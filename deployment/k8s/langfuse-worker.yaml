@@ -63,13 +63,19 @@ spec:
                 command: ["/bin/sh", "-c", "sleep 60"]
           env:
             - name: DATABASE_URL
-              value: "postgresql://REDACTED:REDACTED@postgresql.governance-stack.svc.cluster.local:5432/langfuse"
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-db-secrets
+                  key: database-url
             - name: CLICKHOUSE_URL
               value: "http://clickhouse.governance-stack.svc.cluster.local:8123"
             - name: CLICKHOUSE_USER
               value: "default"
             - name: CLICKHOUSE_PASSWORD
-              value: "ja8oXQmCBZld6NHkKI0PV09SEkqzMgOX"
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-db-secrets
+                  key: clickhouse-password
             - name: CLICKHOUSE_PORT
               value: "8123"
             - name: LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS
@@ -77,11 +83,17 @@ spec:
             - name: LANGFUSE_INGESTION_CLICKHOUSE_WRITE_BATCH_SIZE
               value: "1"
             - name: REDIS_CONNECTION_STRING
-              value: "redis://REDACTED@redis-node-0.redis-headless.governance-stack.svc.cluster.local:6379"
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-db-secrets
+                  key: redis-connection-string
             - name: REDIS_URL
-              value: "redis://REDACTED@redis-node-0.redis-headless.governance-stack.svc.cluster.local:6379"
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-db-secrets
+                  key: redis-connection-string
             - name: REDIS_HOST
-              value: "redis-node-0.redis-headless.governance-stack.svc.cluster.local"
+              value: "redis.governance-stack.svc.cluster.local"
             - name: REDIS_PORT
               value: "6379"
             - name: LOG_LEVEL
@@ -137,6 +149,22 @@ spec:
                 secretKeyRef:
                   name: langfuse-secrets
                   key: encryption-key
+          livenessProbe:
+            httpGet:
+              path: /api/public/health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /api/public/health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
           resources:
             requests:
               cpu: "50m"
@@ -144,23 +172,6 @@ spec:
             limits:
               cpu: "1"
               memory: "2Gi"
----
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: langfuse-worker-hpa
-  namespace: governance-stack
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: langfuse-worker
-  minReplicas: 2
-  maxReplicas: 8
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 60
+# NOTE: HPA is defined in the standalone langfuse-worker-hpa.yaml.
+# The duplicate HPA that was previously inlined here has been removed
+# to avoid conflicting maxReplicas (8 vs 10) and CPU thresholds (60% vs 70%).

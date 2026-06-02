@@ -61,14 +61,14 @@ spec:
             - name: REDIS_PORT
               value: "6379"
             - name: REDIS_HOST
-              value: "redis-master.governance-stack.svc.cluster.local"
+              value: "redis.governance-stack.svc.cluster.local"
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: redis-secret
                   key: redis-password
             - name: REDIS_URL
-              value: "redis://:$(REDIS_PASSWORD)@redis-master.governance-stack.svc.cluster.local:6379"
+              value: "redis://:$(REDIS_PASSWORD)@redis.governance-stack.svc.cluster.local:6379"
             - name: VLLM_BASE_URL
               value: "http://vllm-service.governance-stack.svc.cluster.local:8000/v1"
             - name: VLLM_GATEWAY_URL
@@ -95,6 +95,24 @@ spec:
                   key: secret
             - name: OPA_URL
               value: "http://opa.governance-stack.svc.cluster.local:8181/v1/data/trade/governance"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+            timeoutSeconds: 5
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+
           resources:
             requests:
               cpu: "1000m"

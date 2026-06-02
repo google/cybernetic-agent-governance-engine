@@ -31,7 +31,7 @@
 | --------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | **LangGraph**               | Multi-agent `StateGraph` orchestration | 10-node pipeline (including mandatory NeMo input/output rails); `interrupt_before=["governed_trader"]`; `AsyncRedisSaver` checkpointing |
 | **FastAPI**                 | HTTP API server                        | Agent server `:8000`; Compliance Bridge `:3001`                                                   |
-| **FastMCP**                 | MCP tool server over SSE               | 7 registered tools; `patch_mcp_tools()` injects W3C `traceparent` headers                         |
+| **FastMCP**                 | MCP tool server over SSE               | 6 registered tools; `patch_mcp_tools()` injects W3C `traceparent` headers                         |
 | **NeMo Guardrails**         | AI safety rails                        | Colang 2.x dialect; 15 Presidio PII entity types (input + output rails); model configurable via `GUARDRAILS_MODEL_NAME` |
 | **Open Policy Agent (OPA)** | Rego policy enforcement                | `trade.governance` package; fail-closed posture; `CircuitBreaker` (5 failures, 30 s recovery)     |
 | **LangChain**               | Agent tool-calling framework           | `create_tool_calling_agent`; LangChain OpenAI integration for model binding                       |
@@ -42,9 +42,9 @@
 
 | Component               | Model                          | Details                                                                                |
 | ----------------------- | ------------------------------ | -------------------------------------------------------------------------------------- |
-| **vLLM Reasoning Node** | `DeepSeek-R1-Distill-Llama-8B` | AWQ quantization; `max_model_len=32768`; `gpu_memory_utilization=0.9`; NVIDIA L4 24 GB |
-| **vLLM Fast Node**      | `Meta-Llama-3.1-8B-Instruct`   | OpenAI-compatible endpoint; spot instances; low-latency path                           |
-| **vLLM Evaluator**      | `Qwen/Qwen2.5-7B-Instruct`     | Accessed via `VLLM_FAST_API_BASE`; evaluation and scoring tasks                        |
+| **vLLM Reasoning Node** | `DeepSeek-R1-Distill-Llama-8B` | AWQ quantization; `max_model_len=32768`; `gpu_memory_utilization=0.9`; NVIDIA L4 24 GB; active Risk Manager in ConsensusEngine |
+| **vLLM Fast Node**      | `Meta-Llama-3.1-8B-Instruct`   | OpenAI-compatible endpoint; spot instances; low-latency path; active Compliance Officer in ConsensusEngine |
+| **vLLM Governance**     | `Qwen/Qwen2.5-7B-Instruct`     | **NOT CURRENTLY DEPLOYED** — aspirational governance backend (`vllm-governance.yaml` explicitly marked undeployed) |
 | **liteLLM**             | LLM router                     | `MODEL_REASONING` and `MODEL_FAST` aliasing; unified API surface                       |
 | **vLLM Tensorizer**     | Cold-start optimization        | Model weight streaming from MinIO; eliminates cold-boot latency                        |
 | **Guided JSON (FSM)**   | Structured output              | Enforced at vLLM level for `ExecutionPlan` schema compliance                           |
@@ -68,7 +68,7 @@
 
 | Library               | Purpose                                                                  |
 | --------------------- | ------------------------------------------------------------------------ |
-| `presidio-analyzer`   | Microsoft Presidio PII detection; 16 entity types; `score_threshold=0.3` |
+| `presidio-analyzer`   | Microsoft Presidio PII detection; **15 entity types**; `score_threshold=0.3` |
 | `presidio-anonymizer` | PII anonymization and redaction before LLM submission                    |
 
 ### Policy
@@ -201,7 +201,7 @@ Third-party compliance provider adapters are architecturally isolated in `src/in
 | **State / Checkpoints** | Redis (`AsyncRedisSaver`)      | LangGraph graph checkpoints; HITL interrupt state persistence              |
 | **CBF Cash Balance**    | Redis (`WATCH`/`MULTI`/`EXEC`) | Atomic Control Barrier Function enforcement; prevents balance overrun      |
 | **Compliance Cache**    | `TTLCache` (in-memory)         | 5-minute TTL per compliance control metric; reduces OPA round-trips        |
-| **Audit Logs**          | Langfuse                       | 7-year retention policy; OTLP gRPC ingestion; dual-project configuration   |
+| **Audit Logs**          | Langfuse (self-hosted v3, ClickHouse + MinIO) | 7-year retention policy; OTLP gRPC ingestion; dual-project configuration; standalone OTel Collector deprecated 2026-05-31 |
 | **OSCAL Results**       | GCS / local / S3               | OSCAL Assessment Results artifacts; backend selected via `STORAGE_BACKEND` |
 | **Market Data**         | `yfinance` (real-time)         | 1-month price history on demand; no persistent store                       |
 

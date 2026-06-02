@@ -106,7 +106,7 @@ CAGE is in active NIST RMF implementation. As of the assessment date, the system
 | No intra-cluster mTLS between governance pipeline services | **RESOLVED** (POAM-007 — Linkerd mTLS + Cilium L7 deployed 2026-05-17) |
 | System Security Plan (SSP) not yet drafted                 | **Open** (POAM-015) |
 | FIPS 199 categorization document unsigned                  | **Open** (POAM-009 — In Progress) |
-| HMAC routing seal bypass (FIND-010)                        | **RESOLVED** (POAM-012 closed; `CAGE_ROUTING_SEAL_SECRET` enforced via K8s secret + `RuntimeError` fail-closed guard) |
+| HMAC routing seal bypass (FIND-010)                        | **RESOLVED** (`CAGE_ROUTING_SEAL_SECRET` enforced via K8s secret + `RuntimeError` fail-closed guard) |
 | Langfuse compliance credentials fail silently when absent  | **Open** (POAM-018) |
 | Terraform dual-project fallback defeats telemetry isolation | **Open** (POAM-019) |
 
@@ -129,11 +129,11 @@ The following external systems exchange data with CAGE across the authorization 
 | **GCP Secret Manager**     | N/A                    | N/A — Removed    | **Removed (ADR):** Secrets now delivered exclusively via Kubernetes `Secret` objects provisioned by Terraform; no runtime GCP Secret Manager dependency |
 | **GCS Artifact Bucket**    | GCP API (HTTPS)        | No — GCP FedRAMP | OSCAL/audit evidence archive; 7-year retention          |
 | **MinIO** (model weights)  | HTTPS/REST             | Evaluate         | Self-hosted object store for vLLM model weights         |
-| **Langfuse SaaS**          | HTTPS/REST (OTel OTLP) | **Yes**          | Inference traces; potential PII in spans; DPA required  |
+| **Langfuse** (self-hosted v3) | HTTPS/REST (OTel OTLP) | **Yes**       | Self-hosted v3 with ClickHouse + MinIO; standalone OTel Collector deprecated 2026-05-31; inference traces; potential PII in spans; DPA required if SaaS used |
 | **yfinance / Market Data** | HTTPS/REST             | **Yes**          | Financial instrument prices; API key auth               |
 | **OFAC SDN List**          | HTTPS/REST             | No               | Read-only sanctions reference; no CAGE data transmitted |
 
-> **Risk Note:** Langfuse is the highest-risk external dependency. PII may be present in OTel trace payloads. A data processing agreement (DPA) and ISA are prerequisites before PII-bearing traces may be forwarded to Langfuse SaaS. Evaluation of a self-hosted Langfuse deployment within the GKE boundary is recommended.
+> **Risk Note:** Langfuse is self-hosted v3 (ClickHouse + MinIO backend) within the GKE boundary. PII may be present in OTel trace payloads. The standalone OpenTelemetry Collector was deprecated 2026-05-31; services now export OTLP directly to Langfuse's integrated ingestion endpoint.
 
 ---
 

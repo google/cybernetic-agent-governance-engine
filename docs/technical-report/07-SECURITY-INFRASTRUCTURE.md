@@ -439,7 +439,7 @@ Sources: [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md), [
 
 | Finding ID                                      | Severity     | Security Area     | Status                            |
 | ----------------------------------------------- | ------------ | ----------------- | --------------------------------- |
-| FIND-010: HMAC routing seal bypass              | **Critical** | Cryptography      | ✅ **RESOLVED (POAM-012 Closed)** |
+| FIND-010: HMAC routing seal bypass              | **Critical** | Cryptography      | ✅ **RESOLVED (POAM-007 Closed)** |
 | FIND-011: No intra-cluster mTLS                 | **Critical** | Network           | ✅ **RESOLVED (POAM-007 Closed)** |
 | FIND-007: FIPS 199 unsigned                     | **Critical** | Compliance        | 🔄 In-Progress                    |
 | FIND-001: No account management procedures      | High         | Identity & Access | ❌ Open                           |
@@ -447,6 +447,8 @@ Sources: [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md), [
 | FIND-008: No vulnerability scanning            | High         | Risk Assessment   | ✅ **RESOLVED (POAM-010 Closed)** |
 | FIND-006: No Incident Response Plan             | High         | Incident Response | ❌ Open                           |
 | FIND-012: No automated secret rotation          | Medium       | Identity & Access | ❌ Open                           |
+| POAM-011: SC-8 Transmission Confidentiality     | Medium       | Network           | ❌ **Open**                       |
+| POAM-012: SC-12 Cryptographic Key Management    | Medium       | Cryptography      | ❌ **Open**                       |
 
 ### Supporting Security Documents
 

@@ -90,7 +90,10 @@ import logging
 import os
 from typing import Optional
 
+from opentelemetry import trace as otel_trace
+
 logger = logging.getLogger("Gateway.Governance.KMSSigner")
+_tracer = otel_trace.get_tracer(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -149,6 +152,11 @@ class KMSGovernanceSigner:
     def is_kms_active(self) -> bool:
         """True if Cloud KMS signing is available (production mode)."""
         return self._kms_active
+
+    @property
+    def signing_algorithm(self) -> str:
+        """Returns the active signing algorithm identifier for audit tagging."""
+        return "KMS_ASYMMETRIC" if self._kms_active else "HMAC_SHA256_FALLBACK"
 
     @classmethod
     def from_env(cls) -> "KMSGovernanceSigner":
@@ -243,11 +251,12 @@ class KMSGovernanceSigner:
             RuntimeError: If neither KMS nor legacy HMAC is available.
         """
         plan_bytes = _canonicalise_plan(plan)
-
-        if self._kms_active:
-            return self._kms_sign(plan_bytes)
-
-        return self._hmac_sign(plan_bytes)
+        with _tracer.start_as_current_span("cage.kms_signer.sign") as span:
+            span.set_attribute("cage.signing.algorithm", self.signing_algorithm)
+            span.set_attribute("cage.signing.kms_active", self._kms_active)
+            if self._kms_active:
+                return self._kms_sign(plan_bytes)
+            return self._hmac_sign(plan_bytes)
 
     def _kms_sign(self, plan_bytes: bytes) -> str:
         """Sign via Cloud KMS asymmetricSign API."""
@@ -277,6 +286,16 @@ class KMSGovernanceSigner:
                 "falling back to HMAC (AUDIT: non-repudiation gap).",
                 exc,
             )
+            logger.critical(
+                json.dumps({
+                    "event": "KMS_SIGNING_FALLBACK",
+                    "severity": "CRITICAL",
+                    "signing_path": "HMAC_SHA256_FALLBACK",
+                    "kms_key": self._key_version_name,
+                    "error": str(exc),
+                    "audit_note": "non-repudiation gap: signature cannot be externally verified",
+                })
+            )
             return self._hmac_sign(plan_bytes)
 
     def _hmac_sign(self, plan_bytes: bytes) -> str:
@@ -296,6 +315,16 @@ class KMSGovernanceSigner:
                 "⚠️ [KMSSigner] HMAC fallback active despite KMS being "
                 "configured. This signature has NO non-repudiation value. "
                 "The private key equivalent (GOVERNANCE_SALT) is in-process."
+            )
+            logger.critical(
+                json.dumps({
+                    "event": "KMS_SIGNING_FALLBACK",
+                    "severity": "CRITICAL",
+                    "signing_path": "HMAC_SHA256_FALLBACK",
+                    "kms_key": self._key_version_name,
+                    "error": "KMS active but signing failed — see preceding error log",
+                    "audit_note": "non-repudiation gap: signature cannot be externally verified",
+                })
             )
         else:
             logger.warning(
@@ -416,3 +445,22 @@ def get_governance_signer() -> KMSGovernanceSigner:
     if _signer is None:
         _signer = KMSGovernanceSigner.from_env()
     return _signer
+
+
+def assert_kms_active_in_production() -> None:
+    """Raise RuntimeError if HMAC fallback is active in a production environment.
+
+    Call this during application startup. Safe to call multiple times.
+    Checks CAGE_ENV / ENVIRONMENT to determine if production rules apply.
+    """
+    env = (os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")).lower()
+    if env in ("development", "test", "dev", "ci"):
+        return
+    signer = get_governance_signer()
+    if not signer.is_kms_active:
+        raise RuntimeError(
+            "CAGE STARTUP FAILURE: KMSGovernanceSigner is in HMAC fallback mode "
+            "in a non-development environment. Set KMS_GOVERNANCE_KEY to the full "
+            "Cloud KMS key version resource name. "
+            "Evidentiary independence control violation (see CTRL_KMS_001 in control_mappings.json)."
+        )

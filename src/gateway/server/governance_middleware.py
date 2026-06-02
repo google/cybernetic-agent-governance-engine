@@ -265,15 +265,20 @@ async def validate_action_endpoint(
         ``cage.tool_execute`` root span, producing a unified Langfuse trace
         tree across the service boundary.
 
-    Governance tiers executed:
+    Governance tiers executed (full 7-tier pipeline via _run_checks()):
+        - Tier 0: STPA/STAMP Unsafe Control Action validation
+        - Tier 1: Agent confidence threshold pre-check (fast-fail)
         - Tier 2: Control Barrier Function (CBF) — mathematical safety bounds
-        - Tier 4: OPA Rego policy evaluation — declarative rule enforcement
+        - Tier 3: OPA Rego policy evaluation — declarative rule enforcement
+          (CBF and OPA run concurrently via asyncio.gather for execute_trade)
+        - Tier 4: Fiscal Limit Pre-Reservation — atomic Redis WATCH/MULTI/EXEC
+        - Tier 5: Multi-agent Consensus gate (ISO 42001)
+        - Tier 6: DoWhy Causal Gatekeeper — refutation-based safety lock
+        - Tier 6b: Adaptive FRIA Enforcement (EU AI Act Art. 29a)
 
-    Tiers NOT executed (by design):
-        - Tier 1: Aho-Corasick keyword scan — text-only, irrelevant for structured payloads
-        - Tier 3: Semantic similarity SLM — plan-generation phase, already executed
-        - Tier 5: Multi-agent consensus — evaluated at plan-generation time via
-          ``/v1/chat/completions``, not at actuation time
+    The routing seal is issued ONLY after all tiers pass — a seal issued
+    before full pipeline completion would imply governance approval that
+    was never actually granted.
 
     Returns:
         JSON with ``verdict`` (APPROVED|DENIED), ``violations`` list,

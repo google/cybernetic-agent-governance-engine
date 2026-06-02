@@ -106,10 +106,7 @@ async def _query_opa(input_data: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.integration
-@pytest.mark.skipif(
-    not _opa_trade_policy_available(),
-    reason="OPA not reachable or trade.governance policy not loaded — set OPA_URL and load policy"
-)
+@pytest.mark.usefixtures("require_opa_trade_policy")
 class TestTradeGovernanceRego:
     """Integration tests exercising trade_governance.rego via the OPA REST API."""
 

@@ -86,6 +86,20 @@ from typing import Any, Optional
 
 logger = logging.getLogger("cage.evidence_stream")
 
+
+def _get_signing_algorithm() -> str:
+    """Return the active signing algorithm identifier for evidence stream tagging.
+
+    Returns 'KMS_ASYMMETRIC', 'HMAC_SHA256_FALLBACK', or 'UNKNOWN'.
+    Wrapped in try/except to handle cases where the gateway package is not
+    available in the compliance bridge's import context.
+    """
+    try:
+        from src.gateway.governance.kms_signer import get_governance_signer
+        return get_governance_signer().signing_algorithm
+    except Exception:
+        return "UNKNOWN"
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -249,6 +263,7 @@ class EvidenceStreamSink:
             "payload_json": payload_json,
             "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
             "kms_signature": "",
+            "kms_signature_algorithm": _get_signing_algorithm(),
         }
 
         # Advance chain state

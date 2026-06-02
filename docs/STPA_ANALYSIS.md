@@ -149,11 +149,21 @@ Agent B: reserve($200k) → ATOMIC: REJECTED (would exceed cap)
 
 OPA evaluates the **post-reservation** balance — it is responsible for policy semantics, not concurrency control.
 
+### Implementation Details
+
+| Property | Value |
+| :--- | :--- |
+| Redis key | `fiscal:daily_limit:{YYYY-MM-DD}` (UTC daily window) |
+| Storage format | Cents (integer) — avoids float precision issues |
+| Default cap | $500,000 USD (env: `FISCAL_DAILY_CAP_USD`) |
+| Reservation TTL | 300 seconds (ghost-state auto-expiry) |
+| Fail mode | **Fail-closed** — Redis error → rejected token (never fail-open) |
+
 | Method | Description |
 | :--- | :--- |
 | `reserve(agent_id, amount_usd)` | Atomic check-and-increment; returns `ReservationToken` |
 | `release(token)` | Atomic decrement on Saga rollback; idempotent, never raises |
-| `confirm(token)` | Semantic hook for audit; reservation is already permanent |
+| `confirm(token)` | Semantic hook for audit; reservation is already permanent (`confirm()` does NOT modify the counter — it was already incremented at reservation time) |
 | `current_spend_usd()` | Current total reserved + confirmed spend |
 | `remaining_usd()` | Remaining daily headroom |
 

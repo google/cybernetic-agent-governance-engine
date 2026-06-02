@@ -13,50 +13,51 @@ We also employ **Systems-Theoretic Process Analysis (STPA)** to identify and mit
 
 ### 2. The Dynamic Risk-Adaptive Stack
 
-The architecture enforces "Defense in Depth" through eight distinct runtime layers (0–7) in the StateGraph harness. These work in tandem with the **7-tier Symbolic Governor code pipeline (Tiers 0–6) + Step 8 FRIA** and the broader **15 security & governance control points** wrapping the entire system:
+The architecture enforces "Defense in Depth" through a **7-step `SymbolicGovernor` pipeline** (`_run_checks()`) backed by supporting infrastructure layers and the broader **15 security & governance control points** wrapping the entire system.
 
-### Layer 0: Conversational Guardrails (NeMo)
+> **See also:** [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](docs/NEURO_SYMBOLIC_GOVERNANCE.md) for the full neuro-symbolic architecture detail.
+
+#### Pre-Pipeline: NeMo Guardrails (Layer 0)
 
 **Goal:** Input/Output safety, topical control, and **PII filtering**.
 
-NeMo Guardrails is deployed as a **standalone pod** (`nemo-service`) in the `governance-stack` Kubernetes namespace. It is **not** an in-process sidecar. NeMo delegates all LLM inference to the vLLM endpoint via the `vllm_llama` engine in `config/rails/config.yml`.
+NeMo Guardrails runs **before** `_run_checks()` is invoked. It is deployed as a **standalone pod** (`nemo-service`) in the `governance-stack` Kubernetes namespace — not an in-process sidecar. NeMo delegates all LLM inference to the vLLM endpoint via the `vllm_llama` engine in `config/rails/config.yml`.
 
-- **PII Filtering:** **Microsoft Presidio** (20 entity types) detects and masks PII in both user input and agent output. Spacy `en_core_web_sm` provides entity recognition.
+- **PII Filtering:** **Microsoft Presidio** (15 entity types) detects and masks PII in both user input and agent output. Spacy `en_core_web_sm` provides entity recognition.
 - **Implementation:** `src/gateway/governance/nemo/manager.py` & `config/rails/`
+- **Context Injection:** NeMo actions receive pre-computed STPA and CBF results via context injection (injected by `pre_check()` before the guardrail fires). This eliminates the re-entrant loop where NeMo actions previously called back into `SymbolicGovernor` sub-components, causing each check to run twice per request.
 - **Observability (ISO 42001):** A custom `NeMoOTelCallback` intercepts every guardrail intervention and emits an OpenTelemetry span with `langfuse.trace.metadata.guardrail.outcome` and `langfuse.trace.metadata.iso.control_id="A.6.2.8"`.
 
-### Layer 1: Session Persistence (Redis)
+#### The 7-Step Governance Pipeline (`SymbolicGovernor._run_checks()`)
 
-**Goal:** Stateful sessions on stateless compute.
+The `SymbolicGovernor` in `src/gateway/governance/symbolic_governor.py` is the central enforcement engine. Every tool execution request passes through the following steps in order:
 
-The Agentic Gateway runs on GKE behind a global load balancer. Session state is checkpointed to Redis after each graph node transition via LangGraph's `AsyncRedisSaver`.
+| Step | Name | Implementation | Notes |
+|------|------|---------------|-------|
+| **0** | STPA UCA Constraint Check | `stpa_validator.validate()` | Aho-Corasick keyword scan feeds this; checks for Unsafe Control Actions defined in the ontology |
+| **1** | Agentic Confidence Gate | OPA `system_authz.rego` | **OPA is the sole enforcer** of the confidence threshold (0.95 normal; 0.97 when SLM-degraded). The Python-side confidence check has been removed. |
+| **2** | Control Barrier Function | `ControlBarrierFunction.verify_action()` (`cbf.py`) | Redis-backed cash balance invariant `h(x) = cash_balance − min_cash_balance ≥ 0` |
+| **2b** | OPA Policy Evaluation | `OPAClient.evaluate_policy()` | Runs **concurrently** with CBF via `asyncio.gather` — combined latency is `max(CBF_ms, OPA_ms)` |
+| **3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` | Atomically reserves the requested USD amount against the daily cap in Redis (WATCH/MULTI/EXEC) **before** the consensus gate, closing the TOCTOU race between the CBF balance check and actual trade execution. Released on any subsequent failure. |
+| **4** | Multi-Agent Consensus | `consensus_engine.check_consensus()` | For trades exceeding $10,000: two concurrent LLM critics ("Risk Manager" and "Compliance Officer") must reach unanimity. Any dissent blocks the trade. |
+| **5** | DoWhy Causal Gatekeeper | `causal_safety_check()` | Constructs a `CausalModel` (market_volatility → trade_amount → risk_score), estimates causal effect via backdoor linear regression, then applies a **Placebo Treatment Refuter** (50 simulations, p < 0.05). Fail-safe: blocks on any exception. |
+| **6** | FRIA Normative Boundary + Attestation | `enforce_fria_boundary()` + OTel stamp | **Merged step:** adaptive FRIA enforcement (ALLOW/DEFER/DENY based on consensus score) combined with EU AI Act Art. 29a OTel attestation. Runs only when `CAGE_NORMATIVE_PROVIDER != "static"` for enforcement; attestation stamp always applied for EU_ECB deployments. |
 
-- **Implementation:** `src/governed_financial_advisor/graph/checkpointer.py` — `AsyncRedisSaver` (primary); `MemorySaver` (fallback with OTel alert).
-- **Safety:** Graph state survives pod restarts. HITL pending approval threads persist across server restarts.
+**Routing Seal timing:** The KMS-backed routing seal (`generate_seal()`) is issued **only after all 7 pipeline steps complete successfully**. Previously `validate_action()` issued the seal after only CBF + OPA (Steps 2/2b), implying full governance approval that was never actually granted. That gap is now closed.
 
-### Layer 2: The Syntax Trapdoor (Schema)
+**HITL (Human-in-the-Loop):** Handled by `defer_queue.py`, triggered by pipeline decisions (e.g., `MANUAL_REVIEW` from OPA or confidence starvation). LangGraph's `interrupt_before=["governed_trader"]` enforces a physical pause before every trade execution; the full pipeline is re-run after human approval via `post_hitl_revalidate`.
 
-**Goal:** Structural integrity.
+#### Supporting Infrastructure (Not Pipeline Steps)
 
-Strict **Pydantic v2** models validate every tool call _before_ it reaches the policy engine.
+The following components are essential infrastructure but are **not** numbered governance pipeline steps:
 
-- **Implementation:** `src/governed_financial_advisor/tools/trades.py`
-- **Features:**
-  - **UUID Validation:** `transaction_id` must be a valid UUID v4.
-  - **Regex Validation:** Ticker symbols must match `^[A-Z]{1,5}$`.
-  - **Role Context:** `trader_role` (junior/senior) is enforced in the schema and downstream OPA policy.
+| Component | Role | Notes |
+|-----------|------|-------|
+| **Redis Session Persistence** | Stateful sessions on stateless compute | `AsyncRedisSaver` checkpoints graph state after each node transition; `MemorySaver` fallback emits OTel alert. Implementation: `src/governed_financial_advisor/graph/checkpointer.py` |
+| **Pydantic Schema Validation** | Structural integrity at the request boundary | Strict Pydantic v2 models validate every tool call before it reaches the pipeline. UUID v4, ticker regex `^[A-Z]{1,5}$`, and `trader_role` enforced here. Implementation: `src/governed_financial_advisor/tools/trades.py` |
+| **KMS Routing Seal** | Cryptographic authorization between agent nodes | Issued after full pipeline approval (see above). GCP KMS asymmetric signing (primary); HMAC-SHA256 fallback for dev/CI only. Implementation: `src/gateway/governance/kms_signer.py` |
 
-### Layer 3: The Policy Engine (RBAC & OPA)
-
-**Goal:** Authorization and business logic enforcement.
-
-**Open Policy Agent (OPA)** and **Rego** decouple policy from code. The system implements a **Tri-State Decision**:
-
-1.  **ALLOW** — Action proceeds to the next layer.
-2.  **DENY** — Action is hard-blocked immediately.
-3.  **MANUAL_REVIEW** — Action is suspended pending human intervention.
-
-**Role-Based Access Control (RBAC):**
+**OPA RBAC thresholds** (enforced in Step 2b):
 
 | Role     | ALLOW up to | MANUAL_REVIEW         | DENY         |
 | -------- | ----------- | --------------------- | ------------ |
@@ -64,56 +65,8 @@ Strict **Pydantic v2** models validate every tool call _before_ it reaches the p
 | `senior` | $500,000    | $500,001 – $1,000,000 | > $1,000,000 |
 
 - **Canonical policy:** `src/governed_financial_advisor/governance/policy/trade_governance.rego` (package `trade.governance`).
-- **System authorization:** `deployment/system_authz.rego` — enforces SR 26-2 §IV.B `confidence_sufficient ≥ 0.95` for agentic trade execution.
+- **System authorization:** `deployment/system_authz.rego` — enforces SR 26-2 §IV.B `confidence_sufficient ≥ 0.95` for agentic trade execution (OPA is sole enforcer; Python check removed).
 - **Infrastructure:** OPA runs as a standalone service in the `default` namespace (see [`deployment/k8s/NAMESPACE-GUIDE.md`](deployment/k8s/NAMESPACE-GUIDE.md)); the gateway calls it via the `OPAClient` with a `CircuitBreaker` (5 failures → 30s open-circuit; DENY-on-open).
-
-**State Management (CBF):**
-
-The `ControlBarrierFunction` in `src/gateway/governance/safety.py` enforces the cash balance invariant `h(x) = cash_balance − min_cash_balance ≥ 0` using Redis `WATCH`/`MULTI`/`EXEC` atomic transactions.
-
-### Layer 4: The Signed Handshake (Integrity)
-
-**Goal:** Cryptographic authorization between agent nodes.
-
-A **Signed Handshake** pattern gates the transition from evaluator to executor:
-
-1.  **Evaluator Agent:** Verifies the proposal against OPA and NeMo. If safe, it signs the plan using an HMAC-SHA256 `governance_signature` over `execution_plan_output`.
-2.  **State Gating:** The LangGraph `StateGraph` uses a conditional edge (`check_safety_signature`) that routes to `explainer` if the signature is missing or invalid — trade never executes.
-3.  **Executor Agent:** Validates `governance_signature` independently before issuing any trade instruction.
-
-- **Implementation:** `src/governed_financial_advisor/graph/nodes/evaluator_node.py`
-
-### Layer 5: The Consensus Engine (Adaptive Compute)
-
-**Goal:** High-stakes semantic validation.
-
-For trades exceeding **$10,000**, the `ConsensusEngine` triggers a multi-agent debate:
-
-- **Mechanism:** Two concurrent LLM critics ("Risk Manager" and "Compliance Officer" personas) independently evaluate the trade via `asyncio.gather`. **Unanimity required** — any dissent blocks the trade.
-- **Below threshold:** Single-agent judgment is accepted (documented risk acceptance RA-002).
-- **Implementation:** `src/gateway/governance/consensus.py`
-
-### Layer 6: Human-in-the-Loop (Constructive Friction)
-
-**Goal:** Final mandatory human oversight before trade execution.
-
-LangGraph's `interrupt_before=["governed_trader"]` enforces a physical pause before every trade:
-
-- **Mechanism:** The graph halts at `governed_trader`, persists full `AgentState` to Redis via `AsyncRedisSaver`.
-- **Resume:** A human operator calls `POST /v1/approvals/{thread_id}/resume` with an `APPROVED` or `REJECTED` decision, which reloads the checkpoint and resumes the graph.
-- **Concept:** Policy-as-Code with a Human Safety Switch — no trade executes without a human decision record.
-
-### Layer 7: The Causal Gatekeeper (DoWhy)
-
-**Goal:** World-model integrity validation via causal inference.
-
-The **DoWhy Causal Gatekeeper** (`src/gateway/governance/causal_gatekeeper.py`) acts as the "Lock on the CAGE" — a final causal inference check that validates whether the system's understanding of market dynamics is trustworthy enough to execute a trade.
-
-- **Mechanism:** Constructs a `CausalModel` (market_volatility → trade_amount → risk_score), estimates the causal effect via backdoor linear regression, then applies a **Placebo Treatment Refuter**. If replacing the real treatment with random noise still produces a significant effect (p < 0.05 or |effect| > 0.2), the world-model is deemed untrustworthy and the trade is blocked.
-- **Fail-Safe:** Returns `False` (blocks) on any exception — if causal validity cannot be proven, the action is denied.
-- **Integration:** Injected as Step 6 in `SymbolicGovernor._run_checks()`, runs only for `execute_trade` actions.
-- **Telemetry Provider ([CTRL_TEL_003]):** `LangfuseTelemetryProvider` (`src/gateway/governance/telemetry_provider.py`) fetches live governance spans from Langfuse — replacing `generate_mock_telemetry()`. Falls back to `MockTelemetryProvider` when `< CAUSAL_MIN_LIVE_SAMPLES` (default: 50) live records exist, emitting an audit-visible WARNING.
-  DoWhy now emits **dual OTel spans**: `causal_gatekeeper.statistical_kernel` (tagged `CTRL_MRM_004` / SR 26-2 MRM) for the regression coefficient phase, and `causal_gatekeeper.placebo_refutation` (tagged `CTRL_TEL_003` / ISO 42001 §A.9.4) for the live simulation phase.
 
 ---
 
@@ -136,7 +89,7 @@ All hardcoded regulatory citation strings (`SR 26-2 §IV.B`, `ISO 42001 §A.5.2`
 | `CTRL_TEL_003` | THR-TEL-003 | ISO 42001 §A.9.4 | Agentic | `telemetry_provider.py`, `causal_gatekeeper.py` *(All Regions)* |
 | `CTRL_MRM_004` | THR-MRM-004 | SR 26-2 §IV — Model Risk Management | Traditional ML | `safety.py` (CBF), `causal_gatekeeper.py` *(All Regions, telemetry suppressed in EU_ECB)* |
 | `CTRL_OPA_005` | THR-OPA-005 | ISO 42001 §A.6.1 | Agentic | `symbolic_governor.py` — OPA policy check *(All Regions)* |
-| `CTRL_FRIA_006` | THR-FRIA-006 | EU AI Act Art. 29a | Agentic | `symbolic_governor.py` — Step 7 FRIA attestation *(EU_ECB only)* |
+| `CTRL_FRIA_006` | THR-FRIA-006 | EU AI Act Art. 29a | Agentic | `symbolic_governor.py` — Step 6 FRIA normative boundary + attestation *(EU_ECB only)* |
 | `CTRL_CTX_007` | THR-CTX-007 | CSA AARM-V1 / ISO 42001 §A.5.3 | AARM Primitive | `src/compliance_bridge/context_accumulator.py` *(All Regions)* |
 | `CTRL_DFR_008` | THR-DFR-008 | CSA AARM-V7 / ISO 42001 §A.8.4 | AARM Primitive | `src/gateway/governance/defer_queue.py` — DEFER State Machine *(All Regions)* |
 | `CTRL_AARM_009` | THR-AARM-009 | CSA AARM v1.0 | AARM Primitive | `src/compliance_bridge/aarm_mapper.py` — Threat Ledger *(All Regions)* |
@@ -210,7 +163,7 @@ The architecture implements a **Risk-Based Tiered Strategy** balancing operation
 
 The canonical agent graph is assembled by `create_graph(redis_url)` in `src/governed_financial_advisor/graph/graph.py`. The graph compiles with:
 
-- **8 nodes:** `thinker_node → doer_node → data_analyst / execution_analyst → evaluator → safety_check → governed_trader → explainer`
+- **10 nodes:** `nemo_guardrail → thinker_node → doer_node → data_analyst / execution_analyst → evaluator → safety_check → governed_trader → explainer → nemo_output_rail`
 - **`interrupt_before=["governed_trader"]`** — mandatory HITL pause before any trade execution
 - **`AsyncRedisSaver`** — durable checkpoint persistence; `MemorySaver` fallback emits ERROR log + OTel alert span
 
@@ -220,12 +173,10 @@ All agent transitions are explicitly managed by routing functions (`route_superv
 
 The `@governed_tool` decorator (gateway-side) intercepts all tool executions:
 
-1. Validates Pydantic schema.
-2. Checks HMAC `X-CAGE-Routing-Seal` header.
-3. Queries OPA via `OPAClient` (Tier 4 of the SymbolicGovernor).
-4. Triggers `ConsensusEngine` if trade exceeds `consensus.threshold_usd = $10,000` (Tier 5).
-5. Runs DoWhy Causal Gatekeeper refutation (Tier 7).
-6. Wraps execution in ISO 42001-stamped OpenTelemetry spans.
+1. Validates Pydantic schema (infrastructure boundary — not a pipeline step).
+2. Checks HMAC `X-CAGE-Routing-Seal` header (issued only after full pipeline approval).
+3. Invokes the full `SymbolicGovernor._run_checks()` pipeline: STPA (Step 0) → Confidence/OPA (Steps 1/2b) → CBF (Step 2) → Fiscal Limit Pre-Reservation (Step 3) → Consensus (Step 4) → Causal Gatekeeper (Step 5) → FRIA (Step 6).
+4. Wraps execution in ISO 42001-stamped OpenTelemetry spans.
 
 ## 5. Local Development
 

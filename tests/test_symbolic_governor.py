@@ -40,7 +40,8 @@ async def test_symbolic_governor_confidence_pass():
 @pytest.mark.asyncio
 async def test_symbolic_governor_confidence_fail():
     opa_client = AsyncMock()
-    safety_filter = Mock()
+    safety_filter = AsyncMock()
+    safety_filter.verify_action.return_value = "SAFE"
     consensus_engine = AsyncMock()
 
     governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
@@ -86,7 +87,8 @@ async def test_violation_payload_contains_legacy_citation():
     without requiring changes to their alert rules.
     """
     opa_client = AsyncMock()
-    safety_filter = Mock()
+    safety_filter = AsyncMock()
+    safety_filter.verify_action.return_value = "SAFE"
     consensus_engine = AsyncMock()
 
     governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)

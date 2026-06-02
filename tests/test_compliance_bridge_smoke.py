@@ -25,9 +25,6 @@ import requests
 import pytest
 import time
 
-# Mark all tests in this module as integration tests
-pytestmark = pytest.mark.integration
-
 logger = logging.getLogger(__name__)
 
 # Configuration

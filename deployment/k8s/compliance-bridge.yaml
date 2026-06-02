@@ -113,13 +113,21 @@ spec:
             - name: STARTUP_GRACE_HOURS
               value: "6"
 
-            - name: REDIS_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: redis
-                  key: redis-password
+            # vLLM remediation model settings (preserved from live deployment)
+            - name: REMEDIATION_MODEL
+              value: "gs://laah-cybernetics-models/models--Qwen--Qwen2.5-7B-Instruct/snapshots/a09a35458c702b33eeacc393d103063234e8bc28"
+            - name: REMEDIATION_MAX_TOKENS
+              value: "2048"
+            - name: REMEDIATION_TIMEOUT_MS
+              value: "30000"
+            - name: VLLM_BASE_URL
+              value: "http://vllm-service.governance-stack.svc.cluster.local:8000/v1"
+            - name: VLLM_API_KEY
+              value: "EMPTY"
+
+            # Redis URL — literal value; password embedded at deploy time
             - name: REDIS_URL
-              value: "redis://:$(REDIS_PASSWORD)@redis-master.governance-stack.svc.cluster.local:6379"
+              value: "redis://:$(REDIS_PASSWORD)@redis.governance-stack.svc.cluster.local:6379"
 
             - name: PORT
               value: "3001"

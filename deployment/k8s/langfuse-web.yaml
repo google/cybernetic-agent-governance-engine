@@ -49,11 +49,17 @@ spec:
             - containerPort: 3000
           env:
             - name: DATABASE_URL
-              value: "postgresql://REDACTED:REDACTED@postgresql.governance-stack.svc.cluster.local:5432/langfuse"
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-db-secrets
+                  key: database-url
             - name: LANGFUSE_INIT_USER_EMAIL
               value: "dev-admin@local.com"
             - name: LANGFUSE_INIT_USER_PASSWORD
-              value: "dev-password-123"
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-secrets
+                  key: init-user-password
             - name: LANGFUSE_INIT_PROJECT_NAME
               value: "cybernetic-governance"
             - name: LANGFUSE_INIT_PROJECT_ID
@@ -63,17 +69,29 @@ spec:
             - name: LANGFUSE_INIT_ORG_NAME
               value: "CAGE"
             - name: LANGFUSE_INIT_PROJECT_PUBLIC_KEY
-              value: "REDACTED_LANGFUSE_PK"
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-secrets
+                  key: public-key
             - name: LANGFUSE_INIT_PROJECT_SECRET_KEY
-              value: "REDACTED_LANGFUSE_SK"
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-secrets
+                  key: secret-key
             - name: CLICKHOUSE_URL
               value: "http://clickhouse.governance-stack.svc.cluster.local:8123"
             - name: CLICKHOUSE_MIGRATION_URL
-              value: "clickhouse://default:ja8oXQmCBZld6NHkKI0PV09SEkqzMgOX@clickhouse.governance-stack.svc.cluster.local:9000"
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-db-secrets
+                  key: clickhouse-migration-url
             - name: CLICKHOUSE_USER
               value: "default"
             - name: CLICKHOUSE_PASSWORD
-              value: "ja8oXQmCBZld6NHkKI0PV09SEkqzMgOX"
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-db-secrets
+                  key: clickhouse-password
             - name: CLICKHOUSE_PORT
               value: "8123"
             - name: LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS
@@ -81,11 +99,17 @@ spec:
             - name: LANGFUSE_INGESTION_CLICKHOUSE_WRITE_BATCH_SIZE
               value: "1"
             - name: REDIS_CONNECTION_STRING
-              value: "redis://REDACTED@redis-node-0.redis-headless.governance-stack.svc.cluster.local:6379"
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-db-secrets
+                  key: redis-connection-string
             - name: REDIS_URL
-              value: "redis://REDACTED@redis-node-0.redis-headless.governance-stack.svc.cluster.local:6379"
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-db-secrets
+                  key: redis-connection-string
             - name: REDIS_HOST
-              value: "redis-node-0.redis-headless.governance-stack.svc.cluster.local"
+              value: "redis.governance-stack.svc.cluster.local"
             - name: REDIS_PORT
               value: "6379"
             - name: LOG_LEVEL

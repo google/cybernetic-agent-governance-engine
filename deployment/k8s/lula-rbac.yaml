@@ -17,7 +17,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: lula-auditor
-  namespace: ${NAMESPACE}
+  namespace: governance-stack
   labels:
     app: lula
     compliance.iso42001/component: "audit-runner"
@@ -26,7 +26,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: lula-reader
-  namespace: ${NAMESPACE}
+  namespace: governance-stack
   labels:
     app: lula
 rules:
@@ -59,7 +59,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: lula-auditor
-    namespace: ${NAMESPACE}
+    namespace: governance-stack
 roleRef:
   kind: ClusterRole
   name: lula-default-ns-reader
@@ -69,13 +69,13 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: lula-reader-binding
-  namespace: ${NAMESPACE}
+  namespace: governance-stack
   labels:
     app: lula
 subjects:
   - kind: ServiceAccount
     name: lula-auditor
-    namespace: ${NAMESPACE}
+    namespace: governance-stack
 roleRef:
   kind: Role
   name: lula-reader

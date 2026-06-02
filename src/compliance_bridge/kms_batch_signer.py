@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import json
 import logging
 import os
 import time
@@ -154,6 +155,29 @@ class AsyncBatchSigner:
             self._flush_interval * 1000,
             self._max_batch_size,
         )
+
+        # Eagerly load the signer so we can check its mode at startup
+        if self._signer is None:
+            try:
+                from src.gateway.governance.kms_signer import get_governance_signer
+                self._signer = get_governance_signer()
+            except Exception as _exc:
+                logger.error("[KMSBatchSigner] Failed to load signer at startup: %s", _exc)
+
+        if self._signer is not None and not getattr(self._signer, "is_kms_active", False):
+            logger.critical(
+                json.dumps({
+                    "event": "KMS_BATCH_SIGNER_HMAC_FALLBACK",
+                    "severity": "CRITICAL",
+                    "signing_path": "HMAC_SHA256_FALLBACK",
+                    "audit_note": (
+                        "AsyncBatchSigner is operating in HMAC fallback mode. "
+                        "All evidence stream records will be signed with HMAC-SHA256, "
+                        "not Cloud KMS. kms_signature fields in the evidence stream "
+                        "will contain HMAC digests with no non-repudiation value."
+                    ),
+                })
+            )
 
     async def stop(self) -> None:
         """Stop the background worker (does NOT drain pending records)."""
@@ -313,6 +337,25 @@ class AsyncBatchSigner:
     def is_running(self) -> bool:
         """True if the background worker is active."""
         return self._running
+
+    @property
+    def is_kms_active(self) -> bool:
+        """True if the underlying KMSGovernanceSigner is in KMS mode (not HMAC fallback)."""
+        if self._signer is None:
+            return False
+        return getattr(self._signer, "is_kms_active", False)
+
+    def assert_kms_active_in_production(self) -> None:
+        """Raise RuntimeError if HMAC fallback is active in a production environment."""
+        env = (os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")).lower()
+        if env in ("development", "test", "dev", "ci"):
+            return
+        if not self.is_kms_active:
+            raise RuntimeError(
+                "CAGE STARTUP FAILURE: AsyncBatchSigner is in HMAC fallback mode "
+                "in a non-development environment. Evidence stream records will not "
+                "have non-repudiable KMS signatures. Set KMS_GOVERNANCE_KEY."
+            )
 
 
 # ---------------------------------------------------------------------------

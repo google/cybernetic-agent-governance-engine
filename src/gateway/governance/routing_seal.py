@@ -55,6 +55,43 @@ _TTL_S = int(os.getenv("GOVERNANCE_SEAL_TTL_S", "30"))
 _GOVERNANCE_SALT = os.getenv("GOVERNANCE_SALT", "REDACTED_SALT")
 _HMAC_KEY = _GOVERNANCE_SALT.encode()
 
+_USING_DEFAULT_SALT: bool = _GOVERNANCE_SALT == "REDACTED_SALT"
+
+if _USING_DEFAULT_SALT:
+    logger.warning(
+        "⚠️ [RoutingSeal] GOVERNANCE_SALT is not set — using the hardcoded default "
+        "'REDACTED_SALT'. This key is publicly visible in the source "
+        "repository. Set GOVERNANCE_SALT to a cryptographically random value "
+        "(>=32 bytes) in all non-development environments. "
+        "AUDIT: routing seals are forgeable by any party with repository access."
+    )
+
+
+def is_default_salt() -> bool:
+    """Returns True if the routing seal is using the hardcoded default GOVERNANCE_SALT.
+
+    A True return value means routing seals are forgeable by any party with
+    access to the source repository. This must be False in production.
+    """
+    return _USING_DEFAULT_SALT
+
+
+def assert_custom_salt_in_production() -> None:
+    """Raise RuntimeError if the default GOVERNANCE_SALT is active in production.
+
+    Call during application startup.
+    """
+    env = (os.getenv("CAGE_ENV") or os.getenv("ENVIRONMENT", "production")).lower()
+    if env in ("development", "test", "dev", "ci"):
+        return
+    if _USING_DEFAULT_SALT:
+        raise RuntimeError(
+            "CAGE STARTUP FAILURE: routing_seal.py is using the hardcoded default "
+            "GOVERNANCE_SALT ('REDACTED_SALT'). This key is publicly "
+            "visible in the source repository and must not be used in production. "
+            "Set GOVERNANCE_SALT to a cryptographically random value of >=32 bytes."
+        )
+
 
 def _canonical_payload(action: str, params: dict) -> bytes:
     """Produce a stable, deterministic byte representation of the action payload.

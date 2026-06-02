@@ -12,61 +12,69 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# ── NeMo Guardrails service ────────────────────────────────────────────────────
+# Builds the nemo-guardrails image used by deployment/k8s/nemo.yaml.
+# Uses the official NVIDIA NeMo Guardrails base and installs the gateway
+# extras (grpcio, protobuf, nemoguardrails) via uv.
+#
+# Build context: repo root (so pyproject.toml and uv.lock are reachable).
+# Image pushed to: gcr.io/${PROJECT_ID}/nemo-guardrails:latest
+# ──────────────────────────────────────────────────────────────────────────────
+
 FROM python:3.12-slim
 
 WORKDIR /app
-ENV PYTHONPATH=/app:/app/src/gateway/protos
 
-# System dependencies
+# System dependencies required by NeMo Guardrails, spaCy, and protoc
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  build-essential \
-  git \
-  curl \
+  gcc \
+  g++ \
+  python3-dev \
+  protobuf-compiler \
   && rm -rf /var/lib/apt/lists/*
 
-# Install uv (pip install avoids GHCR connectivity issues in Cloud Build)
-RUN pip install --no-cache-dir uv
-
-# Create virtual environment
-RUN uv venv /app/.venv
-ENV VIRTUAL_ENV=/app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
+# Install uv for dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
 # Copy dependency definitions — both files required for uv sync --frozen
 COPY pyproject.toml uv.lock ./
 
-# Install locked dependencies from uv.lock.
-# --extra gateway pulls: nemoguardrails, presidio-analyzer, presidio-anonymizer,
-#                        spacy, grpcio, protobuf, opentelemetry instrumentation.
-RUN uv sync --frozen --no-dev --extra gateway --extra advisor --no-install-project
+# Create virtual env
+RUN uv venv
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
 
-# Install spaCy English model via direct wheel (avoids CDN redirect failures)
-RUN pip install --no-cache-dir \
-  "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
+# Install gateway extras which include nemoguardrails, grpcio, presidio, spaCy.
+# --no-dev skips test/lint extras; --no-install-project avoids the project
+# package install step (source is imported directly via PYTHONPATH=/app).
+RUN uv sync --frozen --no-dev --extra gateway --no-install-project
 
-# Copy source — the entire gateway directory to ensure all cross-imports resolve
-COPY src/gateway/ /app/src/gateway/
-COPY src/governed_financial_advisor/ /app/src/governed_financial_advisor/
-COPY src/__init__.py /app/src/__init__.py
+# Install grpcio-tools into the venv so we can generate protobuf bindings.
+# uv manages the venv so we use `uv pip install` (not bare pip).
+RUN uv pip install --quiet grpcio-tools
 
-# Generate gRPC protobuf bindings
-RUN uv pip install grpcio-tools && \
-    cd src/gateway/protos && \
-    python -m grpc_tools.protoc \
-    -I=. \
-    --python_out=. \
-    --grpc_python_out=. \
-    *.proto
+# Copy NeMo Guardrails source and config
+COPY src/gateway /app/src/gateway
 COPY config /app/config
 
-# Expose port (default 8000; override via PORT env var at runtime)
+# Generate protobuf Python bindings from nemo.proto inside the venv.
+RUN python -m grpc_tools.protoc \
+  -I /app/src/gateway/protos \
+  --python_out=/app/src/gateway/protos \
+  --grpc_python_out=/app/src/gateway/protos \
+  /app/src/gateway/protos/nemo.proto && \
+  # Fix the generated grpc stub: protoc emits `import nemo_pb2` (bare),
+  # but with PYTHONPATH=/app the module lives at src.gateway.protos.nemo_pb2.
+  sed -i 's/^import nemo_pb2 as nemo__pb2$/from src.gateway.protos import nemo_pb2 as nemo__pb2/' \
+  /app/src/gateway/protos/nemo_pb2_grpc.py
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+# NeMo Guardrails server listens on port 8000
 ARG PORT=8000
 ENV PORT=$PORT
 EXPOSE $PORT
 
-# Healthcheck
-HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
-  CMD curl -f http://localhost:${PORT}/health || exit 1
-
-# Start NeMo Guardrails server
-CMD ["sh", "-c", "python -m src.gateway.governance.nemo.server"]
+# Start the NeMo Guardrails server (FastAPI via uvicorn)
+CMD ["python", "src/gateway/governance/nemo/server.py"]

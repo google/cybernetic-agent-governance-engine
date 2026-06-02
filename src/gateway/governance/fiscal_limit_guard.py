@@ -69,6 +69,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import random
@@ -178,7 +179,7 @@ class FiscalLimitGuard:
         day = time.strftime("%Y-%m-%d", time.gmtime())
         return f"fiscal:daily_limit:{day}"
 
-    def _atomic_increment(
+    async def _atomic_increment(
         self, key: str, amount_cents: int, cap_cents: int
     ) -> int:
         """Atomically increment the spend counter if it stays within cap.
@@ -208,7 +209,7 @@ class FiscalLimitGuard:
                 err_name = type(exc).__name__
                 if "WatchError" in err_name and attempt < _MAX_RETRIES - 1:
                     backoff = (_RETRY_BASE_MS * (2 ** attempt) + random.randint(0, 5)) / 1000.0
-                    time.sleep(backoff)
+                    await asyncio.sleep(backoff)
                     continue
                 logger.error(
                     "_atomic_increment: error on attempt %d key=%s err=%s",
@@ -217,7 +218,7 @@ class FiscalLimitGuard:
                 return -2  # fail-closed signal
         return -2
 
-    def _atomic_decrement(
+    async def _atomic_decrement(
         self, key: str, amount_cents: int
     ) -> int:
         """Atomically decrement the spend counter, flooring at 0.
@@ -239,7 +240,7 @@ class FiscalLimitGuard:
                 err_name = type(exc).__name__
                 if "WatchError" in err_name and attempt < _MAX_RETRIES - 1:
                     backoff = (_RETRY_BASE_MS * (2 ** attempt) + random.randint(0, 5)) / 1000.0
-                    time.sleep(backoff)
+                    await asyncio.sleep(backoff)
                     continue
                 logger.error(
                     "_atomic_decrement: error on attempt %d key=%s err=%s",
@@ -252,7 +253,7 @@ class FiscalLimitGuard:
     # Public API
     # ------------------------------------------------------------------
 
-    def reserve(
+    async def reserve(
         self,
         agent_id: str,
         amount_usd: float,
@@ -277,7 +278,7 @@ class FiscalLimitGuard:
         reservation_id = str(uuid.uuid4())
 
         try:
-            result = self._atomic_increment(window_key, amount_cents, cap_cents)
+            result = await self._atomic_increment(window_key, amount_cents, cap_cents)
         except Exception as exc:
             logger.error(
                 "FiscalLimitGuard.reserve: unexpected error agent=%s err=%s — failing closed.",
@@ -316,7 +317,7 @@ class FiscalLimitGuard:
             )
         return token
 
-    def release(self, token: ReservationToken) -> float:
+    async def release(self, token: ReservationToken) -> float:
         """Release a reservation — called by the Saga compensating node on rollback.
 
         Safe to call multiple times (idempotent via floor-at-zero).
@@ -326,7 +327,7 @@ class FiscalLimitGuard:
         if token.rejected:
             return 0.0
 
-        result = self._atomic_decrement(token.window_key, token.amount_cents)
+        result = await self._atomic_decrement(token.window_key, token.amount_cents)
         new_total_usd = max(0.0, result / 100.0) if result >= 0 else 0.0
         logger.info(
             "FiscalLimitGuard: RELEASED agent=%s amount=%.2f "
@@ -347,7 +348,7 @@ class FiscalLimitGuard:
             token.agent_id, token.amount_usd, token.reservation_id,
         )
 
-    def current_spend_usd(self) -> float:
+    async def current_spend_usd(self) -> float:
         """Return the current reserved + confirmed spend for today's window."""
         try:
             raw = self._redis.get(self._window_key())  # type: ignore[attr-defined]
@@ -356,6 +357,6 @@ class FiscalLimitGuard:
             logger.error("FiscalLimitGuard.current_spend_usd: Redis error: %s", exc)
             return 0.0
 
-    def remaining_usd(self) -> float:
+    async def remaining_usd(self) -> float:
         """Return remaining headroom in today's window."""
-        return max(0.0, self._daily_cap_usd - self.current_spend_usd())
+        return max(0.0, self._daily_cap_usd - await self.current_spend_usd())

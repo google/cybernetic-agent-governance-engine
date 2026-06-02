@@ -18,7 +18,7 @@ The **Cybernetic Governance Engine (CAGE)** is a distributed, multi-runtime syst
 | #   | Subsystem                      | Root Path                         | Runtime                   | Port            |
 | --- | ------------------------------ | --------------------------------- | ------------------------- | --------------- |
 | 1   | **Governed Financial Advisor** | `src/governed_financial_advisor/` | Python / FastAPI          | 8000            |
-| 2   | **Hybrid Inference Gateway**   | `src/gateway/`                    | Python / FastAPI + gRPC   | 8001 (internal) |
+| 2   | **Hybrid Inference Gateway**   | `src/gateway/`                    | Python / FastAPI + gRPC   | 8080            |
 | 3   | **Compliance Bridge**          | `src/compliance_bridge/`          | Python / FastAPI SSE      | 3001            |
 | 4   | **AgentSight UI**              | `src/agentsight-ui/`              | React / TypeScript / Vite | 5173            |
 | 5   | **AgentSight eBPF DaemonSet**  | `deployment/agentsight/`          | Kernel / BPF              | N/A (DaemonSet) |
@@ -262,17 +262,16 @@ The middleware exposes two governance endpoints under the `/governance` mount pa
 
 ### 5.3 MCP Tool Server
 
-`src/gateway/server/mcp_tool_server.py` exposes seven tools via the FastMCP protocol:
+`src/gateway/server/mcp_tool_server.py` exposes six tools via the FastMCP protocol:
 
 | Tool                          | Function                                              |
 | ----------------------------- | ----------------------------------------------------- |
-| `check_safety_constraints`    | Validates trade parameters against safety thresholds  |
-| `evaluate_policy`             | Submits request to OPA Rego policy engine             |
-| `execute_trade_action`        | Commits a governed trade after full pipeline approval |
-| `trigger_safety_intervention` | Forces immediate pipeline halt on detected hazard     |
-| `check_market_status`         | Queries live market status via `yfinance`             |
-| `get_market_sentiment`        | Retrieves aggregated market sentiment signal          |
-| `verify_content_safety`       | Invokes NeMo Guardrails content verification          |
+| `simulate_governance_check`   | Dry-run SymbolicGovernor verify (sim_mode only)       |
+| `execute_trade_action`        | Execute financial trade under full governance         |
+| `trigger_safety_intervention` | Lock system via Redis safety_violation flag           |
+| `check_market_status`         | Check market symbol status                            |
+| `get_market_sentiment`        | Retrieve market sentiment                             |
+| `verify_content_safety`       | NeMo Guardrails text safety check                     |
 
 ### 5.4 Inference Proxy Pipeline
 
@@ -305,7 +304,7 @@ flowchart LR
 
 ## 6. Symbolic Governor 7-Tier Pipeline
 
-The `SymbolicGovernor` class in `src/gateway/governance/symbolic_governor.py` is the neuro-symbolic enforcement core of CAGE. Its `_run_checks()` method executes the governance tiers in **strict sequential order**. The pipeline is **fail-closed**: any active tier raising a validation error produces a `GovernanceError` and halts the pipeline. No partial approval is possible. Tier 3 (SLM Sidecar) is deprecated to optimize the latency budget.
+The `SymbolicGovernor` class in `src/gateway/governance/symbolic_governor.py` is the neuro-symbolic enforcement core of CAGE. Its `_run_checks()` method executes the governance tiers in **strict sequential order**, with the exception of Steps 2 and 4 (CBF and OPA) which are fired **concurrently** via `asyncio.gather`. The pipeline is **fail-closed**: any active tier raising a validation error produces a `GovernanceError` and halts the pipeline. No partial approval is possible. Tier 3 (SLM Sidecar) is deprecated to optimize the latency budget.
 
 ```mermaid
 flowchart TD
@@ -331,13 +330,13 @@ flowchart TD
 | ---- | ------------------------ | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
 | 0    | STPA UCA Validation      | `STPAValidator.validate()` in `src/gateway/governance/stpa_validator.py` | Thresholds from `src/gateway/governance/safety_params.json`                        |
 | 1    | SR 26-2 §IV.B Agentic Confidence | Inline check in `_run_checks()`                                          | `confidence_sufficient ≥ 0.95`                                                     |
-| 2    | Control Barrier Function | `ControlBarrierFunction` — Redis `WATCH`/`MULTI`/`EXEC` transaction      | `min_cash_balance=1000.0`, `gamma=0.5`                                             |
+| 2    | Control Barrier Function | `ControlBarrierFunction` — Redis read-only `verify_action()` (concurrent with Tier 4) | `min_cash_balance=1000.0`, `gamma=0.5`                                             |
 | 3    | SLM Sidecar (Deprecated) | Bypassed to optimize latency budget (runs permanently offline)             | N/A (0ms)                                                                          |
-| 4    | OPA Policy               | `OPAClient` with `CircuitBreaker`                                        | 5 consecutive failures → 30s open-circuit recovery; `trade.governance` Rego bundle |
+| 4    | OPA Policy               | `OPAClient` with `CircuitBreaker` (concurrent with Tier 2 via `asyncio.gather`) | 5 consecutive failures → 30s open-circuit recovery; 3000ms hard latency budget; `trade.governance` Rego bundle |
 | 5    | Multi-Agent Consensus    | `ConsensusEngine` — parallel `asyncio` critic tasks                      | `consensus.threshold_usd=10000.0`                                                  |
 | 6    | Causal Gatekeeper        | `causal_safety_check()` in `src/gateway/governance/causal_gatekeeper.py` | placebo p-value < 0.05 or placebo effect > 0.2                                      |
 
-**Tier 2 (Control Barrier Function):** Uses Redis optimistic locking (`WATCH`/`MULTI`/`EXEC`) to atomically verify that executing the proposed trade will not violate the cash balance floor (`min_cash_balance=1000.0`). The `gamma=0.5` parameter controls the CBF decay coefficient used in the Lyapunov-based safety invariant.
+**Tier 2 (Control Barrier Function):** CBF's `verify_action()` is **read-only** — it does NOT modify Redis state at this stage. It verifies that executing the proposed trade will not violate the cash balance floor (`min_cash_balance=1000.0`). The `gamma=0.5` parameter controls the CBF decay coefficient. Steps 2 and 4 (CBF and OPA) are fired **simultaneously** via `asyncio.gather`. The TOCTOU race is closed by Step 3 (FiscalLimitGuard), NOT by making these sequential — this is intentional, correct design.
 
 **Tier 4 (OPA Circuit Breaker):** The `CircuitBreaker` wrapping the `OPAClient` protects the governance pipeline from OPA service degradation. After 5 consecutive failures, the breaker opens for 30 seconds. During open-circuit state, all governance requests are rejected with `BLOCKED` — the system does not fall back to permissive defaults.
 
@@ -358,8 +357,8 @@ For the full 14-mechanism latency mitigation analysis and latency budget breakdo
 
 #### FiscalLimitGuard
 To prevent concurrent multi-agent "race to the rail" limit depletion where multiple agents check the same remaining daily cap simultaneously, CAGE v2.0.0 enforces atomic limit pre-reservation via the `FiscalLimitGuard` class (`src/gateway/governance/fiscal_limit_guard.py`).
-1. **Pre-Reservation:** Before OPA policy evaluation, the agent atomically reserves the trade amount in Redis using a `WATCH`/`MULTI`/`EXEC` optimistic lock transaction.
-2. **TTL Safety:** Returns a `ReservationToken` with a 300s TTL. If the agent node crashes before execution, the cap is automatically reclaimed.
+1. **Pre-Reservation (Step 3):** After concurrent CBF+OPA (Steps 2+4), the agent atomically reserves the trade amount in Redis using a `WATCH`/`MULTI`/`EXEC` optimistic lock transaction. This is the step that closes the TOCTOU race. Default daily cap: **$500,000 USD** (`FISCAL_DAILY_CAP_USD` env var). Cap is stored in **cents** for integer precision.
+2. **TTL Safety:** Returns a `ReservationToken` with a **300s TTL**. If the agent node crashes before execution, the cap is automatically reclaimed. Fail-closed: if Redis is unavailable, the trade is blocked.
 3. **Commit & Rollback:** On success, the spend is confirmed. On failure, the Saga compensating node releases the token back to Redis headroom.
 
 #### LangGraph Saga Engine

@@ -69,16 +69,52 @@ If this condition is violated, the CBF emits a `[CTRL_MRM_004] SR 26-2 §IV — 
 
 The CBF formula is a **traditional, deterministic quantitative model** (fixed `min_cash_balance` floor, static `γ` decay parameter) with traceable mathematical inputs and measurable outputs — placing it squarely under **SR 26-2 Model Risk Management (CTRL_MRM_004)** scope, not agentic ISO 42001.
 
+### CBF Read-Only Verification
+
+`ControlBarrierFunction.verify_action()` is **read-only** — it reads the current cash balance from Redis (`safety:current_cash` key) but does **not** modify Redis state. Only `update_state()` (deductions) and `rollback_state()` (refunds on failure) write to Redis.
+
+CBF (`verify_action()`) and OPA run **concurrently** via `asyncio.gather` — combined latency is `max(CBF_ms, OPA_ms)`. This is intentional design: the TOCTOU race between the CBF balance check and actual trade execution is **not** closed by making these sequential. It is closed by the **FiscalLimitGuard** (Step 3) using atomic WATCH/MULTI/EXEC pre-reservation (see §5 in `docs/STPA_ANALYSIS.md`).
+
 ### Cloud-Native State Concurrency
 Because CAGE operates in a stateless, scalable Cloud Run environment, the CBF shares cash state via **Redis**.
 To prevent race conditions when multiple trade execution calls occur concurrently, the CBF utilizes an **optimistic locking pipeline**:
 - `WATCH / MULTI / EXEC` transactions ensure atomic read-modify-write operations.
 - The pipeline supports configurable retries (`_MAX_RETRIES = 5`) allowing the system to gracefully handle concurrent modifications.
 - Both `update_state` (deductions) and `rollback_state` (refunds on failure) use this transactional guarantee.
+- **`verify_action()` is read-only** and does not participate in the WATCH/MULTI/EXEC pipeline.
 
 ---
 
-## 3. Intervention Simulation (AgentBeatsSimulator)
+## 3. FiscalLimitGuard — Atomic TOCTOU Remediation
+
+`FiscalLimitGuard` (`src/gateway/governance/fiscal_limit_guard.py`) closes the TOCTOU race between the CBF balance check and actual trade execution using atomic Redis pre-reservation. It runs as **Step 3** in the `SymbolicGovernor` pipeline — after CBF+OPA (Steps 2+4, concurrent) and before the ConsensusEngine (Step 5).
+
+### Key Implementation Details
+
+| Property | Value |
+|----------|-------|
+| Redis key | `fiscal:daily_limit:{YYYY-MM-DD}` (UTC daily window) |
+| Storage format | Cents (integer) — avoids float precision issues |
+| Default cap | $500,000 USD (env: `FISCAL_DAILY_CAP_USD`) |
+| Reservation TTL | 300 seconds (ghost-state auto-expiry) |
+| Fail mode | **Fail-closed** — Redis error → rejected token (never fail-open) |
+| Atomicity | `WATCH/MULTI/EXEC` optimistic locking |
+
+### How It Closes the TOCTOU Race
+
+Without FiscalLimitGuard (TOCTOU vulnerable):
+  Agent A: CBF reads balance=$200k → OPA: ALLOW → executes $200k  ✓
+  Agent B: CBF reads balance=$200k → OPA: ALLOW → executes $200k  ✓ (cap exceeded!)
+
+With FiscalLimitGuard (TOCTOU closed):
+  Agent A: reserve($200k) → ATOMIC: OK, remaining=$0
+  Agent B: reserve($200k) → ATOMIC: REJECTED (would exceed cap)
+
+The `confirm()` method is a **semantic hook only** — the counter already reflects the spend at reservation time. `release(token)` is called by the Saga compensating node on rollback to restore fiscal capacity atomically.
+
+---
+
+## 4. Intervention Simulation (AgentBeatsSimulator)
 
 The Simulator (`src/governed_financial_advisor/agents/evaluator/simulator.py`) is an adversarial evaluation harness used to quantify the system's resilience to prompt injections and policy bypass attempts.
 
