@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import './KernelDashboard.css';
 import type { GovernanceCode } from './types/contract';
 
@@ -55,6 +55,10 @@ interface TelemetryItem {
     auditId?: string;
     modelName?: string;
     textLength?: number;
+    // Phase 1 additions
+    hitl_expires_at?: string | null;   // ISO-8601 UTC — HITL approval deadline
+    price_fresh?: number | null;       // Latest market price (for drift indicator)
+    price_stale?: number | null;       // Cached/stale price (for drift indicator)
 }
 
 // GovernanceEvent — shape of SSE `governance-event` payloads from the backend.
@@ -69,6 +73,27 @@ interface GovernanceEvent {
     timestamp: string;
     modelName?: string;
     textLength?: number;
+    hitl_expires_at?: string | null;
+    price_fresh?: number | null;
+    price_stale?: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Format seconds as MM:SS */
+function formatCountdown(totalSeconds: number): string {
+    if (totalSeconds <= 0) return '00:00';
+    const m = Math.floor(totalSeconds / 60);
+    const s = totalSeconds % 60;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+/** Compute price drift Δ = |fresh − stale| / stale */
+function priceDrift(fresh: number, stale: number): number {
+    if (stale === 0) return 0;
+    return Math.abs(fresh - stale) / Math.abs(stale);
 }
 
 // SSE connection state — drives the colored status dot in the header.
@@ -87,7 +112,7 @@ const CONTROL_NAMES: Record<string, string> = {
     'A.5.2': 'Social Impact Assessment',
     'A.5.3': 'Logging and Monitoring',
     'A.9.2': 'Data Transfer to Suppliers',
-    'SC-4':  'Fiscal Limits and RBAC',
+    'SC-4': 'Fiscal Limits and RBAC',
 };
 
 // Controls that require an immediate GOVERNANCE_VIOLATION alert on low safety
@@ -128,24 +153,53 @@ async function fetchMetrics(controlId: string): Promise<ComplianceMetrics> {
 // ---------------------------------------------------------------------------
 
 const KernelDashboard: React.FC = () => {
-    const [telemetry, setTelemetry]               = useState<TelemetryItem[]>([]);
-    const [health, setHealth]                     = useState<HealthResponse | null>(null);
-    const [loading, setLoading]                   = useState<boolean>(true);
-    const [fetchError, setFetchError]             = useState<string | null>(null);
-    const [securityAlert, setSecurityAlert]       = useState<{ message: string; code: GovernanceCode } | null>(null);
-    const [patchAdvisory, setPatchAdvisory]       = useState<{ message: string; modelName: string; size: number } | null>(null);
+    const [telemetry, setTelemetry] = useState<TelemetryItem[]>([]);
+    const [health, setHealth] = useState<HealthResponse | null>(null);
+    const [loading, setLoading] = useState<boolean>(true);
+    const [fetchError, setFetchError] = useState<string | null>(null);
+    const [securityAlert, setSecurityAlert] = useState<{ message: string; code: GovernanceCode } | null>(null);
+    const [patchAdvisory, setPatchAdvisory] = useState<{ message: string; modelName: string; size: number } | null>(null);
     const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting');
-    const [selectedItem, setSelectedItem]         = useState<TelemetryItem | null>(null);
+    const [selectedItem, setSelectedItem] = useState<TelemetryItem | null>(null);
 
     // Pagination states
-    const [page, setPage]                         = useState<number>(1);
-    const [hasMore, setHasMore]                   = useState<boolean>(true);
-    const [loadingMore, setLoadingMore]           = useState<boolean>(false);
-    const [beforeTimestamp]                       = useState<string>(() => new Date().toISOString());
+    const [page, setPage] = useState<number>(1);
+    const [hasMore, setHasMore] = useState<boolean>(true);
+    const [loadingMore, setLoadingMore] = useState<boolean>(false);
+    const [beforeTimestamp] = useState<string>(() => new Date().toISOString());
+
+    // ── Phase 1: max_slippage_pct slider ──────────────────────────────────────
+    const [maxSlippagePct, setMaxSlippagePct] = useState<number>(2.0);
+    const [slippageSaving, setSlippageSaving] = useState<boolean>(false);
+
+    // ── Phase 1: TTL countdown tick (1-second interval) ───────────────────────
+    const [now, setNow] = useState<number>(() => Date.now());
 
     // Track which critical-control alerts have already been shown this session
     // so we don't re-raise the same modal on every poll cycle.
     const alertedControls = useRef<Set<string>>(new Set());
+
+    // 1-second tick for HITL TTL countdowns
+    useEffect(() => {
+        const tick = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(tick);
+    }, []);
+
+    // POST max_slippage_pct to the gateway thresholds endpoint
+    const saveSlippage = useCallback(async (value: number) => {
+        setSlippageSaving(true);
+        try {
+            await fetch(`${API_BASE}/governance/thresholds`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ max_slippage_pct: value }),
+            });
+        } catch (err) {
+            console.warn('[KernelDashboard] Failed to persist max_slippage_pct:', err);
+        } finally {
+            setSlippageSaving(false);
+        }
+    }, []);
 
     const fetchHistory = async (pageNum: number, cursor: string) => {
         if (pageNum === 1) {
@@ -159,7 +213,7 @@ const KernelDashboard: React.FC = () => {
             const res = await fetch(url);
             if (!res.ok) throw new Error(`History fetch responded ${res.status}`);
             const data = await res.json();
-            
+
             if (data && Array.isArray(data.telemetry)) {
                 setTelemetry((prev) => {
                     const existingIds = new Set(prev.map(item => item.id || item.traceId));
@@ -169,7 +223,7 @@ const KernelDashboard: React.FC = () => {
                     const merged = [...prev, ...uniqueHistory];
                     return merged.slice(0, 100);
                 });
-                
+
                 setHasMore(data.hasMore);
                 setPage(pageNum);
             }
@@ -217,16 +271,16 @@ const KernelDashboard: React.FC = () => {
                         if (result.status === 'fulfilled') {
                             const m = result.value;
                             items.push({
-                                id:            m.control_id,
-                                traceId:       m.control_id,
-                                spanName:      CONTROL_NAMES[m.control_id] ?? m.control_id,
-                                timestamp:     m.last_event_utc,
-                                safetyRate:    m.safety_rate,
-                                totalTraces:   m.total_traces,
+                                id: m.control_id,
+                                traceId: m.control_id,
+                                spanName: CONTROL_NAMES[m.control_id] ?? m.control_id,
+                                timestamp: m.last_event_utc,
+                                safetyRate: m.safety_rate,
+                                totalTraces: m.total_traces,
                                 blockedTraces: m.blocked_traces,
-                                type:          'AUDIT_FINDING',
-                                result:        m.safety_rate >= 1.0 ? 'PASS' : 'FAIL',
-                                auditId:       `poll-window-${m.window_hours}h`,
+                                type: 'AUDIT_FINDING',
+                                result: m.safety_rate >= 1.0 ? 'PASS' : 'FAIL',
+                                auditId: `poll-window-${m.window_hours}h`,
                             });
 
                             if (
@@ -255,12 +309,12 @@ const KernelDashboard: React.FC = () => {
                             }
                         } else {
                             items.push({
-                                id:            controlId,
-                                traceId:       controlId,
-                                spanName:      `${CONTROL_NAMES[controlId] ?? controlId} [fetch error]`,
-                                timestamp:     new Date().toISOString(),
-                                safetyRate:    -1,
-                                totalTraces:   0,
+                                id: controlId,
+                                traceId: controlId,
+                                spanName: `${CONTROL_NAMES[controlId] ?? controlId} [fetch error]`,
+                                timestamp: new Date().toISOString(),
+                                safetyRate: -1,
+                                totalTraces: 0,
                                 blockedTraces: 0,
                             });
                         }
@@ -316,18 +370,21 @@ const KernelDashboard: React.FC = () => {
 
             // Map the incoming GovernanceEvent to a TelemetryItem for the list.
             const item: TelemetryItem = {
-                id:            `${event.auditId}-${event.controlId}-${event.timestamp}`,
-                traceId:       event.traceId,
-                spanName:      CONTROL_NAMES[event.controlId] ?? event.controlId,
-                timestamp:     event.timestamp,
-                safetyRate:    event.safetyRate ?? -1,
-                totalTraces:   0,   // not available in push events; set to 0
+                id: `${event.auditId}-${event.controlId}-${event.timestamp}`,
+                traceId: event.traceId,
+                spanName: CONTROL_NAMES[event.controlId] ?? event.controlId,
+                timestamp: event.timestamp,
+                safetyRate: event.safetyRate ?? -1,
+                totalTraces: 0,   // not available in push events; set to 0
                 blockedTraces: 0,
-                type:          event.type,
-                result:        event.result,
-                auditId:       event.auditId,
-                modelName:     event.modelName,
-                textLength:    event.textLength,
+                type: event.type,
+                result: event.result,
+                auditId: event.auditId,
+                modelName: event.modelName,
+                textLength: event.textLength,
+                hitl_expires_at: event.hitl_expires_at ?? null,
+                price_fresh: event.price_fresh ?? null,
+                price_stale: event.price_stale ?? null,
             };
 
             setTelemetry((prev) => {
@@ -342,7 +399,7 @@ const KernelDashboard: React.FC = () => {
             // GOVERNANCE_VIOLATION → trigger the security alert modal.
             if (event.type === 'GOVERNANCE_VIOLATION') {
                 const controlName = CONTROL_NAMES[event.controlId] ?? event.controlId;
-                const alertKey    = `${event.auditId}-${event.controlId}`;
+                const alertKey = `${event.auditId}-${event.controlId}`;
 
                 if (!alertedControls.current.has(alertKey)) {
                     alertedControls.current.add(alertKey);
@@ -412,15 +469,15 @@ const KernelDashboard: React.FC = () => {
                 <span
                     className={`connection-dot ${connectionStatus}`}
                     title={
-                        connectionStatus === 'connected'  ? 'SSE connected' :
-                        connectionStatus === 'connecting' ? 'Connecting…'   :
-                        'Connection error'
+                        connectionStatus === 'connected' ? 'SSE connected' :
+                            connectionStatus === 'connecting' ? 'Connecting…' :
+                                'Connection error'
                     }
                 />
                 <span>
-                    {connectionStatus === 'connected'  ? 'Live' :
-                     connectionStatus === 'connecting' ? 'Connecting…' :
-                     'Disconnected'}
+                    {connectionStatus === 'connected' ? 'Live' :
+                        connectionStatus === 'connecting' ? 'Connecting…' :
+                            'Disconnected'}
                 </span>
             </div>
 
@@ -494,6 +551,34 @@ const KernelDashboard: React.FC = () => {
                     )}
                 </p>
 
+                {/* ── Phase 1: max_slippage_pct slider ─────────────────────── */}
+                <div className="slippage-control">
+                    <div className="slippage-header">
+                        <label htmlFor="slippage-slider" className="slippage-label">
+                            Max Slippage %
+                        </label>
+                        <span className="slippage-value">
+                            {maxSlippagePct.toFixed(1)}%
+                            {slippageSaving && <span className="slippage-saving"> saving…</span>}
+                        </span>
+                    </div>
+                    <input
+                        id="slippage-slider"
+                        type="range"
+                        min={0}
+                        max={10}
+                        step={0.1}
+                        value={maxSlippagePct}
+                        className="slippage-slider"
+                        onChange={(e) => setMaxSlippagePct(parseFloat(e.target.value))}
+                        onMouseUp={(e) => saveSlippage(parseFloat((e.target as HTMLInputElement).value))}
+                        onTouchEnd={(e) => saveSlippage(parseFloat((e.target as HTMLInputElement).value))}
+                    />
+                    <div className="slippage-ticks">
+                        <span>0%</span><span>5%</span><span>10%</span>
+                    </div>
+                </div>
+
                 {loading && (
                     <p className="loading-indicator" aria-live="polite">
                         ⏳ Connecting to compliance-bridge…
@@ -508,27 +593,54 @@ const KernelDashboard: React.FC = () => {
 
                 {!loading && (
                     <ul>
-                        {telemetry.map((t) => (
-                            <li 
-                                key={t.id} 
-                                className={`telemetry-item ${selectedItem?.id === t.id ? 'selected' : ''}`}
-                                onClick={() => setSelectedItem(t)}
-                            >
-                                <span className="trace-id">{t.traceId || 'N/A'}</span>
-                                {' — '}
-                                <span className="span-name">{t.spanName}</span>
-                                {t.safetyRate >= 0 && (
-                                    <span
-                                        className="safety-rate"
-                                        title={`${t.totalTraces} total traces, ${t.blockedTraces} blocked`}
-                                        style={{ color: t.safetyRate < ALERT_THRESHOLD ? '#ff4444' : '#44cc88' }}
-                                    >
-                                        {' '}[{(t.safetyRate * 100).toFixed(1)}% safe]
+                        {telemetry.map((t) => {
+                            // ── HITL TTL countdown ────────────────────────────
+                            const expiresAt = t.hitl_expires_at ? new Date(t.hitl_expires_at).getTime() : null;
+                            const secsLeft = expiresAt !== null ? Math.max(0, Math.floor((expiresAt - now) / 1000)) : null;
+                            const isExpired = secsLeft !== null && secsLeft === 0;
+                            const isHitlPending = secsLeft !== null;
+
+                            // ── Price drift badge ─────────────────────────────
+                            let driftBadge: React.ReactNode = null;
+                            if (t.price_fresh != null && t.price_stale != null) {
+                                const drift = priceDrift(t.price_fresh, t.price_stale);
+                                const driftPct = (drift * 100).toFixed(2);
+                                const driftClass = drift < 0.005 ? 'drift-green' : drift < 0.02 ? 'drift-yellow' : 'drift-red';
+                                driftBadge = (
+                                    <span className={`drift-badge ${driftClass}`} title={`P_fresh=${t.price_fresh}, P_stale=${t.price_stale}`}>
+                                        ΔP {driftPct}%
                                     </span>
-                                )}
-                                <span className="timestamp">{t.timestamp ? new Date(t.timestamp).toLocaleTimeString() : ''}</span>
-                            </li>
-                        ))}
+                                );
+                            }
+
+                            return (
+                                <li
+                                    key={t.id}
+                                    className={`telemetry-item ${selectedItem?.id === t.id ? 'selected' : ''} ${isExpired ? 'hitl-expired' : ''}`}
+                                    onClick={() => setSelectedItem(t)}
+                                >
+                                    <span className="trace-id">{t.traceId || 'N/A'}</span>
+                                    {' — '}
+                                    <span className="span-name">{t.spanName}</span>
+                                    {t.safetyRate >= 0 && (
+                                        <span
+                                            className="safety-rate"
+                                            title={`${t.totalTraces} total traces, ${t.blockedTraces} blocked`}
+                                            style={{ color: t.safetyRate < ALERT_THRESHOLD ? '#ff4444' : '#44cc88' }}
+                                        >
+                                            {' '}[{(t.safetyRate * 100).toFixed(1)}% safe]
+                                        </span>
+                                    )}
+                                    {driftBadge}
+                                    {isHitlPending && (
+                                        <span className={`hitl-ttl ${isExpired ? 'hitl-ttl-expired' : ''}`}>
+                                            {isExpired ? '⏱ EXPIRED' : `⏱ ${formatCountdown(secsLeft!)}`}
+                                        </span>
+                                    )}
+                                    <span className="timestamp">{t.timestamp ? new Date(t.timestamp).toLocaleTimeString() : ''}</span>
+                                </li>
+                            );
+                        })}
                         {hasMore && telemetry.length > 0 && (
                             <li className="load-more-item" style={{ listStyleType: 'none', textAlign: 'center', margin: '10px 0' }}>
                                 <button className="load-more-btn" onClick={loadNextPage} disabled={loadingMore} style={{ padding: '8px 16px', background: '#333', color: '#fff', border: '1px solid #555', cursor: 'pointer', borderRadius: '4px' }}>
@@ -572,7 +684,7 @@ const KernelDashboard: React.FC = () => {
                                 <div className="meta-value font-mono trace-link-wrapper">
                                     <code>{selectedItem.traceId || 'N/A'}</code>
                                     {selectedItem.traceId && (
-                                        <a 
+                                        <a
                                             href={`http://localhost:3001/project/cage-compliance/traces/${selectedItem.traceId}`}
                                             target="_blank"
                                             rel="noreferrer"
@@ -603,7 +715,7 @@ const KernelDashboard: React.FC = () => {
 
                                 <div className="metric-box">
                                     <span className="metric-label">Safety Rate</span>
-                                    <span 
+                                    <span
                                         className="metric-value"
                                         style={{ color: selectedItem.safetyRate < ALERT_THRESHOLD ? '#ff4444' : '#44cc88' }}
                                     >
@@ -614,9 +726,9 @@ const KernelDashboard: React.FC = () => {
 
                             {selectedItem.safetyRate >= 0 && (
                                 <div className="progress-bar-container">
-                                    <div 
+                                    <div
                                         className="progress-bar-fill"
-                                        style={{ 
+                                        style={{
                                             width: `${selectedItem.safetyRate * 100}%`,
                                             backgroundColor: selectedItem.safetyRate < ALERT_THRESHOLD ? '#ff4444' : '#44cc88'
                                         }}
@@ -644,8 +756,8 @@ const KernelDashboard: React.FC = () => {
                                 This trace was dynamically validated against the following compiled CAGE symbolic guardrails:
                             </p>
                             <pre className="policy-code">
-{selectedItem.id.includes('SC-4') ? 
-`# ISO 42001 SC-4: Fiscal Limits & RBAC Enforcer
+                                {selectedItem.id.includes('SC-4') ?
+                                    `# ISO 42001 SC-4: Fiscal Limits & RBAC Enforcer
 package cage.policy.fiscal_limits
 
 default allow = false
@@ -662,8 +774,8 @@ audit_finding[msg] {
     not allow
     msg := sprintf("CRITICAL LIMIT EXCEEDED: Transaction of %d %s proposed by %s blocked.", [input.amount, input.currency, input.role])
 }`
-: selectedItem.id.includes('A.9.2') ?
-`# ISO 42001 A.9.2: Data Transfer to Suppliers / PII Redaction
+                                    : selectedItem.id.includes('A.9.2') ?
+                                        `# ISO 42001 A.9.2: Data Transfer to Suppliers / PII Redaction
 package cage.policy.data_privacy
 
 default safe_transfer = true
@@ -681,8 +793,8 @@ audit_finding[msg] {
     not safe_transfer
     msg := "PRIVACY VIOLATION: Trace contains unredacted supplier PII; data block active."
 }`
-: selectedItem.id.includes('A.5.3') ?
-`# ISO 42001 A.5.3: Logging & Monitoring Observability Guard
+                                        : selectedItem.id.includes('A.5.3') ?
+                                            `# ISO 42001 A.5.3: Logging & Monitoring Observability Guard
 package cage.policy.observability
 
 default logging_active = true
@@ -695,8 +807,8 @@ logging_active = false {
 logging_active = false {
     not input.has_langfuse_project_secret
 }`
-: 
-`# General CAGE Compliance Policy Guard
+                                            :
+                                            `# General CAGE Compliance Policy Guard
 package cage.policy.general
 
 default compliant = true
@@ -713,7 +825,7 @@ compliant = false {
                         <div className="empty-icon">🔍</div>
                         <h3>Select a Telemetry Trace</h3>
                         <p>
-                            Click any event from the real-time feed on the left to drill down into 
+                            Click any event from the real-time feed on the left to drill down into
                             trace assertions, safety scores, policy rules, and deep observability links.
                         </p>
                     </div>

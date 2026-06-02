@@ -63,7 +63,17 @@ class ComplianceMetrics(BaseModel):
 # Mirrors the Zod OscalFindingSchema in types.ts
 # ---------------------------------------------------------------------------
 
-OscalResult = Literal["PASS", "FAIL", "NOT_APPLICABLE"]
+OscalResult = Literal["PASS", "FAIL", "NOT_APPLICABLE", "ERROR"]
+# ERROR semantics (per NIST SP 800-53A assessment procedures):
+#   PASS           — evidence meets the assessment objective (Satisfied)
+#   FAIL           — evidence fails the assessment objective (Not-Satisfied)
+#   NOT_APPLICABLE — the control does not apply to this system component
+#                    (e.g. a wireless control on a wired-only system)
+#   ERROR          — the control applies but the scanner/collector failed to
+#                    gather evidence ("fetch failed", timeout, etc.).
+#                    Must NEVER be masked as NOT_APPLICABLE — auditing frameworks
+#                    require this to be flagged as Incomplete/Unknown so the
+#                    security blind spot is visible.  (NIST SP 800-53A §3.2)
 
 
 class OscalFinding(BaseModel):

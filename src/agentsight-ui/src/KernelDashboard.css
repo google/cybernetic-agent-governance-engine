@@ -15,7 +15,9 @@
  */
 
 /* Override index.css default centered flex body layout for full screen dashboard */
-body, html, #root {
+body,
+html,
+#root {
     margin: 0 !important;
     padding: 0 !important;
     width: 100vw !important;
@@ -212,8 +214,15 @@ body, html, #root {
 }
 
 @keyframes float {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-8px); }
+
+    0%,
+    100% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-8px);
+    }
 }
 
 .empty-details-card h3 {
@@ -513,8 +522,15 @@ body, html, #root {
 }
 
 @keyframes sse-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.4;
+    }
 }
 
 /* Global modal overlays */
@@ -614,7 +630,185 @@ body, html, #root {
 }
 
 @keyframes shake {
-    0%, 100% { transform: translateX(0); }
-    20%, 60% { transform: translateX(-6px); }
-    40%, 80% { transform: translateX(6px); }
+
+    0%,
+    100% {
+        transform: translateX(0);
+    }
+
+    20%,
+    60% {
+        transform: translateX(-6px);
+    }
+
+    40%,
+    80% {
+        transform: translateX(6px);
+    }
+}
+
+/* ── Phase 1: max_slippage_pct slider ─────────────────────────────────────── */
+
+.slippage-control {
+    background-color: #1a1a2e;
+    border: 1px solid #2d2d4a;
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.slippage-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.slippage-label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #bb86fc;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+.slippage-value {
+    font-family: 'Fira Code', monospace;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #e2e8f0;
+}
+
+.slippage-saving {
+    font-size: 0.7rem;
+    color: #f59e0b;
+    font-style: italic;
+    font-weight: 400;
+}
+
+.slippage-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(to right,
+            #bb86fc 0%,
+            #bb86fc calc(var(--val, 20%) * 1%),
+            #2d2d4a calc(var(--val, 20%) * 1%),
+            #2d2d4a 100%);
+    outline: none;
+    cursor: pointer;
+}
+
+.slippage-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #bb86fc;
+    cursor: pointer;
+    box-shadow: 0 0 6px rgba(187, 134, 252, 0.5);
+    transition: box-shadow 0.2s;
+}
+
+.slippage-slider::-webkit-slider-thumb:hover {
+    box-shadow: 0 0 10px rgba(187, 134, 252, 0.8);
+}
+
+.slippage-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #bb86fc;
+    cursor: pointer;
+    border: none;
+    box-shadow: 0 0 6px rgba(187, 134, 252, 0.5);
+}
+
+.slippage-ticks {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.65rem;
+    color: #555;
+    padding: 0 2px;
+}
+
+/* ── Phase 1: price drift badge ───────────────────────────────────────────── */
+
+.drift-badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-family: 'Fira Code', monospace;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    margin-left: 4px;
+}
+
+.drift-badge.drift-green {
+    background-color: rgba(16, 185, 129, 0.12);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.drift-badge.drift-yellow {
+    background-color: rgba(245, 158, 11, 0.12);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.drift-badge.drift-red {
+    background-color: rgba(239, 68, 68, 0.12);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    animation: drift-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes drift-pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.6;
+    }
+}
+
+/* ── Phase 1: HITL TTL countdown ─────────────────────────────────────────── */
+
+.hitl-ttl {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-family: 'Fira Code', monospace;
+    font-size: 0.72rem;
+    font-weight: 700;
+    background-color: rgba(245, 158, 11, 0.12);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    margin-left: 4px;
+}
+
+.hitl-ttl.hitl-ttl-expired {
+    background-color: rgba(113, 113, 122, 0.12);
+    color: #71717a;
+    border-color: rgba(113, 113, 122, 0.2);
+    text-decoration: line-through;
+}
+
+/* Greyed-out appearance for expired HITL items */
+.telemetry-item.hitl-expired {
+    opacity: 0.45;
+    filter: grayscale(0.6);
+}
+
+.telemetry-item.hitl-expired:hover {
+    opacity: 0.6;
 }

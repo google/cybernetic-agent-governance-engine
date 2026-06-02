@@ -4,8 +4,8 @@
 
 | Field              | Value      |
 | ------------------ | ---------- |
-| **Version**        | 2.1        |
-| **Date**           | 2026-05-25 |
+| **Version**        | 2.2        |
+| **Date**           | 2026-06-01 |
 | **Classification** | INTERNAL   |
 | **Document**       | CAGE-TR-06 |
 
@@ -161,15 +161,55 @@ Lula CronJob (6h)
       → run_audit_workflow (6-step pipeline, upgraded in CAGE v2.0.0)
         ├── Step 1:  Artifact persistence
         ├── Step 2:  OSCAL parse (OscalFinding extraction)
+        │            OscalResult: PASS | FAIL | NOT_APPLICABLE | ERROR
+        │            (see §5.5 for ERROR state semantics)
         ├── Step 2b: ContextAccumulator SHA-256 hash chain (AARM-V1)
         ├── Step 3:  Langfuse trace flush + compliance scores
+        │            ERROR findings score 0.0 (same as FAIL — never masked as PASS)
         ├── Step 4:  SSE event publish (AUDIT_FINDING, CONTEXT_CHAIN_SEALED)
+        │            GOVERNANCE_VIOLATION fired for FAIL **and** ERROR on CRITICAL_CONTROLS
         ├── Step 5:  Critical alert routing (Slack / PagerDuty)
+        │            Triggered by result ∈ {FAIL, ERROR} on {A.9.2, SC-4, A.8.4}
         └── Step 6:  AARM Conformance Report (11-vector NEUTRALIZED/PARTIAL/EXPOSED)
                GCS/S3: context_chain.ndjson + aarm_conformance.json
 ```
 
 This loop produces time-stamped OSCAL Assessment Result artifacts that serve as machine-readable evidence for both ISO 42001 and NIST SP 800-53 assessment records.
+
+### 5.5 OSCAL Assessment State Semantics (NIST SP 800-53A §3.2)
+
+> **Change introduced in CAGE v2.2.0 (2026-06-01).** Prior versions incorrectly mapped scanner failures to `NOT_APPLICABLE`. This section documents the corrected four-state model and its regulatory basis.
+
+The [`OscalResult`](../../src/compliance_bridge/types.py) type in the Compliance Bridge defines four mutually exclusive assessment states, aligned with NIST SP 800-53A §3.2 assessment attribute vocabulary:
+
+| State            | OSCAL `status.state` | Langfuse Score | Triggers Alert | Regulatory Meaning |
+| ---------------- | -------------------- | -------------- | -------------- | ------------------- |
+| `PASS`           | `satisfied`          | `1.0`          | No             | Assessment objective met — evidence satisfies the control requirement |
+| `FAIL`           | `not-satisfied`      | `0.0`          | Yes (if critical) | Assessment objective not met — evidence explicitly fails the control |
+| `NOT_APPLICABLE` | `not-applicable`     | _(no score)_   | No             | Control does not apply to this system component type (e.g. a wireless control on a wired-only system) |
+| `ERROR`          | `error`              | `0.0`          | Yes (if critical) | Control applies but the scanner/collector failed to gather evidence ("fetch failed", timeout, unrecognised OSCAL state) |
+
+#### Why ERROR ≠ NOT_APPLICABLE
+
+The distinction is critical for audit integrity:
+
+- **NOT_APPLICABLE** is a deliberate, documented scoping decision. It means the control was reviewed and determined to be out of scope for this specific system component. It must be justified in the SSP and approved by the Authorizing Official.
+- **ERROR** is an operational failure. The control is in scope, but the evidence collection mechanism broke. The control may be violated — we simply cannot confirm it.
+
+Masking an `ERROR` as `NOT_APPLICABLE` would:
+1. Hide a potential security blind spot from auditors and the Authorizing Official
+2. Prevent the critical-alert pipeline from firing on controls like SC-4 (Fiscal Limits) or A.9.2 (PII masking)
+3. Violate NIST SP 800-53A §3.2, which requires evaluation errors to be flagged as **Incomplete/Unknown** — never as Not Applicable
+
+#### Implementation Points
+
+| Component | Behaviour |
+| --------- | --------- |
+| [`_map_state()`](../../src/compliance_bridge/oscal_parser.py) | Unrecognised OSCAL `status.state` values → `ERROR` (with warning log). Explicit `"not-applicable"` / `"na"` → `NOT_APPLICABLE`. |
+| [`_finding_to_state()`](../../src/compliance_bridge/oscal_exporter.py) | `ERROR` findings emit OSCAL state `"error"`, not `"not-applicable"`. |
+| [`findings_from_metrics_dict()`](../../src/compliance_bridge/oscal_exporter.py) | Langfuse fetch failures (`{"error": "..."}`) emit an `ERROR` `OscalFinding` with a descriptive `remarks` field. They are **not silently dropped**. |
+| [`_step4_alert_on_critical_fail()`](../../src/compliance_bridge/audit_workflow.py) | Critical-control filter matches `result ∈ {FAIL, ERROR}`. A scanner failure on SC-4, A.9.2, or A.8.4 triggers the same Slack/PagerDuty alert as an explicit FAIL. |
+| [`_ingest_sync()`](../../src/compliance_bridge/audit_workflow.py) | `ERROR` findings score `0.0` in Langfuse — identical to FAIL. They are never scored as `1.0` (PASS). |
 
 ### 5.4 Compliance Bridge API Endpoints (v2.0.0)
 
