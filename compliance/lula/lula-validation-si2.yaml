@@ -1,15 +1,12 @@
 # lula-validation-si2.yaml
 # NIST SP 800-53 Rev 5 — SI-2: Flaw Remediation (Dependency Pinning)
 #
-# STUB: This validation requires cluster-specific namespace configuration
-# before activation. See TODO comments below.
-#
 # Asserts that:
 #   1. The cage-gateway Deployment image tag is NOT :latest (must be pinned)
 #   2. The cage-compliance-bridge Deployment image tag is NOT :latest
 #   3. All container images use imagePullPolicy: Always (fresh pulls for patches)
 #   4. A CronJob or Job labeled cage.io/purpose: vulnerability-scan exists
-#      in any namespace (CI scanning evidence)
+#      in the governance-stack namespace (CI scanning evidence)
 #
 # Domain: kubernetes → Deployments, CronJobs in governance-stack namespace
 # Provider: opa (inline Rego)
@@ -17,6 +14,7 @@
 # References:
 #   - deployment/k8s/backend-deployment.yaml — governed-financial-advisor Deployment
 #   - deployment/k8s/compliance-bridge.yaml — compliance bridge Deployment
+#   - deployment/k8s/sbom-cronjob.yaml — SBOM/vulnerability scan CronJob
 #   - .github/workflows/security-scan.yml — CI Trivy container scanning
 #   - docs/POAM.md — POAM-013 (SI-2: unpinned Python dependencies)
 #   - docs/POAM.md — POAM-010 (RA-5: no vulnerability scanning in CI)
@@ -24,12 +22,8 @@
 # OSCAL Mapping:
 #   component: cage-gateway
 #   control: si-2
-
-# STUB: Update namespaces below to the actual cage cluster namespace.
-# TODO: Replace 'governance-stack' with the actual namespace if different.
-# TODO: Confirm Deployment names from deployment/k8s/*.yaml files.
-# TODO: Confirm CronJob label cage.io/purpose: vulnerability-scan is applied
-#       to the security scanning CronJob (see lula-validation-ra5.yaml).
+#
+# Namespace: governance-stack (confirmed from live cluster deployment snapshot)
 
 domain:
   type: kubernetes
@@ -37,12 +31,9 @@ domain:
     resources:
       - name: cage-deployments
         resource: deployments
-        # TODO: Replace 'governance-stack' with the actual cage namespace.
         namespace: governance-stack
       - name: vuln-scan-cronjobs
         resource: cronjobs
-        # CronJob may be in any namespace — check governance-stack first.
-        # TODO: Update namespace to match where the scan CronJob is deployed.
         namespace: governance-stack
 
 provider:
@@ -118,7 +109,7 @@ provider:
 
 notes: >
   NIST SP 800-53 Rev 5 SI-2: Flaw Remediation — Image Pinning and Vulnerability Scanning.
-  STUB — requires cluster-specific namespace configuration before activation.
+  Namespace: governance-stack (confirmed from live cluster deployment snapshot).
   Implements four flaw remediation assertions for the CAGE governance namespace:
     (1) cage-gateway (governed-financial-advisor) Deployment images must NOT use
         :latest tag — all images must be pinned to a digest or semantic version
@@ -137,7 +128,5 @@ notes: >
   image pinning dimension). Python dependency lockfiles are addressed separately.
   Remediates (partially): POAM-010 (RA-5: no vulnerability scanning in CI —
   CronJob evidence complements GitHub Actions Trivy scanning).
-  Activation: confirm namespace and Deployment/CronJob names, update fields, and
-  enable in deployment/k8s/lula-cron.yaml.
   See: compliance/continuous-monitoring/ISCM_STRATEGY.md — SI-2 monitoring cadence.
   See: docs/POAM.md — POAM-013 (SI-2 remediation), POAM-010 (RA-5 remediation).

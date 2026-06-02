@@ -34,11 +34,17 @@ terraform {
     }
   }
 
-  # Store Terraform state in GCS bucket
-  # backend "gcs" {
-  #   bucket = "YOUR_PROJECT-tfstate"
-  #   prefix = "cage/gcp-gke"
-  # }
+  # Store Terraform state in GCS bucket.
+  # Activate by setting TF_BACKEND_BUCKET before running terraform init:
+  #   export TF_BACKEND_BUCKET="${PROJECT_ID}-tfstate"
+  #   terraform init -backend-config="bucket=${TF_BACKEND_BUCKET}"
+  # D-03 remediation: backend is declared; bucket name is injected at init time
+  # via -backend-config to avoid committing project-specific values.
+  backend "gcs" {
+    prefix = "cage/gcp-gke"
+    # bucket is supplied via: terraform init -backend-config="bucket=<PROJECT>-tfstate"
+    # or TF_CLI_ARGS_init="-backend-config=bucket=<PROJECT>-tfstate"
+  }
 }
 
 # ─── Data Sources ─────────────────────────────────────────────────────────────
@@ -549,10 +555,24 @@ module "app_secrets" {
   s3_endpoint_url       = "https://storage.googleapis.com"
   s3_bucket_name        = google_storage_bucket.langfuse_events.name
 
-  hf_token                       = var.hf_token
-  langfuse_compliance_public_key = var.langfuse_compliance_public_key != "" ? var.langfuse_compliance_public_key : module.langfuse.public_key
-  langfuse_compliance_secret_key = var.langfuse_compliance_secret_key != "" ? var.langfuse_compliance_secret_key : module.langfuse.secret_key
-  oscal_api_key                  = "DUMMY_API_KEY_FOR_LOCAL_DEV"
+  hf_token = var.hf_token
+
+  # ─── Langfuse compliance project keys (P2-2) ────────────────────────────────
+  # Dev posture: pass the key as-is (may be empty → module skips secret creation
+  #   when enable_nist_compliance=false; compliance bridge handles None gracefully).
+  # Prod posture (enable_nist_compliance=true): the precondition below enforces
+  #   that a real, distinct cage-compliance project key is provided.
+  #   The silent fallback to module.langfuse.public_key has been removed to prevent
+  #   circular evidence contamination in Step 5 (_fetch_failing_traces).
+  langfuse_compliance_public_key = var.langfuse_compliance_public_key
+  langfuse_compliance_secret_key = var.langfuse_compliance_secret_key
+
+  # Prod precondition: fail the plan if compliance keys are missing or identical
+  # to the operations keys. This enforces AU-9 audit integrity at plan time.
+  # Evaluated only when enable_nist_compliance=true (prod posture).
+  enable_nist_compliance = var.enable_nist_compliance
+
+  oscal_api_key = "DUMMY_API_KEY_FOR_LOCAL_DEV"
 
   opa_url = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
 

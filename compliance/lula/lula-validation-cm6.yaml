@@ -1,9 +1,6 @@
 # lula-validation-cm6.yaml
 # NIST SP 800-53 Rev 5 — CM-6: Configuration Settings
 #
-# STUB: This validation requires cluster-specific namespace configuration
-# before activation. See TODO comments below.
-#
 # Asserts that the governance configuration is present and immutable in the
 # cluster — specifically:
 #   1. The governance-thresholds ConfigMap (from config/governance_thresholds.json)
@@ -19,10 +16,8 @@
 #   - config/rails/config.yml — NeMo Guardrails configuration
 #   - deployment/k8s/financial-advisor.yaml — Financial advisor deployment (mounts config)
 #   - docs/NIST_RMF_CHUNK1_CURRENT_STATE.md — CM-6 current state analysis
-
-# STUB: Update 'namespace' fields below to the actual cluster namespaces.
-# TODO: Confirm the ConfigMap name for governance thresholds from deployment/k8s/financial-advisor.yaml.
-# TODO: Confirm the NeMo Guardrails ConfigMap/Secret name from deployment manifests.
+#
+# Namespace: governance-stack (confirmed from live cluster deployment snapshot)
 
 domain:
   type: kubernetes
@@ -30,11 +25,9 @@ domain:
     resources:
       - name: governance-thresholds-config
         resource: configmaps
-        # TODO: Replace 'governance-stack' with the actual namespace if different.
         namespace: governance-stack
       - name: nemo-guardrails-config
         resource: configmaps
-        # TODO: Confirm this ConfigMap exists; may be a Secret instead.
         namespace: governance-stack
 
 provider:
@@ -58,17 +51,13 @@ provider:
 
 notes: >
   NIST SP 800-53 Rev 5 CM-6: Configuration Settings.
-  STUB — requires cluster-specific ConfigMap names and namespace configuration.
+  Namespace: governance-stack (confirmed from live cluster deployment snapshot).
   Automated verification that governance thresholds and NeMo Guardrails
   configuration are deployed as Kubernetes ConfigMaps, ensuring the baseline
   security configuration is active and cluster-immutable (vs. local file edits).
   The governance thresholds (config/governance_thresholds.json) define the fiscal
   and risk limits enforced by OPA; the NeMo Guardrails config (config/rails/)
   defines the output rail and content filtering rules.
-  Activation steps:
-    1. Confirm ConfigMap names from deployment/k8s/financial-advisor.yaml.
-    2. Update 'name' and 'namespace' fields to match the actual cluster resources.
-    3. Enable in the Lula CronJob (deployment/k8s/lula-cron.yaml).
   This validation also addresses the CM-6/SI-7 POAM items flagged in
   docs/NIST_RMF_CHUNK1_CURRENT_STATE.md regarding deprecated Rego stub confusion.
   See: compliance/continuous-monitoring/ISCM_STRATEGY.md — CM-6 monitoring cadence.

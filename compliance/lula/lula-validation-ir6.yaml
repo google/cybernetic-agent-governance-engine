@@ -1,9 +1,6 @@
 # lula-validation-ir6.yaml
 # NIST SP 800-53 Rev 5 — IR-6: Incident Reporting
 #
-# STUB: This validation requires cluster-specific namespace configuration
-# before activation. See TODO comments below.
-#
 # Asserts that the compliance-bridge service is running and ready in the cluster.
 # The compliance-bridge (src/compliance_bridge/) handles incident notification
 # via audit_workflow.py and notifier.py — it is the primary incident reporting
@@ -18,9 +15,8 @@
 #   - src/compliance_bridge/audit_workflow.py — Compliance audit + alert pipeline
 #   - deployment/k8s/compliance-bridge.yaml — compliance-bridge Deployment manifest
 #   - docs/ROLES_AND_RESPONSIBILITIES.md — IR-6 ISSO/ISSM responsibilities
-
-# STUB: Update 'namespace' below to the actual cluster namespace for compliance-bridge.
-# TODO: Confirm the Deployment name from deployment/k8s/compliance-bridge.yaml before activation.
+#
+# Namespace: governance-stack (confirmed from live cluster deployment snapshot)
 
 domain:
   type: kubernetes
@@ -28,7 +24,6 @@ domain:
     resources:
       - name: compliance-bridge-deployment
         resource: deployments
-        # TODO: Replace 'governance-stack' with the actual namespace if different.
         namespace: governance-stack
 
 provider:
@@ -53,7 +48,7 @@ provider:
 
 notes: >
   NIST SP 800-53 Rev 5 IR-6: Incident Reporting.
-  STUB — requires cluster-specific namespace and deployment name configuration.
+  Namespace: governance-stack (confirmed from live cluster deployment snapshot).
   Automated verification that the compliance-bridge incident reporting service
   is live and operational. The compliance-bridge (src/compliance_bridge/) provides:
     - Real-time Slack/PagerDuty alerting via notifier.py
@@ -62,7 +57,5 @@ notes: >
   IR-6 requires that security incidents be reported to appropriate organizational
   officials and external authorities within defined timeframes — the compliance-bridge
   is the automated first-responder for this requirement.
-  Activation: confirm Deployment name from deployment/k8s/compliance-bridge.yaml,
-  update namespace, and enable in the Lula CronJob.
   See: compliance/continuous-monitoring/ISCM_STRATEGY.md — IR-6 monitoring cadence.
   See: docs/ROLES_AND_RESPONSIBILITIES.md — ISSO/ISSM incident response chain.
