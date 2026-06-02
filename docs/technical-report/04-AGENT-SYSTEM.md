@@ -2,8 +2,8 @@
 
 | Field                | Value                                                                             |
 | -------------------- | --------------------------------------------------------------------------------- |
-| **Document Version** | 1.1                                                                               |
-| **Date**             | 2026-05-31                                                                        |
+| **Document Version** | 2.0                                                                               |
+| **Date**             | 2026-06-01                                                                        |
 | **Classification**   | INTERNAL                                                                          |
 | **Document Series**  | CAGE Technical Report                                                             |
 | **Status**           | DRAFT — Pending AO Approval                                                       |
@@ -16,6 +16,27 @@
 CAGE composes its multi-agent pipeline using LangGraph's `StateGraph`, producing a deterministic, fully auditable execution sequence. Every agent carries a single, well-defined responsibility; no agent performs work outside its declared scope. All inter-agent communication occurs through a shared, strongly typed `AgentState` TypedDict defined in `src/governed_financial_advisor/graph/state.py` — agents read fields they need and write only the fields they own.
 
 Governance checks are not advisory: they gate every state transition before execution can reach `governed_trader`. The pipeline is structured so that thinker/doer reasoning, data acquisition, plan generation, evaluation, and safety validation must all complete successfully before a trade instruction is issued, with human approval required as the final gate. This architecture ensures no path exists from user instruction to trade execution that bypasses policy enforcement.
+
+### 1.1 Primary Regulatory Framework: SR 26-2 (Federal Reserve, April 17, 2026)
+
+The agent system is governed under **SR 26-2** — the Federal Reserve's supervisory guidance on Agentic AI Risk Management (issued April 17, 2026) — as the primary agentic AI governance framework for `US_FED` deployments. SR 26-2 establishes model risk management requirements specifically for autonomous AI agents operating in financial services, including:
+
+- **§IV.B Agentic Confidence Requirement**: Minimum confidence threshold of 0.95 before autonomous execution (enforced at Tier 1 of the SymbolicGovernor)
+- **§IV MRM Compliance**: Model risk management controls mapped to `CTRL_MRM_004` in the US_FED compliance baseline
+- **Agentic Scope**: SR 26-2 Footnote 3 explicitly excludes agentic AI from traditional SR 11-7 MRM scope; CAGE is governed under ISO 42001 + SR 26-2 jointly
+
+### 1.2 Agent Scope (governed_financial_advisor_v1)
+
+| Attribute | Value |
+| --------- | ----- |
+| **Agent ID** | `governed_financial_advisor_v1` |
+| **Version** | v1.2.0 |
+| **Tier** | Tier-1 High Exposure |
+| **Max Single Trade** | $10,000 USD |
+| **Max Daily Cap** | $500,000 USD |
+| **HITL Triggers** | Trade > $10,000 USD or `risk_score` > 0.7 |
+| **Prohibited Actions** | BTC, `direct_account_withdrawal`, `parameter_override`, `guardrail_bypass` |
+| **Allowed Asset Classes** | Equities, fixed income, ETF, bonds |
 
 ---
 
@@ -158,6 +179,48 @@ The subgraph is structured so that no trade call can be made without successfull
 
 ---
 
+## 5a. DEFER Queue and Context Accumulator (v2.0.0)
+
+### DEFER State Machine (AARM-V7)
+
+The agent system extends the governance tri-state decision (`ALLOW | DENY | MANUAL_REVIEW`) to **four states** by introducing `DEFER`. When the model's confidence score falls below the **Confidence-Starvation Boundary** (0.70), the agent context is parked in the DEFER queue rather than forcing a brittle binary decision or creating operational fatigue through excessive HITL escalations.
+
+| Confidence Score | Decision | Routing |
+| ---------------- | -------- | ------- |
+| ≥ 0.95 | `ALLOW` / `DENY` | Autonomous clearance |
+| 0.70 – 0.95 | `MANUAL_REVIEW` | Human operator sign-off |
+| < 0.70 | **`DEFER`** | Automated data-hydration loop (AARM-V7) |
+
+DEFER tokens are stored in **Redis `db=1`** with `noeviction` policy — the system blocks on OOM rather than silently dropping execution contexts. Default TTL: 4 hours before stale escalation. Source: [`src/gateway/governance/defer_queue.py`](../../src/gateway/governance/defer_queue.py).
+
+### Context Accumulator (AARM-V1)
+
+The **SHA-256 hash-chained Context Accumulator** (`src/compliance_bridge/context_accumulator.py`) seals audit evidence against retroactive tampering or Memory Poisoning attacks. Every emitted `OscalFinding` is chained cryptographically to its predecessor:
+
+```
+record_hash_n = SHA-256(prev_hash_{n-1} || content_json_n)
+```
+
+Each audit execution is capped by a `CHAIN_SEALED` sentinel. The compliance API validates `chain_root`, `chain_length`, and `chain_integrity_valid` on all reads, satisfying **ISO 42001 Annex A.5.3** evidence logging controls and neutralizing **AARM-V1 Memory Poisoning**.
+
+### External Normative Provider with Adaptive FRIA Gating
+
+The **External Normative Provider** (`src/gateway/governance/normative_provider.py`) implements Tier 6b of the SymbolicGovernor — an adaptive FRIA gate that invokes external normative providers based on confidence score:
+
+| Confidence Range | Behavior |
+| ---------------- | -------- |
+| ≥ 0.95 | Async gate — non-blocking external validation |
+| [0.70, 0.95) | Synchronous blocking gate — awaits external FRIA response |
+| < 0.70 | DENY — routed to DEFER queue |
+
+Activated when `CAGE_NORMATIVE_PROVIDER != "static"`. The daemon polls the external provider every 6 hours to refresh the normative baseline.
+
+### ConsensusModelRegistry (AARM-V9)
+
+The **ConsensusModelRegistry** enables heterogeneous multi-model consensus for high-value trades (≥ $10,000 USD). Two independent LLM-backed critic personas — a **DeepSeek-R1 Risk Manager** and a **Llama 3.1 Compliance Officer** — are queried concurrently via `asyncio.gather()`. Both must vote `APPROVE` for the trade to proceed. This heterogeneous design neutralizes **AARM-V9 Semantic Blind Spot** — a single model cannot detect its own compliance violations.
+
+---
+
 ## 6. HITL Human-in-the-Loop Approval Workflow
 
 CAGE enforces mandatory human oversight on all trade execution via LangGraph's interrupt mechanism.
@@ -165,6 +228,8 @@ CAGE enforces mandatory human oversight on all trade execution via LangGraph's i
 ### Interrupt Configuration
 
 The graph is compiled with `interrupt_before=["governed_trader"]`. When execution reaches this node, the graph suspends and persists its current state to Redis via `AsyncRedisSaver` before returning control to the API layer. The `approval_node` prepares a `trade_payload` containing the `expires_at` TTL timestamp and the structural `ExecutionPlan`. Importantly, the `approval_node` exposes `max_slippage_pct` to the UI, allowing the human reviewer to inspect and, if necessary, tighten the slippage tolerance before submitting their approval.
+
+The AgentSight KernelDashboard (Phase 1, v2.0.0-rc.1) surfaces `hitl_expires_at` as a live countdown timer per pending telemetry item, and `price_fresh` / `price_stale` as a ΔP drift badge — giving operators real-time visibility into HITL expiry and price movement without leaving the dashboard.
 
 ### State Preparation
 

@@ -2,8 +2,8 @@
 
 | Field                | Value                                                                    |
 | -------------------- | ------------------------------------------------------------------------ |
-| **Document Version** | 1.1                                                                      |
-| **Date**             | 2026-05-31                                                               |
+| **Document Version** | 2.0                                                                      |
+| **Date**             | 2026-06-01                                                               |
 | **Classification**   | INTERNAL                                                                 |
 | **Document Series**  | CAGE Technical Report                                                    |
 | **Status**           | DRAFT — Pending AO Approval                                              |
@@ -15,7 +15,7 @@
 
 | Language                      | Version             | Role                                                                           | Primary Locations                                                                  |
 | ----------------------------- | ------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| **Python**                    | ≥ 3.11              | Primary backend language; all agents, inference gateway, compliance bridge     | `src/gateway/`, `src/compliance_bridge/`, `src/governed_financial_advisor/agents/`  |
+| **Python**                    | ≥ 3.10, < 3.13      | Primary backend language; all agents, inference gateway, compliance bridge     | `src/gateway/`, `src/compliance_bridge/`, `src/governed_financial_advisor/agents/`  |
 | **TypeScript / React**        | React 18 / TS 5.x   | AgentSight UI frontend                                                         | `src/agentsight-ui/`                                                               |
 | **Rego**                      | OPA built-in        | Policy-as-code; symbolic governance enforcement                                | `trade.governance` package; `system.authz` package; `deployment/system_authz.rego` |
 | **Colang 2.x**                | NeMo Guardrails 2.x | Dialog-flow safety rails and guardrail definitions                             | `config/rails/definitions.co`, `config/rails/main_logic.co`                        |
@@ -62,6 +62,7 @@
 | `langfuse`         | LLM observability; audit trace ingestion      |
 | `nemoguardrails`   | NeMo Guardrails runtime                       |
 | `openai`           | OpenAI-compatible REST client (vLLM endpoint) |
+| `google-adk`       | Google Agent Development Kit (≥1.28.1); advisor extras |
 
 ### Privacy / Safety
 
@@ -125,10 +126,11 @@
 
 ### Cryptography
 
-| Library   | Purpose                                                                                   |
-| --------- | ----------------------------------------------------------------------------------------- |
-| `hmac`    | HMAC-SHA256 routing seal (`X-CAGE-Routing-Seal`) and governance signature on `AgentState` |
-| `hashlib` | Digest backend for HMAC operations                                                        |
+| Library              | Purpose                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------- |
+| `google-cloud-kms`   | **Primary** governance signing — Cloud KMS HSM-backed asymmetric RSA-4096 signatures; non-repudiation for all governance decisions |
+| `hmac`               | **Fallback** HMAC-SHA256 routing seal (`X-CAGE-Routing-Seal`) and governance signature; used when `CAGE_KMS_KEY_NAME` is unset (dev/CI only) |
+| `hashlib`            | Digest backend for HMAC and SHA-256 hash-chain operations                                 |
 
 ### gRPC
 
@@ -137,6 +139,13 @@
 | `grpcio`       | gRPC runtime for gateway ↔ UI communication |
 | `grpcio-tools` | Proto compilation toolchain                 |
 | `protobuf`     | Protocol Buffers serialization runtime      |
+
+### Removed / Deprecated Libraries
+
+| Library        | Status                                                                                                   |
+| -------------- | -------------------------------------------------------------------------------------------------------- |
+| ~~`outlines`~~ | **REMOVED** — CVE-2025-69872 (critical vulnerability). Structured output now enforced via vLLM FSM natively. |
+| ~~SLM sidecar~~| **DEPRECATED** — `slm_available=False` permanent sentinel injected into OPA payload; 0ms overhead; Tier 3 bypassed to optimize latency budget. |
 
 ---
 
@@ -164,6 +173,8 @@ Third-party compliance provider adapters are architecturally isolated in `src/in
 | **SSE (EventSource)** | Real-time events      | Consumes `{BACKEND_URL}/v1/events/stream`; 5 s polling fallback on connection loss |
 | **protobuf-js**       | Proto deserialization | `src/protos/gateway.js`, `src/agentsight-ui/src/protos/gateway.ts`                                   |
 
+**Phase 1 additions (v2.0.0-rc.1):** [`KernelDashboard.tsx`](../../src/agentsight-ui/src/KernelDashboard.tsx) adds `useCallback` for `saveSlippage` (POSTs to `/api/governance/thresholds`), a 1-second `setInterval` tick for HITL TTL countdown, `formatCountdown()` and `priceDrift()` helper functions, and extended `TelemetryItem` / `GovernanceEvent` interfaces with `hitl_expires_at`, `price_fresh`, `price_stale` fields. [`KernelDashboard.css`](../../src/agentsight-ui/src/KernelDashboard.css) adds `.slippage-control`, `.drift-badge` (with `drift-pulse` animation), `.hitl-ttl`, and `.hitl-ttl-expired` styles.
+
 ---
 
 ## 7. Infrastructure & Platform
@@ -174,9 +185,10 @@ Third-party compliance provider adapters are architecturally isolated in `src/in
 | **Terraform**                       | Infrastructure-as-code | `infra/modules/` (16 shared modules) + `infra/targets/` (`agnostic/`, `gcp-gke/`)                     |
 | **Docker**                          | Containerization       | Multi-stage builds; `Dockerfile`, `Dockerfile.vllm`, `Dockerfile.lula-*`                              |
 | **Google Cloud Build**              | CI/CD                  | `cloudbuild_gateway.yaml`, `cloudbuild.vllm.yaml`, `cloudbuild.lula.yaml`                             |
+| **uv / uv_build**                   | Build system           | `uv_build>=0.8.14`; fast Python package installer and build backend                                   |
 | **Kubernetes Secrets**              | Secret storage         | Kubernetes-native `Secret` objects provisioned via Terraform (`infra/modules/app_secrets/`); no runtime GCP Secret Manager dependency |
-| **Google Cloud Storage (GCS)**      | Artifact storage       | OSCAL assessment results; model artifacts; configurable via `STORAGE_BACKEND`                         |
-| **MinIO**                           | Model weight storage   | Source for vLLM Tensorizer cold-start weight streaming                                                |
+| **Google Cloud Storage (GCS)**      | Artifact storage       | **Primary** storage SDK (`google-cloud-storage>=2.0.0`); OSCAL assessment results; model artifacts; configurable via `STORAGE_BACKEND` |
+| **MinIO / boto3**                   | S3-compatible storage  | `boto3>=1.35.0` S3-compat fallback; source for vLLM Tensorizer cold-start weight streaming            |
 | **NVIDIA L4 GPU**                   | GPU compute            | 24 GB VRAM; AWQ quantization; spot instances for cost optimisation                                    |
 | **Kubernetes Inference Gateway**    | LLM routing            | nginx `GatewayClass`; see ADR-002 for migration from GKE GCE load balancer                            |
 
@@ -199,8 +211,8 @@ Third-party compliance provider adapters are architecturally isolated in `src/in
 
 | Component               | Technology                                | Details                                                                                                                    |
 | ----------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **Distributed Tracing** | OpenTelemetry SDK                         | OTLP/HTTP export direct to Langfuse; `FastAPIInstrumentor`, `LangchainInstrumentor` auto-instrumentation                  |
-| ~~**Trace Collector**~~ | ~~`opentelemetry-collector-contrib`~~     | **Deprecated 2026-05-31.** Services now export OTLP directly to Langfuse; standalone collector removed from deployment.   |
+| **Distributed Tracing** | OpenTelemetry SDK                         | OTLP/HTTP export direct to Langfuse OTLP endpoint (`http://langfuse-web:3000/api/public/otel/v1/traces`); `FastAPIInstrumentor`, `LangchainInstrumentor` auto-instrumentation |
+| ~~**Trace Collector**~~ | ~~`opentelemetry-collector-contrib`~~     | **Deprecated 2026-05-31.** Services now export OTLP directly to Langfuse integrated OTLP ingestion; standalone collector removed from deployment. |
 | **Compliance Metrics**  | Langfuse                                  | Dual-project setup; `TTLCache(maxsize=32, ttl=300)` for metric caching                                                    |
 | **Real-time Events**    | Server-Sent Events (SSE)                  | `GovernanceEventBus`; `asyncio.Queue(maxsize=128)` back-pressure                                                          |
 | **Kernel Monitoring**   | eBPF DaemonSet (AgentSight)               | OpenSSL uprobes; syscall interception; `python3` process targeting                                                         |
@@ -228,7 +240,8 @@ Third-party compliance provider adapters are architecturally isolated in `src/in
 | **OpenAI-compatible REST API** | vLLM endpoint; `POST /v1/chat/completions` used by all model consumers            |
 | **Server-Sent Events (SSE)**   | MCP transport (`FastMCP`); compliance event streaming from `GovernanceEventBus`   |
 | **W3C Traceparent**            | Distributed trace propagation across the MCP SSE boundary via `patch_mcp_tools()` |
-| **HMAC-SHA256**                | Routing seal (`X-CAGE-Routing-Seal` header); governance signature on `AgentState` |
+| **Cloud KMS (RSA-4096-SHA256)**| **Primary** governance signing — HSM-backed asymmetric signatures; non-repudiation for all governance decisions |
+| **HMAC-SHA256**                | **Fallback** routing seal (`X-CAGE-Routing-Seal` header); governance signature on `AgentState` (dev/CI only when KMS unavailable) |
 | **OTLP (gRPC)**                | OpenTelemetry → Langfuse ingestion; all trace and span export                     |
 | **ISO-20022**                  | Banking payments standard; drives the 200 ms end-to-end latency SLA               |
 | **OSCAL v1.0.4**               | NIST-standard machine-readable compliance artifact format                         |

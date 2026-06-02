@@ -1,8 +1,8 @@
 ---
 title: "Cybernetic Governance Engine (CAGE) — Deployment & Infrastructure"
 document: "08-DEPLOYMENT-INFRASTRUCTURE"
-version: "1.1"
-date: "2026-05-31"
+version: "2.0"
+date: "2026-06-01"
 classification: "INTERNAL"
 ---
 
@@ -18,12 +18,14 @@ CAGE runs on Google Kubernetes Engine (GKE) in the `governance-stack` namespace.
 | ------------------ | ---------------------- | -------------------------------- |
 | Container Platform | GKE                    | `governance-stack` namespace     |
 | IaC                | Terraform              | `infra/modules/` + `infra/targets/`  |
+| Build System       | uv / uv_build          | `uv_build>=0.8.14`; fast Python package installer and build backend |
 | Container Registry | GCR / AR               | Cloud Build → push               |
 | CI/CD              | Google Cloud Build     | YAML-defined pipelines           |
 | GPU Compute        | NVIDIA L4 24 GB        | Spot instances; AWQ quantization |
 | Secret Store       | Kubernetes Secrets     | Terraform-provisioned; no runtime GSM dependency |
-| Object Storage     | GCS + MinIO            | OSCAL artifacts + model weights  |
+| Object Storage     | GCS (primary) + MinIO  | `google-cloud-storage>=2.0.0` primary; `boto3>=1.35.0` S3-compat fallback; OSCAL artifacts + model weights |
 | Database           | Cloud SQL (PostgreSQL) | Langfuse backend                 |
+| OTLP Tracing       | Langfuse direct OTLP   | **OTel Collector deprecated 2026-05-31**; direct ingestion to `http://langfuse-web:3000/api/public/otel/v1/traces` |
 
 ---
 
@@ -109,13 +111,15 @@ Source: `deployment/docker/`
 | Image             | Dockerfile                                     | Base                      | Key Contents                                                                           |
 | ----------------- | ---------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------- |
 | Gateway           | `src/gateway/Dockerfile`                       | Python 3.11-slim          | FastAPI, NeMo, OPA client, all governance deps                                         |
-| Compliance Bridge | `src/compliance_bridge/Dockerfile`             | Python 3.11-slim          | OSCAL parser, Langfuse, SSE                                                            |
+| Compliance Bridge | `src/compliance_bridge/Dockerfile`             | **Python 3.12-slim**      | OSCAL parser, Langfuse, SSE; `google-cloud-storage>=2.0.0`                             |
 | AgentSight UI     | `src/agentsight-ui/Dockerfile`                 | Node 18 → nginx           | React build; nginx serve                                                               |
 | vLLM              | `deployment/docker/Dockerfile.vllm`            | `vllm/vllm-openai:latest` | `vllm[runai]`, `runai-model-streamer`, `huggingface_hub`; ARG `HUGGING_FACE_HUB_TOKEN` |
 | Lula Runtime      | `deployment/docker/Dockerfile.lula-runtime`    | `alpine:3.19`             | Lula binary only                                                                       |
 | Lula Multi-stage  | `deployment/docker/Dockerfile.lula-multistage` | Multi-stage build         | Build + runtime separation                                                             |
 | NeMo              | `Dockerfile.nemo`                              | NeMo base                 | Guardrails server                                                                      |
-| Main              | `Dockerfile`                                   | Python 3.11-slim          | Governed Financial Advisor                                                             |
+| Main              | `Dockerfile`                                   | Python 3.11-slim          | Governed Financial Advisor; `google-adk>=1.28.1` (advisor extras)                      |
+
+> **Note:** The Compliance Bridge base image is `python:3.12-slim` (NOT `python:3.11-slim`). This was updated in v2.0.0 to align with the Python ≥3.10, <3.13 constraint and to pick up 3.12 performance improvements.
 
 **Root-Level Compose Files**
 

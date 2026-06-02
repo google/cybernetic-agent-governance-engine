@@ -98,15 +98,20 @@ async def test_consensus_engine_above_threshold_unanimous_approve(
 
 
 @pytest.mark.asyncio
-async def test_consensus_engine_above_threshold_reject_blocks_trade(
+async def test_consensus_engine_split_vote_escalates_for_human_review(
     mock_thresholds, mock_gateway_client, mock_genai_span
 ):
-    """If any critic returns REJECT, result status must be REJECT."""
+    """A split vote (APPROVE + REJECT) must ESCALATE for human review, not outright REJECT.
+
+    Rationale: when critics disagree, the trade is not clearly safe OR clearly
+    dangerous — it requires human judgment.  Outright REJECT on a split vote
+    would silently block valid trades when one critic is miscalibrated.
+    """
     from src.gateway.governance.consensus import ConsensusEngine
 
     engine = ConsensusEngine()
 
-    # First critic APPROVE, second REJECT → REJECT wins
+    # First critic APPROVE, second REJECT → split vote → ESCALATE
     call_count = 0
 
     async def alternating_vote(*args, **kwargs):
@@ -116,7 +121,29 @@ async def test_consensus_engine_above_threshold_reject_blocks_trade(
 
     with patch.object(engine, "_get_critic_vote", side_effect=alternating_vote):
         result = await engine.check_consensus("sell", 20000.0, "GME")
-    assert result["status"] == "REJECT"
+    assert result["status"] == "ESCALATE", (
+        f"Split APPROVE+REJECT vote must ESCALATE for human review, got {result['status']!r}. "
+        "Unanimous REJECT is required to outright block a trade."
+    )
+
+
+@pytest.mark.asyncio
+async def test_consensus_engine_unanimous_reject_blocks_trade(
+    mock_thresholds, mock_gateway_client, mock_genai_span
+):
+    """Unanimous REJECT from all critics must result in REJECT (outright block)."""
+    from src.gateway.governance.consensus import ConsensusEngine
+
+    engine = ConsensusEngine()
+
+    async def unanimous_reject(*args, **kwargs):
+        return "REJECT"
+
+    with patch.object(engine, "_get_critic_vote", side_effect=unanimous_reject):
+        result = await engine.check_consensus("sell", 20000.0, "GME")
+    assert result["status"] == "REJECT", (
+        f"Unanimous REJECT from all critics must block the trade, got {result['status']!r}."
+    )
 
 
 @pytest.mark.asyncio

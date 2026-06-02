@@ -22,6 +22,8 @@ Thank you for contributing to CAGE. This document describes the development work
 uv sync --all-groups --all-extras
 ```
 
+> **Build system:** CAGE uses `uv` as its build frontend. The `pyproject.toml` requires `uv_build>=0.8.14`. Ensure your local `uv` installation is up to date (`uv self update`) before running `uv sync`.
+
 **2. Configure environment:**
 
 ```bash
@@ -35,7 +37,9 @@ cp .env.example .env
 bash setup_test_env.sh && python -m pytest tests/
 ```
 
-All 256 tests must pass before opening a PR. The test suite covers guardrail nodes, OPA policy evaluation, governance client, NeMo actions, STPA compiler code generation, causal gatekeeper, evidence chain integrity, and the LangGraph pipeline.
+All 644 tests must pass before opening a PR. The test suite covers guardrail nodes, OPA policy evaluation, governance client, NeMo actions, STPA compiler code generation, causal gatekeeper, evidence chain integrity, and the LangGraph pipeline.
+
+> **Observability note:** The standalone OpenTelemetry Collector sidecar was **deprecated 2026-05-31**. All OTel spans are now exported directly to Langfuse via OTLP. Do not add new configuration that references a standalone `otel-collector` endpoint; use `LANGFUSE_OTLP_ENDPOINT` instead.
 
 
 ---
@@ -127,7 +131,7 @@ The playground telemetry module (`examples/telemetry.py`) writes a SHA-256 hash-
 
 ### Pre-PR Checklist
 
-- [ ] All 256 tests pass (or new tests added for new behavior)
+- [ ] All 644 tests pass (or new tests added for new behavior)
 
 - [ ] No `# TODO` / `# FIXME` / `# HACK` comments without a linked GitHub issue
 - [ ] No hardcoded credentials, project IDs, or cloud-provider paths

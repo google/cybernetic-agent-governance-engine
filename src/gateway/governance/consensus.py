@@ -312,9 +312,18 @@ class ConsensusEngine:
             )
             votes = [vote1, vote2]
 
-            # Consensus rule: REJECT > ESCALATE > APPROVE
-            # If ALL critics returned ERROR (LLM unavailable), skip consensus
-            # rather than blocking a valid trade — mirrors SLM sidecar handling.
+            # Consensus rule (updated for split-vote handling):
+            #   ALL ERROR  → APPROVE (fail-open, LLM unavailable)
+            #   ALL REJECT → REJECT  (unanimous denial)
+            #   Mixed APPROVE+REJECT (split) → ESCALATE for human review
+            #   Any ESCALATE → ESCALATE
+            #   ALL APPROVE → APPROVE
+            #
+            # Rationale: a split vote (APPROVE+REJECT) means the critics
+            # disagree — this is not a clear denial, so the trade should be
+            # escalated for human review rather than silently blocked.
+            # Outright REJECT requires unanimous critic agreement.
+            non_error_votes = [v for v in votes if v != "ERROR"]
             if all(v == "ERROR" for v in votes):
                 logger.warning(
                     "⚠️ All consensus critics unavailable (LLM ERROR) — skipping consensus "
@@ -323,9 +332,14 @@ class ConsensusEngine:
                 )
                 decision = "APPROVE"
                 reason = "Consensus skipped — all LLM critics unavailable (fail-open)."
-            elif any(v == "REJECT" for v in votes):
+            elif non_error_votes and all(v == "REJECT" for v in non_error_votes):
+                # Unanimous rejection from all available critics
                 decision = "REJECT"
-                reason = f"Blocked by at least one critic. Votes: {votes}"
+                reason = f"Unanimous rejection by all critics. Votes: {votes}"
+            elif any(v == "REJECT" for v in non_error_votes) and any(v == "APPROVE" for v in non_error_votes):
+                # Split vote: at least one APPROVE and one REJECT → escalate for human review
+                decision = "ESCALATE"
+                reason = f"Split consensus vote — escalating for human review. Votes: {votes}"
             elif any("ESCALATE" in v for v in votes):
                 decision = "ESCALATE"
                 reason = f"Escalated for human review. Votes: {votes}"

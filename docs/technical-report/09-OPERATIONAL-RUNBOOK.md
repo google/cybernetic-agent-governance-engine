@@ -1,8 +1,8 @@
 ---
 title: "Cybernetic Governance Engine (CAGE) — Operational Runbook"
 document: "09-OPERATIONAL-RUNBOOK"
-version: "1.1"
-date: "2026-05-31"
+version: "2.0"
+date: "2026-06-01"
 classification: "INTERNAL"
 ---
 
@@ -10,11 +10,11 @@ classification: "INTERNAL"
 
 | Field              | Value                                     |
 | ------------------ | ----------------------------------------- |
-| **Version**        | 1.1                                       |
-| **Date**           | 2026-05-31                                |
+| **Version**        | 2.0                                       |
+| **Date**           | 2026-06-01                                |
 | **Classification** | INTERNAL                                  |
 | **Series**         | CAGE Technical Report — Document 9 / 10  |
-| **Status**         | Updated — v2.0.0 procedures added         |
+| **Status**         | Updated — v2.0.0-rc.1 promoted 2026-06-01 |
 
 ---
 
@@ -564,7 +564,33 @@ httpx.ConnectError: [Errno -2] Name or service not known (nemo)
 
 ## 7. v2.0.0 Operational Procedures
 
-The following procedures cover operational tasks introduced in CAGE v2.0.0 (Cloud KMS HSM signing, DEFER queue, dual-project Langfuse, normative provider).
+The following procedures cover operational tasks introduced in CAGE v2.0.0 (Cloud KMS HSM signing, DEFER queue, dual-project Langfuse, normative provider, direct Langfuse OTLP).
+
+### 7.0 Verifying OTLP Trace Ingestion (Direct Langfuse — OTel Collector Deprecated)
+
+> **⚠️ Deprecation (2026-05-31):** The standalone OpenTelemetry Collector (`opentelemetry-collector-contrib`) has been removed from the deployment. All services now export OTLP traces directly to Langfuse's integrated OTLP ingestion endpoint.
+
+**OTLP endpoint:** `http://langfuse-web:3000/api/public/otel/v1/traces`
+
+```bash
+# Verify Langfuse OTLP ingestion is accepting traces
+kubectl port-forward -n governance-stack svc/langfuse-web 3000:3000 &
+curl -s -o /dev/null -w "%{http_code}" \
+  http://localhost:3000/api/public/otel/v1/traces \
+  -H "Authorization: Basic $(echo -n "${LANGFUSE_PUBLIC_KEY}:${LANGFUSE_SECRET_KEY}" | base64)"
+# Expected: 200 or 405 (endpoint exists; POST required for actual traces)
+
+# Verify the Lula AU-12 validation passes (checks Langfuse OTLP availability)
+kubectl get job -n governance-stack -l app=lula-cron
+# Check lula-validation-au12.yaml result in GCS
+```
+
+**Failure path:** If traces are not appearing in Langfuse, check:
+1. `LANGFUSE_HOST` env var is set to `http://langfuse-web:3000` (not a collector endpoint)
+2. `OTEL_EXPORTER_OTLP_ENDPOINT` is set to `http://langfuse-web:3000/api/public/otel/v1/traces`
+3. No `opentelemetry-collector` pod is running (it should not be — it was deprecated 2026-05-31)
+
+---
 
 ### 7.1 Verifying Cloud KMS HSM Governance Signing
 
@@ -672,19 +698,87 @@ kubectl exec -n governance-stack deploy/gateway -- \
 
 As of v2.0.0, the automated test suite has grown significantly from the 2026-03-08 session baseline:
 
-| Metric                    | 2026-03-08 Session | v2.0.0 Current |
-| ------------------------- | ------------------ | -------------- |
-| **Tests Passing**         | 152                | **561**        |
-| **Tests Failing**         | 10                 | 0 (connectivity-only) |
-| **Tests Errored**         | 8                  | 0              |
-| **Tests Skipped**         | 17                 | varies by env  |
-| **New Test Modules**      | —                  | `test_fiscal_limit_guard`, `test_causal_gatekeeper`, `test_framework_router`, `test_governance_architecture`, `test_hitl_rationale`, `test_playground_telemetry` |
+| Metric                    | 2026-03-08 Session | v2.0.0 Current | v2.0.0-rc.1 (2026-06-01) |
+| ------------------------- | ------------------ | -------------- | ------------------------- |
+| **Tests Passing**         | 152                | **561**        | **644**                   |
+| **Tests Failing**         | 10                 | 0 (connectivity-only) | **0**            |
+| **Tests Errored**         | 8                  | 0              | 0                         |
+| **Tests Skipped**         | 17                 | varies by env  | 162 (env/integration)     |
+| **New Test Modules**      | —                  | `test_fiscal_limit_guard`, `test_causal_gatekeeper`, `test_framework_router`, `test_governance_architecture`, `test_hitl_rationale`, `test_playground_telemetry` | `test_compliance_bridge_tier2b`, `test_compliance_bridge_tier3`, `test_hitl_toctou_revalidation`, `test_oscal_cer_links` |
+
+**RC-07 test command (v2.0.0-rc.1):**
+
+```bash
+SKIP_LANGFUSE_CHECKS=1 .venv/bin/pytest tests/ -q --tb=short --ignore=tests/test_integration
+# Result: 644 passed, 162 skipped, 0 failures in 24.44s
+```
 
 The 10 failures and 8 errors from the 2026-03-08 session were all resolved by the 7 code fixes applied in that session (missing imports, assertion bug, LangGraph edge unpacking, Redis URL parsing, `cachetools` dep). All remaining failures in the current suite are connectivity-only (see Section 5).
 
 ---
 
 _This document is part of the CAGE Technical Report Series. See [README.md](README.md) for the full index._
+
+---
+
+## 8. AgentSight UI Operational Guidance (Phase 1 — v2.0.0-rc.1)
+
+The **AgentSight KernelDashboard** (`src/agentsight-ui/src/KernelDashboard.tsx`) is the primary compliance operator interface. It connects to `{BACKEND_URL}/v1/events/stream` as an SSE consumer and renders real-time governance signals.
+
+### 8.1 Accessing the AgentSight UI
+
+```bash
+# Port-forward the AgentSight UI service
+kubectl port-forward -n governance-stack svc/agentsight-ui 5173:5173 &
+# Open http://localhost:5173 in a browser
+```
+
+### 8.2 Key Operator Controls
+
+| Feature | How to Use | Notes |
+| ------- | ---------- | ----- |
+| **Max Slippage % Slider** | Drag slider (0–10%, step 0.1) and release | Persisted via `POST /api/governance/thresholds`; takes effect immediately without restart |
+| **ΔP Price Drift Badge** | Observe per-item badge color | Green < 1%, Yellow 1–3%, Red > 3% with pulse animation |
+| **HITL TTL Countdown** | Monitor `MM:SS` countdown per pending approval | Expired items shown at 45% opacity with grayscale; expired approvals return HTTP 410 Gone |
+
+### 8.3 SSE Stream Health Check
+
+```bash
+# Verify the SSE event stream is flowing from the Compliance Bridge
+kubectl port-forward -n governance-stack svc/compliance-bridge 3001:3001 &
+curl -N http://localhost:3001/v1/events/stream
+# Expected: continuous SSE event stream (data: {...} lines)
+```
+
+### 8.4 AgentSight eBPF DaemonSet Status
+
+```bash
+# Verify the eBPF DaemonSet is running on all nodes
+kubectl get daemonset -n governance-stack agentsight-daemon
+# Expected: DESIRED == CURRENT == READY (one pod per node)
+
+# Check eBPF exporter output mode (should be "remote")
+kubectl exec -n governance-stack daemonset/agentsight-daemon -- \
+  cat /etc/agentsight/config.yaml | grep exporter_type
+# Expected: exporter_type: remote
+```
+
+### 8.5 HITL TOCTOU Remediation Verification
+
+The `post_hitl_rehydrate` and `post_hitl_revalidate` nodes execute automatically after HITL approval. To verify they are functioning:
+
+```bash
+# After approving a HITL trade, check the graph execution log
+kubectl logs -n governance-stack deploy/governed-financial-advisor --tail=50 | \
+  grep -E "post_hitl_rehydrate|post_hitl_revalidate|drift_blocked|slippage"
+
+# Expected log lines (in order):
+# INFO: post_hitl_rehydrate: fresh_price=<price>, stale_price=<price>, drift=<pct>%
+# INFO: post_hitl_revalidate: CBF check PASS, OPA check PASS
+# INFO: executor: trade committed
+```
+
+**Drift-blocked scenario:** If the market price has moved beyond `max_slippage_pct` since HITL approval, the trade routes to `drift_blocked` (fail-closed) and the operator sees a human-readable explanation. The trade must be re-submitted.
 
 ## 6. Saga Engine and Ghost-State Recovery Procedures
 

@@ -3,9 +3,10 @@
 ## Cybernetic Governance Engine (CAGE) — Chunk 2 of 5
 
 > **Scope:** NIST RMF Steps 1 (Prepare) and 2 (Categorize)
-> **Produced:** 2026-03-06
+> **Produced:** 2026-06-01
+> **System Version:** CAGE v2.0.0
 > **Prerequisite:** `docs/NIST_RMF_CHUNK1_CURRENT_STATE.md` (inventory baseline)
-> **Standards Referenced:** NIST SP 800-37 Rev. 2, FIPS 199, NIST SP 800-60 Vol. I & II, NIST SP 800-53 Rev. 5
+> **Standards Referenced:** NIST SP 800-37 Rev. 2, FIPS 199, NIST SP 800-60 Vol. I & II, NIST SP 800-53 Rev. 5, SR 26-2 (Federal Reserve, April 17, 2026), CSA AARM v1.0
 
 ---
 
@@ -30,7 +31,7 @@ _(NIST SP 800-37 §2.1 — establishing organizational roles, accountability str
 
 - **`docs/SYSTEM_DESCRIPTION_ISO_42001.md`** (all 66 lines) is a conceptual academic document mapping Stafford Beer's Viable System Model to ISO/IEC 42001 clauses. It identifies system components (Planner, Evaluator, Executor) and their ISO clause mappings but contains no authorization boundary statement, no designated Authorizing Official (AO), no Information System Security Officer (ISSO), and no System Owner role assignment. It is a governance philosophy document, not an NIST SP 800-37–compliant System Security Plan.
 
-- **`docs/CAGE_ONE_PAGER.md`** (lines 8–16) references SR 11-7, ISO 42001, and SOC 2 Type II as regulatory drivers and identifies target audiences as "Engineering leads, compliance reviewers, AI governance evaluators" — but this is an engineering status document, not a formal authorization package. No AO, ISSO, or System Owner are named. Open issues R-06 and R-25 are tracked but there is no formal Plan of Action and Milestones (POA&M) artifact tied to RMF.
+- **`docs/CAGE_ONE_PAGER.md`** (lines 8–16) references SR 11-7, ISO 42001, and SOC 2 Type II as regulatory drivers and identifies target audiences as "Engineering leads, compliance reviewers, AI governance evaluators" — but this is an engineering status document, not a formal authorization package. No AO, ISSO, or System Owner are named. Open issues R-06 and R-25 are tracked but there is no formal Plan of Action and Milestones (POA&M) artifact tied to RMF. **v2.0.0 addition:** SR 26-2 (Federal Reserve, April 17, 2026) is now the primary agentic AI governance framework for CAGE, superseding SR 11-7 for agentic AI use cases. CSA AARM v1.0 provides the 11-vector threat framework.
 
 - **`docs/GOVERNANCE_CROSSWALK.md`** maps 7 governance requirements to engineering artifacts and Lula validation manifests, with a `role-id: provider` stub visible in `compliance/oscal/component-definition.yaml` (line 41). No roles matrix defining human accountability (who holds the AO authority, who is the ISSO, who is the System Owner) exists anywhere in the repository.
 
@@ -58,7 +59,7 @@ _(NIST SP 800-37 §2.2 — defining the system boundary, identifying stakeholder
 
 ### Current State
 
-- **`ARCHITECTURE.md`** (lines 1–100+, Mermaid component map) provides the most detailed boundary context in the codebase. It identifies 8 logical subsystems: governed-financial-advisor, gateway, compliance-bridge, green-stack-pipeline, agentsight-ui, and infrastructure services (Redis, OPA, NeMo, vLLM×2, Langfuse, MinIO/GCS, Lula, KFP). Data flows are shown in the Mermaid diagram via protocol labels (REST+SSE, gRPC, MCP SSE, HTTP, boto3, OTel). Note: standalone OTel Collector deprecated 2026-05-31; OTLP traces now go directly to Langfuse's integrated ingestion endpoint.
+- **`ARCHITECTURE.md`** (lines 1–100+, Mermaid component map) provides the most detailed boundary context in the codebase. It identifies 8 logical subsystems: governed-financial-advisor, gateway, compliance-bridge, green-stack-pipeline, agentsight-ui, and infrastructure services (Redis, OPA, NeMo, vLLM×2, Langfuse, MinIO/GCS, Lula, KFP). Data flows are shown in the Mermaid diagram via protocol labels (REST+SSE, gRPC, MCP SSE, HTTP, boto3, OTel). **v2.0.0:** Standalone OTel Collector **deprecated 2026-05-31**; OTLP traces now go directly to Langfuse's integrated ingestion endpoint at `http://langfuse-web:3000/api/public/otel/v1/traces`. AgentSight UI (React/Vite) with eBPF kernel observability added as a new subsystem.
 
 - **`config/settings.py`** (lines 21–102) inventories external service endpoints through environment variables: `VLLM_BASE_URL`, `VLLM_REASONING_API_BASE`, `VLLM_FAST_API_BASE`, `OPA_URL`, `GATEWAY_URL`, `REDIS_URL`, `SANDBOX_URL`, `LANGCHAIN_PROJECT`, `GOOGLE_CLOUD_PROJECT`. The `REQUIRED_ENV_VARS` list (lines 70–76) enforces startup validation of critical endpoints. However, this is a runtime configuration file — not a formal dependency register with vendor, version, data classification, or risk tier.
 
@@ -67,7 +68,7 @@ _(NIST SP 800-37 §2.2 — defining the system boundary, identifying stakeholder
 ### Gaps Identified
 
 1. **No Formal System Boundary Document:** `ARCHITECTURE.md` is an engineering reference, not a formal system boundary declaration. It does not label which components are within the authorization boundary vs. inherited from the platform, nor does it specify which flows cross trust boundaries.
-2. **No External Dependency Register:** The 10 external services implied by `config/settings.py` (vLLM×2, OPA, NeMo, Redis, Langfuse with integrated OTLP, MinIO/GCS, KFP, Lula, SANDBOX_URL) are not catalogued with: vendor/owner, current version, data types exchanged, interface protocol, encryption-in-transit status, and risk tier classification. (Standalone OTel Collector removed from dependency list — deprecated 2026-05-31.)
+2. **No External Dependency Register:** The 10 external services implied by `config/settings.py` (vLLM×2, OPA, NeMo, Redis, Langfuse with integrated OTLP, MinIO/GCS, KFP, Lula, SANDBOX_URL) are not catalogued with: vendor/owner, current version, data types exchanged, interface protocol, encryption-in-transit status, and risk tier classification. (Standalone OTel Collector removed from dependency list — deprecated 2026-05-31.) **v2.0.0 additions:** TrustLayers (External Normative Provider), AnchorageGrpcLedgerProvider (externally reconciled CBF), `google-adk>=1.28.1` (advisor extras) should be added to the register.
 3. **No Formal Data Flow Diagram with Trust Zones:** The Mermaid diagram in `ARCHITECTURE.md` shows connectivity but does not demarcate trust zones (internet-facing, DMZ, governance zone, inference zone, storage zone) or label encryption state, data classification, or authentication mechanisms per flow.
 4. **`SANDBOX_URL` Undefined:** `config/settings.py` line 55 references `SANDBOX_URL` without any documentation of what this service is, who operates it, what data it receives, or whether it is in-boundary or external.
 5. **No Interconnection Security Agreement (ISA):** For each external service that receives PII or financial transaction data (Langfuse self-hosted, broker APIs implied by `execute_trade_action`), an ISA or Memorandum of Understanding (MOU) should be documented.
@@ -258,11 +259,13 @@ _(Recording the FIPS 199 categorization result in a machine-readable OSCAL artif
 
 ### Justification
 
-The CAGE codebase demonstrates exceptional _technical_ governance maturity — a 7-layer enforcement pipeline, Presidio PII masking across 16 entity types, HMAC-sealed governance verdicts, automated Lula OSCAL auditing, and OTel-stamped ISO 42001 evidence — but this technical strength does not translate into RMF Steps 1–2 readiness, which are fundamentally _documentation and authorization_ steps. The score of 28% reflects the following distribution:
+The CAGE codebase demonstrates exceptional _technical_ governance maturity — a 7-tier neuro-symbolic enforcement pipeline, Presidio PII masking across 16 entity types, Cloud KMS HSM-backed asymmetric signing, automated Lula OSCAL auditing across 15 manifests, and OTel-stamped ISO 42001 evidence — but this technical strength does not translate into RMF Steps 1–2 readiness, which are fundamentally _documentation and authorization_ steps. The score of 28% reflects the following distribution:
 
-**What exists (contributing ~28 points):** The `ARCHITECTURE.md` Mermaid diagram provides a credible starting point for a system boundary narrative (+8). The `config/rails/config.yml` 16-entity PII detection list provides a detailed, technically enforced basis for an information type catalog (+5). The `compliance/oscal/component-definition.yaml` establishes 4 machine-readable implemented requirements and a valid OSCAL framework to extend (+5). The `docs/GOVERNANCE_CROSSWALK.md` provides a partial control-to-artifact traceability matrix (+5). The `docs/banking_regs.md` and references to SR 11-7/SOC 2/ISO 42001 establish regulatory context sufficient to justify a Moderate-High FIPS 199 categorization (+5).
+**What exists (contributing ~28 points):** The `ARCHITECTURE.md` Mermaid diagram provides a credible starting point for a system boundary narrative (+8). The `config/rails/config.yml` 16-entity PII detection list provides a detailed, technically enforced basis for an information type catalog (+5). The `compliance/oscal/component-definition.yaml` establishes machine-readable implemented requirements and a valid OSCAL framework to extend (+5). The `docs/GOVERNANCE_CROSSWALK.md` provides a partial control-to-artifact traceability matrix (+5). The `docs/banking_regs.md` and references to SR 26-2 (Federal Reserve, April 17, 2026), SR 11-7, ISO/IEC 42001:2023, CSA AARM v1.0, and SOC 2 Type II establish regulatory context sufficient to justify a Moderate-High FIPS 199 categorization (+5).
 
 **What is missing (the 72-point gap):** There is no System Security Plan, no FIPS 199 categorization table, no SP 800-60 information type catalog, no Roles and Responsibilities matrix, no Authorization Boundary document, no OSCAL SSP with `security-impact-level`, no Common Control Provider entries, no POA&M, no data retention policy, and no NIST SP 800-53 control mappings. Every one of these artifacts is a mandatory prerequisite for RMF Step 3 (Select controls) — without them, the control selection baseline cannot be formally established, and the system cannot proceed toward an Authority to Operate (ATO).
+
+**v2.0.0 context:** SR 26-2 (Federal Reserve, April 17, 2026) is now the primary agentic AI governance framework, adding specific requirements for agentic AI systems in financial services that must be reflected in the SSP and FIPS 199 categorization. CSA AARM v1.0 provides an 11-vector threat framework that should be incorporated into the SP 800-60 information type catalog and risk assessment.
 
 **Top 3 Priority Recommendations to close the gap:**
 
@@ -272,5 +275,5 @@ The CAGE codebase demonstrates exceptional _technical_ governance maturity — a
 
 ---
 
-_End of Chunk 2 — NIST RMF Steps 1 (Prepare) and 2 (Categorize)_
+_End of Chunk 2 — NIST RMF Steps 1 (Prepare) and 2 (Categorize). Updated 2026-06-01 for CAGE v2.0.0._
 _Chunk 3 will cover Step 3 (Select) — NIST SP 800-53 control baseline selection, tailoring, and parameter assignments._

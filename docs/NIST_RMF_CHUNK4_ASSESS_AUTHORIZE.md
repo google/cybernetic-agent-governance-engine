@@ -2,8 +2,10 @@
 
 ## Cybernetic Governance Engine — Chunk 4 of 5: Assess & Authorize
 
-**Document Date:** 2026-03-06
+**Document Date:** 2026-06-01
+**System Version:** CAGE v2.0.0
 **System Categorization:** C=Moderate / I=High / A=Moderate → **NIST SP 800-53 Rev 5 HIGH Baseline**
+**Additional Frameworks:** SR 26-2 (Federal Reserve, April 17, 2026), CSA AARM v1.0
 **Prior Chunk Scores:** Step 1–2 Readiness: 28/100 | Step 3–4 Readiness: 29/100
 **Scope:** RMF Steps 5 (Assess Controls) and 6 (Authorize System)
 
@@ -34,14 +36,14 @@
 **Current State:**
 
 - [`compliance/oscal/component-definition.yaml`](compliance/oscal/component-definition.yaml) exists as an OSCAL Component Definition v1.0.4 linking 4 ISO 42001 controls (A.5.2, A.5.3, A.9.2, SC-4) to three components (TypeScript Gateway, OPA, NeMo+Presidio). Each `implemented-requirement` links via `rel: lula` to a corresponding Lula validation manifest. This is a **component definition**, not a Security Assessment Plan — it documents what is implemented, not a methodology for assessing whether controls are operating effectively.
-- Four Lula validation files ([`compliance/lula/lula-validation-a52.yaml`](compliance/lula/lula-validation-a52.yaml), [`lula-validation-a53.yaml`](compliance/lula/lula-validation-a53.yaml), [`lula-validation-a92.yaml`](compliance/lula/lula-validation-a92.yaml), [`lula-validation-sc4.yaml`](compliance/lula/lula-validation-sc4.yaml)) implement automated control assertions using OPA Rego. These function as **automated assessment procedures** for their specific controls (e.g., `safety_rate >= 0.99` for A.5.2, `safety_rate == 1.0` zero-tolerance for A.9.2).
+- **15 Lula validation manifests** across ISO 42001, NIST SP 800-53, and CSA AARM controls implement automated control assertions using OPA Rego. These function as **automated assessment procedures** for their specific controls (e.g., `safety_rate >= 0.99` for A.5.2, `safety_rate == 1.0` zero-tolerance for A.9.2). Cadence tiers: Critical=6h, High=daily, Medium=weekly (enforced by `lula_scheduler.py`). **v2.0.0 additions:** NIST AC-2, AC-3, AU-12, CM-6, IA-3, IA-5, IR-6, RA-5, SC-4, SC-8, SI-2 and CSA AARM vectors now covered.
 - [`src/compliance_bridge/audit_workflow.py`](src/compliance_bridge/audit_workflow.py) implements a deterministic 5-step pipeline (persist → parse → ingest → alert → advise) that constitutes an automated assessment execution engine. Steps 1–4 are explicitly LLM-free to preserve audit integrity.
 - [`src/compliance_bridge/oscal_parser.py`](src/compliance_bridge/oscal_parser.py) parses OSCAL Assessment Result YAML from `lula validate` output into typed `OscalFinding` objects, then ingests them into a separate Langfuse compliance project with per-control scores.
 
 **Gaps Identified:**
 
 1. **No formal SAP document exists.** A SAP for a HIGH-baseline system must include: assessment scope, assessment team roles and independence requirements, assessment schedule, control-by-control test methodology for all ~400 HIGH-baseline SP 800-53 controls, evidence collection procedures, and reporting format. None of these exist.
-2. **4 Lula validations cover ISO 42001 controls only.** The Lula files assert A.5.2, A.5.3, A.9.2, and SC-4 (a custom system constraint). They have **zero coverage** of NIST SP 800-53 control families such as AC, IA, SC-8, AU, RA, CA, CM, IR, and SI. A HIGH baseline requires ~300+ automated or manual test procedures.
+2. **15 Lula validations cover ISO 42001, NIST SP 800-53, and CSA AARM controls.** v2.0.0 expanded from 4 to 15 manifests, adding NIST AC-2, AC-3, AU-12, CM-6, IA-3, IA-5, IR-6, RA-5, SC-4, SC-8, SI-2, and CSA AARM vectors. However, a HIGH baseline requires ~300+ automated or manual test procedures — the 15 manifests represent ~5% of required coverage.
 3. **No assessment methodology for non-automated controls.** There is no procedure for assessing AC-2 (Account Management), IA-5 (Authenticator Management), SC-8 (Transmission Confidentiality), IR-4 (Incident Handling), or RA-5 (Vulnerability Scanning). The Lula framework is not extended to SP 800-53.
 4. **No assessor independence statement.** SP 800-53A requires an independent assessor or assessment team. Current automated assessments are performed by the same system that implements the controls — no separation of concerns is documented.
 5. **`oscal/component-definition.yaml` source field points to ISO 42001, not SP 800-53.** The `source: "https://www.iso.org/standard/81230.html"` in every `control-implementation` block means the OSCAL toolchain has no linkage to NIST control catalogs.
@@ -293,9 +295,9 @@
 | Authorization Boundary Document       | ✅ Required         | ⚠️ Partial | `ARCHITECTURE.md` (informal); `compliance/boundary/AUTHORIZATION_BOUNDARY.md`            |
 | Authorization Letter / ATO Memo       | ✅ Required         | ❌ Missing | `compliance/authorization/AUTHORIZATION_MEMO.md`                                         |
 | OSCAL Component Definition            | Supporting          | ✅ Exists  | `compliance/oscal/component-definition.yaml`                                             |
-| OSCAL Assessment Results (automated)  | Supporting          | ✅ Exists  | Lula CronJob → `gs://<OSCAL_S3_BUCKET>/oscal-artifacts/`                                 |
-| Lula Validation Manifests (ISO 42001) | Supporting          | ✅ Exists  | `compliance/lula/lula-validation-a52/a53/a92/sc4.yaml`                                   |
-| Lula Validation Manifests (SP 800-53) | Supporting          | ❌ Missing | `compliance/lula/sp800-53/`                                                              |
+| OSCAL Assessment Results (automated)  | Supporting          | ✅ Exists  | Lula CronJob → `gs://<OSCAL_S3_BUCKET>/oscal-artifacts/` (KMS batch-signed in v2.0.0)   |
+| Lula Validation Manifests (ISO 42001 + SP 800-53 + CSA AARM) | Supporting | ✅ Exists (15 manifests) | `compliance/lula/` — expanded from 4 to 15 in v2.0.0 |
+| Lula Validation Manifests (full SP 800-53 HIGH baseline) | Supporting | ❌ Partial | ~5% of ~300 required controls covered; `compliance/lula/sp800-53/` expansion needed |
 | Supply Chain Risk Assessment          | Supporting          | ❌ Missing | `docs/SUPPLY_CHAIN_RISK_ASSESSMENT.md`                                                   |
 | SBOM (CycloneDX/SPDX)                 | Supporting          | ❌ Missing | `compliance/sbom/<image>-<version>.json`                                                 |
 | Continuous Monitoring Strategy        | ✅ Required (cATO)  | ❌ Missing | `docs/CONTINUOUS_MONITORING_STRATEGY.md`                                                 |
@@ -365,24 +367,38 @@
 
 **Justification:**
 
-The cybernetic-governance-engine demonstrates genuine technical sophistication in its continuous compliance automation infrastructure — the Lula CronJob with 6-hour assessment cadence, the real-time SC-4 watch deployment, the 5-step deterministic OSCAL audit pipeline, and the SSE-based real-time governance event stream are all production-ready components that represent the foundation of a continuous ATO capability. The red team adversarial dataset (290+ payloads across 5 attack categories with LLM judging and Langfuse trace inspection) is particularly strong for an AI system of this type. The `governance_thresholds.json` single-source-of-truth pattern with Pydantic startup validation is excellent engineering practice.
+The cybernetic-governance-engine demonstrates genuine technical sophistication in its continuous compliance automation infrastructure — the Lula CronJob with 6-hour assessment cadence (now covering 15 manifests across ISO 42001, NIST SP 800-53, and CSA AARM), the real-time SC-4 watch deployment, the 5-step deterministic OSCAL audit pipeline with KMS batch signing, and the SSE-based real-time governance event stream are all production-ready components. The red team adversarial dataset (290+ payloads across 5 attack categories with LLM judging and Langfuse trace inspection) is particularly strong for an AI system of this type.
 
-However, the gap between what exists and what is required for a formal authorization decision on a HIGH-baseline system is severe. The authorization package is 24% complete (5 of 21 required artifacts). The most critical missing artifacts — SSP, FIPS 199 categorization, SAP, SAR, POA&M, and RAR — are all absent. Without an SSP, the Authorizing Official has no formal basis for an authorization decision. Without a FIPS 199 document, the HIGH baseline designation is not legally binding. Without a formal POA&M, the identified gaps (mTLS absence, mock trace source, HMAC seal bypass, no vulnerability scanning) have no tracked remediation path.
+**v2.0.0 improvements since initial assessment:** Linkerd mTLS + Cilium L7 egress lockdown deployed (POAM-007 closed 2026-05-17); `outlines` CVE-2025-69872 remediated (POAM-016 closed 2026-05-29); SBOM/Trivy CI enforcement deployed (POAM-010 closed); AgentSight UI Phase 1 with eBPF observability deployed (POAM-021 closed); Cloud KMS HSM-backed asymmetric signing deployed; Lula manifests expanded from 4 to 15; SR 26-2 (Federal Reserve, April 17, 2026) adopted as primary agentic AI governance framework; CSA AARM v1.0 11-vector threat coverage integrated.
 
-The assessment coverage is 16% overall — driven upward by strong ISO 42001 AI-control coverage (37%) but dragged down by near-zero coverage of all SP 800-53 control families that would govern a HIGH-baseline federal or regulated-financial system. There is no manual assessment component at all, which is typically required for a HIGH baseline (interviews with system owners, examination of supporting documentation, observation of system operations).
+**POAM Summary (authoritative source: [`docs/POAM.md`](POAM.md), v1.4, dated 2026-05-29):**
 
-The path to authorization requires: (1) completing the 7 missing authorization package artifacts, (2) extending Lula validations to cover SP 800-53 controls, (3) establishing formal assessor independence, (4) remediating the top 5 control gaps identified in Chunk 3, and (5) an AO signature. These are significant but achievable tasks given the strong technical foundation already in place.
+| Metric          | Count |
+| --------------- | ----- |
+| **Total Items** | 22    |
+| **Critical**    | 3     |
+| **High**        | 13    |
+| **Moderate**    | 6     |
+| **Open**        | 12    |
+| **In Progress** | 3     |
+| **Closed**      | 5     |
+
+However, the gap between what exists and what is required for a formal authorization decision on a HIGH-baseline system remains severe. The authorization package is 24% complete (5 of 21 required artifacts). The most critical missing artifacts — SSP (POAM-015 open), FIPS 199 categorization (POAM-009 in progress), SAP, SAR, and RAR — are still absent. Without an SSP, the Authorizing Official has no formal basis for an authorization decision.
+
+The assessment coverage is 16% overall — driven upward by strong ISO 42001 AI-control coverage (37%) and the expanded 15-manifest Lula suite, but dragged down by near-zero coverage of all SP 800-53 control families. There is no manual assessment component at all, which is typically required for a HIGH baseline.
+
+The path to authorization requires: (1) completing the 7 missing authorization package artifacts, (2) further extending Lula validations to cover SP 800-53 controls, (3) establishing formal assessor independence, (4) remediating the remaining 12 open POAM items, and (5) an AO signature. These are significant but achievable tasks given the strong technical foundation already in place.
 
 **Score Breakdown:**
 
-- Assessment Methodology (SAP quality): 5/20 (Lula automated procedures exist; no formal SAP)
-- Evidence Collection (SAR completeness): 8/20 (Langfuse compliance project exists; no formal SAR)
+- Assessment Methodology (SAP quality): 5/20 (15 Lula automated procedures exist; no formal SAP)
+- Evidence Collection (SAR completeness): 8/20 (Langfuse compliance project + KMS-signed OSCAL artifacts exist; no formal SAR)
 - Red Team Coverage: 6/20 (strong AI coverage; no infra testing; not in CI)
 - Control Effectiveness Metrics: 4/15 (safety_rate exists; no FP rate, coverage rate, trending)
-- Supply Chain Assessment: 1/10 (no SBOM, no CVE scanning, unpinned deps)
+- Supply Chain Assessment: 3/10 (SBOM/Trivy CI deployed; `outlines` CVE remediated; unpinned deps remain)
 - Authorization Package Completeness: 4/20 (5 of 21 artifacts; 24%)
 - Continuous ATO Infrastructure: 7/15 (CronJob + watch + SSE exist; ISCM strategy missing)
 
 ---
 
-_This document is Chunk 4 of 5. Chunk 5 will cover Step 7 (Monitor) and the consolidated implementation roadmap._
+_This document is Chunk 4 of 5. Chunk 5 will cover Step 7 (Monitor) and the consolidated implementation roadmap. Updated 2026-06-01 for CAGE v2.0.0._

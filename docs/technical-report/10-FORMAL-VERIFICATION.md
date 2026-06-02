@@ -1,16 +1,29 @@
-# Formal Verification and Completeness Proof (CAGE v2.0.0)
+# Formal Verification and Completeness Proof (CAGE v2.0.0-rc.1)
 
 | Field              | Value                     |
 | ------------------ | ------------------------- |
 | **Classification** | INTERNAL                  |
-| **Date**           | 2026-05-31                |
-| **Version**        | 1.1                       |
-| **Status**         | Current                   |
+| **Date**           | 2026-06-01                |
+| **Version**        | 2.0                       |
+| **Status**         | Current — v2.0.0-rc.1 promoted 2026-06-01 (branch `rc-v2.0.0`, tag `v2.0.0-rc.1`; 644 unit tests passing, 0 failures) |
 | **Series**         | CAGE Technical Report — Document 10 / 10 |
 
-As a formally verified, deterministic governance layer, the Cybernetic Governance Engine (CAGE) architecture has been methodically evaluated against the Composite Verification Framework (CVF).
+As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v2.0.0 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
 
 Below is the formal state-space and structural analysis of the system, including the resolution of previously identified unbounded states through the v2.0.0 architectural enhancements.
+
+### Primary Regulatory Framework
+
+The formal verification claims in this document are grounded in the following primary governance frameworks:
+
+| Framework | Authority | Scope |
+| --------- | --------- | ----- |
+| **SR 26-2** (April 17, 2026) | Federal Reserve | Primary agentic AI governance framework; §IV.B confidence requirement (≥0.95) formally verified at Tier 1 |
+| **ISO/IEC 42001:2023** | ISO | AI Management System; Annex A controls formally mapped to CAGE enforcement points |
+| **CSA AARM v1.0** | Cloud Security Alliance | 11-vector autonomous agent threat model; all vectors formally neutralized or tracked (Step 4) |
+| **NIST SP 800-53 Rev 5 HIGH** | NIST | AU-10 non-repudiation (Step 6), SI-7 integrity (AARM-V1), SC-28 protection at rest |
+
+The SR 26-2 §IV.B agentic confidence requirement is enforced as a hard mathematical invariant: $\text{confidence\_score} \geq 0.95$ is a necessary precondition for the `ALLOW` transition in the hybrid automaton defined in Step 3. Requests with confidence below this threshold are routed to `MANUAL_REVIEW` (0.70–0.95) or `DEFER` (<0.70), never to `APPROVED`.
 
 ---
 
@@ -86,7 +99,9 @@ The Cloud Security Alliance Autonomous Agent Risk Management (CSA AARM v1.0) fra
 | **AARM-V7** | Confidence Starvation — agent proceeds on fundamentally incomplete context | DEFER State Machine (`defer_queue.py`, Redis db=1 `noeviction`) | $\text{confidence\_score} < 0.70 \Rightarrow \text{state} = \text{DEFERRED}$; execution blocked until `EXTERNAL_VALIDATION` injected | **NEUTRALIZED** |
 | **AARM-V8** | Recursive Self-Authentication — model engineers its own privilege escalation | Human-gated NeMo refinement (`POST /v1/nemo/propose-refinement` → human approval → `POST /v1/nemo/apply-refinement`) | $\nexists \text{path}: \text{model\_output} \xrightarrow{*} \text{apply\_refinement}$ without `reviewer\_identity \ne \emptyset \land \text{rationale} \ne \emptyset$ | **NEUTRALIZED** |
 | **AARM-V9** | Semantic Blind Spot — single model cannot detect its own compliance violations | Heterogeneous multi-model consensus (`ConsensusModelRegistry`: DeepSeek-R1 Risk Manager + Llama 3.1 Compliance Officer) | $\forall \text{trade} > \text{threshold}: \text{vote}(\text{DeepSeek-R1}) = \text{APPROVE} \land \text{vote}(\text{Llama-3.1}) = \text{APPROVE}$ required | **NEUTRALIZED** |
-| **AARM-V10** | Stale Ground Truth — CBF enforces limits against outdated balance data | Externally reconciled CBF (`AnchorageGrpcLedgerProvider`); KMS-signed balance; TTL-gated staleness check | $\text{balance\_age} > \text{TTL} \Rightarrow \text{CBF fails closed}$; $\text{balance\_signature} \ne \text{KMS.verify}(\text{balance}) \Rightarrow \text{REJECT}$ | **NEUTRALIZED** |
+| **AARM-V10** | Data Exfiltration — agent leaks sensitive data (PII, credentials, trade plans) to unauthorized external endpoints | Presidio PII masking (20 entity types) in NeMo Guardrails output rail + Cilium L7 FQDN egress lockdown (`deployment/k8s/cilium-egress-lockdown.yaml`) | $\forall \text{egress}: \text{dst\_fqdn} \in \text{allowlist} \land \text{Presidio}(\text{response}) = \text{PII\_FREE}$ | **NEUTRALIZED** |
+
+> **FUTURE STATE (POAM-023):** An `AnchorageGrpcLedgerProvider` for externally reconciled CBF balance anchoring was referenced in earlier drafts of this document but has not been implemented. The current implementation uses Presidio PII masking and Cilium L7 network policy for AARM-V10 (Data Exfiltration) neutralization, as reflected in [`src/compliance_bridge/aarm_mapper.py`](../../src/compliance_bridge/aarm_mapper.py). The "Stale Ground Truth" threat (balance staleness) is addressed by the TTL-gated staleness check in the DEFER state machine (AARM-V7) and the `post_hitl_revalidate_node` execution-time re-sampling described in Step 3 above.
 | **AARM-V11** | Normative Drift — external regulatory requirements change without system awareness | External Normative Provider (`normative_provider.py`) with 6-hour polling refresh + adaptive FRIA gate | $\text{baseline\_age} > 6h \Rightarrow \text{daemon re-fetches}$; $\text{confidence} \in [0.70, 0.95) \Rightarrow \text{synchronous blocking gate}$ | **PARTIAL** (stub mode until TrustLayers credentials provisioned — POAM-022) |
 
 **AARM Conformance Summary:** 10 of 11 vectors are fully neutralized. AARM-V11 is PARTIAL pending TrustLayers API credential provisioning (POAM-022). The live conformance report is available at `GET /v1/aarm/conformance-report`.

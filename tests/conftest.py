@@ -256,14 +256,17 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
                 pass
 
     langfuse_host = os.environ.get("LANGFUSE_HOST", "http://localhost:3001")
+    skip_langfuse = os.environ.get("SKIP_LANGFUSE_CHECKS", "0").strip() in ("1", "true", "yes")
     timeout = 3
 
     unreachable: list[str] = []
 
-    for label, url in [
-        ("Backend", f"{current_backend}/health"),
-        ("Langfuse", langfuse_host),
-    ]:
+    # Always require Backend; Langfuse is optional when SKIP_LANGFUSE_CHECKS=1
+    services_to_check = [("Backend", f"{current_backend}/health")]
+    if not skip_langfuse:
+        services_to_check.append(("Langfuse", langfuse_host))
+
+    for label, url in services_to_check:
         try:
             requests.get(url, timeout=timeout)
         except requests.exceptions.RequestException:
@@ -275,6 +278,11 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
             "start port-forwards.\n"
             "Unreachable: " + ", ".join(unreachable)
         )
+
+    if skip_langfuse:
+        print("\n⚠️  [pytest bootstrap] SKIP_LANGFUSE_CHECKS=1 — Langfuse reachability check bypassed.")
+        # Ensure SKIP_LANGFUSE_CHECKS is propagated so tests can skip Langfuse-dependent assertions
+        os.environ["SKIP_LANGFUSE_CHECKS"] = "1"
 
     # ─── Issue 3: Pure Python Redis Seeding ───
     try:

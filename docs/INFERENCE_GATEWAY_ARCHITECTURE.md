@@ -1,14 +1,19 @@
-# Inference Gateway Architecture
+# Inference Gateway Architecture — v2.0.0
 
 ## Executive Summary
 
 This document analyzes the feasibility and impact of migrating the current "Sovereign" AI architecture (Split-Brain: Reasoning vs. Governance) to use a Kubernetes Inference Gateway.
 
-Currently, the `GatewayService` routes traffic through the **Inference Gateway** (nginx GatewayClass) at the infrastructure layer, enabling advanced traffic management, autoscaling, and priority handling critical for regulatory compliance (SR 11-7).
+Currently, the `GatewayService` routes traffic through the **Inference Gateway** (nginx GatewayClass) at the infrastructure layer, enabling advanced traffic management, autoscaling, and priority handling critical for regulatory compliance (SR 26-2 — Federal Reserve, April 17, 2026).
 
 **Status:** **IMPLEMENTED** (Production) / **DIRECT** (Local Dev)
+**Version:** v2.0.0 (promoted 2026-06-01)
 
 > **Update 2026-03-03:** The GatewayClass has been migrated from the GKE-proprietary `gke-l7-gxlb` to the portable `nginx` GatewayClass (see `deployment/k8s/inference-gateway/gateway.yaml`). Gateway API CRDs are now installed via Helm rather than the GKE-managed `gateway_api_config.channel`. This eliminates the hard GKE dependency while preserving all routing, priority, and autoscaling capabilities.
+
+> **Update 2026-05-31:** The OTel Collector sidecar has been **deprecated**. All telemetry now flows via direct Langfuse OTLP ingestion at `http://langfuse-web:3000/api/public/otel/v1/traces`. Remove any `OTEL_EXPORTER_OTLP_ENDPOINT` references pointing to a collector.
+
+> **Update 2026-06-01:** The SLM (Small Language Model) semantic similarity sidecar has been **deprecated**. A permanent `slm_available=False` sentinel is hardcoded in `SymbolicGovernor`. Tier 3 of the 7-tier governance pipeline is bypassed; the confidence threshold (Tier 2) is permanently elevated to 0.97 to compensate.
 
 ---
 
@@ -37,7 +42,7 @@ Currently, the `GatewayService` routes traffic through the **Inference Gateway**
 
 1.  **Criticality & Priority Handling (Governance)**
     - **Feature:** The Inference Gateway supports **Priority** classes.
-    - **Impact:** We can assign higher priority to "Governance" traffic (System 2 checks). Even if the "Reasoning" (System 1) pool is saturated with complex queries, the Governance checks (which block trade execution) will be prioritized or routed to reserved capacity. This is vital for **SR 11-7 Model Risk Management**—safety checks must never fail due to congestion.
+    - **Impact:** We can assign higher priority to "Governance" traffic (System 2 checks). Even if the "Reasoning" (System 1) pool is saturated with complex queries, the Governance checks (which block trade execution) will be prioritized or routed to reserved capacity. This is vital for **SR 26-2 Model Risk Management** (Federal Reserve, April 17, 2026) — safety checks must never fail due to congestion. The 200ms max latency SLA (ISO-20022) is enforced at the gateway layer.
 
 2.  **Optimized Autoscaling**
     - **Feature:** Uses custom metrics like **Queue Length** and **KV Cache Usage** (Time-to-First-Token optimization).
@@ -96,7 +101,18 @@ To adopt this without disrupting the current workflow, we recommend a phased app
 
 **Proceed with Inference Gateway (nginx GatewayClass) adoption for the Production environment.**
 
-The **Priority Handling** feature alone justifies the complexity, as it directly supports the "Neuro-Cybernetic" safety mandate: _Governance must always be available to block unsafe actions._ Using standard CPU scaling for the governance model is a safety risk during high load; the Inference Gateway mitigates this.
+The **Priority Handling** feature alone justifies the complexity, as it directly supports the "Neuro-Cybernetic" safety mandate: _Governance must always be available to block unsafe actions._ Using standard CPU scaling for the governance model is a safety risk during high load; the Inference Gateway mitigates this. This directly satisfies SR 26-2 §IV Model Risk Management requirements for agentic AI systems.
+
+## DEFER Queue & AARM Vector Coverage
+
+The Inference Gateway works in conjunction with the DEFER queue (AARM-V7) to handle confidence-starved contexts:
+
+- **DEFER Queue:** Redis `db=1` (noeviction policy) holds contexts that fail the `min_trade_confidence: 0.95` threshold but are not outright denied. These are queued for human review or re-evaluation.
+- **Gateway Role:** The Inference Gateway's priority routing ensures that DEFER queue re-evaluation requests are processed with appropriate priority — preventing starvation of deferred contexts during peak load.
+- **AARM Coverage:** The 11-vector CSA AARM v1.0 threat model is enforced across the gateway layer:
+  - AARM-V1: SHA-256 hash-chained context accumulator prevents context poisoning across inference calls.
+  - AARM-V7: DEFER queue (Redis db=1 noeviction) handles confidence starvation.
+  - AARM-V10: ConsensusModelRegistry ensures heterogeneous multi-model consensus for trades ≥$10,000 USD.
 
 **Next Steps:**
 

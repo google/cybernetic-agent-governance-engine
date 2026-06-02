@@ -119,8 +119,10 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
        ``OTEL_EXPORTER_OTLP_HEADERS`` (parsed as ``key=value,key2=value2``).
     2. ``LANGFUSE_HOST`` + ``LANGFUSE_PUBLIC_KEY`` + ``LANGFUSE_SECRET_KEY`` →
        derive ``{LANGFUSE_HOST}/api/public/otel`` with HTTP Basic Auth.
-       Langfuse's S3 cold-tier worker archives all received spans automatically.
-    3. Fallback → ``http://localhost:4318``, no headers.
+       Langfuse's integrated OTel collector archives all received spans automatically.
+    3. No endpoint configured → return ``("", {})`` so the caller skips OTLP export.
+       The standalone otel-collector sidecar (port 4318) is deprecated; falling back
+       to localhost:4318 would cause retry-loop timeouts in test workers.
     """
     import base64
 
@@ -148,11 +150,14 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
         )
         return endpoint, {"Authorization": f"Basic {token}"}
 
+    # No endpoint configured — otel-collector (port 4318) is deprecated and removed.
+    # Return empty string so configure_telemetry() skips OTLP exporter initialisation.
     logger.debug(
         "Telemetry: no OTEL_EXPORTER_OTLP_ENDPOINT or LANGFUSE_HOST set — "
-        "falling back to http://localhost:4318"
+        "OTLP export disabled (standalone otel-collector is deprecated; "
+        "telemetry is collected natively by Langfuse when LANGFUSE_HOST is set)"
     )
-    return "http://localhost:4318", {}
+    return "", {}
 
 # ---------------------------------------------------------------------------
 # Resilience: downgrade noisy OTLP/S3 backend errors to WARNING level
@@ -327,55 +332,64 @@ def configure_telemetry():
         otel_endpoint, otlp_headers = _resolve_otlp_endpoint_and_headers()
         otlp_configured = False
 
-        try:
-            if otel_endpoint.startswith("http://") or otel_endpoint.startswith("https://"):
-                # Use HTTP Exporter — 5 s timeout so failures don't stall the BSP thread
-                otlp_exporter = OTLPSpanExporter(
-                    endpoint=otel_endpoint,
-                    headers=otlp_headers,
-                    timeout=_OTLP_EXPORT_TIMEOUT_S,
-                )
-                provider.add_span_processor(
-                    RedactingSpanProcessor(
-                        BatchSpanProcessor(
-                            otlp_exporter,
-                            export_timeout_millis=_OTLP_EXPORT_TIMEOUT_MS,
-                        )
-                    )
-                )
-                logger.info(
-                    "✅ OpenTelemetry: HTTP OTLP Exporter configured at %s "
-                    "(timeout=%ds, with Final Redaction Tier)",
-                    otel_endpoint, _OTLP_EXPORT_TIMEOUT_S,
-                )
-                otlp_configured = True
-            else:
-                # Use gRPC Exporter — 5 s timeout
-                otlp_exporter = GRPCSpanExporter(
-                    endpoint=otel_endpoint,
-                    insecure=True,
-                    timeout=_OTLP_EXPORT_TIMEOUT_S,
-                )
-                provider.add_span_processor(
-                    RedactingSpanProcessor(
-                        BatchSpanProcessor(
-                            otlp_exporter,
-                            export_timeout_millis=_OTLP_EXPORT_TIMEOUT_MS,
-                        )
-                    )
-                )
-                logger.info(
-                    "✅ OpenTelemetry: gRPC OTLP Exporter configured at %s "
-                    "(timeout=%ds, with Final Redaction Tier)",
-                    otel_endpoint, _OTLP_EXPORT_TIMEOUT_S,
-                )
-                otlp_configured = True
-        except Exception as otlp_exc:
-            logger.warning(
-                "⚠️ OpenTelemetry: OTLP exporter setup failed (%s). "
-                "Falling back to ConsoleSpanExporter so spans are not lost.",
-                otlp_exc,
+        if not otel_endpoint:
+            # No endpoint configured — otel-collector (port 4318) is deprecated.
+            # Skip OTLP exporter entirely to avoid retry-loop timeouts in tests.
+            logger.info(
+                "ℹ️  OpenTelemetry: OTLP export skipped — no OTEL_EXPORTER_OTLP_ENDPOINT or "
+                "LANGFUSE_HOST configured. Set LANGFUSE_HOST + keys to enable telemetry "
+                "via Langfuse's integrated OTel collector."
             )
+        else:
+            try:
+                if otel_endpoint.startswith("http://") or otel_endpoint.startswith("https://"):
+                    # Use HTTP Exporter — 5 s timeout so failures don't stall the BSP thread
+                    otlp_exporter = OTLPSpanExporter(
+                        endpoint=otel_endpoint,
+                        headers=otlp_headers,
+                        timeout=_OTLP_EXPORT_TIMEOUT_S,
+                    )
+                    provider.add_span_processor(
+                        RedactingSpanProcessor(
+                            BatchSpanProcessor(
+                                otlp_exporter,
+                                export_timeout_millis=_OTLP_EXPORT_TIMEOUT_MS,
+                            )
+                        )
+                    )
+                    logger.info(
+                        "✅ OpenTelemetry: HTTP OTLP Exporter configured at %s "
+                        "(timeout=%ds, with Final Redaction Tier)",
+                        otel_endpoint, _OTLP_EXPORT_TIMEOUT_S,
+                    )
+                    otlp_configured = True
+                else:
+                    # Use gRPC Exporter — 5 s timeout
+                    otlp_exporter = GRPCSpanExporter(
+                        endpoint=otel_endpoint,
+                        insecure=True,
+                        timeout=_OTLP_EXPORT_TIMEOUT_S,
+                    )
+                    provider.add_span_processor(
+                        RedactingSpanProcessor(
+                            BatchSpanProcessor(
+                                otlp_exporter,
+                                export_timeout_millis=_OTLP_EXPORT_TIMEOUT_MS,
+                            )
+                        )
+                    )
+                    logger.info(
+                        "✅ OpenTelemetry: gRPC OTLP Exporter configured at %s "
+                        "(timeout=%ds, with Final Redaction Tier)",
+                        otel_endpoint, _OTLP_EXPORT_TIMEOUT_S,
+                    )
+                    otlp_configured = True
+            except Exception as otlp_exc:
+                logger.warning(
+                    "⚠️ OpenTelemetry: OTLP exporter setup failed (%s). "
+                    "Falling back to ConsoleSpanExporter so spans are not lost.",
+                    otlp_exc,
+                )
 
         # 3. Fallback: always register a LoggingSpanExporter so that spans are
         #    visible in application logs even when the OTLP backend is down.

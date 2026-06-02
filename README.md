@@ -2,7 +2,7 @@
 
 > **AI governance for regulated financial services — built-in, not bolted on.**
 
-![v2.0.0](https://img.shields.io/badge/version-2.0.0-blue) ![561 Tests Passing](https://img.shields.io/badge/tests-561%20passing-brightgreen) ![SR 26-2](https://img.shields.io/badge/SR%2026--2-blue) ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue) ![DORA](https://img.shields.io/badge/DORA-blue) ![NIST AI RMF](https://img.shields.io/badge/NIST-AI%20RMF-blue) ![FedRAMP HIGH](https://img.shields.io/badge/FedRAMP-HIGH-blue) ![EU AI Act](https://img.shields.io/badge/EU%20AI%20Act-blue) ![MAS FEAT](https://img.shields.io/badge/MAS%20FEAT-blue) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![SC-8 Implemented](https://img.shields.io/badge/SC--8-Implemented-brightgreen) ![POAM Closed 5](https://img.shields.io/badge/POAM%20Closed-5-brightgreen)
+![v2.0.0](https://img.shields.io/badge/version-2.0.0-blue) ![644 Tests Passing](https://img.shields.io/badge/tests-644%20passing-brightgreen) ![SR 26-2](https://img.shields.io/badge/SR%2026--2-blue) ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue) ![DORA](https://img.shields.io/badge/DORA-blue) ![NIST AI RMF](https://img.shields.io/badge/NIST-AI%20RMF-blue) ![FedRAMP HIGH](https://img.shields.io/badge/FedRAMP-HIGH-blue) ![EU AI Act](https://img.shields.io/badge/EU%20AI%20Act-blue) ![MAS FEAT](https://img.shields.io/badge/MAS%20FEAT-blue) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![SC-8 Implemented](https://img.shields.io/badge/SC--8-Implemented-brightgreen) ![POAM Closed 5](https://img.shields.io/badge/POAM%20Closed-5-brightgreen)
 
 ---
 
@@ -153,9 +153,9 @@ See [`docs/SECURITY_STATUS.md`](docs/SECURITY_STATUS.md) for the complete postur
 
 ### Prerequisites
 
-- Python ≥ 3.11
+- Python ≥ 3.10, < 3.13
 - Docker & Docker Compose
-- `uv` (recommended) or `pip`
+- `uv` (recommended) or `pip`; build system requires `uv_build>=0.8.14`
 
 ### Environment Variables
 
@@ -204,7 +204,7 @@ curl http://localhost:8080/health
 ### Run Tests
 
 ```bash
-bash setup_test_env.sh && python -m pytest tests/   # 561 tests
+bash setup_test_env.sh && python -m pytest tests/   # 644 tests
 ```
 
 ---
@@ -321,6 +321,9 @@ All third-party dependencies are accessed via standard package management. Key l
 | [DoWhy](https://github.com/py-why/dowhy)                            | MIT        | Causal inference for world-model validation   |
 | [redis-py](https://github.com/redis/redis-py)                       | MIT        | Redis client for FiscalLimitGuard + CBF state |
 | [fakeredis](https://github.com/cunla/fakeredis-py)                  | BSD-3      | In-memory Redis emulator for unit tests       |
+| [google-adk](https://github.com/google/adk-python)                  | Apache 2.0 | Google Agent Development Kit (advisor extras, ≥1.28.1) |
+
+> **Removed packages:** `outlines` was removed in v2.0.0 due to **CVE-2025-69872** (critical severity). Structured-output generation previously provided by `outlines` is now handled via vLLM's native JSON-mode API.
 
 Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 
@@ -332,4 +335,4 @@ Apache 2.0 — see [`LICENSE`](LICENSE)
 
 This is not an officially supported Google product. This project is not eligible for the Google Open Source Software Vulnerability Rewards Program.
 
-_CAGE v2.0.0 — 2026-05-25 — Evidentiary Independence Release_
+_CAGE v2.0.0 — 2026-06-01 — Evidentiary Independence Release_
