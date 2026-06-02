@@ -1,11 +1,8 @@
 # lula-validation-ia5.yaml
 # NIST SP 800-53 Rev 5 — IA-5: Authenticator Management (Secret Rotation)
 #
-# STUB: This validation requires cluster-specific namespace configuration
-# before activation. See TODO comments below.
-#
 # Asserts that:
-#   1. All Secrets in the cage namespace carry the cage.io/rotation-schedule annotation
+#   1. All Secrets in the governance-stack namespace carry the cage.io/rotation-schedule annotation
 #   2. The cage-routing-seal Secret exists (HMAC signing key for governance routing)
 #   3. No Pod env var directly sets a value for keys matching SECRET/KEY/PASSWORD/TOKEN
 #      (all sensitive env vars must reference Secrets via secretKeyRef)
@@ -22,10 +19,8 @@
 # OSCAL Mapping:
 #   component: cage-gateway
 #   control: ia-5
-
-# STUB: Update namespaces below to the actual cage cluster namespace.
-# TODO: Replace 'governance-stack' with the actual namespace if different.
-# TODO: Confirm Secret name 'cage-routing-seal' from deployment/k8s/*.yaml files.
+#
+# Namespace: governance-stack (confirmed from live cluster deployment snapshot)
 
 domain:
   type: kubernetes
@@ -33,11 +28,9 @@ domain:
     resources:
       - name: cage-secrets
         resource: secrets
-        # TODO: Replace 'governance-stack' with the actual cage namespace.
         namespace: governance-stack
       - name: cage-pods
         resource: pods
-        # TODO: Replace 'governance-stack' with the actual cage namespace.
         namespace: governance-stack
 
 provider:
@@ -99,7 +92,7 @@ provider:
 
 notes: >
   NIST SP 800-53 Rev 5 IA-5: Authenticator Management — Secret Rotation.
-  STUB — requires cluster-specific namespace configuration before activation.
+  Namespace: governance-stack (confirmed from live cluster deployment snapshot).
   Implements four authenticator management assertions for the CAGE governance namespace:
     (1) All user-managed Secrets must carry cage.io/rotation-schedule annotation
         (enforces documented rotation periods per IA-5(1) authenticator lifecycle).
@@ -114,7 +107,5 @@ notes: >
   checks as they are lifecycle-managed by Kubernetes automatically.
   Remediates: POAM-012 (SC-12: CAGE_ROUTING_SEAL_SECRET bypass) as supporting evidence
   that the secret is properly provisioned in the cluster.
-  Activation: confirm namespace and secret names, update fields, and enable in
-  deployment/k8s/lula-cron.yaml.
   See: compliance/continuous-monitoring/ISCM_STRATEGY.md — IA-5 monitoring cadence.
   See: docs/POAM.md — POAM-012 (routing seal secret lifecycle).

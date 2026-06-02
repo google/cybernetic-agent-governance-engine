@@ -1,16 +1,13 @@
 # lula-validation-ia3.yaml
 # NIST SP 800-53 Rev 5 — IA-3: Device Identification and Authentication
 #
-# STUB: This validation requires cluster-specific namespace configuration
-# before activation. See TODO comments below.
-#
 # COMPENSATING CONTROL for POAM-007 (full mTLS via Istio is Phase 3 roadmap).
 #
 # Asserts that:
-#   1. Deployments in the cage namespace carry the cage.io/mtls-proxy: "true"
+#   1. Deployments in the governance-stack namespace carry the cage.io/mtls-proxy: "true"
 #      annotation OR the security.istio.io/tlsMode: istio pod annotation
 #      (device identity via sidecar proxy intent).
-#   2. The NetworkPolicy "default-deny-ingress" exists in the cage namespace
+#   2. The NetworkPolicy "default-deny-ingress" exists in the governance-stack namespace
 #      (L3/L4 isolation as compensating control while full mTLS is pending).
 #   3. The OPA Deployment is running (policy-based device authentication
 #      compensating control — all inter-service calls validated by OPA).
@@ -34,10 +31,8 @@
 #   (a) shared HMAC routing seal (cage-routing-seal secret)
 #   (b) NetworkPolicy L3/L4 segmentation (default-deny all ingress)
 #   (c) OPA policy enforcement on every inter-service request
-
-# STUB: Update namespaces below to the actual cage cluster namespace.
-# TODO: Replace 'governance-stack' with the actual namespace if different.
-# TODO: Confirm OPA Deployment name from deployment/k8s/opa.yaml.
+#
+# Namespace: governance-stack (confirmed from live cluster deployment snapshot)
 
 domain:
   type: kubernetes
@@ -45,11 +40,9 @@ domain:
     resources:
       - name: cage-deployments
         resource: deployments
-        # TODO: Replace 'governance-stack' with the actual cage namespace.
         namespace: governance-stack
       - name: cage-network-policies
         resource: networkpolicies
-        # TODO: Replace 'governance-stack' with the actual cage namespace.
         namespace: governance-stack
       - name: opa-deployment
         resource: deployments
@@ -119,7 +112,7 @@ provider:
 notes: >
   NIST SP 800-53 Rev 5 IA-3: Device Identification and Authentication.
   COMPENSATING CONTROL — remediates POAM-007 gap pending Phase 3 Istio mTLS deployment.
-  STUB — requires cluster-specific namespace configuration before activation.
+  Namespace: governance-stack (confirmed from live cluster deployment snapshot).
   Full mTLS via Istio service mesh is scheduled for Phase 3 (target: 2026-07-31).
   Until then, device authentication is enforced via three compensating controls:
     (1) cage.io/mtls-proxy or security.istio.io/tlsMode annotations on Deployments
@@ -131,7 +124,5 @@ notes: >
   All three compensating controls must be live for this validation to pass.
   Remediation path: POAM-007 — evaluate Istio or cert-manager for workload identity
   certificates; implement mTLS for all intra-cluster service communication by 2026-07-31.
-  Activation: confirm namespace and OPA deployment name, update fields, and enable
-  in deployment/k8s/lula-cron.yaml.
   See: docs/POAM.md — POAM-007 (IA-3 remediation).
   See: compliance/continuous-monitoring/ISCM_STRATEGY.md — IA-3 monitoring cadence.

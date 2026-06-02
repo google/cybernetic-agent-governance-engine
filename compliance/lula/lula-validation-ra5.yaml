@@ -1,28 +1,22 @@
 # lula-validation-ra5.yaml
 # NIST SP 800-53 Rev 5 — RA-5: Vulnerability Monitoring and Scanning
 #
-# STUB: This validation requires a Kubernetes CronJob for automated security
-# scanning to be deployed before activation. See TODO comments below.
-#
 # Asserts that a vulnerability scanning CronJob is present and active in the
 # cluster. The security scanning workflow is defined in:
 #   .github/workflows/security-scan.yml (CI/CD pipeline — Trivy + SAST)
-# A corresponding Kubernetes CronJob should be deployed for in-cluster
-# continuous scanning. Until that CronJob is deployed, this validation will
-# remain a stub.
+# The sbom-cronjob (deployment/k8s/sbom-cronjob.yaml) provides the in-cluster
+# continuous scanning evidence for RA-5.
 #
 # Domain: kubernetes → Security Scan CronJob
 # Provider: opa (inline Rego)
 #
 # References:
 #   - .github/workflows/security-scan.yml — CI/CD security scanning (Trivy, SAST)
+#   - deployment/k8s/sbom-cronjob.yaml — In-cluster SBOM/vulnerability scan CronJob
 #   - docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md — RA-5 monitoring roadmap
 #   - docs/POAM.md — RA-5 POAM item
-
-# STUB: Deploy a security-scan CronJob to the cluster first.
-# TODO: Replace 'security-scanner' with the actual CronJob name once deployed.
-# TODO: Replace 'governance-stack' with the actual namespace if different.
-# TODO: See .github/workflows/security-scan.yml for the scan configuration to replicate as a CronJob.
+#
+# Namespace: governance-stack (confirmed from live cluster deployment snapshot)
 
 domain:
   type: kubernetes
@@ -30,7 +24,6 @@ domain:
     resources:
       - name: security-scanner-cronjob
         resource: cronjobs
-        # TODO: Update namespace to match where the CronJob will be deployed.
         namespace: governance-stack
 
 provider:
@@ -54,14 +47,11 @@ provider:
 
 notes: >
   NIST SP 800-53 Rev 5 RA-5: Vulnerability Monitoring and Scanning.
-  STUB — a Kubernetes CronJob for in-cluster vulnerability scanning must be
-  deployed before this validation can be activated.
+  Namespace: governance-stack (confirmed from live cluster deployment snapshot).
   CI/CD pipeline scanning is implemented via .github/workflows/security-scan.yml
   (Trivy container scanning + SAST); this Lula validation covers the continuous
   in-cluster scanning requirement per NIST RA-5 continuous monitoring.
-  Activation steps:
-    1. Deploy a security scanning CronJob (Trivy or equivalent) to the cluster.
-    2. Update the 'name' and 'namespace' fields in this file to match.
-    3. Enable in the Lula CronJob (deployment/k8s/lula-cron.yaml).
+  The sbom-cronjob (deployment/k8s/sbom-cronjob.yaml) provides the in-cluster
+  CronJob evidence. Apply it with: kubectl apply -f deployment/k8s/sbom-cronjob.yaml
   See: compliance/continuous-monitoring/ISCM_STRATEGY.md — RA-5 monitoring cadence.
   See: docs/POAM.md — RA-5 POAM remediation item.

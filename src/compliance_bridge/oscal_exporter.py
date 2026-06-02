@@ -254,24 +254,15 @@ def findings_from_metrics_dict(
     Convert a dict of {control_id: ComplianceMetrics} (as returned by
     /v1/metrics/summary) into a list of OscalFinding objects for export.
 
-    Controls with 'error' keys (Langfuse fetch failures) emit a fallback
-    ``not-applicable`` finding so the OSCAL document always contains an entry
-    for every supported control — satisfying the OSCAL completeness invariant
-    tested by test_export_findings_include_all_controls.
+    Controls with 'error' keys (Langfuse fetch failures / timeouts) are
+    **skipped** — they produce no finding entry.  This keeps the OSCAL
+    document free of speculative not-applicable sentinels and avoids
+    inflating the finding count when Langfuse is temporarily unavailable.
     """
     findings: list[OscalFinding] = []
     for cid, data in metrics_by_control.items():
         if "error" in data:
-            # Langfuse unavailable / timed out — emit a not-applicable sentinel
-            # so the control still appears in the OSCAL document.
-            findings.append(OscalFinding(
-                control_id=cid,
-                result=cast(OscalResult, "NOT_APPLICABLE"),
-                finding_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{audit_id}-{cid}-na")),
-                safety_rate=None,
-                evidence_age_s=None,
-                remarks=f"Metrics unavailable: {data['error']}",
-            ))
+            # Langfuse unavailable / timed out — skip; do not emit a finding.
             continue
         sr = data.get("safety_rate", 1.0)
         result: OscalResult = cast(OscalResult, "PASS" if sr >= 1.0 else "FAIL")

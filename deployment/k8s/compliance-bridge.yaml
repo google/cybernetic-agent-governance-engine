@@ -113,8 +113,13 @@ spec:
             - name: STARTUP_GRACE_HOURS
               value: "6"
 
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis
+                  key: redis-password
             - name: REDIS_URL
-              value: "redis://REDACTED@redis-master.governance-stack.svc.cluster.local:6379"
+              value: "redis://:$(REDIS_PASSWORD)@redis-master.governance-stack.svc.cluster.local:6379"
 
             - name: PORT
               value: "3001"

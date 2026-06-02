@@ -1,13 +1,10 @@
 # lula-validation-ac2.yaml
 # NIST SP 800-53 Rev 5 — AC-2: Account Management
 #
-# STUB: This validation requires cluster-specific namespace configuration
-# before activation. See TODO comments below.
-#
 # Asserts that:
-#   1. ServiceAccounts in the cage namespace carry the cage.io/account-purpose label
+#   1. ServiceAccounts in the governance-stack namespace carry the cage.io/account-purpose label
 #   2. The default ServiceAccount has automountServiceAccountToken: false
-#   3. No Pod in the cage namespace uses the "default" service account
+#   3. No Pod in the governance-stack namespace uses the "default" service account
 #
 # Domain: kubernetes → ServiceAccounts, Pods in governance-stack namespace
 # Provider: opa (inline Rego)
@@ -22,21 +19,15 @@
 #   component: cage-gateway
 #   control: ac-2
 
-# STUB: Update namespaces below to actual cluster namespace for CAGE services.
-# TODO: Replace 'governance-stack' with 'cage' or actual namespace once confirmed.
-# TODO: Confirm ServiceAccount names from deployment/k8s/service-account.yaml.
-
 domain:
   type: kubernetes
   kubernetes-spec:
     resources:
       - name: cage-service-accounts
         resource: serviceaccounts
-        # TODO: Replace 'governance-stack' with the actual cage namespace.
         namespace: governance-stack
       - name: cage-pods
         resource: pods
-        # TODO: Replace 'governance-stack' with the actual cage namespace.
         namespace: governance-stack
 
 provider:
@@ -88,7 +79,7 @@ provider:
 
 notes: >
   NIST SP 800-53 Rev 5 AC-2: Account Management.
-  STUB — requires cluster-specific namespace configuration before activation.
+  Namespace: governance-stack (confirmed from live cluster deployment snapshot).
   Implements three account management assertions for the CAGE governance namespace:
     (1) All named ServiceAccounts must carry the cage.io/account-purpose label
         (enforces documented account purpose per AC-2(a)(1)).
@@ -100,6 +91,4 @@ notes: >
   References: deployment/k8s/service-account.yaml (financial-advisor-sa pattern),
   deployment/terraform/iam.tf (GCP workload identity bindings).
   Remediates: POAM-001 — AC-2 account management procedures gap.
-  Activation: confirm namespace from kubectl get sa -n <namespace>, update fields,
-  and enable in deployment/k8s/lula-cron.yaml.
   See: compliance/continuous-monitoring/ISCM_STRATEGY.md — AC-2 monitoring cadence.

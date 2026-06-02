@@ -278,9 +278,10 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
 
     # ─── Issue 3: Pure Python Redis Seeding ───
     try:
-        # Redis password sourced from cluster env (langfuse-web REDIS_CONNECTION_STRING)
-        redis_password = "REDACTED_PASSWORD"
-        r = redis.Redis(host="localhost", port=6379, db=0, password=redis_password, socket_timeout=3)
+        # Redis password sourced from REDIS_PASSWORD env var (set via setup_test_env.sh
+        # or CI secrets — never hardcoded). Falls back to empty string (no-auth Redis).
+        redis_password = os.environ.get("REDIS_PASSWORD", "")
+        r = redis.Redis(host="localhost", port=6379, db=0, password=redis_password or None, socket_timeout=3)
         r.set("safety:current_cash", "10000000")
         print("\n💰 [pytest bootstrap] Seeded Redis cash balance to safety:current_cash = 10000000")
     except Exception as e:
@@ -288,8 +289,8 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
 
     # ─── Issue 4: Langfuse Compliance Project & Key Bootstrap ───
     try:
-        pk_comp = "REDACTED_LANGFUSE_COMPLIANCE_PK"
-        sk_comp = "REDACTED_LANGFUSE_COMPLIANCE_SK"
+        pk_comp = os.environ.get("LANGFUSE_COMPLIANCE_PUBLIC_KEY", "REDACTED_LANGFUSE_COMPLIANCE_PK")
+        sk_comp = os.environ.get("LANGFUSE_COMPLIANCE_SECRET_KEY", "REDACTED_LANGFUSE_COMPLIANCE_SK")
 
         # 1. PostgreSQL DB Seeding via kubectl exec
         # Generate a fresh bcrypt hash of the secret key (11 rounds, matches Langfuse default)
@@ -322,7 +323,8 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
         """
 
         print("🗄️ [pytest bootstrap] Seeding Langfuse compliance project in GKE PostgreSQL...")
-        env_vars = "PGPASSWORD=REDACTED_PG_PASSWORD"
+        pg_password = os.environ.get("PGPASSWORD", "")
+        env_vars = f"PGPASSWORD={pg_password}"
         subprocess.run(
             ["kubectl", "exec", "-i", "postgresql-0", "-n", "governance-stack", "--", "sh", "-c", f"env {env_vars} psql -U langfuse -d langfuse"],
             input=sql_script,
@@ -383,8 +385,13 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
             print("✅ [pytest bootstrap] Langfuse compliance secret is already up-to-date in GKE.")
 
         # 3. Inject keys into os.environ for integration tests
-        os.environ["LANGFUSE_PUBLIC_KEY"] = "REDACTED_LANGFUSE_PK"
-        os.environ["LANGFUSE_SECRET_KEY"] = "REDACTED_LANGFUSE_SK"
+        # Keys are sourced from env vars (set via setup_test_env.sh or CI secrets).
+        # LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY must be set before running
+        # integration tests — see .env.example for the required variable names.
+        if not os.environ.get("LANGFUSE_PUBLIC_KEY"):
+            print("\n⚠️ [pytest bootstrap] LANGFUSE_PUBLIC_KEY not set — Langfuse integration tests will be skipped.")
+        if not os.environ.get("LANGFUSE_SECRET_KEY"):
+            print("\n⚠️ [pytest bootstrap] LANGFUSE_SECRET_KEY not set — Langfuse integration tests will be skipped.")
         os.environ["LANGFUSE_COMPLIANCE_PUBLIC_KEY"] = pk_comp
         os.environ["LANGFUSE_COMPLIANCE_SECRET_KEY"] = sk_comp
         os.environ["SKIP_LANGFUSE_CHECKS"] = "0"

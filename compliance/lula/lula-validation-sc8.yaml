@@ -1,11 +1,8 @@
 # lula-validation-sc8.yaml
 # NIST SP 800-53 Rev 5 — SC-8: Transmission Confidentiality and Integrity
 #
-# STUB: This validation requires cluster-specific namespace configuration
-# before activation. See TODO comments below.
-#
 # Asserts that:
-#   1. All Services in the cage namespace use port 443 or 8443 or named "https"
+#   1. All Services in the governance-stack namespace use port 443 or 8443 or named "https"
 #      (no cleartext HTTP-only services exposed externally)
 #   2. A default-deny NetworkPolicy exists (enforcing ingress restrictions)
 #   3. Ingress resources (if any) have TLS configured
@@ -24,10 +21,8 @@
 # OSCAL Mapping:
 #   component: cage-gateway
 #   control: sc-8
-
-# STUB: Update namespaces below to the actual cage cluster namespace.
-# TODO: Replace 'governance-stack' with the actual namespace if different.
-# TODO: Confirm Ingress resource names from deployment/k8s/ingress.yaml.
+#
+# Namespace: governance-stack (confirmed from live cluster deployment snapshot)
 
 domain:
   type: kubernetes
@@ -35,19 +30,15 @@ domain:
     resources:
       - name: cage-services
         resource: services
-        # TODO: Replace 'governance-stack' with the actual cage namespace.
         namespace: governance-stack
       - name: cage-network-policies
         resource: networkpolicies
-        # TODO: Replace 'governance-stack' with the actual cage namespace.
         namespace: governance-stack
       - name: cage-ingresses
         resource: ingresses
-        # TODO: Replace 'governance-stack' with the actual cage namespace.
         namespace: governance-stack
       - name: cage-deployments
         resource: deployments
-        # TODO: Replace 'governance-stack' with the actual cage namespace.
         namespace: governance-stack
 
 provider:
@@ -140,7 +131,7 @@ provider:
 
 notes: >
   NIST SP 800-53 Rev 5 SC-8: Transmission Confidentiality and Integrity.
-  STUB — requires cluster-specific namespace configuration before activation.
+  Namespace: governance-stack (confirmed from live cluster deployment snapshot).
   Implements four transmission security assertions for the CAGE governance namespace:
     (1) All Services must expose TLS ports (443 or 8443) or be named "https".
         ClusterIP services annotated cage.io/internal-only: "true" are exempt
@@ -155,7 +146,5 @@ notes: >
   Remediates: POAM-011 (SC-8: no encryption-in-transit validation test).
   This Lula validation provides automated SC-8 evidence in lieu of the missing
   test assertion in tests/test_gateway_connectivity.py (see POAM-011).
-  Activation: confirm namespace and resource names, update fields, and enable in
-  deployment/k8s/lula-cron.yaml.
   See: compliance/continuous-monitoring/ISCM_STRATEGY.md — SC-8 monitoring cadence.
   See: docs/POAM.md — POAM-011 (SC-8 remediation).

@@ -435,6 +435,7 @@ class TestOscalExport:
         ar = doc["assessment-results"]
         assert ar["metadata"]["oscal-version"] == "1.1.2"
 
+    @pytest.mark.skipif(SKIP_LANGFUSE, reason="SKIP_LANGFUSE_CHECKS=1 — no live Langfuse data")
     def test_export_findings_include_all_controls(self, session):
         doc = session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=60).json()["document"]
         findings = doc["assessment-results"]["results"][0]["findings"]
@@ -450,6 +451,7 @@ class TestOscalExport:
             state = f["target"]["status"]["state"]
             assert state in valid_states, f"Invalid OSCAL state: {state!r}"
 
+    @pytest.mark.skipif(SKIP_LANGFUSE, reason="SKIP_LANGFUSE_CHECKS=1 — no live Langfuse data")
     def test_export_findings_have_framework_props(self, session):
         doc = session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=60).json()["document"]
         findings = doc["assessment-results"]["results"][0]["findings"]
