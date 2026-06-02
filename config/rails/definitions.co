@@ -1,0 +1,18 @@
+
+# Action definitions for Colang 2.x resolution
+
+# We use bare action declarations to avoid 'Unexpected token )' errors seen in fixed10.
+# The wrapper flow in main_logic.co will handle argument passing.
+#
+# NOTE (R-22 fix, 2026-03-10): Financial safety action declarations
+# (check_approval_token, check_data_latency, check_drawdown_limit,
+# check_slippage_risk, check_atomic_execution) were removed from this file
+# together with their corresponding Colang flows in main_logic.co.
+# Financial policy enforcement is owned by the safety_check_node → OPA path.
+# The corresponding Python implementations are pass-through stubs in
+# config/rails/actions.py registered by nemo_action_registry.get_all_actions().
+action MaskPIIAction
+action InvokeVllmFallbackAction
+action CustomSelfCheckInputAction
+action CustomSelfCheckOutputAction
+action LogSafetyAuditAction

@@ -1,0 +1,5 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/YOUR_GCP_PROJECT_ID/agentsight-ui:latest', '-f', 'src/agentsight-ui/Dockerfile', '.']
+images:
+- 'gcr.io/YOUR_GCP_PROJECT_ID/agentsight-ui:latest'

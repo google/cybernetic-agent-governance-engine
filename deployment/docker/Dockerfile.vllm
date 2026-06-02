@@ -1,0 +1,30 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+FROM vllm/vllm-openai:latest
+
+# Install Run:ai Model Streamer
+# Try both ensuring standard vllm is updated and installing the streamer
+# Install Run:ai Model Streamer (via vllm[runai] extra or direct)
+# Ensuring vllm[runai] is installed for proper extension mapping
+RUN pip install --no-cache-dir "vllm[runai]" runai-model-streamer huggingface_hub
+
+# Pre-cache model configurations to avoid runtime hangs
+COPY deployment/docker/download_config.py /app/download_config.py
+# We need the HF token to download gated models (like DeepSeek or Llama)
+# Use a build arg for the token
+ARG HUGGING_FACE_HUB_TOKEN
+ENV HUGGING_FACE_HUB_TOKEN=$HUGGING_FACE_HUB_TOKEN
+
+RUN python3 /app/download_config.py

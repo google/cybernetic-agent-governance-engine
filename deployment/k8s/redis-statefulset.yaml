@@ -1,0 +1,146 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# ============================================================================
+# Redis StatefulSet — CAGE v2.0.0 Evidence State Store
+# ============================================================================
+#
+# Dual-purpose Redis instance:
+#   db 0 — LangGraph checkpoint store (existing)
+#   db 1 — Evidence stream + deferred gating tokens (new, noeviction)
+#
+# Key invariants:
+#   1. requests == limits → Guaranteed QoS class (prevents kubelet OOM-kill)
+#   2. ConfigMap mount injects redis.conf with noeviction policy
+#   3. redis-stack-server image retained for RedisJSON compatibility
+#      (used by LangGraph checkpointer and evidence_stream.py)
+#   4. AOF persistence on PVC for write durability
+#
+# Related:
+#   - deployment/k8s/redis-config.yaml (ConfigMap)
+#   - src/compliance_bridge/evidence_stream.py (db=1 consumer)
+#   - src/gateway/governance/normative_provider.py (adaptive gating)
+# ============================================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: governance-stack
+  labels:
+    app: redis
+    tier: control-plane
+    cage.governance/component: evidence-state-store
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+        cage.governance/component: evidence-state-store
+    spec:
+      containers:
+        - name: redis
+          image: redis/redis-stack-server:latest
+          # Load custom redis.conf from ConfigMap
+          # Note: redis-stack-server uses /etc/redis-stack.conf by default;
+          # we override with our hardened config via command args.
+          args:
+            - "redis-server"
+            - "/usr/local/etc/redis/redis.conf"
+            - "--loadmodule"
+            - "/opt/redis-stack/lib/rejson.so"
+            - "--loadmodule"
+            - "/opt/redis-stack/lib/redisearch.so"
+          ports:
+            - containerPort: 6379
+              name: redis
+
+          # CRITICAL GKE INVARIANT: Requests == Limits guarantees "Guaranteed" QoS class.
+          # This protects the state store pod from being evicted by the kubelet
+          # under node memory pressure. The evidence state store holds frozen
+          # transaction tokens that MUST survive node-level resource contention.
+          resources:
+            requests:
+              cpu: "2"
+              memory: "6Gi"
+            limits:
+              cpu: "2"
+              memory: "6Gi"
+
+          # Security hardening
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false  # Required for AOF persistence writes
+            runAsNonRoot: true
+            runAsUser: 999                 # Standard redis UID
+            capabilities:
+              drop:
+                - ALL
+
+          volumeMounts:
+            - name: config
+              mountPath: /usr/local/etc/redis
+              readOnly: true
+            - name: redis-data
+              mountPath: /data
+
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+      volumes:
+        - name: config
+          configMap:
+            name: cage-redis-config
+            items:
+              - key: redis.conf
+                path: redis.conf
+
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # Production: use pd-ssd StorageClass for AOF throughput
+        # storageClassName: premium-rwo
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: governance-stack
+  labels:
+    app: redis
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6379
+      targetPort: 6379
+      name: redis
+  selector:
+    app: redis

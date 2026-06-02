@@ -1,0 +1,30 @@
+steps:
+  # Build the compliance-bridge image using its dedicated Dockerfile.
+  # src/compliance_bridge/Dockerfile:
+  #   - Installs only compliance + langfuse extras (no spaCy/NeMo)
+  #   - CMD: uvicorn compliance_bridge.main:app on port 3001
+  #   - PYTHONPATH=/app covers both compliance_bridge.* and src.gateway.*
+  # Build context is repo root so COPY pyproject.toml / uv.lock works.
+  # MUST use Cloud Build — never local docker build (ARM64 vs x86 mismatch on GKE).
+  - name: 'gcr.io/cloud-builders/docker'
+    id: build-compliance-bridge
+    args:
+      - 'build'
+      - '--file=src/compliance_bridge/Dockerfile'
+      - '--no-cache'
+      - '--tag=gcr.io/$PROJECT_ID/compliance-bridge:latest'
+      - '--tag=gcr.io/$PROJECT_ID/compliance-bridge:$SHORT_SHA'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: push-compliance-bridge
+    args: ['push', '--all-tags', 'gcr.io/$PROJECT_ID/compliance-bridge']
+
+images:
+  - 'gcr.io/$PROJECT_ID/compliance-bridge:latest'
+  - 'gcr.io/$PROJECT_ID/compliance-bridge:$SHORT_SHA'
+
+timeout: '1200s'
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY

@@ -1,0 +1,1 @@
+# NexArt integration tests

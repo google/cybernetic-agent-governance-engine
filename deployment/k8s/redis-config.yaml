@@ -1,0 +1,85 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# ============================================================================
+# Redis Configuration — CAGE v2.0.0 Evidence State Store
+# ============================================================================
+#
+# This ConfigMap configures Redis for dual-purpose operation:
+#   db 0 — LangGraph checkpoint store (existing, volatile caching)
+#   db 1 — Evidence stream state store (noeviction, high-assurance)
+#
+# The noeviction policy is CRITICAL for the Adaptive Gating Engine:
+# When a transaction's consensus score falls into the ambiguity band
+# (0.70 ≤ Score < 0.95), the deferred transaction token is parked in db=1.
+# Under memory pressure, Redis will fail-closed and refuse new writes
+# rather than silently evicting frozen execution states.
+#
+# Related code: src/compliance_bridge/evidence_stream.py (EVIDENCE_STREAM_REDIS_DB=1)
+# ============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cage-redis-config
+  namespace: governance-stack
+  labels:
+    app: redis
+    tier: control-plane
+    cage.governance/component: evidence-state-store
+data:
+  redis.conf: |
+    # ── Networking & Security ─────────────────────────────────────────────
+    bind 0.0.0.0
+    protected-mode yes
+    port 6379
+
+    # Authentication — sourced from advisor-secrets/REDIS_PASSWORD
+    # Password is injected via the container command override below;
+    # redis.conf requirepass is set at runtime by the entrypoint.
+
+    # ── Memory Management ─────────────────────────────────────────────────
+    # Hard cap at 4GB — adjust based on node pool memory profiling.
+    # The existing redis-stack-server defaults to no maxmemory (unlimited),
+    # which is dangerous in a shared GKE node pool.
+    maxmemory 4gb
+
+    # CRITICAL CAGE INVARIANT: Hard-fail writes when maxmemory is hit.
+    # Never evict active, frozen agent transaction states in db=1.
+    # This guarantees that deferred gating tokens survive memory pressure.
+    maxmemory-policy noeviction
+
+    # ── Persistence (AOF for durability) ──────────────────────────────────
+    # AOF provides write durability without blocking the hot-path.
+    # fsync every second balances durability vs throughput.
+    appendonly yes
+    appendfsync everysec
+    no-appendfsync-on-rewrite yes
+    auto-aof-rewrite-percentage 100
+    auto-aof-rewrite-min-size 64mb
+
+    # ── Database Namespace Separation ─────────────────────────────────────
+    # db 0 = LangGraph checkpoints (volatile, recoverable)
+    # db 1 = Evidence stream + deferred gating tokens (high-assurance)
+    databases 16
+
+    # ── Dangerous Command Lockdown ────────────────────────────────────────
+    # Disable runtime reconfiguration that could break the security envelope.
+    # These commands are renamed to empty strings, making them unavailable.
+    rename-command FLUSHDB ""
+    rename-command FLUSHALL ""
+    rename-command CONFIG ""
+
+    # ── Logging ───────────────────────────────────────────────────────────
+    loglevel notice
+    logfile ""

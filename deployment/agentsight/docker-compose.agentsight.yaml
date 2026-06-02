@@ -1,0 +1,74 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+version: "3.8"
+
+services:
+  # ---------------------------------------------------------------------------
+  # 1. AgentSight Daemon (The "Sidecar")
+  # Runs as a privileged container to attach eBPF probes to the host kernel.
+  # ---------------------------------------------------------------------------
+  agentsight-daemon:
+    image: ghcr.io/agent-sight/agentsight-daemon:latest
+    container_name: agentsight-daemon
+    privileged: true  # REQUIRED for eBPF
+    pid: host         # REQUIRED to see other processes
+    network_mode: host # REQUIRED to monitor network interfaces directly
+    volumes:
+      - /sys/kernel/debug:/sys/kernel/debug:rw
+      - /lib/modules:/lib/modules:ro
+      - /usr/src:/usr/src:ro
+      - ./agentsight-config.yaml:/etc/agentsight/config.yaml
+    environment:
+      - LOG_LEVEL=info
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # 2. AgentSight Frontend / Dashboard
+  # Visualizes the correlated Intent + Action traces.
+  # ---------------------------------------------------------------------------
+  agentsight-dashboard:
+    image: ghcr.io/agent-sight/agentsight-dashboard:latest
+    container_name: agentsight-dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      - DAEMON_URL=http://localhost:8080 # Internal communication
+    depends_on:
+      - agentsight-daemon
+
+  # ---------------------------------------------------------------------------
+  # 3. Your Application (The "Agent")
+  # Runs normally, but AgentSight observes it from the outside.
+  # ---------------------------------------------------------------------------
+  governed-advisor:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    container_name: governed-advisor
+    ports:
+      - "8080:8080"
+    environment:
+      # Lightweight Mode Enabled (No heavy payloads in Python logs)
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+      - TRACE_SAMPLING_RATE=1.0
+    depends_on:
+      - agentsight-daemon
+
+  # Optional: Standard OTel Collector/Jaeger for the "Lightweight" APM traces
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686" # UI
+      - "4318:4318"   # OTLP HTTP

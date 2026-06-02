@@ -1,0 +1,62 @@
+# lula-validation-ac3.yaml
+# NIST SP 800-53 Rev 5 — AC-3: Access Enforcement
+#
+# STUB: This validation requires cluster-specific namespace configuration
+# before activation. See TODO comments below.
+#
+# Asserts that the OPA (Open Policy Agent) Deployment is running and ready
+# in the cluster. OPA is the primary access enforcement mechanism, evaluating
+# every trade and governance request against the canonical Rego policy in
+# deployment/system_authz.rego.
+#
+# Domain: kubernetes → OPA Deployment
+# Provider: opa (inline Rego)
+#
+# References:
+#   - deployment/k8s/opa.yaml — OPA Deployment manifest
+#   - deployment/opa_config.yaml — OPA bundle configuration
+#   - deployment/system_authz.rego — Canonical access enforcement policy
+
+# STUB: Update 'namespace' below to the actual cluster namespace for OPA.
+# TODO: Confirm the Deployment name from deployment/k8s/opa.yaml before activation.
+
+domain:
+  type: kubernetes
+  kubernetes-spec:
+    resources:
+      - name: opa-deployment
+        resource: deployments
+        namespace: governance-stack
+      - name: opa-compliance-status
+        resource: configmaps
+        namespace: governance-stack
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+
+      # AC-3: Access Enforcement
+      # Verifies the OPA Deployment is present and ready, and that the
+      # compliance ConfigMap is labelled as ISO 42001 enabled — confirming
+      # the access enforcement layer is live and correctly configured.
+      validate if {
+        input["opa-deployment"].status.readyReplicas >= 1
+        input["opa-compliance-status"].metadata.labels["compliance.iso42001/enabled"] == "true"
+      }
+
+notes: >
+  NIST SP 800-53 Rev 5 AC-3: Access Enforcement.
+  STUB — requires cluster-specific namespace configuration before activation.
+  Automated verification that OPA is live and enforcing access control policies
+  for every governance decision. The canonical Rego policy (deployment/system_authz.rego)
+  implements RBAC-based trade limits: junior traders ≤ $5k, senior traders ≤ $500k,
+  with fail-closed defaults for all unrecognized roles or actions.
+  This validation also checks the opa-compliance-status ConfigMap label to confirm
+  the ISO 42001 compliance configuration is applied (mirrors lula-validation-sc4.yaml).
+  Activation: confirm Deployment and ConfigMap names from deployment/k8s/opa.yaml,
+  update namespace, and enable in the Lula CronJob.
+  See: compliance/continuous-monitoring/ISCM_STRATEGY.md — AC-3 monitoring cadence.

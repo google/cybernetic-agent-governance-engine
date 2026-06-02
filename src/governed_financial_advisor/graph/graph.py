@@ -1,0 +1,177 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Graph Definition: CAGE Architecture — Phase 3 (Explicit Lifecycle with Signature Gate)
+Planner -> Evaluator -> [Signature Gate] -> Executor -> Auditor
+
+LangGraph 1.1 Notes:
+  - StateGraph / TypedDict / add_messages API is fully backward-compatible.
+  - Consumers may opt in to typed streaming via ``version="v2"`` on
+    ``invoke()`` / ``stream()`` calls (see LangGraph 1.1 migration guide).
+  - Typed interrupts are supported for the interrupt_before pattern.
+"""
+
+import os
+
+from langgraph.graph import END, StateGraph
+
+from .checkpointer import get_checkpointer
+from .nodes.agent_nodes import (
+    data_analyst_node,
+    execution_analyst_node,
+    governed_trader_node,
+)
+from .nodes.evaluator_node import evaluator_node
+from .nodes.explainer_node import explainer_node
+from .nodes.guardrail_node import nemo_guardrail_node, nemo_output_rail_node
+from .nodes.safety_node import safety_check_node
+from .nodes.supervisor_node import thinker_node, doer_node
+from .state import AgentState
+
+
+def create_graph(redis_url=None):
+    workflow = StateGraph(AgentState)
+
+    # 1. Add Nodes
+    workflow.add_node("nemo_guardrail", nemo_guardrail_node)  # ADR 2026-03-09: mandatory first node
+    workflow.add_node("thinker_node", thinker_node)
+    workflow.add_node("doer_node", doer_node)
+    workflow.add_node("data_analyst", data_analyst_node)
+    workflow.add_node("execution_analyst", execution_analyst_node)
+    workflow.add_node("evaluator", evaluator_node)
+    workflow.add_node("safety_check", safety_check_node)  # R-11: OPA pre-trade gate
+    workflow.add_node("governed_trader", governed_trader_node)
+    workflow.add_node("explainer", explainer_node)
+    # ADR 2026-03-09b: mandatory output rail — final node on every non-blocked path
+    workflow.add_node("nemo_output_rail", nemo_output_rail_node)
+
+    # 2. Sequential Logic (Centralized)
+    # ADR 2026-03-09: NeMo guardrail is the mandatory entry point.
+    # START → nemo_guardrail → thinker_node (safe) | END (blocked)
+    workflow.set_entry_point("nemo_guardrail")
+
+    def route_after_guardrail(state: AgentState):
+        """
+        Route from the NeMo guardrail gate.
+
+        If the input was blocked, terminate immediately via END so no agent
+        ever processes the unsafe content.  The blocked path skips
+        nemo_output_rail because there is no agent-generated output to screen.
+        Otherwise proceed to thinker_node as normal.  This routing function is
+        the sole mechanism by which the guardrail result is enforced — the LLM
+        cannot influence it.
+        """
+        if state.get("guardrail_blocked"):
+            return END
+        return "thinker_node"
+
+    workflow.add_conditional_edges("nemo_guardrail", route_after_guardrail)
+    workflow.add_edge("thinker_node", "doer_node")
+
+    # Supervisor Routing — reads the explicit `next_step` field set by doer_node.
+    # This avoids fragile keyword scanning of message content (ARCH-03).
+    # BUG-FIX: "FINISH" is a valid Literal in AgentState but is NOT a node name.
+    # Returning the string "FINISH" causes LangGraph to fail with an empty-message
+    # ValueError (→ HTTP 500 {"detail":""}). Map it to the END sentinel explicitly.
+    def route_supervisor(state: AgentState):
+        next_step = state.get("next_step", END)
+        if next_step == "FINISH" or next_step is None:
+            # Route through the output rail before terminating
+            return "nemo_output_rail"
+        return next_step
+
+    workflow.add_conditional_edges("doer_node", route_supervisor)
+
+    # Lifecycle: Planner -> Evaluator -> [Safety Gate] -> Trader | Re-plan
+    workflow.add_edge("execution_analyst", "evaluator")
+
+    def check_safety_signature(state: AgentState):
+        """
+        STRICT LIFECYCLE GATE: Verifies that the Evaluator has provided a signature.
+
+        BUG-FIX: Without a loop cap, execution_analyst → evaluator → execution_analyst
+        cycles infinitely when governance_signature is never set. Add a hard cap using
+        loop_count (which now increments unconditionally in execution_analyst_node).
+
+        R-11 FIX: On APPROVED + signature, route to safety_check (OPA pre-trade gate)
+        rather than directly to governed_trader. The safety_check node then decides
+        whether to allow the trade to proceed to governed_trader or block/escalate.
+        """
+        sig = state.get("governance_signature")
+        verdict = state.get("evaluation_result", {}).get("verdict")
+
+        if verdict == "APPROVED" and sig:
+            return "safety_check"  # R-11: intercept approved plans at OPA gate
+
+        # Safety breaker: if we've looped too many times, give up gracefully
+        if (state.get("loop_count", 0) or 0) >= 3:
+            return "explainer"
+
+        # If rejected or signature missing, loop back to Planner with feedback
+        return "execution_analyst"
+
+    workflow.add_conditional_edges("evaluator", check_safety_signature)
+
+    def route_after_safety(state: AgentState):
+        """
+        R-11: Routes after the OPA pre-trade safety gate.
+
+        APPROVED / SKIPPED → proceed to governed_trader (trade is safe)
+        BLOCKED            → route to explainer (trade denied, explain to user)
+        ESCALATED          → route to explainer (human review needed, explain)
+        """
+        status = state.get("safety_status")
+        if status in ("APPROVED", "SKIPPED"):
+            return "governed_trader"
+        # BLOCKED or ESCALATED — surface to explainer so the user gets a clear
+        # explanation of why the trade was prevented.
+        return "explainer"
+
+    workflow.add_conditional_edges("safety_check", route_after_safety)
+
+    # ADR 2026-03-09b: every non-blocked terminal path routes through the
+    # mandatory output rail before END.  The blocked guardrail path (above)
+    # is the only path that bypasses the output rail — there is no
+    # agent-generated output to screen when the input was blocked.
+    workflow.add_edge("governed_trader", "explainer")
+    workflow.add_edge("data_analyst", "nemo_output_rail")
+    workflow.add_edge("explainer", "nemo_output_rail")
+    workflow.add_edge("nemo_output_rail", END)
+
+    # ARCH-04: Use the Redis-backed checkpointer configured via get_checkpointer().
+    # Falls back gracefully to MemorySaver when redis_url is None (local dev/test).
+    checkpointer = get_checkpointer(redis_url)
+
+    # NexArt Attestation — opt-in via NEXART_ATTESTATION_ENABLED=true
+    # When enabled, a NexArtAttestationCallback is created and stored on the
+    # compiled graph as ``_nexart_callback`` for retrieval after execution.
+    # Zero overhead when disabled — no import, no instantiation.
+    nexart_callback = None
+    if os.environ.get("NEXART_ATTESTATION_ENABLED", "").lower() == "true":
+        try:
+            from src.integrations.nexart import NexArtAttestationCallback
+            nexart_callback = NexArtAttestationCallback()
+        except ImportError:
+            pass  # nexart_adapter not available — skip silently
+
+    compiled = workflow.compile(
+        checkpointer=checkpointer,
+        interrupt_before=["governed_trader"],  # Manual Handshake (Module 6)
+    )
+
+    # Attach the callback for caller retrieval (does not affect graph execution)
+    compiled._nexart_callback = nexart_callback  # type: ignore[attr-defined]
+
+    return compiled

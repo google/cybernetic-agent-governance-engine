@@ -1,0 +1,199 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Latency Currency Economy",
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "type": "text",
+      "pluginVersion": "v11.0.0",
+      "options": {
+        "mode": "markdown",
+        "content": "# Latency Currency Dashboard\nTracking the economy of safety: Governance Tax vs. Reasoning Spend."
+      }
+    },
+    {
+      "title": "Total Governance Tax (Global)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 3
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(latency_currency_tax_sum[5m]))",
+          "legendFormat": "Tax (ms/sec)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        }
+      }
+    },
+    {
+      "title": "Governance Overhead Ratio (%)",
+      "type": "gauge",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 3
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(latency_currency_tax_sum[5m])) / sum(rate(telemetry_total_generation_time_ms_sum[5m])) * 100",
+          "legendFormat": "Overhead %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 50,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "orange", "value": 15 },
+              { "color": "red", "value": 30 }
+            ]
+          },
+          "unit": "percent"
+        }
+      }
+    },
+    {
+      "title": "Bankruptcy Rate (Hard Ceiling Hits)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 3
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(circuit_breaker_bankruptcy_total[1h]))",
+          "legendFormat": "Bankruptcies",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Rejected Wealth (Blocked Transactions)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 3
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(governed_tool_blocked_total[1h]))",
+          "legendFormat": "Blocked",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "yellow", "value": 10 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Tax vs Spend (Time Series)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "targets": [
+        {
+          "expr": "rate(latency_currency_tax_sum[1m])",
+          "legendFormat": "Governance Tax",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(telemetry_total_generation_time_ms_sum[1m])",
+          "legendFormat": "Reasoning Spend",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        }
+      }
+    },
+    {
+      "title": "Latency Distribution (Heatmap)",
+      "type": "heatmap",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "targets": [
+        {
+          "expr": "rate(latency_currency_tax_bucket[5m])",
+          "format": "heatmap",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["governance", "latency-as-currency", "agentic-devops"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Agentic DevOps: Currency Dashboard",
+  "uid": "agentic-devops-v1",
+  "version": 1,
+  "weekStart": ""
+}

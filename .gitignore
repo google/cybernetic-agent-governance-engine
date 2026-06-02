@@ -1,0 +1,206 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.env.tmp
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.deploy_venv/
+.new_venv/
+.build_venv/
+.manual_deploy_venv/
+.mirror_venv/
+.venv_migrate/
+source/
+deploy_*.txt
+deployment/artifacts/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+.DS_Store
+node_modules/
+
+# Logs
+*.log
+agents_log/
+deploy_log.txt
+deploy_agent_log.txt
+mirror.log
+
+# Project Specific
+opa
+!config/opa/
+verification_*.txt
+*.bak
+last_run_results.json
+gateway_rbac_fix.yaml
+
+# Generated Kubernetes manifests
+deployment/k8s/governed-financial-advisor.yaml
+deployment/k8s/vllm-deployment.yaml
+deployment/k8s/generated/
+
+# Traces
+*.parquet
+trace_*.parquet
+logs/cold_tier/
+tests/temp_*/
+GEMINI.md
+.manifest
+
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan_*
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Terraform module testing
+infra/modules/*/.terraform/
+infra/modules/*/.terraform.lock.hcl
+infra/modules/*/terraform.tfstate*
+
+# Terraform target testing
+infra/targets/*/.terraform/
+infra/targets/*/terraform.tfstate*
+infra/targets/*/.terraform.lock.hcl
+
+# Legacy/Backup Files
+*.backup
+*_legacy/
+deployment/backend_service.yaml
+deployment/nemo_service.yaml
+deployment/artifacts/
+manual_gateway_build.yaml
+agent.pkl
+green_stack_pipeline.json
+dependencies.tar.gz
+eval_output_*.txt
+
+# Temporary Evaluation Files
+.eval_venv/
+test_import.py
+
+# Backend Logs
+backend_logs*.txt
+
+# Local Models
+qwen_temp/
+temp_model_cache/
+temp_model_mirror/
+models/
+model_cache/
+*.safetensors
+*.gguf
+*.pt
+*.pth
+*.bin
+*.onnx
+
+# Runtime
+server.pid
+
+# Temporary Debug Logs
+full_logs*.txt
+gateway_cloudbuild.yaml
+
+
+# Gateway Logs
+gateway.logs*
+gateway_logs*.txt
+
+# Temporary Scripts and Artifacts
+check_vllm.py
+debug_*.py
+debug_output.txt
+deployment/create_admin.sql
+deployment/k8s/langfuse-secret.yaml
+deployment_patch.yaml
+existing_keys.txt
+new_keys.txt
+metrics.out
+scripts/debug_*.py
+scripts/migrate_more_prompts.py
+scripts/scan_prompts.py
+test_b64.py
+tests/debug_*.py
+tests/verify_*.py
+test_output.log
+*.log
+server.log
+src/agentsight-ui/dist/
+src/gateway/dist/
+.agent/
+.antigravity/
+.jules/
+
+# User specifically requested additions
+# Infrastructure & State
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Logs & Diagnostics
+*.log
+*_keys.txt
+*audit_results.txt
+.env*
+!.env.example
+
+# OS Specific
+.DS_Store
+
+# Secrets & environment (explicit additions for open-source release)
+*.env.local
+terraform.tfvars
+!terraform.tfvars.example
+deployment/terraform/tf_output.json
+
+# Python build artifacts
+.pytest_cache/
+dist/
+*.egg-info/
+
+# Temporary files
+/tmp/
+
+# Governance transpiler output — regenerate via PolicyTranspiler
+**/generated_actions.py
+**/generated_rules.rego
+
+# Generated protobuf bindings — regenerate via: python -m grpc_tools.protoc
+src/agentsight-ui/gateway_protos/*_pb2.py
+src/agentsight-ui/gateway_protos/*_pb2_grpc.py
+src/gateway/protos/*_pb2.py
+src/gateway/protos/*_pb2_grpc.py
+
+# MCP server local environments and caches (but track the source code)
+mcp-servers/*/.venv/
+mcp-servers/*/__pycache__/
+mcp-servers/*/*.egg-info/
+mcp-servers/*/dist/
+mcp-servers/*/.pytest_cache/
+
+examples/evidence/*.ndjson
+
+# Agent Local Configs
+.agents/
+

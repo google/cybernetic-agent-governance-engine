@@ -1,0 +1,92 @@
+# lula-validation-aarm-vectors.yaml
+# AARM Threat Vector Conformance Validation (CAGE v2.0.0)
+#
+# Validates that the CAGE compliance bridge reports conformance against all
+# 11 CSA Autonomous Agent Risk Management (AARM) threat vectors.
+#
+# Domain:   api → compliance-bridge /v1/aarm/conformance-report endpoint
+# Provider: opa (inline Rego)
+#
+# Assertions:
+#   1. All 11 AARM vectors are present in the conformance report.
+#   2. Zero vectors are EXPOSED (all must be at least PARTIAL).
+#   3. Critical-severity vectors must be NEUTRALIZED:
+#      AARM-V1 (Memory Poisoning), AARM-V2 (Goal Hijacking),
+#      AARM-V3 (Confused Deputy), AARM-V4 (Cross-Agent Propagation),
+#      AARM-V9 (Privilege Escalation), AARM-V10 (Data Exfiltration),
+#      AARM-V11 (Model Substitution)
+#   4. schema_version must equal "cage-aarm-conformance/1.0".
+#   5. aarm_spec_version must equal "CSA-AARM-v1.0".
+
+domain:
+  type: api
+  api-spec:
+    endpoints:
+      - name: aarm_conformance_report
+        url: "http://compliance-bridge.governance-stack.svc.cluster.local/v1/aarm/conformance-report"
+        method: GET
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+      import future.keywords.in
+
+      # ---------------------------------------------------------------------------
+      # Helper: index vectors by vector_id for O(1) access
+      # ---------------------------------------------------------------------------
+      vector_index[vid] := v {
+        v := input.aarm_conformance_report.vectors[_]
+        vid := v.vector_id
+      }
+
+      # ---------------------------------------------------------------------------
+      # Rule 1: All 11 AARM vectors must be present
+      # ---------------------------------------------------------------------------
+      validate if {
+        required_vectors := {
+          "AARM-V1",  "AARM-V2",  "AARM-V3",  "AARM-V4",
+          "AARM-V5",  "AARM-V6",  "AARM-V7",  "AARM-V8",
+          "AARM-V9",  "AARM-V10", "AARM-V11"
+        }
+        present_vectors := {v | vector_index[v]}
+        required_vectors == present_vectors
+
+        # Rule 2: No vector is EXPOSED
+        input.aarm_conformance_report.exposed == 0
+
+        # Rule 3: Critical vectors must be NEUTRALIZED
+        vector_index["AARM-V1"].status  == "NEUTRALIZED"  # Memory Poisoning
+        vector_index["AARM-V2"].status  == "NEUTRALIZED"  # Goal Hijacking
+        vector_index["AARM-V3"].status  == "NEUTRALIZED"  # Confused Deputy
+        vector_index["AARM-V4"].status  == "NEUTRALIZED"  # Cross-Agent Propagation
+        vector_index["AARM-V9"].status  == "NEUTRALIZED"  # Privilege Escalation
+        vector_index["AARM-V10"].status == "NEUTRALIZED"  # Data Exfiltration
+        vector_index["AARM-V11"].status == "NEUTRALIZED"  # Model Substitution
+
+        # Rule 4: Schema version pinned to v1.0
+        input.aarm_conformance_report.schema_version    == "cage-aarm-conformance/1.0"
+        input.aarm_conformance_report.aarm_spec_version == "CSA-AARM-v1.0"
+      }
+
+notes: >
+  CSA AARM Threat Vector Conformance (CAGE v2.0.0).
+  Validates machine-readable proof that CAGE control points neutralize all 11
+  AARM attack vectors defined in the Cloud Security Alliance Autonomous Agent
+  Risk Management (AARM) specification.
+
+  Critical vectors requiring NEUTRALIZED status (all 7 CRITICAL-severity vectors):
+    AARM-V1  Memory Poisoning        → A.5.3, A.8.4 (Context Accumulator)
+    AARM-V2  Goal Hijacking          → A.5.2, SC-4  (NeMo + OPA)
+    AARM-V3  Confused Deputy         → SC-4, A.8.4  (HMAC Signed Handshake)
+    AARM-V4  Cross-Agent Propagation → SC-4, SC-8   (FiscalLimitGuard + Linkerd)
+    AARM-V9  Privilege Escalation    → SC-4, A.8.4  (OPA RBAC + scope declaration)
+    AARM-V10 Data Exfiltration       → A.9.2, SC-7  (Presidio + Cilium)
+    AARM-V11 Model Substitution      → SC-8, SC-4   (Sovereign vLLM + routing seal)
+
+  Non-critical vectors may be PARTIAL but not EXPOSED.
+  Evidence: GET /v1/aarm/conformance-report (compliance-bridge service).
+  Auto-generated artifact: <audit_id>/aarm_conformance.json (GCS/S3).

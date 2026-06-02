@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "cage-infrastructure": {
+      "command": "/path/to/your/project/.venv/bin/python",
+      "args": [
+        "-m",
+        "mcp_servers.infrastructure"
+      ],
+      "env": {
+        "PROJECT_ROOT": "/path/to/your/project"
+      }
+    },
+    "terradev-mcp": {
+      "command": "/path/to/your/project/.venv/bin/python",
+      "args": [
+        "/path/to/your/home/.mcp/node_modules/terradev-mcp/terradev_mcp.py"
+      ],
+      "env": {
+        "DESCRIPTION": "If you want your AI agent to be able to dynamically test and generate Colang flows, look into community tools like terradev-mcp. If you want to write Colang rules yourself for the Langfuse/vLLM stack we just deployed, search the VS Code Extension marketplace for 'Colang Lang' to get your syntax highlighting!"
+      }
+    }
+  }
+}

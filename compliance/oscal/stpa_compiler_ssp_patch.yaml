@@ -1,0 +1,243 @@
+stpa-compiler-ssp-patch:
+  generated: '2026-05-17T17:31:03Z'
+  source: config/stpa_control_structure.yaml
+  system: CAGE Financial Advisor
+  version: 1.1.0
+  implemented-requirement:
+    uuid: g7000099-stpa-4000-8000-compiler00001
+    control-id: sa-11
+    description: "The STPA-to-Policy Compiler implements a deterministic, design-time\
+      \ safety\n          control that translates STAMP/STPA Unsafe Control Action\
+      \ (UCA) analysis\n          directly into runtime-enforceable governance artifacts.\
+      \ This eliminates the\n          \"Natural Language Tax\" — the compliance gap\
+      \ between human-readable safety\n          specifications and the actual code\
+      \ running in the cluster.\n\n          Compiler source: src/gateway/governance/stpa_compiler.py\n\
+      \          Control structure (source of truth): config/stpa_control_structure.yaml\n\
+      \          Generated artifacts:\n            - config/opa/generated_stpa_policy.rego\
+      \    (OPA Rego — 5 UCAs)\n            - config/rails/generated_stpa_rails.co\
+      \     (NeMo Colang — 3 UCAs)\n            - src/gateway/governance/generated_stpa_validator.py\
+      \ (Python — 6 UCAs)\n\n          System: CAGE Financial Advisor v1.1.0\n   \
+      \       UCAs encoded: 9\n          Hazards modelled: 6\n          Safety constraints:\
+      \ 3\n          Last compiled: 2026-05-17T17:31:03Z\n\n          UCA-to-Control\
+      \ mapping:\n            UCA-1 (unsafe_action): Agent executes write operation\
+      \ without a signed approval token.\n  → NIST: AC-3 (Access Enforcement), SC-4\
+      \ (Information in Shared System Resources / Fiscal Limits)\n  → ISO 42001: A.8.4\n\
+      UCA-2 (wrong_timing): Agent executes trade with stale market data (latency >\
+      \ threshold).\n  → NIST: CM-6 (Configuration Settings), SA-11 (Developer Testing\
+      \ and Evaluation)\n  → ISO 42001: A.8.4, A.6.2\nUCA-3 (unsafe_action): Agent\
+      \ outputs PII to user interface.\n  → NIST: AC-3 (Access Enforcement), SC-28\
+      \ (Protection of Information at Rest)\n  → ISO 42001: A.9.2\nUCA-4 (stopped_too_soon):\
+      \ Agent debits account but fails to credit asset (atomic failure).\n  → NIST:\
+      \ SI-7 (Software, Firmware, and Information Integrity), AU-10 (Non-Repudiation)\n\
+      \  → ISO 42001: A.8.4\nUCA-5 (unsafe_action): Agent executes buy order when\
+      \ daily drawdown exceeds limit.\n  → NIST: AC-3 (Access Enforcement), SC-4 (Information\
+      \ in Shared System Resources / Fiscal Limits)\n  → ISO 42001: A.8.4, A.6.2\n\
+      UCA-6 (wrong_timing): Agent submits market order exceeding allowable fraction\
+      \ of daily volume.\n  → NIST: SC-4 (Information in Shared System Resources /\
+      \ Fiscal Limits), SI-3 (Malicious Code Protection)\n  → ISO 42001: A.8.4, A.6.2\n\
+      UCA-7 (unsafe_action): Adversarial prompt injection score exceeds detection\
+      \ threshold.\n  → NIST: SC-4 (Information in Shared System Resources / Fiscal\
+      \ Limits), SI-3 (Malicious Code Protection)\n  → ISO 42001: A.5.2\nUCA-8 (wrong_timing):\
+      \ Agent executes trade before risk assessment is complete.\n  → NIST: AC-3 (Access\
+      \ Enforcement), SA-11 (Developer Testing and Evaluation)\n  → ISO 42001: A.8.4\n\
+      UCA-9 (wrong_timing): Agent executes trade with compliance check bypassed.\n\
+      \  → NIST: AC-3 (Access Enforcement), CM-6 (Configuration Settings)\n  → ISO\
+      \ 42001: A.8.4"
+    props:
+    - name: implementation-status
+      value: implemented
+    - name: stpa-compiler-version
+      value: 1.1.0
+    - name: uca-count
+      value: '9'
+    - name: hazard-count
+      value: '6'
+    - name: last-compiled
+      value: '2026-05-17T17:31:03Z'
+    - name: artifact-opa
+      value: config/opa/generated_stpa_policy.rego
+    - name: artifact-nemo
+      value: config/rails/generated_stpa_rails.co
+    - name: artifact-python
+      value: src/gateway/governance/generated_stpa_validator.py
+    - name: compiler-source
+      value: src/gateway/governance/stpa_compiler.py
+    responsible-roles:
+    - role-id: compliance-engineer
+    by-components:
+    - component-uuid: e5000099-stpa-4000-8000-compiler00001
+      uuid: h8000099-stpa-4000-8000-compiler00000
+      description: 'STPA compiler enforces AC-3 (Access Enforcement) via generated
+        artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
+        (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
+        validator). UCAs covered: UCA-1, UCA-3, UCA-5, UCA-8, UCA-9.'
+      implementation-status:
+        state: implemented
+      links:
+      - href: ../../config/stpa_control_structure.yaml
+        rel: reference
+        text: STPA control structure YAML (source of truth)
+      - href: ../../config/opa/generated_stpa_policy.rego
+        rel: reference
+        text: Generated OPA Rego policy
+    - component-uuid: e5000099-stpa-4000-8000-compiler00001
+      uuid: h8000099-stpa-4000-8000-compiler00001
+      description: 'STPA compiler enforces SC-4 (Information in Shared System Resources
+        / Fiscal Limits) via generated artifacts: config/opa/generated_stpa_policy.rego
+        (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
+        (Python validator). UCAs covered: UCA-1, UCA-5, UCA-6, UCA-7.'
+      implementation-status:
+        state: implemented
+      links:
+      - href: ../../config/stpa_control_structure.yaml
+        rel: reference
+        text: STPA control structure YAML (source of truth)
+      - href: ../../config/opa/generated_stpa_policy.rego
+        rel: reference
+        text: Generated OPA Rego policy
+    - component-uuid: e5000099-stpa-4000-8000-compiler00001
+      uuid: h8000099-stpa-4000-8000-compiler00002
+      description: 'STPA compiler enforces CM-6 (Configuration Settings) via generated
+        artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
+        (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
+        validator). UCAs covered: UCA-2, UCA-9.'
+      implementation-status:
+        state: implemented
+      links:
+      - href: ../../config/stpa_control_structure.yaml
+        rel: reference
+        text: STPA control structure YAML (source of truth)
+      - href: ../../config/opa/generated_stpa_policy.rego
+        rel: reference
+        text: Generated OPA Rego policy
+    - component-uuid: e5000099-stpa-4000-8000-compiler00001
+      uuid: h8000099-stpa-4000-8000-compiler00003
+      description: 'STPA compiler enforces SA-11 (Developer Testing and Evaluation)
+        via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego),
+        config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
+        (Python validator). UCAs covered: UCA-2, UCA-8.'
+      implementation-status:
+        state: implemented
+      links:
+      - href: ../../config/stpa_control_structure.yaml
+        rel: reference
+        text: STPA control structure YAML (source of truth)
+      - href: ../../config/opa/generated_stpa_policy.rego
+        rel: reference
+        text: Generated OPA Rego policy
+    - component-uuid: e5000099-stpa-4000-8000-compiler00001
+      uuid: h8000099-stpa-4000-8000-compiler00004
+      description: 'STPA compiler enforces SC-28 (Protection of Information at Rest)
+        via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego),
+        config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
+        (Python validator). UCAs covered: UCA-3.'
+      implementation-status:
+        state: implemented
+      links:
+      - href: ../../config/stpa_control_structure.yaml
+        rel: reference
+        text: STPA control structure YAML (source of truth)
+      - href: ../../config/opa/generated_stpa_policy.rego
+        rel: reference
+        text: Generated OPA Rego policy
+    - component-uuid: e5000099-stpa-4000-8000-compiler00001
+      uuid: h8000099-stpa-4000-8000-compiler00005
+      description: 'STPA compiler enforces SI-7 (Software, Firmware, and Information
+        Integrity) via generated artifacts: config/opa/generated_stpa_policy.rego
+        (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
+        (Python validator). UCAs covered: UCA-4.'
+      implementation-status:
+        state: implemented
+      links:
+      - href: ../../config/stpa_control_structure.yaml
+        rel: reference
+        text: STPA control structure YAML (source of truth)
+      - href: ../../config/opa/generated_stpa_policy.rego
+        rel: reference
+        text: Generated OPA Rego policy
+    - component-uuid: e5000099-stpa-4000-8000-compiler00001
+      uuid: h8000099-stpa-4000-8000-compiler00006
+      description: 'STPA compiler enforces AU-10 (Non-Repudiation) via generated artifacts:
+        config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
+        (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
+        validator). UCAs covered: UCA-4.'
+      implementation-status:
+        state: implemented
+      links:
+      - href: ../../config/stpa_control_structure.yaml
+        rel: reference
+        text: STPA control structure YAML (source of truth)
+      - href: ../../config/opa/generated_stpa_policy.rego
+        rel: reference
+        text: Generated OPA Rego policy
+    - component-uuid: e5000099-stpa-4000-8000-compiler00001
+      uuid: h8000099-stpa-4000-8000-compiler00007
+      description: 'STPA compiler enforces SI-3 (Malicious Code Protection) via generated
+        artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
+        (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
+        validator). UCAs covered: UCA-6, UCA-7.'
+      implementation-status:
+        state: implemented
+      links:
+      - href: ../../config/stpa_control_structure.yaml
+        rel: reference
+        text: STPA control structure YAML (source of truth)
+      - href: ../../config/opa/generated_stpa_policy.rego
+        rel: reference
+        text: Generated OPA Rego policy
+  new-component:
+    uuid: e5000099-stpa-4000-8000-compiler00001
+    title: STPA-to-Policy Compiler
+    type: software
+    description: 'CLI compiler (src/gateway/governance/stpa_compiler.py) that ingests
+      config/stpa_control_structure.yaml and generates deterministic OPA Rego, NeMo
+      Colang, and Python validator artifacts enforcing STAMP/STPA UCAs at runtime.
+      Eliminates manual policy drift by treating the YAML as the single authoritative
+      source of truth. System: CAGE Financial Advisor v1.1.0.'
+    purpose: Provides compile-time enforcement of STPA UCAs, bridging design-time
+      hazard analysis (MIT STAMP methodology) with runtime OPA/NeMo/Python governance
+      controls. Closes the compliance loop between safety engineering artefacts and
+      live cluster enforcement policies.
+    responsible-roles:
+    - role-id: compliance-engineer
+    props:
+    - name: software-version
+      value: 1.1.0
+    - name: source-file
+      value: src/gateway/governance/stpa_compiler.py
+    - name: control-structure-input
+      value: config/stpa_control_structure.yaml
+    - name: last-compiled
+      value: '2026-05-17T17:31:03Z'
+    - name: uca-count
+      value: '9'
+    control-implementations:
+    - uuid: c3000099-stpa-4000-8000-compiler00001
+      source: https://www.iso.org/standard/81230.html
+      description: ISO/IEC 42001:2023 controls implemented by the STPA compiler
+      implemented-requirements:
+      - uuid: d4000099-stpa-4000-8000-0000000
+        control-id: A.8.4
+        description: 'STPA compiler generates deterministic enforcement artifacts
+          for A.8.4 from config/stpa_control_structure.yaml. UCAs: UCA-1, UCA-2, UCA-4,
+          UCA-5, UCA-6, UCA-8, UCA-9.'
+        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
+          change to keep artifacts in sync.
+      - uuid: d4000099-stpa-4000-8000-0001001
+        control-id: A.6.2
+        description: 'STPA compiler generates deterministic enforcement artifacts
+          for A.6.2 from config/stpa_control_structure.yaml. UCAs: UCA-2, UCA-5, UCA-6.'
+        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
+          change to keep artifacts in sync.
+      - uuid: d4000099-stpa-4000-8000-0002002
+        control-id: A.9.2
+        description: 'STPA compiler generates deterministic enforcement artifacts
+          for A.9.2 from config/stpa_control_structure.yaml. UCAs: UCA-3.'
+        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
+          change to keep artifacts in sync.
+      - uuid: d4000099-stpa-4000-8000-0003003
+        control-id: A.5.2
+        description: 'STPA compiler generates deterministic enforcement artifacts
+          for A.5.2 from config/stpa_control_structure.yaml. UCAs: UCA-7.'
+        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
+          change to keep artifacts in sync.

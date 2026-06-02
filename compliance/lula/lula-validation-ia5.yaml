@@ -1,0 +1,120 @@
+# lula-validation-ia5.yaml
+# NIST SP 800-53 Rev 5 — IA-5: Authenticator Management (Secret Rotation)
+#
+# STUB: This validation requires cluster-specific namespace configuration
+# before activation. See TODO comments below.
+#
+# Asserts that:
+#   1. All Secrets in the cage namespace carry the cage.io/rotation-schedule annotation
+#   2. The cage-routing-seal Secret exists (HMAC signing key for governance routing)
+#   3. No Pod env var directly sets a value for keys matching SECRET/KEY/PASSWORD/TOKEN
+#      (all sensitive env vars must reference Secrets via secretKeyRef)
+#   4. All Secrets carry the cage.io/sensitivity-level label
+#
+# Domain: kubernetes → Secrets, Pods in governance-stack namespace
+# Provider: opa (inline Rego)
+#
+# References:
+#   - deployment/k8s/backend-deployment.yaml — secret volume mounts pattern
+#   - deployment/terraform/secrets.tf — GCP Secret Manager bindings
+#   - docs/POAM.md — POAM-012 (SC-12: CAGE_ROUTING_SEAL_SECRET bypass)
+#
+# OSCAL Mapping:
+#   component: cage-gateway
+#   control: ia-5
+
+# STUB: Update namespaces below to the actual cage cluster namespace.
+# TODO: Replace 'governance-stack' with the actual namespace if different.
+# TODO: Confirm Secret name 'cage-routing-seal' from deployment/k8s/*.yaml files.
+
+domain:
+  type: kubernetes
+  kubernetes-spec:
+    resources:
+      - name: cage-secrets
+        resource: secrets
+        # TODO: Replace 'governance-stack' with the actual cage namespace.
+        namespace: governance-stack
+      - name: cage-pods
+        resource: pods
+        # TODO: Replace 'governance-stack' with the actual cage namespace.
+        namespace: governance-stack
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+      import future.keywords.every
+
+      # IA-5: Authenticator Management — Secret Rotation and Secure Reference
+      #
+      # Check 1: All Secrets must have the cage.io/rotation-schedule annotation.
+      # Check 2: cage-routing-seal Secret (HMAC key) must exist in namespace.
+      # Check 3: No Pod env var directly embeds a sensitive value (must use secretKeyRef).
+      # Check 4: All Secrets must carry cage.io/sensitivity-level label.
+
+      # Sensitive env var key patterns (case-insensitive match via contains)
+      is_sensitive_key(key) if { contains(upper(key), "SECRET") }
+      is_sensitive_key(key) if { contains(upper(key), "PASSWORD") }
+      is_sensitive_key(key) if { contains(upper(key), "TOKEN") }
+      is_sensitive_key(key) if { contains(upper(key), "_KEY") }
+
+      # Check 1 + 4: All Secrets have rotation-schedule annotation and sensitivity label.
+      # ServiceAccount token secrets (type=kubernetes.io/service-account-token) are excluded
+      # as they are managed by Kubernetes automatically.
+      secrets_compliant if {
+        user_secrets := [s | s := input["cage-secrets"][_]; s.type != "kubernetes.io/service-account-token"]
+        every secret in user_secrets {
+          secret.metadata.annotations["cage.io/rotation-schedule"] != null
+          secret.metadata.labels["cage.io/sensitivity-level"] != null
+        }
+      }
+
+      # Check 2: cage-routing-seal Secret must exist.
+      routing_seal_exists if {
+        some secret in input["cage-secrets"]
+        secret.metadata.name == "cage-routing-seal"
+      }
+
+      # Check 3: No container env var hardcodes a sensitive value directly.
+      # All sensitive values must come from secretKeyRef (not a plain value: field).
+      no_hardcoded_secrets if {
+        every pod in input["cage-pods"] {
+          every container in pod.spec.containers {
+            every env in container.env {
+              not (is_sensitive_key(env.name) ; env.value != null ; env.value != "")
+            }
+          }
+        }
+      }
+
+      validate if {
+        secrets_compliant
+        routing_seal_exists
+        no_hardcoded_secrets
+      }
+
+notes: >
+  NIST SP 800-53 Rev 5 IA-5: Authenticator Management — Secret Rotation.
+  STUB — requires cluster-specific namespace configuration before activation.
+  Implements four authenticator management assertions for the CAGE governance namespace:
+    (1) All user-managed Secrets must carry cage.io/rotation-schedule annotation
+        (enforces documented rotation periods per IA-5(1) authenticator lifecycle).
+    (2) cage-routing-seal Secret must exist (HMAC signing key for governance
+        routing seals per deployment/terraform/secrets.tf and POAM-012).
+    (3) No Pod container may embed sensitive values directly in env var value: fields —
+        all keys matching *SECRET*, *KEY*, *PASSWORD*, *TOKEN* must reference
+        Kubernetes Secrets via secretKeyRef (prevents credential exposure in pod specs).
+    (4) All Secrets must carry cage.io/sensitivity-level label (enforces sensitivity
+        classification per IA-5 authenticator management policy).
+  kubernetes.io/service-account-token type Secrets are excluded from annotation
+  checks as they are lifecycle-managed by Kubernetes automatically.
+  Remediates: POAM-012 (SC-12: CAGE_ROUTING_SEAL_SECRET bypass) as supporting evidence
+  that the secret is properly provisioned in the cluster.
+  Activation: confirm namespace and secret names, update fields, and enable in
+  deployment/k8s/lula-cron.yaml.
+  See: compliance/continuous-monitoring/ISCM_STRATEGY.md — IA-5 monitoring cadence.
+  See: docs/POAM.md — POAM-012 (routing seal secret lifecycle).

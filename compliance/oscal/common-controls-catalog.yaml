@@ -1,0 +1,928 @@
+---
+# OSCAL Component Definition
+# GKE/GCP Common Controls — Inherited by CAGE
+# oscal-version: 1.0.4
+#
+# This component definition documents security controls that GCP/GKE satisfies
+# on behalf of the Cybernetic AI Governance Engine (CAGE) system. These are
+# "leveraged authorization" controls per NIST SP 800-37 Rev 2 §2.5.
+#
+# GCP holds a FedRAMP High authorization package. CAGE inherits these controls
+# and is responsible only for the CAGE-specific implementation portions noted
+# as "shared" controls.
+#
+# Referenced by:
+#   - compliance/oscal/system-security-plan.yaml (component: gke-cluster)
+#   - compliance/oscal/sp800053-profile.yaml (exclude-controls justification)
+
+component-definition:
+  uuid: "d2e3f4a5-b6c7-4890-cdef-012345678901"
+  metadata:
+    title: "GKE/GCP Common Controls — Inherited by CAGE"
+    published: "2026-03-06T00:00:00Z"
+    last-modified: "2026-03-06T00:00:00Z"
+    version: "1.0.0-draft"
+    oscal-version: "1.0.4"
+    remarks: >
+      This component definition catalogs the GCP/GKE platform-level security controls
+      that are inherited by the Cybernetic AI Governance Engine (CAGE) per its leveraged
+      authorization relationship with Google Cloud Platform. GCP maintains a FedRAMP High
+      authorization package (Agency ATO) covering these controls. CAGE system owners should
+      request the GCP FedRAMP package from Google Cloud via the FedRAMP Marketplace to
+      obtain current control implementation statements and assessment results.
+      Controls marked "inherited" are fully satisfied by GCP with no CAGE action required.
+      Controls marked "shared" require CAGE to implement the customer-side responsibilities.
+    roles:
+      - id: common-control-provider
+        title: "Common Control Provider"
+        description: "Google Cloud Platform — provides FedRAMP High authorized platform controls"
+      - id: cage-system-owner
+        title: "CAGE System Owner"
+        description: "Responsible for CAGE customer-side implementation of shared controls"
+    parties:
+      - uuid: "b3000001-0000-4000-8000-000000000001"
+        type: organization
+        name: "Google LLC (Google Cloud Platform)"
+        remarks: >
+          FedRAMP High authorized cloud service provider. Authorization package
+          available via FedRAMP Marketplace: https://marketplace.fedramp.gov/
+      - uuid: "b3000002-0000-4000-8000-000000000002"
+        type: organization
+        name: "Cybernetic Governance Engine (CAGE) Operations"
+    responsible-parties:
+      - role-id: common-control-provider
+        party-uuids:
+          - "b3000001-0000-4000-8000-000000000001"
+      - role-id: cage-system-owner
+        party-uuids:
+          - "b3000002-0000-4000-8000-000000000002"
+
+  components:
+    - uuid: "e4000001-0000-4000-8000-000000000001"
+      type: service
+      title: "GKE/GCP Platform"
+      description: >
+        Google Kubernetes Engine (GKE) on Google Cloud Platform provides the container
+        orchestration, physical infrastructure, network fabric, and managed services
+        (Cloud SQL, Cloud Storage, Cloud KMS, Secret Manager) on which CAGE is deployed.
+        GCP holds FedRAMP High authorization covering physical security, environmental
+        controls, media protection, hardware maintenance, and personnel security for
+        Google data center operations.
+      purpose: >
+        Acts as the Common Control Provider (CCP) for CAGE. Provides inherited platform
+        controls that reduce CAGE's control implementation burden for infrastructure-level
+        security requirements. CAGE system owners must verify inherited control status
+        annually by reviewing GCP's FedRAMP package and Cloud Audit Logs.
+      status:
+        state: operational
+      responsible-roles:
+        - role-id: common-control-provider
+          party-uuids:
+            - "b3000001-0000-4000-8000-000000000001"
+      props:
+        - name: fedramp-authorization-level
+          value: "High"
+        - name: fedramp-marketplace-url
+          value: "https://marketplace.fedramp.gov/products/FR1817875220"
+        - name: fedramp-package-id
+          value: "FR1817875220"
+        - name: cage-namespace
+          value: "governance-stack"
+        - name: inherited-control-families
+          value: "PE, MP, MA, PS (fully inherited)"
+        - name: shared-control-families
+          value: "SC-12, SC-28, AU-3, IA-2, SA-9, CP-7, CP-9, SI-3 (shared)"
+
+      control-implementations:
+        # =====================================================================
+        # SOURCE: NIST SP 800-53 Rev 5 Catalog
+        # =====================================================================
+        - uuid: "f5000001-0000-4000-8000-000000000001"
+          source: "https://raw.githubusercontent.com/usnistgov/oscal-content/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json"
+          description: >
+            GCP/GKE implementation of NIST SP 800-53 Rev 5 controls inherited or shared
+            with the CAGE system. All PE, MP, MA, and PS controls are fully inherited.
+            SC-12, SC-28, AU-3, IA-2, SA-9, CP-7, CP-9, and SI-3 are shared controls
+            with defined CAGE customer responsibilities.
+
+          implemented-requirements:
+            # =================================================================
+            # PE — Physical and Environmental Protection (PE-1 through PE-19)
+            # Status: INHERITED — GCP data centers fully satisfy all PE controls
+            # =================================================================
+            - uuid: "g6000001-0000-4000-8000-000000000001"
+              control-id: "pe-1"
+              description: >
+                GCP maintains and enforces physical and environmental protection policies
+                governing all data centers. Physical security policies are documented in
+                GCP's FedRAMP authorization package and applicable SOC 2 Type II reports.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              set-parameters:
+                - param-id: "pe-1_prm_1"
+                  values:
+                    - "Google Cloud Platform physical security team"
+                - param-id: "pe-1_prm_2"
+                  values:
+                    - "annually"
+              remarks: >
+                CAGE RESPONSIBILITY: None. CAGE has no physical presence in any data center.
+                Evidence: GCP FedRAMP package, Google SOC 2 Type II report (available via NDA).
+                GCP FedRAMP Package ID: FR1817875220.
+
+            - uuid: "g6000002-0000-4000-8000-000000000002"
+              control-id: "pe-2"
+              description: >
+                GCP manages physical access authorizations for all data center facilities.
+                Google employees and contractors accessing data centers undergo background
+                checks and physical access logging. Visitor access requires escort.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: >
+                CAGE RESPONSIBILITY: None. CAGE tenant organization has no physical data
+                center access. All physical access is managed by Google Cloud operations.
+
+            - uuid: "g6000003-0000-4000-8000-000000000003"
+              control-id: "pe-3"
+              description: >
+                GCP data centers implement multi-layered physical access controls including
+                biometric authentication, badge access, CCTV surveillance, and security
+                guards. Physical access is logged and reviewed. Unauthorized access attempts
+                are detected and responded to per Google's security operations procedures.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: >
+                CAGE RESPONSIBILITY: None. Physical access controls are fully managed by
+                Google Cloud. Evidence available in GCP FedRAMP package.
+
+            - uuid: "g6000004-0000-4000-8000-000000000004"
+              control-id: "pe-6"
+              description: >
+                GCP monitors physical access to all data center facilities using CCTV,
+                badge reader logs, and security operations center (SOC) monitoring.
+                Physical access records are retained and reviewed for anomalies.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: >
+                CAGE RESPONSIBILITY: None. Physical access monitoring is fully managed
+                by Google Cloud physical security operations.
+
+            - uuid: "g6000005-0000-4000-8000-000000000005"
+              control-id: "pe-8"
+              description: >
+                GCP maintains visitor access records for all data center facilities.
+                Visitor access logs are retained per Google's records retention policy
+                and are available for review as part of FedRAMP assessment activities.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: >
+                CAGE RESPONSIBILITY: None.
+
+            - uuid: "g6000006-0000-4000-8000-000000000006"
+              control-id: "pe-9"
+              description: >
+                GCP data centers implement N+1 redundant power distribution with UPS,
+                PDUs, and backup generators. Power equipment is physically protected
+                from unauthorized access and tampering.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: >
+                CAGE RESPONSIBILITY: None. All power infrastructure is GCP-managed.
+
+            - uuid: "g6000007-0000-4000-8000-000000000007"
+              control-id: "pe-10"
+              description: >
+                GCP provides emergency shutoff capabilities for data center power
+                systems with appropriate safeguards to prevent accidental activation.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000008-0000-4000-8000-000000000008"
+              control-id: "pe-11"
+              description: >
+                GCP data centers provide emergency power via UPS and backup generator
+                systems. UPS systems provide bridge power during generator startup.
+                Generators are maintained and tested per Google's maintenance procedures.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000009-0000-4000-8000-000000000009"
+              control-id: "pe-12"
+              description: >
+                GCP data centers use emergency lighting systems that activate automatically
+                during power failures to ensure safe evacuation and continued operations.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000010-0000-4000-8000-000000000010"
+              control-id: "pe-13"
+              description: >
+                GCP data centers implement fire detection and suppression systems including
+                VESDA (Very Early Smoke Detection Apparatus), clean agent suppression systems,
+                and fire extinguishers. Fire systems are tested and maintained regularly.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000011-0000-4000-8000-000000000011"
+              control-id: "pe-14"
+              description: >
+                GCP data centers maintain temperature and humidity controls within
+                ASHRAE A2 standards using precision air conditioning units with
+                redundant capacity and environmental monitoring systems.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000012-0000-4000-8000-000000000012"
+              control-id: "pe-15"
+              description: >
+                GCP data centers include water damage protection mechanisms including
+                raised floors, water leak detection sensors, and strategic equipment
+                placement to minimize risk from water intrusion.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000013-0000-4000-8000-000000000013"
+              control-id: "pe-16"
+              description: >
+                GCP controls the delivery and removal of information technology
+                components with authorization and inspection procedures at all
+                data center facilities.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000014-0000-4000-8000-000000000014"
+              control-id: "pe-17"
+              description: >
+                GCP implements alternate work site security requirements for personnel
+                who access GCP systems remotely, including VPN requirements, endpoint
+                security, and secure access policies.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None for GCP infrastructure staff."
+
+            - uuid: "g6000015-0000-4000-8000-000000000015"
+              control-id: "pe-18"
+              description: >
+                GCP positions information system components (servers, network equipment)
+                to minimize potential damage from physical and environmental hazards
+                and to prevent unauthorized access.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000016-0000-4000-8000-000000000016"
+              control-id: "pe-19"
+              description: >
+                GCP protects information system components from information leakage via
+                electromagnetic signals. Data center shielding, cable management, and
+                RF emission controls are implemented per GCP security standards.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            # =================================================================
+            # MP — Media Protection (MP-1 through MP-8)
+            # Status: INHERITED — GCP handles all physical media
+            # Logical media encryption (SC-28) is a shared control documented separately
+            # =================================================================
+            - uuid: "g6000017-0000-4000-8000-000000000017"
+              control-id: "mp-1"
+              description: >
+                GCP maintains media protection policies governing all physical storage
+                media within its data centers. Policies are documented in the GCP
+                FedRAMP authorization package.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: >
+                CAGE RESPONSIBILITY: None for physical media. CAGE implements logical
+                data protection (encryption) as documented under SC-28 (shared control).
+
+            - uuid: "g6000018-0000-4000-8000-000000000018"
+              control-id: "mp-2"
+              description: >
+                GCP restricts access to physical media to authorized Google personnel
+                only. Physical media access is logged and controlled via badge access
+                and escort requirements.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000019-0000-4000-8000-000000000019"
+              control-id: "mp-3"
+              description: >
+                GCP marks physical media used in data center operations with
+                appropriate sensitivity labels per Google's media management policy.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000020-0000-4000-8000-000000000020"
+              control-id: "mp-4"
+              description: >
+                GCP stores physical media in secure, access-controlled areas within
+                data center facilities. Removable media storage follows Google's
+                media management and chain of custody procedures.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000021-0000-4000-8000-000000000021"
+              control-id: "mp-5"
+              description: >
+                GCP protects and controls physical media during transport outside
+                of data center facilities using encryption, chain of custody, and
+                tracked courier services per Google's media transport policy.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000022-0000-4000-8000-000000000022"
+              control-id: "mp-6"
+              description: >
+                GCP sanitizes physical media prior to disposal or reuse using
+                NIST SP 800-88 compliant methods (cryptographic erase, physical
+                destruction). Sanitization certificates are maintained per GCP's
+                media disposal procedures. This addresses physical storage media only.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: >
+                CAGE RESPONSIBILITY: CAGE is responsible for logical data sanitization
+                (database records, GCS objects, Kubernetes secrets) prior to system
+                decommission. See docs/DECOMMISSION_CHECKLIST.md.
+
+            - uuid: "g6000023-0000-4000-8000-000000000023"
+              control-id: "mp-7"
+              description: >
+                GCP restricts the use of removable media on information systems within
+                its data centers. Removable media use requires authorization per Google's
+                media management policy.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000024-0000-4000-8000-000000000024"
+              control-id: "mp-8"
+              description: >
+                GCP implements media downgrading procedures for physical storage media
+                per Google's media management policy and applicable NIST SP 800-88 guidance.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            # =================================================================
+            # MA — Maintenance (MA-1 through MA-6)
+            # Status: INHERITED — GCP handles all hardware maintenance
+            # CAGE has no on-premises hardware requiring maintenance
+            # =================================================================
+            - uuid: "g6000025-0000-4000-8000-000000000025"
+              control-id: "ma-1"
+              description: >
+                GCP maintains system maintenance policies and procedures for all
+                data center hardware. Maintenance policies are documented in GCP's
+                FedRAMP authorization package.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: >
+                CAGE RESPONSIBILITY: None for infrastructure hardware. CAGE is responsible
+                for software patch management (SI-2) of its own container images and
+                Kubernetes configurations.
+
+            - uuid: "g6000026-0000-4000-8000-000000000026"
+              control-id: "ma-2"
+              description: >
+                GCP schedules, performs, documents, and reviews hardware maintenance
+                for all physical infrastructure components using change management
+                procedures that minimize impact to hosted services.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000027-0000-4000-8000-000000000027"
+              control-id: "ma-3"
+              description: >
+                GCP controls maintenance tools used in data center operations.
+                Maintenance tools are inventoried, inspected, and controlled per
+                Google's physical security and maintenance procedures.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000028-0000-4000-8000-000000000028"
+              control-id: "ma-4"
+              description: >
+                GCP controls nonlocal maintenance activities for GCP infrastructure.
+                Remote maintenance by Google employees uses privileged access
+                workstations (PAWs) with multi-factor authentication and session logging.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None for GCP infrastructure."
+
+            - uuid: "g6000029-0000-4000-8000-000000000029"
+              control-id: "ma-5"
+              description: >
+                GCP establishes maintenance personnel authorization requirements
+                for all data center maintenance activities. Third-party maintenance
+                personnel undergo background checks and are escorted per Google's
+                physical access control procedures.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            - uuid: "g6000030-0000-4000-8000-000000000030"
+              control-id: "ma-6"
+              description: >
+                GCP maintains timely maintenance and spare parts for critical
+                infrastructure components. GCP SLAs cover hardware replacement
+                and maintenance response times per the GCP Customer Agreement.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: None."
+
+            # =================================================================
+            # PS — Personnel Security (PS-1 through PS-8)
+            # Status: INHERITED — For GCP data center staff
+            # CAGE is responsible for its own personnel security (separate SSP section)
+            # =================================================================
+            - uuid: "g6000031-0000-4000-8000-000000000031"
+              control-id: "ps-1"
+              description: >
+                GCP maintains personnel security policies for Google employees and
+                contractors who access data center facilities or infrastructure systems.
+                Policies are documented in GCP's FedRAMP authorization package.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: >
+                CAGE RESPONSIBILITY: CAGE maintains separate personnel security
+                procedures for its own personnel (documented in docs/ROLES_AND_RESPONSIBILITIES.md).
+                This inherited control covers GCP data center staff only.
+
+            - uuid: "g6000032-0000-4000-8000-000000000032"
+              control-id: "ps-3"
+              description: >
+                GCP screens individuals prior to authorizing access to data center
+                facilities and GCP infrastructure systems. Background checks include
+                criminal history, employment verification, and identity verification
+                per Google's personnel security requirements.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: >
+                CAGE RESPONSIBILITY: CAGE screens its own personnel accessing CAGE systems.
+                GCP screening applies to Google employees who physically access the
+                infrastructure hosting CAGE workloads.
+
+            - uuid: "g6000033-0000-4000-8000-000000000033"
+              control-id: "ps-4"
+              description: >
+                GCP implements personnel termination procedures for Google employees
+                and contractors, including immediate access revocation upon separation,
+                return of credentials and equipment, and exit interviews.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: CAGE manages its own personnel termination procedures."
+
+            - uuid: "g6000034-0000-4000-8000-000000000034"
+              control-id: "ps-5"
+              description: >
+                GCP reviews and manages personnel transfers affecting access to GCP
+                infrastructure systems. Access is adjusted upon role changes per
+                Google's personnel security and access management procedures.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: CAGE manages access changes for its own personnel."
+
+            - uuid: "g6000035-0000-4000-8000-000000000035"
+              control-id: "ps-6"
+              description: >
+                GCP establishes access agreements (NDAs, acceptable use policies) for
+                Google personnel who access GCP systems and data center facilities.
+                Agreement acceptance is documented and tracked.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: CAGE establishes access agreements for its own personnel."
+
+            - uuid: "g6000036-0000-4000-8000-000000000036"
+              control-id: "ps-7"
+              description: >
+                GCP establishes third-party personnel security requirements for vendors
+                and contractors who access GCP data center facilities or infrastructure,
+                including background check requirements and compliance with GCP security policies.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: CAGE manages its own third-party vendor security requirements."
+
+            - uuid: "g6000037-0000-4000-8000-000000000037"
+              control-id: "ps-8"
+              description: >
+                GCP implements personnel sanctions procedures for violations of GCP
+                security policies by Google employees and contractors.
+              props:
+                - name: implementation-status
+                  value: "inherited"
+              responsible-roles:
+                - role-id: common-control-provider
+              remarks: "CAGE RESPONSIBILITY: CAGE manages sanctions for its own personnel."
+
+            # =================================================================
+            # SC-12: Cryptographic Key Establishment and Management
+            # Status: SHARED — GCP provides KMS infrastructure; CAGE uses CMEK
+            # =================================================================
+            - uuid: "g6000038-0000-4000-8000-000000000038"
+              control-id: "sc-12"
+              description: >
+                GCP Cloud Key Management Service (Cloud KMS) provides FIPS 140-2 validated
+                cryptographic key management infrastructure supporting both GCP-managed keys
+                (default) and Customer-Managed Encryption Keys (CMEK). CAGE uses CMEK for
+                Cloud SQL PostgreSQL and GCS audit log buckets, providing an additional
+                cryptographic layer where CAGE controls the key lifecycle.
+              props:
+                - name: implementation-status
+                  value: "shared"
+              responsible-roles:
+                - role-id: common-control-provider
+                - role-id: cage-system-owner
+              remarks: >
+                GCP RESPONSIBILITY: Provides and maintains Cloud KMS as FIPS 140-2 Level 3
+                validated HSM-backed key management infrastructure. Manages GCP default
+                encryption keys. Provides key rotation automation and key destruction.
+
+                CAGE RESPONSIBILITY: (1) Create and manage CMEK keys for Cloud SQL and GCS
+                via Terraform (deployment/terraform/cloudsql.tf, storage.tf).
+                (2) Implement annual minimum key rotation schedule.
+                (3) Control IAM bindings on CMEK keys to limit access.
+                (4) Document key lifecycle procedures in the SSP.
+                (5) Test key rotation without service disruption annually.
+
+            # =================================================================
+            # SC-28: Protection of Information at Rest
+            # Status: SHARED — GCP default encryption + CAGE CMEK layer
+            # =================================================================
+            - uuid: "g6000039-0000-4000-8000-000000000039"
+              control-id: "sc-28"
+              description: >
+                GCP encrypts all data at rest by default using AES-256 encryption with
+                GCP-managed keys. This covers all storage media within GCP data centers
+                including persistent disks, Cloud SQL databases, and GCS buckets.
+                CAGE adds a second encryption layer via CMEK for Cloud SQL PostgreSQL
+                (Langfuse metadata and session data) and GCS audit log archive buckets,
+                ensuring CAGE controls the cryptographic boundary for sensitive data.
+              props:
+                - name: implementation-status
+                  value: "shared"
+              responsible-roles:
+                - role-id: common-control-provider
+                - role-id: cage-system-owner
+              remarks: >
+                GCP RESPONSIBILITY: AES-256 encryption at rest for all GCP storage by default.
+                Physical disk encryption at the storage layer inherited from GCP.
+
+                CAGE RESPONSIBILITY: (1) Enable CMEK on Cloud SQL instance for Langfuse
+                PostgreSQL data (deployment/terraform/cloudsql.tf).
+                (2) Enable CMEK on GCS buckets storing audit log archives
+                (deployment/terraform/storage.tf).
+                (3) Enable GCS object versioning on audit buckets for WORM-equivalent protection.
+                (4) Verify CMEK configuration via Terraform plan and Cloud Audit Logs.
+                (5) Redis cache stores transient session state only; CAGE ensures no persistent
+                sensitive data is stored in Redis beyond session TTL.
+
+            # =================================================================
+            # AU-3: Content of Audit Records
+            # Status: SHARED — GCP provides infrastructure audit; CAGE adds application audit
+            # =================================================================
+            - uuid: "g6000040-0000-4000-8000-000000000040"
+              control-id: "au-3"
+              description: >
+                GCP Cloud Audit Logs provide infrastructure-level audit records for all GCP
+                API calls, resource modifications, and data access events. Cloud Audit Logs
+                include: who (principal), what (method, resource), when (timestamp), and
+                where (source IP). CAGE adds application-level audit records via OpenTelemetry
+                (OTel) spans that include: governance verdict (allow/deny/manual-review),
+                control identifier (ISO 42001, NIST SP 800-53), model version, policy
+                evaluated, and business context (trade type, user role).
+              props:
+                - name: implementation-status
+                  value: "shared"
+              responsible-roles:
+                - role-id: common-control-provider
+                - role-id: cage-system-owner
+              remarks: >
+                GCP RESPONSIBILITY: Cloud Audit Logs (Admin Activity, Data Access, System Event)
+                for all GCP API operations. Cloud Logging retention per GCP policy.
+
+                CAGE RESPONSIBILITY: (1) Application-level OTel spans with AI governance
+                event attributes (src/gateway/tracing_setup.py).
+                (2) OTel export to Langfuse for trace aggregation.
+                (3) Audit log archival to GCS for SEC Rule 17a-4 retention.
+                (4) Audit record review via scripts/automated_auditor.py.
+                (5) Inclusion of AI-specific event fields: ai-governance-decision,
+                policy-violation, prompt-injection-attempt.
+
+            # =================================================================
+            # IA-2: Identification and Authentication — Organizational Users
+            # Status: SHARED — GCP IAM for organizational users; Workload Identity for services
+            # =================================================================
+            - uuid: "g6000041-0000-4000-8000-000000000041"
+              control-id: "ia-2"
+              description: >
+                GCP IAM handles authentication and authorization for organizational users
+                (human identities) accessing GCP Console, Cloud APIs, and GKE cluster.
+                GCP supports MFA enforcement via Organization Policy constraints.
+                GCP Workload Identity provides certificate-based service-to-service
+                authentication, binding Kubernetes service accounts to GCP service accounts
+                (financial-advisor-sa, agentsight-ui-sa per deployment/terraform/iam.tf).
+              props:
+                - name: implementation-status
+                  value: "shared"
+              responsible-roles:
+                - role-id: common-control-provider
+                - role-id: cage-system-owner
+              remarks: >
+                GCP RESPONSIBILITY: GCP IAM authentication infrastructure, MFA enforcement
+                capability, Workload Identity federation mechanism, and Google Identity
+                directory for organizational users.
+
+                CAGE RESPONSIBILITY: (1) Enforce MFA for all privileged (admin) access to
+                GKE cluster and GCP console via Organization Policy.
+                (2) Configure Workload Identity bindings for cage service accounts
+                (deployment/terraform/iam.tf).
+                (3) Implement and document least-privilege IAM role assignments.
+                (4) Review IAM role bindings quarterly per AC-2 account management.
+                (5) Implement API key management for external client applications.
+
+            # =================================================================
+            # SA-9: External Information System Services
+            # Status: SHARED — GKE is FedRAMP High authorized; CAGE inherits per FedRAMP
+            # =================================================================
+            - uuid: "g6000042-0000-4000-8000-000000000042"
+              control-id: "sa-9"
+              description: >
+                GKE is a FedRAMP High authorized cloud service. CAGE's use of GKE constitutes
+                a leveraged authorization relationship per NIST SP 800-37 Rev 2. GCP maintains
+                all required external service documentation, assessment results, and continuous
+                monitoring artifacts. CAGE must also document and assess other external services:
+                Langfuse SaaS (AI observability), LLM provider APIs (OpenAI/Anthropic/Google),
+                and OFAC Sanctions API.
+              props:
+                - name: implementation-status
+                  value: "shared"
+              responsible-roles:
+                - role-id: common-control-provider
+                - role-id: cage-system-owner
+              remarks: >
+                GCP RESPONSIBILITY: Maintain FedRAMP High authorization for GKE and all
+                Google-managed platform services (Cloud SQL, GCS, Cloud KMS, Secret Manager).
+                Provide authorization package access via FedRAMP Marketplace.
+
+                CAGE RESPONSIBILITY: (1) Document all external service interconnections in
+                this SSP (Langfuse, LLM APIs, OFAC API).
+                (2) Establish data processing agreements (DPAs) with Langfuse before ATO.
+                (3) Assess security posture of LLM providers; document in interconnection
+                security agreements (ISAs).
+                (4) Review GCP FedRAMP continuous monitoring reports annually.
+                (5) Include external service risks in POA&M.
+
+            # =================================================================
+            # CP-7: Alternate Processing Site
+            # Status: SHARED — GKE multi-zone; CAGE configures zone affinity
+            # =================================================================
+            - uuid: "g6000043-0000-4000-8000-000000000043"
+              control-id: "cp-7"
+              description: >
+                GKE supports multi-zone cluster configuration providing alternate processing
+                capability within the same GCP region. CAGE's GKE cluster spans at least
+                2 availability zones as configured in deployment/terraform/gke.tf, ensuring
+                that a single zone failure does not interrupt CAGE operations. GCP regional
+                infrastructure provides the physical separation between zones (distinct power,
+                cooling, and network paths per GCP infrastructure design).
+              props:
+                - name: implementation-status
+                  value: "shared"
+              responsible-roles:
+                - role-id: common-control-provider
+                - role-id: cage-system-owner
+              remarks: >
+                GCP RESPONSIBILITY: Provides multi-zone GKE cluster capability and physical
+                zone separation within GCP regions. Guarantees zone-level failure isolation.
+
+                CAGE RESPONSIBILITY: (1) Configure GKE node pool with multi-zone topology
+                spreading (deployment/terraform/gke.tf).
+                (2) Configure pod anti-affinity rules to distribute CAGE workloads across zones.
+                (3) Verify multi-zone failover via disaster recovery testing (CP-4).
+                (4) Establish and test RTO/RPO objectives for zone failure scenarios.
+                (5) Document alternate processing procedures in the Contingency Plan (CP-2).
+
+            # =================================================================
+            # CP-9: Information System Backup
+            # Status: SHARED — GCP automated backups; CAGE application-level procedures
+            # =================================================================
+            - uuid: "g6000044-0000-4000-8000-000000000044"
+              control-id: "cp-9"
+              description: >
+                GCP provides automated backup capabilities for Cloud SQL PostgreSQL
+                (daily automated backups with configurable retention period, point-in-time
+                recovery). GCS provides object versioning enabling recovery of previous
+                object versions for audit log archives. CAGE is responsible for application-level
+                backup procedures including Kubernetes manifest backup, Terraform state backup,
+                governance policy backup, and regular restore testing to verify backup integrity.
+              props:
+                - name: implementation-status
+                  value: "shared"
+              responsible-roles:
+                - role-id: common-control-provider
+                - role-id: cage-system-owner
+              remarks: >
+                GCP RESPONSIBILITY: Cloud SQL automated daily backups (7-day default retention,
+                configurable). Cloud SQL point-in-time recovery. GCS object versioning capability.
+                Backup data encryption with GCP-managed or CMEK keys.
+
+                CAGE RESPONSIBILITY: (1) Enable and configure Cloud SQL automated backups
+                with appropriate retention period (deployment/terraform/cloudsql.tf).
+                (2) Enable GCS object versioning on all audit log buckets.
+                (3) Backup Terraform state to a separate GCS bucket with versioning.
+                (4) Test database restore quarterly and document results.
+                (5) Backup governance policies (Rego, Colang) to GCS on every change.
+                (6) Document backup and restore procedures in the Contingency Plan.
+
+            # =================================================================
+            # SI-3: Malicious Code Protection
+            # Status: SHARED — GKE Binary Authorization + CAGE CI scanning
+            # =================================================================
+            - uuid: "g6000045-0000-4000-8000-000000000045"
+              control-id: "si-3"
+              description: >
+                GKE uses the Container Analysis API to scan container images for known
+                vulnerabilities (CVEs) and Binary Authorization to enforce policies
+                requiring only signed/scanned images to be deployed to the cluster.
+                Binary Authorization policies prevent deployment of images from untrusted
+                registries or images with critical unresolved vulnerabilities. CAGE adds
+                CI pipeline image scanning via Trivy (.github/workflows/security-scan.yml)
+                for early detection before images reach the registry.
+              props:
+                - name: implementation-status
+                  value: "shared"
+              responsible-roles:
+                - role-id: common-control-provider
+                - role-id: cage-system-owner
+              remarks: >
+                GCP RESPONSIBILITY: GKE Container Analysis API for registry image scanning.
+                Binary Authorization policy enforcement at deploy time. Artifact Registry
+                vulnerability scanning for all pushed images.
+
+                CAGE RESPONSIBILITY: (1) Configure Binary Authorization policy to require
+                attestations before production deployment.
+                (2) Run Trivy image scans in CI (.github/workflows/security-scan.yml).
+                (3) Define acceptable vulnerability threshold (no CRITICAL/HIGH unpatched CVEs
+                at deploy time per POAM-010).
+                (4) Review Container Analysis scan results before production deployments.
+                (5) Maintain SBOM (Software Bill of Materials) updated with each release.
+
+  back-matter:
+    resources:
+      - uuid: "y8000001-0000-4000-8000-000000000001"
+        title: "GCP FedRAMP High Authorization Package"
+        rlinks:
+          - href: "https://marketplace.fedramp.gov/products/FR1817875220"
+        remarks: "GCP FedRAMP High Package ID: FR1817875220. Access requires FedRAMP Marketplace registration."
+      - uuid: "y8000002-0000-4000-8000-000000000002"
+        title: "GCP Security Compliance — FedRAMP"
+        rlinks:
+          - href: "https://cloud.google.com/security/compliance/fedramp"
+      - uuid: "y8000003-0000-4000-8000-000000000003"
+        title: "CAGE System Security Plan"
+        rlinks:
+          - href: "compliance/oscal/system-security-plan.yaml"
+            media-type: "application/yaml"
+      - uuid: "y8000004-0000-4000-8000-000000000004"
+        title: "CAGE SP 800-53 HIGH Baseline Profile"
+        rlinks:
+          - href: "compliance/oscal/sp800053-profile.yaml"
+            media-type: "application/yaml"
+      - uuid: "y8000005-0000-4000-8000-000000000005"
+        title: "CAGE Decommission Checklist (SP 800-88)"
+        rlinks:
+          - href: "docs/DECOMMISSION_CHECKLIST.md"
+            media-type: "text/markdown"
+      - uuid: "y8000006-0000-4000-8000-000000000006"
+        title: "NIST SP 800-37 Rev 2 — Risk Management Framework"
+        rlinks:
+          - href: "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-37r2.pdf"
+            media-type: "application/pdf"
+      - uuid: "y8000007-0000-4000-8000-000000000007"
+        title: "NIST SP 800-88 Rev 1 — Guidelines for Media Sanitization"
+        rlinks:
+          - href: "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-88r1.pdf"
+            media-type: "application/pdf"

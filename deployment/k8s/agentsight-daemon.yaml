@@ -1,0 +1,157 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentsight-daemon-config
+  namespace: governance-stack
+  labels:
+    app: agentsight-daemon
+    component: ebpf-observability
+data:
+  config.yaml: |
+    # AgentSight Daemon Configuration (in-cluster)
+    # https://github.com/agent-sight/agentsight
+
+    daemon:
+      log_level: "info"
+      # Target Process Selector
+      # If left empty, it monitors all processes matching the pattern (default: python3)
+      target_pattern: "python3"
+
+    # eBPF Probe Configuration
+    probes:
+      # Intent: SSL/TLS Interception (OpenSSL)
+      ssl:
+        enabled: true
+        library_path: "/usr/lib/x86_64-linux-gnu/libssl.so.3" # Adjust for your base image
+
+      # Action: System Call Monitoring
+      syscalls:
+        enabled: true
+        events:
+          - execve
+          - openat
+          - connect
+          - socket
+          - bind
+
+    # Output / Export Configuration
+    # type: "remote" sends events to the AgentSight UI backend over HTTP.
+    # endpoint resolves to kubernetes_service.agentsight_ui in governance-stack namespace.
+    exporter:
+      type: "remote"
+      endpoint: "http://agentsight-ui.governance-stack.svc.cluster.local:8080"
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: agentsight-daemon
+  namespace: governance-stack
+  labels:
+    app: agentsight-daemon
+    component: ebpf-observability
+spec:
+  selector:
+    matchLabels:
+      app: agentsight-daemon
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: agentsight-daemon
+        component: ebpf-observability
+    spec:
+      # Required for kernel-level process and network tracing
+      hostPID: true
+      hostNetwork: true
+
+      nodeSelector:
+        kubernetes.io/os: linux
+
+      # Tolerate GPU/spot node taints so the daemon runs on every node type
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+        - operator: Exists
+          effect: NoExecute
+
+      containers:
+        - name: agentsight-daemon
+          image: ghcr.io/agent-sight/agentsight-daemon:latest
+          imagePullPolicy: Always
+
+          # eBPF requires elevated privileges and specific Linux capabilities
+          securityContext:
+            privileged: true
+            capabilities:
+              add:
+                - SYS_ADMIN    # eBPF program loading, perf events
+                - NET_ADMIN    # network socket/interface manipulation
+                - SYS_PTRACE   # process inspection across PID namespaces
+                - SYS_RESOURCE # raise rlimits for eBPF map memory
+
+          env:
+            - name: LOG_LEVEL
+              value: "info"
+
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+
+          volumeMounts:
+            # Kernel debug/tracing filesystem — required for eBPF
+            - name: sys
+              mountPath: /sys
+              readOnly: true
+            # Process filesystem — required for cross-PID namespace visibility
+            - name: proc
+              mountPath: /proc
+              readOnly: true
+            # Kernel headers — required for eBPF CO-RE (Compile Once, Run Everywhere)
+            - name: usr-src
+              mountPath: /usr/src
+              readOnly: true
+            # Daemon configuration from ConfigMap
+            - name: agentsight-config
+              mountPath: /etc/agentsight/config.yaml
+              subPath: config.yaml
+              readOnly: true
+
+      volumes:
+        - name: sys
+          hostPath:
+            path: /sys
+            type: Directory
+        - name: proc
+          hostPath:
+            path: /proc
+            type: Directory
+        - name: usr-src
+          hostPath:
+            path: /usr/src
+            type: DirectoryOrCreate
+        - name: agentsight-config
+          configMap:
+            name: agentsight-daemon-config

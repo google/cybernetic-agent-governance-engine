@@ -1,0 +1,620 @@
+/*
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Override index.css default centered flex body layout for full screen dashboard */
+body, html, #root {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    min-height: 100vh !important;
+    max-width: none !important;
+    display: block !important;
+    background-color: #121212 !important;
+    color: #eeeeee !important;
+    overflow: hidden !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+}
+
+.dashboard-layout {
+    display: flex;
+    flex-direction: row;
+    width: 100vw;
+    height: 100vh;
+    background-color: #121212;
+    color: #eeeeee;
+    box-sizing: border-box;
+    overflow: hidden;
+    position: relative;
+}
+
+/* Sidebar / Left Column */
+.sidebar-pane {
+    width: 38%;
+    min-width: 360px;
+    max-width: 500px;
+    border-right: 1px solid #222;
+    display: flex;
+    flex-direction: column;
+    padding: 24px;
+    box-sizing: border-box;
+    background-color: #161616;
+    overflow-y: auto;
+    height: 100vh;
+}
+
+.sidebar-pane h1 {
+    font-size: 1.8rem;
+    margin: 0 0 6px 0;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    background: linear-gradient(90deg, #bb86fc, #03dac6);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.subtitle {
+    font-size: 0.85rem;
+    color: #888;
+    margin: 0 0 24px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.health-badge {
+    background-color: #222;
+    border: 1px solid #333;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    color: #aaa;
+}
+
+.loading-indicator {
+    color: #bb86fc;
+    font-size: 0.95rem;
+    font-style: italic;
+    margin: 16px 0;
+}
+
+.fetch-error-banner {
+    background-color: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 16px;
+    color: #fca5a5;
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+/* Telemetry list */
+.sidebar-pane ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.telemetry-item {
+    padding: 14px;
+    background-color: #1e1e1e;
+    border: 1px solid #2d2d2d;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+    user-select: none;
+}
+
+.telemetry-item:hover {
+    background-color: #242424;
+    border-color: #444;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.telemetry-item.selected {
+    background-color: #2a2235;
+    border-color: #bb86fc;
+    box-shadow: 0 0 10px rgba(187, 134, 252, 0.15);
+}
+
+.telemetry-item.selected::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 12px;
+    bottom: 12px;
+    width: 3px;
+    background-color: #bb86fc;
+    border-radius: 0 4px 4px 0;
+}
+
+.trace-id {
+    color: #03dac6;
+    font-family: 'Fira Code', monospace;
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.span-name {
+    color: #e2e8f0;
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.safety-rate {
+    font-family: 'Fira Code', monospace;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.timestamp {
+    color: #666;
+    font-size: 0.75rem;
+    align-self: flex-end;
+}
+
+/* Drill-down details pane / Right Column */
+.details-pane {
+    flex: 1;
+    background-color: #121212;
+    overflow-y: auto;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+}
+
+.empty-details-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    width: 100%;
+    color: #555;
+    text-align: center;
+    padding: 40px;
+    box-sizing: border-box;
+    align-self: center;
+}
+
+.empty-icon {
+    font-size: 4.5rem;
+    margin-bottom: 20px;
+    color: #2d2d2d;
+    animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+}
+
+.empty-details-card h3 {
+    margin: 0 0 10px 0;
+    color: #888;
+    font-size: 1.3rem;
+    font-weight: 600;
+}
+
+.empty-details-card p {
+    max-width: 380px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: #666;
+    margin: 0;
+}
+
+.details-card {
+    padding: 40px;
+    width: 100%;
+    max-width: 960px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+}
+
+.details-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #222;
+    padding-bottom: 20px;
+}
+
+.details-header h2 {
+    margin: 0;
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #f8fafc;
+}
+
+.event-type-badge {
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+.event-type-badge.AUDIT_FINDING {
+    background-color: rgba(59, 130, 246, 0.1);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.event-type-badge.GOVERNANCE_VIOLATION {
+    background-color: rgba(239, 68, 68, 0.1);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.15);
+}
+
+.event-type-badge.REMEDIATION_GENERATED {
+    background-color: rgba(16, 185, 129, 0.1);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.section {
+    background-color: #161616;
+    border: 1px solid #222;
+    border-radius: 12px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.section h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #bb86fc;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    border-left: 3px solid #bb86fc;
+    padding-left: 10px;
+}
+
+.meta-grid {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    row-gap: 14px;
+    column-gap: 16px;
+    font-size: 0.9rem;
+    align-items: center;
+}
+
+.meta-label {
+    color: #71717a;
+    font-weight: 500;
+}
+
+.meta-value {
+    color: #e4e4e7;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.meta-value code {
+    background-color: #222;
+    padding: 3px 6px;
+    border-radius: 4px;
+    font-family: 'Fira Code', monospace;
+    font-size: 0.85rem;
+    border: 1px solid #333;
+}
+
+.control-id-value {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.control-desc {
+    color: #a1a1aa;
+    font-weight: 400;
+}
+
+.trace-link-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.langfuse-trace-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background-color: #6366f1;
+    color: #ffffff;
+    padding: 6px 12px;
+    border-radius: 6px;
+    text-decoration: none;
+    font-size: 0.8rem;
+    font-weight: 600;
+    transition: all 0.2s;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.langfuse-trace-btn:hover {
+    background-color: #4f46e5;
+    color: #ffffff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(99, 102, 241, 0.3);
+}
+
+/* Result & metrics displaying */
+.result-display {
+    display: flex;
+    gap: 20px;
+    width: 100%;
+}
+
+.metric-box {
+    flex: 1;
+    background-color: #1e1e1e;
+    border: 1px solid #2d2d2d;
+    border-radius: 8px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.metric-label {
+    font-size: 0.7rem;
+    color: #71717a;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+}
+
+.metric-value {
+    font-size: 1.8rem;
+    font-weight: 700;
+    font-family: 'Fira Code', monospace;
+}
+
+.result-badge {
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 0.85rem;
+    width: fit-content;
+}
+
+.result-badge.PASS {
+    background-color: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.result-badge.FAIL {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.result-badge.NOT_APPLICABLE {
+    background-color: rgba(113, 113, 122, 0.15);
+    color: #d4d4d8;
+    border: 1px solid rgba(113, 113, 122, 0.3);
+}
+
+.progress-bar-container {
+    width: 100%;
+    height: 6px;
+    background-color: #27272a;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Symbolic code / policies */
+.policy-intro {
+    font-size: 0.85rem;
+    color: #a1a1aa;
+    margin: 0;
+    line-height: 1.5;
+}
+
+.policy-code {
+    background-color: #0b0b0c;
+    border: 1px solid #27272a;
+    border-radius: 8px;
+    padding: 16px;
+    font-family: 'Fira Code', monospace;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    color: #38bdf8;
+    overflow-x: auto;
+    white-space: pre;
+    margin: 0;
+}
+
+/* Connection indicator */
+.connection-status {
+    position: absolute;
+    top: 24px;
+    right: 24px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.75rem;
+    color: #71717a;
+    z-index: 100;
+    background-color: rgba(18, 18, 18, 0.8);
+    backdrop-filter: blur(4px);
+    padding: 4px 10px;
+    border-radius: 20px;
+    border: 1px solid #222;
+}
+
+.connection-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.connection-dot.connected {
+    background-color: #10b981;
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+}
+
+.connection-dot.connecting {
+    background-color: #f59e0b;
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+    animation: sse-pulse 1.5s ease-in-out infinite;
+}
+
+.connection-dot.error {
+    background-color: #ef4444;
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+}
+
+@keyframes sse-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+/* Global modal overlays */
+.security-alert-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(8px);
+}
+
+.security-alert-modal {
+    background-color: #180808;
+    border: 1px solid #ef4444;
+    padding: 32px;
+    border-radius: 16px;
+    max-width: 500px;
+    width: 90%;
+    color: #ffffff;
+    box-shadow: 0 10px 40px rgba(239, 68, 68, 0.2);
+    animation: shake 0.5s ease-in-out;
+}
+
+.alert-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.alert-icon {
+    font-size: 2.5rem;
+}
+
+.alert-header h2 {
+    margin: 0;
+    color: #ef4444;
+    font-size: 1.3rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+.alert-body {
+    margin-bottom: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.error-code {
+    background-color: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-family: 'Fira Code', monospace;
+    font-weight: 700;
+    color: #fca5a5;
+    font-size: 0.85rem;
+    width: fit-content;
+}
+
+.error-message {
+    font-size: 1rem;
+    line-height: 1.6;
+    margin: 8px 0;
+    color: #e4e4e7;
+}
+
+.warning-text {
+    color: #a1a1aa;
+    font-style: italic;
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+
+.alert-close {
+    width: 100%;
+    padding: 12px;
+    background-color: #ef4444;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.alert-close:hover {
+    background-color: #dc2626;
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20%, 60% { transform: translateX(-6px); }
+    40%, 80% { transform: translateX(6px); }
+}

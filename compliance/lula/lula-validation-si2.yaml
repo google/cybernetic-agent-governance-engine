@@ -1,0 +1,143 @@
+# lula-validation-si2.yaml
+# NIST SP 800-53 Rev 5 — SI-2: Flaw Remediation (Dependency Pinning)
+#
+# STUB: This validation requires cluster-specific namespace configuration
+# before activation. See TODO comments below.
+#
+# Asserts that:
+#   1. The cage-gateway Deployment image tag is NOT :latest (must be pinned)
+#   2. The cage-compliance-bridge Deployment image tag is NOT :latest
+#   3. All container images use imagePullPolicy: Always (fresh pulls for patches)
+#   4. A CronJob or Job labeled cage.io/purpose: vulnerability-scan exists
+#      in any namespace (CI scanning evidence)
+#
+# Domain: kubernetes → Deployments, CronJobs in governance-stack namespace
+# Provider: opa (inline Rego)
+#
+# References:
+#   - deployment/k8s/backend-deployment.yaml — governed-financial-advisor Deployment
+#   - deployment/k8s/compliance-bridge.yaml — compliance bridge Deployment
+#   - .github/workflows/security-scan.yml — CI Trivy container scanning
+#   - docs/POAM.md — POAM-013 (SI-2: unpinned Python dependencies)
+#   - docs/POAM.md — POAM-010 (RA-5: no vulnerability scanning in CI)
+#
+# OSCAL Mapping:
+#   component: cage-gateway
+#   control: si-2
+
+# STUB: Update namespaces below to the actual cage cluster namespace.
+# TODO: Replace 'governance-stack' with the actual namespace if different.
+# TODO: Confirm Deployment names from deployment/k8s/*.yaml files.
+# TODO: Confirm CronJob label cage.io/purpose: vulnerability-scan is applied
+#       to the security scanning CronJob (see lula-validation-ra5.yaml).
+
+domain:
+  type: kubernetes
+  kubernetes-spec:
+    resources:
+      - name: cage-deployments
+        resource: deployments
+        # TODO: Replace 'governance-stack' with the actual cage namespace.
+        namespace: governance-stack
+      - name: vuln-scan-cronjobs
+        resource: cronjobs
+        # CronJob may be in any namespace — check governance-stack first.
+        # TODO: Update namespace to match where the scan CronJob is deployed.
+        namespace: governance-stack
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+      import future.keywords.every
+
+      # SI-2: Flaw Remediation — Image Pinning and Vulnerability Scanning
+      #
+      # Check 1: cage-gateway (governed-financial-advisor) image must not use :latest.
+      # Check 2: cage-compliance-bridge image must not use :latest.
+      # Check 3: All containers must use imagePullPolicy: Always.
+      # Check 4: At least one CronJob or Job with label cage.io/purpose: vulnerability-scan
+      #          must exist (evidence of continuous vulnerability scanning).
+      #
+      # POAM-013: unpinned Python dependency versions (pip freeze lockfiles needed).
+      # This validation addresses the container image pinning dimension of SI-2;
+      # dependency lockfile pinning is tracked separately in POAM-013.
+
+      # Returns true if the image string contains :latest or has no tag (implies latest)
+      uses_latest_tag(image) if { endswith(image, ":latest") }
+      uses_latest_tag(image) if { not contains(image, ":") }
+
+      # Check 1 + 2: Named CAGE deployments must not use :latest images.
+      cage_images_pinned if {
+        gateway_deploys := [d | d := input["cage-deployments"][_];
+          contains(d.metadata.name, "governed-financial-advisor")]
+        count(gateway_deploys) >= 1
+        every deploy in gateway_deploys {
+          every container in deploy.spec.template.spec.containers {
+            not uses_latest_tag(container.image)
+          }
+        }
+      }
+
+      bridge_images_pinned if {
+        bridge_deploys := [d | d := input["cage-deployments"][_];
+          contains(d.metadata.name, "compliance-bridge")]
+        count(bridge_deploys) >= 1
+        every deploy in bridge_deploys {
+          every container in deploy.spec.template.spec.containers {
+            not uses_latest_tag(container.image)
+          }
+        }
+      }
+
+      # Check 3: All containers across all CAGE deployments must use imagePullPolicy: Always.
+      all_containers_pull_always if {
+        every deploy in input["cage-deployments"] {
+          every container in deploy.spec.template.spec.containers {
+            container.imagePullPolicy == "Always"
+          }
+        }
+      }
+
+      # Check 4: At least one vulnerability-scan CronJob must exist.
+      vuln_scan_exists if {
+        some cj in input["vuln-scan-cronjobs"]
+        cj.metadata.labels["cage.io/purpose"] == "vulnerability-scan"
+        cj.spec.schedule != null
+      }
+
+      validate if {
+        cage_images_pinned
+        bridge_images_pinned
+        all_containers_pull_always
+        vuln_scan_exists
+      }
+
+notes: >
+  NIST SP 800-53 Rev 5 SI-2: Flaw Remediation — Image Pinning and Vulnerability Scanning.
+  STUB — requires cluster-specific namespace configuration before activation.
+  Implements four flaw remediation assertions for the CAGE governance namespace:
+    (1) cage-gateway (governed-financial-advisor) Deployment images must NOT use
+        :latest tag — all images must be pinned to a digest or semantic version
+        (prevents uncontrolled updates that could introduce vulnerabilities).
+    (2) cage-compliance-bridge Deployment images must NOT use :latest tag
+        (same rationale as above for the compliance reporting service).
+    (3) All container images must use imagePullPolicy: Always (ensures the runtime
+        always pulls the pinned digest rather than using a potentially stale cached
+        image — critical for security patches to be applied on pod restart).
+    (4) At least one CronJob labeled cage.io/purpose: vulnerability-scan must exist
+        (provides continuous vulnerability scanning evidence per SI-2 and RA-5;
+        see also lula-validation-ra5.yaml for the dedicated RA-5 validation).
+  Note: deployment/k8s/backend-deployment.yaml currently uses :latest image tags —
+  this is flagged as a gap; image tags must be pinned before ATO (see POAM-013).
+  Remediates (partially): POAM-013 (SI-2: unpinned Python dependencies — container
+  image pinning dimension). Python dependency lockfiles are addressed separately.
+  Remediates (partially): POAM-010 (RA-5: no vulnerability scanning in CI —
+  CronJob evidence complements GitHub Actions Trivy scanning).
+  Activation: confirm namespace and Deployment/CronJob names, update fields, and
+  enable in deployment/k8s/lula-cron.yaml.
+  See: compliance/continuous-monitoring/ISCM_STRATEGY.md — SI-2 monitoring cadence.
+  See: docs/POAM.md — POAM-013 (SI-2 remediation), POAM-010 (RA-5 remediation).

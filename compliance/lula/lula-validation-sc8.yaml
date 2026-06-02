@@ -1,0 +1,161 @@
+# lula-validation-sc8.yaml
+# NIST SP 800-53 Rev 5 — SC-8: Transmission Confidentiality and Integrity
+#
+# STUB: This validation requires cluster-specific namespace configuration
+# before activation. See TODO comments below.
+#
+# Asserts that:
+#   1. All Services in the cage namespace use port 443 or 8443 or named "https"
+#      (no cleartext HTTP-only services exposed externally)
+#   2. A default-deny NetworkPolicy exists (enforcing ingress restrictions)
+#   3. Ingress resources (if any) have TLS configured
+#   4. Deployments have readOnlyRootFilesystem: true OR carry a TLS enforcement
+#      annotation (cage.io/tls-enforced: "true")
+#
+# Domain: kubernetes → Services, NetworkPolicies, Ingresses, Deployments
+# Provider: opa (inline Rego)
+#
+# References:
+#   - deployment/k8s/network-policy.yaml — default-deny-ingress NetworkPolicy
+#   - deployment/k8s/ingress.yaml — Ingress TLS configuration
+#   - deployment/k8s/backend-deployment.yaml — container security context
+#   - docs/POAM.md — POAM-011 (SC-8: no TLS assertion in test suite)
+#
+# OSCAL Mapping:
+#   component: cage-gateway
+#   control: sc-8
+
+# STUB: Update namespaces below to the actual cage cluster namespace.
+# TODO: Replace 'governance-stack' with the actual namespace if different.
+# TODO: Confirm Ingress resource names from deployment/k8s/ingress.yaml.
+
+domain:
+  type: kubernetes
+  kubernetes-spec:
+    resources:
+      - name: cage-services
+        resource: services
+        # TODO: Replace 'governance-stack' with the actual cage namespace.
+        namespace: governance-stack
+      - name: cage-network-policies
+        resource: networkpolicies
+        # TODO: Replace 'governance-stack' with the actual cage namespace.
+        namespace: governance-stack
+      - name: cage-ingresses
+        resource: ingresses
+        # TODO: Replace 'governance-stack' with the actual cage namespace.
+        namespace: governance-stack
+      - name: cage-deployments
+        resource: deployments
+        # TODO: Replace 'governance-stack' with the actual cage namespace.
+        namespace: governance-stack
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+      import future.keywords.every
+
+      # SC-8: Transmission Confidentiality and Integrity
+      #
+      # Check 1: All Services must expose port 443, 8443, or use name "https".
+      #          ClusterIP internal-only services on other ports are allowed only
+      #          if they carry the cage.io/internal-only: "true" annotation.
+      # Check 2: default-deny-ingress NetworkPolicy must exist.
+      # Check 3: All Ingress resources must have TLS blocks configured.
+      # Check 4: Deployments must have readOnlyRootFilesystem: true
+      #          OR carry cage.io/tls-enforced: "true" annotation.
+
+      # Allowed TLS port numbers for external-facing services
+      is_tls_port(port) if { port.port == 443 }
+      is_tls_port(port) if { port.port == 8443 }
+      is_tls_port(port) if { port.name == "https" }
+
+      # Internal-only services (ClusterIP with annotation) are exempt from TLS port check
+      is_internal_only(svc) if {
+        svc.spec.type == "ClusterIP"
+        svc.metadata.annotations["cage.io/internal-only"] == "true"
+      }
+
+      # Check 1: Services expose TLS ports or are annotated as internal-only.
+      services_use_tls if {
+        every svc in input["cage-services"] {
+          svc.metadata.name != "kubernetes"
+          is_internal_only(svc)
+        }
+      }
+
+      services_use_tls if {
+        non_internal_svcs := [s | s := input["cage-services"][_]; s.metadata.name != "kubernetes"; not is_internal_only(s)]
+        every svc in non_internal_svcs {
+          some port in svc.spec.ports
+          is_tls_port(port)
+        }
+      }
+
+      # Check 2: default-deny NetworkPolicy must exist.
+      default_deny_exists if {
+        some np in input["cage-network-policies"]
+        np.metadata.name == "default-deny-ingress"
+        np.spec.policyTypes[_] == "Ingress"
+      }
+
+      # Check 3: All Ingress resources must have TLS configured.
+      ingresses_have_tls if {
+        count(input["cage-ingresses"]) == 0  # No ingresses — acceptable for internal deployments
+      }
+
+      ingresses_have_tls if {
+        count(input["cage-ingresses"]) > 0
+        every ingress in input["cage-ingresses"] {
+          count(ingress.spec.tls) > 0
+        }
+      }
+
+      # Check 4: Deployments have readOnlyRootFilesystem OR TLS annotation.
+      deployment_tls_enforced(deploy) if {
+        deploy.metadata.annotations["cage.io/tls-enforced"] == "true"
+      }
+
+      deployment_tls_enforced(deploy) if {
+        some container in deploy.spec.template.spec.containers
+        container.securityContext.readOnlyRootFilesystem == true
+      }
+
+      deployments_secure if {
+        every deploy in input["cage-deployments"] {
+          deployment_tls_enforced(deploy)
+        }
+      }
+
+      validate if {
+        services_use_tls
+        default_deny_exists
+        ingresses_have_tls
+        deployments_secure
+      }
+
+notes: >
+  NIST SP 800-53 Rev 5 SC-8: Transmission Confidentiality and Integrity.
+  STUB — requires cluster-specific namespace configuration before activation.
+  Implements four transmission security assertions for the CAGE governance namespace:
+    (1) All Services must expose TLS ports (443 or 8443) or be named "https".
+        ClusterIP services annotated cage.io/internal-only: "true" are exempt
+        (they rely on NetworkPolicy L3/L4 isolation for confidentiality).
+    (2) default-deny-ingress NetworkPolicy must exist (enforces boundary isolation
+        per network-policy.yaml; prevents unencrypted lateral movement).
+    (3) All Ingress resources must have spec.tls blocks configured (no HTTP-only
+        ingress paths; TLS termination at the cluster edge required).
+    (4) All Deployments must have readOnlyRootFilesystem: true in container
+        securityContext OR carry the cage.io/tls-enforced: "true" annotation
+        (defense-in-depth: immutable filesystem prevents TLS config tampering).
+  Remediates: POAM-011 (SC-8: no encryption-in-transit validation test).
+  This Lula validation provides automated SC-8 evidence in lieu of the missing
+  test assertion in tests/test_gateway_connectivity.py (see POAM-011).
+  Activation: confirm namespace and resource names, update fields, and enable in
+  deployment/k8s/lula-cron.yaml.
+  See: compliance/continuous-monitoring/ISCM_STRATEGY.md — SC-8 monitoring cadence.
+  See: docs/POAM.md — POAM-011 (SC-8 remediation).

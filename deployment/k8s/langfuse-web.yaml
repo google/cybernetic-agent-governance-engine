@@ -1,0 +1,191 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: langfuse-web
+  namespace: governance-stack
+  labels:
+    app: langfuse-web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: langfuse-web
+  template:
+    metadata:
+      labels:
+        app: langfuse-web
+    spec:
+      serviceAccountName: "financial-advisor-sa"
+      securityContext:
+        fsGroup: 65532
+      # Stable Tier: Avoid Spot nodes to prevent downtime at minReplicas=1
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: cloud.google.com/gke-spot
+                    operator: NotIn
+                    values:
+                      - "true"
+      containers:
+        - name: langfuse-web
+          image: langfuse/langfuse:3
+          ports:
+            - containerPort: 3000
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://REDACTED:REDACTED@postgresql.governance-stack.svc.cluster.local:5432/langfuse"
+            - name: LANGFUSE_INIT_USER_EMAIL
+              value: "dev-admin@local.com"
+            - name: LANGFUSE_INIT_USER_PASSWORD
+              value: "dev-password-123"
+            - name: LANGFUSE_INIT_PROJECT_NAME
+              value: "cybernetic-governance"
+            - name: LANGFUSE_INIT_PROJECT_ID
+              value: "cybernetic-governance"
+            - name: LANGFUSE_INIT_ORG_ID
+              value: "CAGE"
+            - name: LANGFUSE_INIT_ORG_NAME
+              value: "CAGE"
+            - name: LANGFUSE_INIT_PROJECT_PUBLIC_KEY
+              value: "REDACTED_LANGFUSE_PK"
+            - name: LANGFUSE_INIT_PROJECT_SECRET_KEY
+              value: "REDACTED_LANGFUSE_SK"
+            - name: CLICKHOUSE_URL
+              value: "http://clickhouse.governance-stack.svc.cluster.local:8123"
+            - name: CLICKHOUSE_MIGRATION_URL
+              value: "clickhouse://default:ja8oXQmCBZld6NHkKI0PV09SEkqzMgOX@clickhouse.governance-stack.svc.cluster.local:9000"
+            - name: CLICKHOUSE_USER
+              value: "default"
+            - name: CLICKHOUSE_PASSWORD
+              value: "ja8oXQmCBZld6NHkKI0PV09SEkqzMgOX"
+            - name: CLICKHOUSE_PORT
+              value: "8123"
+            - name: LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS
+              value: "1000"
+            - name: LANGFUSE_INGESTION_CLICKHOUSE_WRITE_BATCH_SIZE
+              value: "1"
+            - name: REDIS_CONNECTION_STRING
+              value: "redis://REDACTED@redis-node-0.redis-headless.governance-stack.svc.cluster.local:6379"
+            - name: REDIS_URL
+              value: "redis://REDACTED@redis-node-0.redis-headless.governance-stack.svc.cluster.local:6379"
+            - name: REDIS_HOST
+              value: "redis-node-0.redis-headless.governance-stack.svc.cluster.local"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: LOG_LEVEL
+              value: "debug"
+            - name: LANGFUSE_LOG_LEVEL
+              value: "debug"
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            - name: PORT
+              value: "3000"
+            - name: NEXTAUTH_URL
+              value: "http://localhost:3000"
+            - name: AUTH_TRUST_HOST
+              value: "true"
+            - name: LANGFUSE_S3_EVENT_UPLOAD_ENABLED
+              value: "true"
+            - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
+              value: "https://storage.googleapis.com"
+            - name: AWS_ENDPOINT_URL_S3
+              value: "https://storage.googleapis.com"
+            - name: LANGFUSE_S3_EVENT_UPLOAD_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: oscal-artifact-secrets
+                  key: bucket-name
+            - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
+              value: "auto"
+            - name: AWS_S3_PATH_STYLE_ACCESS
+              value: "true"
+            - name: LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE
+              value: "true"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: oscal-artifact-secrets
+                  key: hmac-access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: oscal-artifact-secrets
+                  key: hmac-secret-key
+            - name: LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: oscal-artifact-secrets
+                  key: hmac-access-key
+            - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: oscal-artifact-secrets
+                  key: hmac-secret-key
+            - name: NEXTAUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-secrets
+                  key: nextauth-secret
+            - name: SALT
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-secrets
+                  key: salt
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-secrets
+                  key: encryption-key
+            - name: CLICKHOUSE_CLUSTER_ENABLED
+              value: "false"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /api/public/health
+              port: 3000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 10
+          readinessProbe:
+            httpGet:
+              path: /api/public/health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: langfuse-web
+  namespace: governance-stack
+spec:
+  selector:
+    app: langfuse-web
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+  type: ClusterIP

@@ -1,0 +1,72 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+FROM python:3.12-slim
+
+WORKDIR /app
+ENV PYTHONPATH=/app:/app/src/gateway/protos
+
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  build-essential \
+  git \
+  curl \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install uv (pip install avoids GHCR connectivity issues in Cloud Build)
+RUN pip install --no-cache-dir uv
+
+# Create virtual environment
+RUN uv venv /app/.venv
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Copy dependency definitions — both files required for uv sync --frozen
+COPY pyproject.toml uv.lock ./
+
+# Install locked dependencies from uv.lock.
+# --extra gateway pulls: nemoguardrails, presidio-analyzer, presidio-anonymizer,
+#                        spacy, grpcio, protobuf, opentelemetry instrumentation.
+RUN uv sync --frozen --no-dev --extra gateway --extra advisor --no-install-project
+
+# Install spaCy English model via direct wheel (avoids CDN redirect failures)
+RUN pip install --no-cache-dir \
+  "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
+
+# Copy source — the entire gateway directory to ensure all cross-imports resolve
+COPY src/gateway/ /app/src/gateway/
+COPY src/governed_financial_advisor/ /app/src/governed_financial_advisor/
+COPY src/__init__.py /app/src/__init__.py
+
+# Generate gRPC protobuf bindings
+RUN uv pip install grpcio-tools && \
+    cd src/gateway/protos && \
+    python -m grpc_tools.protoc \
+    -I=. \
+    --python_out=. \
+    --grpc_python_out=. \
+    *.proto
+COPY config /app/config
+
+# Expose port (default 8000; override via PORT env var at runtime)
+ARG PORT=8000
+ENV PORT=$PORT
+EXPOSE $PORT
+
+# Healthcheck
+HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
+  CMD curl -f http://localhost:${PORT}/health || exit 1
+
+# Start NeMo Guardrails server
+CMD ["sh", "-c", "python -m src.gateway.governance.nemo.server"]

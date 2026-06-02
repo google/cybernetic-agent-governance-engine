@@ -1,0 +1,161 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compliance-bridge
+  namespace: governance-stack
+  labels:
+    app: compliance-bridge
+    compliance.iso42001/component: "evidence-bridge"
+    app.kubernetes.io/version: "2.0.0"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: compliance-bridge
+  template:
+    metadata:
+      labels:
+        app: compliance-bridge
+    spec:
+      serviceAccountName: financial-advisor-sa
+      containers:
+        - name: compliance-bridge
+          image: gcr.io/YOUR_GCP_PROJECT_ID/compliance-bridge:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3001
+              name: http
+          env:
+            # Main Langfuse project (application performance metrics)
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-secrets
+                  key: public-key
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-secrets
+                  key: secret-key
+            - name: LANGFUSE_HOST
+              value: "http://langfuse-web.governance-stack.svc.cluster.local"
+
+            # Dedicated Langfuse compliance project (audit traces isolated from app metrics)
+            - name: LANGFUSE_COMPLIANCE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-compliance-secrets
+                  key: public-key
+            - name: LANGFUSE_COMPLIANCE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: langfuse-compliance-secrets
+                  key: secret-key
+
+            # ---------------------------------------------------------------------------
+            # S3-compatible GCS artifact storage (ISO 42001 A.7.5 evidence)
+            # GCS exposes an S3-compatible XML/JSON API — no GCS-native SDK needed.
+            # HMAC keys: https://cloud.google.com/storage/docs/authentication/hmackeys
+            # ---------------------------------------------------------------------------
+            - name: OSCAL_S3_ENDPOINT
+              value: "https://storage.googleapis.com"
+            - name: OSCAL_S3_REGION
+              value: "auto"
+            - name: OSCAL_S3_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: oscal-artifact-secrets
+                  key: bucket-name
+            - name: OSCAL_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: oscal-artifact-secrets
+                  key: hmac-access-key
+            - name: OSCAL_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: oscal-artifact-secrets
+                  key: hmac-secret-key
+
+            # Critical control failure alerting (Slack or PagerDuty webhook)
+            - name: COMPLIANCE_ALERT_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: compliance-alert-secrets
+                  key: webhook-url
+                  optional: true   # Non-blocking if not configured; falls back to ConsoleNotifier
+
+            # Alert channel: "slack" | "console" (default) | "mock"
+            # Kept as "console" in dev — no real Slack/PagerDuty endpoint configured.
+            # Upgrade to "slack" or "pagerduty" in prod with COMPLIANCE_ALERT_WEBHOOK_URL set.
+            - name: ALERT_CHANNEL
+              value: "console"
+
+            # Cold-start grace period configuration
+            # DEPLOYMENT_START_UTC is patched by the CI pipeline at deploy time
+            # DEPLOYMENT_START_UTC is set at deploy time via `kubectl set env` by deploy_sw.py.
+            # Leaving it unset here lets the module default to datetime.now() (safe fallback).
+            - name: STARTUP_GRACE_HOURS
+              value: "6"
+
+            - name: REDIS_URL
+              value: "redis://REDACTED@redis-master.governance-stack.svc.cluster.local:6379"
+
+            - name: PORT
+              value: "3001"
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 5
+            periodSeconds: 30
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          # Reduced resource footprint vs. Node.js (Python FastAPI + uvicorn is lighter)
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: compliance-bridge
+  namespace: governance-stack
+  labels:
+    app: compliance-bridge
+spec:
+  selector:
+    app: compliance-bridge
+  ports:
+    - port: 80
+      targetPort: 3001
+      protocol: TCP
+      name: http
+  type: ClusterIP

@@ -1,0 +1,52 @@
+# lula-validation-a53.yaml
+# ISO 42001 Annex A.5.3 — Logging and Monitoring
+#
+# Asserts that the Cybernetic Governance Engine is actively logging AI activity
+# and maintaining a safety rate >= 98% over the past 24 hours, with fresh evidence
+# no older than 48 hours.
+#
+# Domain: api → compliance-bridge (Python FastAPI service)
+# Provider: opa (inline Rego)
+
+domain:
+  type: api
+  api-spec:
+    endpoints:
+      - name: langfuse_metrics_a53
+        url: "http://compliance-bridge.governance-stack.svc.cluster.local/v1/metrics/A.5.3"
+        method: GET
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+
+      # A.5.3: Logging and Monitoring
+      # Two rules: one for cold-start grace period, one for steady-state.
+
+      # Rule 1: Cold-start grace period (< 6h after deployment)
+      # Skip sample-size check; only require safety rate and fresh evidence.
+      validate if {
+        input.langfuse_metrics_a53.startup_grace_active == true
+        input.langfuse_metrics_a53.safety_rate >= 0.98
+        input.langfuse_metrics_a53.evidence_age_seconds < 172800
+      }
+
+      # Rule 2: Steady-state (> 6h after deployment)
+      # Enforce full constraints: safety rate, sample size, and evidence freshness.
+      validate if {
+        input.langfuse_metrics_a53.startup_grace_active == false
+        input.langfuse_metrics_a53.safety_rate >= 0.98
+        input.langfuse_metrics_a53.total_traces > 100
+        input.langfuse_metrics_a53.evidence_age_seconds < 172800
+      }
+
+notes: >
+  ISO 42001 A.5.3: Logging and Monitoring.
+  Automated verification via Langfuse observability bridge.
+  Evidence: OTel spans tagged with iso42001.control_id=A.5.3 from the
+  TypeScript Governance Gateway and Python LangGraph nodes.
+  Staleness guard: 48 hours (4x the 6-hour CronJob interval).

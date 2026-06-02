@@ -1,0 +1,39 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+FROM golang:1.23-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates curl jq
+
+# Build lula v0.8.1 from source
+WORKDIR /build
+RUN git clone --depth=1 --branch v0.8.1 https://github.com/defenseunicorns/lula.git . || \
+    git clone --depth=1 https://github.com/defenseunicorns/lula.git . && git checkout v0.8.1 || \
+    go install github.com/defenseunicorns/lula@v0.8.1
+
+# If the clone worked, build the binary
+RUN if [ -f go.mod ]; then \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /usr/local/bin/lula ./cmd/lula/; \
+    fi
+
+# ─── Stage 2: Runtime image ───────────────────────────────────────────────────
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates curl jq bash
+
+COPY --from=builder /usr/local/bin/lula /usr/local/bin/lula
+
+RUN chmod +x /usr/local/bin/lula
+
+ENTRYPOINT ["/usr/local/bin/lula"]

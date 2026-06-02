@@ -1,0 +1,137 @@
+# lula-validation-ia3.yaml
+# NIST SP 800-53 Rev 5 — IA-3: Device Identification and Authentication
+#
+# STUB: This validation requires cluster-specific namespace configuration
+# before activation. See TODO comments below.
+#
+# COMPENSATING CONTROL for POAM-007 (full mTLS via Istio is Phase 3 roadmap).
+#
+# Asserts that:
+#   1. Deployments in the cage namespace carry the cage.io/mtls-proxy: "true"
+#      annotation OR the security.istio.io/tlsMode: istio pod annotation
+#      (device identity via sidecar proxy intent).
+#   2. The NetworkPolicy "default-deny-ingress" exists in the cage namespace
+#      (L3/L4 isolation as compensating control while full mTLS is pending).
+#   3. The OPA Deployment is running (policy-based device authentication
+#      compensating control — all inter-service calls validated by OPA).
+#
+# Domain: kubernetes → Deployments, NetworkPolicies, OPA Deployment
+# Provider: opa (inline Rego)
+#
+# References:
+#   - deployment/k8s/network-policy.yaml — default-deny-ingress NetworkPolicy
+#   - deployment/k8s/network-policy-hardening.yaml — hardened L3/L4 policies
+#   - deployment/k8s/opa.yaml — OPA Deployment for policy-based device authN
+#   - docs/POAM.md — POAM-007 (IA-3: no intra-cluster mTLS; HMAC only)
+#
+# OSCAL Mapping:
+#   component: cage-gateway
+#   control: ia-3
+#
+# NOTE: This is a COMPENSATING CONTROL for POAM-007.
+# Full mTLS via Istio service mesh is targeted for Phase 3 (2026-07-31).
+# Until then, device authentication is enforced via:
+#   (a) shared HMAC routing seal (cage-routing-seal secret)
+#   (b) NetworkPolicy L3/L4 segmentation (default-deny all ingress)
+#   (c) OPA policy enforcement on every inter-service request
+
+# STUB: Update namespaces below to the actual cage cluster namespace.
+# TODO: Replace 'governance-stack' with the actual namespace if different.
+# TODO: Confirm OPA Deployment name from deployment/k8s/opa.yaml.
+
+domain:
+  type: kubernetes
+  kubernetes-spec:
+    resources:
+      - name: cage-deployments
+        resource: deployments
+        # TODO: Replace 'governance-stack' with the actual cage namespace.
+        namespace: governance-stack
+      - name: cage-network-policies
+        resource: networkpolicies
+        # TODO: Replace 'governance-stack' with the actual cage namespace.
+        namespace: governance-stack
+      - name: opa-deployment
+        resource: deployments
+        namespace: governance-stack
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+      import future.keywords.every
+
+      # IA-3: Device Identification and Authentication (Compensating Control)
+      #
+      # POAM-007: Full mTLS via Istio is scheduled for Phase 3 (2026-07-31).
+      # This validation asserts the compensating controls are in place:
+      #   (1) Deployment-level mTLS intent annotation OR Istio tlsMode annotation
+      #   (2) Default-deny NetworkPolicy enforcing L3/L4 isolation
+      #   (3) OPA Deployment running for policy-based device authentication
+      #
+      # All three compensating controls must pass for IA-3 compliance.
+
+      # Check 1: At least one Deployment carries mTLS proxy or Istio tlsMode annotation.
+      # This is an intent annotation — actual enforcement is via network policy + OPA
+      # until Istio sidecar injection is enabled in Phase 3.
+      deployments_with_mtls_intent[name] {
+        deploy := input["cage-deployments"][_]
+        name := deploy.metadata.name
+        deploy.metadata.annotations["cage.io/mtls-proxy"] == "true"
+      }
+
+      deployments_with_istio_tls[name] {
+        deploy := input["cage-deployments"][_]
+        name := deploy.metadata.name
+        deploy.spec.template.metadata.annotations["security.istio.io/tlsMode"] == "istio"
+      }
+
+      # Check 2: default-deny-ingress NetworkPolicy must exist as compensating L3/L4 control.
+      default_deny_exists if {
+        some np in input["cage-network-policies"]
+        np.metadata.name == "default-deny-ingress"
+        np.spec.policyTypes[_] == "Ingress"
+      }
+
+      # Check 3: OPA Deployment must be running (policy-based device auth).
+      opa_running if {
+        input["opa-deployment"].status.readyReplicas >= 1
+      }
+
+      validate if {
+        # Compensating control ensemble: NetworkPolicy + OPA must both be live.
+        default_deny_exists
+        opa_running
+        # At least one Deployment carries mTLS intent annotation or Istio annotation.
+        count(deployments_with_mtls_intent) > 0
+      }
+
+      validate if {
+        # Alternative: Istio tlsMode annotation present on pod templates.
+        default_deny_exists
+        opa_running
+        count(deployments_with_istio_tls) > 0
+      }
+
+notes: >
+  NIST SP 800-53 Rev 5 IA-3: Device Identification and Authentication.
+  COMPENSATING CONTROL — remediates POAM-007 gap pending Phase 3 Istio mTLS deployment.
+  STUB — requires cluster-specific namespace configuration before activation.
+  Full mTLS via Istio service mesh is scheduled for Phase 3 (target: 2026-07-31).
+  Until then, device authentication is enforced via three compensating controls:
+    (1) cage.io/mtls-proxy or security.istio.io/tlsMode annotations on Deployments
+        (intent annotation for future Istio sidecar injection).
+    (2) NetworkPolicy default-deny-ingress (L3/L4 isolation per network-policy.yaml
+        and network-policy-hardening.yaml).
+    (3) OPA Deployment running, validating every governance request against
+        deployment/system_authz.rego (policy-based device authentication).
+  All three compensating controls must be live for this validation to pass.
+  Remediation path: POAM-007 — evaluate Istio or cert-manager for workload identity
+  certificates; implement mTLS for all intra-cluster service communication by 2026-07-31.
+  Activation: confirm namespace and OPA deployment name, update fields, and enable
+  in deployment/k8s/lula-cron.yaml.
+  See: docs/POAM.md — POAM-007 (IA-3 remediation).
+  See: compliance/continuous-monitoring/ISCM_STRATEGY.md — IA-3 monitoring cadence.

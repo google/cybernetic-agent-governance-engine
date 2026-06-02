@@ -1,0 +1,334 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+NeMo guardrail-node factories — produce async LangGraph nodes for input/output rails.
+
+The factories encapsulate:
+  - NeMo LLMRails singleton management (``get_nemo_rails``)
+  - ``validate_with_nemo()`` for input rails
+  - ``verify_and_mask_output()`` for output rails
+  - OTel span instrumentation with Langfuse attributes
+  - Fail-closed exception handling (any error → blocked / sentinel)
+  - CAGE_SEAL_ENFORCEMENT mode awareness
+
+Domain-specific message extraction is injected via ``NemoNodeConfig.message_extractor``.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any, Callable
+
+from langchain_core.messages import AIMessage, BaseMessage
+from opentelemetry import trace
+
+from src.gateway.governance.langgraph_harness.types import NemoNodeConfig, StateDict
+
+logger = logging.getLogger("gateway.governance.langgraph_harness.nemo_node_factory")
+tracer = trace.get_tracer("src.gateway.governance.langgraph_harness.nemo_node_factory")
+
+
+# ---------------------------------------------------------------------------
+# NeMo singleton management — imported lazily so the harness doesn't blow
+# up if nemoguardrails is not installed (fail-closed at runtime instead).
+# ---------------------------------------------------------------------------
+
+_nemo_rails = None
+_NEMO_AVAILABLE = False
+
+# Stubs — overwritten below if NeMo is installed.  These must always exist as
+# module-level attributes so that unittest.mock.patch() can target them.
+create_nemo_manager = None  # type: ignore[assignment]
+
+
+async def validate_with_nemo(user_input, rails):  # type: ignore[misc]
+    """Fail-closed stub — NeMo not available."""
+    raise RuntimeError("NeMo manager not available (validate_with_nemo stub)")
+
+
+async def verify_and_mask_output(rails, text):  # type: ignore[misc]
+    """Fail-closed stub — NeMo not available."""
+    raise RuntimeError("NeMo manager not available (verify_and_mask_output stub)")
+
+
+try:
+    from src.gateway.governance.nemo.manager import (
+        create_nemo_manager,
+        validate_with_nemo,
+        verify_and_mask_output,
+    )
+    _NEMO_AVAILABLE = True
+except ImportError:
+    logger.warning("NeMo manager not importable — guardrail nodes will fail-closed")
+
+
+def get_nemo_rails():
+    """Return the singleton LLMRails instance, initializing on first call.
+
+    Raises ``RuntimeError`` (fail-closed) if initialization fails.
+    """
+    global _nemo_rails
+    if _nemo_rails is None:
+        if not _NEMO_AVAILABLE:
+            raise RuntimeError(
+                "NeMo manager not available. Cannot initialize guardrail. "
+                "Ensure nemoguardrails is installed and config/rails/ is accessible."
+            )
+        logger.info("Initializing NeMo rails singleton for harness guardrail node")
+        _nemo_rails = create_nemo_manager()
+        logger.info("NeMo rails singleton initialized successfully")
+    return _nemo_rails
+
+
+# ---------------------------------------------------------------------------
+# Default extractors — used when config.message_extractor is None
+# ---------------------------------------------------------------------------
+
+def _default_user_message_extractor(state: StateDict) -> str:
+    """Extract the most recent user message text from ``state["messages"]``.
+
+    Handles ``BaseMessage`` objects, raw dicts, and tuples defensively.
+    """
+    messages = state.get("messages", [])
+    if not messages:
+        return ""
+    last_msg = messages[-1]
+    if hasattr(last_msg, "content"):
+        return str(last_msg.content)
+    if isinstance(last_msg, dict):
+        return str(last_msg.get("content", ""))
+    if isinstance(last_msg, tuple) and len(last_msg) >= 2:
+        return str(last_msg[1])
+    return str(last_msg)
+
+
+def _default_ai_message_extractor(state: StateDict) -> tuple[str, bool]:
+    """Extract the last AI/assistant message content from ``state["messages"]``.
+
+    Returns ``(content, found)``.
+    """
+    messages = state.get("messages", [])
+    if not messages:
+        return "", False
+    last_msg = messages[-1]
+    if isinstance(last_msg, BaseMessage):
+        return str(last_msg.content), True
+    if isinstance(last_msg, dict):
+        return str(last_msg.get("content", "")), True
+    if isinstance(last_msg, tuple) and len(last_msg) >= 2:
+        return str(last_msg[1]), True
+    return str(last_msg), True
+
+
+# ---------------------------------------------------------------------------
+# Input rail factory
+# ---------------------------------------------------------------------------
+
+def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable:
+    """Return an async LangGraph node for mandatory NeMo input rail enforcement.
+
+    The returned node:
+      1. Extracts user input via ``config.message_extractor`` (or default).
+      2. Calls ``validate_with_nemo()`` — NeMo input rails (LLM-backed filter).
+      3. Sets ``config.blocked_state_key`` and ``config.reason_state_key``.
+      4. Fail-closed: any exception → block.
+      5. Respects ``CAGE_SEAL_ENFORCEMENT`` env var for dev/log-only mode.
+
+    If ``config.pass_through_state`` is ``True`` (default), the returned dict
+    includes ``{**state, ...}`` so that downstream conditional edges can read
+    pre-existing state keys.
+
+    Args:
+        config: Optional :class:`NemoNodeConfig`.  ``None`` uses defaults.
+
+    Returns:
+        An ``async def nemo_guardrail_node(state) -> dict`` for
+        ``workflow.add_node()``.
+    """
+    cfg = config or NemoNodeConfig()
+    _extract = cfg.message_extractor or _default_user_message_extractor
+
+    async def nemo_guardrail_node(state: StateDict) -> dict[str, Any]:
+        with tracer.start_as_current_span("nemo.input_rail") as span:
+            span.set_attribute("langfuse.observation.type", "span")
+
+            user_input = _extract(state)
+
+            if not user_input or not user_input.strip():
+                logger.warning(
+                    "nemo_guardrail_node: no user input found in state — blocking by default"
+                )
+                span.set_attribute("nemo.input_rail.result", "BLOCKED")
+                span.set_attribute("nemo.input_rail.reason", "empty_input")
+                base = {**state} if cfg.pass_through_state else {}
+                return {
+                    **base,
+                    cfg.blocked_state_key: True,
+                    cfg.reason_state_key: "STPA: empty or missing input",
+                }
+
+            span.set_attribute("nemo.input_rail.input_length", len(user_input))
+
+            cage_enforcement = os.environ.get(
+                "CAGE_SEAL_ENFORCEMENT", "enforce"
+            ).lower()
+            span.set_attribute("nemo.cage_enforcement", cage_enforcement)
+
+            try:
+                rails = get_nemo_rails()
+                is_safe, reason = await validate_with_nemo(user_input, rails)
+                span.set_attribute(
+                    "nemo.input_rail.result",
+                    "PASSED" if is_safe else "BLOCKED",
+                )
+                span.set_attribute("nemo.input_rail.reason", reason or "")
+            except Exception as exc:
+                if cage_enforcement == "enforce":
+                    logger.error(
+                        "nemo_guardrail_node: exception during validate_with_nemo — blocking: %s",
+                        exc,
+                    )
+                    span.record_exception(exc)
+                    span.set_status(
+                        trace.Status(trace.StatusCode.ERROR, str(exc))
+                    )
+                    base = {**state} if cfg.pass_through_state else {}
+                    return {
+                        **base,
+                        cfg.blocked_state_key: True,
+                        cfg.reason_state_key: f"GUARDRAIL_ERROR: {exc}",
+                    }
+                else:
+                    logger.warning(
+                        "nemo_guardrail_node: exception (enforcement=%s) — proceeding anyway: %s",
+                        cage_enforcement,
+                        exc,
+                    )
+                    base = {**state} if cfg.pass_through_state else {}
+                    return {
+                        **base,
+                        cfg.blocked_state_key: False,
+                        cfg.reason_state_key: "",
+                    }
+
+            if not is_safe:
+                if cage_enforcement == "enforce":
+                    logger.warning(
+                        "nemo_guardrail_node: input BLOCKED — reason: %s",
+                        reason,
+                    )
+                    base = {**state} if cfg.pass_through_state else {}
+                    return {
+                        **base,
+                        cfg.blocked_state_key: True,
+                        cfg.reason_state_key: reason,
+                    }
+                else:
+                    logger.warning(
+                        "⚠️ nemo_guardrail_node: input flagged (enforcement=%s) — proceeding. reason: %s",
+                        cage_enforcement,
+                        reason,
+                    )
+
+            logger.info(
+                "nemo_guardrail_node: input PASSED — proceeding"
+            )
+            base = {**state} if cfg.pass_through_state else {}
+            return {
+                **base,
+                cfg.blocked_state_key: False,
+                cfg.reason_state_key: "",
+            }
+
+    nemo_guardrail_node.__qualname__ = "nemo_guardrail_node[harness]"
+    return nemo_guardrail_node
+
+
+# ---------------------------------------------------------------------------
+# Output rail factory
+# ---------------------------------------------------------------------------
+
+def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callable:
+    """Return an async LangGraph node for mandatory NeMo output rail enforcement.
+
+    The returned node:
+      1. Extracts the last AI message from ``state["messages"]``.
+      2. Calls ``verify_and_mask_output()`` — NeMo output rails (PII, policy).
+      3. Returns a replacement ``AIMessage`` with the same ``id`` (for the
+         ``add_messages`` reducer to replace in-place).
+      4. Fail-closed: any exception → output replaced with a safe sentinel.
+
+    Args:
+        config: Optional :class:`NemoNodeConfig`.  ``None`` uses defaults.
+
+    Returns:
+        An ``async def nemo_output_rail_node(state) -> dict`` for
+        ``workflow.add_node()``.
+    """
+    cfg = config or NemoNodeConfig()
+
+    async def nemo_output_rail_node(state: StateDict) -> dict[str, Any]:
+        with tracer.start_as_current_span("nemo.output_rail") as span:
+            span.set_attribute("langfuse.observation.type", "span")
+
+            output_text, found = _default_ai_message_extractor(state)
+
+            if not found or not output_text.strip():
+                logger.warning(
+                    "nemo_output_rail_node: no AI message found in state — nothing to screen"
+                )
+                span.set_attribute("nemo.output_rail.skipped", True)
+                return {cfg.output_rail_applied_key: True}
+
+            span.set_attribute(
+                "nemo.output_rail.input_length", len(output_text)
+            )
+
+            try:
+                rails = get_nemo_rails()
+                masked_text = await verify_and_mask_output(rails, output_text)
+                span.set_attribute(
+                    "nemo.output_rail.masked", masked_text != output_text
+                )
+            except Exception as exc:
+                logger.error(
+                    "nemo_output_rail_node: verify_and_mask_output raised — blocking output: %s",
+                    exc,
+                )
+                span.record_exception(exc)
+                span.set_status(
+                    trace.Status(trace.StatusCode.ERROR, str(exc))
+                )
+                masked_text = cfg.output_blocked_sentinel
+
+            # Write the masked text back.  add_messages reducer replaces an
+            # existing message when the returned message carries the same id.
+            messages = state.get("messages", [])
+            last_msg = messages[-1] if messages else None
+
+            if isinstance(last_msg, BaseMessage) and last_msg.id:
+                replacement = AIMessage(content=masked_text, id=last_msg.id)
+            else:
+                replacement = AIMessage(content=masked_text)
+
+            logger.info("nemo_output_rail_node: output rail applied")
+            return {
+                "messages": [replacement],
+                cfg.output_rail_applied_key: True,
+            }
+
+    nemo_output_rail_node.__qualname__ = "nemo_output_rail_node[harness]"
+    return nemo_output_rail_node

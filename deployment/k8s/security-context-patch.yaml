@@ -1,0 +1,234 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-context-policy
+  namespace: governance-stack
+  labels:
+    compliance.nist.gov/control: "SC-39,SI-3"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    app.kubernetes.io/managed-by: cage
+  annotations:
+    compliance.nist.gov/control: "SC-39,SI-3"
+    compliance.nist.gov/last-reviewed: "2026-03-06"
+    compliance.nist.gov/reviewer: "ISSO"
+data:
+  policy.md: |
+    # Container Security Context Policy — NIST SC-39 / SI-3
+
+    All containers in governance-stack MUST implement:
+
+    ## Required securityContext (pod-level)
+    ```yaml
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+      seccompProfile:
+        type: RuntimeDefault
+    ```
+
+    ## Required securityContext (container-level)
+    ```yaml
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+    ```
+
+    ## Required resource limits (all containers)
+    ```yaml
+    resources:
+      limits:
+        memory: "2Gi"
+        cpu: "2000m"
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+    ```
+
+    ## Required emptyDir volumes for writable paths
+    All containers with readOnlyRootFilesystem: true must mount emptyDir
+    volumes for any path the process writes to at runtime:
+    ```yaml
+    volumeMounts:
+      - name: tmp-volume
+        mountPath: /tmp
+      - name: cache-volume
+        mountPath: /app/.cache
+    volumes:
+      - name: tmp-volume
+        emptyDir: {}
+      - name: cache-volume
+        emptyDir: {}
+    ```
+
+    ## Exceptions
+    - vLLM GPU pods: runAsUser may be root (UID 0) for CUDA driver access;
+      seccompProfile: RuntimeDefault still required; tracked in POAM.
+    - Lula jobs: readOnlyRootFilesystem: true with /tmp emptyDir volume mount.
+    - OPA sidecar: may require allowPrivilegeEscalation: false only (no root);
+      readOnlyRootFilesystem: true is achievable with /tmp emptyDir.
+
+    ## Verification
+    ```bash
+    # Check pod-level security contexts
+    kubectl get pods -n governance-stack \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.securityContext}{"\n"}{end}'
+
+    # Check container-level security contexts
+    kubectl get pods -n governance-stack \
+      -o jsonpath='{range .items[*]}{.metadata.name}{range .spec.containers[*]}{"\t"}{.name}{"\t"}{.securityContext}{"\n"}{end}{end}'
+    ```
+
+  required_annotations: |
+    compliance.nist.gov/control: "SC-39,SI-3"
+    compliance.nist.gov/reviewed: "2026-03-06"
+    compliance.nist.gov/reviewer: "ISSO"
+
+---
+# Gateway Deployment Security Context Patch
+# Deployment name: gateway  (from gateway-deployment.yaml.tpl)
+# Container names: gateway, opa
+#
+# Apply with:
+#   kubectl patch deployment gateway -n governance-stack \
+#     --patch "$(kubectl get deployment gateway -n governance-stack -o yaml | \
+#     yq '.spec.template.spec += {"securityContext":{"runAsNonRoot":true,"runAsUser":1000,"runAsGroup":1000,"fsGroup":1000,"seccompProfile":{"type":"RuntimeDefault"}}}')"
+#
+# OR merge the spec.template.spec block below into gateway-deployment.yaml.tpl
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: governance-stack
+  annotations:
+    compliance.nist.gov/control: "SC-39,SI-3,AU-12"
+    compliance.nist.gov/last-reviewed: "2026-03-06"
+    compliance.nist.gov/reviewer: "ISSO"
+spec:
+  template:
+    spec:
+      # SC-39: Pod-level security context — non-root UID/GID, RuntimeDefault seccomp
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        # SI-3 / SC-39: gateway container — no privilege escalation, read-only FS
+        - name: gateway
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+            requests:
+              memory: "2Gi"
+              cpu: "1000m"
+          volumeMounts:
+            - name: tmp-volume
+              mountPath: /tmp
+            - name: cache-volume
+              mountPath: /app/.cache
+        # OPA sidecar — read-only FS with /tmp writable for bundle cache
+        - name: opa
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            limits:
+              memory: "256Mi"
+              cpu: "250m"
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+          volumeMounts:
+            - name: opa-tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp-volume
+          emptyDir: {}
+        - name: cache-volume
+          emptyDir: {}
+        - name: opa-tmp
+          emptyDir: {}
+
+---
+# Compliance Bridge Deployment Security Context Patch
+# Deployment name: compliance-bridge  (from compliance-bridge.yaml)
+# Container name:  compliance-bridge
+#
+# Apply with:
+#   kubectl patch deployment compliance-bridge -n governance-stack \
+#     --patch-file deployment/k8s/security-context-patch.yaml
+# (kubectl patch merges the spec, it will not replace existing volumes/mounts)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compliance-bridge
+  namespace: governance-stack
+  annotations:
+    compliance.nist.gov/control: "SC-39,SI-3,CA-7"
+    compliance.nist.gov/last-reviewed: "2026-03-06"
+    compliance.nist.gov/reviewer: "ISSO"
+spec:
+  template:
+    spec:
+      # SC-39: Pod-level security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        # SI-3: compliance-bridge container hardening
+        - name: compliance-bridge
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+          volumeMounts:
+            - name: tmp-volume
+              mountPath: /tmp
+      volumes:
+        - name: tmp-volume
+          emptyDir: {}

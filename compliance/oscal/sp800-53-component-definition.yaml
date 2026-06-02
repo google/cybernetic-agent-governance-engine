@@ -1,0 +1,590 @@
+# OSCAL Component Definition
+# Cybernetic Governance Engine — NIST SP 800-53 Rev 5 HIGH Baseline
+#
+# This file maps the top 15 SP 800-53 HIGH-baseline controls to the
+# technical components that enforce them. It complements the ISO 42001
+# component definition (component-definition.yaml).
+#
+# Used by: lula validate --input compliance/oscal/sp800-53-component-definition.yaml
+# Companion: compliance/oscal/component-definition.yaml (ISO 42001 controls)
+# SSP Reference: compliance/ssp/SYSTEM_SECURITY_PLAN_OUTLINE.md
+# Categorization: compliance/categorization/FIPS199_CATEGORIZATION.md
+
+component-definition:
+  uuid: "172cb046-96dc-47bb-9209-38ec37dbd579"
+  metadata:
+    title: "Cybernetic Governance Engine — NIST SP 800-53 Rev 5 Component Definition"
+    version: "1.0.0"
+    oscal-version: "1.0.4"
+    last-modified: "2026-03-06T00:00:00Z"
+    remarks: >
+      This component definition maps technical enforcement components to
+      NIST SP 800-53 Rev 5 HIGH-baseline controls. Each implemented requirement
+      links where applicable to a Lula validation manifest for automated
+      continuous compliance assessment. Satisfies CA-2 (Security Assessment)
+      and PL-2 (System Security Plan) documentation requirements.
+
+  components:
+    # -----------------------------------------------------------------------
+    # Component 1: Governance Gateway (src/gateway/)
+    # Enforces: AC-3 (Access Enforcement), AU-12 (Audit Record Generation),
+    #           SC-12 (Cryptographic Key Establishment)
+    # -----------------------------------------------------------------------
+    - uuid: "56654b26-d648-4e47-bbc8-19edd3ec67ba"
+      title: "Governance Gateway"
+      type: software
+      description: >
+        Python FastAPI gateway providing three-tier semantic shielding and
+        HMAC-SHA256 routing seal verification. Implements OPA-backed RBAC
+        enforcement, OTel-based audit trail generation, and cryptographic
+        request integrity verification via routing seals loaded from
+        Kubernetes Secrets.
+      purpose: >
+        Acts as the primary ingress enforcement layer for all AI governance
+        requests. Enforces access control via OPA, generates ISO 42001
+        6-attribute evidence stamps on every governance decision, and
+        cryptographically authenticates request routing via HMAC seals.
+      responsible-roles:
+        - role-id: provider
+      control-implementations:
+        - uuid: "6f075699-75de-4f31-a574-35bb22a194bd"
+          source: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home"
+          description: "NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by the Governance Gateway"
+          implemented-requirements:
+            - uuid: "12e40b44-a5eb-4e0d-b319-42bab7d5d10a"
+              control-id: ac-3
+              description: |
+                Access enforcement is implemented via OPA RBAC policy evaluation on every
+                inbound API request through deployment/system_authz.rego. The governance
+                middleware in src/gateway/server/governance_middleware.py performs routing
+                seal verification before processing any request, rejecting requests with
+                invalid or missing HMAC seals. OPA allow/deny decisions are recorded in
+                structured audit logs with full request context and user identity.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-3"
+                  rel: reference
+                - href: "#9fbe4cdd-f9b0-4635-bc7d-6a3a3beae05a"
+                  rel: lula
+
+            - uuid: "4ccc6861-3f69-476a-9ff2-cbd215b18d46"
+              control-id: au-12
+              description: |
+                Audit record generation is implemented via OpenTelemetry spans in
+                src/gateway/infrastructure/telemetry.py. Every governance decision
+                emits an OTel span containing ISO 42001 6-attribute evidence stamps:
+                control_id, decision_outcome, timestamp_utc, request_id, user_role,
+                and enforcement_tier. Spans are exported to Langfuse for long-term
+                retention and compliance reporting. The compliance-bridge aggregates
+                spans into OSCAL Assessment Results via audit_workflow.py.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AU-12"
+                  rel: reference
+                - href: "#a08c55f1-6d12-445d-b4ae-a99c8b573935"
+                  rel: lula
+
+            - uuid: "61c43f8a-6693-4049-ae09-edd8b22f500a"
+              control-id: sc-12
+              description: |
+                Cryptographic key establishment is implemented via HMAC-SHA256 routing
+                seals in src/gateway/governance/contracts.py. The routing seal secret
+                is loaded from the CAGE_ROUTING_SEAL_SECRET environment variable, which
+                is backed by a Kubernetes Secret (deployment/k8s/oscal-artifact-secrets.yaml).
+                Every request must carry a valid HMAC-SHA256 seal computed over the
+                request payload; invalid seals result in immediate rejection with a 401
+                response. Key rotation is performed via Kubernetes Secret update without
+                service restart.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-12"
+                  rel: reference
+
+    # -----------------------------------------------------------------------
+    # Component 2: NeMo Guardrails (src/gateway/governance/nemo/)
+    # Enforces: SI-10 (Information Input Validation), SI-3 (Malicious Code Protection)
+    # -----------------------------------------------------------------------
+    - uuid: "3d19fa63-7253-4563-b757-23c89ea461ce"
+      title: "NeMo Guardrails"
+      type: software
+      description: >
+        NVIDIA NeMo Guardrails with Microsoft Presidio PII detection providing
+        input/output validation, prompt injection detection, and malicious code
+        protection. Configured via Colang rail definitions and integrated into
+        the governance pipeline through src/gateway/governance/nemo/manager.py.
+      purpose: >
+        Validates all user inputs against 16 PII entity types, detects and blocks
+        prompt injection and jailbreak attempts, and applies content safety rails
+        to both inputs and model outputs. Provides defense-in-depth against
+        adversarial inputs that bypass tier-1 heuristic filtering.
+      responsible-roles:
+        - role-id: provider
+      control-implementations:
+        - uuid: "2de5e59a-f094-4d79-94eb-b3321211b4dc"
+          source: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home"
+          description: "NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by NeMo Guardrails"
+          implemented-requirements:
+            - uuid: "8e46d991-dd78-416a-897d-f909cb63be8d"
+              control-id: si-10
+              description: |
+                Information input validation is implemented via Microsoft Presidio PII detection
+                integrated into NeMo Guardrails. The rail configuration in config/rails/config.yml
+                enables detection of 16 PII entity types including PERSON, EMAIL_ADDRESS,
+                PHONE_NUMBER, US_SSN, CREDIT_CARD, IBAN_CODE, IP_ADDRESS, and more. Colang
+                rail definitions in config/rails/definitions.co enforce input blocking when
+                PII is detected. The NeMo manager in src/gateway/governance/nemo/manager.py
+                orchestrates the validation pipeline. All validation events are tagged with
+                the relevant SP 800-53 control ID and logged to OTel.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SI-10"
+                  rel: reference
+
+            - uuid: "b1f022fc-e7f1-45e6-8972-9f5ab16f99fa"
+              control-id: si-3
+              description: |
+                Malicious code protection is implemented via NeMo Guardrails input/output
+                filtering in src/gateway/governance/nemo/manager.py. The jailbreak detection
+                rail analyzes prompts for known prompt injection patterns, adversarial
+                instructions, and role-confusion attacks. Output rails prevent the model
+                from generating harmful content, code execution instructions, or compliance-
+                violating responses. All detected malicious inputs are blocked, logged, and
+                trigger optional PagerDuty/Slack alerts via the compliance bridge notifier.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SI-3"
+                  rel: reference
+
+    # -----------------------------------------------------------------------
+    # Component 3: OPA Policy Engine (deployment/system_authz.rego)
+    # Enforces: AC-6 (Least Privilege), AC-3 (Access Enforcement),
+    #           IA-3 (Device Identification and Authentication)
+    # -----------------------------------------------------------------------
+    - uuid: "0ea79813-1236-4a81-a077-71638e3f8627"
+      title: "OPA Policy Engine"
+      type: software
+      description: >
+        Open Policy Agent evaluating Rego policies (deployment/system_authz.rego,
+        src/governed_financial_advisor/governance/policy/finance_policy.rego) on
+        every trade execution and governance request. Enforces RBAC role limits,
+        fiscal thresholds, and request authentication. Decision logs are emitted
+        to stdout and captured by Cloud Logging.
+      purpose: >
+        Provides deterministic, auditable policy enforcement independent of the
+        LLM reasoning layer. Least-privilege access and RBAC are enforced via
+        declarative Rego rules. HMAC seal validation per request provides
+        cryptographic device authentication at the policy layer.
+      responsible-roles:
+        - role-id: provider
+      control-implementations:
+        - uuid: "74b69ba2-d9a3-42d6-ac2d-89e9f88cc2e6"
+          source: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home"
+          description: "NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by OPA"
+          implemented-requirements:
+            - uuid: "d3a6a007-74a4-4c0f-b2ba-d68bb2c395ff"
+              control-id: ac-6
+              description: |
+                Least privilege is enforced via OPA Rego policy in deployment/system_authz.rego.
+                The policy grants permissions based on user role (junior_analyst, senior_analyst,
+                compliance_officer, admin) with graduated fiscal limits: junior analysts are
+                limited to $5,000 per trade and $10,000 daily aggregate; senior analysts to
+                $500,000 and $1,000,000 respectively. Fiscal limit checks in finance_policy.rego
+                enforce per-user-class constraints. Users cannot escalate their own permissions;
+                all role assignments are managed via Kubernetes RBAC and propagated to OPA
+                via environment configuration.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-6"
+                  rel: reference
+
+            - uuid: "f919c0a0-f04d-4925-8605-6a759f9ee94e"
+              control-id: ac-3
+              description: |
+                Access enforcement is implemented via OPA allow/deny decisions logged with
+                a full audit trail in deployment/system_authz.rego. Every request is
+                evaluated against the current policy; denied requests are logged with
+                the reason (insufficient_role, fiscal_limit_exceeded, invalid_seal) and
+                returned as structured JSON with HTTP 403. Audit logs include user identity,
+                resource requested, decision outcome, and applicable policy rules. The
+                compliance bridge ingests OPA decision logs into OSCAL Assessment Results.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-3"
+                  rel: reference
+                - href: "#a08c55f1-6d12-445d-b4ae-a99c8b573935"
+                  rel: lula
+
+            - uuid: "5f386745-cdda-431b-adec-850cdd899f3e"
+              control-id: ia-3
+              description: |
+                Device identification and authentication is implemented via HMAC-SHA256
+                seal verification per request in src/gateway/governance/contracts.py.
+                Each client must compute an HMAC-SHA256 seal over the request payload
+                using the shared CAGE_ROUTING_SEAL_SECRET. OPA validates the seal
+                before evaluating any policy rules; requests with missing or invalid
+                seals are rejected with HTTP 401. This ensures that only authenticated
+                client systems (devices) can submit governance requests, providing
+                cryptographic device identity verification without relying solely on
+                network-layer controls.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=IA-3"
+                  rel: reference
+
+    # -----------------------------------------------------------------------
+    # Component 4: Compliance Bridge (src/compliance_bridge/)
+    # Enforces: CA-7 (Continuous Monitoring), AU-9 (Protection of Audit Info),
+    #           IR-6 (Incident Reporting)
+    # -----------------------------------------------------------------------
+    - uuid: "7acccab0-36a0-45d3-adbe-cf31d6cec458"
+      title: "Compliance Bridge"
+      type: software
+      description: >
+        Automated OSCAL audit pipeline providing continuous monitoring, audit
+        information protection, and incident reporting. Runs a 5-step assessment
+        workflow every 6 hours via Kubernetes CronJob. Stores OSCAL Assessment
+        Results to MinIO/GCS and delivers real-time compliance events via SSE
+        and Slack/PagerDuty notifications.
+      purpose: >
+        Operationalizes continuous compliance monitoring by automating the
+        collect-analyze-report cycle. Protects audit integrity through object
+        storage with locking. Ensures security-relevant events are reported to
+        responsible parties within SLA-defined timeframes.
+      responsible-roles:
+        - role-id: provider
+      control-implementations:
+        - uuid: "43e1c175-3c01-4176-9cf2-8de2549c876d"
+          source: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home"
+          description: "NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by the Compliance Bridge"
+          implemented-requirements:
+            - uuid: "356c3f20-ff82-4a9e-9b62-83c0aa240df1"
+              control-id: ca-7
+              description: |
+                Continuous monitoring is automated via the 5-step audit pipeline in
+                src/compliance_bridge/audit_workflow.py: (1) collect OTel spans from
+                Langfuse, (2) evaluate control safety rates, (3) generate OSCAL Assessment
+                Results, (4) store to MinIO/GCS, (5) alert on failures. The pipeline
+                runs every 6 hours via deployment/k8s/lula-cron.yaml (Kubernetes CronJob).
+                Lula validation manifests in compliance/lula/ provide automated control
+                assertions (lula-validation-au12.yaml, lula-validation-ac3.yaml,
+                lula-validation-ra5.yaml, lula-validation-cm6.yaml, lula-validation-ir6.yaml).
+                Monitoring status is streamed in real-time via src/compliance_bridge/sse_events.py.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=CA-7"
+                  rel: reference
+                - href: "#1c436570-b67f-4857-bbbf-d1ba683dae25"
+                  rel: lula
+
+            - uuid: "80d95b3a-12ae-4dd4-8db4-b52661335fa4"
+              control-id: au-9
+              description: |
+                Protection of audit information is implemented via OSCAL Assessment Results
+                stored to MinIO/GCS through src/compliance_bridge/storage.py. S3 object
+                locking (COMPLIANCE mode) provides write-once protection of audit artifacts,
+                preventing modification or deletion for the retention period. Access to audit
+                buckets is restricted via IAM policies to the compliance-bridge service account
+                (principle of least privilege). NOTE: S3 object locking must be enabled at
+                bucket creation time — see POAM item IR-1 for current status and remediation
+                timeline. Audit files are encrypted at rest using GCS/MinIO server-side
+                encryption.
+              props:
+                - name: implementation-status
+                  value: partial
+                - name: control-origination
+                  value: hybrid
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AU-9"
+                  rel: reference
+
+            - uuid: "07769d00-7959-4cfe-86aa-972a537952d5"
+              control-id: ir-6
+              description: |
+                Incident reporting is implemented via src/compliance_bridge/notifier.py,
+                which delivers Slack and PagerDuty notifications when control safety rates
+                fall below threshold or critical failures are detected. Real-time security
+                events are streamed to subscribing dashboards via the SSE event bus in
+                src/compliance_bridge/sse_events.py. The notification pipeline triggers
+                on: (1) PII safety_rate < 1.0, (2) overall compliance score < 0.95,
+                (3) Lula validation failures, (4) OPA pod unavailability. Incident tickets
+                include OSCAL control ID, failure evidence, and remediation guidance links.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=IR-6"
+                  rel: reference
+                - href: "#bea772cc-5526-49bb-979a-d9be71de5707"
+                  rel: lula
+
+    # -----------------------------------------------------------------------
+    # Component 5: STPA Safety Validator (src/gateway/governance/stpa_validator.py)
+    # Enforces: RA-3 (Risk Assessment), SI-4 (System Monitoring)
+    # -----------------------------------------------------------------------
+    - uuid: "4fd30a2a-c26b-4401-af55-ce57ceab042d"
+      title: "STPA Safety Validator"
+      type: software
+      description: >
+        System-Theoretic Process Analysis (STPA) hazard validator with Control
+        Barrier Function (CBF) real-time monitoring. Performs continuous risk
+        assessment of AI inference outputs and enforces safety envelopes on
+        all governance decisions. Implemented in src/gateway/governance/stpa_validator.py
+        and src/gateway/governance/safety.py.
+      purpose: >
+        Provides formal safety analysis (STPA) and real-time safety monitoring
+        (CBF) to identify and mitigate unsafe control actions from the AI
+        reasoning layer. Tracks safety envelope violations, escalates to the
+        symbolic governor, and generates evidence for risk assessment documentation.
+      responsible-roles:
+        - role-id: provider
+      control-implementations:
+        - uuid: "a11854f4-c67e-4674-8818-817ed8c4a09a"
+          source: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home"
+          description: "NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by the STPA Safety Validator"
+          implemented-requirements:
+            - uuid: "6020e394-0647-480b-b9e5-2f05b6cb360c"
+              control-id: ra-3
+              description: |
+                Risk assessment is implemented via STPA hazard analysis in
+                src/gateway/governance/stpa_validator.py. The validator identifies
+                unsafe control actions (UCAs) using the STPA methodology: for each
+                control action, it evaluates four UCA types (provided, not-provided,
+                too-early/too-late, stopped-too-soon/applied-too-long). Control Barrier
+                Functions (CBF) in src/gateway/governance/safety.py define formal safety
+                constraints with Lyapunov stability guarantees. Safety parameters
+                (thresholds, envelope bounds) are defined in
+                src/gateway/governance/safety_params.json. Risk findings are documented
+                in docs/STPA_ANALYSIS.md and tracked in docs/POAM.md.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=RA-3"
+                  rel: reference
+                - href: "#1c436570-b67f-4857-bbbf-d1ba683dae25"
+                  rel: lula
+
+            - uuid: "42c2150e-0256-4ef0-b49b-8a7ee847f9cc"
+              control-id: si-4
+              description: |
+                System monitoring is implemented via CBF real-time monitoring of all
+                inference outputs against safety envelopes defined in
+                src/gateway/governance/safety.py. The symbolic governor tracks violations
+                of fiscal limits, content safety thresholds, and STPA-derived constraints
+                on a per-request basis. Safety envelope violations are logged as OTel spans
+                with severity=WARNING or CRITICAL and trigger the compliance bridge alerting
+                pipeline. The automated auditor in scripts/automated_auditor.py performs
+                periodic assessment of monitoring coverage across all controlled components.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SI-4"
+                  rel: reference
+
+    # -----------------------------------------------------------------------
+    # Component 6: GCP/GKE Infrastructure (inherited controls)
+    # Enforces: SC-7 (Boundary Protection), IA-2 (Identification and Auth),
+    #           SC-8 (Transmission Confidentiality and Integrity)
+    # -----------------------------------------------------------------------
+    - uuid: "3014bff4-f8df-4f9f-a957-9aab57e8f87d"
+      title: "GCP/GKE Infrastructure"
+      type: service
+      description: >
+        Google Cloud Platform / Google Kubernetes Engine infrastructure providing
+        inherited security controls. Includes VPC-native GKE networking with
+        Cloud Load Balancer boundary protection, GCP Workload Identity Federation
+        for authentication, and TLS termination at the load balancer for
+        transmission confidentiality. Supplemented by Kubernetes-layer controls
+        defined in deployment/k8s/.
+      purpose: >
+        Provides platform-level inherited security controls that the application
+        components rely upon. Network boundary protection, identity and
+        authentication, and transmission encryption are inherited from the GCP
+        Common Controls Package and supplemented by cluster-level Kubernetes
+        network policies.
+      responsible-roles:
+        - role-id: provider
+      control-implementations:
+        - uuid: "47bd5e3c-7e9f-4006-98e8-dac390437a7e"
+          source: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home"
+          description: "NIST SP 800-53 Rev 5 HIGH-baseline controls inherited from GCP/GKE platform"
+          implemented-requirements:
+            - uuid: "2d27d190-b3da-49f4-bd39-1d4f25f5d20a"
+              control-id: sc-7
+              description: |
+                Boundary protection is inherited from GKE VPC-native networking and
+                Google Cloud Load Balancer. All ingress traffic is routed through the
+                Cloud Load Balancer, which terminates TLS and applies Cloud Armor WAF
+                rules. Kubernetes network policies in deployment/k8s/network-policy.yaml
+                and deployment/k8s/network-policy-hardening.yaml restrict pod-to-pod
+                communication to explicitly declared paths. The compliance namespace is
+                isolated via Kubernetes NetworkPolicy; only the compliance-bridge pod
+                may reach the MinIO/GCS storage endpoints. Pod Security Admission
+                in deployment/k8s/pod-security-admission.yaml enforces restricted policy.
+              props:
+                - name: implementation-status
+                  value: inherited
+                - name: control-origination
+                  value: inherited
+                - name: inherited-from
+                  value: "GCP/GKE Platform — Google Cloud Common Controls Package"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-7"
+                  rel: reference
+
+            - uuid: "ca8f96e2-69a3-4d6b-980c-962e73e075d8"
+              control-id: ia-2
+              description: |
+                Identification and authentication is inherited from GCP Workload Identity
+                Federation. Each Kubernetes Service Account is bound to a GCP IAM Service
+                Account via Workload Identity, providing cryptographically verifiable
+                identity for all pod-level API calls to GCP services. Cluster authentication
+                is managed via GKE cluster RBAC (deployment/k8s/lula-rbac.yaml,
+                deployment/k8s/service-account.yaml). Human operator access to the GKE
+                cluster requires GCP IAM authentication with MFA enforced at the
+                organizational policy level. GCP Identity-Aware Proxy (IAP) protects
+                any externally accessible management endpoints.
+              props:
+                - name: implementation-status
+                  value: inherited
+                - name: control-origination
+                  value: inherited
+                - name: inherited-from
+                  value: "GCP/GKE Platform — Google Cloud Common Controls Package"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=IA-2"
+                  rel: reference
+
+            - uuid: "230de322-4b76-4a0d-b07d-267f4fa23769"
+              control-id: sc-8
+              description: |
+                Transmission confidentiality and integrity is inherited from GCP TLS
+                termination at the Cloud Load Balancer. HTTPS is enforced on all ingress
+                via deployment/k8s/ingress.yaml with TLS certificates managed by Google-
+                managed SSL certificates. Internal cluster communication between pods uses
+                Kubernetes service mesh with mTLS enforced at the service level where
+                sensitive data (audit logs, PII detection results) transits the network.
+                The GCP load balancer enforces TLS 1.2 minimum with strong cipher suites.
+                All data in transit to external services (Langfuse, Slack, PagerDuty) uses
+                HTTPS with certificate validation enforced by the HTTP client libraries.
+              props:
+                - name: implementation-status
+                  value: inherited
+                - name: control-origination
+                  value: inherited
+                - name: inherited-from
+                  value: "GCP/GKE Platform — Google Cloud Common Controls Package"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-8"
+                  rel: reference
+
+  back-matter:
+    resources:
+      # -----------------------------------------------------------------------
+      # Standards and Frameworks
+      # -----------------------------------------------------------------------
+      - uuid: "34172b73-72d8-4b50-8dd8-0d31a5df3270"
+        title: "NIST SP 800-53 Rev 5 — Security and Privacy Controls"
+        rlinks:
+          - href: "https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final"
+      - uuid: "2416a563-630a-41e1-9e8f-5b174fc771ac"
+        title: "ISO/IEC 42001:2023 — AI Management System Standard"
+        rlinks:
+          - href: "https://www.iso.org/standard/81230.html"
+      - uuid: "7fab6ccd-37af-4a69-8ef5-2e4f5d1fa440"
+        title: "Lula Compliance Automation Tool"
+        rlinks:
+          - href: "https://github.com/defenseunicorns/lula"
+
+      # -----------------------------------------------------------------------
+      # Internal OSCAL and Compliance Artifacts
+      # -----------------------------------------------------------------------
+      - uuid: "dce38770-251a-497c-886d-2130ff259402"
+        title: "FIPS 199 System Categorization"
+        rlinks:
+          - href: "../../compliance/categorization/FIPS199_CATEGORIZATION.md"
+      - uuid: "21147aee-7c67-4f4c-b25e-bcc6637b5cb3"
+        title: "System Security Plan Outline"
+        rlinks:
+          - href: "../../compliance/ssp/SYSTEM_SECURITY_PLAN_OUTLINE.md"
+
+      # -----------------------------------------------------------------------
+      # ISO 42001 Lula Validation Files (cross-linked from companion definition)
+      # -----------------------------------------------------------------------
+      - uuid: "885abacf-6878-4305-a942-6b96f50175cb"
+        title: "Lula Validation: A.5.2 Social Impact Assessment"
+        rlinks:
+          - href: "../../compliance/lula/lula-validation-a52.yaml"
+      - uuid: "541ad147-6eec-4e35-b906-420c803ff6f0"
+        title: "Lula Validation: A.5.3 Logging and Monitoring"
+        rlinks:
+          - href: "../../compliance/lula/lula-validation-a53.yaml"
+      - uuid: "7ac4f5f2-87ca-4632-a890-fb1ecba65119"
+        title: "Lula Validation: A.9.2 Data Privacy (PII)"
+        rlinks:
+          - href: "../../compliance/lula/lula-validation-a92.yaml"
+      - uuid: "ff18a36b-6dc8-4459-88e8-976fd7c10141"
+        title: "Lula Validation: SC-4 Fiscal Limits (OPA)"
+        rlinks:
+          - href: "../../compliance/lula/lula-validation-sc4.yaml"
+
+      # -----------------------------------------------------------------------
+      # SP 800-53 Lula Validation Stub Files
+      # -----------------------------------------------------------------------
+      - uuid: "a08c55f1-6d12-445d-b4ae-a99c8b573935"
+        title: "Lula Validation: AU-12 / AC-3 Audit and Access"
+        rlinks:
+          - href: "../../compliance/lula/lula-validation-au12.yaml"
+          - href: "../../compliance/lula/lula-validation-ac3.yaml"
+      - uuid: "1c436570-b67f-4857-bbbf-d1ba683dae25"
+        title: "Lula Validation: RA-5 / CA-7 Risk and Monitoring"
+        rlinks:
+          - href: "../../compliance/lula/lula-validation-ra5.yaml"
+          - href: "../../compliance/lula/lula-validation-cm6.yaml"
+      - uuid: "bea772cc-5526-49bb-979a-d9be71de5707"
+        title: "Lula Validation: IR-6 Incident Reporting"
+        rlinks:
+          - href: "../../compliance/lula/lula-validation-ir6.yaml"
