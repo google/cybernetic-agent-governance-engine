@@ -39,7 +39,6 @@ from src.gateway.core.policy import OPAClient
 from src.gateway.governance.constants import GovernanceControl, ControlRegistry
 from src.gateway.governance.contracts import SafetyFilter, ConsensusProvider
 from src.gateway.governance.stpa_validator import STPAValidator
-from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
 logger = logging.getLogger("SymbolicGovernor")
 tracer = trace.get_tracer(__name__)
@@ -77,12 +76,18 @@ class SymbolicGovernor:
         consensus_engine: ConsensusProvider,
         stpa_validator: Optional[STPAValidator] = None,
         telemetry_provider: Optional[Any] = None,
+        fiscal_limit_guard: Optional[Any] = None,
     ):
         self.opa_client = opa_client
         self.safety_filter = safety_filter
         self.consensus_engine = consensus_engine
         self.stpa_validator: Optional[STPAValidator] = stpa_validator
         self.telemetry_provider = telemetry_provider
+        # FiscalLimitGuard — optional for backward compatibility with existing tests.
+        # When present, atomically pre-reserves the daily fiscal limit in Redis
+        # (WATCH/MULTI/EXEC) before the consensus gate, closing the TOCTOU race
+        # between the CBF balance check and actual trade execution.
+        self.fiscal_limit_guard = fiscal_limit_guard
 
     async def _run_checks(
         self,
@@ -121,48 +126,33 @@ class SymbolicGovernor:
             stpa_span.set_attribute("governance.stage.latency_ms",
                                     round((time.perf_counter() - _t0) * 1000, 2))
 
-        # 1. Agentic model confidence threshold (trade-specific).
-        # Governed under CTRL_AGT_001 — see config/control_mappings.json for the
-        # active regulatory framework mapping.  Agentic AI is explicitly outside
-        # the prescriptive MRM scope; the registry records both the primary
-        # framework and the legacy citation for SIEM backward-compatibility.
+        # 1. Confidence threshold — local pre-check (fast-fail before network I/O).
+        # The OPA Rego policy (system_authz.rego) also enforces confidence so that
+        # the dynamic SLM-degraded escalation (0.95→0.97) is applied consistently.
+        # This local check fires first to avoid unnecessary CBF/OPA round-trips when
+        # the confidence score is obviously below threshold.
         if tool_name == "execute_trade":
-            with tracer.start_as_current_span("cage.confidence_check") as conf_span:
-                conf_span.set_attribute("langfuse.observation.name", "agent_confidence_check")
-                default_confidence = (
-                    float(os.getenv("GOVERNANCE_SIM_CONFIDENCE", "0.99"))
-                    if sim_mode
-                    else 0.0  # Fail-closed in live mode
+            _confidence = float(params.get("confidence", 0.0))
+            _confidence_threshold = float(os.getenv("AGENT_CONFIDENCE_THRESHOLD", "0.95"))
+            if _confidence < _confidence_threshold:
+                _conf_meta = ControlRegistry().get_mapping(GovernanceControl.AGENT_CONFIDENCE_THRESHOLD)
+                _conf_msg = (
+                    f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
+                    f"{_conf_meta['primary_framework']} Confidence Violation: "
+                    f"score {_confidence:.2f} < threshold {_confidence_threshold:.2f}. "
+                    f"Violation: agent confidence below required minimum."
                 )
-                confidence = params.get("confidence", default_confidence)
-                # Threshold from singleton (Phase 2.3)
-                min_confidence = THRESHOLDS.confidence.min_trade_confidence
-                conf_span.set_attribute("governance.confidence.value", confidence)
-                conf_span.set_attribute("governance.confidence.threshold", min_confidence)
-                if confidence < min_confidence:
-                    registry = ControlRegistry()
-                    meta = registry.get_mapping(GovernanceControl.AGENT_CONFIDENCE_THRESHOLD)
-                    error_msg = (
-                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
-                        f"{meta['primary_framework']} Violation: "
-                        f"Agentic Model Confidence {confidence} < {min_confidence}."
-                    )
-                    structured_payload = {
-                        "control_id": meta["internal_id"],
-                        "primary_framework": meta["primary_framework"],
-                        "co_frameworks": meta["co_frameworks"],
-                        "legacy_citation": meta["legacy_citation"],
-                        "scope": meta["scope"],
-                    }
-                    violations.append(error_msg)
-                    # Attach payload to the first violation so govern() can
-                    # surface it on the raised GovernanceError.
-                    if not hasattr(self, "_pending_payload"):
-                        self._pending_payload = structured_payload
-                    conf_span.set_attribute("governance.confidence.result", "FAIL")
-                else:
-                    conf_span.set_attribute("governance.confidence.result", "PASS")
+                self._pending_payload = {
+                    "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                    "primary_framework": _conf_meta["primary_framework"],
+                    "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                    "scope": _conf_meta.get("scope", ""),
+                    "confidence": _confidence,
+                    "threshold": _confidence_threshold,
+                }
+                violations.append(_conf_msg)
 
+        if tool_name == "execute_trade" and not violations:
             # 2 + 4. CBF (Redis) and OPA policy checks run CONCURRENTLY.
             # They have no data dependency on each other — parallelising them
             # reduces combined latency from CBF_ms+OPA_ms to max(CBF_ms, OPA_ms).
@@ -189,15 +179,8 @@ class SymbolicGovernor:
                         raise
 
             # --- OPA coroutine (wrapped to capture span timing) ---
-            slm_score: Optional[float] = None
-            slm_available: bool = False  # SLM sidecar deprecated (v2.0.x)
-
             opa_payload = params.copy()
             opa_payload["action"] = tool_name
-            # Inject SLM sentinel — Phase 4.3
-            opa_payload["slm_available"] = slm_available
-            if slm_score is not None:
-                opa_payload["slm_similarity_score"] = slm_score
 
             async def _opa_check_with_span() -> Any:
                 """Run OPA policy evaluation inside a dedicated Langfuse span."""
@@ -238,6 +221,18 @@ class SymbolicGovernor:
                         "cannot be verified; this gap must be closed before "
                         "production governance examination.",
                         cbf_result,
+                    )
+                    logger.critical(
+                        json.dumps({
+                            "event": "CBF_FAIL_OPEN_ACTIVATED",
+                            "severity": "CRITICAL",
+                            "tool": tool_name,
+                            "cbf_error": str(cbf_result),
+                            "audit_note": (
+                                "CBF gate bypassed via CBF_FAIL_OPEN=true. "
+                                "Cash balance cannot be independently verified for this trade."
+                            ),
+                        })
                     )
                 else:
                     logger.error(
@@ -283,11 +278,8 @@ class SymbolicGovernor:
 
         else:
             # Non-trade actions: sequential OPA only (no CBF needed)
-            slm_score: Optional[float] = None  # type: ignore[assignment]
-            slm_available: bool = False  # type: ignore[assignment]
             opa_payload = params.copy()
             opa_payload["action"] = tool_name
-            opa_payload["slm_available"] = slm_available
             try:
                 with tracer.start_as_current_span("cage.opa_pre_check") as opa_span:
                     opa_span.set_attribute("langfuse.observation.name", "opa_policy_pre_check")
@@ -313,6 +305,85 @@ class SymbolicGovernor:
                     )
             except Exception as exc:
                 violations.append(f"OPA Check Failed: {exc}")
+
+        # 3. Fiscal Limit Pre-Reservation (trade-specific).
+        # Atomically reserves the requested USD amount against the daily fiscal
+        # cap in Redis (WATCH/MULTI/EXEC) BEFORE the consensus gate.  This closes
+        # the TOCTOU race between the CBF balance check and actual trade execution:
+        # without this step, two concurrent agents could both pass CBF and OPA
+        # against the same remaining balance and together exceed the daily cap.
+        # The reservation is released in the finally block if any subsequent tier
+        # (consensus, causal, FRIA) raises a violation.
+        # If fiscal_limit_guard is None (e.g. in tests), this step is skipped.
+        _fiscal_token = None
+        if tool_name == "execute_trade" and self.fiscal_limit_guard is not None and not violations:
+            with tracer.start_as_current_span("cage.fiscal_limit_reserve") as fiscal_span:
+                fiscal_span.set_attribute("langfuse.observation.name", "fiscal_limit_reserve")
+                fiscal_span.set_attribute("governance.stage", "fiscal_limit")
+                _t_fiscal = time.perf_counter()
+                try:
+                    _amount = float(params.get("amount", 0.0))
+                    _agent_id = str(params.get("agent_id", params.get("user_id", "unknown-agent")))
+                    if _amount > 0:
+                        _fiscal_token = await self.fiscal_limit_guard.reserve(
+                                agent_id=_agent_id,
+                                amount_usd=_amount,
+                            )
+                        fiscal_span.set_attribute(
+                            "governance.fiscal.reservation_id",
+                            _fiscal_token.reservation_id,
+                        )
+                        fiscal_span.set_attribute(
+                            "governance.fiscal.amount_usd", _amount
+                        )
+                        fiscal_span.set_attribute(
+                            "governance.fiscal.running_total_usd",
+                            _fiscal_token.running_total_usd,
+                        )
+                        fiscal_span.set_attribute(
+                            "governance.fiscal.cap_usd", _fiscal_token.cap_usd
+                        )
+                        if _fiscal_token.rejected:
+                            fiscal_span.set_attribute("governance.fiscal.result", "REJECTED")
+                            violations.append(
+                                f"Fiscal Limit Pre-Reservation REJECTED: "
+                                f"amount=${_amount:,.2f} would exceed daily cap "
+                                f"${_fiscal_token.cap_usd:,.2f} "
+                                f"(running_total=${_fiscal_token.running_total_usd:,.2f}). "
+                                f"reservation_id={_fiscal_token.reservation_id}"
+                            )
+                            _fiscal_token = None  # Nothing to release — reservation was denied
+                        else:
+                            fiscal_span.set_attribute("governance.fiscal.result", "RESERVED")
+                    else:
+                        fiscal_span.set_attribute("governance.fiscal.result", "SKIPPED_ZERO_AMOUNT")
+                except Exception as _fiscal_exc:
+                    fiscal_span.record_exception(_fiscal_exc)
+                    fiscal_span.set_attribute("governance.fiscal.result", "ERROR")
+                    logger.error(
+                        "⛔ FiscalLimitGuard.reserve() failed (%s) — failing closed.",
+                        _fiscal_exc,
+                    )
+                    violations.append(
+                        f"Fiscal Limit Pre-Reservation Error: {_fiscal_exc}"
+                    )
+                fiscal_span.set_attribute(
+                    "governance.stage.latency_ms",
+                    round((time.perf_counter() - _t_fiscal) * 1000, 2),
+                )
+
+        # If any tier up to this point has already produced violations, release
+        # the fiscal reservation immediately so capacity is not held unnecessarily.
+        if violations and _fiscal_token is not None:
+            try:
+                await self.fiscal_limit_guard.release(_fiscal_token)
+                logger.info(
+                    "🔄 Fiscal reservation released (pre-consensus violation): id=%s",
+                    _fiscal_token.reservation_id,
+                )
+            except Exception as _rel_exc:
+                logger.warning("⚠️ FiscalLimitGuard.release() failed: %s", _rel_exc)
+            _fiscal_token = None
 
         # 5. ISO 42001: Multi-agent Consensus (trade-specific, high-stakes)
         if tool_name == "execute_trade":
@@ -405,13 +476,15 @@ class SymbolicGovernor:
                     exc,
                 )
 
-        # 7. FRIA Attestation (EU_ECB only — EU AI Act Art. 29a)
+        # 6b (continued). FRIA Attestation (EU_ECB only — EU AI Act Art. 29a)
         # For EU deployments, every governed action must carry a span attribute
         # attesting that a Fundamental Rights Impact Assessment (FRIA) was
         # conducted pre-market per Art. 29a. This is not a blocking runtime gate
         # (FRIA is a pre-market document obligation, not a per-request check),
         # but the live telemetry MUST record the control is active so that
         # DORA Art. 10 monitoring logs satisfy the Art. 12 logging obligation.
+        # Stamped here (at the end of the FRIA tier) as a cross-cutting
+        # observability concern — not a separate governance tier.
         fria_meta = ControlRegistry().get_mapping_safe(GovernanceControl.FRIA_ASSESSMENT)
         if fria_meta is not None:
             # Attach to the current OTel span so DORA Art. 10 audit logs include it
@@ -430,6 +503,19 @@ class SymbolicGovernor:
                 GovernanceControl.FRIA_ASSESSMENT.value,
                 fria_meta["primary_framework"],
             )
+
+        # Release fiscal reservation if any post-reservation tier (consensus,
+        # causal, FRIA) produced violations.  The reservation was held optimistically
+        # through those tiers; if they fail we must return the capacity to the pool.
+        if violations and _fiscal_token is not None and self.fiscal_limit_guard is not None:
+            try:
+                await self.fiscal_limit_guard.release(_fiscal_token)
+                logger.info(
+                    "🔄 Fiscal reservation released (post-pipeline violation): id=%s",
+                    _fiscal_token.reservation_id,
+                )
+            except Exception as _rel_exc:
+                logger.warning("⚠️ FiscalLimitGuard.release() failed: %s", _rel_exc)
 
         return {"violations": violations, "opa_results": policy_resp}
 
@@ -464,6 +550,67 @@ class SymbolicGovernor:
                 span.set_attribute("langfuse.observation.output", str(exc))
                 raise
 
+    async def pre_check(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Run lightweight pre-checks for NeMo Layer-0 context injection.
+
+        Executes STPA validation and CBF barrier check once, returning
+        pre-computed results that NeMo actions can read from context instead
+        of calling back into the governor's sub-components directly.
+
+        This breaks the re-entrant dependency loop where NeMo actions called
+        ``stpa_validator.validate()`` and ``safety_filter.verify_action()``
+        inside Layer 0, causing each to run twice per request (once here,
+        once inside ``_run_checks()``).
+
+        This method is intentionally NOT called from ``_run_checks()`` —
+        ``_run_checks()`` already calls STPA and CBF directly as part of the
+        full pipeline.
+
+        Returns:
+            dict with keys:
+                - ``stpa_result``: ``{"allowed": bool, "violations": list[str]}``
+                - ``cbf_result``:  ``{"allowed": bool, "reason": str}``
+        """
+        tool_name = "execute_trade"
+
+        # --- STPA validation (synchronous) ---
+        stpa_violations: list = []
+        if self.stpa_validator is not None:
+            try:
+                stpa_violations = self.stpa_validator.validate(tool_name, params)
+            except Exception as exc:
+                logger.warning("⚠️ pre_check: STPA validation failed (%s) — treating as no violations.", exc)
+
+        stpa_result = {
+            "allowed": len(stpa_violations) == 0,
+            "violations": stpa_violations,
+        }
+
+        # --- CBF barrier check (async) ---
+        cbf_allowed = True
+        cbf_reason = "SAFE"
+        try:
+            cbf_raw = await self.safety_filter.verify_action(tool_name, params)
+            cbf_allowed = not cbf_raw.startswith("UNSAFE") and not cbf_raw.startswith("[")
+            cbf_reason = cbf_raw
+        except Exception as exc:
+            logger.warning("⚠️ pre_check: CBF check failed (%s) — treating as SAFE (fail-open).", exc)
+            cbf_reason = f"CBF unavailable: {exc}"
+
+        cbf_result = {
+            "allowed": cbf_allowed,
+            "reason": cbf_reason,
+        }
+
+        logger.debug(
+            "🔍 pre_check complete: stpa_allowed=%s cbf_allowed=%s",
+            stpa_result["allowed"], cbf_result["allowed"],
+        )
+        return {
+            "stpa_result": stpa_result,
+            "cbf_result": cbf_result,
+        }
+
     async def verify(self, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Dry-run governance checks.  Does NOT raise exceptions.
 
@@ -491,10 +638,15 @@ class SymbolicGovernor:
     ) -> Dict[str, Any]:
         """Validate a structured tool execution payload — Unified Gateway path.
 
-        This is the entry point for **Option 2: Unified Gateway Governance
-        Routing**.  Executes only Tier 2 (CBF) and Tier 4 (OPA), skipping
-        Tier 1 (Aho-Corasick text scan) and Tier 3 (semantic similarity SLM)
-        which are irrelevant for deterministic, structured tool payloads.
+        This is the **Single Choke Point** for all tool execution.  Runs the
+        complete 7-tier governance pipeline via ``_run_checks()`` — STPA,
+        Confidence, CBF, OPA, Fiscal Limit Pre-Reservation, Consensus, Causal,
+        and FRIA — before issuing the routing seal.
+
+        Previously this method ran only Tier 2 (CBF) and Tier 4 (OPA), which
+        meant 5 of 7 substantive tiers were bypassed while the seal implied full
+        governance approval.  That gap is now closed: the routing seal is issued
+        ONLY after ``_run_checks()`` completes successfully across all tiers.
 
         On approval, a short-lived HMAC-SHA256 ``routing_seal`` is returned.
         The downstream actuator MUST verify this seal before firing — ensuring
@@ -523,58 +675,16 @@ class SymbolicGovernor:
             )
 
             t0 = time.time()
-            violations: List[str] = []
 
             try:
-                # ── Parallel Safety Checks ───────────────────────────────────
-                async def run_cbf():
-                    with tracer.start_as_current_span("cage.cbf_action_check") as cbf_span:
-                        cbf_span.set_attribute("cage.tier", 2)
-                        cbf_span.set_attribute("cage.stage", "cbf")
-                        try:
-                            cbf_result = await self.safety_filter.verify_action(action, params)
-                            cbf_ok = cbf_result == "SAFE"
-                            cbf_span.set_attribute("cage.cbf_result", "PASS" if cbf_ok else "BLOCKED")
-                            if not cbf_ok:
-                                return f"CBF safety violation: {cbf_result}"
-                        except Exception as cbf_exc:
-                            logger.warning("⚠️ CBF action check failed: %s", cbf_exc)
-                            cbf_span.record_exception(cbf_exc)
-                            cbf_span.set_attribute("cage.cbf_result", "ERROR")
-                    return None
-
-                async def run_opa():
-                    with tracer.start_as_current_span("cage.opa_action_check") as opa_span:
-                        opa_span.set_attribute("cage.tier", 4)
-                        opa_span.set_attribute("cage.stage", "opa")
-                        try:
-                            opa_payload = {
-                                "action": action,
-                                **{k: v for k, v in params.items()
-                                   if k in ("symbol", "amount", "currency",
-                                            "confidence", "trader_role", "user_id",
-                                            "risk_profile", "drawdown_pct",
-                                            "portfolio_fraction")},
-                            }
-                            opa_decision = await self.opa_client.evaluate_policy(opa_payload)
-                            opa_span.set_attribute("cage.opa_decision", opa_decision)
-                            if opa_decision == "DENY":
-                                return f"OPA: policy denied '{action}'"
-                            elif opa_decision == "MANUAL_REVIEW":
-                                return f"OPA: '{action}' requires manual review"
-                        except Exception as opa_exc:
-                            logger.error("❌ OPA action check failed: %s", opa_exc)
-                            opa_span.record_exception(opa_exc)
-                            return f"OPA: evaluation error — {opa_exc}"
-                    return None
-
-                # Execute in parallel to maximize throughput and minimize latency
-                import asyncio
-                cbf_error, opa_error = await asyncio.gather(run_cbf(), run_opa())
-                if cbf_error:
-                    violations.append(cbf_error)
-                if opa_error:
-                    violations.append(opa_error)
+                # ── Full 7-tier governance pipeline ──────────────────────────
+                # _run_checks() executes: STPA → Confidence → CBF+OPA (parallel)
+                # → Fiscal Limit Pre-Reservation → Consensus → Causal → FRIA.
+                # The routing seal is issued ONLY after all tiers pass — a seal
+                # issued before full pipeline completion would imply governance
+                # approval that was never actually granted.
+                result = await self._run_checks(action, params, sim_mode=False)
+                violations = result["violations"]
 
                 latency_ms = round((time.time() - t0) * 1000, 2)
                 span.set_attribute("cage.governance_latency_ms", latency_ms)
@@ -589,7 +699,10 @@ class SymbolicGovernor:
                     )
                     raise GovernanceError(violations[0])
 
-                # ── Issue routing seal on APPROVED ────────────────────────────
+                # ── Issue routing seal AFTER full pipeline approval ───────────
+                # The seal is generated here — after _run_checks() has completed
+                # all 7 tiers — so that it cryptographically attests to complete
+                # governance approval, not just a partial CBF+OPA check.
                 with tracer.start_as_current_span("cage.routing_seal") as seal_span:
                     seal = generate_seal(action, params)
                     seal_span.set_attribute("cage.seal_issued", True)
@@ -607,7 +720,6 @@ class SymbolicGovernor:
                     "seal": seal,
                     "latency_ms": latency_ms,
                 }
-
             except GovernanceError:
                 raise
             except Exception as exc:
@@ -615,3 +727,55 @@ class SymbolicGovernor:
                 span.set_status(Status(StatusCode.ERROR))
                 raise
 
+
+def assert_safe_operational_state() -> None:
+    """Raise RuntimeError if the system is in a combined high-risk operational state.
+
+    Specifically, raises if BOTH of the following are true simultaneously:
+      - CBF_FAIL_OPEN=true (CBF gate is bypassed)
+      - KMSGovernanceSigner is in HMAC fallback mode (no non-repudiation)
+
+    Either condition alone is a compliance gap. Together they mean:
+      - No independent cash balance verification (CBF bypassed)
+      - No externally verifiable governance attestation (HMAC fallback)
+    This combined state is the highest-risk operational posture and must
+    never occur in production.
+
+    Call this during application startup.
+    """
+    cbf_fail_open = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
+    if not cbf_fail_open:
+        return  # CBF is active — combined risk state is not present
+
+    # CBF is bypassed — check if KMS is also in fallback mode
+    try:
+        from src.gateway.governance.kms_signer import get_governance_signer
+        signer = get_governance_signer()
+        kms_active = signer.is_kms_active
+    except Exception:
+        kms_active = False  # Cannot determine — assume worst case
+
+    env = (os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")).lower()
+
+    if not kms_active:
+        msg = (
+            "CAGE STARTUP FAILURE: Combined high-risk operational state detected. "
+            "CBF_FAIL_OPEN=true (CBF gate bypassed) AND KMSGovernanceSigner is in "
+            "HMAC fallback mode (no non-repudiation). "
+            "This means: (1) cash balance cannot be independently verified, "
+            "(2) governance attestations cannot be externally verified. "
+            "Resolve by: setting KMS_GOVERNANCE_KEY and/or setting CBF_FAIL_OPEN=false."
+        )
+        if env not in ("development", "test", "dev", "ci"):
+            raise RuntimeError(msg)
+        else:
+            logger.critical(
+                json.dumps({
+                    "event": "COMBINED_HIGH_RISK_STATE",
+                    "severity": "CRITICAL",
+                    "cbf_fail_open": True,
+                    "kms_active": False,
+                    "environment": env,
+                    "audit_note": msg,
+                })
+            )

@@ -20,7 +20,7 @@ import sys
 # Ensure src is in path
 sys.path.append(os.getcwd())
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.unit
 
 from src.governed_financial_advisor.agents.risk_analyst.agent import ConstraintLogic, ProposedUCA
 from src.governed_financial_advisor.governance.nemo_actions import (

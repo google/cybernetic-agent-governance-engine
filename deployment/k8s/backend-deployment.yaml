@@ -40,7 +40,7 @@ spec:
       containers:
         # Main Agent Container
         - name: ingress-agent
-          image: gcr.io/${PROJECT_ID}/governed-financial-advisor:latest
+          image: gcr.io/YOUR_GCP_PROJECT_ID/governed-financial-advisor:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -50,9 +50,9 @@ spec:
             - name: PORT
               value: "8080"
             - name: GOOGLE_CLOUD_PROJECT
-              value: "${PROJECT_ID}"
+              value: "YOUR_GCP_PROJECT_ID"
             - name: GOOGLE_CLOUD_LOCATION
-              value: "${REGION}"
+              value: "us-central1"
             - name: VLLM_BASE_URL
               value: "http://vllm-service.governance-stack.svc.cluster.local:8000/v1"
             - name: OPENAI_API_BASE
@@ -65,8 +65,6 @@ spec:
               value: "http://vllm-reasoning.governance-stack.svc.cluster.local:8000/v1"
             - name: OPA_URL
               value: "http://opa-service:8181/v1/data/trade/governance"
-            - name: DEPLOY_TIMESTAMP
-              value: "${DEPLOY_TIMESTAMP}"
             - name: REDIS_HOST
               valueFrom:
                 secretKeyRef:
@@ -88,9 +86,6 @@ spec:
                   name: redis-credentials
                   key: REDIS_URL
 
-          volumeMounts:
-            - name: rails-config
-              mountPath: /app/config/rails
           resources:
             requests:
               cpu: "500m"

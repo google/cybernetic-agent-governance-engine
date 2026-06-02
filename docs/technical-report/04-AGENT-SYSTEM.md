@@ -183,13 +183,13 @@ The subgraph is structured so that no trade call can be made without successfull
 
 ### DEFER State Machine (AARM-V7)
 
-The agent system extends the governance tri-state decision (`ALLOW | DENY | MANUAL_REVIEW`) to **four states** by introducing `DEFER`. When the model's confidence score falls below the **Confidence-Starvation Boundary** (0.70), the agent context is parked in the DEFER queue rather than forcing a brittle binary decision or creating operational fatigue through excessive HITL escalations.
+The agent system extends the governance tri-state decision (`ALLOW | DENY | MANUAL_REVIEW`) to **four states** by introducing `DEFER`. The three-zone confidence model routes requests based on confidence score:
 
 | Confidence Score | Decision | Routing |
 | ---------------- | -------- | ------- |
 | ≥ 0.95 | `ALLOW` / `DENY` | Autonomous clearance |
-| 0.70 – 0.95 | `MANUAL_REVIEW` | Human operator sign-off |
-| < 0.70 | **`DEFER`** | Automated data-hydration loop (AARM-V7) |
+| 0.70 – 0.95 | **`DEFER`** | Automated data-hydration loop — context parked in Redis db=1 with 4-hour TTL; resolved via `POST /v1/defer/{id}/inject` (automated) or `POST /v1/defer/{id}/escalate` (HITL) |
+| < 0.70 | `DENY` | Confidence-Starvation Boundary — request blocked |
 
 DEFER tokens are stored in **Redis `db=1`** with `noeviction` policy — the system blocks on OOM rather than silently dropping execution contexts. Default TTL: 4 hours before stale escalation. Source: [`src/gateway/governance/defer_queue.py`](../../src/gateway/governance/defer_queue.py).
 
@@ -205,19 +205,31 @@ Each audit execution is capped by a `CHAIN_SEALED` sentinel. The compliance API 
 
 ### External Normative Provider with Adaptive FRIA Gating
 
-The **External Normative Provider** (`src/gateway/governance/normative_provider.py`) implements Tier 6b of the SymbolicGovernor — an adaptive FRIA gate that invokes external normative providers based on confidence score:
+The **External Normative Provider** (`src/gateway/governance/normative_provider.py`) implements Tier 6b of the SymbolicGovernor — an adaptive FRIA gate that invokes external normative providers based on confidence score. The three-zone model maps to the FRIA/Normative Provider as follows:
 
 | Confidence Range | Behavior |
 | ---------------- | -------- |
-| ≥ 0.95 | Async gate — non-blocking external validation |
-| [0.70, 0.95) | Synchronous blocking gate — awaits external FRIA response |
-| < 0.70 | DENY — routed to DEFER queue |
+| ≥ 0.95 | `ALLOW` — async gate, non-blocking external validation |
+| [0.70, 0.95) | `DEFER` — synchronous blocking gate; awaits external FRIA response |
+| < 0.70 | `DENY` — confidence-starvation boundary |
 
 Activated when `CAGE_NORMATIVE_PROVIDER != "static"`. The daemon polls the external provider every 6 hours to refresh the normative baseline.
 
 ### ConsensusModelRegistry (AARM-V9)
 
-The **ConsensusModelRegistry** enables heterogeneous multi-model consensus for high-value trades (≥ $10,000 USD). Two independent LLM-backed critic personas — a **DeepSeek-R1 Risk Manager** and a **Llama 3.1 Compliance Officer** — are queried concurrently via `asyncio.gather()`. Both must vote `APPROVE` for the trade to proceed. This heterogeneous design neutralizes **AARM-V9 Semantic Blind Spot** — a single model cannot detect its own compliance violations.
+The **ConsensusModelRegistry** enables heterogeneous multi-model consensus for high-value trades (≥ `THRESHOLDS.consensus.threshold_usd`). Two independent LLM-backed critic personas — a **DeepSeek-R1 Risk Manager** (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`) and a **Llama 3.1 Compliance Officer** (`meta-llama/Llama-3.1-8B-Instruct`) — are queried concurrently via `asyncio.gather()`. This heterogeneous design neutralizes **AARM-V9 Semantic Blind Spot** — a single model cannot detect its own compliance violations.
+
+### NeMo Guardrails Phase 4.2 Changes
+
+Phase 4.2 introduced the following changes to `src/gateway/governance/nemo/manager.py`:
+
+| Change | Description |
+| ------ | ----------- |
+| **Removed substring heuristics** | The "I cannot answer" phrase-list bypass detection has been removed |
+| **Transparent fallback mode** | When `RailsConfig` parse fails (Colang 2.x `lark.UnexpectedToken`), the system enters `DEGRADED_FAIL_OPEN` mode rather than crashing |
+| **Pre-check injection** | Pre-checks are injected to break re-entrant loops |
+| **Response deduplication** | Duplicate responses are deduplicated before returning |
+| **Degraded mode stamping** | When degraded: all requests stamped `DEGRADED_FAIL_OPEN` in Langfuse with `stpa_hazard=UCA-1_SEMANTIC_BYPASS` and `iso_control=A.5.2`; OPA + STPA remain authoritative |
 
 ---
 

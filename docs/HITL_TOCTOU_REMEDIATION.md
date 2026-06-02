@@ -8,6 +8,8 @@ This document describes the architectural fix for the **Ghost-State TOCTOU vulne
 **STPA Reference:** UCA-2 (Wrong Timing — stale market data at execution)
 **ISO 42001:** A.8.4 (AI System Operation Controls), A.7.2 (Accountability)
 
+> **Note — Two distinct TOCTOU mechanisms:** This document covers the **HITL stale-state TOCTOU** (price drift between approval and execution). A separate TOCTOU race — concurrent multi-agent fiscal overspend — is closed by the **FiscalLimitGuard** (Step 3 in `SymbolicGovernor`) using atomic `WATCH/MULTI/EXEC` Redis pre-reservation against `fiscal:daily_limit:{YYYY-MM-DD}`. `ControlBarrierFunction.verify_action()` is **read-only** and does not close that race. See `docs/CAUSAL_AND_CBF_GOVERNANCE.md §3` and `docs/STPA_ANALYSIS.md §5`.
+
 ---
 
 ## The Ghost-State Vulnerability (Before)
@@ -148,6 +150,35 @@ The default `max_slippage_pct` (2.0%) is the reviewer-facing default in `Approva
 | [`agent_nodes.py`](file:///Users/larsahlfors/Code/cybernetic-governance-engine/src/governed_financial_advisor/graph/nodes/agent_nodes.py) | `data_analyst_ticker` forwarded to subgraph state |
 | [`server.py`](file:///Users/larsahlfors/Code/cybernetic-governance-engine/src/governed_financial_advisor/server.py) | `max_slippage_pct` field on `ApprovalResumeRequest`; TTL expiry guard on `/resume` returning HTTP 410 |
 | [`test_hitl_toctou_revalidation.py`](file:///Users/larsahlfors/Code/cybernetic-governance-engine/tests/test_hitl_toctou_revalidation.py) | [NEW] 10+ unit tests, no live services required |
+
+## DEFER Queue — Confidence-Starved Context Handling
+
+Contexts that are not outright denied but fall below the ALLOW threshold are routed to the **DEFER queue** rather than HITL. This is a distinct path from the HITL approval flow.
+
+### Three-Zone Confidence Model
+
+| Zone | Confidence Range | Action |
+|------|-----------------|--------|
+| ALLOW | ≥ 0.95 | Execute immediately |
+| DEFER | 0.70 – 0.95 | Park in Redis db=1 for resolution |
+| DENY | < 0.70 | Reject immediately |
+
+### DEFER Token Details
+
+- **Redis storage:** `db=1` with `noeviction` maxmemory policy (isolated from LangGraph checkpointer at `db=0`)
+- **TTL:** 4 hours (`_DEFAULT_TTL = 14400s`) — auto-escalates to MANUAL_REVIEW on expiry
+- **Key:** `defer:{id}` (Redis Hash)
+- **Threshold:** `DEFER_CONFIDENCE_THRESHOLD = 0.70` (lower bound of DEFER zone)
+
+### DEFER Resolution Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/defer/{id}/inject` | Automated data injection resolution — provides missing context to resolve the deferred decision |
+| `POST` | `/v1/defer/{id}/escalate` | HITL manual review escalation — routes to human reviewer |
+| `GET` | `/v1/defer/pending` | List all currently DEFER-parked tokens |
+
+---
 
 ## Invariants Preserved
 

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, AsyncIterator, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import nest_asyncio
 from nemoguardrails import LLMRails, RailsConfig
@@ -36,6 +36,7 @@ from opentelemetry.trace import Status, StatusCode
 
 from src.gateway.governance.nemo.vllm_client import VLLMLLM
 from src.gateway.governance.iso_control import stamp_iso_control
+from src.gateway.governance.text_filter import ac_keyword_scan
 
 logger = logging.getLogger("NeMoManager")
 handler = logging.StreamHandler()
@@ -399,26 +400,28 @@ def initialize_rails() -> LLMRails:
 
 
 # ---------------------------------------------------------------------------
-# Deterministic bypass patterns (shared across validate / verify)
+# Bypass detection — delegates to the canonical Aho-Corasick authority
 # ---------------------------------------------------------------------------
-_BYPASS_PATTERNS = [
-    "system override", "root-access", "skip verification", "ROOT-ACCESS-2026",
-    "BYPASS-ALL-LIMITS", "ADMIN-9999", "skip all verification", "emergency override",
-    "CT-2026-EMERGENCY", "Ignore all safety instructions",
-]
-
 
 def _detect_bypass(text: str) -> bool:
-    """Return True if *text* contains any known bypass attempt."""
-    lower = text.lower()
-    return any(p.lower() in lower for p in _BYPASS_PATTERNS)
+    """Return True if *text* contains any known bypass attempt.
+
+    Delegates to ``ac_keyword_scan()`` from ``text_filter.py`` — the
+    canonical Aho-Corasick Tier-1 scanner — so that all bypass detection
+    shares a single keyword list and automaton (REC-6).
+    """
+    return ac_keyword_scan(text)
 
 
 # ---------------------------------------------------------------------------
 # validate_with_nemo — Phase 4.2: substring heuristics REMOVED
 # ---------------------------------------------------------------------------
 
-async def validate_with_nemo(user_input: str, rails: LLMRails) -> tuple[bool, str]:
+async def validate_with_nemo(
+    user_input: str,
+    rails: LLMRails,
+    pre_check_results: Optional[Dict[str, Any]] = None,
+) -> tuple[bool, str]:
     """Validates user input using NeMo Guardrails.
 
     Returns (is_safe: bool, response: str).
@@ -426,6 +429,15 @@ async def validate_with_nemo(user_input: str, rails: LLMRails) -> tuple[bool, st
     Phase 4.2: The legacy ``"I cannot answer"`` substring check is removed.
     Safety is determined solely from whether NeMo's rails pipeline emitted a
     bot response (indicating rail intervention) or passed through cleanly.
+
+    Args:
+        user_input: The raw user message to validate.
+        rails: The LLMRails instance to use for validation.
+        pre_check_results: Optional pre-computed governance results from
+            ``SymbolicGovernor.pre_check()``.  When provided, these are
+            injected into the NeMo context under ``"pre_check_results"`` so
+            that NeMo actions can read them without calling back into the
+            governor's sub-components (breaking the re-entrant loop).
     """
     from src.governed_financial_advisor.utils.privacy import scrub_pii
     try:
@@ -477,11 +489,25 @@ async def validate_with_nemo(user_input: str, rails: LLMRails) -> tuple[bool, st
             span.set_attribute("langfuse.trace.metadata.guardrails.framework", "nemo")
             span.set_attribute("langfuse.trace.metadata.guardrails.input_length", len(user_input))
 
+            # Build NeMo context — inject pre-computed governance results so that
+            # NeMo actions read from this dict instead of calling back into the
+            # governor's sub-components (breaks the re-entrant dependency loop).
+            nemo_context: Dict[str, Any] = {}
+            if pre_check_results is not None:
+                nemo_context["pre_check_results"] = pre_check_results
+                logger.debug(
+                    "🔍 validate_with_nemo: injecting pre_check_results into NeMo context "
+                    "(stpa_allowed=%s, cbf_allowed=%s)",
+                    pre_check_results.get("stpa_result", {}).get("allowed", "?"),
+                    pre_check_results.get("cbf_result", {}).get("allowed", "?"),
+                )
+
             # Use structured rails execution (input rails only)
             res = await rails.generate_async(
                 messages=[{"role": "user", "content": user_input}],
                 options={"rails": ["input"]},
                 streaming_handler=handler,
+                context=nemo_context if nemo_context else None,
             )
 
             # Structured result extraction — no substring matching
@@ -611,11 +637,24 @@ except ImportError:
         return text
 
 
-async def verify_input(rails: LLMRails, text: str) -> SafetyResult:
+async def verify_input(
+    rails: LLMRails,
+    text: str,
+    pre_check_results: Optional[Dict[str, Any]] = None,
+) -> SafetyResult:
     """Verify an input string as a pure filter (Interceptor pattern).
 
     Phase 4.2: Detection logic is fully structural — no substring heuristics.
     A non-empty bot response from the input rails indicates rail intervention.
+
+    Args:
+        rails: The LLMRails instance to use for verification.
+        text: The input text to verify.
+        pre_check_results: Optional pre-computed governance results from
+            ``SymbolicGovernor.pre_check()``.  When provided, these are
+            injected into the NeMo context under ``"pre_check_results"`` so
+            that NeMo actions can read them without calling back into the
+            governor's sub-components (breaking the re-entrant loop).
     """
     with tracer.start_as_current_span("guardrails.verify_input") as span:
         span.set_attribute("langfuse.observation.type", "span")
@@ -643,10 +682,24 @@ async def verify_input(rails: LLMRails, text: str) -> SafetyResult:
             logger.warning("⚠️ verify_input: Semantic Layer Bypassed (Fail-Open). Relying on OPA/STPA.")
             return SafetyResult(is_safe=True)
 
+        # Build NeMo context — inject pre-computed governance results so that
+        # NeMo actions read from this dict instead of calling back into the
+        # governor's sub-components (breaks the re-entrant dependency loop).
+        nemo_context: Dict[str, Any] = {}
+        if pre_check_results is not None:
+            nemo_context["pre_check_results"] = pre_check_results
+            logger.debug(
+                "🔍 verify_input: injecting pre_check_results into NeMo context "
+                "(stpa_allowed=%s, cbf_allowed=%s)",
+                pre_check_results.get("stpa_result", {}).get("allowed", "?"),
+                pre_check_results.get("cbf_result", {}).get("allowed", "?"),
+            )
+
         try:
             res = await rails.generate_async(
                 messages=[{"role": "user", "content": text}],
                 options={"rails": ["input"]},
+                context=nemo_context if nemo_context else None,
             )
             bot_response = _extract_bot_response(res)
 

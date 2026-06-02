@@ -121,6 +121,69 @@ def pytest_collection_modifyitems(
             item.add_marker(skip_integration)
 
 
+# ── OPA reachability fixtures ────────────────────────────────────────────────
+
+@pytest.fixture(scope="session")
+def require_opa_trade_policy():
+    """Skip the requesting test if OPA is unreachable or the trade.governance policy is not loaded.
+
+    Use via ``@pytest.mark.usefixtures("require_opa_trade_policy")`` on any
+    class or test that needs a live OPA instance with the trade.governance
+    policy loaded.  This fixture runs at test-setup time (not collection time),
+    so it never causes collection-time side effects.
+    """
+    opa_url = os.environ.get("OPA_URL")
+    if not opa_url:
+        pytest.skip("OPA_URL not set — skipping OPA integration test")
+
+    import urllib.parse
+    import httpx
+
+    raw = opa_url.rstrip("/")
+    parsed = urllib.parse.urlparse(raw)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+
+    try:
+        resp = httpx.get(f"{base}/health", timeout=2)
+        if not resp.is_success:
+            pytest.skip(f"OPA health check failed ({resp.status_code}) — skipping OPA integration test")
+        resp2 = httpx.post(
+            f"{base}/v1/data/trade/governance",
+            json={"input": {"action": "market_analysis", "trader_role": "junior"}},
+            timeout=2,
+        )
+        if not resp2.is_success:
+            pytest.skip("OPA trade.governance policy not loaded — skipping OPA integration test")
+        result = resp2.json().get("result", {})
+        if "allow" not in result:
+            pytest.skip("OPA trade.governance policy missing 'allow' key — skipping OPA integration test")
+    except Exception as exc:
+        pytest.skip(f"OPA not reachable ({exc}) — skipping OPA integration test")
+
+
+@pytest.fixture(scope="session")
+def require_opa_reachable():
+    """Skip the requesting test if OPA health endpoint is not reachable.
+
+    Use via ``@pytest.mark.usefixtures("require_opa_reachable")`` on any
+    class or test that needs a live OPA instance.  Runs at test-setup time,
+    not collection time.
+    """
+    opa_url = os.environ.get("OPA_URL")
+    if not opa_url:
+        pytest.skip("OPA_URL not set — skipping OPA integration test")
+
+    import urllib.parse
+    import requests as _requests
+
+    parsed = urllib.parse.urlparse(opa_url)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    try:
+        _requests.get(f"{base}/health", timeout=2)
+    except Exception as exc:
+        pytest.skip(f"OPA not reachable ({exc}) — skipping OPA integration test")
+
+
 # ── Session-scoped fixtures ───────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)

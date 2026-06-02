@@ -12,6 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# NOTE: This manifest defines the canonical Redis StatefulSet named 'redis'.
+# If a legacy StatefulSet named 'redis-master' exists in the cluster, it must
+# be migrated before applying this manifest. Migration procedure:
+#   1. kubectl delete statefulset redis-master -n governance-stack --cascade=orphan
+#   2. kubectl apply -f deployment/k8s/redis-statefulset.yaml -n governance-stack
+# The --cascade=orphan flag preserves the PVC data during migration.
+#
+# Current live state (as of 2026-06-02):
+#   - StatefulSet: redis-master (1/1 Running) — legacy name, must be migrated
+#   - Services: redis (ClusterIP), redis-headless (None), redis-master (ClusterIP)
+#   - All application manifests reference redis.governance-stack.svc.cluster.local
+#     (financial-advisor.yaml, gateway.yaml, compliance-bridge.yaml) — the 'redis'
+#     Service name is already correct; only the StatefulSet name needs migration.
+#   - cage-redis-config ConfigMap: exists (created 2026-05-31)
+#
 # ============================================================================
 # Redis StatefulSet — CAGE v2.0.0 Evidence State Store
 # ============================================================================

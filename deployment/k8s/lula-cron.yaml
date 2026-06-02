@@ -17,7 +17,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: lula-validation-manifests
-  namespace: ${NAMESPACE}
+  namespace: governance-stack
   labels:
     app: lula
     compliance.iso42001/component: "audit-manifests"
@@ -30,7 +30,7 @@ data:
       api-spec:
         endpoints:
           - name: langfuse_metrics_a52
-            url: "http://compliance-bridge.${NAMESPACE}.svc.cluster.local:80/v1/metrics/A.5.2"
+            url: "http://compliance-bridge.governance-stack.svc.cluster.local:80/v1/metrics/A.5.2"
             method: GET
     provider:
       type: opa
@@ -56,7 +56,7 @@ data:
       api-spec:
         endpoints:
           - name: langfuse_metrics_a53
-            url: "http://compliance-bridge.${NAMESPACE}.svc.cluster.local:80/v1/metrics/A.5.3"
+            url: "http://compliance-bridge.governance-stack.svc.cluster.local:80/v1/metrics/A.5.3"
             method: GET
     provider:
       type: opa
@@ -82,7 +82,7 @@ data:
       api-spec:
         endpoints:
           - name: langfuse_metrics_a92
-            url: "http://compliance-bridge.${NAMESPACE}.svc.cluster.local:80/v1/metrics/A.9.2"
+            url: "http://compliance-bridge.governance-stack.svc.cluster.local:80/v1/metrics/A.9.2"
             method: GET
     provider:
       type: opa
@@ -109,7 +109,7 @@ data:
         resources:
           - name: opa-compliance-status
             resource: configmaps
-            namespace: ${NAMESPACE}
+            namespace: governance-stack
     provider:
       type: opa
       opa-spec:
@@ -138,7 +138,7 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: lula-audit
-  namespace: ${NAMESPACE}
+  namespace: governance-stack
   labels:
     app: lula
     compliance.iso42001/component: "continuous-audit"
@@ -205,7 +205,7 @@ spec:
                     -X POST \
                     -H "Content-Type: application/json" \
                     --data-binary "@${PAYLOAD_FILE}" \
-                    http://compliance-bridge.${NAMESPACE}.svc.cluster.local:80/v1/audit/ingest)
+                    http://compliance-bridge.governance-stack.svc.cluster.local:80/v1/audit/ingest)
 
                   echo "📊 Ingest HTTP status: ${HTTP_STATUS}"
                   cat /results/ingest-response.json
@@ -263,7 +263,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: lula-sc4-watch
-  namespace: ${NAMESPACE}
+  namespace: governance-stack
   labels:
     app: lula-sc4-watch
     compliance.iso42001/component: "realtime-sc4-watch"
@@ -314,7 +314,7 @@ spec:
                     -X POST \
                     -H "Content-Type: application/json" \
                     --data-binary "@${PAYLOAD_FILE}" \
-                    http://compliance-bridge.${NAMESPACE}.svc.cluster.local:80/v1/audit/ingest)
+                    http://compliance-bridge.governance-stack.svc.cluster.local:80/v1/audit/ingest)
 
                   echo "SC-4 watch: ingested ${AUDIT_ID}, HTTP ${HTTP_STATUS}"
 

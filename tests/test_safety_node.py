@@ -278,10 +278,7 @@ def _opa_reachable() -> bool:
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(
-    not _opa_reachable(),
-    reason="OPA not reachable — set OPA_URL to a live OPA instance"
-)
+@pytest.mark.usefixtures("require_opa_reachable")
 class TestSafetyNodeIntegration:
     """Integration tests that call a real OPA instance via symbolic_governor.govern()."""
 

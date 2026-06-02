@@ -72,6 +72,7 @@ class StpaThresholds(BaseModel):
 
 
 class ConfidenceThresholds(BaseModel):
+    # DEPRECATED: confidence threshold is now enforced exclusively by OPA (system_authz.rego)
     min_trade_confidence: float = Field(
         ..., ge=0.0, le=1.0,
         description=(

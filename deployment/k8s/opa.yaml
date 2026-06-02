@@ -16,7 +16,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: opa-service
-  namespace: ${NAMESPACE}
+  namespace: governance-stack
   labels:
     app: opa
     compliance.iso42001/enabled: "true"
@@ -35,6 +35,7 @@ spec:
         compliance.iso42001/enabled: "true"
       annotations:
         compliance.iso42001/controls: "A.5.3,SC-4,A.9.2,A.5.2"
+        # opa label required by network-policy allow-opa-ingress-from-governance
     spec:
       containers:
         - name: opa
@@ -64,6 +65,22 @@ spec:
             - name: config
               mountPath: /config
               readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8181
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8181
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
           resources:
             requests:
               cpu: "100m"
@@ -83,7 +100,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: opa-compliance-status
-  namespace: ${NAMESPACE}
+  namespace: governance-stack
   labels:
     app: opa
     compliance.iso42001/enabled: "true"
@@ -98,7 +115,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: opa-service
-  namespace: ${NAMESPACE}
+  namespace: governance-stack
 spec:
   selector:
     app: opa

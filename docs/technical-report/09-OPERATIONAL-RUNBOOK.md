@@ -526,7 +526,7 @@ AssertionError: Expected 200, got 404
 **Resolution path:** Add a second port-forward for the gateway service before running the full suite:
 
 ```bash
-kubectl port-forward -n governance-stack svc/gateway 9000:9000 &
+kubectl port-forward -n governance-stack svc/gateway 8080:8080 &
 kubectl port-forward -n governance-stack svc/governed-financial-advisor 8000:8000 &
 pytest tests/ -v --timeout=60
 ```

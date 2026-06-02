@@ -269,27 +269,26 @@ This tool dynamically compiles STPA hazards (UCAs) and control implementations i
 
 Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule ([`deployment/k8s/lula-cron.yaml`](../../deployment/k8s/lula-cron.yaml)). RBAC permissions are defined in [`deployment/k8s/lula-rbac.yaml`](../../deployment/k8s/lula-rbac.yaml).
 
-Each manifest performs a Kubernetes-native check and maps results to a specific OSCAL control:
+**9 total Lula manifests** — 4 Active (full Kubernetes domain checks) and 5 Stub (placeholder validations):
 
-| Manifest                                                                       | Control         | Kubernetes Check                              |
-| ------------------------------------------------------------------------------ | --------------- | --------------------------------------------- |
-| [`compliance/lula/lula-validation-a52.yaml`](../../compliance/lula/lula-validation-a52.yaml)   | ISO 42001 A.5.2 | Social impact assessment ConfigMap            |
-| [`compliance/lula/lula-validation-a53.yaml`](../../compliance/lula/lula-validation-a53.yaml)   | ISO 42001 A.5.3 | Documentation/logging config                  |
-| [`compliance/lula/lula-validation-a92.yaml`](../../compliance/lula/lula-validation-a92.yaml)   | ISO 42001 A.9.2 | PII detection Deployment                      |
-| [`compliance/lula/lula-validation-ac2.yaml`](../../compliance/lula/lula-validation-ac2.yaml)   | SP 800-53 AC-2  | Account management resources                  |
-| [`compliance/lula/lula-validation-ac3.yaml`](../../compliance/lula/lula-validation-ac3.yaml)   | SP 800-53 AC-3  | Access enforcement policy                     |
-| [`compliance/lula/lula-validation-cm6.yaml`](../../compliance/lula/lula-validation-cm6.yaml)   | SP 800-53 CM-6  | Configuration settings ConfigMap              |
-| [`compliance/lula/lula-validation-ia3.yaml`](../../compliance/lula/lula-validation-ia3.yaml)   | SP 800-53 IA-3  | Device identification config                  |
-| [`compliance/lula/lula-validation-ia5.yaml`](../../compliance/lula/lula-validation-ia5.yaml)   | SP 800-53 IA-5  | Authenticator management                      |
-| [`compliance/lula/lula-validation-ir6.yaml`](../../compliance/lula/lula-validation-ir6.yaml)   | SP 800-53 IR-6  | Incident reporting resources                  |
-| [`compliance/lula/lula-validation-ra5.yaml`](../../compliance/lula/lula-validation-ra5.yaml)   | SP 800-53 RA-5  | `security-scanner-cronjob` existence check    |
-| [`compliance/lula/lula-validation-sc4.yaml`](../../compliance/lula/lula-validation-sc4.yaml)   | SP 800-53 SC-4  | Information in shared resources               |
-| [`compliance/lula/lula-validation-sc8.yaml`](../../compliance/lula/lula-validation-sc8.yaml)   | SP 800-53 SC-8  | Transmission confidentiality                  |
-| [`compliance/lula/lula-validation-si2.yaml`](../../compliance/lula/lula-validation-si2.yaml)   | SP 800-53 SI-2  | Flaw remediation CronJob                      |
-| [`compliance/lula/lula-validation-au12.yaml`](../../compliance/lula/lula-validation-au12.yaml) | SP 800-53 AU-12 | Langfuse OTLP ingestion availability (standalone OTel Collector deprecated 2026-05-31) |
-| [`compliance/lula/lula-validation-aarm-vectors.yaml`](../../compliance/lula/lula-validation-aarm-vectors.yaml) | CSA AARM v1.0 | OPA Rego: all 11 vectors present; zero `EXPOSED`; all 7 CRITICAL vectors `NEUTRALIZED` |
+**Active Manifests (4):**
 
-All 15 Lula validation manifests listed above are present in the filesystem.
+| Manifest                                                                       | Control         | Kubernetes Check                              | Status |
+| ------------------------------------------------------------------------------ | --------------- | --------------------------------------------- | ------ |
+| [`compliance/lula/lula-validation-a52.yaml`](../../compliance/lula/lula-validation-a52.yaml)   | ISO 42001 A.5.2 | Social impact assessment ConfigMap            | Active |
+| [`compliance/lula/lula-validation-a53.yaml`](../../compliance/lula/lula-validation-a53.yaml)   | ISO 42001 A.5.3 | Documentation/logging config                  | Active |
+| [`compliance/lula/lula-validation-a92.yaml`](../../compliance/lula/lula-validation-a92.yaml)   | ISO 42001 A.9.2 | PII detection Deployment                      | Active |
+| [`compliance/lula/lula-validation-sc4.yaml`](../../compliance/lula/lula-validation-sc4.yaml)   | SP 800-53 SC-4  | Information in shared resources               | Active |
+
+**Stub Manifests (5):**
+
+| Manifest                                                                       | Control         | Status |
+| ------------------------------------------------------------------------------ | --------------- | ------ |
+| [`compliance/lula/lula-validation-au12.yaml`](../../compliance/lula/lula-validation-au12.yaml) | SP 800-53 AU-12 | Stub (Langfuse OTLP ingestion availability; standalone OTel Collector deprecated 2026-05-31) |
+| [`compliance/lula/lula-validation-ac3.yaml`](../../compliance/lula/lula-validation-ac3.yaml)   | SP 800-53 AC-3  | Stub |
+| [`compliance/lula/lula-validation-ra5.yaml`](../../compliance/lula/lula-validation-ra5.yaml)   | SP 800-53 RA-5  | Stub |
+| [`compliance/lula/lula-validation-cm6.yaml`](../../compliance/lula/lula-validation-cm6.yaml)   | SP 800-53 CM-6  | Stub |
+| [`compliance/lula/lula-validation-ir6.yaml`](../../compliance/lula/lula-validation-ir6.yaml)   | SP 800-53 IR-6  | Stub |
 
 ---
 

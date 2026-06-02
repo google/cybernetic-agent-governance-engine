@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from langchain_core.messages import AIMessage, BaseMessage
 from opentelemetry import trace
@@ -54,7 +54,7 @@ _NEMO_AVAILABLE = False
 create_nemo_manager = None  # type: ignore[assignment]
 
 
-async def validate_with_nemo(user_input, rails):  # type: ignore[misc]
+async def validate_with_nemo(user_input, rails, pre_check_results=None):  # type: ignore[misc]
     """Fail-closed stub — NeMo not available."""
     raise RuntimeError("NeMo manager not available (validate_with_nemo stub)")
 
@@ -73,6 +73,28 @@ try:
     _NEMO_AVAILABLE = True
 except ImportError:
     logger.warning("NeMo manager not importable — guardrail nodes will fail-closed")
+
+# ---------------------------------------------------------------------------
+# SymbolicGovernor singleton — imported lazily to avoid circular imports.
+# Used to call pre_check() before NeMo rails so actions receive pre-computed
+# STPA/CBF results via context instead of calling back into the governor.
+# ---------------------------------------------------------------------------
+_symbolic_governor = None
+
+
+def _get_symbolic_governor():
+    """Return the SymbolicGovernor singleton, or None if unavailable."""
+    global _symbolic_governor
+    if _symbolic_governor is None:
+        try:
+            from src.gateway.governance.singletons import symbolic_governor
+            _symbolic_governor = symbolic_governor
+        except Exception as exc:
+            logger.warning(
+                "⚠️ Could not import symbolic_governor singleton (%s) — "
+                "NeMo actions will use fail-open defaults.", exc
+            )
+    return _symbolic_governor
 
 
 def get_nemo_rails():
@@ -189,7 +211,47 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
 
             try:
                 rails = get_nemo_rails()
-                is_safe, reason = await validate_with_nemo(user_input, rails)
+
+                # --- Pre-check injection (re-entrant loop fix) ---
+                # Call symbolic_governor.pre_check() ONCE here, before NeMo rails
+                # run, and inject the results into the NeMo context.  NeMo actions
+                # (CheckApprovalTokenAction, CheckDataLatencyAction, etc.) will read
+                # from context["pre_check_results"] instead of calling back into the
+                # governor's sub-components — eliminating the double-execution of
+                # stpa_validator.validate() and safety_filter.verify_action().
+                pre_check_results: Optional[dict] = None
+                governor = _get_symbolic_governor()
+                if governor is not None:
+                    # Extract governance params from state if available
+                    governance_params = state.get("governance_params", {})
+                    if not governance_params:
+                        # Fall back to extracting what we can from state
+                        governance_params = {
+                            k: state[k]
+                            for k in (
+                                "approval_token", "amount", "symbol", "latency_ms",
+                                "drawdown_pct", "order_size", "daily_vol",
+                                "confidence", "risk_assessed", "compliance_checked",
+                            )
+                            if k in state
+                        }
+                    try:
+                        pre_check_results = await governor.pre_check(governance_params)
+                        logger.debug(
+                            "🔍 nemo_guardrail_node: pre_check complete "
+                            "(stpa_allowed=%s, cbf_allowed=%s)",
+                            pre_check_results.get("stpa_result", {}).get("allowed", "?"),
+                            pre_check_results.get("cbf_result", {}).get("allowed", "?"),
+                        )
+                    except Exception as pre_exc:
+                        logger.warning(
+                            "⚠️ nemo_guardrail_node: pre_check failed (%s) — "
+                            "NeMo actions will use fail-open defaults.", pre_exc
+                        )
+
+                is_safe, reason = await validate_with_nemo(
+                    user_input, rails, pre_check_results=pre_check_results
+                )
                 span.set_attribute(
                     "nemo.input_rail.result",
                     "PASSED" if is_safe else "BLOCKED",

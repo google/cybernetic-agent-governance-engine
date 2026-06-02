@@ -97,6 +97,30 @@ async def _gateway_lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("⚠️ OPA pre-warm failed (non-blocking): %s", e)
 
+    # ── Startup assertion: confirm trade_governance.rego is active ──────────
+    # REC-5: The gateway must not silently start without the RBAC trade-size
+    # policy (junior ≤ $5k, senior ≤ $500k) loaded in OPA.  This check is
+    # non-blocking — a missing or unreachable policy logs a WARNING but does
+    # NOT prevent startup (test environments may not have OPA running).
+    try:
+        trade_policy_active = await opa_client.check_policy_exists("trade/governance")
+        if trade_policy_active:
+            logger.info(
+                "✅ OPA trade governance policy confirmed active"
+            )
+        else:
+            logger.warning(
+                "⚠️ trade_governance.rego policy not confirmed active — "
+                "OPA_POLICY_PATH may not include trade governance rules. "
+                "Trade size RBAC will not be enforced."
+            )
+    except Exception as e:
+        logger.warning(
+            "⚠️ trade_governance.rego policy not confirmed active — "
+            "OPA_POLICY_PATH may not include trade governance rules. "
+            "Trade size RBAC will not be enforced."
+        )
+
     # External Normative Provider integration (§2.5)
     provider_name = os.getenv("CAGE_NORMATIVE_PROVIDER", "static")
     polling_task = None

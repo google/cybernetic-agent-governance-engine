@@ -36,7 +36,7 @@ All services run in the `governance-stack` namespace. Full manifest inventory li
 | Service                    | Manifest                       | Port | Purpose                      |
 | -------------------------- | ------------------------------ | ---- | ---------------------------- |
 | Governed Financial Advisor | `deployment/k8s/financial-advisor.yaml`       | 8000 | FastAPI agent server         |
-| Hybrid Gateway             | `deployment/k8s/backend-deployment.yaml`      | —    | MCP + Inference + Governance |
+| Hybrid Gateway             | `deployment/k8s/backend-deployment.yaml`      | 8080 | MCP SSE at `/`, inference proxy at `/inference`, governance middleware at `/governance` |
 | Compliance Bridge          | `deployment/k8s/compliance-bridge.yaml`       | 3001 | OSCAL audit + SSE events     |
 | AgentSight UI              | `frontend-deployment.yaml.tpl` | 5173 | React dashboard              |
 | vLLM Reasoning             | `vllm-reasoning.yaml.tpl`      | —    | DeepSeek-R1-Distill-Llama-8B |
@@ -244,7 +244,7 @@ Model weight mirroring is handled by `deployment/scripts/mirror_models.py`, whic
 
 Source: `deployment/langfuse/README.md`, `deployment/langfuse/service.yaml`, `infra/modules/langfuse_stack/`
 
-Langfuse is self-hosted on GKE backed by Cloud SQL PostgreSQL, giving CAGE full control over LLM trace data. Components:
+Langfuse is self-hosted **v3** on GKE backed by **ClickHouse + MinIO** (and Cloud SQL PostgreSQL), giving CAGE full control over LLM trace data. The standalone OpenTelemetry Collector was deprecated 2026-05-31; services now export OTLP directly to Langfuse's integrated ingestion endpoint. Components:
 
 | Resource                         | File                                      |
 | -------------------------------- | ----------------------------------------- |

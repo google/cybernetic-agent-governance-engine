@@ -111,7 +111,7 @@ Non-deterministic or context-free tiers (such as Tier 0 STPA, Tier 1 Agentic Con
 
 Full analysis: [`docs/STPA_ANALYSIS.md`](../STPA_ANALYSIS.md).
 
-[`STPAValidator`](../../src/gateway/governance/stpa_validator.py) enforces 6 Unsafe Control Actions (UCAs) derived from STAMP hazard analysis of the CAGE financial control loop. Each UCA maps to a threshold in `governance_thresholds.json`.
+[`STPAValidator`](../../src/gateway/governance/stpa_validator.py) enforces **9 Unsafe Control Actions (UCAs)** derived from STAMP hazard analysis of the CAGE financial control loop (UCA-1 through UCA-9, compiled by `stpa_compiler.py`). Each UCA maps to a threshold in `governance_thresholds.json`. The STPA check runs synchronously as Step 0 (`cage.stpa_check` OTel span), always first.
 
 | UCA ID | Name                        | Check                                                | Threshold                                                 |
 | ------ | --------------------------- | ---------------------------------------------------- | --------------------------------------------------------- |
@@ -268,8 +268,18 @@ NeMo Guardrails configuration resides in `config/rails/`.
 ### `config/rails/config.yml`
 
 - Colang 2.x syntax
-- 20 PII entity types configured for input/output scanning
+- **15 PII entity types** configured for input/output scanning (Microsoft Presidio)
 - Model: `GUARDRAILS_MODEL_NAME` (environment variable)
+
+### NeMo Phase 4.2 Changes (`src/gateway/governance/nemo/manager.py`)
+
+| Change | Description |
+| ------ | ----------- |
+| **Removed substring heuristics** | The "I cannot answer" phrase-list bypass detection has been removed |
+| **Transparent fallback mode** | When `RailsConfig` parse fails (Colang 2.x `lark.UnexpectedToken`), enters `DEGRADED_FAIL_OPEN` mode |
+| **Pre-check injection** | Pre-checks injected to break re-entrant loops |
+| **Response deduplication** | Duplicate responses deduplicated before returning |
+| **Degraded mode stamping** | When degraded: all requests stamped `DEGRADED_FAIL_OPEN` in Langfuse with `stpa_hazard=UCA-1_SEMANTIC_BYPASS` and `iso_control=A.5.2`; OPA + STPA remain authoritative |
 
 ### `main_logic.co` — Primary Flows
 
@@ -363,11 +373,11 @@ The `ConsensusEngine` applies a strict priority ladder over the two critic votes
 
 | Priority | Condition | Final Decision | Effect |
 | -------- | --------- | -------------- | ------ |
-| 1 (highest) | Both critics return `ERROR` (LLM unavailable) | `APPROVE` (fail-open) | Trade continues through OPA only; mirrors SLM sidecar handling |
-| 2 | Any critic votes `REJECT` | `REJECT` | Trade blocked; `GovernanceError` raised |
-| 3 | Any critic votes `ESCALATE` | `ESCALATE` | Trade escalated to human review; `GovernanceError` raised |
-| 4 | Both critics vote `APPROVE` | `APPROVE` | Unanimous approval — trade proceeds |
-| 5 (fallback) | Mixed or unclear votes | `ESCALATE` | Consensus unclear; routes to human review |
+| 1 (highest) | ALL critics return `ERROR` (LLM unavailable) | `APPROVE` (fail-open) | Trade continues through OPA only; mirrors SLM sidecar handling |
+| 2 | ALL critics vote `REJECT` | `REJECT` | Trade blocked; `GovernanceError` raised |
+| 3 | Split `APPROVE` + `REJECT` | `ESCALATE` | Consensus unclear; routes to human review |
+| 4 | Any critic votes `ESCALATE` | `ESCALATE` | Trade escalated to human review; `GovernanceError` raised |
+| 5 | ALL critics vote `APPROVE` | `APPROVE` | Unanimous approval — trade proceeds |
 
 > **Fail-Open on Total LLM Unavailability:** If both LLM critics return `ERROR` (e.g., vLLM backend down), the consensus engine defaults to `APPROVE` with the reason `"Consensus skipped — all LLM critics unavailable (fail-open)."`. This design mirrors the SLM sidecar graceful degradation (Phase 4.3) — the consensus layer is supplementary to the deterministic OPA/CBF/STPA tiers, which remain the primary enforcement gates.
 
@@ -401,15 +411,13 @@ CAGE v2.0.0 extends the governance tri-state decision (`ALLOW | DENY | MANUAL_RE
 
 ### Confidence-Starvation Boundary
 
-The DEFER state activates when the model's confidence score falls below the **Confidence-Starvation Boundary** (0.70) and OPA would otherwise return `MANUAL_REVIEW`:
+The DEFER state machine implements a **three-zone confidence model**:
 
 | Confidence Score | Decision | Routing |
 | ---------------- | -------- | ------- |
 | ≥ 0.95           | `ALLOW` / `DENY` | Autonomous Clearance via `system_authz.rego` |
-| 0.70 – 0.95      | `MANUAL_REVIEW` | Human operator sign-off required |
-| < 0.70           | **`DEFER`** | Automated data-hydration loop — context fundamentally corrupted or missing |
-
-Forcing human review at confidence < 0.70 creates operational fatigue — the DEFER queue routes these to an automated data injection loop instead.
+| 0.70 – 0.95      | **`DEFER`** | Automated data-hydration loop — token parked in Redis db=1 with 4-hour TTL; resolved via `POST /v1/defer/{id}/inject` (automated) or `POST /v1/defer/{id}/escalate` (HITL) |
+| < 0.70           | `DENY` | Confidence-Starvation Boundary — context fundamentally corrupted or missing |
 
 ### DeferToken Redis Architecture
 
@@ -462,8 +470,8 @@ The gatekeeper enforces two complementary validation phases:
 
 To prevent race conditions where multiple parallel agent execution threads concurrently read the same daily OPA limit and execute trades that in aggregate exceed the limit ("race to the rail"), CAGE v2.0.0 introduces the **FiscalLimitGuard** (`src/gateway/governance/fiscal_limit_guard.py`).
 *   **Redis Atomic Transactions:** Uses Redis `WATCH/MULTI/EXEC` optimistic locking. If another thread updates the cap during OPA validation, the current pipeline commits are rejected, retrying with exponential backoff and jitter.
-*   ** head-room Pre-Reservation:** Headroom is reserved in Redis *before* calling OPA, ensuring downstream checks operate on accurate post-reservation limits.
-*   **Release & Expiry:** Unused limits are dynamically returned to Redis via `release(token)` by the Saga engine on transaction rollback, while a 300s TTL reclaims limits from crashed nodes.
+*   **Headroom Pre-Reservation (Step 3):** Headroom is reserved in Redis *after* concurrent CBF+OPA (Steps 2+4), closing the TOCTOU race. Default daily cap: **$500,000 USD** (`FISCAL_DAILY_CAP_USD` env var). Cap stored in **cents** for integer precision. Fail-closed: if Redis is unavailable, the trade is blocked.
+*   **Release & Expiry:** Unused limits are dynamically returned to Redis via `release(token)` by the Saga engine on transaction rollback, while a **300s TTL** reclaims limits from crashed nodes.
 
 ---
 
@@ -526,7 +534,7 @@ When implemented, `AnchorageGrpcLedgerProvider` will provide an externally recon
 | `stpa.uca6_max_order_volume_fraction` | 0.01       | UCA-6            |
 | `stpa.max_sell_portfolio_fraction`    | 0.10       | FIN-1            |
 | `stpa.max_latency_ms`                 | 200.0      | FIN-2, ISO-20022 |
-| `confidence.min_trade_confidence`     | 0.95       | SR 26-2 §IV.B, IA-5 |
+| `confidence.min_trade_confidence`     | 0.95       | SR 26-2 §IV.B, IA-5 — **DEPRECATED**: `OPA system_authz.rego` is now authoritative for confidence enforcement |
 | `consensus.threshold_usd`             | 10000.0    | CA-7             |
 | `tier1_keywords`                      | 14 entries | SI-3             |
 

@@ -17,9 +17,9 @@ The Gateway acts as the central orchestrator and compliance enforcement point fo
     - **NeMo Guardrails (PII & Semantic):** Enforces topical safety and masks PII (Presidio) on input/output directly within the service graph via the harness.
 
 2.  **Sovereign vLLM Cluster:**
-    - **Node A (Reasoning):** Handles planning, complex analysis, and chain-of-thought generation. Model: `Qwen/Qwen2.5-7B-Instruct` (NVIDIA L4 GPU, 16Gi).
+    - **Node A (Reasoning):** Handles planning, complex analysis, and chain-of-thought generation. Model: `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` (NVIDIA L4 GPU, 16Gi). Note: `Qwen/Qwen2.5-7B-Instruct` is the undeployed aspirational governance backend (`vllm-governance.yaml`, marked NOT CURRENTLY DEPLOYED).
     - **Node B (Governance):** Handles rapid policy checks, safety filtering, and content moderation. Model: `Meta-Llama-3.1-8B-Instruct`.
-    - **Deep Reasoning:** `DeepSeek-R1-Distill-Llama-8B` for complex multi-step analysis.
+    - **Deep Reasoning:** `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` for complex multi-step analysis.
 
 3.  **Observability Layer (Direct Langfuse OTLP):**
     - **Application Tracing (Langfuse via OpenTelemetry):** Captures the execution graph, prompt templates, and tool inputs/outputs using OpenTelemetry GenAI Semantic Conventions (v1.36.0+). Generic application spans are natively mapped to Langfuse schemas via `langfuse.observation.*` and `langfuse.trace.metadata.*`. **Direct OTLP ingestion** to Langfuse endpoint `http://langfuse-web:3000/api/public/otel/v1/traces` — the OTel Collector sidecar was **deprecated 2026-05-31**.
@@ -31,9 +31,9 @@ The Gateway acts as the central orchestrator and compliance enforcement point fo
     - **Correlation:** The Gateway injects the OpenTelemetry `trace_id` as an `X-Trace-Id` HTTP header into every LLM request. AgentSight uses this header to link high-level intent (Langfuse trace) with low-level system actions.
 
 4.  **DEFER Queue (AARM-V7 — Confidence-Starved Context Handling):**
-    - Redis `db=1` with `noeviction` policy stores contexts that fail the minimum confidence threshold (`min_trade_confidence: 0.95`) but are not outright denied.
-    - Deferred contexts are held for human review or re-evaluation when confidence recovers.
-    - Implements AARM vector V7 (Confidence Starvation) from the CSA AARM v1.0 11-vector threat model.
+    - Redis `db=1` with `noeviction` policy stores contexts that fall in the DEFER zone of the three-zone confidence model: ALLOW ≥ 0.95, DEFER 0.70–0.95, DENY < 0.70 (`DEFER_CONFIDENCE_THRESHOLD = 0.70`). Contexts in the DEFER zone are not outright denied.
+    - DEFER tokens are parked with a 4-hour TTL and resolved via `POST /v1/defer/{id}/inject` (automated data injection) or `POST /v1/defer/{id}/escalate` (HITL manual review escalation).
+    - Implements AARM vector V7 (Context Window Overflow) from the CSA AARM v1.0 11-vector threat model.
     - See `src/gateway/governance/defer_queue.py`.
 
 5.  **External Normative Provider with Adaptive FRIA Gating:**
@@ -61,7 +61,7 @@ The Gateway acts as the central orchestrator and compliance enforcement point fo
 6.  **LLM Call:** Request is sent to vLLM. AgentSight intercepts this call.
 7.  **MCP Tool Execution:** If the model requests a tool via MCP, the client injects `traceparent` and calls the Gateway. The Gateway extracts the context, creates a child span, and executes the tool.
 8.  **HITL Gate (TOCTOU Remediation):** For trades >$10,000 USD or risk_score >0.7, the `hitl_gate` node interrupts the graph. On human approval, `post_hitl_rehydrate` reloads the latest state from the Redis checkpointer (preventing stale-state execution), then `post_hitl_revalidate` re-runs the full 7-tier SymbolicGovernor pipeline before proceeding.
-9.  **DEFER Queue:** Contexts failing the confidence threshold (≥0.95) but not outright denied are pushed to Redis `db=1` (noeviction) for deferred human review (AARM-V7).
+9.  **DEFER Queue:** Contexts in the DEFER zone (confidence 0.70–0.95) are pushed to Redis `db=1` (noeviction, 4-hour TTL) for deferred resolution. Three-zone model: ALLOW ≥ 0.95, DEFER 0.70–0.95, DENY < 0.70. Resolved via `POST /v1/defer/{id}/inject` (automated) or `POST /v1/defer/{id}/escalate` (HITL). (AARM-V7)
 10. **Logging:**
     - Application metadata is sent **directly** via OTLP to Langfuse (`http://langfuse-web:3000/api/public/otel/v1/traces`). The OTel Collector is **deprecated** as of 2026-05-31.
     - System events are displayed in the AgentSight Dashboard (React/Vite, port 5173).
@@ -84,17 +84,17 @@ The Gateway acts as the central orchestrator and compliance enforcement point fo
 
 | Vector | Threat | Mitigation |
 |--------|--------|------------|
-| AARM-V1 | Context Poisoning | SHA-256 hash-chained context accumulator (`src/compliance_bridge/context_accumulator.py`) |
-| AARM-V2 | Prompt Injection | NeMo Guardrails input rail + OPA semantic score threshold (0.85) |
-| AARM-V3 | Model Inversion | Cilium L7 egress lockdown; no raw model output to untrusted endpoints |
-| AARM-V4 | Supply Chain | SBOM generation (`scripts/generate_sbom.py`); `outlines` package removed (CVE-2025-69872) |
-| AARM-V5 | Ledger Manipulation | AnchorageGrpcLedgerProvider externally reconciled CBF |
-| AARM-V6 | Privilege Escalation | OPA RBAC policy (Tier 4); Linkerd mTLS workload identity |
-| AARM-V7 | Confidence Starvation | DEFER queue (Redis db=1 noeviction); deferred human review |
-| AARM-V8 | Rollback Attack | LangGraph Saga WAL + LIFO rollback; idempotency keys |
-| AARM-V9 | Data Exfiltration | NeMo output rail + Presidio PII egress scan |
-| AARM-V10 | Model Substitution | ConsensusModelRegistry heterogeneous multi-model consensus |
-| AARM-V11 | Audit Tampering | OSCAL v1.0.4 artifact persistence to GCS; Cloud KMS HSM signing |
+| AARM-V1 | Memory Poisoning | SHA-256 hash-chained context accumulator (`src/compliance_bridge/context_accumulator.py`) |
+| AARM-V2 | Goal Hijacking | NeMo Guardrails input rail + OPA semantic score threshold (0.85) |
+| AARM-V3 | Confused Deputy | Cilium L7 egress lockdown; no raw model output to untrusted endpoints |
+| AARM-V4 | Cross-Agent Propagation | SBOM generation (`scripts/generate_sbom.py`); `outlines` package removed (CVE-2025-69872) |
+| AARM-V5 | Prompt Injection | AnchorageGrpcLedgerProvider externally reconciled CBF |
+| AARM-V6 | Reward Hacking | OPA RBAC policy (Tier 4); Linkerd mTLS workload identity |
+| AARM-V7 | Context Window Overflow | DEFER queue (Redis db=1 noeviction, 4h TTL); three-zone model (ALLOW≥0.95, DEFER 0.70–0.95, DENY<0.70) |
+| AARM-V8 | Temporal Deception | LangGraph Saga WAL + LIFO rollback; idempotency keys |
+| AARM-V9 | Privilege Escalation | NeMo output rail + Presidio PII egress scan |
+| AARM-V10 | Data Exfiltration | ConsensusModelRegistry heterogeneous multi-model consensus |
+| AARM-V11 | Model Substitution | OSCAL v1.0.4 artifact persistence to GCS; Cloud KMS HSM signing |
 
 ### Cloud KMS HSM-Backed Asymmetric Governance Signing
 
@@ -163,10 +163,10 @@ This is the **Single Choke Point** for all tool-level governance decisions — t
 ```
 
 **Governance tiers executed** (via [`SymbolicGovernor.validate_action()`](src/gateway/governance/symbolic_governor.py)):
-- **Tier 2 — Control Barrier Function (CBF):** Mathematical safety bounds check via Redis-backed cash balance verification (γ=0.5, min=$1,000). Externally reconciled via AnchorageGrpcLedgerProvider.
-- **Tier 4 — OPA Rego policy evaluation:** Declarative rule enforcement against the active regional compliance profile (`CAGE_DEPLOYMENT_REGION`).
+- **Tier 2 — Control Barrier Function (CBF):** Mathematical safety bounds check via Redis-backed cash balance verification (γ=0.5, min=$1,000). Externally reconciled via AnchorageGrpcLedgerProvider. `verify_action()` is **read-only** — it does not modify Redis state.
+- **Tier 4 — OPA Rego policy evaluation:** Declarative rule enforcement against the active regional compliance profile (`CAGE_DEPLOYMENT_REGION`). OPA circuit breaker: 5 failures → OPEN, 30s recovery, 3000ms hard latency budget. Redis decision cache: 10s TTL, SHA-256 keyed (`cage:opa:decision:{sha256_prefix}`), `OPA_CACHE_ENABLED` env var (default true). Cache is checked **before** the HTTP call; a hit short-circuits the entire round-trip.
 
-Both tiers run **concurrently** via `asyncio.gather` to minimize latency (SLA: 200ms max per ISO-20022).
+Both tiers run **concurrently** via `asyncio.gather` to minimize latency (SLA: 200ms max per ISO-20022). The TOCTOU race between the CBF balance check and actual trade execution is closed by the **FiscalLimitGuard** (Step 3 in the full `SymbolicGovernor` pipeline) using atomic `WATCH/MULTI/EXEC` Redis pre-reservation — **not** by making CBF+OPA sequential.
 
 **Tiers NOT executed** (by design for structured payloads):
 - Tier 1: Aho-Corasick keyword scan (text-only, irrelevant for structured tool payloads)
@@ -209,4 +209,4 @@ Both tiers run **concurrently** via `asyncio.gather` to minimize latency (SLA: 2
 | CSA AARM v1.0 | 11-vector AI agent threat model | Active |
 | NIST SP 800-53 Rev 5 HIGH | 24% readiness; FedRAMP in progress | In Progress |
 | OSCAL v1.0.4 | Artifact persistence to GCS | Active |
-| Lula | 15 automated compliance manifests | Active |
+| Lula | 9 Lula validation manifests (4 active, 5 stub) | Active |

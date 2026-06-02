@@ -31,7 +31,7 @@ spec:
     spec:
       containers:
         - name: nemo
-          image: ${REGISTRY_URL}/nemo:latest
+          image: gcr.io/YOUR_GCP_PROJECT_ID/nemo-guardrails:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -40,8 +40,10 @@ spec:
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: llm-secrets
-                  key: openai-api-key
+                  name: advisor-secrets
+                  key: OPENAI_API_KEY
+            - name: VLLM_BASE_URL
+              value: "http://vllm-service.governance-stack.svc.cluster.local:8000"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               # Langfuse v3 native OTLP ingestion — no separate collector needed.
               value: "http://langfuse-web.governance-stack.svc.cluster.local:3000/api/public/otel/v1/traces"
@@ -54,6 +56,20 @@ spec:
               value: "otlp"
             - name: OTEL_SERVICE_NAME
               value: "nemo-guardrails"
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+            timeoutSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
           resources:
             requests:
               cpu: "500m"

@@ -73,3 +73,23 @@ jobs:
           LANGFUSE_PUBLIC_KEY: "pk-dummy"
           LANGFUSE_SECRET_KEY: "sk-dummy"
         run: uv run pytest tests/ -m local -v
+
+  langfuse-posture-check:
+    name: "Langfuse Posture Dry-Run Check"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Langfuse posture dry-run check
+        run: |
+          export GOOGLE_CLOUD_PROJECT="mock-dev-project"
+          export GOOGLE_CLOUD_LOCATION="us-central1"
+          export LANGFUSE_HOST="http://localhost:3000"
+          export LANGFUSE_PUBLIC_KEY="pk-lf-mock"
+          export LANGFUSE_SECRET_KEY="sk-lf-mock"
+          export LANGFUSE_COMPLIANCE_HOST="http://localhost:3001"
+          export LANGFUSE_COMPLIANCE_PUBLIC_KEY="pk-lf-comp-mock"
+          export LANGFUSE_COMPLIANCE_SECRET_KEY="sk-lf-comp-mock"
+          python3 scripts/verify_langfuse_posture.py --dry-run --posture development

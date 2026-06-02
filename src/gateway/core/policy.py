@@ -158,6 +158,41 @@ class OPAClient:
     async def close(self):
         pass  # No persistent client; each request uses its own client via context manager.
 
+    async def check_policy_exists(self, policy_path: str) -> bool:
+        """Check whether a named policy is loaded in OPA via the policy management API.
+
+        Makes an HTTP GET to ``{opa_base_url}/v1/policies/{policy_path}`` and
+        returns ``True`` if OPA responds with HTTP 200 (policy found), ``False``
+        for any other status code or if OPA is unreachable.
+
+        Args:
+            policy_path: The OPA policy ID to probe, e.g. ``"trade/governance"``.
+
+        Returns:
+            ``True`` if the policy is present and OPA is reachable, ``False`` otherwise.
+        """
+        try:
+            # Derive the OPA base URL (strip any configured policy path suffix)
+            parsed = urllib.parse.urlparse(self.url)
+            if parsed.scheme == "http+unix":
+                base_url = "http://localhost"
+            else:
+                base_url = f"{parsed.scheme}://{parsed.netloc}"
+
+            probe_url = f"{base_url}/v1/policies/{policy_path}"
+
+            headers = {}
+            if self.auth_token:
+                headers["Authorization"] = f"Bearer {self.auth_token}"
+
+            async with self._make_client() as client:
+                response = await client.get(probe_url, headers=headers, timeout=5.0)
+
+            return response.status_code == 200
+        except Exception as exc:
+            logger.debug("check_policy_exists(%r) failed: %s", policy_path, exc)
+            return False
+
     async def evaluate_policy(self, input_data: dict[str, Any], current_latency_ms: float = 0.0) -> str:
         if not self.cb.can_execute():
             logger.warning("⚠️ Circuit Breaker OPEN. Fast failing OPA check -> DENY.")
