@@ -1,6 +1,6 @@
 # CAGE Compliance & Governance Posture Framework
-**CAGE Version:** 2.0.0 (CSA AARM Conformance Release)  
-**Last Evaluated:** 2026-05-24  
+**CAGE Version:** 2.0.0 (CSA AARM Conformance Release)
+**Last Evaluated:** 2026-06-01
 
 ---
 
@@ -65,8 +65,9 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 ### E. NIST RMF & FedRAMP HIGH
 *   **Status:** **PARTIAL** (Technical Hardening Complete, Administrative ATO Pending).
 *   **Mechanism:**
-    *   **Zero-Trust Network Hardening:** Deploys Linkerd SPIFFE/SVID mTLS for cryptographic workload validation (**POAM-007 / IA-3**) and Cilium Layer 7 network policies for default-deny egress lockdown (**POAM-011 / SC-8**).
-    *   **Programmatic Evidence:** The automated script `oscal_ssp_exporter.py` automatically compiles these exact control configurations and implementation narratives into the authoritative 1,151-line Open Security Controls Assessment Language (OSCAL) document on every build pipeline run.
+    *   **Zero-Trust Network Hardening:** Deploys Linkerd SPIFFE/SVID mTLS for cryptographic workload validation (**POAM-007 / IA-3**, closed 2026-05-17) and Cilium Layer 7 network policies for default-deny egress lockdown (**POAM-011 / SC-8**). Both controls are active in the `governance-stack` Kubernetes namespace.
+    *   **Programmatic Evidence:** The automated script `oscal_ssp_exporter.py` automatically compiles these exact control configurations and implementation narratives into the authoritative 1,151-line Open Security Controls Assessment Language (OSCAL) document on every build pipeline run. OSCAL artifacts are persisted to GCS using the native GCS SDK (boto3 S3-compat fallback) at schema version **OSCAL v1.0.4**.
+    *   **KMS Batch Signing for Audit Evidence:** All OSCAL findings and AARM conformance reports are asymmetrically signed via Google Cloud KMS HSM (`src/gateway/governance/kms_signer.py`) before GCS persistence. The private key never leaves the HSM; Cloud Audit Logs provide external, immutable attestation of every signing operation. This constitutes the audit evidence chain for FedRAMP HIGH AU-9 and AU-10.
     *   **⚠️ Gaps to Authorization:** The CAGE software runtime does not inherently possess an official **Authority to Operate (ATO)**. To close this loop, the parent organization must deploy independent assessors to complete RMF Step 5 (Assess) and Step 6 (Authorize), as well as remediate the remaining 11 open infrastructure POA&M infrastructure tickets.
 *   **Companion Documentation:** For infrastructure configurations, Linkerd policy files, and security posture tracking, see [docs/SECURITY_STATUS.md](docs/SECURITY_STATUS.md) and [docs/POAM.md](docs/POAM.md).
 
@@ -96,6 +97,11 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     *   `GET /v1/defer/pending` — Lists all pending context-starved execution contexts parked in Redis `db=1` (AARM-V7).
     *   `POST /v1/defer/{id}/inject` — Resolves deferred tokens by injecting supplementary context data.
     *   `POST /v1/defer/{id}/escalate` — Escalates deferred tokens to `MANUAL_REVIEW` after TTL expiry (4 hours).
+
+### H. Dependency Security — `outlines` CVE-2025-69872 Remediation
+*   **Status:** Remediated in v2.0.0.
+*   **Mechanism:** The `outlines` package was removed from all CAGE service dependencies following the disclosure of **CVE-2025-69872** (critical severity). Structured-output generation previously provided by `outlines` is now handled via vLLM's native JSON-mode API. No CAGE service imports `outlines` at runtime. The removal is enforced by `pip-audit` and Trivy scans in `.github/workflows/security-scan.yml` (POAM-010 closed). Regulated-environment deployers should verify their own dependency trees do not re-introduce `outlines` via transitive dependencies.
+*   **Compliance Mapping:** NIST SP 800-53 SI-2 (Flaw Remediation); ISO/IEC 42001 §A.9.3 (Supplier Relationships).
 
 ---
 

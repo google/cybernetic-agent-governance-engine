@@ -20,7 +20,8 @@ Call ``setup_tracing()`` once at process startup — before binding to any port
 automatically wraps all vLLM / OpenAI SDK calls.
 
 Environment variables:
-    OTEL_EXPORTER_OTLP_ENDPOINT  — OTLP HTTP endpoint (default http://localhost:4318)
+    OTEL_EXPORTER_OTLP_ENDPOINT  — OTLP HTTP endpoint; if unset and LANGFUSE_HOST is
+                                   also unset, OTLP export is disabled (no localhost fallback)
     OTEL_SERVICE_NAME            — OTel service name (default "cage-gateway")
     OTEL_TRACES_EXPORTER         — set to "none" to disable in tests
     OPENLLMETRY_ENABLED          — set to "false" to skip Traceloop init
@@ -57,8 +58,10 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
     1. ``OTEL_EXPORTER_OTLP_ENDPOINT`` set explicitly → use as-is, no extra headers.
     2. ``LANGFUSE_HOST`` + ``LANGFUSE_PUBLIC_KEY`` + ``LANGFUSE_SECRET_KEY`` →
        derive ``{LANGFUSE_HOST}/api/public/otel`` with HTTP Basic Auth.
-       Langfuse's S3 cold-tier worker archives all received spans automatically.
-    3. Fallback → ``http://localhost:4318``, no headers.
+       Langfuse's integrated OTel collector archives all received spans automatically.
+    3. No endpoint configured → return ``("", {})`` so the caller skips OTLP export.
+       The standalone otel-collector sidecar (port 4318) is deprecated; falling back
+       to localhost:4318 would cause retry-loop timeouts in test workers.
     """
     explicit = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
     if explicit:
@@ -85,11 +88,14 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
         )
         return endpoint, {"Authorization": f"Basic {token}"}
 
+    # No endpoint configured — otel-collector (port 4318) is deprecated and removed.
+    # Return empty string so setup_tracing() skips OTLP exporter initialisation entirely.
     logger.debug(
         "Gateway tracing: no OTEL_EXPORTER_OTLP_ENDPOINT or LANGFUSE_HOST set — "
-        "falling back to http://localhost:4318"
+        "OTLP export disabled (standalone otel-collector is deprecated; "
+        "telemetry is collected natively by Langfuse when LANGFUSE_HOST is set)"
     )
-    return "http://localhost:4318", {}
+    return "", {}
 
 # Phrases emitted by the Langfuse S3 worker / OTel OTLP exporter when the
 # collector's S3 backend is unavailable.
@@ -175,41 +181,50 @@ def setup_tracing() -> None:
             provider = TracerProvider(resource=resource)
             otlp_configured = False
 
-            # OTLP HTTP exporter — short timeout so BSP thread never blocks > 5 s
-            try:
-                from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-                    OTLPSpanExporter,
-                )
-                _otlp_endpoint, _otlp_headers = _resolve_otlp_endpoint_and_headers()
-                # Append /v1/traces only when using the generic localhost collector
-                # (Langfuse's endpoint already includes the full path).
-                otlp_url = (
-                    _otlp_endpoint
-                    if _otlp_endpoint.endswith("/otel") or "/api/public/" in _otlp_endpoint
-                    else f"{_otlp_endpoint}/v1/traces"
-                )
-                exporter = OTLPSpanExporter(
-                    endpoint=otlp_url,
-                    headers=_otlp_headers,
-                    timeout=_OTLP_EXPORT_TIMEOUT_S,
-                )
-                provider.add_span_processor(
-                    BatchSpanProcessor(
-                        exporter,
-                        export_timeout_millis=_OTLP_EXPORT_TIMEOUT_MS,
-                    )
-                )
+            # OTLP HTTP exporter — only when a real endpoint is configured.
+            # The standalone otel-collector (port 4318) is deprecated; we never
+            # fall back to localhost:4318 to avoid retry-loop timeouts in tests.
+            _otlp_endpoint, _otlp_headers = _resolve_otlp_endpoint_and_headers()
+            if not _otlp_endpoint:
                 logger.info(
-                    "✅ OTel OTLP exporter configured → %s (timeout=%ds)",
-                    otlp_url, _OTLP_EXPORT_TIMEOUT_S,
+                    "ℹ️  OTel OTLP export skipped — no OTEL_EXPORTER_OTLP_ENDPOINT or "
+                    "LANGFUSE_HOST configured. Set LANGFUSE_HOST + keys to enable "
+                    "telemetry via Langfuse's integrated OTel collector."
                 )
-                otlp_configured = True
-            except ImportError:
-                logger.warning(
-                    "⚠️ opentelemetry-exporter-otlp-proto-http not installed — "
-                    "spans will not be exported via OTLP.  "
-                    "Install with: pip install opentelemetry-exporter-otlp-proto-http"
-                )
+            else:
+                try:
+                    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+                        OTLPSpanExporter,
+                    )
+                    # Append /v1/traces only when using a generic collector endpoint
+                    # (Langfuse's endpoint already includes the full path).
+                    otlp_url = (
+                        _otlp_endpoint
+                        if _otlp_endpoint.endswith("/otel") or "/api/public/" in _otlp_endpoint
+                        else f"{_otlp_endpoint}/v1/traces"
+                    )
+                    exporter = OTLPSpanExporter(
+                        endpoint=otlp_url,
+                        headers=_otlp_headers,
+                        timeout=_OTLP_EXPORT_TIMEOUT_S,
+                    )
+                    provider.add_span_processor(
+                        BatchSpanProcessor(
+                            exporter,
+                            export_timeout_millis=_OTLP_EXPORT_TIMEOUT_MS,
+                        )
+                    )
+                    logger.info(
+                        "✅ OTel OTLP exporter configured → %s (timeout=%ds)",
+                        otlp_url, _OTLP_EXPORT_TIMEOUT_S,
+                    )
+                    otlp_configured = True
+                except ImportError:
+                    logger.warning(
+                        "⚠️ opentelemetry-exporter-otlp-proto-http not installed — "
+                        "spans will not be exported via OTLP.  "
+                        "Install with: pip install opentelemetry-exporter-otlp-proto-http"
+                    )
 
             # Fallback: ConsoleSpanExporter — always registered so spans are
             # never silently dropped when the OTLP backend is unavailable.

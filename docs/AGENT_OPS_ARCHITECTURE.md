@@ -1,6 +1,9 @@
-# Agent Ops Architecture: Defense-in-Depth for AI Governance
+# Agent Ops Architecture: Defense-in-Depth for AI Governance — v2.0.0
 
 > **Core Principle:** Separate the control plane (policy) from the data plane (execution capability) to create enforceable AI governance.
+
+**Version:** v2.0.0 (promoted 2026-06-01)
+**Primary Compliance:** ISO/IEC 42001:2023 · SR 26-2 (Federal Reserve, April 17, 2026) · CSA AARM v1.0
 
 ## Architecture Pattern
 
@@ -130,6 +133,99 @@ MCP Server: *validates, executes with Cloud Build*
 Result: Safe, compliant, auditable
 ```
 
+## AgentSight UI — Kernel-Level Observability
+
+AgentSight is a React/Vite frontend (port 5173) backed by an eBPF DaemonSet that provides kernel-level observability for the governance pipeline.
+
+### Phase 1 Features (`src/agentsight-ui/`)
+
+| Feature | Description |
+|---------|-------------|
+| **`KernelDashboard`** | Primary dashboard component (`src/agentsight-ui/src/KernelDashboard.tsx`) |
+| **Slippage Slider** | Real-time slippage tolerance control for trade execution monitoring |
+| **Price Drift Badges** | Visual indicators for price drift events detected at the kernel level |
+| **HITL TTL Countdown** | Live countdown timer for Human-in-the-Loop approval windows |
+
+### eBPF DaemonSet
+
+The eBPF DaemonSet runs on every node in the `governance-stack` namespace and intercepts:
+- **Encrypted Traffic (OpenSSL):** Captures raw LLM payloads at the network boundary before encryption.
+- **System Calls (Kernel):** Monitors `execve` (process creation), `openat` (file access), `connect` (network connections).
+- **Correlation:** The Gateway injects `X-Trace-Id` into every LLM request; AgentSight links kernel events to Langfuse traces.
+
+### Telemetry Path (Post-2026-05-31)
+
+The OTel Collector sidecar was **deprecated 2026-05-31**. All telemetry now flows via **direct Langfuse OTLP ingestion**:
+- Endpoint: `http://langfuse-web:3000/api/public/otel/v1/traces`
+- No intermediate collector hop — reduces latency and eliminates a failure point.
+
+---
+
+## DEFER Queue — Operational Details (AARM-V7)
+
+The DEFER queue handles confidence-starved contexts that cannot be immediately approved or denied.
+
+### Configuration
+- **Redis:** `db=1`, `noeviction` policy (contexts are never evicted — human review is mandatory).
+- **Trigger:** Confidence score below `min_trade_confidence: 0.95` but above the hard-deny threshold.
+- **Implementation:** `src/gateway/governance/defer_queue.py`.
+
+### Operational Flow
+```
+Agent generates plan
+        ↓
+SymbolicGovernor Tier 2 — confidence check
+        ↓ (confidence < 0.95, not hard-denied)
+DEFER queue push → Redis db=1 (noeviction)
+        ↓
+Human review notification
+        ↓
+Operator approves/denies via AgentSight UI
+        ↓
+Re-evaluation with updated context
+```
+
+### Monitoring
+- DEFER queue depth is exposed as an OTel metric and visible in the AgentSight `KernelDashboard`.
+- Alerts fire when queue depth exceeds configurable thresholds (prevents silent accumulation).
+
+---
+
+## HITL TOCTOU Remediation — Operational Flow
+
+Human-in-the-Loop (HITL) interrupts are subject to Time-of-Check/Time-of-Use (TOCTOU) races: the market state at approval time may differ from the state at check time.
+
+### Trigger Conditions
+- Trade amount > $10,000 USD
+- `risk_score` > 0.7
+
+### Remediation Nodes
+
+| Node | Purpose |
+|------|---------|
+| `hitl_gate` | Interrupts the LangGraph StateGraph; waits for human approval |
+| `post_hitl_rehydrate` | Reloads the latest state from Redis checkpointer (db=0) — prevents stale-state execution |
+| `post_hitl_revalidate` | Re-runs the full 7-tier SymbolicGovernor pipeline with fresh market data |
+
+### Operational Flow
+```
+hitl_gate interrupt
+        ↓
+Human reviews in AgentSight UI (HITL TTL countdown visible)
+        ↓
+Human approves
+        ↓
+post_hitl_rehydrate — reload state from Redis db=0
+        ↓
+post_hitl_revalidate — re-run 7-tier governance
+        ↓ (if still approved)
+governed_trader node — execute trade
+```
+
+If `post_hitl_revalidate` fails (market conditions changed), the trade is blocked and the operator is notified.
+
+---
+
 ## Compliance Mapping
 
 This architecture directly supports regulatory requirements:
@@ -137,9 +233,11 @@ This architecture directly supports regulatory requirements:
 | Requirement | Policy Layer | Capability Layer |
 |-------------|--------------|------------------|
 | **ISO 42001 A.5.2** (AI deployment control) | Documents approved deployment methods | Enforces approved methods via typed API |
+| **SR 26-2 §IV** (Agentic AI MRM, Federal Reserve, April 17, 2026) | Defines model risk management for agentic systems | HITL TOCTOU remediation; DEFER queue; KMS signing |
 | **NIST AI RMF** (Controlled deployment) | Defines when/why to use each method | Ensures consistent execution |
 | **SOC 2 CC8.1** (Change management) | Establishes change procedures | Logs all deployment actions |
 | **NIST SP 800-53 CM-2** (Baseline configuration) | Documents infrastructure patterns | Prevents configuration drift |
+| **CSA AARM v1.0** (AI agent threat model) | 11-vector threat coverage documented | DEFER queue (V7), context accumulator (V1), consensus (V10) |
 
 ## Real-World Example: GKE Deployment
 

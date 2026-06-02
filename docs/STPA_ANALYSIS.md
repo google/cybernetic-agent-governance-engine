@@ -1,8 +1,10 @@
-# System-Theoretic Process Analysis (STPA) Implementation
+# System-Theoretic Process Analysis (STPA) Implementation — v2.0.0
 
 ## Overview
 
 This document details the STPA analysis applied to the Financial Advisor system (Module 5) and its implementation in code.
+
+**Primary Governance Framework:** SR 26-2 (Federal Reserve, April 17, 2026) — Agentic AI Model Risk Management. ISO/IEC 42001:2023 is the primary AI governance standard.
 
 The STPA control structure is the **single source of truth** for all governance enforcement. The STPA Compiler (`src/gateway/governance/stpa_compiler.py`) ingests `config/stpa_control_structure.yaml` and auto-generates artifacts for four enforcement targets: OPA Rego policies, NeMo Colang rails, Python validator classes, and LangGraph Saga compensating sub-graphs.
 
@@ -26,7 +28,7 @@ The STPA control structure is the **single source of truth** for all governance 
 | **UCA-3** | Unsafe Action | Agent outputs PII to user interface. | `[nemo]` | NeMo Guardrails `verify_content_safety` + Presidio PII egress filter. |
 | **UCA-4** | Stopped Too Soon | Agent debits account but fails to credit asset (atomic failure). | `[nemo, langgraph]` | **Saga WAL Pattern** — see §4 below. |
 | **UCA-5** | Unsafe Action | Agent executes buy when drawdown > 4.5%. | `[opa, nemo, python]` | `SafetyFilter` (CBF) in `SymbolicGovernor` + OPA Rego rule. |
-| **UCA-6** | Unsafe Action | Agent attempts trade below minimum cash balance. | `[opa, python]` | `GeneratedSTPAValidator.check_uca6()`. |
+| **UCA-6** | Unsafe Action | Agent order volume fraction exceeds maximum (`uca6_max_order_volume_fraction=0.01`, i.e., 1% of portfolio). | `[opa, python]` | `GeneratedSTPAValidator.check_uca6()`. |
 | **UCA-7** | Unsafe Action | High prompt injection semantic score detected. | `[opa]` | OPA Rego rule. Semantic score threshold: 0.85. |
 | **UCA-8** | Unsafe Action | Trade attempted before risk assessment completed. | `[opa, python]` | `GeneratedSTPAValidator.check_uca8()`. |
 | **UCA-9** | Unsafe Action | Trade attempted with compliance check bypassed. | `[opa, python]` | `GeneratedSTPAValidator.check_uca9()`. |

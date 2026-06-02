@@ -22,7 +22,7 @@ Generative AI models can hallucinate or degrade in unstable environments. The Ga
 | `CTRL_AGT_001` (THR-CONF-001) | ISO 42001 §A.5.2 | `symbolic_governor.py` confidence threshold | Agentic AI bounding — supersedes SR 26-2 §IV.B agentic scope exclusion |
 | NIST AI RMF MEASURE-2.6 | NIST AI RMF | DoWhy refutation (both phases) | Continuous world-model validation against live production telemetry |
 
-All framework citations are stored in `config/control_mappings.json` and resolved at runtime via `ControlRegistry`. Python source files contain only stable `GovernanceControl` enum members — no hardcoded citation strings.
+All framework citations are stored in regional baseline profiles under `config/compliance/` (e.g., `US_FED_BASELINE.json`, `EU_ECB_BASELINE.json`, `APAC_MAS_BASELINE.json`) and resolved at runtime via `ControlRegistry`. The active profile is selected by the `CAGE_DEPLOYMENT_REGION` environment variable at boot. Python source files contain only stable `GovernanceControl` enum members — no hardcoded citation strings.
 
 ### Causal Graph
 The system evaluates the relationship between market conditions, the agent's action, and the resulting risk:

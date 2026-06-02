@@ -3,8 +3,8 @@
 | Field              | Value                     |
 | ------------------ | ------------------------- |
 | **Classification** | PUBLIC                    |
-| **Date**           | 2026-05-27                |
-| **Version**        | 2.0.0                     |
+| **Date**           | 2026-06-01                |
+| **Version**        | 2.0.0-rc.1                |
 | **Status**         | Implemented & Verified    |
 
 ---

@@ -286,6 +286,7 @@ class TestSafetyNodeIntegration:
     """Integration tests that call a real OPA instance via symbolic_governor.govern()."""
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(120)
     async def test_junior_trade_above_5k_blocked_by_opa(self, minimal_trade_state):
         """Junior trader with $90k trade must be blocked by live OPA policy (R-12)."""
         state = {
@@ -304,6 +305,7 @@ class TestSafetyNodeIntegration:
         assert update["safety_status"] in ("BLOCKED", "ESCALATED")
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(120)
     async def test_senior_trade_below_500k_approved_by_opa(self, minimal_trade_state):
         """Senior trader with $200k trade must be approved (or escalated for human review
         when the SLM sidecar is unavailable and consensus splits).

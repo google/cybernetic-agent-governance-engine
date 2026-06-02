@@ -3,9 +3,10 @@
 ## Cybernetic Governance Engine — Chunk 5 of 5 (FINAL)
 
 **Classification:** For Official Use Only (FOUO)
-**Prepared:** 2026-03-06
-**System:** Cybernetic Governance Engine (CAGE) — GKE-hosted AI Governance Platform
-**Document Status:** Final Synthesis — references all prior chunk findings
+**Prepared:** 2026-06-01
+**System:** Cybernetic Governance Engine (CAGE) v2.0.0 — GKE-hosted AI Governance Platform
+**Document Status:** Final Synthesis — references all prior chunk findings; updated for v2.0.0
+**Additional Frameworks:** SR 26-2 (Federal Reserve, April 17, 2026), CSA AARM v1.0
 
 ---
 
@@ -51,11 +52,14 @@ The system implements a **two-tier monitoring approach** that partially addresse
 **Tier 3 — Application-Level OTel Tracing (continuous):**
 [`src/gateway/infrastructure/telemetry.py`](src/gateway/infrastructure/telemetry.py:31) provides an OTel tracer factory consumed by all gateway modules. [`src/gateway/observability/mcp_tracing.py`](src/gateway/observability/mcp_tracing.py:46) monkey-patches `ToolManager.call_tool` to inject W3C trace context into every MCP tool invocation, bridging SSE transport gaps and producing complete Langfuse waterfall traces.
 
-**OTel Export Pipeline:**
-The standalone OTel Collector (`opentelemetry-collector-contrib`) has been **deprecated (2026-05-31)**. Services now export OTLP traces directly to Langfuse's integrated OTLP ingestion endpoint, eliminating the collector as an intermediary. W3C `traceparent` propagation is preserved end-to-end via `patch_mcp_tools()` in `src/gateway/observability/mcp_tracing.py`.
+**OTel Export Pipeline (v2.0.0):**
+The standalone OTel Collector (`opentelemetry-collector-contrib`) has been **deprecated 2026-05-31**. Services now export OTLP traces directly to Langfuse's integrated OTLP ingestion endpoint at `http://langfuse-web:3000/api/public/otel/v1/traces`, eliminating the collector as an intermediary. W3C `traceparent` propagation is preserved end-to-end via `patch_mcp_tools()` in `src/gateway/observability/mcp_tracing.py`.
 
-**AgentSight eBPF Sidecar:**
-[`deployment/agentsight/agentsight-config.yaml`](deployment/agentsight/agentsight-config.yaml:19) deploys an eBPF daemon targeting `python3` processes, intercepting SSL/TLS via OpenSSL uprobes and monitoring syscalls (`execve`, `openat`, `connect`, `socket`, `bind`). **✅ POAM-021 RESOLVED:** Exporter is configured as `type: "remote"`, targeting `http://agentsight-dashboard:8080`. The prior gap (console mode) has been corrected.
+**DEFER Queue Monitoring (v2.0.0 — AARM-V7):**
+[`src/gateway/governance/defer_queue.py`](src/gateway/governance/defer_queue.py) implements the DEFER state machine for confidence-starved contexts. Redis db=1 (noeviction policy) stores deferred governance decisions pending human review. The DEFER queue is monitored via SSE events (`DEFER_QUEUED`, `DEFER_RESOLVED`) published to the `GovernanceEventBus` and visible in the AgentSight KernelDashboard. Queue depth and resolution latency are tracked as OTel metrics.
+
+**AgentSight UI Phase 1 (v2.0.0):**
+[`src/agentsight-ui/`](src/agentsight-ui/) — React/Vite frontend with eBPF kernel observability. [`deployment/agentsight/agentsight-config.yaml`](deployment/agentsight/agentsight-config.yaml:19) deploys an eBPF daemon targeting `python3` processes, intercepting SSL/TLS via OpenSSL uprobes and monitoring syscalls (`execve`, `openat`, `connect`, `socket`, `bind`). **✅ POAM-021 RESOLVED:** Exporter is configured as `type: "remote"`, targeting `http://agentsight-dashboard:8080`. The prior gap (console mode) has been corrected. `KernelDashboard.tsx` displays real-time governance events, DEFER queue state, and eBPF syscall telemetry.
 
 **SSE Real-Time Event Bus:**
 [`src/compliance_bridge/sse_events.py`](src/compliance_bridge/sse_events.py:81) implements a `GovernanceEventBus` that fans `AUDIT_FINDING` and `GOVERNANCE_VIOLATION` events to all connected SSE clients via [`GET /v1/events/stream`](src/compliance_bridge/main.py:184), consumed by `KernelDashboard.tsx`.
@@ -435,21 +439,22 @@ The **Cybernetic Governance Engine (CAGE)** is a GKE-hosted AI governance platfo
 | Step 2   | **Categorize** | 28%           | 82%                  | No FIPS 199 Categorization Document; no SSP                       |
 | Step 3   | **Select**     | 29%           | 78%                  | SP 800-53 profile not imported; only ISO 42001 controls selected  |
 | Step 4   | **Implement**  | 29%           | 78%                  | 71% of sampled controls unimplemented; IA-3/AC-6 gaps critical    |
-| Step 5   | **Assess**     | 22%           | 76%                  | No independent security assessment; only 4 controls auto-assessed |
-| Step 6   | **Authorize**  | 22%           | 76%                  | No SSP; no Authorization Decision; 24% ATO package completeness   |
-| Step 7   | **Monitor**    | 18%           | 72%                  | No ISCM strategy document; no POA&M; AgentSight in console mode   |
+| Step 5   | **Assess**     | 22%           | 76%                  | No independent security assessment; 15 controls auto-assessed (up from 4) |
+| Step 6   | **Authorize**  | 22%           | 76%                  | No SSP (POAM-015 open); no Authorization Decision; 24% ATO package completeness |
+| Step 7   | **Monitor**    | 18%           | 72%                  | No ISCM strategy document; no POA&M; DEFER queue monitoring added |
 |          | **Overall**    | **24%**       | **77%**              | **SSP + FIPS 199 doc are the critical path items**                |
 
 **Step 7 Readiness Score Derivation (18%):**
 
-- ISCM monitoring tools exist (OTel, Lula CronJob, SSE): +8 points
-- Periodic assessment cadence exists (6h Lula, 60s SC-4 watch): +5 points
+- ISCM monitoring tools exist (OTel direct Langfuse OTLP, Lula CronJob 15 manifests, SSE, AgentSight eBPF): +8 points
+- Periodic assessment cadence exists (6h Lula Critical, daily High, weekly Medium, 60s SC-4 watch): +5 points
 - Alert/notification pipeline exists (Slack/PagerDuty capable): +5 points
-- ~~AgentSight not active (−5)~~ **✅ RESOLVED (POAM-021):** AgentSight exporter confirmed as `"remote"` mode targeting `http://agentsight-dashboard:8080`
+- **✅ RESOLVED (POAM-021):** AgentSight exporter confirmed as `"remote"` mode targeting `http://agentsight-dashboard:8080`
+- **v2.0.0 additions:** DEFER queue monitoring (AARM-V7), SHA-256 hash-chained context accumulator (AARM-V1), KMS batch-signed OSCAL artifacts, SR 26-2 framework adopted, CSA AARM v1.0 11-vector threat coverage
 - Deducted: No ISCM strategy doc (−20), no POA&M (−20), no status reporting format (−10), no decommission controls (−10), no SP 800-53 ongoing assessment (−25)
 
 ---
 
-_Document prepared as part of the 5-chunk NIST RMF analysis series for the Cybernetic Governance Engine. This is a living document — update after each Phase completion milestone._
+_Document prepared as part of the 5-chunk NIST RMF analysis series for the Cybernetic Governance Engine. This is a living document — update after each Phase completion milestone. Updated 2026-06-01 for CAGE v2.0.0._
 
-_References: NIST SP 800-37 Rev 2, SP 800-53 Rev 5, SP 800-137, SP 800-18 Rev 1, FIPS 199, FIPS 200, ISO/IEC 42001:2023, NIST SP 800-161r1._
+_References: NIST SP 800-37 Rev 2, SP 800-53 Rev 5, SP 800-137, SP 800-18 Rev 1, FIPS 199, FIPS 200, ISO/IEC 42001:2023, NIST SP 800-161r1, SR 26-2 (Federal Reserve, April 17, 2026), CSA AARM v1.0._

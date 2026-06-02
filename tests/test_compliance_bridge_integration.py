@@ -86,6 +86,8 @@ from typing import Generator
 
 import pytest
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 pytestmark = pytest.mark.integration
 
@@ -184,8 +186,24 @@ def require_live_bridge():
 
 @pytest.fixture()
 def session() -> requests.Session:
+    """HTTP session with automatic retry on transient connection errors.
+
+    Port-forwards to GKE can drop briefly (ConnectionReset, ConnectionRefused).
+    The Retry adapter re-attempts up to 3 times with exponential back-off so
+    individual tests are not flaky due to port-forward instability.
+    """
     s = requests.Session()
     s.headers["Content-Type"] = "application/json"
+    retry = Retry(
+        total=3,
+        backoff_factor=1.0,          # 1s, 2s, 4s between retries
+        status_forcelist=[502, 503, 504],
+        allowed_methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"],
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    s.mount("http://", adapter)
+    s.mount("https://", adapter)
     return s
 
 
@@ -193,13 +211,27 @@ def session() -> requests.Session:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _post_ingest(session: requests.Session, oscal_yaml: str, audit_id: str) -> dict:
-    resp = session.post(
-        f"{BASE_URL}/v1/audit/ingest",
-        json={"oscal_yaml": oscal_yaml, "audit_id": audit_id},
-        timeout=AUDIT_TIMEOUT,
-    )
-    return resp
+def _post_ingest(
+    session: requests.Session, oscal_yaml: str, audit_id: str
+) -> requests.Response:
+    """POST to /v1/audit/ingest with connection-error retry.
+
+    Retries up to 3 times on ConnectionError/ReadTimeout (port-forward drops).
+    """
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            resp = session.post(
+                f"{BASE_URL}/v1/audit/ingest",
+                json={"oscal_yaml": oscal_yaml, "audit_id": audit_id},
+                timeout=AUDIT_TIMEOUT,
+            )
+            return resp
+        except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout) as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(2 ** attempt)  # 1s, 2s back-off
+    raise last_exc  # type: ignore[misc]
 
 
 def _poll_status(session: requests.Session, audit_id: str, timeout: int = AUDIT_TIMEOUT) -> dict:
@@ -446,7 +478,11 @@ class TestOscalExport:
     def test_export_finding_state_vocabulary(self, session):
         doc = session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=60).json()["document"]
         findings = doc["assessment-results"]["results"][0]["findings"]
-        valid_states = {"satisfied", "not-satisfied", "not-applicable"}
+        # OSCAL 1.1.2 vocabulary + "error" for scanner/collector failures.
+        # Per NIST SP 800-53A §3.2, evidence-collection errors must NOT be
+        # silently mapped to "not-applicable" — they are surfaced as "error"
+        # so auditors can see that evidence could not be gathered.
+        valid_states = {"satisfied", "not-satisfied", "not-applicable", "error"}
         for f in findings:
             state = f["target"]["status"]["state"]
             assert state in valid_states, f"Invalid OSCAL state: {state!r}"
@@ -935,6 +971,7 @@ class TestAlertChannelWiring:
             f"Received frames: {combined[:400]!r}"
         )
 
+    @pytest.mark.timeout(120)
     def test_pass_only_does_not_fire_alert(self, session):
         uid = _uid()
         audit_id = f"inttest-noalert-{uid}"
@@ -1079,6 +1116,7 @@ class TestContextAccumulatorChain:
     live GKE instance and that the chain is intact after each audit run.
     """
 
+    @pytest.mark.timeout(120)
     def test_ingest_response_has_chain_root(self, session):
         uid       = _uid()
         audit_id  = f"inttest-chain-root-{uid}"
@@ -1162,16 +1200,18 @@ class TestAarmConformanceReport:
     audit pipeline Step 6) is validated indirectly via the audit ingest tests.
     """
 
+    @pytest.mark.timeout(120)
     def test_conformance_report_returns_200(self, session):
-        r = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=60)
+        r = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90)
         assert r.status_code == 200, (
             f"/v1/aarm/conformance-report returned {r.status_code}. "
             "Ensure CAGE v2.0.0 image is deployed. "
             f"Body: {r.text[:300]}"
         )
 
+    @pytest.mark.timeout(120)
     def test_conformance_report_shape(self, session):
-        data = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=60).json()
+        data = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90).json()
         assert "report" in data, "Response must have 'report' key"
         assert "audit_id" in data, "Response must have 'audit_id' key"
         report = data["report"]
@@ -1179,8 +1219,9 @@ class TestAarmConformanceReport:
         missing = required_keys - report.keys()
         assert not missing, f"Report missing keys: {missing}"
 
+    @pytest.mark.timeout(120)
     def test_conformance_report_has_11_vectors(self, session):
-        data   = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=60).json()
+        data   = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90).json()
         report = data["report"]
         vectors = report.get("vectors", [])
         assert len(vectors) == 11, (
@@ -1188,8 +1229,9 @@ class TestAarmConformanceReport:
             "Check AARM_THREAT_VECTORS dict in aarm_mapper.py."
         )
 
+    @pytest.mark.timeout(120)
     def test_conformance_report_vector_ids(self, session):
-        data    = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=60).json()
+        data    = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90).json()
         vectors = data["report"]["vectors"]
         ids     = {v["vector_id"] for v in vectors}
         expected = {f"AARM-V{i}" for i in range(1, 12)}
@@ -1197,8 +1239,9 @@ class TestAarmConformanceReport:
             f"Vector IDs mismatch. Expected {sorted(expected)}, got {sorted(ids)}"
         )
 
+    @pytest.mark.timeout(120)
     def test_conformance_report_verdicts_are_valid(self, session):
-        data    = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=60).json()
+        data    = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90).json()
         vectors = data["report"]["vectors"]
         valid_verdicts = {"NEUTRALIZED", "PARTIAL", "EXPOSED"}
         for v in vectors:
@@ -1208,34 +1251,38 @@ class TestAarmConformanceReport:
                 f"Valid verdicts: {valid_verdicts}"
             )
 
+    @pytest.mark.timeout(120)
     def test_conformance_report_overall_posture_valid(self, session):
-        data    = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=60).json()
+        data    = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90).json()
         posture = data["report"]["overall_posture"]
         assert posture in {"SECURE", "DEGRADED", "CRITICAL"}, (
             f"overall_posture {posture!r} is not in (SECURE, DEGRADED, CRITICAL)"
         )
 
+    @pytest.mark.timeout(120)
     def test_conformance_report_aarm_spec_version(self, session):
-        data = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=60).json()
+        data = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90).json()
         spec = data["report"].get("aarm_spec_version", "")
         assert spec.startswith("CSA-AARM"), (
             f"aarm_spec_version must start with 'CSA-AARM', got {spec!r}"
         )
 
+    @pytest.mark.timeout(120)
     def test_conformance_report_custom_audit_id(self, session):
         cid = f"inttest-aarm-{_uid()}"
         data = session.get(
-            f"{BASE_URL}/v1/aarm/conformance-report?audit_id={cid}", timeout=60
+            f"{BASE_URL}/v1/aarm/conformance-report?audit_id={cid}", timeout=90
         ).json()
         assert data["audit_id"] == cid, (
             f"Expected audit_id={cid!r} in response, got {data['audit_id']!r}"
         )
 
+    @pytest.mark.timeout(120)
     def test_conformance_report_yaml_format(self, session):
         """?format=yaml must return 200 with a parseable YAML body."""
         import yaml
         r = session.get(
-            f"{BASE_URL}/v1/aarm/conformance-report?format=yaml", timeout=60
+            f"{BASE_URL}/v1/aarm/conformance-report?format=yaml", timeout=90
         )
         assert r.status_code == 200, (
             f"?format=yaml returned {r.status_code}. pyyaml may be missing in the image."
@@ -1243,6 +1290,7 @@ class TestAarmConformanceReport:
         data = r.json()
         assert "yaml" in data or "report" in data, "YAML response must have 'yaml' or 'report' key"
 
+    @pytest.mark.timeout(120)
     def test_aarm_report_ingest_pipeline_sets_artifact_key(self, session):
         """
         After a full audit ingest, aarm_report_artifact must be set in the response.

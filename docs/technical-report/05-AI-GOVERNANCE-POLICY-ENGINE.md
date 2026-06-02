@@ -1,8 +1,8 @@
 ---
 title: "AI Governance & Policy Engine"
 document: "05-AI-GOVERNANCE-POLICY-ENGINE"
-version: "2.2"
-date: "2026-05-28"
+version: "2.3"
+date: "2026-06-01"
 classification: "INTERNAL"
 project: "Cybernetic Governance Engine (CAGE)"
 ---
@@ -279,19 +279,45 @@ NeMo Guardrails configuration resides in `config/rails/`.
 | `check_latency`        | FIN-2            | Latency ≤ 200ms enforcement             |
 | `check_financial_risk` | UCA-5 + slippage | Combined drawdown + slippage risk check |
 
-### `src/gateway/governance/nemo/actions.py` — Gateway-Delegating Actions
+### NeMo Action Implementations — Two Distinct Patterns
 
-All 5 async action classes delegate to the CAGE Gateway over HTTP rather than executing governance logic in-process. This is the **Governance-as-Sidecar Pattern**: NeMo actions remain thin delegates; all enforcement logic lives in the gateway. This decouples governance from the agent runtime, enables independent scaling, and ensures a single authoritative enforcement point.
+CAGE maintains two separate NeMo action implementations serving different roles:
 
-| Action Class               | Purpose                        | Gateway Endpoint              |
-| -------------------------- | ------------------------------ | ----------------------------- |
-| `CheckApprovalTokenAction` | SC-1 approval token validation | `{GATEWAY_URL}/tools/execute` |
-| `CheckDataLatencyAction`   | FIN-2 latency check            | `{GATEWAY_URL}/tools/execute` |
-| `CheckDrawdownLimitAction` | UCA-5 drawdown enforcement     | `{GATEWAY_URL}/tools/execute` |
-| `CheckSlippageRiskAction`  | Slippage risk check            | `{GATEWAY_URL}/tools/execute` |
-| `RetrieveKnowledgeAction`  | Knowledge graph retrieval      | `{GATEWAY_URL}/tools/execute` |
+#### Gateway-Internal Actions (`src/gateway/governance/nemo/actions.py`)
 
-All actions call `_call_gateway_tool()` via HTTP POST. All actions are **fail-closed**: if the gateway is unreachable, the local fallback returns `False` (block). Threshold values hot-reload with a **60-second TTL** to pick up `governance_thresholds.json` updates without service restart.
+These async action functions execute **directly in-process** within the Hybrid Gateway, calling the `SymbolicGovernor` singleton and `STPAValidator` without any HTTP round-trip. They are for **gateway-internal use only** and are NOT registered with the top-level NeMo Guardrails instance used by the governed financial advisor.
+
+| Action Function              | Purpose                                          | Enforcement Mechanism                                      |
+| ---------------------------- | ------------------------------------------------ | ---------------------------------------------------------- |
+| `CheckApprovalTokenAction`   | SC-1 approval token validation                   | `symbolic_governor.stpa_validator.validate()` in-process   |
+| `CheckDataLatencyAction`     | FIN-2 latency check                              | `symbolic_governor.stpa_validator.validate()` in-process   |
+| `CheckDrawdownLimitAction`   | UCA-5 drawdown enforcement                       | `symbolic_governor.safety_filter.verify_action()` in-process |
+| `CheckSlippageRiskAction`    | UCA-6 slippage risk check                        | `symbolic_governor.safety_filter.verify_action()` in-process |
+| `CheckAtomicExecutionAction` | Multi-leg trade atomicity validation             | Audit trail leg-index consistency check in-process         |
+| `InvokeVllmFallbackAction`   | vLLM fallback response generation                | Direct `VLLMLLM` client call in-process                    |
+
+All actions are **fail-closed**: missing or invalid inputs return `False` (block). Snake_case aliases (`check_approval_token`, `check_data_latency`, etc.) are provided for test imports.
+
+#### Advisor NeMo Actions (`src/governed_financial_advisor/governance/nemo_actions.py`)
+
+These are **synchronous, in-process** fallback implementations used by the governed financial advisor service. They implement the same safety checks as the gateway-internal actions but operate independently of the gateway singleton — reading thresholds directly from the `GovernanceThresholds` Pydantic model with a **60-second TTL cache**.
+
+These implementations serve three purposes:
+1. **Fallback** when the HTTP gateway is unavailable
+2. **Unit testing** without gateway dependency
+3. **Reference implementations** documenting expected behavior
+
+> **Production registration note:** In production, the governed financial advisor registers HTTP-delegating NeMo actions (the **Governance-as-Sidecar Pattern**) that call the gateway's `POST /governance/validate-action` endpoint. The synchronous implementations in this file are NOT registered with production NeMo Guardrails — they are fallbacks only.
+
+| Function               | Purpose                                          | Threshold Source                                      |
+| ---------------------- | ------------------------------------------------ | ----------------------------------------------------- |
+| `check_drawdown_limit` | Portfolio drawdown limit enforcement (UCA-5)     | `GovernanceThresholds.drawdown.limit` (60s TTL cache) |
+| `check_slippage_risk`  | Market order slippage limit (UCA-6, 1% of daily volume) | Hardcoded 1% limit per governance spec          |
+| `check_approval_token` | SC-1 approval token presence and validity        | Token non-empty and not equal to `"bad_sig"` sentinel |
+| `check_data_latency`   | FIN-2 market data freshness (≤ 200ms)            | `DEFAULT_MAX_LATENCY_MS = 200.0`                      |
+| `check_atomic_execution` | Multi-leg trade history consistency            | Audit trail leg-index completeness check              |
+
+All functions are **fail-closed**: missing required fields return `False` (block). Threshold values hot-reload with a **60-second TTL** to pick up `governance_thresholds.json` updates without service restart.
 
 ---
 
@@ -441,13 +467,23 @@ To prevent race conditions where multiple parallel agent execution threads concu
 
 ---
 
-## 9. HMAC Governance Signatures
+## 9. Governance Signing: Cloud KMS HSM (Primary) + HMAC-SHA256 (Fallback)
 
-CAGE employs two distinct HMAC-SHA256 mechanisms to protect request integrity at different points in the pipeline.
+CAGE v2.0.0 promotes **Cloud KMS HSM-backed asymmetric signing** as the primary governance signing mechanism, replacing HMAC-SHA256 as the primary. HMAC-SHA256 is retained as a fallback for development and CI environments only.
 
-### Routing Seal (`X-CAGE-Routing-Seal` Header)
+### Cloud KMS HSM Signing (Primary — Production)
 
-- Applied to **every** `/tools/execute` call
+- **Algorithm**: RSA-PKCS1-4096-SHA256 — asymmetric; private key never leaves the HSM
+- **Key**: `CAGE_KMS_KEY_NAME` environment variable (e.g., `projects/{proj}/locations/global/keyRings/cage-governance/cryptoKeyVersions/1`)
+- **Signing**: `KMSSigner.sign(payload)` — executed inside Google Cloud HSM; non-exportable private key
+- **Verification**: `KMSSigner.verify(payload, signature)` — sub-millisecond local RSA verification using embedded public key PEM
+- **Non-repudiation**: Google Cloud Audit Logs provide an immutable, externally attested record of every `cloudkms.cryptoKeyVersions.useToSign` operation
+- **Compliance**: Satisfies **ISO 42001 §A.7.5** (records integrity), **NIST AU-10** (non-repudiation), **FINRA Rule 4511** (tamper-evident records)
+- **Fallback**: If `CAGE_KMS_KEY_NAME` is unset, the signer falls back to HMAC-SHA256 with a `[KMSSigner] Falling back to HMAC` warning log — **prohibited in production**
+
+### HMAC-SHA256 Routing Seal (Fallback / Dev-CI)
+
+- Applied to **every** `/tools/execute` call as the routing integrity seal
 - HMAC-SHA256 computed over raw request body bytes
 - Secret: `CAGE_ROUTING_SEAL_SECRET` environment variable
 - Enforced by [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py); missing or invalid seal → reject (fail-closed)
@@ -460,6 +496,12 @@ CAGE employs two distinct HMAC-SHA256 mechanisms to protect request integrity at
 - [`check_safety_signature(state)`](../../src/governed_financial_advisor/graph/graph.py) in the `safety_node` validates the signature before the `governed_trader` node executes
 - Prevents state tampering between the evaluator and trader nodes in the LangGraph pipeline
 
+### AnchorageGrpcLedgerProvider (Externally Reconciled CBF)
+
+> **Status (POAM-023):** The `AnchorageGrpcLedgerProvider` for externally reconciled CBF balance anchoring is referenced in the architecture but has not yet been implemented. The current implementation uses the Redis `WATCH/MULTI/EXEC` optimistic locking pattern for CBF enforcement. The "Stale Ground Truth" threat (balance staleness) is addressed by the TTL-gated staleness check in the DEFER state machine (AARM-V7) and the `post_hitl_revalidate_node` execution-time re-sampling.
+
+When implemented, `AnchorageGrpcLedgerProvider` will provide an externally reconciled cash balance anchor via gRPC, ensuring that the CBF invariant `h(x) = cash_balance - min_cash_balance ≥ 0` is validated against an authoritative external ledger rather than a Redis-cached balance — eliminating the residual "Stale Ground Truth" risk for high-value trades.
+
 ---
 
 ## 10. Threshold Management
@@ -471,6 +513,7 @@ CAGE employs two distinct HMAC-SHA256 mechanisms to protect request integrity at
 - `@lru_cache(maxsize=1)` singleton — loaded once at startup
 - [`load_and_validate_thresholds()`](../../src/gateway/governance/schemas/thresholds.py) at line 115: calls `sys.exit(1)` on validation failure — **fail-fast startup**
 - NeMo actions hot-reload with 60-second TTL
+- **v2.0.0-rc.1:** `max_slippage_pct` is now operator-adjustable at runtime via `POST /api/governance/thresholds` from the AgentSight KernelDashboard slider (0–10%, step 0.1); persisted to the running threshold store without service restart
 
 **22 tracked thresholds** with full regulatory traceability (see [`compliance/risk_acceptance/THRESHOLD_TRACEABILITY_MATRIX.md`](../../compliance/risk_acceptance/THRESHOLD_TRACEABILITY_MATRIX.md)):
 

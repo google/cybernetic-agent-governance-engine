@@ -2,11 +2,11 @@
 
 | Field                | Value                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **Document Version** | 1.1                                                                                                           |
-| **Date**             | 2026-05-31                                                                                                    |
+| **Document Version** | 2.0                                                                                                           |
+| **Date**             | 2026-06-01                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | DRAFT — Pending AO Approval                                                                                   |
+| **Status**           | DRAFT — Pending AO Approval (v2.0.0-rc.1 promoted 2026-06-01)                                                |
 | **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md`, `docs/NEURO_SYMBOLIC_GOVERNANCE.md` |
 
 ---
@@ -95,6 +95,29 @@ The stateful agent graph is assembled by `create_graph(redis_url)` in `src/gover
 | `governed_trader`   | `src/governed_financial_advisor/agents/governed_trader/agent.py`   | Final trade execution; HITL interrupt point; writes `execution_result`                            |
 | `explainer`         | `src/governed_financial_advisor/agents/explainer/agent.py`         | Compliance narrative generation; produces human-readable audit summary                            |
 | `nemo_output_rail`  | `src/governed_financial_advisor/graph/nodes/guardrail_node.py`    | **Mandatory output rail (ADR 2026-03-09b)**; NeMo PII masking + content safety; fail-closed; sets `output_rail_applied` |
+
+**LangGraph Subgraph Nodes** — the `data_analyst` and `governed_trader` top-level nodes each delegate to a compiled LangGraph subgraph defined in `src/governed_financial_advisor/graph/subgraphs/`:
+
+*Data Analyst Subgraph* ([`data_analyst_graph.py`](../../src/governed_financial_advisor/graph/subgraphs/data_analyst_graph.py)):
+
+| Subgraph Node  | Responsibility |
+| -------------- | -------------- |
+| `thinker`      | DeepSeek-R1 reasoning — identifies the target ticker from conversation context |
+| `doer`         | Llama 3.1 + dynamic MCP tool binding — translates reasoning into tool calls (`get_market_data`, `check_market_status`, `get_market_sentiment`) |
+| `execute_tool` | Manual MCP tool executor — invokes the tool calls returned by `doer` |
+| `reporter`     | Llama 3.1 — synthesizes raw market data into a structured verbal analysis report |
+
+*Governed Trader Subgraph* ([`governed_trader_graph.py`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py)):
+
+| Subgraph Node          | Responsibility |
+| ---------------------- | -------------- |
+| `approval`             | HITL approval gate — pauses execution pending human reviewer decision |
+| `rejection`            | Terminal node for human-rejected trades |
+| `post_hitl_rehydrate`  | **TOCTOU Remediation** — samples live market price via `yfinance` immediately after HITL resumption; computes drift vs. stale plan price |
+| `post_hitl_revalidate` | **TOCTOU Remediation** — re-runs Tier 2 (CBF) and Tier 4 (OPA) against fresh market data; blocks if slippage exceeds reviewer's approved tolerance |
+| `drift_blocked`        | Fail-closed terminal node — surfaces human-readable explanation when post-HITL re-validation blocks the trade |
+| `executor`             | Llama 3.1 + `execute_trade_action` MCP tool — executes the approved trade plan |
+| `tools`                | Manual MCP tool executor for the executor node's tool calls |
 
 ### 3.3 Routing Logic
 
@@ -229,6 +252,13 @@ The Hybrid Inference Gateway is CAGE's central enforcement plane. It is structur
 ### 5.2 Governance Middleware
 
 `src/gateway/server/governance_middleware.py` wraps every `/tools/execute` call. It enforces the **X-CAGE-Routing-Seal** HMAC header: any tool invocation whose request does not carry a valid HMAC-SHA256 seal — signed with the shared governance key — is rejected before reaching the tool handler. This prevents tool calls from bypassing the governance pipeline by direct HTTP access.
+
+The middleware exposes two governance endpoints under the `/governance` mount path:
+
+| Endpoint | Method | Description |
+| -------- | ------ | ----------- |
+| `POST /governance/check` | POST | Internal dry-run governance check against a proposed tool call. Requires a valid `X-CAGE-Routing-Seal`. Body: `{"tool_name": str, "params": dict}`. Returns `APPROVED` or `REJECTED` with violations list. |
+| `POST /governance/validate-action` | POST | **Unified governance validation for structured tool execution payloads.** Called by the GFA service instead of invoking OPA directly — the Single Choke Point for all tool-level governance decisions. Executes Tier 2 (CBF) and Tier 4 (OPA) re-validation. Propagates W3C `traceparent` context to link GFA spans to gateway child spans in Langfuse. Returns `verdict` (APPROVED\|DENIED), `violations`, `seal`, and `latency_ms`. |
 
 ### 5.3 MCP Tool Server
 
@@ -450,7 +480,7 @@ For the full design rationale, threat model, implementation map, and verificatio
 | `AUDIT_FINDING`        | Compliance Bridge detects a control finding during OSCAL audit   |
 | `GOVERNANCE_VIOLATION` | SymbolicGovernor or evaluator node raises a governance rejection |
 
-### 9.4 AgentSight UI
+### 9.4 AgentSight UI (Phase 1 — v2.0.0-rc.1)
 
 `src/agentsight-ui/src/KernelDashboard.tsx` is the primary compliance operator interface. It connects to `{BACKEND_URL}/v1/events/stream` as an SSE consumer and renders real-time governance signals.
 
@@ -460,6 +490,16 @@ For the full design rationale, threat model, implementation map, and verificatio
 | --------------------- | --------------------------------- |
 | Alert threshold       | `ALERT_THRESHOLD=0.8`             |
 | Monitored control IDs | `A.5.2`, `A.5.3`, `A.9.2`, `SC-4` |
+
+**Phase 1 operator controls (v2.0.0-rc.1):**
+
+| Feature | Implementation | Details |
+|---------|---------------|---------|
+| **Max Slippage % Slider** | `maxSlippagePct` state (default 2.0); range input 0–10%, step 0.1 | Persisted via `POST /api/governance/thresholds` on `mouseup`/`touchend`; `slippageSaving` spinner shown during save |
+| **ΔP Price Drift Badge** | `priceDrift(fresh, stale)` helper; `.drift-badge` CSS class | Green < 1%, Yellow 1–3%, Red > 3% with `drift-pulse` keyframe animation |
+| **HITL TTL Countdown** | `formatCountdown(totalSeconds)` helper; 1-second `setInterval` tick via `now` state | Displays `MM:SS` remaining; `.hitl-ttl-expired` class + `.telemetry-item.hitl-expired` (opacity 0.45, grayscale 0.6) when expired |
+
+New `TelemetryItem` / `GovernanceEvent` interface fields propagated from SSE stream: `hitl_expires_at?: string | null`, `price_fresh?: number | null`, `price_stale?: number | null`.
 
 ### 9.5 AgentSight eBPF DaemonSet
 
@@ -476,7 +516,9 @@ The `deployment/agentsight/` DaemonSet deploys a kernel-level BPF program target
 
 ## 10. Langfuse Webhook Cybernetic Loop
 
-The system that gives CAGE its name — a **cybernetic** (self-correcting) governance engine — is the closed-loop feedback path from Langfuse telemetry scores through Kubeflow Pipelines back to live NeMo Guardrails hot-reload. No human is in the low-latency path; the loop is fully autonomous.
+The system that gives CAGE its name — a **cybernetic** (self-correcting) governance engine — is the closed-loop feedback path from Langfuse telemetry scores through Kubeflow Pipelines back to live NeMo Guardrails hot-reload.
+
+> **v2.0.0 Note:** The NeMo refinement step in this loop requires human approval before executing remediation actions. Specifically, the KFP pipeline's Step 3 calls `POST /v1/nemo/apply-refinement`, which applies a hot-reload of the NeMo rails configuration — but the *propose-refinement* → *human approval* → *apply-refinement* sequence is enforced for any model-initiated refinement (AARM-V8 neutralization). Fully autonomous correction without human approval in the low-latency path is planned for v2.1.0 (POAM-031).
 
 > **Naming note:** The KFP pipeline is registered as `green-stack-governance-loop` and the pipeline file is `green_stack_pipeline.py`. "Green-Stack Pipeline" is the original implementation name; "Cybernetic Governance Loop" is the architectural concept it implements. They refer to the same system — the same code, the same endpoints, the same trigger flow. This document uses the canonical term **Cybernetic Governance Loop**.
 

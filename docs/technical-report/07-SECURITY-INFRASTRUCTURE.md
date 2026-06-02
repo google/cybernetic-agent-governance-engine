@@ -2,8 +2,8 @@
 
 | Field              | Value                                           |
 | ------------------ | ----------------------------------------------- |
-| **Version**        | 1.1                                             |
-| **Date**           | 2026-05-28                                      |
+| **Version**        | 2.0                                                             |
+| **Date**           | 2026-06-01                                                      |
 | **Classification** | INTERNAL                                        |
 | **Document**       | CAGE Technical Report — Security Infrastructure |
 
@@ -15,12 +15,12 @@ CAGE implements a defense-in-depth security model across seven distinct layers. 
 
 | Layer                   | Mechanism                            | Implementation                               |
 | ----------------------- | ------------------------------------ | -------------------------------------------- |
-| Cryptographic Integrity   | HMAC-SHA256 (dual-level)             | Routing seal + governance state signature    |
+| Cryptographic Integrity   | Cloud KMS HSM (primary) + HMAC-SHA256 (fallback) | KMS RSA-4096 governance signing + HMAC routing seal |
 | Policy Authorization      | OPA Rego RBAC                        | `trade.governance` package, fail-closed      |
 | Network Isolation         | Kubernetes NetworkPolicy             | 9 objects, default-deny ingress/egress       |
 | External Normative Gate   | Adaptive FRIA enforcement (v2.1.0)   | `normative_provider.py`: confidence-mapped sync/async external validation (SA-9) |
 | PII Protection            | NeMo Guardrails + Microsoft Presidio | Input/output scanning + anonymization        |
-| Audit Logging             | OpenTelemetry + Langfuse             | 7-year retention, ISO 42001 control stamping |
+| Audit Logging             | OpenTelemetry + Langfuse             | 7-year retention, ISO 42001 control stamping; direct OTLP ingestion (OTel Collector deprecated 2026-05-31) |
 | Continuous Monitoring     | AgentSight eBPF DaemonSet            | Kernel-level process audit trail             |
 
 > ⚠️ **Current Security Posture: HIGH Overall Risk — ATO Not Recommended**
@@ -161,6 +161,20 @@ Three `CiliumNetworkPolicy` resources extend the standard L3/L4 NetworkPolicies 
 | `cage-egress-inference` | `role: inference-node` | `generativelanguage.googleapis.com`, `oauth2.googleapis.com` | LLM API access only |
 | `cage-egress-sovereign-agent` | `role: sovereign-agent` | `query1.finance.yahoo.com`, `storage.googleapis.com`, `generativelanguage.googleapis.com` | Market data + cloud storage + LLM |
 | `cage-default-deny-egress` | All pods | None | Cilium-layer default-deny for all non-allowlisted external egress |
+
+**Full approved FQDN egress allowlist** (all roles combined):
+
+| FQDN | Purpose |
+| ---- | ------- |
+| `api.openai.com` | OpenAI-compatible API (external LLM fallback) |
+| `api.anthropic.com` | Anthropic Claude API (external LLM fallback) |
+| `generativelanguage.googleapis.com` | Google Gemini / Vertex AI |
+| `*.googleapis.com` | GCS, Cloud KMS, Cloud Audit Logs, Workload Identity |
+| `metadata.google.internal` | GKE Workload Identity metadata server |
+| `us.i.posthog.com` | Product analytics (Langfuse telemetry) |
+| `cloud.langfuse.com` | Langfuse SaaS OTLP ingestion |
+| `api.trade.gov` | OFAC sanctions screening |
+| `www.treasury.gov` | OFAC SDN list reference |
 
 Cilium's DNS proxy intercepts all UDP/53 responses and dynamically populates FQDN-based IP sets, ensuring that sovereign agent pods cannot exfiltrate data to arbitrary external endpoints.
 
@@ -351,14 +365,15 @@ All third-party compliance and attestation provider adapters are isolated under 
 
 ## 9. Cryptographic Controls
 
-| Mechanism               | Algorithm           | Usage                            | FIPS Status              | Gaps                             |
-| ----------------------- | ------------------- | -------------------------------- | ------------------------ | -------------------------------- |
-| Routing Seal            | HMAC-SHA256         | Every `POST /tools/execute` call | ✅ FIPS-approved         | None — fully implemented         |
-| Governance Signature    | HMAC-SHA256         | Agent state transitions          | ✅ FIPS-approved         | None — fully implemented         |
-| TLS (external)          | TLS 1.2+            | External service connections     | ✅ FIPS-compliant        | No intra-cluster equivalent      |
-| Intra-cluster transport | **Linkerd mTLS**    | Service-to-service               | ✅ FIPS-compliant     | **FIND-011 RESOLVED** — Linkerd mTLS |
-| Context Evidence Chain  | SHA-256 Hash Chain  | OscalFindings integrity tracking | ✅ FIPS-approved         | None — fully implemented         |
-| Session token expiry    | N/A (expiry policy) | Session tokens ≤ 8h              | N/A                      | No rotation schedule (FIND-012)  |
+| Mechanism               | Algorithm                  | Usage                            | FIPS Status              | Gaps                             |
+| ----------------------- | -------------------------- | -------------------------------- | ------------------------ | -------------------------------- |
+| **KMS Governance Signing** | RSA-PKCS1-4096-SHA256 (HSM) | **Primary** — all governance decisions; non-repudiation | ✅ FIPS-approved | Production only; HMAC fallback for dev/CI |
+| Routing Seal            | HMAC-SHA256                | Every `POST /tools/execute` call | ✅ FIPS-approved         | Fallback only when KMS unavailable |
+| Governance Signature    | HMAC-SHA256                | Agent state transitions          | ✅ FIPS-approved         | None — fully implemented         |
+| TLS (external)          | TLS 1.2+                   | External service connections     | ✅ FIPS-compliant        | No intra-cluster equivalent      |
+| Intra-cluster transport | **Linkerd mTLS**           | Service-to-service               | ✅ FIPS-compliant        | **FIND-011 RESOLVED** — Linkerd mTLS |
+| Context Evidence Chain  | SHA-256 Hash Chain         | OscalFindings integrity tracking | ✅ FIPS-approved         | None — fully implemented         |
+| Session token expiry    | N/A (expiry policy)        | Session tokens ≤ 8h              | N/A                      | No rotation schedule (FIND-012)  |
 
 **FIPS 140-2/3 Assessment**: HMAC-SHA256 is a FIPS-approved algorithm. Intra-cluster mTLS is now enforced via Linkerd (FIND-011 resolved), satisfying FIPS transport requirements for all service-to-service communication within the `governance-stack` namespace.
 
@@ -367,6 +382,21 @@ All third-party compliance and attestation provider adapters are isolated under 
 CAGE v2.0.0 introduces a **Cryptographic Context Accumulator** (`src/compliance_bridge/context_accumulator.py`) to seal audit evidence against retroactive tampering or Memory Poisoning attempts. 
 *   **SHA-256 Hash-Chaining:** Every emitted `OscalFinding` is chained cryptographically to its predecessor. The `record_hash` for finding $n$ is calculated as `SHA-256(prev_hash || content_json)`.
 *   **Seal Sentinel:** Each audit execution is capped by a `CHAIN_SEALED` sentinel payload. The compliance API validates `chain_root`, `chain_length`, and `chain_integrity_valid` on all reads, satisfying **ISO 42001 Annex A.5.3** evidence logging controls.
+
+---
+
+### 9.2 CVE-2025-69872 Remediation (`outlines` Package Removal)
+
+The `outlines` Python package was removed from all CAGE container images following the discovery of **CVE-2025-69872** (critical severity). This remediation satisfies **NIST SP 800-53 SI-2 (Flaw Remediation)** and is validated by the `compliance/lula/lula-validation-si2.yaml` Lula manifest.
+
+| Attribute | Value |
+| --------- | ----- |
+| **CVE** | CVE-2025-69872 |
+| **Severity** | Critical |
+| **Affected Package** | `outlines` (structured output library) |
+| **Remediation** | Package removed from all images; vLLM FSM guided decoding used for `ExecutionPlan` schema compliance |
+| **NIST Control** | SI-2 (Flaw Remediation) |
+| **Status** | **RESOLVED** |
 
 ---
 
@@ -414,7 +444,7 @@ Sources: [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md), [
 | FIND-007: FIPS 199 unsigned                     | **Critical** | Compliance        | 🔄 In-Progress                    |
 | FIND-001: No account management procedures      | High         | Identity & Access | ❌ Open                           |
 | FIND-003: Mock audit traces in EvaluatorAuditor | High         | Audit             | ❌ Open                           |
-| FIND-008: No vulnerability scanning             | High         | Risk Assessment   | ❌ Open                           |
+| FIND-008: No vulnerability scanning            | High         | Risk Assessment   | ✅ **RESOLVED (POAM-010 Closed)** |
 | FIND-006: No Incident Response Plan             | High         | Incident Response | ❌ Open                           |
 | FIND-012: No automated secret rotation          | Medium       | Identity & Access | ❌ Open                           |
 

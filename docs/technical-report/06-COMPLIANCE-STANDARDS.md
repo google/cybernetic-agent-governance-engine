@@ -211,7 +211,7 @@ Masking an `ERROR` as `NOT_APPLICABLE` would:
 | [`_step4_alert_on_critical_fail()`](../../src/compliance_bridge/audit_workflow.py) | Critical-control filter matches `result ∈ {FAIL, ERROR}`. A scanner failure on SC-4, A.9.2, or A.8.4 triggers the same Slack/PagerDuty alert as an explicit FAIL. |
 | [`_ingest_sync()`](../../src/compliance_bridge/audit_workflow.py) | `ERROR` findings score `0.0` in Langfuse — identical to FAIL. They are never scored as `1.0` (PASS). |
 
-### 5.4 Compliance Bridge API Endpoints (v2.0.0)
+### 5.4 Compliance Bridge API Endpoints (v2.0.0-rc.1)
 
 CAGE v2.0.0 adds four new REST endpoints to the Compliance Bridge (`src/compliance_bridge/main.py`):
 
@@ -242,6 +242,15 @@ CAGE maintains its compliance artifacts in OSCAL v1.0.4 format to enable machine
 | [`compliance/oscal/information-type-registry.yaml`](../../compliance/oscal/information-type-registry.yaml)         | Information Type Registry           | Present                            |
 
 > **SSP Gap (FIND-013 / POAM-015):** No complete System Security Plan exists. The [`compliance/oscal/system-security-plan.yaml`](../../compliance/oscal/system-security-plan.yaml) file is a stub with placeholder content. Severity: **HIGH**. Status: **Open**. A complete SSP is a prerequisite for ATO submission.
+
+### OSCAL Artifact Persistence and KMS Batch Signing
+
+OSCAL Assessment Result artifacts are persisted to GCS using the native `google-cloud-storage>=2.0.0` SDK (primary) with `boto3>=1.35.0` S3-compatible fallback. Each artifact batch is signed using **Cloud KMS HSM-backed asymmetric signing** before persistence, providing tamper-evident audit evidence:
+
+- **Signing**: RSA-PKCS1-4096-SHA256 via `KMSSigner` — private key never leaves the HSM
+- **Verification**: Sub-millisecond local RSA verification using embedded public key PEM
+- **Audit trail**: Google Cloud Audit Logs provide an immutable record of every signing operation
+- **Compliance**: Satisfies FINRA Rule 4511 tamper-evident records requirement and ISO 42001 §A.7.5 records integrity
 
 ### Automated Multi-Jurisdiction SSP Exporter
 To accelerate compliance authoring across different jurisdictions, CAGE includes an automated compliance narrative compiler: [`src/gateway/governance/oscal_ssp_exporter.py`](../../src/gateway/governance/oscal_ssp_exporter.py). 
@@ -364,6 +373,20 @@ The security assessor does NOT recommend ATO at this time. An Interim ATO (IATO)
 | FIND-014   | No ATO authorization letter          | High     | Open         | POAM-005        |
 
 FIND-010 and FIND-011 are resolved Critical findings: HMAC seal integrity was hardened (FIND-010), and intra-cluster mTLS was deployed via Linkerd with Cilium L7 egress lockdown (FIND-011). FIND-008 (vulnerability scanning) is resolved via the `security-scan.yml` CI pipeline implementing pip-audit, Trivy, Grype, and CycloneDX SBOM generation.
+
+### CVE-2025-69872 Remediation (`outlines` Package Removal)
+
+The `outlines` Python package was removed from all CAGE images following the discovery of **CVE-2025-69872** (critical severity). Structured output enforcement is now handled natively by vLLM's FSM (Finite State Machine) guided decoding, which provides equivalent `ExecutionPlan` schema compliance without the vulnerable dependency.
+
+| Attribute | Value |
+| --------- | ----- |
+| **CVE** | CVE-2025-69872 |
+| **Severity** | Critical |
+| **Affected Package** | `outlines` |
+| **Remediation** | Package removed; vLLM FSM guided decoding used instead |
+| **NIST Control** | SI-2 (Flaw Remediation) |
+| **Lula Validation** | `compliance/lula/lula-validation-si2.yaml` — flaw remediation CronJob |
+| **Status** | **RESOLVED** |
 
 ---
 

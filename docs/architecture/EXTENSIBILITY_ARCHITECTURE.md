@@ -3,9 +3,9 @@
 | Field              | Value                     |
 | ------------------ | ------------------------- |
 | **Classification** | PUBLIC                    |
-| **Date**           | 2026-05-29                |
-| **Version**        | 2.2.0                     |
-| **Status**         | Current State + Roadmap   |
+| **Date**           | 2026-06-01                |
+| **Version**        | 2.3.0                     |
+| **Status**         | Current State + Roadmap (v2.0.0-rc.1) |
 
 ---
 

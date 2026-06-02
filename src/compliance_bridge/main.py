@@ -883,7 +883,10 @@ async def defer_inject(
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
     try:
         import redis.asyncio as aioredis  # noqa: PLC0415
-        from src.gateway.governance.defer_queue import DeferQueue  # noqa: PLC0415
+        try:
+            from src.gateway.governance.defer_queue import DeferQueue  # noqa: PLC0415
+        except ImportError:
+            from gateway.governance.defer_queue import DeferQueue  # noqa: PLC0415
 
         client   = aioredis.from_url(redis_url, db=1, decode_responses=True)
         queue    = DeferQueue(client)
@@ -931,7 +934,10 @@ async def defer_escalate(
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
     try:
         import redis.asyncio as aioredis  # noqa: PLC0415
-        from src.gateway.governance.defer_queue import DeferQueue  # noqa: PLC0415
+        try:
+            from src.gateway.governance.defer_queue import DeferQueue  # noqa: PLC0415
+        except ImportError:
+            from gateway.governance.defer_queue import DeferQueue  # noqa: PLC0415
 
         client   = aioredis.from_url(redis_url, db=1, decode_responses=True)
         queue    = DeferQueue(client)
