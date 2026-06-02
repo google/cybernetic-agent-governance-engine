@@ -1,0 +1,106 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-governance
+  namespace: default
+  labels:
+    app: vllm-governance
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-governance
+  template:
+    metadata:
+      labels:
+        app: vllm-governance
+    spec:
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Equal"
+        value: "present"
+        effect: "NoSchedule"
+      - key: "cloud.google.com/gke-spot"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      nodeSelector:
+        cloud.google.com/gke-gpu: "true"
+        cloud.google.com/gke-accelerator: nvidia-l4
+      containers:
+      - name: vllm
+        image: vllm/vllm-openai:latest
+        command: ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+        args:
+        - "--model"
+        - "Qwen/Qwen2.5-7B-Instruct"
+        - "--guided-decoding-backend"
+        - "outlines"
+        - "--trust-remote-code"
+        - "--port"
+        - "8000"
+        env:
+        - name: HUGGING_FACE_HUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token-secret
+              key: token
+        - name: OTEL_SERVICE_NAME
+          value: "vllm-governance"
+        # Langfuse v3 native OTLP ingestion — no separate collector needed.
+        # vLLM --otlp-traces-endpoint only supports gRPC; use env vars for HTTP.
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://langfuse-web.governance-stack.svc.cluster.local:3000/api/public/otel/v1/traces"
+        - name: OTEL_EXPORTER_OTLP_PROTOCOL
+          value: "http/protobuf"
+        - name: OTEL_EXPORTER_OTLP_HEADERS
+          valueFrom:
+            secretKeyRef:
+              name: advisor-secrets
+              key: LANGFUSE_BASIC_AUTH_HEADER
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            memory: "16Gi"
+            cpu: "4"
+          requests:
+            nvidia.com/gpu: 1
+            memory: "16Gi"
+            cpu: "4"
+        volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: "4Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-governance
+  namespace: default
+spec:
+  selector:
+    app: vllm-governance
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  type: ClusterIP

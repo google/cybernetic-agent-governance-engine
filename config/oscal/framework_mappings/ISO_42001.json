@@ -1,0 +1,50 @@
+{
+  "_comment": "ISO/IEC 42001:2023 UCA-to-control routing table for the OSCAL SSP Exporter. ISO Annex A clauses are embedded alongside NIST entries; this file covers the standalone ISO42001 framework export path. Loaded at runtime by FrameworkRouter.",
+  "_schema_version": "2.0.0",
+  "_last_updated": "2026-05-23",
+  "_framework_id": "ISO42001",
+  "_framework_label": "ISO/IEC 42001:2023 — AI Management System Standard",
+  "_framework_source": "https://www.iso.org/standard/81230.html",
+  "uca_mappings": {
+    "UCA-1": [
+      "A.8.4"
+    ],
+    "UCA-2": [
+      "A.8.4",
+      "A.6.2"
+    ],
+    "UCA-3": [
+      "A.9.2"
+    ],
+    "UCA-4": [
+      "A.8.4"
+    ],
+    "UCA-5": [
+      "A.8.4",
+      "A.6.2"
+    ],
+    "UCA-6": [
+      "A.8.4",
+      "A.6.2"
+    ],
+    "UCA-7": [
+      "A.5.2"
+    ],
+    "UCA-8": [
+      "A.8.4"
+    ],
+    "UCA-9": [
+      "A.8.4"
+    ]
+  },
+  "control_descriptions": {
+    "A.5.2": "Social impact — AI system impact on society and environment",
+    "A.6.1": "AI system policies and operational planning",
+    "A.6.2": "AI System Lifecycle — Design and development controls",
+    "A.7.5": "Cryptographic Controls — Data integrity and confidentiality",
+    "A.8.4": "AI System Operation — Runtime operational controls",
+    "A.9.2": "Data transfer to suppliers and third parties / PII protection",
+    "A.9.4": "Monitoring and measurement — Live telemetry validation"
+  },
+  "narrative_template": "STPA compiler enforces {control_id} ({control_description}) via generated governance artifacts. UCAs covered: {uca_list}."
+}

@@ -1,0 +1,68 @@
+# lula-validation-ir6.yaml
+# NIST SP 800-53 Rev 5 — IR-6: Incident Reporting
+#
+# STUB: This validation requires cluster-specific namespace configuration
+# before activation. See TODO comments below.
+#
+# Asserts that the compliance-bridge service is running and ready in the cluster.
+# The compliance-bridge (src/compliance_bridge/) handles incident notification
+# via audit_workflow.py and notifier.py — it is the primary incident reporting
+# mechanism for this system, sending alerts to Slack/PagerDuty on critical
+# compliance failures (ISO 42001 A.9.2, SC-4, AU-12 violations).
+#
+# Domain: kubernetes → compliance-bridge Deployment
+# Provider: opa (inline Rego)
+#
+# References:
+#   - src/compliance_bridge/notifier.py — Incident notification dispatcher
+#   - src/compliance_bridge/audit_workflow.py — Compliance audit + alert pipeline
+#   - deployment/k8s/compliance-bridge.yaml — compliance-bridge Deployment manifest
+#   - docs/ROLES_AND_RESPONSIBILITIES.md — IR-6 ISSO/ISSM responsibilities
+
+# STUB: Update 'namespace' below to the actual cluster namespace for compliance-bridge.
+# TODO: Confirm the Deployment name from deployment/k8s/compliance-bridge.yaml before activation.
+
+domain:
+  type: kubernetes
+  kubernetes-spec:
+    resources:
+      - name: compliance-bridge-deployment
+        resource: deployments
+        # TODO: Replace 'governance-stack' with the actual namespace if different.
+        namespace: governance-stack
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+
+      # IR-6: Incident Reporting
+      # Verifies the compliance-bridge Deployment is present and has at least 1
+      # ready replica, confirming the incident reporting and notification
+      # infrastructure is operational.
+      # The compliance-bridge dispatches Slack/PagerDuty alerts on:
+      #   - Critical ISO 42001 compliance failures (A.9.2 PII leak, SC-4 OPA down)
+      #   - Governance threshold violations above MANUAL_REVIEW threshold
+      #   - Audit workflow failures requiring ISSO/ISSM notification
+      validate if {
+        input["compliance-bridge-deployment"].status.readyReplicas >= 1
+      }
+
+notes: >
+  NIST SP 800-53 Rev 5 IR-6: Incident Reporting.
+  STUB — requires cluster-specific namespace and deployment name configuration.
+  Automated verification that the compliance-bridge incident reporting service
+  is live and operational. The compliance-bridge (src/compliance_bridge/) provides:
+    - Real-time Slack/PagerDuty alerting via notifier.py
+    - Compliance audit workflow with critical-failure alerting via audit_workflow.py
+    - The /v1/metrics/* API endpoints consumed by other Lula validations
+  IR-6 requires that security incidents be reported to appropriate organizational
+  officials and external authorities within defined timeframes — the compliance-bridge
+  is the automated first-responder for this requirement.
+  Activation: confirm Deployment name from deployment/k8s/compliance-bridge.yaml,
+  update namespace, and enable in the Lula CronJob.
+  See: compliance/continuous-monitoring/ISCM_STRATEGY.md — IR-6 monitoring cadence.
+  See: docs/ROLES_AND_RESPONSIBILITIES.md — ISSO/ISSM incident response chain.

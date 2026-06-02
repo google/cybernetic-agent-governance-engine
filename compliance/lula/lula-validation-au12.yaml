@@ -1,0 +1,54 @@
+# lula-validation-au12.yaml
+# NIST SP 800-53 Rev 5 — AU-12: Audit Record Generation
+#
+# Asserts that the Langfuse web deployment is running and ready in the cluster.
+# Langfuse is the primary audit record sink: all governance decision spans are
+# shipped directly to Langfuse via its native OTLP endpoint
+# (langfuse-web:3000/api/public/otel/v1/traces).
+#
+# OTel spans tagged with iso42001.control, iso42001.verdict, user, and timestamp
+# fields provide the evidence for AU-12 compliance.
+#
+# Domain: kubernetes → Langfuse Web Deployment
+# Provider: opa (inline Rego)
+#
+# References:
+#   - deployment/k8s/langfuse-web.yaml — Langfuse deployment manifest
+#   - deployment/k8s/generated/gateway-deployment.yaml — OTLP endpoint config
+#   - src/gateway/server/governance_middleware.py — span emission source
+
+domain:
+  type: kubernetes
+  kubernetes-spec:
+    resources:
+      - name: langfuse-web-deployment
+        resource: deployments
+        namespace: governance-stack
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+
+      # AU-12: Audit Record Generation
+      # Verifies the Langfuse web deployment is present and has at least 1
+      # ready replica, confirming the audit record sink is operational.
+      # Required audit fields emitted per span: iso42001.control, iso42001.verdict,
+      # user, timestamp — enforced by governance_middleware.py and LangGraph nodes.
+      validate if {
+        input["langfuse-web-deployment"].status.readyReplicas >= 1
+      }
+
+notes: >
+  NIST SP 800-53 Rev 5 AU-12: Audit Record Generation.
+  Verifies that Langfuse (the native OTLP audit record sink) is live and ready.
+  Services ship traces directly to langfuse-web:3000/api/public/otel/v1/traces
+  using OTEL_EXPORTER_OTLP_ENDPOINT — no intermediate OTel Collector is deployed.
+  Each governance decision span includes the required AU-12 fields:
+  iso42001.control, iso42001.verdict, user, and timestamp.
+  Evidence: OTel spans from src/gateway/server/governance_middleware.py and
+  LangGraph governance nodes ingested directly by Langfuse.
+  See: compliance/continuous-monitoring/ISCM_STRATEGY.md — AU-12 monitoring cadence.

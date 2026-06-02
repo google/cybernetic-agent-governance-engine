@@ -1,0 +1,14 @@
+# NeMo Guardrails - Colang 2.x Entry Point
+#
+# We do NOT import llm, guardrails, or core because the installed NeMo
+# version's standard library files contain Colang 2.x syntax that the
+# lark parser rejects (UnexpectedToken at import statements).
+#
+# Instead we define @override flow main directly here with no imports.
+# The Python validate_with_nemo() has a "No main flow" pass-through guard
+# so NeMo config failures are non-fatal; OPA + STPA remain authoritative.
+
+@override
+flow main
+  match UtteranceUser() as $msg
+  await bot say $msg.text

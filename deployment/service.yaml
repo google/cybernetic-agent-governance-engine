@@ -1,0 +1,109 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: governed-financial-advisor
+  annotations:
+    run.googleapis.com/launch-stage: BETA
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/startup-cpu-boost: "true"
+        autoscaling.knative.dev/min-scale: "1"
+    spec:
+      serviceAccountName: financial-advisor-sa
+      containers:
+        # --- CONTAINER 1: The Agent (Ingress) ---
+        - name: ingress-agent
+          image: gcr.io/PROJECT_ID/financial-advisor:latest
+          # Note: Container dependency is handled via startupProbe on sidecar
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          env:
+            # Point to local sidecar
+            - name: OPA_URL
+              value: "http://opa-service:8181/v1/data/trade/governance"
+            # Auth token for OPA sidecar
+            - name: OPA_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: opa-auth-token
+                  key: latest
+            # NOTE: GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION
+            # are injected by deploy_all.py from .env file (single source of truth)
+
+        # --- CONTAINER 2: OPA Sidecar ---
+        - name: governance-sidecar
+          image: openpolicyagent/opa:0.68.0-static
+          args:
+            - "run"
+            - "--server"
+            - "--addr=0.0.0.0:8181"
+            - "--config-file=/config/opa_config.yaml"
+            - "/policies/finance_policy.rego"
+            - "/policies/system/system_authz.rego"
+          # Health check for dependency
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8181
+          # Mount the policy
+          volumeMounts:
+            - name: policy-volume
+              mountPath: /policies
+              readOnly: true
+            - name: system-authz-vol
+              mountPath: /policies/system
+              readOnly: true
+            - name: opa-config-vol
+              mountPath: /config
+              readOnly: true
+            - name: auth-token-vol
+              mountPath: /secrets/auth
+              readOnly: true
+
+      # --- Volumes ---
+      volumes:
+        - name: policy-volume
+          secret:
+            secretName: finance-policy-rego
+            items:
+              - key: latest
+                path: finance_policy.rego
+        - name: system-authz-vol
+          secret:
+            secretName: system-authz-policy
+            items:
+              - key: latest
+                path: system_authz.rego
+        - name: opa-config-vol
+          secret:
+            secretName: opa-configuration
+            items:
+              - key: latest
+                path: opa_config.yaml
+        - name: auth-token-vol
+          secret:
+            secretName: opa-auth-token
+            items:
+              - key: latest
+                path: token

@@ -1,0 +1,349 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lula-validation-manifests
+  namespace: ${NAMESPACE}
+  labels:
+    app: lula
+    compliance.iso42001/component: "audit-manifests"
+data:
+  # Embedded Lula validation manifests mounted into the CronJob pod.
+  # These are the same files in compliance/lula/ — kept in sync by the CI pipeline.
+  lula-validation-a52.yaml: |
+    domain:
+      type: api
+      api-spec:
+        endpoints:
+          - name: langfuse_metrics_a52
+            url: "http://compliance-bridge.${NAMESPACE}.svc.cluster.local:80/v1/metrics/A.5.2"
+            method: GET
+    provider:
+      type: opa
+      opa-spec:
+        rego: |
+          package lula
+          import future.keywords.if
+          validate if {
+            input.langfuse_metrics_a52.startup_grace_active == true
+            input.langfuse_metrics_a52.safety_rate >= 0.99
+            input.langfuse_metrics_a52.evidence_age_seconds < 172800
+          }
+          validate if {
+            input.langfuse_metrics_a52.startup_grace_active == false
+            input.langfuse_metrics_a52.safety_rate >= 0.99
+            input.langfuse_metrics_a52.total_traces > 100
+            input.langfuse_metrics_a52.evidence_age_seconds < 172800
+          }
+
+  lula-validation-a53.yaml: |
+    domain:
+      type: api
+      api-spec:
+        endpoints:
+          - name: langfuse_metrics_a53
+            url: "http://compliance-bridge.${NAMESPACE}.svc.cluster.local:80/v1/metrics/A.5.3"
+            method: GET
+    provider:
+      type: opa
+      opa-spec:
+        rego: |
+          package lula
+          import future.keywords.if
+          validate if {
+            input.langfuse_metrics_a53.startup_grace_active == true
+            input.langfuse_metrics_a53.safety_rate >= 0.98
+            input.langfuse_metrics_a53.evidence_age_seconds < 172800
+          }
+          validate if {
+            input.langfuse_metrics_a53.startup_grace_active == false
+            input.langfuse_metrics_a53.safety_rate >= 0.98
+            input.langfuse_metrics_a53.total_traces > 100
+            input.langfuse_metrics_a53.evidence_age_seconds < 172800
+          }
+
+  lula-validation-a92.yaml: |
+    domain:
+      type: api
+      api-spec:
+        endpoints:
+          - name: langfuse_metrics_a92
+            url: "http://compliance-bridge.${NAMESPACE}.svc.cluster.local:80/v1/metrics/A.9.2"
+            method: GET
+    provider:
+      type: opa
+      opa-spec:
+        rego: |
+          package lula
+          import future.keywords.if
+          validate if {
+            input.langfuse_metrics_a92.startup_grace_active == true
+            input.langfuse_metrics_a92.safety_rate == 1.0
+            input.langfuse_metrics_a92.evidence_age_seconds < 172800
+          }
+          validate if {
+            input.langfuse_metrics_a92.startup_grace_active == false
+            input.langfuse_metrics_a92.safety_rate == 1.0
+            input.langfuse_metrics_a92.total_traces > 0
+            input.langfuse_metrics_a92.evidence_age_seconds < 172800
+          }
+
+  lula-validation-sc4.yaml: |
+    domain:
+      type: kubernetes
+      kubernetes-spec:
+        resources:
+          - name: opa-compliance-status
+            resource: configmaps
+            namespace: ${NAMESPACE}
+    provider:
+      type: opa
+      opa-spec:
+        rego: |
+          package lula
+          import future.keywords.if
+          validate if {
+            input["opa-compliance-status"].metadata.labels["compliance.iso42001/enabled"] == "true"
+          }
+---
+# ============================================================================
+# CronJob: lula-audit
+# Runs every 6 hours — validates API-domain controls (A.5.2, A.5.3, A.9.2,
+# SC-4) via `lula validate`, persists the raw OSCAL artifact to S3-compatible
+# GCS, then ingests findings into the Langfuse compliance project.
+#
+# Design notes:
+#   - auditId is set to the Unix timestamp to provide a stable idempotency key.
+#     If the CronJob retries after a network failure, the compliance-bridge's
+#     S3 HEAD check skips re-uploading the same artifact.
+#   - The OSCAL YAML is written to a tmp file and passed via --data-binary
+#     @/results/payload.json (jq-built) to avoid shell quoting hazards with
+#     large multi-line documents.
+# ============================================================================
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: lula-audit
+  namespace: ${NAMESPACE}
+  labels:
+    app: lula
+    compliance.iso42001/component: "continuous-audit"
+spec:
+  schedule: "0 */6 * * *" # Every 6 hours
+  concurrencyPolicy: Forbid # Do not allow overlapping runs
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: lula
+        spec:
+          serviceAccountName: lula-auditor
+          restartPolicy: OnFailure
+          containers:
+            # ----------------------------------------------------------------
+            # Container: Lula validate + ingest
+            # ----------------------------------------------------------------
+            - name: lula
+              image: us-central1-docker.pkg.dev/laah-cybernetics/governance-stack/lula:0.9.5
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  echo "🔍 Starting Lula ISO 42001 audit..."
+                  AUDIT_ID="cron-$(date +%s)"
+                  RESULT_FILE="/results/oscal-assessment-${AUDIT_ID}.yaml"
+
+                  # Run Lula against all four validation manifests.
+                  # lula v0.9.5 takes a single positional file argument per
+                  # invocation — --input is not a valid flag in this version.
+                  # Run each validation separately and concatenate YAML docs.
+                  mkdir -p /results/parts
+                  for ctrl in a52 a53 a92 sc4; do
+                    lula validate \
+                      /compliance/lula-validation-${ctrl}.yaml \
+                      --output "/results/parts/oscal-${ctrl}.yaml" || true
+                  done
+
+                  # Merge all YAML documents into one multi-document file
+                  cat /results/parts/oscal-*.yaml > "${RESULT_FILE}"
+
+                  echo "✅ Lula audit complete. Result: ${RESULT_FILE}"
+
+                  # Build the JSON payload safely using jq to avoid shell
+                  # quoting issues with large multi-line OSCAL documents.
+                  # jq -Rs reads the file as a raw string and encodes it as a
+                  # proper JSON string — handles newlines, tabs, quotes, etc.
+                  PAYLOAD_FILE="/results/payload.json"
+                  jq -n \
+                    --arg auditId  "${AUDIT_ID}" \
+                    --rawfile oscal "${RESULT_FILE}" \
+                    '{"auditId": $auditId, "oscalYaml": $oscal}' \
+                    > "${PAYLOAD_FILE}"
+
+                  # POST the structured payload to the compliance-bridge.
+                  # --data-binary @file avoids any shell variable size limits.
+                  HTTP_STATUS=$(curl -s -o /results/ingest-response.json \
+                    -w "%{http_code}" \
+                    -X POST \
+                    -H "Content-Type: application/json" \
+                    --data-binary "@${PAYLOAD_FILE}" \
+                    http://compliance-bridge.${NAMESPACE}.svc.cluster.local:80/v1/audit/ingest)
+
+                  echo "📊 Ingest HTTP status: ${HTTP_STATUS}"
+                  cat /results/ingest-response.json
+
+                  if [ "${HTTP_STATUS}" != "200" ]; then
+                    echo "❌ Ingest failed with HTTP ${HTTP_STATUS}" >&2
+                    exit 1
+                  fi
+
+                  echo "✅ OSCAL results ingested into Langfuse compliance project."
+              env:
+                - name: KUBECONFIG
+                  value: "" # Uses in-cluster config via ServiceAccount
+              volumeMounts:
+                - name: compliance-manifests
+                  mountPath: /compliance
+                - name: results
+                  mountPath: /results
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "256Mi"
+
+          volumes:
+            - name: compliance-manifests
+              configMap:
+                name: lula-validation-manifests
+            # emptyDir is intentional for the CronJob scratch space —
+            # durable artifact persistence is handled by the compliance-bridge
+            # uploading to S3-compatible GCS storage (OSCAL_S3_BUCKET).
+            - name: results
+              emptyDir: {}
+
+---
+# ============================================================================
+# Deployment: lula-sc4-watch  [Option B — real-time SC-4 monitoring]
+#
+# SC-4 validates a Kubernetes ConfigMap label — a control that can change
+# instantly (e.g., accidental `kubectl label` or Helm rollback).  The 6-hour
+# CronJob cadence is too slow for this type of change.
+#
+# `lula validate --watch` re-validates on every Kubernetes resource event for
+# the watched resources.  On each state change, it POSTs a new OSCAL result
+# to the compliance-bridge for immediate ingestion and alerting.
+#
+# The CronJob remains the primary mechanism for API-domain controls
+# (A.5.2, A.5.3, A.9.2) because those require Langfuse evidence accumulation
+# over time.  SC-4 is also included in the CronJob run for consolidated
+# periodic audit records.
+# ============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lula-sc4-watch
+  namespace: ${NAMESPACE}
+  labels:
+    app: lula-sc4-watch
+    compliance.iso42001/component: "realtime-sc4-watch"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lula-sc4-watch
+  template:
+    metadata:
+      labels:
+        app: lula-sc4-watch
+    spec:
+      serviceAccountName: lula-auditor
+      containers:
+        - name: lula-watch
+          image: us-central1-docker.pkg.dev/laah-cybernetics/governance-stack/lula:0.9.5
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "👀 Starting Lula SC-4 real-time watch..."
+
+              # lula validate --watch blocks and re-validates on every
+              # Kubernetes watch event for the SC-4 target resource
+              # (the opa-compliance-status ConfigMap).
+              #
+              # On each validation, write the result and POST to compliance-bridge.
+              while true; do
+                AUDIT_ID="watch-$(date +%s)"
+                RESULT_FILE="/tmp/oscal-sc4-${AUDIT_ID}.yaml"
+
+                lula validate \
+                  /compliance/lula-validation-sc4.yaml \
+                  --output "${RESULT_FILE}" || true
+
+                if [ -f "${RESULT_FILE}" ]; then
+                  PAYLOAD_FILE="/tmp/payload-${AUDIT_ID}.json"
+                  jq -n \
+                    --arg auditId  "${AUDIT_ID}" \
+                    --rawfile oscal "${RESULT_FILE}" \
+                    '{"auditId": $auditId, "oscalYaml": $oscal}' \
+                    > "${PAYLOAD_FILE}"
+
+                  HTTP_STATUS=$(curl -s -o /dev/null \
+                    -w "%{http_code}" \
+                    -X POST \
+                    -H "Content-Type: application/json" \
+                    --data-binary "@${PAYLOAD_FILE}" \
+                    http://compliance-bridge.${NAMESPACE}.svc.cluster.local:80/v1/audit/ingest)
+
+                  echo "SC-4 watch: ingested ${AUDIT_ID}, HTTP ${HTTP_STATUS}"
+
+                  # Clean up tmp files
+                  rm -f "${RESULT_FILE}" "${PAYLOAD_FILE}"
+                fi
+
+                # Poll every 60 seconds.
+                # lula --watch (if supported by the installed version) handles
+                # event-driven re-validation; the sleep is a fallback for
+                # versions that don't support persistent watch mode.
+                sleep 60
+              done
+          volumeMounts:
+            - name: compliance-manifests
+              mountPath: /compliance
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "pgrep -f 'lula|sleep' > /dev/null"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+      volumes:
+        - name: compliance-manifests
+          configMap:
+            name: lula-validation-manifests

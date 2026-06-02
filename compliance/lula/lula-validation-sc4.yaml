@@ -1,0 +1,51 @@
+# lula-validation-sc4.yaml
+# System Constraint SC-4 — Fiscal Limits and RBAC
+#
+# Asserts that the OPA policy engine is actively deployed in the cluster
+# with ISO 42001 compliance labels present on its ConfigMap.
+# This is a CRITICAL control — verifies that the fiscal/RBAC enforcement
+# layer is live, not just configured.
+#
+# Domain: kubernetes → OPA ConfigMap labels (cluster-internal, no HTTP)
+# Provider: opa (inline Rego)
+#
+# Note: SC-4 uses a kubernetes domain (not api), so no service URL is needed.
+# FAIL on this control triggers an immediate alert via compliance-bridge
+# (Python FastAPI) audit_workflow.py — see src/compliance_bridge/audit_workflow.py
+
+domain:
+  type: kubernetes
+  kubernetes-spec:
+    resources:
+      - name: opa-compliance-status
+        resource: configmaps
+        namespace: governance-stack
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+
+      # SC-4: Fiscal Limits and RBAC
+      # Verifies the OPA ConfigMap is present and labelled as ISO 42001 enabled.
+      # This is a structural assertion — if the ConfigMap is missing or mislabelled,
+      # the enforcement layer is considered non-compliant regardless of traffic.
+      validate if {
+        input["opa-compliance-status"].metadata.labels["compliance.iso42001/enabled"] == "true"
+      }
+
+notes: >
+  System Constraint SC-4: Fiscal Limits and RBAC Enforcement.
+  CRITICAL CONTROL — verified via Kubernetes ConfigMap label presence.
+  The opa-compliance-status ConfigMap is created alongside the OPA Deployment
+  during each deploy. Its absence or mislabelling indicates the enforcement
+  layer was not correctly deployed.
+  Any FAIL on this control triggers an immediate Slack/PagerDuty alert
+  via compliance-bridge audit_workflow._step4_alert_on_critical_fail().
+  See: deployment/k8s/opa.yaml for label definitions.
+  See: src/governed_financial_advisor/governance/policy/finance_policy.rego
+       for the Rego rules enforcing SC-4.
+  See: src/compliance_bridge/audit_workflow.py for the alert pipeline.

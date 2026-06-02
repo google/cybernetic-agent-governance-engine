@@ -1,0 +1,81 @@
+{
+  "_comment": "Monetary Authority of Singapore (MAS) regional control-mapping profile. Governed primarily by MAS FEAT Principles (Fairness, Ethics, Accountability, Transparency) and MAS Notice 655 / TRM Guidelines. To activate: set CAGE_DEPLOYMENT_REGION=APAC_MAS",
+  "_schema_version": "1.1.0",
+  "_region": "APAC_MAS",
+  "_jurisdiction": "Singapore / APAC",
+  "_primary_prudential_authority": "Monetary Authority of Singapore (MAS)",
+  "_references": [
+    "MAS FEAT Principles (Fairness, Ethics, Accountability, Transparency) \u2014 November 2019",
+    "MAS Notice 655 \u2013 Technology Risk Management",
+    "MAS TRM Guidelines \u2013 Technology Risk Management Guidelines (January 2021)",
+    "MAS Guidelines on Environmental Risk Management (ENRM) for Banks \u2014 December 2020",
+    "ISO/IEC 42001:2023 (AI Management System Standard)",
+    "NIST AI RMF 1.0 (adopted as supplementary reference)"
+  ],
+
+  "CTRL_AGT_001": {
+    "internal_id": "THR-CONF-001",
+    "primary_framework": "MAS FEAT \u2013 Fairness Principle F1: Bias Impact Assessment",
+    "co_frameworks": [
+      "MAS FEAT \u2013 Ethics Principle E2: Well-reasoned AI Decisions",
+      "MAS TRM Guidelines \u00a76.3 \u2013 AI and Machine Learning Controls",
+      "ISO 42001 \u00a7A.5.2"
+    ],
+    "legacy_citation": "ISO 42001 \u00a7A.5.2 (framework-agnostic baseline)",
+    "scope": "agentic",
+    "description": "Minimum agentic model confidence required to execute a decision. Under MAS FEAT Principle F1, AI decisions affecting customers must be regularly tested for bias. The confidence threshold is a necessary but not sufficient control: MAS expects ongoing Fairness Impact Assessments (FIA) with quantitative bias metrics across demographic groups. MAS TRM Guidelines \u00a76.3 require documented model risk management for AI/ML systems, including drift detection and performance monitoring, which the DoWhy causal gatekeeper directly satisfies."
+  },
+
+  "CTRL_WAL_002": {
+    "internal_id": "THR-WAL-002",
+    "primary_framework": "MAS TRM Guidelines \u00a79.1 \u2013 Business Continuity Management",
+    "co_frameworks": [
+      "MAS Notice 655 \u00a712 \u2013 Recovery Time Objectives",
+      "MAS FEAT \u2013 Accountability Principle A3: Explainable AI Decisions",
+      "ISO 42001 \u00a7A.8.4"
+    ],
+    "legacy_citation": "ISO 42001 \u00a7A.8.4 (framework-agnostic baseline)",
+    "scope": "agentic",
+    "description": "Atomic transaction guarantee via Write-Ahead Log and LIFO rollback. MAS TRM Guidelines \u00a79.1 require financial institutions to maintain business continuity for critical systems with documented recovery procedures. MAS Notice 655 \u00a712 specifies Recovery Time Objectives that the WAL LIFO rollback mechanism directly satisfies by ensuring no partial transaction state persists. MAS FEAT Accountability Principle A3 requires that AI decisions be explainable; WAL audit trails provide the decision provenance required for this."
+  },
+
+  "CTRL_TEL_003": {
+    "internal_id": "THR-TEL-003",
+    "primary_framework": "MAS TRM Guidelines \u00a76.4 \u2013 Model Risk Management and Monitoring",
+    "co_frameworks": [
+      "MAS FEAT \u2013 Transparency Principle T1: Decision Explainability",
+      "MAS FEAT \u2013 Accountability Principle A2: Audit Trail Requirements",
+      "MAS Notice 655 \u00a710 \u2013 Audit Logging Requirements",
+      "ISO 42001 \u00a7A.9.4"
+    ],
+    "legacy_citation": "ISO 42001 \u00a7A.9.4 (framework-agnostic baseline)",
+    "scope": "agentic",
+    "description": "World-model validation must reflect live runtime telemetry. MAS TRM Guidelines \u00a76.4 mandate continuous monitoring of AI model performance in production, including drift detection. MAS FEAT Transparency Principle T1 requires that AI systems be able to explain their decisions to affected customers and regulators. MAS Notice 655 \u00a710 requires audit logs that enable reconstruction of all system decisions. The live Langfuse governance spans directly satisfy all three requirements."
+  },
+
+  "CTRL_MRM_004": {
+    "internal_id": "THR-MRM-004",
+    "primary_framework": "MAS TRM Guidelines \u00a76.3 \u2013 Artificial Intelligence and Machine Learning",
+    "co_frameworks": [
+      "MAS FEAT \u2013 Fairness Principle F2: Quantitative Fairness Metrics",
+      "MAS FEAT \u2013 Ethics Principle E1: AI Governance Framework",
+      "ISO 42001 \u00a7A.6.2"
+    ],
+    "legacy_citation": "SR 26-2 \u00a7IV (US Federal Reserve \u2014 no legal force in Singapore)",
+    "scope": "traditional_ml",
+    "description": "Traditional quantitative model validation for non-agentic, deterministic ML components. MAS TRM Guidelines \u00a76.3 require a documented AI/ML governance framework covering model development, validation, deployment, and monitoring. MAS FEAT Fairness Principle F2 expects quantitative fairness metrics (demographic parity, equalized odds) to be computed and documented during validation. SR 26-2 is a US Federal Reserve guidance document with no legal standing in Singapore."
+  },
+
+  "CTRL_OPA_005": {
+    "internal_id": "THR-OPA-005",
+    "primary_framework": "MAS FEAT \u2013 Accountability Principle A1: Defined Human Oversight",
+    "co_frameworks": [
+      "MAS FEAT \u2013 Ethics Principle E3: AI System Boundaries",
+      "MAS TRM Guidelines \u00a76.3.2 \u2013 Human-in-the-Loop Controls",
+      "ISO 42001 \u00a7A.6.1"
+    ],
+    "legacy_citation": "ISO 42001 \u00a7A.6.1 (framework-agnostic baseline)",
+    "scope": "agentic",
+    "description": "OPA policy evaluation must ALLOW before any agentic action is executed. MAS FEAT Accountability Principle A1 requires that financial institutions define clear human oversight responsibilities for AI systems. The OPA MANUAL_REVIEW outcome is the technical implementation of this human oversight requirement. MAS FEAT Ethics Principle E3 requires that AI systems operate within defined boundaries; OPA DENY outcomes enforce these boundaries. MAS TRM Guidelines \u00a76.3.2 explicitly requires human-in-the-loop controls for high-impact AI decisions, directly mapping to the MANUAL_REVIEW escalation path."
+  }
+}

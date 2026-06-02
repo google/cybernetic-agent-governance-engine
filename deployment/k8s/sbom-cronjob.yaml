@@ -1,0 +1,412 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+# ============================================================================
+# Namespace: cage-compliance
+# Dedicated namespace for compliance automation workloads.
+# ============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cage-compliance
+  labels:
+    cage.io/purpose: compliance-automation
+    cage.io/control: cm-8
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+
+---
+# ============================================================================
+# ConfigMap: cage-sbom-image-list
+# List of CAGE container images to scan on each daily SBOM run.
+# Update this list when new container images are added to the platform.
+# ============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cage-sbom-image-list
+  namespace: cage-compliance
+  labels:
+    cage.io/purpose: sbom-generation
+    cage.io/control: cm-8
+  annotations:
+    cage.io/poam-ref: "POAM-006"
+    cage.io/last-reviewed: "2026-03-06"
+data:
+  # One image reference per line. Comments (#) are stripped by the scan script.
+  # Production: replace :latest with pinned digest e.g. @sha256:<digest>
+  images.txt: |
+    # CAGE Gateway (gRPC + REST API gateway with governance enforcement)
+    gcr.io/${GCP_PROJECT_ID}/cage-gateway:latest
+    # CAGE Compliance Bridge (OSCAL ingest + Langfuse compliance project)
+    gcr.io/${GCP_PROJECT_ID}/cage-compliance-bridge:latest
+    # CAGE Financial Advisor (LangGraph governed trading agent)
+    gcr.io/${GCP_PROJECT_ID}/cage-financial-advisor:latest
+    # CAGE AgentSight UI (React frontend for observability)
+    gcr.io/${GCP_PROJECT_ID}/cage-agentsight-ui:latest
+
+  # GCS bucket for SBOM artifact storage (override via env if needed)
+  gcs-config.sh: |
+    export SBOM_GCS_BUCKET="${SBOM_GCS_BUCKET:-cage-compliance-sboms}"
+    export GCS_PREFIX="sbom/daily/$(date +%Y/%m/%d)"
+    export RETENTION_DAYS=90
+
+---
+# ============================================================================
+# ServiceAccount: sbom-generator
+# Dedicated service account for the SBOM CronJob.
+# Uses Workload Identity (GKE) for GCS upload without key files.
+# ============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sbom-generator
+  namespace: cage-compliance
+  labels:
+    cage.io/purpose: sbom-generation
+    cage.io/control: cm-8
+  annotations:
+    # Workload Identity binding — replace PROJECT_ID and SA_EMAIL
+    iam.gke.io/gcp-service-account: "sbom-generator@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+    cage.io/poam-ref: "POAM-006"
+
+---
+# ============================================================================
+# ClusterRole: sbom-generator-readonly
+# Read-only access to pods and configmaps for image list discovery.
+# Follows least-privilege principle (RA-2 / POAM-002 remediation).
+# ============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sbom-generator-readonly
+  labels:
+    cage.io/purpose: sbom-generation
+    cage.io/control: cm-8
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "list"]
+
+---
+# ============================================================================
+# ClusterRoleBinding: sbom-generator-readonly
+# ============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sbom-generator-readonly
+  labels:
+    cage.io/purpose: sbom-generation
+    cage.io/control: cm-8
+subjects:
+  - kind: ServiceAccount
+    name: sbom-generator
+    namespace: cage-compliance
+roleRef:
+  kind: ClusterRole
+  name: sbom-generator-readonly
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ============================================================================
+# CronJob: cage-sbom-generator
+# Daily at 02:00 UTC — scans all CAGE images, uploads SBOMs to GCS.
+# ============================================================================
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cage-sbom-generator
+  namespace: cage-compliance
+  labels:
+    app: cage-sbom-generator
+    cage.io/purpose: sbom-generation
+    cage.io/control: cm-8
+  annotations:
+    cage.io/poam-ref: "POAM-006, POAM-010"
+    cage.io/nist-control: "CM-8 (System Component Inventory)"
+    cage.io/iso42001-control: "A.7.5 (Supply chain documentation)"
+    cage.io/created: "2026-03-06"
+    cage.io/description: >
+      Generates CycloneDX JSON SBOMs for all CAGE container images using Syft.
+      Results are uploaded to GCS for 90-day retention per CM-8 requirements.
+      Addresses POAM-006 (no SBOM pipeline) and contributes to POAM-010 remediation.
+spec:
+  schedule: "0 2 * * *" # Daily at 02:00 UTC
+  concurrencyPolicy: Forbid # Do not allow overlapping SBOM runs
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      # Retry up to 2 times on failure (transient registry/network issues)
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600 # 1 hour max — abort runaway jobs
+      template:
+        metadata:
+          labels:
+            app: cage-sbom-generator
+            cage.io/purpose: sbom-generation
+            cage.io/control: cm-8
+          annotations:
+            cage.io/run-date: "$(date +%Y-%m-%d)"
+        spec:
+          serviceAccountName: sbom-generator
+          restartPolicy: OnFailure
+
+          # ----------------------------------------------------------------
+          # Security Context — pod-level
+          # Enforces restricted Pod Security Standard.
+          # ----------------------------------------------------------------
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534 # nobody
+            runAsGroup: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+
+          # ----------------------------------------------------------------
+          # InitContainer: Prepare GCS upload credentials check
+          # Validates Workload Identity is configured before the main scan.
+          # ----------------------------------------------------------------
+          initContainers:
+            - name: gcs-preflight
+              image: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -euo pipefail
+                  echo "🔍 Preflight: checking GCS access for SBOM upload..."
+                  # Validate Workload Identity token is available
+                  TOKEN=$(curl -s -H "Metadata-Flavor: Google" \
+                    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
+                    | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token','')[:20])" 2>/dev/null || echo "")
+                  if [ -z "$TOKEN" ]; then
+                    echo "⚠️  WARNING: Could not obtain GCP access token — Workload Identity may not be configured."
+                    echo "⚠️  SBOMs will be generated but GCS upload may fail. See POAM-006."
+                  else
+                    echo "✅ GCP access token obtained (prefix: ${TOKEN}...)"
+                  fi
+
+                  # Verify GCS bucket exists
+                  gsutil ls "gs://${SBOM_GCS_BUCKET}/" > /dev/null 2>&1 \
+                    && echo "✅ GCS bucket gs://${SBOM_GCS_BUCKET}/ is accessible" \
+                    || echo "⚠️  GCS bucket not accessible — will attempt upload anyway"
+              env:
+                - name: SBOM_GCS_BUCKET
+                  valueFrom:
+                    configMapKeyRef:
+                      name: cage-sbom-image-list
+                      key: gcs-config.sh
+                      optional: true
+              envFrom:
+                - secretRef:
+                    name: cage-sbom-env
+                    optional: true
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 65534
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false # cloud-sdk needs write for tmp
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "128Mi"
+              volumeMounts:
+                - name: results
+                  mountPath: /results
+
+          # ----------------------------------------------------------------
+          # Container: cage-sbom-scan
+          # Uses anchore/syft for CycloneDX SBOM generation.
+          # NOTE: In production, pin to a specific digest:
+          #   anchore/syft@sha256:<digest>
+          # ----------------------------------------------------------------
+          containers:
+            - name: cage-sbom-scan
+              image: anchore/syft:latest
+              # PRODUCTION NOTE: Pin this image. Example:
+              # image: anchore/syft@sha256:abc123...
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  echo "🔍 CAGE SBOM Generator starting — CM-8 / POAM-006"
+                  echo "=================================================="
+                  DATE=$(date +%Y-%m-%d)
+                  TIMESTAMP=$(date +%Y%m%dT%H%M%SZ)
+                  RESULTS_DIR="/results/sbom-${DATE}"
+                  mkdir -p "${RESULTS_DIR}"
+
+                  echo "📋 Reading image list from ConfigMap..."
+                  # Strip comments and blank lines from image list
+                  IMAGE_LIST=$(grep -v '^\s*#' /config/images.txt | grep -v '^\s*$' | \
+                    sed "s/\${GCP_PROJECT_ID}/${GCP_PROJECT_ID:-UNKNOWN_PROJECT}/g")
+
+                  SCAN_COUNT=0
+                  FAIL_COUNT=0
+
+                  for IMAGE in $IMAGE_LIST; do
+                    echo ""
+                    echo "🔬 Scanning image: ${IMAGE}"
+                    SAFE_NAME=$(echo "${IMAGE}" | tr '/:@' '---')
+                    SBOM_FILE="${RESULTS_DIR}/${SAFE_NAME}-${DATE}.cdx.json"
+
+                    # Run Syft SBOM generation
+                    if syft "${IMAGE}" \
+                        -o cyclonedx-json \
+                        --file "${SBOM_FILE}" \
+                        --quiet; then
+                      echo "  ✅ SBOM generated: ${SBOM_FILE}"
+                      COMP_COUNT=$(python3 -c \
+                        "import json,sys; d=json.load(open('${SBOM_FILE}')); print(len(d.get('components',[])))" \
+                        2>/dev/null || echo "?")
+                      echo "     Components: ${COMP_COUNT}"
+                      SCAN_COUNT=$((SCAN_COUNT + 1))
+                    else
+                      echo "  ⚠️  Syft scan failed for ${IMAGE} — may not be pullable in this environment"
+                      FAIL_COUNT=$((FAIL_COUNT + 1))
+                      # Write a minimal placeholder SBOM to record the attempt
+                      python3 -c "
+                  import json, datetime
+                  sbom = {
+                    'bomFormat': 'CycloneDX',
+                    'specVersion': '1.4',
+                    'version': 1,
+                    'metadata': {
+                      'timestamp': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+                      'tools': [{'name': 'syft-failed-placeholder', 'version': '0.0'}],
+                      'component': {'type': 'container', 'name': '${IMAGE}', 'version': 'scan-failed'},
+                      'properties': [
+                        {'name': 'cage:scan_status', 'value': 'FAILED'},
+                        {'name': 'cage:poam_ref', 'value': 'POAM-006'},
+                        {'name': 'cage:control_ref', 'value': 'CM-8'},
+                      ]
+                    },
+                    'components': []
+                  }
+                  print(json.dumps(sbom, indent=2))
+                  " > "${SBOM_FILE}" || true
+                    fi
+                  done
+
+                  echo ""
+                  echo "=================================================="
+                  echo "📊 SBOM Generation Summary"
+                  echo "   Total images scanned: $((SCAN_COUNT + FAIL_COUNT))"
+                  echo "   Successful:           ${SCAN_COUNT}"
+                  echo "   Failed:               ${FAIL_COUNT}"
+                  echo "   Output directory:     ${RESULTS_DIR}"
+                  echo "=================================================="
+
+                  # Generate manifest of all SBOMs produced
+                  echo "# CAGE SBOM Generation Manifest — ${DATE}" > "${RESULTS_DIR}/MANIFEST.txt"
+                  echo "# Generated: ${TIMESTAMP}" >> "${RESULTS_DIR}/MANIFEST.txt"
+                  echo "# NIST Control: CM-8 | POAM: POAM-006" >> "${RESULTS_DIR}/MANIFEST.txt"
+                  echo "" >> "${RESULTS_DIR}/MANIFEST.txt"
+                  ls -lh "${RESULTS_DIR}"/*.cdx.json >> "${RESULTS_DIR}/MANIFEST.txt" 2>/dev/null || \
+                    echo "(no SBOM files generated)" >> "${RESULTS_DIR}/MANIFEST.txt"
+
+                  # Upload all SBOMs to GCS
+                  echo ""
+                  echo "📤 Uploading SBOMs to GCS: gs://${SBOM_GCS_BUCKET:-cage-compliance-sboms}/sbom/${DATE}/"
+                  if command -v gsutil > /dev/null 2>&1; then
+                    gsutil -m cp "${RESULTS_DIR}/"*.json \
+                      "gs://${SBOM_GCS_BUCKET:-cage-compliance-sboms}/sbom/${DATE}/" 2>&1 \
+                      && echo "  ✅ GCS upload complete" \
+                      || echo "  ⚠️  GCS upload failed — check Workload Identity configuration"
+
+                    gsutil cp "${RESULTS_DIR}/MANIFEST.txt" \
+                      "gs://${SBOM_GCS_BUCKET:-cage-compliance-sboms}/sbom/${DATE}/MANIFEST.txt" 2>&1 || true
+                  else
+                    echo "  ⚠️  gsutil not found in PATH — skipping GCS upload"
+                    echo "  Artifacts are available in the job's emptyDir: ${RESULTS_DIR}"
+                  fi
+
+                  echo ""
+                  echo "✅ CAGE SBOM CronJob complete — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+              env:
+                - name: GCP_PROJECT_ID
+                  valueFrom:
+                    secretRef:
+                      name: cage-sbom-env
+                      optional: true
+                - name: GCP_PROJECT_ID
+                  value: "$(GCP_PROJECT_ID)"
+                - name: SBOM_GCS_BUCKET
+                  value: "cage-compliance-sboms"
+
+              envFrom:
+                - secretRef:
+                    name: cage-sbom-env
+                    optional: true
+
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 65534
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false # syft writes tmp files
+                capabilities:
+                  drop: ["ALL"]
+
+              resources:
+                requests:
+                  cpu: "250m"
+                  memory: "512Mi"
+                limits:
+                  cpu: "1000m"
+                  memory: "2Gi"
+
+              volumeMounts:
+                - name: results
+                  mountPath: /results
+                - name: image-list
+                  mountPath: /config
+                  readOnly: true
+
+          # ----------------------------------------------------------------
+          # Volumes
+          # ----------------------------------------------------------------
+          volumes:
+            # Scratch space for SBOM JSON files (emptyDir — ephemeral)
+            # Durable storage is GCS (uploaded by gsutil during the run).
+            - name: results
+              emptyDir:
+                sizeLimit: "1Gi"
+
+            # ConfigMap with image list to scan
+            - name: image-list
+              configMap:
+                name: cage-sbom-image-list
+                items:
+                  - key: images.txt
+                    path: images.txt
+                  - key: gcs-config.sh
+                    path: gcs-config.sh

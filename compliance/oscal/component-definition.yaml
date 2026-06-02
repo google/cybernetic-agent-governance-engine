@@ -1,0 +1,323 @@
+component-definition:
+  uuid: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+  metadata:
+    title: Cybernetic Governance Engine — ISO 42001 AIMS Component Definition
+    version: 1.0.0
+    oscal-version: 1.0.4
+    last-modified: '2026-05-17T17:31:03Z'
+    remarks: 'This component definition maps technical enforcement components to ISO/IEC
+      42001:2023 Annex A controls. Each implemented requirement links to a Lula validation
+      manifest for automated continuous compliance.
+
+      '
+    props:
+    - name: nist-rmf-integration
+      value: 'true'
+    - name: sp800-53-companion-definition
+      value: compliance/oscal/sp800-53-component-definition.yaml
+    - name: fips199-categorization
+      value: compliance/categorization/FIPS199_CATEGORIZATION.md
+    - name: ssp-outline
+      value: compliance/ssp/SYSTEM_SECURITY_PLAN_OUTLINE.md
+    - name: information-type-registry
+      value: compliance/oscal/information-type-registry.yaml
+    - name: last-nist-rmf-review
+      value: '2026-03-06'
+  components:
+  - uuid: b2c3d4e5-f6a7-8901-bcde-f12345678901
+    title: TypeScript Governance Gateway
+    type: software
+    description: 'Mastra-based Express gateway enforcing three-tier semantic shielding:
+      Tier 1 Aho-Corasick heuristic, Tier 2 SLM semantic similarity, Tier 3 OPA policy
+      enforcement. All enforcement events are tagged with ISO 42001 control IDs and
+      emitted as OTel spans to Langfuse.
+
+      '
+    purpose: 'Acts as the primary ingress enforcement layer for all AI requests. Blocks
+      prompt injection, toxicity, and policy violations at the network boundary before
+      they reach the LLM inference layer.
+
+      '
+    responsible-roles:
+    - role-id: provider
+    control-implementations:
+    - uuid: c3d4e5f6-a7b8-9012-cdef-123456789012
+      source: https://www.iso.org/standard/81230.html
+      description: ISO/IEC 42001:2023 Annex A controls implemented by the Gateway
+      implemented-requirements:
+      - uuid: d4e5f6a7-b8c9-0123-defa-234567890123
+        control-id: A.5.2
+        description: 'Aho-Corasick Tier-1 and SLM Tier-2 block toxic/injected content
+          at ingress. All blocks are tagged iso42001.control_id=A.5.2 on OTel spans.
+
+          '
+        remarks: 'Implemented in stpaGovernanceMiddleware.ts: stampIsoControl(TIER_1_HEURISTIC).
+          Verified by NeMo output_rail Python traces tagged nemo_output_rail → A.5.2.
+
+          '
+        links:
+        - href: ../../compliance/lula/lula-validation-a52.yaml
+          rel: lula
+          text: 'Lula validation: A.5.2 Social Impact'
+      - uuid: e5f6a7b8-c9d0-1234-efab-345678901234
+        control-id: A.5.3
+        description: 'All governance events emit OTel spans tagged iso42001.control_id=A.5.3,
+          providing a continuous audit trail of AI system activity.
+
+          '
+        remarks: 'Implemented in stpaGovernanceMiddleware.ts: stampIsoControl(TIER_2_SEMANTIC).
+          The compliance-bridge aggregates these spans into a time-windowed safety_rate.
+
+          '
+        links:
+        - href: ../../compliance/lula/lula-validation-a53.yaml
+          rel: lula
+          text: 'Lula validation: A.5.3 Logging and Monitoring'
+  - uuid: f6a7b8c9-d0e1-2345-fabc-456789012345
+    title: Open Policy Agent (OPA)
+    type: software
+    description: 'OPA evaluates Rego policies (finance_policy.rego, system_authz.rego)
+      on every trade execution request. Enforces RBAC role limits, fiscal thresholds,
+      and semantic shielding rules. Decision logs are emitted to stdout and captured
+      by Cloud Logging.
+
+      '
+    purpose: 'Provides deterministic, auditable policy enforcement independent of
+      the LLM reasoning layer. Fiscal limits and RBAC are enforced via declarative
+      Rego rules, not LLM judgment.
+
+      '
+    responsible-roles:
+    - role-id: provider
+    control-implementations:
+    - uuid: a7b8c9d0-e1f2-3456-abcd-567890123456
+      source: https://www.iso.org/standard/81230.html
+      description: ISO/IEC 42001:2023 system constraints implemented by OPA
+      implemented-requirements:
+      - uuid: b8c9d0e1-f2a3-4567-bcde-678901234567
+        control-id: SC-4
+        description: 'finance_policy.rego enforces fiscal limits (junior: $5k/$10k,
+          senior: $500k/$1M) and role-based access control. Manual review thresholds
+          prevent unchecked high-value trade execution.
+
+          '
+        remarks: 'Deployment verified by compliance.iso42001/enabled label on opa-compliance-status
+          ConfigMap (deployment/k8s/opa.yaml). Structural assertion — label absence
+          = control not deployed.
+
+          '
+        links:
+        - href: ../../compliance/lula/lula-validation-sc4.yaml
+          rel: lula
+          text: 'Lula validation: SC-4 Fiscal Limits'
+  - uuid: c9d0e1f2-a3b4-5678-cdef-789012345678
+    title: NeMo Guardrails + Presidio PII Masking
+    type: software
+    description: 'NVIDIA NeMo Guardrails apply Colang-defined input/output rails.
+      Microsoft Presidio performs PII entity detection and anonymization before any
+      data leaves the cluster to external model APIs.
+
+      '
+    purpose: 'Prevents PII (names, SSNs, account numbers, addresses) from being transmitted
+      to external AI suppliers. Implements data minimization and anonymization at
+      the egress boundary.
+
+      '
+    responsible-roles:
+    - role-id: provider
+    control-implementations:
+    - uuid: d0e1f2a3-b4c5-6789-defa-890123456789
+      source: https://www.iso.org/standard/81230.html
+      description: ISO/IEC 42001:2023 data protection controls
+      implemented-requirements:
+      - uuid: e1f2a3b4-c5d6-7890-efab-901234567890
+        control-id: A.9.2
+        description: 'Presidio masking strips PII from all prompts before they reach
+          external vLLM inference. All masking events are tagged iso42001.control_id=A.9.2
+          in Langfuse.
+
+          '
+        remarks: 'Zero-tolerance control: safety_rate must equal 1.0. Any PII leak
+          triggers immediate Slack/PagerDuty alert via complianceAuditWorkflow alertOnCriticalFailStep.
+
+          '
+        links:
+        - href: ../../compliance/lula/lula-validation-a92.yaml
+          rel: lula
+          text: 'Lula validation: A.9.2 Data Privacy'
+  - uuid: e5000099-stpa-4000-8000-compiler00001
+    title: STPA-to-Policy Compiler
+    type: software
+    description: 'CLI compiler (src/gateway/governance/stpa_compiler.py) that ingests
+      config/stpa_control_structure.yaml and generates deterministic OPA Rego, NeMo
+      Colang, and Python validator artifacts enforcing STAMP/STPA UCAs at runtime.
+      Eliminates manual policy drift by treating the YAML as the single authoritative
+      source of truth. System: CAGE Financial Advisor v1.1.0.'
+    purpose: Provides compile-time enforcement of STPA UCAs, bridging design-time
+      hazard analysis (MIT STAMP methodology) with runtime OPA/NeMo/Python governance
+      controls. Closes the compliance loop between safety engineering artefacts and
+      live cluster enforcement policies.
+    responsible-roles:
+    - role-id: compliance-engineer
+    props:
+    - name: software-version
+      value: 1.1.0
+    - name: source-file
+      value: src/gateway/governance/stpa_compiler.py
+    - name: control-structure-input
+      value: config/stpa_control_structure.yaml
+    - name: last-compiled
+      value: '2026-05-17T17:31:03Z'
+    - name: uca-count
+      value: '9'
+    control-implementations:
+    - uuid: c3000099-stpa-4000-8000-compiler00001
+      source: https://www.iso.org/standard/81230.html
+      description: ISO/IEC 42001:2023 controls implemented by the STPA compiler
+      implemented-requirements:
+      - uuid: d4000099-stpa-4000-8000-0000000
+        control-id: A.8.4
+        description: 'STPA compiler generates deterministic enforcement artifacts
+          for A.8.4 from config/stpa_control_structure.yaml. UCAs: UCA-1, UCA-2, UCA-4,
+          UCA-5, UCA-6, UCA-8, UCA-9.'
+        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
+          change to keep artifacts in sync.
+      - uuid: d4000099-stpa-4000-8000-0001001
+        control-id: A.6.2
+        description: 'STPA compiler generates deterministic enforcement artifacts
+          for A.6.2 from config/stpa_control_structure.yaml. UCAs: UCA-2, UCA-5, UCA-6.'
+        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
+          change to keep artifacts in sync.
+      - uuid: d4000099-stpa-4000-8000-0002002
+        control-id: A.9.2
+        description: 'STPA compiler generates deterministic enforcement artifacts
+          for A.9.2 from config/stpa_control_structure.yaml. UCAs: UCA-3.'
+        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
+          change to keep artifacts in sync.
+      - uuid: d4000099-stpa-4000-8000-0003003
+        control-id: A.5.2
+        description: 'STPA compiler generates deterministic enforcement artifacts
+          for A.5.2 from config/stpa_control_structure.yaml. UCAs: UCA-7.'
+        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
+          change to keep artifacts in sync.
+  - uuid: aarm2026-v200-conf-eng-00001111aaaa
+    title: AARM Conformance Engine
+    type: software
+    description: 'CSA AARM (Autonomous Agent Risk Management) conformance layer introduced
+      in CAGE v2.0.0. Consists of three integrated primitives: (1) SHA-256 hash-chained
+      Context Accumulator (context_accumulator.py) providing tamper-evident session
+      state logging; (2) DEFER State Machine (defer_queue.py) implementing a formal
+      fourth governance decision state for confidence-starved execution contexts;
+      (3) 11-vector AARM Threat Ledger (aarm_mapper.py) producing machine-readable
+      AARM Conformance Report Cards auto-serialized to GCS/S3 on every audit run.
+
+      '
+    purpose: 'Provides machine-readable proof that specific CAGE control points neutralize
+      each of the 11 CSA AARM attack vectors, satisfying the AARM Context Accumulator,
+      Deferral Service, and Threat Vector Mapping mandates before proprietary fragmentation
+      can occur.
+
+      '
+    responsible-roles:
+    - role-id: provider
+    props:
+    - name: software-version
+      value: 2.0.0
+    - name: aarm-spec-version
+      value: CSA-AARM-v1.0
+    - name: defer-confidence-threshold
+      value: '0.70'
+    - name: defer-redis-db-index
+      value: '1'
+    - name: defer-redis-maxmemory-policy
+      value: noeviction
+    control-implementations:
+    - uuid: aarm2026-v200-ctrl-impl-00001111
+      source: https://cloudsecurityalliance.org/research/topics/aarm
+      description: CSA AARM v1.0 threat vector neutralizations implemented by CAGE
+      implemented-requirements:
+      - uuid: aarm2026-v1-memory-poisoning
+        control-id: A.5.3
+        description: 'AARM-V1 Memory Poisoning neutralized by SHA-256 hash-chained
+          Context Accumulator. Any post-hoc mutation to any session state node breaks
+          the chain at the mutated node, detected by verify_integrity().'
+        remarks: 'Implemented in src/compliance_bridge/context_accumulator.py.
+          Chain sealed per audit run; root hash embedded in OSCAL Assessment Results.'
+        links:
+        - href: ../../compliance/lula/lula-validation-aarm-vectors.yaml
+          rel: lula
+          text: 'Lula validation: AARM Conformance Vectors'
+      - uuid: aarm2026-v2-goal-hijacking
+        control-id: A.5.2
+        description: 'AARM-V2 Goal Hijacking neutralized by NeMo Guardrails Colang
+          topic lock-down (Layer 0) and OPA declarative goal constraints (Layer 3).'
+        remarks: 'NeMo rails: config/rails/. OPA policy: finance_policy.rego.'
+      - uuid: aarm2026-v3-confused-deputy
+        control-id: SC-4
+        description: 'AARM-V3 Confused Deputy neutralized by HMAC-SHA256 governance
+          signature (Layer 4 Signed Handshake). Missing signatures route to explainer
+          node — trade never executes.'
+        remarks: 'Implemented in evaluator_node.py. check_safety_signature conditional
+          edge.'
+      - uuid: aarm2026-v4-cross-agent
+        control-id: SC-8
+        description: 'AARM-V4 Cross-Agent Propagation neutralized by FiscalLimitGuard
+          atomic pre-reservation (Redis WATCH/MULTI/EXEC) and Linkerd mTLS for all
+          intra-cluster agent communications.'
+        remarks: 'FiscalLimitGuard: src/gateway/governance/fiscal_limit_guard.py.'
+      - uuid: aarm2026-v7-context-overflow
+        control-id: A.8.4
+        description: 'AARM-V7 Context Window Overflow neutralized by DEFER State
+          Machine. Execution context with confidence_score < 0.70 is parked in Redis
+          DeferQueue (db=1, noeviction) pending automated data injection, preventing
+          the agent from proceeding on fundamentally incomplete context.'
+        remarks: 'Confidence-Starvation Boundary: 0.70. See UCA-7 in ontology.py.
+          Implemented in src/gateway/governance/defer_queue.py.'
+      - uuid: aarm2026-v11-model-subst
+        control-id: SC-8
+        description: 'AARM-V11 Model Substitution neutralized by sovereign vLLM
+          deployment on GKE (no external LLM API calls) and CAGE_ROUTING_SEAL_SECRET
+          cryptographic routing seal (POAM-012 / NIST SC-12).'
+        remarks: 'CMEK guard: src/compliance_bridge/cmek_guard.py. POAM-012.'
+    - uuid: aarm2026-v200-ctrl-impl-iso-00002222
+      source: https://www.iso.org/standard/81230.html
+      description: ISO 42001 controls providing the foundational evidence basis for
+        AARM conformance
+      implemented-requirements:
+      - uuid: aarm2026-iso-a53-chain
+        control-id: A.5.3
+        description: 'Context Accumulator provides tamper-evident, append-only audit
+          trail satisfying ISO 42001 Annex A.5.3 chain-of-custody requirements.
+          chain_root and chain_sealed_utc embedded in every OSCAL Assessment Results
+          document.'
+        remarks: 'ISO 42001 A.5.3 §b: records of AI system monitoring. Chain is
+          auto-persisted to GCS/S3 as <audit_id>/context_chain.ndjson.'
+        links:
+        - href: ../../compliance/lula/lula-validation-a53.yaml
+          rel: lula
+          text: 'Lula validation: A.5.3 Logging and Monitoring'
+      - uuid: aarm2026-iso-a84-defer
+        control-id: A.8.4
+        description: 'DEFER State Machine satisfies ISO 42001 Annex A.8.4 operational
+          controls by implementing a formal pause state for ambiguous execution contexts,
+          preventing unsafe AI operation under data starvation.'
+        remarks: 'Three-way Confidence-Starvation Boundary: 0.95 (execute), 0.70-0.95
+          (review), <0.70 (defer). Approved CAGE v2.0.0 architectural decision.'
+  back-matter:
+    resources:
+    - uuid: f2a3b4c5-d6e7-8901-fabc-012345678901
+      title: ISO/IEC 42001:2023 Standard
+      rlinks:
+      - href: https://www.iso.org/standard/81230.html
+    - uuid: a3b4c5d6-e7f8-9012-abcd-123456789012
+      title: Lula Compliance Automation Tool
+      rlinks:
+      - href: https://github.com/defenseunicorns/lula
+    - uuid: b4c5d6e7-f8a9-0123-bcde-234567890123
+      title: OSCAL (Open Security Controls Assessment Language)
+      rlinks:
+      - href: https://pages.nist.gov/OSCAL/
+    - uuid: csa2026-aarm-spec-reference-000001
+      title: CSA Autonomous Agent Risk Management (AARM) Specification v1.0
+      rlinks:
+      - href: https://cloudsecurityalliance.org/research/topics/aarm

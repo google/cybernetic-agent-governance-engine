@@ -1,0 +1,60 @@
+{
+  "_comment": "NIST SP 800-53 Rev 5 UCA-to-control routing table for the OSCAL SSP Exporter. Loaded at runtime by FrameworkRouter. Do NOT hardcode these in Python source.",
+  "_schema_version": "2.0.0",
+  "_last_updated": "2026-05-23",
+  "_framework_id": "NIST",
+  "_framework_label": "NIST SP 800-53 Rev 5 (FedRAMP baseline)",
+  "_framework_source": "https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final",
+  "uca_mappings": {
+    "UCA-1": [
+      "ac-3",
+      "sc-4"
+    ],
+    "UCA-2": [
+      "cm-6",
+      "sa-11"
+    ],
+    "UCA-3": [
+      "ac-3",
+      "sc-28"
+    ],
+    "UCA-4": [
+      "si-7",
+      "au-10"
+    ],
+    "UCA-5": [
+      "ac-3",
+      "sc-4"
+    ],
+    "UCA-6": [
+      "sc-4",
+      "si-3"
+    ],
+    "UCA-7": [
+      "sc-4",
+      "si-3"
+    ],
+    "UCA-8": [
+      "ac-3",
+      "sa-11"
+    ],
+    "UCA-9": [
+      "ac-3",
+      "cm-6"
+    ]
+  },
+  "control_descriptions": {
+    "ac-3": "Access Enforcement",
+    "sc-4": "Information in Shared System Resources / Fiscal Limits",
+    "cm-6": "Configuration Settings",
+    "sa-11": "Developer Testing and Evaluation",
+    "sc-28": "Protection of Information at Rest",
+    "si-7": "Software, Firmware, and Information Integrity",
+    "au-10": "Non-Repudiation",
+    "si-3": "Malicious Code Protection",
+    "sc-8": "Transmission Confidentiality and Integrity",
+    "sc-7": "Boundary Protection",
+    "ia-3": "Device Identification and Authentication"
+  },
+  "narrative_template": "STPA compiler enforces {control_id_upper} ({control_description}) via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python validator). UCAs covered: {uca_list}."
+}

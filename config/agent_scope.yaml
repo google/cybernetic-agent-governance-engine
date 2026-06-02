@@ -1,0 +1,189 @@
+# =============================================================================
+# SR 26-2 Agent Scope Declaration
+# =============================================================================
+#
+# This file is the AUTHORITATIVE machine-readable declaration of the permitted
+# action scope for the CAGE Financial Advisor agentic system, as required by
+# the Federal Reserve's SR 26-2 (April 17, 2026) guidance on Model Risk
+# Management for Generative and Agentic AI Systems.
+#
+# SR 26-2 Context:
+#   SR 26-2 explicitly states that generative and agentic AI are outside the
+#   prescriptive scope of traditional MRM (SR 11-7) and instructs institutions
+#   to apply their own rigorous internal risk frameworks to manage agentic
+#   exposure.  This file IS that framework's scope declaration for CAGE.
+#
+# Integration:
+#   - Parsed by OPA finance_policy.rego as a data document (data.agent_scope)
+#   - Referenced by OSCAL SSP as the authoritative scope boundary artifact
+#   - Validated by Lula CronJob on every 6h compliance scan
+#   - Displayed on the AgentSight Kernel Dashboard (compliance bridge SSE events)
+#
+# Governance:
+#   Changes to this file MUST be:
+#   1. Reviewed and approved by the ISSO before merging
+#   2. Tracked in compliance/risk_acceptance/THRESHOLD_TRACEABILITY_MATRIX.md
+#   3. Trigger an OSCAL audit finding re-evaluation via lula-cron
+#
+# Do NOT hand-edit generated policy files; all scope changes start HERE.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Agent Identity
+# ---------------------------------------------------------------------------
+agent:
+  id: "governed_financial_advisor_v1"
+  display_name: "CAGE Financial Advisor"
+  version: "1.2.0"
+  description: >
+    Autonomous financial advisory agent operating under ISO/IEC 42001,
+    SR 26-2, FedRAMP HIGH, and the EU AI Act. Direct capital allocation
+    authority makes this a Tier-1 High-Exposure agentic system under
+    SR 26-2's materiality classification framework.
+
+# ---------------------------------------------------------------------------
+# SR 26-2 Materiality Classification
+# ---------------------------------------------------------------------------
+sr_26_2:
+  materiality_tier: "Tier-1"
+  materiality_label: "High Financial Exposure"
+  risk_drivers:
+    inherent_risk: "High"
+    inherent_risk_rationale: "Direct capital allocation authority; autonomous trade execution"
+    purpose: "Autonomous trade execution and financial advisory"
+    non_determinism_profile: "High — LLM reasoning path varies per market context"
+  # The four SR 26-2 examination dimensions and how CAGE addresses each:
+  examination_mapping:
+    bounding_mechanism: "ControlBarrierFunction + FiscalLimitGuard (Redis WATCH/MULTI/EXEC)"
+    monitoring_mechanism: "Langfuse OTel spans + Green-Stack KFP pipeline (continuous)"
+    world_model_validation: "DoWhy CausalGatekeeper — placebo refutation on live Langfuse telemetry"
+    non_determinism_containment: "LangGraph Saga WAL + LIFO rollback via generated_saga_nodes.py"
+
+# ---------------------------------------------------------------------------
+# Permitted Action Boundaries
+# ---------------------------------------------------------------------------
+permitted_boundaries:
+  # Fiscal limits — enforced atomically by FiscalLimitGuard via Redis WATCH/MULTI/EXEC
+  fiscal:
+    max_single_trade_usd: 10000       # Triggers HITL interrupt above this threshold
+    max_daily_cap_usd: 500000         # Hard ceiling across all concurrent agents
+    daily_cap_env_var: "FISCAL_DAILY_CAP_USD"
+
+  # Permitted MCP tools — enforced by OPA finance_policy.rego + SymbolicGovernor
+  allowed_mcp_tools:
+    - name: "execute_trade_action"
+      requires_approval_above_usd: 10000
+      requires_risk_score_below: 0.7
+    - name: "evaluate_policy"
+      requires_approval_above_usd: null
+    - name: "check_safety_constraints"
+      requires_approval_above_usd: null
+    - name: "fetch_market_data"
+      requires_approval_above_usd: null
+
+  # Approved asset classes — enforced by OPA
+  approved_asset_classes:
+    - equities
+    - fixed_income
+    - etf
+    - bonds
+
+  # Currency restrictions — compiled into OPA RBAC rules by stpa_compiler
+  prohibited_currencies:
+    - BTC    # Compiled from rbac_rules.restrictions in stpa_control_structure.yaml
+
+  # Prohibited actions — hard-blocked at gateway + OPA level
+  prohibited_actions:
+    - name: "direct_account_withdrawal"
+      reason: "No withdrawal authority granted to autonomous agent"
+    - name: "parameter_override"
+      reason: "Goal-directed persistence containment (bifurcated governance)"
+    - name: "guardrail_bypass"
+      reason: "Hard governance black-box — agent context severed on block"
+
+# ---------------------------------------------------------------------------
+# Human-in-the-Loop (HITL) Gates
+# ---------------------------------------------------------------------------
+hitl_gates:
+  # LangGraph interrupt — defined in graph.py interrupt_before=["governed_trader"]
+  trade_approval:
+    trigger_above_usd: 10000
+    trigger_above_risk_score: 0.7
+    mechanism: "LangGraph interrupt + /v1/approvals/{thread_id}/resume API"
+    mandatory_rationale: true          # ISO 42001 §6.1 / NIST AI RMF GOVERN-5
+    rationale_hashed_into_evidence: true
+
+  # Saga ghost-state escalation — defined in generated_saga_nodes.py
+  saga_escalation:
+    trigger: "PENDING ledger entries detected on saga_router_node invocation"
+    mechanism: "saga_router_node → safety_status=ESCALATED → human_review node"
+    resolution: "Manual reconciliation via /v1/approvals/{thread_id}/resume"
+
+# ---------------------------------------------------------------------------
+# World-Model Validation Configuration
+# ---------------------------------------------------------------------------
+world_model_validation:
+  mechanism: "DoWhy CausalGatekeeper (placebo refutation)"
+  causal_graph:
+    confounder: "market_volatility"
+    treatment: "trade_amount"
+    outcome: "risk_score"
+  refuter: "placebo_treatment_refuter"
+  refuter_simulations: 50
+  p_value_threshold: 0.05
+  placebo_effect_threshold: 0.2
+  max_risk_threshold: 0.95
+  telemetry_source: "LangfuseTelemetryProvider"    # SR 26-2 Gap 1 remediation
+  telemetry_min_samples: 50                         # CAUSAL_MIN_LIVE_SAMPLES env var
+  fallback: "MockTelemetryProvider"
+
+# ---------------------------------------------------------------------------
+# Escalation Policy
+# ---------------------------------------------------------------------------
+escalation_policy:
+  primary: "human_review_node"
+  secondary: "explainer_node"
+  on_saga_partial_failure: "human_review_node"
+  on_causal_lock: "explainer_node"           # Trade blocked; narrative generated
+  on_opa_deny: "explainer_node"              # Hard black-box — no LLM negotiation
+  on_confidence_below_threshold: "explainer_node"
+
+# ---------------------------------------------------------------------------
+# Compliance Mapping
+# ---------------------------------------------------------------------------
+compliance_mapping:
+  control_identifiers:
+    - id: "ISO-42001-A.8.4"
+      description: "Saga WAL telemetry lifecycle — LedgerEntry append-only log"
+    - id: "CTRL_WAL_002"
+      description: "Stable internal ID for WAL atomicity control — maps to ISO-42001-A.8.4. See config/control_mappings.json."
+    - id: "SR-26-2-Aggregate-Risk"
+      description: "Multi-agent FiscalLimitGuard prevents race-to-the-rail collisions"
+    - id: "SR-26-2-Bounding"
+      description: "ControlBarrierFunction + FiscalLimitGuard — hard state-space bounds"
+    - id: "SR-26-2-World-Model"
+      description: "DoWhy CausalGatekeeper — placebo refutation validates agent beliefs"
+    - id: "CTRL_TEL_003"
+      description: "Stable internal ID for live telemetry validation — maps to SR-26-2-World-Model / ISO 42001 §A.9.4. See config/control_mappings.json."
+    - id: "ISO-42001-A.6.2.8"
+      description: "NeMoOTelCallback — every guardrail intervention emits OTel span"
+    - id: "CTRL_AGT_001"
+      description: "Stable internal ID for agentic confidence threshold — maps to ISO 42001 §A.5.2. See config/control_mappings.json."
+    - id: "CTRL_OPA_005"
+      description: "Stable internal ID for OPA policy enforcement — maps to ISO 42001 §A.6.1. See config/control_mappings.json."
+    - id: "NIST-AI-RMF-GOVERN-5"
+      description: "HITL mandatory rationale — approval decision hashed into evidence chain"
+    - id: "SC-4"
+      description: "FiscalLimitGuard isolation — agents cannot exceed cross-agent limits"
+    - id: "SC-7"
+      description: "Linkerd mTLS + Cilium L7 egress — boundary protection"
+    - id: "SC-8"
+      description: "OTel W3C traceparent — transmission confidentiality and integrity"
+
+  lula_validation_targets:
+    - "lula-validation-cm6.yaml"      # Confidence threshold
+    - "lula-validation-sc4.yaml"      # OPA isolation
+    - "lula-validation-sc7.yaml"      # Network boundary
+    - "lula-validation-sc8.yaml"      # Transmission integrity
+    # SR 26-2 specific — to be created as Gap 5 remediation:
+    # - "lula-validation-sr26-2.yaml"

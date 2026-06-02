@@ -1,0 +1,314 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# =============================================================================
+# CAGE Zero-Trust Network (Z3N) — Linkerd mTLS Fine-Grained Authorization
+# =============================================================================
+#
+# NIST SP 800-53 Controls: SC-8, SC-23, IA-3
+# ISO 42001: A.7.5 (Cryptographic Controls), A.8.4 (AI System Operation)
+#
+# Closes POAM-007 (IA-3 — intra-cluster mTLS via service identity)
+# Closes POAM-011 (SC-8 — transmission confidentiality enforcement)
+#
+# Prerequisites:
+#   1. Linkerd control plane installed: linkerd install --crds | kubectl apply -f -
+#      linkerd install | kubectl apply -f -
+#   2. Namespace annotated for Linkerd proxy injection:
+#      kubectl annotate namespace governance-stack \
+#        linkerd.io/inject=enabled --overwrite
+#   3. Workload pods restarted after annotation to acquire proxies:
+#      kubectl rollout restart deployment -n governance-stack
+#
+# SPIFFE identity format:
+#   <serviceaccount>.<namespace>.serviceaccount.identity.linkerd.cluster.local
+#
+# Verification:
+#   linkerd viz edges deployment -n governance-stack   # shows mTLS edge status
+#   linkerd identity -n governance-stack               # shows active certificates
+#   linkerd viz authz deployment/opa-service -n governance-stack
+#
+# POAM references: POAM-007 (IA-3), POAM-011 (SC-8)
+# =============================================================================
+
+---
+# -----------------------------------------------------------------------------
+# ServiceAccount: cage-gateway-sa
+# All gateway pods run under this SA for SPIFFE identity derivation.
+# (financial-advisor-sa is the GCP Workload Identity SA; this is the k8s SA
+#  used for Linkerd mTLS identity in the intra-cluster mesh.)
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cage-gateway-sa
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-identity
+  annotations:
+    compliance.nist.gov/control: "IA-3,SC-8"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-05-17"
+    cage.io/poam: "POAM-007,POAM-011"
+    linkerd.io/inject: "enabled"
+
+---
+# -----------------------------------------------------------------------------
+# ServiceAccount: cage-opa-sa
+# OPA pods run under this SA for SPIFFE identity.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cage-opa-sa
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-identity
+  annotations:
+    compliance.nist.gov/control: "IA-3,SC-8"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-05-17"
+    cage.io/poam: "POAM-007,POAM-011"
+
+---
+# -----------------------------------------------------------------------------
+# ServiceAccount: cage-nemo-sa
+# NeMo Guardrails pods.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cage-nemo-sa
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-identity
+  annotations:
+    compliance.nist.gov/control: "IA-3,SC-8"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-05-17"
+
+---
+# -----------------------------------------------------------------------------
+# ServiceAccount: cage-compliance-bridge-sa
+# Compliance Bridge service.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cage-compliance-bridge-sa
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-identity
+  annotations:
+    compliance.nist.gov/control: "IA-3,SC-8"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-05-17"
+
+---
+# =============================================================================
+# LINKERD SERVER — OPA Policy Engine (port 8181)
+#
+# Declares the OPA pod as a named Linkerd Server resource. Only connections
+# that satisfy an attached AuthorizationPolicy are permitted; all others are
+# dropped at the proxy level before reaching the application port.
+#
+# API: policy.linkerd.io/v1beta2 (Linkerd 2.12+)
+# =============================================================================
+apiVersion: policy.linkerd.io/v1beta2
+kind: Server
+metadata:
+  name: opa-server-8181
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-mtls
+  annotations:
+    compliance.nist.gov/control: "SC-8,IA-3,AC-4"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-05-17"
+    cage.io/poam: "POAM-007,POAM-011"
+    cage.io/evidence: "linkerd viz authz deployment/opa-service -n governance-stack"
+spec:
+  podSelector:
+    matchLabels:
+      app: opa
+  port: 8181
+  # HTTP/1.1 — OPA REST API. Change to gRPC if OPA is moved behind a gRPC proxy.
+  proxyProtocol: HTTP/1
+
+---
+# =============================================================================
+# LINKERD SERVER — NeMo Guardrails (port 8000)
+# =============================================================================
+apiVersion: policy.linkerd.io/v1beta2
+kind: Server
+metadata:
+  name: nemo-server-8000
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-mtls
+  annotations:
+    compliance.nist.gov/control: "SC-8,IA-3,AC-4"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-05-17"
+    cage.io/poam: "POAM-007"
+spec:
+  podSelector:
+    matchLabels:
+      app: nemo-guardrails
+  port: 8000
+  proxyProtocol: gRPC
+
+---
+# =============================================================================
+# LINKERD MESHTLS AUTHENTICATION — Gateway → OPA
+#
+# Specifies which SPIFFE identities are trusted to reach the OPA Server.
+# The identity string is derived deterministically from the ServiceAccount:
+#   <sa-name>.<namespace>.serviceaccount.identity.linkerd.cluster.local
+#
+# API: policy.linkerd.io/v1alpha1
+# =============================================================================
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: gateway-to-opa-authn
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-mtls
+  annotations:
+    compliance.nist.gov/control: "SC-8,IA-3"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-05-17"
+    cage.io/poam: "POAM-007,POAM-011"
+spec:
+  identities:
+    # CAGE Gateway service account — only authorized caller to OPA
+    - "cage-gateway-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+    # Compliance Bridge — requires OPA for policy health checks (CA-7 evidence)
+    - "cage-compliance-bridge-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+
+---
+# =============================================================================
+# LINKERD MESHTLS AUTHENTICATION — Gateway → NeMo
+# =============================================================================
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: gateway-to-nemo-authn
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-mtls
+  annotations:
+    compliance.nist.gov/control: "SC-8,IA-3"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-05-17"
+spec:
+  identities:
+    - "cage-gateway-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+
+---
+# =============================================================================
+# LINKERD AUTHORIZATION POLICY — Authorize gateway → OPA
+#
+# Binds the MeshTLSAuthentication to the OPA Server resource.
+# Effect: Any pod NOT presenting a valid SPIFFE certificate for one of the
+# identities listed in gateway-to-opa-authn will have its connection rejected
+# at the Linkerd proxy sidecar — before any byte reaches port 8181.
+#
+# This is the cryptographic enforcement of the Zero-Trust "never trust,
+# always verify" principle at the transport layer.
+#
+# API: policy.linkerd.io/v1beta2
+# =============================================================================
+apiVersion: policy.linkerd.io/v1beta2
+kind: AuthorizationPolicy
+metadata:
+  name: authorize-gateway-to-opa
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-mtls
+  annotations:
+    compliance.nist.gov/control: "SC-8,IA-3,AC-3,AC-4"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-05-17"
+    cage.io/poam: "POAM-007,POAM-011"
+    cage.io/evidence: "linkerd viz authz deployment/opa-service -n governance-stack"
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: Server
+    name: opa-server-8181
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: gateway-to-opa-authn
+
+---
+# =============================================================================
+# LINKERD AUTHORIZATION POLICY — Authorize gateway → NeMo
+# =============================================================================
+apiVersion: policy.linkerd.io/v1beta2
+kind: AuthorizationPolicy
+metadata:
+  name: authorize-gateway-to-nemo
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-mtls
+  annotations:
+    compliance.nist.gov/control: "SC-8,IA-3,AC-4"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-05-17"
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: Server
+    name: nemo-server-8000
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: gateway-to-nemo-authn
+
+---
+# =============================================================================
+# LINKERD SERVER AUTHORIZATION (legacy v1beta1 fallback)
+#
+# If running Linkerd < 2.12, use ServerAuthorization instead of the
+# AuthorizationPolicy + MeshTLSAuthentication split. Both cannot coexist;
+# remove this block if using the v1beta2 resources above.
+#
+# Uncomment ONLY if using Linkerd < 2.12:
+# =============================================================================
+# apiVersion: policy.linkerd.io/v1beta1
+# kind: ServerAuthorization
+# metadata:
+#   name: gateway-to-opa-legacy
+#   namespace: governance-stack
+# spec:
+#   server:
+#     name: opa-server-8181
+#   client:
+#     meshTLS:
+#       serviceAccounts:
+#         - name: cage-gateway-sa
+#         - name: cage-compliance-bridge-sa

@@ -1,0 +1,73 @@
+{
+  "_comment": "US Federal Reserve / OCC / FDIC regional control-mapping profile. SR 26-2 is the active primary framework for traditional model risk. Agentic controls governed under ISO 42001 per SR 26-2 Footnote 3 (novelty exclusion). To activate: set CAGE_DEPLOYMENT_REGION=US_FED",
+  "_schema_version": "1.1.0",
+  "_region": "US_FED",
+  "_jurisdiction": "United States",
+  "_primary_prudential_authority": "Federal Reserve / OCC / FDIC (Joint Agency)",
+  "_references": [
+    "SR 26-2 (Model Risk Management for Agentic AI Systems)",
+    "SR 11-7 (Guidance on Model Risk Management, legacy baseline)",
+    "ISO/IEC 42001:2023 (AI Management System Standard)",
+    "NIST AI RMF 1.0",
+    "NIST SP 800-53 Rev 5"
+  ],
+
+  "CTRL_AGT_001": {
+    "internal_id": "THR-CONF-001",
+    "primary_framework": "ISO 42001 \u00a7A.5.2",
+    "co_frameworks": [
+      "DORA Art. 11 \u2013 ICT Risk Management",
+      "NIST AI RMF GOVERN-5"
+    ],
+    "legacy_citation": "SR 26-2 \u00a7IV.B",
+    "scope": "agentic",
+    "description": "Minimum agentic model confidence required to execute a trade. Agentic AI is explicitly excluded from SR 26-2 MRM scope (Footnote 3); governed here under ISO 42001 Operational Risk."
+  },
+
+  "CTRL_WAL_002": {
+    "internal_id": "THR-WAL-002",
+    "primary_framework": "ISO 42001 \u00a7A.8.4",
+    "co_frameworks": [
+      "DORA Art. 12 \u2013 Backup and Recovery",
+      "NIST SP 800-53 CP-10"
+    ],
+    "legacy_citation": "SR 26-2 Non-Determinism Containment",
+    "scope": "agentic",
+    "description": "Atomic transaction guarantee via Write-Ahead Log and LIFO rollback. MCP tool invocations in forward WAL nodes must be provably atomic in production, not merely declared in policy documents."
+  },
+
+  "CTRL_TEL_003": {
+    "internal_id": "THR-TEL-003",
+    "primary_framework": "ISO 42001 \u00a7A.9.4",
+    "co_frameworks": [
+      "DORA Art. 10 \u2013 ICT-Related Incident Detection and Monitoring",
+      "NIST AI RMF MEASURE-2.6"
+    ],
+    "legacy_citation": "SR 26-2 World-Model Validation",
+    "scope": "agentic",
+    "description": "World-model validation must reflect live runtime telemetry, not synthetic data. DoWhy causal gatekeeper placebo refutation must be sourced from live Langfuse governance spans."
+  },
+
+  "CTRL_MRM_004": {
+    "internal_id": "THR-MRM-004",
+    "primary_framework": "SR 26-2 \u00a7IV \u2013 Model Risk Management",
+    "co_frameworks": [
+      "SR 11-7 (legacy baseline, superseded by SR 26-2 for agentic components)"
+    ],
+    "legacy_citation": "SR 11-7",
+    "scope": "traditional_ml",
+    "description": "Traditional quantitative model validation criteria applicable to non-agentic, deterministic ML components (e.g. CBF predictor, DoWhy causal model coefficients). SR 26-2 explicitly retains MRM scope for these components."
+  },
+
+  "CTRL_OPA_005": {
+    "internal_id": "THR-OPA-005",
+    "primary_framework": "ISO 42001 \u00a7A.6.1",
+    "co_frameworks": [
+      "NIST SP 800-53 AC-3",
+      "NIST AI RMF GOVERN-6"
+    ],
+    "legacy_citation": "ISO 42001 OPA Policy Enforcement",
+    "scope": "agentic",
+    "description": "OPA policy evaluation must ALLOW before any agentic action is executed. DENY or MANUAL_REVIEW outcomes constitute a policy violation and must surface as GovernanceError."
+  }
+}

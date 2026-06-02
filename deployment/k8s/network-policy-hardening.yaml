@@ -1,0 +1,238 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+# Gateway: allow egress to NeMo Guardrails (not covered in network-policy.yaml)
+# SC-7, AC-4, SC-23: Guardrails service is a separate pod; explicit egress required.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-egress-to-nemo
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: network-security
+  annotations:
+    compliance.nist.gov/control: "SC-7,AC-4,SC-23"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-03-06"
+spec:
+  podSelector:
+    matchLabels:
+      app: gateway
+  policyTypes:
+    - Egress
+  egress:
+    # NeMo Guardrails colosseum (SC-23: session authenticity via controlled channel)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: nemo-guardrails
+      ports:
+        - port: 8000
+          protocol: TCP
+
+---
+# Gateway: allow egress cross-namespace to vLLM inference namespace
+# SC-7: Explicit cross-namespace egress; the existing allow-vllm-egress targets
+# pods labeled app=vllm-service within governance-stack. This covers the separate
+# vllm namespace used in production GPU deployments.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-egress-to-vllm-namespace
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: network-security
+  annotations:
+    compliance.nist.gov/control: "SC-7,AC-4"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-03-06"
+spec:
+  podSelector:
+    matchLabels:
+      app: gateway
+  policyTypes:
+    - Egress
+  egress:
+    # vLLM inference namespace (production GPU workloads)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: vllm
+      ports:
+        - port: 8000
+          protocol: TCP
+
+---
+# Compliance Bridge: allow egress to Langfuse (cross-namespace) and Minio
+# CA-7: Compliance evidence collection requires Langfuse and OSCAL artifact storage.
+# AC-4: Explicitly scope cross-namespace egress to Langfuse namespace only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: compliance-bridge-egress-allowlist
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: network-security
+  annotations:
+    compliance.nist.gov/control: "SC-7,AC-4,CA-7"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-03-06"
+spec:
+  podSelector:
+    matchLabels:
+      app: compliance-bridge
+  policyTypes:
+    - Egress
+  egress:
+    # Langfuse observability (cross-namespace — CA-7 evidence collection)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: langfuse
+      ports:
+        - port: 3000
+          protocol: TCP
+    # OPA (policy evaluation for compliance checks)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: opa
+      ports:
+        - port: 8181
+          protocol: TCP
+    # Minio (OSCAL artifact storage — GCS S3-compatible endpoint via in-cluster Minio)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: minio
+      ports:
+        - port: 9000
+          protocol: TCP
+
+---
+# Lula CronJob: allow egress to Kubernetes API server and Minio only
+# CA-7: Lula performs automated compliance assessment against the cluster API.
+# SC-7: Explicit allowlist — Lula must not reach external endpoints.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lula-egress-allowlist
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: network-security
+  annotations:
+    compliance.nist.gov/control: "SC-7,CA-7"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-03-06"
+spec:
+  podSelector:
+    matchLabels:
+      app: lula
+  policyTypes:
+    - Egress
+  egress:
+    # Kubernetes API server (standard HTTPS port 443 and internal 6443)
+    # Required for Lula cluster assessment domain queries
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+    # Minio for OSCAL assessment result storage (CA-7 continuous monitoring evidence)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: minio
+      ports:
+        - port: 9000
+          protocol: TCP
+
+---
+# Gateway: allow inbound gRPC (port 50051) from orchestrator pods and ingress controller
+# SC-7: Ingress to gRPC port must be explicitly allowed (not covered in network-policy.yaml).
+# The existing allow-gateway-ingress only covers HTTP port 8080.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-grpc-ingress
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: network-security
+  annotations:
+    compliance.nist.gov/control: "SC-7,AC-4"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-03-06"
+spec:
+  podSelector:
+    matchLabels:
+      app: gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    # Internal orchestrators via gRPC
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: governance-stack
+          podSelector:
+            matchLabels:
+              cage.io/role: orchestrator
+      ports:
+        - protocol: TCP
+          port: 50051
+    # Ingress controller for external gRPC traffic (e.g. Envoy/nginx grpc_pass)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 50051
+
+---
+# Compliance Bridge: allow inbound HTTP from governance-stack pods (Lula health checks, internal)
+# SC-7: Compliance bridge must only be reachable from within governance-stack.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-compliance-bridge-ingress
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: network-security
+  annotations:
+    compliance.nist.gov/control: "SC-7,AC-4"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-03-06"
+spec:
+  podSelector:
+    matchLabels:
+      app: compliance-bridge
+  policyTypes:
+    - Ingress
+  ingress:
+    # Internal governance-stack pods (Lula, gateway health checks, observability scraper)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: governance-stack
+      ports:
+        - protocol: TCP
+          port: 3001

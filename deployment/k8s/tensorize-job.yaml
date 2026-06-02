@@ -1,0 +1,203 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tensorize-${MODEL_NAME_SANITIZED}
+  namespace: governance-stack
+  labels:
+    app: tensorize-job
+    model: ${MODEL_NAME_SANITIZED}
+spec:
+  # Automatically clean up 1 hour after completion
+  ttlSecondsAfterFinished: 3600
+  # Do not retry on failure — serialization is idempotent once MinIO upload succeeds
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      # Run on GPU node — tensorizer serialization benefits from GPU-accelerated loading
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Equal"
+          value: "present"
+          effect: "NoSchedule"
+        - key: "cloud.google.com/gke-spot"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      nodeSelector:
+        cloud.google.com/gke-gpu: "true"
+        cloud.google.com/gke-accelerator: nvidia-l4
+      containers:
+        - name: tensorizer
+          # Use same vLLM image as inference pods for version consistency
+          image: vllm/vllm-openai:latest
+          imagePullPolicy: IfNotPresent
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+              memory: "40Gi"
+              cpu: "8"
+            requests:
+              nvidia.com/gpu: "1"
+              memory: "20Gi"
+              cpu: "4"
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+          env:
+            - name: HUGGING_FACE_HUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token-secret
+                  key: token
+            # MinIO S3-compatible endpoint (cloud-agnostic)
+            - name: S3_ENDPOINT_URL
+              value: "http://minio.governance-stack.svc.cluster.local:9000"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: secret-key
+            - name: AWS_EC2_METADATA_DISABLED
+              value: "true"
+            # Model to serialize — injected via envsubst at apply time
+            - name: MODEL_ID
+              value: "${MODEL_ID}"
+            - name: MINIO_BUCKET
+              value: "${MINIO_BUCKET}"
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "  vLLM Tensorizer — Model Serialization Job"
+              echo "  Model:  ${MODEL_ID}"
+              echo "  Bucket: s3://${MINIO_BUCKET}/${MODEL_NAME_SANITIZED}/"
+              echo "  Target: ${S3_ENDPOINT_URL}"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+              pip install --quiet tensorizer boto3
+
+              # Step 1: Download model from HuggingFace Hub to local cache
+              echo "⬇️  Downloading model weights from HuggingFace..."
+              python3 - <<'PYEOF'
+              import os
+              from huggingface_hub import snapshot_download
+
+              model_id = os.environ["MODEL_ID"]
+              cache_dir = "/tmp/hf-cache"
+
+              print(f"Downloading: {model_id} → {cache_dir}")
+              local_path = snapshot_download(
+                  repo_id=model_id,
+                  cache_dir=cache_dir,
+                  token=os.environ.get("HUGGING_FACE_HUB_TOKEN"),
+                  ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "rust_model*"],
+              )
+              print(f"✅ Download complete: {local_path}")
+
+              # Write path for shell to pick up
+              with open("/tmp/model_local_path.txt", "w") as f:
+                  f.write(local_path)
+              PYEOF
+
+              MODEL_LOCAL_PATH=$(cat /tmp/model_local_path.txt)
+              echo "📁 Local model path: ${MODEL_LOCAL_PATH}"
+
+              # Step 2: Serialize to TensorSerializer format and stream to MinIO
+              echo "🔄 Serializing weights to TensorSerializer format..."
+              python3 - <<'PYEOF'
+              import os
+              import boto3
+              from pathlib import Path
+              from tensorizer import TensorSerializer
+              from transformers import AutoModelForCausalLM, AutoTokenizer
+
+              model_id = os.environ["MODEL_ID"]
+              model_name_sanitized = model_id.replace("/", "--")
+              local_path = open("/tmp/model_local_path.txt").read().strip()
+              bucket = os.environ["MINIO_BUCKET"]
+              endpoint = os.environ["S3_ENDPOINT_URL"]
+              prefix = f"{model_name_sanitized}/"
+
+              print(f"Loading model for serialization: {model_id}")
+              model = AutoModelForCausalLM.from_pretrained(
+                  local_path,
+                  trust_remote_code=True,
+                  device_map="cuda",
+              )
+              tokenizer = AutoTokenizer.from_pretrained(local_path)
+
+              s3 = boto3.client(
+                  "s3",
+                  endpoint_url=endpoint,
+                  aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+                  aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+              )
+
+              # Ensure bucket exists
+              try:
+                  s3.head_bucket(Bucket=bucket)
+              except Exception:
+                  s3.create_bucket(Bucket=bucket)
+                  print(f"✅ Created bucket: {bucket}")
+
+              # Serialize model tensors
+              output_path = f"/tmp/tensorized/{model_name_sanitized}/model.tensors"
+              Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+              print(f"Serializing to: {output_path}")
+              with open(output_path, "wb") as f:
+                  serializer = TensorSerializer(f)
+                  serializer.write_module(model)
+                  serializer.close()
+
+              # Upload tensors file to MinIO
+              s3_key = f"{prefix}model.tensors"
+              print(f"⬆️  Uploading to s3://{bucket}/{s3_key} ...")
+              s3.upload_file(output_path, bucket, s3_key)
+
+              # Save tokenizer files
+              tokenizer_dir = f"/tmp/tensorized/{model_name_sanitized}/tokenizer"
+              tokenizer.save_pretrained(tokenizer_dir)
+              for tok_file in Path(tokenizer_dir).iterdir():
+                  tok_key = f"{prefix}tokenizer/{tok_file.name}"
+                  print(f"⬆️  Uploading tokenizer: {tok_key}")
+                  s3.upload_file(str(tok_file), bucket, tok_key)
+
+              print(f"✅ Serialization complete. Model available at:")
+              print(f"   s3://{bucket}/{prefix}")
+              print(f"   Endpoint: {endpoint}")
+              PYEOF
+
+              echo "✅ Tensorization job complete."
+              echo ""
+              echo "To use with vLLM, set:"
+              echo "  --model s3://${MINIO_BUCKET}/${MODEL_NAME_SANITIZED}/"
+              echo "  --load-format tensorizer"
+              echo "  --model-loader-extra-config '{\"s3_endpoint\": \"${S3_ENDPOINT_URL}\"}'"
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: "16Gi"

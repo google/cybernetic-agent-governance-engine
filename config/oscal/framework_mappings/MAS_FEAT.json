@@ -1,0 +1,58 @@
+{
+  "_comment": "MAS FEAT Principles (Fairness, Ethics, Accountability, Transparency) UCA-to-principle routing table for the OSCAL SSP Exporter. Applicable to AI systems deployed by MAS-regulated financial institutions in Singapore under TRM Guidelines §13. Loaded at runtime by FrameworkRouter.",
+  "_schema_version": "2.0.0",
+  "_last_updated": "2026-05-23",
+  "_framework_id": "MAS_FEAT",
+  "_framework_label": "MAS FEAT Principles (Fairness, Ethics, Accountability, Transparency)",
+  "_framework_source": "https://www.mas.gov.sg/publications/monographs-or-information-paper/2019/feat-principles",
+  "uca_mappings": {
+    "UCA-1": [
+      "Accountability A1",
+      "Ethics E3"
+    ],
+    "UCA-2": [
+      "Fairness F1",
+      "Transparency T1"
+    ],
+    "UCA-3": [
+      "Ethics E2",
+      "Transparency T2"
+    ],
+    "UCA-4": [
+      "Accountability A2",
+      "Transparency T1"
+    ],
+    "UCA-5": [
+      "Accountability A1",
+      "Fairness F2"
+    ],
+    "UCA-6": [
+      "Ethics E3",
+      "Accountability A3"
+    ],
+    "UCA-7": [
+      "Ethics E3",
+      "Fairness F1"
+    ],
+    "UCA-8": [
+      "Accountability A1",
+      "Ethics E2"
+    ],
+    "UCA-9": [
+      "Accountability A1",
+      "Transparency T2"
+    ]
+  },
+  "control_descriptions": {
+    "Accountability A1": "Clear roles and responsibilities for AI decision-making",
+    "Accountability A2": "Audit trail and record-keeping for AI decisions",
+    "Accountability A3": "Human accountability for AI-assisted recommendations",
+    "Ethics E2": "AI system reasoning is sound and can be explained",
+    "Ethics E3": "AI system operates within defined boundaries and scope",
+    "Fairness F1": "AI system is regularly tested for bias across protected attributes",
+    "Fairness F2": "Fairness metrics are defined, measured, and reported",
+    "Transparency T1": "AI system outputs are explainable to affected parties",
+    "Transparency T2": "Regular reporting of AI performance and limitations"
+  },
+  "narrative_template": "STPA compiler enforces MAS FEAT {control_id} via generated governance artifacts. UCAs covered: {uca_list}."
+}

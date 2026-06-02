@@ -1,0 +1,53 @@
+# lula-validation-a92.yaml
+# ISO 42001 Annex A.9.2 — Data Transfer to Suppliers
+#
+# Asserts that Presidio PII masking has a 0.0% leak rate —
+# no PII has been transmitted to external model APIs.
+# This is a CRITICAL control; any FAIL triggers an immediate alert.
+#
+# Domain: api → compliance-bridge (Python FastAPI service)
+# Provider: opa (inline Rego)
+
+domain:
+  type: api
+  api-spec:
+    endpoints:
+      - name: langfuse_metrics_a92
+        url: "http://compliance-bridge.governance-stack.svc.cluster.local/v1/metrics/A.9.2"
+        method: GET
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+
+      # A.9.2: Data Transfer to Suppliers — PII must never be sent to external APIs.
+      # Threshold: blocked_traces / total_traces == 0.0 (zero tolerance)
+      # Translated as: safety_rate == 1.0 (all traces passed without PII leak)
+
+      # Rule 1: Cold-start grace period
+      validate if {
+        input.langfuse_metrics_a92.startup_grace_active == true
+        input.langfuse_metrics_a92.safety_rate == 1.0
+        input.langfuse_metrics_a92.evidence_age_seconds < 172800
+      }
+
+      # Rule 2: Steady-state — zero tolerance, no sample-size exemption
+      validate if {
+        input.langfuse_metrics_a92.startup_grace_active == false
+        input.langfuse_metrics_a92.safety_rate == 1.0
+        input.langfuse_metrics_a92.total_traces > 0
+        input.langfuse_metrics_a92.evidence_age_seconds < 172800
+      }
+
+notes: >
+  ISO 42001 A.9.2: Data Transfer to Suppliers.
+  CRITICAL CONTROL — zero tolerance for PII leakage to external model APIs.
+  Automated verification via Presidio PII masking traces tagged
+  iso42001.control_id=A.9.2 (nemo_input_scan) from Python governance nodes.
+  Any FAIL on this control triggers an immediate Slack/PagerDuty alert
+  via the complianceAuditWorkflow alertOnCriticalFailStep.
+  Staleness guard: 48 hours.

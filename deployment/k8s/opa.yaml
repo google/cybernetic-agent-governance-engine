@@ -1,0 +1,114 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa-service
+  namespace: ${NAMESPACE}
+  labels:
+    app: opa
+    compliance.iso42001/enabled: "true"
+    compliance.iso42001/version: "2023"
+  annotations:
+    compliance.iso42001/controls: "A.5.3,SC-4,A.9.2,A.5.2"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opa
+  template:
+    metadata:
+      labels:
+        app: opa
+        compliance.iso42001/enabled: "true"
+      annotations:
+        compliance.iso42001/controls: "A.5.3,SC-4,A.9.2,A.5.2"
+    spec:
+      containers:
+        - name: opa
+          image: openpolicyagent/opa:latest-static
+          args:
+            - "run"
+            - "--server"
+            - "--addr=:8181"
+            - "--diagnostic-addr=:8282"
+            - "--config-file=/config/opa_config.yaml"
+            # Kubernetes ConfigMap mounts create hidden symlink dirs (..data/, ..YYYY.../);
+            # OPA loads every .rego under /policies recursively and would encounter each
+            # file 3× via the live symlink, ..data, and the real path, causing
+            # "multiple default rules" parse errors.  --ignore=..* suppresses all
+            # hidden Kubernetes ConfigMap bookkeeping directories.
+            - "--ignore=..*"
+            - "/policies"
+          ports:
+            - containerPort: 8181
+              name: http
+            - containerPort: 8282
+              name: diagnostics
+          volumeMounts:
+            - name: policies
+              mountPath: /policies
+              readOnly: true
+            - name: config
+              mountPath: /config
+              readOnly: true
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+      volumes:
+        - name: policies
+          configMap:
+            name: opa-policies
+        - name: config
+          configMap:
+            name: opa-runtime-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-compliance-status
+  namespace: ${NAMESPACE}
+  labels:
+    app: opa
+    compliance.iso42001/enabled: "true"
+  annotations:
+    compliance.iso42001/controls: "A.5.3,SC-4,A.9.2,A.5.2"
+data:
+  policy_version: "v1.4.0"
+  controls_enforced: "A.5.3,SC-4,A.9.2,A.5.2"
+  standard: "ISO/IEC 42001:2023"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa-service
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: opa
+  ports:
+    - port: 8181
+      targetPort: 8181
+      protocol: TCP
+      name: http
+    - port: 8282
+      targetPort: 8282
+      protocol: TCP
+      name: diagnostics
+  type: ClusterIP

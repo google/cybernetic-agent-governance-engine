@@ -1,0 +1,59 @@
+{
+  "_comment": "EU AI Act (Regulation (EU) 2024/1689) UCA-to-article routing table for the OSCAL SSP Exporter. Primary statutory basis: High-Risk AI System classification under Art. 6 + Annex III §5(b) — any AI system used for creditworthiness evaluation or credit scoring. SR 26-2 has no legal force in EU jurisdiction. Loaded at runtime by FrameworkRouter.",
+  "_schema_version": "2.0.0",
+  "_last_updated": "2026-05-23",
+  "_framework_id": "EU_AI_ACT",
+  "_framework_label": "EU AI Act (Regulation (EU) 2024/1689) High-Risk AI — Annex III §5(b)",
+  "_framework_source": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32024R1689",
+  "uca_mappings": {
+    "UCA-1": [
+      "Art. 9(5)",
+      "Art. 14"
+    ],
+    "UCA-2": [
+      "Art. 10(3)",
+      "Art. 17"
+    ],
+    "UCA-3": [
+      "Art. 10(5)",
+      "GDPR Art. 22"
+    ],
+    "UCA-4": [
+      "Art. 12",
+      "Art. 17"
+    ],
+    "UCA-5": [
+      "Art. 9(2)(b)",
+      "Art. 14"
+    ],
+    "UCA-6": [
+      "Art. 9(5)",
+      "Art. 14"
+    ],
+    "UCA-7": [
+      "Art. 9(5)",
+      "Annex III §5(b)"
+    ],
+    "UCA-8": [
+      "Art. 9",
+      "Art. 14"
+    ],
+    "UCA-9": [
+      "Art. 9",
+      "Art. 17"
+    ]
+  },
+  "control_descriptions": {
+    "Art. 9": "Risk Management System for High-Risk AI",
+    "Art. 9(2)(b)": "Risk Controls — Identification of known and foreseeable risks",
+    "Art. 9(5)": "Risk Management — Residual risk mitigation measures",
+    "Art. 10(3)": "Data Governance — Examination of data for bias",
+    "Art. 10(5)": "Data Governance — Personal data and data minimisation",
+    "Art. 12": "Record-Keeping and Automatic Logging Obligations",
+    "Art. 14": "Human Oversight — Technical measures to enable oversight",
+    "Art. 17": "Quality Management System (QMS) Requirements",
+    "Annex III §5(b)": "High-Risk AI Classification — Creditworthiness and credit scoring",
+    "GDPR Art. 22": "Automated Individual Decision-Making Including Profiling"
+  },
+  "narrative_template": "STPA compiler enforces {control_id} ({control_description}) via generated artifacts under EU AI Act High-Risk AI obligations. UCAs covered: {uca_list}."
+}

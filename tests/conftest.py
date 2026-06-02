@@ -1,0 +1,395 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Shared pytest configuration, hooks, and fixtures.
+
+Environment defaults
+--------------------
+Variables are resolved in this priority order (highest → lowest):
+
+  1. Shell environment (``export VAR=...`` or CI secrets)
+  2. ``.env`` file at the project root (loaded with override=False)
+  3. Hard-coded defaults set in ``pytest_configure`` below
+
+Integration-marked tests are **skipped by default**.
+Pass ``--run-integration`` on the CLI to include them:
+
+    uv run pytest tests/ --run-integration
+
+Port-forward prerequisites
+--------------------------
+Integration tests require live Kubernetes services.  Start them with:
+
+    ./setup_test_env.sh
+"""
+
+import os
+
+import pytest
+
+# ── Load .env early (before any test module is imported) ─────────────────────
+# override=False means existing shell env vars always win.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(override=False)
+except ImportError:
+    pass  # python-dotenv not installed — rely on shell env only
+
+
+# ── Default environment values ────────────────────────────────────────────────
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Set environment variable defaults that tests expect."""
+    _setdefault("BACKEND_URL", "http://localhost:8081")
+    _setdefault("GATEWAY_URL", "http://localhost:8080")
+    _setdefault("LANGFUSE_HOST", "http://localhost:3001")
+    _setdefault("VLLM_REASONING_API_BASE", "http://localhost:8000/v1")
+    _setdefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318/v1/traces")
+    # Disable OTEL span export during tests — no collector is deployed in the
+    # test environment.  Without this, the BatchSpanProcessor background thread
+    # retries failed exports for several seconds after each test, adding noise
+    # to the output and slowing teardown.  Set OTEL_TRACES_EXPORTER=otlp in
+    # the shell to re-enable when a local collector is running.
+    _setdefault("OTEL_TRACES_EXPORTER", "none")
+    _setdefault("OPENLLMETRY_ENABLED", "false")
+    # compliance-bridge port-forward runs on :3002 (Langfuse occupies :3001)
+    _setdefault("COMPLIANCE_BRIDGE_URL", "http://localhost:3002")
+    # Integration tests: force OPA_URL to the locally port-forwarded instance.
+    # The .env file may contain the cluster-internal address (http://opa:8181/...)
+    # which is unreachable from the developer workstation — always override to localhost.
+    os.environ["OPA_URL"] = os.environ.get(
+        "OPA_URL_TEST_OVERRIDE",
+        "http://localhost:8181/v1/data/trade/governance",
+    )
+    # Disable OPA Redis decision cache in all test runs to prevent cross-test
+    # cache pollution (a warm cache from test_opa_allow would cause test_opa_deny
+    # to return a stale ALLOW).  The cache is enabled in production by default.
+    _setdefault("OPA_CACHE_ENABLED", "false")
+    # GOVERNANCE_SALT must be consistent so routing seals issued during tests
+    # can be verified by both the gateway module and the GFA mirror module.
+    _setdefault("GOVERNANCE_SALT", "CYBERNETIC_GOVERNANCE_TEST_SALT_32C!")
+
+
+def _setdefault(key: str, value: str) -> None:
+    """Set an env var only when it is not already present or is a placeholder."""
+    current = os.environ.get(key)
+    if not current or "<YOUR_" in current or current.startswith("<"):
+        os.environ[key] = value
+
+
+# ── CLI option ────────────────────────────────────────────────────────────────
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--run-integration",
+        action="store_true",
+        default=False,
+        help="Run tests marked with @pytest.mark.integration (require live services).",
+    )
+
+
+# ── Auto-skip integration tests unless opted in ───────────────────────────────
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Auto-skip @pytest.mark.integration tests unless --run-integration is set."""
+    if config.getoption("--run-integration"):
+        return  # opt-in: run everything
+
+    skip_integration = pytest.mark.skip(
+        reason=(
+            "Integration test — requires live external services. "
+            "Pass --run-integration to enable."
+        )
+    )
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip_integration)
+
+
+# ── Session-scoped fixtures ───────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+async def cleanup_redis_client():
+    """Reset the async Redis client between tests to prevent closed event loop errors."""
+    yield
+    try:
+        from src.gateway.infrastructure.redis_client import redis_client
+        if redis_client is not None:
+            await redis_client.close()
+    except Exception:
+        pass
+
+
+@pytest.fixture()
+def mock_gateway_client(monkeypatch):
+    """Stub GatewayClient.validate_action with a pre-approved HMAC routing seal.
+
+    Prevents unit tests from making real HTTP calls to the Hybrid Gateway when
+    testing the ``tools/api.py`` execute_trade path.  The seal is generated
+    using ``GOVERNANCE_SALT`` from the test environment so that
+    ``verify_seal()`` in ``api.py`` accepts it without network access.
+
+    Usage::
+
+        async def test_execute_trade_approved(mock_gateway_client):
+            # GatewayClient.validate_action is pre-stubbed — no real HTTP call.
+            response = await client.post("/tools/execute", json={...})
+            assert response.json()["status"] == "SUCCESS"
+    """
+    import unittest.mock as mock
+    from src.gateway.governance.routing_seal import generate_seal
+    from src.governed_financial_advisor.infrastructure import gateway_client as gc_module
+
+    async def _approved_validate_action(self, action: str, params, **kwargs):
+        seal = generate_seal(action, params)
+        return {"verdict": "APPROVED", "violations": [], "seal": seal, "latency_ms": 1.0}
+
+    monkeypatch.setattr(
+        gc_module.GatewayClient,
+        "validate_action",
+        _approved_validate_action,
+    )
+    return _approved_validate_action
+
+
+@pytest.fixture()
+def mock_gateway_client_denied(monkeypatch):
+    """Stub GatewayClient.validate_action to return a DENIED verdict.
+
+    Use this fixture to test that the execute_trade branch correctly blocks
+    actuation when the Gateway refuses the governance check.
+    """
+    from src.governed_financial_advisor.infrastructure import gateway_client as gc_module
+
+    async def _denied_validate_action(self, action: str, params, **kwargs):
+        raise PermissionError(f"Governance DENIED '{action}': OPA: policy denied 'execute_trade'")
+
+    monkeypatch.setattr(
+        gc_module.GatewayClient,
+        "validate_action",
+        _denied_validate_action,
+    )
+    return _denied_validate_action
+
+
+@pytest.fixture(scope="session")
+def backend_url() -> str:
+    """Return the backend service URL (resolved from BACKEND_URL env var)."""
+    return os.environ["BACKEND_URL"]
+
+
+@pytest.fixture(scope="session")
+def langfuse_client():
+    """
+    Return a configured Langfuse SDK client.
+
+    Skips the requesting test if Langfuse credentials are not present in the
+    environment.  Requires:
+
+        LANGFUSE_PUBLIC_KEY
+        LANGFUSE_SECRET_KEY
+        LANGFUSE_HOST  (defaulted to http://localhost:3001 by pytest_configure)
+    """
+    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
+    secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "")
+    host = os.environ.get("LANGFUSE_HOST", "http://localhost:3001")
+
+    if not public_key or not secret_key:
+        pytest.skip(
+            "Langfuse credentials not set — define LANGFUSE_PUBLIC_KEY and "
+            "LANGFUSE_SECRET_KEY to run this test."
+        )
+
+    try:
+        from langfuse import Langfuse  # type: ignore[import]
+    except ImportError:
+        pytest.skip("langfuse package is not installed.")
+
+    return Langfuse(public_key=public_key, secret_key=secret_key, host=host)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def requires_port_forward(pytestconfig, backend_url: str) -> None:
+    """
+    Session-scoped guard that verifies backend and Langfuse are reachable.
+
+    Tests that depend on this fixture are skipped when the port-forwards are
+    not running.  Start them with ``./setup_test_env.sh``.
+    """
+    if not pytestconfig.getoption("--run-integration"):
+        return
+
+    import requests  # noqa: PLC0415
+    import subprocess
+    import json
+    import base64
+    import bcrypt
+    import redis
+
+    # Dynamic backend port detection/fallback
+    current_backend = backend_url
+    if current_backend == "http://localhost:18080":
+        try:
+            requests.get("http://localhost:18080/health", timeout=1)
+        except requests.exceptions.RequestException:
+            try:
+                requests.get("http://localhost:8081/health", timeout=1)
+                os.environ["BACKEND_URL"] = "http://localhost:8081"
+                current_backend = "http://localhost:8081"
+                print("\n🔄 [pytest bootstrap] Detected Backend at :8081 instead of :18080. Overriding BACKEND_URL.")
+            except requests.exceptions.RequestException:
+                pass
+
+    langfuse_host = os.environ.get("LANGFUSE_HOST", "http://localhost:3001")
+    timeout = 3
+
+    unreachable: list[str] = []
+
+    for label, url in [
+        ("Backend", f"{current_backend}/health"),
+        ("Langfuse", langfuse_host),
+    ]:
+        try:
+            requests.get(url, timeout=timeout)
+        except requests.exceptions.RequestException:
+            unreachable.append(f"{label} ({url})")
+
+    if unreachable:
+        pytest.skip(
+            "Required services are not reachable — run ./setup_test_env.sh to "
+            "start port-forwards.\n"
+            "Unreachable: " + ", ".join(unreachable)
+        )
+
+    # ─── Issue 3: Pure Python Redis Seeding ───
+    try:
+        # Redis password sourced from cluster env (langfuse-web REDIS_CONNECTION_STRING)
+        redis_password = "REDACTED_PASSWORD"
+        r = redis.Redis(host="localhost", port=6379, db=0, password=redis_password, socket_timeout=3)
+        r.set("safety:current_cash", "10000000")
+        print("\n💰 [pytest bootstrap] Seeded Redis cash balance to safety:current_cash = 10000000")
+    except Exception as e:
+        print(f"\n⚠️ [pytest bootstrap] Redis seed failed (port-forward may not be active yet): {e}")
+
+    # ─── Issue 4: Langfuse Compliance Project & Key Bootstrap ───
+    try:
+        pk_comp = "REDACTED_LANGFUSE_COMPLIANCE_PK"
+        sk_comp = "REDACTED_LANGFUSE_COMPLIANCE_SK"
+
+        # 1. PostgreSQL DB Seeding via kubectl exec
+        # Generate a fresh bcrypt hash of the secret key (11 rounds, matches Langfuse default)
+        hashed_secret = bcrypt.hashpw(sk_comp.encode(), bcrypt.gensalt(11)).decode('utf-8')
+        display_secret = "sk-lf-...3162"
+
+        sql_script = f"""
+        -- Ensure cage-compliance project exists
+        INSERT INTO projects (id, name, org_id, created_at, updated_at, has_traces)
+        VALUES ('cage-compliance', 'cage-compliance', 'CAGE', NOW(), NOW(), false)
+        ON CONFLICT (id) DO NOTHING;
+
+        -- Upsert compliance api key.
+        -- fast_hashed_secret_key is intentionally NULL: Langfuse's apiAuth.ts lazily
+        -- populates it via bcrypt fallback on the first successful authentication.
+        INSERT INTO api_keys (id, note, public_key, hashed_secret_key, display_secret_key, project_id, fast_hashed_secret_key, scope)
+        VALUES (
+          'cmpa7dkag0001zt07e609comp',
+          'Provisioned Compliance Key',
+          '{pk_comp}',
+          '{hashed_secret}',
+          '{display_secret}',
+          'cage-compliance',
+          NULL,
+          'PROJECT'::"ApiKeyScope"
+        )
+        ON CONFLICT (public_key) DO UPDATE SET
+          hashed_secret_key     = EXCLUDED.hashed_secret_key,
+          fast_hashed_secret_key = NULL;
+        """
+
+        print("🗄️ [pytest bootstrap] Seeding Langfuse compliance project in GKE PostgreSQL...")
+        env_vars = "PGPASSWORD=REDACTED_PG_PASSWORD"
+        subprocess.run(
+            ["kubectl", "exec", "-i", "postgresql-0", "-n", "governance-stack", "--", "sh", "-c", f"env {env_vars} psql -U langfuse -d langfuse"],
+            input=sql_script,
+            text=True, check=True, capture_output=True
+        )
+        print("✅ [pytest bootstrap] GKE PostgreSQL Langfuse compliance project and keys seeded successfully.")
+
+        # 2. Update Kubernetes Secret if out of date
+        try:
+            res = subprocess.run(
+                ["kubectl", "get", "secret", "langfuse-compliance-secrets", "-n", "governance-stack", "-o", "json"],
+                capture_output=True, text=True, check=True
+            )
+            secret_data = json.loads(res.stdout).get("data", {})
+            existing_pub = base64.b64decode(secret_data.get("public-key", "")).decode("utf-8")
+        except Exception:
+            secret_data = {}
+            existing_pub = None
+
+        if existing_pub != pk_comp:
+            print(f"🔄 [pytest bootstrap] Langfuse compliance secret out-of-date ({existing_pub}). Updating secret...")
+            secret_manifest = {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {
+                    "name": "langfuse-compliance-secrets",
+                    "namespace": "governance-stack"
+                },
+                "type": "Opaque",
+                "data": {
+                    "LANGFUSE_COMPLIANCE_PUBLIC_KEY": base64.b64encode(pk_comp.encode()).decode(),
+                    "LANGFUSE_COMPLIANCE_SECRET_KEY": base64.b64encode(sk_comp.encode()).decode(),
+                    "LANGFUSE_HOST": base64.b64encode(b"http://langfuse-web.governance-stack.svc.cluster.local").decode(),
+                    "public-key": base64.b64encode(pk_comp.encode()).decode(),
+                    "secret-key": base64.b64encode(sk_comp.encode()).decode(),
+                }
+            }
+            subprocess.run(
+                ["kubectl", "apply", "-f", "-"],
+                input=json.dumps(secret_manifest),
+                text=True, check=True, capture_output=True
+            )
+            print("✅ [pytest bootstrap] Langfuse compliance secret updated.")
+
+            # Trigger Rollout Restart for compliance-bridge
+            print("🔄 [pytest bootstrap] Triggering rollout restart of deployment/compliance-bridge...")
+            subprocess.run(
+                ["kubectl", "rollout", "restart", "deployment/compliance-bridge", "-n", "governance-stack"],
+                check=True, capture_output=True
+            )
+            print("⏳ [pytest bootstrap] Waiting for rollout restart to complete...")
+            subprocess.run(
+                ["kubectl", "rollout", "status", "deployment/compliance-bridge", "-n", "governance-stack", "--timeout=120s"],
+                check=True, capture_output=True
+            )
+            print("✅ [pytest bootstrap] compliance-bridge deployment successfully restarted and ready.")
+        else:
+            print("✅ [pytest bootstrap] Langfuse compliance secret is already up-to-date in GKE.")
+
+        # 3. Inject keys into os.environ for integration tests
+        os.environ["LANGFUSE_PUBLIC_KEY"] = "REDACTED_LANGFUSE_PK"
+        os.environ["LANGFUSE_SECRET_KEY"] = "REDACTED_LANGFUSE_SK"
+        os.environ["LANGFUSE_COMPLIANCE_PUBLIC_KEY"] = pk_comp
+        os.environ["LANGFUSE_COMPLIANCE_SECRET_KEY"] = sk_comp
+        os.environ["SKIP_LANGFUSE_CHECKS"] = "0"
+        print("🚀 [pytest bootstrap] Set LANGFUSE_COMPLIANCE_* env vars and set SKIP_LANGFUSE_CHECKS=0.")
+
+    except Exception as e:
+        print(f"\n⚠️ [pytest bootstrap] Langfuse compliance bootstrapping failed: {e}")
+

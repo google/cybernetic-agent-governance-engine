@@ -1,0 +1,150 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Agnostic (Cloud-Neutral) Terraform Variables (Auto-loaded)
+# 
+# Copy this file to terraform.auto.tfvars and fill in your values.
+# Alternatively, source ../../load_env.sh to load values from .env
+#
+# IMPORTANT: Never commit terraform.auto.tfvars to version control!
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Kubernetes Connection
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Path to kubeconfig file (supports: k3s, EKS, AKS, GKE, kind, k3d)
+kubeconfig_path = "~/.kube/config"
+
+# Kubernetes context (empty = current context)
+# kubeconfig_context = ""
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Environment Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Environment: dev, staging, or prod
+# This affects resource sizing, HA settings, and security posture
+environment = "dev"
+
+# Kubernetes namespace for all CAGE resources
+namespace = "governance-stack"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Storage Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Storage class for persistent volumes
+# - k3s/k3d: "local-path"
+# - EKS: "gp2" or "gp3"
+# - AKS: "default" or "managed-premium"
+# - GKE: "standard" or "pd-ssd"
+# - kind: "standard"
+storage_class = "standard"
+
+# MinIO object storage size
+minio_storage_size = "50Gi"
+
+# MinIO credentials
+minio_root_user = "minio-admin"
+# minio_root_password = ""  # Auto-generated if empty
+
+# PostgreSQL storage size (Langfuse database)
+postgres_storage_size = "50Gi"
+
+# Redis storage size (application cache)
+redis_storage_size = "10Gi"
+
+# S3/MinIO bucket for model weights
+model_bucket_name = "vllm-models"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# vLLM Inference Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Enable vLLM deployment
+enable_vllm = false
+
+# Model path (HuggingFace ID or local path)
+vllm_model_path = "meta-llama/Llama-3.2-3B-Instruct"
+
+# GPUs per vLLM pod
+vllm_gpu_count = 1
+
+# Number of vLLM replicas
+vllm_replicas = 1
+
+# Node selector for vLLM pods (target GPU nodes)
+# vllm_node_selector = {
+#   "nvidia.com/gpu.product" = "NVIDIA-A100-SXM4-40GB"
+# }
+
+# Tolerations for vLLM pods (allow scheduling on GPU nodes)
+# vllm_tolerations = [
+#   {
+#     key      = "nvidia.com/gpu"
+#     operator = "Equal"
+#     value    = "present"
+#     effect   = "NoSchedule"
+#   }
+# ]
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Langfuse Observability
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Langfuse external URL (for NextAuth)
+langfuse_nextauth_url = "http://localhost:3000"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Compliance Bridge
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Enable compliance bridge (Langfuse → Lula integration)
+enable_compliance_bridge = false
+
+# Compliance bridge container image
+# compliance_bridge_image = "ghcr.io/your-org/compliance-bridge:latest"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# OPA Policy Engine
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# OPA custom policy files (name -> content)
+# opa_policy_files = {
+#   "custom_policy.rego" = file("${path.root}/policies/custom_policy.rego")
+# }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Container Registry
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Container registry URL
+registry_url = "ghcr.io/your-org/cybernetic-governance-engine"
+
+# Registry server hostname
+registry_server = "ghcr.io"
+
+# Registry credentials (for private registries)
+# registry_username = ""
+# registry_password = ""
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Security Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Enable Pod Security Standards (PSS)
+enable_pod_security_standards = false
+
+# Pod Security Standard level (privileged, baseline, restricted)
+pod_security_level = "baseline"

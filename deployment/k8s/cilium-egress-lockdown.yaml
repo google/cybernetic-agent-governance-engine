@@ -1,0 +1,249 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# =============================================================================
+# CAGE Zero-Trust Network (Z3N) — Cilium Layer-7 Egress Lockdown
+# =============================================================================
+#
+# NIST SP 800-53 Controls: SC-7, AC-4, SI-3
+# ISO 42001: A.6.2 (AI System Lifecycle), A.8.4 (AI System Operation)
+#
+# These CiliumNetworkPolicy resources extend the existing L3/L4 NetworkPolicies
+# in network-policy.yaml and network-policy-hardening.yaml with Layer-7
+# FQDN-aware filtering. Standard Kubernetes NetworkPolicies cannot enforce
+# egress by hostname — a pod could resolve api.openai.com and then freely
+# connect to any IP on port 443. Cilium's DNS proxy intercepts all UDP/53
+# responses and binds the resulting IPs to the allow-list in real time.
+#
+# Prerequisites:
+#   Cilium CNI installed with L7 policy enforcement enabled:
+#   cilium install --set l7Proxy=true --set kubeProxyReplacement=strict
+#   cilium status --wait
+#
+# Verification:
+#   cilium policy get                    # list active policies
+#   cilium monitor --type l7            # watch L7 policy decisions
+#   kubectl exec -n governance-stack <gateway-pod> -- \
+#     curl -sv https://api.openai.com/v1/models   # should succeed
+#   kubectl exec -n governance-stack <gateway-pod> -- \
+#     curl -sv https://malicious.example.com       # should fail (RST)
+#
+# POAM references: POAM-007 (IA-3), POAM-011 (SC-8)
+# =============================================================================
+
+---
+# =============================================================================
+# Policy 1: Gateway Egress — Strict FQDN allowlist for external LLM APIs
+#
+# The gateway pod is the ONLY pod permitted to contact external AI providers.
+# All other pods' egress is blocked at L3/L4 by network-policy.yaml
+# default-deny-egress. This policy layers L7 FQDN enforcement on top.
+#
+# Approved external endpoints:
+#   api.openai.com        — OpenAI GPT-4 / Embedding API
+#   api.anthropic.com     — Anthropic Claude API
+#   generativelanguage.googleapis.com — Google Gemini API
+#   *.googleapis.com      — GCP service APIs (Secret Manager, Cloud Logging, GCS)
+#   us.i.posthog.com      — Langfuse analytics (SaaS)
+# =============================================================================
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: gateway-egress-fqdn-allowlist
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-egress
+  annotations:
+    compliance.nist.gov/control: "SC-7,AC-4,SI-3"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-05-17"
+    cage.io/poam: "POAM-007,POAM-011"
+    cage.io/evidence: "cilium monitor --type l7"
+spec:
+  endpointSelector:
+    matchLabels:
+      app: governed-financial-advisor
+  egress:
+    # ---- Rule 1: DNS proxy — allows ALL internal DNS resolution -----------
+    # The Cilium DNS proxy intercepts UDP 53 responses and dynamically
+    # binds resolved IPs to the FQDN rules below. This rule must come first.
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+
+    # ---- Rule 2: Approved external AI provider APIs ----------------------
+    - toFQDNs:
+        - matchName: "api.openai.com"
+        - matchName: "api.anthropic.com"
+        - matchName: "generativelanguage.googleapis.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+          rules:
+            http:
+              - method: "POST"   # Inference requests only
+              - method: "GET"    # Health/model listing
+
+    # ---- Rule 3: GCP service APIs (Secret Manager, Cloud Logging, GCS) ---
+    - toFQDNs:
+        - matchPattern: "*.googleapis.com"
+        - matchPattern: "metadata.google.internal"  # GKE Workload Identity
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # ---- Rule 4: Langfuse SaaS telemetry ---------------------------------
+    - toFQDNs:
+        - matchName: "us.i.posthog.com"
+        - matchPattern: "cloud.langfuse.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # ---- Rule 5: OFAC Sanctions API (SDN list lookups) ------------------
+    - toFQDNs:
+        - matchName: "api.trade.gov"
+        - matchName: "www.treasury.gov"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+---
+# =============================================================================
+# Policy 2: Sovereign Agent Egress — Strict internal-only lockdown
+#
+# Pods labelled role=sovereign-agent may ONLY reach:
+#   - kube-dns (DNS resolution — required for internal service discovery)
+#   - OPA (policy evaluation — port 8181)
+#   - CAGE Gateway (orchestration callbacks — port 8080)
+#   - OTel Collector (audit trace emission — ports 4317/4318)
+#
+# ALL external egress is implicitly denied. A compromised agent pod cannot
+# exfiltrate data, contact command-and-control infrastructure, or query
+# external APIs directly — it MUST go through the gateway watchdog.
+# =============================================================================
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: agent-egress-internal-only
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-egress
+  annotations:
+    compliance.nist.gov/control: "SC-7,AC-4,SI-3,SC-39"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-05-17"
+    cage.io/poam: "POAM-007"
+    cage.io/evidence: "cilium monitor --type l7 --from-label role=sovereign-agent"
+spec:
+  endpointSelector:
+    matchLabels:
+      role: sovereign-agent
+  egress:
+    # ---- Rule 1: DNS — kube-dns only, with FQDN audit logging -----------
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*.governance-stack.svc.cluster.local"
+              - matchPattern: "*.svc.cluster.local"
+              # Block external DNS names — any attempt to resolve an external
+              # hostname from an agent pod is surfaced in cilium monitor logs
+              # as a policy violation for immediate alert.
+
+    # ---- Rule 2: OPA policy evaluation -----------------------------------
+    - toEndpoints:
+        - matchLabels:
+            app: opa
+      toPorts:
+        - ports:
+            - port: "8181"
+              protocol: TCP
+
+    # ---- Rule 3: CAGE Gateway (orchestration return path) ----------------
+    - toEndpoints:
+        - matchLabels:
+            app: governed-financial-advisor
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+
+---
+# =============================================================================
+# Policy 3: Default-deny external egress for ALL governance-stack pods
+#
+# This Cilium-native default-deny supplements the standard NetworkPolicy
+# default-deny-egress and ensures Cilium's L7 engine is also in deny mode.
+# Cilium processes its own CiliumNetworkPolicies independently from kube-proxy
+# NetworkPolicies; both must be in place for defence-in-depth.
+# =============================================================================
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: default-deny-external-egress
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-egress
+  annotations:
+    compliance.nist.gov/control: "SC-7,AC-4"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-05-17"
+    cage.io/description: >
+      Explicit Cilium-layer default-deny for all external (non-cluster) egress.
+      Works alongside network-policy.yaml default-deny-egress for defence-in-depth.
+      Individual pods override this via specific CiliumNetworkPolicy rules above.
+spec:
+  endpointSelector: {}
+  egress:
+    # Allow intra-cluster traffic only (cluster CIDR is resolved by Cilium
+    # automatically; this rule permits any endpoint within the cluster).
+    - toEndpoints:
+        - {}  # any pod in governance-stack namespace
+    # DNS is required cluster-wide
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

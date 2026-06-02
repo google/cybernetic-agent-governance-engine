@@ -1,0 +1,47 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+version: "3.8"
+
+services:
+  # SLM dev overlay — live source mount so changes to slm_server.py are reflected
+  # without a full image rebuild.  Model is the same lightweight all-MiniLM-L6-v2.
+  slm:
+    volumes:
+      - ./src/gateway/slm:/app/src/gateway/slm
+    environment:
+      - SLM_PORT=5000
+      - SLM_MODEL_NAME=all-MiniLM-L6-v2
+
+  gateway:
+    # Re-attach the live src mount for local development iteration
+    volumes:
+      - ./src:/app/src
+      - ./.env:/app/.env
+      - opa_socket_vol:/tmp
+    # Override command to use the decomposed entrypoint
+    command: ["python", "src/gateway/server/mcp_tool_server.py"]
+    environment:
+      - PORT=8080
+      - OPA_URL=http://opa:8181/v1/data/trade/governance
+      - CAGE_SEAL_ENFORCEMENT=log # Log-only in dev — don't block missing seals
+      - SLM_BASE_URL=http://slm:5000
+      # v2.0.0: override in .env to test EU_ECB or APAC_MAS compliance posture locally
+      - CAGE_DEPLOYMENT_REGION=${CAGE_DEPLOYMENT_REGION:-US_FED}
+
+  app:
+    volumes:
+      - ./src:/app/src
+      - ./.env:/app/.env
+      - opa_socket_vol:/tmp

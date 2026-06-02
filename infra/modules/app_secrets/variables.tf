@@ -1,0 +1,145 @@
+variable "namespace" {
+  description = "Kubernetes namespace"
+  type        = string
+}
+
+variable "salt" {
+  type      = string
+  sensitive = true
+}
+
+variable "alphavantage_api_key" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "openai_api_key" {
+  type      = string
+  sensitive = true
+  default   = "not-needed-for-local-vllm"
+}
+
+variable "langfuse_public_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "langfuse_secret_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "langfuse_host" {
+  type = string
+}
+
+variable "clickhouse_url" {
+  type = string
+}
+
+variable "clickhouse_migration_url" {
+  type = string
+}
+
+variable "clickhouse_user" {
+  type = string
+}
+
+variable "clickhouse_password" {
+  type      = string
+  sensitive = true
+}
+
+variable "database_url" {
+  type      = string
+  sensitive = true
+}
+
+variable "nextauth_secret" {
+  type      = string
+  sensitive = true
+}
+
+variable "nextauth_url" {
+  type = string
+}
+
+variable "aws_access_key_id" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "aws_secret_access_key" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "s3_endpoint_url" {
+  type    = string
+  default = ""
+}
+
+variable "s3_bucket_name" {
+  type    = string
+  default = ""
+}
+
+variable "minio_root_user" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "minio_root_password" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "hf_token" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "langfuse_compliance_public_key" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "langfuse_compliance_secret_key" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "oscal_api_key" {
+  type      = string
+  sensitive = true
+  default   = "DUMMY_API_KEY_FOR_LOCAL_DEV"
+}
+
+variable "opa_url" {
+  type    = string
+  default = ""
+}
+
+variable "model_fast" {
+  type    = string
+  default = "Qwen/Qwen2.5-1.5B-Instruct"
+}
+
+variable "model_reasoning" {
+  type    = string
+  default = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+}
+
+variable "cage_deployment_region" {
+  description = "CAGE deployment region compliance profile (US_FED, EU_ECB, APAC_MAS)"
+  type        = string
+  default     = "US_FED"
+}

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://modelcontextprotocol.io/schema/mcp-config.json",
+  "mcpServers": {
+    "cage-infrastructure": {
+      "command": "/Users/yourusername/Code/cybernetic-governance-engine/.venv/bin/python",
+      "args": [
+        "-m",
+        "mcp_servers.infrastructure"
+      ],
+      "env": {
+        "PROJECT_ROOT": "/Users/yourusername/Code/cybernetic-governance-engine"
+      }
+    },
+    "langfuse": {
+      "command": "node",
+      "args": [
+        "/Users/yourusername/.mcp/node_modules/.bin/melt-langfuse-mcp"
+      ],
+      "env": {
+        "LANGFUSE_PUBLIC_KEY": "${env:LANGFUSE_PUBLIC_KEY}",
+        "LANGFUSE_SECRET_KEY": "${env:LANGFUSE_SECRET_KEY}",
+        "LANGFUSE_HOST": "${env:LANGFUSE_HOST}"
+      }
+    },
+    "langgraph": {
+      "command": "node",
+      "args": [
+        "/Users/yourusername/.mcp/node_modules/langchain-mcp/dist/src/index.js"
+      ]
+    },
+    "google-developer-knowledge": {
+      "serverUrl": "https://developerknowledge.googleapis.com/mcp",
+      "authProviderType": "google_credentials"
+    },
+    "terradev-mcp": {
+      "command": "/Users/yourusername/Code/cybernetic-governance-engine/.venv/bin/python",
+      "args": [
+        "/Users/yourusername/.mcp/node_modules/terradev-mcp/terradev_mcp.py"
+      ],
+      "env": {
+        "DESCRIPTION": "If you want your AI agent to be able to dynamically test and generate Colang flows, look into community tools like terradev-mcp. If you want to write Colang rules yourself for the Langfuse/vLLM stack we just deployed, search the VS Code Extension marketplace for 'Colang Lang' to get your syntax highlighting!"
+      }
+    }
+  }
+}

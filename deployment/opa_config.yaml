@@ -1,0 +1,54 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+decision_logs:
+  console: true
+
+# 2. Status / Monitoring
+# Report status updates to stdout AND expose HTTP status plugin.
+# Lula's kubernetes domain and HTTP queries use the /v1/status endpoint.
+status:
+  console: true
+
+# 3. Services (Optional Placeholder)
+# If we were using a remote bundle server (like Styra DAS or a GCS bucket),
+# we would define it here. For this GKE deployment, policies are mounted locally.
+# services:
+#   - name: bundle_server
+#     url: https://bundles.example.com
+#     credentials:
+#       bearer:
+#         token: "${OPA_BUNDLE_TOKEN}"
+
+# 4. Default Decision
+# Set the default decision path if not specified in the query.
+default_decision: /finance/decision
+
+# 5. Caching
+# Optimize for frequent policy evaluations from the governance gateway.
+caching:
+  inter_query_builtin_cache:
+    max_size_bytes: 1000000
+
+# 6. Labels
+# ISO 42001 compliance labels embedded in OPA status output.
+# Lula's api domain can assert these via GET /v1/status.
+labels:
+  compliance.iso42001/enabled: "true"
+  compliance.iso42001/controls: "A.5.3,SC-4,A.9.2,A.5.2"
+  compliance.iso42001/standard: "ISO/IEC 42001:2023"
+  deployment: "gke-governance-stack"
+
+# POLICY ALLOWLIST: Only trade_governance.rego is evaluated.
+# finance_policy.rego, generated_rules.rego, and trade_policy.rego are DEPRECATED and must NOT be added here.

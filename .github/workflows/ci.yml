@@ -1,0 +1,75 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: build
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  license-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Apache 2.0 License Headers
+        run: |
+          # A simple check to ensure Apache 2.0 or Copyright 2026 Cybernetic Governance Engine is present
+          echo "Validating Apache 2.0 licensing headers across all source files..."
+          missing_headers=0
+          for file in $(find src/ -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.tsx'); do
+            if ! grep -q "Apache License" "$file" && ! grep -q "Copyright 2026" "$file"; then
+              echo "Missing Apache 2.0 license header in: $file"
+              missing_headers=1
+            fi
+          done
+          
+          if [ "$missing_headers" -eq 1 ]; then
+            echo "License validation failed."
+            exit 1
+          fi
+          echo "All source files have the required Apache 2.0 licensing headers."
+
+  pytest-logic:
+    name: "Pytest Logic Tests"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Install Dependencies
+        run: uv sync --all-groups --all-extras
+      - name: Run Pytest (unit/local)
+        env:
+          OPENAI_API_KEY: "sk-dummy"
+          MODEL_REASONING: "casperhansen/deepseek-r1-distill-qwen-14b-awq"
+          MODEL_FAST: "Qwen/Qwen2.5-7B-Instruct"
+          VLLM_API_KEY: "dummy"
+          VLLM_GATEWAY_URL: "http://localhost:8081/v1"
+          REDIS_URL: "redis://localhost:6379/0"
+          OPA_URL: "http://localhost:8181/v1/data/governance/policy"
+          LANGFUSE_HOST: "http://localhost:3000"
+          LANGFUSE_PUBLIC_KEY: "pk-dummy"
+          LANGFUSE_SECRET_KEY: "sk-dummy"
+        run: uv run pytest tests/ -m local -v

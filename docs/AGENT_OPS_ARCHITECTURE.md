@@ -1,0 +1,258 @@
+# Agent Ops Architecture: Defense-in-Depth for AI Governance
+
+> **Core Principle:** Separate the control plane (policy) from the data plane (execution capability) to create enforceable AI governance.
+
+## Architecture Pattern
+
+CAGE implements a **two-layer agent governance architecture** that combines policy with capability:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    AI Agent (Antigravity / Roo Code)        │
+└─────────────────────┬───────────────────────┬───────────────┘
+                      │                       │
+              ┌───────▼────────┐     ┌────────▼────────┐
+              │  Policy Layer  │     │ Capability Layer│
+              │   (The Brain)  │     │  (The Muscle)   │
+              └───────┬────────┘     └────────┬────────┘
+                      │                       │
+              ┌───────▼────────┐     ┌────────▼────────┐
+              │  .clinerules   │     │  MCP Server     │
+              │  docs/*.md     │     │  Tools API      │
+              └────────────────┘     └─────────────────┘
+                      │                       │
+                      └───────┬───────────────┘
+                              ▼
+                    Infrastructure Action
+```
+
+## Layer 1: Policy (The Brain)
+
+### Purpose
+Define **why** and **when** agents should take actions. Establish cognitive boundaries that prevent agents from violating compliance requirements even when technically capable.
+
+### Implementation
+
+| Component | Purpose | Example |
+|-----------|---------|---------|
+| **`.clinerules`** | Roo Code workspace rules | GKE deployment policy |
+| **`docs/DEPLOYMENT_RULES.md`** | Shared knowledge artifact | Comprehensive deployment matrix |
+| **`docs/*.md`** | Domain-specific policies | Security, compliance, architecture |
+
+### Example Policy
+```markdown
+**CRITICAL: When deploying to GKE, ALWAYS use Cloud Build.**
+
+❌ Never use local Docker builds for GKE
+✅ Always use ./deploy_all.sh --target gcp-gke
+```
+
+### Why This Matters
+
+Without policy, an agent facing a deployment failure might:
+1. Try local `docker build` to "see if it works"
+2. Bypass Cloud Build to "save time"
+3. Push untested images to production
+
+**The policy acts as a hard cognitive boundary**, forcing the agent to say:
+> "I am not allowed to do that because it violates our Cloud Build compliance policy."
+
+## Layer 2: Capability (The Muscle)
+
+### Purpose
+Provide **safe, typed execution** of approved actions. Prevent hallucinated commands and ensure consistent execution across all agents.
+
+### Implementation
+
+| Component | Purpose | Example |
+|-----------|---------|---------|
+| **MCP Server** | Typed tool API | `cage-infrastructure` server |
+| **Tool Schema** | Input validation | `deploy_environment` schema |
+| **Execution Sandbox** | Safe command execution | Absolute paths, timeouts |
+
+### Example Capability
+```json
+{
+  "tool": "deploy_environment",
+  "arguments": {
+    "target": "gcp-gke",
+    "environment": "dev"
+  }
+}
+```
+
+### Why This Matters
+
+Without the MCP server, an agent would have to:
+1. Type out bash commands manually
+2. Remember correct flag syntax
+3. Handle errors inconsistently
+4. Potentially hallucinate dangerous commands
+
+**The MCP server provides a strictly typed, safe sandbox** that:
+- Validates inputs before execution
+- Uses absolute paths (no environment sensitivity)
+- Enforces timeouts
+- Returns structured errors
+- Logs all operations for audit
+
+## The Synergy: Defense-in-Depth
+
+Neither layer is sufficient alone. Together, they create enforceable governance:
+
+### Scenario: Agent Asked to Deploy to GKE
+
+#### Without Either Layer ❌
+```
+Agent: *executes arbitrary bash commands*
+Result: Unpredictable, potentially dangerous
+```
+
+#### With Policy Only ⚠️
+```
+Agent: "I should use Cloud Build..."
+Agent: *types out command with hallucinated flags*
+Result: May work, may fail, inconsistent
+```
+
+#### With Capability Only ⚠️
+```
+Agent: *uses deploy_environment tool*
+Agent: "Should I use target=gcp-gke or target=agnostic?"
+Result: Technically safe, but no governance context
+```
+
+#### With Both Layers ✅
+```
+Agent: "Deployment policy requires Cloud Build for GKE"
+Agent: *uses deploy_environment(target="gcp-gke")*
+MCP Server: *validates, executes with Cloud Build*
+Result: Safe, compliant, auditable
+```
+
+## Compliance Mapping
+
+This architecture directly supports regulatory requirements:
+
+| Requirement | Policy Layer | Capability Layer |
+|-------------|--------------|------------------|
+| **ISO 42001 A.5.2** (AI deployment control) | Documents approved deployment methods | Enforces approved methods via typed API |
+| **NIST AI RMF** (Controlled deployment) | Defines when/why to use each method | Ensures consistent execution |
+| **SOC 2 CC8.1** (Change management) | Establishes change procedures | Logs all deployment actions |
+| **NIST SP 800-53 CM-2** (Baseline configuration) | Documents infrastructure patterns | Prevents configuration drift |
+
+## Real-World Example: GKE Deployment
+
+### The Problem
+An agent needs to deploy CAGE to GKE. Without governance, it might:
+- Use local Docker builds (platform inconsistency)
+- Push untested images (security risk)
+- Bypass Cloud Build (no audit trail)
+- Mix deployment methods (configuration drift)
+
+### The Solution
+
+**Policy Layer (.clinerules):**
+```markdown
+When deploying to GKE, ALWAYS use Cloud Build.
+- Rationale: Platform consistency, security scanning, audit trail
+- Command: ./deploy_all.sh --target gcp-gke
+- Prohibited: docker build && docker push
+```
+
+**Capability Layer (MCP Server):**
+```python
+@app.call_tool()
+async def deploy_environment(target: str, environment: str):
+    if target == "gcp-gke":
+        # Automatically uses Cloud Build
+        cmd = ["./deploy_all.sh", "--target", "gcp-gke", "--env", environment]
+    elif target == "agnostic":
+        # Uses local Docker
+        cmd = ["./deploy_all.sh", "--target", "agnostic", "--env", environment]
+    return await safe_execute(cmd, timeout=600)
+```
+
+**Result:**
+1. Agent reads policy → knows it must use Cloud Build for GKE
+2. Agent calls MCP tool → `deploy_environment(target="gcp-gke")`
+3. MCP server validates → ensures correct deployment method
+4. System executes → uses Cloud Build automatically
+5. Action logged → full audit trail for compliance
+
+## Benefits of This Architecture
+
+### For Security
+- **Least privilege:** Agents only have access to approved tools
+- **Input validation:** All parameters validated before execution
+- **Audit trail:** All actions logged with context
+
+### For Compliance
+- **Enforceability:** Policy is technically enforced, not just documented
+- **Consistency:** Same execution path every time
+- **Auditability:** Structured logs for compliance reviews
+
+### For Operations
+- **Reliability:** No hallucinated commands
+- **Maintainability:** Update MCP server, all agents benefit
+- **Debuggability:** Clear separation between policy and execution
+
+### For AI Safety
+- **Cognitive boundaries:** Agents understand limitations
+- **Fail-safe defaults:** MCP server prevents dangerous operations
+- **Graceful degradation:** Clear error messages guide agents
+
+## Implementation Checklist
+
+When adding new agent capabilities:
+
+- [ ] **Define policy** in `.clinerules` or `docs/*.md`
+  - [ ] What is allowed
+  - [ ] What is prohibited
+  - [ ] Why (rationale)
+  - [ ] When (conditions)
+
+- [ ] **Implement capability** in MCP server
+  - [ ] Define tool schema
+  - [ ] Validate inputs
+  - [ ] Safe execution (absolute paths, timeouts)
+  - [ ] Structured error handling
+  - [ ] Audit logging
+
+- [ ] **Test both layers**
+  - [ ] Agent understands policy
+  - [ ] Agent uses correct tool
+  - [ ] Tool validates correctly
+  - [ ] Tool executes safely
+  - [ ] Errors are clear
+
+- [ ] **Document**
+  - [ ] Policy rationale
+  - [ ] Tool usage examples
+  - [ ] Compliance mapping
+
+## Extending This Pattern
+
+This architecture can be applied to any agent operation:
+
+| Operation | Policy Document | MCP Tool |
+|-----------|----------------|----------|
+| **Deployments** | `docs/DEPLOYMENT_RULES.md` | `deploy_environment` |
+| **Infrastructure changes** | `docs/INFRASTRUCTURE_POLICY.md` | `validate_terraform` |
+| **Security scanning** | `docs/SECURITY_POLICY.md` | `run_security_scan` |
+| **Compliance checks** | `docs/COMPLIANCE_POLICY.md` | `check_compliance` |
+| **Data access** | `docs/DATA_GOVERNANCE.md` | `query_data` |
+
+## Related Documentation
+
+- [Deployment Rules](DEPLOYMENT_RULES.md) - Specific policies for CAGE deployment
+- [MCP Integration Guide](MCP_INTEGRATION_GUIDE.md) - Setting up MCP servers
+- [Infrastructure MCP Server](../mcp-servers/infrastructure/README.md) - Tool reference
+
+## Conclusion
+
+**You have successfully boxed in the LLMs.**
+
+They know the rules of the road (policy), and they have a safe vehicle to drive (MCP server).
+
+This is the gold standard for Agent Ops in regulated environments. The control plane and data plane are separated, making AI governance not just documented, but technically enforced.

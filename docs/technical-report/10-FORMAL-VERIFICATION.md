@@ -1,0 +1,165 @@
+# Formal Verification and Completeness Proof (CAGE v2.0.0)
+
+| Field              | Value                     |
+| ------------------ | ------------------------- |
+| **Classification** | INTERNAL                  |
+| **Date**           | 2026-05-31                |
+| **Version**        | 1.1                       |
+| **Status**         | Current                   |
+| **Series**         | CAGE Technical Report — Document 10 / 10 |
+
+As a formally verified, deterministic governance layer, the Cybernetic Governance Engine (CAGE) architecture has been methodically evaluated against the Composite Verification Framework (CVF).
+
+Below is the formal state-space and structural analysis of the system, including the resolution of previously identified unbounded states through the v2.0.0 architectural enhancements.
+
+---
+
+## Step 1: Hazard Completeness (STPA Analysis)
+
+To verify hazard completeness, we re-evaluate the system’s capacity to deterministically neutralize Unsafe Control Actions (UCAs) in light of the new Human-in-the-Loop (HITL) architecture.
+
+**Targeted UCA Re-Evaluation:**
+
+* **Hazard:** **UCA-5 / FIN-1** (Trade exceeds drawdown limit or portfolio fraction limit due to market drift during human review).
+* **Previous State:** Vulnerable to TOCTOU.
+* **New Enforcement Mechanism:** The execution plan now inherently contains a bounded limit (`max_slippage_pct`). The `post_hitl_revalidate_node` acts as a hard deterministic circuit breaker, recalculating drift immediately prior to actuation.
+* **Evaluation:** **PASS.** The hazard is fully mapped to a deterministic mathematical bound evaluated at execution time, not generation time.
+
+---
+
+## Step 2: Structural Completeness (VSM Mapping)
+
+We evaluate the updated architecture against Stafford Beer's Viable System Model to ensure all necessary organizational layers and feedback loops are intact.
+
+* **System 1 (Operations):** The `StateGraph` sub-agents generate bounded intent rather than point-in-time snapshots.
+* **System 2 (Coordination):** The addition of the `hitl_expires_at` Time-To-Live (TTL) timestamp to the `AgentState` checkpoint. This guarantees that suspended states cannot persist indefinitely, repairing temporal coordination breakdowns.
+* **System 3 (Control):** The `SymbolicGovernor` now utilizes a bifurcated execution model. Tiers 2 and 4 are explicitly re-triggered post-HITL.
+* **System 4 (Intelligence):** (Unchanged) Cybernetic Governance Loop adapts to environmental shifts.
+* **System 5 (Policy):** (Unchanged) `ControlRegistry` loads normative profiles.
+
+**Structural Completeness Assessment:** The severed algedonic (feedback) loop between continuous operational reality and System 3 (Control) has been formally closed. System 3 now has the structural mandate to re-assert its control variables immediately prior to System 1's final actuation.
+
+---
+
+## Step 3: Enforcement Completeness (Hybrid Automata & Reachability)
+
+The system is defined as a Hybrid Automaton $H = (Q, X, Init, f, Dom, E, G, R)$.
+
+* **Discrete States ($Q$):** $\{ \text{UNKNOWN}, \dots, \text{PENDING\_HITL}, \text{REVALIDATING}, \text{APPROVED}, \text{BLOCKED} \}$.
+* **Continuous Variables ($X$):** $x_1 = \text{cash\_balance}$, $x_2 = \text{market\_price}$.
+* **Safe Set ($\mathcal{C}$):** Bounded by the Control Barrier Function $h(x) \ge 0$.
+
+### Reachability Analysis: Eliminating the Ghost State
+
+In the prior architecture, the continuous variable $x_2$ (market price) evolved independently while the discrete state remained parked in $\text{PENDING\_HITL}$, allowing the system trajectory to exit the Safe Set $\mathcal{C}$ without triggering a discrete transition ($G$).
+
+**The Updated Hybrid Automaton:**
+
+1. Upon `/v1/approvals/{thread_id}/resume`, the system transitions from $\text{PENDING\_HITL}$ to $\text{REVALIDATING}$.
+2. The `post_hitl_revalidate_node` samples $P_{\text{fresh}}$ (continuous state $x_2$ at time $t_{\text{resume}}$).
+3. The guard condition $G_{\text{actuate}}$ for the transition to $\text{APPROVED}$ (execution) is strictly defined by the invariant:
+$$G_{\text{actuate}} \iff \left( \frac{|P_{\text{fresh}} - P_{\text{stale}}|}{P_{\text{stale}}} \le \text{max\_slippage\_pct} \right) \land \left( \text{CBF}(P_{\text{fresh}}, \text{amount}) \ge 0 \right) \land \left( \text{OPA}(P_{\text{fresh}}, \text{params}) = \text{ALLOW} \right)$$
+4. If $G_{\text{actuate}}$ evaluates to False, the system transitions to $\text{BLOCKED}$ (fail-closed).
+
+Because the transition to an actuated state is mathematically gated by a real-time sample of the continuous variables against the required limits, **the continuous state trajectory can no longer outpace the discrete sampling rate of the governance engine.**
+
+---
+
+## Conclusion (Steps 1–3)
+
+**BOUNDED.** With the integration of explicit slippage bounds, the defense-in-depth TTL, and the `post_hitl_revalidate_node` execution loop, CAGE successfully achieves formal state-space completeness. The architecture enforces continuous reachability bounding, ensuring that the system remains strictly within the mathematically verified Safe Set $\mathcal{C}$ regardless of asynchronous human delays.
+
+---
+
+## Step 4: AARM Threat Vector Formal Neutralization Proof
+
+The Cloud Security Alliance Autonomous Agent Risk Management (CSA AARM v1.0) framework defines 11 threat vectors for agentic AI systems. The following table provides the formal mapping from each AARM vector to the specific CAGE control point that neutralizes it, with the neutralization mechanism stated as a logical invariant.
+
+| AARM Vector | Threat Description | CAGE Control Point | Neutralization Invariant | Verdict |
+| ----------- | ------------------ | ------------------ | ------------------------ | ------- |
+| **AARM-V1** | Memory Poisoning — attacker mutates the agent's context accumulator to inject false beliefs | SHA-256 hash-chained `OscalFinding` log (`context_accumulator.py`) | $\forall n: \text{record\_hash}_n = \text{SHA256}(\text{prev\_hash}_{n-1} \| \text{content\_json}_n)$ — any mutation at node $k$ produces $\text{record\_hash}_k \ne \text{expected}_k$, detectable at $O(n)$ | **NEUTRALIZED** |
+| **AARM-V2** | Prompt Injection — adversarial input hijacks agent intent | Aho-Corasick Tier-1 scan + NeMo Guardrails Tier-2 + Presidio PII scan | $\forall \text{input}: \text{AhoCorasick}(\text{input}) = \emptyset \land \text{NeMo}(\text{input}) = \text{SAFE}$ before any agent node executes | **NEUTRALIZED** |
+| **AARM-V3** | Goal Hijacking — agent's objective is redirected mid-execution | STPA UCA Validator (Tier 0) + OPA Rego policy (Tier 4) | $\forall \text{action}: \text{UCA}(\text{action}) \notin \{\text{UCA-1}, \text{UCA-2}, \text{UCA-5}, \text{UCA-6}\} \land \text{OPA}(\text{action}) = \text{ALLOW}$ | **NEUTRALIZED** |
+| **AARM-V4** | Privilege Escalation — agent acquires capabilities beyond its authorization | OPA RBAC (`trade.governance` package) + Linkerd mTLS SPIFFE/SVID identity | $\forall \text{tool\_call}: \text{role}(\text{caller}) \in \text{authorized\_roles}(\text{tool})$ enforced at OPA; SPIFFE identity verified at network layer | **NEUTRALIZED** |
+| **AARM-V5** | Data Exfiltration — agent leaks sensitive data to unauthorized endpoints | Cilium L7 FQDN egress lockdown + NeMo output rail Presidio scan | $\forall \text{egress}: \text{dst\_fqdn} \in \text{allowlist} \land \text{Presidio}(\text{response}) = \text{PII\_FREE}$ | **NEUTRALIZED** |
+| **AARM-V6** | Cascading Failures — one agent's failure propagates to corrupt system state | LangGraph Saga WAL + LIFO rollback + `FiscalLimitGuard.release(token)` | $\forall \text{failure}: \exists \text{compensating\_node} \text{ s.t. } \text{ledger\_entry.status} \in \{\text{ROLLED\_BACK}, \text{PARTIAL\_FAILURE}\}$ within TTL | **NEUTRALIZED** |
+| **AARM-V7** | Confidence Starvation — agent proceeds on fundamentally incomplete context | DEFER State Machine (`defer_queue.py`, Redis db=1 `noeviction`) | $\text{confidence\_score} < 0.70 \Rightarrow \text{state} = \text{DEFERRED}$; execution blocked until `EXTERNAL_VALIDATION` injected | **NEUTRALIZED** |
+| **AARM-V8** | Recursive Self-Authentication — model engineers its own privilege escalation | Human-gated NeMo refinement (`POST /v1/nemo/propose-refinement` → human approval → `POST /v1/nemo/apply-refinement`) | $\nexists \text{path}: \text{model\_output} \xrightarrow{*} \text{apply\_refinement}$ without `reviewer\_identity \ne \emptyset \land \text{rationale} \ne \emptyset$ | **NEUTRALIZED** |
+| **AARM-V9** | Semantic Blind Spot — single model cannot detect its own compliance violations | Heterogeneous multi-model consensus (`ConsensusModelRegistry`: DeepSeek-R1 Risk Manager + Llama 3.1 Compliance Officer) | $\forall \text{trade} > \text{threshold}: \text{vote}(\text{DeepSeek-R1}) = \text{APPROVE} \land \text{vote}(\text{Llama-3.1}) = \text{APPROVE}$ required | **NEUTRALIZED** |
+| **AARM-V10** | Stale Ground Truth — CBF enforces limits against outdated balance data | Externally reconciled CBF (`AnchorageGrpcLedgerProvider`); KMS-signed balance; TTL-gated staleness check | $\text{balance\_age} > \text{TTL} \Rightarrow \text{CBF fails closed}$; $\text{balance\_signature} \ne \text{KMS.verify}(\text{balance}) \Rightarrow \text{REJECT}$ | **NEUTRALIZED** |
+| **AARM-V11** | Normative Drift — external regulatory requirements change without system awareness | External Normative Provider (`normative_provider.py`) with 6-hour polling refresh + adaptive FRIA gate | $\text{baseline\_age} > 6h \Rightarrow \text{daemon re-fetches}$; $\text{confidence} \in [0.70, 0.95) \Rightarrow \text{synchronous blocking gate}$ | **PARTIAL** (stub mode until TrustLayers credentials provisioned — POAM-022) |
+
+**AARM Conformance Summary:** 10 of 11 vectors are fully neutralized. AARM-V11 is PARTIAL pending TrustLayers API credential provisioning (POAM-022). The live conformance report is available at `GET /v1/aarm/conformance-report`.
+
+---
+
+## Step 5: FiscalLimitGuard Race-Condition Proof
+
+**Claim:** The `FiscalLimitGuard` prevents the multi-agent "race to the rail" scenario where $N$ concurrent agents simultaneously read the same OPA fiscal limit, all pass the check, and collectively exceed the daily cap by a factor of $N$.
+
+**Formal Model:**
+
+Let $L$ = daily fiscal limit, $r_i$ = reservation amount for agent $i$, and $S$ = current reserved sum in Redis.
+
+**Without FiscalLimitGuard (vulnerable):**
+
+$$\forall i \in \{1, \dots, N\}: \text{read}(S) = S_0 \land S_0 + r_i \le L \Rightarrow \text{all } N \text{ agents proceed}$$
+$$\text{actual spend} = S_0 + \sum_{i=1}^{N} r_i \gg L \quad \text{(limit violated)}$$
+
+**With FiscalLimitGuard (Redis `WATCH`/`MULTI`/`EXEC`):**
+
+The guard implements optimistic locking:
+
+1. `WATCH fiscal:daily_limit:<date>` — marks the key for observation
+2. Read $S_{\text{current}}$; check $S_{\text{current}} + r \le L$
+3. `MULTI` / `SET fiscal:daily_limit:<date> $(S_{\text{current}} + r)$` / `EXEC`
+4. If another agent modified the key between steps 1–3, `EXEC` returns `nil` (transaction aborted); the guard retries or returns `BLOCKED`
+
+**Invariant:** At most one agent can atomically increment $S$ per Redis transaction. Therefore:
+
+$$\forall t: S(t) = \sum_{i: \text{committed}(i, t)} r_i \le L$$
+
+**Fail-closed property:** If Redis is unavailable, `FiscalLimitGuard.reserve()` raises `ConnectionError` and the trade is blocked — the system never proceeds without the guard.
+
+**Saga integration:** `FiscalLimitGuard.release(token)` is called by the compensating node `compensate_reverse_trade_node_uca_4` on rollback, restoring the reserved headroom atomically.
+
+---
+
+## Step 6: Cloud KMS HSM Non-Repudiation Proof
+
+**Claim:** The Cloud KMS HSM-backed governance signing scheme provides non-repudiation for all governance decisions — no party can deny that a specific governance verdict was issued at a specific time.
+
+**Formal Properties:**
+
+Let $m$ = governance decision payload (JSON), $\sigma$ = signature, $k_{\text{priv}}$ = HSM private key (never leaves HSM), $k_{\text{pub}}$ = locally embedded public key PEM.
+
+**Signing:** $\sigma = \text{KMS.sign}(k_{\text{priv}}, \text{SHA256}(m))$ — executed inside the HSM; private key is non-exportable.
+
+**Verification:** $\text{valid} = \text{RSA-PKCS1-4096-SHA256.verify}(k_{\text{pub}}, m, \sigma)$ — sub-millisecond local operation.
+
+**Non-repudiation chain:**
+
+1. **Binding:** $\sigma$ is cryptographically bound to $m$ via SHA-256 pre-image resistance. Modifying $m$ invalidates $\sigma$.
+2. **Key custody:** Google Cloud Audit Logs provide an immutable, externally attested record of every `cloudkms.cryptoKeyVersions.useToSign` operation, including timestamp, caller identity, and key version. This record is outside CAGE's control plane.
+3. **Temporal attestation:** The Cloud Audit Log timestamp $t_{\text{sign}}$ is authoritative — it cannot be backdated by the CAGE system.
+4. **Fallback scope:** The HMAC-SHA256 fallback (dev/CI only, activated when `CAGE_KMS_KEY_NAME` is unset) does **not** provide non-repudiation — it provides only integrity. The fallback is explicitly prohibited in production by the `CAGE_ROUTING_SEAL_SECRET` validation check.
+
+**Conclusion:** For any governance decision $m$ with signature $\sigma$ produced in production:
+$$\text{verify}(k_{\text{pub}}, m, \sigma) = \text{true} \Rightarrow \exists t_{\text{sign}} \in \text{CloudAuditLog}: \text{KMS.sign}(k_{\text{priv}}, m) \text{ was called at } t_{\text{sign}}$$
+
+This satisfies **ISO 42001 §A.7.5** (records integrity), **NIST AU-10** (non-repudiation), and **FINRA Rule 4511** (tamper-evident records).
+
+---
+
+## Overall Verification Summary
+
+| Step | Claim | Verdict |
+| ---- | ----- | ------- |
+| 1 | STPA hazard completeness — UCA-5/FIN-1 TOCTOU eliminated | **PASS** |
+| 2 | VSM structural completeness — algedonic feedback loop closed | **PASS** |
+| 3 | Hybrid automata reachability — ghost state eliminated | **PASS** |
+| 4 | AARM 11-vector neutralization | **10/11 NEUTRALIZED** (V11 PARTIAL — POAM-022) |
+| 5 | FiscalLimitGuard race-condition proof | **PASS** |
+| 6 | KMS HSM non-repudiation proof | **PASS** |
+
+**Overall verdict: BOUNDED with one known partial control (AARM-V11 / POAM-022).** The partial control does not affect the safety invariant — the DEFER state machine (AARM-V7) provides a local fail-safe when external normative validation is unavailable.

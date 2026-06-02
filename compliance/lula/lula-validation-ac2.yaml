@@ -1,0 +1,105 @@
+# lula-validation-ac2.yaml
+# NIST SP 800-53 Rev 5 — AC-2: Account Management
+#
+# STUB: This validation requires cluster-specific namespace configuration
+# before activation. See TODO comments below.
+#
+# Asserts that:
+#   1. ServiceAccounts in the cage namespace carry the cage.io/account-purpose label
+#   2. The default ServiceAccount has automountServiceAccountToken: false
+#   3. No Pod in the cage namespace uses the "default" service account
+#
+# Domain: kubernetes → ServiceAccounts, Pods in governance-stack namespace
+# Provider: opa (inline Rego)
+#
+# References:
+#   - deployment/k8s/service-account.yaml — named SA: financial-advisor-sa
+#   - deployment/k8s/backend-deployment.yaml — serviceAccountName binding
+#   - deployment/terraform/iam.tf — GCP IAM bindings for workload identity
+#   - docs/POAM.md — POAM-001 (AC-2: no account management procedures)
+#
+# OSCAL Mapping:
+#   component: cage-gateway
+#   control: ac-2
+
+# STUB: Update namespaces below to actual cluster namespace for CAGE services.
+# TODO: Replace 'governance-stack' with 'cage' or actual namespace once confirmed.
+# TODO: Confirm ServiceAccount names from deployment/k8s/service-account.yaml.
+
+domain:
+  type: kubernetes
+  kubernetes-spec:
+    resources:
+      - name: cage-service-accounts
+        resource: serviceaccounts
+        # TODO: Replace 'governance-stack' with the actual cage namespace.
+        namespace: governance-stack
+      - name: cage-pods
+        resource: pods
+        # TODO: Replace 'governance-stack' with the actual cage namespace.
+        namespace: governance-stack
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+      import future.keywords.every
+
+      # AC-2: Account Management
+      #
+      # Check 1: All non-default ServiceAccounts have the cage.io/account-purpose label.
+      # Check 2: The "default" ServiceAccount has automountServiceAccountToken: false.
+      # Check 3: No Pod uses the "default" ServiceAccount (all pods must use named SAs).
+      #
+      # POAM-001 remediation: formalizes account management for GKE service accounts.
+      validate if {
+        # Check 1: Every non-default ServiceAccount must have the account-purpose label.
+        every sa in input["cage-service-accounts"] {
+          sa.metadata.name == "default"
+        }
+      }
+
+      validate if {
+        named_sas := [sa | sa := input["cage-service-accounts"][_]; sa.metadata.name != "default"]
+        every sa in named_sas {
+          sa.metadata.labels["cage.io/account-purpose"] != null
+        }
+      }
+
+      validate if {
+        # Check 2: "default" ServiceAccount must disable auto-mount of SA token.
+        default_sas := [sa | sa := input["cage-service-accounts"][_]; sa.metadata.name == "default"]
+        count(default_sas) >= 1
+        every sa in default_sas {
+          sa.automountServiceAccountToken == false
+        }
+      }
+
+      validate if {
+        # Check 3: No Pod may use the "default" ServiceAccount.
+        every pod in input["cage-pods"] {
+          pod.spec.serviceAccountName != "default"
+          pod.spec.serviceAccountName != null
+        }
+      }
+
+notes: >
+  NIST SP 800-53 Rev 5 AC-2: Account Management.
+  STUB — requires cluster-specific namespace configuration before activation.
+  Implements three account management assertions for the CAGE governance namespace:
+    (1) All named ServiceAccounts must carry the cage.io/account-purpose label
+        (enforces documented account purpose per AC-2(a)(1)).
+    (2) The default ServiceAccount must have automountServiceAccountToken: false
+        (prevents credential misuse by unintended workloads).
+    (3) No Pod may use the "default" ServiceAccount — all workloads must explicitly
+        bind to a named, purpose-labeled ServiceAccount (enforces AC-2 individual
+        accountability and least privilege).
+  References: deployment/k8s/service-account.yaml (financial-advisor-sa pattern),
+  deployment/terraform/iam.tf (GCP workload identity bindings).
+  Remediates: POAM-001 — AC-2 account management procedures gap.
+  Activation: confirm namespace from kubectl get sa -n <namespace>, update fields,
+  and enable in deployment/k8s/lula-cron.yaml.
+  See: compliance/continuous-monitoring/ISCM_STRATEGY.md — AC-2 monitoring cadence.

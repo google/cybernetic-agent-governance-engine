@@ -1,0 +1,1326 @@
+system-security-plan:
+  uuid: c9e1a2b3-d4f5-4678-9abc-def012345678
+  metadata:
+    title: Cybernetic Governance Engine (CAGE) System Security Plan
+    published: '2026-03-06T00:00:00Z'
+    last-modified: '2026-05-17T17:31:03Z'
+    version: 1.0.0-draft+stpa+stpa
+    oscal-version: 1.0.4
+    remarks: 'This System Security Plan (SSP) documents the security controls implemented
+      for the Cybernetic AI Governance Engine (CAGE), a HIGH-impact AI governance
+      platform for financial services deployed on Google Kubernetes Engine (GKE).
+      This document is a DRAFT pending Authorizing Official (AO) review and approval.
+      All TBD fields must be completed prior to submission for Authorization to Operate
+      (ATO).
+
+      '
+    props:
+    - name: classification
+      value: UNCLASSIFIED//FOR OFFICIAL USE ONLY
+    - name: impact-level
+      value: HIGH
+    - name: authorization-status
+      value: PRE-AUTHORIZATION DRAFT
+    - name: poam-reference
+      value: docs/POAM.md
+    - name: fips199-reference
+      value: compliance/categorization/FIPS199_CATEGORIZATION.md
+    roles:
+    - id: system-owner
+      title: System Owner
+      description: 'Overall responsibility for procurement, development, integration,
+        modification, operation, maintenance, and disposal of the CAGE system. Develops
+        and maintains the SSP in coordination with the ISSO.
+
+        '
+    - id: authorizing-official
+      title: Authorizing Official
+      description: 'Senior official with authority to accept organizational risk and
+        issue the Authorization to Operate (ATO) for the CAGE system.
+
+        '
+    - id: isso
+      title: Information System Security Officer
+      description: 'Primary security point of contact. Maintains SSP and POA&M, coordinates
+        control assessments, monitors continuous security posture.
+
+        '
+    - id: system-admin
+      title: System Administrator
+      description: 'Manages user accounts, applies patches, implements configuration
+        baselines, maintains system inventory per CM-8.
+
+        '
+    - id: assessor
+      title: Security Control Assessor
+      description: 'Independent assessor who conducts security control assessments
+        and produces the Security Assessment Report (SAR).
+
+        '
+    - id: ai-model-operator
+      title: AI Model Operator
+      description: 'Monitors AI model performance, manages model versioning, reviews
+        NeMo Guardrails and OPA Rego governance policies, coordinates AI incident
+        response per SR 11-7.
+
+        '
+    - id: compliance-engineer
+      title: Compliance Engineer
+      description: 'Maintains OSCAL artifacts, operates the Lula compliance-as-code
+        pipeline, generates SBOM, runs automated compliance scans.
+
+        '
+    - id: common-control-provider
+      title: Common Control Provider
+      description: 'Google Cloud Platform / GKE Platform Team responsible for inherited
+        infrastructure-level controls (PE, MP, MA, PS families).
+
+        '
+    parties:
+    - uuid: a1000001-0000-4000-8000-000000000001
+      type: person
+      name: '[SYSTEM OWNER NAME — TBD]'
+      remarks: System Owner — to be populated prior to ATO submission
+    - uuid: a1000002-0000-4000-8000-000000000002
+      type: person
+      name: '[AUTHORIZING OFFICIAL NAME — TBD]'
+      remarks: Authorizing Official — to be populated prior to ATO submission
+    - uuid: a1000003-0000-4000-8000-000000000003
+      type: person
+      name: '[ISSO NAME — TBD]'
+      remarks: ISSO — to be populated prior to ATO submission
+    - uuid: a1000004-0000-4000-8000-000000000004
+      type: person
+      name: '[SYSTEM ADMIN NAME — TBD]'
+      remarks: System Administrator — to be populated prior to ATO submission
+    - uuid: a1000005-0000-4000-8000-000000000005
+      type: person
+      name: '[SECURITY ASSESSOR NAME — TBD]'
+      remarks: Security Control Assessor — to be populated prior to assessment
+    - uuid: a1000006-0000-4000-8000-000000000006
+      type: organization
+      name: Google Cloud Platform
+      remarks: Common Control Provider — GKE/GCP FedRAMP High authorized platform
+    responsible-parties:
+    - role-id: system-owner
+      party-uuids:
+      - a1000001-0000-4000-8000-000000000001
+    - role-id: authorizing-official
+      party-uuids:
+      - a1000002-0000-4000-8000-000000000002
+    - role-id: isso
+      party-uuids:
+      - a1000003-0000-4000-8000-000000000003
+    - role-id: system-admin
+      party-uuids:
+      - a1000004-0000-4000-8000-000000000004
+    - role-id: assessor
+      party-uuids:
+      - a1000005-0000-4000-8000-000000000005
+    - role-id: common-control-provider
+      party-uuids:
+      - a1000006-0000-4000-8000-000000000006
+  import-profile:
+    href: ./sp800053-profile.yaml
+    remarks: 'Imports the CAGE-tailored SP 800-53 Rev 5 HIGH baseline profile, which
+      includes AI-specific overlay controls (SR-3, SR-11, PT-2, PT-3) and excludes
+      controls fully inherited from GCP (PE, MP, MA, PS families).
+
+      '
+  system-characteristics:
+    system-ids:
+    - id: cage-gke-prod
+      identifier-type: https://cage.internal/system-ids
+    system-name: Cybernetic Governance Engine
+    system-name-short: CAGE
+    description: 'The Cybernetic Governance Engine (CAGE) is a HIGH-impact AI governance
+      platform for financial services that enforces real-time, deterministic controls
+      over large language model (LLM) inference. CAGE implements a three-tier semantic
+      shielding architecture: Tier 1 Aho-Corasick heuristic filtering, Tier 2 Small
+      Language Model (SLM) semantic classification, and Tier 3 Open Policy Agent (OPA)
+      Rego policy enforcement. All governance decisions are emitted as OpenTelemetry
+      (OTel) spans stamped with ISO 42001 and NIST SP 800-53 control identifiers,
+      providing a continuous, machine-verifiable audit trail aligned with SEC Rule
+      17a-4 and FINRA 4511 record retention requirements.
+
+      CAGE is deployed on Google Kubernetes Engine (GKE) within the governance-stack
+      namespace and integrates with Langfuse for AI observability, NeMo Guardrails
+      for input/output rail enforcement, and Microsoft Presidio for PII detection
+      and anonymization. The system processes Financial Trade Execution Data, AI Governance
+      Audit Logs, Personally Identifiable Information (PII), and Governance Policy
+      Configurations. The system''s authorization boundary encompasses all containers
+      deployed in the governance-stack namespace, the Cloud SQL PostgreSQL database,
+      Google Cloud Storage buckets for audit log archival, and Redis cache for session
+      state. External interconnections include the Langfuse observability platform
+      (cloud-hosted SaaS) and external LLM provider APIs (OpenAI, Anthropic, Google).
+
+      '
+    security-sensitivity-level: high
+    information-types:
+    - uuid: b2000001-0000-4000-8000-000000000001
+      title: Financial Transaction Data
+      description: 'Buy/sell orders, portfolio positions, trade recommendations, and
+        AI-generated financial advice generated by the CAGE AI governance pipeline.
+        Governed by SEC Rule 17a-4, FINRA 4511, and OFAC sanctions screening requirements.
+
+        '
+      categorizations:
+      - system: https://doi.org/10.6028/NIST.SP.800-60v2r1
+        information-type-ids:
+        - C.2.8.12
+      confidentiality-impact:
+        base: moderate
+        selected: moderate
+        adjustment-justification: 'Unauthorized disclosure enables front-running or
+          market manipulation but does not rise to catastrophic harm.
+
+          '
+      integrity-impact:
+        base: high
+        selected: high
+        adjustment-justification: 'Tampering with trade orders or AI-generated recommendations
+          could result in severe financial loss, regulatory violations, and reputational
+          damage.
+
+          '
+      availability-impact:
+        base: moderate
+        selected: high
+        adjustment-justification: 'System must be available during trading hours;
+          unavailability causes business disruption and potential regulatory non-compliance.
+          Elevated from moderate to HIGH based on financial services operational requirements.
+
+          '
+    - uuid: b2000002-0000-4000-8000-000000000002
+      title: AI Governance Audit Logs
+      description: 'OTel spans with ISO 42001 evidence stamps, OSCAL assessment results,
+        Langfuse traces, governance verdicts, and STPA validation results. Required
+        for regulatory examination by SEC and FINRA.
+
+        '
+      categorizations:
+      - system: https://doi.org/10.6028/NIST.SP.800-60v2r1
+        information-type-ids:
+        - D.16.1
+      confidentiality-impact:
+        base: low
+        selected: moderate
+        adjustment-justification: 'Audit logs contain proprietary governance methodology
+          and enforcement patterns; elevated from LOW to MODERATE to protect against
+          adversarial analysis of governance bypass opportunities.
+
+          '
+      integrity-impact:
+        base: high
+        selected: high
+        adjustment-justification: 'Tampered audit records undermine the ISO 42001
+          evidence chain and obstruct regulatory examination. Integrity must be HIGH.
+
+          '
+      availability-impact:
+        base: moderate
+        selected: moderate
+    - uuid: b2000003-0000-4000-8000-000000000003
+      title: PII/User Identity Data
+      description: 'Individual investor PII processed through NeMo Guardrails Presidio
+        PII detection (16 entity types including SSN, credit card, bank numbers, passport).
+        Governed by SEC Reg S-P and FINRA privacy rules.
+
+        '
+      categorizations:
+      - system: https://doi.org/10.6028/NIST.SP.800-60v2r1
+        information-type-ids:
+        - D.2.2
+      confidentiality-impact:
+        base: high
+        selected: high
+        adjustment-justification: 'Unauthorized disclosure of investor PII causes
+          severe privacy harm, triggers SEC Reg S-P breach notification obligations.
+          Confidentiality must be HIGH.
+
+          '
+      integrity-impact:
+        base: high
+        selected: high
+        adjustment-justification: 'Corrupted PII records cause incorrect financial
+          decisions and legal liability.
+
+          '
+      availability-impact:
+        base: low
+        selected: moderate
+        adjustment-justification: 'PII records are not time-critical for system operation;
+          elevated to MODERATE to ensure audit trail continuity for regulatory examinations.
+
+          '
+    - uuid: b2000004-0000-4000-8000-000000000004
+      title: System Configuration Data
+      description: 'Rego policies, Colang rail definitions, safety thresholds, NeMo
+        Guardrails configuration, and governance policy singletons (governance_thresholds.json).
+        Governs all AI enforcement behavior.
+
+        '
+      categorizations:
+      - system: https://doi.org/10.6028/NIST.SP.800-60v2r1
+        information-type-ids:
+        - C.3.5.1
+      confidentiality-impact:
+        base: moderate
+        selected: moderate
+        adjustment-justification: 'Exposure of Rego/Colang logic reveals proprietary
+          governance methodology; MODERATE protects against adversarial reverse-engineering.
+
+          '
+      integrity-impact:
+        base: high
+        selected: high
+        adjustment-justification: 'Tampered governance policies could silently disable
+          safety controls, allowing prohibited trade actions or PII exfiltration.
+          Integrity must be HIGH.
+
+          '
+      availability-impact:
+        base: high
+        selected: high
+        adjustment-justification: 'Governance policies must be continuously available;
+          their unavailability causes the system to fail-safe (blocking all AI inference),
+          which is operationally unacceptable during trading hours.
+
+          '
+    security-impact-level:
+      security-objective-confidentiality: moderate
+      security-objective-integrity: high
+      security-objective-availability: high
+    status:
+      state: operational
+      remarks: 'CAGE is deployed and operational in GKE governance-stack namespace.
+        Pre-authorization draft SSP; ATO pending assessment completion.
+
+        '
+    authorization-boundary:
+      description: 'The authorization boundary of the CAGE system encompasses all
+        components deployed within the governance-stack Kubernetes namespace on GKE.
+        This includes the CAGE FastAPI/gRPC gateway, NeMo Guardrails server, OPA policy
+        engine, Compliance Bridge service, AgentSight eBPF monitor, and associated
+        GCP managed services (Cloud SQL PostgreSQL, Cloud Storage buckets for audit
+        archival, Redis for session state, Cloud Secret Manager for credential storage).
+        The boundary is enforced via Kubernetes NetworkPolicy restricting all ingress/egress
+        to authorized sources only. External to the boundary: Langfuse SaaS observability
+        platform (external interconnection with data flow agreement), LLM provider
+        APIs (OpenAI/Anthropic/Google), and OFAC sanctions API. GKE cluster infrastructure
+        (physical, hypervisor, network fabric) is managed by Google Cloud Platform
+        as Common Control Provider and is inherited via GCP FedRAMP High authorization.
+
+        '
+      props:
+      - name: namespace
+        value: governance-stack
+      - name: cluster-type
+        value: Google Kubernetes Engine (GKE)
+      - name: network-policy-enforced
+        value: 'true'
+        remarks: deployment/k8s/network-policy.yaml
+      - name: poam-gap-mtls
+        value: POAM-013
+        remarks: mTLS between services pending — NetworkPolicy is primary control
+    network-architecture:
+      description: 'CAGE is deployed in a single GKE cluster spanning multiple availability
+        zones. All inter-service communication is restricted to the governance-stack
+        namespace via Kubernetes NetworkPolicy (deployment/k8s/network-policy.yaml).
+        Inbound traffic is routed through a Cloud Load Balancer to the CAGE gateway
+        service. Outbound traffic egresses via Cloud NAT (nat-config-{region}) for
+        controlled egress to external LLM APIs and Langfuse. All external traffic
+        uses TLS 1.3. Internal service-to-service communication uses gRPC and HTTP
+        over in-cluster networking; mTLS implementation is planned per POAM-013. GCP
+        VPC networking provides network isolation at the hypervisor level inherited
+        from GCP FedRAMP High authorization. The Redis cache, Cloud SQL PostgreSQL,
+        and Cloud Storage are accessed via Private Service Connect or VPC-native routes,
+        not exposed to the public internet.
+
+        '
+      diagrams:
+      - uuid: c3000001-0000-4000-8000-000000000001
+        description: CAGE network architecture diagram
+        links:
+        - href: docs/GATEWAY_ARCHITECTURE.md
+          rel: reference
+          text: Gateway Architecture Documentation
+        - href: docs/INFERENCE_GATEWAY_ARCHITECTURE.md
+          rel: reference
+          text: Inference Gateway Architecture
+    data-flow:
+      description: 'Inbound: Client applications and end-user API consumers submit
+        requests via gRPC or REST over TLS 1.3 to the CAGE gateway. Market data feeds
+        enter via HTTPS. Financial Trade Data (IT-001) and PII (IT-004) are received
+        at the gateway boundary.
+
+        Internal processing pipeline: Gateway → NeMo Guardrails (gRPC, intra-cluster;
+        Presidio PII masking strips PII before any external egress) → OPA Policy Engine
+        (HTTP, intra-cluster; fiscal limits and RBAC enforcement) → LLM inference
+        layer. All services emit OTel spans to the Langfuse collector endpoint. AgentSight
+        eBPF monitor observes kernel-level syscalls for anomaly detection without
+        data exfiltration.
+
+        Outbound: PII-redacted inference requests exit to external LLM provider APIs
+        (OpenAI/Anthropic/Google) via Cloud NAT over HTTPS. OFAC sanctions API queries
+        exit via Cloud NAT. Audit logs (OTel spans) flow to Langfuse SaaS over HTTPS
+        and are archived to GCS buckets for long-term retention per SEC Rule 17a-4.
+
+        Data at rest: Cloud SQL PostgreSQL stores Langfuse metadata and session data
+        encrypted with CMEK. GCS buckets store audit log archives with object versioning
+        and CMEK encryption. Redis cache stores transient session state (TTL-bounded).
+        Kubernetes Secrets reference Cloud Secret Manager for credential storage.
+
+        '
+      diagrams:
+      - uuid: c3000002-0000-4000-8000-000000000002
+        description: CAGE data flow diagram
+        links:
+        - href: compliance/oscal/information-type-registry.yaml
+          rel: reference
+          text: Information Type Registry with data flow summary
+  system-implementation:
+    remarks: 'System implementation documents the users, software components, and
+      inventory items within the CAGE authorization boundary. Component UUIDs reference
+      the existing component-definition.yaml where applicable. This section must be
+      updated whenever new components are added or existing components are significantly
+      modified.
+
+      '
+    users:
+    - uuid: d4000001-0000-4000-8000-000000000001
+      title: API User
+      short-name: api-user
+      description: 'External client applications and end-user API consumers who submit
+        financial advisory queries via the CAGE gRPC/REST gateway. Authenticated via
+        API keys stored in Cloud Secret Manager; access limited to inference endpoints
+        only.
+
+        '
+      role-ids:
+      - api-consumer
+      props:
+      - name: sensitivity-level
+        value: moderate
+      - name: authentication-method
+        value: API Key (Cloud Secret Manager)
+    - uuid: d4000002-0000-4000-8000-000000000002
+      title: Administrative User
+      short-name: admin-user
+      description: 'System administrators with kubectl and GCP IAM access to manage
+        cluster configuration, apply patches, and perform account management. Access
+        requires MFA and is governed by AC-2 account management procedures.
+
+        '
+      role-ids:
+      - system-admin
+      props:
+      - name: sensitivity-level
+        value: high
+      - name: authentication-method
+        value: GCP IAM + MFA
+      - name: privileged-access
+        value: 'true'
+    - uuid: d4000003-0000-4000-8000-000000000003
+      title: Auditor User
+      short-name: auditor-user
+      description: 'Read-only access to Langfuse dashboards, compliance reports, and
+        audit log archives. Used by ISSO, compliance engineers, and external assessors
+        during assessment activities.
+
+        '
+      role-ids:
+      - isso
+      - assessor
+      - compliance-engineer
+      props:
+      - name: sensitivity-level
+        value: moderate
+      - name: authentication-method
+        value: GCP IAM read-only role
+    - uuid: d4000004-0000-4000-8000-000000000004
+      title: AI Model Operator
+      short-name: ai-model-operator
+      description: 'Personnel who manage AI model versions, tune NeMo Guardrails Colang
+        rail definitions, review OPA Rego governance policies, and monitor AI model
+        performance via Langfuse dashboards per SR 11-7 model risk management.
+
+        '
+      role-ids:
+      - ai-model-operator
+      props:
+      - name: sensitivity-level
+        value: high
+      - name: authentication-method
+        value: GCP IAM + MFA
+    components:
+    - uuid: e5000001-0000-4000-8000-000000000001
+      type: software
+      title: CAGE Gateway
+      description: 'FastAPI/gRPC hybrid gateway serving as the primary ingress enforcement
+        layer. Implements three-tier semantic shielding: Tier 1 Aho-Corasick heuristic,
+        Tier 2 SLM semantic classification, Tier 3 OPA policy enforcement. Emits OTel
+        spans stamped with ISO 42001 and NIST SP 800-53 control identifiers.
+
+        '
+      purpose: 'Provides the system''s authorization boundary ingress point, enforcing
+        all governance controls before any request reaches the LLM inference layer.
+
+        '
+      status:
+        state: operational
+      responsible-roles:
+      - role-id: system-admin
+        party-uuids:
+        - a1000004-0000-4000-8000-000000000004
+      props:
+      - name: software-version
+        value: TBD — see SBOM
+      - name: container-image
+        value: cage-gateway:latest
+      - name: namespace
+        value: governance-stack
+    - uuid: e5000002-0000-4000-8000-000000000002
+      type: software
+      title: NeMo Guardrails Server
+      description: 'NVIDIA NeMo Guardrails applying Colang-defined input/output rails.
+        Integrates Microsoft Presidio for PII entity detection and anonymization across
+        16 PII entity types before any data egresses the cluster.
+
+        '
+      purpose: 'Prevents PII transmission to external AI suppliers. Implements A.9.2
+        ISO 42001 data transfer controls and PT-2/PT-3 NIST SP 800-53 PII controls.
+
+        '
+      status:
+        state: operational
+      responsible-roles:
+      - role-id: ai-model-operator
+      props:
+      - name: container-image
+        value: nemo-guardrails:latest
+      - name: namespace
+        value: governance-stack
+      - name: pii-masking
+        value: Microsoft Presidio (16 entity types)
+    - uuid: e5000003-0000-4000-8000-000000000003
+      type: software
+      title: OPA Policy Engine
+      description: 'Open Policy Agent evaluating Rego policies (finance_policy.rego,
+        system_authz.rego, trade_policy.rego) on every trade execution request. Enforces
+        RBAC role limits (junior: $5k/$10k; senior: $500k/$1M) and fiscal thresholds.
+        Decision logs captured by Cloud Logging.
+
+        '
+      purpose: 'Provides deterministic, auditable policy enforcement independent of
+        LLM reasoning. Implements AC-3 access enforcement and CM-6 configuration settings.
+
+        '
+      status:
+        state: operational
+      responsible-roles:
+      - role-id: compliance-engineer
+      props:
+      - name: container-image
+        value: openpolicyagent/opa:latest-rootless
+      - name: namespace
+        value: governance-stack
+      - name: policy-files
+        value: finance_policy.rego, system_authz.rego, trade_policy.rego
+    - uuid: e5000004-0000-4000-8000-000000000004
+      type: software
+      title: Compliance Bridge Service
+      description: 'Python service aggregating OTel spans into time-windowed safety_rate
+        metrics, parsing OSCAL assessment results, and triggering Slack/PagerDuty
+        alerts for compliance violations. Runs automated_auditor.py for continuous
+        AU-12 audit record generation and review.
+
+        '
+      purpose: 'Implements AU-12 audit record generation, IR-6 incident reporting
+        notifications, and continuous compliance monitoring per CA-7.
+
+        '
+      status:
+        state: operational
+      responsible-roles:
+      - role-id: isso
+      props:
+      - name: container-image
+        value: cage-compliance-bridge:latest
+      - name: namespace
+        value: governance-stack
+    - uuid: e5000005-0000-4000-8000-000000000005
+      type: software
+      title: AgentSight eBPF Monitor
+      description: 'eBPF-based kernel-level monitoring agent that observes syscalls,
+        network connections, and file access patterns of AI workloads without requiring
+        application code changes. Provides runtime anomaly detection.
+
+        '
+      purpose: 'Implements SI-4 information system monitoring and AU-2 audit event
+        generation at the kernel level, providing tamper-resistant observability.
+
+        '
+      status:
+        state: operational
+      responsible-roles:
+      - role-id: system-admin
+      props:
+      - name: deployment-type
+        value: DaemonSet (privileged)
+      - name: namespace
+        value: governance-stack
+    - uuid: e5000006-0000-4000-8000-000000000006
+      type: software
+      title: Langfuse Observability
+      description: 'AI observability platform receiving OTel spans from all CAGE components.
+        Provides trace aggregation, prompt/response logging, compliance dashboards,
+        and long-term audit log storage. External interconnection (SaaS).
+
+        '
+      purpose: 'Implements AU-2/AU-12 audit record storage and CA-7 continuous monitoring
+        dashboard. Audit logs are archived from Langfuse to GCS for SEC Rule 17a-4
+        retention compliance.
+
+        '
+      status:
+        state: operational
+      responsible-roles:
+      - role-id: compliance-engineer
+      props:
+      - name: component-type
+        value: external-interconnection
+      - name: data-sharing-agreement
+        value: TBD — Langfuse DPA required before ATO
+      - name: poam-gap
+        value: 'POAM-TBD: Langfuse DPA'
+    - uuid: e5000007-0000-4000-8000-000000000007
+      type: service
+      title: Google Kubernetes Engine (GKE) Cluster
+      description: 'Google Kubernetes Engine cluster hosting the governance-stack
+        namespace. Provides container orchestration, Workload Identity, Binary Authorization,
+        Container Analysis API, and multi-zone availability. Managed by Google Cloud
+        Platform as Common Control Provider.
+
+        '
+      purpose: 'Leveraged authorization platform. GKE/GCP provides inherited controls
+        for PE, MP, MA, PS control families per GCP FedRAMP High authorization. CAGE
+        layers application-level controls on top of the inherited GCP platform controls.
+
+        '
+      status:
+        state: operational
+      responsible-roles:
+      - role-id: common-control-provider
+        party-uuids:
+        - a1000006-0000-4000-8000-000000000006
+      props:
+      - name: component-type
+        value: leveraged-authorization
+      - name: fedramp-package
+        value: GCP FedRAMP High Authorization Package
+      - name: authorization-reference
+        value: compliance/oscal/common-controls-catalog.yaml
+      - name: namespace
+        value: governance-stack
+    inventory-items:
+    - uuid: f6000001-0000-4000-8000-000000000001
+      description: CAGE Gateway container — governance-stack namespace
+      props:
+      - name: asset-type
+        value: container
+      - name: asset-id
+        value: cage-gateway
+      - name: software-version
+        value: TBD
+      responsible-parties:
+      - role-id: system-admin
+        party-uuids:
+        - a1000004-0000-4000-8000-000000000004
+      implemented-components:
+      - component-uuid: e5000001-0000-4000-8000-000000000001
+    - uuid: f6000002-0000-4000-8000-000000000002
+      description: NeMo Guardrails Server container — governance-stack namespace
+      props:
+      - name: asset-type
+        value: container
+      - name: asset-id
+        value: nemo-guardrails
+      responsible-parties:
+      - role-id: ai-model-operator
+      implemented-components:
+      - component-uuid: e5000002-0000-4000-8000-000000000002
+    - uuid: f6000003-0000-4000-8000-000000000003
+      description: OPA Policy Engine container — governance-stack namespace
+      props:
+      - name: asset-type
+        value: container
+      - name: asset-id
+        value: opa-policy-engine
+      responsible-parties:
+      - role-id: compliance-engineer
+      implemented-components:
+      - component-uuid: e5000003-0000-4000-8000-000000000003
+    - uuid: f6000004-0000-4000-8000-000000000004
+      description: Compliance Bridge Service container — governance-stack namespace
+      props:
+      - name: asset-type
+        value: container
+      - name: asset-id
+        value: compliance-bridge
+      responsible-parties:
+      - role-id: isso
+      implemented-components:
+      - component-uuid: e5000004-0000-4000-8000-000000000004
+    - uuid: f6000005-0000-4000-8000-000000000005
+      description: AgentSight eBPF Monitor DaemonSet — governance-stack namespace
+      props:
+      - name: asset-type
+        value: container
+      - name: asset-id
+        value: agentsight
+      responsible-parties:
+      - role-id: system-admin
+      implemented-components:
+      - component-uuid: e5000005-0000-4000-8000-000000000005
+    - uuid: f6000006-0000-4000-8000-000000000006
+      description: Cloud SQL PostgreSQL — Langfuse metadata and session store
+      props:
+      - name: asset-type
+        value: database
+      - name: asset-id
+        value: cloudsql-postgres
+      - name: encryption
+        value: CMEK
+      responsible-parties:
+      - role-id: system-admin
+      implemented-components:
+      - component-uuid: e5000007-0000-4000-8000-000000000007
+    - uuid: f6000007-0000-4000-8000-000000000007
+      description: GCS Audit Log Archive buckets — SEC Rule 17a-4 retention
+      props:
+      - name: asset-type
+        value: storage
+      - name: asset-id
+        value: gcs-audit-archive
+      - name: encryption
+        value: CMEK
+      - name: versioning
+        value: enabled
+      responsible-parties:
+      - role-id: compliance-engineer
+      implemented-components:
+      - component-uuid: e5000007-0000-4000-8000-000000000007
+  control-implementation:
+    description: CAGE SP 800-53 HIGH baseline control implementations
+    set-parameters:
+    - param-id: ac-1_prm_1
+      values:
+      - annually and upon significant system change
+      remarks: AC-1 policy review frequency
+    - param-id: ac-2_prm_1
+      values:
+      - 90 days for inactive accounts; immediate upon role change or separation
+      remarks: AC-2 account review frequency
+    - param-id: au-2_prm_1
+      values:
+      - authentication events, authorization decisions, governance verdict issuance,
+        policy-violation, ai-governance-decision, prompt-injection-attempt, configuration
+        changes, privileged function execution, account management events, system
+        startup and shutdown
+      remarks: AU-2 auditable event types — extended for AI governance events
+    - param-id: au-9_prm_1
+      values:
+      - OTel spans → Langfuse → GCS WORM-equivalent (object versioning + retention
+        policy)
+      remarks: AU-9 audit log protection mechanism
+    - param-id: sc-8_prm_1
+      values:
+      - TLS 1.3 for all external communications; NetworkPolicy for intra-cluster;
+        mTLS planned (POAM-013)
+      remarks: SC-8 transmission confidentiality protection
+    implemented-requirements:
+    - uuid: g7000001-0000-4000-8000-000000000001
+      control-id: ac-2
+      description: 'Account management for CAGE is partially implemented. GCP IAM
+        manages organizational user accounts with role-based access bindings. Kubernetes
+        RBAC (ClusterRoleBindings, RoleBindings) controls access to governance-stack
+        namespace resources. Service accounts use Workload Identity (financial-advisor-sa,
+        agentsight-ui-sa) with least-privilege IAM roles per deployment/terraform/iam.tf.
+        POAM-001 tracks the gap: formal AC-2 account management procedures (periodic
+        review cadence, documented approval workflow, and offboarding checklist) are
+        not yet fully documented and enforced.
+
+        '
+      props:
+      - name: implementation-status
+        value: partially-implemented
+      - name: poam-reference
+        value: POAM-001
+      responsible-roles:
+      - role-id: system-admin
+      by-components:
+      - component-uuid: e5000007-0000-4000-8000-000000000007
+        uuid: h8000001-0000-4000-8000-000000000001
+        description: 'GKE Workload Identity provides service account isolation. GCP
+          IAM enforces role-based access for human users. Kubernetes RBAC enforces
+          namespace-level access boundaries.
+
+          '
+        implementation-status:
+          state: partially-implemented
+        remarks: Formal review procedures documented in docs/ROLES_AND_RESPONSIBILITIES.md;
+          automated review workflow pending POAM-001
+    - uuid: g7000002-0000-4000-8000-000000000002
+      control-id: ac-3
+      description: 'Access enforcement is implemented via Open Policy Agent (OPA)
+        evaluating Rego policies on every request. The system_authz.rego policy enforces
+        RBAC role-based access decisions. The finance_policy.rego enforces fiscal
+        limits by role (junior: $5,000/$10,000 single/daily; senior: $500,000/$1,000,000).
+        OPA decisions are logged to stdout and captured by Cloud Logging for audit.
+        All OPA enforce decisions are emitted as OTel spans tagged with control-id
+        AC-3 for automated compliance verification via Lula.
+
+        '
+      props:
+      - name: implementation-status
+        value: implemented
+      responsible-roles:
+      - role-id: compliance-engineer
+      by-components:
+      - component-uuid: e5000003-0000-4000-8000-000000000003
+        uuid: h8000002-0000-4000-8000-000000000002
+        description: 'OPA policy engine evaluates system_authz.rego and finance_policy.rego
+          for all trade execution and inference requests. Policy files: src/governed_financial_advisor/governance/policy/finance_policy.rego,
+          deployment/system_authz.rego. Automated assertion via Lula: compliance/lula/lula-validation-ac3.yaml.
+
+          '
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../compliance/lula/lula-validation-ac3.yaml
+          rel: reference
+          text: Lula automated validation for AC-3
+    - uuid: g7000003-0000-4000-8000-000000000003
+      control-id: au-2
+      description: 'Auditable events are implemented via OpenTelemetry (OTel) spans
+        emitted by all CAGE components. Events include: authentication events, authorization
+        decisions, governance verdict issuance (allow/deny), policy-violation detections,
+        ai-governance-decision events (with model version metadata), prompt-injection-attempt
+        detections, configuration changes, privileged function executions, account
+        management events, and system startup/shutdown. All OTel spans carry control
+        identifiers (iso42001.control_id and nist.control_id) for automated compliance
+        verification. AgentSight eBPF monitor captures kernel-level events.
+
+        '
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: ai-specific-events
+        value: ai-governance-decision, policy-violation, prompt-injection-attempt
+      responsible-roles:
+      - role-id: isso
+      by-components:
+      - component-uuid: e5000001-0000-4000-8000-000000000001
+        uuid: h8000003-0000-4000-8000-000000000003
+        description: 'CAGE Gateway emits OTel spans for all governance decisions.
+          gateway/tracing_setup.py configures the OTel SDK with Langfuse exporter.
+          All enforcement events include nist.control_id=AU-2 attribute.
+
+          '
+        implementation-status:
+          state: implemented
+      - component-uuid: e5000005-0000-4000-8000-000000000005
+        uuid: h8000003-0000-4000-8000-000000000004
+        description: 'AgentSight eBPF monitor captures kernel-level syscall events
+          for all AI workload containers, providing tamper-resistant OS-level audit.
+
+          '
+        implementation-status:
+          state: implemented
+    - uuid: g7000004-0000-4000-8000-000000000004
+      control-id: au-12
+      description: 'Audit record generation is implemented by scripts/automated_auditor.py,
+        which runs on a scheduled basis (cron) to aggregate OTel spans from Langfuse
+        into structured audit records. Each audit record includes: event type, timestamp,
+        user/service identity, resource accessed, governance outcome, and control
+        identifier. Audit records are exported to GCS buckets for long-term retention
+        per SEC Rule 17a-4. The Compliance Bridge Service triggers Slack/PagerDuty
+        alerts when safety_rate thresholds are breached.
+
+        '
+      props:
+      - name: implementation-status
+        value: implemented
+      responsible-roles:
+      - role-id: compliance-engineer
+      by-components:
+      - component-uuid: e5000004-0000-4000-8000-000000000004
+        uuid: h8000004-0000-4000-8000-000000000005
+        description: 'Compliance Bridge Service (src/compliance_bridge/audit_workflow.py)
+          aggregates OTel spans and generates OSCAL assessment result records. scripts/automated_auditor.py
+          performs scheduled audit trail generation. Lula validation: compliance/lula/lula-validation-au12.yaml.
+
+          '
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../compliance/lula/lula-validation-au12.yaml
+          rel: reference
+          text: Lula automated validation for AU-12
+    - uuid: g7000005-0000-4000-8000-000000000005
+      control-id: cm-6
+      description: 'Configuration settings are managed via a Pydantic validation singleton
+        (src/gateway/governance/singletons.py) loading governance_thresholds.json
+        and safety_params.json. Pydantic schema enforcement prevents invalid configuration
+        values from being applied at runtime. Kubernetes ConfigMaps and Cloud Secret
+        Manager provide the configuration injection mechanism. IaC (Terraform) manages
+        all infrastructure configuration in version-controlled HCL, enforcing reproducible
+        configuration baselines per the CIS Kubernetes Benchmark.
+
+        '
+      props:
+      - name: implementation-status
+        value: implemented
+      responsible-roles:
+      - role-id: system-admin
+      by-components:
+      - component-uuid: e5000001-0000-4000-8000-000000000001
+        uuid: h8000005-0000-4000-8000-000000000006
+        description: 'governance_thresholds.json loaded via Pydantic singleton ensures
+          all configuration values are validated against schema before application.
+          Changes require PR review and CI validation per docs/CHANGE_MANAGEMENT_PROCESS.md.
+          Lula validation: compliance/lula/lula-validation-cm6.yaml.
+
+          '
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../compliance/lula/lula-validation-cm6.yaml
+          rel: reference
+          text: Lula automated validation for CM-6
+    - uuid: g7000006-0000-4000-8000-000000000006
+      control-id: ia-5
+      description: 'Authenticator management is partially implemented. GCP IAM manages
+        organizational user credentials with MFA enforcement for privileged access.
+        API keys for external clients are stored in Cloud Secret Manager with rotation
+        capability. Service-to-service authentication uses GCP Workload Identity (IA-5(1)
+        PKI-based). POAM-014 tracks the gap: formal authenticator lifecycle procedures
+        (maximum lifetime, reuse restrictions, rotation enforcement) are not fully
+        documented for all credential types. The .env.example pattern documents credential
+        injection but automated rotation for Langfuse API keys is pending.
+
+        '
+      props:
+      - name: implementation-status
+        value: partially-implemented
+      - name: poam-reference
+        value: POAM-014
+      responsible-roles:
+      - role-id: system-admin
+      by-components:
+      - component-uuid: e5000007-0000-4000-8000-000000000007
+        uuid: h8000006-0000-4000-8000-000000000007
+        description: 'GCP Workload Identity provides cryptographic service account
+          credentials. Cloud Secret Manager stores and version-controls API keys.
+          Automated rotation for Langfuse API keys pending POAM-014.
+
+          '
+        implementation-status:
+          state: partially-implemented
+    - uuid: g7000007-0000-4000-8000-000000000007
+      control-id: ir-1
+      description: 'Incident response policy and procedures are documented in the
+        CAGE Incident Response Plan referenced in docs/NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md
+        and the ISCM strategy (compliance/continuous-monitoring/ISCM_STRATEGY.md).
+        The policy establishes: incident classification (P1/P2/P3), response time
+        objectives, escalation procedures, and roles/responsibilities per docs/ROLES_AND_RESPONSIBILITIES.md.
+        Policy review occurs annually and upon significant system change.
+
+        '
+      props:
+      - name: implementation-status
+        value: implemented
+      responsible-roles:
+      - role-id: isso
+      by-components:
+      - component-uuid: e5000004-0000-4000-8000-000000000004
+        uuid: h8000007-0000-4000-8000-000000000008
+        description: 'Compliance Bridge Service implements automated incident detection
+          via safety_rate threshold monitoring. Incident response procedures are documented
+          with role assignments. Policy reviewed annually per CM-1 cycle.
+
+          '
+        implementation-status:
+          state: implemented
+    - uuid: g7000008-0000-4000-8000-000000000008
+      control-id: ir-6
+      description: 'Incident reporting is partially implemented. The Compliance Bridge
+        Service (src/compliance_bridge/notifier.py) sends Slack notifications for
+        compliance violations and threshold breaches. OTel span-based alerting triggers
+        on ai-governance-decision failures and policy-violation events. PagerDuty
+        integration for P1/P2 escalation is planned but not yet implemented; this
+        gap is tracked and the automated Slack notification provides interim reporting
+        capability. External incident reporting to regulators (SEC, FINRA) follows
+        manual procedures documented in the IR plan.
+
+        '
+      props:
+      - name: implementation-status
+        value: partially-implemented
+      - name: current-capability
+        value: Slack notifications via compliance_bridge/notifier.py
+      - name: planned-capability
+        value: PagerDuty P1/P2 escalation (pending)
+      responsible-roles:
+      - role-id: isso
+      by-components:
+      - component-uuid: e5000004-0000-4000-8000-000000000004
+        uuid: h8000008-0000-4000-8000-000000000009
+        description: 'src/compliance_bridge/notifier.py implements Slack alert notifications.
+          PagerDuty integration pending. Manual escalation procedures documented in
+          IR plan for external regulatory reporting.
+
+          '
+        implementation-status:
+          state: partially-implemented
+    - uuid: g7000009-0000-4000-8000-000000000009
+      control-id: ra-5
+      description: 'Vulnerability scanning is planned and partially implemented via
+        the GitHub Actions security scanning workflow (.github/workflows/security-scan.yml),
+        which runs pip-audit, Trivy SBOM/CVE scanning, and OPA policy tests on every
+        push to main. GKE Container Analysis API provides image vulnerability scanning.
+        POAM-010 tracks the gap: regular cadence (weekly/monthly) for authenticated
+        vulnerability scanning against the running cluster is not yet fully operationalized,
+        and a formal vulnerability management SOP defining scan frequency, triage
+        procedures, and remediation timeframes is pending.
+
+        '
+      props:
+      - name: implementation-status
+        value: planned
+      - name: poam-reference
+        value: POAM-010
+      - name: current-tools
+        value: pip-audit, Trivy, OPA test, GKE Container Analysis API
+      responsible-roles:
+      - role-id: compliance-engineer
+      by-components:
+      - component-uuid: e5000007-0000-4000-8000-000000000007
+        uuid: h8000009-0000-4000-8000-000000000010
+        description: '.github/workflows/security-scan.yml provides CI-triggered scanning.
+          GKE Container Analysis API provides image scanning. Lula validation: compliance/lula/lula-validation-ra5.yaml.
+          Authenticated periodic scanning SOP pending POAM-010.
+
+          '
+        implementation-status:
+          state: planned
+        links:
+        - href: ../../compliance/lula/lula-validation-ra5.yaml
+          rel: reference
+          text: Lula automated validation for RA-5
+    - uuid: g7000010-0000-4000-8000-000000000010
+      control-id: sc-8
+      description: 'Transmission confidentiality and integrity is partially implemented.
+        All external communications use TLS 1.3 (gateway ingress, LLM API egress,
+        Langfuse OTel export). Kubernetes NetworkPolicy (deployment/k8s/network-policy.yaml)
+        restricts intra-cluster traffic to authorized service pairs only. POAM-013
+        tracks the gap: mutual TLS (mTLS) for intra-cluster service-to-service communications
+        is not yet implemented. The current gRPC-based internal communication relies
+        on Kubernetes network isolation rather than per-connection authentication.
+        mTLS implementation (via Istio or Linkerd service mesh) is planned for Phase
+        3.
+
+        '
+      props:
+      - name: implementation-status
+        value: partially-implemented
+      - name: poam-reference
+        value: POAM-013
+      - name: current-capability
+        value: TLS 1.3 external + Kubernetes NetworkPolicy intra-cluster
+      - name: planned-capability
+        value: mTLS intra-cluster via service mesh (Phase 3)
+      responsible-roles:
+      - role-id: system-admin
+      by-components:
+      - component-uuid: e5000007-0000-4000-8000-000000000007
+        uuid: h8000010-0000-4000-8000-000000000011
+        description: 'Kubernetes NetworkPolicy enforces intra-cluster traffic restrictions.
+          TLS 1.3 enforced for all external communications. mTLS pending POAM-013
+          (Phase 3 service mesh implementation).
+
+          '
+        implementation-status:
+          state: partially-implemented
+      - component-uuid: e5000001-0000-4000-8000-000000000001
+        uuid: h8000010-0000-4000-8000-000000000012
+        description: 'CAGE Gateway enforces TLS 1.3 for all inbound client connections
+          and outbound LLM provider API connections.
+
+          '
+        implementation-status:
+          state: implemented
+    - uuid: g7000099-stpa-4000-8000-compiler00001
+      control-id: sa-11
+      description: "The STPA-to-Policy Compiler implements a deterministic, design-time\
+        \ safety\n          control that translates STAMP/STPA Unsafe Control Action\
+        \ (UCA) analysis\n          directly into runtime-enforceable governance artifacts.\
+        \ This eliminates the\n          \"Natural Language Tax\" — the compliance\
+        \ gap between human-readable safety\n          specifications and the actual\
+        \ code running in the cluster.\n\n          Compiler source: src/gateway/governance/stpa_compiler.py\n\
+        \          Control structure (source of truth): config/stpa_control_structure.yaml\n\
+        \          Generated artifacts:\n            - config/opa/generated_stpa_policy.rego\
+        \    (OPA Rego — 5 UCAs)\n            - config/rails/generated_stpa_rails.co\
+        \     (NeMo Colang — 3 UCAs)\n            - src/gateway/governance/generated_stpa_validator.py\
+        \ (Python — 6 UCAs)\n\n          System: CAGE Financial Advisor v1.1.0\n \
+        \         UCAs encoded: 9\n          Hazards modelled: 6\n          Safety\
+        \ constraints: 3\n          Last compiled: 2026-05-17T17:31:03Z\n\n      \
+        \    UCA-to-Control mapping:\n            UCA-1 (unsafe_action): Agent executes\
+        \ write operation without a signed approval token.\n  → NIST: AC-3 (Access\
+        \ Enforcement), SC-4 (Information in Shared System Resources / Fiscal Limits)\n\
+        \  → ISO 42001: A.8.4\nUCA-2 (wrong_timing): Agent executes trade with stale\
+        \ market data (latency > threshold).\n  → NIST: CM-6 (Configuration Settings),\
+        \ SA-11 (Developer Testing and Evaluation)\n  → ISO 42001: A.8.4, A.6.2\n\
+        UCA-3 (unsafe_action): Agent outputs PII to user interface.\n  → NIST: AC-3\
+        \ (Access Enforcement), SC-28 (Protection of Information at Rest)\n  → ISO\
+        \ 42001: A.9.2\nUCA-4 (stopped_too_soon): Agent debits account but fails to\
+        \ credit asset (atomic failure).\n  → NIST: SI-7 (Software, Firmware, and\
+        \ Information Integrity), AU-10 (Non-Repudiation)\n  → ISO 42001: A.8.4\n\
+        UCA-5 (unsafe_action): Agent executes buy order when daily drawdown exceeds\
+        \ limit.\n  → NIST: AC-3 (Access Enforcement), SC-4 (Information in Shared\
+        \ System Resources / Fiscal Limits)\n  → ISO 42001: A.8.4, A.6.2\nUCA-6 (wrong_timing):\
+        \ Agent submits market order exceeding allowable fraction of daily volume.\n\
+        \  → NIST: SC-4 (Information in Shared System Resources / Fiscal Limits),\
+        \ SI-3 (Malicious Code Protection)\n  → ISO 42001: A.8.4, A.6.2\nUCA-7 (unsafe_action):\
+        \ Adversarial prompt injection score exceeds detection threshold.\n  → NIST:\
+        \ SC-4 (Information in Shared System Resources / Fiscal Limits), SI-3 (Malicious\
+        \ Code Protection)\n  → ISO 42001: A.5.2\nUCA-8 (wrong_timing): Agent executes\
+        \ trade before risk assessment is complete.\n  → NIST: AC-3 (Access Enforcement),\
+        \ SA-11 (Developer Testing and Evaluation)\n  → ISO 42001: A.8.4\nUCA-9 (wrong_timing):\
+        \ Agent executes trade with compliance check bypassed.\n  → NIST: AC-3 (Access\
+        \ Enforcement), CM-6 (Configuration Settings)\n  → ISO 42001: A.8.4"
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: stpa-compiler-version
+        value: 1.1.0
+      - name: uca-count
+        value: '9'
+      - name: hazard-count
+        value: '6'
+      - name: last-compiled
+        value: '2026-05-17T17:31:03Z'
+      - name: artifact-opa
+        value: config/opa/generated_stpa_policy.rego
+      - name: artifact-nemo
+        value: config/rails/generated_stpa_rails.co
+      - name: artifact-python
+        value: src/gateway/governance/generated_stpa_validator.py
+      - name: compiler-source
+        value: src/gateway/governance/stpa_compiler.py
+      responsible-roles:
+      - role-id: compliance-engineer
+      by-components:
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00000
+        description: 'STPA compiler enforces AC-3 (Access Enforcement) via generated
+          artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
+          (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
+          validator). UCAs covered: UCA-1, UCA-3, UCA-5, UCA-8, UCA-9.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00001
+        description: 'STPA compiler enforces SC-4 (Information in Shared System Resources
+          / Fiscal Limits) via generated artifacts: config/opa/generated_stpa_policy.rego
+          (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
+          (Python validator). UCAs covered: UCA-1, UCA-5, UCA-6, UCA-7.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00002
+        description: 'STPA compiler enforces CM-6 (Configuration Settings) via generated
+          artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
+          (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
+          validator). UCAs covered: UCA-2, UCA-9.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00003
+        description: 'STPA compiler enforces SA-11 (Developer Testing and Evaluation)
+          via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego),
+          config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
+          (Python validator). UCAs covered: UCA-2, UCA-8.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00004
+        description: 'STPA compiler enforces SC-28 (Protection of Information at Rest)
+          via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego),
+          config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
+          (Python validator). UCAs covered: UCA-3.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00005
+        description: 'STPA compiler enforces SI-7 (Software, Firmware, and Information
+          Integrity) via generated artifacts: config/opa/generated_stpa_policy.rego
+          (OPA Rego), config/rails/generated_stpa_rails.co (NeMo Colang), src/gateway/governance/generated_stpa_validator.py
+          (Python validator). UCAs covered: UCA-4.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00006
+        description: 'STPA compiler enforces AU-10 (Non-Repudiation) via generated
+          artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
+          (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
+          validator). UCAs covered: UCA-4.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00007
+        description: 'STPA compiler enforces SI-3 (Malicious Code Protection) via
+          generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), config/rails/generated_stpa_rails.co
+          (NeMo Colang), src/gateway/governance/generated_stpa_validator.py (Python
+          validator). UCAs covered: UCA-6, UCA-7.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+  back-matter:
+    resources:
+    - uuid: z9000001-0000-4000-8000-000000000001
+      title: CAGE Component Definition (ISO 42001 AIMS)
+      rlinks:
+      - href: compliance/oscal/component-definition.yaml
+        media-type: application/yaml
+    - uuid: z9000002-0000-4000-8000-000000000002
+      title: CAGE Information Type Registry
+      rlinks:
+      - href: compliance/oscal/information-type-registry.yaml
+        media-type: application/yaml
+    - uuid: z9000003-0000-4000-8000-000000000003
+      title: FIPS 199 Security Categorization
+      rlinks:
+      - href: compliance/categorization/FIPS199_CATEGORIZATION.md
+        media-type: text/markdown
+    - uuid: z9000004-0000-4000-8000-000000000004
+      title: SP 800-53 HIGH Baseline Profile (CAGE-tailored)
+      rlinks:
+      - href: compliance/oscal/sp800053-profile.yaml
+        media-type: application/yaml
+    - uuid: z9000005-0000-4000-8000-000000000005
+      title: GKE/GCP Common Controls Catalog (Inherited)
+      rlinks:
+      - href: compliance/oscal/common-controls-catalog.yaml
+        media-type: application/yaml
+    - uuid: z9000006-0000-4000-8000-000000000006
+      title: CAGE Plan of Action and Milestones (POA&M)
+      rlinks:
+      - href: docs/POAM.md
+        media-type: text/markdown
+    - uuid: z9000007-0000-4000-8000-000000000007
+      title: CAGE Roles and Responsibilities
+      rlinks:
+      - href: docs/ROLES_AND_RESPONSIBILITIES.md
+        media-type: text/markdown
+    - uuid: z9000008-0000-4000-8000-000000000008
+      title: CAGE Decommission Checklist (SP 800-88)
+      rlinks:
+      - href: docs/DECOMMISSION_CHECKLIST.md
+        media-type: text/markdown
+    - uuid: z9000009-0000-4000-8000-000000000009
+      title: Lula AC-3 Validation Manifest
+      rlinks:
+      - href: compliance/lula/lula-validation-ac3.yaml
+        media-type: application/yaml
+    - uuid: z9000010-0000-4000-8000-000000000010
+      title: Lula AU-12 Validation Manifest
+      rlinks:
+      - href: compliance/lula/lula-validation-au12.yaml
+        media-type: application/yaml
+    - uuid: z9000011-0000-4000-8000-000000000011
+      title: Lula CM-6 Validation Manifest
+      rlinks:
+      - href: compliance/lula/lula-validation-cm6.yaml
+        media-type: application/yaml
+    - uuid: z9000012-0000-4000-8000-000000000012
+      title: Lula RA-5 Validation Manifest
+      rlinks:
+      - href: compliance/lula/lula-validation-ra5.yaml
+        media-type: application/yaml
+    - uuid: z9000013-0000-4000-8000-000000000013
+      title: NIST SP 800-53 Rev 5 Catalog
+      rlinks:
+      - href: https://raw.githubusercontent.com/usnistgov/oscal-content/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json
+        media-type: application/json
+    - uuid: z9000014-0000-4000-8000-000000000014
+      title: CAGE Continuous Monitoring Strategy (ISCM)
+      rlinks:
+      - href: compliance/continuous-monitoring/ISCM_STRATEGY.md
+        media-type: text/markdown
+    - uuid: z9000015-0000-4000-8000-000000000015
+      title: GitHub Actions Security Scan Workflow
+      rlinks:
+      - href: .github/workflows/security-scan.yml
+        media-type: application/yaml
+    - uuid: z9000016-0000-4000-8000-000000000016
+      title: SSP Outline Reference
+      rlinks:
+      - href: compliance/ssp/SYSTEM_SECURITY_PLAN_OUTLINE.md
+        media-type: text/markdown

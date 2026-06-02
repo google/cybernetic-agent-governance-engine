@@ -1,0 +1,118 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+version: "3.8"
+
+services:
+  # OPA: Policy Engine
+  opa:
+    image: openpolicyagent/opa:latest-static
+    command:
+      - "run"
+      - "--server"
+      - "--log-level=info"
+      - "--addr=unix:///tmp/opa.sock"
+      - "--addr=:8181"
+      - "/policies"
+    volumes:
+      - ./policies:/policies
+      - opa_socket_vol:/tmp
+    ports:
+      - "8181:8181"
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8181/health" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # SLM similarity sidecar — sentence-transformers scoring service used by the
+  # symbolic governor (Tier-2 semantic check).  Built from Dockerfile.slm which
+  # installs only the slm extra via uv sync --frozen --extra slm.
+  slm:
+    build:
+      context: .
+      dockerfile: Dockerfile.slm
+    ports:
+      - "5000:5000"
+    environment:
+      - SLM_PORT=5000
+      - SLM_MODEL_NAME=all-MiniLM-L6-v2
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  # Gateway (Hybrid Server with NeMo) — immutable baked image
+  gateway:
+    build:
+      context: .
+      dockerfile: src/gateway/Dockerfile
+    command: [ "python", "src/gateway/server/mcp_tool_server.py" ]
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - OPA_URL=http://opa:8181/v1/data/trade/governance
+      # Langfuse v3 native OTLP ingestion — no separate collector needed.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://langfuse-web:3000/api/public/otel/v1/traces
+      - OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic ${LANGFUSE_BASIC_AUTH_B64}
+      # SLM sidecar endpoint — matches the compose service name 'slm'
+      - SLM_BASE_URL=http://slm:5000
+      # v2.0.0 REQUIRED: ControlRegistry regional compliance profile selector.
+      # Override in .env: CAGE_DEPLOYMENT_REGION=EU_ECB
+      # Supported values: US_FED | EU_ECB | APAC_MAS
+      - CAGE_DEPLOYMENT_REGION=${CAGE_DEPLOYMENT_REGION:-US_FED}
+    # No live src mount — image must be rebuilt on code change (Phase 6.2).
+    volumes:
+      - ./.env:/app/.env
+      - opa_socket_vol:/tmp
+    depends_on:
+      opa:
+        condition: service_healthy
+      slm:
+        condition: service_healthy
+
+  # Main Agent Service — immutable baked image
+  app:
+    build: .
+    ports:
+      - "3000:8080"
+    environment:
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-us-central1}
+      - OPA_URL=http://opa:8181/v1/data/trade/governance
+      - OPA_AUTH_TOKEN=${OPA_AUTH_TOKEN:?OPA_AUTH_TOKEN must be set in the environment}
+      - MODEL_FAST=${MODEL_FAST:?MODEL_FAST must be set in the environment}
+      - MODEL_REASONING=${MODEL_REASONING:?MODEL_REASONING must be set in the environment}
+      - VLLM_FAST_API_BASE=http://vllm-fast:8000/v1
+      - GATEWAY_HOST=gateway
+      - GATEWAY_PORT=8080
+      # Langfuse v3 native OTLP ingestion — no separate collector needed.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://langfuse-web:3000/api/public/otel/v1/traces
+      - OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic ${LANGFUSE_BASIC_AUTH_B64}
+      # v2.0.0 REQUIRED: must match the gateway service's CAGE_DEPLOYMENT_REGION.
+      - CAGE_DEPLOYMENT_REGION=${CAGE_DEPLOYMENT_REGION:-US_FED}
+    # No live src mount — image must be rebuilt on code change (Phase 6.2).
+    volumes:
+      - ./.env:/app/.env
+      - opa_socket_vol:/tmp
+    depends_on:
+      gateway:
+        condition: service_started
+
+volumes:
+  opa_socket_vol:

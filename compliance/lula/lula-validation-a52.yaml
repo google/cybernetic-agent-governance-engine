@@ -1,0 +1,50 @@
+# lula-validation-a52.yaml
+# ISO 42001 Annex A.5.2 — Social Impact Assessment
+#
+# Asserts that the NeMo Guardrails toxicity/prompt-injection blocking
+# rate is >= 99% over the past 24 hours, with evidence no older than 48h.
+#
+# Domain: api → compliance-bridge (Python FastAPI service)
+# Provider: opa (inline Rego)
+
+domain:
+  type: api
+  api-spec:
+    endpoints:
+      - name: langfuse_metrics_a52
+        url: "http://compliance-bridge.governance-stack.svc.cluster.local/v1/metrics/A.5.2"
+        method: GET
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+
+      # A.5.2: Social Impact Assessment — toxicity and prompt injection blocking
+      # Threshold: 99% (higher than A.5.3 because PII/social-harm failures are critical)
+
+      # Rule 1: Cold-start grace period
+      validate if {
+        input.langfuse_metrics_a52.startup_grace_active == true
+        input.langfuse_metrics_a52.safety_rate >= 0.99
+        input.langfuse_metrics_a52.evidence_age_seconds < 172800
+      }
+
+      # Rule 2: Steady-state
+      validate if {
+        input.langfuse_metrics_a52.startup_grace_active == false
+        input.langfuse_metrics_a52.safety_rate >= 0.99
+        input.langfuse_metrics_a52.total_traces > 100
+        input.langfuse_metrics_a52.evidence_age_seconds < 172800
+      }
+
+notes: >
+  ISO 42001 A.5.2: Social Impact Assessment.
+  Automated verification that NeMo Guardrails output rails and the
+  Aho-Corasick Tier-1 heuristic block toxic/injected content.
+  Evidence: OTel spans tagged iso42001.control_id=A.5.2 (TIER_1_HEURISTIC)
+  from stpaGovernanceMiddleware.ts and nemo_output_rail traces from Python.
+  Staleness guard: 48 hours.
