@@ -107,6 +107,40 @@ The CBF engine defaults to `BLOCKED` when its state source (Redis) is unreachabl
 
 The system will not permit an action it cannot independently verify as safe. This property is invariant across all domains.
 
+### 1.6 Compliance Assessment State Semantics
+
+The compliance output model of the domain-agnostic kernel uses a **four-state OSCAL result vocabulary** aligned with NIST SP 800-53A §3.2 assessment attribute semantics. Every [`OscalFinding`](../../src/compliance_bridge/types.py) produced by the compliance bridge carries exactly one of these states:
+
+| `OscalResult` | OSCAL Wire Value | Meaning | Auditor Visibility |
+|---|---|---|---|
+| `PASS` | `satisfied` | Control evaluated; evidence meets threshold | ✅ Satisfied |
+| `FAIL` | `not-satisfied` | Control evaluated; evidence below threshold | ❌ Not Satisfied |
+| `NOT_APPLICABLE` | `not-applicable` | Control does not apply to this component type (deliberate scoping decision) | ℹ️ Scoped Out |
+| `ERROR` | `error` | Control applies but scanner/collector failed to gather evidence | 🚨 Blind Spot |
+
+#### Why ERROR ≠ NOT_APPLICABLE
+
+`NOT_APPLICABLE` is a **deliberate architectural scoping decision** — the control is out of scope for this component by design (e.g., a network isolation control applied to a stateless function). It is set intentionally by a human or policy author.
+
+`ERROR` is a **runtime evidence-collection failure** — the control is in scope, the scanner attempted to gather evidence, and the attempt failed (e.g., `"fetch failed"`, timeout, missing credentials). Masking an `ERROR` as `NOT_APPLICABLE` hides a security blind spot from auditors and violates the completeness requirement of most compliance frameworks.
+
+> **Invariant:** A data-collection failure MUST be reported as `ERROR`. It MUST NOT be silently dropped or coerced to `NOT_APPLICABLE`.
+
+#### Kernel Touch Points
+
+| Component | Role |
+|---|---|
+| [`src/compliance_bridge/types.py`](../../src/compliance_bridge/types.py) | Defines `OscalResult = Literal["PASS", "FAIL", "NOT_APPLICABLE", "ERROR"]` |
+| [`src/compliance_bridge/oscal_parser.py`](../../src/compliance_bridge/oscal_parser.py) | `_map_state()` — unrecognised OSCAL `status.state` → `ERROR` (not `NOT_APPLICABLE`) |
+| [`src/compliance_bridge/oscal_exporter.py`](../../src/compliance_bridge/oscal_exporter.py) | `_finding_to_state()` — `ERROR` → `"error"` wire value; `findings_from_metrics_dict()` — fetch errors emit `ERROR` findings |
+| [`src/compliance_bridge/audit_workflow.py`](../../src/compliance_bridge/audit_workflow.py) | `_step4_alert_on_critical_fail()` — critical-control alert filter matches `result in ("FAIL", "ERROR")` |
+
+#### Critical-Control Alert Behaviour
+
+Controls in `CRITICAL_CONTROLS = {"A.9.2", "SC-4", "A.8.4"}` trigger Slack/PagerDuty alerts on **both** `FAIL` and `ERROR`. An `ERROR` on a critical control is treated with the same urgency as a `FAIL` because the system cannot assert the control is satisfied — the absence of evidence is itself a risk signal.
+
+This property is invariant across all domains that extend the compliance bridge.
+
 ---
 
 ## Part 2 — Architecture Roadmap (Partial Implementation)

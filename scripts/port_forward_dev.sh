@@ -76,8 +76,8 @@ start_pf() {
 : > "${PF_PIDS_FILE}"   # truncate / create
 
 start_pf opa          opa                       8181  8181  # OPA policy engine
-start_pf langfuse     langfuse-web              3001    80  # Langfuse API (LLM judge evaluation)
-start_pf langfuse-web langfuse-web              3000    80  # Langfuse UI (NextAuth)
+start_pf langfuse     langfuse-web              3001  3000  # Langfuse API (LLM judge evaluation)
+start_pf langfuse-web langfuse-web              3000  3000  # Langfuse UI (NextAuth)
 start_pf vllm-fast    vllm-service              8001  8000  # Fast vLLM (Qwen2.5-7B) — primary (:8001)
 start_pf vllm-fast2   vllm-service             18081  8000  # Fast vLLM — VLLM_FAST_API_BASE (:18081)
 start_pf vllm-reason  vllm-reasoning            8000  8000  # Reasoning vLLM (DeepSeek R1) — primary (:8000)

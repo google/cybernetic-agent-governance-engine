@@ -234,6 +234,10 @@ def _ingest_sync(
             as_type="span",
             trace_context=trace_context,
         )
+        # ERROR findings score 0.0 — they must not be treated as compliant.
+        # A scanner failure on a critical control is a security blind spot;
+        # scoring it as 1.0 (PASS) would mask the gap from compliance dashboards.
+        # (NIST SP 800-53A §3.2: evaluation errors → Incomplete/Unknown, not Satisfied)
         span.score(
             name=f"iso42001.{finding.control_id}.compliant",
             value=1.0 if finding.result == "PASS" else 0.0,
@@ -262,10 +266,17 @@ async def _step4_alert_on_critical_fail(
     findings: list[OscalFinding],
     audit_id: str,
 ) -> tuple[bool, list[str]]:
-    """Returns (alerted, alert_targets)."""
+    """Returns (alerted, alert_targets).
+
+    Both FAIL and ERROR results on CRITICAL_CONTROLS trigger an alert.
+    ERROR means evidence collection failed — the control may be violated but
+    we cannot confirm it.  Per NIST SP 800-53A §3.2, an evaluation error must
+    never be silently treated as compliant; it must be escalated so a human
+    can investigate the scanner failure and close the evidence gap.
+    """
     critical_fails = [
         f for f in findings
-        if f.result == "FAIL" and f.control_id in CRITICAL_CONTROLS
+        if f.result in ("FAIL", "ERROR") and f.control_id in CRITICAL_CONTROLS
     ]
 
     if not critical_fails:

@@ -1,5 +1,7 @@
 # ISO/IEC 42001: Artificial Intelligence Management System (AIMS) Compliance
 
+> **Last updated:** 2026-06-01 — Added §OSCAL Assessment State Semantics reflecting CAGE v2.2.0 ERROR-state correction (NIST SP 800-53A §3.2 alignment).
+
 ## Overview
 
 This document maps the **Neuro-Cybernetic Governance** implementation to the clauses of **ISO/IEC 42001**. The architecture implements a **Continuous Compliance** model: NeMo and OPA handle live enforcement, Langfuse captures evidence, and **Lula** periodically audits both to generate OSCAL Assessment Results that serve as machine-readable proof for auditors.
@@ -40,10 +42,11 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
 - **9.1 Monitoring, measurement, analysis and evaluation:**
   - **Implementation (Runtime):** The **Evaluator Agent (System 3)** acts as the real-time monitor, racing against execution to detect anomalies.
   - **Code:** [`src/governed_financial_advisor/agents/evaluator/agent.py`](../src/governed_financial_advisor/agents/evaluator/agent.py)
-  - **Implementation (Continuous Audit):** **Lula** validates each ISO 42001 control every 6 hours via the `langfuse-bridge` compliance API. Findings are expressed as **Signed OSCAL Assessment Results** using a deterministic TypeScript parser to ensure high-integrity evidence mapping.
+  - **Implementation (Continuous Audit):** **Lula** validates each ISO 42001 control every 6 hours via the `compliance_bridge` API. Findings are expressed as **OSCAL Assessment Results** using a deterministic Python parser ([`oscal_parser.py`](../src/compliance_bridge/oscal_parser.py)) to ensure high-integrity evidence mapping.
   - **Lula Manifests:** [`compliance/lula/`](../compliance/lula/)
-  - **Bridge Service:** [`src/langfuse-bridge/`](../src/langfuse-bridge/)
+  - **Bridge Service:** [`src/compliance_bridge/`](../src/compliance_bridge/)
   - **Telemetry:** OpenTelemetry spans tagged with `iso42001.control_id` flow to Langfuse. The bridge aggregates them into a `safety_rate` per control over a 24-hour window with a 48-hour staleness guard and a configurable startup grace period.
+  - **Assessment State Integrity (CAGE v2.2.0):** Each OSCAL finding carries one of four states: `PASS`, `FAIL`, `NOT_APPLICABLE`, or `ERROR`. A scanner/collector failure ("fetch failed", timeout) maps to `ERROR` — **never** to `NOT_APPLICABLE`. This distinction is required by NIST SP 800-53A §3.2: evaluation errors must be flagged as Incomplete/Unknown so auditors can investigate the evidence gap. `ERROR` findings on critical controls (SC-4, A.9.2, A.8.4) trigger the same Slack/PagerDuty alert as explicit `FAIL` findings and score `0.0` in Langfuse. See [`docs/technical-report/06-COMPLIANCE-STANDARDS.md §5.5`](technical-report/06-COMPLIANCE-STANDARDS.md) for the full state table.
 
 ### Clause 10: Improvement
 
@@ -56,12 +59,15 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
 
 ## Annex A Control Mapping
 
-| Control   | Description                | Enforcement Component                  | Lula Validation                                                           | Threshold                           |
-| --------- | -------------------------- | -------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------- |
-| **A.5.2** | Social Impact Assessment   | NeMo output rail + Aho-Corasick Tier-1 | [`lula-validation-a52.yaml`](../compliance/lula/lula-validation-a52.yaml) | safety_rate ≥ 99%                   |
-| **A.5.3** | Logging and Monitoring     | OTel spans → Langfuse (all tiers)      | [`lula-validation-a53.yaml`](../compliance/lula/lula-validation-a53.yaml) | safety_rate ≥ 98%                   |
-| **A.9.2** | Data Transfer to Suppliers | Presidio PII masking (NeMo input rail) | [`lula-validation-a92.yaml`](../compliance/lula/lula-validation-a92.yaml) | safety_rate = 100% (zero tolerance) |
-| **SC-4**  | Fiscal Limits and RBAC     | `trade_governance.rego` (OPA)          | [`lula-validation-sc4.yaml`](../compliance/lula/lula-validation-sc4.yaml) | k8s label present                   |
+| Control   | Description                | Enforcement Component                  | Lula Validation                                                           | Threshold                           | Critical Alert on ERROR? |
+| --------- | -------------------------- | -------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------- | ------------------------ |
+| **A.5.2** | Social Impact Assessment   | NeMo output rail + Aho-Corasick Tier-1 | [`lula-validation-a52.yaml`](../compliance/lula/lula-validation-a52.yaml) | safety_rate ≥ 99%                   | No                       |
+| **A.5.3** | Logging and Monitoring     | OTel spans → Langfuse (all tiers)      | [`lula-validation-a53.yaml`](../compliance/lula/lula-validation-a53.yaml) | safety_rate ≥ 98%                   | No                       |
+| **A.9.2** | Data Transfer to Suppliers | Presidio PII masking (NeMo input rail) | [`lula-validation-a92.yaml`](../compliance/lula/lula-validation-a92.yaml) | safety_rate = 100% (zero tolerance) | **Yes** — CRITICAL_CONTROL |
+| **SC-4**  | Fiscal Limits and RBAC     | `trade_governance.rego` (OPA)          | [`lula-validation-sc4.yaml`](../compliance/lula/lula-validation-sc4.yaml) | k8s label present                   | **Yes** — CRITICAL_CONTROL |
+| **A.8.4** | AI System Operation Controls | HITL + Saga WAL; DEFER state machine | [`lula-validation-a84.yaml`](../compliance/lula/lula-validation-a84.yaml) | STPA UCA checks pass                | **Yes** — CRITICAL_CONTROL |
+
+> **Note on `ERROR` state (CAGE v2.2.0):** A scanner/collector failure on any control produces an `ERROR` finding — not `NOT_APPLICABLE`. For the three `CRITICAL_CONTROL` entries above (A.9.2, SC-4, A.8.4), an `ERROR` finding triggers the same Slack/PagerDuty alert as an explicit `FAIL`. This ensures evidence gaps on the most sensitive controls are never silently hidden. See [`docs/technical-report/06-COMPLIANCE-STANDARDS.md §5.5`](technical-report/06-COMPLIANCE-STANDARDS.md) for the full four-state semantics table.
 
 ---
 

@@ -181,22 +181,43 @@ class TestOscalExporterUnit:
         assert doc1["assessment-results"]["uuid"] == doc2["assessment-results"]["uuid"]
 
     def test_findings_from_metrics_dict(self):
+        """
+        Fetch errors must produce ERROR findings — NOT be silently skipped.
+
+        Rationale (NIST SP 800-53A §3.2 / FedRAMP assessment guide):
+          A data-collection failure ("fetch failed") is not the same as
+          NOT_APPLICABLE.  Silently dropping the finding hides a potential
+          security blind spot from auditors.  The correct behaviour is to
+          emit an ERROR finding so the gap is visible in the OSCAL document
+          and can be investigated by a human reviewer.
+        """
         from src.compliance_bridge.oscal_exporter import findings_from_metrics_dict
         data = {
             "A.5.2": {"safety_rate": 1.0, "evidence_age_seconds": 60.0},
             "A.9.2": {"safety_rate": 0.85, "evidence_age_seconds": 3600.0},
-            "SC-4":  {"error": "fetch failed"},   # should be skipped
+            "SC-4":  {"error": "fetch failed"},   # must emit ERROR, not be skipped
         }
         findings = findings_from_metrics_dict(data, "dict-test")
-        assert len(findings) == 2
+        # All three controls must produce a finding entry
+        assert len(findings) == 3
         cids = {f.control_id for f in findings}
         assert "A.5.2" in cids
         assert "A.9.2" in cids
-        assert "SC-4" not in cids
+        assert "SC-4" in cids, (
+            "SC-4 fetch error must produce an ERROR finding — "
+            "silently skipping it masks a security blind spot (NIST SP 800-53A §3.2)"
+        )
         a52 = next(f for f in findings if f.control_id == "A.5.2")
         assert a52.result == "PASS"
         a92 = next(f for f in findings if f.control_id == "A.9.2")
         assert a92.result == "FAIL"
+        sc4 = next(f for f in findings if f.control_id == "SC-4")
+        assert sc4.result == "ERROR", (
+            f"Expected ERROR for fetch-failed SC-4, got {sc4.result!r}"
+        )
+        assert sc4.safety_rate is None
+        assert sc4.evidence_age_s is None
+        assert "fetch failed" in (sc4.remarks or "")
 
 
 # ---------------------------------------------------------------------------

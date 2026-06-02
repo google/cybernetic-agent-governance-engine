@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "cage-infrastructure": {
+      "command": "/absolute/path/to/python3",
+      "args": ["-m", "mcp_servers.infrastructure"],
+      "env": {
+        "PROJECT_ROOT": "/absolute/path/to/cybernetic-governance-engine"
+      }
+    }
+  }
+}

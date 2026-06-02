@@ -115,12 +115,33 @@ class RawResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _map_state(state: str) -> OscalResult:
+    """Map an OSCAL status.state string to our canonical OscalResult enum.
+
+    Mapping rationale (NIST SP 800-53A §3.2 assessment attribute vocabulary):
+      satisfied / pass / passed   → PASS           (assessment objective met)
+      not-satisfied / fail/failed → FAIL           (assessment objective not met)
+      not-applicable              → NOT_APPLICABLE (control does not apply to
+                                                    this system component type)
+      anything else               → ERROR          (unknown/unrecognised state —
+                                                    must NOT be silently treated
+                                                    as NOT_APPLICABLE; doing so
+                                                    would mask a potential security
+                                                    blind spot from auditors)
+    """
     s = state.lower().strip()
     if s in ("satisfied", "pass", "passed"):
         return "PASS"
     if s in ("not-satisfied", "fail", "failed"):
         return "FAIL"
-    return "NOT_APPLICABLE"
+    if s in ("not-applicable", "not_applicable", "na"):
+        return "NOT_APPLICABLE"
+    # Unknown / unrecognised state — flag as ERROR so auditors see it.
+    logger.warning(
+        "[oscal_parser] Unrecognised OSCAL status.state %r — mapping to ERROR "
+        "(not NOT_APPLICABLE). Verify the lula output schema.",
+        state,
+    )
+    return "ERROR"
 
 
 # ---------------------------------------------------------------------------

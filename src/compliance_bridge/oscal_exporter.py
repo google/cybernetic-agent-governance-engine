@@ -63,12 +63,25 @@ from .aarm_mapper import AARM_THREAT_VECTORS
 # ---------------------------------------------------------------------------
 
 def _finding_to_state(finding: OscalFinding) -> str:
-    """Convert OscalFinding.result to the OSCAL finding state vocabulary."""
+    """Convert OscalFinding.result to the OSCAL finding state vocabulary.
+
+    NIST OSCAL 1.1.x assessment-results state vocabulary:
+      satisfied      — control objective met (PASS)
+      not-satisfied  — control objective not met (FAIL)
+      not-applicable — control does not apply to this system component
+      error          — scanner/collector failure; evidence could not be gathered.
+                       Must NOT be mapped to "not-applicable" — that would hide
+                       a potential security blind spot from auditors.
+                       (NIST SP 800-53A §3.2 / FedRAMP assessment guide)
+    """
     if finding.result == "PASS":
         return "satisfied"
     if finding.result == "FAIL":
         return "not-satisfied"
-    return "not-applicable"
+    if finding.result == "NOT_APPLICABLE":
+        return "not-applicable"
+    # ERROR (or any future unknown value) — surface as "error" so auditors see it.
+    return "error"
 
 
 # ---------------------------------------------------------------------------
@@ -255,14 +268,30 @@ def findings_from_metrics_dict(
     /v1/metrics/summary) into a list of OscalFinding objects for export.
 
     Controls with 'error' keys (Langfuse fetch failures / timeouts) are
-    **skipped** — they produce no finding entry.  This keeps the OSCAL
-    document free of speculative not-applicable sentinels and avoids
-    inflating the finding count when Langfuse is temporarily unavailable.
+    emitted as ERROR findings — they are NOT silently skipped.
+
+    Rationale (NIST SP 800-53A §3.2 / FedRAMP assessment guide):
+      A data-collection failure ("fetch failed") is NOT the same as
+      NOT_APPLICABLE.  NOT_APPLICABLE means the control does not apply to
+      this system component (e.g. a wireless control on a wired-only system).
+      A fetch failure means the control applies but the scanner broke trying
+      to check it.  Silently dropping the finding hides a potential security
+      blind spot.  Auditing frameworks require such states to be flagged as
+      Error / Incomplete / Unknown — never masked as Not Applicable.
     """
     findings: list[OscalFinding] = []
     for cid, data in metrics_by_control.items():
         if "error" in data:
-            # Langfuse unavailable / timed out — skip; do not emit a finding.
+            # Scanner/collector failure — emit an ERROR finding so auditors
+            # can see the gap.  Do NOT skip or map to NOT_APPLICABLE.
+            findings.append(OscalFinding(
+                control_id=cid,
+                result="ERROR",
+                finding_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{audit_id}-{cid}-error")),
+                safety_rate=None,
+                evidence_age_s=None,
+                remarks=f"Evidence collection error: {data['error']}",
+            ))
             continue
         sr = data.get("safety_rate", 1.0)
         result: OscalResult = cast(OscalResult, "PASS" if sr >= 1.0 else "FAIL")
