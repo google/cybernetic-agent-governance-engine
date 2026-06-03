@@ -12,11 +12,61 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# safety.py — backward-compatibility shim
-# This module has been split into text_filter.py (stateless text safety)
-# and cbf.py (stateful Redis-backed financial invariant).
-# This shim re-exports all public symbols for backward compatibility.
-from src.gateway.governance.text_filter import ac_keyword_scan
-from src.gateway.governance.cbf import ControlBarrierFunction, safety_filter
+"""
+DEPRECATED — safety.py
 
-__all__ = ["ac_keyword_scan", "ControlBarrierFunction", "safety_filter"]
+This module is a backward-compatibility shim only.  It was split into two
+canonical modules:
+
+  - ``src.gateway.governance.text_filter`` — stateless text safety
+        Exports: ``ac_keyword_scan``
+
+  - ``src.gateway.governance.cbf`` — stateful Redis-backed financial invariant
+        Exports: ``ControlBarrierFunction``, ``safety_filter``
+
+All imports from this module will emit a ``DeprecationWarning`` at runtime.
+Update your imports to use the canonical paths above.
+
+**This module will be removed in the next major version.**
+
+Known callers that have already been migrated to direct imports:
+  - src/gateway/governance/singletons.py       → cbf.safety_filter
+  - src/gateway/server/governance_middleware.py → text_filter.ac_keyword_scan
+  - src/gateway/server/inference_proxy.py       → text_filter.ac_keyword_scan
+"""
+
+from __future__ import annotations
+
+import warnings
+
+# ---------------------------------------------------------------------------
+# Lazy re-exports with per-symbol deprecation warnings (Python 3.7+ __getattr__)
+# ---------------------------------------------------------------------------
+
+_SYMBOL_ORIGINS: dict[str, str] = {
+    "ac_keyword_scan": "src.gateway.governance.text_filter",
+    "ControlBarrierFunction": "src.gateway.governance.cbf",
+    "safety_filter": "src.gateway.governance.cbf",
+}
+
+
+def __getattr__(name: str):
+    """Emit a DeprecationWarning and return the symbol from its canonical module."""
+    if name not in _SYMBOL_ORIGINS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    canonical = _SYMBOL_ORIGINS[name]
+    warnings.warn(
+        f"Importing {name!r} from 'src.gateway.governance.safety' is deprecated "
+        f"and will be removed in the next major version. "
+        f"Import it directly from '{canonical}' instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+    import importlib
+    module = importlib.import_module(canonical)
+    return getattr(module, name)
+
+
+__all__ = list(_SYMBOL_ORIGINS.keys())

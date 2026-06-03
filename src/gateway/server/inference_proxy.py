@@ -42,7 +42,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from opentelemetry import trace
 from pydantic import BaseModel, Field
 
-from src.gateway.governance.safety import ac_keyword_scan
+from src.gateway.governance.text_filter import ac_keyword_scan
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.nemo.manager import verify_input, verify_and_mask_output
 from src.governed_financial_advisor.infrastructure.config_manager import config_manager

@@ -227,7 +227,14 @@ class TestNemoOutputRailNodeFactory:
 
     @pytest.mark.asyncio
     async def test_masks_output_successfully(self):
-        """verify_and_mask_output returns masked text → replaced in messages."""
+        """verify_and_mask_output returns masked text → replaced in messages.
+
+        validate_output_semantics is also mocked to return (True, '') so that
+        the semantic validation step does not interfere with the PII-masking
+        assertion.  The NeMo circuit breaker may be OPEN in test environments
+        (transparent fallback mode), which would otherwise block the output
+        before the assertion is reached.
+        """
         node = create_nemo_output_rail_node(NemoNodeConfig())
 
         state = {"messages": [_FakeMessage("raw AI output", id="msg-99")]}
@@ -239,6 +246,10 @@ class TestNemoOutputRailNodeFactory:
             "src.gateway.governance.langgraph_harness.nemo_node_factory.verify_and_mask_output",
             new_callable=AsyncMock,
             return_value="masked output",
+        ), patch(
+            "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_output_semantics",
+            new_callable=AsyncMock,
+            return_value=(True, ""),
         ):
             result = await node(state)
 

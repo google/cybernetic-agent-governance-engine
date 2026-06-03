@@ -46,6 +46,16 @@ class GeneratedSTPAValidator:
         python -m src.gateway.governance.stpa_compiler compile
     """
 
+    def validate(self, action_name: str, params: dict[str, Any]) -> list[str]:
+        """Backward-compatible entry point — delegates to ``validate_generated()``.
+
+        ``symbolic_governor`` imports ``GeneratedSTPAValidator`` directly
+        (bypassing the deprecated ``stpa_validator`` shim) but still calls
+        ``.validate()`` at its call-sites.  This alias keeps those call-sites
+        working without requiring a separate shim import.
+        """
+        return self.validate_generated(action_name, params)
+
     def validate_generated(self, action_name: str, params: dict[str, Any]) -> list[str]:
         """Run all generated UCA checks. Returns list of violation strings."""
         violations: list[str] = []
@@ -60,6 +70,11 @@ class GeneratedSTPAValidator:
         _v = self._check_uca_8(action_name, params)
         if _v: violations.append(_v)
         _v = self._check_uca_9(action_name, params)
+        if _v: violations.append(_v)
+        # Migrated from hand-authored stpa_validator.py (see Task 2 migration notes below)
+        _v = self._check_sc_1(action_name, params)
+        if _v: violations.append(_v)
+        _v = self._check_fin_2(action_name, params)
         if _v: violations.append(_v)
         return violations
 
@@ -121,8 +136,19 @@ class GeneratedSTPAValidator:
             if action_name != "execute_trade":
                 return None
             # Composite condition: order_size > threshold_ref(stpa.uca6_max_order_volume_fraction) * daily_vol
-            # Implement custom logic here.
-            pass
+            vol_fraction = THRESHOLDS.stpa.uca6_max_order_volume_fraction
+            order_size = float(params.get("order_size", 0))
+            daily_vol = float(params.get("daily_vol", 0))
+            if daily_vol > 0 and order_size > vol_fraction * daily_vol:
+                logger.warning(
+                    "UCA-6 triggered: order_size=%s > %.0f%% of daily_vol=%s",
+                    order_size, vol_fraction * 100, daily_vol,
+                )
+                return (
+                    f"STPA Violation UCA-6: Order size exceeds {vol_fraction * 100:.0f}% of "
+                    f"daily volume ({order_size} > {vol_fraction * daily_vol:.4f}) — "
+                    "High slippage risk / control action out of acceptable execution window."
+                )
             return None
         except Exception as exc:
             logger.error("Error evaluating UCA-6: %s", exc)
@@ -156,3 +182,75 @@ class GeneratedSTPAValidator:
             logger.error("Error evaluating UCA-9: %s", exc)
             return f"STPA Violation UCA-9: Evaluation error — failing closed ({exc})."
 
+    # -------------------------------------------------------------------------
+    # Migrated constraints from hand-authored stpa_validator.py
+    #
+    # SC-1 and FIN-2 were previously implemented only in the hand-authored
+    # stpa_validator.py.  They are added here directly so that
+    # GeneratedSTPAValidator is the single authoritative Python validator.
+    #
+    # TODO: These constraints should eventually be added to
+    # config/stpa_control_structure.yaml and regenerated via:
+    #   python -m src.gateway.governance.stpa_compiler compile
+    #
+    # SC-1 maps to safety_constraints[0] in the YAML (scope: [write_db, delete_db]).
+    # FIN-2 maps to safety_constraints[2] in the YAML (scope: [execute_trade]).
+    # -------------------------------------------------------------------------
+
+    def _check_sc_1(self, action_name: str, params: dict) -> str | None:
+        """SC-1: Agent must never execute a write to production DB without a signed approval token.
+
+        Migrated from stpa_validator.py _check_constraint(SC-1).
+        Canonical YAML source: config/stpa_control_structure.yaml safety_constraints[id=SC-1].
+        """
+        try:
+            if action_name not in ("write_db", "delete_db"):
+                return None
+            if params.get("approval_token") is None:
+                logger.warning(
+                    "SC-1 triggered: %s called without approval_token", action_name
+                )
+                return (
+                    f"STPA Violation SC-1: Agent attempted {action_name} without a signed "
+                    "approval token — write to production DB is not permitted without "
+                    "explicit authorization."
+                )
+            return None
+        except Exception as exc:
+            logger.error("Error evaluating SC-1: %s", exc)
+            return f"STPA Violation SC-1: Evaluation error — failing closed ({exc})."
+
+    def _check_fin_2(self, action_name: str, params: dict) -> str | None:
+        """FIN-2: Agent must not execute trade if latency exceeds max_latency_ms.
+
+        Migrated from stpa_validator.py _check_constraint(FIN-2).
+        Canonical YAML source: config/stpa_control_structure.yaml safety_constraints[id=FIN-2].
+
+        Note: UCA-2 already enforces the same latency threshold for execute_trade.
+        FIN-2 is retained as a named safety-constraint check for audit traceability
+        (the YAML safety_constraints section references it explicitly).
+        """
+        try:
+            if action_name != "execute_trade":
+                return None
+            if "latency_ms" not in params:
+                logger.warning("FIN-2: Missing latency_ms metric — failing closed.")
+                return (
+                    "STPA Violation FIN-2: Missing required latency_ms parameter — "
+                    "cannot verify trade execution latency constraint."
+                )
+            latency = float(params["latency_ms"])
+            limit = THRESHOLDS.stpa.max_latency_ms
+            if latency > limit:
+                logger.warning(
+                    "FIN-2 triggered: latency_ms=%.2f > max_latency_ms=%.2f",
+                    latency, limit,
+                )
+                return (
+                    f"STPA Violation FIN-2: Trade execution latency {latency:.2f}ms exceeds "
+                    f"maximum allowable {limit:.2f}ms — safety constraint violated."
+                )
+            return None
+        except Exception as exc:
+            logger.error("Error evaluating FIN-2: %s", exc)
+            return f"STPA Violation FIN-2: Evaluation error — failing closed ({exc})."

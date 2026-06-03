@@ -73,7 +73,7 @@ def _extract_trade_payload(state: dict[str, Any]) -> dict[str, Any]:
         # Edge case: plan was stored as a raw string — cannot extract fields
         plan = {}
 
-    return {
+    payload: dict = {
         "action": plan.get("action", "unknown"),
         "amount": plan.get("amount", 0),
         "symbol": plan.get("symbol", "UNKNOWN"),
@@ -84,6 +84,13 @@ def _extract_trade_payload(state: dict[str, Any]) -> dict[str, Any]:
         "confidence": plan.get("confidence", 1.0),
         "latency_ms": plan.get("latency_ms", 0.0),
     }
+    # Pass through optional STPA-required fields when present in the plan.
+    # UCA-5 checks drawdown; UCA-6 checks order_size / daily_vol.
+    # These are populated by the risk analyst agent in production.
+    for optional_field in ("drawdown", "order_size", "daily_vol"):
+        if optional_field in plan:
+            payload[optional_field] = plan[optional_field]
+    return payload
 
 
 # ---------------------------------------------------------------------------

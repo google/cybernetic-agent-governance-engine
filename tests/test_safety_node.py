@@ -323,6 +323,11 @@ class TestSafetyNodeIntegration:
                 "symbol": "MSFT",
                 "currency": "USD",
                 "trader_role": "senior",
+                # drawdown=0.0 satisfies UCA-5 (daily drawdown within limit).
+                # The risk analyst agent populates this field in production;
+                # the integration test must supply it to avoid a fail-closed
+                # STPA violation on a missing required parameter.
+                "drawdown": 0.0,
             },
         }
         with patch("src.gateway.governance.causal_gatekeeper.causal_safety_check", return_value=True):

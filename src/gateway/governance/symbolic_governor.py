@@ -38,7 +38,8 @@ from opentelemetry.trace import Status, StatusCode
 from src.gateway.core.policy import OPAClient
 from src.gateway.governance.constants import GovernanceControl, ControlRegistry
 from src.gateway.governance.contracts import SafetyFilter, ConsensusProvider
-from src.gateway.governance.stpa_validator import STPAValidator
+# Import directly from generated_stpa_validator, bypassing the deprecated stpa_validator shim.
+from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator as STPAValidator
 
 logger = logging.getLogger("SymbolicGovernor")
 tracer = trace.get_tracer(__name__)

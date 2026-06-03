@@ -33,7 +33,12 @@ pytestmark = pytest.mark.local
 
 @pytest.fixture
 def stable_telemetry():
-    """Simulates a healthy system with clear, stable causal links."""
+    """Simulates a healthy system with clear, stable causal links.
+
+    A ``timestamp`` column is included so that the telemetry freshness check
+    treats this data as fresh (matching the contract of generate_mock_telemetry).
+    """
+    import time
     np.random.seed(42)
     n = 200
     market_volatility = np.random.uniform(0.1, 0.9, n)
@@ -41,10 +46,13 @@ def stable_telemetry():
     trade_amount = np.clip(trade_amount, 100, 10000)
     risk_score = (market_volatility * 0.5) + (trade_amount / 10000 * 0.5) + np.random.normal(0, 0.05, n)
     risk_score = np.clip(risk_score, 0.0, 1.0)
+    now = time.time()
+    timestamps = now - np.random.uniform(0, 3600, n)
     return pd.DataFrame({
         'market_volatility': market_volatility,
         'trade_amount': trade_amount,
-        'risk_score': risk_score
+        'risk_score': risk_score,
+        'timestamp': timestamps,
     })
 
 
@@ -74,11 +82,15 @@ class TestCausalSafetyCheckUnit:
         assert result is True
 
     def test_generate_mock_telemetry_shape(self):
-        """The mock telemetry generator should produce the expected columns."""
+        """The mock telemetry generator should produce the expected columns.
+
+        generate_mock_telemetry() now includes a 'timestamp' column so that
+        the telemetry freshness check treats synthetic data as fresh.
+        """
         from src.gateway.governance.causal_gatekeeper import generate_mock_telemetry
         df = generate_mock_telemetry(n_samples=100)
         assert len(df) == 100
-        assert set(df.columns) == {'market_volatility', 'trade_amount', 'risk_score'}
+        assert set(df.columns) == {'market_volatility', 'trade_amount', 'risk_score', 'timestamp'}
 
     def test_generate_mock_telemetry_deterministic(self):
         """Mock telemetry should be deterministic (seeded)."""
@@ -88,11 +100,23 @@ class TestCausalSafetyCheckUnit:
         pd.testing.assert_frame_equal(df1, df2)
 
     def test_causal_check_fails_safe_on_error(self):
-        """If DoWhy raises an exception, the check should fail-safe (return False)."""
+        """If DoWhy raises an exception, the check should fail-safe (return False).
+
+        The Redis cache is bypassed (patched to return None) so that a cached
+        result from a previous test with the same cache key cannot mask the
+        fail-safe behaviour being tested here.
+        """
+        from unittest.mock import AsyncMock, patch
         from src.gateway.governance.causal_gatekeeper import causal_safety_check
-        # Provide a DataFrame missing required columns to trigger an error
+        # Provide a DataFrame missing required columns to trigger an error.
+        # No timestamp column → freshness check fails closed → returns False.
         bad_data = pd.DataFrame({'x': [1, 2, 3], 'y': [4, 5, 6]})
-        result = causal_safety_check({"amount": 100}, bad_data)
+        with patch(
+            "src.gateway.governance.causal_gatekeeper._causal_cache_get",
+            new_callable=AsyncMock,
+            return_value=None,  # force cache miss so the check actually runs
+        ):
+            result = causal_safety_check({"amount": 100}, bad_data)
         assert result is False
 
 
