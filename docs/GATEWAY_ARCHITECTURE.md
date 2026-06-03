@@ -4,7 +4,7 @@
 
 The Gateway acts as the central orchestrator and compliance enforcement point for the AI financial advisor. It implements a **Kubernetes Inference Gateway** architecture, abstracting a "Split-Brain" topology that routes tasks between a high-capacity Reasoning Model (`DeepSeek-R1-Distill-Llama-8B`) and a low-latency Governance Model (`Meta-Llama-3.1-8B-Instruct`). Both models are hosted on cost-optimized **Spot/preemptible GPU nodes** (NVIDIA L4). (GKE is the reference deployment; other Kubernetes distributions are supported)
 
-**Version:** v2.0.0 (promoted 2026-06-01 as v2.0.0-rc.1)
+**Version:** v2.0.0-rc.2 (promoted 2026-06-03)
 **Primary Compliance Framework:** ISO/IEC 42001:2023 · SR 26-2 (Federal Reserve, April 17, 2026) · CSA AARM v1.0
 
 ## Core Components
@@ -60,7 +60,7 @@ The Gateway acts as the central orchestrator and compliance enforcement point fo
 5.  **Header Injection:** The client generates a trace ID and injects `X-Trace-Id`.
 6.  **LLM Call:** Request is sent to vLLM. AgentSight intercepts this call.
 7.  **MCP Tool Execution:** If the model requests a tool via MCP, the client injects `traceparent` and calls the Gateway. The Gateway extracts the context, creates a child span, and executes the tool.
-8.  **HITL Gate (TOCTOU Remediation):** For trades >$10,000 USD or risk_score >0.7, the `hitl_gate` node interrupts the graph. On human approval, `post_hitl_rehydrate` reloads the latest state from the Redis checkpointer (preventing stale-state execution), then `post_hitl_revalidate` re-runs the full 7-tier SymbolicGovernor pipeline before proceeding.
+8.  **HITL Gate (TOCTOU Remediation):** For trades >$10,000 USD or risk_score >0.7, the `hitl_gate` node interrupts the graph. On human approval, `post_hitl_rehydrate` fetches a live market quote and computes price drift, then `post_hitl_revalidate` re-runs **Tier 2 (CBF)** and **Tier 4 (OPA)** only with fresh market data before proceeding (or blocking on drift/governance violation).
 9.  **DEFER Queue:** Contexts in the DEFER zone (confidence 0.70–0.95) are pushed to Redis `db=1` (noeviction, 4-hour TTL) for deferred resolution. Three-zone model: ALLOW ≥ 0.95, DEFER 0.70–0.95, DENY < 0.70. Resolved via `POST /v1/defer/{id}/inject` (automated) or `POST /v1/defer/{id}/escalate` (HITL). (AARM-V7)
 10. **Logging:**
     - Application metadata is sent **directly** via OTLP to Langfuse (`http://langfuse-web:3000/api/public/otel/v1/traces`). The OTel Collector is **deprecated** as of 2026-05-31.
@@ -86,15 +86,15 @@ The Gateway acts as the central orchestrator and compliance enforcement point fo
 |--------|--------|------------|
 | AARM-V1 | Memory Poisoning | SHA-256 hash-chained context accumulator (`src/compliance_bridge/context_accumulator.py`) |
 | AARM-V2 | Goal Hijacking | NeMo Guardrails input rail + OPA semantic score threshold (0.85) |
-| AARM-V3 | Confused Deputy | Cilium L7 egress lockdown; no raw model output to untrusted endpoints |
+| AARM-V3 | Confused Deputy | HMAC-SHA256 routing seal + Cloud KMS HSM asymmetric signing; all execution paths cryptographically attested |
 | AARM-V4 | Cross-Agent Propagation | SBOM generation (`scripts/generate_sbom.py`); `outlines` package removed (CVE-2025-69872) |
-| AARM-V5 | Prompt Injection | AnchorageGrpcLedgerProvider externally reconciled CBF |
+| AARM-V5 | Prompt Injection | Aho-Corasick keyword scan (Tier 1) + NeMo Guardrails Colang 2.x input rail (Tier 3) |
 | AARM-V6 | Reward Hacking | OPA RBAC policy (Tier 4); Linkerd mTLS workload identity |
 | AARM-V7 | Context Window Overflow | DEFER queue (Redis db=1 noeviction, 4h TTL); three-zone model (ALLOW≥0.95, DEFER 0.70–0.95, DENY<0.70) |
 | AARM-V8 | Temporal Deception | LangGraph Saga WAL + LIFO rollback; idempotency keys |
-| AARM-V9 | Privilege Escalation | NeMo output rail + Presidio PII egress scan |
-| AARM-V10 | Data Exfiltration | ConsensusModelRegistry heterogeneous multi-model consensus |
-| AARM-V11 | Model Substitution | OSCAL v1.0.4 artifact persistence to GCS; Cloud KMS HSM signing |
+| AARM-V9 | Privilege Escalation | ConsensusModelRegistry heterogeneous multi-model consensus (DeepSeek-R1 + Llama 3.1) |
+| AARM-V10 | Data Exfiltration | NeMo output rail + Presidio PII egress scan (15 entity types) |
+| AARM-V11 | Model Substitution | OSCAL v1.0.4 artifact persistence to GCS; Cloud KMS HSM signing (PARTIAL — POAM-022) |
 
 ### Cloud KMS HSM-Backed Asymmetric Governance Signing
 
@@ -209,4 +209,4 @@ Both tiers run **concurrently** via `asyncio.gather` to minimize latency (SLA: 2
 | CSA AARM v1.0 | 11-vector AI agent threat model | Active |
 | NIST SP 800-53 Rev 5 HIGH | 24% readiness; FedRAMP in progress | In Progress |
 | OSCAL v1.0.4 | Artifact persistence to GCS | Active |
-| Lula | 9 Lula validation manifests (4 active, 5 stub) | Active |
+| Lula | 15 Lula validation manifests (all active) | Active |

@@ -28,13 +28,14 @@ flowchart TD
     Phase3 --> Phase4[Phase 4: Compliance Isolation\nDual GCP Project Split]
 ```
 
-### **Phase 1: AgentSight UI Uplift (Immediate Next Focus)**
+### **Phase 1: AgentSight UI Uplift** ✅ COMPLETED (v2.0.0-rc.1)
 **Goal:** Expose the bounded execution envelopes to compliance operators and human reviewers to complete the HITL closed loop.
 
-*   **Reviewer Input Panel**: Update `KernelDashboard.tsx` to display an interactive, adjustable control (slider or numeric input) allowing the reviewer to adjust the `max_slippage_pct` (defaulting to 2.0%) before clicking "Approve".
-*   **Live Price Drift Indicator**: Display the computed price drift delta ($\Delta P = |P_{\text{fresh}} - P_{\text{stale}}| / P_{\text{stale}}$) in real time next to the transaction details, giving reviewers visibility into current market volatility before they commit.
-*   **TTL Countdown Visualizer**: Add a visual countdown timer for `hitl_expires_at`. When the TTL expires, automatically grey out the approval action, transition the UI status, and prompt the operator to request a fresh trade evaluation (avoiding unexpected HTTP 410 Gone rejections on click).
-*   **Audit Evidence Display**: Render the resulting `rehydration_result` (with $P_{\text{stale}}$, $P_{\text{fresh}}$, and `drift_pct`) in the transaction history panel to preserve evidence visibility.
+*   **Reviewer Input Panel**: ✅ COMPLETED — `KernelDashboard.tsx` displays an interactive, adjustable control allowing the reviewer to adjust `max_slippage_pct` (defaulting to 2.0%) before clicking "Approve".
+*   **Live Price Drift Indicator**: ✅ COMPLETED — Computed price drift delta ($\Delta P = |P_{\text{fresh}} - P_{\text{stale}}| / P_{\text{stale}}$) displayed in real time next to transaction details.
+*   **TTL Countdown Visualizer**: ✅ COMPLETED — Visual countdown timer for `hitl_expires_at`; automatically greys out approval action on expiry and prompts operator to request fresh trade evaluation.
+*   **Audit Evidence Display**: ✅ COMPLETED — `rehydration_result` (with $P_{\text{stale}}$, $P_{\text{fresh}}$, and `drift_pct`) rendered in transaction history panel.
+*   **eBPF Kernel Observability**: ✅ COMPLETED — AgentSight eBPF DaemonSet deployed (`deployment/k8s/agentsight-daemon.yaml`); remote exporter active (`exporter.type: "remote"`).
 
 ---
 

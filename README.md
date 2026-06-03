@@ -2,13 +2,13 @@
 
 > **AI governance for regulated financial services — built-in, not bolted on.**
 
-![v2.0.0](https://img.shields.io/badge/version-2.0.0-blue) ![644 Tests Passing](https://img.shields.io/badge/tests-644%20passing-brightgreen) ![SR 26-2](https://img.shields.io/badge/SR%2026--2-blue) ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue) ![DORA](https://img.shields.io/badge/DORA-blue) ![NIST AI RMF](https://img.shields.io/badge/NIST-AI%20RMF-blue) ![FedRAMP HIGH](https://img.shields.io/badge/FedRAMP-HIGH-blue) ![EU AI Act](https://img.shields.io/badge/EU%20AI%20Act-blue) ![MAS FEAT](https://img.shields.io/badge/MAS%20FEAT-blue) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 3](https://img.shields.io/badge/POAM%20Closed-3-brightgreen)
+![v2.0.0-rc.2](https://img.shields.io/badge/version-2.0.0--rc.2-blue) ![844 Tests Passing](https://img.shields.io/badge/tests-844%20passing-brightgreen) ![SR 26-2](https://img.shields.io/badge/SR%2026--2-blue) ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue) ![DORA](https://img.shields.io/badge/DORA-blue) ![NIST AI RMF](https://img.shields.io/badge/NIST-AI%20RMF-blue) ![FedRAMP HIGH](https://img.shields.io/badge/FedRAMP-HIGH-blue) ![EU AI Act](https://img.shields.io/badge/EU%20AI%20Act-blue) ![MAS FEAT](https://img.shields.io/badge/MAS%20FEAT-blue) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 5](https://img.shields.io/badge/POAM%20Closed-5-brightgreen)
 
 ---
 
 ## The CAGE Product Offering
 
-CAGE v2.0.0 provides a multi-jurisdiction, dual-layer governance architecture for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
+CAGE v2.0.0-rc.2 provides a multi-jurisdiction, dual-layer governance architecture for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
 
 1.  **The Governance Gateway:** A high-performance inference proxy and MCP tool server that enforces a 7-tier symbolic governance model (STPA/UCA validation, agentic confidence check, Control Barrier Function, OPA Rego, multi-agent consensus, causal gatekeeper, and adaptive FRIA gate) combined with network and runtime hardening (Linkerd mTLS, Cilium L7, eBPF telemetry). The SLM sidecar (formerly Tier 3) has been deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. It acts as the "Controller" in our Controller-Plant architecture, intercepting all agent-to-tool and agent-to-LLM communications.
 2.  **The Reusable Agent Harness:** A set of deterministic LangGraph factories (`OpaNodeConfig`/`NemoNodeConfig`) that allow developers to wrap *any* agentic workflow in mandatory, non-bypassable governance guardrails.
@@ -136,11 +136,11 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 | -------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | **AI governance enforcement**                | ✅ Implemented & tested | NeMo rails, OPA circuit breaker, Cloud KMS HSM seal, HITL, CBF (externally reconciled), heterogeneous consensus, PII, STPA — all fail-closed |
 | **Evidentiary independence (v2.0.0)**        | ✅ Implemented & tested | KMS asymmetric signing, human-gated refinement, Anchorage custody reconciliation, multi-model consensus — recursive self-authentication eliminated |
-| **Multi-Framework automated compliance**     | 🟡 Partial              | 9 Lula validation manifests (4 active, 5 stub) across ISO 42001, FedRAMP HIGH, and CSA AARM                                |
+| **Multi-Framework automated compliance**     | 🟡 Partial              | 15 Lula validation manifests (all active) across ISO 42001, FedRAMP HIGH, and CSA AARM                                     |
 | **NIST RMF Steps 1–4 (Prepare → Implement)** | 🟡 Partial              | SC-8 elevated to implemented; SC-7 reinforced; FIPS 199 unsigned; ATO not yet issued                                       |
 | **NIST RMF Step 5 (Assess)**                 | ❌ Not started          | No Security Assessment Report; no independent assessor                                                                      |
 | **NIST RMF Step 6 (Authorize)**              | ❌ Not started          | No ATO letter issued                                                                                                        |
-| **Infrastructure security**                  | 🟡 Partial              | 12 of 22 POA&M open (3 Closed: POAM-007 IA-3, POAM-010 RA-5, POAM-016 SI-2; POAM-011 SC-8 and POAM-012 SC-12 remain Open) — see [`docs/SECURITY_STATUS.md`](docs/SECURITY_STATUS.md)   |
+| **Infrastructure security**                  | 🟡 Partial              | 12 of 22 POA&M open (5 Closed: POAM-007 IA-3, POAM-010 RA-5, POAM-016 SI-2, POAM-020 CM-3, POAM-021 SI-4; POAM-011 SC-8 and POAM-012 SC-12 remain Open) — see [`docs/SECURITY_STATUS.md`](docs/SECURITY_STATUS.md)   |
 | **Intra-cluster mTLS**                       | ✅ Implemented          | Linkerd mTLS: SPIFFE/SVID identity for Gateway→OPA, Gateway→NeMo (POAM-007 closed)                                         |
 | **L7 egress boundary**                       | ✅ Implemented          | Cilium CiliumNetworkPolicy: FQDN allowlist for gateway, internal-only lockdown for agent pods                               |
 | **CI vulnerability scanning**                | ✅ Implemented          | pip-audit, Trivy, Grype, CycloneDX SBOM in `.github/workflows/security-scan.yml` (POAM-010 closed)                         |
@@ -204,7 +204,7 @@ curl http://localhost:8080/health
 ### Run Tests
 
 ```bash
-bash setup_test_env.sh && python -m pytest tests/   # 644 tests
+bash setup_test_env.sh && python -m pytest tests/   # 844 tests passing
 ```
 
 ---
@@ -335,4 +335,4 @@ Apache 2.0 — see [`LICENSE`](LICENSE)
 
 This is not an officially supported Google product. This project is not eligible for the Google Open Source Software Vulnerability Rewards Program.
 
-_CAGE v2.0.0 — 2026-06-01 — Evidentiary Independence Release_
+_CAGE v2.0.0-rc.2 — 2026-06-03 — Security & Formal Verification Lock_

@@ -477,8 +477,19 @@ async def export_oscal_assessment_results(
 
     async def _fetch(cid: str) -> None:
         try:
-            m = await get_compliance_metrics(cid, window_hours)
+            # Per-fetch timeout (8s) ensures each Langfuse call gives up independently.
+            # asyncio.to_thread() tasks cannot be cancelled once the OS thread is running,
+            # so the outer gather timeout alone is insufficient — the event loop stays
+            # blocked until all threads complete.  This inner timeout guarantees the
+            # coroutine yields control back within 8s regardless of thread state.
+            m = await asyncio.wait_for(
+                get_compliance_metrics(cid, window_hours),
+                timeout=8.0,
+            )
             controls_data[cid] = m.model_dump()
+        except asyncio.TimeoutError:
+            logger.warning("[oscal-export] Per-fetch timeout for %s — storing error result", cid)
+            controls_data[cid] = {"error": f"fetch timeout after 8s for {cid}"}
         except Exception as exc:
             logger.warning("[oscal-export] Failed to fetch %s: %s", cid, exc)
             controls_data[cid] = {"error": str(exc)}

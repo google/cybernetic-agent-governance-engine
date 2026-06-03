@@ -2,8 +2,8 @@
 
 **System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor  
 **Reference:** NIST SP 800-128 (Security-Focused Configuration Management for Information Systems); NIST SP 800-53 Rev 5 CM-3, CM-4, CM-5  
-**Version:** 1.0 (Draft)  
-**Date:** 2026-03-06  
+**Version:** 1.1 (Draft)
+**Date:** 2026-06-03
 **ISSO:** [ISSO NAME — TBD]  
 **System Owner:** [SYSTEM OWNER — TBD]  
 **Status:** DRAFT — PENDING AO APPROVAL
@@ -442,20 +442,20 @@ For GCP infrastructure changes:
 
 ```bash
 # View current state
-terraform show deployment/terraform/
+terraform show infra/
 
 # Plan the rollback to previous state
 # (Revert the Terraform .tf file change in git, then:)
-git revert <commit-sha>  # or git checkout HEAD~1 deployment/terraform/<file>.tf
+git revert <commit-sha>  # or git checkout HEAD~1 infra/<file>.tf
 
 # Preview rollback impact
-terraform plan -chdir=deployment/terraform/
+terraform plan -chdir=infra/targets/gcp-gke/
 
 # Apply rollback (requires Cloud Engineering Lead approval)
-terraform apply -chdir=deployment/terraform/
+terraform apply -chdir=infra/targets/gcp-gke/
 ```
 
-**Critical:** Terraform state file (`deployment/terraform/`) must not be manually edited. Always use `terraform plan` → `terraform apply` workflow. State is stored in GCS backend (`deployment/terraform/backend.tf`).
+**Critical:** Terraform state file must not be manually edited. Always use `terraform plan` → `terraform apply` workflow. State is stored in GCS backend (`infra/targets/gcp-gke/backend.tf`). The legacy `deployment/terraform/` directory is retained as historical reference only — all active IaC is under `infra/`.
 
 ### 8.3 OPA Policy Rollback
 

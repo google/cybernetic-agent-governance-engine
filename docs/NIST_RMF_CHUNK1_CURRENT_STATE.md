@@ -3,11 +3,11 @@
 ## Cybernetic Governance Engine (CAGE)
 
 **Document version:** 2.0.0
-**Date:** 2026-06-01
+**Date:** 2026-06-03
 **Scope:** Read-only inventory of existing codebase capabilities across five governance dimensions.
 **Purpose:** Input for subsequent NIST RMF gap-analysis chunks (Chunks 2–5).
 **Constraint:** No NIST RMF gaps are identified here; gap analysis is deferred to Chunk 2.
-**System Version:** CAGE v2.0.0 (promoted 2026-06-01 as v2.0.0-rc.1)
+**System Version:** CAGE v2.0.0-rc.2 (promoted 2026-06-03)
 **Overall NIST RMF Readiness:** 24% (NIST SP 800-53 Rev 5 HIGH baseline)
 **Primary Compliance Frameworks:** ISO/IEC 42001:2023 (primary), SR 26-2 (Federal Reserve, April 17, 2026), NIST SP 800-53 Rev 5 HIGH (FedRAMP in progress), CSA AARM v1.0
 

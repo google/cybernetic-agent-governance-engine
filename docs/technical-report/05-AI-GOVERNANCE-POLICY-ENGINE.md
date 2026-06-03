@@ -2,7 +2,7 @@
 title: "AI Governance & Policy Engine"
 document: "05-AI-GOVERNANCE-POLICY-ENGINE"
 version: "2.3"
-date: "2026-06-01"
+date: "2026-06-03"
 classification: "INTERNAL"
 project: "Cybernetic Governance Engine (CAGE)"
 ---

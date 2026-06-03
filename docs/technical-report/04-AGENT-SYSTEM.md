@@ -3,10 +3,10 @@
 | Field                | Value                                                                             |
 | -------------------- | --------------------------------------------------------------------------------- |
 | **Document Version** | 2.0                                                                               |
-| **Date**             | 2026-06-01                                                                        |
+| **Date**             | 2026-06-03                                                                        |
 | **Classification**   | INTERNAL                                                                          |
 | **Document Series**  | CAGE Technical Report                                                             |
-| **Status**           | DRAFT — Pending AO Approval (GKE deployment verified 2026-06-03; 853 tests passing) |
+| **Status**           | DRAFT — Pending AO Approval (v2.0.0-rc.2 promoted 2026-06-03; GKE deployment verified 2026-06-03; **844 passing, 0 failed, 24 skipped**) |
 | **Reference**        | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/` |
 
 ---

@@ -16,12 +16,11 @@
 kms_signer.py — Cloud KMS Asymmetric Governance Signer (Priority 1)
 ====================================================================
 
-Replaces the in-process HMAC ``GOVERNANCE_SALT`` self-signing pattern with
-Google Cloud KMS asymmetric signing.  This closes the recursive
-self-authentication vulnerability identified in the evidentiary independence
-analysis: the previous HMAC key lived in the same process memory as both
-the signer (evaluator_node) and the verifier (explainer_node), meaning the
-system was cryptographically attesting to itself.
+Provides Google Cloud KMS asymmetric signing for governance plans.  The
+previous in-process HMAC ``GOVERNANCE_SALT`` self-signing pattern has been
+**removed** — it created a recursive self-authentication vulnerability where
+the signing key lived in the same process memory as both the signer
+(evaluator_node) and the verifier (explainer_node).
 
 Architecture
 ------------
@@ -58,14 +57,13 @@ Security properties
    application's control plane.  A compromised container cannot forge a
    signature without calling KMS, and that call is logged externally.
 
-Fallback behaviour
-------------------
-When Cloud KMS is unavailable (local dev, CI, missing credentials):
-  - ``KMSGovernanceSigner.sign()`` falls back to a local HMAC using
-    ``GOVERNANCE_SALT`` (if set) and emits a WARNING.
-  - ``KMSGovernanceSigner.verify()`` falls back to local HMAC verification.
-  - The fallback is **not acceptable for production** — the ``is_kms_active``
-    property returns False and the compliance bridge will flag it.
+No fallback
+-----------
+The legacy HMAC ``GOVERNANCE_SALT`` fallback has been permanently removed.
+If KMS is unavailable, ``sign()`` raises ``RuntimeError`` immediately so
+the failure is explicit and audit-visible rather than silently degraded.
+Use ``CAGE_ENV=development`` or ``CAGE_ENV=test`` to skip the startup
+assertion in non-production environments; signing will still require KMS.
 
 Environment variables
 ---------------------
@@ -77,14 +75,11 @@ Environment variables
                                 (embedded at container build time).
                                 If unset, the public key is fetched from
                                 KMS on first use (slower, but works).
-  GOVERNANCE_SALT            — Legacy HMAC salt (fallback only; will be
-                                removed once KMS is fully deployed).
 """
 
 from __future__ import annotations
 
 import hashlib
-import hmac as hmac_mod
 import json
 import logging
 import os
@@ -101,7 +96,6 @@ _tracer = otel_trace.get_tracer(__name__)
 
 _KMS_KEY_VERSION: str = os.environ.get("KMS_GOVERNANCE_KEY", "")
 _PUBLIC_PEM_PATH: str = os.environ.get("KMS_GOVERNANCE_PUBLIC_PEM", "")
-_LEGACY_SALT: str = os.environ.get("GOVERNANCE_SALT", "")
 
 
 def _canonicalise_plan(plan: dict) -> bytes:
@@ -128,11 +122,11 @@ class KMSGovernanceSigner:
         signature = signer.sign(plan_dict)
         is_valid  = signer.verify(plan_dict, signature)
 
-    In production, ``sign()`` calls ``asymmetricSign`` on the KMS HSM.
+    ``sign()`` calls ``asymmetricSign`` on the KMS HSM.
     ``verify()`` uses the locally-embedded public key (no KMS call needed).
 
-    In dev/CI (no KMS credentials), both fall back to legacy HMAC-SHA256
-    using ``GOVERNANCE_SALT`` and emit a WARNING.
+    There is no HMAC fallback.  If KMS is unavailable, ``sign()`` raises
+    ``RuntimeError`` so the failure is explicit and audit-visible.
     """
 
     def __init__(
@@ -140,12 +134,10 @@ class KMSGovernanceSigner:
         kms_client: object | None = None,
         key_version_name: str = "",
         public_key_pem: bytes = b"",
-        legacy_salt: str = "",
     ) -> None:
         self._kms_client = kms_client
         self._key_version_name = key_version_name
         self._public_key_pem = public_key_pem
-        self._legacy_salt = legacy_salt
         self._kms_active = kms_client is not None and bool(key_version_name)
 
     @property
@@ -162,73 +154,63 @@ class KMSGovernanceSigner:
     def from_env(cls) -> "KMSGovernanceSigner":
         """Construct from environment variables.
 
-        Tries to initialise a Cloud KMS client.  Falls back to legacy HMAC
-        if the ``google-cloud-kms`` package is not installed or credentials
-        are missing.
+        Raises ``RuntimeError`` if ``KMS_GOVERNANCE_KEY`` is not set or the
+        ``google-cloud-kms`` package is not installed.  There is no HMAC
+        fallback — failures must be explicit.
         """
-        kms_client = None
-        public_key_pem = b""
-
-        if _KMS_KEY_VERSION:
-            try:
-                from google.cloud import kms  # type: ignore[import]
-
-                kms_client = kms.KeyManagementServiceClient()
-                logger.info(
-                    "[KMSSigner] Cloud KMS client initialised for key: %s",
-                    _KMS_KEY_VERSION,
-                )
-
-                # Load public key — prefer local PEM file (build-time embed)
-                if _PUBLIC_PEM_PATH and os.path.isfile(_PUBLIC_PEM_PATH):
-                    with open(_PUBLIC_PEM_PATH, "rb") as f:
-                        public_key_pem = f.read()
-                    logger.info(
-                        "[KMSSigner] Public key loaded from: %s", _PUBLIC_PEM_PATH
-                    )
-                else:
-                    # Fetch from KMS (first-use bootstrap)
-                    try:
-                        response = kms_client.get_public_key(
-                            name=_KMS_KEY_VERSION
-                        )
-                        public_key_pem = response.pem.encode("utf-8")
-                        logger.info(
-                            "[KMSSigner] Public key fetched from KMS "
-                            "(embed in container image for production)."
-                        )
-                    except Exception as pk_exc:
-                        logger.warning(
-                            "[KMSSigner] Failed to fetch public key from KMS: %s. "
-                            "Signature verification will use HMAC fallback.",
-                            pk_exc,
-                        )
-
-            except ImportError:
-                logger.warning(
-                    "[KMSSigner] google-cloud-kms not installed — "
-                    "falling back to legacy HMAC. Install with: "
-                    "pip install google-cloud-kms"
-                )
-            except Exception as exc:
-                logger.warning(
-                    "[KMSSigner] KMS client init failed: %s — "
-                    "falling back to legacy HMAC.",
-                    exc,
-                )
-
-        if kms_client is None and not _LEGACY_SALT:
-            logger.error(
-                "[KMSSigner] Neither KMS_GOVERNANCE_KEY nor GOVERNANCE_SALT "
-                "is configured. Governance signatures will be unavailable. "
-                "This is a critical compliance gap."
+        if not _KMS_KEY_VERSION:
+            raise RuntimeError(
+                "[KMSSigner] KMS_GOVERNANCE_KEY is not set. "
+                "Set it to the full Cloud KMS key version resource name. "
+                "The legacy HMAC GOVERNANCE_SALT fallback has been removed. "
+                "See CTRL_KMS_001 in control_mappings.json."
             )
+
+        try:
+            from google.cloud import kms  # type: ignore[import]
+        except ImportError as exc:
+            raise RuntimeError(
+                "[KMSSigner] google-cloud-kms is not installed. "
+                "Install with: pip install google-cloud-kms"
+            ) from exc
+
+        try:
+            kms_client = kms.KeyManagementServiceClient()
+            logger.info(
+                "[KMSSigner] Cloud KMS client initialised for key: %s",
+                _KMS_KEY_VERSION,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"[KMSSigner] KMS client init failed: {exc}. "
+                "Check workload identity / ADC credentials."
+            ) from exc
+
+        public_key_pem = b""
+        # Load public key — prefer local PEM file (build-time embed)
+        if _PUBLIC_PEM_PATH and os.path.isfile(_PUBLIC_PEM_PATH):
+            with open(_PUBLIC_PEM_PATH, "rb") as f:
+                public_key_pem = f.read()
+            logger.info("[KMSSigner] Public key loaded from: %s", _PUBLIC_PEM_PATH)
+        else:
+            # Fetch from KMS (first-use bootstrap)
+            try:
+                response = kms_client.get_public_key(name=_KMS_KEY_VERSION)
+                public_key_pem = response.pem.encode("utf-8")
+                logger.info(
+                    "[KMSSigner] Public key fetched from KMS "
+                    "(embed in container image for production)."
+                )
+            except Exception as pk_exc:
+                raise RuntimeError(
+                    f"[KMSSigner] Failed to fetch public key from KMS: {pk_exc}. "
+                    "Set KMS_GOVERNANCE_PUBLIC_PEM to a local PEM file path."
+                ) from pk_exc
 
         return cls(
             kms_client=kms_client,
             key_version_name=_KMS_KEY_VERSION,
             public_key_pem=public_key_pem,
-            legacy_salt=_LEGACY_SALT,
         )
 
     # ------------------------------------------------------------------
@@ -238,28 +220,29 @@ class KMSGovernanceSigner:
     def sign(self, plan: dict) -> str:
         """Sign a governance plan and return the hex-encoded signature.
 
-        In production (KMS active):
-          - Computes SHA-256 digest of the canonical plan
-          - Calls ``asymmetricSign`` on the KMS HSM
-          - Returns the hex-encoded signature bytes
-
-        In dev/CI (KMS not active):
-          - Falls back to HMAC-SHA256 using ``GOVERNANCE_SALT``
-          - Emits a WARNING so the gap is audit-visible
+        Computes SHA-256 digest of the canonical plan, calls
+        ``asymmetricSign`` on the KMS HSM, and returns the hex-encoded
+        signature bytes.
 
         Raises:
-            RuntimeError: If neither KMS nor legacy HMAC is available.
+            RuntimeError: If KMS signing fails.  There is no HMAC fallback.
         """
+        if not self._kms_active:
+            raise RuntimeError(
+                "[KMSSigner] sign() called but KMS is not active. "
+                "Ensure KMS_GOVERNANCE_KEY is set and from_env() succeeded."
+            )
         plan_bytes = _canonicalise_plan(plan)
         with _tracer.start_as_current_span("cage.kms_signer.sign") as span:
             span.set_attribute("cage.signing.algorithm", self.signing_algorithm)
             span.set_attribute("cage.signing.kms_active", self._kms_active)
-            if self._kms_active:
-                return self._kms_sign(plan_bytes)
-            return self._hmac_sign(plan_bytes)
+            return self._kms_sign(plan_bytes)
 
     def _kms_sign(self, plan_bytes: bytes) -> str:
-        """Sign via Cloud KMS asymmetricSign API."""
+        """Sign via Cloud KMS asymmetricSign API.
+
+        Raises ``RuntimeError`` on failure — no HMAC fallback.
+        """
         try:
             from google.cloud.kms_v1.types import service as kms_service  # type: ignore[import]
 
@@ -281,64 +264,19 @@ class KMSGovernanceSigner:
             return signature_hex
 
         except Exception as exc:
-            logger.error(
-                "[KMSSigner] KMS signing failed: %s — "
-                "falling back to HMAC (AUDIT: non-repudiation gap).",
-                exc,
-            )
             logger.critical(
                 json.dumps({
-                    "event": "KMS_SIGNING_FALLBACK",
+                    "event": "KMS_SIGNING_FAILED",
                     "severity": "CRITICAL",
-                    "signing_path": "HMAC_SHA256_FALLBACK",
                     "kms_key": self._key_version_name,
                     "error": str(exc),
-                    "audit_note": "non-repudiation gap: signature cannot be externally verified",
+                    "audit_note": "signing failed — no fallback; trade blocked",
                 })
             )
-            return self._hmac_sign(plan_bytes)
-
-    def _hmac_sign(self, plan_bytes: bytes) -> str:
-        """Legacy HMAC-SHA256 fallback (dev/CI only)."""
-        if not self._legacy_salt:
-            logger.error(
-                "[KMSSigner] No signing mechanism available "
-                "(KMS unavailable, GOVERNANCE_SALT not set). "
-                "Returning empty signature — trade will be blocked "
-                "at the signature gate."
-            )
-            return ""
-
-        if self._kms_active:
-            # KMS was configured but failed — this is a degraded state
-            logger.warning(
-                "⚠️ [KMSSigner] HMAC fallback active despite KMS being "
-                "configured. This signature has NO non-repudiation value. "
-                "The private key equivalent (GOVERNANCE_SALT) is in-process."
-            )
-            logger.critical(
-                json.dumps({
-                    "event": "KMS_SIGNING_FALLBACK",
-                    "severity": "CRITICAL",
-                    "signing_path": "HMAC_SHA256_FALLBACK",
-                    "kms_key": self._key_version_name,
-                    "error": "KMS active but signing failed — see preceding error log",
-                    "audit_note": "non-repudiation gap: signature cannot be externally verified",
-                })
-            )
-        else:
-            logger.warning(
-                "⚠️ [KMSSigner] Using legacy HMAC-SHA256 (GOVERNANCE_SALT). "
-                "This is acceptable in dev/test but MUST be replaced with "
-                "Cloud KMS in production. See Priority 1 in the evidentiary "
-                "independence roadmap."
-            )
-
-        return hmac_mod.new(
-            self._legacy_salt.encode(),
-            plan_bytes,
-            hashlib.sha256,
-        ).hexdigest()
+            raise RuntimeError(
+                f"[KMSSigner] KMS asymmetricSign failed: {exc}. "
+                "The HMAC fallback has been removed. Fix KMS connectivity."
+            ) from exc
 
     # ------------------------------------------------------------------
     # Verify
@@ -347,12 +285,8 @@ class KMSGovernanceSigner:
     def verify(self, plan: dict, signature_hex: str) -> bool:
         """Verify a governance signature against a plan.
 
-        In production (public key available):
-          - Uses the RSA/EC public key to verify the KMS-produced signature
-          - No KMS call needed — verification is local
-
-        In dev/CI:
-          - Falls back to HMAC comparison
+        Uses the RSA/EC public key to verify the KMS-produced signature
+        locally — no KMS gRPC call needed.
 
         Returns:
             True if the signature is valid.
@@ -360,12 +294,14 @@ class KMSGovernanceSigner:
         if not signature_hex:
             return False
 
+        if not self._public_key_pem:
+            raise RuntimeError(
+                "[KMSSigner] verify() called but no public key is loaded. "
+                "Ensure KMS_GOVERNANCE_PUBLIC_PEM is set or KMS bootstrap succeeded."
+            )
+
         plan_bytes = _canonicalise_plan(plan)
-
-        if self._public_key_pem:
-            return self._kms_verify(plan_bytes, signature_hex)
-
-        return self._hmac_verify(plan_bytes, signature_hex)
+        return self._kms_verify(plan_bytes, signature_hex)
 
     def _kms_verify(self, plan_bytes: bytes, signature_hex: str) -> bool:
         """Verify using the KMS public key (local, no gRPC call)."""
@@ -406,26 +342,12 @@ class KMSGovernanceSigner:
 
         except Exception as exc:
             logger.warning(
-                "[KMSSigner] KMS public key verification failed: %s — "
-                "trying HMAC fallback.",
+                "[KMSSigner] KMS public key verification failed: %s",
                 exc,
             )
-            return self._hmac_verify(plan_bytes, signature_hex)
-
-        return False
-
-    def _hmac_verify(self, plan_bytes: bytes, signature_hex: str) -> bool:
-        """Legacy HMAC verification fallback."""
-        if not self._legacy_salt:
             return False
 
-        expected = hmac_mod.new(
-            self._legacy_salt.encode(),
-            plan_bytes,
-            hashlib.sha256,
-        ).hexdigest()
-
-        return hmac_mod.compare_digest(expected, signature_hex)
+        return False
 
 
 # ---------------------------------------------------------------------------

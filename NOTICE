@@ -20,7 +20,7 @@ Third-Party Source Code Adapted Into This Repository
 ---
 
 LalaSkye / no-direct-bind — Copyright (c) LalaSkye contributors. Apache License 2.0.
-  Source: https://github.com/LalaSkye/no-direct-bind
+  Source: https://github.com/LalaSkye/no-direct-bind/commit/7fe9ff99636798accd5e04136991e1d3d3079417
   Note: proof/model.py was adapted from the NoDirectBind BFS state-space enumerator.
   Modifications: Extended for CAGE 7-tier governance architecture with Gap 2/3/4 sub-proofs.
 

@@ -37,7 +37,7 @@ cp .env.example .env
 bash setup_test_env.sh && python -m pytest tests/
 ```
 
-All 644 tests must pass before opening a PR. The test suite covers guardrail nodes, OPA policy evaluation, governance client, NeMo actions, STPA compiler code generation, causal gatekeeper, evidence chain integrity, and the LangGraph pipeline.
+All tests must pass before opening a PR (current baseline: **844 passing, 0 failed, 24 skipped**). The test suite covers guardrail nodes, OPA policy evaluation, governance client, NeMo actions, STPA compiler code generation, causal gatekeeper, evidence chain integrity, and the LangGraph pipeline.
 
 > **Observability note:** The standalone OpenTelemetry Collector sidecar was **deprecated 2026-05-31**. All OTel spans are now exported directly to Langfuse via OTLP. Do not add new configuration that references a standalone `otel-collector` endpoint; use `LANGFUSE_OTLP_ENDPOINT` instead.
 
@@ -131,7 +131,7 @@ The playground telemetry module (`examples/telemetry.py`) writes a SHA-256 hash-
 
 ### Pre-PR Checklist
 
-- [ ] All 644 tests pass (or new tests added for new behavior)
+- [ ] All tests pass — current baseline: **844 passing, 0 failed, 24 skipped** (or new tests added for new behavior)
 
 - [ ] No `# TODO` / `# FIXME` / `# HACK` comments without a linked GitHub issue
 - [ ] No hardcoded credentials, project IDs, or cloud-provider paths

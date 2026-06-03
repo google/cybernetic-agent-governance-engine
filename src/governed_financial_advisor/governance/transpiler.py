@@ -22,6 +22,7 @@ deterministic templates. Any OpenAI-compatible endpoint is supported —
 set OPENAI_API_BASE / OPENAI_API_KEY in the environment.
 """
 
+import ast
 import logging
 import os
 import re
@@ -45,14 +46,78 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 class JudgeAgent:
-    """Evaluates LLM-generated policy code for correctness."""
+    """Evaluates LLM-generated policy code for correctness.
+
+    Uses AST-level parsing for Python output and structural token checks for
+    Rego output.  The previous substring-match approach ("def " in code) was
+    too permissive — any string containing those tokens would pass.
+    """
+
+    # Rego-specific tokens that must ALL be present for a valid policy fragment.
+    _REGO_REQUIRED_TOKENS: tuple[str, ...] = ("package", "default", "decision")
 
     def verify(self, code: str) -> bool:
-        """Return True if the generated code looks syntactically reasonable."""
+        """Return True if the generated code is structurally valid.
+
+        For Python: attempts ``ast.parse()``; requires at least one
+        ``FunctionDef`` or ``AsyncFunctionDef`` node at the module level.
+
+        For Rego: checks that all required Rego tokens are present (package
+        declaration, default decision, decision rule).
+
+        Returns False on any parse error or structural deficiency.
+        """
         if not code or not code.strip():
             return False
-        # Basic structural checks
-        return "def " in code or "decision" in code or "package" in code
+
+        stripped = code.strip()
+
+        # Detect Rego by the mandatory package declaration
+        if stripped.startswith("package "):
+            return self._verify_rego(stripped)
+
+        # Default: treat as Python
+        return self._verify_python(stripped)
+
+    def _verify_python(self, code: str) -> bool:
+        """Parse *code* as Python and require at least one top-level function."""
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as exc:
+            logger.warning(
+                "JudgeAgent: Python AST parse failed: %s", exc
+            )
+            return False
+
+        has_function = any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            for node in ast.walk(tree)
+        )
+        if not has_function:
+            logger.warning(
+                "JudgeAgent: Python code contains no function definitions"
+            )
+            return False
+
+        return True
+
+    def _verify_rego(self, code: str) -> bool:
+        """Structural token check for OPA Rego policy fragments.
+
+        Rego has no Python-compatible parser available in the standard library,
+        so we verify the mandatory structural tokens that every valid governance
+        policy fragment must contain.
+        """
+        missing = [
+            tok for tok in self._REGO_REQUIRED_TOKENS if tok not in code
+        ]
+        if missing:
+            logger.warning(
+                "JudgeAgent: Rego fragment missing required tokens: %s",
+                missing,
+            )
+            return False
+        return True
 
 
 # ---------------------------------------------------------------------------
