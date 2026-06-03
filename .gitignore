@@ -204,6 +204,12 @@ examples/evidence/*.ndjson
 # Agent Local Configs
 .agents/
 
--e 
-# Test result artifacts
+# Test result artifacts — local pytest output, never commit
 test_results/
+test_results_*.txt
+test_results_final_*.txt
+*_results_*.txt
+junit*.xml
+coverage.xml
+.coverage
+htmlcov/
