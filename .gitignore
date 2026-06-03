@@ -213,3 +213,6 @@ junit*.xml
 coverage.xml
 .coverage
 htmlcov/
+
+# Stale scratch/temp directories — canonical protos live in src/gateway/protos/
+temp_test/
