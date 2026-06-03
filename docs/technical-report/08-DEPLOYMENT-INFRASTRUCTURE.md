@@ -132,13 +132,21 @@ Source: `deployment/docker/`
 
 Source: `deployment/docker/`
 
-| Pipeline | Config                                                | Builds                          |
-| -------- | ----------------------------------------------------- | ------------------------------- |
-| Gateway  | `deployment/docker/cloudbuild_gateway.yaml` / `deployment/docker/cloudbuild.gateway.yaml` | Hybrid Gateway image            |
-| vLLM     | `deployment/docker/cloudbuild.vllm.yaml`                                | vLLM inference image            |
-| Lula     | `deployment/docker/cloudbuild.lula.yaml`                                | Lula compliance validator image |
+| Pipeline                    | Config                                                                                    | Builds                                                                    |
+| --------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Gateway                     | `deployment/docker/cloudbuild.gateway.yaml`                                               | `gcr.io/laah-cybernetics/gateway:latest` — Hybrid Gateway image           |
+| Governed Financial Advisor  | `deployment/docker/cloudbuild.advisor.yaml`                                               | `gcr.io/laah-cybernetics/governed-financial-advisor:latest` — Advisor image |
+| vLLM                        | `deployment/docker/cloudbuild.vllm.yaml`                                                  | vLLM inference image                                                      |
+| Lula                        | `deployment/docker/cloudbuild.lula.yaml`                                                  | Lula compliance validator image                                           |
 
-**Build flow**: Cloud Build trigger → Docker build → push to GCR/AR → update Kubernetes Deployment via `kubectl rollout`.
+**Build flow**: Cloud Build trigger → Docker build → push to GCR (`gcr.io/laah-cybernetics/`) → update Kubernetes Deployment via `kubectl rollout`.
+
+**2026-06-03 deployment:** Both application images were built via Cloud Build and deployed to GKE cluster `gke_laah-cybernetics_us-central1-a_cage-dev`, namespace `governance-stack`. No Terraform/infrastructure files were modified. All pods verified running and healthy.
+
+| Image                                                    | Digest (sha256)                                                    |
+| -------------------------------------------------------- | ------------------------------------------------------------------ |
+| `gcr.io/laah-cybernetics/gateway:latest`                 | `sha256:f0e8f4170e90b37cb5809eff7de93d63a0c75a57c6a03f1ce6815421c4b8dc65` |
+| `gcr.io/laah-cybernetics/governed-financial-advisor:latest` | `sha256:f0e8f4170e90b37cb5809eff7de93d63a0c75a57c6a03f1ce6815421c4b8dc65` |
 
 ---
 

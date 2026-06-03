@@ -3,9 +3,9 @@
 | Field              | Value                     |
 | ------------------ | ------------------------- |
 | **Classification** | PUBLIC                    |
-| **Date**           | 2026-06-01                |
+| **Date**           | 2026-06-03                |
 | **Version**        | 2.0.0-rc.1                |
-| **Status**         | Implemented & Verified    |
+| **Status**         | Implemented & Verified (GKE deployment confirmed 2026-06-03) |
 
 ---
 

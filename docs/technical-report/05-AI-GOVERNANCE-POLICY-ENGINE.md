@@ -113,6 +113,8 @@ Full analysis: [`docs/STPA_ANALYSIS.md`](../STPA_ANALYSIS.md).
 
 [`STPAValidator`](../../src/gateway/governance/stpa_validator.py) enforces **9 Unsafe Control Actions (UCAs)** derived from STAMP hazard analysis of the CAGE financial control loop (UCA-1 through UCA-9, compiled by `stpa_compiler.py`). Each UCA maps to a threshold in `governance_thresholds.json`. The STPA check runs synchronously as Step 0 (`cage.stpa_check` OTel span), always first.
 
+> **Implementation note (2026-06-03):** The STPA compiler generates `src/gateway/governance/generated_stpa_validator.py` containing `GeneratedSTPAValidator`. A `validate()` alias was added to `GeneratedSTPAValidator` that delegates to `validate_generated()`, resolving an `AttributeError` when `symbolic_governor.py` called `.validate()` on the generated class. Both `stpa_validator.py` (hand-authored) and `generated_stpa_validator.py` (compiler output) are now present and operational.
+
 | UCA ID | Name                        | Check                                                | Threshold                                                 |
 | ------ | --------------------------- | ---------------------------------------------------- | --------------------------------------------------------- |
 | SC-1   | Unauthorized Control Action | `approval_token` required for all controlled actions | Any trade without token → BLOCK                           |
@@ -270,6 +272,8 @@ NeMo Guardrails configuration resides in `config/rails/`.
 - Colang 2.x syntax
 - **15 PII entity types** configured for input/output scanning (Microsoft Presidio)
 - Model: `GUARDRAILS_MODEL_NAME` (environment variable)
+
+> **Implementation note (2026-06-03 — `nemo_node_factory.py`):** Both hardcoded `"BLOCKED"` sentinel strings in `src/gateway/governance/langgraph_harness/nemo_node_factory.py` were replaced with `cfg.output_blocked_sentinel` — in the semantic validation BLOCKED path and the exception path. This ensures the sentinel value is always read from configuration rather than hardcoded, preventing mismatches when the sentinel is configured differently in tests or non-default deployments.
 
 ### NeMo Phase 4.2 Changes (`src/gateway/governance/nemo/manager.py`)
 
@@ -457,7 +461,9 @@ Pending tokens are resolved by:
 
 ## 8. DoWhy Causal Gatekeeper — Tier 6 (v2.0.0)
 
-The **DoWhy Causal Gatekeeper** (`src/gateway/governance/causal_gatekeeper.py`) serves as CAGE's final mathematical validation layer—the "Lock" on the CAGE. It utilizes **Microsoft DoWhy** causal inference and placebo simulation to confirm that the system's world-model is structurally sound before high-stakes trade actions.
+The **DoWhy Causal Gatekeeper** ([`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)) serves as CAGE's final mathematical validation layer—the "Lock" on the CAGE. It utilizes **Microsoft DoWhy** causal inference and placebo simulation to confirm that the system's world-model is structurally sound before high-stakes trade actions.
+
+> **Implementation note (2026-06-03):** `generate_mock_telemetry()` was updated to include a `timestamp` column (4 columns total: `trade_amount`, `risk_score`, `market_volatility`, `timestamp`). The freshness check in `causal_safety_check()` requires this column to validate that telemetry data is not stale. The fail-closed behavior is preserved — genuinely stale telemetry still blocks. The fix ensures synthetic/mock data passes the freshness check without bypassing the production guard.
 
 ### 8.1 Dual-Lifecycle Validation
 The gatekeeper enforces two complementary validation phases:

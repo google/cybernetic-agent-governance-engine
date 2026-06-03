@@ -5,7 +5,7 @@
 | **Classification** | INTERNAL                  |
 | **Date**           | 2026-06-01                |
 | **Version**        | 2.0                       |
-| **Status**         | Current — v2.0.0-rc.1 promoted 2026-06-01 (branch `rc-v2.0.0`, tag `v2.0.0-rc.1`; 644 unit tests passing, 0 failures) |
+| **Status**         | Current — v2.0.0-rc.1 promoted 2026-06-01 (branch `rc-v2.0.0`, tag `v2.0.0-rc.1`); GKE deployment verified 2026-06-03; **853 tests passing, 0 failures** (`test_results/run_20260603T103414.txt`) |
 | **Series**         | CAGE Technical Report — Document 10 / 10 |
 
 As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v2.0.0 architecture has been methodically evaluated against the Composite Verification Framework (CVF).

@@ -6,7 +6,7 @@
 | **Date**             | 2026-06-01                                                                        |
 | **Classification**   | INTERNAL                                                                          |
 | **Document Series**  | CAGE Technical Report                                                             |
-| **Status**           | DRAFT — Pending AO Approval                                                       |
+| **Status**           | DRAFT — Pending AO Approval (GKE deployment verified 2026-06-03; 853 tests passing) |
 | **Reference**        | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/` |
 
 ---

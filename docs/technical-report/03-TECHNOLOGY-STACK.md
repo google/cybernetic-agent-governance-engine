@@ -6,7 +6,7 @@
 | **Date**             | 2026-06-01                                                               |
 | **Classification**   | INTERNAL                                                                 |
 | **Document Series**  | CAGE Technical Report                                                    |
-| **Status**           | DRAFT — Pending AO Approval                                              |
+| **Status**           | DRAFT — Pending AO Approval (GKE deployment verified 2026-06-03; 853 tests passing) |
 | **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md` |
 
 ---
@@ -146,6 +146,12 @@
 | -------------- | -------------------------------------------------------------------------------------------------------- |
 | ~~`outlines`~~ | **REMOVED** — CVE-2025-69872 (critical vulnerability). Structured output now enforced via vLLM FSM natively. |
 | ~~SLM sidecar~~| **DEPRECATED** — `slm_available=False` permanent sentinel injected into OPA payload; 0ms overhead; Tier 3 bypassed to optimize latency budget. |
+
+### Known Environment Issues
+
+| Issue | Resolution |
+| ----- | ---------- |
+| `typer` corrupted namespace stub (`No module named typer.main`) | **Resolved 2026-06-03** — Reinstall `typer>=0.9.0` via `pip install --force-reinstall "typer>=0.9.0"`. The corrupted stub caused `presidio_analyzer` import failure and `OperatorConfig NameError` in NeMo SDD actions, blocking `test_pii_integration.py`. |
 
 ---
 
