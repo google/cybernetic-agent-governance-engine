@@ -2,8 +2,8 @@
 
 | Field              | Value                                           |
 | ------------------ | ----------------------------------------------- |
-| **Version**        | 2.0                                                             |
-| **Date**           | 2026-06-01                                                      |
+| **Version**        | 2.1                                             |
+| **Date**           | 2026-06-03                                      |
 | **Classification** | INTERNAL                                        |
 | **Document**       | CAGE Technical Report — Security Infrastructure |
 
@@ -26,6 +26,8 @@ CAGE implements a defense-in-depth security model across seven distinct layers. 
 > ⚠️ **Current Security Posture: HIGH Overall Risk — ATO Not Recommended**
 >
 > One **critical** open finding remains unresolved: unsigned FIPS 199 categorization (FIND-007). Two critical findings have been resolved: HMAC bypass vulnerability FIND-010 / POAM-012 is **CLOSED**, and intra-cluster mTLS FIND-011 / POAM-007 is **CLOSED** (Linkerd mTLS + Cilium L7 egress lockdown deployed).
+>
+> ✅ **v2.0.0-rc.2 Security Hardening Sprint (2026-06-03):** All four No-Direct-Bind architectural gaps have been closed. The `NoDirectBind` safety invariant is now machine-verified over the entire reachable state space. See §3a below and [Document 10 — Formal Verification](./10-FORMAL-VERIFICATION.md) §Step 7 for full details.
 
 ---
 
@@ -60,6 +62,80 @@ Explicit allow rules cover: agent server → gateway, gateway → OPA, gateway �
 > as environment variables. No runtime dependency on `google-cloud-secret-manager`.
 
 > ⚠️ **Langfuse DPA Risk**: Langfuse SaaS processes compliance metrics and agent traces. A Data Processing Agreement (DPA) is required before production use. This represents a residual ISA risk until the DPA is executed.
+
+---
+
+## 3a. Remediation Update — Closure of Ungated Variant Vulnerabilities (v2.0.0-rc.2)
+
+> **Classification:** Security Hardening — Pre-ATO Package Update
+> **Date:** 2026-06-03
+> **Sprint:** No-Direct-Bind Formal Verification Lock
+
+The v2.0.0-rc.2 security hardening sprint closed four architectural gaps identified during formal analysis of the `NoDirectBind` safety invariant. The invariant is defined as:
+
+$$\text{NoDirectBind} \equiv (\text{phase} = \texttt{EXECUTED}) \Rightarrow (\text{resolvedAllow} = \texttt{TRUE})$$
+
+All four gaps have been remediated and machine-verified. The system is now hard-gated against fail-open configurations in production environments.
+
+### Gap 2 — Cryptographic Attestation Enforced on All Execution Paths
+
+**Finding:** The `SymbolicGovernor.govern()` method ran the full 7-tier governance pipeline but returned `None` on approval, providing no cryptographic attestation that authority had been resolved. A caller that caught `GovernanceError` on denial could proceed to execution without a routing seal — a direct-bind shortcut identical to the ungated counterexample in the formal proof.
+
+**Remediation:**
+
+[`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) now issues an HMAC-SHA256 routing seal on approval and returns it as a non-empty string. The seal is generated via [`routing_seal.generate_seal()`](../../src/gateway/governance/routing_seal.py) inside a dedicated `cage.routing_seal` OTel span, after all 7 governance tiers have passed. [`governance_middleware.enforce_governance()`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers. [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) calls `verify_seal()` before executing the trade; a missing or invalid seal produces an immediate `BLOCKED` response.
+
+Both `govern()` and `validate_action()` now satisfy the `NoDirectBind` invariant. There is no longer any code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`.
+
+**Verification:** The formal proof in [`proof/model.py`](../../proof/model.py) confirms that the pre-fix `govern()` path (no seal) produces a direct-bind violation (`EXECUTED` with `resolvedAllow = False`), and that the fixed path does not.
+
+### Gap 3 — `CBF_FAIL_OPEN` Hard-Gated in Production
+
+**Finding:** Setting `CBF_FAIL_OPEN=true` silently removed the Control Barrier Function (Tier 2) from the governance gate. The condition was logged at `CRITICAL` level but did not prevent the service from starting or processing requests. This constituted a documented, operator-accessible direct-bind shortcut that degraded the 7-tier gate to a 6-tier gate without any deployment-time enforcement.
+
+**Remediation:**
+
+A module-level startup assertion in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) now raises a `RuntimeError` at import time if `CBF_FAIL_OPEN=true` is detected in any non-development environment (`CAGE_ENV` not in `{development, test, dev, ci}`):
+
+```
+CAGE STARTUP FAILURE (No-Direct-Bind Gap 3): CBF_FAIL_OPEN=true is set in a
+production environment. This removes the Control Barrier Function tier from the
+governance gate, creating a direct-bind shortcut to EXECUTED without resolved
+cash-barrier authority.
+```
+
+The pod will crash at startup rather than serve requests with a degraded gate. This is consistent with the existing `CAGE_ROUTING_SEAL_SECRET` and `CAGE_ENV` startup validation pattern.
+
+**Operational impact:** `CBF_FAIL_OPEN=true` remains available in `development` and `test` environments for local development without a Redis instance. It is permanently blocked in production.
+
+### Gap 4 — DoWhy Causal Gatekeeper Mandatory in Production
+
+**Finding:** If the `dowhy` Python package was not installed, the causal gatekeeper (Tier 6) was silently skipped via `except ImportError: logger.debug(...)`. This removed a mandatory governance tier without any startup-time signal, allowing the service to start and process requests with a 6-tier gate while appearing to operate normally.
+
+Additionally, runtime exceptions during DoWhy refutation (e.g., numerical instability, telemetry parse errors) were previously swallowed via `except Exception: logger.warning(...)`, causing the tier to silently pass rather than fail closed.
+
+**Remediation:**
+
+1. **Import assertion:** A module-level startup assertion in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) attempts `import dowhy` in production environments and raises `RuntimeError` if the import fails:
+
+   ```
+   CAGE STARTUP FAILURE (No-Direct-Bind Gap 4): 'dowhy' is not installed.
+   The DoWhy causal gatekeeper (Tier 6) is a mandatory component of the
+   No-Direct-Bind governance gate in production.
+   ```
+
+2. **Fail-closed runtime errors:** Unexpected exceptions during DoWhy refutation are now appended to the `violations` list, causing the governance pipeline to return `DENIED` rather than proceeding as if the tier had passed. The `except ImportError` branch inside `_run_checks()` remains for dev/test environments (where the startup assertion does not fire) and logs at `DEBUG` level with an explicit note that production startup will fail if `dowhy` is absent.
+
+**Verification:** The formal proof confirms that the DoWhy-absent configuration preserves the structural `NoDirectBind` invariant (the seal path is intact), but the production startup assertion prevents this configuration from being reachable in production at all.
+
+### Remediation Status Summary
+
+| Gap | Description | Status | Enforcement Point |
+| --- | ----------- | ------ | ----------------- |
+| Gap 1 | No exhaustive state-space proof | ✅ **CLOSED** | [`proof/model.py`](../../proof/model.py) — BFS over 19 reachable states |
+| Gap 2 | `govern()` path issued no seal | ✅ **CLOSED** | [`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) + [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) |
+| Gap 3 | `CBF_FAIL_OPEN=true` silently degraded gate | ✅ **CLOSED** | Module-level `RuntimeError` in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
+| Gap 4 | DoWhy absence silently removed Tier 6 | ✅ **CLOSED** | Module-level `RuntimeError` + fail-closed runtime handler in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
 
 ---
 

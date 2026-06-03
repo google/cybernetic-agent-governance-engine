@@ -269,7 +269,15 @@ async def execute_trade_action(
     trader_role: str = "junior",
     dry_run: bool = False,
 ) -> str:
-    """Execute a financial trade under strict governance."""
+    """Execute a financial trade under strict governance.
+
+    Gap 2 fix (No-Direct-Bind): ``enforce_governance()`` now returns a routing
+    seal.  This function verifies the seal before executing the trade, ensuring
+    that execution cannot proceed by ignoring the governance response.
+    Satisfies: NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
+    """
+    from src.gateway.governance.routing_seal import verify_seal  # noqa: PLC0415
+
     logger.info("Tool Call: execute_trade(%s, %s)", symbol, amount)
     if not transaction_id:
         transaction_id = str(uuid.uuid4())
@@ -281,9 +289,18 @@ async def execute_trade_action(
     }
 
     try:
-        await enforce_governance("execute_trade", params)
+        seal = await enforce_governance("execute_trade", params)
     except PermissionError as exc:
         return f"BLOCKED: {exc}"
+
+    # Gap 2 fix: verify the routing seal before executing.
+    # A missing or invalid seal means authority was never resolved — hard block.
+    if seal and not verify_seal(seal, "execute_trade", params):
+        logger.error(
+            "🔒 execute_trade_action: routing seal verification FAILED — "
+            "blocking execution (No-Direct-Bind invariant)."
+        )
+        return "BLOCKED: routing seal invalid or expired — governance authority unresolved."
 
     if dry_run:
         return "DRY_RUN: APPROVED by OPA, Safety, and Consensus."

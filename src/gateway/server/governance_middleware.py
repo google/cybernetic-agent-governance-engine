@@ -161,17 +161,26 @@ def enforce_routing_seal(request: Request, body_bytes: bytes) -> None:
 # Governance enforcement helpers
 # ---------------------------------------------------------------------------
 
-async def enforce_governance(tool_name: str, params: Dict[str, Any]) -> None:
+async def enforce_governance(tool_name: str, params: Dict[str, Any]) -> str:
     """Run the full Symbolic Governor pipeline for the given tool call.
+
+    Gap 2 fix (No-Direct-Bind): ``govern()`` now returns a routing seal on
+    approval.  This function propagates that seal to callers so they can
+    verify it before executing the governed action, satisfying the invariant:
+        NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
+
+    Returns:
+        HMAC-SHA256 routing seal string (non-empty on approval).
 
     Raises:
         PermissionError: If the governor blocks the action.
     """
     if tool_name in {"check_market_status", "verify_content_safety"}:
-        return  # Exempt read-only tools from governance overhead
+        return ""  # Exempt read-only tools from governance overhead
 
     try:
-        await symbolic_governor.govern(tool_name, params)
+        seal = await symbolic_governor.govern(tool_name, params)
+        return seal
     except GovernanceError as exc:
         logger.warning("🛡️ Symbolic Governor BLOCKED %s: %s", tool_name, exc)
         raise PermissionError(f"Governance Blocked: {exc}")

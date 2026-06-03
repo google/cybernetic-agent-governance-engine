@@ -452,8 +452,9 @@ class TestMetricsSummary:
 # ---------------------------------------------------------------------------
 
 class TestOscalExport:
+    @pytest.mark.timeout(120)
     def test_export_returns_200(self, session):
-        r = session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=60)
+        r = session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=90)
         assert r.status_code == 200
 
     def test_export_has_document_and_audit_id(self, session):

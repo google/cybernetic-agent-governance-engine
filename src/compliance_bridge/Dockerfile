@@ -75,4 +75,4 @@ EXPOSE $PORT
 
 # Invoke uvicorn directly from the venv — NOT via `uv run` to avoid the
 # project-package re-install step that `uv run` triggers at container startup.
-CMD ["sh", "-c", "uvicorn compliance_bridge.main:app --host 0.0.0.0 --port $PORT"]
+CMD ["sh", "-c", "uvicorn compliance_bridge.main:app --host 0.0.0.0 --port $PORT --timeout-keep-alive 120"]

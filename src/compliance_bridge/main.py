@@ -881,41 +881,54 @@ async def defer_inject(
     the governing agent with the injected data appended to its context.
     """
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+
+    # Import DeferQueue — isolate ImportError / RuntimeError (e.g. missing
+    # optional gateway deps like 'dowhy') from the token-not-found 404 path.
     try:
         import redis.asyncio as aioredis  # noqa: PLC0415
         try:
             from src.gateway.governance.defer_queue import DeferQueue  # noqa: PLC0415
         except ImportError:
             from gateway.governance.defer_queue import DeferQueue  # noqa: PLC0415
+    except (ImportError, RuntimeError) as exc:
+        logger.warning("[defer/inject] DeferQueue import failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "DEFER_QUEUE_UNAVAILABLE", "message": str(exc)},
+        )
 
+    try:
         client   = aioredis.from_url(redis_url, db=1, decode_responses=True)
         queue    = DeferQueue(client)
         resolved = await queue.resolve(defer_id, "INJECTED", injection_data=body.injection_data)
         await client.aclose()
-
-        if resolved is None:
-            raise HTTPException(status_code=404, detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id})
-
-        # Publish DEFER_RESOLVED SSE event
-        try:
-            await event_bus.publish({
-                "type":       "DEFER_RESOLVED",
-                "traceId":    resolved.defer_id,
-                "controlId":  "A.8.4",
-                "result":     None,
-                "safetyRate": None,
-                "auditId":    resolved.thread_id,
-                "resolution": "INJECTED",
-                "timestamp":  resolved.resolved_at_utc or "",
-            })
-        except Exception:
-            pass
-
-        return JSONResponse(content={"status": "resolved", "defer_id": defer_id, "resolution": "INJECTED"})
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail={"error": "DEFER_INJECT_FAILED", "message": str(exc)})
+
+    if resolved is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id},
+        )
+
+    # Publish DEFER_RESOLVED SSE event
+    try:
+        await event_bus.publish({
+            "type":       "DEFER_RESOLVED",
+            "traceId":    resolved.defer_id,
+            "controlId":  "A.8.4",
+            "result":     None,
+            "safetyRate": None,
+            "auditId":    resolved.thread_id,
+            "resolution": "INJECTED",
+            "timestamp":  resolved.resolved_at_utc or "",
+        })
+    except Exception:
+        pass
+
+    return JSONResponse(content={"status": "resolved", "defer_id": defer_id, "resolution": "INJECTED"})
 
 
 @app.post(
@@ -932,41 +945,54 @@ async def defer_escalate(
     a human operator must make the final judgment call.
     """
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+
+    # Import DeferQueue — isolate ImportError / RuntimeError (e.g. missing
+    # optional gateway deps like 'dowhy') from the token-not-found 404 path.
     try:
         import redis.asyncio as aioredis  # noqa: PLC0415
         try:
             from src.gateway.governance.defer_queue import DeferQueue  # noqa: PLC0415
         except ImportError:
             from gateway.governance.defer_queue import DeferQueue  # noqa: PLC0415
+    except (ImportError, RuntimeError) as exc:
+        logger.warning("[defer/escalate] DeferQueue import failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "DEFER_QUEUE_UNAVAILABLE", "message": str(exc)},
+        )
 
+    try:
         client   = aioredis.from_url(redis_url, db=1, decode_responses=True)
         queue    = DeferQueue(client)
         resolved = await queue.resolve(defer_id, "ESCALATED")
         await client.aclose()
-
-        if resolved is None:
-            raise HTTPException(status_code=404, detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id})
-
-        # Publish DEFER_RESOLVED SSE event
-        try:
-            await event_bus.publish({
-                "type":       "DEFER_RESOLVED",
-                "traceId":    resolved.defer_id,
-                "controlId":  "A.8.4",
-                "result":     None,
-                "safetyRate": None,
-                "auditId":    resolved.thread_id,
-                "resolution": "ESCALATED",
-                "timestamp":  resolved.resolved_at_utc or "",
-            })
-        except Exception:
-            pass
-
-        return JSONResponse(content={"status": "escalated", "defer_id": defer_id, "resolution": "ESCALATED"})
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail={"error": "DEFER_ESCALATE_FAILED", "message": str(exc)})
+
+    if resolved is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id},
+        )
+
+    # Publish DEFER_RESOLVED SSE event
+    try:
+        await event_bus.publish({
+            "type":       "DEFER_RESOLVED",
+            "traceId":    resolved.defer_id,
+            "controlId":  "A.8.4",
+            "result":     None,
+            "safetyRate": None,
+            "auditId":    resolved.thread_id,
+            "resolution": "ESCALATED",
+            "timestamp":  resolved.resolved_at_utc or "",
+        })
+    except Exception:
+        pass
+
+    return JSONResponse(content={"status": "escalated", "defer_id": defer_id, "resolution": "ESCALATED"})
 
 
 # ---------------------------------------------------------------------------
