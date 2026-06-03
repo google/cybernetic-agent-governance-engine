@@ -1,0 +1,781 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- /Users/larsahlfors/Code/cybernetic-governance-engine/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /Users/larsahlfors/Code/cybernetic-governance-engine
+configfile: pytest.ini (WARNING: ignoring pytest config in pyproject.toml!)
+plugins: timeout-2.4.0, asyncio-1.3.0, langsmith-0.8.4, respx-0.23.1, anyio-4.13.0
+timeout: 30.0s
+timeout method: signal
+timeout func_only: False
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 21 items
+
+tests/test_fiscal_limit_guard.py::test_single_agent_reservation_accepted FAILED [  4%]
+tests/test_fiscal_limit_guard.py::test_confirm_is_idempotent FAILED      [  9%]
+tests/test_fiscal_limit_guard.py::test_current_spend_and_remaining FAILED [ 14%]
+tests/test_fiscal_limit_guard.py::test_second_agent_rejected_when_limit_exceeded FAILED [ 19%]
+tests/test_fiscal_limit_guard.py::test_three_agents_sequential_within_cap FAILED [ 23%]
+tests/test_fiscal_limit_guard.py::test_fourth_agent_rejected_after_three FAILED [ 28%]
+tests/test_fiscal_limit_guard.py::test_release_restores_capacity FAILED  [ 33%]
+tests/test_fiscal_limit_guard.py::test_release_of_rejected_token_is_noop FAILED [ 38%]
+tests/test_fiscal_limit_guard.py::test_double_release_does_not_go_negative FAILED [ 42%]
+tests/test_fiscal_limit_guard.py::test_redis_failure_fails_closed FAILED [ 47%]
+tests/test_fiscal_limit_guard.py::test_redis_release_failure_is_logged_not_raised FAILED [ 52%]
+tests/test_fiscal_limit_guard.py::test_empty_redis_returns_zero_spend FAILED [ 57%]
+tests/test_fiscal_limit_guard.py::test_exact_cap_reservation_accepted FAILED [ 61%]
+tests/test_fiscal_limit_guard.py::test_one_cent_over_cap_rejected FAILED [ 66%]
+tests/test_fiscal_limit_guard.py::test_invalid_amount_raises FAILED      [ 71%]
+tests/test_fiscal_limit_guard.py::test_reservation_token_fields FAILED   [ 76%]
+tests/test_governance_architecture.py::test_enforce_no_hardcoded_regulatory_strings_in_governance_src FAILED [ 80%]
+tests/test_pii_integration.py::test_pii_activation_logic FAILED          [ 85%]
+tests/test_safety_node.py::TestSafetyNodeIntegration::test_senior_trade_below_500k_approved_by_opa SKIPPED [ 90%]
+tests/test_symbolic_governor_security.py::test_assert_safe_operational_state_does_not_raise_in_production_when_kms_active FAILED [ 95%]
+tests/test_symbolic_governor_security.py::test_fiscal_limit_guard_reserve_called_with_correct_args FAILED [100%]
+
+=================================== FAILURES ===================================
+____________________ test_single_agent_reservation_accepted ____________________
+
+guard = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x10c561df0>
+
+    def test_single_agent_reservation_accepted(guard: FiscalLimitGuard) -> None:
+        token = guard.reserve(agent_id="trading-agent", amount_usd=100_000.0)
+>       assert not token.rejected
+                   ^^^^^^^^^^^^^^
+E       AttributeError: 'coroutine' object has no attribute 'rejected'
+
+tests/test_fiscal_limit_guard.py:69: AttributeError
+__________________________ test_confirm_is_idempotent __________________________
+
+guard = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x10c5638c0>
+
+    def test_confirm_is_idempotent(guard: FiscalLimitGuard) -> None:
+        """confirm() should not raise and not change the spend total."""
+        token = guard.reserve(agent_id="trading-agent", amount_usd=50_000.0)
+        before = guard.current_spend_usd()
+>       guard.confirm(token)
+
+tests/test_fiscal_limit_guard.py:79: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x10c5638c0>
+token = <coroutine object FiscalLimitGuard.reserve at 0x128456da0>
+
+    def confirm(self, token: ReservationToken) -> None:
+        """Confirm that a reservation became a real spend (trade executed).
+    
+        Currently a semantic hook — the counter already reflects the spend.
+        """
+>       if token.rejected:
+           ^^^^^^^^^^^^^^
+E       AttributeError: 'coroutine' object has no attribute 'rejected'
+
+src/gateway/governance/fiscal_limit_guard.py:344: AttributeError
+_______________________ test_current_spend_and_remaining _______________________
+
+guard = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x1285ace00>
+
+    def test_current_spend_and_remaining(guard: FiscalLimitGuard) -> None:
+        guard.reserve(agent_id="trading-agent", amount_usd=200_000.0)
+>       assert guard.current_spend_usd() == pytest.approx(200_000.0, abs=0.01)
+E       assert <coroutine ob...t 0x1285c17e0> == 200000.0 ± 0.01
+E         
+E         comparison failed
+E         Obtained: <coroutine object FiscalLimitGuard.current_spend_usd at 0x1285c17e0>
+E         Expected: 200000.0 ± 0.01
+
+tests/test_fiscal_limit_guard.py:85: AssertionError
+----------------------------- Captured stderr call -----------------------------
+/Users/larsahlfors/Code/cybernetic-governance-engine/tests/test_fiscal_limit_guard.py:84: RuntimeWarning: coroutine 'FiscalLimitGuard.reserve' was never awaited
+  guard.reserve(agent_id="trading-agent", amount_usd=200_000.0)
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+________________ test_second_agent_rejected_when_limit_exceeded ________________
+
+guard = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x1285afb60>
+
+    def test_second_agent_rejected_when_limit_exceeded(guard: FiscalLimitGuard) -> None:
+        """
+        Simulates two agents simultaneously targeting $300k each against a $500k cap.
+        The first must succeed; the second must be atomically rejected.
+        """
+        token_a = guard.reserve(agent_id="trading-agent", amount_usd=300_000.0)
+        token_b = guard.reserve(agent_id="hedging-agent", amount_usd=300_000.0)
+    
+>       assert not token_a.rejected, "Agent A should be accepted"
+                   ^^^^^^^^^^^^^^^^
+E       AttributeError: 'coroutine' object has no attribute 'rejected'
+
+tests/test_fiscal_limit_guard.py:101: AttributeError
+___________________ test_three_agents_sequential_within_cap ____________________
+
+guard = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x1286a9340>
+
+    def test_three_agents_sequential_within_cap(guard: FiscalLimitGuard) -> None:
+        """Three agents each reserving $150k should all pass against a $500k cap."""
+        tokens = [
+            guard.reserve(agent_id=f"agent-{i}", amount_usd=150_000.0)
+            for i in range(3)
+        ]
+>       assert all(not t.rejected for t in tokens)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_fiscal_limit_guard.py:113: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+.0 = <list_iterator object at 0x1285afca0>
+
+>   assert all(not t.rejected for t in tokens)
+                   ^^^^^^^^^^
+E   AttributeError: 'coroutine' object has no attribute 'rejected'
+
+tests/test_fiscal_limit_guard.py:113: AttributeError
+____________________ test_fourth_agent_rejected_after_three ____________________
+
+guard = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x1286aac30>
+
+    def test_fourth_agent_rejected_after_three(guard: FiscalLimitGuard) -> None:
+        """After 3 × $150k, the fourth $150k must be rejected (would hit $600k)."""
+        for i in range(3):
+            guard.reserve(agent_id=f"agent-{i}", amount_usd=150_000.0)
+        token = guard.reserve(agent_id="agent-3", amount_usd=150_000.0)
+>       assert token.rejected
+               ^^^^^^^^^^^^^^
+E       AttributeError: 'coroutine' object has no attribute 'rejected'
+
+tests/test_fiscal_limit_guard.py:122: AttributeError
+----------------------------- Captured stderr call -----------------------------
+/Users/larsahlfors/Code/cybernetic-governance-engine/tests/test_fiscal_limit_guard.py:120: RuntimeWarning: coroutine 'FiscalLimitGuard.reserve' was never awaited
+  guard.reserve(agent_id=f"agent-{i}", amount_usd=150_000.0)
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+________________________ test_release_restores_capacity ________________________
+
+guard = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x128718680>
+
+    def test_release_restores_capacity(guard: FiscalLimitGuard) -> None:
+        """
+        Agent A reserves $300k, trade fails, Saga compensating node calls release().
+        Agent B should then succeed since capacity was restored.
+        """
+        token_a = guard.reserve(agent_id="trading-agent", amount_usd=300_000.0)
+>       assert not token_a.rejected
+                   ^^^^^^^^^^^^^^^^
+E       AttributeError: 'coroutine' object has no attribute 'rejected'
+
+tests/test_fiscal_limit_guard.py:135: AttributeError
+____________________ test_release_of_rejected_token_is_noop ____________________
+
+guard = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x12871a240>
+
+    def test_release_of_rejected_token_is_noop(guard: FiscalLimitGuard) -> None:
+        """Releasing a rejected token must not corrupt the spend counter."""
+        # Fill the cap
+        guard.reserve(agent_id="agent-a", amount_usd=500_000.0)
+        rejected_token = guard.reserve(agent_id="agent-b", amount_usd=10_000.0)
+>       assert rejected_token.rejected
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'coroutine' object has no attribute 'rejected'
+
+tests/test_fiscal_limit_guard.py:151: AttributeError
+----------------------------- Captured stderr call -----------------------------
+/Users/larsahlfors/Code/cybernetic-governance-engine/tests/test_fiscal_limit_guard.py:149: RuntimeWarning: coroutine 'FiscalLimitGuard.reserve' was never awaited
+  guard.reserve(agent_id="agent-a", amount_usd=500_000.0)
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+___________________ test_double_release_does_not_go_negative ___________________
+
+guard = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x1286abce0>
+
+    def test_double_release_does_not_go_negative(guard: FiscalLimitGuard) -> None:
+        """Releasing the same token twice must floor at 0, not go negative."""
+        token = guard.reserve(agent_id="trading-agent", amount_usd=100_000.0)
+        guard.release(token)
+        guard.release(token)  # idempotent — must not underflow
+>       assert guard.current_spend_usd() >= 0.0
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: '>=' not supported between instances of 'coroutine' and 'float'
+
+tests/test_fiscal_limit_guard.py:163: TypeError
+----------------------------- Captured stderr call -----------------------------
+/Users/larsahlfors/Code/cybernetic-governance-engine/tests/test_fiscal_limit_guard.py:161: RuntimeWarning: coroutine 'FiscalLimitGuard.release' was never awaited
+  guard.release(token)
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+/Users/larsahlfors/Code/cybernetic-governance-engine/tests/test_fiscal_limit_guard.py:162: RuntimeWarning: coroutine 'FiscalLimitGuard.release' was never awaited
+  guard.release(token)  # idempotent — must not underflow
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+_______________________ test_redis_failure_fails_closed ________________________
+
+redis_client = <fakeredis._connection.FakeRedis(<redis.connection.ConnectionPool(<fakeredis._connection.FakeRedisConnection(version=(...oding=utf-8,socket_timeout=None,decode_responses=True,protocol=2,server=None,client_name=None,username=<REDACTED>)>)>)>
+
+    def test_redis_failure_fails_closed(redis_client: fakeredis.FakeRedis) -> None:
+        """
+        If Redis is unreachable during reserve(), the guard must fail CLOSED
+        (return a rejected token) to prevent the agent from bypassing the limit.
+        """
+        broken_guard = FiscalLimitGuard(
+            redis_client=redis_client,
+            daily_cap_usd=500_000.0,
+        )
+        # Simulate a connection error at the atomic layer
+        broken_guard._atomic_increment = MagicMock(
+            side_effect=ConnectionError("Redis connection refused")
+        )
+        token = broken_guard.reserve(agent_id="trading-agent", amount_usd=50_000.0)
+>       assert token.rejected, "Redis failure must fail CLOSED (reservation rejected)"
+               ^^^^^^^^^^^^^^
+E       AttributeError: 'coroutine' object has no attribute 'rejected'
+
+tests/test_fiscal_limit_guard.py:184: AttributeError
+_______________ test_redis_release_failure_is_logged_not_raised ________________
+
+guard = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x10c563c80>
+
+    def test_redis_release_failure_is_logged_not_raised(
+        guard: FiscalLimitGuard,
+    ) -> None:
+        """
+        If Redis fails during release(), the guard must log an error but NOT raise,
+        since the rollback path must always complete to update the Saga ledger.
+        """
+        token = guard.reserve(agent_id="trading-agent", amount_usd=50_000.0)
+        guard._atomic_decrement = MagicMock(return_value=-1)
+        # Must not raise
+        result = guard.release(token)
+>       assert result == 0.0
+E       assert <coroutine object FiscalLimitGuard.release at 0x1285bdc40> == 0.0
+
+tests/test_fiscal_limit_guard.py:198: AssertionError
+_____________________ test_empty_redis_returns_zero_spend ______________________
+
+guard = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x1285adeb0>
+
+    def test_empty_redis_returns_zero_spend(guard: FiscalLimitGuard) -> None:
+>       assert guard.current_spend_usd() == 0.0
+E       assert <coroutine object FiscalLimitGuard.current_spend_usd at 0x128595380> == 0.0
+E        +  where <coroutine object FiscalLimitGuard.current_spend_usd at 0x128595380> = current_spend_usd()
+E        +    where current_spend_usd = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x1285adeb0>.current_spend_usd
+
+tests/test_fiscal_limit_guard.py:206: AssertionError
+_____________________ test_exact_cap_reservation_accepted ______________________
+
+guard = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x128567b60>
+
+    def test_exact_cap_reservation_accepted(guard: FiscalLimitGuard) -> None:
+        """Reserving exactly the cap amount must succeed."""
+        token = guard.reserve(agent_id="trading-agent", amount_usd=500_000.0)
+>       assert not token.rejected
+                   ^^^^^^^^^^^^^^
+E       AttributeError: 'coroutine' object has no attribute 'rejected'
+
+tests/test_fiscal_limit_guard.py:213: AttributeError
+_______________________ test_one_cent_over_cap_rejected ________________________
+
+guard = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x128718f50>
+
+    def test_one_cent_over_cap_rejected(guard: FiscalLimitGuard) -> None:
+        """Reserving $500k + $0.01 must be rejected."""
+        guard.reserve(agent_id="trading-agent", amount_usd=500_000.0)
+        token = guard.reserve(agent_id="agent-b", amount_usd=0.01)
+>       assert token.rejected
+               ^^^^^^^^^^^^^^
+E       AttributeError: 'coroutine' object has no attribute 'rejected'
+
+tests/test_fiscal_limit_guard.py:221: AttributeError
+----------------------------- Captured stderr call -----------------------------
+/Users/larsahlfors/Code/cybernetic-governance-engine/tests/test_fiscal_limit_guard.py:219: RuntimeWarning: coroutine 'FiscalLimitGuard.reserve' was never awaited
+  guard.reserve(agent_id="trading-agent", amount_usd=500_000.0)
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+__________________________ test_invalid_amount_raises __________________________
+
+guard = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x128720b60>
+
+    def test_invalid_amount_raises(guard: FiscalLimitGuard) -> None:
+>       with pytest.raises(ValueError, match="amount_usd must be > 0"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE <class 'ValueError'>
+
+tests/test_fiscal_limit_guard.py:225: Failed
+----------------------------- Captured stderr call -----------------------------
+/Users/larsahlfors/Code/cybernetic-governance-engine/tests/test_fiscal_limit_guard.py:226: RuntimeWarning: coroutine 'FiscalLimitGuard.reserve' was never awaited
+  guard.reserve(agent_id="trading-agent", amount_usd=0.0)
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+________________________ test_reservation_token_fields _________________________
+
+guard = <src.gateway.governance.fiscal_limit_guard.FiscalLimitGuard object at 0x128720c50>
+
+    def test_reservation_token_fields(guard: FiscalLimitGuard) -> None:
+        token = guard.reserve(agent_id="liquidity-agent", amount_usd=75_000.0)
+>       assert token.agent_id == "liquidity-agent"
+               ^^^^^^^^^^^^^^
+E       AttributeError: 'coroutine' object has no attribute 'agent_id'
+
+tests/test_fiscal_limit_guard.py:234: AttributeError
+________ test_enforce_no_hardcoded_regulatory_strings_in_governance_src ________
+
+    def test_enforce_no_hardcoded_regulatory_strings_in_governance_src():
+        """Architecture Guardrail: regulatory citation strings must not appear in
+        executable governance source code.
+    
+        All framework citations (SR 26-2, ISO 42001, DORA, etc.) must live
+        exclusively in config/control_mappings.json.  Python source files may
+        only reference stable GovernanceControl enum members (CTRL_* IDs).
+    
+        If this test fails, move the offending string to control_mappings.json
+        and reference it via ControlRegistry.get_mapping(GovernanceControl.<ID>).
+        """
+        violations = []
+    
+        for python_file in sorted(_SRC_GOVERNANCE.glob("**/*.py")):
+            if python_file.name in _EXCLUDED_FILES:
+                continue
+    
+            for line_num, code in _executable_lines(python_file):
+                for pattern in _PROHIBITED_PATTERNS:
+                    if pattern.search(code):
+                        violations.append(
+                            f"{python_file.relative_to(_REPO_ROOT)}:{line_num} "
+                            f"— hardcoded citation detected: {code!r}"
+                        )
+    
+>       assert not violations, (
+            "Architecture violation(s) detected — hardcoded regulatory strings found "
+            "in executable governance source code.\n\n"
+            "Move each citation to config/control_mappings.json and reference it via "
+            "ControlRegistry.get_mapping(GovernanceControl.<ID>):\n\n"
+            + "\n".join(violations)
+        )
+E       AssertionError: Architecture violation(s) detected — hardcoded regulatory strings found in executable governance source code.
+E         
+E         Move each citation to config/control_mappings.json and reference it via ControlRegistry.get_mapping(GovernanceControl.<ID>):
+E         
+E         src/gateway/governance/kms_signer.py:465 — hardcoded citation detected: '"This is a SR 26-2 evidentiary independence violation."'
+E       assert not ['src/gateway/governance/kms_signer.py:465 — hardcoded citation detected: \'"This is a SR 26-2 evidentiary independence violation."\'']
+
+tests/test_governance_architecture.py:157: AssertionError
+----------------------------- Captured stderr call -----------------------------
+/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/ast.py:52: RuntimeWarning: coroutine 'FiscalLimitGuard.reserve' was never awaited
+  return compile(source, filename, mode, flags,
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/ast.py:52: RuntimeWarning: coroutine 'FiscalLimitGuard.current_spend_usd' was never awaited
+  return compile(source, filename, mode, flags,
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/ast.py:52: RuntimeWarning: coroutine 'FiscalLimitGuard.release' was never awaited
+  return compile(source, filename, mode, flags,
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+__________________________ test_pii_activation_logic ___________________________
+
+rails = <nemoguardrails.rails.llm.llmrails.LLMRails object at 0x1283ebe00>
+
+    def test_pii_activation_logic(rails):
+        """
+        Verifies that PII filtering logic is correctly activated and monkeypatched.
+        """
+        # 1. Verify Monkeypatch
+        from nemoguardrails.library.sensitive_data_detection.actions import _get_analyzer
+        assert _get_analyzer.__name__ == "_get_analyzer_patch", "Presidio Analyzer should be monkeypatched to use en_core_web_sm"
+    
+        # 3. Verify Direct Action Execution (Unit Test Style)
+        # This ensures the logic works, avoiding the fragile 'input rails' flow integration in mock environment
+        import asyncio
+        from nemoguardrails.library.sensitive_data_detection.actions import mask_sensitive_data
+    
+        text = "My name is John Doe."
+>       masked = asyncio.run(mask_sensitive_data(source='input', text=text, config=rails.config))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_pii_integration.py:82: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+main = <coroutine object mask_sensitive_data at 0x129029d00>
+
+    def run(main, *, debug=False):
+        loop = asyncio.get_event_loop()
+        loop.set_debug(debug)
+        task = asyncio.ensure_future(main)
+        try:
+>           return loop.run_until_complete(task)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.venv/lib/python3.12/site-packages/nest_asyncio.py:30: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_UnixSelectorEventLoop running=False closed=False debug=False>
+future = <Task finished name='Task-2' coro=<mask_sensitive_data() done, defined at /Users/larsahlfors/Code/cybernetic-governanc...uardrails/library/sensitive_data_detection/actions.py:136> exception=NameError("name 'OperatorConfig' is not defined")>
+
+    def run_until_complete(self, future):
+        with manage_run(self):
+            f = asyncio.ensure_future(future, loop=self)
+            if f is not future:
+                f._log_destroy_pending = False
+            while not f.done():
+                self._run_once()
+                if self._stopping:
+                    break
+            if not f.done():
+                raise RuntimeError(
+                    'Event loop stopped before Future completed.')
+>           return f.result()
+                   ^^^^^^^^^^
+
+.venv/lib/python3.12/site-packages/nest_asyncio.py:98: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Task finished name='Task-2' coro=<mask_sensitive_data() done, defined at /Users/larsahlfors/Code/cybernetic-governanc...uardrails/library/sensitive_data_detection/actions.py:136> exception=NameError("name 'OperatorConfig' is not defined")>
+
+    def result(self):
+        """Return the result this future represents.
+    
+        If the future has been cancelled, raises CancelledError.  If the
+        future's result isn't yet available, raises InvalidStateError.  If
+        the future is done and has an exception set, this exception is raised.
+        """
+        if self._state == _CANCELLED:
+            raise self._make_cancelled_error()
+        if self._state != _FINISHED:
+            raise exceptions.InvalidStateError('Result is not ready.')
+        self.__log_traceback = False
+        if self._exception is not None:
+>           raise self._exception.with_traceback(self._exception_tb)
+
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/futures.py:202: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = None
+
+    def __step_run_and_handle_result(self, exc):
+        coro = self._coro
+        try:
+            if exc is None:
+                # We use the `send` method directly, because coroutines
+                # don't have `__iter__` and `__next__` methods.
+>               result = coro.send(None)
+                         ^^^^^^^^^^^^^^^
+
+../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:314: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+source = 'input', text = 'My name is John Doe.'
+config = RailsConfig(models=[Model(type='main', engine='vllm_llama', model='gs://laah-cybernetics-models/models--Qwen--Qwen2.5-..._format=<SpanFormat.opentelemetry: 'opentelemetry'>, enable_content_capture=False), raw_llm_call_action='raw llm call')
+
+    @action(is_system_action=True)
+    async def mask_sensitive_data(source: str, text: str, config: RailsConfig):
+        """Checks whether the provided text contains any sensitive data.
+    
+        Args
+            source: The source for the text, i.e. "input", "output", "retrieval".
+            text: The text to check.
+            config: The rails configuration object.
+    
+        Returns
+            The altered text, if applicable.
+        """
+        # Based on the source of the data, we use the right options
+        sdd_config = config.rails.config.sensitive_data_detection
+        assert source in ["input", "output", "retrieval"]
+        options: SensitiveDataDetectionOptions = getattr(sdd_config, source)
+    
+        # If we don't have any entities specified, we stop
+        if len(options.entities) == 0:
+            return text
+    
+        analyzer = _get_analyzer()
+        operators = {}
+        for entity in options.entities:
+>           operators[entity] = OperatorConfig("replace")
+                                ^^^^^^^^^^^^^^
+E           NameError: name 'OperatorConfig' is not defined
+
+.venv/lib/python3.12/site-packages/nemoguardrails/library/sensitive_data_detection/actions.py:160: NameError
+---------------------------- Captured stderr setup -----------------------------
+2026-06-02 14:06:39,620 - NeMoManager - INFO - ✅ Monkeypatched nemoguardrails SDD _get_analyzer → _get_analyzer_patch
+2026-06-02 14:06:39,780 - NeMoManager - WARNING - ⚠️ NeMo RailsConfig parse failed (Error while parsing Colang file: config/rails/generated_stpa_rails.co
+Unexpected token Token('_NEWLINE', '\n    ') at line 65, column 35.
+Expected one of: 
+	* LPAR
+:
+  if $check_uca_3.detected == true
+                                  ^) — using minimal fallback config. NeMo semantic rails disabled; OPA/STPA remain active.
+2026-06-02 14:06:43,145 - NeMoManager - WARNING - 🔶 NeMo running in TRANSPARENT FALLBACK mode — semantic rails OFFLINE, OPA+STPA authoritative. All requests will be stamped DEGRADED_FAIL_OPEN in Langfuse.
+2026-06-02 14:06:43,146 - NeMoManager - WARNING - ⚠️ Presidio SDD action unavailable; NeMo will use its built-in SDD (if installed).
+2026-06-02 14:06:43,151 - NeMoManager - INFO - ✅ NeMo actions registered from canonical registry (13 actions)
+------------------------------ Captured log setup ------------------------------
+INFO     NeMoManager:manager.py:91 ✅ Monkeypatched nemoguardrails SDD _get_analyzer → _get_analyzer_patch
+WARNING  NeMoManager:manager.py:244 ⚠️ NeMo RailsConfig parse failed (Error while parsing Colang file: config/rails/generated_stpa_rails.co
+Unexpected token Token('_NEWLINE', '\n    ') at line 65, column 35.
+Expected one of: 
+	* LPAR
+:
+  if $check_uca_3.detected == true
+                                  ^) — using minimal fallback config. NeMo semantic rails disabled; OPA/STPA remain active.
+WARNING  langfuse:client.py:3561 Prompt 'nemo/self_check_input-label:production' not found during refresh, evicting from cache.
+ERROR    PromptFetcher:prompt_fetcher.py:57 Failed to fetch nemo/self_check_input from Langfuse: headers: {'x-robots-tag': 'noindex', 'x-content-type-options': 'nosniff', 'referrer-policy': 'strict-origin-when-cross-origin', 'document-policy': 'js-profiling', 'permissions-policy': 'autoplay=*, fullscreen=*, microphone=*', 'x-frame-options': 'SAMEORIGIN', 'vary': 'Origin, Accept-Encoding', 'content-type': 'application/json; charset=utf-8', 'etag': '"170w55j6bic33"', 'content-length': '111', 'date': 'Tue, 02 Jun 2026 18:06:40 GMT', 'connection': 'keep-alive', 'keep-alive': 'timeout=5'}, status_code: 404, body: {'message': "Prompt not found: 'nemo/self_check_input' with label 'production'", 'error': 'LangfuseNotFoundError'}
+WARNING  langfuse:client.py:3561 Prompt 'nemo/self_check_output-label:production' not found during refresh, evicting from cache.
+ERROR    PromptFetcher:prompt_fetcher.py:68 Failed to fetch nemo/self_check_output from Langfuse: headers: {'x-robots-tag': 'noindex', 'x-content-type-options': 'nosniff', 'referrer-policy': 'strict-origin-when-cross-origin', 'document-policy': 'js-profiling', 'permissions-policy': 'autoplay=*, fullscreen=*, microphone=*', 'x-frame-options': 'SAMEORIGIN', 'vary': 'Origin, Accept-Encoding', 'content-type': 'application/json; charset=utf-8', 'etag': '"16pxlgsclvt34"', 'content-length': '112', 'date': 'Tue, 02 Jun 2026 18:06:42 GMT', 'connection': 'keep-alive', 'keep-alive': 'timeout=5'}, status_code: 404, body: {'message': "Prompt not found: 'nemo/self_check_output' with label 'production'", 'error': 'LangfuseNotFoundError'}
+WARNING  PromptFetcher:prompt_fetcher.py:71 No NeMo prompts fetched from Langfuse. Falling back to local prompts.yml
+WARNING  NeMoManager:manager.py:365 🔶 NeMo running in TRANSPARENT FALLBACK mode — semantic rails OFFLINE, OPA+STPA authoritative. All requests will be stamped DEGRADED_FAIL_OPEN in Langfuse.
+WARNING  NeMoManager:manager.py:376 ⚠️ Presidio SDD action unavailable; NeMo will use its built-in SDD (if installed).
+INFO     NeMoManager:manager.py:385 ✅ NeMo actions registered from canonical registry (13 actions)
+----------------------------- Captured stderr call -----------------------------
+2026-06-02 14:06:43,154 - NeMoManager - WARNING - ⚠️ _get_analyzer_patch failed: No module named 'typer.main'
+------------------------------ Captured log call -------------------------------
+WARNING  NeMoManager:manager.py:82 ⚠️ _get_analyzer_patch failed: No module named 'typer.main'
+_ test_assert_safe_operational_state_does_not_raise_in_production_when_kms_active _
+
+    def test_assert_safe_operational_state_does_not_raise_in_production_when_kms_active():
+        """assert_safe_operational_state() does NOT raise in production when CBF_FAIL_OPEN=true but KMS IS active."""
+        mock_signer = MagicMock()
+        mock_signer.is_kms_active = True  # KMS is active — combined risk state is not present
+    
+        env = {k: v for k, v in os.environ.items() if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")}
+        env["CBF_FAIL_OPEN"] = "true"
+        env["CAGE_ENV"] = "production"
+    
+        with patch.dict(os.environ, env, clear=True), \
+             patch("src.gateway.governance.symbolic_governor.get_governance_signer",
+                   return_value=mock_signer, create=True):
+            from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+            # Should not raise — KMS is active, so non-repudiation gap is closed
+>           assert_safe_operational_state()
+
+tests/test_symbolic_governor_security.py:198: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def assert_safe_operational_state() -> None:
+        """Raise RuntimeError if the system is in a combined high-risk operational state.
+    
+        Specifically, raises if BOTH of the following are true simultaneously:
+          - CBF_FAIL_OPEN=true (CBF gate is bypassed)
+          - KMSGovernanceSigner is in HMAC fallback mode (no non-repudiation)
+    
+        Either condition alone is a compliance gap. Together they mean:
+          - No independent cash balance verification (CBF bypassed)
+          - No externally verifiable governance attestation (HMAC fallback)
+        This combined state is the highest-risk operational posture and must
+        never occur in production.
+    
+        Call this during application startup.
+        """
+        cbf_fail_open = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
+        if not cbf_fail_open:
+            return  # CBF is active — combined risk state is not present
+    
+        # CBF is bypassed — check if KMS is also in fallback mode
+        try:
+            from src.gateway.governance.kms_signer import get_governance_signer
+            signer = get_governance_signer()
+            kms_active = signer.is_kms_active
+        except Exception:
+            kms_active = False  # Cannot determine — assume worst case
+    
+        env = (os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")).lower()
+    
+        if not kms_active:
+            msg = (
+                "CAGE STARTUP FAILURE: Combined high-risk operational state detected. "
+                "CBF_FAIL_OPEN=true (CBF gate bypassed) AND KMSGovernanceSigner is in "
+                "HMAC fallback mode (no non-repudiation). "
+                "This means: (1) cash balance cannot be independently verified, "
+                "(2) governance attestations cannot be externally verified. "
+                "Resolve by: setting KMS_GOVERNANCE_KEY and/or setting CBF_FAIL_OPEN=false."
+            )
+            if env not in ("development", "test", "dev", "ci"):
+>               raise RuntimeError(msg)
+E               RuntimeError: CAGE STARTUP FAILURE: Combined high-risk operational state detected. CBF_FAIL_OPEN=true (CBF gate bypassed) AND KMSGovernanceSigner is in HMAC fallback mode (no non-repudiation). This means: (1) cash balance cannot be independently verified, (2) governance attestations cannot be externally verified. Resolve by: setting KMS_GOVERNANCE_KEY and/or setting CBF_FAIL_OPEN=false.
+
+src/gateway/governance/symbolic_governor.py:770: RuntimeError
+___________ test_fiscal_limit_guard_reserve_called_with_correct_args ___________
+
+    @pytest.mark.asyncio
+    async def test_fiscal_limit_guard_reserve_called_with_correct_args():
+        """SymbolicGovernor calls reserve() with agent_id and amount_usd from params."""
+        from src.gateway.governance.fiscal_limit_guard import ReservationToken
+        import time
+    
+        mock_guard = MagicMock()
+        mock_token = ReservationToken(
+            reservation_id="test-id",
+            agent_id="trading-agent",
+            amount_usd=10000.0,
+            amount_cents=1000000,
+            window_key="fiscal:daily_limit:2026-06-02",
+            cap_usd=500_000.0,
+            running_total_usd=10000.0,
+            rejected=False,
+            reserved_at=time.time(),
+            ttl_seconds=300,
+        )
+        mock_guard.reserve = AsyncMock(return_value=mock_token)
+        mock_guard.release = AsyncMock(return_value=0.0)
+    
+        governor = _make_governor(fiscal_limit_guard=mock_guard)
+    
+        params = {
+            "confidence": 0.99,
+            "amount": 10000.0,
+            "symbol": "TSLA",
+            "agent_id": "trading-agent",
+        }
+    
+>       await governor.govern("execute_trade", params)
+
+tests/test_symbolic_governor_security.py:306: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <src.gateway.governance.symbolic_governor.SymbolicGovernor object at 0x12896cb90>
+tool_name = 'execute_trade'
+params = {'agent_id': 'trading-agent', 'amount': 10000.0, 'confidence': 0.99, 'symbol': 'TSLA'}
+
+    async def govern(self, tool_name: str, params: Dict[str, Any]) -> None:
+        """Orchestrate governance checks for live execution.
+    
+        Raises:
+            GovernanceError: If any check fails.
+        """
+        with tracer.start_as_current_span("symbolic_governor.govern") as span:
+            span.set_attribute("langfuse.observation.type", "span")
+            span.set_attribute("langfuse.observation.name", "governance_evaluation")
+            span.set_attribute(
+                "langfuse.observation.input",
+                json.dumps({"tool": tool_name, "params": params}),
+            )
+            logger.info("⚖️ Symbolic Governor evaluating: %s", tool_name)
+            try:
+                # Reset per-invocation payload state
+                if hasattr(self, "_pending_payload"):
+                    del self._pending_payload
+                result = await self._run_checks(tool_name, params, sim_mode=False)
+                violations = result["violations"]
+                if violations:
+                    payload = getattr(self, "_pending_payload", None)
+>                   raise GovernanceError(violations[0], payload=payload)
+E                   src.gateway.governance.symbolic_governor.GovernanceError: Causal Safety Violation: DoWhy refutation failed — world-model is untrustworthy or risk exceeds safety boundary.
+
+src/gateway/governance/symbolic_governor.py:544: GovernanceError
+----------------------------- Captured stderr call -----------------------------
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/statsmodels/regression/linear_model.py:1966: RuntimeWarning: divide by zero encountered in scalar divide
+  return np.sqrt(eigvals[0]/eigvals[-1])
+/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/dowhy/causal_refuter.py:161: RuntimeWarning: invalid value encountered in scalar divide
+  z_score = (estimate.value - mean_refute_values) / std_dev_refute_values
+------------------------------ Captured log call -------------------------------
+ERROR    dowhy.causal_graph:causal_graph.py:92 Error: Pygraphviz cannot be loaded. No module named 'pygraphviz'
+Trying pydot ...
+WARNING  dowhy.causal_refuter:causal_refuter.py:222 We assume a Normal Distribution as the sample has less than 100 examples.
+             Note: The underlying distribution may not be Normal. We assume that it approaches normal with the increase in sample size.
+WARNING  src.gateway.governance.causal_gatekeeper:causal_gatekeeper.py:233 [CTRL_MRM_004] CAUSAL LOCK: Proposed action predicted to exceed safety boundary.
+=========================== short test summary info ============================
+FAILED tests/test_fiscal_limit_guard.py::test_single_agent_reservation_accepted
+FAILED tests/test_fiscal_limit_guard.py::test_confirm_is_idempotent - Attribu...
+FAILED tests/test_fiscal_limit_guard.py::test_current_spend_and_remaining - a...
+FAILED tests/test_fiscal_limit_guard.py::test_second_agent_rejected_when_limit_exceeded
+FAILED tests/test_fiscal_limit_guard.py::test_three_agents_sequential_within_cap
+FAILED tests/test_fiscal_limit_guard.py::test_fourth_agent_rejected_after_three
+FAILED tests/test_fiscal_limit_guard.py::test_release_restores_capacity - Att...
+FAILED tests/test_fiscal_limit_guard.py::test_release_of_rejected_token_is_noop
+FAILED tests/test_fiscal_limit_guard.py::test_double_release_does_not_go_negative
+FAILED tests/test_fiscal_limit_guard.py::test_redis_failure_fails_closed - At...
+FAILED tests/test_fiscal_limit_guard.py::test_redis_release_failure_is_logged_not_raised
+FAILED tests/test_fiscal_limit_guard.py::test_empty_redis_returns_zero_spend
+FAILED tests/test_fiscal_limit_guard.py::test_exact_cap_reservation_accepted
+FAILED tests/test_fiscal_limit_guard.py::test_one_cent_over_cap_rejected - At...
+FAILED tests/test_fiscal_limit_guard.py::test_invalid_amount_raises - Failed:...
+FAILED tests/test_fiscal_limit_guard.py::test_reservation_token_fields - Attr...
+FAILED tests/test_governance_architecture.py::test_enforce_no_hardcoded_regulatory_strings_in_governance_src
+FAILED tests/test_pii_integration.py::test_pii_activation_logic - NameError: ...
+FAILED tests/test_symbolic_governor_security.py::test_assert_safe_operational_state_does_not_raise_in_production_when_kms_active
+FAILED tests/test_symbolic_governor_security.py::test_fiscal_limit_guard_reserve_called_with_correct_args
+======================== 20 failed, 1 skipped in 9.99s =========================

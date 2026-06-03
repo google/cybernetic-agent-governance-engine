@@ -16,6 +16,7 @@
 Gateway Core: Policy & Governance (OPA + CircuitBreaker)
 """
 
+import asyncio
 import logging
 import os
 import time
@@ -32,6 +33,30 @@ from config.settings import Config
 
 logger = logging.getLogger("Gateway.Policy")
 tracer = trace.get_tracer("gateway.policy")
+
+# ---------------------------------------------------------------------------
+# OPA Explain-Mode Async Background Logging
+# ---------------------------------------------------------------------------
+# When CAGE_OPA_EXPLAIN_LOGGING=true, every successful OPA evaluation enqueues
+# a (policy_path, input_data, decision) tuple onto _explain_queue.  A
+# background coroutine (_explain_worker) dequeues these tuples and makes a
+# separate HTTP request to OPA with ?explain=full to fetch the full policy
+# evaluation trace, logging it at DEBUG level.
+#
+# The hot path (evaluate_policy) is NEVER delayed by explain requests:
+#   - Enqueue is non-blocking (put_nowait).
+#   - If the queue is full, the explain request is silently dropped.
+#   - The background worker runs independently on the event loop.
+#
+# Enable with: CAGE_OPA_EXPLAIN_LOGGING=true
+# Default: false (disabled — explain=full adds significant OPA overhead).
+CAGE_OPA_EXPLAIN_LOGGING: bool = (
+    os.getenv("CAGE_OPA_EXPLAIN_LOGGING", "false").lower() == "true"
+)
+
+# Module-level singleton queue for buffering explain requests.
+# maxsize=1000 caps memory usage; overflow is dropped (never blocks hot path).
+_explain_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
 
 # ---------------------------------------------------------------------------
 # OPA Decision Cache — short-TTL Redis cache for identical policy inputs
@@ -84,6 +109,107 @@ async def _write_opa_cache(key: str, decision: str) -> None:
         await redis_client.setex(key, _OPA_CACHE_TTL_SECONDS, decision)
     except Exception:
         pass  # Cache write failure is silent — OPA HTTP path remains authoritative
+
+
+# ---------------------------------------------------------------------------
+# OPA Explain-Mode Background Worker
+# ---------------------------------------------------------------------------
+
+async def _explain_worker() -> None:
+    """Background coroutine that fetches OPA explain=full traces asynchronously.
+
+    Dequeues ``(policy_path, input_data, decision)`` tuples from
+    ``_explain_queue`` and makes a separate HTTP request to OPA with
+    ``?explain=full`` appended to the URL.  The full explanation is logged at
+    DEBUG level (truncated to 500 chars to avoid log flooding).
+
+    This coroutine runs indefinitely until cancelled.  It never raises — all
+    connection errors are caught and logged as WARNING, then the worker
+    continues processing the next item.
+
+    IMPORTANT: This worker must NOT be awaited on the hot path.  It is
+    scheduled as a background task via ``start_explain_worker()``.
+    """
+    logger.info("OPA explain-mode worker started (queue maxsize=%d).", _explain_queue.maxsize)
+    while True:
+        try:
+            policy_path, input_data, decision = await _explain_queue.get()
+        except asyncio.CancelledError:
+            logger.info("OPA explain-mode worker cancelled — shutting down.")
+            return
+
+        try:
+            # Build the explain URL — append ?explain=full to the OPA target URL.
+            # We re-read Config here (not cached) so that test overrides work.
+            opa_url = Config.OPA_URL
+            parsed = urllib.parse.urlparse(opa_url)
+
+            if parsed.scheme == "http+unix":
+                uds_path = urllib.parse.unquote(parsed.netloc)
+                explain_url = f"http://localhost{parsed.path}?explain=full"
+                transport = httpx.AsyncHTTPTransport(uds=uds_path)
+            else:
+                explain_url = f"{opa_url}?explain=full"
+                transport = httpx.AsyncHTTPTransport(retries=0)
+
+            auth_token = Config.OPA_AUTH_TOKEN
+            headers: dict = {}
+            if auth_token:
+                headers["Authorization"] = f"Bearer {auth_token}"
+
+            async with httpx.AsyncClient(transport=transport) as client:
+                response = await client.post(
+                    explain_url,
+                    json={"input": input_data},
+                    headers=headers,
+                    timeout=10.0,
+                )
+                response.raise_for_status()
+                resp_json = response.json()
+                explanation = resp_json.get("explanation", [])
+                explanation_str = json.dumps(explanation)[:500]  # truncate to 500 chars
+
+            logger.debug(
+                "OPA explain (policy=%s decision=%s): %s",
+                policy_path,
+                decision,
+                explanation_str,
+            )
+
+        except asyncio.CancelledError:
+            logger.info("OPA explain-mode worker cancelled during HTTP request — shutting down.")
+            _explain_queue.task_done()
+            return
+        except Exception as exc:
+            logger.warning(
+                "OPA explain-mode worker: failed to fetch explanation "
+                "(policy=%s decision=%s): %s",
+                policy_path, decision, exc,
+            )
+        finally:
+            try:
+                _explain_queue.task_done()
+            except ValueError:
+                pass  # task_done() called more times than get() — ignore
+
+
+def start_explain_worker(loop: asyncio.AbstractEventLoop) -> asyncio.Task:
+    """Schedule ``_explain_worker()`` as a background task on *loop*.
+
+    Call this once at application startup (e.g. in the FastAPI lifespan handler
+    or after ``asyncio.get_event_loop()`` is established).
+
+    Args:
+        loop: The running event loop on which to schedule the worker.
+
+    Returns:
+        The ``asyncio.Task`` wrapping the worker coroutine.  The caller may
+        store a reference to prevent garbage collection, but the task runs
+        independently and does not need to be awaited.
+    """
+    task = loop.create_task(_explain_worker(), name="opa_explain_worker")
+    logger.info("OPA explain-mode background worker scheduled (task=%s).", task.get_name())
+    return task
 
 
 class CircuitBreaker:
@@ -237,6 +363,10 @@ class OPAClient:
                 # trace (~100KB-1MB JSON), adding 13-17s of latency vs ~30ms without it.
                 # The audit trail is captured via OTel span attributes above.
                 # Use ?explain=notes for lightweight rule annotations if needed.
+                #
+                # Explain-mode logging is async and non-blocking — the hot path is
+                # never delayed by explain requests.  See _explain_worker() and
+                # start_explain_worker() for the background explain architecture.
                 query_url = self.target_url
 
                 # Use a fresh client per request to avoid event-loop lifetime issues
@@ -275,6 +405,24 @@ class OPAClient:
                 decision_str: str = str(result) if result is not None else "DENY"
                 await _write_opa_cache(cache_key, decision_str)
 
+                # ── Async explain-mode logging (non-blocking) ────────────────
+                # If CAGE_OPA_EXPLAIN_LOGGING is enabled, enqueue the policy
+                # path, input, and decision for background explain=full fetching.
+                # put_nowait() is used so the hot path is never blocked.
+                # If the queue is full, the explain request is silently dropped.
+                # Explain-mode logging is async and non-blocking — the hot path
+                # is never delayed by explain requests.
+                if CAGE_OPA_EXPLAIN_LOGGING:
+                    policy_path = input_data.get("action", "unknown")
+                    try:
+                        _explain_queue.put_nowait((policy_path, input_data, decision_str))
+                    except asyncio.QueueFull:
+                        logger.warning(
+                            "OPA explain queue full (maxsize=%d) — dropping explain "
+                            "request for policy=%s decision=%s.",
+                            _explain_queue.maxsize, policy_path, decision_str,
+                        )
+
                 return result
 
             except Exception as e:
@@ -284,4 +432,3 @@ class OPAClient:
                 span.set_status(Status(StatusCode.ERROR))
                 span.set_attribute("langfuse.trace.metadata.governance.denial_reason", "SYSTEM_FAILURE")
                 return "DENY"
-

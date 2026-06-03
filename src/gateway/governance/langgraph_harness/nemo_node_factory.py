@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable, Optional
+from typing import Any, Callable, List, Optional
 
 from langchain_core.messages import AIMessage, BaseMessage
 from opentelemetry import trace
@@ -64,15 +64,78 @@ async def verify_and_mask_output(rails, text):  # type: ignore[misc]
     raise RuntimeError("NeMo manager not available (verify_and_mask_output stub)")
 
 
+async def validate_output_semantics(rails, text):  # type: ignore[misc]
+    """Fail-closed stub — NeMo not available."""
+    raise RuntimeError("NeMo manager not available (validate_output_semantics stub)")
+
+
 try:
     from src.gateway.governance.nemo.manager import (
         create_nemo_manager,
         validate_with_nemo,
         verify_and_mask_output,
+        validate_output_semantics,
     )
     _NEMO_AVAILABLE = True
 except ImportError:
     logger.warning("NeMo manager not importable — guardrail nodes will fail-closed")
+
+# ---------------------------------------------------------------------------
+# Presidio input-side PII scan — module-level singletons (Fix 3 / P1)
+#
+# Uses the same AnalyzerEngine + AnonymizerEngine pattern as manager.py's
+# _build_presidio_action().  Engines are built once at import time and reused
+# across all node invocations.  If Presidio is unavailable the singletons are
+# None and the scan is skipped (graceful degradation).
+# ---------------------------------------------------------------------------
+
+_PII_ENTITIES: List[str] = [
+    "PHONE_NUMBER", "CREDIT_CARD", "EMAIL_ADDRESS", "LOCATION",
+    "PERSON", "DATE_TIME", "NRP", "CRYPTO", "US_SSN",
+    "US_ITIN", "US_PASSPORT", "US_BANK_NUMBER", "US_DRIVER_LICENSE",
+    "IBAN_CODE", "IP_ADDRESS",
+]
+
+_presidio_analyzer = None
+_presidio_anonymizer = None
+
+try:
+    from presidio_analyzer import AnalyzerEngine
+    from presidio_analyzer.nlp_engine import NlpEngineProvider
+    from presidio_anonymizer import AnonymizerEngine
+    import spacy as _spacy
+
+    _spacy_model = (
+        "en_core_web_lg"
+        if _spacy.util.is_package("en_core_web_lg")
+        else "en_core_web_sm"
+    )
+    _nlp_provider = NlpEngineProvider(
+        nlp_configuration={
+            "nlp_engine_name": "spacy",
+            "models": [{"lang_code": "en", "model_name": _spacy_model}],
+        }
+    )
+    _presidio_analyzer = AnalyzerEngine(
+        nlp_engine=_nlp_provider.create_engine(),
+        default_score_threshold=0.3,
+    )
+    _presidio_anonymizer = AnonymizerEngine()
+    logger.info(
+        "✅ Presidio input-PII engines initialised (model=%s, entities=%d)",
+        _spacy_model,
+        len(_PII_ENTITIES),
+    )
+except ImportError:
+    logger.warning(
+        "⚠️ Presidio not available — input-side PII scan disabled (graceful degradation). "
+        "Install presidio-analyzer, presidio-anonymizer, and a spaCy model to enable."
+    )
+except Exception as _presidio_init_exc:
+    logger.warning(
+        "⚠️ Presidio engine initialisation failed — input-side PII scan disabled: %s",
+        _presidio_init_exc,
+    )
 
 # ---------------------------------------------------------------------------
 # SymbolicGovernor singleton — imported lazily to avoid circular imports.
@@ -249,6 +312,55 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                             "NeMo actions will use fail-open defaults.", pre_exc
                         )
 
+                # --- Input-side PII scan (Fix 3 / P1) ---
+                # Scan the input for PII BEFORE it reaches the LLM.  If PII is
+                # detected, redact it in-place so the downstream NeMo rail and
+                # any LLM call never see raw personal data.
+                # The scan is wrapped in try/except so a Presidio failure never
+                # blocks the input rail (graceful degradation).
+                try:
+                    if _presidio_analyzer is not None and _presidio_anonymizer is not None:
+                        pii_results = _presidio_analyzer.analyze(
+                            text=user_input,
+                            entities=_PII_ENTITIES,
+                            language="en",
+                        )
+                        if pii_results:
+                            entity_types: List[str] = sorted(
+                                {r.entity_type for r in pii_results}
+                            )
+                            logger.warning(
+                                "⚠️ Input PII detected — redacting before NeMo rail "
+                                "(entity_types=%s, count=%d). Raw values NOT logged.",
+                                entity_types,
+                                len(pii_results),
+                            )
+                            from presidio_anonymizer.entities import OperatorConfig
+                            anonymized = _presidio_anonymizer.anonymize(
+                                text=user_input,
+                                analyzer_results=pii_results,
+                                operators={
+                                    et: OperatorConfig("replace", {"new_value": f"<{et}>"})
+                                    for et in entity_types
+                                },
+                            )
+                            user_input = anonymized.text
+                            # OTel audit trail — types only, never values
+                            span.set_attribute("input.pii_redacted", True)
+                            span.set_attribute(
+                                "input.pii_entity_types", str(entity_types)
+                            )
+                        else:
+                            span.set_attribute("input.pii_redacted", False)
+                    else:
+                        span.set_attribute("input.pii_redacted", False)
+                except Exception as pii_exc:
+                    logger.warning(
+                        "⚠️ Input PII scan failed — continuing without redaction: %s",
+                        pii_exc,
+                    )
+                    span.set_attribute("input.pii_redacted", False)
+
                 is_safe, reason = await validate_with_nemo(
                     user_input, rails, pre_check_results=pre_check_results
                 )
@@ -359,6 +471,11 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
                 "nemo.output_rail.input_length", len(output_text)
             )
 
+            cage_enforcement = os.environ.get(
+                "CAGE_SEAL_ENFORCEMENT", "enforce"
+            ).lower()
+            span.set_attribute("nemo.cage_enforcement", cage_enforcement)
+
             try:
                 rails = get_nemo_rails()
                 masked_text = await verify_and_mask_output(rails, output_text)
@@ -376,15 +493,57 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
                 )
                 masked_text = cfg.output_blocked_sentinel
 
-            # Write the masked text back.  add_messages reducer replaces an
+            # --- Semantic safety validation (P2) ---
+            # Run validate_output_semantics() on the PII-masked text.
+            # In enforce mode: block on UNSAFE verdict.
+            # In log mode: warn but pass through.
+            final_text = masked_text
+            try:
+                rails = get_nemo_rails()
+                sem_safe, sem_reason = await validate_output_semantics(rails, masked_text)
+                span.set_attribute("output.semantic_validated", True)
+                span.set_attribute("output.semantic_safe", sem_safe)
+                if not sem_safe:
+                    if cage_enforcement == "enforce":
+                        logger.warning(
+                            "nemo_output_rail_node: output BLOCKED by semantic validation — reason: %s",
+                            sem_reason,
+                        )
+                        span.set_attribute("output.semantic_blocked", True)
+                        final_text = cfg.output_blocked_sentinel
+                    else:
+                        logger.warning(
+                            "⚠️ nemo_output_rail_node: output flagged by semantic validation "
+                            "(enforcement=%s) — passing through. reason: %s",
+                            cage_enforcement,
+                            sem_reason,
+                        )
+                        span.set_attribute("output.semantic_flagged", True)
+                else:
+                    logger.debug("nemo_output_rail_node: semantic validation PASSED")
+            except Exception as sem_exc:
+                logger.error(
+                    "nemo_output_rail_node: validate_output_semantics raised — "
+                    "applying fail-closed logic (enforcement=%s): %s",
+                    cage_enforcement,
+                    sem_exc,
+                )
+                span.set_attribute("output.semantic_validated", False)
+                if cage_enforcement == "enforce":
+                    span.set_attribute("output.semantic_blocked", True)
+                    final_text = cfg.output_blocked_sentinel
+                else:
+                    span.set_attribute("output.semantic_flagged", True)
+
+            # Write the final text back.  add_messages reducer replaces an
             # existing message when the returned message carries the same id.
             messages = state.get("messages", [])
             last_msg = messages[-1] if messages else None
 
             if isinstance(last_msg, BaseMessage) and last_msg.id:
-                replacement = AIMessage(content=masked_text, id=last_msg.id)
+                replacement = AIMessage(content=final_text, id=last_msg.id)
             else:
-                replacement = AIMessage(content=masked_text)
+                replacement = AIMessage(content=final_text)
 
             logger.info("nemo_output_rail_node: output rail applied")
             return {

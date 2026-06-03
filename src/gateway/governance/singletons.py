@@ -16,8 +16,8 @@ import logging
 import os
 from src.gateway.core.policy import OPAClient
 from src.gateway.governance.consensus import consensus_engine
-from src.gateway.governance.safety import safety_filter
-from src.gateway.governance.stpa_validator import STPAValidator
+from src.gateway.governance.cbf import safety_filter
+from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator as STPAValidator
 from src.gateway.governance.symbolic_governor import SymbolicGovernor
 from src.gateway.governance.fiscal_limit_guard import FiscalLimitGuard
 

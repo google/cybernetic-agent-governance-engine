@@ -313,8 +313,8 @@ class ConsensusEngine:
             votes = [vote1, vote2]
 
             # Consensus rule (updated for split-vote handling):
-            #   ALL ERROR  → APPROVE (fail-open, LLM unavailable)
-            #   ALL REJECT → REJECT  (unanimous denial)
+            #   ALL ERROR  → ESCALATE (fail-closed: unanimous error must escalate)
+            #   ALL REJECT → REJECT   (unanimous denial)
             #   Mixed APPROVE+REJECT (split) → ESCALATE for human review
             #   Any ESCALATE → ESCALATE
             #   ALL APPROVE → APPROVE
@@ -325,13 +325,17 @@ class ConsensusEngine:
             # Outright REJECT requires unanimous critic agreement.
             non_error_votes = [v for v in votes if v != "ERROR"]
             if all(v == "ERROR" for v in votes):
+                # Unanimous ERROR must escalate, not approve — a DoS attack causing
+                # both backends to error would otherwise bypass the consensus gate
+                # entirely, allowing any trade to pass through unchecked.
                 logger.warning(
-                    "⚠️ All consensus critics unavailable (LLM ERROR) — skipping consensus "
-                    "for %s %.2f %s. Trade continues through OPA only.",
+                    "🔴 All consensus critics returned ERROR — escalating for human review "
+                    "(action=%s amount=%.2f symbol=%s). "
+                    "Fail-open APPROVE would allow a DoS bypass of the consensus gate.",
                     action, amount, symbol,
                 )
-                decision = "APPROVE"
-                reason = "Consensus skipped — all LLM critics unavailable (fail-open)."
+                decision = "ESCALATE"
+                reason = "consensus_unanimous_error"
             elif non_error_votes and all(v == "REJECT" for v in non_error_votes):
                 # Unanimous rejection from all available critics
                 decision = "REJECT"

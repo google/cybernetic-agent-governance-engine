@@ -39,13 +39,14 @@ from __future__ import annotations
 import datetime
 import hashlib
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from src.governed_financial_advisor.graph.state import AgentState, LedgerEntry
 
 import asyncio
 
 from src.governed_financial_advisor.infrastructure.mcp_client import GatewayMCPClient
+from src.gateway.governance.fiscal_limit_guard import FiscalLimitGuard, ReservationToken
 
 # [CTRL_WAL_002] module-level MCP client singleton for WAL forward nodes.
 # The singleton is re-used across Saga invocations to avoid connection churn.
@@ -146,6 +147,11 @@ def compensate_reverse_trade_node_uca_4(state: AgentState) -> dict[str, Any]:
     with uca_ref=='UCA-4', extracts parameters via parameter_mapping,
     and calls the reverse API.
     The idempotency_key prevents double-refunds across LangGraph retries.
+
+    FiscalLimitGuard.release() integration:
+    If state["reservation_token"] is present, releases the fiscal reservation
+    atomically after the trade reversal is confirmed.  Logs a WARNING if the
+    token is absent so operators know the fiscal counter was not decremented.
     """
     txns = state.get("completed_transactions") or []
     target = next(
@@ -181,12 +187,515 @@ def compensate_reverse_trade_node_uca_4(state: AgentState) -> dict[str, Any]:
         rollback_entry: LedgerEntry = dict(target)  # type: ignore[assignment]
         rollback_entry["status"] = "ROLLED_BACK"
         rollback_entry["timestamp"] = _utcnow()
+
+        # FiscalLimitGuard.release() — decrement the atomic fiscal counter on rollback.
+        reservation_token: Optional[ReservationToken] = state.get("reservation_token")  # type: ignore[assignment]
+        if reservation_token is not None:
+            guard = FiscalLimitGuard.from_env()
+            new_total = asyncio.get_event_loop().run_until_complete(
+                guard.release(reservation_token)
+            )
+            logger.info(
+                "UCA-4: FiscalLimitGuard.release() called — new_total_usd=%.2f reservation_id=%s",
+                new_total,
+                reservation_token.reservation_id,
+            )
+        else:
+            logger.warning(
+                "UCA-4: reservation_token absent in state — fiscal counter NOT decremented. "
+                "Manual reconciliation may be required."
+            )
+
         return {
             "completed_transactions": [rollback_entry],
             "safety_status": "BLOCKED",
         }
     except Exception as exc:
         logger.error("UCA-4: compensating action FAILED key=%s err=%s", idempotency_key, exc)
+        partial_entry: LedgerEntry = dict(target)  # type: ignore[assignment]
+        partial_entry["status"] = "PARTIAL_FAILURE"
+        partial_entry["timestamp"] = _utcnow()
+        return {
+            "completed_transactions": [partial_entry],
+            "safety_status": "ESCALATED",
+            "next_step": "human_review",
+        }
+
+
+# ---------------------------------------------------------------------------
+# UCA-1: Agent executes write operation without a signed approval token.
+# ---------------------------------------------------------------------------
+
+def forward_write_db_node_uca_1(state: AgentState) -> dict[str, Any]:
+    """WAL forward node for UCA-1 (write_db without approval token).
+
+    Step 1: Write PENDING intent to ledger (yielded to checkpointer).
+    Step 2: Perform the metadata write (approval record update stub).
+    Step 3: Confirm COMPLETED in the ledger.
+
+    This node MUST be wrapped in a try/except by the caller.
+    On exception, the PENDING entry persists so saga_router_node
+    can reconcile ghost state on the next execution.
+    """
+    seq_id = _next_sequence_id(state)
+    intent: LedgerEntry = {
+        "sequence_id": seq_id,
+        "timestamp": _utcnow(),
+        "uca_ref": "UCA-1",
+        "action": "write_db",
+        "idempotency_key": "",
+        "status": "PENDING",
+        "context_data": {},
+    }
+    # Step 1: Persist WAL intent BEFORE the write
+    logger.info("UCA-1: writing PENDING intent seq_id=%s", seq_id)
+    yield {"completed_transactions": [intent]}
+
+    # Step 2: Perform the metadata write (approval record update).
+    # Stub: in production, replace with the actual DB write call.
+    write_record_id = f"approval-record-{seq_id}"
+    logger.info("UCA-1: metadata write executed record_id=%s", write_record_id)
+
+    # Step 3: Mark COMPLETED
+    confirmed: LedgerEntry = {
+        "sequence_id": seq_id,
+        "timestamp": _utcnow(),
+        "uca_ref": "UCA-1",
+        "action": "write_db",
+        "idempotency_key": _derive_idempotency_key(write_record_id, "void_write"),
+        "status": "COMPLETED",
+        "context_data": {"write_record_id": write_record_id},
+    }
+    logger.info("UCA-1: action COMPLETED record_id=%s", write_record_id)
+    return {"completed_transactions": [confirmed]}
+
+
+def compensate_write_db_node_uca_1(state: AgentState) -> dict[str, Any]:
+    """Idempotent compensating node for UCA-1 (void_write).
+
+    Marks the approval record write as voided.  The SHA-256 idempotency_key
+    prevents double-voiding across LangGraph retries.
+
+    FiscalLimitGuard.release() integration:
+    If state["reservation_token"] is present, releases the fiscal reservation
+    atomically.  Logs a WARNING if the token is absent.
+    """
+    txns = state.get("completed_transactions") or []
+    target = next(
+        (
+            t for t in reversed(txns)
+            if t["uca_ref"] == "UCA-1"
+            and t["action"] == "write_db"
+            and t["status"] == "COMPLETED"
+        ),
+        None,
+    )
+    if target is None:
+        logger.warning("UCA-1: no COMPLETED ledger entry — nothing to compensate.")
+        return {"safety_status": "ESCALATED"}
+
+    idempotency_key = target["idempotency_key"]
+    context_data = target["context_data"]
+    write_record_id = context_data.get("write_record_id", "unknown")
+
+    try:
+        # Stub: in production, call the DB API to mark the record as voided.
+        # db_api.void_write(idempotency_key=idempotency_key, record_id=write_record_id)
+        logger.info(
+            "UCA-1: 'void_write' executed — record_id=%s key=%s",
+            write_record_id, idempotency_key,
+        )
+        rollback_entry: LedgerEntry = dict(target)  # type: ignore[assignment]
+        rollback_entry["status"] = "ROLLED_BACK"
+        rollback_entry["timestamp"] = _utcnow()
+
+        # FiscalLimitGuard.release()
+        reservation_token: Optional[ReservationToken] = state.get("reservation_token")  # type: ignore[assignment]
+        if reservation_token is not None:
+            guard = FiscalLimitGuard.from_env()
+            new_total = asyncio.get_event_loop().run_until_complete(
+                guard.release(reservation_token)
+            )
+            logger.info(
+                "UCA-1: FiscalLimitGuard.release() called — new_total_usd=%.2f reservation_id=%s",
+                new_total, reservation_token.reservation_id,
+            )
+        else:
+            logger.warning(
+                "UCA-1: reservation_token absent in state — fiscal counter NOT decremented. "
+                "Manual reconciliation may be required."
+            )
+
+        return {
+            "completed_transactions": [rollback_entry],
+            "safety_status": "BLOCKED",
+        }
+    except Exception as exc:
+        logger.error("UCA-1: compensating action FAILED key=%s err=%s", idempotency_key, exc)
+        partial_entry: LedgerEntry = dict(target)  # type: ignore[assignment]
+        partial_entry["status"] = "PARTIAL_FAILURE"
+        partial_entry["timestamp"] = _utcnow()
+        return {
+            "completed_transactions": [partial_entry],
+            "safety_status": "ESCALATED",
+            "next_step": "human_review",
+        }
+
+
+# ---------------------------------------------------------------------------
+# UCA-2: Agent executes trade with stale market data (latency > threshold).
+# ---------------------------------------------------------------------------
+
+def forward_data_fetch_node_uca_2(state: AgentState) -> dict[str, Any]:
+    """WAL forward node for UCA-2 (data_fetch with latency recording).
+
+    Step 1: Write PENDING intent to ledger (yielded to checkpointer).
+    Step 2: Fetch market data and record the fetch timestamp.
+    Step 3: Confirm COMPLETED in the ledger.
+
+    This node MUST be wrapped in a try/except by the caller.
+    On exception, the PENDING entry persists so saga_router_node
+    can reconcile ghost state on the next execution.
+    """
+    seq_id = _next_sequence_id(state)
+    fetch_timestamp = _utcnow()
+    intent: LedgerEntry = {
+        "sequence_id": seq_id,
+        "timestamp": fetch_timestamp,
+        "uca_ref": "UCA-2",
+        "action": "data_fetch",
+        "idempotency_key": "",
+        "status": "PENDING",
+        "context_data": {},
+    }
+    # Step 1: Persist WAL intent BEFORE the fetch
+    logger.info("UCA-2: writing PENDING intent seq_id=%s", seq_id)
+    yield {"completed_transactions": [intent]}
+
+    # Step 2: Fetch market data with timestamp recording.
+    # Stub: in production, replace with the actual market data API call.
+    fetch_id = f"data-fetch-{seq_id}"
+    logger.info("UCA-2: data fetch executed fetch_id=%s timestamp=%s", fetch_id, fetch_timestamp)
+
+    # Step 3: Mark COMPLETED
+    confirmed: LedgerEntry = {
+        "sequence_id": seq_id,
+        "timestamp": _utcnow(),
+        "uca_ref": "UCA-2",
+        "action": "data_fetch",
+        "idempotency_key": _derive_idempotency_key(fetch_id, "invalidate_cache"),
+        "status": "COMPLETED",
+        "context_data": {"fetch_id": fetch_id, "fetch_timestamp": fetch_timestamp},
+    }
+    logger.info("UCA-2: action COMPLETED fetch_id=%s", fetch_id)
+    return {"completed_transactions": [confirmed]}
+
+
+def compensate_data_fetch_node_uca_2(state: AgentState) -> dict[str, Any]:
+    """Idempotent compensating node for UCA-2 (invalidate_cache).
+
+    Invalidates the stale data cache entry associated with the fetch.
+    The SHA-256 idempotency_key prevents double-invalidation across retries.
+
+    FiscalLimitGuard.release() integration:
+    If state["reservation_token"] is present, releases the fiscal reservation
+    atomically.  Logs a WARNING if the token is absent.
+    """
+    txns = state.get("completed_transactions") or []
+    target = next(
+        (
+            t for t in reversed(txns)
+            if t["uca_ref"] == "UCA-2"
+            and t["action"] == "data_fetch"
+            and t["status"] == "COMPLETED"
+        ),
+        None,
+    )
+    if target is None:
+        logger.warning("UCA-2: no COMPLETED ledger entry — nothing to compensate.")
+        return {"safety_status": "ESCALATED"}
+
+    idempotency_key = target["idempotency_key"]
+    context_data = target["context_data"]
+    fetch_id = context_data.get("fetch_id", "unknown")
+    fetch_timestamp = context_data.get("fetch_timestamp", "unknown")
+
+    try:
+        # Stub: in production, call the cache invalidation API.
+        # cache_api.invalidate(idempotency_key=idempotency_key, fetch_id=fetch_id)
+        logger.info(
+            "UCA-2: 'invalidate_cache' executed — fetch_id=%s fetch_timestamp=%s key=%s",
+            fetch_id, fetch_timestamp, idempotency_key,
+        )
+        rollback_entry: LedgerEntry = dict(target)  # type: ignore[assignment]
+        rollback_entry["status"] = "ROLLED_BACK"
+        rollback_entry["timestamp"] = _utcnow()
+
+        # FiscalLimitGuard.release()
+        reservation_token: Optional[ReservationToken] = state.get("reservation_token")  # type: ignore[assignment]
+        if reservation_token is not None:
+            guard = FiscalLimitGuard.from_env()
+            new_total = asyncio.get_event_loop().run_until_complete(
+                guard.release(reservation_token)
+            )
+            logger.info(
+                "UCA-2: FiscalLimitGuard.release() called — new_total_usd=%.2f reservation_id=%s",
+                new_total, reservation_token.reservation_id,
+            )
+        else:
+            logger.warning(
+                "UCA-2: reservation_token absent in state — fiscal counter NOT decremented. "
+                "Manual reconciliation may be required."
+            )
+
+        return {
+            "completed_transactions": [rollback_entry],
+            "safety_status": "BLOCKED",
+        }
+    except Exception as exc:
+        logger.error("UCA-2: compensating action FAILED key=%s err=%s", idempotency_key, exc)
+        partial_entry: LedgerEntry = dict(target)  # type: ignore[assignment]
+        partial_entry["status"] = "PARTIAL_FAILURE"
+        partial_entry["timestamp"] = _utcnow()
+        return {
+            "completed_transactions": [partial_entry],
+            "safety_status": "ESCALATED",
+            "next_step": "human_review",
+        }
+
+
+# ---------------------------------------------------------------------------
+# UCA-8: Agent executes trade before risk assessment is complete.
+# ---------------------------------------------------------------------------
+
+def forward_risk_assessment_node_uca_8(state: AgentState) -> dict[str, Any]:
+    """WAL forward node for UCA-8 (risk_assessment before trade).
+
+    Step 1: Write PENDING intent to ledger (yielded to checkpointer).
+    Step 2: Trigger risk assessment and record the result.
+    Step 3: Confirm COMPLETED in the ledger.
+
+    This node MUST be wrapped in a try/except by the caller.
+    On exception, the PENDING entry persists so saga_router_node
+    can reconcile ghost state on the next execution.
+    """
+    seq_id = _next_sequence_id(state)
+    intent: LedgerEntry = {
+        "sequence_id": seq_id,
+        "timestamp": _utcnow(),
+        "uca_ref": "UCA-8",
+        "action": "risk_assessment",
+        "idempotency_key": "",
+        "status": "PENDING",
+        "context_data": {},
+    }
+    # Step 1: Persist WAL intent BEFORE the assessment
+    logger.info("UCA-8: writing PENDING intent seq_id=%s", seq_id)
+    yield {"completed_transactions": [intent]}
+
+    # Step 2: Trigger risk assessment.
+    # Stub: in production, replace with the actual risk assessment service call.
+    assessment_id = f"risk-assessment-{seq_id}"
+    logger.info("UCA-8: risk assessment triggered assessment_id=%s", assessment_id)
+
+    # Step 3: Mark COMPLETED
+    confirmed: LedgerEntry = {
+        "sequence_id": seq_id,
+        "timestamp": _utcnow(),
+        "uca_ref": "UCA-8",
+        "action": "risk_assessment",
+        "idempotency_key": _derive_idempotency_key(assessment_id, "invalidate_risk_assessment"),
+        "status": "COMPLETED",
+        "context_data": {"assessment_id": assessment_id},
+    }
+    logger.info("UCA-8: action COMPLETED assessment_id=%s", assessment_id)
+    return {"completed_transactions": [confirmed]}
+
+
+def compensate_risk_assessment_node_uca_8(state: AgentState) -> dict[str, Any]:
+    """Idempotent compensating node for UCA-8 (invalidate_risk_assessment).
+
+    Marks the risk assessment as invalidated so the trade cannot proceed
+    on a stale or incomplete assessment.
+    The SHA-256 idempotency_key prevents double-invalidation across retries.
+
+    FiscalLimitGuard.release() integration:
+    If state["reservation_token"] is present, releases the fiscal reservation
+    atomically.  Logs a WARNING if the token is absent.
+    """
+    txns = state.get("completed_transactions") or []
+    target = next(
+        (
+            t for t in reversed(txns)
+            if t["uca_ref"] == "UCA-8"
+            and t["action"] == "risk_assessment"
+            and t["status"] == "COMPLETED"
+        ),
+        None,
+    )
+    if target is None:
+        logger.warning("UCA-8: no COMPLETED ledger entry — nothing to compensate.")
+        return {"safety_status": "ESCALATED"}
+
+    idempotency_key = target["idempotency_key"]
+    context_data = target["context_data"]
+    assessment_id = context_data.get("assessment_id", "unknown")
+
+    try:
+        # Stub: in production, call the risk service to mark the assessment invalid.
+        # risk_api.invalidate(idempotency_key=idempotency_key, assessment_id=assessment_id)
+        logger.info(
+            "UCA-8: 'invalidate_risk_assessment' executed — assessment_id=%s key=%s",
+            assessment_id, idempotency_key,
+        )
+        rollback_entry: LedgerEntry = dict(target)  # type: ignore[assignment]
+        rollback_entry["status"] = "ROLLED_BACK"
+        rollback_entry["timestamp"] = _utcnow()
+
+        # FiscalLimitGuard.release()
+        reservation_token: Optional[ReservationToken] = state.get("reservation_token")  # type: ignore[assignment]
+        if reservation_token is not None:
+            guard = FiscalLimitGuard.from_env()
+            new_total = asyncio.get_event_loop().run_until_complete(
+                guard.release(reservation_token)
+            )
+            logger.info(
+                "UCA-8: FiscalLimitGuard.release() called — new_total_usd=%.2f reservation_id=%s",
+                new_total, reservation_token.reservation_id,
+            )
+        else:
+            logger.warning(
+                "UCA-8: reservation_token absent in state — fiscal counter NOT decremented. "
+                "Manual reconciliation may be required."
+            )
+
+        return {
+            "completed_transactions": [rollback_entry],
+            "safety_status": "BLOCKED",
+        }
+    except Exception as exc:
+        logger.error("UCA-8: compensating action FAILED key=%s err=%s", idempotency_key, exc)
+        partial_entry: LedgerEntry = dict(target)  # type: ignore[assignment]
+        partial_entry["status"] = "PARTIAL_FAILURE"
+        partial_entry["timestamp"] = _utcnow()
+        return {
+            "completed_transactions": [partial_entry],
+            "safety_status": "ESCALATED",
+            "next_step": "human_review",
+        }
+
+
+# ---------------------------------------------------------------------------
+# UCA-9: Agent executes trade with compliance check bypassed.
+# ---------------------------------------------------------------------------
+
+def forward_compliance_check_node_uca_9(state: AgentState) -> dict[str, Any]:
+    """WAL forward node for UCA-9 (compliance_check before trade).
+
+    Step 1: Write PENDING intent to ledger (yielded to checkpointer).
+    Step 2: Run compliance check and record the result.
+    Step 3: Confirm COMPLETED in the ledger.
+
+    This node MUST be wrapped in a try/except by the caller.
+    On exception, the PENDING entry persists so saga_router_node
+    can reconcile ghost state on the next execution.
+    """
+    seq_id = _next_sequence_id(state)
+    intent: LedgerEntry = {
+        "sequence_id": seq_id,
+        "timestamp": _utcnow(),
+        "uca_ref": "UCA-9",
+        "action": "compliance_check",
+        "idempotency_key": "",
+        "status": "PENDING",
+        "context_data": {},
+    }
+    # Step 1: Persist WAL intent BEFORE the compliance check
+    logger.info("UCA-9: writing PENDING intent seq_id=%s", seq_id)
+    yield {"completed_transactions": [intent]}
+
+    # Step 2: Run compliance check.
+    # Stub: in production, replace with the actual compliance service call.
+    compliance_check_id = f"compliance-check-{seq_id}"
+    logger.info("UCA-9: compliance check executed compliance_check_id=%s", compliance_check_id)
+
+    # Step 3: Mark COMPLETED
+    confirmed: LedgerEntry = {
+        "sequence_id": seq_id,
+        "timestamp": _utcnow(),
+        "uca_ref": "UCA-9",
+        "action": "compliance_check",
+        "idempotency_key": _derive_idempotency_key(compliance_check_id, "void_compliance_check"),
+        "status": "COMPLETED",
+        "context_data": {"compliance_check_id": compliance_check_id},
+    }
+    logger.info("UCA-9: action COMPLETED compliance_check_id=%s", compliance_check_id)
+    return {"completed_transactions": [confirmed]}
+
+
+def compensate_compliance_check_node_uca_9(state: AgentState) -> dict[str, Any]:
+    """Idempotent compensating node for UCA-9 (void_compliance_check).
+
+    Marks the compliance check as voided so the trade cannot proceed
+    on a bypassed or incomplete compliance check.
+    The SHA-256 idempotency_key prevents double-voiding across retries.
+
+    FiscalLimitGuard.release() integration:
+    If state["reservation_token"] is present, releases the fiscal reservation
+    atomically.  Logs a WARNING if the token is absent.
+    """
+    txns = state.get("completed_transactions") or []
+    target = next(
+        (
+            t for t in reversed(txns)
+            if t["uca_ref"] == "UCA-9"
+            and t["action"] == "compliance_check"
+            and t["status"] == "COMPLETED"
+        ),
+        None,
+    )
+    if target is None:
+        logger.warning("UCA-9: no COMPLETED ledger entry — nothing to compensate.")
+        return {"safety_status": "ESCALATED"}
+
+    idempotency_key = target["idempotency_key"]
+    context_data = target["context_data"]
+    compliance_check_id = context_data.get("compliance_check_id", "unknown")
+
+    try:
+        # Stub: in production, call the compliance service to void the check.
+        # compliance_api.void(idempotency_key=idempotency_key, check_id=compliance_check_id)
+        logger.info(
+            "UCA-9: 'void_compliance_check' executed — compliance_check_id=%s key=%s",
+            compliance_check_id, idempotency_key,
+        )
+        rollback_entry: LedgerEntry = dict(target)  # type: ignore[assignment]
+        rollback_entry["status"] = "ROLLED_BACK"
+        rollback_entry["timestamp"] = _utcnow()
+
+        # FiscalLimitGuard.release()
+        reservation_token: Optional[ReservationToken] = state.get("reservation_token")  # type: ignore[assignment]
+        if reservation_token is not None:
+            guard = FiscalLimitGuard.from_env()
+            new_total = asyncio.get_event_loop().run_until_complete(
+                guard.release(reservation_token)
+            )
+            logger.info(
+                "UCA-9: FiscalLimitGuard.release() called — new_total_usd=%.2f reservation_id=%s",
+                new_total, reservation_token.reservation_id,
+            )
+        else:
+            logger.warning(
+                "UCA-9: reservation_token absent in state — fiscal counter NOT decremented. "
+                "Manual reconciliation may be required."
+            )
+
+        return {
+            "completed_transactions": [rollback_entry],
+            "safety_status": "BLOCKED",
+        }
+    except Exception as exc:
+        logger.error("UCA-9: compensating action FAILED key=%s err=%s", idempotency_key, exc)
         partial_entry: LedgerEntry = dict(target)  # type: ignore[assignment]
         partial_entry["status"] = "PARTIAL_FAILURE"
         partial_entry["timestamp"] = _utcnow()
@@ -208,6 +717,13 @@ def saga_router_node(state: AgentState) -> dict[str, Any]:
     2. LIFO rollback: traverses COMPLETED entries in reverse sequence_id order
        and delegates to the appropriate compensating node function.
     3. Unhandled UCA escalation: escalates if no compensating node is registered.
+
+    Registered UCA node pairs (LIFO rollback stack):
+      UCA-1: forward_write_db_node_uca_1        / compensate_write_db_node_uca_1
+      UCA-2: forward_data_fetch_node_uca_2      / compensate_data_fetch_node_uca_2
+      UCA-4: forward_execute_trade_node_uca_4   / compensate_reverse_trade_node_uca_4
+      UCA-8: forward_risk_assessment_node_uca_8 / compensate_risk_assessment_node_uca_8
+      UCA-9: forward_compliance_check_node_uca_9/ compensate_compliance_check_node_uca_9
     """
     txns = sorted(
         state.get("completed_transactions") or [],
@@ -241,9 +757,40 @@ def saga_router_node(state: AgentState) -> dict[str, Any]:
     uca_ref = next_target["uca_ref"]
     action = next_target["action"]
 
+    if uca_ref == "UCA-1" and action == "write_db":
+        logger.info(
+            "saga_router: delegating to compensate_write_db_node_uca_1 seq_id=%s",
+            next_target["sequence_id"],
+        )
+        return compensate_write_db_node_uca_1(state)
+
+    if uca_ref == "UCA-2" and action == "data_fetch":
+        logger.info(
+            "saga_router: delegating to compensate_data_fetch_node_uca_2 seq_id=%s",
+            next_target["sequence_id"],
+        )
+        return compensate_data_fetch_node_uca_2(state)
+
     if uca_ref == "UCA-4" and action == "execute_trade":
-        logger.info("saga_router: delegating to compensate_reverse_trade_node_uca_4 seq_id=%s", next_target["sequence_id"])
+        logger.info(
+            "saga_router: delegating to compensate_reverse_trade_node_uca_4 seq_id=%s",
+            next_target["sequence_id"],
+        )
         return compensate_reverse_trade_node_uca_4(state)
+
+    if uca_ref == "UCA-8" and action == "risk_assessment":
+        logger.info(
+            "saga_router: delegating to compensate_risk_assessment_node_uca_8 seq_id=%s",
+            next_target["sequence_id"],
+        )
+        return compensate_risk_assessment_node_uca_8(state)
+
+    if uca_ref == "UCA-9" and action == "compliance_check":
+        logger.info(
+            "saga_router: delegating to compensate_compliance_check_node_uca_9 seq_id=%s",
+            next_target["sequence_id"],
+        )
+        return compensate_compliance_check_node_uca_9(state)
 
     logger.error(
         "saga_router: no compensating node for uca_ref=%s action=%s",

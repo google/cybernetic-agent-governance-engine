@@ -1,0 +1,16 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- /Users/larsahlfors/Code/cybernetic-governance-engine/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /Users/larsahlfors/Code/cybernetic-governance-engine
+configfile: pytest.ini (WARNING: ignoring pytest config in pyproject.toml!)
+plugins: locust-2.44.0, xdist-3.8.0, timeout-2.4.0, asyncio-1.3.0, langsmith-0.8.4, respx-0.23.1, anyio-4.13.0
+timeout: 30.0s
+timeout method: signal
+timeout func_only: False
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 2 items
+
+tests/test_symbolic_governor.py::test_symbolic_governor_confidence_fail PASSED [ 50%]
+tests/test_symbolic_governor.py::test_violation_payload_contains_legacy_citation PASSED [100%]
+
+============================== 2 passed in 11.53s ==============================

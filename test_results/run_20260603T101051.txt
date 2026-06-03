@@ -1,0 +1,1016 @@
+..........................s............................................. [  8%]
+................................+++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-4 (6204502016) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/tqdm/_monitor.py", line 60, in run
+    self.was_killed.wait(self.sleep_interval)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-3 (6187675648) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 127, in run
+    self.upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 131, in upload
+    batch = self._next()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 71, in _next
+    event = self._ingestion_queue.get(
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-2 (6170849280) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_utils/prompt_cache.py", line 50, in run
+    task = self._queue.get()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 171, in get
+    self.not_empty.wait()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 355, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-1 (6154022912) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_upload_consumer.py", line 37, in run
+    self._media_manager.process_next_media_upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_manager.py", line 43, in process_next_media_upload
+    upload_job = self._queue.get(block=True, timeout=1)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6137196544) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6120370176) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+F+++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-4 (6204502016) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/tqdm/_monitor.py", line 60, in run
+    self.was_killed.wait(self.sleep_interval)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-3 (6187675648) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 127, in run
+    self.upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 131, in upload
+    batch = self._next()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 71, in _next
+    event = self._ingestion_queue.get(
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-2 (6170849280) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_utils/prompt_cache.py", line 50, in run
+    task = self._queue.get()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 171, in get
+    self.not_empty.wait()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 355, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-1 (6154022912) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_upload_consumer.py", line 37, in run
+    self._media_manager.process_next_media_upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_manager.py", line 43, in process_next_media_upload
+    upload_job = self._queue.get(block=True, timeout=1)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6137196544) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6120370176) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+F+++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-4 (6204502016) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/tqdm/_monitor.py", line 60, in run
+    self.was_killed.wait(self.sleep_interval)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-3 (6187675648) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 127, in run
+    self.upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 131, in upload
+    batch = self._next()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 71, in _next
+    event = self._ingestion_queue.get(
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-2 (6170849280) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_utils/prompt_cache.py", line 50, in run
+    task = self._queue.get()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 171, in get
+    self.not_empty.wait()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 355, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-1 (6154022912) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_upload_consumer.py", line 37, in run
+    self._media_manager.process_next_media_upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_manager.py", line 43, in process_next_media_upload
+    upload_job = self._queue.get(block=True, timeout=1)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6137196544) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6120370176) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+F.+++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-4 (6204502016) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/tqdm/_monitor.py", line 60, in run
+    self.was_killed.wait(self.sleep_interval)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-3 (6187675648) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 127, in run
+    self.upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 131, in upload
+    batch = self._next()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 71, in _next
+    event = self._ingestion_queue.get(
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-2 (6170849280) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_utils/prompt_cache.py", line 50, in run
+    task = self._queue.get()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 171, in get
+    self.not_empty.wait()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 355, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-1 (6154022912) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_upload_consumer.py", line 37, in run
+    self._media_manager.process_next_media_upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_manager.py", line 43, in process_next_media_upload
+    upload_job = self._queue.get(block=True, timeout=1)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6137196544) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6120370176) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+F.+++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-4 (6204502016) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/tqdm/_monitor.py", line 60, in run
+    self.was_killed.wait(self.sleep_interval)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-3 (6187675648) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 127, in run
+    self.upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 131, in upload
+    batch = self._next()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 71, in _next
+    event = self._ingestion_queue.get(
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-2 (6170849280) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_utils/prompt_cache.py", line 50, in run
+    task = self._queue.get()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 171, in get
+    self.not_empty.wait()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 355, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-1 (6154022912) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_upload_consumer.py", line 37, in run
+    self._media_manager.process_next_media_upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_manager.py", line 43, in process_next_media_upload
+    upload_job = self._queue.get(block=True, timeout=1)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6137196544) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6120370176) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+F................+++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-4 (6204502016) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/tqdm/_monitor.py", line 60, in run
+    self.was_killed.wait(self.sleep_interval)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-3 (6187675648) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 127, in run
+    self.upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 131, in upload
+    batch = self._next()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 71, in _next
+    event = self._ingestion_queue.get(
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-2 (6170849280) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_utils/prompt_cache.py", line 50, in run
+    task = self._queue.get()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 171, in get
+    self.not_empty.wait()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 355, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-1 (6154022912) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_upload_consumer.py", line 37, in run
+    self._media_manager.process_next_media_upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_manager.py", line 43, in process_next_media_upload
+    upload_job = self._queue.get(block=True, timeout=1)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6137196544) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6120370176) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+F+++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-4 (6204502016) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/tqdm/_monitor.py", line 60, in run
+    self.was_killed.wait(self.sleep_interval)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-3 (6187675648) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 127, in run
+    self.upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 131, in upload
+    batch = self._next()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 71, in _next
+    event = self._ingestion_queue.get(
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-2 (6170849280) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_utils/prompt_cache.py", line 50, in run
+    task = self._queue.get()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 171, in get
+    self.not_empty.wait()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 355, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-1 (6154022912) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_upload_consumer.py", line 37, in run
+    self._media_manager.process_next_media_upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_manager.py", line 43, in process_next_media_upload
+    upload_job = self._queue.get(block=True, timeout=1)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6137196544) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6120370176) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+F.+++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-4 (6204502016) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/tqdm/_monitor.py", line 60, in run
+    self.was_killed.wait(self.sleep_interval)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-3 (6187675648) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 127, in run
+    self.upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 131, in upload
+    batch = self._next()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 71, in _next
+    event = self._ingestion_queue.get(
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-2 (6170849280) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_utils/prompt_cache.py", line 50, in run
+    task = self._queue.get()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 171, in get
+    self.not_empty.wait()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 355, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-1 (6154022912) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_upload_consumer.py", line 37, in run
+    self._media_manager.process_next_media_upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_manager.py", line 43, in process_next_media_upload
+    upload_job = self._queue.get(block=True, timeout=1)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6137196544) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6120370176) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+F.s.+++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-4 (6204502016) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/tqdm/_monitor.py", line 60, in run
+    self.was_killed.wait(self.sleep_interval)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-3 (6187675648) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 127, in run
+    self.upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 131, in upload
+    batch = self._next()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 71, in _next
+    event = self._ingestion_queue.get(
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-2 (6170849280) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_utils/prompt_cache.py", line 50, in run
+    task = self._queue.get()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 171, in get
+    self.not_empty.wait()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 355, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-1 (6154022912) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_upload_consumer.py", line 37, in run
+    self._media_manager.process_next_media_upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_manager.py", line 43, in process_next_media_upload
+    upload_job = self._queue.get(block=True, timeout=1)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6137196544) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6120370176) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+F+++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-4 (6204502016) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/tqdm/_monitor.py", line 60, in run
+    self.was_killed.wait(self.sleep_interval)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-3 (6187675648) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 127, in run
+    self.upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 131, in upload
+    batch = self._next()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 71, in _next
+    event = self._ingestion_queue.get(
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-2 (6170849280) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_utils/prompt_cache.py", line 50, in run
+    task = self._queue.get()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 171, in get
+    self.not_empty.wait()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 355, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-1 (6154022912) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_upload_consumer.py", line 37, in run
+    self._media_manager.process_next_media_upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_manager.py", line 43, in process_next_media_upload
+    upload_job = self._queue.get(block=True, timeout=1)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6137196544) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6120370176) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+F+++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-4 (6204502016) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/tqdm/_monitor.py", line 60, in run
+    self.was_killed.wait(self.sleep_interval)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-3 (6187675648) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 127, in run
+    self.upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 131, in upload
+    batch = self._next()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 71, in _next
+    event = self._ingestion_queue.get(
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-2 (6170849280) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_utils/prompt_cache.py", line 50, in run
+    task = self._queue.get()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 171, in get
+    self.not_empty.wait()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 355, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-1 (6154022912) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_upload_consumer.py", line 37, in run
+    self._media_manager.process_next_media_upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_manager.py", line 43, in process_next_media_upload
+    upload_job = self._queue.get(block=True, timeout=1)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6137196544) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6120370176) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+F.+++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-4 (6204502016) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/tqdm/_monitor.py", line 60, in run
+    self.was_killed.wait(self.sleep_interval)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-3 (6187675648) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 127, in run
+    self.upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 131, in upload
+    batch = self._next()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 71, in _next
+    event = self._ingestion_queue.get(
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-2 (6170849280) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_utils/prompt_cache.py", line 50, in run
+    task = self._queue.get()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 171, in get
+    self.not_empty.wait()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 355, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-1 (6154022912) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_upload_consumer.py", line 37, in run
+    self._media_manager.process_next_media_upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_manager.py", line 43, in process_next_media_upload
+    upload_job = self._queue.get(block=True, timeout=1)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6137196544) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6120370176) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+F+++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-4 (6204502016) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/tqdm/_monitor.py", line 60, in run
+    self.was_killed.wait(self.sleep_interval)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-3 (6187675648) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 127, in run
+    self.upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 131, in upload
+    batch = self._next()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/score_ingestion_consumer.py", line 71, in _next
+    event = self._ingestion_queue.get(
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-2 (6170849280) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_utils/prompt_cache.py", line 50, in run
+    task = self._queue.get()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 171, in get
+    self.not_empty.wait()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 355, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of Thread-1 (6154022912) ~~~~~~~~~~~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_upload_consumer.py", line 37, in run
+    self._media_manager.process_next_media_upload()
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/langfuse/_task_manager/media_manager.py", line 43, in process_next_media_upload
+    upload_job = self._queue.get(block=True, timeout=1)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/queue.py", line 180, in get
+    self.not_empty.wait(remaining)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6137196544) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
+~~~~~~~~~~~~~~ Stack of OtelBatchSpanRecordProcessor (6120370176) ~~~~~~~~~~~~~~
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/larsahlfors/Code/cybernetic-governance-engine/.venv/lib/python3.12/site-packages/opentelemetry/sdk/_shared_internal/__init__.py", line 168, in worker
+    sleep_interrupted = self._worker_awaken.wait(self._schedule_delay)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "/Users/larsahlfors/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/threading.py", line 359, in wait
+    gotit = waiter.acquire(True, timeout)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+F

@@ -42,7 +42,7 @@ from pydantic import BaseModel
 
 from src.gateway.governance.singletons import symbolic_governor, opa_client
 from src.gateway.governance.symbolic_governor import GovernanceError
-from src.gateway.governance.safety import ac_keyword_scan
+from src.gateway.governance.text_filter import ac_keyword_scan
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 

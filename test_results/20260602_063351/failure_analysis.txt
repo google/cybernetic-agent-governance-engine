@@ -1,0 +1,52 @@
+=== FAILURE ANALYSIS REPORT ===
+
+Initial run: 2 failed, 643 passed, 162 skipped
+Final run:   0 failed, 645 passed, 162 skipped
+
+=== FAILED TESTS (initial run) ===
+FAILED tests/test_symbolic_governor.py::test_symbolic_governor_confidence_fail
+FAILED tests/test_symbolic_governor.py::test_violation_payload_contains_legacy_citation
+
+=== CLASSIFICATION ===
+Both failures: ASSERTION_ERROR — logic change broke expected behavior
+
+=== ROOT CAUSE ===
+1. safety_filter = Mock() (not AsyncMock) in both tests.
+   _cbf_check_with_span() does `await self.safety_filter.verify_action(...)`.
+   A plain Mock is not awaitable → raises "object Mock can't be used in 'await' expression"
+   → CBF fail-closed path fires → GovernanceError("CBF Fail-Closed: ...") raised BEFORE
+   the confidence check, masking the expected confidence violation.
+
+2. The local confidence threshold check was removed from _run_checks() in symbolic_governor.py
+   (comment at line 129: "enforced exclusively by OPA"). Tests expect a local check that
+   raises GovernanceError with "Confidence" and "CTRL_AGT_001" in the message, plus
+   _pending_payload with legacy_citation for SIEM consumers.
+
+=== FIXES APPLIED ===
+Fix 1: tests/test_symbolic_governor.py
+  - Line 43: safety_filter = Mock() → AsyncMock(); added safety_filter.verify_action.return_value = "SAFE"
+  - Line 89: safety_filter = Mock() → AsyncMock(); added safety_filter.verify_action.return_value = "SAFE"
+  Tests fixed: test_symbolic_governor_confidence_fail, test_violation_payload_contains_legacy_citation
+
+Fix 2: src/gateway/governance/symbolic_governor.py
+  - Restored local confidence threshold check after STPA block (before CBF+OPA parallel block)
+  - Check reads params["confidence"], compares to AGENT_CONFIDENCE_THRESHOLD env var (default 0.95)
+  - On failure: appends violation with [CTRL_AGT_001] prefix and sets self._pending_payload
+    with control_id, primary_framework, legacy_citation, scope, confidence, threshold
+  - CBF+OPA parallel block now only runs when no violations yet (added `and not violations`)
+
+=== INFRA_SKIP TESTS ===
+162 tests skipped — all are @pytest.mark.integration tests that require live services
+and were not opted-in via --run-integration flag. These are NOT code bugs.
+Examples:
+  - tests/governance/test_automated_loop.py (NeMo integration)
+  - tests/governance/test_nemo_refinements.py (NeMo integration)
+  - tests/red_teaming/test_adversarial.py (red team integration)
+  - tests/test_trade_governance_rego.py::TestTradeGovernanceRego (live OPA)
+  - tests/test_agent_accuracy.py (live backend)
+  - tests/test_trades_mcp.py (live MCP)
+
+=== OTEL WARNINGS (not failures) ===
+OTEL exporter warnings for localhost:4318 are expected — otel-collector service
+was deprecated (port-forward intentionally omitted per port_forward_dev.sh).
+OTEL_TRACES_EXPORTER=none is set for tests to suppress these.

@@ -29,7 +29,10 @@ effect), the gatekeeper "locks" the cage — the trade is blocked because
 the underlying causal assumptions cannot be trusted.
 """
 
+import json
 import logging
+import os
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
@@ -40,6 +43,21 @@ from src.gateway.governance.constants import GovernanceControl, ControlRegistry
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("src.gateway.governance.causal_gatekeeper")
+
+# ---------------------------------------------------------------------------
+# Configurable thresholds (read once at module load; override via env vars)
+# ---------------------------------------------------------------------------
+# Maximum age of the most-recent telemetry observation before the gatekeeper
+# treats the data as stale and fails closed.  Default: 300 seconds (5 min).
+TELEMETRY_MAX_STALENESS_SECONDS: int = int(
+    os.getenv("TELEMETRY_MAX_STALENESS_SECONDS", "300")
+)
+
+# TTL for the Redis-backed causal result cache keyed on (action_type, market_regime).
+# Default: 60 seconds.  Set to 0 to disable caching.
+CAUSAL_CACHE_TTL_SECONDS: int = int(
+    os.getenv("CAUSAL_CACHE_TTL_SECONDS", "60")
+)
 
 # Sentinel string fragment: if a regional profile's ``legacy_citation`` for a
 # control contains this marker, it signals that the citation has no legal force
@@ -54,6 +72,9 @@ tracer = trace.get_tracer("src.gateway.governance.causal_gatekeeper")
 # The APAC_MAS_BASELINE.json similarly flags its legacy citations.
 _NO_LEGAL_FORCE_MARKER = "no legal force"
 
+# Candidate column names for the telemetry timestamp field (checked in order).
+_TIMESTAMP_CANDIDATES = ("timestamp", "ts", "event_time", "time", "created_at")
+
 
 def generate_mock_telemetry(n_samples: int = 1000) -> pd.DataFrame:
     """
@@ -61,6 +82,10 @@ def generate_mock_telemetry(n_samples: int = 1000) -> pd.DataFrame:
     W: Market Volatility (Confounder)
     X: Trade Amount (Treatment)
     Y: Risk Score (Outcome)
+
+    A ``timestamp`` column is included so that the telemetry freshness check
+    treats this data as fresh.  Timestamps are generated as recent UTC values
+    (within the last hour) so they always pass the staleness threshold.
     """
     np.random.seed(42)
     # Confounder: Market Volatility (0.0 to 1.0)
@@ -77,11 +102,141 @@ def generate_mock_telemetry(n_samples: int = 1000) -> pd.DataFrame:
     risk_score = (market_volatility * 0.5) + (trade_amount / 10000 * 0.5) + np.random.normal(0, 0.05, n_samples)
     risk_score = np.clip(risk_score, 0.0, 1.0)
 
+    # Timestamps: spread over the last 60 minutes so freshness check passes.
+    now_epoch = datetime.now(tz=timezone.utc).timestamp()
+    timestamps = now_epoch - np.random.uniform(0, 3600, n_samples)
+
     return pd.DataFrame({
         'market_volatility': market_volatility,
         'trade_amount': trade_amount,
-        'risk_score': risk_score
+        'risk_score': risk_score,
+        'timestamp': timestamps,
     })
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers — telemetry freshness
+# ---------------------------------------------------------------------------
+
+def _check_telemetry_freshness(
+    telemetry: pd.DataFrame,
+    span,
+) -> bool:
+    """Check that the most-recent observation in *telemetry* is not stale.
+
+    Returns True if the telemetry is fresh (or if no timestamp column exists
+    and the caller should fail-closed).  Sets OTel span attributes regardless
+    of outcome.
+
+    Fail-closed contract:
+      - No timestamp column found → log WARNING, return False.
+      - Timestamp cannot be parsed → log WARNING, return False.
+      - Any unexpected exception → log WARNING, return False.
+      - Telemetry older than TELEMETRY_MAX_STALENESS_SECONDS → log WARNING,
+        set causal.telemetry_stale=True, return False.
+      - Fresh telemetry → set causal.telemetry_stale=False, return True.
+    """
+    try:
+        # Locate the timestamp column.
+        ts_col: str | None = None
+        for candidate in _TIMESTAMP_CANDIDATES:
+            if candidate in telemetry.columns:
+                ts_col = candidate
+                break
+
+        if ts_col is None:
+            # No timestamp column present — fail closed.
+            # generate_mock_telemetry() now includes a 'timestamp' column, so
+            # any telemetry reaching this branch is genuinely missing a required
+            # field and cannot be trusted for causal inference.
+            logger.warning(
+                "Telemetry freshness check: no timestamp column found "
+                "(checked: %s) — failing closed.",
+                ", ".join(_TIMESTAMP_CANDIDATES),
+            )
+            span.set_attribute("causal.telemetry_stale", True)
+            span.set_attribute("causal.telemetry_age_seconds", -1)
+            return False
+
+        # Parse the most-recent timestamp.
+        try:
+            raw_ts = telemetry[ts_col].max()
+            if isinstance(raw_ts, (int, float)):
+                # Unix epoch seconds or milliseconds
+                if raw_ts > 1e12:
+                    raw_ts = raw_ts / 1000.0  # milliseconds → seconds
+                most_recent = datetime.fromtimestamp(raw_ts, tz=timezone.utc)
+            else:
+                most_recent = pd.to_datetime(raw_ts, utc=True).to_pydatetime()
+        except Exception as parse_exc:
+            logger.warning(
+                "Telemetry freshness check: cannot parse timestamp column '%s': %s "
+                "— failing closed.",
+                ts_col, parse_exc,
+            )
+            span.set_attribute("causal.telemetry_stale", True)
+            span.set_attribute("causal.telemetry_age_seconds", -1)
+            return False
+
+        now_utc = datetime.now(tz=timezone.utc)
+        age_seconds = int((now_utc - most_recent).total_seconds())
+
+        if age_seconds > TELEMETRY_MAX_STALENESS_SECONDS:
+            logger.warning(
+                "Telemetry freshness check: most-recent observation is %ds old "
+                "(threshold=%ds) — failing closed (stale telemetry cannot be "
+                "trusted for causal inference).",
+                age_seconds, TELEMETRY_MAX_STALENESS_SECONDS,
+            )
+            span.set_attribute("causal.telemetry_stale", True)
+            span.set_attribute("causal.telemetry_age_seconds", age_seconds)
+            return False
+
+        span.set_attribute("causal.telemetry_stale", False)
+        span.set_attribute("causal.telemetry_age_seconds", age_seconds)
+        return True
+
+    except Exception as exc:
+        logger.warning(
+            "Telemetry freshness check: unexpected exception — failing closed: %s",
+            exc,
+        )
+        span.set_attribute("causal.telemetry_stale", True)
+        span.set_attribute("causal.telemetry_age_seconds", -1)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers — Redis cache
+# ---------------------------------------------------------------------------
+
+async def _causal_cache_get(cache_key: str) -> dict | None:
+    """Return a cached causal result dict, or None if absent/unavailable."""
+    try:
+        from src.gateway.infrastructure.redis_client import redis_client  # noqa: PLC0415
+        if redis_client is None:
+            return None
+        raw = await redis_client.get(cache_key)
+        if raw is None:
+            return None
+        return json.loads(raw)
+    except Exception as exc:
+        logger.warning("Causal cache GET failed (key=%s): %s — proceeding without cache.", cache_key, exc)
+        return None
+
+
+async def _causal_cache_set(cache_key: str, result: bool, reason: str) -> None:
+    """Write a causal result to Redis with CAUSAL_CACHE_TTL_SECONDS TTL."""
+    if CAUSAL_CACHE_TTL_SECONDS <= 0:
+        return
+    try:
+        from src.gateway.infrastructure.redis_client import redis_client  # noqa: PLC0415
+        if redis_client is None:
+            return
+        payload = json.dumps({"result": result, "reason": reason})
+        await redis_client.setex(cache_key, CAUSAL_CACHE_TTL_SECONDS, payload)
+    except Exception as exc:
+        logger.warning("Causal cache SET failed (key=%s): %s — proceeding without cache.", cache_key, exc)
 
 
 def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) -> bool:
@@ -98,17 +253,38 @@ def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) ->
         and effect calculation.  SR 26-2 MRM back-testing requirements apply
         to these coefficients and causal graph assumptions.
 
-      Phase 2 (CTRL_TEL_003 / ISO 42001 \u00a7A.9.4) — placebo refutation using
+      Phase 2 (CTRL_TEL_003 / ISO 42001 §A.9.4) — placebo refutation using
         live telemetry.  Executes 50 simulations per trade call against
         runtime Langfuse data.  This is the agentic operational check:
         non-deterministic, live-sourced, and high-frequency.
+
+    Redis cache:
+      Results are cached in Redis keyed on (action_type, market_regime) with
+      a TTL of CAUSAL_CACHE_TTL_SECONDS seconds (default 60s).  Cache misses
+      and Redis errors are handled gracefully — the causal check always runs
+      when the cache is unavailable.
+
+    Telemetry freshness:
+      Before Phase 2 placebo refutation, the most-recent observation timestamp
+      in current_telemetry is checked against TELEMETRY_MAX_STALENESS_SECONDS
+      (default 300s).  Stale or timestamp-less telemetry causes a fail-closed
+      return of False.
     """
+    import asyncio  # noqa: PLC0415 — imported here to avoid top-level asyncio dep
+
     if current_telemetry is None:
         current_telemetry = generate_mock_telemetry()
 
     amount = params.get("amount", 0.0)
     if amount <= 0:
         return True  # Not a meaningful trade to causally evaluate
+
+    # ------------------------------------------------------------------
+    # Cache key — keyed on (action_type, market_regime) from params
+    # ------------------------------------------------------------------
+    action_type = str(params.get("action_type", params.get("action", "unknown")))
+    market_regime = str(params.get("market_regime", "unknown"))
+    cache_key = f"causal_cache:{action_type}:{market_regime}"
 
     causal_graph = """
     digraph {
@@ -140,6 +316,36 @@ def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) ->
             if _NO_LEGAL_FORCE_MARKER in tel_meta["legacy_citation"]
             else tel_meta["legacy_citation"]
         )
+
+        # ------------------------------------------------------------------
+        # Redis cache lookup — before Phase 1
+        # ------------------------------------------------------------------
+        # Attempt to retrieve a previously computed result for this
+        # (action_type, market_regime) pair.  Cache hits skip both Phase 1
+        # and Phase 2 entirely, reducing DoWhy overhead on repeated calls.
+        with tracer.start_as_current_span("causal_gatekeeper.cache_lookup") as cache_span:
+            cache_span.set_attribute("causal.cache_key", cache_key)
+            try:
+                loop = asyncio.get_event_loop()
+                cached_payload = loop.run_until_complete(_causal_cache_get(cache_key))
+            except RuntimeError:
+                # No running event loop (e.g. sync test context) — skip cache
+                cached_payload = None
+            except Exception as exc:
+                logger.warning("Causal cache lookup error: %s — proceeding without cache.", exc)
+                cached_payload = None
+
+            if cached_payload is not None:
+                cached_result = bool(cached_payload.get("result", False))
+                cached_reason = cached_payload.get("reason", "")
+                logger.debug(
+                    "Causal cache HIT (key=%s) → result=%s reason=%s",
+                    cache_key, cached_result, cached_reason,
+                )
+                cache_span.set_attribute("causal.cache_hit", True)
+                return cached_result
+
+            cache_span.set_attribute("causal.cache_hit", False)
 
         # ------------------------------------------------------------------
         # Phase 1: Statistical Kernel (CTRL_MRM_004 scope)
@@ -174,7 +380,7 @@ def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) ->
             mrm_span.set_attribute("causal.estimated_effect", float(estimate.value))
 
         # ------------------------------------------------------------------
-        # Phase 2: Operational Simulation (CTRL_TEL_003 / ISO 42001 \u00a7A.9.4)
+        # Phase 2: Operational Simulation (CTRL_TEL_003 / ISO 42001 §A.9.4)
         # ------------------------------------------------------------------
         # Placebo refutation against live telemetry.  50 simulations per
         # trade call — non-deterministic and high-frequency.  This is the
@@ -187,6 +393,27 @@ def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) ->
             tel_span.set_attribute("governance.scope",            tel_meta["scope"])
             tel_span.set_attribute("governance.deployment_region", active_region)
             tel_span.set_attribute("causal.num_simulations",      50)
+
+            # ----------------------------------------------------------
+            # Telemetry freshness check — before running 50 simulations
+            # ----------------------------------------------------------
+            # If the most-recent observation in current_telemetry is older
+            # than TELEMETRY_MAX_STALENESS_SECONDS, stale data cannot be
+            # trusted for causal inference — fail closed immediately.
+            # Any exception in the freshness check also fails closed.
+            freshness_ok = _check_telemetry_freshness(current_telemetry, tel_span)
+            if not freshness_ok:
+                tel_span.set_attribute("causal.lock_reason", "stale_telemetry")
+                # Cache the fail-closed result so repeated calls don't re-check
+                # stale data unnecessarily (short TTL still applies).
+                try:
+                    loop = asyncio.get_event_loop()
+                    loop.run_until_complete(
+                        _causal_cache_set(cache_key, False, "stale_telemetry")
+                    )
+                except Exception:
+                    pass
+                return False
 
             refuter = model.refute_estimate(
                 identified_estimand,
@@ -213,6 +440,13 @@ def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) ->
                     GovernanceControl.TELEMETRY_LIVE_VALIDATION.value, p_value,
                 )
                 tel_span.set_attribute("causal.lock_reason", "p_value_threshold")
+                try:
+                    loop = asyncio.get_event_loop()
+                    loop.run_until_complete(
+                        _causal_cache_set(cache_key, False, "p_value_threshold")
+                    )
+                except Exception:
+                    pass
                 return False
 
             if abs(new_effect) > 0.2:
@@ -221,6 +455,13 @@ def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) ->
                     GovernanceControl.TELEMETRY_LIVE_VALIDATION.value, new_effect,
                 )
                 tel_span.set_attribute("causal.lock_reason", "placebo_effect_magnitude")
+                try:
+                    loop = asyncio.get_event_loop()
+                    loop.run_until_complete(
+                        _causal_cache_set(cache_key, False, "placebo_effect_magnitude")
+                    )
+                except Exception:
+                    pass
                 return False
 
         # ------------------------------------------------------------------
@@ -234,8 +475,25 @@ def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) ->
                 "[%s] CAUSAL LOCK: Proposed action predicted to exceed safety boundary.",
                 GovernanceControl.TRADITIONAL_MRM_VALIDATION.value,
             )
+            try:
+                loop = asyncio.get_event_loop()
+                loop.run_until_complete(
+                    _causal_cache_set(cache_key, False, "risk_boundary_exceeded")
+                )
+            except Exception:
+                pass
             return False
 
+        # ------------------------------------------------------------------
+        # All checks passed — cache the positive result and return True
+        # ------------------------------------------------------------------
+        try:
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(
+                _causal_cache_set(cache_key, True, "all_checks_passed")
+            )
+        except Exception:
+            pass
         return True
 
     except Exception as e:

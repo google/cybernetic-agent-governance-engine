@@ -53,6 +53,25 @@ class CbfThresholds(BaseModel):
 
 
 class DrawdownThresholds(BaseModel):
+    # KEY AUDIT FINDING (2026-06-03): `drawdown.limit` and
+    # `stpa.uca5_drawdown_threshold_pct` are NOT aliases — they are distinct
+    # thresholds with different semantics and units:
+    #
+    #   drawdown.limit                  — fraction in [0,1), e.g. 0.05 (5%)
+    #     Used by: cbf.py ControlBarrierFunction.verify_action()
+    #     Payload key: "drawdown_pct" (raw value divided by 100 before compare)
+    #     Purpose: CBF Redis-backed cash-barrier drawdown ceiling
+    #
+    #   stpa.uca5_drawdown_threshold_pct — percentage, e.g. 4.5 (4.5%)
+    #     Used by: stpa_validator.py _check_uca5() and
+    #              generated_stpa_validator.py _check_uca_5()
+    #     Payload key: "drawdown" (raw percentage value, compared directly)
+    #     Purpose: STPA UCA-5 unsafe-control-action drawdown trigger
+    #
+    # No consolidation is required. The canonical key for the CBF barrier is
+    # `drawdown.limit`; the canonical key for the STPA UCA-5 trigger is
+    # `stpa.uca5_drawdown_threshold_pct`. Both are single-occurrence keys with
+    # no duplicate aliases in governance_thresholds.json.
     limit: float = Field(
         ..., gt=0.0, lt=1.0, description="Max portfolio drawdown fraction [0,1)."
     )

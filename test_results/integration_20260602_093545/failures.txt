@@ -1,0 +1,11 @@
+=== FAILED TESTS ===
+FAILED tests/test_compliance_bridge_integration.py::TestSlaAndEvalDataset::test_fail_ingest_creates_langfuse_eval_dataset_item
+
+=== ERRORS ===
+
+=== SUMMARY ===
+============ 1 failed, 786 passed, 20 skipped in 779.17s (0:12:59) =============
+Transient error HTTPConnectionPool(host='localhost', port=4318): Max retries exceeded with url: /v1/traces (Caused by NewConnectionError("HTTPConnection(host='localhost', port=4318): Failed to establish a new connection: [Errno 61] Connection refused")) encountered while exporting span batch, retrying in 3.45s.
+Transient error HTTPConnectionPool(host='localhost', port=4318): Max retries exceeded with url: /v1/traces (Caused by NewConnectionError("HTTPConnection(host='localhost', port=4318): Failed to establish a new connection: [Errno 61] Connection refused")) encountered while exporting span batch, retrying in 0.94s.
+Transient error HTTPConnectionPool(host='localhost', port=4318): Max retries exceeded with url: /v1/traces (Caused by NewConnectionError("HTTPConnection(host='localhost', port=4318): Failed to establish a new connection: [Errno 61] Connection refused")) encountered while exporting span batch, retrying in 2.00s.
+Transient error HTTPConnectionPool(host='localhost', port=4318): Max retries exceeded with url: /v1/traces (Caused by NewConnectionError("HTTPConnection(host='localhost', port=4318): Failed to establish a new connection: [Errno 61] Connection refused")) encountered while exporting span batch, retrying in 3.48s.

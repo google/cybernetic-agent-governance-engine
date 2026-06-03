@@ -1,0 +1,41 @@
+{
+  "timestamp": "2026-06-02T18:06:21.870875+00:00",
+  "environment": "gke-live-governance-stack",
+  "cluster": "gke_laah-cybernetics_us-central1-a_cage-dev",
+  "namespace": "governance-stack",
+  "test_log": "test_results/test_output_20260602T135235.txt",
+  "results_file": "test_results/test_results_20260602T135235.xml",
+  "passed": 875,
+  "failed": 21,
+  "errors": 0,
+  "skipped": 4,
+  "total": 900,
+  "duration_seconds": 2.02,
+  "failures": [
+    "tests/test_fiscal_limit_guard.py::test_single_agent_reservation_accepted",
+    "tests/test_fiscal_limit_guard.py::test_confirm_is_idempotent",
+    "tests/test_fiscal_limit_guard.py::test_current_spend_and_remaining",
+    "tests/test_fiscal_limit_guard.py::test_second_agent_rejected_when_limit_exceeded",
+    "tests/test_fiscal_limit_guard.py::test_three_agents_sequential_within_cap",
+    "tests/test_fiscal_limit_guard.py::test_fourth_agent_rejected_after_three",
+    "tests/test_fiscal_limit_guard.py::test_release_restores_capacity",
+    "tests/test_fiscal_limit_guard.py::test_release_of_rejected_token_is_noop",
+    "tests/test_fiscal_limit_guard.py::test_double_release_does_not_go_negative",
+    "tests/test_fiscal_limit_guard.py::test_redis_failure_fails_closed",
+    "tests/test_fiscal_limit_guard.py::test_redis_release_failure_is_logged_not_raised",
+    "tests/test_fiscal_limit_guard.py::test_empty_redis_returns_zero_spend",
+    "tests/test_fiscal_limit_guard.py::test_exact_cap_reservation_accepted",
+    "tests/test_fiscal_limit_guard.py::test_one_cent_over_cap_rejected",
+    "tests/test_fiscal_limit_guard.py::test_invalid_amount_raises",
+    "tests/test_fiscal_limit_guard.py::test_reservation_token_fields",
+    "tests/test_governance_architecture.py::test_enforce_no_hardcoded_regulatory_strings_in_governance_src",
+    "tests/test_pii_integration.py::test_pii_activation_logic",
+    "tests/test_safety_node.py::TestSafetyNodeIntegration::test_senior_trade_below_500k_approved_by_opa",
+    "tests/test_symbolic_governor_security.py::test_assert_safe_operational_state_does_not_raise_in_production_when_kms_active",
+    "tests/test_symbolic_governor_security.py::test_fiscal_limit_guard_reserve_called_with_correct_args"
+  ],
+  "errors_detail": [],
+  "excluded_files": [
+    "tests/test_profile_check.py (sys.exit(1) at module level \u2014 langchain_openai import chain)"
+  ]
+}

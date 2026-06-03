@@ -1,0 +1,18 @@
+..........................s............................................. [  8%]
+......................................s.....................s......s.... [ 16%]
+...........s............................................................ [ 24%]
+........................................................................ [ 33%]
+........................................................................ [ 41%]
+........................................................................ [ 49%]
+........................................................................ [ 57%]
+.......................................s................................ [ 66%]
+........................................................................ [ 74%]
+s...............s.......ss.............................................. [ 82%]
+......................................................................s. [ 91%]
+......ss......s.....s.........s......................................... [ 99%]
+.....                                                                    [100%]
+853 passed, 20 skipped in 772.78s (0:12:52)
+Transient error HTTPConnectionPool(host='localhost', port=4318): Max retries exceeded with url: /v1/traces (Caused by NewConnectionError("HTTPConnection(host='localhost', port=4318): Failed to establish a new connection: [Errno 61] Connection refused")) encountered while exporting span batch, retrying in 1.19s.
+Transient error HTTPConnectionPool(host='localhost', port=4318): Max retries exceeded with url: /v1/traces (Caused by NewConnectionError("HTTPConnection(host='localhost', port=4318): Failed to establish a new connection: [Errno 61] Connection refused")) encountered while exporting span batch, retrying in 2.05s.
+Transient error HTTPConnectionPool(host='localhost', port=4318): Max retries exceeded with url: /v1/traces (Caused by NewConnectionError("HTTPConnection(host='localhost', port=4318): Failed to establish a new connection: [Errno 61] Connection refused")) encountered while exporting span batch, retrying in 3.64s.
+Failed to export span batch due to timeout, max retries or shutdown.

@@ -1,0 +1,68 @@
+{
+  "timestamp": "2026-06-03T10:47:18Z",
+  "final_result": {
+    "passed": 853,
+    "failed": 0,
+    "skipped": 20,
+    "duration_seconds": 772.78,
+    "result_file": "test_results/run_20260603T103414.txt"
+  },
+  "deployment": {
+    "cluster": "gke_laah-cybernetics_us-central1-a_cage-dev",
+    "namespace": "governance-stack",
+    "images_built": [
+      "gcr.io/laah-cybernetics/gateway:latest (sha256:f0e8f4170e90b37cb5809eff7de93d63a0c75a57c6a03f1ce6815421c4b8dc65 — gateway)",
+      "gcr.io/laah-cybernetics/governed-financial-advisor:latest (sha256:f0e8f4170e90b37cb5809eff7de93d63a0c75a57c6a03f1ce6815421c4b8dc65 — advisor)"
+    ]
+  },
+  "fixes_applied": {
+    "src/gateway/governance/generated_stpa_validator.py": {
+      "description": "Added validate() alias delegating to validate_generated() — fixes 'GeneratedSTPAValidator has no attribute validate' in symbolic_governor.py",
+      "type": "production_code"
+    },
+    "src/gateway/governance/causal_gatekeeper.py": {
+      "description": "Added timestamp column to generate_mock_telemetry() so freshness check passes for synthetic data; reverted freshness check to fail-closed per spec docstring",
+      "type": "production_code"
+    },
+    "src/gateway/governance/langgraph_harness/nemo_node_factory.py": {
+      "description": "Both hardcoded sentinel strings changed to cfg.output_blocked_sentinel — semantic validation BLOCKED path (line ~513) and exception path (line ~534)",
+      "type": "production_code"
+    },
+    "src/governed_financial_advisor/graph/nodes/safety_node.py": {
+      "description": "Fixed _extract_trade_payload to pass optional STPA-required fields (drawdown, order_size, daily_vol) through — UCA-5 checks drawdown",
+      "type": "production_code"
+    },
+    "tests/test_harness_nemo_factory.py": {
+      "description": "Added validate_output_semantics mock to test_masks_output_successfully — NeMo circuit breaker OPEN in transparent fallback mode was blocking output",
+      "type": "test_fix"
+    },
+    "tests/test_output_rail_node.py": {
+      "description": "Added validate_output_semantics mock to test_output_rail_masks_unsafe_output and test_output_rail_passes_safe_output",
+      "type": "test_fix"
+    },
+    "tests/test_safety_node.py": {
+      "description": "Added drawdown: 0.0 to integration test state to satisfy UCA-5 check",
+      "type": "test_fix"
+    },
+    "tests/test_causal_gatekeeper.py": {
+      "description": "Added timestamp column to stable_telemetry fixture; updated test_generate_mock_telemetry_shape to expect 4 columns; fixed test_causal_check_fails_safe_on_error to patch _causal_cache_get to return None (prevent Redis cache contamination)",
+      "type": "test_fix"
+    },
+    "tests/test_trades_mcp.py": {
+      "description": "Added asyncio import; added asyncio.wait_for(timeout=20s) to prevent pytest-timeout hang; added pytest.skip when MCP_SERVER_SSE_URL not configured",
+      "type": "test_fix"
+    },
+    "environment": {
+      "description": "Reinstalled typer>=0.9.0 (was corrupted namespace stub) — fixes presidio_analyzer import failure (No module named typer.main) which caused OperatorConfig NameError in NeMo SDD actions",
+      "type": "environment_fix"
+    }
+  },
+  "test_run_history": [
+    {"run": "run_20260603T010438.txt", "passed": 825, "failed": 18, "skipped": 20},
+    {"run": "run_20260603T013930.txt", "passed": 843, "failed": 10, "skipped": 20},
+    {"run": "run_20260603T021336.txt", "passed": 743, "failed": 5, "skipped": 125},
+    {"run": "run_20260603T024849.txt", "passed": 852, "failed": 1, "skipped": 20},
+    {"run": "run_20260603T030511.txt", "passed": 852, "failed": 1, "skipped": 20},
+    {"run": "run_20260603T103414.txt", "passed": 853, "failed": 0, "skipped": 20}
+  ]
+}

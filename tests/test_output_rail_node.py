@@ -92,6 +92,12 @@ async def test_output_rail_masks_unsafe_output():
     """
     verify_and_mask_output returning masked content → state updated with
     the masked string, NOT the original raw agent output.
+
+    validate_output_semantics is also mocked to return (True, '') so that
+    the semantic validation step does not interfere with the PII-masking
+    assertion.  The NeMo circuit breaker may be OPEN in test environments
+    (transparent fallback mode), which would otherwise block the output
+    before the assertion is reached.
     """
     from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_output_rail_node
 
@@ -103,6 +109,10 @@ async def test_output_rail_masks_unsafe_output():
             f"{_GUARDRAIL_MODULE}.verify_and_mask_output",
             new_callable=AsyncMock,
             return_value=masked_output,
+        ), patch(
+            f"{_GUARDRAIL_MODULE}.validate_output_semantics",
+            new_callable=AsyncMock,
+            return_value=(True, ""),
         ):
             result = await nemo_output_rail_node(_build_state(raw_output))
 
@@ -120,6 +130,11 @@ async def test_output_rail_passes_safe_output():
     """
     verify_and_mask_output returning (scrubbed) original content → state
     updated with that content.  The rail should not alter safe, PII-free text.
+
+    validate_output_semantics is also mocked to return (True, '') so that
+    the semantic validation step does not interfere with the pass-through
+    assertion.  The NeMo circuit breaker may be OPEN in test environments
+    (transparent fallback mode), which would otherwise block the output.
     """
     from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_output_rail_node
 
@@ -130,6 +145,10 @@ async def test_output_rail_passes_safe_output():
             f"{_GUARDRAIL_MODULE}.verify_and_mask_output",
             new_callable=AsyncMock,
             return_value=safe_output,
+        ), patch(
+            f"{_GUARDRAIL_MODULE}.validate_output_semantics",
+            new_callable=AsyncMock,
+            return_value=(True, ""),
         ):
             result = await nemo_output_rail_node(_build_state(safe_output))
 
