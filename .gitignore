@@ -204,3 +204,6 @@ examples/evidence/*.ndjson
 # Agent Local Configs
 .agents/
 
+-e 
+# Test result artifacts
+test_results/

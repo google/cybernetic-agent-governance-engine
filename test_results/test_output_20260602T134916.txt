@@ -1,5 +1,0 @@
-ERROR: usage: __main__.py [options] [file_or_dir] [file_or_dir] [...]
-__main__.py: error: unrecognized arguments: --timeout=120
-  inifile: /Users/larsahlfors/Code/cybernetic-governance-engine/pytest.ini
-  rootdir: /Users/larsahlfors/Code/cybernetic-governance-engine
-
