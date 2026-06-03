@@ -14,7 +14,7 @@ classification: "INTERNAL"
 | **Date**           | 2026-06-01                                |
 | **Classification** | INTERNAL                                  |
 | **Series**         | CAGE Technical Report — Document 9 / 10  |
-| **Status**         | Updated — v2.0.0-rc.1 promoted 2026-06-01 |
+| **Status**         | Updated — v2.0.0-rc.1 promoted 2026-06-01; GKE deployment + full test cycle completed 2026-06-03 |
 
 ---
 
@@ -25,7 +25,7 @@ classification: "INTERNAL"
 
 ## Overview
 
-This document records the operational procedures executed during the 2026-03-08 deployment session, including vLLM model update verification, `governed-financial-advisor` crash recovery via ReplicaSet rollback, the full integration test results, and the code-level bug fixes applied in the same session. It is intended as a reference runbook for operators, SREs, and engineers who manage or diagnose the CAGE deployment on GKE.
+This document records the operational procedures executed during the 2026-03-08 deployment session (Sections 1–6) and the 2026-06-03 GKE deployment and test/fix cycle (Section 9). It covers vLLM model update verification, `governed-financial-advisor` crash recovery via ReplicaSet rollback, the full integration test results, and the code-level bug fixes applied in each session. It is intended as a reference runbook for operators, SREs, and engineers who manage or diagnose the CAGE deployment on GKE.
 
 All commands target the `governance-stack` namespace unless stated otherwise.
 
@@ -694,17 +694,18 @@ kubectl exec -n governance-stack deploy/gateway -- \
 
 ---
 
-### 7.5 Current Automated Test Coverage (v2.0.0)
+### 7.5 Current Automated Test Coverage
 
-As of v2.0.0, the automated test suite has grown significantly from the 2026-03-08 session baseline:
+As of the 2026-06-03 GKE deployment cycle, the automated test suite has grown significantly from the 2026-03-08 session baseline:
 
-| Metric                    | 2026-03-08 Session | v2.0.0 Current | v2.0.0-rc.1 (2026-06-01) |
-| ------------------------- | ------------------ | -------------- | ------------------------- |
-| **Tests Passing**         | 152                | **561**        | **644**                   |
-| **Tests Failing**         | 10                 | 0 (connectivity-only) | **0**            |
-| **Tests Errored**         | 8                  | 0              | 0                         |
-| **Tests Skipped**         | 17                 | varies by env  | 162 (env/integration)     |
-| **New Test Modules**      | —                  | `test_fiscal_limit_guard`, `test_causal_gatekeeper`, `test_framework_router`, `test_governance_architecture`, `test_hitl_rationale`, `test_playground_telemetry` | `test_compliance_bridge_tier2b`, `test_compliance_bridge_tier3`, `test_hitl_toctou_revalidation`, `test_oscal_cer_links` |
+| Metric                    | 2026-03-08 Session | v2.0.0 Current | v2.0.0-rc.1 (2026-06-01) | **2026-06-03 GKE Cycle** |
+| ------------------------- | ------------------ | -------------- | ------------------------- | ------------------------- |
+| **Tests Passing**         | 152                | **561**        | **644**                   | **853**                   |
+| **Tests Failing**         | 10                 | 0 (connectivity-only) | **0**            | **0**                     |
+| **Tests Errored**         | 8                  | 0              | 0                         | 0                         |
+| **Tests Skipped**         | 17                 | varies by env  | 162 (env/integration)     | **20**                    |
+| **Runtime**               | —                  | —              | 24.44s                    | **772.78s (12:52)**       |
+| **Result file**           | —                  | —              | —                         | `test_results/run_20260603T103414.txt` |
 
 **RC-07 test command (v2.0.0-rc.1):**
 
@@ -713,11 +714,183 @@ SKIP_LANGFUSE_CHECKS=1 .venv/bin/pytest tests/ -q --tb=short --ignore=tests/test
 # Result: 644 passed, 162 skipped, 0 failures in 24.44s
 ```
 
-The 10 failures and 8 errors from the 2026-03-08 session were all resolved by the 7 code fixes applied in that session (missing imports, assertion bug, LangGraph edge unpacking, Redis URL parsing, `cachetools` dep). All remaining failures in the current suite are connectivity-only (see Section 5).
+**2026-06-03 full suite command:**
+
+```bash
+pytest tests/ -q --tb=short
+# Result: 853 passed, 20 skipped, 0 failures in 772.78s
+```
+
+The 10 failures and 8 errors from the 2026-03-08 session were all resolved by the 7 code fixes applied in that session (missing imports, assertion bug, LangGraph edge unpacking, Redis URL parsing, `cachetools` dep). The 2026-06-03 cycle required 4 additional production code fixes and 5 test fixture fixes to reach 0 failures — see Section 9.
 
 ---
 
 _This document is part of the CAGE Technical Report Series. See [README.md](README.md) for the full index._
+
+---
+
+## 9. 2026-06-03 GKE Deployment and Test/Fix Cycle
+
+### 9.1 Session Summary
+
+On 2026-06-03, both application images were built via Cloud Build and deployed to GKE cluster `gke_YOUR_GCP_PROJECT_ID_us-central1-a_cage-dev`, namespace `governance-stack`. No Terraform or Kubernetes infrastructure files were modified. All pods were verified running and healthy after deployment. Four test/fix/redeploy cycles were required to reach 0 failures.
+
+**Final result:** 853 passed, 0 failed, 20 skipped (772.78s / 12:52 runtime).
+
+**Summary JSON:** `test_results/final_summary_20260603T104718.json`
+
+### 9.2 Test Run History
+
+| Run File                          | Passed | Failed | Skipped |
+| --------------------------------- | ------ | ------ | ------- |
+| `run_20260603T010438.txt`         | 825    | 18     | 20      |
+| `run_20260603T013930.txt`         | 843    | 10     | 20      |
+| `run_20260603T021336.txt`         | 743    | 5      | 125     |
+| `run_20260603T024849.txt`         | 852    | 1      | 20      |
+| `run_20260603T030511.txt`         | 852    | 1      | 20      |
+| **`run_20260603T103414.txt`**     | **853**| **0**  | **20**  |
+
+### 9.3 Production Code Fixes Applied
+
+Four production source files were modified to resolve test failures:
+
+#### 9.3.1 `src/gateway/governance/generated_stpa_validator.py` — Added `validate()` alias
+
+**Problem:** `symbolic_governor.py` called `STPAValidator.validate()` but `GeneratedSTPAValidator` only exposed `validate_generated()`, causing an `AttributeError` at runtime.
+
+**Fix:** Added a `validate()` method that delegates to `validate_generated()`:
+
+```python
+def validate(self, *args, **kwargs):
+    """Alias for validate_generated() — required by symbolic_governor.py."""
+    return self.validate_generated(*args, **kwargs)
+```
+
+**Impact:** Resolved `AttributeError: 'GeneratedSTPAValidator' object has no attribute 'validate'` in the SymbolicGovernor Tier 0 STPA check.
+
+---
+
+#### 9.3.2 `src/gateway/governance/causal_gatekeeper.py` — Added `timestamp` column to mock telemetry
+
+**Problem:** `generate_mock_telemetry()` produced a DataFrame without a `timestamp` column. The freshness check in `causal_safety_check()` requires a `timestamp` column to validate that telemetry data is not stale. Synthetic data failed the freshness check, causing spurious `GovernanceError` blocks.
+
+**Fix:** Added a `timestamp` column to the mock telemetry DataFrame:
+
+```python
+df["timestamp"] = pd.Timestamp.utcnow()
+```
+
+**Fail-closed behavior preserved:** The freshness check was reverted to fail-closed per the spec docstring — if telemetry is genuinely stale, the gatekeeper blocks. The fix only ensures synthetic/mock data passes the freshness check.
+
+**Impact:** Resolved freshness check failures for synthetic telemetry in `test_causal_gatekeeper.py`. The DataFrame now has 4 columns: `trade_amount`, `risk_score`, `market_volatility`, `timestamp`.
+
+---
+
+#### 9.3.3 `src/gateway/governance/langgraph_harness/nemo_node_factory.py` — Replaced hardcoded sentinel strings
+
+**Problem:** Two code paths in `nemo_node_factory.py` used hardcoded sentinel strings (`"BLOCKED"`) instead of reading `cfg.output_blocked_sentinel`. When the sentinel value was configured differently (e.g., in tests), the hardcoded strings caused mismatches in the semantic validation BLOCKED path (line ~513) and the exception path (line ~534).
+
+**Fix:** Replaced both hardcoded strings with `cfg.output_blocked_sentinel`:
+
+```python
+# Before (semantic validation BLOCKED path):
+return {"output": "BLOCKED"}
+
+# After:
+return {"output": cfg.output_blocked_sentinel}
+
+# Before (exception path):
+return {"output": "BLOCKED", "error": str(e)}
+
+# After:
+return {"output": cfg.output_blocked_sentinel, "error": str(e)}
+```
+
+**Impact:** Resolved sentinel mismatch failures in `test_harness_nemo_factory.py` and `test_output_rail_node.py`.
+
+---
+
+#### 9.3.4 `src/governed_financial_advisor/graph/nodes/safety_node.py` — Pass optional STPA fields through `_extract_trade_payload()`
+
+**Problem:** `_extract_trade_payload()` did not forward the optional STPA-required fields `drawdown`, `order_size`, and `daily_vol` from the agent state to the trade payload. The UCA-5 check in the STPA validator requires `drawdown` to be present; its absence caused UCA-5 to fail even for valid trades.
+
+**Fix:** Updated `_extract_trade_payload()` to pass through the optional fields:
+
+```python
+payload = {
+    "action": ...,
+    "amount": ...,
+    # Optional STPA-required fields — pass through if present
+    "drawdown": state.get("drawdown"),
+    "order_size": state.get("order_size"),
+    "daily_vol": state.get("daily_vol"),
+}
+```
+
+**Impact:** Resolved UCA-5 check failures in `test_safety_node.py` integration tests.
+
+### 9.4 Test Fixture / Configuration Fixes Applied
+
+Five test files were updated to align with the production code fixes:
+
+| File | Fix Applied |
+| ---- | ----------- |
+| `tests/test_harness_nemo_factory.py` | Added `validate_output_semantics` mock to `test_masks_output_successfully` — NeMo circuit breaker OPEN in transparent fallback mode was blocking output |
+| `tests/test_output_rail_node.py` | Added `validate_output_semantics` mock to `test_output_rail_masks_unsafe_output` and `test_output_rail_passes_safe_output` |
+| `tests/test_safety_node.py` | Added `drawdown: 0.0` to integration test state to satisfy UCA-5 check |
+| `tests/test_causal_gatekeeper.py` | Added `timestamp` column to `stable_telemetry` fixture; updated `test_generate_mock_telemetry_shape` to expect 4 columns; patched `_causal_cache_get` to return `None` (prevent Redis cache contamination) |
+| `tests/test_trades_mcp.py` | Added `asyncio.wait_for(timeout=20s)` to prevent pytest-timeout hang; added `pytest.skip` when `MCP_SERVER_SSE_URL` not configured |
+
+### 9.5 Environment Fix
+
+**Problem:** `typer` had a corrupted namespace stub (`No module named typer.main`), which caused `presidio_analyzer` to fail on import. This blocked `test_pii_integration.py` and caused `OperatorConfig NameError` in NeMo SDD actions.
+
+**Fix:** Reinstalled `typer>=0.9.0`:
+
+```bash
+pip install --force-reinstall "typer>=0.9.0"
+```
+
+**Impact:** Resolved `presidio_analyzer` import failure; `test_pii_integration.py` now collects and runs correctly.
+
+### 9.6 New/Modified Source Files Confirmed in This Cycle
+
+The following source files were confirmed present and operational during the 2026-06-03 cycle (previously undocumented or newly discovered):
+
+| File | Component |
+| ---- | --------- |
+| `src/gateway/governance/causal_gatekeeper.py` | Causal inference gatekeeper (DoWhy Tier 6) |
+| `src/gateway/governance/constants.py` | `GovernanceControl` enum + `ControlRegistry` singleton |
+| `src/gateway/governance/defer_queue.py` | DEFER state machine (Redis db=1) |
+| `src/gateway/governance/iso_control.py` | ISO 42001 control stamping (`stamp_iso_control()`) |
+| `src/gateway/governance/normative_provider.py` | External normative provider + adaptive FRIA gate |
+| `src/gateway/governance/stpa_validator.py` | STPA validator (alongside generated version) |
+| `src/gateway/governance/telemetry_provider.py` | Telemetry provider for causal gatekeeper |
+| `src/gateway/governance/schemas/thresholds.py` | `GovernanceThresholds` Pydantic model |
+| `src/gateway/slm/mock_slm.py` | Mock SLM for testing (Tier 3 deprecated) |
+| `src/governed_financial_advisor/governance/nemo_action_registry.py` | NeMo action registry |
+| `src/governed_financial_advisor/governance/nemo_actions.py` | Advisor NeMo actions (fallback implementations) |
+| `src/governed_financial_advisor/governance/structs.py` | Governance structs |
+| `src/governed_financial_advisor/governance/transpiler.py` | Policy transpiler (`PolicyTranspiler`) |
+| `src/governed_financial_advisor/pipelines/green_stack_pipeline.py` | KFP Cybernetic Governance Loop pipeline |
+| `src/governed_financial_advisor/utils/` | Utilities: `context`, `langfuse_utils`, `privacy`, `prompt_utils`, `routing_seal`, `telemetry`, `text_utils` |
+| `src/governed_financial_advisor/demo/` | Demo components: `demo_observability`, `pipeline_manager`, `router`, `state` |
+| `src/governed_financial_advisor/server.py` | Advisor FastAPI server entry point |
+
+### 9.7 Fix Summary Table
+
+| # | File | Change | Category |
+| - | ---- | ------ | -------- |
+| 1 | `src/gateway/governance/generated_stpa_validator.py` | Added `validate()` alias delegating to `validate_generated()` | Production code |
+| 2 | `src/gateway/governance/causal_gatekeeper.py` | Added `timestamp` column to `generate_mock_telemetry()`; reverted freshness check to fail-closed | Production code |
+| 3 | `src/gateway/governance/langgraph_harness/nemo_node_factory.py` | Replaced hardcoded `"BLOCKED"` sentinel strings with `cfg.output_blocked_sentinel` | Production code |
+| 4 | `src/governed_financial_advisor/graph/nodes/safety_node.py` | Fixed `_extract_trade_payload()` to pass `drawdown`, `order_size`, `daily_vol` through | Production code |
+| 5 | `tests/test_harness_nemo_factory.py` | Added `validate_output_semantics` mock | Test fixture |
+| 6 | `tests/test_output_rail_node.py` | Added `validate_output_semantics` mock to 2 tests | Test fixture |
+| 7 | `tests/test_safety_node.py` | Added `drawdown: 0.0` to integration test state | Test fixture |
+| 8 | `tests/test_causal_gatekeeper.py` | Added `timestamp` column; updated shape assertion; patched `_causal_cache_get` | Test fixture |
+| 9 | `tests/test_trades_mcp.py` | Added `asyncio.wait_for(timeout=20s)`; added `pytest.skip` guard | Test fixture |
+| 10 | Environment | Reinstalled `typer>=0.9.0` (corrupted namespace stub) | Environment |
 
 ---
 

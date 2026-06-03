@@ -3,9 +3,9 @@
 | Field              | Value                  |
 | ------------------ | ---------------------- |
 | **Classification** | PUBLIC                 |
-| **Date**           | 2026-06-01             |
+| **Date**           | 2026-06-03             |
 | **Version**        | 2.0.0                  |
-| **Status**         | Complete (10 documents) |
+| **Status**         | Complete (10 documents) — GKE deployment verified 2026-06-03 |
 
 ---
 
@@ -27,7 +27,7 @@ The Cybernetic Governance Engine (CAGE) is a production-grade, multi-agent AI go
 | 06  | Compliance & Standards        | [`06-COMPLIANCE-STANDARDS.md`](06-COMPLIANCE-STANDARDS.md)               | Full regulatory framework coverage — NIST SP 800-53 Rev 5 (24% readiness across 9 families), NIST RMF 7-step posture and ATO roadmap, ISO/IEC 42001:2023 (Clauses 6/8/9/10 + Annex A), OSCAL artifacts, **9 Lula validation manifests** (4 Active: A.5.2, A.5.3, A.9.2, SC-4; 5 Stub: AU-12, AC-3, RA-5, CM-6, IR-6), ISCM 2-tier strategy, Privacy Impact Assessment (8 risks), SAR-CAGE-2026Q1 (9 findings), and threshold traceability                                                                                                             |
 | 07  | Security Infrastructure       | [`07-SECURITY-INFRASTRUCTURE.md`](07-SECURITY-INFRASTRUCTURE.md)         | Defense-in-depth security — authorization boundary (9 NetworkPolicy objects), **Cloud KMS HSM-backed governance signing** (v2.0.0: asymmetric signing via HSM replacing HMAC self-signing) + routing seal, OPA RBAC, secret management (Kubernetes-native secrets via Terraform), two-layer PII protection (NeMo + Presidio, **15 entity types**), 7-year audit logging, AgentSight eBPF monitoring, cryptographic controls, **externally reconciled CBF** (v2.0.0: Anchorage Digital OCC-chartered custody, KMS-signed balances), red team coverage, and all open security findings |
 | 08  | Deployment & Infrastructure   | [`08-DEPLOYMENT-INFRASTRUCTURE.md`](08-DEPLOYMENT-INFRASTRUCTURE.md)     | Full deployment architecture — 16-service Kubernetes topology, Kubernetes Inference Gateway (ADR-002 nginx GatewayClass), Docker image inventory, Cloud Build CI/CD pipelines, modular Terraform IaC (`infra/targets/` + `infra/modules/`), vLLM GPU configuration (DeepSeek-R1 AWQ on L4), Langfuse self-hosted deployment, storage backends, network policies, latency strategy (200ms ISO-20022 SLA), **Redis db=1 noeviction** (v2.0.0: Guaranteed QoS, `maxmemory-policy noeviction` for DEFER state machine), and operational runbooks |
-| 09  | Operational Runbook           | [`09-OPERATIONAL-RUNBOOK.md`](09-OPERATIONAL-RUNBOOK.md)                 | Verified operational procedures — vLLM model update verification, `governed-financial-advisor` CrashLoopBackOff recovery, full integration test results (**644 passing** as of v2.0.0-rc.1, up from 152 in 2026-03-08 session), 7 code fixes applied, known connectivity-only failure classification, Saga engine ghost-state recovery, and **v2.0.0 procedures** (KMS HSM signing verification, DEFER queue inspection, dual-project Langfuse credential validation, normative provider boot-time baseline check). **v1.1 (2026-05-31).** |
+| 09  | Operational Runbook           | [`09-OPERATIONAL-RUNBOOK.md`](09-OPERATIONAL-RUNBOOK.md)                 | Verified operational procedures — vLLM model update verification, `governed-financial-advisor` CrashLoopBackOff recovery, full integration test results (**853 passing, 0 failed, 20 skipped** as of 2026-06-03 GKE cycle, up from 644 in v2.0.0-rc.1 and 152 in 2026-03-08 session), 7 code fixes (2026-03-08) + 4 production + 5 test fixture fixes (2026-06-03) applied, known connectivity-only failure classification, Saga engine ghost-state recovery, **v2.0.0 procedures** (KMS HSM signing verification, DEFER queue inspection, dual-project Langfuse credential validation, normative provider boot-time baseline check), and **2026-06-03 GKE deployment cycle** (Section 9: Cloud Build image builds, 4-cycle fix history, production code fixes, test fixture fixes, environment fix). |
 | 10  | Formal Verification           | [`10-FORMAL-VERIFICATION.md`](10-FORMAL-VERIFICATION.md)                 | Composite Verification Framework (CVF) proof — STPA hazard completeness (UCA-5/FIN-1 TOCTOU eliminated), VSM structural completeness (algedonic feedback loop closed), hybrid automata reachability (ghost state eliminated), **AARM 11-vector neutralization table** (10/11 NEUTRALIZED; V11 PARTIAL pending POAM-022), **FiscalLimitGuard race-condition proof** (Redis WATCH/MULTI/EXEC optimistic lock invariant), and **Cloud KMS HSM non-repudiation proof** (ISO 42001 §A.7.5, NIST AU-10, FINRA Rule 4511). **v1.1 (2026-05-31).** |
 
 ---
@@ -61,7 +61,7 @@ The Cybernetic Governance Engine (CAGE) is a production-grade, multi-agent AI go
 | Resolved Critical Findings     | 2 (FIND-010 HMAC bypass — resolved; FIND-011 mTLS — POAM-007 closed) |
 | AARM Vectors Neutralized       | 10/11 (V11 PARTIAL — POAM-022)            |
 | Red Team Payloads              | 290+                                      |
-| Automated Tests                | 644 passing (v2.0.0-rc.1)                 |
+| Automated Tests                | **853 passing, 0 failed, 20 skipped** (2026-06-03 GKE cycle; `test_results/run_20260603T103414.txt`) |
 | Audit Log Retention            | 7 years                                   |
 | Latency SLA                    | 200ms US / 150ms EU (ISO-20022)           |
 | Primary LLM (Reasoning)        | DeepSeek-R1-Distill-Llama-8B (AWQ)        |

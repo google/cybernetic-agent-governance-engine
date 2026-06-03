@@ -6,7 +6,7 @@
 | **Date**             | 2026-06-01                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | DRAFT — Pending AO Approval (v2.0.0-rc.1 promoted 2026-06-01)                                                |
+| **Status**           | DRAFT — Pending AO Approval (v2.0.0-rc.1 promoted 2026-06-01; GKE deployment verified 2026-06-03)           |
 | **Reference**        | `docs/ROLES_AND_RESPONSIBILITIES.md`, `docs/banking_regs.md`, `compliance/boundary/AUTHORIZATION_BOUNDARY.md` |
 
 ---
@@ -82,7 +82,7 @@ CAGE provides eight integrated capabilities that together constitute a full-stac
 
 ## 5. Current Compliance Posture (NIST RMF Readiness)
 
-CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v2.0.0-rc.1 release candidate was promoted on 2026-06-01 (branch `rc-v2.0.0`, tag `v2.0.0-rc.1`); 644 unit tests pass, 0 failures.
+CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v2.0.0-rc.1 release candidate was promoted on 2026-06-01 (branch `rc-v2.0.0`, tag `v2.0.0-rc.1`). Both application images were built via Cloud Build and deployed to GKE cluster `gke_YOUR_GCP_PROJECT_ID_us-central1-a_cage-dev`, namespace `governance-stack`, on 2026-06-03. The full test suite now reports **853 passed, 0 failed, 20 skipped** (12:52 runtime; `test_results/run_20260603T103414.txt`).
 
 ### 5.1 Control Family Readiness
 

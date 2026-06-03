@@ -6,7 +6,7 @@
 | **Date**             | 2026-06-01                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | DRAFT — Pending AO Approval (v2.0.0-rc.1 promoted 2026-06-01)                                                |
+| **Status**           | DRAFT — Pending AO Approval (v2.0.0-rc.1 promoted 2026-06-01; GKE deployment verified 2026-06-03)           |
 | **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md`, `docs/NEURO_SYMBOLIC_GOVERNANCE.md` |
 
 ---
@@ -91,7 +91,7 @@ The stateful agent graph is assembled by `create_graph(redis_url)` in `src/gover
 | `data_analyst`      | `src/governed_financial_advisor/agents/data_analyst/agent.py`      | Live market data fetch via `yfinance`; writes `data_analyst_ticker`                               |
 | `execution_analyst` | `src/governed_financial_advisor/agents/execution_analyst/agent.py` | Structured `ExecutionPlan` synthesis; writes `execution_plan_output` (list of `PlanStep`)         |
 | `evaluator`         | `src/governed_financial_advisor/agents/evaluator/agent.py`         | Audit verification; OPA policy check; NeMo output scan; writes `evaluation_result`, `opa_results` |
-| `safety_check`      | `src/governed_financial_advisor/graph/nodes/safety_node.py`        | HMAC-SHA256 governance signature validation; writes `safety_status`                               |
+| `safety_check`      | `src/governed_financial_advisor/graph/nodes/safety_node.py`        | HMAC-SHA256 governance signature validation; writes `safety_status`. **Fix (2026-06-03):** `_extract_trade_payload()` now passes optional STPA-required fields (`drawdown`, `order_size`, `daily_vol`) through to the trade payload — required for UCA-5 check. |
 | `governed_trader`   | `src/governed_financial_advisor/agents/governed_trader/agent.py`   | Final trade execution; HITL interrupt point; writes `execution_result`                            |
 | `explainer`         | `src/governed_financial_advisor/agents/explainer/agent.py`         | Compliance narrative generation; produces human-readable audit summary                            |
 | `nemo_output_rail`  | `src/governed_financial_advisor/graph/nodes/guardrail_node.py`    | **Mandatory output rail (ADR 2026-03-09b)**; NeMo PII masking + content safety; fail-closed; sets `output_rail_applied` |
