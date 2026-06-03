@@ -2,8 +2,8 @@
 
 **System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor  
 **Reference:** NIST SP 800-37 Rev. 2, NIST SP 800-53 Rev. 5 CA-5  
-**Version:** 1.4  
-**Date:** 2026-05-29  
+**Version:** 1.5
+**Date:** 2026-06-03
 **Status:** ACTIVE
 
 ---

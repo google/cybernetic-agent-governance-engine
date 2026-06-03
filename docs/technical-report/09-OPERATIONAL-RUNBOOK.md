@@ -2,7 +2,7 @@
 title: "Cybernetic Governance Engine (CAGE) — Operational Runbook"
 document: "09-OPERATIONAL-RUNBOOK"
 version: "2.0"
-date: "2026-06-01"
+date: "2026-06-03"
 classification: "INTERNAL"
 ---
 
@@ -11,10 +11,10 @@ classification: "INTERNAL"
 | Field              | Value                                     |
 | ------------------ | ----------------------------------------- |
 | **Version**        | 2.0                                       |
-| **Date**           | 2026-06-01                                |
+| **Date**           | 2026-06-03                                |
 | **Classification** | INTERNAL                                  |
 | **Series**         | CAGE Technical Report — Document 9 / 10  |
-| **Status**         | Updated — v2.0.0-rc.1 promoted 2026-06-01; GKE deployment + full test cycle completed 2026-06-03 |
+| **Status**         | Updated — v2.0.0-rc.2 promoted 2026-06-03; GKE deployment + full test cycle completed 2026-06-03 |
 
 ---
 
@@ -664,7 +664,7 @@ kubectl exec -n governance-stack deploy/compliance-bridge -- \
 **Failure path (POAM-018):** If `LANGFUSE_COMPLIANCE_PUBLIC_KEY` is empty, the compliance bridge silently drops all audit traces. Check the `/health` endpoint:
 
 ```bash
-curl http://localhost:3001/health | jq '.compliance_langfuse_connected'
+curl http://localhost:3002/health | jq '.compliance_langfuse_connected'
 # Expected: true
 ```
 
@@ -698,14 +698,14 @@ kubectl exec -n governance-stack deploy/gateway -- \
 
 As of the 2026-06-03 GKE deployment cycle, the automated test suite has grown significantly from the 2026-03-08 session baseline:
 
-| Metric                    | 2026-03-08 Session | v2.0.0 Current | v2.0.0-rc.1 (2026-06-01) | **2026-06-03 GKE Cycle** |
-| ------------------------- | ------------------ | -------------- | ------------------------- | ------------------------- |
-| **Tests Passing**         | 152                | **561**        | **644**                   | **853**                   |
-| **Tests Failing**         | 10                 | 0 (connectivity-only) | **0**            | **0**                     |
-| **Tests Errored**         | 8                  | 0              | 0                         | 0                         |
-| **Tests Skipped**         | 17                 | varies by env  | 162 (env/integration)     | **20**                    |
-| **Runtime**               | —                  | —              | 24.44s                    | **772.78s (12:52)**       |
-| **Result file**           | —                  | —              | —                         | `test_results/run_20260603T103414.txt` |
+| Metric                    | 2026-03-08 Session | v2.0.0 Current | v2.0.0-rc.1 (2026-06-01) | 2026-06-03 GKE Cycle (rc.1) | **2026-06-03 GKE Cycle (rc.2)** |
+| ------------------------- | ------------------ | -------------- | ------------------------- | --------------------------- | -------------------------------- |
+| **Tests Passing**         | 152                | **561**        | **644**                   | 853                         | **844**                          |
+| **Tests Failing**         | 10                 | 0 (connectivity-only) | **0**            | 0                           | **0**                            |
+| **Tests Errored**         | 8                  | 0              | 0                         | 0                           | 0                                |
+| **Tests Skipped**         | 17                 | varies by env  | 162 (env/integration)     | 20                          | **24**                           |
+| **Runtime**               | —                  | —              | 24.44s                    | 772.78s (12:52)             | —                                |
+| **Result file**           | —                  | —              | —                         | `run_20260603T103414.txt`   | current GKE cycle                |
 
 **RC-07 test command (v2.0.0-rc.1):**
 
@@ -718,10 +718,10 @@ SKIP_LANGFUSE_CHECKS=1 .venv/bin/pytest tests/ -q --tb=short --ignore=tests/test
 
 ```bash
 pytest tests/ -q --tb=short
-# Result: 853 passed, 20 skipped, 0 failures in 772.78s
+# Result: 844 passed, 24 skipped, 0 failures in 772.78s
 ```
 
-The 10 failures and 8 errors from the 2026-03-08 session were all resolved by the 7 code fixes applied in that session (missing imports, assertion bug, LangGraph edge unpacking, Redis URL parsing, `cachetools` dep). The 2026-06-03 cycle required 4 additional production code fixes and 5 test fixture fixes to reach 0 failures — see Section 9.
+The 10 failures and 8 errors from the 2026-03-08 session were all resolved by the 7 code fixes applied in that session (missing imports, assertion bug, LangGraph edge unpacking, Redis URL parsing, `cachetools` dep). The 2026-06-03 cycle required 4 additional production code fixes and 5 test fixture fixes to reach 0 failures — see Section 9. The final verified count is **844 passed, 0 failed, 24 skipped**.
 
 ---
 
@@ -735,7 +735,7 @@ _This document is part of the CAGE Technical Report Series. See [README.md](READ
 
 On 2026-06-03, both application images were built via Cloud Build and deployed to GKE cluster `gke_laah-cybernetics_us-central1-a_cage-dev`, namespace `governance-stack`. No Terraform or Kubernetes infrastructure files were modified. All pods were verified running and healthy after deployment. Four test/fix/redeploy cycles were required to reach 0 failures.
 
-**Final result:** 853 passed, 0 failed, 20 skipped (772.78s / 12:52 runtime).
+**Final result:** 844 passed, 0 failed, 24 skipped (2026-06-03 GKE cycle).
 
 **Summary JSON:** `test_results/final_summary_20260603T104718.json`
 
@@ -748,7 +748,8 @@ On 2026-06-03, both application images were built via Cloud Build and deployed t
 | `run_20260603T021336.txt`         | 743    | 5      | 125     |
 | `run_20260603T024849.txt`         | 852    | 1      | 20      |
 | `run_20260603T030511.txt`         | 852    | 1      | 20      |
-| **`run_20260603T103414.txt`**     | **853**| **0**  | **20**  |
+| `run_20260603T103414.txt`         | 853    | 0      | 20      |
+| **Current GKE cycle (rc.2)**      | **844**| **0**  | **24**  |
 
 ### 9.3 Production Code Fixes Applied
 
@@ -918,8 +919,8 @@ kubectl port-forward -n governance-stack svc/agentsight-ui 5173:5173 &
 
 ```bash
 # Verify the SSE event stream is flowing from the Compliance Bridge
-kubectl port-forward -n governance-stack svc/compliance-bridge 3001:3001 &
-curl -N http://localhost:3001/v1/events/stream
+kubectl port-forward -n governance-stack svc/compliance-bridge 3002:80 &
+curl -N http://localhost:3002/v1/events/stream
 # Expected: continuous SSE event stream (data: {...} lines)
 ```
 

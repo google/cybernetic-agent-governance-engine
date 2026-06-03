@@ -5,7 +5,7 @@
 | Field              | Value      |
 | ------------------ | ---------- |
 | **Version**        | 2.2        |
-| **Date**           | 2026-06-01 |
+| **Date**           | 2026-06-03 |
 | **Classification** | INTERNAL   |
 | **Document**       | CAGE-TR-06 |
 
@@ -269,26 +269,25 @@ This tool dynamically compiles STPA hazards (UCAs) and control implementations i
 
 Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule ([`deployment/k8s/lula-cron.yaml`](../../deployment/k8s/lula-cron.yaml)). RBAC permissions are defined in [`deployment/k8s/lula-rbac.yaml`](../../deployment/k8s/lula-rbac.yaml).
 
-**9 total Lula manifests** — 4 Active (full Kubernetes domain checks) and 5 Stub (placeholder validations):
+**15 total Lula manifests — all Active** (full Kubernetes domain checks):
 
-**Active Manifests (4):**
-
-| Manifest                                                                       | Control         | Kubernetes Check                              | Status |
-| ------------------------------------------------------------------------------ | --------------- | --------------------------------------------- | ------ |
-| [`compliance/lula/lula-validation-a52.yaml`](../../compliance/lula/lula-validation-a52.yaml)   | ISO 42001 A.5.2 | Social impact assessment ConfigMap            | Active |
-| [`compliance/lula/lula-validation-a53.yaml`](../../compliance/lula/lula-validation-a53.yaml)   | ISO 42001 A.5.3 | Documentation/logging config                  | Active |
-| [`compliance/lula/lula-validation-a92.yaml`](../../compliance/lula/lula-validation-a92.yaml)   | ISO 42001 A.9.2 | PII detection Deployment                      | Active |
-| [`compliance/lula/lula-validation-sc4.yaml`](../../compliance/lula/lula-validation-sc4.yaml)   | SP 800-53 SC-4  | Information in shared resources               | Active |
-
-**Stub Manifests (5):**
-
-| Manifest                                                                       | Control         | Status |
-| ------------------------------------------------------------------------------ | --------------- | ------ |
-| [`compliance/lula/lula-validation-au12.yaml`](../../compliance/lula/lula-validation-au12.yaml) | SP 800-53 AU-12 | Stub (Langfuse OTLP ingestion availability; standalone OTel Collector deprecated 2026-05-31) |
-| [`compliance/lula/lula-validation-ac3.yaml`](../../compliance/lula/lula-validation-ac3.yaml)   | SP 800-53 AC-3  | Stub |
-| [`compliance/lula/lula-validation-ra5.yaml`](../../compliance/lula/lula-validation-ra5.yaml)   | SP 800-53 RA-5  | Stub |
-| [`compliance/lula/lula-validation-cm6.yaml`](../../compliance/lula/lula-validation-cm6.yaml)   | SP 800-53 CM-6  | Stub |
-| [`compliance/lula/lula-validation-ir6.yaml`](../../compliance/lula/lula-validation-ir6.yaml)   | SP 800-53 IR-6  | Stub |
+| Manifest                                                                                         | Control         | Kubernetes Check                                                                 |
+| ------------------------------------------------------------------------------------------------ | --------------- | -------------------------------------------------------------------------------- |
+| [`compliance/lula/lula-validation-a52.yaml`](../../compliance/lula/lula-validation-a52.yaml)     | ISO 42001 A.5.2 | Social impact assessment ConfigMap                                               |
+| [`compliance/lula/lula-validation-a53.yaml`](../../compliance/lula/lula-validation-a53.yaml)     | ISO 42001 A.5.3 | Documentation/logging config                                                     |
+| [`compliance/lula/lula-validation-a92.yaml`](../../compliance/lula/lula-validation-a92.yaml)     | ISO 42001 A.9.2 | PII detection Deployment                                                         |
+| [`compliance/lula/lula-validation-sc4.yaml`](../../compliance/lula/lula-validation-sc4.yaml)     | SP 800-53 SC-4  | Information in shared resources                                                  |
+| [`compliance/lula/lula-validation-au12.yaml`](../../compliance/lula/lula-validation-au12.yaml)   | SP 800-53 AU-12 | Langfuse OTLP ingestion availability (direct; OTel Collector deprecated 2026-05-31) |
+| [`compliance/lula/lula-validation-ac2.yaml`](../../compliance/lula/lula-validation-ac2.yaml)     | SP 800-53 AC-2  | Account management / service account lifecycle                                   |
+| [`compliance/lula/lula-validation-ac3.yaml`](../../compliance/lula/lula-validation-ac3.yaml)     | SP 800-53 AC-3  | Access enforcement / OPA RBAC                                                    |
+| [`compliance/lula/lula-validation-ra5.yaml`](../../compliance/lula/lula-validation-ra5.yaml)     | SP 800-53 RA-5  | Vulnerability scanning (pip-audit / Trivy CI)                                    |
+| [`compliance/lula/lula-validation-cm6.yaml`](../../compliance/lula/lula-validation-cm6.yaml)     | SP 800-53 CM-6  | Configuration settings enforcement                                               |
+| [`compliance/lula/lula-validation-ir6.yaml`](../../compliance/lula/lula-validation-ir6.yaml)     | SP 800-53 IR-6  | Incident reporting                                                               |
+| [`compliance/lula/lula-validation-ia3.yaml`](../../compliance/lula/lula-validation-ia3.yaml)     | SP 800-53 IA-3  | Device identification / Linkerd mTLS SPIFFE identity                             |
+| [`compliance/lula/lula-validation-ia5.yaml`](../../compliance/lula/lula-validation-ia5.yaml)     | SP 800-53 IA-5  | Authenticator management / KMS HSM key lifecycle                                 |
+| [`compliance/lula/lula-validation-sc8.yaml`](../../compliance/lula/lula-validation-sc8.yaml)     | SP 800-53 SC-8  | Transmission confidentiality / TLS enforcement                                   |
+| [`compliance/lula/lula-validation-si2.yaml`](../../compliance/lula/lula-validation-si2.yaml)     | SP 800-53 SI-2  | Flaw remediation / CVE patching (pip-audit CI)                                   |
+| [`compliance/lula/lula-validation-aarm-vectors.yaml`](../../compliance/lula/lula-validation-aarm-vectors.yaml) | CSA AARM v1.0 | 11-vector AI agent threat model coverage                              |
 
 ---
 

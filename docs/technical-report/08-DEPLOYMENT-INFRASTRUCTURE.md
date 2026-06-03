@@ -2,7 +2,7 @@
 title: "Cybernetic Governance Engine (CAGE) — Deployment & Infrastructure"
 document: "08-DEPLOYMENT-INFRASTRUCTURE"
 version: "2.0"
-date: "2026-06-01"
+date: "2026-06-03"
 classification: "INTERNAL"
 ---
 
@@ -37,7 +37,7 @@ All services run in the `governance-stack` namespace. Full manifest inventory li
 | -------------------------- | ------------------------------ | ---- | ---------------------------- |
 | Governed Financial Advisor | `deployment/k8s/financial-advisor.yaml`       | 8000 | FastAPI agent server         |
 | Hybrid Gateway             | `deployment/k8s/backend-deployment.yaml`      | 8080 | MCP SSE at `/`, inference proxy at `/inference`, governance middleware at `/governance` |
-| Compliance Bridge          | `deployment/k8s/compliance-bridge.yaml`       | 3001 | OSCAL audit + SSE events     |
+| Compliance Bridge          | `deployment/k8s/compliance-bridge.yaml`       | 3002 | OSCAL audit + SSE events     |
 | AgentSight UI              | `frontend-deployment.yaml.tpl` | 5173 | React dashboard              |
 | vLLM Reasoning             | `vllm-reasoning.yaml.tpl`      | —    | DeepSeek-R1-Distill-Llama-8B |
 | vLLM Fast                  | `vllm-fast.yaml.tpl`           | —    | Meta-Llama-3.1-8B-Instruct   |

@@ -3,10 +3,10 @@
 | Field                | Value                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------- |
 | **Document Version** | 2.0                                                                                                           |
-| **Date**             | 2026-06-01                                                                                                    |
+| **Date**             | 2026-06-03                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | DRAFT — Pending AO Approval (v2.0.0-rc.1 promoted 2026-06-01; GKE deployment verified 2026-06-03)           |
+| **Status**           | DRAFT — Pending AO Approval (v2.0.0-rc.2 promoted 2026-06-03; GKE deployment verified 2026-06-03)           |
 | **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md`, `docs/NEURO_SYMBOLIC_GOVERNANCE.md` |
 
 ---
@@ -19,7 +19,7 @@ The **Cybernetic Governance Engine (CAGE)** is a distributed, multi-runtime syst
 | --- | ------------------------------ | --------------------------------- | ------------------------- | --------------- |
 | 1   | **Governed Financial Advisor** | `src/governed_financial_advisor/` | Python / FastAPI          | 8000            |
 | 2   | **Hybrid Inference Gateway**   | `src/gateway/`                    | Python / FastAPI + gRPC   | 8080            |
-| 3   | **Compliance Bridge**          | `src/compliance_bridge/`          | Python / FastAPI SSE      | 3001            |
+| 3   | **Compliance Bridge**          | `src/compliance_bridge/`          | Python / FastAPI SSE      | 3002            |
 | 4   | **AgentSight UI**              | `src/agentsight-ui/`              | React / TypeScript / Vite | 5173            |
 | 5   | **AgentSight eBPF DaemonSet**  | `deployment/agentsight/`          | Kernel / BPF              | N/A (DaemonSet) |
 | 6   | **Vendor Integrations**        | `src/integrations/`               | Python (lazy-loaded)      | N/A (adapters)  |
@@ -42,7 +42,7 @@ flowchart TD
 
     LangGraph -->|MCP tool calls| HybridGW[Hybrid Inference Gateway]
     LangGraph -->|AsyncRedisSaver checkpoint| Redis[(Redis\nCheckpoint + HITL State)]
-    LangGraph -->|OSCAL audit events| CompBridge[Compliance Bridge\nport 3001]
+    LangGraph -->|OSCAL audit events| CompBridge[Compliance Bridge\nport 3002]
 
     HybridGW -->|mount /| MCPApp[FastMCP Tool Server\n7 tools]
     HybridGW -->|mount /inference| InfProxy[Inference Proxy\n5-tier pipeline]
@@ -163,7 +163,7 @@ flowchart LR
 
 ### 3.4 AgentState Schema
 
-All inter-node communication is carried by a single `AgentState` TypedDict defined in `src/governed_financial_advisor/graph/state.py`. The full field inventory is:
+All inter-node communication is carried by a single `AgentState` TypedDict defined in `src/governed_financial_advisor/graph/state.py`. The full field inventory (25 fields):
 
 | Field                      | Type                             | Description                                |
 | -------------------------- | -------------------------------- | ------------------------------------------ |
@@ -188,6 +188,7 @@ All inter-node communication is carried by a single `AgentState` TypedDict defin
 | `completed_transactions`   | `Annotated[list[LedgerEntry], add]` | Saga WAL — append-only transaction ledger |
 | `approval_required`        | `bool`                           | HITL flag set by evaluator                 |
 | `approval_decision`        | `Optional[dict]`                 | Human approval decision (structured dict)  |
+| `hitl_expires_at`          | `Optional[str]`                  | TTL expiration timestamp for pending HITL state |
 | `guardrail_blocked`        | `bool`                           | NeMo input rail gate (ADR 2026-03-09)      |
 | `guardrail_reason`         | `str`                            | Reason for guardrail block                 |
 | `output_rail_applied`      | `bool`                           | NeMo output rail tracking (ADR 2026-03-09b)|

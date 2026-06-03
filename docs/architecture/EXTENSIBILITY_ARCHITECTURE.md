@@ -5,7 +5,7 @@
 | **Classification** | PUBLIC                    |
 | **Date**           | 2026-06-03                |
 | **Version**        | 2.3.0                     |
-| **Status**         | Current State + Roadmap (v2.0.0-rc.1; GKE deployment verified 2026-06-03) |
+| **Status**         | Current State + Roadmap (v2.0.0-rc.2; GKE deployment verified 2026-06-03) |
 
 ---
 
@@ -451,7 +451,7 @@ The `FINANCE_SR26_2_DORA` profile (current `US_FED_BASELINE.json`) serves as the
 | OPA policy enforcement             | [`config/opa/`](../../../config/opa/)                                                     | ✅ Production |
 | NeMo input/output rails            | [`config/rails/`](../../../config/rails/)                                                 | ✅ Production |
 | LangGraph Saga engine              | `src/governed_financial_advisor/agents/`                                                   | ✅ Production |
-| Automated test suite (853 passing, 0 failed, 20 skipped) | [`tests/`](../../../tests/)                                                   | ✅ Passing    |
+| Automated test suite (844 passing, 0 failed, 24 skipped) | [`tests/`](../../../tests/)                                                   | ✅ Passing    |
 
 ### Architecture Insight: Why Financial Services First
 

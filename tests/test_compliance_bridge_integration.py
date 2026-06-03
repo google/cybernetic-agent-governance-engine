@@ -452,6 +452,23 @@ class TestMetricsSummary:
 # ---------------------------------------------------------------------------
 
 class TestOscalExport:
+    @pytest.fixture(scope="class", autouse=True)
+    def warm_up_oscal_cache(self):
+        """Pre-warm the server-side Langfuse metrics cache before any test in this
+        class runs.
+
+        GET /v1/oscal/assessment-results fetches all 13 controls from Langfuse on
+        a cold cache.  The first call can take >60 s when the thread pool is cold,
+        causing test_export_returns_200 to time out.  This fixture fires a warm-up
+        request with a generous timeout (120 s) so that subsequent test calls hit
+        the 5-minute TTL cache and return in <1 s.
+        """
+        import requests as _req
+        try:
+            _req.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=120)
+        except Exception:
+            pass  # warm-up best-effort; individual tests will surface real failures
+
     @pytest.mark.timeout(120)
     def test_export_returns_200(self, session):
         r = session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=90)

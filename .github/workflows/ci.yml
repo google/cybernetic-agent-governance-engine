@@ -74,6 +74,18 @@ jobs:
           LANGFUSE_SECRET_KEY: "sk-dummy"
         run: uv run pytest tests/ -m local -v
 
+  stpa-freshness-check:
+    name: "STPA Artifact Freshness Check"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check generated STPA artifacts are current
+        run: |
+          python scripts/check_stpa_freshness.py --verbose
+
   langfuse-posture-check:
     name: "Langfuse Posture Dry-Run Check"
     runs-on: ubuntu-latest

@@ -2,7 +2,7 @@
 
 > **Core Principle:** Separate the control plane (policy) from the data plane (execution capability) to create enforceable AI governance.
 
-**Version:** v2.0.0 (promoted 2026-06-01)
+**Version:** v2.0.0-rc.2 (promoted 2026-06-03)
 **Primary Compliance:** ISO/IEC 42001:2023 · SR 26-2 (Federal Reserve, April 17, 2026) · CSA AARM v1.0
 
 ## Architecture Pattern
@@ -167,7 +167,7 @@ The DEFER queue handles confidence-starved contexts that cannot be immediately a
 
 ### Configuration
 - **Redis:** `db=1`, `noeviction` policy (contexts are never evicted — human review is mandatory).
-- **Trigger:** Confidence score below `min_trade_confidence: 0.95` but above the hard-deny threshold.
+- **Trigger:** Confidence score in the DEFER zone: below `min_trade_confidence: 0.95` but at or above the hard-deny threshold of `0.70`. Three-zone model: ALLOW (≥0.95), DEFER (0.70–0.95), DENY (<0.70).
 - **Implementation:** `src/gateway/governance/defer_queue.py`.
 
 ### Operational Flow
@@ -204,8 +204,8 @@ Human-in-the-Loop (HITL) interrupts are subject to Time-of-Check/Time-of-Use (TO
 | Node | Purpose |
 |------|---------|
 | `hitl_gate` | Interrupts the LangGraph StateGraph; waits for human approval |
-| `post_hitl_rehydrate` | Reloads the latest state from Redis checkpointer (db=0) — prevents stale-state execution |
-| `post_hitl_revalidate` | Re-runs the full 7-tier SymbolicGovernor pipeline with fresh market data |
+| `post_hitl_rehydrate` | Fetches a live market quote at actuation time (yfinance `fast_info["last_price"]`); computes price drift vs. stale approval price |
+| `post_hitl_revalidate` | Re-runs **Tier 2 (CBF)** and **Tier 4 (OPA)** only with fresh market data and live cash balance; checks drift against reviewer's `max_slippage_pct` |
 
 ### Operational Flow
 ```
@@ -213,13 +213,13 @@ hitl_gate interrupt
         ↓
 Human reviews in AgentSight UI (HITL TTL countdown visible)
         ↓
-Human approves
+Human approves (with max_slippage_pct tolerance)
         ↓
-post_hitl_rehydrate — reload state from Redis db=0
-        ↓
-post_hitl_revalidate — re-run 7-tier governance
-        ↓ (if still approved)
-governed_trader node — execute trade
+post_hitl_rehydrate — fetch live price; compute drift_pct
+        ↓ (if drift_pct > max_slippage_pct → drift_blocked_node)
+post_hitl_revalidate — re-run Tier 2 (CBF) + Tier 4 (OPA) with fresh params
+        ↓ (if governance violation → drift_blocked_node)
+executor_node — execute trade
 ```
 
 If `post_hitl_revalidate` fails (market conditions changed), the trade is blocked and the operator is notified.

@@ -76,7 +76,7 @@ _MAX_BATCH_SIZE: int = int(
     os.environ.get("KMS_BATCH_MAX_SIZE", "32")
 )
 _ENABLED: bool = (
-    os.environ.get("KMS_BATCH_ENABLED", "false").lower() == "true"
+    os.environ.get("KMS_BATCH_ENABLED", "true").lower() == "true"
 )
 
 

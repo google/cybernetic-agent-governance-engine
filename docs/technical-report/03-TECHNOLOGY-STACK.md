@@ -3,10 +3,10 @@
 | Field                | Value                                                                    |
 | -------------------- | ------------------------------------------------------------------------ |
 | **Document Version** | 2.0                                                                      |
-| **Date**             | 2026-06-01                                                               |
+| **Date**             | 2026-06-03                                                               |
 | **Classification**   | INTERNAL                                                                 |
 | **Document Series**  | CAGE Technical Report                                                    |
-| **Status**           | DRAFT — Pending AO Approval (GKE deployment verified 2026-06-03; 853 tests passing) |
+| **Status**           | DRAFT — Pending AO Approval (GKE deployment verified 2026-06-03; 844 tests passing) |
 | **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md` |
 
 ---
@@ -30,7 +30,7 @@
 | Framework                   | Role                                   | Key Details                                                                                       |
 | --------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | **LangGraph**               | Multi-agent `StateGraph` orchestration | 10-node pipeline (including mandatory NeMo input/output rails); `interrupt_before=["governed_trader"]`; `AsyncRedisSaver` checkpointing |
-| **FastAPI**                 | HTTP API server                        | Agent server `:8000`; Compliance Bridge `:3001`                                                   |
+| **FastAPI**                 | HTTP API server                        | Agent server `:8000`; Compliance Bridge `:3002`                                                   |
 | **FastMCP**                 | MCP tool server over SSE               | 6 registered tools; `patch_mcp_tools()` injects W3C `traceparent` headers                         |
 | **NeMo Guardrails**         | AI safety rails                        | Colang 2.x dialect; 15 Presidio PII entity types (input + output rails); model configurable via `GUARDRAILS_MODEL_NAME` |
 | **Open Policy Agent (OPA)** | Rego policy enforcement                | `trade.governance` package; fail-closed posture; `CircuitBreaker` (5 failures, 30 s recovery)     |

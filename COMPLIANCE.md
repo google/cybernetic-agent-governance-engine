@@ -71,20 +71,24 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     *   **⚠️ Gaps to Authorization:** The CAGE software runtime does not inherently possess an official **Authority to Operate (ATO)**. To close this loop, the parent organization must deploy independent assessors to complete RMF Step 5 (Assess) and Step 6 (Authorize), as well as remediate the remaining 11 open infrastructure POA&M infrastructure tickets.
 *   **Companion Documentation:** For infrastructure configurations, Linkerd policy files, and security posture tracking, see [docs/SECURITY_STATUS.md](docs/SECURITY_STATUS.md) and [docs/POAM.md](docs/POAM.md).
 
-### F. Lula Automated Compliance Validation (9 Manifests: 4 Active, 5 Stub)
+### F. Lula Automated Compliance Validation (15 Manifests — All Active)
 *   **Status:** 100% Automated.
-*   **Mechanism:** Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule (`deployment/k8s/lula-cron.yaml`). There are **9 validation manifests** in `compliance/lula/` — 4 active and 5 stub — each performing a Kubernetes-native resource check mapped to a specific OSCAL control ID:
-    *   **Active manifests:**
+*   **Mechanism:** Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule (`deployment/k8s/lula-cron.yaml`). There are **15 active validation manifests** in `compliance/lula/` — each performing a Kubernetes-native resource check mapped to a specific OSCAL control ID:
     *   `lula-validation-a52.yaml` (ISO 42001 A.5.2) — Social impact assessment ConfigMap
     *   `lula-validation-a53.yaml` (ISO 42001 A.5.3) — Documentation/logging config
     *   `lula-validation-a92.yaml` (ISO 42001 A.9.2) — PII detection Deployment
     *   `lula-validation-sc4.yaml` (NIST SP 800-53 SC-4) — Information in shared resources
-    *   **Stub manifests (validation logic pending):**
-    *   `lula-validation-au12.yaml` (NIST SP 800-53 AU-12) — Langfuse OTLP ingestion availability (standalone OTel Collector deprecated 2026-05-31; stub needs update to check Langfuse worker readiness)
-    *   `lula-validation-ac3.yaml` (NIST SP 800-53 AC-3) — Access enforcement policy
-    *   `lula-validation-ra5.yaml` (NIST SP 800-53 RA-5) — `security-scanner-cronjob` existence check
-    *   `lula-validation-cm6.yaml` (NIST SP 800-53 CM-6) — Configuration settings ConfigMap
-    *   `lula-validation-ir6.yaml` (NIST SP 800-53 IR-6) — Incident reporting resources
+    *   `lula-validation-au12.yaml` (NIST SP 800-53 AU-12) — Langfuse OTLP ingestion availability (direct; standalone OTel Collector deprecated 2026-05-31)
+    *   `lula-validation-ac2.yaml` (NIST SP 800-53 AC-2) — Account management / service account lifecycle
+    *   `lula-validation-ac3.yaml` (NIST SP 800-53 AC-3) — Access enforcement / OPA RBAC
+    *   `lula-validation-ra5.yaml` (NIST SP 800-53 RA-5) — Vulnerability scanning (pip-audit / Trivy CI)
+    *   `lula-validation-cm6.yaml` (NIST SP 800-53 CM-6) — Configuration settings enforcement
+    *   `lula-validation-ir6.yaml` (NIST SP 800-53 IR-6) — Incident reporting
+    *   `lula-validation-ia3.yaml` (NIST SP 800-53 IA-3) — Device identification / Linkerd mTLS SPIFFE identity
+    *   `lula-validation-ia5.yaml` (NIST SP 800-53 IA-5) — Authenticator management / KMS HSM key lifecycle
+    *   `lula-validation-sc8.yaml` (NIST SP 800-53 SC-8) — Transmission confidentiality / TLS enforcement
+    *   `lula-validation-si2.yaml` (NIST SP 800-53 SI-2) — Flaw remediation / CVE patching (pip-audit CI)
+    *   `lula-validation-aarm-vectors.yaml` (CSA AARM v1.0) — 11-vector AI agent threat model coverage
 
 ### G. Continuous Audit Event Loop & Compliance Bridge API (v2.0.0)
 *   **Status:** Implemented & Active.

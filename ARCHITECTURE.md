@@ -1,13 +1,13 @@
 # CAGE Architecture — Cybernetic Governance Engine
 
-> **Architecture:** 10-node governance graph with integrated safety checks, STPA-compiled policy enforcement, LangGraph Saga WAL pattern, Zero-Trust Network cluster hardening (Z3N), DoWhy causal inference validation, and Redis-backed multi-agent FiscalLimitGuard.
+> **Architecture:** 10-node governance graph with integrated safety checks, STPA-compiled policy enforcement, LangGraph Saga WAL pattern, Zero-Trust Network cluster hardening (Z3N), DoWhy causal inference validation, Redis-backed multi-agent FiscalLimitGuard, and exhaustively verified NoDirectBind safety invariant (v2.0.0-rc.2).
 
 
 ---
 
 ## System Overview
 
-The Cybernetic Governance Engine (CAGE) is a Python-first backend platform that orchestrates a governed financial advisory workflow under ISO/IEC 42001, SR 11-7, FedRAMP HIGH, the EU AI Act, and MAS FEAT. Through its multi-region compliance profile system (activated via `CAGE_DEPLOYMENT_REGION`), CAGE dynamically adapts its active controls, compliance mappings, and numeric thresholds for US Fed (`US_FED`), EU ECB (`EU_ECB`), and APAC MAS (`APAC_MAS`) environments. The canonical reasoning path is a LangGraph multi-agent `StateGraph` (`src/governed_financial_advisor/graph/graph.py`) with **10 nodes** — including the mandatory, fail-closed `nemo_guardrail` input node, `nemo_output_rail` output node, and `nemo_output_rail_da` data analyst output node — nemo_guardrail → thinker_node → doer_node → data_analyst / execution_analyst → evaluator → **safety_check** → governed_trader → explainer → nemo_output_rail. Each LLM call and tool invocation traverses a 7-tier gateway governance pipeline (Aho-Corasick keyword scan → NeMo Guardrails → STPA validator → OPA policy engine → Control Barrier Function → consensus engine → NeMo output masking). The `safety_check_node` was added in Rev8 as an explicit OPA policy gate between the evaluator and the governed trader — BLOCKED/ESCALATED results route to the explainer without executing a trade. A parallel KFP v2 Green-Stack Pipeline (`src/governed_financial_advisor/pipelines/green_stack_pipeline.py`) provides continuous governance evaluation by fetching compliance metrics from the compliance bridge, evaluating against ISO 42001 thresholds, and hot-reloading NeMo Guardrails configurations in-process via `POST /v1/nemo/apply-refinement` when thresholds are breached. The pipeline is programmatically submitted via `POST /v1/refinement/trigger` or automatically triggered reactively by a Langfuse webhook receiver (`POST /v1/webhooks/langfuse`) equipped with a 5-minute cooldown gate and a 10-sample minimum to prevent policy flapping during noisy bursts. A legacy namespace shim (`src/graph/graph.py`) exposes an optimistic-execution subgraph used only by the legacy test suite; it now emits a `DeprecationWarning` on import. The compliance bridge ingests Lula OSCAL audit findings into Langfuse and broadcasts real-time governance and remediation events via SSE (including dynamic patch advisories on the Kernel Dashboard). All in-flight approval state is checkpointed to Redis via LangGraph's `AsyncRedisSaver` — the fallback `MemorySaver` now emits an ERROR log and OTel attributes on activation. The system deploys on GKE with NVIDIA L4 Spot GPU nodes for two vLLM inference pools routed through a cloud-agnostic NGINX Inference Gateway.
+The Cybernetic Governance Engine (CAGE) is a Python-first backend platform that orchestrates a governed financial advisory workflow under ISO/IEC 42001, SR 26-2, FedRAMP HIGH, the EU AI Act, and MAS FEAT. Through its multi-region compliance profile system (activated via `CAGE_DEPLOYMENT_REGION`), CAGE dynamically adapts its active controls, compliance mappings, and numeric thresholds for US Fed (`US_FED`), EU ECB (`EU_ECB`), and APAC MAS (`APAC_MAS`) environments. The canonical reasoning path is a LangGraph multi-agent `StateGraph` (`src/governed_financial_advisor/graph/graph.py`) with **10 nodes** — including the mandatory, fail-closed `nemo_guardrail` input node, `nemo_output_rail` output node — nemo_guardrail → thinker_node → doer_node → data_analyst / execution_analyst → evaluator → **safety_check** → governed_trader → explainer → nemo_output_rail. Each LLM call and tool invocation traverses a 7-tier gateway governance pipeline (Aho-Corasick keyword scan → NeMo Guardrails → STPA validator → OPA policy engine → Control Barrier Function → consensus engine → DoWhy causal gatekeeper). The `safety_check_node` was added in Rev8 as an explicit OPA policy gate between the evaluator and the governed trader — BLOCKED/ESCALATED results route to the explainer without executing a trade. A parallel KFP v2 Cybernetic Governance Loop (`src/governed_financial_advisor/pipelines/green_stack_pipeline.py`) provides continuous governance evaluation by fetching compliance metrics from the compliance bridge, evaluating against ISO 42001 thresholds, and hot-reloading NeMo Guardrails configurations in-process via `POST /v1/nemo/apply-refinement` when thresholds are breached. The pipeline is programmatically submitted via `POST /v1/refinement/trigger` or automatically triggered reactively by a Langfuse webhook receiver (`POST /v1/webhooks/langfuse`) equipped with a 5-minute cooldown gate and a 10-sample minimum to prevent policy flapping during noisy bursts. A legacy namespace shim (`src/graph/graph.py`) exposes an optimistic-execution subgraph used only by the legacy test suite; it now emits a `DeprecationWarning` on import. The compliance bridge ingests Lula OSCAL audit findings into Langfuse and broadcasts real-time governance and remediation events via SSE (including dynamic patch advisories on the Kernel Dashboard). All in-flight approval state is checkpointed to Redis via LangGraph's `AsyncRedisSaver` — the fallback `MemorySaver` now emits an ERROR log and OTel attributes on activation. The system deploys on GKE with NVIDIA L4 Spot GPU nodes for two vLLM inference pools routed through a cloud-agnostic NGINX Inference Gateway.
 
 ---
 
@@ -23,7 +23,7 @@ graph TB
         FA[server.py\nNeMo input/output guardrails]
         GRAPH[graph.py CANONICAL\n10 nodes + HITL interrupt]
         CHECKPT[checkpointer.py\nAsyncRedisSaver / MemorySaver]
-        STATE[state.py\nAgentState TypedDict 20 fields]
+        STATE[state.py\nAgentState TypedDict 25 fields]
         NODES[graph/nodes/\nagent_nodes, evaluator, explainer\nsupervisor, approval, safety]
         SUBS[graph/subgraphs/\ndata_analyst_graph\ngoverned_trader_graph]
         GOV[governance/\nclient, structs, policy_loader\ntranspiler, nemo_actions]
@@ -108,7 +108,7 @@ graph TB
 
 ## Green-Stack Pipeline
 
-[`src/governed_financial_advisor/pipelines/green_stack_pipeline.py`](src/governed_financial_advisor/pipelines/green_stack_pipeline.py) is a **Kubeflow Pipelines v2 (KFP v2)** pipeline that implements the cybernetic governance **feedback loop**:
+[`src/governed_financial_advisor/pipelines/green_stack_pipeline.py`](src/governed_financial_advisor/pipelines/green_stack_pipeline.py) is a **Kubeflow Pipelines v2 (KFP v2)** pipeline that implements the cybernetic governance **feedback loop** (also referred to as the "Cybernetic Governance Loop"):
 
 ```
 Compliance Bridge → ISO 42001 Evaluation → NeMo In-Process Hot-Reload
@@ -124,7 +124,7 @@ Three KFP components:
 
 The pipeline is named "green-stack" because it operates as the "self-healing" layer of the governance stack — when the compliance bridge reports degraded safety rates, the pipeline automatically triggers NeMo Guardrails policy hot-reloading in-process without human intervention. This is the **cybernetic feedback** component of CAGE.
 
-**Current status:** Fully implemented and validated. The `POST /v1/refinement/trigger` endpoint enqueues a Kubeflow Pipelines (KFP) refinement run. A reactive `POST /v1/webhooks/langfuse` webhook receiver automatically triggers KFP runs when the safety score drops below the 0.95 threshold, utilizing a 5-minute cooldown gate (`REFINEMENT_COOLDOWN_SECONDS=300`) and a 10-sample minimum (`REFINEMENT_MIN_SAMPLES=10`) to prevent policy flapping during noisy bursts. The final step of the KFP pipeline calls the hot-reload `POST /v1/nemo/apply-refinement` endpoint on the backend to apply and reload new guardrails in-process without pod restarts.
+**Current status:** Fully implemented and validated. The `POST /v1/refinement/trigger` endpoint enqueues a Kubeflow Pipelines (KFP) refinement run. A reactive `POST /v1/webhooks/langfuse` webhook receiver automatically triggers KFP runs when the safety score drops below the 0.95 threshold, utilizing a 5-minute cooldown gate (`REFINEMENT_COOLDOWN_SECONDS=300`) and a 10-sample minimum (`REFINEMENT_MIN_SAMPLES=10`) to prevent policy flapping during noisy bursts. The final step of the KFP pipeline calls the hot-reload `POST /v1/nemo/apply-refinement` endpoint on the backend to apply and reload new guardrails in-process without pod restarts. **v2.0.0 note:** All NeMo config refinements require explicit human approval via `POST /v1/nemo/propose-refinement` before the apply step executes — the autonomous hot-reload loop is human-gated.
 
 ---
 
@@ -273,7 +273,6 @@ CAGE supports multi-jurisdiction productization by separating the technical engi
 GKE Cluster (governance-stack namespace)
 ├── governed-financial-advisor   (1 pod, 2 CPU / 2Gi, REDIS_URL configured)
 │     └── deployment/k8s/financial-advisor.yaml
-├── governed-financial-advisor-slm (Dedicated ClusterIP service on port 8000 for SLM reasoning similarity)
 ├── gateway                      (deployment/k8s/backend-deployment.yaml)
 ├── compliance-bridge            (deployment/service.yaml)
 
@@ -284,7 +283,7 @@ GKE Cluster (governance-stack namespace)
 ├── langfuse                     (self-hosted: ClickHouse + MinIO + Worker)
 ├── minio                        (model weights + OSCAL artifacts)
 ├── agentsight                   (eBPF kernel sidecar — deployment/agentsight/)
-├── lula-cron                    (CronJob every 6h — A.5.2, A.5.3, A.9.2, SC-4, SC-7, SC-8 OSCAL validation)
+├── lula-cron                    (CronJob every 6h — 15 active OSCAL validation manifests)
 ├── inference-gateway            (NGINX Gateway API — cloud-agnostic)
 ├── linkerd control plane        (Z3N: mTLS proxy injection on governance-stack namespace)
 │     ├── deployment/k8s/linkerd-mtls-policy.yaml  — Server + AuthorizationPolicy + MeshTLSAuthentication
@@ -297,7 +296,7 @@ GKE Cluster (governance-stack namespace)
 
 **Model loading:** vLLM pods load serialized TensorSerializer shards from MinIO (`vllm-models` bucket). Cold-start ~60–90s vs ~20 min HuggingFace download. No GKE-proprietary GCS Fuse CSI driver required.
 
-**Workload Identity:** GKE Workload Identity Federation (OIDC) exclusively. Zero hardcoded `service-account-key.json` files (verified in `deployment/terraform/iam.tf`). `roles/iam.workloadIdentityUser` binding to `financial-advisor-sa`.
+**Workload Identity:** GKE Workload Identity Federation (OIDC) exclusively. Zero hardcoded `service-account-key.json` files (verified in `infra/modules/gateway/main.tf`). `roles/iam.workloadIdentityUser` binding to `financial-advisor-sa`.
 
 **Cost optimization:** vLLM pods bound to `cloud.google.com/gke-spot=true` nodes → ~60% compute savings. Gateway runs on On-Demand instances.
 
@@ -310,7 +309,7 @@ GKE Cluster (governance-stack namespace)
 | Financial Advisor server     | `src/governed_financial_advisor/server.py`                             | `graph/graph.py`, `graph/checkpointer.py`                                                                 |
 | Canonical CAGE graph         | `graph/graph.py::create_graph()`                                       | 10 nodes (including mandatory NeMo input/output rails): nemo_guardrail → thinker → doer → data_analyst / execution_analyst → evaluator → safety_check → governed_trader → explainer → nemo_output_rail |
 | Legacy optimistic graph shim | `src/governed_financial_advisor/graph/graph.py` (legacy shim)          | For `test_optimistic_graph.py` ONLY — do not use in production                                            |
-| Agent state schema           | `graph/state.py::AgentState`                                           | 20+ fields: messages, next_step, safety_status, governance_signature, approval_required, approval_decision, **completed_transactions** (WAL ledger) |
+| Agent state schema           | `graph/state.py::AgentState`                                           | 25 fields: messages, next_step, safety_status, governance_signature, approval_required, approval_decision, hitl_expires_at, **completed_transactions** (WAL ledger) |
 | WAL Ledger entries           | `graph/state.py::LedgerEntry`                                          | sequence_id, uca_ref, idempotency_key, status (PENDING/COMPLETED/ROLLED_BACK/PARTIAL_FAILURE), context_data |
 | Saga router + nodes          | `src/gateway/governance/generated_saga_nodes.py`                       | saga_router_node (LIFO + ghost-state), compensate_reverse_trade_node_uca_4 (DO NOT EDIT)                  |
 | Fiscal limit guard           | `src/gateway/governance/fiscal_limit_guard.py`                         | Redis WATCH/MULTI/EXEC atomic pre-reservation; prevent multi-agent OPA limit collision                   |
@@ -397,4 +396,4 @@ Full engineering and compliance documentation for CAGE is maintained in the [Tec
 
 ---
 
-_Architecture current as of 2026-05-29. Canonical graph: 10 nodes including mandatory NeMo input/output rails. Governance tiers: **15** (added Tier 15 FiscalLimitGuard). STPA compiler active: UCAs compiled from `config/stpa_control_structure.yaml`; LangGraph Saga target added (UCA-4 fully enforced via WAL + LIFO rollback + idempotent compensating nodes). Z3N: Linkerd + Cilium deployed. POAM-007 (IA-3), POAM-010 (RA-5), and POAM-016 (SI-2) closed. POAM-011 (SC-8) and POAM-012 (SC-12) remain Open. Vendor integrations isolated in `src/integrations/{vendor}/` (NexArt, TrustLayers). Redis db=1 hardened with `noeviction` + Guaranteed QoS. Lula coverage: 9 validation manifests (4 active: A.5.2, A.5.3, A.9.2, SC-4; 5 stub: AU-12, AC-3, RA-5, CM-6, IR-6). FiscalLimitGuard: Redis WATCH/MULTI/EXEC atomic pre-reservation prevents multi-agent OPA limit collision. For architectural decisions, see [`docs/DEPLOYMENT_DECISION_RECORD.md`](docs/DEPLOYMENT_DECISION_RECORD.md)._
+_Architecture current as of 2026-06-03. Canonical graph: 10 nodes including mandatory NeMo input/output rails. Governance tiers: **7** (SymbolicGovernor tiers 0–6) + FiscalLimitGuard pre-reservation + LangGraph Saga WAL. STPA compiler active: UCAs compiled from `config/stpa_control_structure.yaml`; LangGraph Saga target added (UCA-4 fully enforced via WAL + LIFO rollback + idempotent compensating nodes). Z3N: Linkerd + Cilium deployed. POAM-007 (IA-3), POAM-010 (RA-5), POAM-016 (SI-2), POAM-020 (CM-3), POAM-021 (SI-4) closed. POAM-011 (SC-8) and POAM-012 (SC-12) remain Open. Vendor integrations isolated in `src/integrations/{vendor}/` (NexArt, TrustLayers). Redis db=1 hardened with `noeviction` + Guaranteed QoS. Lula coverage: 15 active validation manifests. FiscalLimitGuard: Redis WATCH/MULTI/EXEC atomic pre-reservation prevents multi-agent OPA limit collision. NoDirectBind safety invariant machine-verified over 19 reachable states (v2.0.0-rc.2). Test suite: **844 passing, 0 failed, 24 skipped** (2026-06-03). For architectural decisions, see [`docs/DEPLOYMENT_DECISION_RECORD.md`](docs/DEPLOYMENT_DECISION_RECORD.md)._

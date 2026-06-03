@@ -1,5 +1,5 @@
 # Adapted from the open-source implementation by LalaSkye (Apache 2.0)
-# Original repository: https://github.com/LalaSkye/no-direct-bind
+# Original repository: https://github.com/LalaSkye/no-direct-bind/commit/7fe9ff99636798accd5e04136991e1d3d3079417
 # Modifications: Adapted for the CAGE 7-tier governance architecture,
 # extended with Gap 2/3/4 sub-proofs, and integrated with CAGE state
 # machine phases (PENDING → CHECKING → SEAL_ISSUED → EXECUTED/DENIED).

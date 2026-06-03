@@ -7,7 +7,7 @@ This document analyzes the feasibility and impact of migrating the current "Sove
 Currently, the `GatewayService` routes traffic through the **Inference Gateway** (nginx GatewayClass) at the infrastructure layer, enabling advanced traffic management, autoscaling, and priority handling critical for regulatory compliance (SR 26-2 — Federal Reserve, April 17, 2026).
 
 **Status:** **IMPLEMENTED** (Production) / **DIRECT** (Local Dev)
-**Version:** v2.0.0 (promoted 2026-06-01)
+**Version:** v2.0.0-rc.2 (promoted 2026-06-03)
 
 > **Update 2026-03-03:** The GatewayClass has been migrated from the GKE-proprietary `gke-l7-gxlb` to the portable `nginx` GatewayClass (see `deployment/k8s/inference-gateway/gateway.yaml`). Gateway API CRDs are now installed via Helm rather than the GKE-managed `gateway_api_config.channel`. This eliminates the hard GKE dependency while preserving all routing, priority, and autoscaling capabilities.
 
