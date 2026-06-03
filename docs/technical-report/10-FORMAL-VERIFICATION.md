@@ -1,11 +1,11 @@
-# Formal Verification and Completeness Proof (CAGE v2.0.0-rc.1)
+# Formal Verification and Completeness Proof (CAGE v2.0.0-rc.2)
 
 | Field              | Value                     |
 | ------------------ | ------------------------- |
 | **Classification** | INTERNAL                  |
-| **Date**           | 2026-06-01                |
-| **Version**        | 2.0                       |
-| **Status**         | Current — v2.0.0-rc.1 promoted 2026-06-01 (branch `rc-v2.0.0`, tag `v2.0.0-rc.1`); GKE deployment verified 2026-06-03; **853 tests passing, 0 failures** (`test_results/run_20260603T103414.txt`) |
+| **Date**           | 2026-06-03                |
+| **Version**        | 2.1                       |
+| **Status**         | Current — v2.0.0-rc.2 promoted 2026-06-03 (Security & Formal Verification Lock); GKE deployment verified 2026-06-03; **853 tests passing, 0 failures** (`test_results/run_20260603T103414.txt`); NoDirectBind invariant machine-verified over 19 reachable states |
 | **Series**         | CAGE Technical Report — Document 10 / 10 |
 
 As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v2.0.0 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
@@ -166,6 +166,128 @@ This satisfies **ISO 42001 §A.7.5** (records integrity), **NIST AU-10** (non-re
 
 ---
 
+## Step 7: Mathematical State-Space Containment (NoDirectBind)
+
+### Theorem Statement
+
+The **No-Direct-Bind** property is a safety invariant over the CAGE execution state machine, formally stated as:
+
+$$\text{NoDirectBind} \equiv (\text{phase} = \texttt{EXECUTED}) \Rightarrow (\text{resolvedAllow} = \texttt{TRUE})$$
+
+In operational terms: **there is no reachable state in which an agent has actuated an effect while governance authority remained unresolved.** Absence of a resolved `ALLOW` is `HOLD`, by construction — the architecture is fail-closed.
+
+This is a theorem, not a test result. A test demonstrates that the gate works on the cases the test author anticipated. This proof demonstrates two stronger properties:
+
+1. **Universality** — the invariant holds over the *entire* reachable state space, not a sample.
+2. **Load-bearing gate** — the ungated variant provably *violates* the invariant, producing an explicit counterexample. The gate is not decorative; removing it causes the property to fail.
+
+### Exhaustive State-Space Proof (`proof/model.py`)
+
+The CAGE 7-tier governance pipeline is modelled as a deterministic state machine and verified exhaustively using a breadth-first search (BFS) enumerator implemented in [`proof/model.py`](../../proof/model.py). The proof requires no external dependencies beyond the Python standard library.
+
+**State machine definition:**
+
+| Component | Definition |
+| --------- | ---------- |
+| **Tiers** | `stpa` → `confidence` → `cbf` → `opa` → `fiscal` → `consensus` → `causal` (7 tiers, in order) |
+| **Phases** | `PENDING` → `CHECKING` → `SEAL_ISSUED` → `EXECUTED` \| `DENIED` |
+| **`resolvedAllow`** | `TRUE` if and only if all 7 tiers have passed **and** a routing seal has been issued |
+| **Terminal states** | `EXECUTED` (success) and `DENIED` (fail-closed) |
+
+**Transition rules (gated architecture):**
+
+- Any tier failure immediately transitions to `DENIED` — fail-closed by construction.
+- All 7 tiers passing transitions to `SEAL_ISSUED` with `resolvedAllow = TRUE`.
+- `SEAL_ISSUED` → `EXECUTED` only after the downstream actuator calls `verify_seal()` and the seal is cryptographically valid and unexpired.
+- `SEAL_ISSUED` → `DENIED` if the seal is invalid or expired (e.g., TTL elapsed, HMAC mismatch).
+
+**Proof results (run: `python3 proof/model.py`):**
+
+```
+[gated]   Reachable states: 19
+[gated]   No-Direct-Bind holds over all 19 reachable states: True
+[gated]   EXECUTED states: 1
+[gated]     → resolvedAllow=True  seal_present=True
+
+[ungated] direct-bind shortcut produces a violation: True
+[ungated] Counterexample state:
+[ungated]   phase         = EXECUTED
+[ungated]   resolvedAllow = False
+[ungated]   seal_present  = False
+[ungated]   tier_results  = {all 7 tiers: PASS}
+
+✅ All assertions passed.
+```
+
+The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE` and `seal_present = True`. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all 7 tiers pass, because no seal was issued and no seal was verified.
+
+### Closure of the Direct-Bind Shortcut (Gap 2)
+
+Prior to v2.0.0-rc.2, the `SymbolicGovernor` exposed two code paths into `_run_checks()`:
+
+| Path | Seal issued? | Satisfies NoDirectBind? |
+| ---- | ------------ | ----------------------- |
+| `validate_action()` | ✅ Yes — after all 7 tiers pass | ✅ Yes |
+| `govern()` (pre-fix) | ❌ No — returned `None` | ❌ No — direct-bind shortcut |
+
+A caller that caught `GovernanceError` from the old `govern()` path and proceeded to execution would reach `EXECUTED` without a resolved seal — a direct-bind violation identical to the ungated counterexample above.
+
+**Remediation (v2.0.0-rc.2):**
+
+[`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) now issues a routing seal on approval and returns it as a `str`. The seal is generated via [`routing_seal.generate_seal()`](../../src/gateway/governance/routing_seal.py) inside a `cage.routing_seal` OTel span, after `_run_checks()` has completed all 7 tiers. [`governance_middleware.enforce_governance()`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers. [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) calls `verify_seal()` before executing the trade — a missing or invalid seal produces an immediate `BLOCKED` response.
+
+Both `govern()` and `validate_action()` now satisfy the invariant. There is no longer any code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`.
+
+### Gap-Specific Sub-Proofs
+
+The proof file also verifies three additional sub-cases:
+
+| Sub-proof | Configuration modelled | Invariant holds? | Interpretation |
+| --------- | ---------------------- | ---------------- | -------------- |
+| Gap 2 (pre-fix `govern()`) | All tiers pass; no seal issued; direct transition to `EXECUTED` | ❌ **No** — violation confirmed | Confirms the pre-fix path was a direct-bind shortcut |
+| Gap 3 (`CBF_FAIL_OPEN`) | CBF tier silently skipped (always PASS) | ✅ Yes (structurally) | Seal path preserved, but CBF tier absent from gate; production startup `RuntimeError` prevents this configuration |
+| Gap 4 (DoWhy absent) | Causal tier silently skipped (always PASS) | ✅ Yes (structurally) | Seal path preserved, but causal tier absent from gate; production startup `RuntimeError` prevents this configuration |
+
+For Gaps 3 and 4, the structural invariant is preserved because the seal is still issued after the remaining tiers pass. However, the *completeness* of the gate is degraded — a mandatory tier is absent. The production startup assertions (see Step 7.1 below) prevent these configurations from being reachable in production at all, closing the gap at the deployment boundary rather than the runtime boundary.
+
+### 7.1 Production Startup Assertions (Gaps 3 & 4)
+
+Two module-level assertions in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) enforce gate completeness at pod startup, before the first request is served:
+
+**Gap 3 — `CBF_FAIL_OPEN` production block:**
+
+```python
+if _CBF_FAIL_OPEN and _IS_PRODUCTION:
+    raise RuntimeError(
+        "CAGE STARTUP FAILURE (No-Direct-Bind Gap 3): CBF_FAIL_OPEN=true is set "
+        "in a production environment. This removes the Control Barrier Function tier "
+        "from the governance gate, creating a direct-bind shortcut to EXECUTED without "
+        "resolved cash-barrier authority."
+    )
+```
+
+**Gap 4 — DoWhy production import assertion:**
+
+```python
+if _IS_PRODUCTION:
+    try:
+        import dowhy
+    except ImportError:
+        raise RuntimeError(
+            "CAGE STARTUP FAILURE (No-Direct-Bind Gap 4): 'dowhy' is not installed. "
+            "The DoWhy causal gatekeeper (Tier 6) is a mandatory component of the "
+            "No-Direct-Bind governance gate in production."
+        )
+```
+
+Both assertions use the same environment detection logic as the existing `CAGE_ROUTING_SEAL_SECRET` and `CAGE_ENV` checks, ensuring consistent fail-fast behaviour across all production gate components. In `development`, `test`, `dev`, and `ci` environments, the assertions are bypassed and the conditions are logged at `DEBUG` level.
+
+Additionally, runtime causal gatekeeper errors (previously silently skipped via `except Exception: logger.warning(...)`) now fail closed: unexpected exceptions during DoWhy refutation are appended to the `violations` list, causing the governance pipeline to return `DENIED` rather than proceeding as if the tier had passed.
+
+> **Attribution:** The NoDirectBind TLA+ specification and foundational BFS state-space enumerator were adapted from the open-source implementation by LalaSkye (Apache 2.0). Source: https://github.com/LalaSkye/no-direct-bind
+
+---
+
 ## Overall Verification Summary
 
 | Step | Claim | Verdict |
@@ -176,5 +298,6 @@ This satisfies **ISO 42001 §A.7.5** (records integrity), **NIST AU-10** (non-re
 | 4 | AARM 11-vector neutralization | **10/11 NEUTRALIZED** (V11 PARTIAL — POAM-022) |
 | 5 | FiscalLimitGuard race-condition proof | **PASS** |
 | 6 | KMS HSM non-repudiation proof | **PASS** |
+| 7 | NoDirectBind invariant — exhaustive state-space proof over 19 reachable states | **PASS** |
 
-**Overall verdict: BOUNDED with one known partial control (AARM-V11 / POAM-022).** The partial control does not affect the safety invariant — the DEFER state machine (AARM-V7) provides a local fail-safe when external normative validation is unavailable.
+**Overall verdict: BOUNDED with one known partial control (AARM-V11 / POAM-022).** The partial control does not affect the safety invariant — the DEFER state machine (AARM-V7) provides a local fail-safe when external normative validation is unavailable. The NoDirectBind invariant (Step 7) is machine-verified: there is no reachable state in which an agent reaches `EXECUTED` without a cryptographically resolved `ALLOW`.

@@ -15,8 +15,21 @@ limitations under the License.
 
 ---
 
-This product uses the following third-party libraries as pip dependencies.
-No third-party source code has been copied into this repository.
+Third-Party Source Code Adapted Into This Repository
+
+---
+
+LalaSkye / no-direct-bind — Copyright (c) LalaSkye contributors. Apache License 2.0.
+  Source: https://github.com/LalaSkye/no-direct-bind
+  Note: proof/model.py was adapted from the NoDirectBind BFS state-space enumerator.
+  Modifications: Extended for CAGE 7-tier governance architecture with Gap 2/3/4 sub-proofs.
+
+---
+
+Third-Party Software Used as External Dependencies
+
+The following third-party software is used as a dependency of this project. No source code
+from these packages has been copied into this repository.
 
 ---
 

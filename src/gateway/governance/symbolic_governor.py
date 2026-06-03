@@ -29,7 +29,7 @@ import json
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from opentelemetry import trace
@@ -45,6 +45,44 @@ logger = logging.getLogger("SymbolicGovernor")
 tracer = trace.get_tracer(__name__)
 
 # SLM sidecar has been completely deprecated to optimize latency.
+
+# ---------------------------------------------------------------------------
+# No-Direct-Bind startup assertions
+# ---------------------------------------------------------------------------
+# These checks run at module import time so the service fails fast rather than
+# surfacing gaps on the first live request.
+
+_ENVIRONMENT: str = (
+    os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
+).lower()
+_IS_PRODUCTION: bool = _ENVIRONMENT not in ("development", "test", "dev", "ci")
+
+# Gap 3 fix: CBF_FAIL_OPEN=true in production is a direct-bind shortcut —
+# it removes the cash-barrier tier from the gate entirely.  Fail fast.
+_CBF_FAIL_OPEN: bool = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
+if _CBF_FAIL_OPEN and _IS_PRODUCTION:
+    raise RuntimeError(
+        "CAGE STARTUP FAILURE (No-Direct-Bind Gap 3): CBF_FAIL_OPEN=true is set in "
+        f"environment '{_ENVIRONMENT}'. This removes the Control Barrier Function tier "
+        "from the governance gate, creating a direct-bind shortcut to EXECUTED without "
+        "resolved cash-barrier authority. "
+        "Set CBF_FAIL_OPEN=false or set CAGE_ENV=development to bypass (not for production)."
+    )
+
+# Gap 4 fix: DoWhy absence in production silently removes Tier 6 (causal
+# gatekeeper).  Fail fast so the gap is surfaced at startup, not at runtime.
+if _IS_PRODUCTION:
+    try:
+        import dowhy as _dowhy_probe  # noqa: F401
+    except ImportError:
+        raise RuntimeError(
+            "CAGE STARTUP FAILURE (No-Direct-Bind Gap 4): 'dowhy' is not installed. "
+            "The DoWhy causal gatekeeper (Tier 6) is a mandatory component of the "
+            "No-Direct-Bind governance gate in production. Without it, an agent can "
+            "reach EXECUTED without causal world-model validation. "
+            "Install dowhy: pip install dowhy, or set CAGE_ENV=development to bypass."
+        )
+
 
 class GovernanceError(Exception):
     """Raised when a symbolic rule is violated.
@@ -408,9 +446,13 @@ class SymbolicGovernor:
                     violations.append(f"Consensus Check Failed: {exc}")
 
         # 6. DoWhy Causal Gatekeeper — refutation-based safety lock
+        # Gap 4 fix: ImportError is no longer silently swallowed in production.
+        # The startup assertion above (module-level) already fails fast if dowhy
+        # is absent in production, so reaching this branch with ImportError means
+        # we are in a dev/test environment — log at DEBUG and skip.
         if tool_name == "execute_trade":
             try:
-                from src.gateway.governance.causal_gatekeeper import causal_safety_check
+                from src.gateway.governance.causal_gatekeeper import causal_safety_check  # noqa: PLC0415
 
                 telemetry_data = None
                 if self.telemetry_provider is not None:
@@ -422,9 +464,17 @@ class SymbolicGovernor:
                         "world-model is untrustworthy or risk exceeds safety boundary."
                     )
             except ImportError:
-                logger.debug("DoWhy not installed — skipping causal gatekeeper.")
+                # Only reachable in dev/test (production startup assertion prevents this).
+                logger.debug(
+                    "DoWhy not installed — skipping causal gatekeeper (dev/test only). "
+                    "Production startup will fail if dowhy is absent."
+                )
             except Exception as exc:
-                logger.warning("⚠️ Causal gatekeeper check failed (%s) — skipping.", exc)
+                logger.warning("⚠️ Causal gatekeeper check failed (%s) — failing closed.", exc)
+                violations.append(
+                    f"Causal Safety Violation: gatekeeper raised an unexpected error — "
+                    f"failing closed. Detail: {exc}"
+                )
 
         # 6b. Adaptive FRIA Enforcement (External Normative Provider)
         # When CAGE_NORMATIVE_PROVIDER != "static", the enforcement semantic
@@ -520,12 +570,28 @@ class SymbolicGovernor:
 
         return {"violations": violations, "opa_results": policy_resp}
 
-    async def govern(self, tool_name: str, params: Dict[str, Any]) -> None:
+    async def govern(self, tool_name: str, params: Dict[str, Any]) -> str:
         """Orchestrate governance checks for live execution.
+
+        Gap 2 fix (No-Direct-Bind): ``govern()`` now issues a routing seal on
+        approval and returns it.  Callers MUST verify the seal before executing
+        the governed action.  This closes the direct-bind shortcut that existed
+        when ``govern()`` raised ``GovernanceError`` on denial but provided no
+        cryptographic attestation of resolved authority on approval.
+
+        The seal is generated via ``routing_seal.generate_seal()`` — the same
+        mechanism used by ``validate_action()`` — so both paths satisfy the
+        No-Direct-Bind invariant:
+            NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
+
+        Returns:
+            HMAC-SHA256 routing seal string (non-empty on approval).
 
         Raises:
             GovernanceError: If any check fails.
         """
+        from src.gateway.governance.routing_seal import generate_seal  # noqa: PLC0415
+
         with tracer.start_as_current_span("symbolic_governor.govern") as span:
             span.set_attribute("langfuse.observation.type", "span")
             span.set_attribute("langfuse.observation.name", "governance_evaluation")
@@ -543,8 +609,19 @@ class SymbolicGovernor:
                 if violations:
                     payload = getattr(self, "_pending_payload", None)
                     raise GovernanceError(violations[0], payload=payload)
-                logger.info("✅ Symbolic Governor Approved: %s", tool_name)
+
+                # Gap 2 fix: issue routing seal AFTER all checks pass.
+                # The seal is the cryptographic attestation that resolvedAllow=TRUE.
+                # Callers must verify it before executing the governed action.
+                with tracer.start_as_current_span("cage.routing_seal") as seal_span:
+                    seal = generate_seal(tool_name, params)
+                    seal_span.set_attribute("cage.seal_issued", True)
+                    seal_span.set_attribute("cage.seal_path", "govern")
+
+                logger.info("✅ Symbolic Governor Approved: %s (seal issued)", tool_name)
                 span.set_attribute("langfuse.observation.output", "APPROVED")
+                span.set_attribute("cage.seal_issued", True)
+                return seal
             except Exception as exc:
                 span.record_exception(exc)
                 span.set_status(Status(StatusCode.ERROR))
