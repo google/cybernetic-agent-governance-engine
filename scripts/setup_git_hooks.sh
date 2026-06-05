@@ -55,7 +55,7 @@ PREPUSH_FILE="${REPO_ROOT}/.git/hooks/pre-push"
 cat > "${PREPUSH_FILE}" << 'HOOK'
 #!/usr/bin/env bash
 # Block direct pushes to protected branches
-PROTECTED_BRANCHES="main rc-v2.0.0"
+PROTECTED_BRANCHES="main"
 CURRENT_BRANCH=$(git symbolic-ref HEAD 2>/dev/null | sed 's|refs/heads/||')
 
 for BRANCH in $PROTECTED_BRANCHES; do
