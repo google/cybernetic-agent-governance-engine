@@ -32,10 +32,23 @@ spec:
         app: agentsight-ui
         component: ebpf-observability
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: agentsight-ui
           image: ${AGENTSIGHT_UI_IMAGE}
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - containerPort: 80
               name: http
