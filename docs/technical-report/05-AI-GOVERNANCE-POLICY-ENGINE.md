@@ -55,9 +55,9 @@ GovernanceError ← Tier 6: Causal Gatekeeper (DoWhy Placebo Refutation)
 
 | Tier | Name                                    | Class / Function                                                                                    | Threshold Source                                                   | Fail Behavior                                 | Active Regions |
 | ---- | --------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------- | --- |
-| 0    | STPA UCA Validation                     | `STPAValidator.validate()` in [`src/gateway/governance/stpa_validator.py`](../../src/gateway/governance/stpa_validator.py) | `governance_thresholds.json` `stpa.*`                              | `GovernanceError`                             | *All Regions* |
+| 0    | STPA UCA Validation                     | `GeneratedSTPAValidator.validate()` in [`src/gateway/governance/generated_stpa_validator.py`](../../src/gateway/governance/generated_stpa_validator.py) (imported as `STPAValidator` by `symbolic_governor.py`; `stpa_validator.py` is a deprecated shim) | `governance_thresholds.json` `stpa.*`                              | `GovernanceError`                             | *All Regions* |
 | 1    | Agentic Confidence Check                | inline logic in `src/gateway/governance/symbolic_governor.py`                                                              | Region-specific thresholds (`Confidence: 0.95` or `0.97` for EU)   | `GovernanceError`                             | *All Regions* |
-| 2    | Control Barrier Function                | `ControlBarrierFunction` in [`safety.py:115`](../../src/gateway/governance/safety.py)               | Region-specific thresholds (`Drawdown: 5%` or `4%` for EU)         | `GovernanceError`                             | `US_FED`, `APAC_MAS` |
+| 2    | Control Barrier Function                | `ControlBarrierFunction` in [`cbf.py`](../../src/gateway/governance/cbf.py) (`safety.py` is a deprecated shim that re-exports from `cbf.py`) | Region-specific thresholds (`Drawdown: 5%` or `4%` for EU)         | `GovernanceError`                             | `US_FED`, `APAC_MAS` |
 | 3    | SLM Sidecar (Deprecated)               | Bypassed to optimize latency budget (runs permanently offline)                            | N/A (0ms)                                                         | Runs with `slm_available=False` sentinel | *All Regions* |
 | 4    | OPA Policy Evaluation                   | `OPAClient` in [`core/policy.py`](../../src/gateway/core/policy.py) + `CircuitBreaker`              | `trade.governance` Rego package                                    | `GovernanceError`; DENY on circuit open       | *All Regions* |
 | 5    | Multi-Agent Consensus                   | `ConsensusEngine` in [`consensus.py:71`](../../src/gateway/governance/consensus.py)                 | Region-specific thresholds (`Consensus: $10k` / `$7.5k` / `$5k`)   | `GovernanceError`                             | *All Regions* |
@@ -111,9 +111,11 @@ Non-deterministic or context-free tiers (such as Tier 0 STPA, Tier 1 Agentic Con
 
 Full analysis: [`docs/STPA_ANALYSIS.md`](../STPA_ANALYSIS.md).
 
-[`STPAValidator`](../../src/gateway/governance/stpa_validator.py) enforces **9 Unsafe Control Actions (UCAs)** derived from STAMP hazard analysis of the CAGE financial control loop (UCA-1 through UCA-9, compiled by `stpa_compiler.py`). Each UCA maps to a threshold in `governance_thresholds.json`. The STPA check runs synchronously as Step 0 (`cage.stpa_check` OTel span), always first.
+[`GeneratedSTPAValidator`](../../src/gateway/governance/generated_stpa_validator.py) enforces **9 Unsafe Control Actions (UCAs)** derived from STAMP hazard analysis of the CAGE financial control loop (UCA-1 through UCA-9, compiled by `stpa_compiler.py`). Each UCA maps to a threshold in `governance_thresholds.json`. The STPA check runs synchronously as Step 0 (`cage.stpa_check` OTel span), always first.
 
-> **Implementation note (2026-06-03):** The STPA compiler generates `src/gateway/governance/generated_stpa_validator.py` containing `GeneratedSTPAValidator`. A `validate()` alias was added to `GeneratedSTPAValidator` that delegates to `validate_generated()`, resolving an `AttributeError` when `symbolic_governor.py` called `.validate()` on the generated class. Both `stpa_validator.py` (hand-authored) and `generated_stpa_validator.py` (compiler output) are now present and operational.
+`symbolic_governor.py` imports `GeneratedSTPAValidator` directly from `generated_stpa_validator.py` (bypassing the deprecated `stpa_validator.py` shim). `stpa_validator.py` is now a backward-compatibility shim that re-exports `GeneratedSTPAValidator` as `STPAValidator` and emits a `DeprecationWarning` on import — it will be removed in the next major version.
+
+> **Implementation note (2026-06-03):** A `validate()` method was added to `GeneratedSTPAValidator` that delegates to `validate_generated()`, resolving an `AttributeError` when `symbolic_governor.py` called `.validate()` on the generated class. The `validate()` method is the canonical entry-point; `validate_generated()` contains the per-UCA check logic. Both methods are present in `generated_stpa_validator.py`.
 
 | UCA ID | Name                        | Check                                                | Threshold                                                 |
 | ------ | --------------------------- | ---------------------------------------------------- | --------------------------------------------------------- |
@@ -130,7 +132,7 @@ Full analysis: [`docs/STPA_ANALYSIS.md`](../STPA_ANALYSIS.md).
 
 ## 4. Control Barrier Function — Tier 2
 
-[`ControlBarrierFunction`](../../src/gateway/governance/safety.py) (line 115) enforces the core financial safety invariant using control theory formalism:
+[`ControlBarrierFunction`](../../src/gateway/governance/cbf.py) enforces the core financial safety invariant using control theory formalism. (`safety.py` is a deprecated backward-compatibility shim that re-exports `ControlBarrierFunction` and `safety_filter` from `cbf.py`; import directly from `cbf.py` in new code.)
 
 **Safety invariant:**
 
@@ -145,7 +147,7 @@ Where `cbf.min_cash_balance = 1000.0` and `cbf.gamma = 0.5` (decay rate on the b
 Balance updates use a WATCH/MULTI/EXEC pattern (5 retries on contention) to guarantee atomicity:
 
 ```python
-# Atomic CBF enforcement pattern (safety.py)
+# Atomic CBF enforcement pattern (cbf.py)
 await redis.watch(cash_balance_key)
 current_balance = float(await redis.get(cash_balance_key))
 # Evaluate h(x) = current_balance - min_cash_balance
@@ -164,7 +166,7 @@ To prevent Time-Of-Check to Time-Of-Use (TOCTOU) exploits and drift under volati
 
 ### Aho-Corasick Keyword Scan
 
-`ac_keyword_scan()` (lines 83+) performs a Tier-1 text scan using a `pyahocorasick` automaton:
+`ac_keyword_scan()` in [`text_filter.py`](../../src/gateway/governance/text_filter.py) performs a Tier-1 text scan using a `pyahocorasick` automaton. (`safety.py` re-exports `ac_keyword_scan` from `text_filter.py` for backward compatibility but is deprecated.)
 
 - **14 keyword entries** loaded from `tier1_keywords` in `governance_thresholds.json`
 - Pattern matching runs in **O(n)** time against the request content string
@@ -522,10 +524,10 @@ When implemented, `AnchorageGrpcLedgerProvider` will provide an externally recon
 
 **Single source of truth:** [`config/governance_thresholds.json`](../../config/governance_thresholds.json)
 
-[`GovernanceThresholds`](../../src/gateway/governance/schemas/thresholds.py) Pydantic model (line 91):
+[`GovernanceThresholds`](../../src/gateway/governance/schemas/thresholds.py) Pydantic model (root model at line 115):
 
-- `@lru_cache(maxsize=1)` singleton — loaded once at startup
-- [`load_and_validate_thresholds()`](../../src/gateway/governance/schemas/thresholds.py) at line 115: calls `sys.exit(1)` on validation failure — **fail-fast startup**
+- `@lru_cache(maxsize=1)` singleton — loaded once at startup via the module-level `THRESHOLDS` constant
+- [`load_and_validate_thresholds()`](../../src/gateway/governance/schemas/thresholds.py) at line 138: calls `sys.exit(1)` on validation failure — **fail-fast startup**
 - NeMo actions hot-reload with 60-second TTL
 - **v2.0.0-rc.1:** `max_slippage_pct` is now operator-adjustable at runtime via `POST /api/governance/thresholds` from the AgentSight KernelDashboard slider (0–10%, step 0.1); persisted to the running threshold store without service restart
 

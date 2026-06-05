@@ -46,10 +46,11 @@ The Gateway acts as the central orchestrator and compliance enforcement point fo
     - Activated for trades ≥ $10,000 USD (consensus_threshold_usd).
     - Prevents single-model capture by requiring agreement across model families.
 
-7.  **AnchorageGrpcLedgerProvider (Externally Reconciled CBF):**
-    - The Control Barrier Function (CBF) cash-balance barrier (γ=0.5, min=$1,000) is reconciled against an external ledger via gRPC.
-    - Prevents the agent from relying solely on in-process Redis state for safety-critical balance checks.
-    - Closes AARM-V5 (Ledger Manipulation) threat vector.
+7.  **AnchorageGrpcLedgerProvider (Externally Reconciled CBF — FUTURE STATE / POAM-023):**
+    - **Status:** Not yet implemented. Referenced in architecture as a planned enhancement.
+    - When implemented, the Control Barrier Function (CBF) cash-balance barrier (γ=0.5, min=$1,000) will be reconciled against an external ledger via gRPC, eliminating reliance on Redis-cached balances for safety-critical checks.
+    - The current implementation uses Redis `WATCH/MULTI/EXEC` optimistic locking for CBF enforcement. The "Stale Ground Truth" risk is mitigated by the TTL-gated staleness check in the DEFER state machine (AARM-V7) and the `post_hitl_revalidate_node` execution-time re-sampling.
+    - See POAM-023 for tracking status.
 
 ## Data Flow
 
@@ -163,7 +164,7 @@ This is the **Single Choke Point** for all tool-level governance decisions — t
 ```
 
 **Governance tiers executed** (via [`SymbolicGovernor.validate_action()`](src/gateway/governance/symbolic_governor.py)):
-- **Tier 2 — Control Barrier Function (CBF):** Mathematical safety bounds check via Redis-backed cash balance verification (γ=0.5, min=$1,000). Externally reconciled via AnchorageGrpcLedgerProvider. `verify_action()` is **read-only** — it does not modify Redis state.
+- **Tier 2 — Control Barrier Function (CBF):** Mathematical safety bounds check via Redis-backed cash balance verification (γ=0.5, min=$1,000) implemented in [`cbf.py`](src/gateway/governance/cbf.py). External ledger reconciliation via `AnchorageGrpcLedgerProvider` is a planned future enhancement (POAM-023); the current implementation uses Redis `WATCH/MULTI/EXEC` optimistic locking. `verify_action()` is **read-only** — it does not modify Redis state.
 - **Tier 4 — OPA Rego policy evaluation:** Declarative rule enforcement against the active regional compliance profile (`CAGE_DEPLOYMENT_REGION`). OPA circuit breaker: 5 failures → OPEN, 30s recovery, 3000ms hard latency budget. Redis decision cache: 10s TTL, SHA-256 keyed (`cage:opa:decision:{sha256_prefix}`), `OPA_CACHE_ENABLED` env var (default true). Cache is checked **before** the HTTP call; a hit short-circuits the entire round-trip.
 
 Both tiers run **concurrently** via `asyncio.gather` to minimize latency (SLA: 200ms max per ISO-20022). The TOCTOU race between the CBF balance check and actual trade execution is closed by the **FiscalLimitGuard** (Step 3 in the full `SymbolicGovernor` pipeline) using atomic `WATCH/MULTI/EXEC` Redis pre-reservation — **not** by making CBF+OPA sequential.

@@ -1,0 +1,11 @@
+createTime: '2026-06-05T14:39:06.254210359Z'
+filename: cloudbuild.compliance.yaml
+id: 98801f66-4fe9-4c3a-8634-d0be55e87ee1
+name: compliance-bridge-main
+repositoryEventConfig:
+  push:
+    branch: ^main$
+  repository: projects/YOUR_GCP_PROJECT_ID/locations/us-central1/connections/github-us-central1-conn/repositories/cybernetic-governance-engine-backup
+  repositoryType: GITHUB
+resourceName: projects/YOUR_GCP_PROJECT_ID/locations/us-central1/triggers/98801f66-4fe9-4c3a-8634-d0be55e87ee1
+serviceAccount: projects/YOUR_GCP_PROJECT_ID/serviceAccounts/compliance-bridge-sa@YOUR_GCP_PROJECT_ID.iam.gserviceaccount.com
