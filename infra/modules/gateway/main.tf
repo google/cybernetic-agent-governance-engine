@@ -49,10 +49,30 @@ resource "kubernetes_deployment" "gateway" {
       spec {
         service_account_name = "financial-advisor-sa"
 
+        security_context {
+          run_as_non_root = true
+          run_as_user     = 1000
+          seccomp_profile {
+            type = "RuntimeDefault"
+          }
+        }
+
         container {
           name              = "gateway"
           image             = var.image
           image_pull_policy = "Always"
+
+          security_context {
+            allow_privilege_escalation = false
+            run_as_non_root            = true
+            run_as_user                = 1000
+            seccomp_profile {
+              type = "RuntimeDefault"
+            }
+            capabilities {
+              drop = ["ALL"]
+            }
+          }
 
           port {
             container_port = 8080
@@ -177,11 +197,6 @@ resource "kubernetes_deployment" "gateway" {
             name  = "OPA_URL"
             value = var.opa_url
           }
-          env {
-            name  = "GOVERNANCE_SALT"
-            value = var.governance_salt
-          }
-
           resources {
             requests = {
               cpu    = "1000m"

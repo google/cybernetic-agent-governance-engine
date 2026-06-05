@@ -354,12 +354,7 @@ spec:
 
               env:
                 - name: GCP_PROJECT_ID
-                  valueFrom:
-                    secretRef:
-                      name: cage-sbom-env
-                      optional: true
-                - name: GCP_PROJECT_ID
-                  value: "$(GCP_PROJECT_ID)"
+                  value: "YOUR_GCP_PROJECT_ID"
                 - name: SBOM_GCS_BUCKET
                   value: "cage-compliance-sboms"
 
