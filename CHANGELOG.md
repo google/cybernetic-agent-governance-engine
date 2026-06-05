@@ -314,7 +314,9 @@ that the live cluster has open gaps (committed credentials, unavailable pod,
 
 ---
 
-## [2.0.0] — 2026-05-24
+## [Unreleased]
+
+## [2.0.0] - 2026-06-05
 
 ### CSA AARM Native Integration — Consequence-Governance Primitives
 

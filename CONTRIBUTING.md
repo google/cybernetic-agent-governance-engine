@@ -1,179 +1,185 @@
-# Contributing to CAGE (Cybernetic Agent Governance Engine)
+# Contributing to Cybernetic Governance Engine
 
-Thank you for contributing to CAGE. This document describes the development workflow, coding standards, and required practices for contributors.
-
----
-
-## Deployment Policy
-
-**🚨 CRITICAL:** Before making any infrastructure changes or deployments, review:
-- [Deployment Rules](docs/DEPLOYMENT_RULES.md) - Mandatory deployment policies
-- [Agent Ops Architecture](docs/AGENT_OPS_ARCHITECTURE.md) - Defense-in-depth governance pattern
-
-**Key Rule:** When deploying to GKE, ALWAYS use Cloud Build via `./deploy_all.sh --target gcp-gke`. Never use local Docker builds for GKE deployments.
+Thank you for contributing. This document describes the Git workflow, branch naming conventions, commit message standards, and pull request process for this project.
 
 ---
 
-## Development Setup
+## Table of Contents
 
-**1. Install dependencies:**
+1. [Quick Setup](#quick-setup)
+2. [Branch Naming Conventions](#branch-naming-conventions)
+3. [Commit Message Standard](#commit-message-standard)
+4. [Pull Request Process](#pull-request-process)
+5. [Merge Strategy](#merge-strategy)
+6. [Release & Tagging Process](#release--tagging-process)
+7. [Protected Branches](#protected-branches)
+
+---
+
+## Quick Setup
+
+After cloning, run the hook installer to enforce commit standards locally:
 
 ```bash
-uv sync --all-groups --all-extras
+bash scripts/setup_git_hooks.sh
 ```
 
-> **Build system:** CAGE uses `uv` as its build frontend. The `pyproject.toml` requires `uv_build>=0.8.14`. Ensure your local `uv` installation is up to date (`uv self update`) before running `uv sync`.
-
-**2. Configure environment:**
-
-```bash
-cp .env.example .env
-# Populate required env vars — see README.md for the full list
-```
-
-**3. Run the test suite:**
-
-```bash
-bash setup_test_env.sh && python -m pytest tests/
-```
-
-All tests must pass before opening a PR (current baseline: **844 passing, 0 failed, 24 skipped**). The test suite covers guardrail nodes, OPA policy evaluation, governance client, NeMo actions, STPA compiler code generation, causal gatekeeper, evidence chain integrity, and the LangGraph pipeline.
-
-> **Observability note:** The standalone OpenTelemetry Collector sidecar was **deprecated 2026-05-31**. All OTel spans are now exported directly to Langfuse via OTLP. Do not add new configuration that references a standalone `otel-collector` endpoint; use `LANGFUSE_OTLP_ENDPOINT` instead.
-
+This installs:
+- A **commit message template** (`.gitmessage`) shown in your editor on every `git commit`
+- A **commit-msg hook** that rejects non-Conventional-Commits messages
+- A **pre-push hook** that blocks direct pushes to `main` and `rc-v2.0.0`
 
 ---
 
-## Coding Standards
+## Branch Naming Conventions
 
-### Security-Critical Paths: Fail-Closed
-
-Any code on a security-critical enforcement path must fail closed. This means:
-
-- On any exception, the default return is **DENY / BLOCKED** — never ALLOW
-- No raw LLM output is returned if a guardrail raises an exception
-- OPA circuit breaker defaults to `"DENY"` when open
-
-```python
-# Correct pattern for fail-closed enforcement
-try:
-    decision = await opa_client.evaluate_policy(opa_input)
-except Exception as e:
-    logger.critical("OPA call failed: %s — DENY (fail-closed)", e)
-    decision = "DENY"
-```
-
-### Guardrail Nodes
-
-NeMo input and output guardrail nodes are mandatory infrastructure-level nodes in the LangGraph pipeline. They are not optional or agent-callable. See:
-
-- [`src/governed_financial_advisor/graph/nodes/guardrail_node.py`](src/governed_financial_advisor/graph/nodes/guardrail_node.py) — input gate
-- [`src/governed_financial_advisor/graph/nodes/`](src/governed_financial_advisor/graph/nodes/) — all LangGraph nodes
-
-Do not add agent-callable tools that replicate or bypass guardrail behavior. OPA evaluation must remain in the infrastructure enforcement path, not the MCP tool manifest.
-
-### Secret Management
-
-All secrets must be injected as environment variables:
-
-- Local/dev: `.env` file via `python-dotenv`
-- Docker Compose: `env_file` or `environment` section
-- Kubernetes production: `Secret` objects mounted as env vars
-
-**Do not use Google Secret Manager.** It was removed in v1.0.0. Use `os.getenv()` or `ConfigManager.get()` for all secret resolution.
-
-### Provider-Agnostic Infrastructure
-
-- Do not hardcode cloud-provider specifics (GCS bucket names, GCP project IDs) inside application code
-- Use environment variables for all endpoints, credentials, and routing
-- Use portable Kubernetes primitives — no GKE-proprietary annotations in application manifests
-
----
-
-## STPA Compiler Contract
-
-`config/stpa_control_structure.yaml` is the **single source of truth** for all Unsafe Control Actions. It is the only file contributors should edit when adding or modifying safety constraints. Never hand-edit the generated artifacts:
-
-| Artifact | Path | Generator |
+| Purpose | Pattern | Example |
 |---|---|---|
-| OPA Rego policy | `config/opa/generated_stpa_policy.rego` | `stpa_compiler compile` |
-| NeMo Colang rails | `config/rails/generated_stpa_rails.co` | `stpa_compiler compile` |
-| Python validator | `src/gateway/governance/generated_stpa_validator.py` | `stpa_compiler compile` |
+| New feature | `feat/<short-description>` | `feat/redis-rate-limiter` |
+| Bug fix | `fix/<short-description>` | `fix/oscal-uuid-collision` |
+| Documentation | `docs/<short-description>` | `docs/stpa-control-diagram` |
+| Refactor | `refactor/<short-description>` | `refactor/gateway-middleware` |
+| CI / tooling | `ci/<short-description>` | `ci/pin-actions-sha` |
+| Hotfix on release | `hotfix/<version>-<description>` | `hotfix/2.0.1-redis-timeout` |
+| Release candidate | `rc-v<semver>` | `rc-v2.1.0` |
+| Experiment / spike | `spike/<short-description>` | `spike/cbf-formal-proof` |
 
-After editing `stpa_control_structure.yaml`, always re-compile:
+**Rules:**
+- Use lowercase kebab-case only — no underscores, no uppercase
+- Keep descriptions short (≤ 30 chars after the prefix)
+- Delete branches after merge
 
-```bash
-uv run python -m src.gateway.governance.stpa_compiler compile
+---
+
+## Commit Message Standard
+
+This project follows [Conventional Commits v1.0.0](https://www.conventionalcommits.org/).
+
+### Format
+
+```
+<type>(<scope>): <short summary>
+
+[optional body]
+
+[optional footer(s)]
 ```
 
-Commit all three generated artifacts in the same PR as the YAML change. CI will verify that the artifacts are in sync.
+### Types
 
----
+| Type | When to use |
+|---|---|
+| `feat` | A new feature visible to users or operators |
+| `fix` | A bug fix |
+| `docs` | Documentation only |
+| `style` | Formatting, whitespace — no logic change |
+| `refactor` | Code restructuring — no feature or fix |
+| `perf` | Performance improvement |
+| `test` | Adding or correcting tests |
+| `chore` | Build system, dependency updates |
+| `ci` | CI/CD pipeline changes |
+| `revert` | Reverts a previous commit |
 
-## Evidence Chain and Telemetry
+### Scopes
 
-The playground telemetry module (`examples/telemetry.py`) writes a SHA-256 hash-chained NDJSON evidence log. When adding new governance tiers or modifying existing ones:
+Use one of: `gateway`, `compliance`, `infra`, `governance`, `tests`, `docs`, `ci`, `agentsight`, `advisor`, `nemo`, `opa`
 
-- Update `PlaygroundTelemetry.scenario_span()` attribute set to include any new NIST/ISO control IDs.
-- Do not bypass `_redact_params()` — PII fields must never appear in the evidence chain.
-- Verify chain integrity with `tel.verify_chain()` in tests (see `tests/test_playground_telemetry.py`).
+### Rules
 
----
+- Subject line ≤ 72 characters
+- Use imperative mood: "add", not "added" or "adds"
+- No period at end of subject line
+- Separate subject from body with a blank line
+- Body explains **what** and **why**, not how
+- Breaking changes: add `BREAKING CHANGE:` in footer or `!` after type
 
-## Development Workflow
+### Examples
 
-1. **Fork and branch** — branch from `main`; use a descriptive branch name
-2. **Write tests** — all new behavior must be covered by tests in `tests/`
-3. **Run the test suite** — `bash setup_test_env.sh && python -m pytest tests/`
-4. **Recompile STPA artifacts** — if you edited `config/stpa_control_structure.yaml`, run `uv run python -m src.gateway.governance.stpa_compiler compile` and commit all three generated artifacts
-5. **Check for stale artifacts** — remove any `# TODO`, `# FIXME`, debug prints, hardcoded paths, or unapproved credentials before opening a PR
-6. **Update docs** — if your change affects architecture, update the relevant doc in `docs/` and `ARCHITECTURE.md`
+```
+feat(gateway): add Redis-backed rate limiter for OPA policy calls
 
-### Pre-PR Checklist
+Implements token-bucket rate limiting at the gateway layer to prevent
+OPA from being overwhelmed during burst traffic. Limit is configurable
+via GOVERNANCE_THRESHOLDS_PATH.
 
-- [ ] All tests pass — current baseline: **844 passing, 0 failed, 24 skipped** (or new tests added for new behavior)
-
-- [ ] No `# TODO` / `# FIXME` / `# HACK` comments without a linked GitHub issue
-- [ ] No hardcoded credentials, project IDs, or cloud-provider paths
-- [ ] STPA YAML edited → compiler re-run → all three artifacts committed
-- [ ] Architecture docs updated if behavior changed
-- [ ] `THIRD_PARTY_NOTICES.md` regenerated if dependencies changed
-
----
-
-## License Compliance
-
-This project tracks all third-party dependency licenses in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Regenerate it whenever you add, remove, or update a dependency:
-
-```bash
-make notices
+Closes #42
 ```
 
-Or directly:
+```
+fix(compliance): correct OSCAL component UUID collision on re-export
 
-```bash
-bash scripts/generate_notices.sh
+UUIDs were regenerated on every export, breaking idempotency checks
+in the Lula validation pipeline. Now uses deterministic UUID v5
+derived from component name + system identifier.
 ```
 
-Commit the updated `THIRD_PARTY_NOTICES.md` in the same PR as the dependency change. Do not edit `THIRD_PARTY_NOTICES.md` manually.
+```
+chore(ci): pin actions/checkout to SHA for supply-chain hardening
 
-The script scans four environments:
-
-1. **Root Python environment** — `pyproject.toml` / `uv.lock`
-2. **`src/compliance_bridge`** — `src/compliance_bridge/requirements.txt`
-3. **`src/governed_financial_advisor`** — `src/governed_financial_advisor/requirements.txt`
-4. **`src/agentsight-ui`** — `src/agentsight-ui/package.json` via `generate-license-file`
+BREAKING CHANGE: Workflow callers must update their local cache.
+```
 
 ---
 
-## Contributor License Agreement
+## Pull Request Process
 
-Contributions to this project must be accompanied by a Contributor License Agreement. You (or your employer) retain the copyright to your contribution; this simply gives us permission to use and redistribute your contributions as part of the project. Head over to <https://cla.developers.google.com/> to see your current agreements on file or to sign a new one.
+1. **Branch** from the current integration branch (`rc-v<next>` or `main`)
+2. **Commit** using Conventional Commits (the hook enforces this)
+3. **Push** your branch and open a PR against the integration branch
+4. **Fill in** the PR template completely
+5. **Ensure CI passes** — all checks must be green before merge
+6. **Request review** from at least one maintainer
+7. **Squash-merge** — use "Squash and merge" so each PR becomes one clean commit on the integration branch
 
-You generally only need to submit a CLA once, so if you've already submitted one (even if it was for a different project), you probably don't need to do it again.
+### PR Title
+
+The PR title becomes the squash-merge commit message. It must follow Conventional Commits format:
+
+```
+feat(gateway): add Redis rate limiter
+```
 
 ---
 
-## Code of Conduct
+## Merge Strategy
 
-Contributions must maintain the same standard of precision as the existing codebase. Commit history must be clean — no debug artifacts, stray credentials, or commented-out dead code.
+| Scenario | Strategy |
+|---|---|
+| Feature / fix PR → integration branch | **Squash merge** |
+| Integration branch → `main` (release) | **Merge commit** (preserves release boundary) |
+| Hotfix → `main` + integration branch | **Cherry-pick** |
+
+**Never force-push to `main` or `rc-v*` branches.**
+
+---
+
+## Release & Tagging Process
+
+1. Freeze the integration branch (`rc-v<version>`)
+2. Update `CHANGELOG.md` — add release date under the version header
+3. Create an **annotated tag**:
+   ```bash
+   git tag -a v2.0.0 -m "release: v2.0.0 — Cybernetic Governance Engine GA"
+   git push origin v2.0.0
+   ```
+4. Merge the integration branch into `main` via merge commit
+5. Create a GitHub Release from the tag, copying the CHANGELOG section as the body
+
+### Tag Format
+
+```
+v<MAJOR>.<MINOR>.<PATCH>[-<pre-release>]
+```
+
+Examples: `v2.0.0`, `v2.0.0-rc.1`, `v2.1.0-dev.1`
+
+---
+
+## Protected Branches
+
+| Branch | Protection |
+|---|---|
+| `main` | No direct push; requires PR + CI green + 1 review |
+| `rc-v*` | No direct push; requires PR + CI green |
+
+The local pre-push hook enforces this for `main` and the current integration branch. GitHub branch protection rules enforce it server-side.

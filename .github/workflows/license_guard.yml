@@ -15,9 +15,16 @@
 name: License Guard
 
 on:
+  push:
+    branches:
+      - main
+      - rc-v2.0.0
+      - 'release/**'
   pull_request:
     branches:
       - main
+      - rc-v2.0.0
+      - 'release/**'
 
 jobs:
   license-check:
