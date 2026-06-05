@@ -1,0 +1,21 @@
+# <type>(<scope>): <short summary — imperative mood, ≤72 chars>
+# │       │         └─ No period at end. Present tense. e.g. "add", not "added"
+# │       └─ Optional: gateway | compliance | infra | governance | tests | docs | ci
+# └─ Required: feat | fix | docs | style | refactor | perf | test | chore | ci | revert
+#
+# ─── Body (optional, wrap at 72 chars) ──────────────────────────────────────
+#
+# Explain WHAT changed and WHY (not how). Reference design decisions,
+# trade-offs, or links to issues/ADRs.
+#
+# ─── Footer (optional) ───────────────────────────────────────────────────────
+#
+# Breaking changes:  BREAKING CHANGE: <description>
+# Issue refs:        Closes #<n>, Refs #<n>
+# Co-authors:        Co-authored-by: Name <email>
+#
+# ─── Examples ────────────────────────────────────────────────────────────────
+# feat(gateway): add Redis-backed rate limiter for OPA policy calls
+# fix(compliance): correct OSCAL component UUID collision on re-export
+# chore(ci): pin actions/checkout to SHA for supply-chain hardening
+# docs(governance): add STPA control structure diagram to ARCHITECTURE.md
