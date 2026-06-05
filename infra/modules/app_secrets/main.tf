@@ -14,20 +14,22 @@ resource "kubernetes_secret" "advisor_secrets" {
   }
 
   data = {
-    "SALT"                     = var.salt
-    "ALPHAVANTAGE_API_KEY"     = var.alphavantage_api_key
-    "OPENAI_API_KEY"           = var.openai_api_key
-    "LANGFUSE_PUBLIC_KEY"      = var.langfuse_public_key
-    "LANGFUSE_SECRET_KEY"      = var.langfuse_secret_key
-    "LANGFUSE_HOST"            = var.langfuse_host
-    "CLICKHOUSE_URL"           = var.clickhouse_url
-    "CLICKHOUSE_MIGRATION_URL" = var.clickhouse_migration_url
-    "CLICKHOUSE_USER"          = var.clickhouse_user
-    "CLICKHOUSE_PASSWORD"      = var.clickhouse_password
-    "DATABASE_URL"             = var.database_url
-    "NEXTAUTH_SECRET"          = var.nextauth_secret
-    "NEXTAUTH_URL"             = var.nextauth_url
-    "CAGE_DEPLOYMENT_REGION"   = var.cage_deployment_region
+    "SALT"                        = var.salt
+    "ALPHAVANTAGE_API_KEY"        = var.alphavantage_api_key
+    "OPENAI_API_KEY"              = var.openai_api_key
+    "LANGFUSE_PUBLIC_KEY"         = var.langfuse_public_key
+    "LANGFUSE_SECRET_KEY"         = var.langfuse_secret_key
+    "LANGFUSE_HOST"               = var.langfuse_host
+    "CLICKHOUSE_URL"              = var.clickhouse_url
+    "CLICKHOUSE_MIGRATION_URL"    = var.clickhouse_migration_url
+    "CLICKHOUSE_USER"             = var.clickhouse_user
+    "CLICKHOUSE_PASSWORD"         = var.clickhouse_password
+    "DATABASE_URL"                = var.database_url
+    "NEXTAUTH_SECRET"             = var.nextauth_secret
+    "NEXTAUTH_URL"                = var.nextauth_url
+    "CAGE_DEPLOYMENT_REGION"      = var.cage_deployment_region
+    CAGE_ROUTING_SEAL_SECRET = var.routing_seal_secret
+    GOVERNANCE_SALT          = var.governance_salt
   }
 }
 

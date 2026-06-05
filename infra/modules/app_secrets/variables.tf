@@ -143,3 +143,15 @@ variable "cage_deployment_region" {
   type        = string
   default     = "US_FED"
 }
+
+variable "routing_seal_secret" {
+  description = "HMAC secret for CAGE routing seal enforcement"
+  type        = string
+  sensitive   = true
+}
+
+variable "governance_salt" {
+  description = "Salt value for governance HMAC operations"
+  type        = string
+  sensitive   = true
+}

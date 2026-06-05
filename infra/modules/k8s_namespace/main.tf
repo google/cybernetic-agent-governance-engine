@@ -32,9 +32,12 @@ resource "kubernetes_namespace" "this" {
         "environment"                  = var.environment
       },
       var.enable_pod_security_standards ? {
-        "pod-security.kubernetes.io/enforce" = var.pod_security_level
-        "pod-security.kubernetes.io/audit"   = var.pod_security_level
-        "pod-security.kubernetes.io/warn"    = var.pod_security_level
+        "pod-security.kubernetes.io/enforce"         = var.pod_security_level
+        "pod-security.kubernetes.io/audit"           = var.pod_security_level
+        "pod-security.kubernetes.io/warn"            = var.pod_security_level
+        "pod-security.kubernetes.io/enforce-version" = "latest"
+        "pod-security.kubernetes.io/audit-version"   = "latest"
+        "pod-security.kubernetes.io/warn-version"    = "latest"
       } : {},
       var.labels
     )

@@ -481,6 +481,7 @@ module "gateway" {
   vllm_fast_api_base      = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
   guardrails_model_name   = var.model_fast
   opa_url                 = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181/v1/data/trade/governance"
+  governance_salt         = var.governance_salt
 
   depends_on = [module.opa, module.vllm, module.redis]
 }
@@ -537,6 +538,7 @@ module "app_secrets" {
   openai_api_key       = ""
   model_fast           = var.model_fast
   model_reasoning      = var.model_reasoning
+  routing_seal_secret  = var.routing_seal_secret
 
   langfuse_public_key = var.langfuse_public_key != "" ? var.langfuse_public_key : module.langfuse.public_key
   langfuse_secret_key = var.langfuse_secret_key != "" ? var.langfuse_secret_key : module.langfuse.secret_key
