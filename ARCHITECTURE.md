@@ -39,12 +39,12 @@ graph TB
 
     subgraph gateway\nPython + FastAPI + FastMCP
         GW[hybrid_server.py\nMCP server + OPA + NeMo proxy]
-        AC[safety.py\nAho-Corasick Tier-1]
+        AC[text_filter.py\nAho-Corasick Tier-1]
         NEMO[nemo/manager.py\nColang 2.x + Presidio PII]
-        STPA[stpa_validator.py\nUCA-1/2/5/6 checks]
+        STPA[generated_stpa_validator.py\nGeneratedSTPAValidator\nUCA-1/2/5/6/8/9 checks]
         OPA_C[core/policy.py\nOPAClient circuit breaker]
         SYMGOV[symbolic_governor.py\nGovernanceControl Registry\n(CTRL_AGT_001 · CTRL_OPA_005)]
-        CBF[safety.py ControlBarrierFunction\nRedis-backed cash/drawdown]
+        CBF[cbf.py ControlBarrierFunction\nRedis-backed cash/drawdown]
         CAUSAL[causal_gatekeeper.py\nDoWhy refutation lock]
         FLG[fiscal_limit_guard.py\nRedis pre-reservation]
         SAGA[generated_saga_nodes.py\nsaga_router + compensating nodes]
