@@ -3,8 +3,8 @@ system-security-plan:
   metadata:
     title: Cybernetic Governance Engine (CAGE) System Security Plan
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-05-17T17:31:03Z'
-    version: 1.0.0-draft+stpa+stpa
+    last-modified: '2026-06-05T13:00:00Z'
+    version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
       for the Cybernetic AI Governance Engine (CAGE), a HIGH-impact AI governance
@@ -895,6 +895,9 @@ system-security-plan:
           '
         implementation-status:
           state: implemented
+        remarks: 'Branch rename from rc-v2.0.0 to main completed 2026-06-05. This
+          constitutes a CM-2/CM-6 configuration baseline change. Authoritative branch
+          is now main.'
         links:
         - href: ../../compliance/lula/lula-validation-cm6.yaml
           rel: reference
