@@ -1,0 +1,99 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# =============================================================================
+# CAGE Zero-Trust Network (Z3N) — Trivy Security Scanner Egress Policy
+# =============================================================================
+#
+# NIST SP 800-53 Controls: SC-7, AC-4, SI-3, RA-5
+# ISO 42001: A.6.2 (AI System Lifecycle), A.8.4 (AI System Operation)
+#
+# This CiliumNetworkPolicy allows the Trivy security scanner CronJob
+# (app: security-scanner) to pull vulnerability database updates from:
+#   - ghcr.io (GitHub Container Registry) — primary Trivy DB source
+#   - pkg.dev (Google Artifact Registry) — GCR fallback mirror
+#
+# Without this policy, the default-deny-external-egress policy in
+# cilium-egress-lockdown.yaml blocks all outbound HTTPS from the scanner,
+# causing the Trivy DB download to fail with a connection timeout.
+#
+# POAM references: POAM-007 (IA-3), POAM-011 (SC-8)
+# =============================================================================
+
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: trivy-scanner-egress-fqdn
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-egress
+    app.kubernetes.io/part-of: security-scanning
+  annotations:
+    compliance.nist.gov/control: "SC-7,AC-4,SI-3,RA-5"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-06-05"
+    cage.io/poam: "POAM-007,POAM-011"
+    cage.io/evidence: "cilium monitor --type l7 --from-label app=security-scanner"
+    cage.io/description: >
+      Allows the Trivy vulnerability scanner CronJob to pull DB updates from
+      ghcr.io (primary) and pkg.dev (GCR fallback). Scoped strictly to pods
+      with label app=security-scanner in the governance-stack namespace.
+      All other external egress remains blocked by default-deny-external-egress.
+spec:
+  endpointSelector:
+    matchLabels:
+      app: security-scanner
+  egress:
+    # ---- Rule 1: DNS proxy — required for FQDN resolution -------------------
+    # Cilium DNS proxy intercepts UDP/53 responses and dynamically binds
+    # resolved IPs to the FQDN rules below. Must be listed first.
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+
+    # ---- Rule 2: GitHub Container Registry (primary Trivy DB source) --------
+    # Trivy downloads its vulnerability database from ghcr.io/aquasecurity/trivy-db
+    # and ghcr.io/aquasecurity/trivy-java-db. The OCI manifest fetch and layer
+    # pulls all use HTTPS on port 443.
+    - toFQDNs:
+        - matchName: "ghcr.io"
+        - matchPattern: "*.ghcr.io"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # ---- Rule 3: Google Artifact Registry / pkg.dev (GCR fallback) ----------
+    # When ghcr.io is unreachable or rate-limited, Trivy falls back to
+    # mirror images hosted on pkg.dev (Google Artifact Registry).
+    # Also covers gcr.io redirects that resolve through pkg.dev infrastructure.
+    - toFQDNs:
+        - matchName: "pkg.dev"
+        - matchPattern: "*.pkg.dev"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

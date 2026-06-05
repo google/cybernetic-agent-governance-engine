@@ -52,12 +52,18 @@ spec:
                 runAsUser: 65534
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
+                seccompProfile:
+                  type: RuntimeDefault
                 capabilities:
                   drop:
                     - ALL
               volumeMounts:
                 - name: tmp-dir
                   mountPath: /tmp
+                - name: cache-dir
+                  mountPath: /.cache
           volumes:
             - name: tmp-dir
+              emptyDir: {}
+            - name: cache-dir
               emptyDir: {}

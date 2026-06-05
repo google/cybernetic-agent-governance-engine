@@ -83,8 +83,9 @@ variable "guardrails_model_name" {
 }
 
 variable "cage_env" {
-  type    = string
-  default = "development"
+  description = "Runtime environment for the gateway (development, staging, production)"
+  type        = string
+  default     = "production"
 }
 
 variable "opa_url" {

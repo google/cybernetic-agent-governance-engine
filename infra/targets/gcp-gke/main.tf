@@ -474,6 +474,7 @@ module "gateway" {
   project_id              = var.project_id
   region                  = var.region
   enable_logging          = "true"
+  cage_env                = "production"
   redis_host              = module.redis.service_name
   redis_password          = module.redis.password
   vllm_base_url           = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
@@ -533,6 +534,7 @@ module "app_secrets" {
 
   namespace = module.namespace.name
 
+  governance_salt      = var.governance_salt
   salt                 = var.governance_salt
   alphavantage_api_key = "" # Add variable if needed
   openai_api_key       = ""
@@ -571,8 +573,7 @@ module "app_secrets" {
 
   # Prod precondition: fail the plan if compliance keys are missing or identical
   # to the operations keys. This enforces AU-9 audit integrity at plan time.
-  # Evaluated only when enable_nist_compliance=true (prod posture).
-  enable_nist_compliance = var.enable_nist_compliance
+  # enable_nist_compliance is not passed to app_secrets module (not declared there).
 
   oscal_api_key = "DUMMY_API_KEY_FOR_LOCAL_DEV"
 

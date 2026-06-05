@@ -36,14 +36,13 @@ pytestmark = pytest.mark.unit
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_signer(kms_client=None, key_version_name="", legacy_salt="test-salt"):
+def _make_signer(kms_client=None, key_version_name=""):
     """Construct a KMSGovernanceSigner directly without touching env vars."""
     from src.gateway.governance.kms_signer import KMSGovernanceSigner
     return KMSGovernanceSigner(
         kms_client=kms_client,
         key_version_name=key_version_name,
         public_key_pem=b"",
-        legacy_salt=legacy_salt,
     )
 
 
@@ -91,36 +90,17 @@ def test_is_kms_active_true_with_client_and_key():
 # sign() OTel span attributes
 # ---------------------------------------------------------------------------
 
-def test_sign_sets_span_attribute_algorithm_hmac():
-    """sign() sets cage.signing.algorithm='HMAC_SHA256_FALLBACK' on the OTel span in HMAC mode."""
-    signer = _make_signer(kms_client=None, key_version_name="", legacy_salt="test-salt")
-
-    mock_span = MagicMock()
-    mock_ctx_manager = MagicMock()
-    mock_ctx_manager.__enter__ = MagicMock(return_value=mock_span)
-    mock_ctx_manager.__exit__ = MagicMock(return_value=False)
-
-    with patch("src.gateway.governance.kms_signer._tracer") as mock_tracer:
-        mock_tracer.start_as_current_span.return_value = mock_ctx_manager
+def test_sign_raises_runtime_error_when_kms_inactive():
+    """sign() raises RuntimeError when KMS is not active (no HMAC fallback)."""
+    signer = _make_signer(kms_client=None, key_version_name="")
+    with pytest.raises(RuntimeError, match="KMS is not active"):
         signer.sign({"action": "test"})
 
-    mock_span.set_attribute.assert_any_call("cage.signing.algorithm", "HMAC_SHA256_FALLBACK")
 
-
-def test_sign_sets_span_attribute_kms_active_false_in_hmac_mode():
-    """sign() sets cage.signing.kms_active=False on the OTel span in HMAC mode."""
-    signer = _make_signer(kms_client=None, key_version_name="", legacy_salt="test-salt")
-
-    mock_span = MagicMock()
-    mock_ctx_manager = MagicMock()
-    mock_ctx_manager.__enter__ = MagicMock(return_value=mock_span)
-    mock_ctx_manager.__exit__ = MagicMock(return_value=False)
-
-    with patch("src.gateway.governance.kms_signer._tracer") as mock_tracer:
-        mock_tracer.start_as_current_span.return_value = mock_ctx_manager
-        signer.sign({"action": "test"})
-
-    mock_span.set_attribute.assert_any_call("cage.signing.kms_active", False)
+def test_sign_algorithm_property_hmac_fallback_label_when_kms_inactive():
+    """signing_algorithm returns 'HMAC_SHA256_FALLBACK' label when KMS inactive (property still exists for audit tagging)."""
+    signer = _make_signer(kms_client=None, key_version_name="")
+    assert signer.signing_algorithm == "HMAC_SHA256_FALLBACK"
 
 
 def test_sign_sets_span_attribute_algorithm_kms():
@@ -140,13 +120,18 @@ def test_sign_sets_span_attribute_algorithm_kms():
     mock_ctx_manager.__enter__ = MagicMock(return_value=mock_span)
     mock_ctx_manager.__exit__ = MagicMock(return_value=False)
 
-    # Mock the KMS service types import inside _kms_sign
+    # Mock the KMS service types import inside _kms_sign (must mock all parent packages)
     mock_kms_service = MagicMock()
     mock_kms_service.AsymmetricSignRequest = MagicMock(return_value=MagicMock())
     mock_kms_service.Digest = MagicMock(return_value=MagicMock())
+    kms_modules = {
+        "google": MagicMock(), "google.cloud": MagicMock(),
+        "google.cloud.kms_v1": MagicMock(), "google.cloud.kms_v1.types": MagicMock(),
+        "google.cloud.kms_v1.types.service": mock_kms_service,
+    }
 
     with patch("src.gateway.governance.kms_signer._tracer") as mock_tracer, \
-         patch.dict("sys.modules", {"google.cloud.kms_v1.types.service": mock_kms_service}):
+         patch.dict("sys.modules", kms_modules):
         mock_tracer.start_as_current_span.return_value = mock_ctx_manager
         signer.sign({"action": "test"})
 
@@ -172,9 +157,14 @@ def test_sign_sets_span_attribute_kms_active_true_in_kms_mode():
     mock_kms_service = MagicMock()
     mock_kms_service.AsymmetricSignRequest = MagicMock(return_value=MagicMock())
     mock_kms_service.Digest = MagicMock(return_value=MagicMock())
+    kms_modules = {
+        "google": MagicMock(), "google.cloud": MagicMock(),
+        "google.cloud.kms_v1": MagicMock(), "google.cloud.kms_v1.types": MagicMock(),
+        "google.cloud.kms_v1.types.service": mock_kms_service,
+    }
 
     with patch("src.gateway.governance.kms_signer._tracer") as mock_tracer, \
-         patch.dict("sys.modules", {"google.cloud.kms_v1.types.service": mock_kms_service}):
+         patch.dict("sys.modules", kms_modules):
         mock_tracer.start_as_current_span.return_value = mock_ctx_manager
         signer.sign({"action": "test"})
 
@@ -182,87 +172,87 @@ def test_sign_sets_span_attribute_kms_active_true_in_kms_mode():
 
 
 # ---------------------------------------------------------------------------
-# _hmac_sign() CRITICAL log in degraded state
+# _kms_sign() failure behaviour (no HMAC fallback)
 # ---------------------------------------------------------------------------
 
-def test_hmac_sign_emits_critical_log_when_kms_active():
-    """_hmac_sign() emits logger.critical() with KMS_SIGNING_FALLBACK event when _kms_active=True (degraded state)."""
+def test_kms_sign_emits_critical_log_and_raises_on_failure():
+    """_kms_sign() emits logger.critical() with KMS_SIGNING_FAILED event and raises RuntimeError when KMS call fails."""
     mock_kms_client = MagicMock()
     key_name = "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"
-    signer = _make_signer(kms_client=mock_kms_client, key_version_name=key_name, legacy_salt="test-salt")
+    signer = _make_signer(kms_client=mock_kms_client, key_version_name=key_name)
 
     # Confirm _kms_active is True
     assert signer._kms_active is True
 
     plan_bytes = b'{"action":"test"}'
 
-    with patch("src.gateway.governance.kms_signer.logger") as mock_logger:
-        signer._hmac_sign(plan_bytes)
+    mock_kms_service = MagicMock()
+    mock_kms_service.AsymmetricSignRequest = MagicMock(side_effect=RuntimeError("KMS unavailable"))
+    mock_kms_service.Digest = MagicMock()
 
-    # Verify critical was called
-    assert mock_logger.critical.called, "logger.critical() was not called in degraded state"
+    with patch("src.gateway.governance.kms_signer.logger") as mock_logger, \
+         patch.dict("sys.modules", {"google.cloud.kms_v1.types.service": mock_kms_service}):
+        with pytest.raises(RuntimeError, match="KMS asymmetricSign failed"):
+            signer._kms_sign(plan_bytes)
 
-    # Extract the JSON payload from the critical call
+    # Verify critical was called with KMS_SIGNING_FAILED event
+    assert mock_logger.critical.called, "logger.critical() was not called on KMS failure"
     critical_call_args = mock_logger.critical.call_args
     critical_message = critical_call_args[0][0]
     payload = json.loads(critical_message)
+    assert payload["event"] == "KMS_SIGNING_FAILED"
 
-    assert payload["event"] == "KMS_SIGNING_FALLBACK"
 
-
-def test_hmac_sign_critical_log_contains_severity_critical():
-    """_hmac_sign() CRITICAL log payload contains 'severity': 'CRITICAL'."""
+def test_kms_sign_critical_log_contains_severity_critical():
+    """_kms_sign() CRITICAL log payload contains 'severity': 'CRITICAL'."""
     mock_kms_client = MagicMock()
     key_name = "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"
-    signer = _make_signer(kms_client=mock_kms_client, key_version_name=key_name, legacy_salt="test-salt")
+    signer = _make_signer(kms_client=mock_kms_client, key_version_name=key_name)
 
     plan_bytes = b'{"action":"test"}'
 
-    with patch("src.gateway.governance.kms_signer.logger") as mock_logger:
-        signer._hmac_sign(plan_bytes)
+    mock_kms_service = MagicMock()
+    mock_kms_service.AsymmetricSignRequest = MagicMock(side_effect=RuntimeError("KMS unavailable"))
+    mock_kms_service.Digest = MagicMock()
+
+    with patch("src.gateway.governance.kms_signer.logger") as mock_logger, \
+         patch.dict("sys.modules", {"google.cloud.kms_v1.types.service": mock_kms_service}):
+        with pytest.raises(RuntimeError):
+            signer._kms_sign(plan_bytes)
 
     critical_call_args = mock_logger.critical.call_args
     payload = json.loads(critical_call_args[0][0])
     assert payload["severity"] == "CRITICAL"
 
 
-def test_hmac_sign_critical_log_contains_hmac_signing_path():
-    """_hmac_sign() CRITICAL log payload contains 'signing_path': 'HMAC_SHA256_FALLBACK'."""
+def test_kms_sign_critical_log_contains_audit_note():
+    """_kms_sign() CRITICAL log payload contains 'audit_note' indicating no fallback."""
     mock_kms_client = MagicMock()
     key_name = "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"
-    signer = _make_signer(kms_client=mock_kms_client, key_version_name=key_name, legacy_salt="test-salt")
+    signer = _make_signer(kms_client=mock_kms_client, key_version_name=key_name)
 
     plan_bytes = b'{"action":"test"}'
 
-    with patch("src.gateway.governance.kms_signer.logger") as mock_logger:
-        signer._hmac_sign(plan_bytes)
+    mock_kms_service = MagicMock()
+    mock_kms_service.AsymmetricSignRequest = MagicMock(side_effect=RuntimeError("KMS unavailable"))
+    mock_kms_service.Digest = MagicMock()
+
+    with patch("src.gateway.governance.kms_signer.logger") as mock_logger, \
+         patch.dict("sys.modules", {"google.cloud.kms_v1.types.service": mock_kms_service}):
+        with pytest.raises(RuntimeError):
+            signer._kms_sign(plan_bytes)
 
     critical_call_args = mock_logger.critical.call_args
     payload = json.loads(critical_call_args[0][0])
-    assert payload["signing_path"] == "HMAC_SHA256_FALLBACK"
+    assert "audit_note" in payload
 
 
-def test_hmac_sign_no_critical_log_when_kms_inactive():
-    """_hmac_sign() does NOT emit logger.critical() when _kms_active=False (normal dev fallback)."""
-    signer = _make_signer(kms_client=None, key_version_name="", legacy_salt="test-salt")
-
+def test_sign_raises_when_kms_inactive_no_fallback():
+    """sign() raises RuntimeError when _kms_active=False — no HMAC fallback exists."""
+    signer = _make_signer(kms_client=None, key_version_name="")
     assert signer._kms_active is False
-
-    plan_bytes = b'{"action":"test"}'
-
-    with patch("src.gateway.governance.kms_signer.logger") as mock_logger:
-        signer._hmac_sign(plan_bytes)
-
-    mock_logger.critical.assert_not_called()
-
-
-def test_hmac_sign_returns_valid_hex_digest():
-    """_hmac_sign() returns a non-empty hex string when legacy_salt is set."""
-    signer = _make_signer(kms_client=None, key_version_name="", legacy_salt="test-salt")
-    plan_bytes = b'{"action":"test"}'
-    result = signer._hmac_sign(plan_bytes)
-    assert isinstance(result, str)
-    assert len(result) == 64  # SHA-256 hex digest is 64 chars
+    with pytest.raises(RuntimeError, match="KMS is not active"):
+        signer.sign({"action": "test"})
 
 
 # ---------------------------------------------------------------------------
@@ -353,69 +343,52 @@ def test_assert_kms_active_raises_uses_environment_fallback():
 
 
 # ---------------------------------------------------------------------------
-# from_env() fallback paths
+# from_env() error paths (no HMAC fallback — raises RuntimeError)
 # ---------------------------------------------------------------------------
 
-def test_from_env_hmac_fallback_when_no_kms_key_set():
-    """from_env() produces a signer with is_kms_active=False when KMS_GOVERNANCE_KEY is not set."""
-    env = {k: v for k, v in os.environ.items() if k not in ("KMS_GOVERNANCE_KEY",)}
-    env["GOVERNANCE_SALT"] = "test-salt-for-from-env"
-
-    with patch.dict(os.environ, env, clear=True):
-        # Reload the module-level constants by patching them directly
-        with patch("src.gateway.governance.kms_signer._KMS_KEY_VERSION", ""), \
-             patch("src.gateway.governance.kms_signer._LEGACY_SALT", "test-salt-for-from-env"):
-            from src.gateway.governance.kms_signer import KMSGovernanceSigner
-            signer = KMSGovernanceSigner.from_env()
-
-    assert signer.is_kms_active is False
-    assert signer.signing_algorithm == "HMAC_SHA256_FALLBACK"
+def test_from_env_raises_when_no_kms_key_set():
+    """from_env() raises RuntimeError when KMS_GOVERNANCE_KEY is not set (no HMAC fallback)."""
+    with patch("src.gateway.governance.kms_signer._KMS_KEY_VERSION", ""):
+        from src.gateway.governance.kms_signer import KMSGovernanceSigner
+        with pytest.raises(RuntimeError, match="KMS_GOVERNANCE_KEY is not set"):
+            KMSGovernanceSigner.from_env()
 
 
-def test_from_env_hmac_fallback_when_google_cloud_kms_not_installed():
-    """from_env() falls back to HMAC when KMS_GOVERNANCE_KEY is set but google-cloud-kms raises ImportError."""
+def test_from_env_raises_when_google_cloud_kms_not_installed():
+    """from_env() raises RuntimeError when KMS_GOVERNANCE_KEY is set but google-cloud-kms raises ImportError."""
+    import builtins
+    original_import = builtins.__import__
+
+    def _import_error_for_google_cloud_kms(name, *args, **kwargs):
+        if "google.cloud" in name or name == "google":
+            raise ImportError(f"No module named '{name}'")
+        return original_import(name, *args, **kwargs)
+
     with patch("src.gateway.governance.kms_signer._KMS_KEY_VERSION",
                "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"), \
-         patch("src.gateway.governance.kms_signer._LEGACY_SALT", "test-salt"), \
          patch("builtins.__import__", side_effect=_import_error_for_google_cloud_kms):
         from src.gateway.governance.kms_signer import KMSGovernanceSigner
-        signer = KMSGovernanceSigner.from_env()
-
-    assert signer.is_kms_active is False
-    assert signer.signing_algorithm == "HMAC_SHA256_FALLBACK"
+        with pytest.raises(RuntimeError, match="google-cloud-kms is not installed"):
+            KMSGovernanceSigner.from_env()
 
 
-def _import_error_for_google_cloud_kms(name, *args, **kwargs):
-    """Side-effect function: raises ImportError only for google.cloud.kms imports."""
-    if "google" in name or "google.cloud" in name:
-        raise ImportError(f"No module named '{name}'")
-    return original_import(name, *args, **kwargs)
-
-
-# Store the real __import__ before patching
-import builtins
-original_import = builtins.__import__
-
-
-def test_from_env_signing_algorithm_hmac_when_no_key():
-    """from_env() signer has signing_algorithm='HMAC_SHA256_FALLBACK' when KMS_GOVERNANCE_KEY is absent."""
-    with patch("src.gateway.governance.kms_signer._KMS_KEY_VERSION", ""), \
-         patch("src.gateway.governance.kms_signer._LEGACY_SALT", "test-salt"):
+def test_from_env_signing_algorithm_raises_when_no_key():
+    """from_env() raises RuntimeError (not returns HMAC signer) when KMS_GOVERNANCE_KEY is absent."""
+    with patch("src.gateway.governance.kms_signer._KMS_KEY_VERSION", ""):
         from src.gateway.governance.kms_signer import KMSGovernanceSigner
-        signer = KMSGovernanceSigner.from_env()
-
-    assert signer.signing_algorithm == "HMAC_SHA256_FALLBACK"
+        with pytest.raises(RuntimeError, match="KMS_GOVERNANCE_KEY is not set"):
+            KMSGovernanceSigner.from_env()
 
 
 # ---------------------------------------------------------------------------
-# _kms_sign() CRITICAL log on runtime KMS failure
+# _kms_sign() CRITICAL log on runtime KMS failure — raises RuntimeError (no fallback)
 # ---------------------------------------------------------------------------
 
-def test_kms_sign_emits_critical_log_on_failure():
-    """_kms_sign() emits logger.critical() with KMS_SIGNING_FALLBACK event when KMS call fails at runtime."""
+def test_kms_sign_emits_critical_log_and_raises_on_runtime_failure():
+    """_kms_sign() emits logger.critical() with KMS_SIGNING_FAILED event and raises RuntimeError when KMS call fails."""
     mock_kms_client = MagicMock()
     key_name = "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"
-    signer = _make_signer(kms_client=mock_kms_client, key_version_name=key_name, legacy_salt="test-salt")
+    signer = _make_signer(kms_client=mock_kms_client, key_version_name=key_name)
 
     # Make the KMS service types import succeed but the actual sign call fail
     mock_kms_service = MagicMock()
@@ -426,13 +399,11 @@ def test_kms_sign_emits_critical_log_on_failure():
 
     with patch("src.gateway.governance.kms_signer.logger") as mock_logger, \
          patch.dict("sys.modules", {"google.cloud.kms_v1.types.service": mock_kms_service}):
-        result = signer._kms_sign(plan_bytes)
+        with pytest.raises(RuntimeError, match="KMS asymmetricSign failed"):
+            signer._kms_sign(plan_bytes)
 
-    # Should fall back to HMAC and emit critical
+    # Should emit critical with KMS_SIGNING_FAILED (not FALLBACK — there is no fallback)
     assert mock_logger.critical.called
     critical_call_args = mock_logger.critical.call_args
     payload = json.loads(critical_call_args[0][0])
-    assert payload["event"] == "KMS_SIGNING_FALLBACK"
-    # Result should be the HMAC fallback (non-empty hex string)
-    assert isinstance(result, str)
-    assert len(result) == 64
+    assert payload["event"] == "KMS_SIGNING_FAILED"
