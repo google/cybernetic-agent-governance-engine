@@ -32,11 +32,24 @@ spec:
       labels:
         app: compliance-bridge
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: financial-advisor-sa
       containers:
         - name: compliance-bridge
           image: gcr.io/YOUR_GCP_PROJECT_ID/compliance-bridge:latest
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - containerPort: 3001
               name: http

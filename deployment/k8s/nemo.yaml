@@ -29,10 +29,23 @@ spec:
       labels:
         app: nemo
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: nemo
           image: gcr.io/YOUR_GCP_PROJECT_ID/nemo-guardrails:latest
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - containerPort: 8000
               name: http

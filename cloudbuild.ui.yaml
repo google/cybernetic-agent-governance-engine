@@ -1,5 +1,26 @@
 steps:
-- name: 'gcr.io/cloud-builders/docker'
-  args: ['build', '-t', 'gcr.io/YOUR_GCP_PROJECT_ID/agentsight-ui:latest', '-f', 'src/agentsight-ui/Dockerfile', '.']
+  # Build the agentsight-ui image using its dedicated Dockerfile.
+  # Build context is repo root so COPY instructions in the Dockerfile work correctly.
+  # MUST use Cloud Build — never local docker build (ARM64 vs x86 mismatch on GKE).
+  - name: 'gcr.io/cloud-builders/docker'
+    id: build-agentsight-ui
+    args:
+      - 'build'
+      - '--no-cache'
+      - '--file=src/agentsight-ui/Dockerfile'
+      - '--tag=gcr.io/$PROJECT_ID/agentsight-ui:latest'
+      - '--tag=gcr.io/$PROJECT_ID/agentsight-ui:$SHORT_SHA'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: push-agentsight-ui
+    args: ['push', '--all-tags', 'gcr.io/$PROJECT_ID/agentsight-ui']
+
 images:
-- 'gcr.io/YOUR_GCP_PROJECT_ID/agentsight-ui:latest'
+  - 'gcr.io/$PROJECT_ID/agentsight-ui:latest'
+  - 'gcr.io/$PROJECT_ID/agentsight-ui:$SHORT_SHA'
+
+timeout: '1200s'
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY

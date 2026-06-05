@@ -12,28 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.23-alpine AS builder
+# ─── Stage 1: Builder — compile lula from source ──────────────────────────────
+FROM golang:1.22-alpine AS builder
 
-RUN apk add --no-cache git ca-certificates curl jq
+ARG LULA_VERSION=0.9.5
 
-# Build lula v0.8.1 from source
+RUN apk add --no-cache git ca-certificates
+
 WORKDIR /build
-RUN git clone --depth=1 --branch v0.8.1 https://github.com/defenseunicorns/lula.git . || \
-    git clone --depth=1 https://github.com/defenseunicorns/lula.git . && git checkout v0.8.1 || \
-    go install github.com/defenseunicorns/lula@v0.8.1
 
-# If the clone worked, build the binary
-RUN if [ -f go.mod ]; then \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /usr/local/bin/lula ./cmd/lula/; \
-    fi
+RUN git clone --depth 1 --branch v${LULA_VERSION} \
+    https://github.com/defenseunicorns/lula.git . && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -ldflags="-s -w -X github.com/defenseunicorns/lula/src/cmd.version=v${LULA_VERSION}" \
+    -o /usr/local/bin/lula ./cmd/lula
 
 # ─── Stage 2: Runtime image ───────────────────────────────────────────────────
-FROM alpine:3.19
-
-RUN apk add --no-cache ca-certificates curl jq bash
+FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=builder /usr/local/bin/lula /usr/local/bin/lula
-
-RUN chmod +x /usr/local/bin/lula
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 ENTRYPOINT ["/usr/local/bin/lula"]
