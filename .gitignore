@@ -62,6 +62,7 @@ GEMINI.md
 *.tfstate.*
 *.tfplan
 tfplan_*
+terraform.auto.tfvars
 .terraform/
 .terraform.lock.hcl
 crash.log
