@@ -1,0 +1,63 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# D-06: PSA-compliant Trivy security-scan CronJob
+# Runs weekly (Sunday 03:00 UTC) to scan the CAGE gateway image for CVEs.
+# Complies with RA-5 (Vulnerability Scanning) control.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: security-scanner-cronjob
+  namespace: governance-stack
+  labels:
+    app: security-scanner
+    compliance: ra-5
+spec:
+  schedule: "0 3 * * 0"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: security-scanner
+            compliance: ra-5
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: trivy-scanner
+              image: aquasec/trivy:0.51.4
+              command:
+                - trivy
+                - image
+                - "--format"
+                - json
+                - "--output"
+                - /tmp/scan-results.json
+                - gcr.io/YOUR_GCP_PROJECT_ID/cage-gateway:latest
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 65534
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              volumeMounts:
+                - name: tmp-dir
+                  mountPath: /tmp
+          volumes:
+            - name: tmp-dir
+              emptyDir: {}

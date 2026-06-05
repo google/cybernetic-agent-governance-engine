@@ -128,7 +128,10 @@ spec:
         - name: MCP_SERVER_SSE_URL
           value: http://gateway:8080/mcp/sse
         - name: GOVERNANCE_SALT
-          value: REDACTED_SALT
+          valueFrom:
+            secretKeyRef:
+              name: advisor-secrets
+              key: GOVERNANCE_SALT
         - name: SLM_BASE_URL
           value: http://localhost:5000
         - name: SLM_TIMEOUT_SECONDS

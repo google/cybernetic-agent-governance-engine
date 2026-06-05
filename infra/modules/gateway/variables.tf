@@ -90,3 +90,9 @@ variable "cage_env" {
 variable "opa_url" {
   type = string
 }
+
+variable "governance_salt" {
+  description = "Salt value for governance HMAC operations"
+  type        = string
+  sensitive   = true
+}

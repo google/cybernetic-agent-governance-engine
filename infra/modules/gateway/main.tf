@@ -177,6 +177,10 @@ resource "kubernetes_deployment" "gateway" {
             name  = "OPA_URL"
             value = var.opa_url
           }
+          env {
+            name  = "GOVERNANCE_SALT"
+            value = var.governance_salt
+          }
 
           resources {
             requests = {
