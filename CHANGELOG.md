@@ -2,6 +2,98 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+## [2.0.0] - 2026-06-05
+
+### CSA AARM Native Integration — Consequence-Governance Primitives
+
+This release transforms CAGE from a proactive exploration repository into the industry's
+definitive reference implementation for the Cloud Security Alliance (CSA) Autonomous Agent
+Risk Management (AARM) specification. Three engineering-hardened primitives are promoted
+from playground utilities to production infrastructure, each directly satisfying an AARM
+mandate before proprietary fragmentation occurs.
+
+### Added
+
+- **Cryptographic Hash-Chained Context Accumulator (`src/compliance_bridge/context_accumulator.py`):**
+  Promotes the SHA-256 chain-of-custody pattern from `examples/telemetry.py` to the core
+  compliance pipeline. Each `OscalFinding` appended to the `ContextAccumulator` is hash-linked
+  to the preceding node using `SHA-256(prev_hash || content_json)`. Genesis seed is derived from
+  `sha256(audit_id)` for deterministic chain identity. The accumulator is sealed with a
+  `CHAIN_SEALED` sentinel after every audit run and persisted to GCS/S3 as
+  `<audit_id>/context_chain.ndjson`. `chain_root`, `chain_length`, and `chain_integrity_valid`
+  are returned in all audit API responses. Satisfies **AARM-V1 Memory Poisoning** neutralization
+  and **ISO 42001 Annex A.5.3** chain-of-custody requirements.
+
+- **DEFER State Machine Primitive (`src/gateway/governance/defer_queue.py`):**
+  Extends CAGE's tri-state OPA decision (`ALLOW | DENY | MANUAL_REVIEW`) to four states
+  by introducing `DEFER`. Activates at the "Confidence-Starvation Boundary" — when
+  `confidence_score < 0.70` AND OPA would return `MANUAL_REVIEW`. Three-way split:
+  - `≥ 0.95` → Autonomous Clearance (execute)
+  - `0.70–0.95` → MANUAL_REVIEW (human sign-off)
+  - `< 0.70` → DEFER (automated data-hydration loop)
+
+  `DeferToken` is persisted in Redis `db=1` with `maxmemory-policy noeviction` (isolated from
+  the LangGraph checkpointer at `db=0` to prevent eviction interference). UCA-7 formally
+  documents this as "Agent proceeds with ambiguous context instead of parking for data injection."
+  Satisfies **AARM-V7 Context Window Overflow** neutralization and **ISO 42001 Annex A.8.4**.
+
+- **Native AARM Threat Vector Mapping — 11-Vector Threat Ledger
+  (`src/compliance_bridge/aarm_mapper.py`, `aarm_report_generator.py`):**
+  Machine-readable proof that specific CAGE control points neutralize each of the 11 CSA AARM
+  attack vectors. `build_aarm_conformance_report()` joins the static threat ledger against live
+  `OscalFinding` results to produce per-vector verdicts: `NEUTRALIZED | PARTIAL | EXPOSED`.
+  Report card is auto-serialized to GCS/S3 as `<audit_id>/aarm_conformance.json` on every
+  Lula-scheduled audit run. `GET /v1/aarm/conformance-report` provides on-demand access with
+  optional vLLM narrative enrichment (11 concurrent calls, `asyncio.Semaphore(3)` rate cap).
+
+- **New Lula Validation Manifest (`compliance/lula/lula-validation-aarm-vectors.yaml`):**
+  OPA Rego asserts: (1) all 11 AARM vectors present, (2) zero `EXPOSED` vectors, and
+  (3) all 7 `CRITICAL`-severity vectors (`V1`, `V2`, `V3`, `V4`, `V9`, `V10`, `V11`)
+  are `NEUTRALIZED`.
+
+- **OSCAL Component Definition — AARM Conformance Engine
+  (`compliance/oscal/component-definition.yaml`):**
+  New `AARM Conformance Engine` component documents all three primitives with
+  `control-implementations` cross-referencing AARM v1.0 and ISO 42001 requirements.
+  `context-accumulator-chain-root` and `aarm-spec-version` props embedded in every
+  OSCAL Assessment Results document.
+
+- **New API Endpoints (`src/compliance_bridge/main.py`):**
+  - `GET /v1/aarm/conformance-report` — AARM Conformance Report Card (JSON/YAML, optional narrative)
+  - `GET /v1/defer/pending` — list parked DEFER queue tokens
+  - `POST /v1/defer/{id}/inject` — resolve via automated data injection
+  - `POST /v1/defer/{id}/escalate` — escalate to MANUAL_REVIEW
+
+- **New SSE Event Types (`src/compliance_bridge/sse_events.py`):**
+  `CONTEXT_CHAIN_SEALED` (emitted on chain seal) and `DEFER_PARKING` / `DEFER_RESOLVED`
+  (emitted on token park/resolution). KernelDashboard consumers see real-time chain status.
+
+- **New Tests:**
+  - `tests/test_context_accumulator.py` — 15 tests including critical tamper-detection
+    invariant: mutating `node_index=0` payload causes `verify_integrity()` to return
+    `(False, 0)` — structural failure caught at the mutated node.
+  - `tests/test_defer_queue.py` — hermetic fakeredis tests for all DeferQueue operations,
+    confirms `DEFER_CONFIDENCE_THRESHOLD == 0.70`.
+  - `tests/test_aarm_mapper.py` — ledger completeness, NEUTRALIZED/PARTIAL/EXPOSED scoring,
+    overall posture classification (SECURE/DEGRADED/CRITICAL).
+
+### Modified
+
+- **`src/compliance_bridge/audit_workflow.py`:** Upgraded from 5-step to 6-step pipeline.
+  Step 2b injects the `ContextAccumulator` after OSCAL parse. Step 6 generates the AARM
+  Conformance Report Card.
+- **`src/compliance_bridge/types.py`:** `OscalFinding` gains `chain_index: int | None`.
+  `CONTROL_META` enriched with `aarm` framework cross-references across all affected controls.
+  `ISO_CONTROL_MAP` gains `context_accumulate` → `A.5.3` and `defer_parking` → `A.8.4`.
+- **`src/compliance_bridge/oscal_exporter.py`:** Finding props include `aarm-vector`
+  cross-references. Assessment Results props include `context-accumulator-chain-root`,
+  `context-accumulator-sealed-utc`, and `aarm-spec-version`.
+- **`src/gateway/governance/ontology.py`:** UCA-7 (DEFER) formally registered with
+  Confidence-Starvation Boundary (0.70) documented in `detection_pattern`.
+- **Compliance Bridge version:** `2.1.0` (service API version bump within CAGE v2.0.0).
+
 ## [v2.0.0-rc.2] — 2026-06-03 — Security & Formal Verification Lock
 
 ### Security Hardening
@@ -313,98 +405,6 @@ that the live cluster has open gaps (committed credentials, unavailable pod,
 | After Phase 4 (Compliance Isolation) | 77% |
 
 ---
-
-## [Unreleased]
-
-## [2.0.0] - 2026-06-05
-
-### CSA AARM Native Integration — Consequence-Governance Primitives
-
-This release transforms CAGE from a proactive exploration repository into the industry's
-definitive reference implementation for the Cloud Security Alliance (CSA) Autonomous Agent
-Risk Management (AARM) specification. Three engineering-hardened primitives are promoted
-from playground utilities to production infrastructure, each directly satisfying an AARM
-mandate before proprietary fragmentation occurs.
-
-### Added
-
-- **Cryptographic Hash-Chained Context Accumulator (`src/compliance_bridge/context_accumulator.py`):**
-  Promotes the SHA-256 chain-of-custody pattern from `examples/telemetry.py` to the core
-  compliance pipeline. Each `OscalFinding` appended to the `ContextAccumulator` is hash-linked
-  to the preceding node using `SHA-256(prev_hash || content_json)`. Genesis seed is derived from
-  `sha256(audit_id)` for deterministic chain identity. The accumulator is sealed with a
-  `CHAIN_SEALED` sentinel after every audit run and persisted to GCS/S3 as
-  `<audit_id>/context_chain.ndjson`. `chain_root`, `chain_length`, and `chain_integrity_valid`
-  are returned in all audit API responses. Satisfies **AARM-V1 Memory Poisoning** neutralization
-  and **ISO 42001 Annex A.5.3** chain-of-custody requirements.
-
-- **DEFER State Machine Primitive (`src/gateway/governance/defer_queue.py`):**
-  Extends CAGE's tri-state OPA decision (`ALLOW | DENY | MANUAL_REVIEW`) to four states
-  by introducing `DEFER`. Activates at the "Confidence-Starvation Boundary" — when
-  `confidence_score < 0.70` AND OPA would return `MANUAL_REVIEW`. Three-way split:
-  - `≥ 0.95` → Autonomous Clearance (execute)
-  - `0.70–0.95` → MANUAL_REVIEW (human sign-off)
-  - `< 0.70` → DEFER (automated data-hydration loop)
-
-  `DeferToken` is persisted in Redis `db=1` with `maxmemory-policy noeviction` (isolated from
-  the LangGraph checkpointer at `db=0` to prevent eviction interference). UCA-7 formally
-  documents this as "Agent proceeds with ambiguous context instead of parking for data injection."
-  Satisfies **AARM-V7 Context Window Overflow** neutralization and **ISO 42001 Annex A.8.4**.
-
-- **Native AARM Threat Vector Mapping — 11-Vector Threat Ledger
-  (`src/compliance_bridge/aarm_mapper.py`, `aarm_report_generator.py`):**
-  Machine-readable proof that specific CAGE control points neutralize each of the 11 CSA AARM
-  attack vectors. `build_aarm_conformance_report()` joins the static threat ledger against live
-  `OscalFinding` results to produce per-vector verdicts: `NEUTRALIZED | PARTIAL | EXPOSED`.
-  Report card is auto-serialized to GCS/S3 as `<audit_id>/aarm_conformance.json` on every
-  Lula-scheduled audit run. `GET /v1/aarm/conformance-report` provides on-demand access with
-  optional vLLM narrative enrichment (11 concurrent calls, `asyncio.Semaphore(3)` rate cap).
-
-- **New Lula Validation Manifest (`compliance/lula/lula-validation-aarm-vectors.yaml`):**
-  OPA Rego asserts: (1) all 11 AARM vectors present, (2) zero `EXPOSED` vectors, and
-  (3) all 7 `CRITICAL`-severity vectors (`V1`, `V2`, `V3`, `V4`, `V9`, `V10`, `V11`)
-  are `NEUTRALIZED`.
-
-- **OSCAL Component Definition — AARM Conformance Engine
-  (`compliance/oscal/component-definition.yaml`):**
-  New `AARM Conformance Engine` component documents all three primitives with
-  `control-implementations` cross-referencing AARM v1.0 and ISO 42001 requirements.
-  `context-accumulator-chain-root` and `aarm-spec-version` props embedded in every
-  OSCAL Assessment Results document.
-
-- **New API Endpoints (`src/compliance_bridge/main.py`):**
-  - `GET /v1/aarm/conformance-report` — AARM Conformance Report Card (JSON/YAML, optional narrative)
-  - `GET /v1/defer/pending` — list parked DEFER queue tokens
-  - `POST /v1/defer/{id}/inject` — resolve via automated data injection
-  - `POST /v1/defer/{id}/escalate` — escalate to MANUAL_REVIEW
-
-- **New SSE Event Types (`src/compliance_bridge/sse_events.py`):**
-  `CONTEXT_CHAIN_SEALED` (emitted on chain seal) and `DEFER_PARKING` / `DEFER_RESOLVED`
-  (emitted on token park/resolution). KernelDashboard consumers see real-time chain status.
-
-- **New Tests:**
-  - `tests/test_context_accumulator.py` — 15 tests including critical tamper-detection
-    invariant: mutating `node_index=0` payload causes `verify_integrity()` to return
-    `(False, 0)` — structural failure caught at the mutated node.
-  - `tests/test_defer_queue.py` — hermetic fakeredis tests for all DeferQueue operations,
-    confirms `DEFER_CONFIDENCE_THRESHOLD == 0.70`.
-  - `tests/test_aarm_mapper.py` — ledger completeness, NEUTRALIZED/PARTIAL/EXPOSED scoring,
-    overall posture classification (SECURE/DEGRADED/CRITICAL).
-
-### Modified
-
-- **`src/compliance_bridge/audit_workflow.py`:** Upgraded from 5-step to 6-step pipeline.
-  Step 2b injects the `ContextAccumulator` after OSCAL parse. Step 6 generates the AARM
-  Conformance Report Card.
-- **`src/compliance_bridge/types.py`:** `OscalFinding` gains `chain_index: int | None`.
-  `CONTROL_META` enriched with `aarm` framework cross-references across all affected controls.
-  `ISO_CONTROL_MAP` gains `context_accumulate` → `A.5.3` and `defer_parking` → `A.8.4`.
-- **`src/compliance_bridge/oscal_exporter.py`:** Finding props include `aarm-vector`
-  cross-references. Assessment Results props include `context-accumulator-chain-root`,
-  `context-accumulator-sealed-utc`, and `aarm-spec-version`.
-- **`src/gateway/governance/ontology.py`:** UCA-7 (DEFER) formally registered with
-  Confidence-Starvation Boundary (0.70) documented in `detection_pattern`.
-- **Compliance Bridge version:** `2.1.0` (service API version bump within CAGE v2.0.0).
 
 ## [2.0.0] — 2026-05-23
 
