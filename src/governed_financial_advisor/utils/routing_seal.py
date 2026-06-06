@@ -29,10 +29,17 @@ HMAC key.  Symmetric HMAC-SHA256 validation works flawlessly because both
 sides use the same key and the same canonical payload serialisation.
 
 Usage:
-    from src.governed_financial_advisor.utils.routing_seal import verify_seal
+    from src.governed_financial_advisor.utils.routing_seal import (
+        verify_seal,
+        SymbolicGovernorViolation,
+    )
 
-    if not verify_seal(seal, "execute_trade", params):
-        raise PermissionError("Invalid or expired routing seal — trade blocked")
+    # verify_seal() raises SymbolicGovernorViolation on failure (P3 fix).
+    # Callers must use try/except — a return-value check is no longer possible.
+    try:
+        verify_seal(seal, "execute_trade", params)
+    except SymbolicGovernorViolation as exc:
+        raise PermissionError(f"Invalid or expired routing seal — trade blocked: {exc.reason}")
 """
 
 # SYNC NOTE: This file must remain in sync with
@@ -50,6 +57,31 @@ import os
 import time
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# SymbolicGovernorViolation — mirrors src/gateway/governance/routing_seal.py
+# ---------------------------------------------------------------------------
+
+
+class SymbolicGovernorViolation(Exception):
+    """Raised when a routing seal verification fails.
+
+    GFA-side mirror of the gateway's ``SymbolicGovernorViolation``.  Defined
+    here so that the GFA service does not need to import gateway source code.
+
+    Attributes:
+        reason: Human-readable description of the specific failure mode.
+        action: The action name that was being verified.
+    """
+
+    def __init__(self, reason: str, action: str = "") -> None:
+        self.reason = reason
+        self.action = action
+        super().__init__(
+            f"SymbolicGovernorViolation: routing seal rejected for action "
+            f"'{action}': {reason}"
+        )
 
 _GOVERNANCE_SALT = os.getenv("GOVERNANCE_SALT", "REDACTED_SALT")
 _HMAC_KEY = _GOVERNANCE_SALT.encode()
@@ -107,37 +139,56 @@ def _canonical_payload(action: str, params: dict) -> bytes:
 def verify_seal(seal: str, action: str, params: dict) -> bool:
     """Verify a routing seal issued by the Hybrid Gateway.
 
-    Returns ``True`` if the seal is cryptographically valid and not expired.
-    Returns ``False`` (never raises) on any invalid input so that callers can
-    treat a ``False`` result as a hard governance block.
+    Returns ``True`` on success, ``False`` on any verification failure.
+
+    Cryptographic contract:
+        Algorithm : HMAC-SHA256
+        Key       : ``GOVERNANCE_SALT`` environment variable (≥32 bytes in
+                    production; see ``assert_custom_salt_in_production()``).
+        Message   : ``<expire_hex>.<action_slug>.`` + canonical JSON payload
+                    (``json.dumps({"action": action, **params}, sort_keys=True,
+                    separators=(",", ":"))``).
+        Digest    : hex-encoded lowercase SHA-256 HMAC.
+        TTL       : ``GOVERNANCE_SEAL_TTL_S`` seconds (default 30).
 
     Args:
         seal:    Seal string from the Gateway's ``/governance/validate-action`` response.
         action:  Tool / policy action name — must match the issuance action.
         params:  Execution plan parameters — must match the issuance params.
+
+    Returns:
+        ``True`` if the seal is valid and unexpired.
+        ``False`` if the seal is malformed, expired, has an action mismatch,
+        or fails HMAC verification.
     """
     try:
         parts = seal.split(".", 2)
         if len(parts) != 3:
-            logger.warning("🔒 Routing seal rejected: malformed (got %d parts)", len(parts))
-            return False
+            reason = f"malformed seal (got {len(parts)} parts, expected 3)"
+            logger.warning("🔒 Routing seal rejected: %s", reason)
+            raise SymbolicGovernorViolation(reason, action)
 
         expire_hex, action_slug, received_sig = parts
 
         # Check expiry
-        expire_ts = int(expire_hex, 16)
+        try:
+            expire_ts = int(expire_hex, 16)
+        except ValueError:
+            reason = f"non-hex expiry field: {expire_hex!r}"
+            logger.warning("🔒 Routing seal rejected: %s", reason)
+            raise SymbolicGovernorViolation(reason, action)
+
         if time.time() > expire_ts:
-            logger.warning("🔒 Routing seal rejected: expired (ts=%s)", expire_ts)
-            return False
+            reason = f"expired (ts={expire_ts})"
+            logger.warning("🔒 Routing seal rejected: %s", reason)
+            raise SymbolicGovernorViolation(reason, action)
 
         # Check action slug
         expected_slug = action.replace("_", "-").lower()[:32]
         if action_slug != expected_slug:
-            logger.warning(
-                "🔒 Routing seal rejected: action mismatch (got %s, expected %s)",
-                action_slug, expected_slug,
-            )
-            return False
+            reason = f"action mismatch (got '{action_slug}', expected '{expected_slug}')"
+            logger.warning("🔒 Routing seal rejected: %s", reason)
+            raise SymbolicGovernorViolation(reason, action)
 
         # Recompute HMAC
         payload = _canonical_payload(action, params)
@@ -145,12 +196,16 @@ def verify_seal(seal: str, action: str, params: dict) -> bool:
         expected_sig = hmac.new(_HMAC_KEY, message, hashlib.sha256).hexdigest()
 
         if not hmac.compare_digest(received_sig, expected_sig):
-            logger.warning("🔒 Routing seal rejected: HMAC mismatch")
-            return False
+            reason = "HMAC mismatch — seal may be forged or tampered"
+            logger.warning("🔒 Routing seal rejected: %s", reason)
+            raise SymbolicGovernorViolation(reason, action)
 
         logger.debug("✅ Routing seal verified: action=%s", action)
         return True
 
+    except SymbolicGovernorViolation:
+        return False
     except Exception as exc:  # noqa: BLE001
+        reason = f"unexpected verification error: {exc}"
         logger.warning("🔒 Routing seal verification error: %s", exc)
         return False

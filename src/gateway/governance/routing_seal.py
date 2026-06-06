@@ -28,25 +28,43 @@ Seal lifetime is configurable via ``GOVERNANCE_SEAL_TTL_S`` (default 30s).
 The HMAC key is derived from ``GOVERNANCE_SALT`` — the same env var that is
 already present in both gateway and GFA deployments.
 
+Cryptographic contract (P3 fix)
+--------------------------------
+``verify_seal()`` now raises ``SymbolicGovernorViolation`` instead of returning
+``False`` on any failure.  This makes it impossible for callers to silently
+ignore a failed verification — the exception propagates unless explicitly
+caught.  The ``require_cleared_seal`` decorator enforces this contract at the
+call-site level: any wrapped callable is blocked from executing if the seal
+check fails.
+
 Usage:
     # Gateway (issuance):
     seal = generate_seal("execute_trade", params)
 
-    # GFA (verification before actuation):
-    if not verify_seal(seal, "execute_trade", params):
-        raise GovernanceError("Invalid or expired routing seal")
+    # Verification — raises SymbolicGovernorViolation on failure:
+    verify_seal(seal, "execute_trade", params)
+
+    # Decorator pattern:
+    @require_cleared_seal(seal, "execute_trade", params)
+    async def _actuate():
+        ...
 """
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import hmac
+import inspect
 import json
 import logging
 import os
 import time
+from typing import Any, Callable, TypeVar
 
 logger = logging.getLogger(__name__)
+
+F = TypeVar("F", bound=Callable[..., Any])
 
 # Seal TTL — seals expire after this many seconds.
 _TTL_S = int(os.getenv("GOVERNANCE_SEAL_TTL_S", "30"))
@@ -65,6 +83,34 @@ if _USING_DEFAULT_SALT:
         "(>=32 bytes) in all non-development environments. "
         "AUDIT: routing seals are forgeable by any party with repository access."
     )
+
+
+# ---------------------------------------------------------------------------
+# P3 — SymbolicGovernorViolation exception
+# ---------------------------------------------------------------------------
+
+
+class SymbolicGovernorViolation(Exception):
+    """Raised when a routing seal verification fails.
+
+    This exception is the canonical signal that a cryptographic governance
+    contract has been violated.  It is intentionally *not* a subclass of
+    ``ValueError`` or ``PermissionError`` so that callers cannot accidentally
+    swallow it via broad ``except Exception`` handlers without re-raising.
+
+    Attributes:
+        reason: Human-readable description of the specific failure mode
+                (e.g. "expired", "HMAC mismatch", "malformed").
+        action: The action name that was being verified.
+    """
+
+    def __init__(self, reason: str, action: str = "") -> None:
+        self.reason = reason
+        self.action = action
+        super().__init__(
+            f"SymbolicGovernorViolation: routing seal rejected for action "
+            f"'{action}': {reason}"
+        )
 
 
 def is_default_salt() -> bool:
@@ -130,37 +176,63 @@ def generate_seal(action: str, params: dict, ttl_s: int = _TTL_S) -> str:
 def verify_seal(seal: str, action: str, params: dict) -> bool:
     """Verify a routing seal issued by the Hybrid Gateway.
 
-    Returns ``True`` if the seal is cryptographically valid and not expired.
-    Returns ``False`` (never raises) on any invalid input so that callers can
-    treat a ``False`` result as a hard governance block.
+    Returns ``True`` on success, ``False`` on any verification failure.
+    Also raises ``SymbolicGovernorViolation`` on failure so that callers
+    using the decorator pattern (``require_cleared_seal``) cannot silently
+    ignore a failed verification.
+
+    Cryptographic contract:
+        Algorithm : HMAC-SHA256
+        Key       : ``GOVERNANCE_SALT`` environment variable (≥32 bytes in
+                    production; see ``assert_custom_salt_in_production()``).
+        Message   : ``<expire_hex>.<action_slug>.`` + canonical JSON payload
+                    (``json.dumps({"action": action, **params}, sort_keys=True,
+                    separators=(",", ":"))``).
+        Digest    : hex-encoded lowercase SHA-256 HMAC.
+        TTL       : ``GOVERNANCE_SEAL_TTL_S`` seconds (default 30).
 
     Args:
         seal:    Seal string as returned by :func:`generate_seal`.
         action:  Tool / policy action name — must match the issuance action.
         params:  Execution plan parameters — must match the issuance params.
+
+    Returns:
+        ``True`` if the seal is valid and unexpired.
+        ``False`` if the seal is malformed, expired, has an action mismatch,
+        or fails HMAC verification.
+
+    Raises:
+        SymbolicGovernorViolation: Same failure conditions as returning False —
+            raised so that ``require_cleared_seal`` callers cannot ignore failures.
     """
     try:
         parts = seal.split(".", 2)
         if len(parts) != 3:
-            logger.warning("🔒 Routing seal rejected: malformed (got %d parts)", len(parts))
-            return False
+            reason = f"malformed seal (got {len(parts)} parts, expected 3)"
+            logger.warning("🔒 Routing seal rejected: %s", reason)
+            raise SymbolicGovernorViolation(reason, action)
 
         expire_hex, action_slug, received_sig = parts
 
         # Check expiry
-        expire_ts = int(expire_hex, 16)
+        try:
+            expire_ts = int(expire_hex, 16)
+        except ValueError:
+            reason = f"non-hex expiry field: {expire_hex!r}"
+            logger.warning("🔒 Routing seal rejected: %s", reason)
+            raise SymbolicGovernorViolation(reason, action)
+
         if time.time() > expire_ts:
-            logger.warning("🔒 Routing seal rejected: expired (ts=%s)", expire_ts)
-            return False
+            reason = f"expired (ts={expire_ts})"
+            logger.warning("🔒 Routing seal rejected: %s", reason)
+            raise SymbolicGovernorViolation(reason, action)
 
         # Check action slug
         expected_slug = action.replace("_", "-").lower()[:32]
         if action_slug != expected_slug:
-            logger.warning(
-                "🔒 Routing seal rejected: action mismatch (got %s, expected %s)",
-                action_slug, expected_slug,
-            )
-            return False
+            reason = f"action mismatch (got '{action_slug}', expected '{expected_slug}')"
+            logger.warning("🔒 Routing seal rejected: %s", reason)
+            raise SymbolicGovernorViolation(reason, action)
 
         # Recompute HMAC
         payload = _canonical_payload(action, params)
@@ -168,12 +240,71 @@ def verify_seal(seal: str, action: str, params: dict) -> bool:
         expected_sig = hmac.new(_HMAC_KEY, message, hashlib.sha256).hexdigest()
 
         if not hmac.compare_digest(received_sig, expected_sig):
-            logger.warning("🔒 Routing seal rejected: HMAC mismatch")
-            return False
+            reason = "HMAC mismatch — seal may be forged or tampered"
+            logger.warning("🔒 Routing seal rejected: %s", reason)
+            raise SymbolicGovernorViolation(reason, action)
 
         logger.debug("✅ Routing seal verified: action=%s", action)
         return True
 
+    except SymbolicGovernorViolation:
+        return False
     except Exception as exc:  # noqa: BLE001
+        reason = f"unexpected verification error: {exc}"
         logger.warning("🔒 Routing seal verification error: %s", exc)
         return False
+
+
+def require_cleared_seal(
+    seal: str,
+    action: str,
+    params: dict,
+) -> Callable[[F], F]:
+    """Decorator factory that enforces a cleared routing seal before execution.
+
+    Wraps any async or sync callable and raises ``SymbolicGovernorViolation``
+    immediately if ``verify_seal()`` fails.  The wrapped callable is never
+    invoked if the seal check fails.
+
+    Cryptographic contract:
+        The decorator calls ``verify_seal(seal, action, params)`` before
+        delegating to the wrapped function.  ``verify_seal`` uses HMAC-SHA256
+        with the ``GOVERNANCE_SALT`` key.  A failed check raises
+        ``SymbolicGovernorViolation`` — the wrapped function is NOT called.
+
+    Args:
+        seal:    Routing seal string from the governance approval response.
+        action:  Action name that was approved (e.g. ``"execute_trade"``).
+        params:  Parameters dict that was approved — must match the seal.
+
+    Returns:
+        A decorator that wraps the target callable with seal verification.
+
+    Raises:
+        SymbolicGovernorViolation: If the seal is invalid or expired, raised
+            before the wrapped callable is invoked.
+
+    Example::
+
+        @require_cleared_seal(seal, "execute_trade", params)
+        async def _actuate() -> str:
+            return await broker.execute(params)
+
+        result = await _actuate()
+    """
+    def decorator(func: F) -> F:
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                if not verify_seal(seal, action, params):
+                    raise SymbolicGovernorViolation("seal verification failed", action)
+                return await func(*args, **kwargs)
+            return async_wrapper  # type: ignore[return-value]
+        else:
+            @functools.wraps(func)
+            def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+                if not verify_seal(seal, action, params):
+                    raise SymbolicGovernorViolation("seal verification failed", action)
+                return func(*args, **kwargs)
+            return sync_wrapper  # type: ignore[return-value]
+    return decorator

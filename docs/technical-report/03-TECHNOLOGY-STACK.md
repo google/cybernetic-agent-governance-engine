@@ -30,7 +30,7 @@
 | Framework                   | Role                                   | Key Details                                                                                       |
 | --------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | **LangGraph**               | Multi-agent `StateGraph` orchestration | 10-node pipeline (including mandatory NeMo input/output rails); `interrupt_before=["governed_trader"]`; `AsyncRedisSaver` checkpointing |
-| **FastAPI**                 | HTTP API server                        | Agent server `:8000`; Compliance Bridge `:3002`                                                   |
+| **FastAPI**                 | HTTP API server                        | Agent server `:8081 (local) / :80 (K8s)`; Compliance Bridge internal `:3001`, local port-forward `:3002` |
 | **FastMCP**                 | MCP tool server over SSE               | 6 registered tools; `patch_mcp_tools()` injects W3C `traceparent` headers                         |
 | **NeMo Guardrails**         | AI safety rails                        | Colang 2.x dialect; 15 Presidio PII entity types (input + output rails); model configurable via `GUARDRAILS_MODEL_NAME` |
 | **Open Policy Agent (OPA)** | Rego policy enforcement                | `trade.governance` package; fail-closed posture; `CircuitBreaker` (5 failures, 30 s recovery)     |
@@ -44,7 +44,7 @@
 | ----------------------- | ------------------------------ | -------------------------------------------------------------------------------------- |
 | **vLLM Reasoning Node** | `DeepSeek-R1-Distill-Llama-8B` | AWQ quantization; `max_model_len=32768`; `gpu_memory_utilization=0.9`; NVIDIA L4 24 GB; active Risk Manager in ConsensusEngine |
 | **vLLM Fast Node**      | `Meta-Llama-3.1-8B-Instruct`   | OpenAI-compatible endpoint; spot instances; low-latency path; active Compliance Officer in ConsensusEngine |
-| **vLLM Governance**     | `Qwen/Qwen2.5-7B-Instruct`     | **NOT CURRENTLY DEPLOYED** — aspirational governance backend (`vllm-governance.yaml` explicitly marked undeployed) |
+| **vLLM Governance**     | `Qwen/Qwen2.5-1.5B-Instruct`   | **NOT CURRENTLY DEPLOYED** — aspirational governance backend (`vllm-governance.yaml` explicitly marked undeployed) |
 | **liteLLM**             | LLM router                     | `MODEL_REASONING` and `MODEL_FAST` aliasing; unified API surface                       |
 | **vLLM Tensorizer**     | Cold-start optimization        | Model weight streaming from MinIO; eliminates cold-boot latency                        |
 | **Guided JSON (FSM)**   | Structured output              | Enforced at vLLM level for `ExecutionPlan` schema compliance                           |

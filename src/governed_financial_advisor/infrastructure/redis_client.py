@@ -21,6 +21,14 @@ from redis.asyncio import Redis, ConnectionPool
 from redis.exceptions import RedisError, ConnectionError, TimeoutError
 from opentelemetry import trace
 from src.governed_financial_advisor.utils.telemetry import get_tracer
+from src.gateway.infrastructure.redis_client import TransactionAbortedError  # re-exported
+
+__all__ = [
+    "AsyncRedisClient",
+    "RedisClient",
+    "redis_client",
+    "TransactionAbortedError",
+]
 
 logger = logging.getLogger("Infrastructure.Redis")
 

@@ -26,7 +26,9 @@ To prevent the AI from learning how to circumvent rules, CAGE employs a **Bifurc
 The central enforcement engine residing in the Gateway. It wraps every tool execution request.
 
 - **Responsibility:** Intercepts tool calls and validates them against safety rules _before_ execution (or concurrently in Optimistic mode).
-- **Checks (7-Step Pipeline):**
+- **Checks (8-Step Pipeline (Steps 0–6 including Step 2b)):**
+
+  > **Note on Step 2b:** Step 2b (OPA Policy Evaluation) runs concurrently with Step 2 (CBF) via `asyncio.gather` as a conditional branch within the pipeline. It is counted as a distinct step, making the total 8 steps (Steps 0, 1, 2, 2b, 3, 4, 5, 6).
 
   > **See also:** [`README_GOVERNANCE.md`](../README_GOVERNANCE.md) for the canonical layer model and infrastructure context.
 
@@ -34,7 +36,7 @@ The central enforcement engine residing in the Gateway. It wraps every tool exec
   |------|------|---------------|-------|
   | **0** | STPA UCA Constraint Check | `stpa_validator.validate()` | Aho-Corasick keyword scan against 14 tier-1 keywords; checks for Unsafe Control Actions (UCAs) defined in the ontology *(All Regions)* |
   | **1** | Agentic Confidence Gate | OPA `system_authz.rego` | **OPA is the sole enforcer** of `CTRL_AGT_001` — three-zone confidence model: ALLOW ≥ 0.95, DEFER 0.70–0.95, DENY < 0.70 (`DEFER_CONFIDENCE_THRESHOLD = 0.70`). Normal threshold 0.95; SLM-degraded escalation to 0.97 baked into `system_authz.rego`. The Python-side confidence check has been removed. Contexts in the DEFER zone are pushed to the **DEFER queue** (Redis db=1, 4h TTL, AARM-V7) rather than outright denied. **Note:** `min_trade_confidence` in `governance_thresholds.json` is **deprecated** — OPA `system_authz.rego` is now authoritative for confidence enforcement. ISO 42001 §A.5.2 *(All Regions)* |
-  | **2** | Control Barrier Function | `ControlBarrierFunction.verify_action()` (`cbf.py`) | Redis-backed cash balance invariant `h(x) = cash_balance − min_cash_balance ≥ 0` (γ=0.5, min=$1,000; 5% drawdown default; 4% for EU). Externally reconciled via AnchorageGrpcLedgerProvider. |
+  | **2** | Control Barrier Function | `ControlBarrierFunction.verify_action()` (`cbf.py`) | Redis-backed cash balance invariant `h(x) = cash_balance − min_cash_balance ≥ 0` (γ=0.5, min=$1,000; 5% drawdown default; 4% for EU). Currently reads position state from Redis cache. External reconciliation via `AnchorageGrpcLedgerProvider` is planned (POAM-023, not yet implemented). |
   | **2b** | OPA Policy Evaluation | `OPAClient.evaluate_policy()` | Runs **concurrently** with CBF via `asyncio.gather` — combined latency is `max(CBF_ms, OPA_ms)`. Evaluates declarative, role-based authorization constraints *(All Regions)*. |
   | **3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` | **Active in pipeline.** Atomically reserves the requested USD amount against the daily cap in Redis (WATCH/MULTI/EXEC) **before** the consensus gate, closing the TOCTOU race between the CBF balance check and actual trade execution. Released on any subsequent failure. |
   | **4** | Multi-Agent Consensus | `consensus_engine.check_consensus()` | Triggers heterogeneous multi-model consensus via ConsensusModelRegistry for trades exceeding threshold ($10k default; $7.5k for EU; $5k for MAS). Unanimity required — any dissent blocks the trade *(All Regions)*. |
