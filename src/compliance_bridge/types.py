@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # ComplianceMetrics — the JSON response shape returned by GET /v1/metrics/:control_id
@@ -77,6 +77,25 @@ OscalResult = Literal["PASS", "FAIL", "NOT_APPLICABLE", "ERROR"]
 
 
 class OscalFinding(BaseModel):
+    """Immutable OSCAL assessment finding produced by the audit pipeline.
+
+    This model is **frozen** (``ConfigDict(frozen=True)``) to enforce immutability
+    of the intent payload after construction.  The hash-chained
+    ``ContextAccumulator`` relies on the payload being stable once appended —
+    any post-construction mutation would silently corrupt the SHA-256 chain and
+    invalidate tamper-detection (ISO 42001 A.5.3 / CSA AARM Context Accumulator
+    mandate).
+
+    Downstream consumers that need a modified copy must create a new instance::
+
+        updated = finding.model_copy(update={"finding_id": new_id})
+
+    Never mutate a finding in-place after it has been passed to
+    ``ContextAccumulator.append_finding()``.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
     control_id:  str
     result:      OscalResult
     safety_rate: float | None = Field(default=None, ge=0.0, le=1.0)

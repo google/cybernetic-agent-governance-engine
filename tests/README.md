@@ -113,15 +113,15 @@ Copy [`.env.example`](../.env.example) to `.env` and fill in your values.
 
 | Variable          | Default                                    | Description                                |
 | ----------------- | ------------------------------------------ | ------------------------------------------ |
-| `MODEL_REASONING` | `deepseek-ai/DeepSeek-R1-Distill-Qwen-32B` | LLM-as-Judge / reasoning model             |
-| `MODEL_FAST`      | `Qwen/Qwen2.5-7B-Instruct`                 | Fast tasks (FSM, classification)           |
+| `MODEL_REASONING` | `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` | LLM-as-Judge / reasoning model             |
+| `MODEL_FAST`      | `Qwen/Qwen2.5-1.5B-Instruct`               | Fast tasks (FSM, classification)           |
 | `OPENAI_API_KEY`  | `not-needed-for-local-vllm`                | Set to any non-empty string for local vLLM |
 
 ### Governance & Infra
 
 | Variable          | Default                                       | Description                                        |
 | ----------------- | --------------------------------------------- | -------------------------------------------------- |
-| `OPA_URL`         | `http://localhost:8181/v1/data/finance/allow` | OPA policy engine endpoint                         |
+| `OPA_URL`         | `http://localhost:8181/v1/data/trade/governance` | OPA policy engine endpoint                         |
 | `REDIS_URL`       | `redis://localhost:6379`                      | Redis for state management                         |
 | `GOVERNANCE_SALT` | _(required)_                                  | HMAC salt for the governance gateway               |
 | `K8S_NAMESPACE`   | `governance-stack`                            | Kubernetes namespace (used by `setup_test_env.sh`) |
@@ -147,11 +147,11 @@ The script maps the following ports:
 | `8001`     | `svc/vllm-service`               | vLLM fast inference (Qwen)          |
 | `3001`     | `svc/langfuse-web`               | Langfuse UI & scoring API           |
 | `3002`     | `svc/compliance-bridge`          | Compliance Bridge API               |
-| ~~`4318`~~ | ~~`svc/otel-collector`~~         | **Removed** — standalone OTel Collector deprecated 2026-05-31; OTLP traces exported directly to Langfuse integrated endpoint (`svc/langfuse-web:3001`) |
+| ~~`4318`~~ | ~~`svc/otel-collector`~~         | **Deprecated** (best-effort, forwarded by `setup_test_env.sh` if available) |
 | `8181`     | `svc/opa`                        | OPA policy engine                   |
 | `8080`     | `svc/gateway`                    | Inference Gateway                   |
 | `6379`     | `svc/redis`                      | Redis cache                         |
-| `5001`     | `svc/governed-financial-advisor-slm` | SLM reasoning node similarity service |
+| ~~`5001`~~ | ~~`svc/governed-financial-advisor-slm`~~ | **SLM service is permanently deprecated (`slm_available=False`). Port 5001 is no longer forwarded.** |
 
 
 The script accepts `--namespace <ns>` and `--dry-run` flags:

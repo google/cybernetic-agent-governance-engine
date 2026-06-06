@@ -56,12 +56,12 @@ Automated continuous compliance assessment is active for **15 Lula validation ma
 | RA-5      | Vulnerability scanning — Trivy/pip-audit CI       | CI scan passing      | `lula-validation-ra5.yaml`   | **Active** |
 | CM-6      | Configuration settings — governance config        | Config validated     | `lula-validation-cm6.yaml`   | **Active** |
 | IR-6      | Incident reporting — governance bypass alerts     | Alert pipeline valid | `lula-validation-ir6.yaml`   | **Active** |
-| SC-7      | Boundary protection — Cilium egress lockdown      | Policy enforced      | `lula-validation-sc7.yaml`   | **Active** |
+| AC-2      | Account management — service account lifecycle    | Lifecycle validated  | `lula-validation-ac2.yaml`   | **Active** |
 | SC-8      | Transmission confidentiality — Linkerd mTLS       | mTLS enforced        | `lula-validation-sc8.yaml`   | **Active** |
 | IA-3      | Device identification — SPIFFE/SVID identity      | Identity verified    | `lula-validation-ia3.yaml`   | **Active** |
-| CM-3      | Configuration change control — change management  | Process validated    | `lula-validation-cm3.yaml`   | **Active** |
-| SI-4      | System monitoring — AgentSight eBPF remote export | Exporter active      | `lula-validation-si4.yaml`   | **Active** |
-| SA-9      | External system services — normative provider     | Provider reachable   | `lula-validation-sa9.yaml`   | **Active** |
+| IA-5      | Authenticator management — KMS HSM key lifecycle  | Key lifecycle valid  | `lula-validation-ia5.yaml`   | **Active** |
+| SI-2      | Flaw remediation — CVE patching (pip-audit CI)    | CI scan passing      | `lula-validation-si2.yaml`   | **Active** |
+| AARM-V    | 11-vector AI agent threat model coverage          | All vectors covered  | `lula-validation-aarm-vectors.yaml` | **Active** |
 
 Findings are expressed as OSCAL Assessment Results and ingested into Langfuse via direct OTLP (OTel Collector deprecated 2026-05-31; Langfuse native OTLP ingestion is now used). **Additional ISO 42001 Annex A controls and the full NIST SP 800-53 control baseline are not yet mapped or assessed.**
 

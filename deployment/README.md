@@ -7,13 +7,13 @@ This directory contains the configuration and scripts to deploy the Financial Ad
 The system is deployed as a distributed microservices architecture on GKE:
 
 1.  **Gateway Service (`gateway-service`)**:
-    - gRPC service (Port 50051).
+    - FastAPI HTTP service (port 8080), with gRPC available on port 50051 for streaming.
     - Acts as the central router and "Physical Layer" for the agent.
     - Handles Tool Execution and LLM Routing.
     - Connects to OPA and NeMo Guardrails.
 
 2.  **Financial Advisor Agent (`governed-financial-advisor`)**:
-    - FastAPI backend (Port 8080).
+    - FastAPI backend. K8s service port 80, local port-forward 8081.
     - Hosts the LangGraph control plane and ADK agents.
     - Connects to the Gateway via internal DNS.
 
@@ -36,6 +36,8 @@ The system is deployed as a distributed microservices architecture on GKE:
 > **Note:** The prerequisites above apply to GCP deployments. For other Kubernetes providers, use your cloud provider's CLI and ensure cluster access via kubectl.
 
 ## Deployment Script
+
+> **⚠️ Superseded:** `deploy_sw.py` and `deployment/terraform/` are superseded. Current deployment uses `deploy_all.sh` and `infra/targets/gcp-gke/`. The instructions below are retained for historical reference only.
 
 The `deploy_sw.py` script is the central entry point for deploying the entire Cybernetic Governance Engine stack to GKE.
 
@@ -105,9 +107,11 @@ Configuration is managed via `deployment/config.yaml` (default settings) and `.e
 - `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`: Credentials for the in-cluster MinIO instance used as the vLLM model weight store. `deploy_sw.py` automatically bootstraps these via `_bootstrap_minio_credentials()` and `_ensure_minio_bucket()` pre-flight functions.
 - `OPENAI_API_KEY`: Required if using OpenAI models via NeMo.
 
-## vLLM Model Weight Loading (MinIO + Tensorizer)
+## vLLM Model Weight Loading
 
-vLLM deployments load model weights from **MinIO** (in-cluster S3-compatible object store) using vLLM's native `--load-format tensorizer`. This replaces the previous approach of mounting GCS buckets via the GKE-proprietary GCS Fuse CSI driver.
+> **Model Store Note:** GCS (`gs://YOUR_GCP_PROJECT_ID-models/`) is now the **primary** model artifact store. See `deployment/scripts/upload_to_gcs.py` for artifact upload. MinIO is used for Langfuse event storage only; the MinIO + Tensorizer cold-start path below is a secondary/fallback option.
+
+vLLM deployments can also load model weights from **MinIO** (in-cluster S3-compatible object store) using vLLM's native `--load-format tensorizer`. This replaces the previous approach of mounting GCS buckets via the GKE-proprietary GCS Fuse CSI driver.
 
 ### One-Time Tensorization
 
@@ -160,7 +164,7 @@ Expected output should show `Running` status for:
 - `gateway-service-*`
 - `governed-financial-advisor-*`
 - `vllm-fast-*` (if enabled)
-- `financial-advisor-ui-*`
+- `agentsight-ui-*`
 - `langfuse-web-*`
 - `langfuse-worker-*`
 - `clickhouse-0`
@@ -170,7 +174,7 @@ ACCESS_UI_INSTRUCTIONS
 The deployment is fully hardened and uses **ClusterIP** for all services. To access the UI locally:
 
 ```bash
-kubectl port-forward svc/financial-advisor-ui 3000:80 -n governance-stack
+kubectl port-forward svc/agentsight-ui 3000:80 -n governance-stack
 ```
 
 Open `http://localhost:3000` in your browser.

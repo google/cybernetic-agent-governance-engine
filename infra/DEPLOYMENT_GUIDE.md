@@ -25,10 +25,16 @@ infra/
 **Use case**: Laptop development, no Kubernetes required
 
 ```bash
+# For local development (hot-reload volumes, dev overrides):
+docker compose -f docker-compose.dev.yml up
+
+# Or via the unified script:
 ./deploy_all.sh
 ```
 
 **What runs**: Docker Compose stack with all services
+
+> **Compose file distinction:** `docker-compose.yml` is the production compose file. `docker-compose.dev.yml` is for local development — it includes hot-reload volume mounts and development overrides. Use `docker-compose.dev.yml` for local iteration; use `docker-compose.yml` only for production-equivalent local testing.
 
 ### 2. Agnostic Kubernetes Target
 

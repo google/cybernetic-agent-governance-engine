@@ -35,12 +35,12 @@ All services run in the `governance-stack` namespace. Full manifest inventory li
 
 | Service                    | Manifest                       | Port | Purpose                      |
 | -------------------------- | ------------------------------ | ---- | ---------------------------- |
-| Governed Financial Advisor | `deployment/k8s/financial-advisor.yaml`       | 8000 | FastAPI agent server         |
+| Governed Financial Advisor | `deployment/k8s/financial-advisor.yaml`       | 80 (K8s) / 8081 (local port-forward) | FastAPI agent server         |
 | Hybrid Gateway             | `deployment/k8s/backend-deployment.yaml`      | 8080 | MCP SSE at `/`, inference proxy at `/inference`, governance middleware at `/governance` |
-| Compliance Bridge          | `deployment/k8s/compliance-bridge.yaml`       | 3002 | OSCAL audit + SSE events     |
+| Compliance Bridge          | `deployment/k8s/compliance-bridge.yaml`       | 3001 (internal) / 3002 (local port-forward) | OSCAL audit + SSE events     |
 | AgentSight UI              | `frontend-deployment.yaml.tpl` | 5173 | React dashboard              |
 | vLLM Reasoning             | `vllm-reasoning.yaml.tpl`      | —    | DeepSeek-R1-Distill-Llama-8B |
-| vLLM Fast                  | `vllm-fast.yaml.tpl`           | —    | Meta-Llama-3.1-8B-Instruct   |
+| vLLM Fast                  | `vllm-fast.yaml.tpl`           | —    | Qwen/Qwen2.5-1.5B-Instruct   |
 | OPA                        | `deployment/k8s/opa.yaml`                     | —    | Policy engine                |
 | Redis                      | `deployment/k8s/redis-statefulset.yaml`       | 6379 | Checkpointing (db=0) + DEFER (db=1, noeviction) |
 | NeMo                       | `deployment/k8s/nemo.yaml`                    | —    | Guardrails server            |
@@ -221,7 +221,7 @@ Source: `generate_reasoning_manifest.py`, `deployment/k8s/vllm-inference-spot.ya
 | Instance type          | Spot (cost-optimized)                    |
 | Prefix caching         | Enabled — governance system prompt reuse |
 
-### Fast Node — Meta-Llama-3.1-8B-Instruct
+### Fast Node — Qwen/Qwen2.5-1.5B-Instruct
 
 | Parameter         | Value                      |
 | ----------------- | -------------------------- |
@@ -384,7 +384,9 @@ Pod startup and model weight loading represent a critical secondary latency fact
 | ------------------- | ------------- | -------------- | ------------------------ |
 | **Full HuggingFace Download** | ~20 minutes | Yes | High network latency; prone to rate-limiting and external gateway failures. |
 | **GCS Fuse Image Streaming**  | ~2–5 minutes | No (GKE-only) | Lazy-pulling via GCS CSI driver; high runtime overhead and GKE proprietary lock-in. |
-| **MinIO + vLLM Tensorizer**   | **60–90 seconds** | **Yes** | **(Active)** Streams serialized shards from in-cluster S3-compatible MinIO; no POSIX mounting overhead. |
+| **MinIO + vLLM Tensorizer**   | **60–90 seconds** | **Yes** | Streams serialized shards from in-cluster S3-compatible MinIO; no POSIX mounting overhead. |
+
+> **Model Store Note:** GCS (`gs://YOUR_GCP_PROJECT_ID-models/`) is the **primary** model artifact store. See `deployment/scripts/upload_to_gcs.py` for artifact upload. MinIO is used for Langfuse event storage only; vLLM Tensorizer cold-start streaming from MinIO is a secondary/fallback path.
 
 Model weights are pre-serialized to TensorSerializer format via a one-time GKE Job ([`deployment/k8s/tensorize-job.yaml`](../../deployment/k8s/tensorize-job.yaml)) and stored in the local `vllm-models` MinIO bucket. At pod startup, vLLM streams individual tensor shards on demand using `--load-format tensorizer`—completely eliminating posix file system locks and GKE CSI driver dependencies.
 

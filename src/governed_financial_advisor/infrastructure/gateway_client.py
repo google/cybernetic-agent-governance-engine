@@ -28,6 +28,8 @@ from typing import Any, Dict, Optional
 import httpx
 from opentelemetry.propagate import inject as otel_inject
 
+from src.governed_financial_advisor.graph.annotations import side_effect_node
+
 logger = logging.getLogger("infrastructure.gateway_client")
 
 _GATEWAY_URL_DEFAULT = "http://localhost:8080"
@@ -55,6 +57,7 @@ class GatewayClient:
             )
         return self._http
 
+    @side_effect_node(kind="api_call", external_system="gateway_api")
     async def chat(
         self,
         message: str,
@@ -88,6 +91,7 @@ class GatewayClient:
             return choices[0].get("message", {}).get("content", "")
         return data.get("response", "")
 
+    @side_effect_node(kind="api_call", external_system="gateway_api")
     async def validate_action(
         self,
         action: str,

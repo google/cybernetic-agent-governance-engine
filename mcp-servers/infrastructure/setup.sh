@@ -114,35 +114,66 @@ EOF
 fi
 
 # Configure Roo Code globally
-ROO_GLOBAL_DIR="$HOME/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings"
-ROO_CONFIG="$ROO_GLOBAL_DIR/cline_mcp_settings.json"
-
 info "Configuring Roo Code globally..."
 
-# Check if we should use symlink or separate config
-if [[ -f "$ANTIGRAVITY_CONFIG" ]]; then
-    mkdir -p "$ROO_GLOBAL_DIR"
-    
-    if [[ -L "$ROO_CONFIG" ]]; then
-        info "Roo config is already a symlink"
-    elif [[ -f "$ROO_CONFIG" ]]; then
-        info "Existing Roo config found, creating symlink..."
-        mv "$ROO_CONFIG" "$ROO_CONFIG.backup"
-        ln -sf "$ANTIGRAVITY_CONFIG" "$ROO_CONFIG"
-        success "Created symlink: Roo ↔ Antigravity configs now shared"
-    else
-        ln -sf "$ANTIGRAVITY_CONFIG" "$ROO_CONFIG"
-        success "Created symlink: Roo ↔ Antigravity configs now shared"
-    fi
+# Determine correct paths based on OS
+ROO_CONFIG_PATHS=()
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    ROO_CONFIG_PATHS=(
+        "$HOME/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+        "$HOME/Library/Application Support/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json"
+        "$HOME/Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+    )
+else
+    ROO_CONFIG_PATHS=(
+        "$HOME/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json"
+        "$HOME/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+    )
 fi
 
-# Also offer project-local .roo/mcp.json as optional
+# Write separate configs instead of symlinking to prevent schema validation errors
+# with cloud-based MCP servers (like google-developer-knowledge) in Roo Code/Cline
+for ROO_CONFIG in "${ROO_CONFIG_PATHS[@]}"; do
+    ROO_DIR="$(dirname "$ROO_CONFIG")"
+    mkdir -p "$ROO_DIR"
+    
+    # Remove symlink if it exists
+    if [[ -L "$ROO_CONFIG" ]]; then
+        rm "$ROO_CONFIG"
+    fi
+    
+    if command -v jq &> /dev/null && [[ -f "$ANTIGRAVITY_CONFIG" ]]; then
+        # Use jq to copy everything except google-developer-knowledge
+        jq 'del(.mcpServers["google-developer-knowledge"])' "$ANTIGRAVITY_CONFIG" > "$ROO_CONFIG"
+        success "Configured Roo/Cline at $ROO_CONFIG (filtered)"
+    else
+        # Fallback to a clean config with just the infrastructure server if jq not present
+        cat > "$ROO_CONFIG" <<EOF
+{
+  "mcpServers": {
+    "cage-infrastructure": {
+      "command": "$PYTHON_PATH",
+      "args": ["-m", "mcp_servers.infrastructure"],
+      "env": {
+        "PROJECT_ROOT": "$REPO_ROOT"
+      }
+    }
+  }
+}
+EOF
+        success "Configured Roo/Cline at $ROO_CONFIG (fallback)"
+    fi
+done
+
+# Also set up project-local reference (optional)
 info "Setting up project-local reference (optional)..."
 mkdir -p "$REPO_ROOT/.roo"
 
 if [[ ! -f "$REPO_ROOT/.roo/mcp.json" ]]; then
-    ln -sf "$ANTIGRAVITY_CONFIG" "$REPO_ROOT/.roo/mcp.json" 2>/dev/null || true
-    info "Created project symlink to global config (optional)"
+    if [[ -f "${ROO_CONFIG_PATHS[0]}" ]]; then
+        cp "${ROO_CONFIG_PATHS[0]}" "$REPO_ROOT/.roo/mcp.json" 2>/dev/null || true
+        info "Created project-local copy of Roo/Cline config (optional)"
+    fi
 fi
 
 # Update .gitignore if needed
@@ -162,7 +193,7 @@ info "Configuration Summary:"
 echo "  • Python executable: $PYTHON_PATH"
 echo "  • Project root: $REPO_ROOT"
 echo "  • Antigravity config: $ANTIGRAVITY_CONFIG"
-echo "  • Roo config: $ROO_CONFIG (symlinked)"
+echo "  • Roo/Cline configs: Updated independently and filtered"
 echo ""
 info "Next steps:"
 echo "  1. Restart VS Code (Cmd+R or Ctrl+R)"

@@ -18,7 +18,7 @@ The Gateway acts as the central orchestrator and compliance enforcement point fo
 
 2.  **Sovereign vLLM Cluster:**
     - **Node A (Reasoning):** Handles planning, complex analysis, and chain-of-thought generation. Model: `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` (NVIDIA L4 GPU, 16Gi). Note: `Qwen/Qwen2.5-7B-Instruct` is the undeployed aspirational governance backend (`vllm-governance.yaml`, marked NOT CURRENTLY DEPLOYED).
-    - **Node B (Governance):** Handles rapid policy checks, safety filtering, and content moderation. Model: `Meta-Llama-3.1-8B-Instruct`.
+    - **Node B (Governance):** Handles rapid policy checks, safety filtering, and content moderation. Model: `Qwen/Qwen2.5-1.5B-Instruct`.
     - **Deep Reasoning:** `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` for complex multi-step analysis.
 
 3.  **Observability Layer (Direct Langfuse OTLP):**

@@ -32,6 +32,8 @@ import hmac
 import json
 import logging
 import os
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -45,6 +47,8 @@ from src.gateway.governance.symbolic_governor import GovernanceError
 from src.gateway.governance.text_filter import ac_keyword_scan
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
+from src.gateway.governance.routing_seal import SymbolicGovernorViolation
+from src.gateway.governance.kms_signer import get_governance_signer
 
 logger = logging.getLogger("Gateway.GovernanceMiddleware")
 
@@ -183,6 +187,12 @@ async def enforce_governance(tool_name: str, params: Dict[str, Any]) -> str:
         return seal
     except GovernanceError as exc:
         logger.warning("🛡️ Symbolic Governor BLOCKED %s: %s", tool_name, exc)
+        await _emit_refusal_receipt(
+            action_id=tool_name,
+            refusal_reason=str(exc),
+            oscal_control_ref="SC-4",
+            params=params,
+        )
         raise PermissionError(f"Governance Blocked: {exc}")
 
 
@@ -255,6 +265,154 @@ class ValidateActionRequest(BaseModel):
     params: Dict[str, Any]
 
 
+# ---------------------------------------------------------------------------
+# P4 — KMS-verified governance signature check
+# ---------------------------------------------------------------------------
+
+def _verify_governance_signature(governance_signature: str, payload_plan: dict) -> None:
+    """Verify a KMS-backed governance signature against a plan payload.
+
+    Replaces the previous truthy check (``if governance_signature:``) with a
+    call to the KMS asymmetric verifier.  A missing or invalid signature raises
+    ``SymbolicGovernorViolation`` so the failure cannot be silently ignored.
+
+    Verification algorithm:
+        The ``KMSGovernanceSigner.verify()`` method computes a SHA-256 digest
+        of the canonical JSON plan (``json.dumps(plan, sort_keys=True,
+        separators=(",", ":"))``), then verifies the provided signature against
+        the Cloud KMS public key using EC-DSA (SHA-256 prehashed) or RSA-PSS
+        as appropriate for the configured key type.
+
+    Key reference:
+        ``KMS_GOVERNANCE_KEY`` environment variable — full Cloud KMS key
+        version resource name (e.g.
+        ``projects/my-proj/locations/us-central1/keyRings/cage-governance/
+        cryptoKeys/plan-signer/cryptoKeyVersions/1``).
+
+    Expected digest format:
+        The ``governance_signature`` argument must be a lowercase hex-encoded
+        byte string produced by ``KMSGovernanceSigner.sign(plan_dict)``.
+
+    Args:
+        governance_signature: Hex-encoded KMS signature string.
+        payload_plan:         The governance plan dict that was signed.
+
+    Raises:
+        SymbolicGovernorViolation: If the signature is absent, empty, or fails
+            cryptographic verification.
+    """
+    if not governance_signature:
+        raise SymbolicGovernorViolation(
+            "governance_signature is absent or empty — KMS verification cannot proceed",
+            action="governance_check",
+        )
+
+    try:
+        signer = get_governance_signer()
+        valid = signer.verify(plan=payload_plan, signature_hex=governance_signature)
+    except Exception as exc:
+        raise SymbolicGovernorViolation(
+            f"KMS verifier raised an unexpected error: {exc}",
+            action="governance_check",
+        ) from exc
+
+    if not valid:
+        raise SymbolicGovernorViolation(
+            "KMS signature verification failed — governance plan may be tampered",
+            action="governance_check",
+        )
+
+    logger.debug(
+        "✅ KMS governance signature verified (algorithm=%s)",
+        getattr(get_governance_signer(), "signing_algorithm", "UNKNOWN"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# P6 — Signed OSCAL compliance receipt on GovernanceError (hard refusal)
+# ---------------------------------------------------------------------------
+
+async def _emit_refusal_receipt(
+    action_id: str,
+    refusal_reason: str,
+    oscal_control_ref: str,
+    params: Dict[str, Any],
+) -> None:
+    """Emit a signed OSCAL compliance receipt for a hard governance refusal.
+
+    Called from every ``GovernanceError`` handler in this module.  The receipt
+    is signed via ``KMSGovernanceSigner.sign()`` and published to the evidence
+    stream via ``EvidenceStreamSink.ingest()``.
+
+    If OSCAL emission itself fails, the error is logged at ERROR level but the
+    original ``GovernanceError`` is NOT suppressed — the refusal must still
+    propagate to the caller.
+
+    Receipt fields:
+        - ``action_id``         : tool / action name that was refused
+        - ``refusal_reason``    : human-readable violation description
+        - ``timestamp_utc``     : ISO 8601 UTC timestamp of the refusal
+        - ``oscal_control_ref`` : OSCAL control ID (e.g. ``"SC-4"``)
+        - ``kms_signature``     : hex-encoded KMS signature of the receipt
+        - ``receipt_id``        : UUID v4 for idempotent deduplication
+
+    Args:
+        action_id:         The tool / action name that triggered the refusal.
+        refusal_reason:    The ``str(exc)`` of the ``GovernanceError``.
+        oscal_control_ref: OSCAL control reference (e.g. ``"SC-4"``).
+        params:            Original action parameters (used for context only).
+    """
+    receipt_id = str(uuid.uuid4())
+    timestamp_utc = datetime.now(tz=timezone.utc).isoformat()
+
+    receipt: Dict[str, Any] = {
+        "type": "GOVERNANCE_REFUSAL_RECEIPT",
+        "receipt_id": receipt_id,
+        "action_id": action_id,
+        "refusal_reason": refusal_reason,
+        "timestamp_utc": timestamp_utc,
+        "oscal_control_ref": oscal_control_ref,
+        "kms_signature": "",
+    }
+
+    # Sign the receipt via KMS
+    try:
+        signer = get_governance_signer()
+        # Sign a stable subset of the receipt (exclude kms_signature itself)
+        signable = {k: v for k, v in receipt.items() if k != "kms_signature"}
+        receipt["kms_signature"] = signer.sign(signable)
+    except Exception as sign_exc:
+        logger.error(
+            "❌ [P6] Failed to KMS-sign refusal receipt for action '%s' "
+            "(receipt_id=%s): %s — receipt will be emitted unsigned.",
+            action_id,
+            receipt_id,
+            sign_exc,
+        )
+
+    # Publish to evidence stream
+    try:
+        from src.compliance_bridge.evidence_stream import get_evidence_sink  # noqa: PLC0415
+        sink = get_evidence_sink()
+        await sink.ingest(receipt)
+        logger.error(
+            "🔴 [P6] Signed OSCAL refusal receipt emitted: action='%s' "
+            "control='%s' receipt_id=%s kms_signed=%s",
+            action_id,
+            oscal_control_ref,
+            receipt_id,
+            bool(receipt["kms_signature"]),
+        )
+    except Exception as emit_exc:
+        logger.error(
+            "❌ [P6] Failed to emit OSCAL refusal receipt for action '%s' "
+            "(receipt_id=%s): %s — GovernanceError will still propagate.",
+            action_id,
+            receipt_id,
+            emit_exc,
+        )
+
+
 @governance_app.post("/validate-action")
 async def validate_action_endpoint(
     request: Request,
@@ -311,6 +469,14 @@ async def validate_action_endpoint(
         return JSONResponse(content=result)
 
     except GovernanceError as exc:
+        # P6: emit a signed OSCAL compliance receipt for every hard refusal.
+        # Errors during emission are logged but do NOT suppress the refusal.
+        await _emit_refusal_receipt(
+            action_id=body.action,
+            refusal_reason=str(exc),
+            oscal_control_ref="SC-4",
+            params=body.params,
+        )
         return JSONResponse(
             status_code=403,
             content={
