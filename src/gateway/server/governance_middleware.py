@@ -487,7 +487,7 @@ async def validate_action_endpoint(
             },
         )
     except Exception as exc:
-        logger.error("❌ validate_action internal error: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.error("❌ validate_action internal error", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal governance error")
     finally:
         otel_context.detach(token)

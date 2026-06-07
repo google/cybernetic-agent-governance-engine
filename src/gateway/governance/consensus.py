@@ -258,13 +258,25 @@ class ConsensusEngine:
                 )
                 content = response.choices[0].message.content.strip()
             else:
-                # Fall back to shared GatewayClient
-                content = await self._default_client.generate(
-                    prompt=prompt,
-                    system_instruction=f"You are a strict {role}.",
-                    mode="verifier",
-                    temperature=0.0,
-                )
+                # Fall back to shared GatewayClient — enforce 30-second hard limit
+                # (HIGH-07: GatewayClient has no built-in timeout; default is 600s)
+                try:
+                    content = await asyncio.wait_for(
+                        self._default_client.generate(
+                            prompt=prompt,
+                            system_instruction=f"You are a strict {role}.",
+                            mode="verifier",
+                            temperature=0.0,
+                        ),
+                        timeout=30.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "⏱️ Consensus critic %s (GatewayClient fallback) timed out "
+                        "after 30s — returning ERROR verdict.",
+                        role,
+                    )
+                    return "ERROR"
                 content = content.strip()
 
             if "APPROVE" in content:

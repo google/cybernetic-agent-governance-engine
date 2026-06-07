@@ -20,113 +20,214 @@ from locust import HttpUser, task, between, events
 # --- 1. Custom Metrics Hooks ---
 # We use this to track "business logic" errors (e.g., Guardrail blocks)
 # distinct from server crashes (HTTP 500).
-REQUEST_TYPE = "Agent_Workflow"
-
-@events.init_command_line_parser.add_listener
-def _(parser):
-    parser.add_argument("--agent-endpoint", type=str, env_var="AGENT_ENDPOINT", default="/agent/query", help="The endpoint to hit")
+REQUEST_TYPE = "Governance_Workflow"
 
 # --- 2. Data Generators ---
+# Tool names exercised by /governance/check
+TOOL_NAMES = [
+    "execute_trade",
+    "write_db",
+    "send_notification",
+    "fetch_market_data",
+    "update_portfolio",
+    "place_order",
+    "cancel_order",
+    "transfer_funds",
+]
+
+# Action types exercised by /governance/validate-action
+ACTION_TYPES = [
+    "execute_trade",
+    "write_db",
+    "send_notification",
+    "update_portfolio",
+    "place_order",
+    "cancel_order",
+    "transfer_funds",
+]
+
 TICKERS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "JPM", "V", "NVDA", "BRK.B"]
 RISK_LEVELS = ["low", "moderate", "high", "speculative"]
 TIME_HORIZONS = ["short_term", "medium_term", "long_term"]
 
-class FinancialAdvisorUser(HttpUser):
-    # Agents are slow. Users won't hammer the enter key.
-    # Wait 5-15 seconds between completion and next request.
-    wait_time = between(5, 15)
+# Realistic HMAC test value — empty string is accepted in development/test
+# environments where CAGE_ROUTING_SEAL_SECRET is not set.
+_TEST_SEAL = ""
 
-    @task
-    def execute_advisory_workflow(self):
-        # Generate random inputs to defeat caching
-        ticker = random.choice(TICKERS)
-        risk = random.choice(RISK_LEVELS)
-        horizon = random.choice(TIME_HORIZONS)
 
-        # Note: The prompt structure here should match what the actual agent expects
-        prompt = f"Analyze {ticker} for a {risk} risk portfolio with a {horizon} horizon. Research the stock, create a trading plan, and execute it."
+def _make_trade_params() -> dict:
+    """Generate realistic trade parameters for governance checks."""
+    return {
+        "symbol": random.choice(TICKERS),
+        "quantity": random.randint(1, 500),
+        "price": round(random.uniform(10.0, 1500.0), 2),
+        "confidence": round(random.uniform(0.70, 0.99), 2),
+        "latency_ms": random.randint(10, 180),  # kept below 200 ms threshold
+        "risk_level": random.choice(RISK_LEVELS),
+        "horizon": random.choice(TIME_HORIZONS),
+        "agent_id": f"load_test_agent_{random.randint(1, 50)}",
+    }
+
+
+def _make_db_params() -> dict:
+    return {
+        "query": f"SELECT * FROM portfolio WHERE user_id = {random.randint(1, 9999)}",
+        "approval_token": f"tok_{random.randint(100000, 999999)}",
+        "agent_id": f"load_test_agent_{random.randint(1, 50)}",
+    }
+
+
+def _make_notification_params() -> dict:
+    return {
+        "recipient": f"user_{random.randint(1, 1000)}@example.com",
+        "message": f"Portfolio update for {random.choice(TICKERS)}",
+        "channel": random.choice(["email", "sms", "push"]),
+        "agent_id": f"load_test_agent_{random.randint(1, 50)}",
+    }
+
+
+def _random_params(tool_name: str) -> dict:
+    """Return realistic params keyed to the given tool/action name."""
+    if "trade" in tool_name or "order" in tool_name or "transfer" in tool_name:
+        return _make_trade_params()
+    if "db" in tool_name or "portfolio" in tool_name:
+        return _make_db_params()
+    return _make_notification_params()
+
+
+class GovernanceUser(HttpUser):
+    """Simulates upstream orchestrators calling the governance enforcement surface.
+
+    Two task weights reflect realistic traffic split:
+      - governance_check (weight=3): dry-run pre-flight checks before tool execution
+      - validate_action  (weight=2): full 7-tier pipeline validation at execution time
+      - health_check     (weight=1): basic liveness probe
+    """
+
+    # Governance calls are fast (sub-second) but orchestrators batch them;
+    # wait 1–5 seconds between requests to model realistic concurrency.
+    wait_time = between(1, 5)
+
+    # ------------------------------------------------------------------ #
+    # Task: POST /governance/check                                         #
+    # Endpoint: governance_middleware.governance_check()                   #
+    # Body: {"tool_name": str, "params": dict}                            #
+    # Header: X-CAGE-Routing-Seal (HMAC-SHA256 of body bytes)             #
+    # ------------------------------------------------------------------ #
+    @task(3)
+    def governance_check(self):
+        """Dry-run governance check — mirrors what the GFA does before tool execution."""
+        tool_name = random.choice(TOOL_NAMES)
+        params = _random_params(tool_name)
 
         payload = {
-            "prompt": prompt,
-            "user_id": f"load_test_user_{random.randint(1, 1000)}",
-            "thread_id": f"thread_{random.randint(1, 10000)}"
+            "tool_name": tool_name,
+            "params": params,
         }
 
-        # We define a custom name so all random tickers group under one entry in the UI
-        request_name = "POST /agent/query"
-
-        # Use the configured endpoint or default
-        endpoint = self.environment.parsed_options.agent_endpoint if self.environment.parsed_options else "/agent/query"
-
-        if endpoint == "/health":
-            with self.client.get(
-                endpoint,
-                name="GET /health",
-                catch_response=True,
-                timeout=10
-            ) as response:
-                if response.status_code == 200:
-                    response.success()
-                else:
-                    response.failure(f"HTTP Error: {response.status_code}")
-            return
-
         with self.client.post(
-            endpoint,
+            "/governance/check",
             json=payload,
-            name=request_name,
+            headers={"X-CAGE-Routing-Seal": _TEST_SEAL},
+            name="POST /governance/check",
             catch_response=True,
-            timeout=120 # Important: LLM agents can take 30s-60s to finish a full chain
+            timeout=30,
         ) as response:
-
-            # --- 3. Validation Logic ---
             if response.status_code == 200:
                 try:
                     data = response.json()
-
-                    # Check 1: Did the Guardrail block it?
-                    resp_text = data.get("response", "")
-
-                    # Heuristics for Governance Blocks
-                    is_blocked = False
-                    block_reasons = ["cannot answer", "policy", "unsafe", "violation", "blocked", "refuse"]
-                    if any(r in resp_text.lower() for r in block_reasons):
-                        is_blocked = True
-
-                    if is_blocked:
-                        # Track Rejection Rate explicitly
-                        events.request.fire(
-                            request_type="Verification_Failure",
-                            name="Governance_Block",
-                            response_time=response.elapsed.total_seconds() * 1000,
-                            response_length=len(resp_text),
-                            exception=None,
-                        )
-                        # We treat it as a "success" HTTP request but track the business event
+                    status = data.get("status", "")
+                    if status in ("APPROVED", "REJECTED"):
+                        # Both are valid governance outcomes — not HTTP errors
+                        if status == "REJECTED":
+                            events.request.fire(
+                                request_type="Governance_Block",
+                                name="check_rejected",
+                                response_time=response.elapsed.total_seconds() * 1000,
+                                response_length=len(response.content),
+                                exception=None,
+                            )
                         response.success()
-                        return
-
-                    # Check 2: Retry/Rejection Indicator
-                    # If the system had to retry (e.g. "Plan rejected, retrying..."), we count that.
-                    # This depends on if the final response exposes the retry count.
-                    # Assuming metadata might contain it:
-                    trace_id = data.get("trace_id")
-                    if trace_id:
-                         # We could log this trace ID for correlation
-                         pass
-
-                    response.success()
-
+                    else:
+                        response.failure(f"Unexpected status field: {status!r}")
                 except json.JSONDecodeError:
                     response.failure("Response was not valid JSON")
-
-            elif response.status_code == 504:
-                response.failure("Gateway Timeout - Agent took too long")
-
+            elif response.status_code == 400:
+                response.failure(f"Bad request: {response.text[:200]}")
+            elif response.status_code == 403:
+                # Seal rejected — expected in strict enforcement mode
+                response.success()
             else:
                 response.failure(f"HTTP Error: {response.status_code}")
 
-    # Optional: Health check task to ensure basic connectivity isn't the bottleneck
-    @task(weight=1)
+    # ------------------------------------------------------------------ #
+    # Task: POST /governance/validate-action                               #
+    # Endpoint: governance_middleware.validate_action_endpoint()           #
+    # Body: {"action": str, "params": dict}                               #
+    # ------------------------------------------------------------------ #
+    @task(2)
+    def validate_action(self):
+        """Full 7-tier governance pipeline — mirrors what the GFA calls at execution time."""
+        action = random.choice(ACTION_TYPES)
+        params = _random_params(action)
+
+        payload = {
+            "action": action,
+            "params": params,
+        }
+
+        with self.client.post(
+            "/governance/validate-action",
+            json=payload,
+            headers={"X-Governance-Seal": _TEST_SEAL},
+            name="POST /governance/validate-action",
+            catch_response=True,
+            timeout=30,
+        ) as response:
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    verdict = data.get("verdict", "")
+                    if verdict in ("APPROVED", "DENIED"):
+                        if verdict == "DENIED":
+                            events.request.fire(
+                                request_type="Governance_Block",
+                                name="validate_action_denied",
+                                response_time=response.elapsed.total_seconds() * 1000,
+                                response_length=len(response.content),
+                                exception=None,
+                            )
+                        response.success()
+                    else:
+                        response.failure(f"Unexpected verdict field: {verdict!r}")
+                except json.JSONDecodeError:
+                    response.failure("Response was not valid JSON")
+            elif response.status_code == 403:
+                # GovernanceError hard-denial — valid business outcome
+                try:
+                    data = response.json()
+                    if data.get("verdict") == "DENIED":
+                        events.request.fire(
+                            request_type="Governance_Block",
+                            name="validate_action_hard_denied",
+                            response_time=response.elapsed.total_seconds() * 1000,
+                            response_length=len(response.content),
+                            exception=None,
+                        )
+                        response.success()
+                        return
+                except json.JSONDecodeError:
+                    pass
+                response.failure(f"HTTP 403 (non-governance): {response.text[:200]}")
+            elif response.status_code == 422:
+                response.failure(f"Validation error (schema mismatch): {response.text[:200]}")
+            else:
+                response.failure(f"HTTP Error: {response.status_code}")
+
+    # ------------------------------------------------------------------ #
+    # Task: GET /health                                                    #
+    # ------------------------------------------------------------------ #
+    @task(1)
     def health_check(self):
-        self.client.get("/health", name="Health Check")
+        """Basic liveness probe — ensures connectivity is not the bottleneck."""
+        self.client.get("/health", name="GET /health")

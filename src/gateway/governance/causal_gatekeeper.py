@@ -33,11 +33,18 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from typing import Optional
 
 import numpy as np
 import pandas as pd
-from dowhy import CausalModel
 from opentelemetry import trace
+
+try:
+    from dowhy import CausalModel as _CausalModel
+    _DOWHY_AVAILABLE = True
+except ImportError:
+    _CausalModel = None  # type: ignore[assignment,misc]
+    _DOWHY_AVAILABLE = False
 
 from src.gateway.governance.constants import GovernanceControl, ControlRegistry
 
@@ -239,12 +246,67 @@ async def _causal_cache_set(cache_key: str, result: bool, reason: str) -> None:
         logger.warning("Causal cache SET failed (key=%s): %s — proceeding without cache.", cache_key, exc)
 
 
-def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) -> bool:
+# ---------------------------------------------------------------------------
+# Synchronous cache helpers — safe to call from thread-pool workers
+# (i.e. functions dispatched via asyncio.to_thread).  These use the
+# module-level sync_redis_client (redis.Redis) so they never touch the
+# event loop and never raise RuntimeError in Python 3.10+.
+# The async _causal_cache_get / _causal_cache_set above are preserved for
+# any callers that already run inside an async context.
+# ---------------------------------------------------------------------------
+
+def _causal_cache_get_sync(cache_key: str) -> dict | None:
+    """Return a cached causal result dict, or None if absent/unavailable.
+
+    Thread-safe: uses the synchronous ``sync_redis_client`` (blocking I/O).
+    """
+    try:
+        from src.gateway.infrastructure.redis_client import sync_redis_client  # noqa: PLC0415
+        if sync_redis_client is None:
+            return None
+        raw = sync_redis_client.get(cache_key)
+        if raw is None:
+            return None
+        return json.loads(raw)
+    except Exception as exc:
+        logger.warning(
+            "Causal cache GET (sync) failed (key=%s): %s — proceeding without cache.",
+            cache_key, exc,
+        )
+        return None
+
+
+def _causal_cache_set_sync(cache_key: str, result: bool, reason: str) -> None:
+    """Write a causal result to Redis with CAUSAL_CACHE_TTL_SECONDS TTL.
+
+    Thread-safe: uses the synchronous ``sync_redis_client`` (blocking I/O).
+    """
+    if CAUSAL_CACHE_TTL_SECONDS <= 0:
+        return
+    try:
+        from src.gateway.infrastructure.redis_client import sync_redis_client  # noqa: PLC0415
+        if sync_redis_client is None:
+            return
+        payload = json.dumps({"result": result, "reason": reason})
+        sync_redis_client.setex(cache_key, CAUSAL_CACHE_TTL_SECONDS, payload)
+    except Exception as exc:
+        logger.warning(
+            "Causal cache SET (sync) failed (key=%s): %s — proceeding without cache.",
+            cache_key, exc,
+        )
+
+
+def causal_safety_check(params: dict, current_telemetry: Optional[pd.DataFrame] = None) -> bool:
     """
     Acts as the 'Lock' on the Cage using DoWhy refutation for execute_trade.
 
     Returns True if the action is causally safe, False if the world-model
     is untrustworthy or the predicted risk exceeds the safety boundary.
+
+    When ``dowhy`` is not installed, the function fails closed (returns False)
+    for any trade with amount > 0, logging a warning.  This preserves the
+    fail-closed safety contract while allowing the module to be imported in
+    environments where ``dowhy`` is not available (e.g. unit-test runners).
 
     Dual-tag lifecycle:
       Phase 1 (CTRL_MRM_004 / SR 26-2 MRM) — causal model setup, effect
@@ -270,14 +332,20 @@ def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) ->
       (default 300s).  Stale or timestamp-less telemetry causes a fail-closed
       return of False.
     """
-    import asyncio  # noqa: PLC0415 — imported here to avoid top-level asyncio dep
-
     if current_telemetry is None:
         current_telemetry = generate_mock_telemetry()
 
     amount = params.get("amount", 0.0)
     if amount <= 0:
         return True  # Not a meaningful trade to causally evaluate
+
+    # Fail closed when dowhy is not installed — the causal tier is unavailable.
+    if not _DOWHY_AVAILABLE:
+        logger.warning(
+            "causal_safety_check: 'dowhy' is not installed — failing closed "
+            "(causal tier unavailable). Install dowhy to enable causal inference."
+        )
+        return False
 
     # ------------------------------------------------------------------
     # Cache key — keyed on (action_type, market_regime) from params
@@ -325,15 +393,7 @@ def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) ->
         # and Phase 2 entirely, reducing DoWhy overhead on repeated calls.
         with tracer.start_as_current_span("causal_gatekeeper.cache_lookup") as cache_span:
             cache_span.set_attribute("causal.cache_key", cache_key)
-            try:
-                loop = asyncio.get_event_loop()
-                cached_payload = loop.run_until_complete(_causal_cache_get(cache_key))
-            except RuntimeError:
-                # No running event loop (e.g. sync test context) — skip cache
-                cached_payload = None
-            except Exception as exc:
-                logger.warning("Causal cache lookup error: %s — proceeding without cache.", exc)
-                cached_payload = None
+            cached_payload = _causal_cache_get_sync(cache_key)
 
             if cached_payload is not None:
                 cached_result = bool(cached_payload.get("result", False))
@@ -366,7 +426,7 @@ def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) ->
             mrm_span.set_attribute("governance.deployment_region", active_region)
             mrm_span.set_attribute("causal.graph",                causal_graph.strip())
 
-            model = CausalModel(
+            model = _CausalModel(
                 data=current_telemetry,
                 treatment='trade_amount',
                 outcome='risk_score',
@@ -406,13 +466,7 @@ def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) ->
                 tel_span.set_attribute("causal.lock_reason", "stale_telemetry")
                 # Cache the fail-closed result so repeated calls don't re-check
                 # stale data unnecessarily (short TTL still applies).
-                try:
-                    loop = asyncio.get_event_loop()
-                    loop.run_until_complete(
-                        _causal_cache_set(cache_key, False, "stale_telemetry")
-                    )
-                except Exception:
-                    pass
+                _causal_cache_set_sync(cache_key, False, "stale_telemetry")
                 return False
 
             refuter = model.refute_estimate(
@@ -440,13 +494,7 @@ def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) ->
                     GovernanceControl.TELEMETRY_LIVE_VALIDATION.value, p_value,
                 )
                 tel_span.set_attribute("causal.lock_reason", "p_value_threshold")
-                try:
-                    loop = asyncio.get_event_loop()
-                    loop.run_until_complete(
-                        _causal_cache_set(cache_key, False, "p_value_threshold")
-                    )
-                except Exception:
-                    pass
+                _causal_cache_set_sync(cache_key, False, "p_value_threshold")
                 return False
 
             if abs(new_effect) > 0.2:
@@ -455,13 +503,7 @@ def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) ->
                     GovernanceControl.TELEMETRY_LIVE_VALIDATION.value, new_effect,
                 )
                 tel_span.set_attribute("causal.lock_reason", "placebo_effect_magnitude")
-                try:
-                    loop = asyncio.get_event_loop()
-                    loop.run_until_complete(
-                        _causal_cache_set(cache_key, False, "placebo_effect_magnitude")
-                    )
-                except Exception:
-                    pass
+                _causal_cache_set_sync(cache_key, False, "placebo_effect_magnitude")
                 return False
 
         # ------------------------------------------------------------------
@@ -475,25 +517,13 @@ def causal_safety_check(params: dict, current_telemetry: pd.DataFrame = None) ->
                 "[%s] CAUSAL LOCK: Proposed action predicted to exceed safety boundary.",
                 GovernanceControl.TRADITIONAL_MRM_VALIDATION.value,
             )
-            try:
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(
-                    _causal_cache_set(cache_key, False, "risk_boundary_exceeded")
-                )
-            except Exception:
-                pass
+            _causal_cache_set_sync(cache_key, False, "risk_boundary_exceeded")
             return False
 
         # ------------------------------------------------------------------
         # All checks passed — cache the positive result and return True
         # ------------------------------------------------------------------
-        try:
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(
-                _causal_cache_set(cache_key, True, "all_checks_passed")
-            )
-        except Exception:
-            pass
+        _causal_cache_set_sync(cache_key, True, "all_checks_passed")
         return True
 
     except Exception as e:

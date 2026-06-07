@@ -20,15 +20,20 @@ This is the canonical Redis client for all gateway-internal modules
 convenience helpers used by ControlBarrierFunction.
 
 Environment variables:
-    REDIS_HOST  — default "localhost"
-    REDIS_PORT  — default 6379
-    REDIS_DB    — default 0
+    REDIS_HOST     — default "localhost"
+    REDIS_PORT     — default 6379
+    REDIS_DB       — default 0
     REDIS_PASSWORD — optional
+    REDIS_TLS      — set to "true" to use rediss:// (TLS). Also auto-enabled
+                     when REDIS_URL starts with "rediss://". In production
+                     (GKE/Cloud Memorystore) always set REDIS_TLS=true.
+                     ssl_cert_reqs=None is used to allow self-signed certs in dev.
 """
 
 import json
 import logging
 import os
+import ssl
 from typing import Any, List, Optional
 
 logger = logging.getLogger("Gateway.Infrastructure.Redis")
@@ -47,6 +52,7 @@ class TransactionAbortedError(Exception):
 
 
 try:
+    import redis
     import redis.asyncio as aioredis
     from urllib.parse import urlparse as _urlparse
 
@@ -73,6 +79,14 @@ try:
     else:
         _REDIS_PORT = _url_port
 
+    # HIGH-04: TLS detection — enabled when REDIS_TLS=true OR REDIS_URL uses rediss://
+    _REDIS_TLS: bool = (
+        os.environ.get("REDIS_TLS", "").lower() in ("true", "1", "yes")
+        or _REDIS_URL.startswith("rediss://")
+    )
+    if _REDIS_TLS:
+        logger.info("🔒 Gateway Redis TLS enabled (rediss://)")
+
     class _AsyncRedisClient:
         """Thin async Redis wrapper matching the interface expected by safety.py."""
 
@@ -89,6 +103,8 @@ try:
                     decode_responses=True,
                     socket_connect_timeout=3.0,
                     socket_timeout=3.0,
+                    ssl=_REDIS_TLS,  # rediss:// TLS (HIGH-04)
+                    ssl_cert_reqs=ssl.CERT_NONE,  # allow self-signed certs in dev/GKE
                 )
             return self._client
 
@@ -202,9 +218,54 @@ try:
         "✅ Gateway Redis client initialised (%s:%s db=%s)", _REDIS_HOST, _REDIS_PORT, _REDIS_DB
     )
 
+    class _SyncRedisClient:
+        """Thin synchronous Redis wrapper for use in thread-pool contexts.
+
+        This client uses the standard (blocking) ``redis.Redis`` driver so it
+        can be called safely from worker threads (e.g. functions dispatched via
+        ``asyncio.to_thread``).  It shares the same connection parameters as
+        the async ``_AsyncRedisClient`` above.
+        """
+
+        def __init__(self) -> None:
+            self._client: Optional[redis.Redis] = None  # type: ignore[type-arg]
+
+        def _get(self) -> redis.Redis:  # type: ignore[type-arg]
+            if self._client is None:
+                self._client = redis.Redis(
+                    host=_REDIS_HOST,
+                    port=_REDIS_PORT,
+                    db=_REDIS_DB,
+                    password=_REDIS_PASSWORD,
+                    decode_responses=True,
+                    socket_connect_timeout=3.0,
+                    socket_timeout=3.0,
+                    ssl=_REDIS_TLS,  # rediss:// TLS (HIGH-04)
+                    ssl_cert_reqs=ssl.CERT_NONE,  # type: ignore[arg-type]  # allow self-signed certs in dev/GKE
+                )
+            return self._client
+
+        def get(self, key: str) -> Optional[str]:
+            return self._get().get(key)  # type: ignore[return-value]
+
+        def setex(self, key: str, ttl_seconds: int, value: str) -> None:
+            """Set *key* to *value* with an expiry of *ttl_seconds* seconds."""
+            self._get().setex(key, ttl_seconds, value)
+
+        def close(self) -> None:
+            if self._client is not None:
+                self._client.close()
+                self._client = None
+
+    sync_redis_client = _SyncRedisClient()
+    logger.info(
+        "✅ Gateway sync Redis client initialised (%s:%s db=%s)", _REDIS_HOST, _REDIS_PORT, _REDIS_DB
+    )
+
 except ImportError:
     logger.warning(
         "⚠️ redis.asyncio not installed — gateway Redis client unavailable. "
         "Install with: pip install redis[asyncio]"
     )
     redis_client = None  # type: ignore[assignment]
+    sync_redis_client = None  # type: ignore[assignment]
