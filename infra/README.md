@@ -181,6 +181,11 @@ terraform apply
 - **[`langfuse_stack`](modules/langfuse_stack/)** - Observability platform
 - **[`opa_policy`](modules/opa_policy/)** - Policy engine
 - **[`compliance_bridge`](modules/compliance_bridge/)** - ISO 42001 auditing
+- **[`agentsight_ui`](modules/agentsight_ui/)** - AgentSight UI frontend
+- **[`app_secrets`](modules/app_secrets/)** - Kubernetes Secrets management
+- **[`gateway`](modules/gateway/)** - Inference Gateway
+- **[`governed_advisor`](modules/governed_advisor/)** - Governed Financial Advisor backend
+- **[`slm_inference`](modules/slm_inference/)** - SLM inference (deprecated, kept for reference)
 
 Each module includes:
 - ✅ `README.md` - Documentation

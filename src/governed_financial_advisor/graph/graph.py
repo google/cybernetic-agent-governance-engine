@@ -16,6 +16,34 @@
 Graph Definition: CAGE Architecture — Phase 3 (Explicit Lifecycle with Signature Gate)
 Planner -> Evaluator -> [Signature Gate] -> Executor -> Auditor
 
+Graph Topology
+--------------
+The governed financial advisor graph is a directed state machine with the
+following node sequence:
+
+    START
+      └─► nemo_guardrail        (mandatory input rail — ADR 2026-03-09)
+            ├─► END             (blocked path — no agent output to screen)
+            └─► thinker_node
+                  └─► doer_node
+                        ├─► data_analyst      ─► nemo_output_rail ─► END
+                        ├─► execution_analyst ─► evaluator
+                        │     ├─► safety_check ─► governed_trader ─► explainer
+                        │     │                └─► explainer (BLOCKED/ESCALATED)
+                        │     └─► execution_analyst (loop, max 3)
+                        │     └─► explainer (loop cap)
+                        └─► nemo_output_rail (FINISH) ─► END
+
+Side-Effect Surface
+-------------------
+All nodes that perform external I/O (database writes, API calls, message
+queue publishes) are annotated with ``@side_effect_node`` from
+:mod:`src.governed_financial_advisor.graph.annotations`.
+
+To inspect the complete side-effect surface without running the system,
+call :func:`get_side_effect_topology`.  This is the canonical proof
+artifact for the July compliance review.
+
 LangGraph 1.1 Notes:
   - StateGraph / TypedDict / add_messages API is fully backward-compatible.
   - Consumers may opt in to typed streaming via ``version="v2"`` on
@@ -27,6 +55,7 @@ import os
 
 from langgraph.graph import END, StateGraph
 
+from .annotations import SIDE_EFFECT_REGISTRY
 from .checkpointer import get_checkpointer
 from .nodes.agent_nodes import (
     data_analyst_node,
@@ -39,6 +68,37 @@ from .nodes.guardrail_node import nemo_guardrail_node, nemo_output_rail_node
 from .nodes.safety_node import safety_check_node
 from .nodes.supervisor_node import thinker_node, doer_node
 from .state import AgentState
+
+
+def get_side_effect_topology() -> dict[str, dict]:
+    """Return the complete side-effect topology of the governed financial advisor graph.
+
+    This is the canonical proof artifact for compliance review.  It maps every
+    annotated node name to its external mutation profile, allowing auditors to
+    inspect the complete I/O surface without running the system.
+
+    All nodes that perform external I/O are annotated with
+    ``@side_effect_node`` from
+    :mod:`src.governed_financial_advisor.graph.annotations`.  This function
+    returns a serialisation-safe snapshot of ``SIDE_EFFECT_REGISTRY`` with the
+    ``fn`` key removed so the result can be passed directly to ``json.dumps``.
+
+    Returns:
+        dict mapping node qualified name → ``{"kind": str, "external_system": str}``
+
+    Example::
+
+        topology = get_side_effect_topology()
+        # {
+        #   "execute_trade": {"kind": "api_call", "external_system": "gateway_mcp"},
+        #   "tool_executor_node": {"kind": "api_call", "external_system": "gateway_mcp"},
+        #   ...
+        # }
+    """
+    return {
+        name: {"kind": entry["kind"], "external_system": entry["external_system"]}
+        for name, entry in SIDE_EFFECT_REGISTRY.items()
+    }
 
 
 def create_graph(redis_url=None):

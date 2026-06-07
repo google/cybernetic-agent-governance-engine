@@ -146,6 +146,15 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
 
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
           # Reduced resource footprint vs. Node.js (Python FastAPI + uvicorn is lighter)
           resources:
             requests:

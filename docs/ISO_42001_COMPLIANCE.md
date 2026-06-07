@@ -32,7 +32,7 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
 
 - **8.1 Operational planning and control:**
   - **Implementation:** The **TypeScript Governance Gateway** acts as the operational control point, enforcing policies on all AI actions via three-tier semantic shielding.
-  - **Code:** [`src/gateway/src/governance/middleware/stpaGovernanceMiddleware.ts`](../src/gateway/src/governance/middleware/stpaGovernanceMiddleware.ts)
+  - **Code:** [`src/gateway/server/governance_middleware.py`](../src/gateway/server/governance_middleware.py)
 - **8.2 AI Risk Assessment:**
   - **Implementation:** The **Symbolic Governor** performs real-time risk assessment (STPA, CBF) on every tool call. OPA Rego policies enforce fiscal limits and RBAC.
   - **Code:** [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](../src/governed_financial_advisor/governance/policy/trade_governance.rego)
@@ -53,7 +53,7 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
 - **10.1 Nonconformity and corrective action:**
   - **Implementation (Immediate):** The **Interrupt Mechanism** (Redis-based) is an automated corrective action that stops nonconforming behavior immediately via the `trigger_safety_intervention` tool.
   - **Implementation (Audit-Driven):** The **complianceAuditWorkflow** (Mastra) ingests OSCAL findings back into Langfuse and fires Slack/PagerDuty alerts for critical control failures (A.9.2 Data Privacy, SC-4 Fiscal Limits).
-  - **Code:** [`src/langfuse-bridge/src/workflows/complianceAuditWorkflow.ts`](../src/langfuse-bridge/src/workflows/complianceAuditWorkflow.ts)
+  - **Code:** [`src/compliance_bridge/audit_workflow.py`](../src/compliance_bridge/audit_workflow.py)
 
 ---
 
@@ -65,7 +65,7 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
 | **A.5.3** | Logging and Monitoring     | OTel spans → Langfuse (all tiers)      | [`lula-validation-a53.yaml`](../compliance/lula/lula-validation-a53.yaml) | safety_rate ≥ 98%                   | No                       |
 | **A.9.2** | Data Transfer to Suppliers | Presidio PII masking (NeMo input rail) | [`lula-validation-a92.yaml`](../compliance/lula/lula-validation-a92.yaml) | safety_rate = 100% (zero tolerance) | **Yes** — CRITICAL_CONTROL |
 | **SC-4**  | Fiscal Limits and RBAC     | `trade_governance.rego` (OPA)          | [`lula-validation-sc4.yaml`](../compliance/lula/lula-validation-sc4.yaml) | k8s label present                   | **Yes** — CRITICAL_CONTROL |
-| **A.8.4** | AI System Operation Controls | HITL + Saga WAL; DEFER state machine | [`lula-validation-a84.yaml`](../compliance/lula/lula-validation-a84.yaml) | STPA UCA checks pass                | **Yes** — CRITICAL_CONTROL |
+| **A.8.4** | AI System Operation Controls | HITL + Saga WAL; DEFER state machine | N/A (no manifest)                                                         | STPA UCA checks pass                | **Yes** — CRITICAL_CONTROL |
 
 > **Note on `ERROR` state (CAGE v2.2.0):** A scanner/collector failure on any control produces an `ERROR` finding — not `NOT_APPLICABLE`. For the three `CRITICAL_CONTROL` entries above (A.9.2, SC-4, A.8.4), an `ERROR` finding triggers the same Slack/PagerDuty alert as an explicit `FAIL`. This ensures evidence gaps on the most sensitive controls are never silently hidden. See [`docs/technical-report/06-COMPLIANCE-STANDARDS.md §5.5`](technical-report/06-COMPLIANCE-STANDARDS.md) for the full four-state semantics table.
 

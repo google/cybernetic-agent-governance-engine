@@ -71,8 +71,6 @@ spec:
               value: "redis://:$(REDIS_PASSWORD)@redis.governance-stack.svc.cluster.local:6379"
             - name: VLLM_BASE_URL
               value: "http://vllm-service.governance-stack.svc.cluster.local:8000/v1"
-            - name: VLLM_GATEWAY_URL
-              value: ""
             - name: VLLM_REASONING_API_BASE
               value: "http://vllm-reasoning.governance-stack.svc.cluster.local:8000/v1"
             - name: VLLM_FAST_API_BASE

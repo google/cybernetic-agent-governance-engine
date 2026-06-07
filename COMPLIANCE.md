@@ -60,13 +60,13 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 ### D. Singapore MAS FEAT Principles Baseline (APAC_MAS Profile)
 *   **Status:** Technical Controls Mapped & Enforced.
 *   **Mechanism:**
-    *   **Fairness, Ethics, Accountability, Transparency (FEAT):** Restricts the agent's parameters to MAS FEAT boundaries, dynamically loading `config/thresholds/APAC_MAS_BASELINE.json` to enforce strict operational limits (e.g., SLA latency floor: `100ms`, Consensus: `$5,000`). Ensures full algorithmic accountability and trace transparency in the compliance project trace database.
+    *   **Fairness, Ethics, Accountability, Transparency (FEAT):** Restricts the agent's parameters to MAS FEAT boundaries, dynamically loading `config/thresholds/APAC_MAS_BASELINE.json` to enforce strict operational limits (e.g., SLA latency floor: `175ms`, Consensus: `$8,500`). Ensures full algorithmic accountability and trace transparency in the compliance project trace database.
 
 ### E. NIST RMF & FedRAMP HIGH
 *   **Status:** **PARTIAL** (Technical Hardening Complete, Administrative ATO Pending).
 *   **Mechanism:**
     *   **Zero-Trust Network Hardening:** Deploys Linkerd SPIFFE/SVID mTLS for cryptographic workload validation (**POAM-007 / IA-3**, closed 2026-05-17) and Cilium Layer 7 network policies for default-deny egress lockdown (**POAM-011 / SC-8**, Open). Both controls are technically active in the `governance-stack` Kubernetes namespace; POAM-011 (SC-8) and POAM-012 (SC-12) remain Open pending formal assessment closure.
-    *   **Programmatic Evidence:** The automated script `oscal_ssp_exporter.py` automatically compiles these exact control configurations and implementation narratives into the authoritative 1,151-line Open Security Controls Assessment Language (OSCAL) document on every build pipeline run. OSCAL artifacts are persisted to GCS using the native GCS SDK (boto3 S3-compat fallback) at schema version **OSCAL v1.0.4**.
+    *   **Programmatic Evidence:** The automated script `oscal_ssp_exporter.py` automatically compiles these exact control configurations and implementation narratives into the authoritative 1,330-line Open Security Controls Assessment Language (OSCAL) document on every build pipeline run. OSCAL artifacts are persisted to GCS using the native GCS SDK (boto3 S3-compat fallback) at schema version **OSCAL v1.0.4**.
     *   **KMS Batch Signing for Audit Evidence:** All OSCAL findings and AARM conformance reports are asymmetrically signed via Google Cloud KMS HSM (`src/gateway/governance/kms_signer.py`) before GCS persistence. The private key never leaves the HSM; Cloud Audit Logs provide external, immutable attestation of every signing operation. This constitutes the audit evidence chain for FedRAMP HIGH AU-9 and AU-10.
     *   **⚠️ Gaps to Authorization:** The CAGE software runtime does not inherently possess an official **Authority to Operate (ATO)**. To close this loop, the parent organization must deploy independent assessors to complete RMF Step 5 (Assess) and Step 6 (Authorize), as well as remediate the remaining 11 open infrastructure POA&M infrastructure tickets.
 *   **Companion Documentation:** For infrastructure configurations, Linkerd policy files, and security posture tracking, see [docs/SECURITY_STATUS.md](docs/SECURITY_STATUS.md) and [docs/POAM.md](docs/POAM.md).
@@ -77,7 +77,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     *   `lula-validation-a52.yaml` (ISO 42001 A.5.2) — Social impact assessment ConfigMap
     *   `lula-validation-a53.yaml` (ISO 42001 A.5.3) — Documentation/logging config
     *   `lula-validation-a92.yaml` (ISO 42001 A.9.2) — PII detection Deployment
-    *   `lula-validation-sc4.yaml` (NIST SP 800-53 SC-4) — Information in shared resources
+    *   `lula-validation-sc4.yaml` (NIST SP 800-53 SC-4) — Validates OPA ConfigMap label presence in `governance-stack` namespace (SC-4 implementation check)
     *   `lula-validation-au12.yaml` (NIST SP 800-53 AU-12) — Langfuse OTLP ingestion availability (direct; standalone OTel Collector deprecated 2026-05-31)
     *   `lula-validation-ac2.yaml` (NIST SP 800-53 AC-2) — Account management / service account lifecycle
     *   `lula-validation-ac3.yaml` (NIST SP 800-53 AC-3) — Access enforcement / OPA RBAC
@@ -92,15 +92,25 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 
 ### G. Continuous Audit Event Loop & Compliance Bridge API (v2.0.0)
 *   **Status:** Implemented & Active.
-*   **Mechanism:** In CAGE v2.0.0, the Compliance Bridge service (`src/compliance_bridge/main.py`) acts as the central hub for automated compliance scoring and threat ledger reporting. It exposes four key REST endpoints:
-    *   `GET /v1/aarm/conformance-report` — Generates a live 11-vector CSA AARM conformance report with optional vLLM narrative enrichment (Semaphore-controlled rate limit of 3 concurrent calls).
-    *   `GET /v1/defer/pending` — Lists all pending context-starved execution contexts parked in Redis `db=1` (AARM-V7).
-    *   `POST /v1/defer/{id}/inject` — Resolves deferred tokens by injecting supplementary context data.
-    *   `POST /v1/defer/{id}/escalate` — Escalates deferred tokens to `MANUAL_REVIEW` after TTL expiry (4 hours).
+*   **Mechanism:** In CAGE v2.0.0, the Compliance Bridge service (`src/compliance_bridge/main.py`) acts as the central hub for automated compliance scoring and threat ledger reporting. It exposes fourteen REST endpoints:
+    1.  `GET /health` — Kubernetes liveness probe.
+    2.  `GET /v1/controls` — Discovery endpoint; returns the full registry of supported ISO 42001 / NIST controls.
+    3.  `GET /v1/metrics/summary` — Aggregate compliance posture across all supported controls in a single response.
+    4.  `GET /v1/oscal/assessment-results` — Exports current compliance posture as an OSCAL 1.1.2 Assessment Results document.
+    5.  `GET /v1/audit/status/{audit_id}` — Polls the status of a previously submitted audit.
+    6.  `GET /v1/metrics/{control_id}` — Returns compliance metrics for a specific control ID (queried by Lula).
+    7.  `POST /v1/audit/ingest` — Accepts OSCAL Assessment Result YAML from the Lula CronJob, parses, persists to GCS, and ingests into Langfuse.
+    8.  `GET /v1/aarm/conformance-report` — Generates a live 11-vector CSA AARM conformance report with optional vLLM narrative enrichment (Semaphore-controlled rate limit of 3 concurrent calls).
+    9.  `GET /v1/defer/pending` — Lists all pending context-starved execution contexts parked in Redis `db=1` (AARM-V7).
+    10. `POST /v1/defer/{defer_id}/inject` — Resolves deferred tokens by injecting supplementary context data.
+    11. `POST /v1/defer/{defer_id}/escalate` — Escalates deferred tokens to `MANUAL_REVIEW` after TTL expiry (4 hours).
+    12. `GET /v1/prompts/{name}` — Proxy endpoint; fetches Langfuse prompts by name via HTTP.
+    13. `GET /v1/telemetry/history` — Fetches paginated historical compliance telemetry from the Langfuse compliance project.
+    14. `GET /v1/events/stream` — SSE governance event stream consumed by the AgentSight UI KernelDashboard.
 
-### H. Dependency Security — `outlines` CVE-2025-69872 Remediation
+### H. Dependency Security — `diskcache` CVE-2025-69872 Remediation
 *   **Status:** Remediated in v2.0.0.
-*   **Mechanism:** The `outlines` package was removed from all CAGE service dependencies following the disclosure of **CVE-2025-69872** (critical severity). Structured-output generation previously provided by `outlines` is now handled via vLLM's native JSON-mode API. No CAGE service imports `outlines` at runtime. The removal is enforced by `pip-audit` and Trivy scans in `.github/workflows/security-scan.yml` (POAM-010 closed). Regulated-environment deployers should verify their own dependency trees do not re-introduce `outlines` via transitive dependencies.
+*   **Mechanism:** **CVE-2025-69872 in `diskcache`** (transitive dependency via `outlines`; `outlines` removed to eliminate the dependency) — a pickle deserialization RCE vulnerability in the `diskcache` package, which was a transitive dependency pulled in by `outlines`. The `outlines` package was removed from all CAGE service dependencies to eliminate `diskcache` from the dependency tree. Structured-output generation previously provided by `outlines` is now handled via vLLM's native JSON-mode API. No CAGE service imports `outlines` or `diskcache` at runtime. The removal is enforced by `pip-audit` and Trivy scans in `.github/workflows/security-scan.yml` (POAM-010 closed). Regulated-environment deployers should verify their own dependency trees do not re-introduce `outlines` via transitive dependencies.
 *   **Compliance Mapping:** NIST SP 800-53 SI-2 (Flaw Remediation); ISO/IEC 42001 §A.9.3 (Supplier Relationships).
 
 ---
@@ -115,7 +125,7 @@ The **architecture guardrail** (`test_governance_architecture.py`) scans all bus
 3.  **Active Control Verification:** Ensures every control code defined in the system registry has a physical, verified invocation point in the gateway's execution paths.
 4.  **Regional Profile Parity:** Ensures every `CTRL_*` key across all three regional profiles has a corresponding `GovernanceControl` enum member.
 
-The **FrameworkRouter test matrix** (`test_framework_router.py`, 41 tests) locks down the v2.0.0 Crown Jewel Decoupling:
+The **FrameworkRouter test matrix** (`test_framework_router.py`, ~40 tests) locks down the v2.0.0 Crown Jewel Decoupling:
 1.  **JSON schema integrity** for all four OSCAL routing files (`NIST`, `ISO42001`, `EU_AI_ACT`, `MAS_FEAT`).
 2.  **Cache identity** — `FrameworkRouter.get()` returns identical instance; no double-load on repeated calls.
 3.  **Cache isolation** — loading NIST does not pollute the EU_AI_ACT cache entry.

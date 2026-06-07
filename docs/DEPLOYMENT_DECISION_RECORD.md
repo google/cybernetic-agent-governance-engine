@@ -86,6 +86,8 @@ We use Kubernetes `Secret` objects exclusively for resilient, cloud-agnostic sec
 - `cloud.google.com/gke-accelerator: nvidia-l4` node selectors → `nvidia.com/gpu.product: NVIDIA-L4` across all vLLM manifests
 - Removed `gcfs_config`, `gateway_api_config.channel`, and `gpu_sharing_config` blocks from `deployment/terraform/gke.tf`
 
+> **Note:** The path `deployment/terraform/gke.tf` no longer exists. Current IaC is located at `infra/targets/gcp-gke/` (Terraform modular monorepo).
+
 **Consequences**:
 
 - Inference gateway and AgentSight ingress now portable across any Kubernetes distribution with nginx

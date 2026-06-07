@@ -21,6 +21,7 @@ from opentelemetry import trace as otel_trace
 from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel
 
+from src.governed_financial_advisor.graph.annotations import side_effect_node
 from src.governed_financial_advisor.tools.market_data_tool import get_market_data
 from src.governed_financial_advisor.tools.trades import execute_trade, propose_trade
 from src.gateway.governance.singletons import opa_client
@@ -53,6 +54,7 @@ class ToolExecutionRequest(BaseModel):
     params: Dict[str, Any]
 
 @tools_router.post("/execute")
+@side_effect_node(kind="api_call", external_system="gateway_api")
 async def execute_tool_endpoint(request: ToolExecutionRequest):
     """
     Executes a named tool directly via HTTP.
@@ -194,11 +196,14 @@ async def execute_tool_endpoint(request: ToolExecutionRequest):
                 root_span.set_attribute("cage.gateway_verdict", gov_result.get("verdict", ""))
 
                 # ── Verify routing seal before actuation ─────────────────────
+                # verify_seal() returns True on success, False on any failure.
+                # This is the defense-in-depth check (P3 fix).
                 if not verify_seal(seal, "execute_trade", params):
                     root_span.set_attribute("cage.seal_valid", False)
                     root_span.set_status(Status(StatusCode.ERROR))
                     raise PermissionError(
-                        "Routing seal invalid or expired — trade blocked (defense-in-depth)"
+                        "Routing seal invalid or expired — trade blocked "
+                        "(defense-in-depth)"
                     )
 
                 root_span.set_attribute("cage.seal_valid", True)
