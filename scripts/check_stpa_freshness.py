@@ -41,6 +41,7 @@ import argparse
 import datetime
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -86,6 +87,30 @@ def _parse_embedded_timestamp(artifact: Path) -> datetime.datetime | None:
     return None
 
 
+def _git_last_commit_time(path: Path) -> datetime.datetime | None:
+    """Return the UTC datetime of the last git commit that touched *path*.
+
+    Falls back to ``None`` if git is unavailable or the file is untracked.
+    This is used instead of ``stat().st_mtime`` so that the check is
+    stable in CI environments where ``git checkout`` resets all file
+    mtimes to the checkout time.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%cI", "--", str(path)],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=path.parent if path.is_file() else path,
+        )
+        ts_str = result.stdout.strip()
+        if not ts_str:
+            return None
+        return datetime.datetime.fromisoformat(ts_str)
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+        return None
+
+
 def check_freshness(verbose: bool = False) -> list[str]:
     """Return a list of staleness error messages (empty = all fresh)."""
     errors: list[str] = []
@@ -94,14 +119,27 @@ def check_freshness(verbose: bool = False) -> list[str]:
         errors.append(f"Source file not found: {_SOURCE}")
         return errors
 
+    # Prefer git commit time over filesystem mtime.  In CI, ``git checkout``
+    # resets all file mtimes to the checkout time, making mtime comparisons
+    # meaningless.  The git commit timestamp is stable across checkouts.
+    source_git_time = _git_last_commit_time(_SOURCE)
+    if source_git_time is not None:
+        source_mtime_dt = source_git_time
+        source_time_label = "git commit"
+    else:
+        # Fallback for untracked files or environments without git.
+        source_mtime = _SOURCE.stat().st_mtime
+        source_mtime_dt = datetime.datetime.fromtimestamp(
+            source_mtime, tz=datetime.timezone.utc
+        )
+        source_time_label = "mtime (git unavailable)"
+
+    # Keep a raw mtime for the file-level mtime check (Check 1).
     source_mtime = _SOURCE.stat().st_mtime
-    source_mtime_dt = datetime.datetime.fromtimestamp(
-        source_mtime, tz=datetime.timezone.utc
-    )
 
     if verbose:
         print(f"Source:  {_SOURCE}")
-        print(f"  mtime: {source_mtime_dt.isoformat()}")
+        print(f"  {source_time_label}: {source_mtime_dt.isoformat()}")
 
     for artifact in _GENERATED_ARTIFACTS:
         if not artifact.exists():
@@ -125,8 +163,11 @@ def check_freshness(verbose: bool = False) -> list[str]:
             print(f"  file mtime:    {artifact_mtime_dt.isoformat()}")
             print(f"  embedded ts:   {embedded_ts.isoformat() if embedded_ts else 'not found'}")
 
-        # Check 1: file mtime — artifact must be newer than source
-        if artifact_mtime < source_mtime:
+        # Check 1: file mtime — artifact must be newer than source.
+        # Skip this check in CI-like environments where git commit time is
+        # used for the source reference, because all file mtimes are reset
+        # to the checkout time and are therefore unreliable for ordering.
+        if source_git_time is None and artifact_mtime < source_mtime:
             msg = (
                 f"STALE (mtime): {artifact.relative_to(_REPO_ROOT)}\n"
                 f"  artifact mtime: {artifact_mtime_dt.isoformat()}\n"
