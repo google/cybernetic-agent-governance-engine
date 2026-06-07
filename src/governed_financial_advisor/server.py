@@ -25,9 +25,21 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from langgraph.types import Command
 from opentelemetry import trace
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.instrumentation.langchain import LangchainInstrumentor
 from pydantic import BaseModel
+
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    _FASTAPI_INSTRUMENTOR_AVAILABLE = True
+except ImportError:
+    FastAPIInstrumentor = None  # type: ignore[assignment,misc]
+    _FASTAPI_INSTRUMENTOR_AVAILABLE = False
+
+try:
+    from opentelemetry.instrumentation.langchain import LangchainInstrumentor
+    _LANGCHAIN_INSTRUMENTOR_AVAILABLE = True
+except ImportError:
+    LangchainInstrumentor = None  # type: ignore[assignment,misc]
+    _LANGCHAIN_INSTRUMENTOR_AVAILABLE = False
 
 from config.settings import Config
 from src.governed_financial_advisor.demo.router import demo_router
@@ -44,7 +56,8 @@ ENABLE_TRACING = os.environ.get("ENABLE_TRACING", "true").lower() == "true"
 
 if ENABLE_TRACING:
     configure_telemetry()
-    LangchainInstrumentor().instrument() # Traces Graph nodes (including Agent calls)
+    if _LANGCHAIN_INSTRUMENTOR_AVAILABLE and LangchainInstrumentor is not None:
+        LangchainInstrumentor().instrument()  # Traces Graph nodes (including Agent calls)
 
 # --- LIFESPAN (Startup/Shutdown) ---
 @asynccontextmanager
@@ -101,12 +114,12 @@ def server_request_hook(span, scope):
     span.set_attribute("input", f"{method} {path}")
     span.update_name(f"{method} {path}")
 
-if ENABLE_TRACING:
+if ENABLE_TRACING and _FASTAPI_INSTRUMENTOR_AVAILABLE and FastAPIInstrumentor is not None:
     FastAPIInstrumentor.instrument_app(
         app,
         server_request_hook=server_request_hook,
         excluded_urls="health,docs,openapi.json,favicon.ico,mcp",
-    ) # Only trace meaningful agent routes; health/docs/scanners are excluded
+    )  # Only trace meaningful agent routes; health/docs/scanners are excluded
 app.include_router(demo_router)
 app.include_router(tools_router)
 

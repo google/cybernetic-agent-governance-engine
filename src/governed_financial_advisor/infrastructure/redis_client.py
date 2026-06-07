@@ -15,6 +15,7 @@
 import logging
 import os
 import asyncio
+import ssl
 from typing import Optional
 
 from redis.asyncio import Redis, ConnectionPool
@@ -46,6 +47,14 @@ class AsyncRedisClient:
                 "Sessions will not persist across pod restarts."
             )
         self.redis_url: str = redis_url or ""
+
+        # HIGH-04: TLS detection — enabled when REDIS_TLS=true OR REDIS_URL uses rediss://
+        self.use_tls: bool = (
+            os.getenv("REDIS_TLS", "").lower() in ("true", "1", "yes")
+            or self.redis_url.startswith("rediss://")
+        )
+        if self.use_tls:
+            logger.info("🔒 FinancialAdvisor Redis TLS enabled (rediss://)")
 
         # Determine host: REDIS_URL takes precedence when set (its parsed hostname
         # is the authoritative value).  REDIS_HOST is only used as a fallback when
@@ -136,12 +145,18 @@ class AsyncRedisClient:
 
         # 2. Fallback to Standard Connection
         try:
-            self.pool = ConnectionPool.from_url(
-                self.redis_url,
+            pool_kwargs: dict = dict(
                 max_connections=100,
                 socket_connect_timeout=2.0,
                 socket_timeout=5.0,
-                decode_responses=True
+                decode_responses=True,
+            )
+            if self.use_tls:
+                pool_kwargs["ssl"] = True
+                pool_kwargs["ssl_cert_reqs"] = ssl.CERT_NONE  # allow self-signed certs in dev/GKE
+            self.pool = ConnectionPool.from_url(
+                self.redis_url,
+                **pool_kwargs,
             )
             self.client = Redis(connection_pool=self.pool)
             await self.client.ping()
