@@ -18,6 +18,12 @@
 #   4. schema_version must equal "cage-aarm-conformance/1.0".
 #   5. aarm_spec_version must equal "CSA-AARM-v1.0".
 
+metadata:
+  annotations:
+    cage.region: ALL
+    cage.compliance-posture: csa-aarm
+    cage.posture-note: "CSA AARM is a universal posture requirement applicable to all deployment regions (US_FED, EU_ECB, APAC_MAS)."
+
 domain:
   type: api
   api-spec:
