@@ -73,7 +73,11 @@ flowchart TD
 
 ## ATO Readiness Milestones
 
+> **⚠️ US_FED ONLY — Regional Scoping Notice:** The ATO readiness milestones below apply exclusively to **`US_FED` deployments** under the NIST SP 800-53 authorization framework. `EU_ECB` and `APAC_MAS` deployments have separate compliance milestones governed by their respective regional frameworks — they are **not** subject to NIST ATO requirements.
+
 By progressing through this roadmap, CAGE's NIST SP 800-53 Moderate baseline compliance posture advances systematically:
+
+### US_FED — NIST SP 800-53 ATO Milestones
 
 | Metric | Current State | After Phase 1 (UI) | After Phase 2 (Hardening) | After Phase 3 (Zero-Trust) | After Phase 4 (Isolation) |
 |---|---|---|---|---|---|
@@ -83,3 +87,26 @@ By progressing through this roadmap, CAGE's NIST SP 800-53 Moderate baseline com
 | **System Protection (SC/SI)**  | Partial | **Partial** | **Partial** | **Implemented** | **Implemented** |
 
 *Note: 100% compliance requires formal AO signature on the final Authorization Decision Package. 77% represents the maximum technical and engineering readiness achievable prior to sign-off.*
+
+### EU_ECB — EU AI Act Compliance Milestones
+
+EU_ECB deployments are gated on EU AI Act (Reg. 2024/1689) compliance, not NIST SP 800-53. Key milestones for EU_ECB:
+
+| Milestone | Status | Notes |
+|---|---|---|
+| High-Risk AI classification (Art. 6 + Annex III §5(b)) | ✅ Mapped | 6 controls in `EU_ECB_BASELINE.json` |
+| Fundamental Rights Impact Assessment — Step 8 FRIA (Art. 29a) | 🟡 Partial | Attestation logging active; EU AI Office registration pending |
+| DORA ICT resilience controls (Arts. 10, 11, 12) | 🟡 Partial | Architecture mapped; full compliance testing pending |
+| GDPR Art. 22 automated decision-making constraints | 🟡 Partial | DPIA integration pending |
+| EBA Guidelines (2023/02) internal governance | 🟡 Partial | ECB SSM TRIM validation pending |
+
+### APAC_MAS — MAS FEAT Compliance Milestones
+
+APAC_MAS deployments are gated on MAS FEAT compliance, not NIST SP 800-53. Key milestones for APAC_MAS:
+
+| Milestone | Status | Notes |
+|---|---|---|
+| MAS FEAT Principles (F, E, A, T) | 🟡 Partial | 5 controls in `APAC_MAS_BASELINE.json` |
+| Fairness Impact Assessment — quantitative metrics (F2) | 🟡 Partial | DoWhy causal gatekeeper mapped; quantitative metrics pending |
+| MAS Notice 655 audit certification | 🟡 Partial | Certification pending |
+| MAS TRM Guidelines §6.3/6.4 AI controls | 🟡 Partial | Architecture mapped; MAS ENRM validation pending |
