@@ -1143,6 +1143,10 @@ kubectl wait --for=condition=complete \
 
 kubectl logs -n governance-stack -l job-name=lula-manual-run
 # Expected: all 15 assertions PASS, including RA-5 (security-scanner-cronjob present)
+# NOTE: As of v2.0.0-rc.3, only 4 of 15 manifests are Active (a52, a53, a92, sc4).
+# The remaining 11 are Stubs requiring cluster-specific configuration.
+# All 15 must be activated and passing before the stable v2.0.0 tag is applied.
+# See compliance/lula/README.md for activation instructions.
 
 kubectl delete job lula-manual-run -n governance-stack
 ```

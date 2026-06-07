@@ -9,8 +9,8 @@ This document provides step-by-step procedures for rolling back to the original 
 The refactoring was designed with rollback in mind:
 
 - ✅ Original code backed up (`deploy_all.sh.backup`, `deploy_sw.py.backup`)
-- ✅ New infrastructure in separate directory (`infra/`)
-- ✅ Old infrastructure still exists (`deployment/terraform/`)
+- ✅ New infrastructure in `infra/` (fully migrated from `deployment/terraform/`)
+- ✅ Active Terraform targets: `infra/targets/gcp-gke/` and `infra/targets/agnostic/`
 - ✅ Can run both in parallel for validation
 
 ## Rollback Scenarios
@@ -45,10 +45,10 @@ terraform destroy -var-file=dev.tfvars -auto-approve
 cd infra/targets/agnostic
 terraform destroy -var-file=dev.tfvars -auto-approve
 
-# Resume using original Terraform
-cd deployment/terraform
+# Resume using active Terraform target
+cd infra/targets/gcp-gke
 terraform init
-terraform apply
+terraform apply -var-file=dev.tfvars
 ```
 
 ### Scenario 3: Full Rollback (Git)
@@ -115,9 +115,9 @@ mv terraform.tfstate.recovered terraform.tfstate
 ### Check Deployment Works
 
 ```bash
-# Old structure
-cd deployment/terraform
-terraform plan
+# Active Terraform target
+cd infra/targets/gcp-gke
+terraform plan -var-file=dev.tfvars
 
 # Verify services
 kubectl get pods -n governance-stack
@@ -185,10 +185,10 @@ Practice rollback in dev environment:
 cd infra/targets/gcp-gke
 terraform destroy -auto-approve
 
-# 4. Restore old infrastructure
-cd deployment/terraform
+# 4. Restore infrastructure from active target
+cd infra/targets/gcp-gke
 terraform init
-terraform apply -auto-approve
+terraform apply -var-file=dev.tfvars -auto-approve
 
 # 5. Verify old works
 kubectl get pods -n governance-stack

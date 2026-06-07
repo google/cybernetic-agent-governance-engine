@@ -296,19 +296,18 @@ Quick rollback:
 mv deploy_all.sh.backup deploy_all.sh
 mv deployment/deploy_sw.py.backup deployment/deploy_sw.py
 
-# Use original Terraform
-cd deployment/terraform
-terraform apply
+# Use active Terraform target
+cd infra/targets/gcp-gke
+terraform apply -var-file=dev.tfvars
 ```
 
 ## Next Steps
 
 1. **Test minimal deployment** on both targets
-2. **Extract remaining modules** (postgres, redis, vllm, etc.)
-3. **Add modules to targets** (uncomment in main.tf)
-4. **Test full stack** deployment
-5. **Migrate production** to new structure
-6. **Archive old code** when confident
+2. **Test full stack** deployment end-to-end
+3. **Run Lula validations** post-deployment (`compliance/lula/`)
+4. **Verify CAGE_DEPLOYMENT_REGION** is set correctly for each region
+5. **Monitor** governance pipeline metrics in Langfuse
 
 ## See Also
 

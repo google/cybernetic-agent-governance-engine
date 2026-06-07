@@ -561,6 +561,10 @@ for LULA_FILE in compliance/lula/lula-validation-*.yaml; do
   lula validate -f "$LULA_FILE"
 done
 # Expected: all 15 assertions pass, including RA-5 (security-scanner-cronjob present)
+# NOTE: As of v2.0.0-rc.3, only 4 of 15 manifests are Active (a52, a53, a92, sc4).
+# The remaining 11 are Stubs requiring cluster-specific configuration.
+# All 15 must be activated and passing before the stable v2.0.0 tag is applied.
+# See compliance/lula/README.md for activation instructions.
 ```
 
 ### 6.5 — Verify NIST ≥45% Coverage

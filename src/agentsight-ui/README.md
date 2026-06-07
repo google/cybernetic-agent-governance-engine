@@ -1,6 +1,6 @@
 # agentsight-ui
 
-React + TypeScript + Vite SPA that serves as the **Kernel Dashboard** for the Cybernetic Governance Engine. It connects to the [`compliance-bridge-ts`](../compliance_bridge_ts/) service via **Server-Sent Events (SSE)** and displays real-time governance telemetry, ISO 42001 compliance metrics, and kernel-level observability data from the AgentSight eBPF DaemonSet.
+React + TypeScript + Vite SPA that serves as the **Kernel Dashboard** for the Cybernetic Governance Engine. It connects to the [`compliance-bridge`](../compliance_bridge/) Python FastAPI service via **Server-Sent Events (SSE)** and displays real-time governance telemetry, ISO 42001 compliance metrics, and kernel-level observability data from the AgentSight eBPF DaemonSet.
 
 ---
 
@@ -9,12 +9,14 @@ React + TypeScript + Vite SPA that serves as the **Kernel Dashboard** for the Cy
 ```
 agentsight-ui (React SPA)
     │
-    ├── SSE  GET /v1/events/stream   ──▶  compliance-bridge-ts (port 3001)
-    ├── REST GET /v1/metrics/:id     ──▶  compliance-bridge-ts (port 3001)
-    └── REST GET /health             ──▶  compliance-bridge-ts (port 3001)
+    ├── SSE  GET /v1/events/stream   ──▶  compliance-bridge (Python FastAPI, port 3001)
+    ├── REST GET /v1/metrics/:id     ──▶  compliance-bridge (Python FastAPI, port 3001)
+    └── REST GET /health             ──▶  compliance-bridge (Python FastAPI, port 3001)
 ```
 
 The Vite dev server proxies `/v1/` → `http://localhost:3001` (see [`vite.config.ts`](vite.config.ts)), so no CORS configuration is required during local development.
+
+> **Note:** The compliance bridge backend is the Python FastAPI service at `src/compliance_bridge/` — not a TypeScript service. The `src/compliance_bridge/main.py` exposes the `/v1/events/stream` SSE endpoint and all `/v1/metrics/` REST endpoints consumed by this UI.
 
 ---
 
@@ -24,7 +26,7 @@ The Vite dev server proxies `/v1/` → `http://localhost:3001` (see [`vite.confi
 
 ### SSE Integration
 
-Opens a persistent `EventSource` to `GET /v1/events/stream` on mount. Each SSE message carries a `GovernanceEvent` payload (mirrored from [`src/compliance_bridge_ts/src/events.ts`](../compliance_bridge_ts/src/events.ts)):
+Opens a persistent `EventSource` to `GET /v1/events/stream` on mount. Each SSE message carries a `GovernanceEvent` payload:
 
 ```typescript
 interface GovernanceEvent {
@@ -75,6 +77,14 @@ interface ComplianceMetrics {
 }
 ```
 
+### Reviewer Input Panel (HITL)
+
+The dashboard includes an interactive control allowing compliance operators to set `max_slippage_pct` (default 2.0%) before approving a trade. Also displays:
+
+- **Live Price Drift Indicator** — real-time computed price drift delta (ΔP = |P_fresh − P_stale| / P_stale)
+- **TTL Countdown Visualizer** — countdown timer for `hitl_expires_at`; automatically greys out the approval action on expiry
+- **Audit Evidence Display** — `rehydration_result` (with P_stale, P_fresh, and `drift_pct`) for compliance audit review
+
 ---
 
 ## Source Structure
@@ -82,7 +92,7 @@ interface ComplianceMetrics {
 ```
 src/agentsight-ui/
 ├── Dockerfile                    # node:22-alpine, serves dist/ via nginx
-├── vite.config.ts                # Vite proxy: /v1/ → localhost:3001
+├── vite.config.ts                # Vite proxy: /v1/ → localhost:8001
 ├── .env.example                  # VITE_COMPLIANCE_BRIDGE_URL
 ├── README.md                     # This file
 └── src/
@@ -90,7 +100,7 @@ src/agentsight-ui/
     ├── App.tsx                   # Root component (renders KernelDashboard)
     ├── App.css
     ├── index.css
-    ├── KernelDashboard.tsx       # Primary dashboard component (SSE + metrics)
+    ├── KernelDashboard.tsx       # Primary dashboard component (SSE + metrics + HITL)
     ├── KernelDashboard.css       # Dashboard styles
     └── assets/
 ```
@@ -108,8 +118,9 @@ npm install
 cp .env.example .env
 # Default: VITE_COMPLIANCE_BRIDGE_URL=http://localhost:3001
 
-# 3. Start compliance-bridge-ts first (SSE source)
-cd ../compliance_bridge_ts && npm run dev &
+# 3. Start compliance-bridge first (Python FastAPI SSE source)
+cd ../compliance_bridge
+uv run uvicorn compliance_bridge.main:app --host 0.0.0.0 --port 3001 &
 
 # 4. Start Vite dev server
 cd ../agentsight-ui
@@ -125,7 +136,7 @@ The Vite proxy automatically forwards `/v1/*` requests to `http://localhost:3001
 
 | Variable                     | Default                 | Description                                                                                         |
 | ---------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------- |
-| `VITE_COMPLIANCE_BRIDGE_URL` | `http://localhost:3001` | Base URL of the compliance-bridge-ts service (dev only — in production, Vite proxy handles routing) |
+| `VITE_COMPLIANCE_BRIDGE_URL` | `http://localhost:3001` | Base URL of the compliance-bridge Python FastAPI service (dev only — in production, Vite proxy handles routing) |
 
 ---
 
@@ -135,14 +146,14 @@ The Vite proxy automatically forwards `/v1/*` requests to `http://localhost:3001
 # Build production image
 docker build -t agentsight-ui .
 
-# Run (expects compliance-bridge-ts reachable at /v1/ via nginx upstream)
+# Run (expects compliance-bridge reachable at /v1/ via nginx upstream)
 docker run -p 80:80 agentsight-ui
 ```
 
 In Kubernetes, the UI is deployed via [`deployment/k8s/frontend-deployment.yaml.tpl`](../../deployment/k8s/frontend-deployment.yaml.tpl). The nginx ingress routes:
 
 - `/` → `agentsight-ui` service (port 80)
-- `/v1/` → `compliance-bridge-ts` service (port 3001)
+- `/v1/` → `compliance-bridge` Python service (port 3001)
 
 Port-forward for local access:
 
@@ -158,7 +169,7 @@ The dashboard displays kernel-level telemetry captured by the **AgentSight eBPF 
 
 The dashboard renders this data alongside Langfuse compliance metrics, providing a unified view of:
 
-- **Application-level** governance events (from compliance-bridge-ts SSE)
+- **Application-level** governance events (from compliance-bridge SSE)
 - **Kernel-level** system call traces (from AgentSight eBPF)
 
 ---

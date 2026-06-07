@@ -136,7 +136,7 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 | -------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | **AI governance enforcement**                | ✅ Implemented & tested | NeMo rails, OPA circuit breaker, Cloud KMS HSM seal (production seal enforcement active — unsigned requests return 403), HITL, CBF (externally reconciled), heterogeneous consensus, PII, STPA — all fail-closed |
 | **Evidentiary independence (v2.0.0)**        | ✅ Implemented & tested | KMS asymmetric signing, human-gated refinement, Anchorage custody reconciliation, multi-model consensus — recursive self-authentication eliminated |
-| **Multi-Framework automated compliance**     | 🟡 Partial              | 15 Lula validation manifests (all active) across ISO 42001, FedRAMP HIGH, and CSA AARM                                     |
+| **Multi-Framework automated compliance**     | 🟡 Partial              | 15 Lula validation manifests (4 Active, 11 Stub) across ISO 42001, NIST SP 800-53, and CSA AARM — see [`compliance/lula/README.md`](compliance/lula/README.md) |
 | **NIST RMF Steps 1–4 (Prepare → Implement)** | 🟡 Partial              | SC-8 elevated to implemented; SC-7 reinforced; FIPS 199 unsigned; ATO not yet issued                                       |
 | **NIST RMF Step 5 (Assess)**                 | ❌ Not started          | No Security Assessment Report; no independent assessor                                                                      |
 | **NIST RMF Step 6 (Authorize)**              | ❌ Not started          | No ATO letter issued                                                                                                        |
@@ -293,10 +293,10 @@ cybernetic-governance-engine/
 | Document                                                                               | Description                                                        |
 | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | [`COMPLIANCE.md`](COMPLIANCE.md)                                                       | **Core Compliance Posture & Framework Mapping (SR 26-2, ISO 42001, DORA)** |
-| [`README_GOVERNANCE.md`](README_GOVERNANCE.md)                                         | **Detailed 15-Tier Symbolic Governor & Decoupled Architecture Spec** |
+| [`README_GOVERNANCE.md`](README_GOVERNANCE.md)                                         | **Detailed 7-Tier Symbolic Governor & Decoupled Architecture Spec** |
 | [`docs/AUDIT_LOG_SCHEMA.md`](docs/AUDIT_LOG_SCHEMA.md)                                 | **`cage-intent/1.0` & `cage-view-access/1.0` schema reference** — hash-chain mechanics, all fields, regulatory mapping (MiFID II Art. 25 / GDPR Art. 30 / ISO 42001 A.8.4) |
 | [`docs/SECURITY_STATUS.md`](docs/SECURITY_STATUS.md)                                   | Security posture, NIST RMF status, open POA&M items                |
-| [`docs/POAM.md`](docs/POAM.md)                                                         | Plan of Action & Milestones (22 items; 5 closed)                   |
+| [`docs/POAM.md`](docs/POAM.md)                                                         | Plan of Action & Milestones (22 items; 6 closed)                   |
 | [`docs/GATEWAY_ARCHITECTURE.md`](docs/GATEWAY_ARCHITECTURE.md)                         | Gateway subsystem detail                                           |
 | [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](docs/NEURO_SYMBOLIC_GOVERNANCE.md)               | Neuro-symbolic governance design                                   |
 | [`docs/STPA_ANALYSIS.md`](docs/STPA_ANALYSIS.md)                                       | STPA hazard assessment — UCAs 1–9, Saga pattern, FiscalLimitGuard  |
