@@ -1,5 +1,7 @@
 # Path B Deployment Plan: GKE Rollout with Pre-existing Issue Remediation
 
+> **⚠️ HISTORICAL DOCUMENT** — This plan was executed against cluster `gke_YOUR_GCP_PROJECT_ID_us-central1-a_cage-dev` during the CAGE v2.0.0-rc.3 rollout (2026-06). The deployment is complete. This document is retained as an audit record. Do not re-execute these steps against a live cluster without a new change request.
+
 **Document status**: Planning only — no commands are to be executed until each section is reviewed and approved.
 **Target cluster**: `gke_YOUR_GCP_PROJECT_ID_us-central1-a_cage-dev` (Kubernetes v1.35.3-gke.1389002)
 **Primary namespace**: `governance-stack`

@@ -314,9 +314,9 @@ The 16 PII entity types enumerated in §2.2 are subject to NeMo Guardrails detec
 | Connection                      | Protocol                                        | Status                             |
 | ------------------------------- | ----------------------------------------------- | ---------------------------------- |
 | Client → CAGE API Gateway       | TLS 1.3 (via GKE Ingress)                       | ✅ Implemented                     |
-| CAGE → vLLM (intra-cluster)     | HTTP (cluster-internal; NetworkPolicy isolated) | ⚠️ mTLS pending Phase 3 (POAM-007) |
-| CAGE → OPA (sidecar)            | localhost (127.0.0.1; no network exposure)      | ✅ Acceptable                      |
-| CAGE → Langfuse (intra-cluster) | HTTP (cluster-internal; NetworkPolicy isolated) | ⚠️ mTLS pending Phase 3 (POAM-007) |
+| CAGE → vLLM (intra-cluster)     | Linkerd mTLS (cluster-internal)                 | ✅ Implemented — Linkerd mTLS (POAM-007 Closed 2026-05-17) |
+| CAGE → OPA (sidecar)            | localhost (127.0.0.1; no network exposure)      | ✅ Acceptable                                              |
+| CAGE → Langfuse (intra-cluster) | Linkerd mTLS (cluster-internal)                 | ✅ Implemented — Linkerd mTLS (POAM-007 Closed 2026-05-17) |
 | CAGE → Cloud SQL                | TLS 1.2+ (Cloud SQL proxy)                      | ✅ Implemented                     |
 | CAGE → GCS                      | TLS 1.3 (GCP API)                               | ✅ Implemented                     |
 | OTel → Cloud Trace              | TLS 1.3 (HTTPS)                                 | ✅ Implemented                     |

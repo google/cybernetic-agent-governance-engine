@@ -91,18 +91,16 @@ Update `storage_class` in `.tfvars` based on your platform:
 
 ## What Gets Deployed
 
-### Current (Minimal)
+All infrastructure modules are fully implemented. Enable them by uncommenting the relevant blocks in [`main.tf`](main.tf) and providing the required variables in your `.tfvars` file.
 
 - ✅ Kubernetes namespace with labels
 - ✅ MinIO object storage (S3-compatible)
-- 🚧 PostgreSQL (module not extracted yet)
-- 🚧 Redis (module not extracted yet)
-- 🚧 vLLM inference (module not extracted yet)
-- 🚧 Langfuse observability (module not extracted yet)
-
-### Future (As Modules Are Extracted)
-
-Uncomment sections in [`main.tf`](main.tf) as modules become available.
+- ✅ PostgreSQL database (`infra/modules/postgres_db/`)
+- ✅ Redis cache with Sentinel HA (`infra/modules/redis_cache/`)
+- ✅ vLLM inference backend (`infra/modules/vllm_inference/`)
+- ✅ Langfuse observability stack (`infra/modules/langfuse_stack/`)
+- ✅ Compliance bridge (`infra/modules/compliance_bridge/`)
+- ✅ OPA policy engine (`infra/modules/opa_policy/`)
 
 ## Security Postures
 
