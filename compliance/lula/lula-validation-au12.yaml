@@ -17,6 +17,12 @@
 #   - deployment/k8s/generated/gateway-deployment.yaml — OTLP endpoint config
 #   - src/gateway/server/governance_middleware.py — span emission source
 
+metadata:
+  annotations:
+    cage.region: US_FED
+    cage.compliance-posture: nist-sp800-53
+    cage.posture-note: "NIST SP 800-53 is a US Federal posture requirement. This validation is skipped for EU_ECB and APAC_MAS deployments."
+
 domain:
   type: kubernetes
   kubernetes-spec:
