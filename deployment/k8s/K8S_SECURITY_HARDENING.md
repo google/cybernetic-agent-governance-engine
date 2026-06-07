@@ -7,6 +7,10 @@
 
 ---
 
+> **Branch Reference Update (2026-06-05):** The `rc-v2.0.0` branch no longer exists. `main` is now the authoritative branch for all network policy manifests and Kubernetes security configurations. All emergency rollback procedures referencing `rc-v2.0.0` should use `main` instead. Long-Term governance documentation for the nw environment is deferred per POAM (target: 90 days from 2026-06-05).
+
+---
+
 ## Table of Contents
 
 1. [Overview](#overview)

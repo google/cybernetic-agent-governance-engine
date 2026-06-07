@@ -29,6 +29,10 @@ spec:
       labels:
         app: vllm-inference
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       # GCS HMAC keys provide S3-compatible access to GCS buckets without
       # requiring GCP-specific CSI drivers or Workload Identity bindings.
       # This approach is portable across cloud providers that support S3 protocol.
@@ -76,6 +80,15 @@ spec:
           # Standard vLLM OpenAI-compatible image with runai_streamer support for
           # streaming model weights from S3-compatible storage (GCS HMAC or AWS S3)
           image: gcr.io/laah-cybernetics/vllm-streamer:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
           imagePullPolicy: IfNotPresent
           resources:
             limits:
