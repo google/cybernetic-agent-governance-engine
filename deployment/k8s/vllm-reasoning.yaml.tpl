@@ -23,6 +23,10 @@ spec:
       labels:
         app: vllm-reasoning
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: financial-advisor-sa
       tolerations:
         - key: "nvidia.com/gpu"
@@ -100,6 +104,15 @@ ${TOLERATIONS}
           # Build: Dockerfile.vllm in repo root.
           image: gcr.io/YOUR_GCP_PROJECT_ID/vllm-streamer:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
           command: ["/bin/bash", "-c"]
           args:
             - |

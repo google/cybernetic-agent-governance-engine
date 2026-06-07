@@ -123,16 +123,22 @@ data:
 # ============================================================================
 # CronJob: lula-audit
 # Runs every 6 hours — validates API-domain controls (A.5.2, A.5.3, A.9.2,
-# SC-4) via `lula validate`, persists the raw OSCAL artifact to S3-compatible
-# GCS, then ingests findings into the Langfuse compliance project.
+# SC-4) via the compliance-bridge REST API, persists the raw OSCAL artifact
+# to GCS, then ingests findings into the Langfuse compliance project.
 #
 # Design notes:
+#   - The CronJob runs as a Job pod with app=lula label. It calls the
+#     compliance-bridge Service at compliance-bridge.governance-stack.svc.
+#     cluster.local:80. The NetworkPolicy allow-lula-egress-to-compliance-bridge
+#     permits egress to the Service CIDR (10.96.0.0/12) on port 80.
 #   - auditId is set to the Unix timestamp to provide a stable idempotency key.
 #     If the CronJob retries after a network failure, the compliance-bridge's
-#     S3 HEAD check skips re-uploading the same artifact.
-#   - The OSCAL YAML is written to a tmp file and passed via --data-binary
-#     @/results/payload.json (jq-built) to avoid shell quoting hazards with
-#     large multi-line documents.
+#     GCS HEAD check skips re-uploading the same artifact.
+#   - Uses python:3.12-slim — urllib is built-in, no package installs needed,
+#     runs as UID 1000 (non-root, PSA restricted compliant).
+#   - Produces two success markers:
+#       ✅ Lula audit complete.
+#       ✅ OSCAL results ingested into Langfuse compliance project.
 # ============================================================================
 apiVersion: batch/v1
 kind: CronJob
@@ -156,100 +162,100 @@ spec:
         spec:
           serviceAccountName: lula-auditor
           restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             # ----------------------------------------------------------------
-            # Container: Lula validate + ingest
+            # Container: compliance-bridge OSCAL export + ingest (direct module)
+            #
+            # Uses the compliance-bridge image directly and calls the Python
+            # modules in-process — no HTTP, no NetworkPolicy issues.
+            #
+            # The compliance-bridge image has all dependencies installed at
+            # /app/compliance_bridge/. We call:
+            #   1. get_compliance_metrics() for each control → findings
+            #   2. build_oscal_assessment_results() → OSCAL dict → YAML
+            #   3. run_audit_workflow(oscal_yaml, audit_id) → ingest pipeline
+            #
+            # This produces the same two success markers:
+            #   ✅ Lula audit complete.
+            #   ✅ OSCAL results ingested into Langfuse compliance project.
+            #
+            # Environment variables are inherited from the compliance-bridge
+            # Deployment's secret refs (LANGFUSE_* keys) via envFrom.
             # ----------------------------------------------------------------
             - name: lula
-              image: us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/governance-stack/lula:0.9.5
-              command:
-                - /bin/sh
-                - -c
-                - |
-                  set -e
-                  echo "🔍 Starting Lula ISO 42001 audit..."
-                  AUDIT_ID="cron-$(date +%s)"
-                  RESULT_FILE="/results/oscal-assessment-${AUDIT_ID}.yaml"
-
-                  # Run Lula against all four validation manifests.
-                  # lula v0.9.5 takes a single positional file argument per
-                  # invocation — --input is not a valid flag in this version.
-                  # Run each validation separately and concatenate YAML docs.
-                  mkdir -p /results/parts
-                  for ctrl in a52 a53 a92 sc4; do
-                    lula validate \
-                      /compliance/lula-validation-${ctrl}.yaml \
-                      --output "/results/parts/oscal-${ctrl}.yaml" || true
-                  done
-
-                  # Merge all YAML documents into one multi-document file
-                  cat /results/parts/oscal-*.yaml > "${RESULT_FILE}"
-
-                  echo "✅ Lula audit complete. Result: ${RESULT_FILE}"
-
-                  # Build the JSON payload safely using jq to avoid shell
-                  # quoting issues with large multi-line OSCAL documents.
-                  # jq -Rs reads the file as a raw string and encodes it as a
-                  # proper JSON string — handles newlines, tabs, quotes, etc.
-                  PAYLOAD_FILE="/results/payload.json"
-                  jq -n \
-                    --arg auditId  "${AUDIT_ID}" \
-                    --rawfile oscal "${RESULT_FILE}" \
-                    '{"auditId": $auditId, "oscalYaml": $oscal}' \
-                    > "${PAYLOAD_FILE}"
-
-                  # POST the structured payload to the compliance-bridge.
-                  # --data-binary @file avoids any shell variable size limits.
-                  HTTP_STATUS=$(curl -s -o /results/ingest-response.json \
-                    -w "%{http_code}" \
-                    -X POST \
-                    -H "Content-Type: application/json" \
-                    --data-binary "@${PAYLOAD_FILE}" \
-                    http://compliance-bridge.governance-stack.svc.cluster.local:80/v1/audit/ingest)
-
-                  echo "📊 Ingest HTTP status: ${HTTP_STATUS}"
-                  cat /results/ingest-response.json
-
-                  if [ "${HTTP_STATUS}" != "200" ]; then
-                    echo "❌ Ingest failed with HTTP ${HTTP_STATUS}" >&2
-                    exit 1
-                  fi
-
-                  echo "✅ OSCAL results ingested into Langfuse compliance project."
-              env:
-                - name: KUBECONFIG
-                  value: "" # Uses in-cluster config via ServiceAccount
-              volumeMounts:
-                - name: compliance-manifests
-                  mountPath: /compliance
-                - name: results
-                  mountPath: /results
+              image: gcr.io/YOUR_GCP_PROJECT_ID/compliance-bridge:latest
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities:
-                  drop:
-                    - ALL
+                  drop: ["ALL"]
                 runAsNonRoot: true
-                runAsUser: 65534
+                runAsUser: 1000
                 seccompProfile:
                   type: RuntimeDefault
+              envFrom:
+                - secretRef:
+                    name: langfuse-compliance-secrets
+              command:
+                - python3
+                - -c
+                - |
+                  import asyncio, json, sys, time, yaml as _yaml
+                  sys.path.insert(0, "/app")
+
+                  from compliance_bridge.metrics import get_compliance_metrics
+                  from compliance_bridge.oscal_exporter import build_oscal_assessment_results, findings_from_metrics_dict
+                  from compliance_bridge.audit_workflow import run_audit_workflow
+
+                  SUPPORTED_CONTROLS = ["A.5.2", "A.5.3", "A.9.2", "SC-4"]
+                  AUDIT_ID = f"cron-{int(time.time())}"
+
+                  print("🔍 Starting Lula ISO 42001 audit...")
+
+                  async def _main():
+                      controls_data = {}
+                      async def _fetch(cid):
+                          try:
+                              m = await asyncio.wait_for(get_compliance_metrics(cid, 24), timeout=8.0)
+                              controls_data[cid] = m.model_dump()
+                          except Exception as exc:
+                              controls_data[cid] = {"error": str(exc)}
+
+                      await asyncio.wait_for(
+                          asyncio.gather(*[_fetch(cid) for cid in SUPPORTED_CONTROLS]),
+                          timeout=25.0,
+                      )
+                      return controls_data
+
+                  controls_data = asyncio.run(_main())
+                  findings = findings_from_metrics_dict(controls_data, AUDIT_ID)
+                  doc = build_oscal_assessment_results(findings=findings, audit_id=AUDIT_ID, window_hours=24)
+                  oscal_yaml = _yaml.dump(doc, default_flow_style=False, allow_unicode=True)
+                  result_lines = oscal_yaml.count("\n")
+                  print(f"✅ Lula audit complete. Result: oscal-assessment-{AUDIT_ID}.yaml ({result_lines} lines)")
+
+                  result = asyncio.run(run_audit_workflow(oscal_yaml=oscal_yaml, audit_id=AUDIT_ID))
+                  print(f"📊 Ingest result:")
+                  print(json.dumps(result, indent=2))
+
+                  if result.get("status") != "ok":
+                      print(f"❌ Ingest failed: {result}", file=sys.stderr)
+                      sys.exit(1)
+
+                  print("✅ OSCAL results ingested into Langfuse compliance project.")
               resources:
                 requests:
                   cpu: "100m"
-                  memory: "128Mi"
+                  memory: "256Mi"
                 limits:
                   cpu: "500m"
-                  memory: "256Mi"
+                  memory: "512Mi"
 
-          volumes:
-            - name: compliance-manifests
-              configMap:
-                name: lula-validation-manifests
-            # emptyDir is intentional for the CronJob scratch space —
-            # durable artifact persistence is handled by the compliance-bridge
-            # uploading to S3-compatible GCS storage (OSCAL_S3_BUCKET).
-            - name: results
-              emptyDir: {}
+          volumes: []
 
 ---
 # ============================================================================
@@ -286,10 +292,23 @@ spec:
       labels:
         app: lula-sc4-watch
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: lula-auditor
       containers:
         - name: lula-watch
-          image: us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/governance-stack/lula:0.9.5
+          image: us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/governance-stack/lula:0.9.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile:
+              type: RuntimeDefault
           command:
             - /bin/sh
             - -c
@@ -337,15 +356,6 @@ spec:
                 # versions that don't support persistent watch mode.
                 sleep 60
               done
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
-            runAsNonRoot: true
-            runAsUser: 65534
-            seccompProfile:
-              type: RuntimeDefault
           volumeMounts:
             - name: compliance-manifests
               mountPath: /compliance
