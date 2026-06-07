@@ -4,7 +4,7 @@
 
 The Gateway acts as the central orchestrator and compliance enforcement point for the AI financial advisor. It implements a **Kubernetes Inference Gateway** architecture, abstracting a "Split-Brain" topology that routes tasks between a high-capacity Reasoning Model (`DeepSeek-R1-Distill-Llama-8B`) and a low-latency Governance Model (`Meta-Llama-3.1-8B-Instruct`). Both models are hosted on cost-optimized **Spot/preemptible GPU nodes** (NVIDIA L4). (GKE is the reference deployment; other Kubernetes distributions are supported)
 
-**Version:** v2.0.0-rc.2 (promoted 2026-06-03)
+**Version:** v2.0.0-rc.3 (promoted 2026-06-07)
 **Primary Compliance Framework:** ISO/IEC 42001:2023 · SR 26-2 (Federal Reserve, April 17, 2026) · CSA AARM v1.0
 
 ## Core Components
@@ -163,16 +163,20 @@ This is the **Single Choke Point** for all tool-level governance decisions — t
 }
 ```
 
-**Governance tiers executed** (via [`SymbolicGovernor.validate_action()`](src/gateway/governance/symbolic_governor.py)):
-- **Tier 2 — Control Barrier Function (CBF):** Mathematical safety bounds check via Redis-backed cash balance verification (γ=0.5, min=$1,000) implemented in [`cbf.py`](src/gateway/governance/cbf.py). External ledger reconciliation via `AnchorageGrpcLedgerProvider` is a planned future enhancement (POAM-023); the current implementation uses Redis `WATCH/MULTI/EXEC` optimistic locking. `verify_action()` is **read-only** — it does not modify Redis state.
-- **Tier 4 — OPA Rego policy evaluation:** Declarative rule enforcement against the active regional compliance profile (`CAGE_DEPLOYMENT_REGION`). OPA circuit breaker: 5 failures → OPEN, 30s recovery, 3000ms hard latency budget. Redis decision cache: 10s TTL, SHA-256 keyed (`cage:opa:decision:{sha256_prefix}`), `OPA_CACHE_ENABLED` env var (default true). Cache is checked **before** the HTTP call; a hit short-circuits the entire round-trip.
+**Governance tiers executed** (via [`SymbolicGovernor.validate_action()`](src/gateway/governance/symbolic_governor.py)) — full 7-tier pipeline via `_run_checks()`:
 
-Both tiers run **concurrently** via `asyncio.gather` to minimize latency (SLA: 200ms max per ISO-20022). The TOCTOU race between the CBF balance check and actual trade execution is closed by the **FiscalLimitGuard** (Step 3 in the full `SymbolicGovernor` pipeline) using atomic `WATCH/MULTI/EXEC` Redis pre-reservation — **not** by making CBF+OPA sequential.
+- **Tier 0 — STPA/STAMP UCA validation:** Runs for all tool names when `stpa_validator` is injected. Checks unsafe control actions (UCA-1 through UCA-6) against `governance_thresholds.json`.
+- **Tier 1 — Agent confidence threshold pre-check:** `execute_trade` only. Fast-fails if `confidence < AGENT_CONFIDENCE_THRESHOLD` (default 0.95, env-overridable). Skips CBF/OPA round-trips when confidence is obviously below threshold.
+- **Tier 2 — Control Barrier Function (CBF):** `execute_trade` only. Mathematical safety bounds check via Redis-backed cash balance verification (γ=0.5, min=$1,000) implemented in [`cbf.py`](src/gateway/governance/cbf.py). External ledger reconciliation via `AnchorageGrpcLedgerProvider` is a planned future enhancement (POAM-023); the current implementation uses Redis `WATCH/MULTI/EXEC` optimistic locking. `verify_action()` is **read-only** — it does not modify Redis state.
+- **Tier 3 — OPA Rego policy evaluation:** All tool names. Declarative rule enforcement against the active regional compliance profile (`CAGE_DEPLOYMENT_REGION`). OPA circuit breaker: 5 failures → OPEN, 30s recovery, 3000ms hard latency budget. Redis decision cache: 10s TTL, SHA-256 keyed (`cage:opa:decision:{sha256_prefix}`), `OPA_CACHE_ENABLED` env var (default true). Cache is checked **before** the HTTP call; a hit short-circuits the entire round-trip. For `execute_trade`, CBF (Tier 2) and OPA (Tier 3) run **concurrently** via `asyncio.gather` to minimize latency.
+- **Tier 4 — Fiscal Limit Pre-Reservation:** `execute_trade` only, when `fiscal_limit_guard` is injected and no prior violations exist. Atomically reserves the requested USD amount against the daily fiscal cap in Redis (`WATCH/MULTI/EXEC`) before the consensus gate. Closes the TOCTOU race between the CBF balance check and actual trade execution. Released immediately if any subsequent tier produces a violation.
+- **Tier 5 — Multi-agent Consensus (ISO 42001 A.8.4):** `execute_trade` only, **conditional on amount ≥ $10,000 USD** (`consensus.threshold_usd` in `governance_thresholds.json`). Trades below $10,000 receive an immediate `SKIPPED` result with zero LLM calls. Above threshold: two critic personas (Risk Manager → DeepSeek-R1, Compliance Officer → Llama 3.1) are queried concurrently via `asyncio.gather`. Consensus rules: unanimous `APPROVE` → pass; unanimous `REJECT` → block; split vote or any `ESCALATE` → escalate for human review; unanimous `ERROR` → escalate (fail-closed, DoS bypass prevention). Results are pushed to a background audit queue (`_AUDIT_QUEUE`) for post-execution logging.
+- **Tier 6 — DoWhy Causal Gatekeeper:** `execute_trade` only. Redis-cached by `(action_type, market_regime)` with a 60-second TTL (`CAUSAL_CACHE_TTL_SECONDS`); cache hits skip both phases entirely. On cache miss: Phase 1 runs DoWhy causal model + linear regression (SR 26-2 MRM scope); Phase 2 runs 50-simulation placebo refutation against live telemetry (ISO 42001 §A.9.4). Fails closed if telemetry is stale (> `TELEMETRY_MAX_STALENESS_SECONDS`, default 300s) or if `dowhy` is not installed (production startup raises `RuntimeError` if `dowhy` is absent).
+- **Tier 6b — Adaptive FRIA Enforcement:** `execute_trade` only, when `CAGE_NORMATIVE_PROVIDER != "static"` and no prior violations exist. Confidence-score-gated: ≥ 0.95 → async attestation; 0.70–0.95 → synchronous blocking DEFER gate; < 0.70 → hard DENY. EU_ECB deployments additionally stamp FRIA attestation on every OTel span (EU AI Act Art. 29a / DORA Art. 10 logging obligation).
 
-**Tiers NOT executed** (by design for structured payloads):
-- Tier 1: Aho-Corasick keyword scan (text-only, irrelevant for structured tool payloads)
-- Tier 3: Semantic similarity SLM — **DEPRECATED** (`slm_available=False` permanent sentinel; SLM sidecar retired)
-- Tier 5: Multi-agent consensus (evaluated at plan-generation time, not at actuation time)
+**Semantic similarity SLM (Tier 3 in legacy docs):** **DEPRECATED** — `slm_available=False` permanent sentinel; SLM sidecar retired. OPA Rego policy now handles semantic score thresholds.
+
+**Tools exempt from all governance overhead:** `check_market_status` and `verify_content_safety` return an empty seal immediately in `enforce_governance()` without entering `_run_checks()`.
 
 **Response** (on approval):
 ```json
@@ -210,4 +214,4 @@ Both tiers run **concurrently** via `asyncio.gather` to minimize latency (SLA: 2
 | CSA AARM v1.0 | 11-vector AI agent threat model | Active |
 | NIST SP 800-53 Rev 5 HIGH | 24% readiness; FedRAMP in progress | In Progress |
 | OSCAL v1.0.4 | Artifact persistence to GCS | Active |
-| Lula | 15 Lula validation manifests (all active) | Active |
+| Lula | 15 Lula validation manifests (4 Active, 11 Stub — see [`compliance/lula/README.md`](../compliance/lula/README.md)) | Active (4 of 15) |

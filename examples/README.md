@@ -127,3 +127,142 @@ cage.governance.violation_count=<n>
 ```
 
 These attributes are the same tags that flow into Langfuse, the Compliance Bridge, and the OSCAL SSP exporter — closing the audit loop from demo to production evidence.
+
+---
+
+# CAGE · Governance-as-Code Demo (`governance_demo.py`)
+
+> **"Three acts, zero infrastructure."** — A self-contained walkthrough of the three headline governance capabilities of CAGE v2.0.0: atomic fiscal pre-reservation, HITL mandatory rationale, and tamper-evident hash chain verification.
+
+No Kubernetes, no external services, no LLM calls required. Uses `fakeredis` for Act 1 and the real `PlaygroundTelemetry` evidence chain for Acts 2 & 3.
+
+## Quick Start
+
+```bash
+# Full interactive walkthrough (default)
+uv run python examples/governance_demo.py
+
+# Skip inter-act pauses (CI / README demos)
+uv run python examples/governance_demo.py --no-pause
+
+# Run a single act
+uv run python examples/governance_demo.py --act 1
+uv run python examples/governance_demo.py --act 2
+uv run python examples/governance_demo.py --act 3
+```
+
+## Acts
+
+### Act 1 — Multi-Agent Concurrency Race (FiscalLimitGuard)
+
+Three agents (trading, hedging, liquidity) simultaneously attempt a **$180,000** trade against a **$200,000** daily cap. Without `FiscalLimitGuard` all three would read `remaining=$200k` and pass OPA — a classic TOCTOU race. With the guard, exactly one reservation succeeds atomically at the Redis layer via `WATCH/MULTI/EXEC`; the other two are rejected before reaching OPA.
+
+```
+✓ trading-agent        $180,000   RESERVED  running=$180,000/$200,000
+✗ hedging-agent        $180,000   REJECTED  (cap=$200,000  running=$180,000)
+✗ liquidity-agent      $180,000   REJECTED  (cap=$200,000  running=$180,000)
+
+PASS — exactly one reservation atomically succeeded
+```
+
+Also demonstrates the Saga rollback path: `release()` restores the reserved amount when the winning trade fails.
+
+### Act 2 — HITL Approval with Mandatory Rationale
+
+A **$95,000** TSLA trade arrives with `risk_score=0.82` (threshold: 0.70). The LangGraph graph interrupts at `approval_node`. The demo:
+
+1. Proves the API rejects an empty rationale with `422 Unprocessable Entity`
+2. Prompts the operator for a mandatory free-text rationale (or uses a default in `--no-pause` mode)
+3. Hashes the rationale into the `cage-intent/1.0` evidence chain **before** the graph resumes — ensuring the human decision is persisted even if the agentic graph crashes mid-execution
+
+```
+✓ 422 Unprocessable Entity — empty rationale rejected
+✓ Evidence record written  →  APPROVED
+  hash   : <sha256[:32]>…
+  ISO    : A.8.4 · A.7.2 · §6.1    NIST: GOVERN-5 · SC-4
+```
+
+### Act 3 — Tamper-Evident Hash Chain Verification
+
+Reads every evidence record written in Acts 1 & 2, recomputes each SHA-256 link, then mutates one field to prove tamper detection:
+
+```
+✓ Chain VALID  —  N record(s) verified  (<elapsed> ms)
+✓ Tamper detected at record [00]  →  chain integrity FAILED  ✓
+```
+
+The evidence chain is written to `examples/evidence/evidence_chain_<date>.ndjson` and can be re-verified at any time with `--act 3`.
+
+## Compliance Coverage
+
+| Act | Mechanism | Controls |
+|-----|-----------|----------|
+| 1 | `FiscalLimitGuard` Redis atomic pre-reservation | SR 26-2 §IV.B, NIST SC-4 |
+| 2 | HITL mandatory rationale → evidence chain | ISO 42001 A.8.4, A.7.2, §6.1; NIST GOVERN-5; MiFID II Art. 25 |
+| 3 | SHA-256 hash chain verification + tamper proof | `cage-intent/1.0`; GDPR Art. 30 |
+
+---
+
+# Shared Audit Infrastructure (`telemetry.py`)
+
+`telemetry.py` is the shared audit library used by both `chaos_agent_playground.py` and `governance_demo.py`. It is not a runnable script — import it as a module.
+
+## Two Complementary Audit Mechanisms
+
+### 1. OTel Span Emitter
+
+Emits real OpenTelemetry spans with the same Langfuse attribute schema used by the live gateway (`symbolic_governor.py`, `stpa_validator.py`). When `LANGFUSE_HOST` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` are set, spans flow directly into Langfuse Cloud. Without credentials the `LoggingSpanExporter` fallback captures them locally.
+
+Span attributes mirror the live system exactly:
+
+```
+langfuse.observation.type       = "span"
+langfuse.observation.name       = "governance_evaluation"
+langfuse.observation.output     = "BLOCKED" | "APPROVED"
+cage.governance.decision        = "BLOCKED" | "APPROVED"
+cage.governance.blocking_tier   = 0–4 | -1
+cage.governance.violation_count = int
+cage.evidence.chain_hash        = sha256 hex
+```
+
+### 2. NDJSON Evidence Chain
+
+Writes a tamper-evident, cryptographically linked audit log to `examples/evidence/evidence_chain_<date>.ndjson`. Each record SHA-256 hashes its own payload and chains the previous record's hash — forming an append-only, verifiable evidence trail.
+
+A separate `view_access_log_<date>.ndjson` registers every read-access event with the accessor identity, timestamp, and record hash — satisfying **MiFID II Article 25** and **GDPR Article 30** view-tracking requirements.
+
+## Integrity vs. Provenance
+
+The hash chain guarantees **data integrity** (non-tampering) but does **not** guarantee **data provenance** (truthfulness at creation). Every `cage-intent/1.0` record includes a `provenance_disclaimer` field to make this residual limitation machine-readable and auditor-visible. Cloud KMS asymmetric signing (`kms_signer.py`) covers governance plan signatures; per-record KMS attestation is a roadmap item.
+
+## Usage
+
+```python
+from examples.telemetry import PlaygroundTelemetry
+
+tel = PlaygroundTelemetry()
+
+# Wrap a scenario execution in an OTel span + evidence record
+with tel.scenario_span("A", "execute_trade", params) as span:
+    # ... run governance tiers ...
+    tel.record_result(span, violations, blocking_tier, elapsed_ms,
+                      action="execute_trade", params=params, scenario_id="A")
+tel.flush()
+
+# HITL approval record (written before graph resume)
+record_hash = tel.record_approval(
+    thread_id="thread-abc123",
+    approved=True,
+    reviewer="analyst@example.com",
+    rationale="Trade within IPS mandate; drawdown < CBF limit.",
+)
+
+# View-access audit log (read-tracking)
+records = tel.read_evidence_log(
+    accessor_id="analyst@example.com",
+    reason="compliance review",
+)
+
+# Verify chain integrity
+valid, count = tel.verify_chain()
+```
