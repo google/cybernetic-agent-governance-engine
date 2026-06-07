@@ -85,6 +85,7 @@ async def _background_audit_worker() -> None:
             _AUDIT_QUEUE.task_done()
         except Exception as exc:
             logger.error("Audit worker error: %s", exc)
+            _AUDIT_QUEUE.task_done()
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +254,7 @@ class ConsensusEngine:
                         {"role": "user", "content": prompt},
                     ],
                     temperature=0.0,
+                    timeout=30.0,  # 30-second hard limit
                 )
                 content = response.choices[0].message.content.strip()
             else:
