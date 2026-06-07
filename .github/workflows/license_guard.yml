@@ -18,12 +18,11 @@ on:
   push:
     branches:
       - main
-      - rc-v2.0.0
       - 'release/**'
+      - 'feat/**'
   pull_request:
     branches:
       - main
-      - rc-v2.0.0
       - 'release/**'
 
 jobs:
