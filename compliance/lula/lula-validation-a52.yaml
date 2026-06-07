@@ -7,6 +7,12 @@
 # Domain: api → compliance-bridge (Python FastAPI service)
 # Provider: opa (inline Rego)
 
+metadata:
+  annotations:
+    cage.region: ALL
+    cage.compliance-posture: iso-42001
+    cage.posture-note: "ISO 42001 is a universal posture requirement applicable to all deployment regions (US_FED, EU_ECB, APAC_MAS)."
+
 domain:
   type: api
   api-spec:

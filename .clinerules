@@ -1,0 +1,475 @@
+# CAGE Software Delivery Lifecycle — Agent Rule Set
+# Authority: docs/GIT_WORKFLOW_STANDARDS.md, docs/DEPLOYMENT_RULES.md,
+#            docs/V2_RELEASE_PLAN.md, docs/CHANGE_MANAGEMENT_PROCESS.md,
+#            .github/pull_request_template.md, .github/workflows/ci.yml
+# These rules are NON-NEGOTIABLE. They are always active, always evaluated,
+# and always applied regardless of the nature of the task being performed.
+
+# ============================================================
+# SECTION 1 — COMMIT MESSAGE RULES (Conventional Commits v1.0)
+# Source: docs/GIT_WORKFLOW_STANDARDS.md §2
+# ============================================================
+
+# 1.1 Every commit message the agent writes or suggests MUST follow:
+#     <type>(<scope>): <short summary>
+#     where the entire subject line is ≤ 72 characters.
+
+# 1.2 VALID TYPES — only these ten are permitted:
+#     feat | fix | docs | style | refactor | perf | test | chore | ci | revert
+#     No other type is acceptable. If a change does not fit, decompose it.
+
+# 1.3 VALID SCOPES (optional but strongly recommended — use exactly one):
+#     gateway | compliance | infra | governance | tests | docs | ci |
+#     agentsight | advisor | nemo | opa
+#     Omit parentheses entirely when no scope applies.
+
+# 1.4 SUBJECT LINE RULES:
+#     - Imperative mood: "add rate limiter" NOT "added" or "adds"
+#     - No period at end
+#     - No capitalisation of first word of description
+#     - Be specific: convey WHAT changed, not just that something changed
+#     - PROHIBITED subjects (hook will reject): "fix stuff", "update", "WIP",
+#       "fixup!", "squash!", "done", "misc changes", "addressing review comments"
+
+# 1.5 BODY (optional, required when subject is not self-evident):
+#     - Separate from subject with exactly one blank line
+#     - Wrap every line at 72 characters
+#     - Explain WHAT changed and WHY — not how (the diff shows how)
+#     - Reference design decisions, trade-offs, ADRs, or relevant context
+
+# 1.6 FOOTER TOKENS:
+#     Issue refs:       Closes #<n>  |  Refs #<n>
+#     Breaking change:  BREAKING CHANGE: <description>
+#     Co-authorship:    Co-authored-by: Name <email>
+#     Breaking changes may also use the ! shorthand: feat(gateway)!: ...
+
+# 1.7 REVERT commits must reference the reverted SHA in the body.
+
+# 1.8 MEGA-COMMITS are prohibited. A single commit touching > ~20 files or
+#     > ~500 lines (excluding generated files) must be decomposed.
+
+
+# ============================================================
+# SECTION 2 — BRANCH NAMING RULES
+# Source: docs/GIT_WORKFLOW_STANDARDS.md §3
+# ============================================================
+
+# 2.1 ALL branch names must use lowercase kebab-case.
+#     No underscores. No uppercase. No spaces.
+
+# 2.2 REQUIRED PATTERNS:
+#     feat/<ticket-id>-short-description   (new feature — ticket ID mandatory)
+#     fix/<ticket-id>-short-description    (bug fix — ticket ID mandatory)
+#     chore/<description>                  (tooling, deps, build)
+#     docs/<description>                   (documentation only)
+#     release/v<X.Y.Z>                     (release candidate branch)
+#     hotfix/<ticket-id>-description       (production hotfix)
+#     refactor/<description>               (code restructuring)
+#     ci/<description>                     (CI/CD pipeline changes)
+#     spike/<description>                  (experiment / proof-of-concept)
+
+# 2.3 The description segment after the prefix must be ≤ 30 characters.
+
+# 2.4 Feature and fix branches are SHORT-LIVED. Delete after PR merge.
+#     Never leave stale branches on the remote.
+
+# 2.5 PROTECTED BRANCHES — direct push is ALWAYS prohibited:
+#     main | rc-v2.0.0 | release/**
+#     The pre-push hook enforces this locally. GitHub branch protection
+#     enforces it server-side. No exceptions, including for maintainers.
+
+# 2.6 ALWAYS branch from the latest integration branch:
+#     git checkout main && git pull origin main before branching.
+#     Never branch from a stale local copy.
+
+# ============================================================
+# SECTION 3 — PULL REQUEST STANDARDS
+# Source: docs/GIT_WORKFLOW_STANDARDS.md §4,
+#         .github/pull_request_template.md
+# ============================================================
+
+# 3.1 PR TITLE must follow Conventional Commits exactly:
+#     type(scope): description
+#     The PR title becomes the squash-merge commit on the integration branch.
+#     A malformed PR title produces a malformed commit on main.
+
+# 3.2 ALL sections of .github/pull_request_template.md must be completed:
+#     - Summary: one paragraph (what + why, not a file list)
+#     - Type of Change: check every applicable box
+#     - Related Issues / ADRs: Closes #n or explicit N/A with justification
+#     - Changes Made: bullet list of specific files/components and reasons
+#     - Testing: check every applicable method; explain if no tests needed
+#     - Compliance & Security Checklist: all items checked
+#     - Deployment Notes: migration steps, env var changes, or N/A
+
+# 3.3 CI REQUIREMENTS — all checks must be green before merge:
+#     - License Guard (.github/workflows/license_guard.yml)
+#     - CI suite (.github/workflows/ci.yml): pytest, STPA freshness,
+#       Langfuse posture dry-run, license headers
+#     - Security scan (.github/workflows/security-scan.yml)
+#     A single failing check blocks merge. Never ask reviewers to approve
+#     a PR with failing CI.
+
+# 3.4 REVIEW REQUIREMENTS:
+#     - At least one approving review from a maintainer before merge
+#     - Author may not approve their own PR
+#     - All blocking review comments must be resolved before merge
+
+# 3.5 MERGE STRATEGY:
+#     - Squash merge for all feat/fix/chore/docs/ci/refactor PRs
+#     - Merge commits reserved for merging rc-v* into main at release time
+#     - Rebase merging is NOT used in this repository
+
+# 3.6 COMPLIANCE & SECURITY CHECKLIST (universal — all PRs):
+#     - No secrets, credentials, or PII in committed files
+#     - Network policy unchanged OR reviewed by security owner
+#     - OPA policy changes reviewed for correctness
+#     - Data residency: new storage paths guarded by CAGE_DEPLOYMENT_REGION
+#     - ISO 42001 / CSA AARM: lula validate passes for all lula-validation-*.yaml
+#     - No region-specific behaviour without a cage_deployment_region guard
+
+# 3.7 SHARED-MODULE IMPACT: Any PR touching src/gateway/governance/,
+#     src/compliance_bridge/, config/compliance/, config/thresholds/, or
+#     config/oscal/ must declare cross-region impact for US_FED, EU_ECB,
+#     and APAC_MAS in the PR description.
+
+
+# ============================================================
+# SECTION 4 — VERSIONING & RELEASE STRATEGY
+# Source: docs/V2_RELEASE_PLAN.md, docs/V2_RELEASE_RUNBOOK.md
+# ============================================================
+
+# 4.1 SEMANTIC VERSIONING: All releases follow SemVer (MAJOR.MINOR.PATCH).
+#     - MAJOR: breaking changes to public API or authorization boundary
+#     - MINOR: new features, backward-compatible
+#     - PATCH: bug fixes, backward-compatible
+
+# 4.2 PRE-RELEASE LABELS:
+#     v<X.Y.Z>-dev.<N>   — development snapshot (not for production)
+#     v<X.Y.Z>-rc.<N>    — release candidate (on rc-v<X.Y.Z> branch)
+#     v<X.Y.Z>           — stable release (tagged on rc-v<X.Y.Z> after all gates pass)
+
+# 4.3 RELEASE BRANCH LIFECYCLE:
+#     1. Branch rc-v<X.Y.Z> from main when feature freeze begins
+#     2. All P0/P1 blockers resolved via PRs targeting rc-v<X.Y.Z>
+#     3. Stable tag v<X.Y.Z> applied to rc-v<X.Y.Z> HEAD after all gates pass
+#     4. rc-v<X.Y.Z> merged into main via merge commit (not squash)
+#     5. rc-v<X.Y.Z> branch retained as a permanent release boundary marker
+
+# 4.4 TAGGING PROCEDURE — only after ALL release gates are green:
+#     git tag -a v<X.Y.Z> -m "chore(release): stable v<X.Y.Z>\n\n<summary>"
+#     git push origin v<X.Y.Z>
+#     Tags must be annotated (not lightweight). Message must follow
+#     Conventional Commits format with type "chore" and scope "release".
+
+# 4.5 GITHUB RELEASE: Created via `gh release create` or GitHub UI after
+#     tagging. Must reference CHANGELOG.md for release notes. Must be
+#     marked as "Latest release" for stable releases.
+
+# 4.6 FEATURE FREEZE: Once rc-v<X.Y.Z> is branched, no new features may
+#     be merged into it. Only P0/P1 bug fixes and compliance remediations
+#     are permitted on the release branch.
+
+# ============================================================
+# SECTION 5 — RELEASE GATE REQUIREMENTS
+# Source: docs/V2_RELEASE_PLAN.md §8
+# ============================================================
+
+# 5.1 UNIVERSAL GATES (all regions — must pass for ANY stable release):
+#     - All ISO 42001 Lula assertions pass (lula-validation-a52.yaml,
+#       lula-validation-a53.yaml, lula-validation-a92.yaml)
+#     - CSA AARM Lula assertion passes (lula-validation-aarm-vectors.yaml)
+#     - SBOM generated and validated
+#     - Container image vulnerability scan passes (Trivy — no CRITICAL unmitigated)
+#     - Secret detection scan passes (zero secrets in codebase)
+#     - All unit and integration tests pass (pytest — 0 failures)
+#     - STPA freshness check passes (scripts/check_stpa_freshness.py)
+#     - Langfuse posture verified (scripts/verify_langfuse_posture.py)
+#     - git log --all -S "<any-credential>" returns zero matches
+#     - governed-financial-advisor READY 1/1, AVAILABLE 1
+#     - CAGE_ROUTING_SEAL_SECRET present in advisor-secrets (>=64 chars)
+#     - GOVERNANCE_SALT present in advisor-secrets (>=64 chars)
+#     - Unsigned gateway request returns 403
+#     - Valid signed gateway request returns 200
+#     - security-scanner-cronjob exists in governance-stack namespace
+#     - PSA labels applied: governance-stack=restricted, langfuse=baseline, vllm=baseline
+#     - git tag v<X.Y.Z> pushed to origin
+#     - GitHub Release published as Latest
+#     - terraform.auto.tfvars confirmed gitignored (no secrets in working tree)
+
+# 5.2 US_FED GATES (CAGE_DEPLOYMENT_REGION=US_FED only):
+#     - All 10 NIST SP 800-53 Lula assertions pass
+#     - NIST SP 800-53 coverage >=45% (via oscal_ssp_exporter.py)
+#     - ATO process initiated (OSCAL SSP submitted to AO)
+#     - POAM items documented for all open findings
+
+# 5.3 EU_ECB GATES (CAGE_DEPLOYMENT_REGION=EU_ECB only):
+#     - EU AI Act compliance posture verified
+#     - GDPR data residency confirmed: all paths within europe-west1
+#     - DORA Art. 10 audit logging enabled in eu-dev.tfvars
+#     - SR 26-2 telemetry suppression active ("no legal force" sentinel intact)
+
+# 5.4 APAC_MAS GATES (CAGE_DEPLOYMENT_REGION=APAC_MAS only):
+#     - MAS FEAT compliance posture verified
+#     - MAS TRM §4.2 data residency confirmed: all paths within asia-southeast1
+#     - MAS Notice 655 audit logging enabled in apac-dev.tfvars
+#     - SR 26-2 telemetry suppression active ("no legal force" sentinel intact)
+
+
+# ============================================================
+# SECTION 6 — DEPLOYMENT RULES
+# Source: docs/DEPLOYMENT_RULES.md
+# ============================================================
+
+# 6.1 GKE DEPLOYMENTS MUST USE CLOUD BUILD — local Docker builds are
+#     prohibited for GKE targets. This is non-negotiable.
+#     APPROVED methods:
+#       ./deploy_all.sh --target gcp-gke --env <dev|prod>
+#       gcloud builds submit --config deployment/docker/cloudbuild_gateway.yaml
+#       cage-infrastructure MCP server with target: "gcp-gke"
+#     PROHIBITED for GKE:
+#       docker build ... && docker push ...
+#       docker-compose build && docker-compose push
+#       kubectl apply without a preceding Cloud Build
+
+# 6.2 LOCAL / AGNOSTIC targets may use local Docker:
+#     ./deploy_all.sh --target agnostic --env dev   (k3d/kind)
+#     ./deploy_all.sh                               (docker-compose)
+
+# 6.3 DEPLOYMENT TARGET MATRIX:
+#     gcp-gke  + prod  → Cloud Build  → ./deploy_all.sh --target gcp-gke --env prod
+#     gcp-gke  + dev   → Cloud Build  → ./deploy_all.sh --target gcp-gke --env dev
+#     agnostic + dev   → Local Docker → ./deploy_all.sh --target agnostic --env dev
+#     docker-compose   → Local Docker → ./deploy_all.sh
+
+# 6.4 CLOUD BUILD CONFIG FILES:
+#     Gateway:  deployment/docker/cloudbuild_gateway.yaml (primary)
+#     vLLM:     deployment/docker/cloudbuild.vllm.yaml
+#     LULA:     deployment/docker/cloudbuild.lula.yaml
+
+# 6.5 TERRAFORM STATE: Never manually edit Terraform state. Always use
+#     terraform plan → terraform apply. State is in GCS backend
+#     (infra/targets/gcp-gke/backend.tf). Active IaC is under infra/;
+#     deployment/terraform/ is historical reference only.
+
+# 6.6 terraform.auto.tfvars is ALWAYS gitignored. Never commit it.
+#     Secret values go in terraform.auto.tfvars only — never in .tf files.
+
+# ============================================================
+# SECTION 7 — HOTFIX WORKFLOW
+# Source: docs/GIT_WORKFLOW_STANDARDS.md §3, docs/CHANGE_MANAGEMENT_PROCESS.md §7
+# ============================================================
+
+# 7.1 Hotfixes branch from the affected release branch (rc-v<X.Y.Z> or main):
+#     git checkout rc-v<X.Y.Z> && git pull origin rc-v<X.Y.Z>
+#     git checkout -b hotfix/<ticket-id>-description
+
+# 7.2 Hotfix branch naming: hotfix/<ticket-id>-description
+#     Description segment must be ≤ 30 characters.
+
+# 7.3 Hotfix PRs target the release branch (rc-v<X.Y.Z>), not main.
+#     After merge to rc-v<X.Y.Z>, a follow-on PR cherry-picks to main.
+
+# 7.4 Emergency changes (Cat-E) follow the same branch/PR process but
+#     with expedited approval: ISSO + System Owner verbal authorization
+#     within 2 hours; AO notification within 1 hour of implementation;
+#     full documentation completed within 4 hours post-implementation.
+
+# 7.5 Post-emergency: Full CAB retrospective within 5 business days.
+#     Root cause analysis documented. POAM item created if systemic gap found.
+
+# ============================================================
+# SECTION 8 — FEATURE FREEZE & ENVIRONMENT PROMOTION
+# Source: docs/V2_RELEASE_PLAN.md §4.6, docs/CHANGE_MANAGEMENT_PROCESS.md §2
+# ============================================================
+
+# 8.1 FEATURE FREEZE triggers when rc-v<X.Y.Z> is branched from main.
+#     After freeze: only P0/P1 bug fixes and compliance remediations
+#     may target the release branch. No new features.
+
+# 8.2 ENVIRONMENT PROMOTION ORDER: dev → staging → production.
+#     No direct promotion from dev to production.
+#     Each promotion requires all CI gates to pass on the target branch.
+
+# 8.3 CHANGE CATEGORIES govern promotion approval lead times:
+#     Cat-E (Emergency):  2-hour approval window; immediate implementation
+#     Cat-S (Standard):   Pre-approved; no individual CAB approval needed
+#     Cat-N (Normal):     5 business days minimum; full CAB review
+#     Cat-M (Major):      30 calendar days minimum; CAB + AO review
+
+# 8.4 MAJOR CHANGES (Cat-M) that require AO pre-approval before promotion:
+#     - New GCP services or Kubernetes namespaces
+#     - New external API integrations
+#     - New AI models or inference services
+#     - Changes to HIGH-impact NIST SP 800-53 controls
+#     - Significant security architecture changes
+
+# 8.5 CHANGELOG.md must be updated for every Cat-N and Cat-M change.
+#     Format: [CR-YYYY-NNN] description, reviewed-by, approved date,
+#     implemented date, Lula validation result.
+
+
+# ============================================================
+# SECTION 9 — SECRET & CREDENTIAL HYGIENE
+# Source: docs/V2_RELEASE_PLAN.md §3.2, docs/GIT_WORKFLOW_STANDARDS.md §6
+# ============================================================
+
+# 9.1 NEVER commit secrets, credentials, API keys, passwords, tokens,
+#     or PII to any file tracked by git. This includes:
+#     - Hardcoded fallback values in source code (e.g., os.environ.get("KEY", "secret"))
+#     - Inline values in Kubernetes manifests, Helm values, or Terraform .tf files
+#     - Any value matching patterns: pk-lf-*, sk-lf-*, hf_*, GOOG*, redis://*:*@*
+
+# 9.2 terraform.auto.tfvars is ALWAYS gitignored. Secret values belong
+#     there only. Never reference secret values in committed .tf files.
+
+# 9.3 Before staging any file, verify no credential strings are present:
+#     git diff --cached | grep -iE '(password|secret|token|key)' \
+#       | grep -v 'secretKeyRef\|secretRef\|var\.\|variable\|sensitive'
+
+# 9.4 Kubernetes Secrets must use secretKeyRef or secretRef — never
+#     hardcoded `value:` fields for sensitive data.
+
+# 9.5 If a secret is accidentally committed, treat it as compromised
+#     immediately. Rotate before rewriting history. History rewrite
+#     does not revoke live credentials.
+
+# ============================================================
+# SECTION 10 — LICENSE HEADER REQUIREMENTS
+# Source: .github/workflows/ci.yml (license-check job)
+# ============================================================
+
+# 10.1 ALL new source files in src/ must include an Apache 2.0 license
+#      header OR a "Copyright 2026" notice. The CI license-check job
+#      enforces this for *.py, *.js, *.ts, *.tsx files.
+
+# 10.2 Standard header for Python files:
+#      # Copyright 2026 Google LLC
+#      #
+#      # Licensed under the Apache License, Version 2.0 (the "License");
+#      # you may not use this file except in compliance with the License.
+#      # You may obtain a copy of the License at
+#      #
+#      #     https://www.apache.org/licenses/LICENSE-2.0
+#      #
+#      # Unless required by applicable law or agreed to in writing, software
+#      # distributed under the License is distributed on an "AS IS" BASIS,
+#      # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#      # See the License for the specific language governing permissions and
+#      # limitations under the License.
+
+# 10.3 When creating any new .py, .ts, .tsx, or .js file under src/,
+#      prepend the Apache 2.0 header before any other content.
+
+# ============================================================
+# SECTION 11 — COMPLIANCE ARTIFACT OBLIGATIONS
+# Source: docs/CHANGE_MANAGEMENT_PROCESS.md §5, §9
+# ============================================================
+
+# 11.1 Any change that alters a NIST SP 800-53 control implementation
+#      requires an OSCAL component update in compliance/oscal/ within
+#      2 business days of the PR merge.
+
+# 11.2 Any change that adds or removes Kubernetes resources referenced
+#      by Lula validation files requires a Lula validation update in
+#      compliance/lula/ in the same PR or a follow-on PR.
+
+# 11.3 POAM items must be updated when a change remediates an open finding.
+#      Update docs/POAM.md with: commit SHA, Lula result, closure date.
+
+# 11.4 STPA artifacts must remain fresh. The CI stpa-freshness-check job
+#      runs scripts/check_stpa_freshness.py on every push. If STPA
+#      source files change, regenerate the STPA artifacts before committing.
+
+# 11.5 Langfuse posture must be verified via scripts/verify_langfuse_posture.py
+#      before any release. The CI langfuse-posture-check job enforces this.
+
+# ============================================================
+# SECTION 12 — SHARED-MODULE REGION GUARD OBLIGATIONS
+# Source: .github/pull_request_template.md §Compliance & Security Checklist
+# ============================================================
+
+# 12.1 This is a shared monorepo. src/gateway/governance/ and
+#      src/compliance_bridge/ deploy simultaneously to US_FED, EU_ECB,
+#      and APAC_MAS via CAGE_DEPLOYMENT_REGION. A change to any shared
+#      module affects all three compliance postures.
+
+# 12.2 Any new storage path, GCS write, Langfuse sink, or telemetry
+#      export introduced in shared modules MUST be gated on
+#      CAGE_DEPLOYMENT_REGION to prevent silent cross-region data leakage
+#      (GDPR Art. 44 / MAS TRM §4.2).
+
+# 12.3 EU_ECB data paths must remain within europe-west1.
+#      APAC_MAS data paths must remain within asia-southeast1.
+#      US_FED data paths must remain within us-central1 or approved US regions.
+
+# 12.4 The "no legal force" SR 26-2 sentinel in EU and APAC baselines
+#      must never be removed. Its presence suppresses telemetry that
+#      lacks legal basis under GDPR / MAS Notice 655.
+
+# ============================================================
+# SECTION 13 — CHANGE MANAGEMENT INTEGRATION
+# Source: docs/CHANGE_MANAGEMENT_PROCESS.md §2, §3, §9
+# ============================================================
+
+# 13.1 When generating commit messages for production changes, include
+#      the Change Request ID in the body when one exists:
+#      Format: [CR-YYYY-NNN] <description>
+
+# 13.2 Cat-M changes (new GCP services, new K8s namespaces, new AI models,
+#      new external APIs, HIGH-impact control changes) require AO pre-approval.
+#      The agent must flag these and refuse to generate implementation steps
+#      without noting the Cat-M requirement.
+
+# 13.3 Cat-E changes follow the same branch/PR process but with expedited
+#      approval. The agent must still produce a valid branch name, commit
+#      message, and PR description — speed does not waive format requirements.
+
+# 13.4 CHANGELOG.md must be updated for every Cat-N and Cat-M change.
+#      When generating PR descriptions or commit bodies for such changes,
+#      include a CHANGELOG.md update reminder.
+
+# ============================================================
+# SECTION 14 — AGENT ENFORCEMENT SUMMARY
+# These are the hard stops the agent applies before any output.
+# ============================================================
+
+# 14.1 BEFORE suggesting or writing any commit message:
+#      - Verify type is one of the 10 permitted types
+#      - Verify subject line ≤ 72 characters
+#      - Verify imperative mood, no trailing period, no capitalisation
+#      - Reject prohibited subjects outright
+
+# 14.2 BEFORE suggesting any branch name:
+#      - Verify pattern matches one of the 9 permitted prefixes
+#      - Verify description segment ≤ 30 characters
+#      - Verify lowercase kebab-case only
+
+# 14.3 BEFORE suggesting any GKE deployment command:
+#      - Verify Cloud Build is used (not local docker build/push)
+#      - Reject any suggestion of `docker build` + `docker push` for GKE
+
+# 14.4 BEFORE suggesting any file creation in src/:
+#      - Prepend Apache 2.0 license header for .py/.ts/.tsx/.js files
+#      - Verify no secrets or credentials are embedded
+
+# 14.5 BEFORE suggesting any Terraform change:
+#      - Verify secret values are in terraform.auto.tfvars (gitignored)
+#      - Verify no sensitive values appear in committed .tf files
+#      - Remind that terraform plan must precede terraform apply
+
+# 14.6 BEFORE suggesting any release tag or version bump:
+#      - Verify all universal release gates are listed as prerequisites
+#      - Verify tag is annotated (not lightweight)
+#      - Verify tag message follows Conventional Commits with chore(release)
+
+# 14.7 BEFORE suggesting any PR description:
+#      - Verify all sections of .github/pull_request_template.md are addressed
+#      - Verify compliance checklist items are included
+#      - Verify shared-module cross-region impact is declared if applicable
+
+# 14.8 BEFORE suggesting any change to shared compliance modules:
+#      - Flag CAGE_DEPLOYMENT_REGION guard requirement
+#      - Flag cross-region impact declaration requirement
+#      - Flag Lula validation re-run requirement post-merge
+

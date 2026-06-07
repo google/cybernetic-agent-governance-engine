@@ -1,0 +1,23 @@
+# MAS FEAT Principles + MAS Notice 655 Compliance Profile
+# cage.region: APAC_MAS
+# cage.compliance-posture: mas-feat
+# cage.posture-note: "MAS FEAT is an APAC_MAS posture requirement. This profile is not applicable to US_FED or EU_ECB deployments."
+#
+# Status: STUB — full MAS FEAT control catalog to be implemented
+# Reference: MAS FEAT Principles (2018), MAS Notice 655, MAS TRM Guidelines
+oscal-version: "1.0.4"
+profile:
+  uuid: "mas-feat-profile-stub-001"
+  metadata:
+    title: "MAS FEAT Principles + MAS Notice 655 Compliance Profile"
+    version: "0.1.0-stub"
+    oscal-version: "1.0.4"
+    remarks: |
+      STUB PROFILE — MAS FEAT control catalog not yet fully implemented.
+      This profile covers APAC_MAS deployments only (CAGE_DEPLOYMENT_REGION=APAC_MAS).
+      Key frameworks: MAS FEAT Principles (2018), MAS Notice 655, MAS TRM §4.2.
+  imports:
+    - href: "#mas-feat-catalog-stub"
+      include-all: {}
+  modify:
+    set-parameters: []

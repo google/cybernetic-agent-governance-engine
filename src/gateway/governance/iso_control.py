@@ -33,11 +33,22 @@ Attribute schema (6 mandatory attributes):
 """
 
 import logging
+import os
 import time
 from importlib.metadata import version as _pkg_version, PackageNotFoundError
 from typing import Any
 
 logger = logging.getLogger("Gateway.Governance.IsoControl")
+
+# ---------------------------------------------------------------------------
+# Deployment region — resolved at call time via the same env-var pattern used
+# throughout src/gateway/governance/ (constants.py, normative_provider.py).
+# Defaults to "US_FED" so that existing deployments without the env var set
+# continue to stamp spans exactly as before (backward-compatible).
+# ---------------------------------------------------------------------------
+
+def _get_deployment_region() -> str:
+    return os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
 
 # ---------------------------------------------------------------------------
 # Gateway version — resolved once at import time
@@ -86,6 +97,16 @@ def stamp_iso_control(
                   ``"REDACT"``.
     """
     if not span:
+        return
+
+    # NIST SP 800-53 control IDs have no legal force outside US_FED — suppress
+    # per SR 26-2 suppression pattern.
+    if _get_deployment_region() != "US_FED":
+        logger.debug(
+            "stamp_iso_control: skipping nist.control_id stamping — "
+            "deployment region is '%s', not 'US_FED'.",
+            _get_deployment_region(),
+        )
         return
 
     timestamp_ms: int = int(time.time() * 1000)
