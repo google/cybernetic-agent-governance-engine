@@ -70,6 +70,7 @@ import argparse
 import datetime
 import json
 import logging
+import os
 import sys
 import textwrap
 import uuid as _uuid_mod
@@ -103,6 +104,81 @@ _STPA_IMPL_UUID = "g7000099-stpa-4000-8000-compiler00001"
 _STPA_BY_COMP_UUID = "h8000099-stpa-4000-8000-compiler00001"
 _STPA_CTRL_IMPL_UUID = "c3000099-stpa-4000-8000-compiler00001"
 _STPA_REQ_UUID_PREFIX = "d4000099-stpa-4000-8000"
+
+# ---------------------------------------------------------------------------
+# Multi-jurisdiction SSP router — see docs/technical-report/06-COMPLIANCE-STANDARDS.md §15.7
+# ---------------------------------------------------------------------------
+
+# Maps CAGE_DEPLOYMENT_REGION values to OSCAL profile paths and framework metadata.
+# Each entry drives both the profile import-href in the SSP and the FrameworkRouter
+# selection for UCA cross-walk narrative generation.
+REGIONAL_PROFILES: dict[str, dict] = {
+    "US_FED": {
+        "profile_path": "compliance/oscal/sp800053-profile.yaml",
+        "framework": "NIST SP 800-53 Rev 5 HIGH",
+        "framework_id": "nist-sp800-53-rev5-high",
+        "coverage_metric": "nist_sp800_53_coverage_pct",
+    },
+    "EU_ECB": {
+        "profile_path": "compliance/oscal/eu-ai-act-profile.yaml",
+        "framework": "EU AI Act (Reg 2024/1689) + GDPR",
+        "framework_id": "eu-ai-act-2024",
+        "coverage_metric": "eu_ai_act_coverage_pct",
+    },
+    "APAC_MAS": {
+        "profile_path": "compliance/oscal/mas-feat-profile.yaml",
+        "framework": "MAS FEAT Principles + MAS Notice 655",
+        "framework_id": "mas-feat-2023",
+        "coverage_metric": "mas_feat_coverage_pct",
+    },
+}
+
+# Maps CAGE_DEPLOYMENT_REGION to the FrameworkRouter key used for UCA cross-walk.
+# US_FED → NIST, EU_ECB → EU_AI_ACT, APAC_MAS → MAS_FEAT.
+_REGION_TO_FRAMEWORK_KEY: dict[str, str] = {
+    "US_FED":    "NIST",
+    "EU_ECB":    "EU_AI_ACT",
+    "APAC_MAS":  "MAS_FEAT",
+}
+
+
+def get_regional_profile(region: str | None = None) -> dict:
+    """Return the OSCAL profile metadata dict for the given deployment region.
+
+    Args:
+        region: Explicit region string (``"US_FED"``, ``"EU_ECB"``, or
+            ``"APAC_MAS"``).  If *None*, the value is read from the
+            ``CAGE_DEPLOYMENT_REGION`` environment variable.  Defaults to
+            ``"US_FED"`` if the variable is unset or the value is unrecognised
+            (backward-compatible with pre-multi-jurisdiction deployments).
+
+    Returns:
+        A dict from :data:`REGIONAL_PROFILES` with keys ``profile_path``,
+        ``framework``, ``framework_id``, and ``coverage_metric``.
+    """
+    if region is None:
+        region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
+    else:
+        region = region.strip().upper()
+
+    if region not in REGIONAL_PROFILES:
+        logger.warning(
+            "get_regional_profile: unknown region '%s' — falling back to US_FED. "
+            "Set CAGE_DEPLOYMENT_REGION to one of: %s",
+            region,
+            sorted(REGIONAL_PROFILES.keys()),
+        )
+        region = "US_FED"
+
+    profile = REGIONAL_PROFILES[region]
+    logger.info(
+        "get_regional_profile: region=%s → profile=%s framework=%s",
+        region,
+        profile["profile_path"],
+        profile["framework"],
+    )
+    return profile
+
 
 # ---------------------------------------------------------------------------
 # Framework Router — external JSON-driven UCA-to-control mapping
@@ -643,13 +719,37 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def cmd_export(args: argparse.Namespace) -> int:
+    # ---------------------------------------------------------------------------
+    # Multi-jurisdiction SSP router — resolve region before any framework work.
+    # CAGE_DEPLOYMENT_REGION drives both the OSCAL profile path and the
+    # FrameworkRouter key used for UCA cross-walk narrative generation.
+    # The --framework CLI flag is still honoured when explicitly supplied;
+    # if it was left at the default ("NIST"), the router overrides it from env.
+    # ---------------------------------------------------------------------------
+    regional_profile = get_regional_profile()  # reads CAGE_DEPLOYMENT_REGION
+    region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
+    if region not in REGIONAL_PROFILES:
+        region = "US_FED"
+
+    # Derive the FrameworkRouter key from the resolved region, unless the caller
+    # explicitly passed a non-default --framework value on the CLI.
+    framework_key = _REGION_TO_FRAMEWORK_KEY.get(region, "NIST")
+    if args.framework != "NIST":
+        # Explicit CLI override — respect it and warn if it conflicts with region.
+        framework_key = args.framework
+        logger.warning(
+            "cmd_export: --framework=%s overrides region-derived framework for %s",
+            args.framework,
+            region,
+        )
+
     try:
         cs = load_control_structure(args.input)
     except Exception as exc:
         print(f"❌ Failed to load control structure: {exc}", file=sys.stderr)
         return 1
 
-    patch_block = generate_ssp_patch(cs, target_framework=args.framework)
+    patch_block = generate_ssp_patch(cs, target_framework=framework_key)
     component_entry = generate_component_entry(cs)
 
     ok_ssp = _apply_ssp_patch(args.ssp, patch_block, dry_run=args.dry_run)
@@ -661,14 +761,23 @@ def cmd_export(args: argparse.Namespace) -> int:
         return 1
 
     if not args.dry_run:
-        router = FrameworkRouter.get(args.framework)
+        router = FrameworkRouter.get(framework_key)
         print("✅ OSCAL SSP export complete:")
+        print(f"   Region          : {region}")
+        print(f"   Profile path    : {regional_profile['profile_path']}")
         print(f"   SSP             → {args.ssp}")
         print(f"   Component def   → {args.component_def}")
         print(f"   Standalone patch→ {args.patch_out}")
         print(f"   Framework       : {router.label}")
         print(f"   UCAs exported   : {len(cs.unsafe_control_actions)}")
         print(f"   Controls mapped : {len(router.all_controls(cs.unsafe_control_actions))}")
+        # Coverage metric is region-specific — only emit the NIST coverage label
+        # for US_FED deployments; other regions use their own coverage_metric key.
+        coverage_metric = regional_profile["coverage_metric"]
+        if region == "US_FED":
+            print(f"   Coverage metric : {coverage_metric} (NIST SP 800-53 Rev 5 HIGH)")
+        else:
+            print(f"   Coverage metric : {coverage_metric}")
 
     return 0
 

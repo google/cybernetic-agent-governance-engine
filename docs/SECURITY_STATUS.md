@@ -12,6 +12,8 @@ CAGE v2.0.0 provides a **production-grade AI governance enforcement runtime**. T
 > [!IMPORTANT]
 > This system has **not received an Authorization to Operate (ATO)** from a NIST-designated Authorizing Official. It has not undergone a formal Security Assessment. Deployers in regulated environments must complete their own risk assessment before production use.
 
+> **⚠️ Regional Scoping Notice:** NIST RMF / NIST SP 800-53 compliance status reported in this document applies **exclusively to `US_FED` deployments**. `EU_ECB` deployments are governed by EU AI Act (Reg. 2024/1689), DORA, and GDPR — not NIST. `APAC_MAS` deployments are governed by MAS FEAT Principles, MAS Notice 655, and MAS TRM Guidelines — not NIST. See the [EU_ECB Compliance Status](#eu_ecb--eu-ai-act--dora-compliance-status) and [APAC_MAS Compliance Status](#apac_mas--mas-feat-compliance-status) sections below.
+
 ---
 
 ## What Is Fully Implemented
@@ -69,9 +71,11 @@ Findings are expressed as OSCAL Assessment Results and ingested into Langfuse vi
 
 ## What Is Not Yet Complete
 
-### NIST RMF Authorization Process
+### NIST RMF Authorization Process (`US_FED` only)
 
-The NIST RMF is a six-step process. The table below reflects the current state:
+> **⚠️ US_FED ONLY:** The NIST RMF authorization process described below applies exclusively to **`US_FED` deployments**. `EU_ECB` and `APAC_MAS` deployments are not subject to NIST RMF and do not require an ATO. See the [EU_ECB](#eu_ecb--eu-ai-act--dora-compliance-status) and [APAC_MAS](#apac_mas--mas-feat-compliance-status) sections for their respective compliance status.
+
+The NIST RMF is a six-step process. The table below reflects the current state for `US_FED` deployments:
 
 | RMF Step              | Status         | Notes                                                                                              |
 | --------------------- | -------------- | -------------------------------------------------------------------------------------------------- |
@@ -118,6 +122,46 @@ The following weaknesses are documented in [`docs/POAM.md`](POAM.md) (v1.5, 2026
 - **No SBOM** — no Software Bill of Materials is generated per build (POAM-006). Note: vulnerability scanning (POAM-010) is now closed — pip-audit, Trivy, and Grype are active in CI.
 - **No TLS enforcement test** — `tests/test_gateway_connectivity.py` does not assert TLS 1.2+ on all endpoints (POAM-011).
 - **Langfuse compliance credentials not validated at startup** — silent failure if compliance project keys are absent (POAM-018).
+
+---
+
+## EU_ECB — EU AI Act / DORA Compliance Status
+
+> **EU_ECB deployments are gated on EU AI Act and DORA compliance — not NIST SP 800-53.** The following table reflects the current compliance posture for `CAGE_DEPLOYMENT_REGION=EU_ECB`.
+
+| Framework / Obligation | Status | Notes |
+| ---------------------- | ------ | ----- |
+| **EU AI Act Art. 6 + Annex III §5(b)** — High-Risk AI classification | 🟡 Partial | 6 controls mapped in `EU_ECB_BASELINE.json`; EU AI Office registration pending |
+| **EU AI Act Art. 9** — Risk management system | 🟡 Partial | Min. agentic confidence raised to 0.97; formal risk management documentation pending |
+| **EU AI Act Art. 10** — Data governance | 🟡 Partial | Presidio PII masking active; data governance documentation pending |
+| **EU AI Act Art. 12** — Record-keeping | 🟡 Partial | OTel + Langfuse audit trail active; GDPR-compliant retention schedule pending |
+| **EU AI Act Art. 14** — Human oversight | ✅ Implemented | HITL gate (`interrupt_before=["governed_trader"]`); TOCTOU remediation active |
+| **EU AI Act Art. 17** — Quality management | 🟡 Partial | ISO 42001 Clause 9 evidence loop active; formal QMS documentation pending |
+| **EU AI Act Art. 29a** — FRIA (Step 8) | 🟡 Partial | FRIA attestation logging active (`CTRL_FRIA_006`); EU AI Office registration pending |
+| **EU AI Act Art. 61** — Post-market monitoring | 🟡 Partial | Lula CronJob + OSCAL Assessment Results active; formal post-market plan pending |
+| **DORA Art. 10** — ICT risk management | 🟡 Partial | Architecture mapped; full DORA compliance testing pending |
+| **DORA Art. 11** — ICT-related incident management | 🟡 Partial | `GovernanceEventBus` + Slack/PagerDuty alerts active; formal DORA incident plan pending |
+| **DORA Art. 12** — Digital operational resilience testing | ❌ Not started | No DORA resilience testing performed |
+| **GDPR Art. 22** — Automated decision-making | 🟡 Partial | HITL gate enforced; DPIA integration pending |
+| **EBA Guidelines (2023/02)** — Internal governance | 🟡 Partial | Model governance mapped; ECB SSM TRIM validation pending |
+| **SR 26-2 telemetry** | ✅ Suppressed | US-specific SR 26-2 citations suppressed in EU OTel spans via sentinel mechanism (§15.5) |
+
+---
+
+## APAC_MAS — MAS FEAT Compliance Status
+
+> **APAC_MAS deployments are gated on MAS FEAT compliance — not NIST SP 800-53.** The following table reflects the current compliance posture for `CAGE_DEPLOYMENT_REGION=APAC_MAS`.
+
+| Framework / Obligation | Status | Notes |
+| ---------------------- | ------ | ----- |
+| **MAS FEAT — Fairness (F1)** — Non-discriminatory outcomes | 🟡 Partial | DoWhy causal gatekeeper mapped; quantitative fairness metrics (demographic parity, equalized odds) pending |
+| **MAS FEAT — Fairness (F2)** — Quantitative fairness metrics | 🟡 Partial | Threshold mapped in `APAC_MAS_BASELINE.json`; formal F2 assessment pending |
+| **MAS FEAT — Ethics (E1)** — Ethical AI use | 🟡 Partial | NeMo guardrails + Aho-Corasick bias detection active; ethics framework documentation pending |
+| **MAS FEAT — Accountability (A1)** — Human oversight | ✅ Implemented | HITL gate active; consensus threshold $5,000 (MAS FEAT A1 human oversight) |
+| **MAS FEAT — Transparency (T1)** — Explainability | 🟡 Partial | `explainer` agent node active; formal transparency report pending |
+| **MAS Notice 655** — Audit certification | 🟡 Partial | OTel + Langfuse audit trail active; MAS Notice 655 certification pending |
+| **MAS TRM Guidelines §6.3/6.4** — AI controls | 🟡 Partial | Architecture mapped; MAS ENRM validation pending |
+| **SR 26-2 telemetry** | ✅ Suppressed | US-specific SR 26-2 citations suppressed in APAC OTel spans via sentinel mechanism (§15.5) |
 
 ---
 

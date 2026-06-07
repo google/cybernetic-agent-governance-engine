@@ -1,0 +1,23 @@
+# EU AI Act (Reg 2024/1689) + GDPR Compliance Profile
+# cage.region: EU_ECB
+# cage.compliance-posture: eu-ai-act
+# cage.posture-note: "EU AI Act is an EU_ECB posture requirement. This profile is not applicable to US_FED or APAC_MAS deployments."
+#
+# Status: STUB — full EU AI Act control catalog to be implemented
+# Reference: Regulation (EU) 2024/1689 of the European Parliament
+oscal-version: "1.0.4"
+profile:
+  uuid: "eu-ai-act-profile-stub-001"
+  metadata:
+    title: "EU AI Act (Reg 2024/1689) + GDPR Compliance Profile"
+    version: "0.1.0-stub"
+    oscal-version: "1.0.4"
+    remarks: |
+      STUB PROFILE — EU AI Act control catalog not yet fully implemented.
+      This profile covers EU_ECB deployments only (CAGE_DEPLOYMENT_REGION=EU_ECB).
+      Key frameworks: EU AI Act Reg 2024/1689, GDPR Art. 44, DORA Art. 10.
+  imports:
+    - href: "#eu-ai-act-catalog-stub"
+      include-all: {}
+  modify:
+    set-parameters: []

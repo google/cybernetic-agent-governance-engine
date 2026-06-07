@@ -1,7 +1,7 @@
 system-security-plan:
   uuid: c9e1a2b3-d4f5-4678-9abc-def012345678
   metadata:
-    title: Cybernetic Governance Engine (CAGE) System Security Plan
+    title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
     last-modified: '2026-06-05T13:00:00Z'
     version: 1.0.1-draft+stpa
@@ -12,6 +12,19 @@ system-security-plan:
       This document is a DRAFT pending Authorizing Official (AO) review and approval.
       All TBD fields must be completed prior to submission for Authorization to Operate
       (ATO).
+
+      CAGE_DEPLOYMENT_REGION: US_FED
+
+      Compliance Framework: NIST SP 800-53 Rev 5 HIGH
+
+      Posture Scope: US Federal deployments only (CAGE_DEPLOYMENT_REGION=US_FED)
+
+      EU_ECB SSP: compliance/oscal/eu-ai-act-ssp.yaml (stub — not yet implemented)
+
+      APAC_MAS SSP: compliance/oscal/mas-feat-ssp.yaml (stub — not yet implemented)
+
+      Note: This SSP is NOT applicable to EU_ECB or APAC_MAS deployments. Those
+      regions use their own regional SSPs aligned to EU AI Act and MAS FEAT respectively.
 
       '
     props:
@@ -25,6 +38,12 @@ system-security-plan:
       value: docs/POAM.md
     - name: fips199-reference
       value: compliance/categorization/FIPS199_CATEGORIZATION.md
+    - name: cage-deployment-region
+      value: US_FED
+    - name: cage-compliance-posture
+      value: nist-sp800-53-rev5-high
+    - name: cage-posture-scope
+      value: us-federal-only
     roles:
     - id: system-owner
       title: System Owner

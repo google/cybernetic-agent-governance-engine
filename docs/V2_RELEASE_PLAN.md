@@ -1252,27 +1252,60 @@ Or via the GitHub UI:
 
 ### 8.10 Final Release Checklist
 
-```
-[ ] git log --all -S "<any-credential>" returns zero matches
-[ ] governed-financial-advisor READY 1/1, AVAILABLE 1
-[ ] No slm-sidecar container in advisor pod
-[ ] CAGE_ROUTING_SEAL_SECRET present in advisor-secrets (≥64 chars)
-[ ] GOVERNANCE_SALT present in advisor-secrets (≥64 chars)
-[ ] GOVERNANCE_SALT present in gateway pod env (≥64 chars)
-[ ] Unsigned gateway request returns 403
-[ ] Valid signed gateway request returns 200
-[ ] security-scanner-cronjob exists in governance-stack namespace
-[ ] PSA labels applied to governance-stack (restricted), langfuse (baseline), vllm (baseline)
-[ ] All Lula assertions pass (15/15)
-[ ] NIST SP 800-53 coverage ≥45%
-[ ] Full test suite: 0 failures
-[ ] ATO package submitted to AO
-[ ] POAM-011, POAM-012, R-21 documented as open items in POA&M
-[ ] git tag v2.0.0 pushed to origin
-[ ] GitHub Release published as Latest
-[ ] Branch fix/v2-p0-blockers deleted from remote
-[ ] terraform.auto.tfvars confirmed gitignored (no secrets in working tree)
-```
+### Release Gate Checklist
+
+#### ✅ Universal Gates (all regions — must pass for any stable release)
+
+- [ ] All ISO 42001 Lula assertions pass (`lula-validation-a52.yaml`, `lula-validation-a53.yaml`, `lula-validation-a92.yaml`)
+- [ ] CSA AARM Lula assertion passes (`lula-validation-aarm-vectors.yaml`)
+- [ ] All non-NIST Lula assertions pass (ISO 42001 + CSA AARM manifests)
+- [ ] SBOM generated and validated (`deployment/k8s/sbom-cronjob.yaml` output)
+- [ ] Container image vulnerability scan passes (Trivy — no CRITICAL unmitigated)
+- [ ] Secret detection scan passes (no secrets in codebase)
+- [ ] All unit and integration tests pass (`pytest`)
+- [ ] STPA freshness check passes (`scripts/check_stpa_freshness.py`)
+- [ ] Langfuse posture verified (`scripts/verify_langfuse_posture.py`)
+- [ ] `git log --all -S "<any-credential>"` returns zero matches
+- [ ] `governed-financial-advisor` READY 1/1, AVAILABLE 1
+- [ ] No `slm-sidecar` container in advisor pod
+- [ ] `CAGE_ROUTING_SEAL_SECRET` present in `advisor-secrets` (≥64 chars)
+- [ ] `GOVERNANCE_SALT` present in `advisor-secrets` (≥64 chars)
+- [ ] `GOVERNANCE_SALT` present in gateway pod env (≥64 chars)
+- [ ] Unsigned gateway request returns 403
+- [ ] Valid signed gateway request returns 200
+- [ ] `security-scanner-cronjob` exists in `governance-stack` namespace
+- [ ] PSA labels applied to `governance-stack` (restricted), `langfuse` (baseline), `vllm` (baseline)
+- [ ] Full test suite: 0 failures
+- [ ] `git tag v2.0.0` pushed to origin
+- [ ] GitHub Release published as Latest
+- [ ] Branch `fix/v2-p0-blockers` deleted from remote
+- [ ] `terraform.auto.tfvars` confirmed gitignored (no secrets in working tree)
+
+#### 🇺🇸 US_FED Gates (required for US_FED stable release only)
+
+> NIST SP 800-53 is a US Federal posture requirement. These gates apply exclusively to `CAGE_DEPLOYMENT_REGION=US_FED` deployments. EU_ECB and APAC_MAS stable releases are NOT blocked by NIST gates.
+
+- [ ] All 10 NIST SP 800-53 Lula assertions pass (`lula-validation-ac2.yaml`, `lula-validation-ac3.yaml`, `lula-validation-au12.yaml`, `lula-validation-cm6.yaml`, `lula-validation-ia3.yaml`, `lula-validation-ia5.yaml`, `lula-validation-ir6.yaml`, `lula-validation-ra5.yaml`, `lula-validation-sc8.yaml`, `lula-validation-si2.yaml`)
+- [ ] NIST SP 800-53 coverage ≥45% (checked via `oscal_ssp_exporter.py`)
+- [ ] `security-scanner-cronjob` deployed in `governance-stack` namespace (RA-5 Lula assertion prerequisite)
+- [ ] ATO process initiated (OSCAL SSP PRE-AUTHORIZATION DRAFT → submitted)
+- [ ] POAM-005 (no ATO) and POAM-009 (FIPS 199 unsigned) addressed or formally accepted
+- [ ] POAM-011, POAM-012, R-21 documented as open items in POA&M
+- [ ] ATO package submitted to AO
+
+#### 🇪🇺 EU_ECB Gates (required for EU_ECB stable release only)
+
+- [ ] EU AI Act compliance posture verified (no new High-Risk AI behaviour without FRIA attestation)
+- [ ] GDPR data residency confirmed: all data paths within `europe-west1` (EEA)
+- [ ] DORA Art. 10 audit logging enabled (`enable_audit_logging = true` in `eu-dev.tfvars`)
+- [ ] SR 26-2 telemetry suppression active (`"no legal force"` sentinel intact)
+
+#### 🌏 APAC_MAS Gates (required for APAC_MAS stable release only)
+
+- [ ] MAS FEAT compliance posture verified
+- [ ] MAS TRM §4.2 data residency confirmed: all data paths within `asia-southeast1` (Singapore)
+- [ ] MAS Notice 655 audit logging enabled (`enable_audit_logging = true` in `apac-dev.tfvars`)
+- [ ] SR 26-2 telemetry suppression active (`"no legal force"` sentinel intact)
 
 ---
 
