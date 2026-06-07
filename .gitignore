@@ -218,3 +218,21 @@ htmlcov/
 # Stale scratch/temp directories — canonical protos live in src/gateway/protos/
 temp_test/
 mcp-servers/infrastructure/setup.sh
+
+# Roo AI assistant configuration, rules, and state
+.roo/
+.rooignore
+.roo.json
+.roo.yaml
+.roo.yml
+.roorc
+.roo-cache/
+.roo-state/
+
+# Antigravity (Roo subsystem) — config examples and init scripts
+.antigravity/
+antigravity.json
+antigravity.yaml
+antigravity.yml
+config/antigravity_mcp_example.json
+init_antigravity.sh
