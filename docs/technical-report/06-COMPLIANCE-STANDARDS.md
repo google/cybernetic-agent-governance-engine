@@ -66,6 +66,10 @@ The Privacy Impact Assessment ([`compliance/pia/PRIVACY_IMPACT_ASSESSMENT.md`](.
 
 ## 3. NIST SP 800-53 Rev 5 Control Coverage
 
+> **⚠️ US_FED ONLY — Regional Scoping Notice:** NIST SP 800-53 Rev 5 is a **US_FED deployment requirement only**. It does **not** apply to `EU_ECB` or `APAC_MAS` deployments. EU_ECB stable releases are gated on EU AI Act (Reg. 2024/1689) compliance. APAC_MAS stable releases are gated on MAS FEAT compliance. See §14 (Compliance Posture Summary) and §15.2 (Supported Jurisdictions) for the full regional breakdown.
+
+> **NIST SP 800-53 gates apply to US_FED deployments only.** EU_ECB stable releases are gated on EU AI Act compliance. APAC_MAS stable releases are gated on MAS FEAT compliance.
+
 **Sources:** [`docs/NIST_RMF_CHUNK1_CURRENT_STATE.md`](../NIST_RMF_CHUNK1_CURRENT_STATE.md) through [`docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](../NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)
 
 ### 3.1 Overall Readiness
@@ -573,6 +577,8 @@ The `EU_ECB` profile activates an additional governance step — **Step 8: FRIA 
 - Requires periodic reassessment (365-day interval per Art. 29a)
 
 ### 15.7 OSCAL Framework Router
+
+> **Implementation Status:** The Multi-jurisdiction SSP Router described in this section has been **fully implemented** in [`src/gateway/governance/oscal_ssp_exporter.py`](../../src/gateway/governance/oscal_ssp_exporter.py) (previously described as "designed but not implemented"). The `FrameworkRouter` class and its CLI export interface are production-ready as of CAGE v2.2.0.
 
 The **`FrameworkRouter`** class ([`src/gateway/governance/oscal_ssp_exporter.py`](../../src/gateway/governance/oscal_ssp_exporter.py)) enables automated SSP generation targeted at different international authorities. It loads external JSON routing tables from `config/oscal/framework_mappings/` and maps STPA Unsafe Control Actions (UCAs) to jurisdiction-specific control identifiers:
 
