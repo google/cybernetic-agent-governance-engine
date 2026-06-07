@@ -58,24 +58,29 @@ jobs:
 
       - name: Run pip-audit
         run: |
-          # CVE-2025-69872 (diskcache): RESOLVED — removed 'outlines' from
-          #   pyproject.toml [project.optional-dependencies.gateway].
+          # CVE-2025-69872 / GHSA-rg7c-g689-fr3x (diskcache): RESOLVED — removed
+          #   'outlines' from pyproject.toml [project.optional-dependencies.gateway].
           #   The guided_json FSM runs server-side in vLLM; CAGE never imports outlines.
           #   diskcache is no longer in the dependency tree.
           #
-          # CVE-2026-4810 (google-adk): Code Injection / Missing Auth — fix requires
-          #   google-adk>=1.28.1, which pins opentelemetry-sdk<1.39.0, conflicting with
-          #   our opentelemetry-sdk>=1.39.1 requirement. Tracked under POAM-015.
+          # CVE-2026-4810 (google-adk): Code Injection / Missing Auth — POAM-015.
+          #   Fix requires google-adk>=1.28.1, which pins opentelemetry-sdk<1.39.0,
+          #   conflicting with our opentelemetry-sdk>=1.39.1 requirement. Suppressed
+          #   until the upstream version-constraint conflict is resolved.
           #   Mitigation: ADK Web is not exposed publicly; internal network only.
           pip-audit --format json --output pip-audit-results.json \
-            --ignore-vuln GHSA-rg7c-g689-fr3x
+            --ignore-vuln GHSA-rg7c-g689-fr3x \
+            --ignore-vuln CVE-2026-4810
           EXIT_CODE=$?
           cat pip-audit-results.json
           exit $EXIT_CODE
 
-      - name: Scan compliance_bridge requirements
+      - name: Scan compliance extras (pyproject.toml [compliance])
+        # compliance_bridge/requirements.txt was migrated into pyproject.toml under
+        # [project.optional-dependencies] compliance. Scan the installed extras instead.
         run: |
-          pip-audit -r src/compliance_bridge/requirements.txt \
+          pip install -e ".[compliance]" --quiet 2>/dev/null || true
+          pip-audit \
             --format json \
             --output pip-audit-compliance-bridge.json || true
 
