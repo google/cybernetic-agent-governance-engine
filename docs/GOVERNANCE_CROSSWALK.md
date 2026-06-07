@@ -48,7 +48,7 @@ The **Safety Node** ([`src/governed_financial_advisor/graph/nodes/safety_node.py
 
 ### 3. Continuous Compliance Audit (Lula)
 
-The **Lula CronJob** ([`deployment/k8s/lula-cron.yaml`](../deployment/k8s/lula-cron.yaml)) runs every 6 hours and validates all four controls (A.5.2, A.5.3, A.9.2, SC-4) against live cluster state and Langfuse evidence. Findings are expressed as **OSCAL Assessment Results** and ingested back into Langfuse via the **compliance bridge audit workflow** ([`src/compliance_bridge/audit_workflow.py`](../src/compliance_bridge/audit_workflow.py)).
+The **Lula CronJob** ([`deployment/k8s/lula-cron.yaml`](../deployment/k8s/lula-cron.yaml)) runs every 6 hours and validates the **4 Active** Lula manifests (A.5.2, A.5.3, A.9.2, SC-4) against live cluster state and Langfuse evidence. There are 15 total manifests — 4 Active and 11 Stub (requiring cluster-specific configuration before activation). See [`compliance/lula/README.md`](../compliance/lula/README.md) for the full status table with regional scope annotations. Findings are expressed as **OSCAL Assessment Results** and ingested back into Langfuse via the **compliance bridge audit workflow** ([`src/compliance_bridge/audit_workflow.py`](../src/compliance_bridge/audit_workflow.py)).
 
 Key components:
 

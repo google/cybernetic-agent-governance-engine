@@ -10,28 +10,40 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 
 ## Validation Coverage
 
-| Validation File                                          | Control | Standard             | Status    | Description                                                        |
-| -------------------------------------------------------- | ------- | -------------------- | --------- | ------------------------------------------------------------------ |
-| [`lula-validation-a52.yaml`](lula-validation-a52.yaml)   | A.5.2   | ISO 42001            | ✅ Active | Social Impact Assessment — NeMo Guardrails toxicity blocking ≥ 99% |
-| [`lula-validation-a53.yaml`](lula-validation-a53.yaml)   | A.5.3   | ISO 42001            | ✅ Active | Logging and Monitoring — Langfuse safety rate ≥ 98%                |
-| [`lula-validation-a92.yaml`](lula-validation-a92.yaml)   | A.9.2   | ISO 42001            | ✅ Active | Data Transfer to Suppliers — Presidio PII leak rate = 0%           |
-| [`lula-validation-aarm-vectors.yaml`](lula-validation-aarm-vectors.yaml) | CSA AARM v1.0 Vectors | CSA AARM | 🔶 Stub | CSA AARM v1.0 11-vector threat coverage validation |
-| [`lula-validation-ac2.yaml`](lula-validation-ac2.yaml)   | AC-2    | NIST SP 800-53       | 🔶 Stub   | Account Management                                                 |
-| [`lula-validation-ac3.yaml`](lula-validation-ac3.yaml)   | AC-3    | NIST SP 800-53 Rev 5 | 🔶 Stub   | Access Enforcement — OPA Deployment + ConfigMap check              |
-| [`lula-validation-au12.yaml`](lula-validation-au12.yaml) | AU-12   | NIST SP 800-53 Rev 5 | 🔶 Stub   | Audit Record Generation — Langfuse OTLP ingestion availability (standalone OTel Collector deprecated 2026-05-31; validation needs update) |
-| [`lula-validation-cm6.yaml`](lula-validation-cm6.yaml)   | CM-6    | NIST SP 800-53 Rev 5 | 🔶 Stub   | Configuration Settings — Governance ConfigMaps present             |
-| [`lula-validation-ia3.yaml`](lula-validation-ia3.yaml)   | IA-3    | NIST SP 800-53       | 🔶 Stub   | Device Identification                                              |
-| [`lula-validation-ia5.yaml`](lula-validation-ia5.yaml)   | IA-5    | NIST SP 800-53       | 🔶 Stub   | Authenticator Management                                           |
-| [`lula-validation-ir6.yaml`](lula-validation-ir6.yaml)   | IR-6    | NIST SP 800-53 Rev 5 | 🔶 Stub   | Incident Reporting — compliance-bridge Deployment check            |
-| [`lula-validation-ra5.yaml`](lula-validation-ra5.yaml)   | RA-5    | NIST SP 800-53 Rev 5 | 🔶 Stub   | Vulnerability Scanning — Security scan CronJob check               |
-| [`lula-validation-sc4.yaml`](lula-validation-sc4.yaml)   | SC-4    | System Constraint    | ✅ Active | Fiscal Limits and RBAC — OPA ConfigMap label present               |
-| [`lula-validation-sc8.yaml`](lula-validation-sc8.yaml)   | SC-8    | NIST SP 800-53       | 🔶 Stub   | Transmission Confidentiality                                       |
-| [`lula-validation-si2.yaml`](lula-validation-si2.yaml)   | SI-2    | NIST SP 800-53       | 🔶 Stub   | Flaw Remediation                                                   |
+| Validation File                                          | Control | Standard             | Region Scope | Status    | Description                                                        |
+| -------------------------------------------------------- | ------- | -------------------- | ------------ | --------- | ------------------------------------------------------------------ |
+| [`lula-validation-a52.yaml`](lula-validation-a52.yaml)   | A.5.2   | ISO 42001            | ALL          | ✅ Active | Social Impact Assessment — NeMo Guardrails toxicity blocking ≥ 99% |
+| [`lula-validation-a53.yaml`](lula-validation-a53.yaml)   | A.5.3   | ISO 42001            | ALL          | ✅ Active | Logging and Monitoring — Langfuse safety rate ≥ 98%                |
+| [`lula-validation-a92.yaml`](lula-validation-a92.yaml)   | A.9.2   | ISO 42001            | ALL          | ✅ Active | Data Transfer to Suppliers — Presidio PII leak rate = 0%           |
+| [`lula-validation-sc4.yaml`](lula-validation-sc4.yaml)   | SC-4    | NIST SP 800-53       | US_FED       | ✅ Active | Fiscal Limits and RBAC — OPA ConfigMap label present in `governance-stack` namespace |
+| [`lula-validation-aarm-vectors.yaml`](lula-validation-aarm-vectors.yaml) | CSA AARM v1.0 | CSA AARM | ALL | 🔶 Stub | CSA AARM v1.0 11-vector threat coverage validation |
+| [`lula-validation-ac2.yaml`](lula-validation-ac2.yaml)   | AC-2    | NIST SP 800-53       | US_FED       | 🔶 Stub   | Account Management — ServiceAccount lifecycle in `governance-stack` |
+| [`lula-validation-ac3.yaml`](lula-validation-ac3.yaml)   | AC-3    | NIST SP 800-53 Rev 5 | US_FED       | 🔶 Stub   | Access Enforcement — OPA Deployment + ConfigMap check              |
+| [`lula-validation-au12.yaml`](lula-validation-au12.yaml) | AU-12   | NIST SP 800-53 Rev 5 | US_FED       | 🔶 Stub   | Audit Record Generation — Langfuse OTLP ingestion availability (standalone OTel Collector deprecated 2026-05-31; validation needs update) |
+| [`lula-validation-cm6.yaml`](lula-validation-cm6.yaml)   | CM-6    | NIST SP 800-53 Rev 5 | US_FED       | 🔶 Stub   | Configuration Settings — Governance ConfigMaps present             |
+| [`lula-validation-ia3.yaml`](lula-validation-ia3.yaml)   | IA-3    | NIST SP 800-53       | US_FED       | 🔶 Stub   | Device Identification — Linkerd mTLS SPIFFE identity               |
+| [`lula-validation-ia5.yaml`](lula-validation-ia5.yaml)   | IA-5    | NIST SP 800-53       | US_FED       | 🔶 Stub   | Authenticator Management — KMS HSM key lifecycle                   |
+| [`lula-validation-ir6.yaml`](lula-validation-ir6.yaml)   | IR-6    | NIST SP 800-53 Rev 5 | US_FED       | 🔶 Stub   | Incident Reporting — compliance-bridge Deployment check            |
+| [`lula-validation-ra5.yaml`](lula-validation-ra5.yaml)   | RA-5    | NIST SP 800-53 Rev 5 | US_FED       | 🔶 Stub   | Vulnerability Scanning — Security scan CronJob check               |
+| [`lula-validation-sc8.yaml`](lula-validation-sc8.yaml)   | SC-8    | NIST SP 800-53       | US_FED       | 🔶 Stub   | Transmission Confidentiality — TLS enforcement                     |
+| [`lula-validation-si2.yaml`](lula-validation-si2.yaml)   | SI-2    | NIST SP 800-53       | US_FED       | 🔶 Stub   | Flaw Remediation — CVE patching (pip-audit CI)                     |
 
 **Legend:**
 
 - ✅ **Active** — Validation is production-ready and enabled in the Lula CronJob
 - 🔶 **Stub** — Validation logic is complete but requires cluster-specific namespace/resource name configuration before activation (see `# TODO:` comments in each file)
+- **Region Scope:** `ALL` = applies to US_FED, EU_ECB, and APAC_MAS deployments; `US_FED` = applies only when `CAGE_DEPLOYMENT_REGION=US_FED`
+
+### Posture Architecture Alignment
+
+The active/stub split is **intentional and aligned with the posture architecture**:
+
+- **3 Active (ALL scope):** ISO 42001 universal controls (A.5.2, A.5.3, A.9.2) — production-ready across all deployment regions
+- **1 Active (US_FED scope):** SC-4 fiscal limits — production-ready for US Federal deployments
+- **1 Stub (ALL scope):** CSA AARM vectors — universal but requires cluster configuration
+- **10 Stub (US_FED scope):** NIST SP 800-53 controls — US Federal only; require cluster-specific namespace/resource configuration before activation
+
+The 10 US_FED NIST stubs represent an **implementation gap** tracked as an open POAM item: activating all 10 would raise NIST SP 800-53 Lula coverage from 1/11 to 11/11 controls, directly supporting the US_FED release gate requirement (F-01 in [`docs/PRODUCTION_READINESS_REPORT.md`](../../docs/PRODUCTION_READINESS_REPORT.md)). The CSA AARM stub (1 manifest, ALL scope) is a separate gap affecting all regions.
 
 ---
 
