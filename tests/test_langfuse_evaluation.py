@@ -99,6 +99,15 @@ tracer = trace.get_tracer("langfuse-eval-integration")
 # ── Judge LLM (vLLM OpenAI-compat endpoint) ──────────────────────────────────
 # Initialise lazily — actual connectivity check happens inside the test.
 def _make_judge_llm():
+    # max_tokens: use 1024 for instruction-tuned models (Qwen2.5-7B, max_model_len=2048)
+    # and 4096 for reasoning models (DeepSeek R1, max_model_len=16384).
+    # Override via JUDGE_MAX_TOKENS env var.
+    import os as _os
+    _default_max = 4096
+    try:
+        _default_max = int(_os.environ.get("JUDGE_MAX_TOKENS", "4096"))
+    except ValueError:
+        pass
     return ChatOpenAI(
         base_url=VLLM_BASE,
         api_key="none",
@@ -107,7 +116,7 @@ def _make_judge_llm():
         # DeepSeek R1 emits <think>...</think> reasoning blocks (up to ~2 K tokens)
         # before the final JSON answer.  512 was too small, causing truncated JSON
         # ("Unterminated string") and excluding those responses from the mean.
-        max_tokens=4096,
+        max_tokens=_default_max,
     )
 
 

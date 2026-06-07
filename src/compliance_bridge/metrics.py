@@ -48,6 +48,38 @@ from .types import CONTROL_META, ComplianceMetrics
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# HIGH-05: Langfuse credential startup validation
+# Warns at module import time if application Langfuse credentials are absent
+# so that missing config is surfaced immediately rather than silently
+# producing empty compliance metrics.
+# ---------------------------------------------------------------------------
+
+def _validate_langfuse_credentials() -> None:
+    """Emit a WARNING if any Langfuse credential env vars are missing or empty.
+
+    Does NOT raise — metrics queries degrade gracefully when Langfuse is
+    unreachable, but operators must know the credentials are absent.
+    Fires once at module import time so the gap is visible in startup logs.
+    """
+    missing: list[str] = []
+    for var in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
+        if not os.environ.get(var):
+            missing.append(var)
+
+    if missing:
+        logger.warning(
+            "Langfuse compliance credentials not configured — audit metrics will not be "
+            "recorded. Set LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST. "
+            "Missing: %s",
+            ", ".join(missing),
+        )
+
+
+_validate_langfuse_credentials()
+
+
 # ---------------------------------------------------------------------------
 # Langfuse client — application project (NOT the compliance audit project)
 # ---------------------------------------------------------------------------

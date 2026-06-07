@@ -96,6 +96,43 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# HIGH-05: Langfuse credential startup validation
+# Warns at module import time if compliance or app Langfuse credentials are
+# absent so that missing config is surfaced immediately rather than silently
+# producing empty audit metrics.
+# ---------------------------------------------------------------------------
+
+def _validate_langfuse_credentials() -> None:
+    """Emit a WARNING if any Langfuse credential env vars are missing or empty.
+
+    Does NOT raise — compliance audit steps are non-fatal by design.
+    Fires once at module import time so the gap is visible in startup logs.
+    """
+    missing: list[str] = []
+
+    # Compliance project credentials (used by _make_compliance_langfuse)
+    for var in ("LANGFUSE_COMPLIANCE_PUBLIC_KEY", "LANGFUSE_COMPLIANCE_SECRET_KEY"):
+        if not os.environ.get(var):
+            missing.append(var)
+
+    # Application project credentials (used by _make_app_langfuse / _fetch_failing_traces)
+    for var in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
+        if not os.environ.get(var):
+            missing.append(var)
+
+    if missing:
+        logger.warning(
+            "Langfuse compliance credentials not configured — audit metrics will not be "
+            "recorded. Set %s. "
+            "(LANGFUSE_HOST defaults to https://cloud.langfuse.com if unset.)",
+            ", ".join(missing),
+        )
+
+
+_validate_langfuse_credentials()
+
+
+# ---------------------------------------------------------------------------
 # Compliance Langfuse client factory
 # Separate from the main app project to keep audit traces isolated.
 # ---------------------------------------------------------------------------

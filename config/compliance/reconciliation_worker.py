@@ -93,6 +93,19 @@ TTL_SECONDS: int = int(
 )
 PROVIDER: str = os.environ.get("RECONCILIATION_PROVIDER", "stub")
 
+# ---------------------------------------------------------------------------
+# Production guard (BLOCKER-06)
+# ---------------------------------------------------------------------------
+# The stub provider fabricates a static $100k balance.  If the CBF evaluates
+# against this fake number in production, the safety barrier is meaningless.
+# Block startup immediately so the misconfiguration cannot be silently deployed.
+
+if os.environ.get("ENVIRONMENT") == "production" and PROVIDER == "stub":
+    raise RuntimeError(
+        "RECONCILIATION_PROVIDER=stub is not allowed in production. "
+        "Set a real ledger provider (e.g. RECONCILIATION_PROVIDER=anchorage)."
+    )
+
 # Redis key schema
 _REDIS_KEY_VERIFIED_BALANCE = "reconciliation:verified_balance"
 _REDIS_KEY_VERIFIED_AT = "reconciliation:verified_at"

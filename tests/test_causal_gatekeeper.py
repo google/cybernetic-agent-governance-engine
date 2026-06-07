@@ -106,14 +106,13 @@ class TestCausalSafetyCheckUnit:
         result from a previous test with the same cache key cannot mask the
         fail-safe behaviour being tested here.
         """
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import MagicMock, patch
         from src.gateway.governance.causal_gatekeeper import causal_safety_check
         # Provide a DataFrame missing required columns to trigger an error.
         # No timestamp column → freshness check fails closed → returns False.
         bad_data = pd.DataFrame({'x': [1, 2, 3], 'y': [4, 5, 6]})
         with patch(
-            "src.gateway.governance.causal_gatekeeper._causal_cache_get",
-            new_callable=AsyncMock,
+            "src.gateway.governance.causal_gatekeeper._causal_cache_get_sync",
             return_value=None,  # force cache miss so the check actually runs
         ):
             result = causal_safety_check({"amount": 100}, bad_data)

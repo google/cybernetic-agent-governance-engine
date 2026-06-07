@@ -36,9 +36,23 @@ import os
 from typing import Optional
 
 import httpx
-from nemoguardrails.actions import action
 from opentelemetry import trace as _otel_trace
 from opentelemetry.trace import Status, StatusCode
+
+try:
+    from nemoguardrails.actions import action as _nemo_action
+    def action(name: str):  # type: ignore[misc]
+        """Thin wrapper that delegates to nemoguardrails.actions.action."""
+        return _nemo_action(name=name)
+except ImportError:
+    # nemoguardrails not installed (e.g. in unit-test environments).
+    # Provide a no-op decorator so the module can still be imported and
+    # all action functions remain callable.
+    def action(name: str):  # type: ignore[misc]
+        """No-op decorator used when nemoguardrails is not installed."""
+        def decorator(fn):
+            return fn
+        return decorator
 
 logger = logging.getLogger(__name__)
 

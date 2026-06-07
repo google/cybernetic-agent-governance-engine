@@ -24,12 +24,16 @@ services:
       - "--log-level=info"
       - "--addr=unix:///tmp/opa.sock"
       - "--addr=:8181"
+      - "--authentication=token"
       - "/policies"
     volumes:
       - ./policies:/policies
       - opa_socket_vol:/tmp
     ports:
-      - "8181:8181"
+      # HIGH-01 FIX: Restrict OPA to localhost only — prevents unauthenticated
+      # access from external processes on the host. Inter-service communication
+      # within the Docker network uses the internal port directly (no host binding needed).
+      - "127.0.0.1:8181:8181"
     healthcheck:
       test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8181/health" ]
       interval: 5s
@@ -77,8 +81,12 @@ services:
       # Supported values: US_FED | EU_ECB | APAC_MAS
       - CAGE_DEPLOYMENT_REGION=${CAGE_DEPLOYMENT_REGION:-US_FED}
     # No live src mount — image must be rebuilt on code change (Phase 6.2).
+    # HIGH-03 FIX: Use env_file instead of mounting .env as a volume. Mounting
+    # .env as a volume exposes all secrets to any process that can read the
+    # container filesystem; env_file injects only the declared env vars.
+    env_file:
+      - .env
     volumes:
-      - ./.env:/app/.env
       - opa_socket_vol:/tmp
     depends_on:
       opa:
@@ -107,8 +115,12 @@ services:
       # v2.0.0 REQUIRED: must match the gateway service's CAGE_DEPLOYMENT_REGION.
       - CAGE_DEPLOYMENT_REGION=${CAGE_DEPLOYMENT_REGION:-US_FED}
     # No live src mount — image must be rebuilt on code change (Phase 6.2).
+    # HIGH-03 FIX: Use env_file instead of mounting .env as a volume. Mounting
+    # .env as a volume exposes all secrets to any process that can read the
+    # container filesystem; env_file injects only the declared env vars.
+    env_file:
+      - .env
     volumes:
-      - ./.env:/app/.env
       - opa_socket_vol:/tmp
     depends_on:
       gateway:

@@ -28,9 +28,17 @@ import os
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 import nest_asyncio
-from nemoguardrails import LLMRails, RailsConfig
-from nemoguardrails.context import streaming_handler_var
-from nemoguardrails.llm.providers import register_llm_provider
+try:
+    from nemoguardrails import LLMRails, RailsConfig
+    from nemoguardrails.context import streaming_handler_var
+    from nemoguardrails.llm.providers import register_llm_provider
+    _NEMOGUARDRAILS_AVAILABLE = True
+except ImportError:
+    LLMRails = None  # type: ignore[assignment,misc]
+    RailsConfig = None  # type: ignore[assignment,misc]
+    streaming_handler_var = None  # type: ignore[assignment]
+    register_llm_provider = None  # type: ignore[assignment]
+    _NEMOGUARDRAILS_AVAILABLE = False
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
@@ -205,8 +213,15 @@ tracer = trace.get_tracer(__name__)
 #   - src/gateway/governance/nemo/README.md
 #   - plans/nemo_guardrails_architectural_analysis.md
 # ---------------------------------------------------------------------------
-def create_nemo_manager(config_path: str = "config/rails") -> LLMRails:
+def create_nemo_manager(config_path: str = "config/rails") -> "LLMRails | None":
     """Create and initialise a NeMo Guardrails manager with vLLM support."""
+    if not _NEMOGUARDRAILS_AVAILABLE:
+        logger.warning(
+            "create_nemo_manager: 'nemoguardrails' is not installed — "
+            "returning None (NeMo guardrails tier unavailable)."
+        )
+        return None
+
     try:
         nest_asyncio.apply()
     except Exception as exc:

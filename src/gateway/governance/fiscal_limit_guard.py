@@ -179,18 +179,92 @@ class FiscalLimitGuard:
         day = time.strftime("%Y-%m-%d", time.gmtime())
         return f"fiscal:daily_limit:{day}"
 
+    def _is_async_client(self) -> bool:
+        """Return True if the Redis client is an async (redis.asyncio) client."""
+        # redis.asyncio clients have a coroutine-based execute_command; the sync
+        # client's pipeline() returns a Pipeline whose watch() is a plain method.
+        # The most reliable detection is checking the module path of the client.
+        client_module = type(self._redis).__module__
+        return "asyncio" in client_module
+
+    def _sync_atomic_increment(self, key: str, amount_cents: int, cap_cents: int) -> int:
+        """Sync WATCH/MULTI/EXEC increment — used when client is redis.Redis (sync)."""
+        for attempt in range(_MAX_RETRIES):
+            try:
+                pipe = self._redis.pipeline(True)  # type: ignore[attr-defined]
+                pipe.watch(key)
+                current = int(pipe.get(key) or 0)
+                if (current + amount_cents) > cap_cents:
+                    pipe.reset()
+                    return -1
+                pipe.multi()
+                pipe.incrby(key, amount_cents)
+                pipe.expire(key, self._window_seconds)
+                results = pipe.execute()
+                return int(results[0])
+            except Exception as exc:
+                err_name = type(exc).__name__
+                if "WatchError" in err_name and attempt < _MAX_RETRIES - 1:
+                    backoff = (_RETRY_BASE_MS * (2 ** attempt) + random.randint(0, 5)) / 1000.0
+                    import time as _time
+                    _time.sleep(backoff)
+                    continue
+                logger.error(
+                    "_atomic_increment: error on attempt %d key=%s err=%s",
+                    attempt, key, exc,
+                )
+                return -2
+        return -2
+
+    def _sync_atomic_decrement(self, key: str, amount_cents: int) -> int:
+        """Sync WATCH/MULTI/EXEC decrement — used when client is redis.Redis (sync)."""
+        for attempt in range(_MAX_RETRIES):
+            try:
+                pipe = self._redis.pipeline(True)  # type: ignore[attr-defined]
+                pipe.watch(key)
+                current = int(pipe.get(key) or 0)
+                new_val = max(0, current - amount_cents)
+                pipe.multi()
+                pipe.set(key, new_val)
+                pipe.expire(key, self._window_seconds)
+                pipe.execute()
+                return new_val
+            except Exception as exc:
+                err_name = type(exc).__name__
+                if "WatchError" in err_name and attempt < _MAX_RETRIES - 1:
+                    backoff = (_RETRY_BASE_MS * (2 ** attempt) + random.randint(0, 5)) / 1000.0
+                    import time as _time
+                    _time.sleep(backoff)
+                    continue
+                logger.error(
+                    "_atomic_decrement: error on attempt %d key=%s err=%s",
+                    attempt, key, exc,
+                )
+                return -1
+        return -1
+
     async def _atomic_increment(
         self, key: str, amount_cents: int, cap_cents: int
     ) -> int:
         """Atomically increment the spend counter if it stays within cap.
 
-        Uses WATCH/MULTI/EXEC optimistic locking with retries.
+        Supports both sync (redis.Redis) and async (redis.asyncio.Redis) clients.
+        When a sync client is detected the pipeline runs in a thread executor so
+        the async caller is not blocked.
 
         Returns:
             New total (int, in cents) on success.
             -1 if cap would be exceeded.
             -2 if all retries failed due to contention (treated as fail-closed).
         """
+        if not self._is_async_client():
+            # Sync client — run blocking pipeline in a thread executor
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                None, self._sync_atomic_increment, key, amount_cents, cap_cents
+            )
+
+        # Async client path (redis.asyncio)
         for attempt in range(_MAX_RETRIES):
             try:
                 pipe = self._redis.pipeline(True)  # type: ignore[attr-defined]
@@ -223,8 +297,16 @@ class FiscalLimitGuard:
     ) -> int:
         """Atomically decrement the spend counter, flooring at 0.
 
+        Supports both sync (redis.Redis) and async (redis.asyncio.Redis) clients.
         Returns new total in cents, or -1 on error.
         """
+        if not self._is_async_client():
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                None, self._sync_atomic_decrement, key, amount_cents
+            )
+
+        # Async client path (redis.asyncio)
         for attempt in range(_MAX_RETRIES):
             try:
                 pipe = self._redis.pipeline(True)  # type: ignore[attr-defined]
@@ -351,7 +433,12 @@ class FiscalLimitGuard:
     async def current_spend_usd(self) -> float:
         """Return the current reserved + confirmed spend for today's window."""
         try:
-            raw = await self._redis.get(self._window_key())  # type: ignore[attr-defined]
+            key = self._window_key()
+            if self._is_async_client():
+                raw = await self._redis.get(key)  # type: ignore[attr-defined]
+            else:
+                loop = asyncio.get_event_loop()
+                raw = await loop.run_in_executor(None, self._redis.get, key)  # type: ignore[attr-defined]
             return int(raw) / 100.0 if raw else 0.0
         except Exception as exc:
             logger.error("FiscalLimitGuard.current_spend_usd: Redis error: %s", exc)

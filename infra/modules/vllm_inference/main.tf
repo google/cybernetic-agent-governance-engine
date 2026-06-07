@@ -52,6 +52,16 @@ resource "kubernetes_deployment" "vllm" {
       spec {
         service_account_name = var.service_account_name
 
+        # Pod-level security context: seccomp profile satisfies baseline/restricted
+        # admission controllers. run_as_non_root is intentionally omitted here
+        # because vLLM GPU workloads require root for CUDA device access; the
+        # namespace policy is set to "baseline" (not "restricted") for GPU namespaces.
+        security_context {
+          seccomp_profile {
+            type = "RuntimeDefault"
+          }
+        }
+
         affinity {
           # Pod Anti-Affinity for GPU distribution
           dynamic "pod_anti_affinity" {
@@ -122,6 +132,22 @@ resource "kubernetes_deployment" "vllm" {
               memory           = var.memory_request
               cpu              = var.cpu_request
               "nvidia.com/gpu" = tostring(var.gpu_count)
+            }
+          }
+
+          # Container-level security context.
+          # Satisfies pod-security "baseline" admission policy for GPU workloads.
+          # NOTE: run_as_non_root is intentionally NOT set here — vLLM requires
+          # root for CUDA/GPU device access. The namespace policy is therefore
+          # set to "baseline" (not "restricted") via kubectl label. The three
+          # fields below are still best-practice hardening even under baseline.
+          security_context {
+            allow_privilege_escalation = false
+            seccomp_profile {
+              type = "RuntimeDefault"
+            }
+            capabilities {
+              drop = ["ALL"]
             }
           }
 
