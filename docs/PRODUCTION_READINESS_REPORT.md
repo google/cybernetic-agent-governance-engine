@@ -57,11 +57,11 @@ The CAGE governance engine demonstrates sophisticated, defense-in-depth architec
 
 | Severity | Count | Required Pre-Release |
 |----------|-------|---------------------|
-| 🔴 Blocker | 10 | All 10 |
+| 🔴 Blocker | 9 | All 9 (BLOCKER-10 resolved — `CHANGELOG.md` now exists) |
 | 🟠 High | 12 | All 12 |
 | 🟡 Medium | 17 | Recommended |
 | 🔵 Low | 14 | Post-release acceptable |
-| **Total** | **53** | **22 required** |
+| **Total** | **52** | **21 required** |
 
 ---
 
@@ -356,23 +356,18 @@ Three critical governance documents remain in **DRAFT** status pending AO approv
 
 ---
 
-### BLOCKER-10 | Compliance | `CHANGELOG.md` Does Not Exist
+### BLOCKER-10 | Compliance | `CHANGELOG.md` — ✅ RESOLVED
 
 | Field | Value |
 |-------|-------|
 | **Domain** | Compliance / Documentation |
-| **File** | `CHANGELOG.md` (missing) |
-| **POAM** | None (newly identified) |
-| **Impact** | Release gate blocker — `gh release create` instructions reference `CHANGELOG.md` explicitly; Cat-N/Cat-M change records are undocumented |
+| **File** | `CHANGELOG.md` |
+| **POAM** | None |
+| **Status** | ✅ **Resolved** — `CHANGELOG.md` now exists with retroactive entries for rc.1 through rc.3 |
 
-**Description:** `CHANGELOG.md` is referenced as a required artifact in [`CONTRIBUTING.md`](CONTRIBUTING.md), [`docs/CHANGE_MANAGEMENT_PROCESS.md`](docs/CHANGE_MANAGEMENT_PROCESS.md), and [`docs/V2_RELEASE_PLAN.md`](docs/V2_RELEASE_PLAN.md), but the file does not exist in the repository. The `.clinerules` Section 8.5 mandates that `CHANGELOG.md` be updated for every Cat-N and Cat-M change. The release runbook's `gh release create` command references it for release notes. Without it, the GitHub Release cannot be properly published.
+**Description:** `CHANGELOG.md` was identified as missing in the initial assessment. It has since been created with entries for all release candidates (rc.1, rc.2, rc.3) and an `[Unreleased]` section tracking Sprint 2 production-readiness fixes. The file follows the Keep a Changelog format and references Change Request IDs per `.clinerules` §8.5.
 
-**Fix:** Create `CHANGELOG.md` with retroactive entries for rc.1 through rc.3, following the format specified in [`docs/CHANGE_MANAGEMENT_PROCESS.md`](docs/CHANGE_MANAGEMENT_PROCESS.md):
-```
-## [v2.0.0-rc.3] — 2026-06-07
-### Changed
-- [CR-2026-NNN] description, reviewed-by, approved date, Lula result
-```
+**This blocker is resolved.** The remaining 9 blockers (BLOCKER-01 through BLOCKER-09) still require remediation before stable production release.
 
 ---
 
@@ -718,11 +713,11 @@ No regulated production deployment is legally permissible without a named Author
 
 | Severity | Count | Required Before Release |
 |----------|-------|------------------------|
-| 🔴 Blocker | 10 | All 10 required |
+| 🔴 Blocker | 9 | All 9 required (BLOCKER-10 resolved — `CHANGELOG.md` now exists) |
 | 🟠 High | 12 | All 12 required |
 | 🟡 Medium | 17 | Recommended |
 | 🔵 Low | 14 | Post-release acceptable |
-| **Total** | **53** | **22 required pre-release** |
+| **Total** | **52** | **21 required pre-release** |
 
 ### By Domain
 

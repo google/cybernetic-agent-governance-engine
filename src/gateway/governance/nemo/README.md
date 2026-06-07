@@ -1,6 +1,6 @@
 # NeMo Guardrails — Integration Overview
 
-> **Last updated:** 2026-03-10
+> **Last updated:** 2026-06-07 (v2.0.0-rc.3)
 
 This package (`src/gateway/governance/nemo/`) contains everything the
 Cybernetic Governance Engine needs to run NVIDIA NeMo Guardrails as a
@@ -92,11 +92,12 @@ callers, but it is **not part of the graph's critical path**.
 
 ## File Reference
 
-| File                                                                   | Role                                                                                                                                                                                                   |
+| File                                                                   | Role                                                                                                                                                                   |
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [`manager.py`](manager.py)                                             | **Authoritative in-process path.** `create_nemo_manager()` builds an `LLMRails` instance. `validate_with_nemo()`, `verify_input()`, and `verify_and_mask_output()` are called directly by graph nodes. |
 | [`server.py`](server.py)                                               | **gRPC sidecar (external callers only).** Implements `governance.NeMoGuardrails.Verify` over the network. NOT used by graph nodes. Runs as a separate process.                                         |
 | [`actions.py`](actions.py)                                             | Gateway-internal NeMo action implementations (`CheckApprovalTokenAction`, `CheckDataLatencyAction`, etc.). Delegates to the `SymbolicGovernor` singleton.                                              |
+| [`prompt_fetcher.py`](prompt_fetcher.py)                               | **v2.0.0:** Fetches Langfuse prompts for NeMo rail configuration. Used by the human-gated refinement workflow (`POST /v1/nemo/propose-refinement`) to stage config proposals before human approval.    |
 | [`vllm_client.py`](vllm_client.py)                                     | `VLLMLLM` — a LangChain `BaseChatModel` wrapper around the vLLM inference service via LiteLLM. Registered as the `vllm_llama` LLM provider and used by NeMo for any LLM calls within Colang flows.     |
 | [`__init__.py`](__init__.py)                                           | Package init (currently empty; kept for Python package resolution).                                                                                                                                    |
 | [`../../../../src/gateway/protos/nemo.proto`](../../protos/nemo.proto) | Protobuf definition for the gRPC sidecar: `NeMoGuardrails.Verify(VerifyRequest) → VerifyResponse`.                                                                                                     |

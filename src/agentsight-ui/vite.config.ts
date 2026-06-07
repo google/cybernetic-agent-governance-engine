@@ -30,7 +30,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
-      // Forward /v1/* directly to the Hono TypeScript compliance-bridge.
+      // Forward /v1/* directly to the Python FastAPI compliance-bridge.
       // This allows EventSource('/v1/events/stream') to work in dev without
       // CORS issues — the browser sees it as same-origin.
       '/v1': {
