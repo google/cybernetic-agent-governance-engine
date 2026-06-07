@@ -121,6 +121,21 @@ async def _gateway_lifespan(app: FastAPI):
             "Trade size RBAC will not be enforced."
         )
 
+    # ── Production guard: prohibit log-mode seal enforcement (BLOCKER-03) ──────
+    if os.getenv("ENVIRONMENT") == "production":
+        assert os.getenv("CAGE_SEAL_ENFORCEMENT") != "log", (
+            "CAGE_SEAL_ENFORCEMENT=log is prohibited in production"
+        )
+
+    # ── Production guard: prohibit stub ledger provider (BLOCKER-06) ───────────
+    # The stub provider fabricates a static $100k balance; the CBF would evaluate
+    # against fake data, making the safety barrier meaningless in production.
+    if os.getenv("ENVIRONMENT") == "production" and os.getenv("RECONCILIATION_PROVIDER", "stub") == "stub":
+        raise RuntimeError(
+            "RECONCILIATION_PROVIDER=stub is not allowed in production. "
+            "Set a real ledger provider (e.g. RECONCILIATION_PROVIDER=anchorage)."
+        )
+
     # External Normative Provider integration (§2.5)
     provider_name = os.getenv("CAGE_NORMATIVE_PROVIDER", "static")
     polling_task = None
@@ -135,6 +150,11 @@ async def _gateway_lifespan(app: FastAPI):
             "✅ Normative provider '%s' initialized with background polling",
             provider_name,
         )
+
+    # ── Start consensus background audit worker (HIGH-06) ──────────────────
+    from src.gateway.governance.consensus import _background_audit_worker
+    asyncio.create_task(_background_audit_worker())
+    logger.info("✅ Consensus background audit worker started")
 
     yield
 

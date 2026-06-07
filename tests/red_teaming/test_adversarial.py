@@ -20,7 +20,10 @@ import sys
 # Ensure src is in path
 sys.path.append(os.getcwd())
 
-pytestmark = pytest.mark.integration
+# red_team is used instead of integration so these adversarial tests are
+# excluded from standard CI integration runs and only executed in dedicated
+# security CI pipelines via: pytest -m red_team
+pytestmark = pytest.mark.red_team
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 from src.governed_financial_advisor.agents.evaluator.red_agent import RedAgent # Updated import

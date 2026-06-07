@@ -238,3 +238,90 @@ spec:
       ports:
         - protocol: TCP
           port: 8181
+
+---
+# Policy 10: Allow inbound inference traffic to vllm-inference from governed-financial-advisor,
+# gateway, and nemo-guardrails pods on port 8000.
+# Required because default-deny-ingress blocks all inbound traffic; without this policy
+# the advisor pod gets ConnectTimeout when calling the thinker_node reasoner LLM.
+# NIST SP 800-53: SC-7, AC-4
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-vllm-inference-ingress
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: vllm-inference
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: governance-stack
+          podSelector:
+            matchLabels:
+              app: governed-financial-advisor
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: governance-stack
+          podSelector:
+            matchLabels:
+              app: gateway
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: governance-stack
+          podSelector:
+            matchLabels:
+              app: nemo-guardrails
+      ports:
+        - protocol: TCP
+          port: 8000
+
+---
+# Policy 11: Allow inbound inference traffic to vllm-reasoning from governed-financial-advisor,
+# gateway, and nemo-guardrails pods on port 8000.
+# Mirrors Policy 10 for the reasoning (DeepSeek R1) model pod.
+# NIST SP 800-53: SC-7, AC-4
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-vllm-reasoning-ingress
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: vllm-reasoning
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: governance-stack
+          podSelector:
+            matchLabels:
+              app: governed-financial-advisor
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: governance-stack
+          podSelector:
+            matchLabels:
+              app: gateway
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: governance-stack
+          podSelector:
+            matchLabels:
+              app: nemo-guardrails
+      ports:
+        - protocol: TCP
+          port: 8000

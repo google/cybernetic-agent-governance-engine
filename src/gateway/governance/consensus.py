@@ -85,6 +85,7 @@ async def _background_audit_worker() -> None:
             _AUDIT_QUEUE.task_done()
         except Exception as exc:
             logger.error("Audit worker error: %s", exc)
+            _AUDIT_QUEUE.task_done()
 
 
 # ---------------------------------------------------------------------------
@@ -253,16 +254,29 @@ class ConsensusEngine:
                         {"role": "user", "content": prompt},
                     ],
                     temperature=0.0,
+                    timeout=30.0,  # 30-second hard limit
                 )
                 content = response.choices[0].message.content.strip()
             else:
-                # Fall back to shared GatewayClient
-                content = await self._default_client.generate(
-                    prompt=prompt,
-                    system_instruction=f"You are a strict {role}.",
-                    mode="verifier",
-                    temperature=0.0,
-                )
+                # Fall back to shared GatewayClient — enforce 30-second hard limit
+                # (HIGH-07: GatewayClient has no built-in timeout; default is 600s)
+                try:
+                    content = await asyncio.wait_for(
+                        self._default_client.generate(
+                            prompt=prompt,
+                            system_instruction=f"You are a strict {role}.",
+                            mode="verifier",
+                            temperature=0.0,
+                        ),
+                        timeout=30.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "⏱️ Consensus critic %s (GatewayClient fallback) timed out "
+                        "after 30s — returning ERROR verdict.",
+                        role,
+                    )
+                    return "ERROR"
                 content = content.strip()
 
             if "APPROVE" in content:
