@@ -24,7 +24,7 @@ The Cybernetic Governance Engine (CAGE) simultaneously targets federal cybersecu
 | **FIPS 199**                  | NIST            | Security categorization *(US_FED)* |
 | **FIPS 140-2/3**              | NIST            | Cryptographic standards *(All Regions)* |
 | **ISO/IEC 42001:2023**        | ISO             | AI Management System *(All Regions)* |
-| **OSCAL v1.0.4**              | NIST            | Machine-readable compliance artifacts *(All Regions)* |
+| **OSCAL v1.0.4 / 1.1.2**     | NIST            | Machine-readable compliance artifacts *(All Regions)*. Artifact schema: OSCAL v1.0.4. Runtime assessment state semantics: aligned to NIST SP 800-53A §3.2 four-state model (OSCAL 1.1.2 — includes `ERROR` state alongside `satisfied`, `not-satisfied`, `not-applicable`). |
 | **ISO-20022**                 | ISO             | Banking/payments standard *(All Regions)* |
 | **FINRA Rule 4511**           | FINRA           | 7-year records retention *(US_FED)* |
 | **SEC Rule 17a-4**            | SEC             | Electronic records *(US_FED)* |

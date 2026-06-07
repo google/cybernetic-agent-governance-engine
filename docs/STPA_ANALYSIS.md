@@ -23,15 +23,15 @@ The STPA control structure is the **single source of truth** for all governance 
 
 | ID | Category | Description | Enforcement | Implementation |
 | :--- | :--- | :--- | :--- | :--- |
-| **UCA-1** | Unsafe Action | Agent executes write operation without approval token. | `[opa, nemo, python]` | `GeneratedSTPAValidator.check_uca1()` + OPA Rego rule. |
-| **UCA-2** | Wrong Timing | Agent executes trade with stale market data (>200ms latency). | `[opa, nemo, python]` | `GeneratedSTPAValidator.check_uca2()` + OPA Rego rule. |
+| **UCA-1** | Unsafe Action | Agent executes write operation without approval token. | `[opa, nemo, python]` | `GeneratedSTPAValidator._check_uca_1()` + OPA Rego rule. |
+| **UCA-2** | Wrong Timing | Agent executes trade with stale market data (>200ms latency). | `[opa, nemo, python]` | `GeneratedSTPAValidator._check_uca_2()` + OPA Rego rule. |
 | **UCA-3** | Unsafe Action | Agent outputs PII to user interface. | `[nemo]` | NeMo Guardrails `verify_content_safety` + Presidio PII egress filter. |
 | **UCA-4** | Stopped Too Soon | Agent debits account but fails to credit asset (atomic failure). | `[nemo, langgraph]` | **Saga WAL Pattern** — see §4 below. |
-| **UCA-5** | Unsafe Action | Agent executes buy when drawdown > 4.5%. | `[opa, nemo, python]` | `SafetyFilter` (CBF) in `SymbolicGovernor` + OPA Rego rule. |
-| **UCA-6** | Unsafe Action | Agent order volume fraction exceeds maximum (`uca6_max_order_volume_fraction=0.01`, i.e., 1% of portfolio). | `[opa, python]` | `GeneratedSTPAValidator.check_uca6()`. |
+| **UCA-5** | Unsafe Action | Agent executes buy when drawdown > 4.5%. | `[opa, nemo, python]` | `GeneratedSTPAValidator._check_uca_5()` (threshold: `THRESHOLDS.stpa.uca5_drawdown_threshold_pct`) + `ControlBarrierFunction` in `cbf.py` + OPA Rego rule. |
+| **UCA-6** | Unsafe Action | Agent order volume fraction exceeds maximum (`uca6_max_order_volume_fraction=0.01`, i.e., 1% of portfolio). | `[opa, python]` | `GeneratedSTPAValidator._check_uca_6()`. |
 | **UCA-7** | Unsafe Action | High prompt injection semantic score detected. | `[opa]` | OPA Rego rule. Semantic score threshold: 0.85. |
-| **UCA-8** | Unsafe Action | Trade attempted before risk assessment completed. | `[opa, python]` | `GeneratedSTPAValidator.check_uca8()`. |
-| **UCA-9** | Unsafe Action | Trade attempted with compliance check bypassed. | `[opa, python]` | `GeneratedSTPAValidator.check_uca9()`. |
+| **UCA-8** | Unsafe Action | Trade attempted before risk assessment completed. | `[opa, python]` | `GeneratedSTPAValidator._check_uca_8()`. |
+| **UCA-9** | Unsafe Action | Trade attempted with compliance check bypassed. | `[opa, python]` | `GeneratedSTPAValidator._check_uca_9()`. |
 
 ---
 
@@ -179,8 +179,8 @@ OPA evaluates the **post-reservation** balance — it is responsible for policy 
 | :--- | :--- |
 | `config/stpa_control_structure.yaml` | Single source of truth for all UCA definitions, conditions, and enforcement targets |
 | `src/gateway/governance/stpa_compiler.py` | Compiler CLI; ingests YAML; emits OPA/NeMo/Python/LangGraph artifacts |
-| `src/gateway/governance/stpa_validator.py` | Hand-authored base validator (legacy) |
-| `src/gateway/governance/generated_stpa_validator.py` | Auto-generated Python validator (do not edit) |
+| `src/gateway/governance/generated_stpa_validator.py` | **Primary** auto-generated Python validator — `GeneratedSTPAValidator` with `validate()` entry-point and `_check_uca_*()` per-UCA methods (do not edit; re-run compiler to regenerate) |
+| `src/gateway/governance/stpa_validator.py` | **Deprecated shim** — re-exports `GeneratedSTPAValidator` as `STPAValidator`; emits `DeprecationWarning` on import; will be removed in the next major version. `symbolic_governor.py` now imports `GeneratedSTPAValidator` directly. |
 | `config/opa/generated_stpa_policy.rego` | Auto-generated OPA Rego rules (do not edit) |
 | `config/rails/generated_stpa_rails.co` | Auto-generated NeMo Colang rails (do not edit) |
 | `src/gateway/governance/generated_saga_nodes.py` | Auto-generated LangGraph Saga nodes (do not edit) |

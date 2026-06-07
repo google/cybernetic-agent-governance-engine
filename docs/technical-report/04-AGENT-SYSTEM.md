@@ -48,7 +48,7 @@ The agent system is governed under **SR 26-2** — the Federal Reserve's supervi
 | `doer_node`             | `src/governed_financial_advisor/graph/nodes/supervisor_node.py`  | `MODEL_FAST`                                 | LangGraph node                                 | Decomposed instructions                          |
 | `DataAnalystAgent`      | `src/governed_financial_advisor/agents/data_analyst/agent.py`       | yfinance (no LLM)                            | yfinance direct                                | `data_analyst_ticker`; price history; top 3 news |
 | `ExecutionAnalystAgent` | `src/governed_financial_advisor/agents/execution_analyst/agent.py`  | `MODEL_REASONING`; guided JSON               | `ChatOpenAI` on `GATEWAY_API_BASE`             | `ExecutionPlan` (PlanStep list)                  |
-| `EvaluatorAgent`        | `src/governed_financial_advisor/agents/evaluator/agent.py`          | `Qwen/Qwen2.5-7B-Instruct` via `VLLM_FAST`   | `create_tool_calling_agent`; 5 async MCP tools | `evaluation_result`, `opa_results`               |
+| `EvaluatorAgent`        | `src/governed_financial_advisor/agents/evaluator/agent.py`          | `Qwen/Qwen2.5-1.5B-Instruct` via `VLLM_FAST`  | `create_tool_calling_agent`; 5 async MCP tools | `evaluation_result`, `opa_results`               |
 | `ExplainerAgent`        | `src/governed_financial_advisor/agents/explainer/agent.py`          | `MODEL_FAST`                                 | LangGraph node                                 | Compliance narrative                             |
 | `GovernedTrader`        | `src/governed_financial_advisor/agents/governed_trader/agent.py`    | `MODEL_FAST` (execution)                     | LangGraph node; HITL interrupt point           | `execution_result`                               |
 | `RiskAnalystAgent`      | `src/governed_financial_advisor/agents/risk_analyst/agent.py`       | STAMP hazards from GCS; fallback H-1/H-2/H-3 | LangGraph node                                 | `ProposedUCA` structs                            |
@@ -287,7 +287,7 @@ The fallback `MemorySaver` is strictly for development and degraded-mode operati
 
 ## 8. EvaluatorAgent Detail
 
-`src/governed_financial_advisor/agents/evaluator/agent.py` is the most architecturally complex agent in the pipeline. It uses LangChain's `create_tool_calling_agent` bound to `Qwen/Qwen2.5-7B-Instruct` (via `VLLM_FAST_API_BASE`) and dispatches five async MCP tools:
+`src/governed_financial_advisor/agents/evaluator/agent.py` is the most architecturally complex agent in the pipeline. It uses LangChain's `create_tool_calling_agent` bound to `Qwen/Qwen2.5-1.5B-Instruct` (via `VLLM_FAST_API_BASE`) and dispatches five async MCP tools:
 
 | MCP Tool                   | Purpose                                                             |
 | -------------------------- | ------------------------------------------------------------------- |

@@ -653,9 +653,13 @@ async def run_audit_workflow(oscal_yaml: str, audit_id: str) -> dict:
     # Step 2 — parse OSCAL (raises ValueError on failure → propagated to caller)
     findings = await _step2_parse_oscal(oscal_yaml)
 
-    # Normalize finding_ids to valid deterministic UUIDs to prevent Langfuse/DB errors
-    for finding in findings:
-        finding.finding_id = _ensure_uuid(finding.finding_id)
+    # Normalize finding_ids to valid deterministic UUIDs to prevent Langfuse/DB errors.
+    # OscalFinding is frozen (ConfigDict(frozen=True)) — create new instances via
+    # model_copy() rather than mutating in-place (ISO 42001 A.5.3 immutability).
+    findings = [
+        finding.model_copy(update={"finding_id": _ensure_uuid(finding.finding_id)})
+        for finding in findings
+    ]
 
     # Step 2b — SHA-256 hash-chained Context Accumulator (AARM mandate, CAGE v2.0.0)
     # Append every OSCAL finding as a chained node, then seal to lock the chain.

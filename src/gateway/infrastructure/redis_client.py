@@ -26,11 +26,25 @@ Environment variables:
     REDIS_PASSWORD — optional
 """
 
+import json
 import logging
 import os
-from typing import Optional
+from typing import Any, List, Optional
 
 logger = logging.getLogger("Gateway.Infrastructure.Redis")
+
+
+class TransactionAbortedError(Exception):
+    """Raised when a Redis WATCH/MULTI/EXEC transaction is aborted due to a
+    concurrent modification of a watched key (WatchError).
+
+    Callers should treat this as a retriable condition: the watched key was
+    modified by another writer between the WATCH and EXEC calls, so the
+    transaction was rolled back atomically by Redis.  Any staging keys written
+    *before* the MULTI block have been explicitly deleted by the client before
+    this exception is raised, leaving Redis in a clean state.
+    """
+
 
 try:
     import redis.asyncio as aioredis
@@ -104,6 +118,79 @@ try:
         def watch(self, *keys: str):
             """Return a pipeline in WATCH mode for optimistic locking."""
             return self._get().pipeline()
+
+        async def watched_transaction(
+            self,
+            watch_keys: List[str],
+            staging_keys: List[str],
+            build_pipeline_fn: Any,
+        ) -> Any:
+            """Execute a WATCH/MULTI/EXEC transaction with guaranteed cleanup on abort.
+
+            Contract:
+                1. WATCH is issued on *watch_keys* before any reads or staging writes.
+                2. The caller-supplied *build_pipeline_fn* is invoked with the pipeline
+                   object after WATCH but before MULTI.  It may write staging keys
+                   (SET/HSET/LPUSH/etc.) outside the pipeline queue — those keys must
+                   be listed in *staging_keys* so they can be cleaned up on abort.
+                3. MULTI is called, the pipeline commands are queued, and EXEC is
+                   issued atomically.
+                4. If a concurrent writer modifies any watched key between step 1 and
+                   step 3, Redis raises ``WatchError``.  This method catches it,
+                   deletes every key listed in *staging_keys* (best-effort), emits a
+                   structured WARNING log, and re-raises as ``TransactionAbortedError``.
+
+            Cleanup guarantee:
+                Any key in *staging_keys* that was written before MULTI is explicitly
+                deleted via ``DEL`` before ``TransactionAbortedError`` is raised.  This
+                prevents dirty staging state from leaking into subsequent reads.
+
+            Args:
+                watch_keys:        Keys to pass to WATCH.  The transaction aborts if
+                                   any of these are modified by another client before
+                                   EXEC.
+                staging_keys:      Keys written outside the pipeline (before MULTI)
+                                   that must be cleaned up on WatchError.
+                build_pipeline_fn: Async callable ``(pipe) -> None`` invoked after
+                                   WATCH.  It should issue any pre-MULTI writes and
+                                   then queue pipeline commands.  The pipeline is
+                                   already in buffered (MULTI) mode when EXEC is
+                                   called by this method.
+
+            Returns:
+                The list of results returned by ``pipe.execute()``.
+
+            Raises:
+                TransactionAbortedError: A watched key was modified concurrently.
+                                         All staging keys have been deleted.
+            """
+            client = self._get()
+            async with client.pipeline(transaction=True) as pipe:
+                try:
+                    await pipe.watch(*watch_keys)
+                    pipe.multi()
+                    await build_pipeline_fn(pipe)
+                    return await pipe.execute()
+                except aioredis.WatchError:
+                    # Best-effort cleanup of any staging keys written before MULTI.
+                    if staging_keys:
+                        try:
+                            await client.delete(*staging_keys)
+                        except Exception as del_exc:  # noqa: BLE001
+                            logger.warning(
+                                "watched_transaction: staging key cleanup failed: %s",
+                                del_exc,
+                            )
+                    logger.warning(
+                        json.dumps({
+                            "event": "redis_watch_abort",
+                            "keys_cleaned": staging_keys,
+                            "reason": "WatchError",
+                        })
+                    )
+                    raise TransactionAbortedError(
+                        f"WATCH aborted: concurrent modification of {watch_keys}"
+                    ) from None
 
         async def close(self) -> None:
             if self._client is not None:

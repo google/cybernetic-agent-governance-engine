@@ -35,6 +35,8 @@ import os
 from datetime import datetime, timezone
 from typing import Annotated, Any, Optional, TypedDict
 
+from src.governed_financial_advisor.graph.annotations import side_effect_node
+
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -182,6 +184,7 @@ def route_approval(state: GovernedTraderState) -> str:
 # Executor nodes (unchanged from original)
 # ---------------------------------------------------------------------------
 
+@side_effect_node(kind="api_call", external_system="gateway_mcp")
 async def tool_executor_node(state: GovernedTraderState):
     """
     Manually executes tools requested by the executor node.
@@ -321,6 +324,7 @@ def should_continue(state: GovernedTraderState) -> str:
 # ---------------------------------------------------------------------------
 
 
+@side_effect_node(kind="api_call", external_system="yfinance")
 async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]:
     """TOCTOU Remediation — State Re-hydration Node.
 
@@ -462,6 +466,7 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
             return _skipped_result(f"yfinance_error: {exc}")
 
 
+@side_effect_node(kind="api_call", external_system="symbolic_governor")
 async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any]:
     """TOCTOU Remediation — Pre-Actuation Re-Validation Node.
 

@@ -75,6 +75,8 @@ If Cloud Build is unavailable:
 | vLLM | `deployment/docker/cloudbuild.vllm.yaml` | LLM inference engine |
 | LULA | `deployment/docker/cloudbuild.lula.yaml` | Compliance validation |
 
+> **Note:** Two Cloud Build configs exist for the Gateway: `deployment/docker/cloudbuild.gateway.yaml` (primary) and `deployment/docker/cloudbuild_gateway.yaml` (alternate with `_GCP_PROJECT_ID` substitution). Use `cloudbuild.gateway.yaml` for standard builds.
+
 ## MCP Server Integration
 
 The `cage-infrastructure` MCP server enforces these rules automatically:
@@ -113,7 +115,7 @@ gcloud builds list --limit=5
 gcloud container images list
 
 # Check deployment status
-kubectl get deployments -n cage-system
+kubectl get deployments -n governance-stack
 ```
 
 ## Agent Instructions

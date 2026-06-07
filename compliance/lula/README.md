@@ -15,12 +15,18 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 | [`lula-validation-a52.yaml`](lula-validation-a52.yaml)   | A.5.2   | ISO 42001            | ✅ Active | Social Impact Assessment — NeMo Guardrails toxicity blocking ≥ 99% |
 | [`lula-validation-a53.yaml`](lula-validation-a53.yaml)   | A.5.3   | ISO 42001            | ✅ Active | Logging and Monitoring — Langfuse safety rate ≥ 98%                |
 | [`lula-validation-a92.yaml`](lula-validation-a92.yaml)   | A.9.2   | ISO 42001            | ✅ Active | Data Transfer to Suppliers — Presidio PII leak rate = 0%           |
-| [`lula-validation-sc4.yaml`](lula-validation-sc4.yaml)   | SC-4    | System Constraint    | ✅ Active | Fiscal Limits and RBAC — OPA ConfigMap label present               |
-| [`lula-validation-au12.yaml`](lula-validation-au12.yaml) | AU-12   | NIST SP 800-53 Rev 5 | 🔶 Stub   | Audit Record Generation — Langfuse OTLP ingestion availability (standalone OTel Collector deprecated 2026-05-31; validation needs update) |
+| [`lula-validation-aarm-vectors.yaml`](lula-validation-aarm-vectors.yaml) | CSA AARM v1.0 Vectors | CSA AARM | 🔶 Stub | CSA AARM v1.0 11-vector threat coverage validation |
+| [`lula-validation-ac2.yaml`](lula-validation-ac2.yaml)   | AC-2    | NIST SP 800-53       | 🔶 Stub   | Account Management                                                 |
 | [`lula-validation-ac3.yaml`](lula-validation-ac3.yaml)   | AC-3    | NIST SP 800-53 Rev 5 | 🔶 Stub   | Access Enforcement — OPA Deployment + ConfigMap check              |
-| [`lula-validation-ra5.yaml`](lula-validation-ra5.yaml)   | RA-5    | NIST SP 800-53 Rev 5 | 🔶 Stub   | Vulnerability Scanning — Security scan CronJob check               |
+| [`lula-validation-au12.yaml`](lula-validation-au12.yaml) | AU-12   | NIST SP 800-53 Rev 5 | 🔶 Stub   | Audit Record Generation — Langfuse OTLP ingestion availability (standalone OTel Collector deprecated 2026-05-31; validation needs update) |
 | [`lula-validation-cm6.yaml`](lula-validation-cm6.yaml)   | CM-6    | NIST SP 800-53 Rev 5 | 🔶 Stub   | Configuration Settings — Governance ConfigMaps present             |
+| [`lula-validation-ia3.yaml`](lula-validation-ia3.yaml)   | IA-3    | NIST SP 800-53       | 🔶 Stub   | Device Identification                                              |
+| [`lula-validation-ia5.yaml`](lula-validation-ia5.yaml)   | IA-5    | NIST SP 800-53       | 🔶 Stub   | Authenticator Management                                           |
 | [`lula-validation-ir6.yaml`](lula-validation-ir6.yaml)   | IR-6    | NIST SP 800-53 Rev 5 | 🔶 Stub   | Incident Reporting — compliance-bridge Deployment check            |
+| [`lula-validation-ra5.yaml`](lula-validation-ra5.yaml)   | RA-5    | NIST SP 800-53 Rev 5 | 🔶 Stub   | Vulnerability Scanning — Security scan CronJob check               |
+| [`lula-validation-sc4.yaml`](lula-validation-sc4.yaml)   | SC-4    | System Constraint    | ✅ Active | Fiscal Limits and RBAC — OPA ConfigMap label present               |
+| [`lula-validation-sc8.yaml`](lula-validation-sc8.yaml)   | SC-8    | NIST SP 800-53       | 🔶 Stub   | Transmission Confidentiality                                       |
+| [`lula-validation-si2.yaml`](lula-validation-si2.yaml)   | SI-2    | NIST SP 800-53       | 🔶 Stub   | Flaw Remediation                                                   |
 
 **Legend:**
 

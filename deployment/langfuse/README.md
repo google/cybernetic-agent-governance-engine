@@ -45,10 +45,10 @@ Langfuse v3 **requires** S3-compatible storage. We use a self-hosted MinIO insta
 Port-forward the web service to access the UI:
 
 ```bash
-kubectl port-forward svc/langfuse-web 3000:80 -n governance-stack
+kubectl port-forward svc/langfuse-web 3001:80 -n governance-stack
 ```
 
-Visit `http://localhost:3000`.
+Visit `http://localhost:3001`.
 
 ## Troubleshooting
 

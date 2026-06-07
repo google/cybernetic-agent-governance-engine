@@ -228,7 +228,7 @@ All required variables must be non-empty. Key variables:
 | `LANGFUSE_HOST`       | ConfigMap                   | `http://langfuse-web:3000`                 |
 | `REDIS_URL`           | ConfigMap                   | `redis://redis:6379`                       |
 | `OPA_URL`             | ConfigMap                   | `http://opa:8181`                          |
-| `MODEL_FAST`          | ConfigMap or Deployment env | `meta-llama/Meta-Llama-3.1-8B-Instruct`    |
+| `MODEL_FAST`          | ConfigMap or Deployment env | `Qwen/Qwen2.5-1.5B-Instruct`               |
 | `MODEL_REASONING`     | ConfigMap or Deployment env | `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` |
 | `NEMO_URL`            | ConfigMap                   | `http://nemo:8080`                         |
 
@@ -238,13 +238,13 @@ Once the pod is `Running 1/1`, establish a direct port-forward to the stable ser
 
 ```bash
 kubectl port-forward -n governance-stack \
-  svc/governed-financial-advisor 8000:8000
+  svc/governed-financial-advisor 8081:80
 ```
 
 Verify the health endpoint responds before running the test suite:
 
 ```bash
-curl -s http://localhost:8000/health | python3 -m json.tool
+curl -s http://localhost:8081/health | python3 -m json.tool
 ```
 
 Expected:
@@ -271,7 +271,7 @@ flowchart TD
     F --> G{Pod reaches 1/1 Running?}
     G -- Yes --> H[kubectl exec to verify env vars]
     H --> I[kubectl port-forward svc/governed-financial-advisor 8000:8000]
-    I --> J[curl /health to confirm service ready]
+    I --> J[curl http://localhost:8081/health to confirm service ready]
     J --> K[Run pytest integration suite]
     G -- No --> B
 ```
@@ -527,7 +527,7 @@ AssertionError: Expected 200, got 404
 
 ```bash
 kubectl port-forward -n governance-stack svc/gateway 8080:8080 &
-kubectl port-forward -n governance-stack svc/governed-financial-advisor 8000:8000 &
+kubectl port-forward -n governance-stack svc/governed-financial-advisor 8081:80 &
 pytest tests/ -v --timeout=60
 ```
 

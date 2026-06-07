@@ -17,9 +17,9 @@ The **Cybernetic Governance Engine (CAGE)** is a distributed, multi-runtime syst
 
 | #   | Subsystem                      | Root Path                         | Runtime                   | Port            |
 | --- | ------------------------------ | --------------------------------- | ------------------------- | --------------- |
-| 1   | **Governed Financial Advisor** | `src/governed_financial_advisor/` | Python / FastAPI          | 8000            |
+| 1   | **Governed Financial Advisor** | `src/governed_financial_advisor/` | Python / FastAPI          | 80 (K8s) / 8081 (local port-forward) |
 | 2   | **Hybrid Inference Gateway**   | `src/gateway/`                    | Python / FastAPI + gRPC   | 8080            |
-| 3   | **Compliance Bridge**          | `src/compliance_bridge/`          | Python / FastAPI SSE      | 3002            |
+| 3   | **Compliance Bridge**          | `src/compliance_bridge/`          | Python / FastAPI SSE      | 3001 (internal) / 3002 (local port-forward) |
 | 4   | **AgentSight UI**              | `src/agentsight-ui/`              | React / TypeScript / Vite | 5173            |
 | 5   | **AgentSight eBPF DaemonSet**  | `deployment/agentsight/`          | Kernel / BPF              | N/A (DaemonSet) |
 | 6   | **Vendor Integrations**        | `src/integrations/`               | Python (lazy-loaded)      | N/A (adapters)  |
@@ -36,13 +36,13 @@ The diagram below captures the primary runtime request path from a user API call
 
 ```mermaid
 flowchart TD
-    User([User / Client]) -->|POST /v1/chat/completions| FastAPI[FastAPI Agent Server\nport 8000]
+    User([User / Client]) -->|POST /v1/chat/completions| FastAPI[FastAPI Agent Server\nport 8081 (local) / 80 (K8s)]
 
     FastAPI -->|invoke graph| LangGraph[LangGraph StateGraph\n10 nodes]
 
     LangGraph -->|MCP tool calls| HybridGW[Hybrid Inference Gateway]
     LangGraph -->|AsyncRedisSaver checkpoint| Redis[(Redis\nCheckpoint + HITL State)]
-    LangGraph -->|OSCAL audit events| CompBridge[Compliance Bridge\nport 3002]
+    LangGraph -->|OSCAL audit events| CompBridge[Compliance Bridge\nport 3001 (internal) / 3002 (local)]
 
     HybridGW -->|mount /| MCPApp[FastMCP Tool Server\n7 tools]
     HybridGW -->|mount /inference| InfProxy[Inference Proxy\n5-tier pipeline]
@@ -50,7 +50,7 @@ flowchart TD
     HybridGW -->|X-CAGE-Routing-Seal HMAC| GovMiddleware[Governance Middleware]
 
     InfProxy -->|deepseek model route| vLLM_R[vLLM Reasoning\nDeepSeek-R1-Distill-Llama-8B]
-    InfProxy -->|default model route| vLLM_F[vLLM Fast\nMeta-Llama-3.1-8B-Instruct]
+    InfProxy -->|default model route| vLLM_F[vLLM Fast\nQwen/Qwen2.5-1.5B-Instruct]
 
     GovApp --> SymGov[SymbolicGovernor\n7-tier pipeline]
     SymGov --> OPA[OPA Rego Engine\ntrade.governance]
@@ -209,7 +209,7 @@ Human-in-the-Loop (HITL) trade approval is a first-class architectural feature, 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant FastAPI as FastAPI Server\n:8000
+    participant FastAPI as FastAPI Server\nport 8081 (local) / 80 (K8s)
     participant Graph as LangGraph StateGraph
     participant Redis
     participant Human as Human Approver
@@ -299,7 +299,7 @@ flowchart LR
 | Model Variant | Backend                                                  | Use Case                                      |
 | ------------- | -------------------------------------------------------- | --------------------------------------------- |
 | `deepseek-*`  | `VLLM_REASONING_API_BASE` — DeepSeek-R1-Distill-Llama-8B | Chain-of-thought reasoning (thinker node)     |
-| Default       | `VLLM_FAST_API_BASE` — Meta-Llama-3.1-8B-Instruct        | Instruction following (doer, explainer nodes) |
+| Default       | `VLLM_FAST_API_BASE` — Qwen/Qwen2.5-1.5B-Instruct        | Instruction following (doer, explainer nodes) |
 
 ---
 

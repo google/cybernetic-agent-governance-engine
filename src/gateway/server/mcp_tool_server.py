@@ -276,7 +276,10 @@ async def execute_trade_action(
     that execution cannot proceed by ignoring the governance response.
     Satisfies: NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
     """
-    from src.gateway.governance.routing_seal import verify_seal  # noqa: PLC0415
+    from src.gateway.governance.routing_seal import (  # noqa: PLC0415
+        verify_seal,
+        SymbolicGovernorViolation,
+    )
 
     logger.info("Tool Call: execute_trade(%s, %s)", symbol, amount)
     if not transaction_id:
@@ -294,13 +297,18 @@ async def execute_trade_action(
         return f"BLOCKED: {exc}"
 
     # Gap 2 fix: verify the routing seal before executing.
-    # A missing or invalid seal means authority was never resolved — hard block.
-    if seal and not verify_seal(seal, "execute_trade", params):
-        logger.error(
-            "🔒 execute_trade_action: routing seal verification FAILED — "
-            "blocking execution (No-Direct-Bind invariant)."
-        )
-        return "BLOCKED: routing seal invalid or expired — governance authority unresolved."
+    # verify_seal() now raises SymbolicGovernorViolation instead of returning
+    # False — callers cannot silently ignore a failed seal check (P3 fix).
+    if seal:
+        try:
+            verify_seal(seal, "execute_trade", params)
+        except SymbolicGovernorViolation as exc:
+            logger.error(
+                "🔒 execute_trade_action: routing seal verification FAILED — "
+                "blocking execution (No-Direct-Bind invariant). Reason: %s",
+                exc.reason,
+            )
+            return "BLOCKED: routing seal invalid or expired — governance authority unresolved."
 
     if dry_run:
         return "DRY_RUN: APPROVED by OPA, Safety, and Consensus."

@@ -28,12 +28,14 @@ from src.governed_financial_advisor.graph.nodes.agent_nodes import (
     data_analyst_node
 )
 from src.governed_financial_advisor.graph.state import AgentState
+from src.governed_financial_advisor.graph.annotations import side_effect_node
 
 logger = logging.getLogger("EvaluatorNode")
 tracer = trace.get_tracer("src.governed_financial_advisor.graph.nodes.evaluator_node")
 
 from src.gateway.governance.kms_signer import get_governance_signer
 
+@side_effect_node(kind="api_call", external_system="cloud_kms")
 def generate_governance_signature(plan: dict) -> str:
     """Generate a cryptographic governance signature for a plan.
 
@@ -52,6 +54,7 @@ def generate_governance_signature(plan: dict) -> str:
     signer = get_governance_signer()
     return signer.sign(plan)
 
+@side_effect_node(kind="api_call", external_system="opa_engine")
 async def evaluator_node(state: AgentState) -> dict[str, Any]:
     """
     System 3 Control Node: The "Real-Time Monitor".

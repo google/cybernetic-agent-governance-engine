@@ -60,6 +60,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from src.gateway.infrastructure.redis_client import TransactionAbortedError
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -167,16 +169,29 @@ class DeferQueue:
 
         Returns:
             The ``defer_id`` of the parked token.
+
+        Raises:
+            TransactionAbortedError: The Redis WATCH/MULTI/EXEC transaction was
+                aborted because a concurrent writer modified a watched key.  The
+                caller should treat this as a retriable condition.
         """
         key        = f"{_KEY_PREFIX}{token.defer_id}"
         expiry_ts  = time.time() + token.ttl_seconds
         token_json = token.model_dump_json()
 
-        async with self._redis.pipeline(transaction=True) as pipe:
-            pipe.hset(key, mapping={"token": token_json, "status": "PARKED"})
-            pipe.expire(key, token.ttl_seconds)
-            pipe.zadd(_EXPIRY_ZSET, {token.defer_id: expiry_ts})
-            await pipe.execute()
+        try:
+            async with self._redis.pipeline(transaction=True) as pipe:
+                pipe.hset(key, mapping={"token": token_json, "status": "PARKED"})
+                pipe.expire(key, token.ttl_seconds)
+                pipe.zadd(_EXPIRY_ZSET, {token.defer_id: expiry_ts})
+                await pipe.execute()
+        except TransactionAbortedError:
+            logger.warning(
+                "[defer_queue] park() transaction aborted for defer_id=%s thread_id=%s — "
+                "returning DeferResult.ABORTED",
+                token.defer_id, token.thread_id,
+            )
+            raise
 
         logger.info(
             "[defer_queue] Parked token defer_id=%s thread_id=%s reason=%s "
@@ -218,14 +233,22 @@ class DeferQueue:
         token.resolved_at_utc = datetime.now(tz=timezone.utc).isoformat()
         token.resolution       = resolution
 
-        async with self._redis.pipeline(transaction=True) as pipe:
-            pipe.hset(key, mapping={
-                "token":  token.model_dump_json(),
-                "status": "RESOLVED",
-                **({"injection_data": json.dumps(injection_data)} if injection_data else {}),
-            })
-            pipe.zrem(_EXPIRY_ZSET, defer_id)
-            await pipe.execute()
+        try:
+            async with self._redis.pipeline(transaction=True) as pipe:
+                pipe.hset(key, mapping={
+                    "token":  token.model_dump_json(),
+                    "status": "RESOLVED",
+                    **({"injection_data": json.dumps(injection_data)} if injection_data else {}),
+                })
+                pipe.zrem(_EXPIRY_ZSET, defer_id)
+                await pipe.execute()
+        except TransactionAbortedError:
+            logger.warning(
+                "[defer_queue] resolve() transaction aborted for defer_id=%s resolution=%s — "
+                "returning DeferResult.ABORTED",
+                defer_id, resolution,
+            )
+            raise
 
         logger.info(
             "[defer_queue] Resolved defer_id=%s resolution=%s thread_id=%s",
@@ -320,3 +343,94 @@ class DeferQueue:
 #: than MANUAL_REVIEW, preventing operational fatigue from fundamentally incomplete
 #: context windows. See UCA-7 in src/gateway/governance/ontology.py.
 DEFER_CONFIDENCE_THRESHOLD: float = 0.70
+
+
+# ---------------------------------------------------------------------------
+# replay_evaluate — Phase 3 of the confidence-score replay flow
+# ---------------------------------------------------------------------------
+
+class ReplayResult(str, Enum):
+    """Outcome of a replay_evaluate() call.
+
+    ADMITTED:  The enriched context raised effective confidence above
+               DEFER_CONFIDENCE_THRESHOLD; the token has been resolved
+               with resolution="INJECTED" and removed from the DEFER queue.
+    PARKED:    Effective confidence is still below the threshold; the token
+               remains in Redis db=1 awaiting further hydration or escalation.
+    NOT_FOUND: No token with the given defer_id exists in the queue.
+    """
+
+    ADMITTED  = "ADMITTED"
+    PARKED    = "PARKED"
+    NOT_FOUND = "NOT_FOUND"
+
+
+async def replay_evaluate(
+    queue: "DeferQueue",
+    defer_id: str,
+    enriched_context: dict[str, Any],
+) -> ReplayResult:
+    """Phase 3 — Re-evaluate a parked token against the confidence threshold.
+
+    This is the canonical re-evaluation entry point for the three-phase
+    confidence-score replay flow (CAGE v2.0.0):
+
+      Phase 1 — PARK:    Token with confidence < DEFER_CONFIDENCE_THRESHOLD
+                         is parked in Redis db=1 via DeferQueue.park().
+      Phase 2 — HYDRATE: Out-of-band context enrichment raises effective
+                         confidence (caller responsibility).
+      Phase 3 — REPLAY:  This function.  Reads the effective confidence from
+                         ``enriched_context["confidence_score"]`` and compares
+                         it against DEFER_CONFIDENCE_THRESHOLD (0.70).
+
+    Decision logic:
+      - If ``enriched_context["confidence_score"] >= DEFER_CONFIDENCE_THRESHOLD``:
+          Calls ``queue.resolve(defer_id, "INJECTED", injection_data=enriched_context)``
+          to remove the token from the DEFER queue and returns ``ReplayResult.ADMITTED``.
+      - If the effective confidence is still below the threshold:
+          The token remains PARKED; returns ``ReplayResult.PARKED``.
+      - If the token is not found (expired or never parked):
+          Returns ``ReplayResult.NOT_FOUND``.
+
+    Args:
+        queue:            A ``DeferQueue`` instance connected to Redis db=1.
+        defer_id:         The ``defer_id`` of the parked token to re-evaluate.
+        enriched_context: Dict produced by the hydration step.  Must contain
+                          ``"confidence_score"`` (float in [0, 1]).  Any
+                          additional fields are stored as injection_data on
+                          the resolved token for audit purposes.
+
+    Returns:
+        A ``ReplayResult`` enum member indicating the outcome.
+
+    ISO 42001 mapping: A.8.4 (AI System Operation Controls) — changed-condition
+    replay is a formal re-entry point that prevents indefinite parking of tokens
+    whose context has been enriched by automated data-hydration loops.
+    """
+    token = await queue.get(defer_id)
+    if token is None:
+        logger.warning(
+            "[replay_evaluate] Token not found for defer_id=%s — returning NOT_FOUND.",
+            defer_id,
+        )
+        return ReplayResult.NOT_FOUND
+
+    effective_confidence: float = float(
+        enriched_context.get("confidence_score", token.confidence_score or 0.0)
+    )
+
+    if effective_confidence >= DEFER_CONFIDENCE_THRESHOLD:
+        await queue.resolve(defer_id, "INJECTED", injection_data=enriched_context)
+        logger.info(
+            "[replay_evaluate] Token ADMITTED: defer_id=%s effective_confidence=%.3f "
+            "threshold=%.2f",
+            defer_id, effective_confidence, DEFER_CONFIDENCE_THRESHOLD,
+        )
+        return ReplayResult.ADMITTED
+
+    logger.info(
+        "[replay_evaluate] Token remains PARKED: defer_id=%s effective_confidence=%.3f "
+        "threshold=%.2f",
+        defer_id, effective_confidence, DEFER_CONFIDENCE_THRESHOLD,
+    )
+    return ReplayResult.PARKED
