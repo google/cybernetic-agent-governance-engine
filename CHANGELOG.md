@@ -31,6 +31,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 - **`tests/test_governance_middleware.py`** — Governance API surface coverage using `fastapi.testclient.TestClient` (BLOCKER-08). Covers the `/governance/check` endpoint, `/governance/validate-action` endpoint, `enforce_routing_seal()` log-mode bypass path, `_emit_refusal_receipt()` KMS signing, and `_verify_governance_signature()`. Brings `governance_middleware.py` coverage from ~5% toward the ≥80% target.
 - **`tests/load/locustfile.py`** — Load test updated to target live governance endpoints (`/governance/validate-action`, `/tools/execute`) instead of the removed `/agent/query` endpoint (HIGH-11). Re-establishes meaningful performance baseline data for production readiness validation.
 
+### Docs
+
+- docs: update markdown files to reflect v2.0.0-rc.3 state — corrected stale `deployment/terraform/` path references in `infra/ROLLBACK_PROCEDURES.md` and `infra/DEPLOYMENT_GUIDE.md` to active `infra/targets/gcp-gke/`; updated POAM-007 mTLS status from pending to closed (Linkerd mTLS implemented 2026-05-17) in `compliance/pia/PRIVACY_IMPACT_ASSESSMENT.md`; added historical notice to `plans/path-b-deployment-plan.md`; replaced stale "module not extracted yet" markers in `infra/targets/agnostic/README.md` with accurate module completion status.
+
 ---
 
 ## [2.0.0-rc.3] — 2026-06-06
@@ -46,7 +50,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 - **KMS batch signing for OSCAL artifacts** — `src/compliance_bridge/kms_batch_signer.py` provides HSM-backed asymmetric signing for compliance evidence artifacts stored in GCS. Closes the cryptographic evidence chain for MiFID II / GDPR audit requirements.
 - **AgentSight eBPF remote exporter** — `exporter.type: "remote"` confirmed active in `deployment/k8s/agentsight-daemon.yaml` (POAM-021 closed). eBPF kernel observability data now flows to the remote collector rather than console-only mode.
 - **Security-scan CronJob manifest** — `deployment/k8s/security-scan-cronjob.yaml` created with PSA `restricted:latest`-compliant `securityContext`. Runs Trivy weekly (Sunday 03:00 UTC) against `gcr.io/YOUR_GCP_PROJECT_ID/cage-gateway:latest`. Satisfies the RA-5 Lula assertion in `compliance/lula/lula-validation-ra5.yaml`.
-- **15 Lula validation manifests (all active)** — Automated continuous compliance assessment covering NIST SP 800-53, ISO 42001 Annex A, and CSA AARM controls. CronJob runs every 6 hours; findings expressed as OSCAL Assessment Results.
+- **15 Lula validation manifests (4 Active, 11 Stub)** — Automated continuous compliance assessment covering NIST SP 800-53, ISO 42001 Annex A, and CSA AARM controls. 4 manifests are production-ready and Active (A.5.2, A.5.3, A.9.2, SC-4); 11 are Stubs requiring cluster-specific configuration before activation. CronJob runs every 6 hours for Active manifests; findings expressed as OSCAL Assessment Results. See [`compliance/lula/README.md`](compliance/lula/README.md) for full status.
 
 ### Fixed
 
