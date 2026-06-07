@@ -458,7 +458,9 @@ class SymbolicGovernor:
                 if self.telemetry_provider is not None:
                     telemetry_data = self.telemetry_provider.get_latest_data()
 
-                if not causal_safety_check(params, telemetry_data):
+                trade_context = {"params": params, "telemetry": telemetry_data}
+                result = await asyncio.to_thread(causal_safety_check, trade_context)
+                if not result:
                     violations.append(
                         "Causal Safety Violation: DoWhy refutation failed — "
                         "world-model is untrustworthy or risk exceeds safety boundary."

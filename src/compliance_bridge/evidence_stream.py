@@ -174,6 +174,7 @@ class EvidenceStreamSink:
         self._sequence: int = 0
         self._running = False
         self._flush_task: Optional[asyncio.Task] = None
+        self._chain_lock = asyncio.Lock()
 
     async def start(self) -> None:
         """Connect to Redis and start the GCS flush daemon."""
@@ -249,26 +250,28 @@ class EvidenceStreamSink:
         if self._redis is None:
             return None
 
-        # Hash-chain the event
+        # Hash-chain the event — lock guards all reads/writes of _prev_hash and _sequence
         payload_json = json.dumps(event, sort_keys=True, default=str)
-        record_hash = _sha256(self._prev_hash + payload_json)
 
-        entry = {
-            "schema": _SCHEMA,
-            "sequence": str(self._sequence),
-            "event_type": event.get("type", "UNKNOWN"),
-            "control_id": event.get("controlId", ""),
-            "prev_hash": self._prev_hash,
-            "record_hash": record_hash,
-            "payload_json": payload_json,
-            "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
-            "kms_signature": "",
-            "kms_signature_algorithm": _get_signing_algorithm(),
-        }
+        async with self._chain_lock:
+            record_hash = _sha256(self._prev_hash + payload_json)
 
-        # Advance chain state
-        self._prev_hash = record_hash
-        self._sequence += 1
+            entry = {
+                "schema": _SCHEMA,
+                "sequence": str(self._sequence),
+                "event_type": event.get("type", "UNKNOWN"),
+                "control_id": event.get("controlId", ""),
+                "prev_hash": self._prev_hash,
+                "record_hash": record_hash,
+                "payload_json": payload_json,
+                "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
+                "kms_signature": "",
+                "kms_signature_algorithm": _get_signing_algorithm(),
+            }
+
+            # Advance chain state
+            self._prev_hash = record_hash
+            self._sequence += 1
 
         # Optional KMS signing (async, non-blocking)
         if self._kms_sign:

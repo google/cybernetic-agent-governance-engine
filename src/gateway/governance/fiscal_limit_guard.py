@@ -128,10 +128,10 @@ class FiscalLimitGuard:
     TTL automatically reclaims the reservation.
 
     Atomicity is implemented via Redis WATCH/MULTI/EXEC optimistic locking —
-    fully supported by both production Redis and fakeredis in tests.
+    fully supported by both production Redis and fakeredis.aioredis in tests.
 
     Args:
-        redis_client:     A ``redis.Redis`` instance (sync).
+        redis_client:     A ``redis.asyncio.Redis`` instance (async).
         daily_cap_usd:    Hard ceiling for all agents combined (default $500k).
         reservation_ttl:  Seconds before a stale reservation auto-expires (default 300s).
         window_seconds:   Window duration in seconds for the rolling counter (default 86400).
@@ -157,7 +157,7 @@ class FiscalLimitGuard:
     ) -> "FiscalLimitGuard":
         """Construct from REDIS_URL environment variable."""
         try:
-            import redis  # type: ignore[import]
+            import redis.asyncio as aioredis  # type: ignore[import]
         except ImportError as exc:
             raise RuntimeError(
                 "redis-py is required for FiscalLimitGuard. "
@@ -168,7 +168,7 @@ class FiscalLimitGuard:
         cap = daily_cap_usd or float(
             os.environ.get("FISCAL_DAILY_CAP_USD", "500000")
         )
-        client = redis.from_url(redis_url, decode_responses=True)
+        client = aioredis.from_url(redis_url, decode_responses=True)
         return cls(client, daily_cap_usd=cap, reservation_ttl=reservation_ttl)
 
     # ------------------------------------------------------------------
@@ -194,15 +194,15 @@ class FiscalLimitGuard:
         for attempt in range(_MAX_RETRIES):
             try:
                 pipe = self._redis.pipeline(True)  # type: ignore[attr-defined]
-                pipe.watch(key)
-                current = int(pipe.get(key) or 0)
+                await pipe.watch(key)
+                current = int(await pipe.get(key) or 0)
                 if (current + amount_cents) > cap_cents:
-                    pipe.reset()
+                    await pipe.reset()
                     return -1
                 pipe.multi()
                 pipe.incrby(key, amount_cents)
                 pipe.expire(key, self._window_seconds)
-                results = pipe.execute()
+                results = await pipe.execute()
                 return int(results[0])
             except Exception as exc:
                 # WatchError or connection error — retry with backoff
@@ -228,13 +228,13 @@ class FiscalLimitGuard:
         for attempt in range(_MAX_RETRIES):
             try:
                 pipe = self._redis.pipeline(True)  # type: ignore[attr-defined]
-                pipe.watch(key)
-                current = int(pipe.get(key) or 0)
+                await pipe.watch(key)
+                current = int(await pipe.get(key) or 0)
                 new_val = max(0, current - amount_cents)
                 pipe.multi()
                 pipe.set(key, new_val)
                 pipe.expire(key, self._window_seconds)
-                pipe.execute()
+                await pipe.execute()
                 return new_val
             except Exception as exc:
                 err_name = type(exc).__name__
@@ -351,7 +351,7 @@ class FiscalLimitGuard:
     async def current_spend_usd(self) -> float:
         """Return the current reserved + confirmed spend for today's window."""
         try:
-            raw = self._redis.get(self._window_key())  # type: ignore[attr-defined]
+            raw = await self._redis.get(self._window_key())  # type: ignore[attr-defined]
             return int(raw) / 100.0 if raw else 0.0
         except Exception as exc:
             logger.error("FiscalLimitGuard.current_spend_usd: Redis error: %s", exc)
