@@ -16,11 +16,12 @@ name: build
 on:
   push:
     branches:
-      - rc-v2.0.0
+      - main
       - "feature/**"
+      - "feat/**"
   pull_request:
     branches:
-      - rc-v2.0.0
+      - main
 
 jobs:
   license-check:
