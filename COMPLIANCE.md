@@ -18,7 +18,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 
 | System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact | Active Regions |
 | --- | --- | --- | --- | --- | --- |
-| **Statistical Code** | Control Barrier Function ($h(x)$ formula & $\gamma$ decay) | **SR 26-2 §IV.B** <br> (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/safety.py` | `US_FED`, `APAC_MAS` *(suppressed in EU_ECB)* |
+| **Statistical Code** | Control Barrier Function ($h(x)$ formula & $\gamma$ decay) | **SR 26-2 §IV.B** <br> (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/cbf.py` | `US_FED`, `APAC_MAS` *(suppressed in EU_ECB)* |
 | **Statistical Code** | DoWhy Causal Inference Model Graph & Regression Coefficients | **SR 26-2 §IV.B** <br> (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/causal_gatekeeper.py` | `US_FED`, `APAC_MAS` *(suppressed in EU_ECB)* |
 | **Autonomous Engine** | LLM Routers & Execution Trust Thresholds | **ISO/IEC 42001 §A.5.2** <br> (AI Management System) | `CTRL_AGT_001` | `src/gateway/governance/symbolic_governor.py` | *All Regions* |
 | **Autonomous Engine** | LangGraph SAGA WAL Router + Atomic Rollback Patterns | **ISO/IEC 42001 §A.8.4** <br> **DORA Article 12** | `CTRL_WAL_002` | `src/gateway/governance/generated_saga_nodes.py` | *All Regions* |
@@ -71,24 +71,28 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     *   **⚠️ Gaps to Authorization:** The CAGE software runtime does not inherently possess an official **Authority to Operate (ATO)**. To close this loop, the parent organization must deploy independent assessors to complete RMF Step 5 (Assess) and Step 6 (Authorize), as well as remediate the remaining 11 open infrastructure POA&M infrastructure tickets.
 *   **Companion Documentation:** For infrastructure configurations, Linkerd policy files, and security posture tracking, see [docs/SECURITY_STATUS.md](docs/SECURITY_STATUS.md) and [docs/POAM.md](docs/POAM.md).
 
-### F. Lula Automated Compliance Validation (15 Manifests — All Active)
-*   **Status:** 100% Automated.
-*   **Mechanism:** Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule (`deployment/k8s/lula-cron.yaml`). There are **15 active validation manifests** in `compliance/lula/` — each performing a Kubernetes-native resource check mapped to a specific OSCAL control ID:
-    *   `lula-validation-a52.yaml` (ISO 42001 A.5.2) — Social impact assessment ConfigMap
-    *   `lula-validation-a53.yaml` (ISO 42001 A.5.3) — Documentation/logging config
-    *   `lula-validation-a92.yaml` (ISO 42001 A.9.2) — PII detection Deployment
-    *   `lula-validation-sc4.yaml` (NIST SP 800-53 SC-4) — Validates OPA ConfigMap label presence in `governance-stack` namespace (SC-4 implementation check)
-    *   `lula-validation-au12.yaml` (NIST SP 800-53 AU-12) — Langfuse OTLP ingestion availability (direct; standalone OTel Collector deprecated 2026-05-31)
+### F. Lula Automated Compliance Validation (15 Manifests — 4 Active, 11 Stub)
+*   **Status:** Partially Automated.
+*   **Mechanism:** Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule (`deployment/k8s/lula-cron.yaml`). There are **15 validation manifests** in `compliance/lula/` — 4 are production-ready and Active; 11 are Stubs that require cluster-specific namespace/resource name configuration before activation. See [`compliance/lula/README.md`](compliance/lula/README.md) for the full status table and activation instructions.
+
+    **✅ Active (4):**
+    *   `lula-validation-a52.yaml` (ISO 42001 A.5.2, **ALL regions**) — Social impact assessment; NeMo Guardrails toxicity blocking ≥ 99%
+    *   `lula-validation-a53.yaml` (ISO 42001 A.5.3, **ALL regions**) — Logging and monitoring; Langfuse safety rate ≥ 98%
+    *   `lula-validation-a92.yaml` (ISO 42001 A.9.2, **ALL regions**) — Data transfer to suppliers; Presidio PII leak rate = 0%
+    *   `lula-validation-sc4.yaml` (NIST SP 800-53 SC-4, **US_FED only**) — Fiscal limits and RBAC; OPA ConfigMap label present in `governance-stack` namespace
+
+    **🔶 Stub (11)** — logic complete, requires cluster-specific configuration:
+    *   `lula-validation-aarm-vectors.yaml` (CSA AARM v1.0, **ALL regions**) — 11-vector AI agent threat model coverage
     *   `lula-validation-ac2.yaml` (NIST SP 800-53 AC-2) — Account management / service account lifecycle
     *   `lula-validation-ac3.yaml` (NIST SP 800-53 AC-3) — Access enforcement / OPA RBAC
-    *   `lula-validation-ra5.yaml` (NIST SP 800-53 RA-5) — Vulnerability scanning (pip-audit / Trivy CI)
+    *   `lula-validation-au12.yaml` (NIST SP 800-53 AU-12) — Langfuse OTLP ingestion availability (standalone OTel Collector deprecated 2026-05-31; validation needs update)
     *   `lula-validation-cm6.yaml` (NIST SP 800-53 CM-6) — Configuration settings enforcement
-    *   `lula-validation-ir6.yaml` (NIST SP 800-53 IR-6) — Incident reporting
     *   `lula-validation-ia3.yaml` (NIST SP 800-53 IA-3) — Device identification / Linkerd mTLS SPIFFE identity
     *   `lula-validation-ia5.yaml` (NIST SP 800-53 IA-5) — Authenticator management / KMS HSM key lifecycle
+    *   `lula-validation-ir6.yaml` (NIST SP 800-53 IR-6) — Incident reporting
+    *   `lula-validation-ra5.yaml` (NIST SP 800-53 RA-5) — Vulnerability scanning (pip-audit / Trivy CI)
     *   `lula-validation-sc8.yaml` (NIST SP 800-53 SC-8) — Transmission confidentiality / TLS enforcement
     *   `lula-validation-si2.yaml` (NIST SP 800-53 SI-2) — Flaw remediation / CVE patching (pip-audit CI)
-    *   `lula-validation-aarm-vectors.yaml` (CSA AARM v1.0) — 11-vector AI agent threat model coverage
 
 ### G. Continuous Audit Event Loop & Compliance Bridge API (v2.0.0)
 *   **Status:** Implemented & Active.

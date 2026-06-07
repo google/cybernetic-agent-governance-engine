@@ -1,6 +1,6 @@
-# Security & Compliance Status — CAGE v2.0.0-rc.2
+# Security & Compliance Status — CAGE v2.0.0-rc.3
 
-**Date:** 2026-06-03
+**Date:** 2026-06-07
 **Status:** Public disclosure of current security posture and compliance implementation state
 
 ---
@@ -43,27 +43,27 @@ CAGE v2.0.0 provides a **production-grade AI governance enforcement runtime**. T
 | Cryptographic evidence chain     | SHA-256 hash-chained NDJSON; MiFID II / GDPR view-access log; KMS batch signing for OSCAL artifacts | ✅ Implemented (v1.1.0) |
 | AgentSight UI Phase 1            | React/Vite frontend; eBPF kernel observability via `deployment/k8s/agentsight-daemon.yaml`; remote exporter active | ✅ Implemented (v2.0.0) |
 
-### Compliance Automation (15 Lula Validation Manifests — All Active)
+### Compliance Automation (15 Lula Validation Manifests — 4 Active, 11 Stub)
 
-Automated continuous compliance assessment is active for **15 Lula validation manifests (all active)** covering NIST SP 800-53 / ISO 42001 / CSA AARM controls via Lula CronJob (every 6 hours) and the OSCAL compliance bridge:
+Automated continuous compliance assessment covers **15 Lula validation manifests** in `compliance/lula/`. Of these, **4 are Active** (production-ready, enabled in the Lula CronJob) and **11 are Stubs** (logic complete but requiring cluster-specific namespace/resource name configuration before activation). See [`compliance/lula/README.md`](../compliance/lula/README.md) for the full status table and activation instructions.
 
-| Control   | Description                                       | Threshold            | Lula Validation              | Status |
-| --------- | ------------------------------------------------- | -------------------- | ---------------------------- | ------ |
-| ISO A.5.2 | Social impact — hate speech / bias prevention     | `safety_rate ≥ 99%`  | `lula-validation-a52.yaml`   | **Active** |
-| ISO A.5.3 | Logging and monitoring — audit event completeness | `safety_rate ≥ 98%`  | `lula-validation-a53.yaml`   | **Active** |
-| ISO A.9.2 | Data privacy — no PII sent to external APIs       | `safety_rate = 100%` | `lula-validation-a92.yaml`   | **Active** |
-| SC-4      | Fiscal limits — human approval for trades > $10k  | OPA policy active    | `lula-validation-sc4.yaml`   | **Active** |
-| AU-12     | Audit record generation — OTel span completeness  | `safety_rate ≥ 98%`  | `lula-validation-au12.yaml`  | **Active** |
-| AC-3      | Access enforcement — OPA policy gate              | OPA circuit breaker  | `lula-validation-ac3.yaml`   | **Active** |
-| RA-5      | Vulnerability scanning — Trivy/pip-audit CI       | CI scan passing      | `lula-validation-ra5.yaml`   | **Active** |
-| CM-6      | Configuration settings — governance config        | Config validated     | `lula-validation-cm6.yaml`   | **Active** |
-| IR-6      | Incident reporting — governance bypass alerts     | Alert pipeline valid | `lula-validation-ir6.yaml`   | **Active** |
-| AC-2      | Account management — service account lifecycle    | Lifecycle validated  | `lula-validation-ac2.yaml`   | **Active** |
-| SC-8      | Transmission confidentiality — Linkerd mTLS       | mTLS enforced        | `lula-validation-sc8.yaml`   | **Active** |
-| IA-3      | Device identification — SPIFFE/SVID identity      | Identity verified    | `lula-validation-ia3.yaml`   | **Active** |
-| IA-5      | Authenticator management — KMS HSM key lifecycle  | Key lifecycle valid  | `lula-validation-ia5.yaml`   | **Active** |
-| SI-2      | Flaw remediation — CVE patching (pip-audit CI)    | CI scan passing      | `lula-validation-si2.yaml`   | **Active** |
-| AARM-V    | 11-vector AI agent threat model coverage          | All vectors covered  | `lula-validation-aarm-vectors.yaml` | **Active** |
+| Control   | Standard        | Region Scope | Description                                       | Threshold            | Lula Validation              | Status |
+| --------- | --------------- | ------------ | ------------------------------------------------- | -------------------- | ---------------------------- | ------ |
+| ISO A.5.2 | ISO 42001       | ALL          | Social impact — hate speech / bias prevention     | `safety_rate ≥ 99%`  | `lula-validation-a52.yaml`   | ✅ **Active** |
+| ISO A.5.3 | ISO 42001       | ALL          | Logging and monitoring — audit event completeness | `safety_rate ≥ 98%`  | `lula-validation-a53.yaml`   | ✅ **Active** |
+| ISO A.9.2 | ISO 42001       | ALL          | Data privacy — no PII sent to external APIs       | `safety_rate = 100%` | `lula-validation-a92.yaml`   | ✅ **Active** |
+| SC-4      | NIST SP 800-53  | US_FED       | Fiscal limits — human approval for trades > $10k  | OPA policy active    | `lula-validation-sc4.yaml`   | ✅ **Active** |
+| AARM-V    | CSA AARM v1.0   | ALL          | 11-vector AI agent threat model coverage          | All vectors covered  | `lula-validation-aarm-vectors.yaml` | 🔶 **Stub** |
+| AC-2      | NIST SP 800-53  | US_FED       | Account management — service account lifecycle    | Lifecycle validated  | `lula-validation-ac2.yaml`   | 🔶 **Stub** |
+| AC-3      | NIST SP 800-53  | US_FED       | Access enforcement — OPA policy gate              | OPA circuit breaker  | `lula-validation-ac3.yaml`   | 🔶 **Stub** |
+| AU-12     | NIST SP 800-53  | US_FED       | Audit record generation — OTel span completeness  | `safety_rate ≥ 98%`  | `lula-validation-au12.yaml`  | 🔶 **Stub** |
+| CM-6      | NIST SP 800-53  | US_FED       | Configuration settings — governance config        | Config validated     | `lula-validation-cm6.yaml`   | 🔶 **Stub** |
+| IA-3      | NIST SP 800-53  | US_FED       | Device identification — SPIFFE/SVID identity      | Identity verified    | `lula-validation-ia3.yaml`   | 🔶 **Stub** |
+| IA-5      | NIST SP 800-53  | US_FED       | Authenticator management — KMS HSM key lifecycle  | Key lifecycle valid  | `lula-validation-ia5.yaml`   | 🔶 **Stub** |
+| IR-6      | NIST SP 800-53  | US_FED       | Incident reporting — governance bypass alerts     | Alert pipeline valid | `lula-validation-ir6.yaml`   | 🔶 **Stub** |
+| RA-5      | NIST SP 800-53  | US_FED       | Vulnerability scanning — Trivy/pip-audit CI       | CI scan passing      | `lula-validation-ra5.yaml`   | 🔶 **Stub** |
+| SC-8      | NIST SP 800-53  | US_FED       | Transmission confidentiality — Linkerd mTLS       | mTLS enforced        | `lula-validation-sc8.yaml`   | 🔶 **Stub** |
+| SI-2      | NIST SP 800-53  | US_FED       | Flaw remediation — CVE patching (pip-audit CI)    | CI scan passing      | `lula-validation-si2.yaml`   | 🔶 **Stub** |
 
 Findings are expressed as OSCAL Assessment Results and ingested into Langfuse via direct OTLP (OTel Collector deprecated 2026-05-31; Langfuse native OTLP ingestion is now used). **Additional ISO 42001 Annex A controls and the full NIST SP 800-53 control baseline are not yet mapped or assessed.**
 
@@ -85,7 +85,7 @@ The NIST RMF is a six-step process. The table below reflects the current state f
 | **4 — Implement**     | 🟡 Partial     | AI governance controls implemented (see above); infrastructure-layer controls have gaps (see POAM) |
 | **5 — Assess**        | ❌ Not started | No Security Assessment Report (SAR); no independent Control Assessor engaged                       |
 | **6 — Authorize**     | ❌ Not started | No Authorization to Operate (ATO) letter issued (POAM-005, Critical)                               |
-| **Ongoing — Monitor** | 🟡 Partial     | Lula CronJob active for 15 validation manifests (all active); DEFER queue monitoring active; broader continuous monitoring not yet operational |
+| **Ongoing — Monitor** | 🟡 Partial     | Lula CronJob active for 4 Active validation manifests (11 Stub — require cluster configuration); DEFER queue monitoring active; broader continuous monitoring not yet operational |
 
 ### Infrastructure Security Gaps (from POA&M)
 

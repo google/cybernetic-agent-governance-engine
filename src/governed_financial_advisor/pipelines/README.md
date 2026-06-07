@@ -2,7 +2,9 @@
 
 > **Canonical name:** Cybernetic Governance Loop (also referred to as "Green-Stack Pipeline" in historical documentation)
 
-This directory contains the **Kubeflow Pipelines v2** pipeline definition that implements CAGE's autonomous self-correcting governance feedback loop — the system that gives the **Cybernetic** Governance Engine its name.
+This directory contains the **Kubeflow Pipelines v2** pipeline definition that implements CAGE's self-correcting governance feedback loop — the system that gives the **Cybernetic** Governance Engine its name.
+
+> **⚠️ v2.0.0 Change — Human-Gated Refinement:** In v2.0.0, the autonomous NeMo hot-reload loop has been severed. The pipeline no longer calls `POST /v1/nemo/apply-refinement` directly. Instead, it calls `POST /v1/nemo/propose-refinement`, which stages the refinement as a proposal requiring explicit human approval (reviewer identity + rationale) before any config change is applied. This eliminates the recursive self-authentication path where a model could engineer its own privilege escalation. Set `NEMO_AUTO_APPLY_ENABLED=true` to bypass human gating in dev/CI environments only.
 
 ## Pipeline: `governance_pipeline`
 
@@ -34,12 +36,13 @@ _submit_kfp_run()            ← Kubeflow Pipelines SDK (kfp.Client)
 │          safety_rate <  threshold? → FAIL (continue)      │
 │                                                           │
 │  Step 3: trigger_nemo_refinement                          │
-│          POST {backend_url}/v1/nemo/apply-refinement      │
-│          → In-process NeMo rails singleton hot-reload     │
+│          POST {backend_url}/v1/nemo/propose-refinement    │
+│          → Stages refinement proposal for human approval  │
+│          → Auto-applies only if NEMO_AUTO_APPLY_ENABLED   │
 └───────────────────────────────────────────────────────────┘
 ```
 
-The full loop is: **Langfuse score → webhook → KFP pipeline → evaluate → hot-reload** — no human in the low-latency path.
+The full loop is: **Langfuse score → webhook → KFP pipeline → evaluate → propose refinement → human approval → apply**. In v2.0.0, a human reviewer must explicitly approve all NeMo config changes before they take effect. The `NEMO_AUTO_APPLY_ENABLED=true` flag bypasses this gate for dev/CI environments only.
 
 ### Components
 
@@ -47,7 +50,7 @@ The full loop is: **Langfuse score → webhook → KFP pipeline → evaluate →
 | ----- | ------------- | ------ |
 | 1 | `fetch_compliance_metrics` | Fetches windowed safety scores from the Compliance Bridge for a specific ISO 42001 control |
 | 2 | `evaluate_governance_metrics` | Compares `safety_rate` to `safety_threshold` (default: 0.95); returns `PASS` or `FAIL` |
-| 3 | `trigger_nemo_refinement` | On FAIL, calls `POST /v1/nemo/apply-refinement` to hot-reload the NeMo Guardrails config in-process |
+| 3 | `trigger_nemo_refinement` | On FAIL, calls `POST /v1/nemo/propose-refinement` to stage a refinement proposal for human approval (v2.0.0); auto-applies only when `NEMO_AUTO_APPLY_ENABLED=true` |
 
 ### Trigger Mechanisms
 
@@ -66,11 +69,12 @@ Both call the shared `_submit_kfp_run()` function in `server.py`.
 | --- | ------- | ------- |
 | `KFP_ENDPOINT` | (empty) | Kubeflow Pipelines API server; if unset, degrades to `dry_run` |
 | `COMPLIANCE_BRIDGE_URL` | `http://compliance-bridge/` | Compliance Bridge service URL for metrics fetch |
-| `BACKEND_URL` | `http://governed-financial-advisor/` | Backend URL for NeMo hot-reload endpoint |
+| `BACKEND_URL` | `http://governed-financial-advisor/` | Backend URL for NeMo refinement proposal endpoint |
 | `NEMO_SAFETY_THRESHOLD` | `0.95` | ISO 42001 safety rate below which the loop fires |
 | `LANGFUSE_WATCH_SCORE_NAME` | `iso_42001_safety_rate` | Langfuse score name to watch |
 | `REFINEMENT_COOLDOWN_SECONDS` | `300` | Anti-flapping cooldown (5 min) |
 | `REFINEMENT_MIN_SAMPLES` | `10` | Minimum sample size before triggering |
+| `NEMO_AUTO_APPLY_ENABLED` | `false` | Set `true` to bypass human-gated refinement approval (dev/CI only) |
 
 ### Running Locally
 
