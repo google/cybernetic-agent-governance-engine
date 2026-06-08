@@ -51,6 +51,42 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 - docs: update markdown files to reflect v2.0.0-rc.3 state — corrected stale `deployment/terraform/` path references in `infra/ROLLBACK_PROCEDURES.md` and `infra/DEPLOYMENT_GUIDE.md` to active `infra/targets/gcp-gke/`; updated POAM-007 mTLS status from pending to closed (Linkerd mTLS implemented 2026-05-17) in `compliance/pia/PRIVACY_IMPACT_ASSESSMENT.md`; added historical notice to `plans/path-b-deployment-plan.md`; replaced stale "module not extracted yet" markers in `infra/targets/agnostic/README.md` with accurate module completion status.
 
+### Track C & D — Seal Enforcement + Compliance Validation — [CR-2026-TQP-001] (Cat-N, 2026-06-08)
+
+> Track C (Seal Enforcement Verification) is complete. Track D (Compliance Validation) is partially complete — locally-verifiable gates are green; cluster-dependent gates are deferred pending a live GKE environment. Both tracks are part of the same release gate sequence as the Token Quota Proxy (CR-2026-TQP-001).
+>
+> Commits: `a7e01ea` (Track C — `verify_remote.py` seal enforcement checks), `554f5af` (Track D — `fiscal_limit_guard.py` async heuristic fix).
+>
+> reviewed-by: N/A — self-verified via automated test suite | approved date: 2026-06-08 | implemented date: 2026-06-08 | Lula validation result: N/A — deferred to live cluster
+
+#### Gate Status
+
+| Gate | ID | Description | Status |
+|------|----|-------------|--------|
+| U-15 | C2 | Unsigned gateway request → HTTP 403 | ✅ Green |
+| U-16 | C2 | Valid signed gateway request → non-403 | ✅ Green |
+| U-08 | D3 | `fiscal_limit_guard.py` async client heuristic | ✅ Green |
+| U-09 | D4 | STPA freshness check | ✅ Green |
+| U-21 | D6 | `terraform.auto.tfvars` gitignored | ✅ Green |
+| U-01–U-04 | D1 | Lula re-validation (ISO 42001 / CSA AARM) | ⏳ Deferred — live cluster required |
+| U-05, U-06 | D2 | SBOM generation + Trivy scan | ⏳ Deferred — live cluster required |
+| U-10 | D5 | Langfuse posture verification | ⏳ Deferred — deployed environment required |
+
+#### Track C — Seal Enforcement Verification (complete)
+
+- **C1 — `CAGE_SEAL_ENFORCEMENT=enforce` confirmed** (`src/gateway/server/governance_middleware.py`) — `enforce_routing_seal()` raises HTTP 403 on missing or invalid `X-CAGE-Routing-Seal` header. Implementation verified in-source; no code change required.
+- **C2/C3 — `TestRoutingSealEnforcement` + `test_routing_seal.py`** (gates U-15, U-16) — 18/18 tests pass. `TestRoutingSealEnforcement` (7 tests) covers the middleware enforcement path; `tests/test_routing_seal.py` (11 tests) covers the HMAC seal construction and verification logic. Both gate conditions confirmed green.
+- **C4 — `scripts/verify_remote.py` enhanced** (SHA `a7e01ea`) — Added `check_seal_enforcement()` (remote U-15/U-16 verification via live HTTP probes) and `check_langfuse_posture()` (subprocess delegation to `scripts/verify_langfuse_posture.py`). Script now exits with code 1 on any gate failure, making it suitable as a blocking pre-release check.
+
+#### Track D — Compliance Validation (partial)
+
+- **D3 — `fiscal_limit_guard.py` async heuristic fix** (gate U-08, SHA `554f5af`) — Fixed `_is_async_client()` detection logic in `src/gateway/governance/fiscal_limit_guard.py`. `aioredis` clients were incorrectly routed through the synchronous `WATCH/MULTI/EXEC` pipeline, causing `asyncio` event-loop blocking under concurrent governance load. Clients are now correctly dispatched through the async pipeline path. Full test suite result: **796 passed, 148 skipped, 0 failed**.
+- **D4 — STPA freshness check passes** (gate U-09) — `scripts/check_stpa_freshness.py` confirms all 3 generated STPA artifacts are current relative to `config/stpa_control_structure.yaml`. No regeneration required.
+- **D6 — `terraform.auto.tfvars` gitignored** (gate U-21) — Confirmed via `*.auto.tfvars` pattern present in both `infra/targets/gcp-gke/.gitignore` and `infra/targets/agnostic/.gitignore`. No secrets in working tree.
+- **D1 — Lula re-validation deferred** (gates U-01–U-04) — `lula validate -f compliance/lula/lula-validation-a52.yaml` (and `a53.yaml`, `a92.yaml`, `aarm-vectors.yaml`) requires a live GKE cluster with the governance stack deployed. Deferred until cluster is available.
+- **D2 — SBOM + Trivy scan deferred** (gates U-05, U-06) — `python scripts/generate_sbom.py` and `kubectl create job --from=cronjob/security-scanner-cronjob` require a live cluster. Deferred.
+- **D5 — Langfuse posture verification deferred** (gate U-10) — `python3 scripts/verify_langfuse_posture.py` requires a deployed environment with Langfuse secrets populated. Deferred.
+
 ---
 
 ## [2.0.0-rc.3] — 2026-06-06
