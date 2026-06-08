@@ -70,14 +70,18 @@ jobs:
           #   The guided_json FSM runs server-side in vLLM; CAGE never imports outlines.
           #   diskcache is no longer in the dependency tree.
           #
-          # CVE-2026-4810 (google-adk): Code Injection / Missing Auth — POAM-015.
-          #   Fix requires google-adk>=1.28.1, which pins opentelemetry-sdk<1.39.0,
-          #   conflicting with our opentelemetry-sdk>=1.39.1 requirement. Suppressed
-          #   until the upstream version-constraint conflict is resolved.
-          #   Mitigation: ADK Web is not exposed publicly; internal network only.
+          # CVE-2026-4810 (google-adk): RESOLVED — upgraded google-adk to 2.2.0 which
+          #   drops the starlette<1 constraint and no longer carries this vulnerability.
+          #
+          # PYSEC-2026-139 (torch 2.10.0): No fix version available upstream as of
+          #   2026-06-08. torch is a dev/inference-only dependency; it is not included
+          #   in the compliance-bridge or gateway production images. Suppressed pending
+          #   an upstream patch release. Mitigation: torch is never executed in
+          #   production containers; only used locally for SLM fine-tuning experiments.
+          #   POAM item to be created under POAM-016.
           pip-audit --format json --output pip-audit-results.json \
             --ignore-vuln GHSA-rg7c-g689-fr3x \
-            --ignore-vuln CVE-2026-4810
+            --ignore-vuln PYSEC-2026-139
           EXIT_CODE=$?
           cat pip-audit-results.json
           exit $EXIT_CODE

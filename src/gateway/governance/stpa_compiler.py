@@ -663,6 +663,15 @@ class GeneratedSTPAValidator:
         python -m src.gateway.governance.stpa_compiler compile
     """
 
+    def validate(self, action_name: str, params: dict[str, Any]) -> list[str]:
+        """Public entry-point — delegates to validate_generated().
+
+        Call-sites that previously used STPAValidator.validate() can use this
+        method directly on GeneratedSTPAValidator without going through the
+        deprecated shim in stpa_validator.py.
+        """
+        return self.validate_generated(action_name, params)
+
     def validate_generated(self, action_name: str, params: dict[str, Any]) -> list[str]:
         """Run all generated UCA checks. Returns list of violation strings."""
         violations: list[str] = []
