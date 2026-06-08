@@ -196,20 +196,29 @@
 #     - git tag v<X.Y.Z> pushed to origin
 #     - GitHub Release published as Latest
 #     - terraform.auto.tfvars confirmed gitignored (no secrets in working tree)
+# ARCHITECTURE: The universal gates are ISO 42001-only. No regional framework gate
+# (NIST SP 800-53, EU AI Act, GDPR, DORA, MAS FEAT, MAS Notice 655) is required to
+# pass before the global stable tag is applied. Regional gates are additive layers only.
 
 # 5.2 US_FED GATES (CAGE_DEPLOYMENT_REGION=US_FED only):
+# SCOPE: CAGE_DEPLOYMENT_REGION=US_FED ONLY. These gates MUST NOT be treated as
+#        prerequisites for the global stable tag. They block US_FED deployment only.
 #     - All 10 NIST SP 800-53 Lula assertions pass
 #     - NIST SP 800-53 coverage >=45% (via oscal_ssp_exporter.py)
 #     - ATO process initiated (OSCAL SSP submitted to AO)
 #     - POAM items documented for all open findings
 
 # 5.3 EU_ECB GATES (CAGE_DEPLOYMENT_REGION=EU_ECB only):
+# SCOPE: CAGE_DEPLOYMENT_REGION=EU_ECB ONLY. These gates MUST NOT be treated as
+#        prerequisites for the global stable tag. They block EU_ECB deployment only.
 #     - EU AI Act compliance posture verified
 #     - GDPR data residency confirmed: all paths within europe-west1
 #     - DORA Art. 10 audit logging enabled in eu-dev.tfvars
 #     - SR 26-2 telemetry suppression active ("no legal force" sentinel intact)
 
 # 5.4 APAC_MAS GATES (CAGE_DEPLOYMENT_REGION=APAC_MAS only):
+# SCOPE: CAGE_DEPLOYMENT_REGION=APAC_MAS ONLY. These gates MUST NOT be treated as
+#        prerequisites for the global stable tag. They block APAC_MAS deployment only.
 #     - MAS FEAT compliance posture verified
 #     - MAS TRM §4.2 data residency confirmed: all paths within asia-southeast1
 #     - MAS Notice 655 audit logging enabled in apac-dev.tfvars

@@ -1,0 +1,96 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.4",
+  "serialNumber": "urn:uuid:cage-sbom-2026-06-08-15-12-42Z",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-06-08T15:12:42Z",
+    "tools": [
+      {
+        "vendor": "CAGE DevSecOps",
+        "name": "generate_sbom.py/pip-fallback",
+        "version": "1.0.0"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "name": "governed-financial-advisor",
+      "version": "0.1.0",
+      "description": "CAGE Governed Financial Advisor \u2014 Python dependencies",
+      "purl": "pkg:pypi/governed-financial-advisor@0.1.0"
+    },
+    "properties": [
+      {
+        "name": "cage:poam_ref",
+        "value": "POAM-006"
+      },
+      {
+        "name": "cage:control_ref",
+        "value": "CM-8"
+      },
+      {
+        "name": "cage:classification",
+        "value": "COMPLIANCE"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "certifi",
+      "version": "2026.2.25",
+      "purl": "pkg:pypi/certifi@2026.2.25",
+      "licenses": []
+    },
+    {
+      "type": "library",
+      "name": "grpcio",
+      "version": "1.81.0",
+      "purl": "pkg:pypi/grpcio@1.81.0",
+      "licenses": []
+    },
+    {
+      "type": "library",
+      "name": "grpcio-tools",
+      "version": "1.81.0",
+      "purl": "pkg:pypi/grpcio-tools@1.81.0",
+      "licenses": []
+    },
+    {
+      "type": "library",
+      "name": "pip",
+      "version": "26.0",
+      "purl": "pkg:pypi/pip@26.0",
+      "licenses": []
+    },
+    {
+      "type": "library",
+      "name": "protobuf",
+      "version": "6.33.6",
+      "purl": "pkg:pypi/protobuf@6.33.6",
+      "licenses": []
+    },
+    {
+      "type": "library",
+      "name": "setuptools",
+      "version": "82.0.1",
+      "purl": "pkg:pypi/setuptools@82.0.1",
+      "licenses": []
+    },
+    {
+      "type": "library",
+      "name": "typing_extensions",
+      "version": "4.15.0",
+      "purl": "pkg:pypi/typing_extensions@4.15.0",
+      "licenses": []
+    },
+    {
+      "type": "library",
+      "name": "wheel",
+      "version": "0.46.3",
+      "purl": "pkg:pypi/wheel@0.46.3",
+      "licenses": []
+    }
+  ],
+  "dependencies": []
+}

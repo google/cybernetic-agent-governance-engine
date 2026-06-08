@@ -91,6 +91,11 @@ spec:
                 secretKeyRef:
                   name: cage-routing-seal
                   key: secret
+            # BLOCKER-06: RECONCILIATION_PROVIDER must not be "stub" in production.
+            # The stub provider fabricates a static $100k balance; CBF would evaluate
+            # against fake data. "gcs" routes to the GCS-backed WORM ledger.
+            - name: RECONCILIATION_PROVIDER
+              value: "gcs"
             - name: OPA_URL
               value: "http://opa.governance-stack.svc.cluster.local:8181/v1/data/trade/governance"
           livenessProbe:

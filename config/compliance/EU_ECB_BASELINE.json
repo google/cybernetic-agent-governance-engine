@@ -1,4 +1,8 @@
 {
+  "_baseline_type": "additive_regional_layer",
+  "_global_baseline": "ISO_42001",
+  "_region": "EU_ECB",
+  "_activation": "CAGE_DEPLOYMENT_REGION=EU_ECB",
   "_comment": "European Central Bank / EBA / EU AI Office regional control-mapping profile. EU AI Act (Regulation (EU) 2024/1689) is the primary statutory framework for all agentic controls. Any AI system used for creditworthiness evaluation or credit scoring is a High-Risk AI System per Art. 6 and Annex III, Point 5(b). SR 26-2 has no legal force in EU jurisdiction. To activate: set CAGE_DEPLOYMENT_REGION=EU_ECB",
   "_schema_version": "1.1.0",
   "_region": "EU_ECB",
@@ -12,7 +16,6 @@
     "BCBS 239 \u2014 Risk Data Aggregation and Risk Reporting",
     "ISO/IEC 42001:2023 (AI Management System Standard)"
   ],
-
   "CTRL_AGT_001": {
     "internal_id": "THR-CONF-001",
     "primary_framework": "EU AI Act Art. 6 + Annex III \u00a75(b) \u2013 High-Risk AI System Classification",
@@ -26,7 +29,6 @@
     "scope": "agentic",
     "description": "Minimum agentic model confidence required to execute a decision affecting credit access. Under EU AI Act Art. 6 and Annex III Point 5(b), any AI system used by a financial institution to evaluate creditworthiness or gate access to financial resources is a High-Risk AI System. The novelty exclusion present in US SR 26-2 (Footnote 3) does not exist in EU law. Art. 9 mandates a documented risk management system covering this threshold. EU AI Act Art. 17 requires this control be part of a Quality Management System with documented procedures."
   },
-
   "CTRL_WAL_002": {
     "internal_id": "THR-WAL-002",
     "primary_framework": "DORA Art. 12 \u2013 Backup, Restoration and Recovery Procedures",
@@ -39,7 +41,6 @@
     "scope": "agentic",
     "description": "Atomic transaction guarantee via Write-Ahead Log and LIFO rollback. Under DORA Art. 12, ICT business continuity plans must include documented recovery procedures for critical functions; atomic WAL rollback satisfies this for agentic trade execution. BCBS 239 Principle 2 requires data accuracy and integrity controls that are directly satisfied by WAL atomicity guarantees."
   },
-
   "CTRL_TEL_003": {
     "internal_id": "THR-TEL-003",
     "primary_framework": "DORA Art. 10 \u2013 ICT-Related Incident Detection and Monitoring",
@@ -54,7 +55,6 @@
     "scope": "agentic",
     "description": "World-model validation must reflect live runtime telemetry, not synthetic data. Under DORA Art. 10, continuous monitoring of ICT systems is mandatory for financial entities. EU AI Act Art. 12 mandates automatic logging of High-Risk AI system operations for the entire operational lifetime. Art. 61 requires post-market monitoring plans with live data ingestion. The ECB joint mapping rules confirm DORA Art. 10 monitoring obligations are satisfied only when live runtime metadata (not synthetic proxies) is ingested directly into the monitoring infrastructure."
   },
-
   "CTRL_MRM_004": {
     "internal_id": "THR-MRM-004",
     "primary_framework": "EBA/GL/2023/02 \u2013 Guidelines on Internal Models (ECB SSM)",
@@ -68,7 +68,6 @@
     "scope": "traditional_ml",
     "description": "Traditional quantitative model validation criteria for non-agentic, deterministic ML components (e.g. CBF predictor coefficients, DoWhy causal model coefficients). In the EU, the governing framework is EBA/GL/2023/02 (superseding the ECB TRIM guide) and the ECB SSM supervisory expectations for internal model approval (IMAPA). SR 26-2 is a US Federal Reserve guidance document with no legal standing in the EU. EU AI Act Art. 10 imposes additional data governance requirements on training data quality, bias assessment, and data lineage for High-Risk AI systems."
   },
-
   "CTRL_OPA_005": {
     "internal_id": "THR-OPA-005",
     "primary_framework": "EU AI Act Art. 9(5) \u2013 Risk Management Measures for High-Risk AI",
@@ -83,7 +82,6 @@
     "scope": "agentic",
     "description": "OPA policy evaluation must ALLOW before any agentic action is executed. Under EU AI Act Art. 9(5), providers of High-Risk AI systems must implement risk management measures including automated checks. Art. 14 mandates human oversight measures that the OPA MANUAL_REVIEW outcome directly satisfies. GDPR Art. 22 restricts automated decision-making with legal or similarly significant effects; a DENY or MANUAL_REVIEW outcome is the technical implementation of Art. 22(2)(b) (explicit consent gateway) or Art. 22(2)(c) (legal authorisation). DENY outcomes must surface as GovernanceError with the full Art. 22 context in the payload."
   },
-
   "CTRL_FRIA_006": {
     "internal_id": "THR-FRIA-006",
     "primary_framework": "EU AI Act Art. 29a \u2013 Fundamental Rights Impact Assessment",
@@ -96,5 +94,22 @@
     "legacy_citation": "N/A \u2014 no US equivalent exists for FRIA",
     "scope": "agentic",
     "description": "Pre-market Fundamental Rights Impact Assessment (FRIA) required before CAGE executes any autonomous workflow in the EU. Under Art. 29a, deployers of High-Risk AI systems must perform a FRIA demonstrating the system does not exhibit bias limiting access based on protected characteristics under GDPR Art. 22. The SHA-256 hash-chained decision ledger (cage-intent/1.0) is a statutory requirement for non-repudiation under Art. 12, and must be preserved for post-market monitoring under Art. 61. This control has no US counterpart and must be enabled exclusively in EU deployment profiles."
+  },
+  "CTRL_TQP_007": {
+    "internal_id": "THR-TQP-007",
+    "primary_framework": "ISO 42001 \u00a7A.4 \u2013 Resource Management",
+    "co_frameworks": [
+      "ISO 42001 \u00a76.1 \u2013 STPA Risk Logging",
+      "GDPR Art. 5(1)(f) \u2013 Integrity and Confidentiality of Processing",
+      "GDPR Art. 44 \u2013 Data Transfers to Third Countries (data residency guard)",
+      "DORA Art. 10 \u2013 ICT-Related Incident Detection and Monitoring",
+      "EU AI Act Art. 9 \u2013 Risk Management System for High-Risk AI"
+    ],
+    "legacy_citation": "ISO 42001 \u00a7A.4 (framework-agnostic baseline)",
+    "scope": "agentic",
+    "enforcement_tier": 2,
+    "worm_bucket_env_var": "OSCAL_S3_BUCKET_EU_ECB",
+    "data_residency": "europe-west1",
+    "description": "Per-session token and step-count quota enforcement via Redis atomic Lua counters. Blocks execution when sequence_step_count > 12 OR accumulated_tokens > 100,000. Fail-CLOSED: Redis unavailable blocks the request. Every blocked execution produces a KMS-signed UCA record persisted to the WORM ledger within europe-west1 only (GDPR Art. 44 data residency). Pre-ledger PII sanitization applied per ISO 42001 Annex A.6 and GDPR Art. 5(1)(f). WORM bucket routed via OSCAL_S3_BUCKET_EU_ECB environment variable. Primary enforcer: TokenQuotaProxy (Python, Redis Lua). Secondary declarative evidence: OPA quota_within_limits rule."
   }
 }

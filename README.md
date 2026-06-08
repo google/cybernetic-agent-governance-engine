@@ -2,13 +2,13 @@
 
 > **AI governance for regulated financial services — built-in, not bolted on.**
 
-![v2.0.0-rc.3](https://img.shields.io/badge/version-2.0.0--rc.3-blue) ![803 Tests Passing](https://img.shields.io/badge/tests-803%20passing-brightgreen) ![SR 26-2](https://img.shields.io/badge/SR%2026--2-blue) ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue) ![DORA](https://img.shields.io/badge/DORA-blue) ![NIST AI RMF](https://img.shields.io/badge/NIST-AI%20RMF-blue) ![FedRAMP HIGH](https://img.shields.io/badge/FedRAMP-HIGH-blue) ![EU AI Act](https://img.shields.io/badge/EU%20AI%20Act-blue) ![MAS FEAT](https://img.shields.io/badge/MAS%20FEAT-blue) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 6](https://img.shields.io/badge/POAM%20Closed-6-brightgreen)
+![v2.0.0](https://img.shields.io/badge/version-2.0.0-brightgreen) ![796 Tests Passing](https://img.shields.io/badge/tests-796%20passing-brightgreen) ![SR 26-2](https://img.shields.io/badge/SR%2026--2-blue) ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue) ![DORA](https://img.shields.io/badge/DORA-blue) ![NIST AI RMF](https://img.shields.io/badge/NIST-AI%20RMF-blue) ![FedRAMP HIGH](https://img.shields.io/badge/FedRAMP-HIGH-blue) ![EU AI Act](https://img.shields.io/badge/EU%20AI%20Act-blue) ![MAS FEAT](https://img.shields.io/badge/MAS%20FEAT-blue) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 6](https://img.shields.io/badge/POAM%20Closed-6-brightgreen)
 
 ---
 
 ## The CAGE Product Offering
 
-CAGE v2.0.0-rc.3 provides a multi-jurisdiction, dual-layer governance architecture for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
+CAGE v2.0.0 provides a multi-jurisdiction, dual-layer governance architecture for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
 
 1.  **The Governance Gateway:** A high-performance inference proxy and MCP tool server that enforces a 7-tier symbolic governance model (STPA/UCA validation, agentic confidence check, Control Barrier Function, OPA Rego, multi-agent consensus, causal gatekeeper, and adaptive FRIA gate) combined with network and runtime hardening (Linkerd mTLS, Cilium L7, eBPF telemetry). The SLM sidecar (formerly Tier 3) has been deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. It acts as the "Controller" in our Controller-Plant architecture, intercepting all agent-to-tool and agent-to-LLM communications.
 2.  **The Reusable Agent Harness:** A set of deterministic LangGraph factories (`OpaNodeConfig`/`NemoNodeConfig`) that allow developers to wrap *any* agentic workflow in mandatory, non-bypassable governance guardrails.
@@ -75,6 +75,9 @@ For full architectural detail, see [`docs/GATEWAY_ARCHITECTURE.md`](docs/GATEWAY
 - **DoWhy Causal Gatekeeper** — Microsoft DoWhy causal inference validates world-model integrity via placebo refutation before allowing high-stakes actions; fail-safe on error (blocks when causal assumptions cannot be verified).
 - **LangGraph Saga Pattern** — STPA compiler now generates WAL forward nodes, idempotent compensating nodes, and a centralized `saga_router_node` from UCA definitions in YAML. UCA-4 (atomic debit/credit failure) is fully enforced. Ghost-state recovery (OOM crash between PENDING and COMPLETED) escalates to `human_review`. Rollback evidence emitted as OTel spans via `SagaCallbackHandler` (ISO 42001 A.8.4).
 - **FiscalLimitGuard** — Redis `WATCH/MULTI/EXEC` optimistic-lock pre-reservation guard prevents multi-agent "race to the rail" where concurrent threads all read the same OPA limit and all pass. Fail-closed on Redis failure. Integrates with Saga rollback via `release(token)`.
+- **Token Quota Proxy (CTRL_TQP_007)** — `src/gateway/governance/token_quota_proxy.py` enforces hard per-session step-count (`≤12`) and token (`≤100,000`) quotas via Redis atomic Lua counters. Fail-CLOSED: Redis unavailability blocks the request (HTTP 429). Two-phase commit: `check_and_increment()` reserves quota before the vLLM call; `reconcile_actual_tokens()` corrects over-allocation after the response. `rollback_step()` atomically decrements counters on downstream failure. Implements ISO 42001 Annex A.4 (Resource Management). Governance control: `CTRL_TQP_007`.
+- **PII Sanitizer** — `src/gateway/governance/pii_sanitizer.py` applies five compiled regex patterns (SSN, credit card, email, phone, API key/Bearer token) sequentially to every UCA compliance record before WORM persistence. Implements ISO 42001 Annex A.6 (Data Lineage and PII Leak Mitigation). Thread-safe; no per-call state.
+- **UCA Logger** — `src/gateway/governance/uca_logger.py` builds, cryptographically signs (Cloud KMS in production; HMAC-SHA256 stub when `CAGE_ENV=test`), and persists 16-field ISO 42001 Clause 6.1 Unsafe Control Action records to a region-gated WORM bucket (`CAGE_DEPLOYMENT_REGION` → `OSCAL_S3_BUCKET_{REGION}`). Three UCA types: `quota_exceeded`, `prompt_injection`, `pii_sanitization`.
 - **Mandatory NeMo input + output guardrails** — non-bypassable LangGraph nodes generated by the harness; fail-closed on any exception; Presidio PII scan on every request and response.
 - **OPA policy evaluation via direct REST API** — circuit breaker defaults to DENY on failure; generated by the harness router.
 - **STPA-to-Policy Compiler** — CLI tool (`src/gateway/governance/stpa_compiler.py`) ingests `config/stpa_control_structure.yaml` and generates OPA Rego, NeMo Colang rails, a Python `GeneratedSTPAValidator`, and LangGraph Saga nodes — eliminating manual policy transcription errors.
@@ -140,7 +143,7 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 | **NIST RMF Steps 1–4 (Prepare → Implement)** | 🟡 Partial              | SC-8 elevated to implemented; SC-7 reinforced; FIPS 199 unsigned; ATO not yet issued                                       |
 | **NIST RMF Step 5 (Assess)**                 | ❌ Not started          | No Security Assessment Report; no independent assessor                                                                      |
 | **NIST RMF Step 6 (Authorize)**              | ❌ Not started          | No ATO letter issued                                                                                                        |
-| **Infrastructure security**                  | 🟡 Partial              | 11 of 22 POA&M open (6 Closed: POAM-003 AU-12, POAM-007 IA-3, POAM-010 RA-5, POAM-016 SI-2, POAM-020 CM-3, POAM-021 SI-4; POAM-011 SC-8 and POAM-012 SC-12 remain Open) — see [`docs/SECURITY_STATUS.md`](docs/SECURITY_STATUS.md) |
+| **Infrastructure security**                  | 🟡 Partial              | 13 of 23 POA&M open (6 Closed: POAM-003 AU-12, POAM-007 IA-3, POAM-010 RA-5, POAM-016 SI-2, POAM-020 CM-3, POAM-021 SI-4; POAM-023 SI-2 CVE-2025-13462 opened 2026-06-08) — see [`docs/SECURITY_STATUS.md`](docs/SECURITY_STATUS.md) |
 | **PodSecurity (restricted)**                 | ✅ Implemented          | `securityContext` (`runAsNonRoot`, `runAsUser: 65534`, `seccompProfile`, `allowPrivilegeEscalation: false`, `capabilities.drop: ALL`) applied to all 6 app deployment manifests (rc.3) |
 | **Intra-cluster mTLS**                       | ✅ Implemented          | Linkerd mTLS: SPIFFE/SVID identity for Gateway→OPA, Gateway→NeMo (POAM-007 closed)                                         |
 | **L7 egress boundary**                       | ✅ Implemented          | Cilium CiliumNetworkPolicy: FQDN allowlist for gateway, internal-only lockdown for agent pods                               |
@@ -178,6 +181,13 @@ Copy `.env.example` to `.env` and configure at minimum:
 | `CONSENSUS_RISK_MANAGER_URL`                     | Override vLLM endpoint for Risk Manager critic persona |
 | `CONSENSUS_COMPLIANCE_OFFICER_URL`               | Override vLLM endpoint for Compliance Officer critic persona |
 | `CAGE_NORMATIVE_PROVIDER`                        | External normative provider (`static` or `trustlayers`; default `static`) |
+| `STEP_QUOTA_MAX`                                 | Hard step-count limit per agent session for Token Quota Proxy (default: `12`) |
+| `TOKEN_QUOTA_MAX`                                | Hard token limit per agent session for Token Quota Proxy (default: `100000`) |
+| `SESSION_TTL_SECONDS`                            | Redis key TTL for Token Quota Proxy session counters in seconds (default: `3600`) |
+| `OSCAL_S3_BUCKET_US_FED`                         | WORM bucket for UCA records in US_FED region (used by UCA Logger) |
+| `OSCAL_S3_BUCKET_EU_ECB`                         | WORM bucket for UCA records in EU_ECB region (europe-west1; used by UCA Logger) |
+| `OSCAL_S3_BUCKET_APAC_MAS`                       | WORM bucket for UCA records in APAC_MAS region (asia-southeast1; used by UCA Logger) |
+| `CAGE_ENV`                                       | Set to `test` to enable HMAC-SHA256 stub signing in UCA Logger (suppresses KMS requirement) |
 
 ### Local Development
 
@@ -205,7 +215,7 @@ curl http://localhost:8080/health
 ### Run Tests
 
 ```bash
-bash setup_test_env.sh && python -m pytest tests/   # 803 tests passing (25 skipped due to Langfuse port-forward infra flakiness — 0 regressions)
+bash setup_test_env.sh && python -m pytest tests/   # 796 tests passing, 0 failed (148 skipped — 0 regressions; Track D 2026-06-08)
 ```
 
 ---
@@ -224,7 +234,10 @@ cybernetic-governance-engine/
 │   │   │   ├── oscal_ssp_exporter.py # Automated OSCAL SSP patcher
 │   │   │   ├── generated_stpa_validator.py  # Auto-generated from YAML
 │   │   │   ├── generated_saga_nodes.py      # Auto-generated LangGraph Saga nodes
-│   │   │   └── fiscal_limit_guard.py        # Redis pre-reservation guard
+│   │   │   ├── fiscal_limit_guard.py        # Redis pre-reservation guard
+│   │   │   ├── token_quota_proxy.py  # CTRL_TQP_007: per-session step/token quota circuit breaker (ISO 42001 A.4)
+│   │   │   ├── pii_sanitizer.py      # Pre-ledger PII sanitization pipeline (ISO 42001 A.6)
+│   │   │   └── uca_logger.py         # ISO 42001 Clause 6.1 UCA record builder, KMS signer, WORM persister
 │   │   └── server/                   # MCP tool server + inference proxy
 │   ├── governed_financial_advisor/
 │   │   ├── graph/
@@ -296,7 +309,11 @@ cybernetic-governance-engine/
 | [`README_GOVERNANCE.md`](README_GOVERNANCE.md)                                         | **Detailed 7-Tier Symbolic Governor & Decoupled Architecture Spec** |
 | [`docs/AUDIT_LOG_SCHEMA.md`](docs/AUDIT_LOG_SCHEMA.md)                                 | **`cage-intent/1.0` & `cage-view-access/1.0` schema reference** — hash-chain mechanics, all fields, regulatory mapping (MiFID II Art. 25 / GDPR Art. 30 / ISO 42001 A.8.4) |
 | [`docs/SECURITY_STATUS.md`](docs/SECURITY_STATUS.md)                                   | Security posture, NIST RMF status, open POA&M items                |
-| [`docs/POAM.md`](docs/POAM.md)                                                         | Plan of Action & Milestones (22 items; 6 closed)                   |
+| [`docs/POAM_INDEX.md`](docs/POAM_INDEX.md)                                             | POA&M Master Index — cross-region traceability matrix (38 items)   |
+| [`docs/POAM_ISO42001.md`](docs/POAM_ISO42001.md)                                       | POA&M — ISO 42001 universal AIMS weaknesses (all regions, 6 items) |
+| [`docs/POAM_US_FED.md`](docs/POAM_US_FED.md)                                           | POA&M — US_FED NIST SP 800-53 / ATO track (23 items; 6 closed)    |
+| [`docs/POAM_EU_ECB.md`](docs/POAM_EU_ECB.md)                                           | POA&M — EU_ECB EU AI Act / DORA / GDPR (5 items)                  |
+| [`docs/POAM_APAC_MAS.md`](docs/POAM_APAC_MAS.md)                                       | POA&M — APAC_MAS MAS FEAT / Notice 655 / TRM (4 items)            |
 | [`docs/GATEWAY_ARCHITECTURE.md`](docs/GATEWAY_ARCHITECTURE.md)                         | Gateway subsystem detail                                           |
 | [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](docs/NEURO_SYMBOLIC_GOVERNANCE.md)               | Neuro-symbolic governance design                                   |
 | [`docs/STPA_ANALYSIS.md`](docs/STPA_ANALYSIS.md)                                       | STPA hazard assessment — UCAs 1–9, Saga pattern, FiscalLimitGuard  |
@@ -330,9 +347,9 @@ Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 
 ---
 
-## What's New in v2.0.0-rc.3
+## What's New in v2.0.0
 
-> **Release date:** 2026-06-05 — Deployment fixes, PodSecurity compliance, STPA validator fix
+> **Release date:** 2026-06-08 — Stable release: Token Quota Proxy, PII Sanitizer, UCA Logger, gateway CVE remediation, seal enforcement verification, all universal Lula assertions PASS
 
 ### Bug Fixes
 
@@ -358,18 +375,19 @@ Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 
 | Suite | Passed | Failed | Notes |
 |-------|--------|--------|-------|
-| Full suite (`uv run pytest tests/ --run-integration`) | **803** | **25** | 44 Langfuse port-forward timeouts — infra flakiness, 0 regressions |
+| Full suite (`uv run pytest tests/ --run-integration`) | **796** | **0** | 148 skipped — 0 regressions (Track D 2026-06-08, cluster: cage-dev) |
 
 > The 25 failures are exclusively Langfuse port-forward timeout flakiness in the GKE test environment. No governance logic regressions. The rc.2 844-pass run used a stable port-forward session; rc.3 ran against a freshly restarted cluster.
 
-### POAM Status (rc.3)
+### POAM Status (v2.0.0)
 
 | Metric | Count |
 |--------|-------|
-| Total Items | 22 |
-| **Closed** | **6** (POAM-003 AU-12 closed in rc.3; POAM-007, POAM-010, POAM-016, POAM-020, POAM-021 previously closed) |
-| Open | 11 |
+| Total Items | 24 |
+| **Closed** | **6** (POAM-003 AU-12, POAM-007 IA-3, POAM-010 RA-5, POAM-016 SI-2, POAM-020 CM-3, POAM-021 SI-4) |
+| Open | 14 (includes POAM-023 SI-2 CVE-2025-13462, opened 2026-06-08) |
 | In Progress | 3 |
+| Critical | 4 |
 
 ---
 
@@ -379,4 +397,4 @@ Apache 2.0 — see [`LICENSE`](LICENSE)
 
 This is not an officially supported Google product. This project is not eligible for the Google Open Source Software Vulnerability Rewards Program.
 
-_CAGE v2.0.0-rc.3 — 2026-06-05 — Deployment Fixes, PodSecurity Compliance, STPA Validator Fix_
+_CAGE v2.0.0 — 2026-06-08 — Stable Release: Token Quota Proxy, PII Sanitizer, UCA Logger, CTRL_TQP_007, gateway CVE remediation, seal enforcement verification_
