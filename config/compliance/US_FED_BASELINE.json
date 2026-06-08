@@ -1,4 +1,8 @@
 {
+  "_baseline_type": "additive_regional_layer",
+  "_global_baseline": "ISO_42001",
+  "_region": "US_FED",
+  "_activation": "CAGE_DEPLOYMENT_REGION=US_FED",
   "_comment": "US Federal Reserve / OCC / FDIC regional control-mapping profile. SR 26-2 is the active primary framework for traditional model risk. Agentic controls governed under ISO 42001 per SR 26-2 Footnote 3 (novelty exclusion). To activate: set CAGE_DEPLOYMENT_REGION=US_FED",
   "_schema_version": "1.1.0",
   "_region": "US_FED",
@@ -11,7 +15,6 @@
     "NIST AI RMF 1.0",
     "NIST SP 800-53 Rev 5"
   ],
-
   "CTRL_AGT_001": {
     "internal_id": "THR-CONF-001",
     "primary_framework": "ISO 42001 \u00a7A.5.2",
@@ -23,7 +26,6 @@
     "scope": "agentic",
     "description": "Minimum agentic model confidence required to execute a trade. Agentic AI is explicitly excluded from SR 26-2 MRM scope (Footnote 3); governed here under ISO 42001 Operational Risk."
   },
-
   "CTRL_WAL_002": {
     "internal_id": "THR-WAL-002",
     "primary_framework": "ISO 42001 \u00a7A.8.4",
@@ -35,7 +37,6 @@
     "scope": "agentic",
     "description": "Atomic transaction guarantee via Write-Ahead Log and LIFO rollback. MCP tool invocations in forward WAL nodes must be provably atomic in production, not merely declared in policy documents."
   },
-
   "CTRL_TEL_003": {
     "internal_id": "THR-TEL-003",
     "primary_framework": "ISO 42001 \u00a7A.9.4",
@@ -47,7 +48,6 @@
     "scope": "agentic",
     "description": "World-model validation must reflect live runtime telemetry, not synthetic data. DoWhy causal gatekeeper placebo refutation must be sourced from live Langfuse governance spans."
   },
-
   "CTRL_MRM_004": {
     "internal_id": "THR-MRM-004",
     "primary_framework": "SR 26-2 \u00a7IV \u2013 Model Risk Management",
@@ -58,7 +58,6 @@
     "scope": "traditional_ml",
     "description": "Traditional quantitative model validation criteria applicable to non-agentic, deterministic ML components (e.g. CBF predictor, DoWhy causal model coefficients). SR 26-2 explicitly retains MRM scope for these components."
   },
-
   "CTRL_OPA_005": {
     "internal_id": "THR-OPA-005",
     "primary_framework": "ISO 42001 \u00a7A.6.1",
