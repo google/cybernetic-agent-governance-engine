@@ -39,7 +39,7 @@ dev = [
     "pandas>=2.2.0",
     "pip-licenses>=5.0.0",
     "pip-audit>=2.10.0",
-    "fakeredis>=2.35.1",
+    "fakeredis[lua]>=2.35.1",
     "pytest-timeout>=2.4.0",
     "bcrypt>=5.0.0",
 ]
