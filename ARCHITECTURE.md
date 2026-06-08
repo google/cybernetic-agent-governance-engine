@@ -47,6 +47,9 @@ graph TB
         CBF[cbf.py ControlBarrierFunction\nRedis-backed cash/drawdown]
         CAUSAL[causal_gatekeeper.py\nDoWhy refutation lock]
         FLG[fiscal_limit_guard.py\nRedis pre-reservation]
+        TQP[token_quota_proxy.py\nCTRL_TQP_007 step+token quota]
+        PIISAN[pii_sanitizer.py\nISO 42001 A.6 pre-ledger redaction]
+        UCALOG[uca_logger.py\nISO 42001 Clause 6.1 WORM records]
         SAGA[generated_saga_nodes.py\nsaga_router + compensating nodes]
     end
 
@@ -79,7 +82,9 @@ graph TB
     GRAPH --> NODES --> SUBS --> GW
     GRAPH --> CHECKPT --> REDIS
 
-    GW --> AC --> NEMO --> STPA --> OPA_C --> SYMGOV --> CBF --> CAUSAL --> FLG
+    GW --> TQP --> AC --> NEMO --> STPA --> OPA_C --> SYMGOV --> CBF --> CAUSAL --> FLG
+    TQP --> PIISAN --> UCALOG
+    UCALOG --> S3
     FLG --> SAGA
     CBF --> REDIS
     FLG --> REDIS
@@ -225,6 +230,9 @@ All governance enforcement layers are Python-only:
 | 13   | Linkerd mTLS                | [`linkerd-mtls-policy.yaml`](deployment/k8s/linkerd-mtls-policy.yaml)               | SPIFFE/SVID identity; `Server`/`AuthorizationPolicy`/`MeshTLSAuthentication` v1beta2               | All intra-cluster service communication  |
 | 14   | Cilium L7 egress            | [`cilium-egress-lockdown.yaml`](deployment/k8s/cilium-egress-lockdown.yaml)          | FQDN allowlist (gateway); internal-only lockdown (sovereign-agent pods); default-deny              | All outbound network traffic             |
 | 15   | FiscalLimitGuard            | [`fiscal_limit_guard.py`](src/gateway/governance/fiscal_limit_guard.py)              | Redis `WATCH/MULTI/EXEC` atomic pre-reservation; prevents multi-agent TOCTOU on OPA fiscal limits  | Every `execute_trade` call, pre-OPA      |
+| 16   | Token Quota Proxy           | [`token_quota_proxy.py`](src/gateway/governance/token_quota_proxy.py)                | Redis atomic Lua counters; step-count ≤12 and token ≤100k per session; fail-CLOSED on Redis error; two-phase commit (reserve → reconcile); rollback on downstream failure. ISO 42001 Annex A.4. `CTRL_TQP_007`. | Every inference proxy request (Step 2 in `inference_proxy.py`) |
+
+> **CTRL_TQP_007 — Token Quota Proxy:** Implements ISO 42001 Annex A.4 (Resource Management). Every blocked execution produces a KMS-signed UCA record persisted to the region-gated WORM ledger via [`uca_logger.py`](src/gateway/governance/uca_logger.py). Pre-ledger PII sanitization applied by [`pii_sanitizer.py`](src/gateway/governance/pii_sanitizer.py) (ISO 42001 Annex A.6). OPA `quota_within_limits` and `token_quota_within_limits` rules in `deployment/system_authz.rego` provide secondary declarative evidence; Python `TokenQuotaProxy` is the primary enforcer.
 
 ### Multi-Jurisdiction Regional Compliance Profiles
 
@@ -396,4 +404,4 @@ Full engineering and compliance documentation for CAGE is maintained in the [Tec
 
 ---
 
-_Architecture current as of 2026-06-05. Canonical graph: 10 nodes including mandatory NeMo input/output rails. Governance tiers: **7** (SymbolicGovernor tiers 0–6) + FiscalLimitGuard pre-reservation + LangGraph Saga WAL. STPA compiler active: UCAs compiled from `config/stpa_control_structure.yaml`; LangGraph Saga target added (UCA-4 fully enforced via WAL + LIFO rollback + idempotent compensating nodes). Z3N: Linkerd + Cilium deployed. POAM-007 (IA-3), POAM-010 (RA-5), POAM-016 (SI-2), POAM-020 (CM-3), POAM-021 (SI-4) closed. POAM-011 (SC-8) and POAM-012 (SC-12) remain Open. Vendor integrations isolated in `src/integrations/{vendor}/` (NexArt, TrustLayers). Redis db=1 hardened with `noeviction` + Guaranteed QoS. Lula coverage: 15 validation manifests (4 Active, 11 Stub). FiscalLimitGuard: Redis WATCH/MULTI/EXEC atomic pre-reservation prevents multi-agent OPA limit collision. NoDirectBind safety invariant machine-verified over 19 reachable states (v2.0.0-rc.2). Test suite: **803 passing** (rc.3 — 2026-06-05). For architectural decisions, see [`docs/DEPLOYMENT_DECISION_RECORD.md`](docs/DEPLOYMENT_DECISION_RECORD.md)._
+_Architecture current as of 2026-06-08. Canonical graph: 10 nodes including mandatory NeMo input/output rails. Governance tiers: **7** (SymbolicGovernor tiers 0–6) + FiscalLimitGuard pre-reservation + Token Quota Proxy (CTRL_TQP_007) + LangGraph Saga WAL. STPA compiler active: UCAs compiled from `config/stpa_control_structure.yaml`; LangGraph Saga target added (UCA-4 fully enforced via WAL + LIFO rollback + idempotent compensating nodes). Z3N: Linkerd + Cilium deployed. POAM-007 (IA-3), POAM-010 (RA-5), POAM-016 (SI-2), POAM-020 (CM-3), POAM-021 (SI-4) closed. POAM-023 (SI-2 CVE-2025-13462) opened 2026-06-08. POAM-011 (SC-8) and POAM-012 (SC-12) remain Open. Vendor integrations isolated in `src/integrations/{vendor}/` (NexArt, TrustLayers). Redis db=1 hardened with `noeviction` + Guaranteed QoS. Lula coverage: 15 validation manifests (4 Active, 11 Stub). FiscalLimitGuard: Redis WATCH/MULTI/EXEC atomic pre-reservation prevents multi-agent OPA limit collision. Token Quota Proxy: Redis Lua atomic step/token counters; fail-CLOSED; ISO 42001 A.4. NoDirectBind safety invariant machine-verified over 19 reachable states (v2.0.0-rc.2). Test suite: **796 passing, 0 failed** (Track D — 2026-06-08). For architectural decisions, see [`docs/DEPLOYMENT_DECISION_RECORD.md`](docs/DEPLOYMENT_DECISION_RECORD.md)._

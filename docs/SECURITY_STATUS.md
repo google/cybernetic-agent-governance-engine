@@ -42,6 +42,9 @@ CAGE v2.0.0 provides a **production-grade AI governance enforcement runtime**. T
 | Cilium L7 egress lockdown (SC-7) | FQDN allowlist (gateway); internal-only (agent pods)                      | ✅ Implemented (v1.1.0) |
 | Cryptographic evidence chain     | SHA-256 hash-chained NDJSON; MiFID II / GDPR view-access log; KMS batch signing for OSCAL artifacts | ✅ Implemented (v1.1.0) |
 | AgentSight UI Phase 1            | React/Vite frontend; eBPF kernel observability via `deployment/k8s/agentsight-daemon.yaml`; remote exporter active | ✅ Implemented (v2.0.0) |
+| Token Quota Proxy (CTRL_TQP_007) | Per-session step-count (≤12) and token (≤100k) quota enforcement via Redis atomic Lua counters; fail-CLOSED; HTTP 429 on quota exceeded; two-phase commit (reserve → reconcile); rollback on downstream failure. ISO 42001 Annex A.4. | ✅ Implemented (fix/track-b-v2-release-gates) |
+| PII Sanitizer                    | Pre-ledger regex sanitization pipeline (SSN, CC, email, phone, API key/Bearer token) applied to all UCA records before WORM persistence. ISO 42001 Annex A.6. | ✅ Implemented (fix/track-b-v2-release-gates) |
+| UCA Logger                       | ISO 42001 Clause 6.1 UCA record builder; KMS-signed (HMAC-SHA256 stub in `CAGE_ENV=test`); region-gated WORM persistence (`CAGE_DEPLOYMENT_REGION` → `OSCAL_S3_BUCKET_{REGION}`); UCA types: `quota_exceeded`, `prompt_injection`, `pii_sanitization`. | ✅ Implemented (fix/track-b-v2-release-gates) |
 
 ### Compliance Automation (15 Lula Validation Manifests — 4 Active, 11 Stub)
 
@@ -89,13 +92,13 @@ The NIST RMF is a six-step process. The table below reflects the current state f
 
 ### Infrastructure Security Gaps (from POA&M)
 
-The following weaknesses are documented in [`docs/POAM.md`](POAM.md) (v1.5, 2026-06-03 — authoritative). Items marked **Closed** were resolved; see POAM.md for full closure evidence:
+The following weaknesses are documented in [`docs/POAM.md`](POAM.md) (v1.7, 2026-06-08 — authoritative). Items marked **Closed** were resolved; see POAM.md for full closure evidence:
 
 | ID       | Control    | Weakness                                                              | Severity     | Status          | Target Date |
 | -------- | ---------- | --------------------------------------------------------------------- | ------------ | --------------- | ----------- |
 | POAM-001 | AC-2       | No account management procedures                                      | High         | Open            | 2026-04-30  |
 | POAM-002 | AC-6       | Overly broad IAM role bindings in Terraform                           | High         | Open            | 2026-05-15  |
-| POAM-003 | AU-12      | `automated_auditor.py` uses synthetic mock traces, not live OTLP      | High         | Open            | 2026-04-15  |
+| POAM-003 | AU-12      | ~~`automated_auditor.py` uses synthetic mock traces~~ **✅ Closed** — live OSCAL assessment results generated from Langfuse compliance metrics via compliance-bridge REST API | High | **Closed** | 2026-06-05 |
 | POAM-004 | CA-5       | No formal POA&M process (this document)                               | High         | In Progress     | 2026-03-31  |
 | POAM-005 | CA-6       | **No Authorization to Operate (ATO) letter**                          | **Critical** | Open            | 2026-06-30  |
 | POAM-006 | CM-8       | No SBOM in CI/CD pipeline                                             | High         | Open            | 2026-05-01  |
@@ -115,10 +118,11 @@ The following weaknesses are documented in [`docs/POAM.md`](POAM.md) (v1.5, 2026
 | POAM-020 | CM-3       | ~~Technical report README version mismatch~~ **✅ Closed** — aligned to v2.0.0 | Moderate | **Closed** | 2026-06-15 |
 | POAM-021 | SI-4       | ~~AgentSight eBPF exporter in console mode~~ **✅ Closed** — `exporter.type: "remote"` confirmed | High | **Closed** | 2026-07-15 |
 | POAM-022 | SA-9, CA-7 | External Normative Provider operating in stub mode (TrustLayers credentials not provisioned) | Moderate | In Progress | 2026-08-31 |
+| POAM-023 | SI-2       | CVE-2025-13462 in `libpython3.11` (python:3.12-slim-bookworm base layer) — 19 CRITICAL CVEs; no Debian bookworm fix available as of 2026-06-08; suppressed via `.trivyignore`; Cilium egress lockdown reduces exploitability | **Critical** | Open | 2026-09-08 |
 
 ### Testing Gaps
 
-- **`automated_auditor.py` uses synthetic mock traces** — the continuous audit invariant checker (POAM-003) does not connect to a live OTLP source; its evidence does not reflect actual system behavior.
+- **~~`automated_auditor.py` uses synthetic mock traces`~~** — POAM-003 closed 2026-06-05. Live OSCAL assessment results now generated from Langfuse compliance metrics via compliance-bridge REST API.
 - **No SBOM** — no Software Bill of Materials is generated per build (POAM-006). Note: vulnerability scanning (POAM-010) is now closed — pip-audit, Trivy, and Grype are active in CI.
 - **No TLS enforcement test** — `tests/test_gateway_connectivity.py` does not assert TLS 1.2+ on all endpoints (POAM-011).
 - **Langfuse compliance credentials not validated at startup** — silent failure if compliance project keys are absent (POAM-018).
