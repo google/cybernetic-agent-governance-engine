@@ -10,18 +10,15 @@
     "EU AI Act Art. 9 \u2013 Risk Management System for High-Risk AI",
     "GDPR Art. 22 \u2013 Automated Individual Decision-Making"
   ],
-
   "cbf": {
     "min_cash_balance": 1000.0,
     "gamma": 0.6,
     "_comment": "Gamma elevated to 0.6 from US baseline 0.5. EU prudential requirements under CRD VI and EBA SREP Guidelines mandate more conservative capital buffer maintenance. Higher gamma = more aggressive safety filter intervention."
   },
-
   "drawdown": {
     "limit": 0.04,
     "_comment": "EU EBA stress-test adverse scenario drawdown limit set at 4% (vs US 5%). Reflects EBA/GL/2018/02 severe adverse scenario calibration for European systemic risk. Under the ECB SSM supervisory review, a 4% drawdown limit is considered the boundary for Pillar 2 Requirement (P2R) triggers."
   },
-
   "stpa": {
     "uca5_drawdown_threshold_pct": 3.5,
     "_comment": "UCA-5 (EU): drawdown > 3.5% triggers block, 1% more conservative than US baseline (4.5%). Reflects EBA adverse scenario cushion requirement.",
@@ -32,20 +29,25 @@
     "max_latency_ms": 150.0,
     "_comment": "FIN-2 (EU): maximum 150ms round-trip latency (vs US 200ms). DORA Art. 10 requires financial entities to maintain ICT operational resilience with lower tolerance thresholds under ECB SSM expectations."
   },
-
   "confidence": {
     "min_trade_confidence": 0.97,
     "_comment": "[CTRL_AGT_001] Minimum agentic model confidence for EU High-Risk AI classification under EU AI Act Art. 6 + Annex III \u00a75(b). Threshold elevated to 0.97 from US baseline of 0.95 to reflect the mandatory Art. 9 risk management requirements for High-Risk AI systems. Pre-market FRIA (Art. 29a) must document this threshold and its calibration basis. Any change requires re-registration with the EU AI Office."
   },
-
   "consensus": {
     "threshold_usd": 7500.0,
     "_comment": "EU: consensus check threshold lowered to EUR 7,500 equivalent (vs USD 10,000). GDPR Art. 22(2) requires human oversight for automated decisions with legal or similarly significant effects on individuals. The lower threshold ensures more decisions receive human review, satisfying Art. 14 (Human Oversight) of the EU AI Act for High-Risk AI systems."
   },
-
   "fria": {
     "enabled": true,
-    "protected_characteristics": ["gender", "race", "ethnicity", "age", "disability", "nationality", "religion"],
+    "protected_characteristics": [
+      "gender",
+      "race",
+      "ethnicity",
+      "age",
+      "disability",
+      "nationality",
+      "religion"
+    ],
     "bias_threshold_demographic_parity": 0.05,
     "_comment": "Maximum allowable demographic parity gap across EU Charter Art. 21 protected characteristics. 5% tolerance per EBA/GL/2020/06 loan origination guidelines fair lending expectations.",
     "bias_threshold_equalized_odds": 0.05,
@@ -53,7 +55,6 @@
     "fria_reassessment_interval_days": 365,
     "_comment": "EU AI Act Art. 29a requires periodic FRIA reassessment. Annual minimum; more frequent if model drift detected via CTRL_TEL_003."
   },
-
   "tier1_keywords": [
     "SYSTEM OVERRIDE",
     "IGNORE PREVIOUS INSTRUCTIONS",
@@ -72,5 +73,14 @@
     "GDPR OVERRIDE",
     "IGNORE FAIRNESS CHECKS",
     "BYPASS FRIA"
-  ]
+  ],
+  "governance_controls": {
+    "CTRL_TQP_007": {
+      "control_id": "CTRL_TQP_007",
+      "iso_clause": "A.4",
+      "description": "Per-session token and step-count quota enforcement via Redis atomic counters",
+      "enforcement_tier": 2,
+      "worm_bucket_env_var": "OSCAL_S3_BUCKET_EU_ECB"
+    }
+  }
 }

@@ -1,0 +1,4 @@
+# CVE-2025-13462 — libpython3.11 in python:3.12-slim-bookworm base layer
+# No Debian bookworm fix available as of 2026-06-08.
+# Risk accepted via POAM-023. Review date: 2026-09-08.
+CVE-2025-13462

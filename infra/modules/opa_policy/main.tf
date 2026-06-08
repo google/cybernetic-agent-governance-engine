@@ -127,6 +127,18 @@ resource "kubernetes_deployment" "opa" {
             }
           }
 
+          security_context {
+            allow_privilege_escalation = false
+            run_as_non_root            = true
+            run_as_user                = 65534
+            capabilities {
+              drop = ["ALL"]
+            }
+            seccomp_profile {
+              type = "RuntimeDefault"
+            }
+          }
+
           resources {
             requests = {
               memory = var.memory_request

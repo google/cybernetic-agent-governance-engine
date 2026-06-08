@@ -42,7 +42,7 @@ metadata:
   labels:
     app: vllm-governance
 spec:
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app: vllm-governance
@@ -72,8 +72,6 @@ spec:
         args:
         - "--model"
         - "Qwen/Qwen2.5-7B-Instruct"
-        - "--guided-decoding-backend"
-        - "outlines"
         - "--trust-remote-code"
         - "--port"
         - "8000"

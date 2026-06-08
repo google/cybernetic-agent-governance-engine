@@ -206,6 +206,9 @@ resource "kubernetes_deployment" "nemo_guardrails" {
               capabilities {
                 drop = ["ALL"]
               }
+              seccomp_profile {
+                type = "RuntimeDefault"
+              }
             }
           }
         }
@@ -271,6 +274,9 @@ resource "kubernetes_deployment" "nemo_guardrails" {
               capabilities {
                 drop = ["ALL"]
               }
+              seccomp_profile {
+                type = "RuntimeDefault"
+              }
             }
           }
         }
@@ -329,6 +335,9 @@ resource "kubernetes_deployment" "nemo_guardrails" {
               allow_privilege_escalation = false
               capabilities {
                 drop = ["ALL"]
+              }
+              seccomp_profile {
+                type = "RuntimeDefault"
               }
             }
           }

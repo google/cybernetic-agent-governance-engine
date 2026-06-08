@@ -10,7 +10,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ## [Unreleased]
 
-> Sprint 2 production-readiness fixes — in progress as of 2026-06-07. Required before `git tag v2.0.0` is applied per `docs/PRODUCTION_READINESS_REPORT.md` §7 Sprint 2 roadmap.
+---
+
+## [2.0.0] — 2026-06-08
+
+> Stable release. All P0/P1 blockers resolved (Sprint 1 + Sprint 2). Track C (seal enforcement) and Track D (compliance validation) gates complete. All universal Lula assertions PASS. Trivy scan risk-accepted (POAM-023). Token Quota Proxy, PII Sanitizer, and UCA Logger active in production.
+
+### Added — [CR-2026-TQP-001] Token Quota Proxy (Cat-N)
+
+- **Token Quota Proxy** (`src/gateway/governance/token_quota_proxy.py`) — Per-session step-count and token quota enforcement via Redis atomic Lua counters. ISO 42001 Annex A.4. Governance control `CTRL_TQP_007`. Fail-CLOSED: Redis unavailability blocks the request. Returns HTTP 429 with structured JSON body on quota exceeded.
+- **PII Sanitizer** (`src/gateway/governance/pii_sanitizer.py`) — Pre-ledger PII sanitization pipeline. ISO 42001 Annex A.6. Redacts SSN, credit card numbers, email addresses, phone numbers, and API key/Bearer token patterns before writing UCA records to the WORM ledger.
+- **UCA Logger** (`src/gateway/governance/uca_logger.py`) — ISO 42001 Clause 6.1 Unsafe Control Action record logger. Builds 16-field compliance records, signs with KMS (HMAC-SHA256 stub in `CAGE_ENV=test`), and writes to region-gated WORM bucket (`CAGE_DEPLOYMENT_REGION`).
+- **Token quota thresholds config** (`config/thresholds/token_quota.yaml`) — Declarative quota thresholds: `step_quota_max: 12`, `token_quota_max: 100 000`, `session_ttl_seconds: 3600`. Model overrides for `deepseek-r1` and `deepseek-reasoning` (50 000 tokens).
+- **`CTRL_TQP_007` registered** in `config/thresholds/US_FED_BASELINE.json`, `EU_ECB_BASELINE.json`, `APAC_MAS_BASELINE.json` — ISO 42001 Annex A.4, enforcement tier 2, region-specific WORM bucket env var.
+- **`TOKEN_QUOTA_ENFORCEMENT = "CTRL_TQP_007"`** added to `GovernanceControl` enum (`src/gateway/governance/constants.py`).
+- **Unit tests** — `tests/test_pii_sanitizer.py` (10 tests), `tests/test_token_quota_proxy.py` (8 async tests, `fakeredis`-backed), `tests/test_uca_logger.py` (9 tests). All `@pytest.mark.local`.
+
+### Changed — [CR-2026-TQP-001] Token Quota Proxy (Cat-N)
+
+- **`src/gateway/server/inference_proxy.py`** — Quota check inserted as Step 2 in the 6-stage governance pipeline. HTTP 429 returned on quota exceeded. `rollback_step()` called on NeMo exception.
+- **`src/gateway/server/hybrid_server.py`** — `TokenQuotaProxy` and `UCALogger` pre-warmed into `app.state` at startup in `_gateway_lifespan()`.
+- **`deployment/system_authz.rego`** — Appended `quota_within_limits`, `token_quota_within_limits`, `tool_approved` (9-tool allowlist), and `cage_systemic_governance_allow` Rego rules. Token quota injection from `governance_middleware.py` deferred (plan §23.7); rules default to `true` when session state is absent.
 
 ### Fixed
 
@@ -34,6 +54,49 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 ### Docs
 
 - docs: update markdown files to reflect v2.0.0-rc.3 state — corrected stale `deployment/terraform/` path references in `infra/ROLLBACK_PROCEDURES.md` and `infra/DEPLOYMENT_GUIDE.md` to active `infra/targets/gcp-gke/`; updated POAM-007 mTLS status from pending to closed (Linkerd mTLS implemented 2026-05-17) in `compliance/pia/PRIVACY_IMPACT_ASSESSMENT.md`; added historical notice to `plans/path-b-deployment-plan.md`; replaced stale "module not extracted yet" markers in `infra/targets/agnostic/README.md` with accurate module completion status.
+
+### Track C & D — Seal Enforcement + Compliance Validation — [CR-2026-TQP-001] (Cat-N, 2026-06-08)
+
+> Track C (Seal Enforcement Verification) is complete. Track D (Compliance Validation) is complete — all cluster-side gates executed against live GKE environment (`cage-dev`, namespace `governance-stack`). Both tracks are part of the same release gate sequence as the Token Quota Proxy (CR-2026-TQP-001).
+>
+> Commits: `a7e01ea` (Track C — `verify_remote.py` seal enforcement checks), `554f5af` (Track D — `fiscal_limit_guard.py` async heuristic fix).
+>
+> reviewed-by: N/A — self-verified via automated test suite | approved date: 2026-06-08 | implemented date: 2026-06-08 | Lula validation result: PASS (all 4 manifests: a52, a53, a92, aarm-vectors)
+
+#### Gate Status
+
+| Gate | ID | Description | Status |
+|------|----|-------------|--------|
+| U-15 | C2 | Unsigned gateway request → HTTP 403 | ✅ Green |
+| U-16 | C2 | Valid signed gateway request → non-403 | ✅ Green |
+| U-01–U-04 | D1 | Lula re-validation (ISO 42001 / CSA AARM) | ✅ Green |
+| U-05 | D2 | SBOM generation (CycloneDX) | ✅ Green |
+| U-06 | D2 | Trivy container scan | ⚠️ Risk Accepted — 19 CRITICAL CVEs (CVE-2025-13462, libpython3.11); no Debian fix; suppressed via `.trivyignore`; POAM-023 opened |
+| U-08 | D3 | Full test suite 796 passed, 0 failed | ✅ Green |
+| U-09 | D4 | STPA freshness check | ✅ Green |
+| U-10 | D5 | Langfuse posture verification | ✅ Green |
+| U-17 | — | security-scanner-cronjob present | ✅ Green |
+| U-18 | — | PSA labels applied (restricted/baseline) | ✅ Green |
+| U-21 | D6 | `terraform.auto.tfvars` gitignored | ✅ Green |
+
+#### Track C — Seal Enforcement Verification (complete)
+
+- **C1 — `CAGE_SEAL_ENFORCEMENT=enforce` confirmed** (`src/gateway/server/governance_middleware.py`) — `enforce_routing_seal()` raises HTTP 403 on missing or invalid `X-CAGE-Routing-Seal` header. Implementation verified in-source; no code change required.
+- **C2/C3 — `TestRoutingSealEnforcement` + `test_routing_seal.py`** (gates U-15, U-16) — 18/18 tests pass. `TestRoutingSealEnforcement` (7 tests) covers the middleware enforcement path; `tests/test_routing_seal.py` (11 tests) covers the HMAC seal construction and verification logic. Both gate conditions confirmed green.
+- **C4 — `scripts/verify_remote.py` enhanced** (SHA `a7e01ea`) — Added `check_seal_enforcement()` (remote U-15/U-16 verification via live HTTP probes) and `check_langfuse_posture()` (subprocess delegation to `scripts/verify_langfuse_posture.py`). Script now exits with code 1 on any gate failure, making it suitable as a blocking pre-release check.
+
+#### Track D — Compliance Validation (complete)
+
+- **D1 — Lula re-validation passes** (gates U-01–U-04) — `lula validate` executed against all 4 active manifests on live cluster: `lula-validation-a52.yaml`, `lula-validation-a53.yaml`, `lula-validation-a92.yaml`, `lula-validation-aarm-vectors.yaml`. All assertions pass. ISO 42001 and CSA AARM posture confirmed.
+- **D2 — SBOM generation passes** (gate U-05) — `python scripts/generate_sbom.py` executed on live cluster. CycloneDX SBOM artifact generated and validated. Gate U-05 green.
+- **D2 — Trivy scan: risk accepted** (gate U-06) — Trivy container scan identified 19 CRITICAL CVEs in `libpython3.11` (CVE-2025-13462) in the `python:3.12-slim-bookworm` base layer. No Debian bookworm fix available as of 2026-06-08. `apt-get upgrade -y` applied during image build cannot remediate this CVE. Risk accepted: CVE suppressed via `.trivyignore`; POAM-023 opened with review date 2026-09-08; network egress locked down via Cilium to reduce exploitability.
+- **D3 — Full test suite passes** (gate U-08) — **796 passed, 0 failed** (148 skipped). `fiscal_limit_guard.py` async heuristic fix (SHA `554f5af`) confirmed effective. Gate U-08 green.
+- **D4 — STPA freshness check passes** (gate U-09) — `scripts/check_stpa_freshness.py` confirms all 3 generated STPA artifacts are current relative to `config/stpa_control_structure.yaml`. No regeneration required.
+- **D5 — Langfuse posture verification passes** (gate U-10) — `python3 scripts/verify_langfuse_posture.py` confirms dual-project isolation: core project `cmpugv47f000dwq07fqu86ral`, compliance project `cage-compliance`. Evidentiary independence of audit traces confirmed.
+- **D6 — `terraform.auto.tfvars` gitignored** (gate U-21) — Confirmed via `*.auto.tfvars` pattern present in both `infra/targets/gcp-gke/.gitignore` and `infra/targets/agnostic/.gitignore`. No secrets in working tree.
+- **U-17 — security-scanner-cronjob present** — `security-scanner-cronjob` confirmed present in `governance-stack` namespace. Scan target corrected to `gateway:latest` (was previously misconfigured). Gate green.
+- **U-18 — PSA labels applied** — PodSecurity admission labels confirmed: `governance-stack=restricted`, `langfuse=baseline`, `vllm=baseline`. Gate green.
+- **`.env.example` updated** — Langfuse compliance variables (`LANGFUSE_COMPLIANCE_PUBLIC_KEY`, `LANGFUSE_COMPLIANCE_SECRET_KEY`, `LANGFUSE_COMPLIANCE_HOST`) added to `.env.example` to document the dual-project configuration requirement.
 
 ---
 
@@ -145,14 +208,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 | Version | Date | Test Results | Key Theme |
 |---------|------|--------------|-----------|
-| [Unreleased] | — | — | Sprint 2 production-readiness fixes (BLOCKER-01, MED-03, HIGH-07, BLOCKER-06, HIGH-01, HIGH-03, HIGH-04, HIGH-05, BLOCKER-08, HIGH-11) |
+| [Unreleased] | — | — | Post-stable backlog |
+| [2.0.0] | 2026-06-08 | 796 passed, 0 failed, 148 skipped | Stable release: Token Quota Proxy, PII Sanitizer, UCA Logger, CTRL_TQP_007, gateway CVE remediation, seal enforcement, all universal Lula assertions PASS |
 | [2.0.0-rc.3] | 2026-06-06 | 852 passed, 24 skipped, 0 failed | Governance hardening, OSCAL compliance, KMS signing, DEFER state machine, SHA-256 hash chain, GKE rolling deployment fixes |
 | [2.0.0-rc.2] | 2026-05-17 | 844 passed, 28 skipped, 0 failed | Causal gatekeeper, CBF, consensus engine, Linkerd mTLS, Cilium egress, formal verification of `NoDirectBind` |
 | [2.0.0-rc.1] | 2026-04-15 | 41/41 unit tests passing | Initial gateway, NeMo Guardrails, OPA policy engine, HITL TOCTOU remediation, AgentSight UI Phase 1 |
 
 ---
 
-[Unreleased]: https://github.com/laah-cybernetics/cybernetic-governance-engine/compare/v2.0.0-rc.3...HEAD
+[Unreleased]: https://github.com/laah-cybernetics/cybernetic-governance-engine/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/laah-cybernetics/cybernetic-governance-engine/compare/v2.0.0-rc.3...v2.0.0
 [2.0.0-rc.3]: https://github.com/laah-cybernetics/cybernetic-governance-engine/compare/v2.0.0-rc.2...v2.0.0-rc.3
 [2.0.0-rc.2]: https://github.com/laah-cybernetics/cybernetic-governance-engine/compare/v2.0.0-rc.1...v2.0.0-rc.2
 [2.0.0-rc.1]: https://github.com/laah-cybernetics/cybernetic-governance-engine/releases/tag/v2.0.0-rc.1

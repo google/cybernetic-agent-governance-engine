@@ -177,6 +177,18 @@ resource "kubernetes_deployment" "compliance_bridge" {
             }
           }
 
+          security_context {
+            allow_privilege_escalation = false
+            run_as_non_root            = true
+            run_as_user                = 1000
+            capabilities {
+              drop = ["ALL"]
+            }
+            seccomp_profile {
+              type = "RuntimeDefault"
+            }
+          }
+
           resources {
             requests = {
               cpu    = "50m"

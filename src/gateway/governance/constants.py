@@ -113,6 +113,10 @@ class GovernanceControl(Enum):
     """Pre-market Fundamental Rights Impact Assessment (EU AI Act Art. 29a).
     Only present in EU_ECB regional profile; raises KeyError in other regions."""
 
+    TOKEN_QUOTA_ENFORCEMENT = "CTRL_TQP_007"
+    """Per-session token and step-count quota enforcement via Redis atomic counters.
+    ISO 42001 Annex A.4. Enforcement tier 2. Primary enforcer: TokenQuotaProxy."""
+
 
 # ---------------------------------------------------------------------------
 # Singleton ControlRegistry

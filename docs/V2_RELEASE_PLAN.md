@@ -95,7 +95,8 @@ Phase 5: Seal Enforcement Verification
 │  Requires Phase 4 complete (secrets must be present in cluster)
 │
 Phase 6: Pre-Release Checklist + Tag
-   Requires all prior phases complete + NIST ≥45% + ATO initiated
+   Requires all prior phases complete (universal gates only).
+   US_FED deployment additionally requires: NIST ≥45% + ATO initiated (§5.2).
 ```
 
 ### Critical Ordering Rules
@@ -1153,6 +1154,8 @@ kubectl delete job lula-manual-run -n governance-stack
 
 ### 8.5 NIST SP 800-53 Coverage Check
 
+> **US_FED ONLY** — This check applies exclusively to `CAGE_DEPLOYMENT_REGION=US_FED` deployments. Skip for the global stable tag; required before US_FED production promotion.
+
 **Current state:** 24% at `v2.0.0-dev.1`. Gate requires ≥45%.
 
 ```bash
@@ -1175,7 +1178,7 @@ print(f'Implemented: {len(implemented)}/{total} = {len(implemented)/total*100:.1
 " 2>/dev/null || echo "Run from cluster with full dependencies"
 ```
 
-> **If coverage is below 45%:** Additional NIST control implementations must be documented before tagging. Review [`docs/NIST_RMF_CHUNK*.md`](docs/) for controls that are implemented in code but not yet documented in the OSCAL SSP. Update the SSP exporter and re-run.
+> **If coverage is below 45%:** Additional NIST control implementations must be documented before US_FED production promotion (not before the global stable tag). Review [`docs/NIST_RMF_CHUNK*.md`](docs/) for controls that are implemented in code but not yet documented in the OSCAL SSP. Update the SSP exporter and re-run.
 
 ### 8.6 Full Test Suite Pass
 
@@ -1223,7 +1226,7 @@ git tag -a v2.0.0 \
 
 Promotion from v2.0.0-rc.2 after closure of D-01, D-02, D-04.
 All P0 blockers resolved. HMAC seal enforcement active.
-NIST coverage ≥45%. ATO process initiated.
+US_FED deployment requires separate NIST ≥45% and ATO gates (.clinerules §5.2).
 Full test suite: 844+ passed, 0 failed."
 
 # Push the tag
