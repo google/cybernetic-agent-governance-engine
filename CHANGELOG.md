@@ -53,11 +53,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ### Track C & D — Seal Enforcement + Compliance Validation — [CR-2026-TQP-001] (Cat-N, 2026-06-08)
 
-> Track C (Seal Enforcement Verification) is complete. Track D (Compliance Validation) is partially complete — locally-verifiable gates are green; cluster-dependent gates are deferred pending a live GKE environment. Both tracks are part of the same release gate sequence as the Token Quota Proxy (CR-2026-TQP-001).
+> Track C (Seal Enforcement Verification) is complete. Track D (Compliance Validation) is complete — all cluster-side gates executed against live GKE environment (`cage-dev`, namespace `governance-stack`). Both tracks are part of the same release gate sequence as the Token Quota Proxy (CR-2026-TQP-001).
 >
 > Commits: `a7e01ea` (Track C — `verify_remote.py` seal enforcement checks), `554f5af` (Track D — `fiscal_limit_guard.py` async heuristic fix).
 >
-> reviewed-by: N/A — self-verified via automated test suite | approved date: 2026-06-08 | implemented date: 2026-06-08 | Lula validation result: N/A — deferred to live cluster
+> reviewed-by: N/A — self-verified via automated test suite | approved date: 2026-06-08 | implemented date: 2026-06-08 | Lula validation result: PASS (all 4 manifests: a52, a53, a92, aarm-vectors)
 
 #### Gate Status
 
@@ -65,12 +65,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 |------|----|-------------|--------|
 | U-15 | C2 | Unsigned gateway request → HTTP 403 | ✅ Green |
 | U-16 | C2 | Valid signed gateway request → non-403 | ✅ Green |
-| U-08 | D3 | `fiscal_limit_guard.py` async client heuristic | ✅ Green |
+| U-01–U-04 | D1 | Lula re-validation (ISO 42001 / CSA AARM) | ✅ Green |
+| U-05 | D2 | SBOM generation (CycloneDX) | ✅ Green |
+| U-06 | D2 | Trivy container scan | ⚠️ Risk Accepted — 19 CRITICAL CVEs (CVE-2025-13462, libpython3.11); no Debian fix; suppressed via `.trivyignore`; POAM-023 opened |
+| U-08 | D3 | Full test suite 796 passed, 0 failed | ✅ Green |
 | U-09 | D4 | STPA freshness check | ✅ Green |
+| U-10 | D5 | Langfuse posture verification | ✅ Green |
+| U-17 | — | security-scanner-cronjob present | ✅ Green |
+| U-18 | — | PSA labels applied (restricted/baseline) | ✅ Green |
 | U-21 | D6 | `terraform.auto.tfvars` gitignored | ✅ Green |
-| U-01–U-04 | D1 | Lula re-validation (ISO 42001 / CSA AARM) | ⏳ Deferred — live cluster required |
-| U-05, U-06 | D2 | SBOM generation + Trivy scan | ⏳ Deferred — live cluster required |
-| U-10 | D5 | Langfuse posture verification | ⏳ Deferred — deployed environment required |
 
 #### Track C — Seal Enforcement Verification (complete)
 
@@ -78,14 +81,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 - **C2/C3 — `TestRoutingSealEnforcement` + `test_routing_seal.py`** (gates U-15, U-16) — 18/18 tests pass. `TestRoutingSealEnforcement` (7 tests) covers the middleware enforcement path; `tests/test_routing_seal.py` (11 tests) covers the HMAC seal construction and verification logic. Both gate conditions confirmed green.
 - **C4 — `scripts/verify_remote.py` enhanced** (SHA `a7e01ea`) — Added `check_seal_enforcement()` (remote U-15/U-16 verification via live HTTP probes) and `check_langfuse_posture()` (subprocess delegation to `scripts/verify_langfuse_posture.py`). Script now exits with code 1 on any gate failure, making it suitable as a blocking pre-release check.
 
-#### Track D — Compliance Validation (partial)
+#### Track D — Compliance Validation (complete)
 
-- **D3 — `fiscal_limit_guard.py` async heuristic fix** (gate U-08, SHA `554f5af`) — Fixed `_is_async_client()` detection logic in `src/gateway/governance/fiscal_limit_guard.py`. `aioredis` clients were incorrectly routed through the synchronous `WATCH/MULTI/EXEC` pipeline, causing `asyncio` event-loop blocking under concurrent governance load. Clients are now correctly dispatched through the async pipeline path. Full test suite result: **796 passed, 148 skipped, 0 failed**.
+- **D1 — Lula re-validation passes** (gates U-01–U-04) — `lula validate` executed against all 4 active manifests on live cluster: `lula-validation-a52.yaml`, `lula-validation-a53.yaml`, `lula-validation-a92.yaml`, `lula-validation-aarm-vectors.yaml`. All assertions pass. ISO 42001 and CSA AARM posture confirmed.
+- **D2 — SBOM generation passes** (gate U-05) — `python scripts/generate_sbom.py` executed on live cluster. CycloneDX SBOM artifact generated and validated. Gate U-05 green.
+- **D2 — Trivy scan: risk accepted** (gate U-06) — Trivy container scan identified 19 CRITICAL CVEs in `libpython3.11` (CVE-2025-13462) in the `python:3.12-slim-bookworm` base layer. No Debian bookworm fix available as of 2026-06-08. `apt-get upgrade -y` applied during image build cannot remediate this CVE. Risk accepted: CVE suppressed via `.trivyignore`; POAM-023 opened with review date 2026-09-08; network egress locked down via Cilium to reduce exploitability.
+- **D3 — Full test suite passes** (gate U-08) — **796 passed, 0 failed** (148 skipped). `fiscal_limit_guard.py` async heuristic fix (SHA `554f5af`) confirmed effective. Gate U-08 green.
 - **D4 — STPA freshness check passes** (gate U-09) — `scripts/check_stpa_freshness.py` confirms all 3 generated STPA artifacts are current relative to `config/stpa_control_structure.yaml`. No regeneration required.
+- **D5 — Langfuse posture verification passes** (gate U-10) — `python3 scripts/verify_langfuse_posture.py` confirms dual-project isolation: core project `cmpugv47f000dwq07fqu86ral`, compliance project `cage-compliance`. Evidentiary independence of audit traces confirmed.
 - **D6 — `terraform.auto.tfvars` gitignored** (gate U-21) — Confirmed via `*.auto.tfvars` pattern present in both `infra/targets/gcp-gke/.gitignore` and `infra/targets/agnostic/.gitignore`. No secrets in working tree.
-- **D1 — Lula re-validation deferred** (gates U-01–U-04) — `lula validate -f compliance/lula/lula-validation-a52.yaml` (and `a53.yaml`, `a92.yaml`, `aarm-vectors.yaml`) requires a live GKE cluster with the governance stack deployed. Deferred until cluster is available.
-- **D2 — SBOM + Trivy scan deferred** (gates U-05, U-06) — `python scripts/generate_sbom.py` and `kubectl create job --from=cronjob/security-scanner-cronjob` require a live cluster. Deferred.
-- **D5 — Langfuse posture verification deferred** (gate U-10) — `python3 scripts/verify_langfuse_posture.py` requires a deployed environment with Langfuse secrets populated. Deferred.
+- **U-17 — security-scanner-cronjob present** — `security-scanner-cronjob` confirmed present in `governance-stack` namespace. Scan target corrected to `gateway:latest` (was previously misconfigured). Gate green.
+- **U-18 — PSA labels applied** — PodSecurity admission labels confirmed: `governance-stack=restricted`, `langfuse=baseline`, `vllm=baseline`. Gate green.
+- **`.env.example` updated** — Langfuse compliance variables (`LANGFUSE_COMPLIANCE_PUBLIC_KEY`, `LANGFUSE_COMPLIANCE_SECRET_KEY`, `LANGFUSE_COMPLIANCE_HOST`) added to `.env.example` to document the dual-project configuration requirement.
 
 ---
 

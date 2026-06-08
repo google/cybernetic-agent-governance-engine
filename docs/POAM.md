@@ -2,8 +2,8 @@
 
 **System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor  
 **Reference:** NIST SP 800-37 Rev. 2, NIST SP 800-53 Rev. 5 CA-5  
-**Version:** 1.6
-**Date:** 2026-06-05
+**Version:** 1.7
+**Date:** 2026-06-08
 **Status:** ACTIVE
 
 ---
@@ -12,12 +12,12 @@
 
 | Metric          | Count |
 | --------------- | ----- |
-| **Total Items** | 22    |
-| **Critical**    | 3     |
+| **Total Items** | 23    |
+| **Critical**    | 4     |
 | **High**        | 13    |
 | **Moderate**    | 6     |
 | **Low**         | 0     |
-| **Open**        | 11    |
+| **Open**        | 12    |
 | **In Progress** | 3     |
 | **Closed**      | 6     |
 
@@ -49,6 +49,7 @@
 | POAM-020 | CM-3       | ~~Technical report README version mismatch.~~ **RESOLVED.** `docs/technical-report/README.md` references have been corrected from v2.1.0 to v2.0.0. Document descriptions, Quick Reference table, and findings summary now reflect current codebase state. | Documentation audit | **Moderate** | 2026-06-15 | 2 hrs | **Closed** | ✅ Fixed in `docs/technical-report/README.md` — version aligned to v2.0.0, FIND-011 mTLS marked resolved, open critical findings reduced from 2 to 1. Closed 2026-05-27. |
 | POAM-021 | SI-4       | ~~AgentSight eBPF monitoring exporter set to console mode.~~ **RESOLVED.** Inspection of `deployment/agentsight/agentsight-config.yaml` confirms `exporter.type: "remote"` is already configured, targeting `http://agentsight-dashboard:8080`. The gap documented in Chunk5 G7.1-2 was based on a prior state that has since been corrected. | Configuration review + Chunk5 G7.1-2 | **High** | 2026-07-15 | 0 hrs | **Closed** | ✅ Already configured as `type: "remote"` in `agentsight-config.yaml`. No change needed — prior gap documentation was stale. Closed 2026-05-27. |
 | POAM-022 | SA-9, CA-7 | External Normative Provider interface implemented but operating in stub mode. `normative_provider.py` provides the full 3-endpoint integration surface with adaptive gating primitive (`enforce_fria_boundary()`), but production activation requires TrustLayers API credentials. `CAGE_NORMATIVE_PROVIDER=static` (default) means no external validation is performed — all FRIA checks are stub-admitted. The interface code, daemon lifecycle, DEFER queue integration, and 29 tests are verified, but the control is not providing independent compliance ground truth until credentials are provisioned. | Code review + §2.5 implementation | **Moderate** | 2026-08-31 | 4 hrs | **In Progress** | Coordinate with TrustLayers team for API key provisioning; configure `CAGE_NORMATIVE_ENDPOINT` and `CAGE_NORMATIVE_API_KEY_SECRET` in `prod.tfvars`; verify boot-time baseline fetch and adaptive gating in staging environment |
+| POAM-023 | SI-2       | CVE-2025-13462 in `libpython3.11` (python:3.12-slim-bookworm base layer) — CRITICAL remote code execution potential in Python standard library. Trivy container scan (gate U-06) identified 19 CRITICAL CVEs attributable to `libpython3.11` in the bookworm base layer. No Debian bookworm fix is available as of 2026-06-08. `apt-get upgrade -y` was applied during image build but cannot remediate this CVE. Network egress locked down via Cilium (`deployment/k8s/cilium-egress-lockdown.yaml`) to reduce exploitability. CVE suppressed in Trivy via `.trivyignore` pending upstream Debian patch. | Trivy container scan (gate U-06, Track D) | **Critical** | 2026-09-08 | 2 hrs | Open | Monitor Debian bookworm security tracker for CVE-2025-13462 patch availability; rebuild gateway image immediately upon patch release; remove `.trivyignore` suppression entry; re-run Trivy scan to confirm remediation. Review date: 2026-09-08. |
 
 ---
 
