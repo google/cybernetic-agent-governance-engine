@@ -21,6 +21,10 @@ the cage-project (observability) and cage-compliance (compliance) postures.
 Usage:
     python scripts/verify_langfuse_posture.py [--dry-run] [--posture development|production]
 
+Environment variables:
+    LANGFUSE_PROJECT_ID           Override core project ID (default: cmpugv47f000dwq07fqu86ral)
+    LANGFUSE_COMPLIANCE_PROJECT_ID Override compliance project ID (default: cage-compliance)
+
 Exit codes:
     0 — all checks pass
     1 — any check fails
@@ -34,8 +38,8 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 # Known project IDs — must match live Langfuse instance
-CAGE_PROJECT_ID = "cmpughgmx0007wq07jboncka4"
-CAGE_COMPLIANCE_ID = "cage-compliance"
+CAGE_PROJECT_ID = os.getenv("LANGFUSE_PROJECT_ID", "cmpugv47f000dwq07fqu86ral")
+CAGE_COMPLIANCE_ID = os.getenv("LANGFUSE_COMPLIANCE_PROJECT_ID", "cage-compliance")
 
 # Required env vars for each posture
 BASE_REQUIRED_VARS = [
