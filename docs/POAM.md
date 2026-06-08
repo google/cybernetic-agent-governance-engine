@@ -18,4 +18,14 @@ For the original NIST SP 800-53 / US_FED content (all 23 original entries), see 
 
 ---
 
+## Notable Items Added in v2.0.0 (2026-06-08)
+
+| ID | Control | Weakness | Severity | Status | Target Date |
+|----|---------|----------|----------|--------|-------------|
+| POAM-023 | SI-2 | CTRL_TQP_007 OPA runtime injection deferred — Token Quota Proxy enforces budget via Redis counters; OPA policy injection is a follow-on task | Open | Open | 2026-08-01 |
+
+> POAM-023 is tracked in [`docs/POAM_US_FED.md`](POAM_US_FED.md) and [`docs/SECURITY_STATUS.md`](SECURITY_STATUS.md). The gateway Dockerfile was pinned to `python:3.12-slim-bookworm` with `apt-get upgrade` applied; residual CVE-2025-13462 (`libpython3.11`) has no Debian bookworm fix as of 2026-06-08 and is suppressed via `.trivyignore` with Cilium egress lockdown reducing exploitability.
+
+---
+
 _Superseded by `docs/POAM_US_FED.md` v2.0 (2026-06-08). See [`plans/poam-framework-redesign.md`](../plans/poam-framework-redesign.md) for the redesign rationale._

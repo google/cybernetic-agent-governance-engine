@@ -10,7 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ## [Unreleased]
 
-> Sprint 2 production-readiness fixes — in progress as of 2026-06-07. Required before `git tag v2.0.0` is applied per `docs/PRODUCTION_READINESS_REPORT.md` §7 Sprint 2 roadmap.
+---
+
+## [2.0.0] — 2026-06-08
+
+> Stable release. All P0/P1 blockers resolved (Sprint 1 + Sprint 2). Track C (seal enforcement) and Track D (compliance validation) gates complete. All universal Lula assertions PASS. Trivy scan risk-accepted (POAM-023). Token Quota Proxy, PII Sanitizer, and UCA Logger active in production.
 
 ### Added — [CR-2026-TQP-001] Token Quota Proxy (Cat-N)
 
@@ -204,14 +208,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 | Version | Date | Test Results | Key Theme |
 |---------|------|--------------|-----------|
-| [Unreleased] | — | — | Sprint 2 production-readiness fixes (BLOCKER-01, MED-03, HIGH-07, BLOCKER-06, HIGH-01, HIGH-03, HIGH-04, HIGH-05, BLOCKER-08, HIGH-11) |
+| [Unreleased] | — | — | Post-stable backlog |
+| [2.0.0] | 2026-06-08 | 796 passed, 0 failed, 148 skipped | Stable release: Token Quota Proxy, PII Sanitizer, UCA Logger, CTRL_TQP_007, gateway CVE remediation, seal enforcement, all universal Lula assertions PASS |
 | [2.0.0-rc.3] | 2026-06-06 | 852 passed, 24 skipped, 0 failed | Governance hardening, OSCAL compliance, KMS signing, DEFER state machine, SHA-256 hash chain, GKE rolling deployment fixes |
 | [2.0.0-rc.2] | 2026-05-17 | 844 passed, 28 skipped, 0 failed | Causal gatekeeper, CBF, consensus engine, Linkerd mTLS, Cilium egress, formal verification of `NoDirectBind` |
 | [2.0.0-rc.1] | 2026-04-15 | 41/41 unit tests passing | Initial gateway, NeMo Guardrails, OPA policy engine, HITL TOCTOU remediation, AgentSight UI Phase 1 |
 
 ---
 
-[Unreleased]: https://github.com/YOUR_GCP_PROJECT_ID/cybernetic-governance-engine/compare/v2.0.0-rc.3...HEAD
+[Unreleased]: https://github.com/YOUR_GCP_PROJECT_ID/cybernetic-governance-engine/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/YOUR_GCP_PROJECT_ID/cybernetic-governance-engine/compare/v2.0.0-rc.3...v2.0.0
 [2.0.0-rc.3]: https://github.com/YOUR_GCP_PROJECT_ID/cybernetic-governance-engine/compare/v2.0.0-rc.2...v2.0.0-rc.3
 [2.0.0-rc.2]: https://github.com/YOUR_GCP_PROJECT_ID/cybernetic-governance-engine/compare/v2.0.0-rc.1...v2.0.0-rc.2
 [2.0.0-rc.1]: https://github.com/YOUR_GCP_PROJECT_ID/cybernetic-governance-engine/releases/tag/v2.0.0-rc.1
