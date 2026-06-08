@@ -52,16 +52,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install pip-audit
-        run: pip install "pip-audit>=2.7.0"
+      - name: Install project dependencies (locked)
+        # Use uv sync --frozen so the exact versions in uv.lock are installed.
+        # This ensures pip-audit scans the same dependency tree that was audited
+        # locally, not a fresh pip-resolved tree that may differ.
+        run: uv sync --frozen --all-groups --all-extras
 
-      - name: Install project dependencies
-        run: pip install -e ".[dev]" || pip install -e . || true
+      - name: Install pip-audit into uv venv
+        run: uv pip install "pip-audit>=2.7.0"
 
       - name: Run pip-audit
         run: |
@@ -79,7 +87,7 @@ jobs:
           #   an upstream patch release. Mitigation: torch is never executed in
           #   production containers; only used locally for SLM fine-tuning experiments.
           #   POAM item to be created under POAM-016.
-          pip-audit --format json --output pip-audit-results.json \
+          uv run pip-audit --format json --output pip-audit-results.json \
             --ignore-vuln GHSA-rg7c-g689-fr3x \
             --ignore-vuln PYSEC-2026-139
           EXIT_CODE=$?
@@ -90,8 +98,7 @@ jobs:
         # compliance_bridge/requirements.txt was migrated into pyproject.toml under
         # [project.optional-dependencies] compliance. Scan the installed extras instead.
         run: |
-          pip install -e ".[compliance]" --quiet 2>/dev/null || true
-          pip-audit \
+          uv run pip-audit \
             --format json \
             --output pip-audit-compliance-bridge.json || true
 
