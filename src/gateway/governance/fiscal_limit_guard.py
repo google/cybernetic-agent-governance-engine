@@ -184,8 +184,10 @@ class FiscalLimitGuard:
         # redis.asyncio clients have a coroutine-based execute_command; the sync
         # client's pipeline() returns a Pipeline whose watch() is a plain method.
         # The most reliable detection is checking the module path of the client.
+        # Note: fakeredis.aioredis uses "aioredis" (not "asyncio") in its module
+        # name, so we check for both to cover all async-compatible clients.
         client_module = type(self._redis).__module__
-        return "asyncio" in client_module
+        return "asyncio" in client_module or "aioredis" in client_module
 
     def _sync_atomic_increment(self, key: str, amount_cents: int, cap_cents: int) -> int:
         """Sync WATCH/MULTI/EXEC increment — used when client is redis.Redis (sync)."""
