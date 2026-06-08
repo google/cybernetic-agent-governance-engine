@@ -9,18 +9,15 @@
     "MAS TRM Guidelines \u00a76.3 \u2013 AI and Machine Learning Controls",
     "MAS TRM Guidelines \u00a79.1 \u2013 Business Continuity Management"
   ],
-
   "cbf": {
     "min_cash_balance": 1000.0,
     "gamma": 0.55,
     "_comment": "Gamma set to 0.55, intermediate between US (0.5) and EU (0.6). MAS capital adequacy requirements under MAS Notice 637 (CAR) are generally aligned with Basel III but with Singapore-specific calibrations."
   },
-
   "drawdown": {
     "limit": 0.045,
     "_comment": "MAS drawdown limit set at 4.5%, between US (5%) and EU (4%). Reflects MAS supervisory expectations under the Internal Capital Adequacy Assessment Process (ICAAP) and MAS Notice 637 stress-testing requirements."
   },
-
   "stpa": {
     "uca5_drawdown_threshold_pct": 4.0,
     "_comment": "UCA-5 (MAS): drawdown > 4.0% triggers block. Intermediate between US (4.5%) and EU (3.5%).",
@@ -31,27 +28,32 @@
     "max_latency_ms": 175.0,
     "_comment": "FIN-2 (MAS): maximum 175ms round-trip latency. MAS TRM Guidelines \u00a77.2 require financial institutions to define and monitor recovery time and recovery point objectives; 175ms is the MAS-expected baseline for AI-driven trade execution systems."
   },
-
   "confidence": {
     "min_trade_confidence": 0.96,
     "_comment": "[CTRL_AGT_001] MAS FEAT Fairness Principle F1 requires AI decisions to be regularly tested for bias and explainability. Confidence threshold of 0.96 reflects MAS expectation that AI systems operating in customer-facing financial contexts must demonstrate high reliability. MAS TRM Guidelines \u00a76.3 require documented confidence thresholds in the AI governance framework."
   },
-
   "consensus": {
     "threshold_usd": 8500.0,
     "_comment": "MAS: consensus check threshold set to SGD 11,500 / USD 8,500 equivalent. MAS FEAT Accountability Principle A1 requires defined human oversight responsibilities. MAS TRM Guidelines \u00a76.3.2 requires human-in-the-loop controls for high-impact AI decisions above this threshold."
   },
-
   "feat": {
     "fairness_impact_assessment_enabled": true,
-    "protected_characteristics": ["gender", "race", "ethnicity", "age", "disability", "nationality", "religion", "marital_status"],
+    "protected_characteristics": [
+      "gender",
+      "race",
+      "ethnicity",
+      "age",
+      "disability",
+      "nationality",
+      "religion",
+      "marital_status"
+    ],
     "_comment": "MAS FEAT Principle F1 requires regular Fairness Impact Assessments. Singapore's Personal Data Protection Act (PDPA) protects all listed characteristics.",
     "bias_threshold_demographic_parity": 0.08,
     "_comment": "MAS FEAT Fairness Principle F2: quantitative fairness metric. 8% demographic parity gap tolerance reflects MAS guidance that small differences may be justified by legitimate risk factors.",
     "transparency_report_interval_days": 180,
     "_comment": "MAS FEAT Transparency Principle T2 requires periodic transparency reporting to the MAS. 6-month interval per MAS supervisory expectations."
   },
-
   "tier1_keywords": [
     "SYSTEM OVERRIDE",
     "IGNORE PREVIOUS INSTRUCTIONS",
@@ -69,5 +71,14 @@
     "ACT AS A DEVELOPER WITH ROOT ACCESS",
     "BYPASS FEAT CHECKS",
     "IGNORE FAIRNESS ASSESSMENT"
-  ]
+  ],
+  "governance_controls": {
+    "CTRL_TQP_007": {
+      "control_id": "CTRL_TQP_007",
+      "iso_clause": "A.4",
+      "description": "Per-session token and step-count quota enforcement via Redis atomic counters",
+      "enforcement_tier": 2,
+      "worm_bucket_env_var": "OSCAL_S3_BUCKET_APAC_MAS"
+    }
+  }
 }

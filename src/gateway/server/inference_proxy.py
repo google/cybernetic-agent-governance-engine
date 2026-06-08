@@ -21,10 +21,11 @@ governance middleware logic.
 
 Governance pipeline applied here:
   1. Tier-1 Aho-Corasick keyword scan on last user message.
-  2. NeMo Guardrails input verification.
-  3. ISO 42001 evidence stamps.
-  4. Forward to vLLM backend.
-  5. Output scanning / PII masking via NeMo before returning.
+  2. Token Quota Enforcement (ISO 42001 Annex A.4) — CTRL_TQP_007.
+  3. NeMo Guardrails input verification.
+  4. ISO 42001 evidence stamps.
+  5. Forward to vLLM backend.
+  6. Output scanning / PII masking via NeMo before returning.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from opentelemetry import trace
 from pydantic import BaseModel, Field
@@ -47,6 +48,8 @@ from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.nemo.manager import verify_input, verify_and_mask_output
 from src.governed_financial_advisor.infrastructure.config_manager import config_manager
 from src.governed_financial_advisor.utils.privacy import scrub_pii
+from src.gateway.governance.token_quota_proxy import _get_token_quota_proxy
+from src.gateway.governance.uca_logger import _get_uca_logger
 
 # ---------------------------------------------------------------------------
 # SymbolicGovernor singleton — imported lazily to avoid circular imports.
@@ -185,7 +188,10 @@ def _create_blocked_response(reason: str) -> Dict[str, Any]:
 
 
 @inference_app.post("/v1/chat/completions")
-async def chat_completions(request: Request) -> JSONResponse:
+async def chat_completions(
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> JSONResponse:
     """OpenAI-compatible governed inference endpoint."""
     from src.gateway.governance.nemo.manager import initialize_rails as _init_rails
 
@@ -233,44 +239,86 @@ async def chat_completions(request: Request) -> JSONResponse:
                 return JSONResponse(content=blocked, status_code=403)
             stamp_iso_control(span, tier=1, control="A.5.2", outcome="PASS")
 
-            # 2. NeMo input verification — with pre-check injection
-            # Call pre_check() once here so NeMo actions read pre-computed
-            # STPA/CBF results from context instead of calling back into the
-            # governor (breaks the re-entrant dependency loop).
-            pre_check_results: Optional[dict] = None
-            governor = _get_symbolic_governor()
-            if governor is not None:
-                # Extract governance params from the request body
-                governance_params = {
-                    k: body[k]
-                    for k in (
-                        "approval_token", "amount", "symbol", "latency_ms",
-                        "drawdown_pct", "order_size", "daily_vol",
-                        "confidence", "risk_assessed", "compliance_checked",
-                    )
-                    if k in body
-                }
-                try:
-                    pre_check_results = await governor.pre_check(governance_params)
-                    logger.debug(
-                        "🔍 InferenceProxy: pre_check complete "
-                        "(stpa_allowed=%s, cbf_allowed=%s)",
-                        pre_check_results.get("stpa_result", {}).get("allowed", "?"),
-                        pre_check_results.get("cbf_result", {}).get("allowed", "?"),
-                    )
-                except Exception as pre_exc:
-                    logger.warning(
-                        "⚠️ InferenceProxy: pre_check failed (%s) — "
-                        "NeMo actions will use fail-open defaults.", pre_exc
-                    )
-            nemo_result = await verify_input(rails, last_user_msg, pre_check_results=pre_check_results)
-            if not nemo_result.is_safe:
-                stamp_iso_control(span, tier=3, control="A.6.1.2", outcome="BLOCK")
-                blocked = _create_blocked_response(nemo_result.reason)
-                return JSONResponse(content=blocked, status_code=403)
-            stamp_iso_control(span, tier=3, control="A.6.1.2", outcome="PASS")
+            # ── Step 2 (NEW): Token Quota Enforcement (ISO 42001 Annex A.4) ──
+            agent_id = (
+                body.get("agent_id")
+                or request.headers.get("X-Agent-ID", "")
+                or "anonymous"
+            )
+            token_delta = int(body.get("max_tokens", 0))
+            quota_result = await _get_token_quota_proxy().check_and_increment(
+                agent_id=agent_id,
+                token_delta=token_delta,
+            )
+            if not quota_result.allowed:
+                stamp_iso_control(span, tier=2, control="A.4", outcome="BLOCK")
+                # Awaited inline — WORM write must complete before 429 is
+                # returned to guarantee ISO 42001 Clause 6.1 audit lineage
+                # survives spot-instance eviction.
+                await _get_uca_logger().log_quota_exceeded(quota_result, body)
+                return JSONResponse(
+                    content={
+                        "error": "quota_exceeded",
+                        "reason": quota_result.block_reason,
+                        "step_count": quota_result.step_count,
+                        "accumulated_tokens": quota_result.accumulated_tokens,
+                        "quota_max_steps": quota_result.step_quota_max,
+                        "quota_max_tokens": quota_result.token_quota_max,
+                        "agent_id": agent_id,
+                        "iso42001_control": "A.4",
+                        "dge_action": "TERMINATED_WITH_ROLLBACK",
+                    },
+                    status_code=429,
+                )
+            stamp_iso_control(span, tier=2, control="A.4", outcome="PASS")
 
-        # 3. Forward to vLLM (R-06 fix — pooled client, streaming support)
+            # 3. NeMo input verification — with pre-check injection
+            # Steps 3-6 are wrapped in a try/except so that any downstream
+            # failure triggers a quota rollback (CTRL_TQP_007 §5.3).
+            try:
+                # Call pre_check() once here so NeMo actions read pre-computed
+                # STPA/CBF results from context instead of calling back into the
+                # governor (breaks the re-entrant dependency loop).
+                pre_check_results: Optional[dict] = None
+                governor = _get_symbolic_governor()
+                if governor is not None:
+                    # Extract governance params from the request body
+                    governance_params = {
+                        k: body[k]
+                        for k in (
+                            "approval_token", "amount", "symbol", "latency_ms",
+                            "drawdown_pct", "order_size", "daily_vol",
+                            "confidence", "risk_assessed", "compliance_checked",
+                        )
+                        if k in body
+                    }
+                    try:
+                        pre_check_results = await governor.pre_check(governance_params)
+                        logger.debug(
+                            "🔍 InferenceProxy: pre_check complete "
+                            "(stpa_allowed=%s, cbf_allowed=%s)",
+                            pre_check_results.get("stpa_result", {}).get("allowed", "?"),
+                            pre_check_results.get("cbf_result", {}).get("allowed", "?"),
+                        )
+                    except Exception as pre_exc:
+                        logger.warning(
+                            "⚠️ InferenceProxy: pre_check failed (%s) — "
+                            "NeMo actions will use fail-open defaults.", pre_exc
+                        )
+                nemo_result = await verify_input(rails, last_user_msg, pre_check_results=pre_check_results)
+                if not nemo_result.is_safe:
+                    stamp_iso_control(span, tier=3, control="A.6.1.2", outcome="BLOCK")
+                    blocked = _create_blocked_response(nemo_result.reason)
+                    return JSONResponse(content=blocked, status_code=403)
+                stamp_iso_control(span, tier=3, control="A.6.1.2", outcome="PASS")
+
+            except Exception:
+                await _get_token_quota_proxy().rollback_step(
+                    agent_id, reserved_tokens=token_delta
+                )
+                raise
+
+        # 4. Forward to vLLM (R-06 fix — pooled client, streaming support)
         api_base = _resolve_backend_url(model_id)
         api_key = config_manager.get("VLLM_API_KEY") or "EMPTY"
         target_url = f"{api_base.rstrip('/')}/chat/completions"
@@ -313,7 +361,7 @@ async def chat_completions(request: Request) -> JSONResponse:
             logger.error("vLLM Proxy Error: %s", exc)
             raise HTTPException(status_code=500, detail=f"LLM backend connection error: {exc}")
 
-        # 4. Output filtering / PII masking
+        # 5. Output filtering / PII masking
         if "choices" in vllm_response and vllm_response["choices"]:
             choice = vllm_response["choices"][0]
             message = choice.get("message", {})
