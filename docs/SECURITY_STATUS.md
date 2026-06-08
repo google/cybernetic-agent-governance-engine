@@ -92,7 +92,7 @@ The NIST RMF is a six-step process. The table below reflects the current state f
 
 ### Infrastructure Security Gaps (from POA&M)
 
-The following weaknesses are documented in [`docs/POAM.md`](POAM.md) (v1.7, 2026-06-08 — authoritative). Items marked **Closed** were resolved; see POAM.md for full closure evidence:
+The following weaknesses are documented in [`docs/POAM_US_FED.md`](POAM_US_FED.md) (v2.0, 2026-06-08 — authoritative for US_FED). Items marked **Closed** were resolved; see POAM_US_FED.md for full closure evidence. For universal ISO 42001 AIMS weaknesses (all regions), see [`docs/POAM_ISO42001.md`](POAM_ISO42001.md). For the cross-region traceability matrix, see [`docs/POAM_INDEX.md`](POAM_INDEX.md):
 
 | ID       | Control    | Weakness                                                              | Severity     | Status          | Target Date |
 | -------- | ---------- | --------------------------------------------------------------------- | ------------ | --------------- | ----------- |
@@ -187,7 +187,11 @@ Before deploying CAGE in a regulated financial environment:
 
 | Document                            | Location                                                                                                                                                           |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Plan of Action & Milestones (POA&M) | [`docs/POAM.md`](POAM.md)                                                                                                                                          |
+| POA&M Index (all regions)           | [`docs/POAM_INDEX.md`](POAM_INDEX.md)                                                                                                                              |
+| POA&M — ISO 42001 universal (ALL)   | [`docs/POAM_ISO42001.md`](POAM_ISO42001.md)                                                                                                                        |
+| POA&M — US_FED (NIST SP 800-53)     | [`docs/POAM_US_FED.md`](POAM_US_FED.md)                                                                                                                            |
+| POA&M — EU_ECB (EU AI Act / DORA)   | [`docs/POAM_EU_ECB.md`](POAM_EU_ECB.md)                                                                                                                            |
+| POA&M — APAC_MAS (MAS FEAT)         | [`docs/POAM_APAC_MAS.md`](POAM_APAC_MAS.md)                                                                                                                        |
 | NIST RMF Current-State Inventory    | [`docs/NIST_RMF_CHUNK1_CURRENT_STATE.md`](NIST_RMF_CHUNK1_CURRENT_STATE.md)                                                                                        |
 | NIST RMF Gap Analysis (Steps 2–5)   | [`docs/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md) — [`NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](NIST_RMF_CHUNK5_MONITOR_ROADMAP.md) |
 | ISO 42001 Compliance Detail         | [`docs/ISO_42001_COMPLIANCE.md`](ISO_42001_COMPLIANCE.md)                                                                                                          |

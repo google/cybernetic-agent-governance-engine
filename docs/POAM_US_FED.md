@@ -1,0 +1,112 @@
+---
+poam_file: POAM_US_FED
+region_scope: US_FED
+primary_framework: "NIST SP 800-53 Rev. 5 / NIST SP 800-37 Rev. 2"
+global_baseline: ISO 42001
+version: "2.0"
+date: 2026-06-08
+supersedes: docs/POAM.md
+see_also:
+  - docs/POAM_ISO42001.md   # universal ISO 42001 AIMS weaknesses (all regions)
+  - docs/POAM_EU_ECB.md     # EU AI Act / DORA / GDPR weaknesses (EU_ECB only)
+  - docs/POAM_APAC_MAS.md   # MAS FEAT / Notice 655 / TRM weaknesses (APAC_MAS only)
+  - docs/POAM_INDEX.md      # cross-region traceability matrix
+---
+
+# Plan of Action and Milestones (POA&M) — US_FED
+
+**System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor
+**Reference:** NIST SP 800-37 Rev. 2, NIST SP 800-53 Rev. 5 CA-5
+**Region Scope:** `CAGE_DEPLOYMENT_REGION=US_FED` only
+**Global Baseline:** ISO/IEC 42001:2023 (AI Management System Standard)
+**Version:** 2.0
+**Date:** 2026-06-08
+**Status:** ACTIVE
+
+> **⚠️ Scope Notice:** This document tracks weaknesses against the **NIST SP 800-53 Rev. 5** control baseline and the **NIST RMF authorization process**. It applies exclusively to `US_FED` deployments. For universal ISO 42001 AIMS weaknesses (all regions), see [`docs/POAM_ISO42001.md`](POAM_ISO42001.md). For EU_ECB-specific weaknesses, see [`docs/POAM_EU_ECB.md`](POAM_EU_ECB.md). For APAC_MAS-specific weaknesses, see [`docs/POAM_APAC_MAS.md`](POAM_APAC_MAS.md).
+
+---
+
+## POA&M Summary
+
+| Metric          | Count |
+| --------------- | ----- |
+| **Total Items** | 23    |
+| **Critical**    | 4     |
+| **High**        | 13    |
+| **Moderate**    | 6     |
+| **Low**         | 0     |
+| **Open**        | 12    |
+| **In Progress** | 3     |
+| **Closed**      | 6     |
+
+> **Note:** POAM-018 and POAM-019 are also tracked in [`docs/POAM_ISO42001.md`](POAM_ISO42001.md) as universal ISO 42001 §A.9.4 weaknesses (all regions). The entries below are retained here for NIST SP 800-53 AU-9 / SC-7 audit continuity.
+
+---
+
+## POA&M Items
+
+| POA&M ID | Control ID | ISO 42001 Ref | Regions | Weakness Description | Detection Method | Risk Level | Scheduled Completion | Resources Required | Status | Milestone |
+| -------- | ---------- | ------------- | ------- | -------------------- | ---------------- | ---------- | -------------------- | ------------------ | ------ | --------- |
+| POAM-001 | AC-2 | §A.9.2 | US_FED | No account management procedures documented. No formal process exists for account provisioning, periodic review, or deactivation for CAGE system access including GCP IAM, Kubernetes RBAC, and application-level service accounts. | Manual review | **High** | 2026-04-30 | 8 hrs | Open | Draft AC-2 procedure covering GCP IAM, GKE RBAC, and application service account lifecycle |
+| POAM-002 | AC-6 | §A.9.2 | US_FED | IAM Terraform bindings use overly broad roles. Review of `deployment/` Terraform configuration reveals use of roles such as `roles/editor` or broad project-level bindings rather than purpose-specific custom roles implementing least privilege. | Terraform plan review | **High** | 2026-05-15 | 16 hrs | Open | Update iam.tf with least-privilege custom IAM roles scoped per service; validate with `terraform plan` |
+| POAM-003 | AU-12 | §A.9.4 | US_FED | ~~`automated_auditor.py` uses synthetic mock traces.~~ **RESOLVED.** The `lula-audit` CronJob now calls the compliance-bridge Python modules directly (`get_compliance_metrics` → `build_oscal_assessment_results` → `run_audit_workflow`) using live Langfuse compliance project credentials. Phase 4 Post-Rename Lula Validation executed 2026-06-05: audit_id `lula-post-rename-1780672943`, 13 findings ingested, `chain_integrity_valid: true`. Evidence: `proof/lula-poam-evidence.log`, `proof/compliance-trigger-evidence.yaml`. | Code review + Phase 4 live run | **High** | 2026-04-15 | 8 hrs | **Closed** | ✅ Live OSCAL assessment results generated from Langfuse compliance metrics via compliance-bridge REST API. CronJob (`deployment/k8s/lula-cron.yaml`) uses `gcr.io/YOUR_GCP_PROJECT_ID/compliance-bridge:latest` image, calls modules in-process — no synthetic traces. Verified: `✅ Lula audit complete` + `✅ OSCAL results ingested into Langfuse compliance project`. Closed 2026-06-05. |
+| POAM-004 | CA-5 | §10.2 | US_FED | No formal POA&M process. Prior to this document, no structured Plan of Action and Milestones process existed to track identified security weaknesses, assign ownership, or enforce remediation deadlines. | Gap analysis | **High** | 2026-03-31 | 4 hrs | **In Progress** | Complete this document; establish POA&M review cadence (monthly review, quarterly AO briefing) |
+| POAM-005 | CA-6 | N/A | US_FED | No Authorization to Operate (ATO) letter exists. The CAGE system has never undergone a formal NIST RMF authorization process. No ATO letter has been issued by an Authorizing Official. System operates without formal risk acceptance documentation. | Gap analysis | **Critical** | 2026-06-30 | 40 hrs | Open | Complete full authorization package: SSP → Security Assessment → SAR → POA&M → AO review → ATO letter issuance |
+| POAM-006 | CM-8 | §A.8.3 | US_FED | No Software Bill of Materials (SBOM) generated. The CAGE system has no automated SBOM generation in its CI/CD pipeline. Container images and Python dependencies cannot be rapidly scanned against known CVE databases in response to zero-day disclosures. | Gap analysis | **High** | 2026-05-01 | 16 hrs | Open | Add Trivy SBOM generation (CycloneDX or SPDX format) to GitHub Actions CI pipeline; publish SBOM artifacts per container image build |
+| POAM-007 | IA-3 | §A.9.3 | US_FED | No intra-cluster mTLS; service identity relies on shared HMAC only. Inter-service authentication within the GKE cluster uses a shared `CAGE_ROUTING_SEAL_SECRET` HMAC rather than cryptographic service identity (mTLS). Compromise of the shared secret undermines all service-to-service authentication claims. | Architecture review | **High** | 2026-07-31 | 120 hrs | **Closed** | ✅ Linkerd mTLS implemented via `deployment/k8s/linkerd-mtls-policy.yaml`. Server + AuthorizationPolicy + MeshTLSAuthentication resources enforce SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths. Cilium L7 lockdown via `deployment/k8s/cilium-egress-lockdown.yaml` prevents lateral movement. Verified: `linkerd viz authz deployment/opa-service -n governance-stack`. Closed 2026-05-17. |
+| POAM-008 | IR-1 | §6.1 | US_FED | No formal Incident Response Plan (IRP) document. No documented procedures exist for detecting, reporting, containing, eradicating, and recovering from security incidents affecting the CAGE system. This includes AI-specific incidents such as governance bypass events and prompt injection attacks. | Gap analysis | **High** | 2026-04-30 | 16 hrs | Open | Draft IRP from NIST SP 800-61r2 template; include AI-specific incident categories (governance bypass, model manipulation, PII exfiltration); obtain AO approval |
+| POAM-009 | RA-2 | N/A | US_FED | FIPS 199 categorization is unsigned/informal. While a FIPS 199 categorization document has been created (`compliance/categorization/FIPS199_CATEGORIZATION.md`), it has not been formally reviewed and signed by the System Owner and Authorizing Official, and therefore carries no formal risk acceptance authority. | Gap analysis | **Critical** | 2026-03-31 | 4 hrs | **In Progress** | Obtain AO and System Owner signatures on `compliance/categorization/FIPS199_CATEGORIZATION.md`; archive signed copy |
+| POAM-010 | RA-5 | §A.8.3 | US_FED | ~~No vulnerability scanning in CI pipeline.~~ **RESOLVED.** pip-audit, Trivy, Grype, and CycloneDX SBOM generation are now integrated into the `security-scan.yml` GitHub Actions workflow. Known CVEs in third-party libraries are detected and fail the build unless explicitly ignored with documented POAM justifications. | Automated CI scanning | **High** | 2026-04-15 | 8 hrs | **Closed** | ✅ Implemented in `.github/workflows/security-scan.yml` — pip-audit with GHSA ignore list, Trivy FS scan, Grype enrichment, CycloneDX SBOM artifact generation |
+| POAM-011 | SC-8 | §A.9.3 | US_FED | No encryption-in-transit validation test. The test suite (`tests/test_gateway_connectivity.py`) does not assert that all connections use TLS 1.2 or higher. It is possible to configure the gateway without TLS without triggering a test failure. | Gap analysis | **Moderate** | 2026-05-15 | 8 hrs | Open | Add TLS assertion to `tests/test_gateway_connectivity.py`; verify gRPC and REST endpoints enforce TLS 1.2+ with valid certificates |
+| POAM-012 | SC-12 | §A.6.1 | US_FED | `CAGE_ROUTING_SEAL_SECRET` bypass allows silent enforcement disable. The `CAGE_ROUTING_SEAL_SECRET` environment variable, when unset or set to a development value, bypasses cryptographic enforcement of governance routing seals. In non-development environments this could silently disable a critical safety control without alerting operators. | Code review | **High** | 2026-04-01 | 2 hrs | Open | Raise `RuntimeError` in non-development environments when `CAGE_ROUTING_SEAL_SECRET` is absent or matches known development defaults; add alert to monitoring |
+| POAM-013 | SI-2 | §A.8.3 | US_FED | Python dependencies use unpinned version specifiers (`>=`) across all services. Review of `pyproject.toml` and service `requirements.txt` files reveals use of `>=` version constraints rather than pinned versions. This allows non-reproducible builds and uncontrolled dependency updates that may introduce vulnerabilities. | Dependency audit | **High** | 2026-04-15 | 8 hrs | Open | Generate `pip freeze` lockfiles per service; pin all dependencies to exact versions; integrate pip-audit into CI to detect version drift |
+| POAM-014 | SC-28 | §A.9.3 | US_FED | No encryption-at-rest validation for Langfuse / CloudSQL. While GCP provides encryption at rest by default, there is no documented validation that Customer-Managed Encryption Keys (CMEK) are configured for CloudSQL (Langfuse traces/PII) and GCS buckets (audit artifacts). Default Google-managed keys may not meet organizational key management requirements. | Architecture review | **Moderate** | 2026-05-31 | 4 hrs | Open | Verify CMEK configuration on CloudSQL instances and GCS buckets used by CAGE; document key rotation policy; update SSP SC-28 control statement |
+| POAM-015 | PL-2 | N/A | US_FED | No System Security Plan (SSP) exists. The CAGE system has no formal SSP documenting system boundaries, security controls, and control implementation statements. The SSP is a mandatory artifact for ATO and is prerequisite to the security assessment. | Gap analysis | **Critical** | 2026-06-30 | 160 hrs | Open | Draft SSP from NIST SP 800-18 template using `compliance/ssp/SYSTEM_SECURITY_PLAN_OUTLINE.md` as scaffold; populate all HIGH baseline control implementation statements; obtain AO approval |
+| POAM-016 | SI-2 | §A.8.3 | US_FED | ~~`CVE-2025-69872` (diskcache): Pickle deserialization RCE.~~ **RESOLVED.** The `outlines` package was removed from `pyproject.toml [project.optional-dependencies.gateway]` — CAGE never imports outlines; the `guided_json` FSM decoder runs server-side inside vLLM. Removing outlines eliminates the transitive `diskcache` dependency entirely. `GHSA-w8v5-vhqr-4h9v` ignore removed from `.github/workflows/security-scan.yml`. | pip-audit CI scan | **Moderate** | 2026-05-29 | 1 hr | **Closed** | ✅ Root cause eliminated: `outlines` removed from gateway deps; `diskcache`, `outlines-core`, `genson` dropped from `uv.lock`. Closed 2026-05-29. |
+| POAM-017 | SI-2 | §A.8.3 | US_FED | `CVE-2026-4810` (google-adk): Code injection vulnerability. The `google-adk` library is vulnerable to code injection. Upgrade is blocked by a hard requirement on `opentelemetry-sdk<1.39.0`, while the project requires `opentelemetry-sdk>=1.39.1`. Ignored in CI via `GHSA-rg7c-g689-fr3x`. | pip-audit CI scan | **Moderate** | 2026-07-31 | 4 hrs | Open | Monitor `google-adk` and `opentelemetry-sdk` for compatible version releases; upgrade when constraint conflict is resolved |
+| POAM-018 | AU-9 | §A.9.4 | ALL | Langfuse compliance project credentials fail silently when absent. If `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `LANGFUSE_COMPLIANCE_SECRET_KEY` are not configured, the Langfuse SDK initializes with empty credentials and silently drops all compliance audit traces. No error is raised, no alert fires, and all ISO 42001 evidence collection ceases without visible indication. **Phase 4 validation 2026-06-05 confirmed credentials are live.** | Code review | **High** | 2026-07-15 | 4 hrs | Open | Add startup validation in `audit_workflow.py` that raises `RuntimeError` if compliance credentials are empty in non-dev environments; add `/health` check that reports compliance Langfuse connectivity status. **See also:** [`docs/POAM_ISO42001.md#POAM-018`](POAM_ISO42001.md) — tracked as ISO 42001 §A.9.4 universal weakness. |
+| POAM-019 | AU-9, SC-7 | §A.9.4 | ALL | Terraform fallback silently collapses dual-project telemetry isolation. `infra/targets/gcp-gke/main.tf` L546-547 falls back to application project credentials when `langfuse_compliance_public_key` / `langfuse_compliance_secret_key` are empty. This silently defeats the dual-project architecture designed to provide evidentiary independence of audit evidence. | Terraform config review | **High** | 2026-07-15 | 2 hrs | Open | Remove Terraform fallback on L546-547; make compliance credentials a required variable with no default; add compliance credentials to `prod.tfvars` template. **See also:** [`docs/POAM_ISO42001.md#POAM-019`](POAM_ISO42001.md) — tracked as ISO 42001 §A.9.4 universal weakness. |
+| POAM-020 | CM-3 | §10.2 | US_FED | ~~Technical report README version mismatch.~~ **RESOLVED.** `docs/technical-report/README.md` references have been corrected from v2.1.0 to v2.0.0. Document descriptions, Quick Reference table, and findings summary now reflect current codebase state. | Documentation audit | **Moderate** | 2026-06-15 | 2 hrs | **Closed** | ✅ Fixed in `docs/technical-report/README.md` — version aligned to v2.0.0, FIND-011 mTLS marked resolved, open critical findings reduced from 2 to 1. Closed 2026-05-27. |
+| POAM-021 | SI-4 | §A.9.4 | US_FED | ~~AgentSight eBPF monitoring exporter set to console mode.~~ **RESOLVED.** Inspection of `deployment/agentsight/agentsight-config.yaml` confirms `exporter.type: "remote"` is already configured, targeting `http://agentsight-dashboard:8080`. The gap documented in Chunk5 G7.1-2 was based on a prior state that has since been corrected. | Configuration review | **High** | 2026-07-15 | 0 hrs | **Closed** | ✅ Already configured as `type: "remote"` in `agentsight-config.yaml`. No change needed — prior gap documentation was stale. Closed 2026-05-27. |
+| POAM-022 | SA-9, CA-7 | §A.6.1 | US_FED | External Normative Provider interface implemented but operating in stub mode. `normative_provider.py` provides the full 3-endpoint integration surface with adaptive gating primitive (`enforce_fria_boundary()`), but production activation requires TrustLayers API credentials. `CAGE_NORMATIVE_PROVIDER=static` (default) means no external validation is performed — all FRIA checks are stub-admitted. The interface code, daemon lifecycle, DEFER queue integration, and 29 tests are verified, but the control is not providing independent compliance ground truth until credentials are provisioned. | Code review | **Moderate** | 2026-08-31 | 4 hrs | **In Progress** | Coordinate with TrustLayers team for API key provisioning; configure `CAGE_NORMATIVE_ENDPOINT` and `CAGE_NORMATIVE_API_KEY_SECRET` in `prod.tfvars`; verify boot-time baseline fetch and adaptive gating in staging environment. **EU AI Act Art. 29a aspect tracked separately:** [`docs/POAM_EU_ECB.md#EU-001`](POAM_EU_ECB.md). |
+| POAM-023 | SI-2 | §A.8.3 | US_FED | CVE-2025-13462 in `libpython3.11` (python:3.12-slim-bookworm base layer) — CRITICAL remote code execution potential in Python standard library. Trivy container scan (gate U-06) identified 19 CRITICAL CVEs attributable to `libpython3.11` in the bookworm base layer. No Debian bookworm fix is available as of 2026-06-08. `apt-get upgrade -y` was applied during image build but cannot remediate this CVE. Network egress locked down via Cilium (`deployment/k8s/cilium-egress-lockdown.yaml`) to reduce exploitability. CVE suppressed in Trivy via `.trivyignore` pending upstream Debian patch. | Trivy container scan (gate U-06, Track D) | **Critical** | 2026-09-08 | 2 hrs | Open | Monitor Debian bookworm security tracker for CVE-2025-13462 patch availability; rebuild gateway image immediately upon patch release; remove `.trivyignore` suppression entry; re-run Trivy scan to confirm remediation. Review date: 2026-09-08. |
+
+---
+
+## POA&M Process
+
+### Review Cadence
+
+- **Monthly:** Review open items, update milestones, escalate slipped items
+- **Quarterly:** AO briefing on POA&M status; risk acceptance decisions for items requiring schedule extensions
+- **Annual:** Full POA&M review as part of annual authorization renewal
+
+### Entry Criteria
+
+New POA&M items are created when:
+
+- Security control assessments identify weaknesses
+- Continuous monitoring detects new vulnerabilities
+- Penetration testing or red-team exercises identify gaps
+- Regulatory changes require new controls
+- Automated scanning (Trivy, pip-audit, Lula) identifies compliance failures
+
+### Closure Criteria
+
+Items are closed when:
+
+1. Remediation actions are fully implemented
+2. Implementation is verified by the ISSO or Security Control Assessor
+3. Supporting evidence (code changes, scan results, configuration artifacts) is archived
+4. AO is notified of closure for HIGH/CRITICAL items
+
+### Escalation
+
+- Items not remediated by scheduled completion date are escalated to the System Owner
+- Critical items overdue by >30 days are escalated to the AO
+- Items that cannot be remediated must have a formal risk acceptance signed by the AO
+
+---
+
+_This document is a living record and must be updated within 5 business days of any status change. Unauthorized modification of closed or in-progress items requires ISSO concurrence. This file supersedes `docs/POAM.md` (v1.7, 2026-06-08). For the cross-region traceability matrix, see [`docs/POAM_INDEX.md`](POAM_INDEX.md)._
