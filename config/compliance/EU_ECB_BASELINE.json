@@ -94,5 +94,22 @@
     "legacy_citation": "N/A \u2014 no US equivalent exists for FRIA",
     "scope": "agentic",
     "description": "Pre-market Fundamental Rights Impact Assessment (FRIA) required before CAGE executes any autonomous workflow in the EU. Under Art. 29a, deployers of High-Risk AI systems must perform a FRIA demonstrating the system does not exhibit bias limiting access based on protected characteristics under GDPR Art. 22. The SHA-256 hash-chained decision ledger (cage-intent/1.0) is a statutory requirement for non-repudiation under Art. 12, and must be preserved for post-market monitoring under Art. 61. This control has no US counterpart and must be enabled exclusively in EU deployment profiles."
+  },
+  "CTRL_TQP_007": {
+    "internal_id": "THR-TQP-007",
+    "primary_framework": "ISO 42001 \u00a7A.4 \u2013 Resource Management",
+    "co_frameworks": [
+      "ISO 42001 \u00a76.1 \u2013 STPA Risk Logging",
+      "GDPR Art. 5(1)(f) \u2013 Integrity and Confidentiality of Processing",
+      "GDPR Art. 44 \u2013 Data Transfers to Third Countries (data residency guard)",
+      "DORA Art. 10 \u2013 ICT-Related Incident Detection and Monitoring",
+      "EU AI Act Art. 9 \u2013 Risk Management System for High-Risk AI"
+    ],
+    "legacy_citation": "ISO 42001 \u00a7A.4 (framework-agnostic baseline)",
+    "scope": "agentic",
+    "enforcement_tier": 2,
+    "worm_bucket_env_var": "OSCAL_S3_BUCKET_EU_ECB",
+    "data_residency": "europe-west1",
+    "description": "Per-session token and step-count quota enforcement via Redis atomic Lua counters. Blocks execution when sequence_step_count > 12 OR accumulated_tokens > 100,000. Fail-CLOSED: Redis unavailable blocks the request. Every blocked execution produces a KMS-signed UCA record persisted to the WORM ledger within europe-west1 only (GDPR Art. 44 data residency). Pre-ledger PII sanitization applied per ISO 42001 Annex A.6 and GDPR Art. 5(1)(f). WORM bucket routed via OSCAL_S3_BUCKET_EU_ECB environment variable. Primary enforcer: TokenQuotaProxy (Python, Redis Lua). Secondary declarative evidence: OPA quota_within_limits rule."
   }
 }
