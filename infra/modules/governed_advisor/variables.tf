@@ -133,7 +133,8 @@ variable "gateway_url" {
 }
 
 variable "governance_salt" {
-  type = string
+  type      = string
+  sensitive = true
 }
 
 variable "mcp_mode" {
