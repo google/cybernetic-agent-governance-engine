@@ -309,7 +309,11 @@ cybernetic-governance-engine/
 | [`README_GOVERNANCE.md`](README_GOVERNANCE.md)                                         | **Detailed 7-Tier Symbolic Governor & Decoupled Architecture Spec** |
 | [`docs/AUDIT_LOG_SCHEMA.md`](docs/AUDIT_LOG_SCHEMA.md)                                 | **`cage-intent/1.0` & `cage-view-access/1.0` schema reference** — hash-chain mechanics, all fields, regulatory mapping (MiFID II Art. 25 / GDPR Art. 30 / ISO 42001 A.8.4) |
 | [`docs/SECURITY_STATUS.md`](docs/SECURITY_STATUS.md)                                   | Security posture, NIST RMF status, open POA&M items                |
-| [`docs/POAM.md`](docs/POAM.md)                                                         | Plan of Action & Milestones (22 items; 6 closed)                   |
+| [`docs/POAM_INDEX.md`](docs/POAM_INDEX.md)                                             | POA&M Master Index — cross-region traceability matrix (38 items)   |
+| [`docs/POAM_ISO42001.md`](docs/POAM_ISO42001.md)                                       | POA&M — ISO 42001 universal AIMS weaknesses (all regions, 6 items) |
+| [`docs/POAM_US_FED.md`](docs/POAM_US_FED.md)                                           | POA&M — US_FED NIST SP 800-53 / ATO track (23 items; 6 closed)    |
+| [`docs/POAM_EU_ECB.md`](docs/POAM_EU_ECB.md)                                           | POA&M — EU_ECB EU AI Act / DORA / GDPR (5 items)                  |
+| [`docs/POAM_APAC_MAS.md`](docs/POAM_APAC_MAS.md)                                       | POA&M — APAC_MAS MAS FEAT / Notice 655 / TRM (4 items)            |
 | [`docs/GATEWAY_ARCHITECTURE.md`](docs/GATEWAY_ARCHITECTURE.md)                         | Gateway subsystem detail                                           |
 | [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](docs/NEURO_SYMBOLIC_GOVERNANCE.md)               | Neuro-symbolic governance design                                   |
 | [`docs/STPA_ANALYSIS.md`](docs/STPA_ANALYSIS.md)                                       | STPA hazard assessment — UCAs 1–9, Saga pattern, FiscalLimitGuard  |
