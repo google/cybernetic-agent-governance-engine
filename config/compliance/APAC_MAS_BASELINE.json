@@ -76,5 +76,22 @@
     "legacy_citation": "ISO 42001 \u00a7A.6.1 (framework-agnostic baseline)",
     "scope": "agentic",
     "description": "OPA policy evaluation must ALLOW before any agentic action is executed. MAS FEAT Accountability Principle A1 requires that financial institutions define clear human oversight responsibilities for AI systems. The OPA MANUAL_REVIEW outcome is the technical implementation of this human oversight requirement. MAS FEAT Ethics Principle E3 requires that AI systems operate within defined boundaries; OPA DENY outcomes enforce these boundaries. MAS TRM Guidelines \u00a76.3.2 explicitly requires human-in-the-loop controls for high-impact AI decisions, directly mapping to the MANUAL_REVIEW escalation path."
+  },
+  "CTRL_TQP_007": {
+    "internal_id": "THR-TQP-007",
+    "primary_framework": "ISO 42001 \u00a7A.4 \u2013 Resource Management",
+    "co_frameworks": [
+      "ISO 42001 \u00a76.1 \u2013 STPA Risk Logging",
+      "MAS TRM Guidelines \u00a76.3 \u2013 Artificial Intelligence and Machine Learning",
+      "MAS TRM Guidelines \u00a74.2 \u2013 Data Residency and Sovereignty",
+      "MAS Notice 655 \u00a710 \u2013 Audit Logging Requirements",
+      "MAS FEAT \u2013 Accountability Principle A2: Audit Trail Requirements"
+    ],
+    "legacy_citation": "ISO 42001 \u00a7A.4 (framework-agnostic baseline)",
+    "scope": "agentic",
+    "enforcement_tier": 2,
+    "worm_bucket_env_var": "OSCAL_S3_BUCKET_APAC_MAS",
+    "data_residency": "asia-southeast1",
+    "description": "Per-session token and step-count quota enforcement via Redis atomic Lua counters. Blocks execution when sequence_step_count > 12 OR accumulated_tokens > 100,000. Fail-CLOSED: Redis unavailable blocks the request. Every blocked execution produces a KMS-signed UCA record persisted to the WORM ledger within asia-southeast1 only (MAS TRM Guidelines \u00a74.2 data residency). Pre-ledger PII sanitization applied per ISO 42001 Annex A.6. MAS Notice 655 \u00a710 audit logging satisfied by WORM-persisted UCA records. MAS FEAT Accountability Principle A2 audit trail requirement satisfied by KMS-signed, immutable UCA records. WORM bucket routed via OSCAL_S3_BUCKET_APAC_MAS environment variable. Primary enforcer: TokenQuotaProxy (Python, Redis Lua). Secondary declarative evidence: OPA quota_within_limits rule."
   }
 }

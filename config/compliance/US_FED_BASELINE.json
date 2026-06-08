@@ -68,5 +68,20 @@
     "legacy_citation": "ISO 42001 OPA Policy Enforcement",
     "scope": "agentic",
     "description": "OPA policy evaluation must ALLOW before any agentic action is executed. DENY or MANUAL_REVIEW outcomes constitute a policy violation and must surface as GovernanceError."
+  },
+  "CTRL_TQP_007": {
+    "internal_id": "THR-TQP-007",
+    "primary_framework": "ISO 42001 \u00a7A.4 \u2013 Resource Management",
+    "co_frameworks": [
+      "ISO 42001 \u00a76.1 \u2013 STPA Risk Logging",
+      "ISO 42001 \u00a7A.6 \u2013 Data Lineage and PII Leak Mitigation",
+      "NIST SP 800-53 SC-5 \u2013 Denial-of-Service Protection",
+      "NIST AI RMF GOVERN-1.7 \u2013 Resource Constraints"
+    ],
+    "legacy_citation": "SR 26-2 \u00a7IV.C \u2013 Operational Risk Controls for Agentic AI",
+    "scope": "agentic",
+    "enforcement_tier": 2,
+    "worm_bucket_env_var": "OSCAL_S3_BUCKET_US_FED",
+    "description": "Per-session token and step-count quota enforcement via Redis atomic Lua counters. Blocks execution when sequence_step_count > 12 OR accumulated_tokens > 100,000. Fail-CLOSED: Redis unavailable blocks the request. Every blocked execution produces a KMS-signed UCA record persisted to the WORM ledger (ISO 42001 Clause 6.1). Pre-ledger PII sanitization applied per Annex A.6. Primary enforcer: TokenQuotaProxy (Python, Redis Lua). Secondary declarative evidence: OPA quota_within_limits rule (pending runtime injection of session state)."
   }
 }
