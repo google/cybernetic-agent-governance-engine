@@ -46,7 +46,7 @@ spec:
                 - json
                 - "--output"
                 - /tmp/scan-results.json
-                - gcr.io/laah-cybernetics/cage-gateway:latest
+                - gcr.io/laah-cybernetics/gateway:latest
               securityContext:
                 runAsNonRoot: true
                 runAsUser: 65534

@@ -63,13 +63,25 @@ _PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         ),
         "[REDACTED_SSN]",
     ),
-    # Credit card: Visa, MC, Amex, Discover, JCB, Diners — with optional
-    # spaces or dashes between groups.
+    # Credit card: Visa, MC, Amex, Discover, JCB, Diners.
+    # Allows optional spaces or dashes between 4-digit groups (e.g. 4111-1111-1111-1111).
+    # Pattern: leading prefix digits followed by remaining digits with optional separators.
     (
         re.compile(
-            r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}"
-            r"|3(?:0[0-5]|[68][0-9])[0-9]{11}|6(?:011|5[0-9]{2})[0-9]{12}"
-            r"|(?:2131|1800|35\d{3})\d{11})(?:[-\s]?\d{4}){0,3}\b"
+            r"\b(?:"
+            # Visa: 4 + 12 or 15 more digits (13 or 16 total), groups separated by [-\s]?
+            r"4\d{3}(?:[-\s]?\d{4}){2,3}"
+            # Mastercard: 51-55 + 14 more digits
+            r"|5[1-5]\d{2}(?:[-\s]?\d{4}){3}"
+            # Amex: 34 or 37 + 13 more digits (15 total, groups 4-6-5)
+            r"|3[47]\d{2}[-\s]?\d{6}[-\s]?\d{5}"
+            # Diners: 300-305 or 36x or 38x + 11 more digits (14 total)
+            r"|3(?:0[0-5]|[68]\d)\d{11}"
+            # Discover: 6011 or 65xx + 12 more digits (16 total)
+            r"|6(?:011|5\d{2})(?:[-\s]?\d{4}){3}"
+            # JCB: 2131, 1800, or 35xxx + 11 more digits (15-16 total)
+            r"|(?:2131|1800|35\d{3})\d{11}"
+            r")\b"
         ),
         "[REDACTED_CC]",
     ),
@@ -80,10 +92,11 @@ _PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         ),
         "[REDACTED_EMAIL]",
     ),
-    # Phone: US/international formats with optional country code.
+    # Phone: US/international formats with optional country code (+1 or 1).
+    # Uses (?<!\w) instead of \b so that '+' before the digit is included in the match.
     (
         re.compile(
-            r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"
+            r"(?<!\w)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"
         ),
         "[REDACTED_PHONE]",
     ),
