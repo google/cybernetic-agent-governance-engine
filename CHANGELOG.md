@@ -12,6 +12,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 > Sprint 2 production-readiness fixes — in progress as of 2026-06-07. Required before `git tag v2.0.0` is applied per `docs/PRODUCTION_READINESS_REPORT.md` §7 Sprint 2 roadmap.
 
+### Added — [CR-2026-TQP-001] Token Quota Proxy (Cat-N)
+
+- **Token Quota Proxy** (`src/gateway/governance/token_quota_proxy.py`) — Per-session step-count and token quota enforcement via Redis atomic Lua counters. ISO 42001 Annex A.4. Governance control `CTRL_TQP_007`. Fail-CLOSED: Redis unavailability blocks the request. Returns HTTP 429 with structured JSON body on quota exceeded.
+- **PII Sanitizer** (`src/gateway/governance/pii_sanitizer.py`) — Pre-ledger PII sanitization pipeline. ISO 42001 Annex A.6. Redacts SSN, credit card numbers, email addresses, phone numbers, and API key/Bearer token patterns before writing UCA records to the WORM ledger.
+- **UCA Logger** (`src/gateway/governance/uca_logger.py`) — ISO 42001 Clause 6.1 Unsafe Control Action record logger. Builds 16-field compliance records, signs with KMS (HMAC-SHA256 stub in `CAGE_ENV=test`), and writes to region-gated WORM bucket (`CAGE_DEPLOYMENT_REGION`).
+- **Token quota thresholds config** (`config/thresholds/token_quota.yaml`) — Declarative quota thresholds: `step_quota_max: 12`, `token_quota_max: 100 000`, `session_ttl_seconds: 3600`. Model overrides for `deepseek-r1` and `deepseek-reasoning` (50 000 tokens).
+- **`CTRL_TQP_007` registered** in `config/thresholds/US_FED_BASELINE.json`, `EU_ECB_BASELINE.json`, `APAC_MAS_BASELINE.json` — ISO 42001 Annex A.4, enforcement tier 2, region-specific WORM bucket env var.
+- **`TOKEN_QUOTA_ENFORCEMENT = "CTRL_TQP_007"`** added to `GovernanceControl` enum (`src/gateway/governance/constants.py`).
+- **Unit tests** — `tests/test_pii_sanitizer.py` (10 tests), `tests/test_token_quota_proxy.py` (8 async tests, `fakeredis`-backed), `tests/test_uca_logger.py` (9 tests). All `@pytest.mark.local`.
+
+### Changed — [CR-2026-TQP-001] Token Quota Proxy (Cat-N)
+
+- **`src/gateway/server/inference_proxy.py`** — Quota check inserted as Step 2 in the 6-stage governance pipeline. HTTP 429 returned on quota exceeded. `rollback_step()` called on NeMo exception.
+- **`src/gateway/server/hybrid_server.py`** — `TokenQuotaProxy` and `UCALogger` pre-warmed into `app.state` at startup in `_gateway_lifespan()`.
+- **`deployment/system_authz.rego`** — Appended `quota_within_limits`, `token_quota_within_limits`, `tool_approved` (9-tool allowlist), and `cage_systemic_governance_allow` Rego rules. Token quota injection from `governance_middleware.py` deferred (plan §23.7); rules default to `true` when session state is absent.
+
 ### Fixed
 
 - **`causal_gatekeeper.py`** — Eliminated `run_until_complete()` calls in thread-pool context (BLOCKER-01). The DoWhy causal model is now offloaded via `asyncio.to_thread()` from `symbolic_governor.py._run_checks()`, removing the event-loop deadlock that caused E2E p95 latency of 20,528ms (10× over the 3,000ms budget) and made the system effectively single-threaded under governance load.

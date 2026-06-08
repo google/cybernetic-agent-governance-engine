@@ -121,6 +121,18 @@ async def _gateway_lifespan(app: FastAPI):
             "Trade size RBAC will not be enforced."
         )
 
+    # ── Pre-warm Token Quota Proxy and UCA Logger (CTRL_TQP_007) ───────────────
+    try:
+        from src.gateway.governance.token_quota_proxy import TokenQuotaProxy
+        from src.gateway.governance.uca_logger import UCALogger
+        app.state.token_quota_proxy = TokenQuotaProxy.from_env()
+        app.state.uca_logger = UCALogger.from_env()
+        logger.info("✅ Token Quota Proxy and UCA Logger pre-warmed")
+    except Exception as e:
+        logger.warning(
+            "⚠️ Token Quota Proxy pre-warm failed (non-blocking): %s", e
+        )
+
     # ── Production guard: prohibit log-mode seal enforcement (BLOCKER-03) ──────
     if os.getenv("ENVIRONMENT") == "production":
         assert os.getenv("CAGE_SEAL_ENFORCEMENT") != "log", (

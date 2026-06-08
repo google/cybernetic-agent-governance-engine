@@ -1,0 +1,25 @@
+# Token Quota Thresholds — ISO 42001 Annex A.4 (Resource Management)
+# Governance control: CTRL_TQP_007
+# Primary enforcer: TokenQuotaProxy (src/gateway/governance/token_quota_proxy.py)
+# Secondary evidence: OPA Rego rules (deployment/system_authz.rego)
+#
+# These values are loaded by TokenQuotaProxy.from_env() at startup.
+# Override individual values via environment variables:
+#   TOKEN_QUOTA_MAX_STEPS    — overrides defaults.step_quota_max
+#   TOKEN_QUOTA_MAX_TOKENS   — overrides defaults.token_quota_max
+#   TOKEN_QUOTA_SESSION_TTL  — overrides defaults.session_ttl_seconds
+
+defaults:
+  step_quota_max: 12
+  token_quota_max: 100000
+  session_ttl_seconds: 3600
+
+model_overrides:
+  "deepseek-r1":
+    token_quota_max: 50000
+  "deepseek-reasoning":
+    token_quota_max: 50000
+
+iso42001_control: "A.4"
+evidence_mechanism: "stateful-redis-counter"
+enforcement_tier: 2
