@@ -76,8 +76,15 @@ def test_langfuse_basic_auth():
     assert resp.status_code == 200, f"Auth failed with status code {resp.status_code}: {resp.text}"
     logger.info("✅ Langfuse auth check passed.")
 
+@pytest.mark.integration
 def test_langfuse_trace_ingestion():
-    """Verifies trace ingestion endpoint returns 207 Multi-Status."""
+    """Verifies trace ingestion endpoint returns 207 Multi-Status and persists to ClickHouse.
+
+    Marked integration: requires live Langfuse + ClickHouse + langfuse-worker.
+    Run with: uv run pytest tests/test_langfuse_smoke.py --run-integration
+    ClickHouse buffer flush can take >90s on single-node deployments with Redis
+    queue delays; retry window extended to 18 attempts × 10s = 180s.
+    """
     _host = os.environ.get("LANGFUSE_HOST", LANGFUSE_HOST)
     _pk = os.environ.get("LANGFUSE_PUBLIC_KEY", os.environ.get("PK", LANGFUSE_PUBLIC_KEY))
     _sk = os.environ.get("LANGFUSE_SECRET_KEY", os.environ.get("SK", LANGFUSE_SECRET_KEY))
@@ -124,16 +131,20 @@ def test_langfuse_trace_ingestion():
     time.sleep(10)
     
     # Verify persistence via public API
-    verify_url = f"{LANGFUSE_HOST.rstrip('/')}/api/public/traces"
+    # Use the local _host/_pk/_sk variables (not the module-level constants) so
+    # that runtime env overrides (e.g. LANGFUSE_HOST=http://localhost:13000 via
+    # port-forward) are respected in both the ingestion and verification legs.
+    verify_url = f"{_host.rstrip('/')}/api/public/traces"
     params = {"name": trace_name, "limit": 10, "projectId": "cybernetic-governance"}
     
-    # Try looking for the trace for up to 90 seconds (9 attempts of 10s each)
+    # Try looking for the trace for up to 180 seconds (18 attempts × 10s).
+    # Single-node ClickHouse with Redis queue delays can take >90s to flush.
     found = False
-    for attempt in range(1, 10):
+    for attempt in range(1, 19):
          logger.info(f"Verifying trace persistence attempt {attempt}/9...")
          verify_resp = requests.get(
              verify_url,
-             auth=(LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY),
+             auth=(_pk, _sk),
              params=params,
              timeout=10
          )
