@@ -17,7 +17,9 @@ FROM python:3.12-slim-bookworm
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     python3-dev \
