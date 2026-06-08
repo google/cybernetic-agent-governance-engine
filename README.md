@@ -2,13 +2,13 @@
 
 > **AI governance for regulated financial services — built-in, not bolted on.**
 
-![v2.0.0-rc.3](https://img.shields.io/badge/version-2.0.0--rc.3-blue) ![803 Tests Passing](https://img.shields.io/badge/tests-803%20passing-brightgreen) ![SR 26-2](https://img.shields.io/badge/SR%2026--2-blue) ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue) ![DORA](https://img.shields.io/badge/DORA-blue) ![NIST AI RMF](https://img.shields.io/badge/NIST-AI%20RMF-blue) ![FedRAMP HIGH](https://img.shields.io/badge/FedRAMP-HIGH-blue) ![EU AI Act](https://img.shields.io/badge/EU%20AI%20Act-blue) ![MAS FEAT](https://img.shields.io/badge/MAS%20FEAT-blue) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 6](https://img.shields.io/badge/POAM%20Closed-6-brightgreen)
+![v2.0.0](https://img.shields.io/badge/version-2.0.0-brightgreen) ![796 Tests Passing](https://img.shields.io/badge/tests-796%20passing-brightgreen) ![SR 26-2](https://img.shields.io/badge/SR%2026--2-blue) ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue) ![DORA](https://img.shields.io/badge/DORA-blue) ![NIST AI RMF](https://img.shields.io/badge/NIST-AI%20RMF-blue) ![FedRAMP HIGH](https://img.shields.io/badge/FedRAMP-HIGH-blue) ![EU AI Act](https://img.shields.io/badge/EU%20AI%20Act-blue) ![MAS FEAT](https://img.shields.io/badge/MAS%20FEAT-blue) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 6](https://img.shields.io/badge/POAM%20Closed-6-brightgreen)
 
 ---
 
 ## The CAGE Product Offering
 
-CAGE v2.0.0-rc.3 provides a multi-jurisdiction, dual-layer governance architecture for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
+CAGE v2.0.0 provides a multi-jurisdiction, dual-layer governance architecture for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
 
 1.  **The Governance Gateway:** A high-performance inference proxy and MCP tool server that enforces a 7-tier symbolic governance model (STPA/UCA validation, agentic confidence check, Control Barrier Function, OPA Rego, multi-agent consensus, causal gatekeeper, and adaptive FRIA gate) combined with network and runtime hardening (Linkerd mTLS, Cilium L7, eBPF telemetry). The SLM sidecar (formerly Tier 3) has been deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. It acts as the "Controller" in our Controller-Plant architecture, intercepting all agent-to-tool and agent-to-LLM communications.
 2.  **The Reusable Agent Harness:** A set of deterministic LangGraph factories (`OpaNodeConfig`/`NemoNodeConfig`) that allow developers to wrap *any* agentic workflow in mandatory, non-bypassable governance guardrails.
@@ -215,7 +215,7 @@ curl http://localhost:8080/health
 ### Run Tests
 
 ```bash
-bash setup_test_env.sh && python -m pytest tests/   # 803 tests passing (25 skipped due to Langfuse port-forward infra flakiness — 0 regressions)
+bash setup_test_env.sh && python -m pytest tests/   # 796 tests passing, 0 failed (148 skipped — 0 regressions; Track D 2026-06-08)
 ```
 
 ---
@@ -347,9 +347,9 @@ Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 
 ---
 
-## What's New in v2.0.0-rc.3
+## What's New in v2.0.0
 
-> **Release date:** 2026-06-05 — Deployment fixes, PodSecurity compliance, STPA validator fix
+> **Release date:** 2026-06-08 — Stable release: Token Quota Proxy, PII Sanitizer, UCA Logger, gateway CVE remediation, seal enforcement verification, all universal Lula assertions PASS
 
 ### Bug Fixes
 
@@ -375,17 +375,17 @@ Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 
 | Suite | Passed | Failed | Notes |
 |-------|--------|--------|-------|
-| Full suite (`uv run pytest tests/ --run-integration`) | **803** | **25** | 44 Langfuse port-forward timeouts — infra flakiness, 0 regressions |
+| Full suite (`uv run pytest tests/ --run-integration`) | **796** | **0** | 148 skipped — 0 regressions (Track D 2026-06-08, cluster: cage-dev) |
 
 > The 25 failures are exclusively Langfuse port-forward timeout flakiness in the GKE test environment. No governance logic regressions. The rc.2 844-pass run used a stable port-forward session; rc.3 ran against a freshly restarted cluster.
 
-### POAM Status (rc.3)
+### POAM Status (v2.0.0)
 
 | Metric | Count |
 |--------|-------|
-| Total Items | 23 |
+| Total Items | 24 |
 | **Closed** | **6** (POAM-003 AU-12, POAM-007 IA-3, POAM-010 RA-5, POAM-016 SI-2, POAM-020 CM-3, POAM-021 SI-4) |
-| Open | 13 |
+| Open | 14 (includes POAM-023 SI-2 CVE-2025-13462, opened 2026-06-08) |
 | In Progress | 3 |
 | Critical | 4 |
 
@@ -397,4 +397,4 @@ Apache 2.0 — see [`LICENSE`](LICENSE)
 
 This is not an officially supported Google product. This project is not eligible for the Google Open Source Software Vulnerability Rewards Program.
 
-_CAGE v2.0.0-rc.3 — 2026-06-05 — Deployment Fixes, PodSecurity Compliance, STPA Validator Fix_
+_CAGE v2.0.0 — 2026-06-08 — Stable Release: Token Quota Proxy, PII Sanitizer, UCA Logger, CTRL_TQP_007, gateway CVE remediation, seal enforcement verification_

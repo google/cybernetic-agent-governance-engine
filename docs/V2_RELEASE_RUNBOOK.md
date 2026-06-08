@@ -304,6 +304,8 @@ git reset --hard origin/rc-v2.0.0
 
 > **Rule:** All GKE image deployments via Cloud Build. `kubectl apply` permitted only for non-image resources (CronJobs, PSA labels, etc.).
 
+> **⚠️ Required env var — `RECONCILIATION_PROVIDER`:** The gateway composition root ([`hybrid_server.py`](../src/gateway/server/hybrid_server.py)) asserts `RECONCILIATION_PROVIDER != "stub"` when `ENVIRONMENT=production`. You **must** set `RECONCILIATION_PROVIDER=gcs` (or another non-stub provider) in the gateway deployment before applying. Failure to do so causes the gateway pod to crash-loop at startup with `RuntimeError: RECONCILIATION_PROVIDER must not be 'stub' in production`. Add or verify this value in `terraform.auto.tfvars` (gitignored) and confirm it is injected into the gateway pod via the `advisor-secrets` Kubernetes Secret.
+
 ### 4.1 — Pre-Apply Checks
 
 ```bash

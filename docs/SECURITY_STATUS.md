@@ -1,6 +1,6 @@
-# Security & Compliance Status — CAGE v2.0.0-rc.3
+# Security & Compliance Status — CAGE v2.0.0
 
-**Date:** 2026-06-07
+**Date:** 2026-06-08
 **Status:** Public disclosure of current security posture and compliance implementation state
 
 ---
@@ -118,7 +118,7 @@ The following weaknesses are documented in [`docs/POAM_US_FED.md`](POAM_US_FED.m
 | POAM-020 | CM-3       | ~~Technical report README version mismatch~~ **✅ Closed** — aligned to v2.0.0 | Moderate | **Closed** | 2026-06-15 |
 | POAM-021 | SI-4       | ~~AgentSight eBPF exporter in console mode~~ **✅ Closed** — `exporter.type: "remote"` confirmed | High | **Closed** | 2026-07-15 |
 | POAM-022 | SA-9, CA-7 | External Normative Provider operating in stub mode (TrustLayers credentials not provisioned) | Moderate | In Progress | 2026-08-31 |
-| POAM-023 | SI-2       | CVE-2025-13462 in `libpython3.11` (python:3.12-slim-bookworm base layer) — 19 CRITICAL CVEs; no Debian bookworm fix available as of 2026-06-08; suppressed via `.trivyignore`; Cilium egress lockdown reduces exploitability | **Critical** | Open | 2026-09-08 |
+| POAM-023 | SI-2       | CVE-2025-13462 in `libpython3.11` (python:3.12-slim-bookworm base layer) — 19 CRITICAL CVEs; gateway Dockerfile pinned to `python:3.12-slim-bookworm` with `apt-get upgrade -y` applied at build time; no Debian bookworm fix available as of 2026-06-08; residual CVEs suppressed via `.trivyignore`; Cilium egress lockdown reduces exploitability; risk accepted with review date 2026-09-08 | **Critical** | Open | 2026-09-08 |
 
 ### Testing Gaps
 
