@@ -1,4 +1,8 @@
 {
+  "_baseline_type": "additive_regional_layer",
+  "_global_baseline": "ISO_42001",
+  "_region": "APAC_MAS",
+  "_activation": "CAGE_DEPLOYMENT_REGION=APAC_MAS",
   "_comment": "Monetary Authority of Singapore (MAS) regional control-mapping profile. Governed primarily by MAS FEAT Principles (Fairness, Ethics, Accountability, Transparency) and MAS Notice 655 / TRM Guidelines. To activate: set CAGE_DEPLOYMENT_REGION=APAC_MAS",
   "_schema_version": "1.1.0",
   "_region": "APAC_MAS",
@@ -12,7 +16,6 @@
     "ISO/IEC 42001:2023 (AI Management System Standard)",
     "NIST AI RMF 1.0 (adopted as supplementary reference)"
   ],
-
   "CTRL_AGT_001": {
     "internal_id": "THR-CONF-001",
     "primary_framework": "MAS FEAT \u2013 Fairness Principle F1: Bias Impact Assessment",
@@ -25,7 +28,6 @@
     "scope": "agentic",
     "description": "Minimum agentic model confidence required to execute a decision. Under MAS FEAT Principle F1, AI decisions affecting customers must be regularly tested for bias. The confidence threshold is a necessary but not sufficient control: MAS expects ongoing Fairness Impact Assessments (FIA) with quantitative bias metrics across demographic groups. MAS TRM Guidelines \u00a76.3 require documented model risk management for AI/ML systems, including drift detection and performance monitoring, which the DoWhy causal gatekeeper directly satisfies."
   },
-
   "CTRL_WAL_002": {
     "internal_id": "THR-WAL-002",
     "primary_framework": "MAS TRM Guidelines \u00a79.1 \u2013 Business Continuity Management",
@@ -38,7 +40,6 @@
     "scope": "agentic",
     "description": "Atomic transaction guarantee via Write-Ahead Log and LIFO rollback. MAS TRM Guidelines \u00a79.1 require financial institutions to maintain business continuity for critical systems with documented recovery procedures. MAS Notice 655 \u00a712 specifies Recovery Time Objectives that the WAL LIFO rollback mechanism directly satisfies by ensuring no partial transaction state persists. MAS FEAT Accountability Principle A3 requires that AI decisions be explainable; WAL audit trails provide the decision provenance required for this."
   },
-
   "CTRL_TEL_003": {
     "internal_id": "THR-TEL-003",
     "primary_framework": "MAS TRM Guidelines \u00a76.4 \u2013 Model Risk Management and Monitoring",
@@ -52,7 +53,6 @@
     "scope": "agentic",
     "description": "World-model validation must reflect live runtime telemetry. MAS TRM Guidelines \u00a76.4 mandate continuous monitoring of AI model performance in production, including drift detection. MAS FEAT Transparency Principle T1 requires that AI systems be able to explain their decisions to affected customers and regulators. MAS Notice 655 \u00a710 requires audit logs that enable reconstruction of all system decisions. The live Langfuse governance spans directly satisfy all three requirements."
   },
-
   "CTRL_MRM_004": {
     "internal_id": "THR-MRM-004",
     "primary_framework": "MAS TRM Guidelines \u00a76.3 \u2013 Artificial Intelligence and Machine Learning",
@@ -65,7 +65,6 @@
     "scope": "traditional_ml",
     "description": "Traditional quantitative model validation for non-agentic, deterministic ML components. MAS TRM Guidelines \u00a76.3 require a documented AI/ML governance framework covering model development, validation, deployment, and monitoring. MAS FEAT Fairness Principle F2 expects quantitative fairness metrics (demographic parity, equalized odds) to be computed and documented during validation. SR 26-2 is a US Federal Reserve guidance document with no legal standing in Singapore."
   },
-
   "CTRL_OPA_005": {
     "internal_id": "THR-OPA-005",
     "primary_framework": "MAS FEAT \u2013 Accountability Principle A1: Defined Human Oversight",
