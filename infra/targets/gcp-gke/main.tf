@@ -173,17 +173,28 @@ resource "google_storage_hmac_key" "langfuse_key" {
 # ─── Cloud Build IAM — Artifact Registry push permission ─────────────────────
 #
 # GCP projects created after May 2023 route gcr.io pushes through Artifact
-# Registry. The Cloud Build default SA needs roles/artifactregistry.writer
-# at the project level to push images via cloudbuild.compliance.yaml and
-# the gateway / advisor Cloud Build configs.
+# Registry. Two SAs need roles/artifactregistry.writer:
 #
-# Cloud Build default SA: [PROJECT_NUMBER]@cloudbuild.gserviceaccount.com
+#   1. The Cloud Build default SA ([PROJECT_NUMBER]@cloudbuild.gserviceaccount.com)
+#      — used by gcloud builds submit and any trigger without a custom SA.
+#
+#   2. The compliance-bridge trigger custom SA
+#      (compliance-bridge-sa@laah-cybernetics.iam.gserviceaccount.com)
+#      — the compliance-bridge-main GitHub trigger is configured to run as
+#        this SA, so it is the identity that actually performs the docker push.
+#
 # Reference: https://cloud.google.com/build/docs/securing-builds/configure-access-for-cloud-build-service-account
 
 resource "google_project_iam_member" "cloudbuild_artifactregistry_writer" {
   project = var.project_id
   role    = "roles/artifactregistry.writer"
   member  = "serviceAccount:${data.google_project.current.number}@cloudbuild.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "compliance_bridge_sa_artifactregistry_writer" {
+  project = var.project_id
+  role    = "roles/artifactregistry.writer"
+  member  = "serviceAccount:compliance-bridge-sa@${var.project_id}.iam.gserviceaccount.com"
 }
 
 # ─── Deploy PostgreSQL Database ───────────────────────────────────────────────
