@@ -22,8 +22,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv for dependency management
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Install uv for dependency management.
+# Pin to a specific version to guarantee reproducible builds — never use :latest,
+# which can silently introduce breaking changes between Cloud Build runs.
+# To upgrade: bump the version here, run `uv lock` locally, and commit both files.
+COPY --from=ghcr.io/astral-sh/uv:0.10.9 /uv /usr/local/bin/uv
 
 # Copy dependency definitions — both files required for uv sync --frozen.
 # Build context must be the monorepo root so pyproject.toml and uv.lock are reachable.
@@ -33,12 +36,15 @@ COPY pyproject.toml uv.lock ./
 # --frozen enforces the lockfile; --no-dev skips test/lint extras.
 # --no-install-project skips building the project package itself (we import
 #   source directly via PYTHONPATH=/app, not as an installed package).
+# --no-build prevents falling back to source compilation if a pre-built wheel
+#   is unavailable (e.g. CDN propagation lag after a fresh PyPI release).
+#   A missing wheel produces a clear error rather than a silent C-compile failure.
 # --extra compliance pulls google-cloud-storage (native GCS SDK, ADC/Workload Identity),
 #   boto3 (S3-compat fallback for non-GCP targets, activated via STORAGE_BACKEND=s3),
 #   and PyYAML (?format=yaml support)
 # --extra langfuse pulls the langfuse SDK
 # Done BEFORE copying source so this heavy layer is cached across source changes.
-RUN uv sync --frozen --no-dev --no-install-project --extra compliance --extra langfuse
+RUN uv sync --frozen --no-dev --no-install-project --no-build --extra compliance --extra langfuse
 
 # Copy application source — all directories needed by the compliance-bridge.
 # Placed AFTER uv sync to maximise Docker layer cache reuse.
