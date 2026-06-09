@@ -98,6 +98,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 - **U-18 — PSA labels applied** — PodSecurity admission labels confirmed: `governance-stack=restricted`, `langfuse=baseline`, `vllm=baseline`. Gate green.
 - **`.env.example` updated** — Langfuse compliance variables (`LANGFUSE_COMPLIANCE_PUBLIC_KEY`, `LANGFUSE_COMPLIANCE_SECRET_KEY`, `LANGFUSE_COMPLIANCE_HOST`) added to `.env.example` to document the dual-project configuration requirement.
 
+### Post-Release CI & Infra Fixes (Cat-S, 2026-06-08 – 2026-06-09)
+
+> These fixes were discovered during CI execution after the local release gate verification at `7d5990c`. They are included in the v2.0.0 stable tag (moved to `8ce3cae`) because: (a) the STPA freshness CI gate and security scan were provably failing at the original tag commit; (b) the IAM bindings are deployment prerequisites without which Cloud Build cannot push images; (c) the tag had never been pushed to a public remote, making recreation safe. No application logic was changed.
+>
+> Commits: `d3408a8`, `46a908d` (PR #9), `030cf88` (PR #10), `51c5df2` (PR #11), `8ce3cae`.
+
+#### Fixed
+
+- **CI: STPA freshness check broken in shallow clones** (`d3408a8`, `.github/workflows/ci.yml`) — Added `fetch-depth: 0` to the `stpa-freshness-check` checkout step. Without full history, `git log` could not resolve source file commit times in CI shallow clones, causing the U-09 gate to fail on every CI run post-tag.
+- **CI: Security scan CVEs resolved** (`d3408a8`, `uv.lock`, `.github/workflows/security-scan.yml`) — Upgraded aiohttp 3.13.5→3.14.1 (CVE-2026-34993, CVE-2026-47265), starlette 0.52.1→1.2.1 (PYSEC-2026-161) via google-adk 2.2.0, pip 26.1.1→26.1.2 (PYSEC-2026-196), pyjwt 2.12.1→2.13.0 (PYSEC-2026-175/177/178/179). Removed `--ignore-vuln CVE-2026-4810` (resolved by google-adk 2.2.0). Added `--ignore-vuln PYSEC-2026-139` (torch 2.10.0, dev-only, no upstream fix; POAM-016 to be created).
+- **CI: Security scan now uses locked dependency tree** (`46a908d`, `.github/workflows/security-scan.yml`) — Replaced `pip install pip-audit` + `pip install -e ".[dev]"` with `uv sync --frozen --all-groups --all-extras` + `uv run pip-audit`. Ensures pip-audit scans the exact versions in `uv.lock`, not a fresh pip-resolved tree.
+- **`stpa_compiler.py`: `validate()` shim added to compiler template** (`d3408a8`, `src/gateway/governance/stpa_compiler.py`) — Added `validate()` public entry-point to the `GeneratedSTPAValidator` class template so it is emitted on every compiler run rather than manually maintained. Regenerated all STPA artifacts (timestamp: `2026-06-08T19:22:41Z`).
+- **`compliance_bridge/Dockerfile`: pin uv to 0.10.9 and add `--no-build`** (`030cf88`, `src/compliance_bridge/Dockerfile`) — Pinned `uv` from `:latest` to `:0.10.9` for reproducible Cloud Build runs. Added `--no-build` to `uv sync` to prevent silent C-compile fallback when a pre-built wheel is unavailable.
+- **Infra: Cloud Build SA missing `artifactregistry.writer`** (`51c5df2`, PR #11, `infra/targets/gcp-gke/main.tf`) — Added `google_project_iam_member` binding granting `roles/artifactregistry.writer` to the default Cloud Build SA (`[PROJECT_NUMBER]@cloudbuild.gserviceaccount.com`). Without this, the Cloud Build push step failed with `Permission 'artifactregistry.repositories.uploadArtifacts' denied`.
+- **Infra: compliance-bridge-sa missing `artifactregistry.writer`** (`8ce3cae`, `infra/targets/gcp-gke/main.tf`) — Added a second `google_project_iam_member` binding for the custom compliance-bridge Cloud Build SA (`compliance-bridge-sa@YOUR_GCP_PROJECT_ID.iam.gserviceaccount.com`). The previous binding only covered the default Cloud Build SA; the compliance-bridge trigger uses a custom SA.
+
 ---
 
 ## [2.0.0-rc.3] — 2026-06-06
