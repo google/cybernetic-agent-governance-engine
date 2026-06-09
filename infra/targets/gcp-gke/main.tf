@@ -51,6 +51,12 @@ terraform {
 
 data "google_client_config" "default" {}
 
+# Resolve project number — required to construct the Cloud Build default SA
+# member string: [PROJECT_NUMBER]@cloudbuild.gserviceaccount.com
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
 # ─── Provision GKE Cluster ────────────────────────────────────────────────────
 
 module "gke" {
@@ -162,6 +168,22 @@ resource "google_storage_bucket_iam_member" "langfuse_gcs_admin" {
 resource "google_storage_hmac_key" "langfuse_key" {
   service_account_email = google_service_account.langfuse_gcs.email
   project               = var.project_id
+}
+
+# ─── Cloud Build IAM — Artifact Registry push permission ─────────────────────
+#
+# GCP projects created after May 2023 route gcr.io pushes through Artifact
+# Registry. The Cloud Build default SA needs roles/artifactregistry.writer
+# at the project level to push images via cloudbuild.compliance.yaml and
+# the gateway / advisor Cloud Build configs.
+#
+# Cloud Build default SA: [PROJECT_NUMBER]@cloudbuild.gserviceaccount.com
+# Reference: https://cloud.google.com/build/docs/securing-builds/configure-access-for-cloud-build-service-account
+
+resource "google_project_iam_member" "cloudbuild_artifactregistry_writer" {
+  project = var.project_id
+  role    = "roles/artifactregistry.writer"
+  member  = "serviceAccount:${data.google_project.current.number}@cloudbuild.gserviceaccount.com"
 }
 
 # ─── Deploy PostgreSQL Database ───────────────────────────────────────────────
