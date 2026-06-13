@@ -133,6 +133,21 @@ async def _gateway_lifespan(app: FastAPI):
             "⚠️ Token Quota Proxy pre-warm failed (non-blocking): %s", e
         )
 
+    # ── Production guard: enforce KMS signer activation (H-05) ────────────────
+    # assert_kms_active_in_production() raises RuntimeError if KMS is not
+    # configured in prod, preventing silent fallback to no-op stub signing.
+    cage_env = os.getenv("CAGE_ENV", os.getenv("ENVIRONMENT", "production")).lower()
+    if cage_env not in ("development", "test", "dev", "ci"):
+        try:
+            from src.gateway.governance.kms_signer import assert_kms_active_in_production
+            assert_kms_active_in_production()
+            logger.info("✅ KMS signer activation confirmed at startup")
+        except RuntimeError as kms_err:
+            logger.critical(
+                "🚨 STARTUP FAILURE: KMS signer not active in production: %s", kms_err
+            )
+            raise
+
     # ── Production guard: prohibit log-mode seal enforcement (BLOCKER-03) ──────
     if os.getenv("ENVIRONMENT") == "production":
         assert os.getenv("CAGE_SEAL_ENFORCEMENT") != "log", (
@@ -194,6 +209,48 @@ root_app = FastAPI(
     version="2.0.0",
     lifespan=_gateway_lifespan,
 )
+
+
+@root_app.get("/healthz")
+async def healthz():
+    """Health check endpoint that verifies KMS connectivity.
+
+    Returns 200 with kms_active=true when KMS signing is available.
+    Returns 200 with kms_active=false in dev/test environments.
+    Returns 503 if KMS is required but unavailable.
+    """
+    from fastapi.responses import JSONResponse as _JSONResponse
+    cage_env = os.getenv("CAGE_ENV", os.getenv("ENVIRONMENT", "production")).lower()
+    is_prod = cage_env not in ("development", "test", "dev", "ci")
+
+    try:
+        from src.gateway.governance.kms_signer import get_governance_signer
+        signer = get_governance_signer()
+        kms_active = signer.is_kms_active
+        if is_prod and not kms_active:
+            return _JSONResponse(
+                status_code=503,
+                content={
+                    "status": "unhealthy",
+                    "kms_active": False,
+                    "reason": "KMS signer not active in production environment",
+                },
+            )
+        return _JSONResponse(
+            status_code=200,
+            content={"status": "healthy", "kms_active": kms_active, "env": cage_env},
+        )
+    except Exception as exc:
+        logger.error("healthz: KMS check failed: %s", exc)
+        if is_prod:
+            return _JSONResponse(
+                status_code=503,
+                content={"status": "unhealthy", "kms_active": False, "reason": "KMS check failed"},
+            )
+        return _JSONResponse(
+            status_code=200,
+            content={"status": "healthy", "kms_active": False, "env": cage_env},
+        )
 
 # Inference proxy handles /v1/chat/completions
 root_app.mount("/inference", inference_app)
