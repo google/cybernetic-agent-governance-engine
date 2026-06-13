@@ -29,6 +29,74 @@ import re
 import textwrap
 from typing import Optional
 
+# ---------------------------------------------------------------------------
+# C-05: Safe dispatch — replaces any exec() of LLM-generated code.
+# Only functions in ALLOWED_FUNCTIONS may be dispatched; all arguments must
+# be AST literals (no arbitrary expressions).  Raises ValueError on any
+# attempt to call an unlisted function or pass non-literal arguments.
+# ---------------------------------------------------------------------------
+
+ALLOWED_FUNCTIONS = {
+    "approve_trade",
+    "deny_trade",
+    "defer_trade",
+    "flag_for_review",
+    "set_position_limit",
+    "set_risk_threshold",
+}
+
+
+def _safe_dispatch(generated_code: str, context: dict) -> dict:
+    """Parse LLM output as a function call and dispatch to allowlisted functions only.
+
+    This replaces any use of exec() for LLM-generated governance code.
+    Only single function calls whose names appear in ALLOWED_FUNCTIONS are
+    permitted.  All arguments must be AST literals — no arbitrary expressions.
+
+    Args:
+        generated_code: A single-expression Python function call string
+                        produced by the LLM (e.g. ``"approve_trade(amount=500)"``).
+        context:        Dict mapping function names to callables.
+
+    Returns:
+        The return value of the dispatched function.
+
+    Raises:
+        ValueError: If the code is not a single function call, the function is
+                    not in the allowlist, or any argument is not a literal.
+        SyntaxError: If the generated code cannot be parsed.
+    """
+    try:
+        tree = ast.parse(generated_code.strip(), mode="eval")
+    except SyntaxError as exc:
+        raise ValueError(f"Invalid generated code syntax: {exc}") from exc
+
+    if not isinstance(tree.body, ast.Call):
+        raise ValueError("Generated code must be a single function call")
+
+    func_node = tree.body.func
+    func_name = func_node.id if isinstance(func_node, ast.Name) else None
+    if func_name not in ALLOWED_FUNCTIONS:
+        raise ValueError(
+            f"Function '{func_name}' is not in the governance allowlist"
+        )
+
+    dispatch_map = {
+        name: context[name] for name in ALLOWED_FUNCTIONS if name in context
+    }
+    if func_name not in dispatch_map:
+        raise ValueError(
+            f"Function '{func_name}' not available in current context"
+        )
+
+    # Extract literal arguments only — no arbitrary expressions allowed.
+    args = [ast.literal_eval(arg) for arg in tree.body.args]
+    kwargs = {
+        kw.arg: ast.literal_eval(kw.value) for kw in tree.body.keywords
+    }
+
+    return dispatch_map[func_name](*args, **kwargs)
+
 logger = logging.getLogger("governance.transpiler")
 
 # Import LLM at module level so tests can patch it via
