@@ -38,7 +38,7 @@ from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query, Request, BackgroundTasks
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -60,6 +60,7 @@ def _ensure_langfuse_imported() -> None:
         from langfuse import Langfuse as _LF  # noqa: PLC0415
         Langfuse = _LF
 
+from .auth import require_internal_token
 from .audit_workflow import run_audit_workflow
 from .cmek_guard import validate_cmek_configuration
 from .lula_scheduler import run_lula_scheduler
@@ -657,6 +658,7 @@ async def audit_ingest(
     body: AuditIngestRequest,
     background_tasks: BackgroundTasks,
     background: bool = Query(default=False, description="Run ingestion in the background asynchronously"),
+    _auth: str = Depends(require_internal_token),
 ) -> JSONResponse:
     if not body.oscal_yaml or not body.oscal_yaml.strip():
         raise HTTPException(
