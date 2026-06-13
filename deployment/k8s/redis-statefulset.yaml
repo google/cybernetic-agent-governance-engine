@@ -74,13 +74,23 @@ spec:
           # Load custom redis.conf from ConfigMap
           # Note: redis-stack-server uses /etc/redis-stack.conf by default;
           # we override with our hardened config via command args.
+          # H-13: requirepass is injected from the redis-credentials Secret so
+          # the password never appears in committed manifests or ConfigMaps.
           args:
             - "redis-server"
             - "/usr/local/etc/redis/redis.conf"
+            - "--requirepass"
+            - "$(REDIS_PASSWORD)"
             - "--loadmodule"
             - "/opt/redis-stack/lib/rejson.so"
             - "--loadmodule"
             - "/opt/redis-stack/lib/redisearch.so"
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: redis-password
           ports:
             - containerPort: 6379
               name: redis
