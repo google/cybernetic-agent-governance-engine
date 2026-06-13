@@ -99,6 +99,58 @@ _COMPLIANCE_DIR: Path = _REPO_ROOT / "config" / "compliance"
 
 
 # ---------------------------------------------------------------------------
+# §0 — Policy Integrity (H-08)
+# ---------------------------------------------------------------------------
+
+
+class PolicyIntegrityError(RuntimeError):
+    """Raised when a policy file's SHA-256 digest does not match its companion
+    ``.sha256`` file.  Loading is aborted to prevent tampered policy injection.
+    """
+
+
+def _verify_policy_integrity(policy_path: Path, raw_bytes: bytes) -> None:
+    """Verify SHA-256 digest of *raw_bytes* against a companion digest file.
+
+    The companion file is expected at ``{policy_path}.sha256`` and must contain
+    the lowercase hex digest of the policy file (same format as ``sha256sum``).
+
+    If the companion file is absent, a warning is logged and the load proceeds
+    (dev/CI tolerance — digest files are optional in non-production environments).
+    If the companion file is present but the digest mismatches, ``PolicyIntegrityError``
+    is raised and the policy is NOT loaded.
+
+    Args:
+        policy_path: Filesystem path to the policy file (used to locate companion).
+        raw_bytes:   Raw bytes of the policy file already read from disk.
+
+    Raises:
+        PolicyIntegrityError: If the digest file exists and the digest mismatches.
+    """
+    digest_path = policy_path.with_suffix(policy_path.suffix + ".sha256")
+    if not digest_path.exists():
+        logger.warning(
+            "normative_provider: no integrity digest found for %s — "
+            "skipping verification (set CAGE_ENV=prod to enforce)",
+            policy_path.name,
+        )
+        return
+
+    expected_hex = digest_path.read_text().strip().split()[0].lower()
+    actual_hex = hashlib.sha256(raw_bytes).hexdigest()
+    if actual_hex != expected_hex:
+        raise PolicyIntegrityError(
+            f"SHA-256 mismatch for {policy_path.name}: "
+            f"expected={expected_hex[:16]}… actual={actual_hex[:16]}… — "
+            "policy file may have been tampered with"
+        )
+    logger.debug(
+        "normative_provider: integrity OK for %s (sha256=%s…)",
+        policy_path.name, actual_hex[:16],
+    )
+
+
+# ---------------------------------------------------------------------------
 # §1 — Data Contracts
 # ---------------------------------------------------------------------------
 
@@ -252,7 +304,14 @@ class StubNormativeProvider:
         )
 
     async def fetch_baseline(self, region: str) -> NormativeBaseline:
-        """Read from local config/compliance/{REGION}_BASELINE.json."""
+        """Read from local config/compliance/{REGION}_BASELINE.json.
+
+        Verifies SHA-256 integrity of the policy file before loading (H-08).
+        A companion ``{REGION}_BASELINE.json.sha256`` file must exist alongside
+        the policy file.  If the digest file is absent the load proceeds with a
+        warning (dev/CI tolerance); if the digest is present but mismatches the
+        file content, the load is rejected to prevent tampered policy injection.
+        """
         config_path = _COMPLIANCE_DIR / f"{region}_BASELINE.json"
         if not config_path.exists():
             return NormativeBaseline(
@@ -261,9 +320,13 @@ class StubNormativeProvider:
                 error=f"Local profile not found: {config_path}",
             )
         try:
-            with open(config_path, "r") as fh:
-                profile = json.load(fh)
+            raw_bytes = config_path.read_bytes()
+            _verify_policy_integrity(config_path, raw_bytes)
+            profile = json.loads(raw_bytes)
             return NormativeBaseline(region=region, profile=profile)
+        except PolicyIntegrityError as exc:
+            logger.error("normative_provider: policy integrity check failed: %s", exc)
+            return NormativeBaseline(region=region, profile={}, error=str(exc))
         except Exception as exc:
             return NormativeBaseline(
                 region=region, profile={}, error=str(exc)

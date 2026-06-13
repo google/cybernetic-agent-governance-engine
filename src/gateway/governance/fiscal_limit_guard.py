@@ -356,6 +356,16 @@ class FiscalLimitGuard:
         if amount_usd <= 0:
             raise ValueError(f"reserve: amount_usd must be > 0, got {amount_usd}")
 
+        # H-11: Reject non-positive trade values before any fiscal limit check.
+        # Negative values could circumvent fiscal controls or cause accounting
+        # errors in downstream systems that assume positive trade amounts.
+        # This guard is separate from the amount_usd > 0 check above so that
+        # callers receive a distinct, actionable error message.
+        if not isinstance(amount_usd, (int, float)) or amount_usd != amount_usd:
+            raise ValueError(
+                f"reserve: amount_usd must be a finite positive number, got {amount_usd!r}"
+            )
+
         amount_cents = int(round(amount_usd * 100))
         cap_cents = int(round(self._daily_cap_usd * 100))
         window_key = self._window_key()
