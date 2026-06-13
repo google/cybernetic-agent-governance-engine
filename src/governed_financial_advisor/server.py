@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 import uvicorn
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from langgraph.types import Command
 from opentelemetry import trace
 from pydantic import BaseModel
@@ -49,6 +49,7 @@ from src.governed_financial_advisor.utils.context import user_context
 from src.gateway.governance.nemo.manager import load_rails, validate_with_nemo, verify_and_mask_output
 from src.governed_financial_advisor.utils.telemetry import configure_telemetry
 from src.governed_financial_advisor.utils.telemetry import configure_telemetry
+from src.governed_financial_advisor.infrastructure.auth import require_api_key
 from src.governed_financial_advisor.infrastructure.mcp_client import get_mcp_client
 
 # Observability
@@ -240,7 +241,11 @@ def health_check():
     }
 
 @app.post("/agent/query")
-async def query_agent(req: QueryRequest, request: Request):
+async def query_agent(
+    req: QueryRequest,
+    request: Request,
+    _auth: str = Depends(require_api_key),
+):
     """
     Main agent query endpoint.
 
@@ -398,6 +403,7 @@ async def resume_approval(
     thread_id: str,
     req: ApprovalResumeRequest,
     request: Request,
+    _auth: str = Depends(require_api_key),
 ):
     """
     Resume an interrupted graph that is awaiting human trade approval.
@@ -816,7 +822,11 @@ class NeMoApproveRequest(BaseModel):
 
 
 @app.post("/v1/nemo/approve-refinement/{proposal_id}")
-async def approve_nemo_refinement(proposal_id: str, req: NeMoApproveRequest):
+async def approve_nemo_refinement(
+    proposal_id: str,
+    req: NeMoApproveRequest,
+    _auth: str = Depends(require_api_key),
+):
     """Approve or reject a staged NeMo refinement proposal.
 
     Requires a human risk officer to provide their identity and a mandatory

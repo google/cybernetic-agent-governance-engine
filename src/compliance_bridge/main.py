@@ -38,7 +38,7 @@ from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query, Request, BackgroundTasks
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -60,6 +60,7 @@ def _ensure_langfuse_imported() -> None:
         from langfuse import Langfuse as _LF  # noqa: PLC0415
         Langfuse = _LF
 
+from .auth import require_internal_token
 from .audit_workflow import run_audit_workflow
 from .cmek_guard import validate_cmek_configuration
 from .lula_scheduler import run_lula_scheduler
@@ -172,6 +173,23 @@ async def lifespan(app: FastAPI):
         )
 
     _get_app_langfuse()  # eager init so first request isn't slow
+
+    # ------------------------------------------------------------------
+    # C-08: Start KMS batch signer for evidence chain signing.
+    # The signer is disabled by default (KMS_BATCH_ENABLED=false) and
+    # must be explicitly enabled in production via env var.
+    # assert_kms_active_in_production() enforces KMS mode in prod.
+    # ------------------------------------------------------------------
+    from .kms_batch_signer import _ENABLED as _KMS_ENABLED, get_batch_signer as _get_batch_signer  # noqa: PLC0415
+    _batch_signer = _get_batch_signer()
+    if _KMS_ENABLED:
+        await _batch_signer.start()
+        logger.info("✅ KMS batch signer started")
+        _env_for_kms = os.environ.get("CAGE_ENV", "dev").lower()
+        if _env_for_kms == "prod":
+            _batch_signer.assert_kms_active_in_production()
+    else:
+        logger.info("ℹ️ KMS batch signer disabled (KMS_BATCH_ENABLED != true)")
 
     # Start background tasks
     _sla_task  = asyncio.create_task(run_sla_monitor(),     name="sla-monitor")
@@ -657,6 +675,7 @@ async def audit_ingest(
     body: AuditIngestRequest,
     background_tasks: BackgroundTasks,
     background: bool = Query(default=False, description="Run ingestion in the background asynchronously"),
+    _auth: str = Depends(require_internal_token),
 ) -> JSONResponse:
     if not body.oscal_yaml or not body.oscal_yaml.strip():
         raise HTTPException(

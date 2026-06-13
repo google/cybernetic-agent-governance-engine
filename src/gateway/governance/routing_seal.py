@@ -313,3 +313,12 @@ def require_cleared_seal(
                 return func(*args, **kwargs)
             return sync_wrapper  # type: ignore[return-value]
     return decorator
+
+
+# ---------------------------------------------------------------------------
+# C-03: Auto-enforce custom HMAC salt at import time in production.
+# This ensures the check runs before any seal is generated or verified.
+# ---------------------------------------------------------------------------
+import os as _os
+if _os.environ.get("CAGE_ENV", "dev").lower() == "prod":
+    assert_custom_salt_in_production()
