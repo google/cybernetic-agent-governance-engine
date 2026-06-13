@@ -108,9 +108,11 @@ def main():
         return
         
     count = 0
-    for trace in traces_data:
-        trace_id = trace["id"]
-        
+    # M-19: Renamed loop variable from 'trace' to 'trace_item' to avoid shadowing
+    # the 'trace' module imported from opentelemetry at line 23.
+    for trace_item in traces_data:
+        trace_id = trace_item["id"]
+
         # Fetch observations (spans/generations) for this trace
         try:
             obs_res = httpx.get(f"{host}/api/public/observations?traceId={trace_id}&type=GENERATION", auth=auth)
@@ -149,15 +151,16 @@ def main():
                 reasoning = eval_result.get("reasoning", "")
 
                 # Push Compliance Score via OTel span event
-                tracer = trace.get_tracer(__name__)
-                with tracer.start_as_current_span("evaluation.score.financial_compliance") as span:
+                # M-19: Use module-level 'trace' (opentelemetry.trace), not loop var
+                _otel_tracer = trace.get_tracer(__name__)
+                with _otel_tracer.start_as_current_span("evaluation.score.financial_compliance") as span:
                     span.set_attribute("evaluation.trace_id", str(trace_id))
                     span.set_attribute("evaluation.score_name", "financial_compliance")
                     span.set_attribute("evaluation.score_value", float(eval_result.get("compliance_score", 0)))
                     span.set_attribute("evaluation.score_comment", str(reasoning) if reasoning else "")
 
                 # Push Helpfulness Score via OTel span event
-                with tracer.start_as_current_span("evaluation.score.helpfulness") as span:
+                with _otel_tracer.start_as_current_span("evaluation.score.helpfulness") as span:
                     span.set_attribute("evaluation.trace_id", str(trace_id))
                     span.set_attribute("evaluation.score_name", "helpfulness")
                     span.set_attribute("evaluation.score_value", float(eval_result.get("helpfulness_score", 1)))

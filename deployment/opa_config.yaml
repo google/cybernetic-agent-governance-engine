@@ -12,8 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# M-23: Decision log sink — console + HTTP forwarding to compliance-bridge.
+# The HTTP plugin forwards every OPA decision to the compliance-bridge
+# /v1/audit/ingest endpoint so governance decisions are durably persisted
+# (AU-12 / ISO 42001 A.9.2).  The compliance-bridge writes them to GCS with
+# a 90-day retention policy.
+#
+# CAGE_COMPLIANCE_BRIDGE_URL must be set in the OPA pod environment.
+# If the env var is absent (e.g. local dev), the plugin URL falls back to
+# the in-cluster default so OPA still starts without error.
 decision_logs:
   console: true
+  plugin: http
+  service: compliance_bridge_decision_log
+
+services:
+  compliance_bridge_decision_log:
+    url: "${CAGE_COMPLIANCE_BRIDGE_URL:-http://compliance-bridge.governance-stack.svc.cluster.local:3001}/v1/opa/decision-logs"
+    headers:
+      Content-Type: application/json
+      X-OPA-Decision-Log: "true"
 
 # 2. Status / Monitoring
 # Report status updates to stdout AND expose HTTP status plugin.

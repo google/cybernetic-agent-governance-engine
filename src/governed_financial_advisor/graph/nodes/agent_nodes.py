@@ -212,7 +212,7 @@ async def governed_trader_node(state):
     subgraph_state = {
         "messages": state.get("messages", []),
         "execution_plan": str(state.get("execution_plan_output", "No plan.")),
-        "evaluation_result": str(state.get("evaluation_result", "APPROVED")),
+        "evaluation_result": str(state.get("evaluation_result", "DENIED")),  # M-06: fail-closed default
         "governance_signature": state.get("governance_signature"),
         "data_analyst_ticker": state.get("data_analyst_ticker"),  # TOCTOU: re-hydration
     }

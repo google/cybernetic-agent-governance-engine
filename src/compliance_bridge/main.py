@@ -234,15 +234,20 @@ app = FastAPI(
 # both need cross-origin access to the SSE stream.
 # ---------------------------------------------------------------------------
 
+# M-13: Build CORS origin list without empty strings (empty string allows all origins)
+_cors_origins: list[str] = [
+    "http://localhost:5173",   # Vite dev server default
+    "http://localhost:3000",   # Alternative dev port
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+]
+_ui_origin = os.environ.get("UI_ORIGIN", "").strip()
+if _ui_origin:
+    _cors_origins.append(_ui_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",   # Vite dev server default
-        "http://localhost:3000",   # Alternative dev port
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:3000",
-        os.environ.get("UI_ORIGIN", ""),  # Production UI origin via env var
-    ],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
@@ -425,7 +430,8 @@ async def get_metrics_summary(
             m = await get_compliance_metrics(cid, window_hours)
             results[cid] = m.model_dump()
             # A control is "failing" when safety_rate < 1.0 and not in grace period
-            if m.safety_rate < 1.0 and not m.startup_grace_active:
+            # M-10: safety_rate is None when no traces exist — treat as not-failing
+            if m.safety_rate is not None and m.safety_rate < 1.0 and not m.startup_grace_active:
                 failing.append(cid)
                 if cid in CRITICAL_CONTROLS:
                     critical_fails.append(cid)

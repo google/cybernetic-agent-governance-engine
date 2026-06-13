@@ -153,7 +153,22 @@ class AsyncRedisClient:
             )
             if self.use_tls:
                 pool_kwargs["ssl"] = True
-                pool_kwargs["ssl_cert_reqs"] = ssl.CERT_NONE  # allow self-signed certs in dev/GKE
+                cage_env = os.getenv("CAGE_ENV", "dev").lower()
+                if cage_env == "dev":
+                    # In dev mode, allow optional cert verification with a warning
+                    pool_kwargs["ssl_cert_reqs"] = ssl.CERT_OPTIONAL
+                    logger.warning(
+                        "⚠️ Redis TLS: ssl_cert_reqs=OPTIONAL in dev mode. "
+                        "Set CAGE_ENV=prod to enforce certificate verification."
+                    )
+                else:
+                    # In production, require full certificate verification (M-04)
+                    pool_kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
+                    ca_cert_path = os.environ.get(
+                        "REDIS_CA_CERT_PATH", "/etc/ssl/certs/ca-certificates.crt"
+                    )
+                    pool_kwargs["ssl_ca_certs"] = ca_cert_path
+                    logger.info("🔒 Redis TLS: ssl_cert_reqs=REQUIRED, ca_certs=%s", ca_cert_path)
             self.pool = ConnectionPool.from_url(
                 self.redis_url,
                 **pool_kwargs,

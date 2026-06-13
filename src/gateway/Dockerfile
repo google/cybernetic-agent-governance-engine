@@ -57,6 +57,13 @@ COPY config /app/config
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
+# M-24: Run as non-root user (UID 1000) to satisfy PSA restricted policy.
+# Create the user before chowning so the RUN layer is cached independently
+# of the source-copy layers above.
+RUN useradd --no-create-home --shell /bin/false --uid 1000 appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
 # Expose port (default 8080; override via --build-arg PORT=<n>)
 ARG PORT=8080
 ENV PORT=$PORT

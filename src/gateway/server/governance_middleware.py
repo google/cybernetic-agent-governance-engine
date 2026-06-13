@@ -63,6 +63,35 @@ _ENVIRONMENT: str = (
     os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
 ).lower()
 
+
+def _is_dev_environment() -> bool:
+    """M-15: Secondary check using K8s namespace to prevent CAGE_ENV spoofing.
+
+    In production GKE deployments the pod's namespace is mounted at
+    /var/run/secrets/kubernetes.io/serviceaccount/namespace.
+    If that file exists and does NOT contain 'dev', we treat the environment
+    as production regardless of the CAGE_ENV env var.
+    """
+    if _ENVIRONMENT not in ("dev", "development", "test"):
+        return False
+    # Secondary check: K8s namespace file (present in GKE pods)
+    ns_file = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+    try:
+        with open(ns_file, encoding="utf-8") as f:
+            namespace = f.read().strip().lower()
+        # If namespace doesn't contain 'dev' or 'test', treat as production
+        if namespace and not any(kw in namespace for kw in ("dev", "test", "local")):
+            logger.warning(
+                "⚠️  M-15: CAGE_ENV=%s but K8s namespace=%r — treating as production.",
+                _ENVIRONMENT, namespace,
+            )
+            return False
+    except FileNotFoundError:
+        pass  # Not running in K8s — trust CAGE_ENV
+    except Exception as exc:
+        logger.warning("M-15: Could not read K8s namespace file: %s", exc)
+    return True
+
 # ---------------------------------------------------------------------------
 # POAM-012 — Module-level startup validation of CAGE_ROUTING_SEAL_SECRET
 # SC-12 / AC-3: HMAC key must be present and sufficiently strong in all

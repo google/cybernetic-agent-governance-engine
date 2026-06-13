@@ -29,6 +29,7 @@ Quality Impact: ZERO
 """
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -102,20 +103,28 @@ class QueryCache:
         logger.debug("QueryCache: NON-CACHEABLE (no pattern match)")
         return False
     
-    def _get_cache_key(self, query: str) -> str:
-        """Generate cache key from normalized query."""
+    def _get_cache_key(self, query: str, governance_context: dict | None = None) -> str:
+        """Generate cache key from normalized query and governance context.
+
+        # Governance context included in cache key to prevent stale decisions
+        """
         # Normalize: lowercase, strip whitespace, remove extra spaces
         normalized = " ".join(query.lower().strip().split())
-        # Hash for fixed-length key
-        hash_digest = hashlib.sha256(normalized.encode()).hexdigest()
-        return f"query_cache:{hash_digest[:16]}"
-    
-    async def get(self, query: str) -> Optional[str]:
+        # Use full 64-character SHA-256 hex digest (M-02: no truncation)
+        query_hash = hashlib.sha256(normalized.encode()).hexdigest()
+        if governance_context:
+            ctx_json = json.dumps(governance_context, sort_keys=True)
+            ctx_hash = hashlib.sha256(ctx_json.encode()).hexdigest()
+            return f"query_cache:{query_hash}:{ctx_hash}"
+        return f"query_cache:{query_hash}"
+
+    async def get(self, query: str, governance_context: dict | None = None) -> Optional[str]:
         """Get cached response if available and query is cacheable."""
         if not self.is_cacheable(query):
             return None
-        
-        cache_key = self._get_cache_key(query)
+
+        # Governance context included in cache key to prevent stale decisions
+        cache_key = self._get_cache_key(query, governance_context)
         
         # Try Redis first
         if self.redis:
@@ -135,12 +144,13 @@ class QueryCache:
         logger.debug("QueryCache MISS: %s", query[:50])
         return None
     
-    async def set(self, query: str, response: str):
+    async def set(self, query: str, response: str, governance_context: dict | None = None):
         """Cache response if query is cacheable."""
         if not self.is_cacheable(query):
             return
-        
-        cache_key = self._get_cache_key(query)
+
+        # Governance context included in cache key to prevent stale decisions
+        cache_key = self._get_cache_key(query, governance_context)
         
         # Try Redis first
         if self.redis:

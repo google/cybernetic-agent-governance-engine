@@ -42,7 +42,6 @@ except ImportError:
     _LANGCHAIN_INSTRUMENTOR_AVAILABLE = False
 
 from config.settings import Config
-from src.governed_financial_advisor.demo.router import demo_router
 from src.governed_financial_advisor.tools.api import tools_router
 from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.utils.context import user_context
@@ -121,8 +120,12 @@ if ENABLE_TRACING and _FASTAPI_INSTRUMENTOR_AVAILABLE and FastAPIInstrumentor is
         server_request_hook=server_request_hook,
         excluded_urls="health,docs,openapi.json,favicon.ico,mcp",
     )  # Only trace meaningful agent routes; health/docs/scanners are excluded
-app.include_router(demo_router)
 app.include_router(tools_router)
+
+if os.environ.get("CAGE_ENV", "dev").lower() == "dev":
+    from src.governed_financial_advisor.demo.router import demo_router
+    app.include_router(demo_router)
+    logger.warning("Demo endpoints enabled — do not use in production")
 
 # --- GLOBAL SINGLETONS ---
 rails = load_rails()
@@ -284,11 +287,20 @@ async def query_agent(
         # Only caches deterministic responses (definitions, regulations, concepts).
         # Market data and personalized advice are NEVER cached.
         from src.governed_financial_advisor.infrastructure.query_cache import get_query_cache
-        
+        from config.settings import Config as _Config
+
         query_cache = await get_query_cache(redis_client=None)  # Will use Redis if available
-        
+
+        # Build governance context for cache key (M-01: prevent stale governance decisions)
+        _governance_context = {
+            "risk_threshold": getattr(_Config, "RISK_THRESHOLD", None),
+            "safety_threshold": os.environ.get("NEMO_SAFETY_THRESHOLD", "0.95"),
+            "cage_env": os.environ.get("CAGE_ENV", "dev"),
+        }
+
         # Check cache first (only for cacheable query types)
-        cached_response = await query_cache.get(req.prompt)
+        # Governance context included in cache key to prevent stale decisions
+        cached_response = await query_cache.get(req.prompt, governance_context=_governance_context)
         if cached_response:
             logger.info("Cache HIT - returning cached response (skipping graph execution)")
             final_response_text = cached_response
@@ -368,7 +380,7 @@ async def query_agent(
         else:
             # Cache successful responses (only if query was cacheable)
             # Blocked responses are not cached (different blocks may have different reasons)
-            await query_cache.set(req.prompt, final_response_text)
+            await query_cache.set(req.prompt, final_response_text, governance_context=_governance_context)
 
         if current_span and current_span.is_recording():
             current_span.set_attribute("gen_ai.system", "langchain")

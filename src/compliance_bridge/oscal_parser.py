@@ -168,7 +168,17 @@ def _get_prop(
 # @raises ValueError If YAML is malformed or contains no findings at all.
 # ---------------------------------------------------------------------------
 
+# M-09: Maximum OSCAL YAML payload size (5 MB) to prevent DoS via yaml.safe_load
+_MAX_OSCAL_YAML_BYTES: int = 5 * 1024 * 1024  # 5 MB
+
+
 def parse_oscal_yaml(oscal_yaml: str) -> list[OscalFinding]:
+    # M-09: Reject oversized payloads before yaml.safe_load to prevent DoS
+    if len(oscal_yaml.encode("utf-8")) > _MAX_OSCAL_YAML_BYTES:
+        raise ValueError(
+            f"[oscal_parser] OSCAL YAML payload exceeds maximum allowed size "
+            f"({_MAX_OSCAL_YAML_BYTES // (1024 * 1024)} MB). Rejecting to prevent DoS."
+        )
     # 1. Parse YAML (raises yaml.YAMLError on syntax error)
     try:
         raw = yaml.safe_load(oscal_yaml)

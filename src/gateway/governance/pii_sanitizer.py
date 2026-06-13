@@ -85,6 +85,22 @@ _PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         ),
         "[REDACTED_CC]",
     ),
+    # M-14: IBAN — International Bank Account Number (up to 34 alphanumeric chars).
+    # Format: 2-letter country code + 2 check digits + up to 30 BBAN chars.
+    (
+        re.compile(
+            r"\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b"
+        ),
+        "[REDACTED_IBAN]",
+    ),
+    # M-14: SWIFT/BIC code — 8 or 11 alphanumeric characters.
+    # Format: 4-char bank code + 2-char country + 2-char location + optional 3-char branch.
+    (
+        re.compile(
+            r"\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b"
+        ),
+        "[REDACTED_SWIFT]",
+    ),
     # Email address: RFC 5321 simplified.
     (
         re.compile(

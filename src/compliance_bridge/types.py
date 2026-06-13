@@ -36,7 +36,7 @@ a separate short-form alias map — see TradingKnowledgeGraph.ISO_CONTROL_MAP.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -47,7 +47,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ComplianceMetrics(BaseModel):
     control_id: str
-    safety_rate: float = Field(ge=0.0, le=1.0)
+    # M-10: None when no traces exist in the window (avoids false-positive 1.0 score)
+    safety_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     total_traces: int = Field(ge=0)
     blocked_traces: int = Field(ge=0)
     passed_traces: int = Field(ge=0)

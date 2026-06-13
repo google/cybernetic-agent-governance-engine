@@ -188,13 +188,30 @@ def _prune_message_history(messages: list, max_pairs: int = 4) -> list:
 # must call the getters instead; the nodes below already use the getters.
 
 
+def _sanitize_user_message(text: str) -> str:
+    """Strip control characters and truncate user input before LLM inclusion.
+
+    M-05: Prevents prompt-injection via crafted user messages.
+    Removes ASCII control characters (except newline/tab) and caps length.
+    """
+    import unicodedata
+    # Remove ASCII control characters except \n (0x0A) and \t (0x09)
+    sanitized = "".join(
+        ch for ch in text
+        if unicodedata.category(ch) != "Cc" or ch in ("\n", "\t")
+    )
+    # Truncate to 4096 characters to prevent context-window stuffing
+    return sanitized[:4096]
+
+
 def thinker_node(state):
     """DeepSeek analyzes the state and creates a plan."""
     logger.debug("--- [Graph] Supervisor (Thinker) ---")
 
     # --- State Management: Extract and persist user profile ---
     updated_state = state.copy()
-    last_msg_text = state["messages"][-1].content.lower()
+    # M-05: Sanitize raw user input before any LLM prompt inclusion
+    last_msg_text = _sanitize_user_message(state["messages"][-1].content).lower()
 
     if any(term in last_msg_text for term in ["conservative", "moderate", "aggressive"]):
         if "conservative" in last_msg_text:

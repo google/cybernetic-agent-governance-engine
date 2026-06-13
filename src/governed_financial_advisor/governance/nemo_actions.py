@@ -27,6 +27,9 @@ These fallback implementations should NOT be registered with production NeMo Gua
 Threshold loading: reads from GovernanceThresholds singleton (60s TTL cache).
 """
 
+import base64
+import hashlib
+import hmac
 import logging
 import os
 import time
@@ -161,15 +164,47 @@ def check_slippage_risk(context: Dict[str, Any]) -> bool:
     return result
 
 
-def check_approval_token(context: Dict[str, Any]) -> bool:
-    """Return True if a valid approval token is present.
+def generate_approval_token(thread_id: str, trade_id: str, ttl_seconds: int = 3600) -> str:
+    """Generate a cryptographically signed approval token."""
+    secret = os.environ.get("CAGE_ROUTING_SEAL_SECRET", "dev-secret")
+    expiry = int(time.time()) + ttl_seconds
+    payload = f"{thread_id}:{trade_id}:{expiry}"
+    signature = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    token_data = f"{payload}:{signature}"
+    return base64.urlsafe_b64encode(token_data.encode()).decode()
 
-    Token is valid when it is non-empty and does NOT equal the known bad
-    signature sentinel 'bad_sig'.  A token containing 'valid' is always
-    accepted (legacy compatibility).
+
+def validate_approval_token(token: str, thread_id: str, trade_id: str) -> bool:
+    """Validate a cryptographically signed approval token."""
+    try:
+        token_data = base64.urlsafe_b64decode(token.encode()).decode()
+        parts = token_data.rsplit(":", 1)
+        if len(parts) != 2:
+            return False
+        payload, signature = parts
+        payload_parts = payload.split(":")
+        if len(payload_parts) != 3:
+            return False
+        t_id, tr_id, expiry_str = payload_parts
+        if t_id != thread_id or tr_id != trade_id:
+            return False
+        if int(time.time()) > int(expiry_str):
+            return False
+        secret = os.environ.get("CAGE_ROUTING_SEAL_SECRET", "dev-secret")
+        expected_sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(signature, expected_sig)
+    except Exception:
+        return False
+
+
+def check_approval_token(context: Dict[str, Any]) -> bool:
+    """Return True if a valid HMAC-signed approval token is present.
+
+    Uses cryptographic HMAC-SHA256 validation. Falls back to legacy
+    non-empty check when thread_id/trade_id are not provided in context.
 
     Returns:
-        True  — token present and valid.
+        True  — token present and cryptographically valid.
         False — token absent or invalid (fail-closed).
     """
     token = context.get("approval_token")
@@ -186,6 +221,20 @@ def check_approval_token(context: Dict[str, Any]) -> bool:
         logger.warning("check_approval_token: token is known bad signature — DENY")
         return False
 
+    # Attempt HMAC validation when thread_id and trade_id are available
+    thread_id = context.get("thread_id", "")
+    trade_id = context.get("trade_id", "")
+    if thread_id and trade_id:
+        valid = validate_approval_token(token_str, thread_id, trade_id)
+        if not valid:
+            logger.warning(
+                "check_approval_token: HMAC validation failed for thread=%s trade=%s — DENY",
+                thread_id, trade_id,
+            )
+        return valid
+
+    # Legacy path: token is non-empty and not a known bad value
+    logger.debug("check_approval_token: no thread_id/trade_id — using legacy non-empty check")
     return True
 
 
