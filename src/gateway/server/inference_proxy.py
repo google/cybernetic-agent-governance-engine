@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import time
+import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, Optional
 
@@ -76,6 +77,17 @@ def _get_symbolic_governor():
 logger = logging.getLogger("Gateway.InferenceProxy")
 
 inference_app = FastAPI(title="CAGE Inference Proxy")
+
+
+def _safe_error_response(exc: Exception, status_code: int = 500) -> dict:
+    """Return a sanitized error response with correlation ID.
+
+    Log full details server-side so operators can trace the issue without
+    exposing raw exception messages (including stack traces) to API callers.
+    """
+    correlation_id = str(_uuid.uuid4())
+    logger.error("Request failed [correlation_id=%s]", correlation_id, exc_info=exc)
+    return {"error": "Internal server error", "correlation_id": correlation_id}
 
 # ---------------------------------------------------------------------------
 # Module-level pooled httpx client (R-06 fix — connection pooling)
@@ -358,8 +370,8 @@ async def chat_completions(
         except HTTPException:
             raise
         except Exception as exc:
-            logger.error("vLLM Proxy Error: %s", exc)
-            raise HTTPException(status_code=500, detail=f"LLM backend connection error: {exc}")
+            safe_err = _safe_error_response(exc)
+            raise HTTPException(status_code=500, detail=safe_err)
 
         # 5. Output filtering / PII masking
         if "choices" in vllm_response and vllm_response["choices"]:
