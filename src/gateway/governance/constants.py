@@ -74,6 +74,46 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger("Gateway.Governance.Constants")
 
+
+# ---------------------------------------------------------------------------
+# Secure environment variable helper
+# ---------------------------------------------------------------------------
+
+def _require_env(key: str, fallback: str, *, sensitive: bool = True) -> str:
+    """Return the value of environment variable *key*, or *fallback* in dev.
+
+    In production (CAGE_ENV=prod), raises RuntimeError for sensitive variables
+    that are not set — preventing silent use of insecure defaults.
+
+    In dev/test, logs a warning and returns the fallback so existing
+    non-production deployments are not broken.
+
+    Args:
+        key:       Environment variable name.
+        fallback:  Default value to use in non-production environments.
+        sensitive: When True, raises in prod if the variable is unset.
+                   Set to False for non-secret configuration values.
+
+    Returns:
+        The environment variable value, or *fallback* in dev/test.
+
+    Raises:
+        RuntimeError: If *sensitive* is True, CAGE_ENV=prod, and *key* is unset.
+    """
+    value = os.environ.get(key)
+    if value:
+        return value
+    cage_env = os.environ.get("CAGE_ENV", "dev").lower()
+    if cage_env == "prod" and sensitive:
+        raise RuntimeError(
+            f"Required environment variable {key!r} is not set in production. "
+            f"Set it via Kubernetes Secret or environment injection before starting."
+        )
+    logging.getLogger(__name__).warning(
+        "Using fallback for %s — set this in production", key
+    )
+    return fallback
+
 # ---------------------------------------------------------------------------
 # Supported deployment regions
 # ---------------------------------------------------------------------------
