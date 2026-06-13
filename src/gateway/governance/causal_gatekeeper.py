@@ -66,6 +66,16 @@ CAUSAL_CACHE_TTL_SECONDS: int = int(
     os.getenv("CAUSAL_CACHE_TTL_SECONDS", "60")
 )
 
+# NOTE: Timestamp-based ordering is a best-effort approximation. For production,
+# use span parentId relationships via OpenTelemetry context propagation.
+#
+# When CAUSAL_GATEKEEPER_STRICT_MODE=true, any causal check where trace_id
+# fields are missing or mismatched is rejected outright.  In non-strict mode,
+# a warning is logged and the check falls back to timestamp-only ordering.
+CAUSAL_GATEKEEPER_STRICT_MODE: bool = (
+    os.environ.get("CAUSAL_GATEKEEPER_STRICT_MODE", "false").lower() == "true"
+)
+
 # Sentinel string fragment: if a regional profile's ``legacy_citation`` for a
 # control contains this marker, it signals that the citation has no legal force
 # in the active jurisdiction.  In that case the gatekeeper emits
@@ -294,6 +304,76 @@ def _causal_cache_set_sync(cache_key: str, result: bool, reason: str) -> None:
             "Causal cache SET (sync) failed (key=%s): %s — proceeding without cache.",
             cache_key, exc,
         )
+
+
+def validate_causal_ordering(
+    governance_span: dict,
+    execution_span: dict,
+) -> bool:
+    """Validate causal ordering between a governance span and an execution span.
+
+    NOTE: Timestamp-based ordering is a best-effort approximation. For production,
+    use span parentId relationships via OpenTelemetry context propagation.
+
+    Performs two checks:
+      1. Timestamp check: governance_span timestamp must precede execution_span timestamp.
+      2. trace_id check: both spans must share the same trace_id (same causal chain).
+
+    When CAUSAL_GATEKEEPER_STRICT_MODE=true, missing or mismatched trace_id fields
+    cause an immediate rejection.  In non-strict mode, a warning is logged and the
+    check falls back to timestamp-only ordering.
+
+    Args:
+        governance_span: Dict with optional keys 'timestamp', 'trace_id'.
+        execution_span:  Dict with optional keys 'timestamp', 'trace_id'.
+
+    Returns:
+        True if causal ordering is valid, False if ordering cannot be confirmed.
+    """
+    gov_trace_id = governance_span.get("trace_id")
+    exec_trace_id = execution_span.get("trace_id")
+
+    # --- trace_id validation ---
+    if gov_trace_id and exec_trace_id:
+        if gov_trace_id != exec_trace_id:
+            logger.warning(
+                "causal_ordering: trace_id mismatch — governance=%s execution=%s. "
+                "Spans are not in the same causal chain.",
+                gov_trace_id,
+                exec_trace_id,
+            )
+            return False
+    else:
+        # trace_id fields missing — strict mode rejects, non-strict warns and continues
+        if CAUSAL_GATEKEEPER_STRICT_MODE:
+            logger.warning(
+                "causal_ordering: STRICT MODE — trace_id fields missing "
+                "(governance_has=%s, execution_has=%s). Rejecting.",
+                bool(gov_trace_id),
+                bool(exec_trace_id),
+            )
+            return False
+        logger.warning(
+            "causal_ordering: trace_id fields missing — falling back to "
+            "timestamp-only ordering (best-effort approximation). "
+            "Set CAUSAL_GATEKEEPER_STRICT_MODE=true to reject missing trace_ids."
+        )
+
+    # --- Timestamp check (best-effort) ---
+    gov_ts = governance_span.get("timestamp")
+    exec_ts = execution_span.get("timestamp")
+
+    if gov_ts is not None and exec_ts is not None:
+        if gov_ts >= exec_ts:
+            logger.warning(
+                "causal_ordering: governance timestamp (%s) is not before "
+                "execution timestamp (%s) — ordering violation.",
+                gov_ts,
+                exec_ts,
+            )
+            return False
+
+    return True
 
 
 def causal_safety_check(params: dict, current_telemetry: Optional[pd.DataFrame] = None) -> bool:
