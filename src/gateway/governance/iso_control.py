@@ -32,6 +32,7 @@ Attribute schema (6 mandatory attributes):
     iso42001.evidence_chain — composite key "{control}:{tier}:{outcome}"
 """
 
+import collections
 import logging
 import os
 import time
@@ -39,6 +40,13 @@ from importlib.metadata import version as _pkg_version, PackageNotFoundError
 from typing import Any
 
 logger = logging.getLogger("Gateway.Governance.IsoControl")
+
+# ---------------------------------------------------------------------------
+# In-memory audit trail — fast local cache (last 1000 entries)
+# ---------------------------------------------------------------------------
+_audit_trail: collections.deque = collections.deque(maxlen=1000)
+
+_REDIS_STREAM_KEY = "iso_control:audit_trail"
 
 # ---------------------------------------------------------------------------
 # Deployment region — resolved at call time via the same env-var pattern used
@@ -66,6 +74,32 @@ def _resolve_gateway_version() -> str:
 
 
 _GATEWAY_VERSION: str = _resolve_gateway_version()
+
+
+# ---------------------------------------------------------------------------
+# Redis persistence helper
+# ---------------------------------------------------------------------------
+
+def _persist_evaluation(result: dict) -> None:
+    """Write an ISO control evaluation result to a Redis stream for durable audit trail.
+
+    Uses stream key 'iso_control:audit_trail' with XADD.
+    Failures are logged and swallowed — Redis unavailability must not break
+    the control evaluation path.
+    """
+    try:
+        from src.gateway.infrastructure.redis_client import sync_redis_client  # noqa: PLC0415
+        if sync_redis_client is None:
+            return
+        # XADD requires a flat dict of str→str fields
+        fields = {k: str(v) for k, v in result.items()}
+        sync_redis_client._get().xadd(_REDIS_STREAM_KEY, fields)
+    except Exception as exc:
+        logger.error(
+            "iso_control: failed to persist evaluation to Redis stream '%s': %s",
+            _REDIS_STREAM_KEY,
+            exc,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -118,3 +152,18 @@ def stamp_iso_control(
     span.set_attribute("iso42001.timestamp",       timestamp_ms)
     span.set_attribute("iso42001.gateway_version", _GATEWAY_VERSION)
     span.set_attribute("iso42001.evidence_chain",  evidence_chain)
+
+    # Build evaluation result dict and persist durably
+    result = {
+        "control": control,
+        "tier": tier,
+        "outcome": outcome,
+        "timestamp_ms": timestamp_ms,
+        "gateway_version": _GATEWAY_VERSION,
+        "evidence_chain": evidence_chain,
+        "deployment_region": _get_deployment_region(),
+    }
+    # Keep fast local cache (bounded deque, maxlen=1000)
+    _audit_trail.append(result)
+    # Persist to Redis stream for durable cross-pod audit trail
+    _persist_evaluation(result)
