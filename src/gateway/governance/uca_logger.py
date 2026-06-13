@@ -256,6 +256,16 @@ class UCALogger:
         region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
         session_key = f"quota:session:{agent_id}"
 
+        # PII sanitized before persistence per GDPR Art. 32 / MAS Notice 655
+        # Sanitize all text fields that may contain PII or sensitive financial data.
+        _sanitize = self._pii.sanitize
+
+        # Sanitize kwargs fields that may carry prompt/content/message/description
+        for _field in ("injected_content", "original_args", "sanitized_args",
+                       "prompt", "content", "message", "description", "block_reason"):
+            if _field in kwargs and isinstance(kwargs[_field], str):
+                kwargs[_field] = _sanitize(kwargs[_field])
+
         # Build request_summary with PII sanitization
         raw_summary = ""
         if request_body:
@@ -268,7 +278,7 @@ class UCALogger:
         elif kwargs.get("original_args"):
             raw_summary = str(kwargs["original_args"])[:512]
 
-        request_summary = self._pii.sanitize(raw_summary) if raw_summary else ""
+        request_summary = _sanitize(raw_summary) if raw_summary else ""
 
         # Quota-specific fields
         block_reason = kwargs.get("block_reason", "")
