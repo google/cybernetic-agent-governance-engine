@@ -16,12 +16,13 @@ import logging
 import json
 import time
 from typing import Any, Dict, Optional
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from opentelemetry import trace as otel_trace
 from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel
 
 from src.governed_financial_advisor.graph.annotations import side_effect_node
+from src.governed_financial_advisor.infrastructure.auth import require_api_key
 from src.governed_financial_advisor.tools.market_data_tool import get_market_data
 from src.governed_financial_advisor.tools.trades import execute_trade, propose_trade
 from src.gateway.governance.singletons import opa_client
@@ -55,7 +56,10 @@ class ToolExecutionRequest(BaseModel):
 
 @tools_router.post("/execute")
 @side_effect_node(kind="api_call", external_system="gateway_api")
-async def execute_tool_endpoint(request: ToolExecutionRequest):
+async def execute_tool_endpoint(
+    request: ToolExecutionRequest,
+    _auth: str = Depends(require_api_key),
+):
     """
     Executes a named tool directly via HTTP.
     Matches the checks performed by GatewayClient.
