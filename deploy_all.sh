@@ -75,52 +75,118 @@ EOF
 }
 
 # ─── .env loader ─────────────────────────────────────────────────────────────
+# H-16: Load .env WITHOUT set -a / set -o allexport.
+# Using allexport exports ALL variables (including secrets) to every child
+# process spawned by this script.  Secrets then appear in /proc/<pid>/environ
+# for terraform, gcloud, kubectl, etc., and may be logged in Cloud Build logs.
+#
+# Instead: source .env into a subshell, read only the variables we need, and
+# export them selectively.  Secrets are mapped directly to TF_VAR_* names so
+# they are never present as bare env vars in child process environments.
+_read_env_var() {
+  # Read a single variable from .env without exporting it to the environment.
+  # Usage: _read_env_var VAR_NAME
+  local var_name="$1"
+  local value
+  # grep for the line, strip comments, strip surrounding quotes
+  value=$(grep -E "^${var_name}=" "$REPO_ROOT/.env" 2>/dev/null \
+    | head -1 \
+    | sed "s/^${var_name}=//" \
+    | sed "s/^['\"]//;s/['\"]$//" \
+    | sed 's/[[:space:]]*#.*//')
+  printf '%s' "$value"
+}
+
 load_env() {
   if [[ -f "$REPO_ROOT/.env" ]]; then
-    info "Loading environment from .env and exporting as TF_VAR_* variables"
-    
-    # First, load all variables normally
-    set -o allexport
-    # shellcheck disable=SC1090
-    source "$REPO_ROOT/.env"
-    set +o allexport
-    
-    # Then map common .env variables to TF_VAR_* format for Terraform
-    # Authentication & Secrets
-    [[ -n "${AWS_ACCESS_KEY_ID:-}" ]] && export TF_VAR_aws_access_key="$AWS_ACCESS_KEY_ID"
-    [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]] && export TF_VAR_aws_secret_key="$AWS_SECRET_ACCESS_KEY"
-    [[ -n "${HUGGING_FACE_HUB_TOKEN:-}" ]] && export TF_VAR_hf_token="$HUGGING_FACE_HUB_TOKEN"
-    [[ -n "${GOVERNANCE_SALT:-}" ]] && export TF_VAR_governance_salt="$GOVERNANCE_SALT"
-    [[ -n "${CAGE_ROUTING_SEAL_SECRET:-}" ]] && export TF_VAR_routing_seal_secret="$CAGE_ROUTING_SEAL_SECRET"
-    
-    # Langfuse
-    [[ -n "${LANGFUSE_HOST:-}" ]] && export TF_VAR_langfuse_host="$LANGFUSE_HOST"
-    [[ -n "${LANGFUSE_PUBLIC_KEY:-}" ]] && export TF_VAR_langfuse_public_key="$LANGFUSE_PUBLIC_KEY"
-    [[ -n "${LANGFUSE_SECRET_KEY:-}" ]] && export TF_VAR_langfuse_secret_key="$LANGFUSE_SECRET_KEY"
-    [[ -n "${LANGFUSE_COMPLIANCE_PUBLIC_KEY:-}" ]] && export TF_VAR_langfuse_compliance_public_key="$LANGFUSE_COMPLIANCE_PUBLIC_KEY"
-    [[ -n "${LANGFUSE_COMPLIANCE_SECRET_KEY:-}" ]] && export TF_VAR_langfuse_compliance_secret_key="$LANGFUSE_COMPLIANCE_SECRET_KEY"
-    
-    # Models
-    [[ -n "${MODEL_REASONING:-}" ]] && export TF_VAR_model_reasoning="$MODEL_REASONING"
-    [[ -n "${MODEL_FAST:-}" ]] && export TF_VAR_model_fast="$MODEL_FAST"
-    [[ -n "${MODEL_CONSENSUS:-}" ]] && export TF_VAR_model_consensus="$MODEL_CONSENSUS"
-    # Infrastructure
-    [[ -n "${VLLM_REASONING_API_BASE:-}" ]] && export TF_VAR_vllm_reasoning_url="$VLLM_REASONING_API_BASE"
-    [[ -n "${VLLM_FAST_API_BASE:-}" ]] && export TF_VAR_vllm_fast_url="$VLLM_FAST_API_BASE"
-    [[ -n "${VLLM_GATEWAY_URL:-}" ]] && export TF_VAR_vllm_gateway_url="$VLLM_GATEWAY_URL"
-    [[ -n "${OPA_URL:-}" ]] && export TF_VAR_opa_url="$OPA_URL"
-    [[ -n "${REDIS_URL:-}" ]] && export TF_VAR_redis_url="$REDIS_URL"
-    [[ -n "${S3_ENDPOINT_URL:-}" ]] && export TF_VAR_minio_endpoint="$S3_ENDPOINT_URL"
-    [[ -n "${S3_BUCKET_NAME:-}" ]] && export TF_VAR_minio_bucket="$S3_BUCKET_NAME"
-    
-    # General
-    [[ -n "${ENVIRONMENT:-}" ]] && export TF_VAR_environment="$ENVIRONMENT"
-    [[ -n "${K8S_CLUSTER_NAME:-}" ]] && export TF_VAR_cluster_name="$K8S_CLUSTER_NAME"
-    [[ -n "${K8S_NAMESPACE:-}" ]] && export TF_VAR_namespace="$K8S_NAMESPACE"
-    [[ -n "${REGISTRY_URL:-}" ]] && export TF_VAR_registry_url="$REGISTRY_URL"
-    [[ -n "${STORAGE_BACKEND:-}" ]] && export TF_VAR_storage_backend="$STORAGE_BACKEND"
-    [[ -n "${COLD_TIER_BUCKET:-}" ]] && export TF_VAR_cold_tier_bucket="$COLD_TIER_BUCKET"
-    
+    info "Loading environment from .env (selective export — H-16)"
+
+    # ── Non-secret infrastructure variables (safe to export broadly) ──────
+    local _env _cluster _namespace _registry _storage _cold_tier
+    local _vllm_reasoning _vllm_fast _vllm_gateway _opa _redis _s3_ep _s3_bkt
+    local _model_reasoning _model_fast _model_consensus
+
+    _env=$(_read_env_var ENVIRONMENT)
+    _cluster=$(_read_env_var K8S_CLUSTER_NAME)
+    _namespace=$(_read_env_var K8S_NAMESPACE)
+    _registry=$(_read_env_var REGISTRY_URL)
+    _storage=$(_read_env_var STORAGE_BACKEND)
+    _cold_tier=$(_read_env_var COLD_TIER_BUCKET)
+    _vllm_reasoning=$(_read_env_var VLLM_REASONING_API_BASE)
+    _vllm_fast=$(_read_env_var VLLM_FAST_API_BASE)
+    _vllm_gateway=$(_read_env_var VLLM_GATEWAY_URL)
+    _opa=$(_read_env_var OPA_URL)
+    _redis=$(_read_env_var REDIS_URL)
+    _s3_ep=$(_read_env_var S3_ENDPOINT_URL)
+    _s3_bkt=$(_read_env_var S3_BUCKET_NAME)
+    _model_reasoning=$(_read_env_var MODEL_REASONING)
+    _model_fast=$(_read_env_var MODEL_FAST)
+    _model_consensus=$(_read_env_var MODEL_CONSENSUS)
+
+    [[ -n "$_env" ]]            && export TF_VAR_environment="$_env"
+    [[ -n "$_cluster" ]]        && export TF_VAR_cluster_name="$_cluster"
+    [[ -n "$_namespace" ]]      && export TF_VAR_namespace="$_namespace"
+    [[ -n "$_registry" ]]       && export TF_VAR_registry_url="$_registry"
+    [[ -n "$_storage" ]]        && export TF_VAR_storage_backend="$_storage"
+    [[ -n "$_cold_tier" ]]      && export TF_VAR_cold_tier_bucket="$_cold_tier"
+    [[ -n "$_vllm_reasoning" ]] && export TF_VAR_vllm_reasoning_url="$_vllm_reasoning"
+    [[ -n "$_vllm_fast" ]]      && export TF_VAR_vllm_fast_url="$_vllm_fast"
+    [[ -n "$_vllm_gateway" ]]   && export TF_VAR_vllm_gateway_url="$_vllm_gateway"
+    [[ -n "$_opa" ]]            && export TF_VAR_opa_url="$_opa"
+    [[ -n "$_redis" ]]          && export TF_VAR_redis_url="$_redis"
+    [[ -n "$_s3_ep" ]]          && export TF_VAR_minio_endpoint="$_s3_ep"
+    [[ -n "$_s3_bkt" ]]         && export TF_VAR_minio_bucket="$_s3_bkt"
+    [[ -n "$_model_reasoning" ]] && export TF_VAR_model_reasoning="$_model_reasoning"
+    [[ -n "$_model_fast" ]]     && export TF_VAR_model_fast="$_model_fast"
+    [[ -n "$_model_consensus" ]] && export TF_VAR_model_consensus="$_model_consensus"
+
+    # ── Langfuse host (non-secret) ─────────────────────────────────────────
+    local _lf_host
+    _lf_host=$(_read_env_var LANGFUSE_HOST)
+    [[ -n "$_lf_host" ]] && export TF_VAR_langfuse_host="$_lf_host"
+
+    # ── Secrets — mapped directly to TF_VAR_* (never exported as bare vars) ─
+    # These are read and immediately assigned to TF_VAR_* names.  The raw
+    # secret values are never exported as standalone env vars, preventing them
+    # from leaking into child process /proc/<pid>/environ entries under their
+    # original names.
+    local _secret_val
+    _secret_val=$(_read_env_var AWS_ACCESS_KEY_ID)
+    [[ -n "$_secret_val" ]] && export TF_VAR_aws_access_key="$_secret_val"
+    unset _secret_val
+
+    _secret_val=$(_read_env_var AWS_SECRET_ACCESS_KEY)
+    [[ -n "$_secret_val" ]] && export TF_VAR_aws_secret_key="$_secret_val"
+    unset _secret_val
+
+    _secret_val=$(_read_env_var HUGGING_FACE_HUB_TOKEN)
+    [[ -n "$_secret_val" ]] && export TF_VAR_hf_token="$_secret_val"
+    unset _secret_val
+
+    _secret_val=$(_read_env_var GOVERNANCE_SALT)
+    [[ -n "$_secret_val" ]] && export TF_VAR_governance_salt="$_secret_val"
+    unset _secret_val
+
+    _secret_val=$(_read_env_var CAGE_ROUTING_SEAL_SECRET)
+    [[ -n "$_secret_val" ]] && export TF_VAR_routing_seal_secret="$_secret_val"
+    unset _secret_val
+
+    _secret_val=$(_read_env_var LANGFUSE_PUBLIC_KEY)
+    [[ -n "$_secret_val" ]] && export TF_VAR_langfuse_public_key="$_secret_val"
+    unset _secret_val
+
+    _secret_val=$(_read_env_var LANGFUSE_SECRET_KEY)
+    [[ -n "$_secret_val" ]] && export TF_VAR_langfuse_secret_key="$_secret_val"
+    unset _secret_val
+
+    _secret_val=$(_read_env_var LANGFUSE_COMPLIANCE_PUBLIC_KEY)
+    [[ -n "$_secret_val" ]] && export TF_VAR_langfuse_compliance_public_key="$_secret_val"
+    unset _secret_val
+
+    _secret_val=$(_read_env_var LANGFUSE_COMPLIANCE_SECRET_KEY)
+    [[ -n "$_secret_val" ]] && export TF_VAR_langfuse_compliance_secret_key="$_secret_val"
+    unset _secret_val
+
     success "Environment loaded: ${TF_VAR_environment:-dev} | Namespace: ${TF_VAR_namespace:-governance-stack}"
   else
     warn ".env not found — relying on shell environment variables"
