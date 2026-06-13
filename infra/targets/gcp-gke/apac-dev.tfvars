@@ -80,12 +80,15 @@ enable_cmek                    = false
 enable_private_master_endpoint = false
 enable_pod_security_standards  = false # Apply manually via pod-security-admission.yaml
 
-# APAC Dev: open access (prod must restrict to SG VPN CIDR)
+# SECURITY (C-06): Restrict to RFC 1918 private ranges only.
+# Never use 0.0.0.0/0 — it exposes the GKE API server to the internet.
+# Replace 10.0.0.0/8 with your VPN/office CIDR ranges before deploying.
+# Example: authorized_networks = [{ cidr = "203.0.113.0/24", display_name = "SG VPN" }]
 # MAS TRM §4.2 — access controls for financial data systems
 authorized_networks = [
   {
-    cidr         = "0.0.0.0/0"
-    display_name = "Allow All (APAC Dev Only — restrict in prod)"
+    cidr         = "10.0.0.0/8"
+    display_name = "RFC-1918 private range (restrict to VPN CIDR in prod)"
   }
 ]
 
