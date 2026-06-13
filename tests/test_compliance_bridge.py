@@ -38,6 +38,7 @@ pytestmark = pytest.mark.unit
 
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
+from fastapi import Depends
 
 
 # ---------------------------------------------------------------------------
@@ -278,15 +279,27 @@ assessment-results:
 def client():
     """
     TestClient for the FastAPI app.
+
     Langfuse is patched at import time so no real credentials are needed.
+    The ``require_internal_token`` dependency (C-07) is overridden to return
+    a fixed sentinel so tests are not blocked by auth and can focus on
+    business-logic assertions.  A separate ``TestAuditIngestAuth`` class
+    exercises the auth behaviour directly.
     """
     with patch("src.compliance_bridge.main.Langfuse") as MockLangfuse:
         mock_lf = MagicMock()
         MockLangfuse.return_value = mock_lf
 
         from src.compliance_bridge.main import app
-        with TestClient(app, raise_server_exceptions=True) as c:
-            yield c
+        from src.compliance_bridge.auth import require_internal_token
+
+        # Override auth so business-logic tests are not blocked by C-07.
+        app.dependency_overrides[require_internal_token] = lambda: "test-token"
+        try:
+            with TestClient(app, raise_server_exceptions=True) as c:
+                yield c
+        finally:
+            app.dependency_overrides.pop(require_internal_token, None)
 
 
 class TestHealthEndpoint:
@@ -416,6 +429,67 @@ class TestAuditIngestEndpoint:
         assert data["phase"] == "running"
         assert data["status"] == "ok"
         assert data["audit_id"] == "test-audit-bg"
+
+
+class TestAuditIngestAuth:
+    """Verify that C-07 auth is enforced when a token IS configured.
+
+    Uses CAGE_ENV=staging so that:
+    - The auth module enforces the token (only skips in CAGE_ENV=dev).
+    - The KMS batch signer does NOT call assert_kms_active_in_production()
+      (that assertion only fires when CAGE_ENV=prod).
+    - The routing-seal startup check passes (it reads ENVIRONMENT, not CAGE_ENV,
+      and defaults to "development" when unset).
+    """
+
+    # Env vars shared across all auth tests — staging enforces auth without
+    # triggering the KMS production assertion added by C-08.
+    _AUTH_ENV = {
+        "COMPLIANCE_BRIDGE_INTERNAL_TOKEN": "secret-token",
+        "CAGE_ENV": "staging",
+    }
+
+    def test_missing_token_returns_401_when_token_configured(self):
+        """Without a bearer token the endpoint must return 401."""
+        with patch("src.compliance_bridge.main.Langfuse") as MockLangfuse:
+            MockLangfuse.return_value = MagicMock()
+            with patch.dict(os.environ, self._AUTH_ENV, clear=False):
+                from src.compliance_bridge.main import app
+                with TestClient(app, raise_server_exceptions=True) as c:
+                    response = c.post(
+                        "/v1/audit/ingest",
+                        json={"oscal_yaml": "  ", "audit_id": "auth-test"},
+                    )
+                assert response.status_code == 401
+
+    def test_wrong_token_returns_401(self):
+        """A bearer token that does not match the configured secret must return 401."""
+        with patch("src.compliance_bridge.main.Langfuse") as MockLangfuse:
+            MockLangfuse.return_value = MagicMock()
+            with patch.dict(os.environ, self._AUTH_ENV, clear=False):
+                from src.compliance_bridge.main import app
+                with TestClient(app, raise_server_exceptions=True) as c:
+                    response = c.post(
+                        "/v1/audit/ingest",
+                        headers={"Authorization": "Bearer wrong-token"},
+                        json={"oscal_yaml": "  ", "audit_id": "auth-test"},
+                    )
+                assert response.status_code == 401
+
+    def test_correct_token_passes_auth_layer(self):
+        """A valid bearer token must pass auth (business logic then handles the request)."""
+        with patch("src.compliance_bridge.main.Langfuse") as MockLangfuse:
+            MockLangfuse.return_value = MagicMock()
+            with patch.dict(os.environ, self._AUTH_ENV, clear=False):
+                from src.compliance_bridge.main import app
+                with TestClient(app, raise_server_exceptions=True) as c:
+                    # Empty oscal_yaml → 400 from business logic, NOT 401 from auth.
+                    response = c.post(
+                        "/v1/audit/ingest",
+                        headers={"Authorization": "Bearer secret-token"},
+                        json={"oscal_yaml": "  ", "audit_id": "auth-test"},
+                    )
+                assert response.status_code == 400
 
 
 class TestTelemetryHistoryEndpoint:

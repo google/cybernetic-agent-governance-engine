@@ -73,12 +73,18 @@ def _make_metrics(control_id: str, safety_rate: float = 1.0, grace: bool = False
 
 @pytest.fixture
 def client():
+    """TestClient with Langfuse patched and C-07 auth dependency overridden."""
     with patch("src.compliance_bridge.main.Langfuse") as MockLF:
         MockLF.return_value = MagicMock()
         from src.compliance_bridge.main import app
+        from src.compliance_bridge.auth import require_internal_token
         from fastapi.testclient import TestClient
-        with TestClient(app, raise_server_exceptions=True) as c:
-            yield c
+        app.dependency_overrides[require_internal_token] = lambda: "test-token"
+        try:
+            with TestClient(app, raise_server_exceptions=True) as c:
+                yield c
+        finally:
+            app.dependency_overrides.pop(require_internal_token, None)
 
 
 # ---------------------------------------------------------------------------

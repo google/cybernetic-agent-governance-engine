@@ -59,17 +59,26 @@ assessment-results:
 
 @pytest.fixture
 def client():
-    """TestClient with Langfuse patched — required for app import."""
+    """TestClient with Langfuse patched — required for app import.
+
+    The ``require_internal_token`` dependency (C-07) is overridden so that
+    unit tests are not blocked by auth and can focus on business-logic.
+    """
     with patch("src.compliance_bridge.main.Langfuse") as MockLF:
         mock_lf = MagicMock()
         MockLF.return_value = mock_lf
         from src.compliance_bridge.main import app
+        from src.compliance_bridge.auth import require_internal_token
         from fastapi.testclient import TestClient
         # Reset audit status store between tests
         from src.compliance_bridge import main as bridge_main
         bridge_main._audit_status.clear()
-        with TestClient(app, raise_server_exceptions=True) as c:
-            yield c
+        app.dependency_overrides[require_internal_token] = lambda: "test-token"
+        try:
+            with TestClient(app, raise_server_exceptions=True) as c:
+                yield c
+        finally:
+            app.dependency_overrides.pop(require_internal_token, None)
 
 
 # ---------------------------------------------------------------------------
