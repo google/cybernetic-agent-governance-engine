@@ -674,8 +674,13 @@ class SymbolicGovernor:
             cbf_allowed = not cbf_raw.startswith("UNSAFE") and not cbf_raw.startswith("[")
             cbf_reason = cbf_raw
         except Exception as exc:
-            logger.warning("⚠️ pre_check: CBF check failed (%s) — treating as SAFE (fail-open).", exc)
-            cbf_reason = f"CBF unavailable: {exc}"
+            # C-02: fail-closed on Redis/CBF unavailability — DENY is the safe default.
+            logger.error(
+                "CBF pre_check failed due to Redis error — denying request for safety",
+                exc_info=True,
+            )
+            cbf_allowed = False
+            cbf_reason = f"CBF unavailable (fail-closed): {exc}"
 
         cbf_result = {
             "allowed": cbf_allowed,
