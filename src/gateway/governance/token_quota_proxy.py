@@ -74,6 +74,13 @@ logger = logging.getLogger("Gateway.Governance.TokenQuotaProxy")
 # Using Lua ensures check + increment is a single atomic Redis operation.
 # ---------------------------------------------------------------------------
 
+# H-10: All quota mutations use atomic Lua scripts via EVALSHA.
+# This eliminates the GET-then-SET race condition where concurrent requests
+# could each read the same counter value below the limit and all proceed,
+# collectively exceeding the quota.  A single Lua script executes atomically
+# on the Redis server — no other command can interleave between the check
+# and the increment.
+
 # check_and_increment: atomically increment step and token counters.
 # Returns {allowed, steps, tokens, reason} as a 4-element list.
 _LUA_CHECK_AND_INCREMENT = """

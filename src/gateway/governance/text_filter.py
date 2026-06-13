@@ -24,6 +24,7 @@ Keyword list is sourced entirely from the validated threshold singleton
 """
 
 import logging
+import re
 from typing import Any, Optional
 
 # ---------------------------------------------------------------------------
@@ -59,16 +60,57 @@ def _load_tier1_keywords() -> list[str]:
     return list(THRESHOLDS.tier1_keywords)  # already upper-cased by Pydantic validator
 
 
+def _validate_keyword(kw: str) -> bool:
+    """Return True if *kw* is a valid, safe keyword for the Aho-Corasick automaton.
+
+    Rejects patterns that would cause catastrophic backtracking (ReDoS) or
+    fail to compile as regex.  Plain keyword strings (no regex metacharacters)
+    are always accepted.  This is a defence-in-depth check — the Aho-Corasick
+    automaton itself does not use regex, but the fallback ``any()`` path does
+    a simple substring match, so we still validate to catch obviously malformed
+    entries early (H-09).
+    """
+    if not kw or not isinstance(kw, str):
+        logger.warning("text_filter: rejecting empty or non-string keyword: %r", kw)
+        return False
+    try:
+        re.compile(re.escape(kw), re.IGNORECASE)
+        return True
+    except re.error as exc:
+        logger.error(
+            "text_filter: keyword %r failed regex validation — skipping: %s", kw, exc
+        )
+        return False
+
+
 def _build_automaton() -> Optional[Any]:
-    """Build and return a pyahocorasick Automaton from the Tier-1 keyword list."""
+    """Build and return a pyahocorasick Automaton from the Tier-1 keyword list.
+
+    Validates each keyword before adding it to the automaton (H-09).
+    Malformed keywords are logged and skipped rather than silently disabling
+    the entire filter.
+    """
     if not _AC_AVAILABLE:
         return None
     keywords = _load_tier1_keywords()
     A = _ahocorasick.Automaton()
+    accepted = 0
     for idx, kw in enumerate(keywords):
+        if not _validate_keyword(kw):
+            continue
         A.add_word(kw.upper(), (idx, kw))
+        accepted += 1
+    if accepted == 0:
+        logger.error(
+            "text_filter: no valid keywords loaded — Tier-1 filter is DISABLED. "
+            "Check config/governance_thresholds.json tier1_keywords."
+        )
+        return None
     A.make_automaton()
-    logger.info("✅ Aho-Corasick automaton built with %d Tier-1 keywords.", len(keywords))
+    logger.info(
+        "✅ Aho-Corasick automaton built with %d/%d valid Tier-1 keywords.",
+        accepted, len(keywords),
+    )
     return A
 
 

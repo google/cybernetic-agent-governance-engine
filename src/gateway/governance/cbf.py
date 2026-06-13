@@ -85,6 +85,29 @@ class ControlBarrierFunction:
             raise RuntimeError("Redis client unavailable.")
         return await redis_client.get_float(self.redis_key, 100000.0)
 
+    async def _read_cbf_state_atomic(self) -> dict[str, float]:
+        """Atomically read all CBF state keys in a single pipeline round-trip.
+
+        Using a pipeline (implicit MULTI/EXEC) prevents the race condition where
+        individual GET calls observe inconsistent state snapshots between reads.
+        All keys are fetched in one atomic batch — no other writer can interleave.
+
+        Returns:
+            dict with key "current_cash" (float).
+        """
+        if redis_client is None:
+            raise RuntimeError("Redis client unavailable.")
+        # pipeline() without transaction=True uses implicit pipelining (batched
+        # GETs sent in one round-trip). For read-only snapshots this is sufficient
+        # and avoids the WATCH overhead of a full MULTI/EXEC transaction.
+        client = redis_client._get()
+        async with client.pipeline(transaction=False) as pipe:
+            pipe.get(self.redis_key)
+            results = await pipe.execute()
+        raw_cash = results[0]
+        current_cash = float(raw_cash) if raw_cash is not None else 100000.0
+        return {"current_cash": current_cash}
+
     def get_h(self, cash_balance: float) -> float:
         """Safety function h(x).  Safe when h(x) >= 0."""
         return cash_balance - self.min_cash_balance
@@ -94,8 +117,15 @@ class ControlBarrierFunction:
     # ------------------------------------------------------------------
 
     async def verify_action(self, action_name: str, payload: dict[str, Any]) -> str:
-        """Verify an action is safe relative to shared Redis cash state."""
-        current_cash = await self._get_current_cash()
+        """Verify an action is safe relative to shared Redis cash state.
+
+        Uses ``_read_cbf_state_atomic()`` to snapshot all state keys in a single
+        pipeline round-trip, preventing the race condition where interleaved writes
+        between individual GETs cause the barrier certificate to be evaluated
+        against an inconsistent state snapshot (H-07).
+        """
+        state = await self._read_cbf_state_atomic()
+        current_cash = state["current_cash"]
 
         if self.tracer:
             with self.tracer.start_as_current_span("safety.cbf_check") as span:

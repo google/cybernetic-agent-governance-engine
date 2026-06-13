@@ -72,9 +72,13 @@ metadata:
     cage.io/poam: "POAM-007,POAM-011"
     cage.io/evidence: "cilium monitor --type l7"
 spec:
+  # H-14: Corrected label selector — the gateway pod carries label app=gateway,
+  # NOT app=governed-financial-advisor.  The previous selector was matching the
+  # wrong pod, blocking legitimate gateway egress and granting unintended
+  # external egress to the financial advisor pod.
   endpointSelector:
     matchLabels:
-      app: governed-financial-advisor
+      app: gateway
   egress:
     # ---- Rule 1: DNS proxy — allows ALL internal DNS resolution -----------
     # The Cilium DNS proxy intercepts UDP 53 responses and dynamically
@@ -132,6 +136,68 @@ spec:
       toPorts:
         - ports:
             - port: "443"
+              protocol: TCP
+
+---
+# =============================================================================
+# Policy 1b: Financial Advisor Egress — internal-only (H-14 companion rule)
+#
+# The governed-financial-advisor pod must NOT have external egress.
+# It communicates only with the gateway (port 8080) and internal services.
+# This rule replaces the unintended external egress that Policy 1 previously
+# granted to the financial advisor pod via the wrong label selector.
+# =============================================================================
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: financial-advisor-egress-internal-only
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: z3n-egress
+  annotations:
+    compliance.nist.gov/control: "SC-7,AC-4,SI-3"
+    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    compliance.nist.gov/last-reviewed: "2026-06-13"
+    cage.io/poam: "POAM-007"
+    cage.io/description: >
+      H-14 companion: restricts governed-financial-advisor to internal egress only.
+      The pod must route all external calls through the gateway watchdog.
+spec:
+  endpointSelector:
+    matchLabels:
+      app: governed-financial-advisor
+  egress:
+    # DNS — internal cluster names only
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*.governance-stack.svc.cluster.local"
+              - matchPattern: "*.svc.cluster.local"
+    # Gateway (orchestration return path and inference proxy)
+    - toEndpoints:
+        - matchLabels:
+            app: gateway
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # Compliance bridge
+    - toEndpoints:
+        - matchLabels:
+            app: compliance-bridge
+      toPorts:
+        - ports:
+            - port: "8090"
               protocol: TCP
 
 ---
