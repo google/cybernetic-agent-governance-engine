@@ -173,10 +173,11 @@ def _fetch_from_langfuse_sync(
     langfuse = _make_app_langfuse()
     window_start = datetime.now(tz=timezone.utc) - timedelta(hours=window_hours)
 
+    # M-10: Expand window to 1000 traces to avoid under-counting in busy deployments
     traces_response = langfuse.trace.list(
         tags=[f"control:{control_id}"],
         from_timestamp=window_start,
-        limit=100,
+        limit=1000,
     )
 
     total_traces = 0
@@ -199,7 +200,8 @@ def _fetch_from_langfuse_sync(
                 passed_traces += 1
 
     blocked_traces      = total_traces - passed_traces
-    safety_rate         = (passed_traces / total_traces) if total_traces > 0 else 1.0
+    # M-10: Return None when no traces exist — 1.0 was a false-positive perfect score
+    safety_rate         = (passed_traces / total_traces) if total_traces > 0 else None
     now                 = datetime.now(tz=timezone.utc)
     last_event_utc      = last_event_date.isoformat() if total_traces > 0 else now.isoformat()
     evidence_age_seconds = (
@@ -212,7 +214,7 @@ def _fetch_from_langfuse_sync(
 
     return ComplianceMetrics(
         control_id=control_id,
-        safety_rate=round(safety_rate * 10000) / 10000,
+        safety_rate=round(safety_rate * 10000) / 10000 if safety_rate is not None else None,
         total_traces=total_traces,
         blocked_traces=blocked_traces,
         passed_traces=passed_traces,

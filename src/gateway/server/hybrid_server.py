@@ -38,7 +38,9 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.gateway.server.mcp_tool_server import app as mcp_app
 from src.gateway.server.inference_proxy import inference_app
@@ -196,6 +198,26 @@ async def _gateway_lifespan(app: FastAPI):
 
 
 # ---------------------------------------------------------------------------
+# M-16: Debug endpoint guard middleware
+# Gate all /debug/* paths behind CAGE_ENV=dev. In production, return HTTP 404
+# so internal governance state is never exposed to external callers.
+# ---------------------------------------------------------------------------
+
+class _DebugEndpointGuard(BaseHTTPMiddleware):
+    """Return 404 for /debug/* paths unless CAGE_ENV is 'dev' or 'test'."""
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path.startswith("/debug"):
+            cage_env = os.getenv("CAGE_ENV", "prod").lower()
+            if cage_env not in ("dev", "test", "local"):
+                return JSONResponse(
+                    status_code=404,
+                    content={"detail": "Not found"},
+                )
+        return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
 # Root application — mount decomposed sub-apps
 # ---------------------------------------------------------------------------
 
@@ -209,6 +231,9 @@ root_app = FastAPI(
     version="2.0.0",
     lifespan=_gateway_lifespan,
 )
+
+# M-16: Block /debug/* in non-dev environments
+root_app.add_middleware(_DebugEndpointGuard)
 
 
 @root_app.get("/healthz")
@@ -251,6 +276,7 @@ async def healthz():
             status_code=200,
             content={"status": "healthy", "kms_active": False, "env": cage_env},
         )
+
 
 # Inference proxy handles /v1/chat/completions
 root_app.mount("/inference", inference_app)

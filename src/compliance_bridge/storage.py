@@ -57,10 +57,16 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Backend selection
+# Backend selection — M-21: deferred to first use, not at import time
 # ---------------------------------------------------------------------------
 
-_STORAGE_BACKEND: str = os.environ.get("STORAGE_BACKEND", "gcs").lower()
+def _get_storage_backend() -> str:
+    """Return the storage backend name, resolved at call time (not import time).
+
+    M-21: Selecting the backend at import time caused failures in test
+    environments where STORAGE_BACKEND is not set until after module load.
+    """
+    return os.environ.get("STORAGE_BACKEND", "gcs").lower()
 
 # ---------------------------------------------------------------------------
 # Lazy client singletons
@@ -246,7 +252,8 @@ def _s3_upload(bucket_name: str, key: str, content: str, audit_id: str, timestam
 
 async def artifact_exists(bucket: str, key: str) -> bool:
     """Async existence check — dispatches to GCS or S3 backend."""
-    if _STORAGE_BACKEND == "s3":
+    # M-21: Resolve backend at call time, not at import time
+    if _get_storage_backend() == "s3":
         return await asyncio.to_thread(_s3_blob_exists, bucket, key)
     return await asyncio.to_thread(_gcs_blob_exists, bucket, key)
 
@@ -260,7 +267,8 @@ async def upload_artifact(bucket: str, key: str, content: str) -> str:
     """
     audit_id  = key.split("/")[-1].replace(".yaml", "")
     timestamp = datetime.now(tz=timezone.utc)
-    if _STORAGE_BACKEND == "s3":
+    # M-21: Resolve backend at call time, not at import time
+    if _get_storage_backend() == "s3":
         return await asyncio.to_thread(_s3_upload, bucket, key, content, audit_id, timestamp)
     return await asyncio.to_thread(_gcs_upload, bucket, key, content, audit_id, timestamp)
 

@@ -81,15 +81,22 @@ jobs:
           # CVE-2026-4810 (google-adk): RESOLVED — upgraded google-adk to 2.2.0 which
           #   drops the starlette<1 constraint and no longer carries this vulnerability.
           #
-          # PYSEC-2026-139 (torch 2.10.0): No fix version available upstream as of
-          #   2026-06-08. torch is a dev/inference-only dependency; it is not included
-          #   in the compliance-bridge or gateway production images. Suppressed pending
-          #   an upstream patch release. Mitigation: torch is never executed in
-          #   production containers; only used locally for SLM fine-tuning experiments.
-          #   POAM item to be created under POAM-016.
+          # PYSEC-2026-139 / CVE-2026-4538 (torch 2.10.0): No fix version available
+          #   upstream as of 2026-06-08. torch is a dev/inference-only dependency; it
+          #   is not included in the compliance-bridge or gateway production images.
+          #   Suppressed pending an upstream patch release. Mitigation: torch is never
+          #   executed in production containers; only used locally for SLM fine-tuning
+          #   experiments. POAM item tracked under POAM-016.
+          #
+          # CVE-2025-3000 / GHSA-rrmf-rvhw-rf47 (torch 2.10.0): Second alias for the
+          #   same torch dev-only package. Critical memory corruption in torch.jit.script.
+          #   No fix version available upstream. Same mitigation as PYSEC-2026-139:
+          #   torch is never executed in production containers; dev/SLM-only dependency.
+          #   Suppressed under the same POAM-016 tracking item.
           uv run pip-audit --format json --output pip-audit-results.json \
             --ignore-vuln GHSA-rg7c-g689-fr3x \
-            --ignore-vuln PYSEC-2026-139
+            --ignore-vuln PYSEC-2026-139 \
+            --ignore-vuln GHSA-rrmf-rvhw-rf47
           EXIT_CODE=$?
           cat pip-audit-results.json
           exit $EXIT_CODE

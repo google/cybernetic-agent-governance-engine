@@ -114,6 +114,9 @@ class GovernanceEventBus:
             yield ServerSentEvent(data=json.dumps(event), event="governance-event")
     """
 
+    # M-07: Maximum concurrent SSE subscribers to prevent resource exhaustion
+    MAX_SUBSCRIBERS: int = 100
+
     def __init__(self, maxsize: int = 128) -> None:
         # ``_queues`` is the Python equivalent of the TypeScript ``Set<Subscriber>``.
         self._queues: list[asyncio.Queue[dict]] = []
@@ -129,7 +132,16 @@ class GovernanceEventBus:
     # ------------------------------------------------------------------
 
     def _new_queue(self) -> asyncio.Queue[dict]:
-        """Allocate a fresh subscriber queue and register it."""
+        """Allocate a fresh subscriber queue and register it.
+
+        M-07: Raises RuntimeError if MAX_SUBSCRIBERS is already reached to
+        prevent unbounded memory growth from connection floods.
+        """
+        if len(self._queues) >= self.MAX_SUBSCRIBERS:
+            raise RuntimeError(
+                f"[event_bus] SSE subscriber limit reached ({self.MAX_SUBSCRIBERS}). "
+                "Rejecting new connection to prevent resource exhaustion."
+            )
         q: asyncio.Queue[dict] = asyncio.Queue(maxsize=self._maxsize)
         self._queues.append(q)
         logger.debug(
@@ -189,8 +201,19 @@ class GovernanceEventBus:
             event: A ``GovernanceEvent``-shaped dict — serialisable via
                    ``json.dumps`` for inclusion in the SSE ``data`` field.
         """
+        # M-08: Persist to evidence stream FIRST (durability before fan-out).
+        # Evidence must be written regardless of whether any SSE subscribers
+        # are connected — decouples audit durability from delivery.
+        if self._evidence_sink is not None:
+            try:
+                await self._evidence_sink.ingest(event)
+            except Exception as exc:
+                logger.warning(
+                    "[event_bus] Evidence stream ingest failed: %s", exc
+                )
+
         if not self._queues:
-            logger.debug("[event_bus] publish() called with no subscribers — skipping.")
+            logger.debug("[event_bus] publish() called with no subscribers — skipping fan-out.")
             return
 
         dead: list[asyncio.Queue[dict]] = []
@@ -207,15 +230,6 @@ class GovernanceEventBus:
 
         for q in dead:
             self.unsubscribe(q)
-
-        # Forward to evidence stream sink (opt-in — Feature 4)
-        if self._evidence_sink is not None:
-            try:
-                await self._evidence_sink.ingest(event)
-            except Exception as exc:
-                logger.warning(
-                    "[event_bus] Evidence stream ingest failed: %s", exc
-                )
 
     @property
     def subscriber_count(self) -> int:

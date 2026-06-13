@@ -106,6 +106,23 @@ def _build_critical_alert_body(
     }
 
 
+def _escape_slack_mrkdwn(text: str) -> str:
+    """M-22: Escape Slack mrkdwn special characters in LLM-generated text.
+
+    Prevents injection of Slack formatting directives (bold, italic, links,
+    channel mentions, user mentions) from untrusted LLM output.
+    See: https://api.slack.com/reference/surfaces/formatting#escaping
+    """
+    # Escape the three HTML entities Slack requires
+    text = text.replace("&", "&amp;")
+    text = text.replace("<", "&lt;")
+    text = text.replace(">", "&gt;")
+    # Neutralise mrkdwn formatting characters that could be injected
+    for ch in ("*", "_", "`", "~"):
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
 def _build_remediation_followup_body(
     control_id: str,
     audit_id: str,
@@ -114,6 +131,8 @@ def _build_remediation_followup_body(
     trace_ids: list[str],
 ) -> dict:
     trace_ref = ", ".join(trace_ids) if trace_ids else "none available"
+    # M-22: Escape LLM-generated text before embedding in Slack mrkdwn
+    safe_remediation_text = _escape_slack_mrkdwn(remediation_text)
     return {
         "text": f"🔍 Remediation Advisory — {control_id} | Audit {audit_id}",
         "blocks": [
@@ -130,7 +149,7 @@ def _build_remediation_followup_body(
             },
             {
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": remediation_text},
+                "text": {"type": "mrkdwn", "text": safe_remediation_text},
             },
             {
                 "type": "section",

@@ -50,6 +50,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import secrets
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -60,8 +62,13 @@ logger = logging.getLogger(__name__)
 _DEFAULT_INTERVAL    = 3600    # 1 hour
 _DEFAULT_TIMEOUT     = 120     # 2 minutes per lula run
 _DEFAULT_COMPONENT   = "compliance/oscal/component-definition.yaml"
-_DEFAULT_RESULTS     = "/tmp/lula-assessment-results.yaml"
+# M-11: _DEFAULT_RESULTS is now a prefix for tempfile.mkstemp() — not a fixed /tmp path
+_DEFAULT_RESULTS_PREFIX = "lula-assessment-results-"
 _INGEST_ENDPOINT     = "/v1/audit/ingest"
+
+# M-12: Module-level loopback auth token (generated once at startup)
+# Used to authenticate the internal POST /v1/audit/ingest call.
+_LOOPBACK_AUTH_TOKEN: str = secrets.token_hex(32)
 
 
 def _is_disabled() -> bool:
@@ -81,7 +88,8 @@ def _component_path() -> str:
 
 
 def _results_path() -> str:
-    return os.environ.get("LULA_ASSESSMENT_RESULTS_PATH", _DEFAULT_RESULTS)
+    # M-11: If env var is set, use it; otherwise tempfile.mkstemp() is used per-cycle
+    return os.environ.get("LULA_ASSESSMENT_RESULTS_PATH", "")
 
 
 def _bridge_url() -> str:
@@ -174,11 +182,15 @@ async def _post_results_to_bridge(results_path: str, audit_id: str) -> bool:
 
     url = _bridge_url()
     try:
+        # M-12: Include loopback auth token to authenticate internal POST
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 url,
                 json={"oscal_yaml": oscal_yaml, "audit_id": audit_id},
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Lula-Scheduler-Token": _LOOPBACK_AUTH_TOKEN,
+                },
             )
         if resp.is_success:
             logger.info(
@@ -204,7 +216,6 @@ async def _post_results_to_bridge(results_path: str, audit_id: str) -> bool:
 async def _run_lula_cycle() -> dict:
     """Execute one lula validate → ingest cycle. Returns a status dict."""
     component = _component_path()
-    results   = _results_path()
     timeout   = _timeout()
     audit_id  = f"lula-scheduled-{uuid.uuid4().hex[:12]}"
 
@@ -216,15 +227,35 @@ async def _run_lula_cycle() -> dict:
         )
         return {"status": "skipped", "reason": "component_not_found", "audit_id": audit_id}
 
-    lula_ok = await _run_lula_validate(component, results, timeout)
-    if not lula_ok:
-        return {"status": "failed", "reason": "lula_validate_failed", "audit_id": audit_id}
+    # M-11: Use tempfile.mkstemp() to avoid TOCTOU race on /tmp path.
+    # If LULA_ASSESSMENT_RESULTS_PATH is set, use it; otherwise create a secure temp file.
+    fixed_results = _results_path()
+    if fixed_results:
+        results = fixed_results
+        tmp_fd = None
+    else:
+        tmp_fd, results = tempfile.mkstemp(
+            prefix=_DEFAULT_RESULTS_PREFIX, suffix=".yaml"
+        )
+        os.close(tmp_fd)  # lula will write to the path; we just need the name
 
-    ingested = await _post_results_to_bridge(results, audit_id)
-    if not ingested:
-        return {"status": "failed", "reason": "ingest_failed", "audit_id": audit_id}
+    try:
+        lula_ok = await _run_lula_validate(component, results, timeout)
+        if not lula_ok:
+            return {"status": "failed", "reason": "lula_validate_failed", "audit_id": audit_id}
 
-    return {"status": "ok", "audit_id": audit_id}
+        ingested = await _post_results_to_bridge(results, audit_id)
+        if not ingested:
+            return {"status": "failed", "reason": "ingest_failed", "audit_id": audit_id}
+
+        return {"status": "ok", "audit_id": audit_id}
+    finally:
+        # Clean up temp file if we created one
+        if tmp_fd is None and not fixed_results:
+            try:
+                os.unlink(results)
+            except OSError:
+                pass
 
 
 async def run_lula_scheduler() -> None:

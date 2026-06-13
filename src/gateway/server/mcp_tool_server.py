@@ -29,11 +29,13 @@ Phase 3.3: Routing seal enforcement is applied to every tool call via the
 from __future__ import annotations
 
 import asyncio
+import collections
 import inspect
 import json
 import logging
 import os
 import sys
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
@@ -62,6 +64,41 @@ from opentelemetry import trace
 
 logger = logging.getLogger("Gateway.MCPToolServer")
 tracer = trace.get_tracer("gateway.mcp_tool_server")
+
+# ---------------------------------------------------------------------------
+# M-20: Per-client sliding-window rate limiter
+# Limits each client IP to _RATE_LIMIT_MAX_CALLS tool calls per
+# _RATE_LIMIT_WINDOW_SECONDS. Uses an in-process deque; no Redis dependency.
+# ---------------------------------------------------------------------------
+
+_RATE_LIMIT_MAX_CALLS: int = int(os.getenv("MCP_RATE_LIMIT_MAX_CALLS", "60"))
+_RATE_LIMIT_WINDOW_SECONDS: int = int(os.getenv("MCP_RATE_LIMIT_WINDOW_SECONDS", "60"))
+
+# client_ip → deque of call timestamps (monotonic)
+_rate_limit_buckets: dict[str, collections.deque] = {}
+_rate_limit_lock = asyncio.Lock()
+
+
+async def _check_rate_limit(client_ip: str) -> bool:
+    """Return True if the request is within the rate limit, False if exceeded.
+
+    Uses a sliding-window algorithm: timestamps older than the window are
+    evicted before counting, so the limit is enforced over a rolling period.
+    """
+    now = time.monotonic()
+    cutoff = now - _RATE_LIMIT_WINDOW_SECONDS
+    async with _rate_limit_lock:
+        bucket = _rate_limit_buckets.setdefault(
+            client_ip, collections.deque()
+        )
+        # Evict expired timestamps
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= _RATE_LIMIT_MAX_CALLS:
+            return False
+        bucket.append(now)
+        return True
+
 
 # ---------------------------------------------------------------------------
 # Startup validation and telemetry bootstrap
@@ -378,6 +415,18 @@ class ToolExecutionRequest(BaseModel):
 @app.post("/tools/execute")
 async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Request):
     """Execute a named tool via HTTP.  Requires X-CAGE-Routing-Seal."""
+    # M-20: Per-client rate limiting (sliding window)
+    client_ip: str = (request.client.host if request.client else "unknown")
+    if not await _check_rate_limit(client_ip):
+        logger.warning("Rate limit exceeded for client %s", client_ip)
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Rate limit exceeded: max {_RATE_LIMIT_MAX_CALLS} calls "
+                f"per {_RATE_LIMIT_WINDOW_SECONDS}s per client."
+            ),
+        )
+
     body_bytes = await request.body()
     enforce_routing_seal(request, body_bytes)
 
