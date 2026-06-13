@@ -45,24 +45,27 @@ slm_degraded_warning := "SLM sidecar unavailable: elevated confidence threshold 
 # CTRL_TQP_007 — secondary declarative evidence layer.
 # Primary enforcement: TokenQuotaProxy (Python, Redis Lua).
 # These rules activate when governance_middleware.py injects session state.
-# Until that injection is implemented (deferred — see plan §23.7),
-# quota_within_limits and token_quota_within_limits default to true via the
-# second clause of each rule.
+#
+# C-10: Fail-closed defaults — missing fields are treated as over-limit/unknown.
+# Removed permissive "if { not input.field }" clauses that defaulted to ALLOW
+# when fields were absent. Use object.get with over-limit defaults instead.
 
 _max_sequence_steps := 12
+_max_tokens         := 100000
+
+# Fail-closed: missing sequence_step_count → treat as over limit (deny).
+_sequence_step_count := object.get(input, "sequence_step_count", _max_sequence_steps + 1)
 
 quota_within_limits if {
-    step_count := object.get(input, "sequence_step_count", 0)
-    step_count <= _max_sequence_steps
+    _sequence_step_count <= _max_sequence_steps
 }
-quota_within_limits if { not input.sequence_step_count }
+
+# Fail-closed: missing accumulated_tokens → treat as over limit (deny).
+_accumulated_tokens := object.get(input, "accumulated_tokens", _max_tokens + 1)
 
 token_quota_within_limits if {
-    accumulated := object.get(input, "accumulated_tokens", 0)
-    quota_max   := object.get(input, "token_quota_max", 100000)
-    accumulated <= quota_max
+    _accumulated_tokens <= _max_tokens
 }
-token_quota_within_limits if { not input.accumulated_tokens }
 
 # ── Tool Allowlist (ISO 42001 Annex A.2) ────────────────────────────────────
 _approved_tools := {
@@ -70,8 +73,14 @@ _approved_tools := {
     "calculate_risk", "get_account_balance", "submit_order",
     "cancel_order", "get_order_status",
 }
-tool_approved if { input.tool_name; input.tool_name in _approved_tools }
-tool_approved if { not input.tool_name }
+
+# Fail-closed: missing tool_name → treat as unknown tool (deny).
+_tool_name := object.get(input, "tool_name", "__unknown__")
+
+tool_approved if {
+    _tool_name != "__unknown__"
+    _tool_name in _approved_tools
+}
 
 # ── Combined governance allow rule ──────────────────────────────────────────
 cage_systemic_governance_allow if {

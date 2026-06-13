@@ -46,6 +46,9 @@ async def execute_trade(order: TradeOrder) -> str:
     OPTIMISTIC EXECUTION: Checks 'safety_violation' in Redis before committing.
     CONFIG: Uses ConfigManager for secure key retrieval.
     """
+    # C-01: Validate trade side before use — fail closed on invalid values.
+    action = order.side
+    assert action in {"buy", "sell"}, f"Invalid trade side: {action}"
     # --- INTERRUPT CHECK (Module 6) ---
     violation = await _redis_get("safety_violation")
     if violation:
@@ -85,7 +88,7 @@ async def execute_trade(order: TradeOrder) -> str:
     payload = {
         "symbol": order.symbol,
         "qty": order.amount,
-        "side": "buy", # Assuming buy for simple example
+        "side": action,  # C-01: use validated trade side, not hardcoded "buy"
         "type": "market",
         "time_in_force": "day"
     }

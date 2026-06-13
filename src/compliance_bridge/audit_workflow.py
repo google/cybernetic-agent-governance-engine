@@ -240,47 +240,57 @@ def _ingest_sync(
     compliance_langfuse = _make_compliance_langfuse()
 
     for finding in findings:
-        # SDK v4.x compliant trace context structure
-        trace_context = {
-            "trace_id": finding.finding_id,
-            "name": "lula-audit",
-            "tags": [
-                "compliance",
-                "iso-42001",
-                "automated-audit",
-                "lula",
-                f"control:{finding.control_id}",
-                f"result:{finding.result}",
-            ],
-            "metadata": {
-                "iso_42001_control":    finding.control_id,
-                "lula_result":          finding.result,
-                "evidence_age_seconds": str(finding.evidence_age_s),
-                "oscal_finding_id":     finding.finding_id,
-                "safety_rate":          str(finding.safety_rate) if finding.safety_rate is not None else "-1.0",
-                "standard":             "ISO/IEC 42001:2023",
-                "audit_id":             audit_id,
-                "artifact_key":         artifact_key or "",
-                "audit_timestamp_utc":  datetime.now(tz=timezone.utc).isoformat(),
-            }
-        }
-        
-        # Implicit trace creation via span initiation
-        span = compliance_langfuse.start_observation(
-            name="lula-audit-result",
-            as_type="span",
-            trace_context=trace_context,
-        )
-        # ERROR findings score 0.0 — they must not be treated as compliant.
-        # A scanner failure on a critical control is a security blind spot;
-        # scoring it as 1.0 (PASS) would mask the gap from compliance dashboards.
-        # (NIST SP 800-53A §3.2: evaluation errors → Incomplete/Unknown, not Satisfied)
-        span.score(
-            name=f"iso42001.{finding.control_id}.compliant",
-            value=1.0 if finding.result == "PASS" else 0.0,
-            comment=finding.remarks or f"Automated Lula audit — {finding.result}",
-        )
-        span.end()
+        # C-09: Use correct Langfuse SDK v2 API.
+        # langfuse.start_observation() does not exist — use trace() + span().
+        # All Langfuse calls are wrapped in try/except so that Langfuse
+        # failures never break the audit workflow (non-fatal observability).
+        try:
+            trace = compliance_langfuse.trace(
+                id=_ensure_uuid(finding.finding_id),
+                name="lula-audit",
+                tags=[
+                    "compliance",
+                    "iso-42001",
+                    "automated-audit",
+                    "lula",
+                    f"control:{finding.control_id}",
+                    f"result:{finding.result}",
+                ],
+                metadata={
+                    "iso_42001_control":    finding.control_id,
+                    "lula_result":          finding.result,
+                    "evidence_age_seconds": str(finding.evidence_age_s),
+                    "oscal_finding_id":     finding.finding_id,
+                    "safety_rate":          str(finding.safety_rate) if finding.safety_rate is not None else "-1.0",
+                    "standard":             "ISO/IEC 42001:2023",
+                    "audit_id":             audit_id,
+                    "artifact_key":         artifact_key or "",
+                    "audit_timestamp_utc":  datetime.now(tz=timezone.utc).isoformat(),
+                },
+            )
+
+            span = trace.span(name="lula-audit-result")
+
+            # ERROR findings score 0.0 — they must not be treated as compliant.
+            # A scanner failure on a critical control is a security blind spot;
+            # scoring it as 1.0 (PASS) would mask the gap from compliance dashboards.
+            # (NIST SP 800-53A §3.2: evaluation errors → Incomplete/Unknown, not Satisfied)
+            compliance_langfuse.score(
+                trace_id=trace.id,
+                name=f"iso42001.{finding.control_id}.compliant",
+                value=1.0 if finding.result == "PASS" else 0.0,
+                comment=finding.remarks or f"Automated Lula audit — {finding.result}",
+            )
+
+            span.end()
+
+        except Exception as _lf_exc:
+            # Langfuse failures must never break the audit workflow.
+            logger.error(
+                "[audit_workflow] Langfuse ingestion failed for finding %s (non-fatal): %s",
+                finding.finding_id,
+                _lf_exc,
+            )
 
     _flush_with_timeout(compliance_langfuse)
     logger.info("[audit_workflow] Flushed %d traces and scores to Langfuse compliance project.", len(findings))
@@ -501,38 +511,37 @@ async def _step5_one_control(
     )
 
     # Log advisory to compliance Langfuse (non-fatal)
+    # C-09: Use correct Langfuse SDK v2 API — propagate_attributes and
+    # start_observation() do not exist. Use trace() + span() + score() instead.
     try:
         def _log_advisory_sync() -> None:
             comp_lf = _make_compliance_langfuse()
-            from langfuse import propagate_attributes
-            with propagate_attributes(
+            adv_trace = comp_lf.trace(
+                name="remediation-advisory",
                 tags=["compliance", "iso-42001", "llm-remediation", f"control:{control_id}"],
                 metadata={
-                    "model":                 model_name,
-                    "max_tokens":            max_tokens,
+                    "model":                 str(model_name),
+                    "max_tokens":            str(max_tokens),
                     "audit_id":              audit_id,
                     "control_id":            control_id,
                     "generated_utc":         datetime.now(tz=timezone.utc).isoformat(),
-                    "human_review_required": True,
-                    "disclaimer": "LLM-generated — human verification required (ISO 42001 A.7.2)",
+                    "human_review_required": "true",
+                    "disclaimer":            "LLM-generated — human verification required (ISO 42001 A.7.2)",
                 },
-            ):
-                span = comp_lf.start_observation(
-                    name="remediation-advisory",
-                    as_type="span",
-                    input={
-                        "finding":           finding.model_dump(),
-                        "trace_ids_sampled": trace_ids_sampled,
-                        "prompt_length":     len(prompt),
-                    },
-                    output={"remediation_text": remediation_text},
-                )
-                span.score(
-                    name=f"iso42001.{control_id}.remediation_generated",
-                    value=1.0,
-                    comment=f"Advisory generated by {model_name} for audit {audit_id}",
-                )
-                span.end()
+                input={
+                    "trace_ids_sampled": trace_ids_sampled,
+                    "prompt_length":     len(prompt),
+                },
+                output={"remediation_text": remediation_text},
+            )
+            span = adv_trace.span(name="remediation-advisory")
+            comp_lf.score(
+                trace_id=adv_trace.id,
+                name=f"iso42001.{control_id}.remediation_generated",
+                value=1.0,
+                comment=f"Advisory generated by {model_name} for audit {audit_id}",
+            )
+            span.end()
             # Do NOT flush here — runs inside background task via asyncio.to_thread;
             # explicit flush blocks thread pool and causes port-forward stream timeouts.
             # Langfuse SDK auto-flushes on its own schedule.
