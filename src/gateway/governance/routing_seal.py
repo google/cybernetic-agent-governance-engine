@@ -70,9 +70,12 @@ F = TypeVar("F", bound=Callable[..., Any])
 _TTL_S = int(os.getenv("GOVERNANCE_SEAL_TTL_S", "30"))
 
 # HMAC key — must match between gateway (issuer) and GFA (verifier).
-# Use a hardcoded default if GOVERNANCE_SALT is not set (non-production only).
+# Use _require_env so that production deployments fail fast if GOVERNANCE_SALT
+# is not set, rather than silently using an insecure hardcoded default.
 _DEFAULT_SALT = "default-governance-salt-change-in-production"
-_GOVERNANCE_SALT = os.environ.get("GOVERNANCE_SALT", _DEFAULT_SALT)
+
+from src.gateway.governance.constants import _require_env  # noqa: E402
+_GOVERNANCE_SALT = _require_env("GOVERNANCE_SALT", _DEFAULT_SALT, sensitive=True)
 _HMAC_KEY = _GOVERNANCE_SALT.encode()
 
 # True when the hardcoded default salt is active (no custom GOVERNANCE_SALT set).
