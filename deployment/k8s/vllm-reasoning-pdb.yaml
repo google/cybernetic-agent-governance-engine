@@ -16,7 +16,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: vllm-reasoning-pdb
-  namespace: governance-stack
+  namespace: vllm-inference
 # maxUnavailable: 1 allows the old replica to terminate during rolling updates.
 # maxUnavailable: 0 caused a scheduling deadlock: the new pod couldn't be placed
 # (Unschedulable) while the PDB simultaneously blocked eviction of the old pod.

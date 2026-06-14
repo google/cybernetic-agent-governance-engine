@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# NOTE: This DaemonSet requires a namespace with PSA label privileged. Deploy to agentsight namespace, not governance-stack.
 
 ---
 apiVersion: v1
@@ -78,6 +80,8 @@ spec:
       labels:
         app: agentsight-daemon
         component: ebpf-observability
+      annotations:
+        pod-security.kubernetes.io/enforce: privileged
     spec:
       # Required for kernel-level process and network tracing
       hostPID: true

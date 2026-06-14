@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# NOTE: This manifest defines the canonical Redis StatefulSet named 'redis'.
-# If a legacy StatefulSet named 'redis-master' exists in the cluster, it must
-# be migrated before applying this manifest. Migration procedure:
-#   1. kubectl delete statefulset redis-master -n governance-stack --cascade=orphan
-#   2. kubectl apply -f deployment/k8s/redis-statefulset.yaml -n governance-stack
-# The --cascade=orphan flag preserves the PVC data during migration.
+# DEPRECATED: This StatefulSet conflicts with the Bitnami Helm-managed redis-node StatefulSet.
+# The active Redis cluster is redis-node (3/3 Running, Sentinel mode).
+# DO NOT apply this file to the governance-stack namespace.
+# This file is retained for reference only.
+# To remove the conflicting StatefulSet from the cluster:
+#   kubectl delete statefulset redis -n governance-stack
 #
-# Current live state (as of 2026-06-02):
+# Historical note — original migration context (2026-06-02):
 #   - StatefulSet: redis-master (1/1 Running) — legacy name, must be migrated
 #   - Services: redis (ClusterIP), redis-headless (None), redis-master (ClusterIP)
 #   - All application manifests reference redis.governance-stack.svc.cluster.local
@@ -56,6 +56,7 @@ metadata:
     app: redis
     tier: control-plane
     cage.governance/component: evidence-state-store
+    deprecated: "true"
 spec:
   serviceName: redis
   replicas: 1
@@ -68,6 +69,10 @@ spec:
         app: redis
         cage.governance/component: evidence-state-store
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: redis
           image: redis/redis-stack-server:latest
@@ -116,6 +121,8 @@ spec:
             capabilities:
               drop:
                 - ALL
+            seccompProfile:
+              type: RuntimeDefault
 
           volumeMounts:
             - name: config

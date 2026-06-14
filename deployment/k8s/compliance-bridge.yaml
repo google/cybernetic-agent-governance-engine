@@ -138,9 +138,17 @@ spec:
             - name: VLLM_API_KEY
               value: "EMPTY"
 
-            # Redis URL — literal value; password embedded at deploy time
+            # Redis credentials — sourced from redis-credentials secret (§9 compliance)
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_PASSWORD
             - name: REDIS_URL
-              value: "redis://:$(REDIS_PASSWORD)@redis.governance-stack.svc.cluster.local:6379"
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_URL
 
             - name: PORT
               value: "3001"

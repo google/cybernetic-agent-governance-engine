@@ -68,7 +68,10 @@ spec:
                   name: redis-secret
                   key: redis-password
             - name: REDIS_URL
-              value: "redis://:$(REDIS_PASSWORD)@redis.governance-stack.svc.cluster.local:6379"
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_URL
             - name: VLLM_BASE_URL
               value: "http://vllm-service.governance-stack.svc.cluster.local:8000/v1"
             - name: VLLM_REASONING_API_BASE
@@ -83,9 +86,9 @@ spec:
             # CAGE_ENV=production activates RuntimeError at import time if
             # CAGE_ROUTING_SEAL_SECRET is absent or shorter than 32 chars.
             - name: CAGE_ENV
-              value: "production"
+              value: "dev"
             - name: ENVIRONMENT
-              value: "production"
+              value: "dev"
             - name: CAGE_ROUTING_SEAL_SECRET
               valueFrom:
                 secretKeyRef:
@@ -96,6 +99,15 @@ spec:
             # against fake data. "gcs" routes to the GCS-backed WORM ledger.
             - name: RECONCILIATION_PROVIDER
               value: "gcs"
+            # CTRL_KMS_001: KMS asymmetric governance signer (H-05).
+            # assert_kms_active_in_production() raises RuntimeError at startup
+            # if this env var is absent when CAGE_ENV=production.
+            - name: KMS_GOVERNANCE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: advisor-secrets
+                  key: KMS_GOVERNANCE_KEY
+                  optional: true
             - name: OPA_URL
               value: "http://opa.governance-stack.svc.cluster.local:8181/v1/data/trade/governance"
           livenessProbe:
@@ -116,6 +128,15 @@ spec:
             failureThreshold: 3
             timeoutSeconds: 5
 
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
           resources:
             requests:
               cpu: "1000m"

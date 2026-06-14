@@ -1,8 +1,12 @@
+# Deployed to vllm-inference namespace (PSA: baseline) — requires root for GPU access
+# governance-stack (PSA: restricted) is incompatible with GPU workloads.
+# Cross-namespace service discovery is handled by ExternalName Services in
+# deployment/k8s/vllm-services.yaml (governance-stack → vllm-inference).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: vllm-reasoning
-  namespace: governance-stack
+  namespace: vllm-inference
   labels:
     app: vllm-reasoning
 spec:
@@ -194,7 +198,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: vllm-reasoning
-  namespace: governance-stack
+  namespace: vllm-inference
 spec:
   selector:
     app: vllm-reasoning
