@@ -16,12 +16,11 @@ import os
 import sys
 from pathlib import Path
 
-# Add project root to sys.path
-sys.path.append(os.getcwd())
+# Add project root to sys.path so scripts.lib is importable
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from deployment.lib.renderer import generate_vllm_manifest
-from deployment.lib.config import load_config
-from deployment.lib.utils import load_dotenv
+from scripts.lib.config import load_config
+from scripts.lib.utils import load_dotenv
 
 def main():
     load_dotenv()
@@ -46,11 +45,13 @@ def main():
     }
     
     accelerator_kind = os.environ.get("ACCELERATOR_KIND", "gpu")
-    
-    manifest = generate_vllm_manifest(accelerator_kind, reasoning_config, app_name="vllm-reasoning")
-    with open("vllm-reasoning-manual.yaml", "w") as f:
-        f.write(manifest)
-    print("Manifest written to vllm-reasoning-manual.yaml")
+
+    # NOTE: generate_vllm_manifest (deployment.lib.renderer) was never implemented.
+    # This script now prints the resolved config for manual manifest authoring.
+    import json
+    print(f"Resolved reasoning config (accelerator={accelerator_kind}):")
+    print(json.dumps(reasoning_config, indent=2, default=str))
+    print("\nUse deployment/k8s/templates/vllm-reasoning.yaml.tpl as the manifest template.")
 
 if __name__ == "__main__":
     main()

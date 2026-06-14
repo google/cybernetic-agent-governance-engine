@@ -35,6 +35,7 @@ Integration tests require live Kubernetes services.  Start them with:
     ./setup_test_env.sh
 """
 
+import logging
 import os
 
 import pytest
@@ -48,6 +49,56 @@ try:
 except ImportError:
     pass  # python-dotenv not installed — rely on shell env only
 
+# ── Suppress OTLP BatchSpanProcessor retry noise in test runs ─────────────────
+# Set OTEL_TRACES_EXPORTER=none at module-import time (before any test module
+# is collected) so that:
+#   1. test_langfuse_evaluation.py's module-level BatchSpanProcessor guard
+#      fires correctly at collection time.
+#   2. The _SuppressOTLPRetryNoise filter below can check the env var at
+#      record-emit time and suppress retry warnings after teardown.
+# override=False: honour an explicit shell override (e.g. OTEL_TRACES_EXPORTER=otlp
+# to re-enable tracing in a local integration run).
+if not os.environ.get("OTEL_TRACES_EXPORTER"):
+    os.environ["OTEL_TRACES_EXPORTER"] = "none"
+
+# Install a logging filter on all relevant OTLP logger namespaces here —
+# before any test module is imported — so the filter is in place before any
+# TracerProvider is created.  The BatchSpanProcessor background thread emits
+# "Transient error HTTPConnectionPool … retrying in Xs" warnings to stderr
+# after pytest teardown when no local OTLP collector is running.
+_OTLP_NOISY_PHRASES = (
+    "Transient error",
+    "Max retries exceeded",
+    "Failed to establish a new connection",
+    "Failed to export",
+    "Retrying in",
+    "Connection refused",
+    "Failed to upload JSON to S3",
+)
+_OTLP_LOGGER_NAMESPACES = (
+    "opentelemetry.exporter.otlp.proto.http.trace_exporter",
+    "opentelemetry.exporter.otlp.proto.http.metric_exporter",
+    "opentelemetry.exporter.otlp.proto.http._log_exporter",
+    "opentelemetry.exporter.otlp.proto.grpc.exporter",
+    "opentelemetry.sdk.trace.export",
+)
+
+
+class _SuppressOTLPRetryNoise(logging.Filter):
+    """Suppress noisy OTLP retry warnings when OTEL_TRACES_EXPORTER=none."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if os.environ.get("OTEL_TRACES_EXPORTER") == "none":
+            msg = record.getMessage()
+            if any(phrase in msg for phrase in _OTLP_NOISY_PHRASES):
+                return False  # suppress
+        return True
+
+
+_otlp_noise_filter = _SuppressOTLPRetryNoise()
+for _ns in _OTLP_LOGGER_NAMESPACES:
+    logging.getLogger(_ns).addFilter(_otlp_noise_filter)
+
 
 # ── Default environment values ────────────────────────────────────────────────
 
@@ -57,12 +108,15 @@ def pytest_configure(config: pytest.Config) -> None:
     _setdefault("GATEWAY_URL", "http://localhost:8080")
     _setdefault("LANGFUSE_HOST", "http://localhost:3001")
     _setdefault("VLLM_REASONING_API_BASE", "http://localhost:8000/v1")
-    _setdefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318/v1/traces")
-    # Disable OTEL span export during tests — no collector is deployed in the
-    # test environment.  Without this, the BatchSpanProcessor background thread
-    # retries failed exports for several seconds after each test, adding noise
-    # to the output and slowing teardown.  Set OTEL_TRACES_EXPORTER=otlp in
-    # the shell to re-enable when a local collector is running.
+    # OTEL_EXPORTER_OTLP_ENDPOINT: default points at the Langfuse native OTLP
+    # endpoint forwarded to localhost:3001 by setup_test_env.sh.
+    # The standalone OTel Collector (port 4318) is deprecated and removed.
+    _setdefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:3001/api/public/otel/v1/traces")
+    # Disable OTEL span export during tests — no live Langfuse instance is
+    # available in the unit-test environment.  Without this, the BatchSpanProcessor
+    # background thread retries failed exports for several seconds after each test,
+    # adding noise to the output and slowing teardown.  Set OTEL_TRACES_EXPORTER=otlp
+    # in the shell to re-enable when a Langfuse port-forward is active.
     _setdefault("OTEL_TRACES_EXPORTER", "none")
     _setdefault("OPENLLMETRY_ENABLED", "false")
     # compliance-bridge port-forward runs on :3002 (Langfuse occupies :3001)

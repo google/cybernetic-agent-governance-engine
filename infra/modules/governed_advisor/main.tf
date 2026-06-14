@@ -185,7 +185,12 @@ resource "kubernetes_deployment" "governed_advisor" {
           }
           env {
             name  = "OTEL_EXPORTER_OTLP_ENDPOINT"
-            value = "http://otel-collector.${var.namespace}:4318/v1/traces"
+            # Langfuse v3 native OTLP ingestion — no separate OTel Collector deployed.
+            value = "http://langfuse-web.${var.namespace}.svc.cluster.local:3000/api/public/otel/v1/traces"
+          }
+          env {
+            name  = "OTEL_EXPORTER_OTLP_PROTOCOL"
+            value = "http/protobuf"
           }
           env {
             name  = "OTEL_EXPORTER_OTLP_HEADERS"

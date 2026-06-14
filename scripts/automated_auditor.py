@@ -21,7 +21,8 @@ POAM-003 Resolution (2026-03-06):
 
 Set AUDITOR_TRACE_SOURCE to one of:
     langfuse   — live Langfuse SDK (default, satisfies AU-12)
-    otlp       — Jaeger/OTLP HTTP endpoint
+    otlp       — Jaeger-compatible HTTP query API (NOT the deprecated standalone
+                 OTel Collector; the collector sidecar on port 4318 is removed)
     cloudtrace — Google Cloud Trace API
     mock       — synthetic data for testing (does NOT satisfy AU-12)
 
@@ -43,7 +44,10 @@ logger = logging.getLogger("AutomatedAuditor")
 # Environment-driven configuration
 # ---------------------------------------------------------------------------
 _AUDITOR_TRACE_SOURCE = os.environ.get("AUDITOR_TRACE_SOURCE", "langfuse")
-_AUDITOR_OTLP_ENDPOINT = os.environ.get("AUDITOR_OTLP_ENDPOINT", "http://localhost:4318")
+# AUDITOR_OTLP_ENDPOINT is only used when AUDITOR_TRACE_SOURCE=otlp (Jaeger HTTP query API).
+# The standalone OTel Collector sidecar (port 4318) is deprecated and removed.
+# Do NOT set this to localhost:4318 — that endpoint no longer exists.
+_AUDITOR_OTLP_ENDPOINT = os.environ.get("AUDITOR_OTLP_ENDPOINT", "")
 _AUDITOR_GCP_PROJECT_ID = os.environ.get("AUDITOR_GCP_PROJECT_ID", "")
 
 # Langfuse credentials — mirrors the pattern in src/compliance_bridge/metrics.py
@@ -257,15 +261,18 @@ class MockTraceSource(TraceSource):
     """Synthetic trace generator for unit/integration tests.
 
     WARNING: This source does NOT represent production audit coverage and does
-    NOT satisfy AU-12 control requirements.  Set AUDITOR_TRACE_SOURCE=otlp for
-    real production compliance.
+    NOT satisfy AU-12 control requirements.  Set AUDITOR_TRACE_SOURCE=langfuse
+    (default) for real production compliance via the Langfuse SDK.
+    The standalone OTel Collector (AUDITOR_TRACE_SOURCE=otlp, port 4318) is
+    deprecated and removed — do not use it as a production AU-12 source.
     """
 
     def fetch_traces(self, service_name: str, lookback_minutes: int) -> list[dict]:
         logger.warning(
             "AUDITOR_TRACE_SOURCE=mock: Using synthetic traces. "
             "This does not represent production audit coverage. "
-            "Set AUDITOR_TRACE_SOURCE=otlp for real AU-12 compliance."
+            "Set AUDITOR_TRACE_SOURCE=langfuse for real AU-12 compliance "
+            "(the standalone OTel Collector on port 4318 is deprecated and removed)."
         )
 
         # Scenario 1: Valid Path

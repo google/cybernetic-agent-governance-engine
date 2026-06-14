@@ -239,10 +239,13 @@ _APPROVED_FQDNS = {
     "api.trade.gov",
 }
 
+# NOTE: otel-collector.governance-stack.svc.cluster.local removed — the standalone
+# OTel Collector is deprecated (2026-05-31). Traces route directly to Langfuse's
+# native OTLP endpoint (langfuse-web.governance-stack.svc.cluster.local:3000/api/public/otel/v1/traces).
 _SOVEREIGN_AGENT_ALLOWED_INTERNAL = {
     "opa.governance-stack.svc.cluster.local",
     "gateway.governance-stack.svc.cluster.local",
-    "otel-collector.governance-stack.svc.cluster.local",
+    "langfuse-web.governance-stack.svc.cluster.local",
 }
 
 

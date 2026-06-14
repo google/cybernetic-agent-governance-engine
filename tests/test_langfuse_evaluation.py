@@ -87,12 +87,22 @@ JUDGE_MODEL = os.environ.get(
 )
 
 # ── OTel setup ────────────────────────────────────────────────────────────────
+# Guard: when OTEL_TRACES_EXPORTER=none (set by conftest.py for unit/CI runs)
+# do NOT create a BatchSpanProcessor — its background thread retries failed
+# OTLP exports for several seconds after pytest teardown, producing noisy
+# "Transient error HTTPConnectionPool" messages on stderr.
 resource = Resource.create({"service.name": "langfuse-eval-integration"})
 provider = TracerProvider(resource=resource)
-otlp_exporter = OTLPSpanExporter(
-    endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318/v1/traces")
-)
-provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+if os.environ.get("OTEL_TRACES_EXPORTER") != "none":
+    # Route directly to Langfuse's native OTLP endpoint.
+    # The standalone OTel Collector (port 4318) is deprecated and removed.
+    otlp_exporter = OTLPSpanExporter(
+        endpoint=os.environ.get(
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "http://localhost:3001/api/public/otel/v1/traces",
+        )
+    )
+    provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
 trace.set_tracer_provider(provider)
 tracer = trace.get_tracer("langfuse-eval-integration")
 

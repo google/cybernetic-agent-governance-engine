@@ -164,18 +164,31 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
 # ---------------------------------------------------------------------------
 
 # Phrases emitted by the Langfuse S3 worker and by the OTel OTLP HTTP exporter
-# when the collector's S3 backend is unavailable.  These are background-thread
-# errors that should never surface as ERROR in application logs.
+# when the collector's S3 backend or OTLP endpoint is unavailable.  These are
+# background-thread errors that should never surface as ERROR in application
+# logs.  The list also covers urllib3 connection-pool retry messages that the
+# BatchSpanProcessor emits when no local OTLP collector is running (e.g. in
+# unit-test environments where OTEL_TRACES_EXPORTER=none is set but a
+# secondary TracerProvider was already initialised before the guard fired).
 _S3_ERROR_PHRASES = (
     "Failed to upload JSON to S3",
     "Failed to export",
     "Transient error StatusCode",
+    "Transient error HTTPConnectionPool",
     "Retrying in",
+    "Max retries exceeded",
+    "Failed to establish a new connection",
+    "Connection refused",
 )
 
 # OTLP exporter logger namespaces that may emit these errors.
+# Note: the HTTP trace exporter logger name is the module's __name__:
+#   opentelemetry.exporter.otlp.proto.http.trace_exporter
+# (not ".http.exporter" — that was the old incorrect name).
 _OTLP_LOGGER_NAMESPACES = (
-    "opentelemetry.exporter.otlp.proto.http.exporter",
+    "opentelemetry.exporter.otlp.proto.http.trace_exporter",
+    "opentelemetry.exporter.otlp.proto.http.metric_exporter",
+    "opentelemetry.exporter.otlp.proto.http._log_exporter",
     "opentelemetry.exporter.otlp.proto.grpc.exporter",
     "opentelemetry.sdk.trace.export",
 )
@@ -186,23 +199,29 @@ _OTLP_EXPORT_TIMEOUT_MS = _OTLP_EXPORT_TIMEOUT_S * 1_000
 
 
 class _OTLPErrorFilter(logging.Filter):
-    """Downgrades known OTLP/S3 export errors from ERROR to WARNING.
+    """Suppresses or downgrades known OTLP/S3 export errors.
 
-    The OTel SDK ``BatchSpanProcessor`` background thread logs a record at
-    ``logging.ERROR`` every time the OTLP endpoint returns a non-2xx status
-    (e.g. HTTP 500 "Failed to upload JSON to S3" from the Langfuse collector).
-    This filter intercepts those records on the relevant OTLP logger namespaces
-    and reduces their severity to ``WARNING`` so they no longer surface as
-    uncaught exceptions or trigger alerting rules.
+    Behaviour depends on ``OTEL_TRACES_EXPORTER``:
+
+    * ``none`` (test mode) — **suppress** all matching records entirely
+      (return ``False``).  The ``BatchSpanProcessor`` background thread emits
+      ``WARNING``-level "Transient error HTTPConnectionPool … retrying in Xs"
+      messages after pytest teardown when no local OTLP collector is running.
+      These are expected and should not appear in test output.
+
+    * Any other value (production) — **downgrade** ERROR → WARNING so the
+      records are still visible but do not trigger alerting rules.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
         msg = record.getMessage()
         if any(phrase in msg for phrase in _S3_ERROR_PHRASES):
+            if os.environ.get("OTEL_TRACES_EXPORTER") == "none":
+                return False  # suppress entirely in test/disabled mode
             if record.levelno >= logging.ERROR:
                 record.levelno = logging.WARNING
                 record.levelname = "WARNING"
-        return True  # always allow the (possibly mutated) record through
+        return True  # allow the (possibly mutated) record through
 
 
 def _install_otlp_error_filter() -> None:
@@ -211,6 +230,13 @@ def _install_otlp_error_filter() -> None:
     for ns in _OTLP_LOGGER_NAMESPACES:
         logging.getLogger(ns).addFilter(_filter)
     logger.debug("🔇 OTLP error-downgrade filter installed on %s", _OTLP_LOGGER_NAMESPACES)
+
+
+# Install the filter eagerly at module-import time so that any
+# BatchSpanProcessor background thread that was started before
+# configure_telemetry() is called (e.g. during pytest teardown) still has
+# its noisy retry messages suppressed.
+_install_otlp_error_filter()
 
 
 def configure_telemetry():
@@ -324,11 +350,13 @@ def configure_telemetry():
         except Exception:
             pass
 
-        # 2. Centralized Tier / OTel Collector
+        # 2. Centralized Tier / Langfuse native OTLP ingestion
         # Endpoint resolution priority (see _resolve_otlp_endpoint_and_headers):
         #   1. OTEL_EXPORTER_OTLP_ENDPOINT (explicit)
         #   2. LANGFUSE_HOST + LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY
-        #   3. http://localhost:4318 (fallback)
+        #      → auto-derives {LANGFUSE_HOST}/api/public/otel with HTTP Basic Auth
+        #   3. No fallback — OTLP export is disabled if neither is set.
+        #      The standalone OTel Collector (port 4318) is deprecated and removed.
         otel_endpoint, otlp_headers = _resolve_otlp_endpoint_and_headers()
         otlp_configured = False
 
