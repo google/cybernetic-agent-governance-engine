@@ -24,4 +24,4 @@ steps:
 images:
   - "gcr.io/${_GCP_PROJECT_ID}/gateway:latest"
 substitutions:
-  _GCP_PROJECT_ID: "YOUR_GCP_PROJECT_ID"
+  _GCP_PROJECT_ID: ""  # Pass via --substitutions=_GCP_PROJECT_ID=<project> or set in Cloud Build trigger
