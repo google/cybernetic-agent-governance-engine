@@ -12,9 +12,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ---
 
-## [2.0.1] — 2026-06-14
+## [2.0.0] — 2026-06-14
 
-> Post-release security hardening and documentation audit. Covers Sprint 1 critical fixes (C-01–C-07), Sprint 2 high-severity fixes (H-08–H-16), Sprint 3 medium-severity fixes (M-01–M-24), deployment manifest corrections (#15), and a full v2.0.0 documentation consistency audit (POAM-024 staging deferral).
+> **Stable release — full scope including post-release security hardening.**
+> Original gate verification: 2026-06-08. Tag re-pointed to HEAD on 2026-06-14 to incorporate Sprint 1 critical fixes (C-01–C-07), Sprint 2 high-severity fixes (H-08–H-16), Sprint 3 medium-severity fixes (M-01–M-24), deployment manifest corrections (#15), and documentation audit (POAM-024). The tag was re-created at the release boundary commit because `v2.0.0` had not been consumed by any downstream system prior to re-tagging. All universal Lula assertions PASS. Trivy scan risk-accepted (POAM-023). Token Quota Proxy, PII Sanitizer, and UCA Logger active in production.
+>
+> **Audit note:** Original tag `8352708` (2026-06-08) is preserved in commit history. Re-tagging rationale: no prior consumption of `v2.0.0`; security hardening incorporated to ensure users checking out `v2.0.0` receive all critical and high-severity fixes.
 
 ### Fixed — Sprint 1 Critical Security Fixes (Cat-N, PR #12)
 
@@ -56,17 +59,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 - **`fix(tests): update smoke and sprint3 tests for current deployment state`** (`6e79153`) — [`tests/test_langfuse_smoke.py`](tests/test_langfuse_smoke.py) and [`tests/test_sprint3_medium_severity.py`](tests/test_sprint3_medium_severity.py) updated to reflect current deployment state.
 - **`docs: add security audit report and v3 audit results artifact`** (`4f6077a`) — [`docs/SECURITY_AUDIT_REPORT.md`](docs/SECURITY_AUDIT_REPORT.md) and [`audit_results_v3.json`](audit_results_v3.json) added.
 
-### Changed — v2.0.0 Documentation Audit and Consistency Fixes (Cat-N, `f13ab2b`, Refs POAM-024)
+### Changed — Documentation Audit and Consistency Fixes (Cat-N, `f13ab2b`, Refs POAM-024)
 
 - **`docs(docs): fix critical inconsistencies in v2.0.0 release docs`** (`9eacea4`) — Release plan, runbook, roadmap, and POAM index corrected for v2.0.0 state.
 - **`docs(compliance): fix compliance artifact inconsistencies`** (`deedaeb`) — POAM, SSP outline, SAR, PIA, risk assessment, ISCM strategy, authorization boundary, FIPS 199 categorization, and threshold traceability matrix updated for consistency.
 - **`docs: update root, deployment, infra, and technical-report docs`** (`fa781a9`) — README, README_GOVERNANCE, ARCHITECTURE, deploy_all.sh, deployment README, namespace guide, infra README/QUICK_START/IMPLEMENTATION_STATUS, and all technical-report chapters updated.
 - **`docs: fix remaining docs inconsistencies; defer staging posture (POAM-024)`** (`9373ef4`) — Remaining cross-document inconsistencies resolved. Staging compliance posture verification deferred and tracked as POAM-024.
-- **`docs/SECURITY_AUDIT_REPORT.md`** — C-04 finding reclassified from "No authentication" to "Incomplete authentication coverage" (accurate: `/agent/query` is authenticated via `Depends(require_api_key)`; remaining endpoints tracked). Release decision header added: GO — STABLE RELEASE APPROVED (v2.0.0, 2026-06-08).
+- **`docs/SECURITY_AUDIT_REPORT.md`** — C-04 finding reclassified from "No authentication" to "Incomplete authentication coverage". Release decision header added: GO — STABLE RELEASE APPROVED (v2.0.0, 2026-06-08).
 
 ---
 
-## [2.0.0] — 2026-06-08
+## [2.0.0-original] — 2026-06-08
+
+> Original gate verification commit: `8352708`. Preserved here for audit trail. The `v2.0.0` tag was re-pointed to the release boundary commit on 2026-06-14 to incorporate security hardening (C-01–C-07, H-08–H-16, M-01–M-24). No downstream system had consumed `v2.0.0` prior to re-tagging.
 
 > Stable release. All P0/P1 blockers resolved (Sprint 1 + Sprint 2). Track C (seal enforcement) and Track D (compliance validation) gates complete. All universal Lula assertions PASS. Trivy scan risk-accepted (POAM-023). Token Quota Proxy, PII Sanitizer, and UCA Logger active in production.
 
