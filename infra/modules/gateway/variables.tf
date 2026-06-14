@@ -97,3 +97,16 @@ variable "governance_salt" {
   type        = string
   sensitive   = true
 }
+
+variable "langfuse_host" {
+  description = "Langfuse host URL (e.g. http://langfuse-web.<namespace>.svc.cluster.local:3000)"
+  type        = string
+  default     = ""
+}
+
+variable "otel_exporter_otlp_headers" {
+  description = "HTTP Basic Auth header for Langfuse OTLP ingestion (Authorization=Basic <b64>)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
