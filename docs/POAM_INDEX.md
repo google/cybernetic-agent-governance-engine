@@ -19,11 +19,11 @@ This index provides a single-page view across all four POAM files. It is the aut
 
 | File | Region Scope | Primary Framework | Entries | Open | In Progress | Closed |
 |---|---|---|---|---|---|---|
-| [`docs/POAM_ISO42001.md`](POAM_ISO42001.md) | ALL | ISO/IEC 42001:2023 | 6 | 5 | 1 | 0 |
+| [`docs/POAM_ISO42001.md`](POAM_ISO42001.md) | ALL | ISO/IEC 42001:2023 | 8 | 7 | 1 | 0 |
 | [`docs/POAM_US_FED.md`](POAM_US_FED.md) | US_FED | NIST SP 800-53 Rev. 5 | 23 | 12 | 3 | 6 |
 | [`docs/POAM_EU_ECB.md`](POAM_EU_ECB.md) | EU_ECB | EU AI Act / DORA / GDPR | 5 | 4 | 1 | 0 |
 | [`docs/POAM_APAC_MAS.md`](POAM_APAC_MAS.md) | APAC_MAS | MAS FEAT / Notice 655 / TRM | 4 | 4 | 0 | 0 |
-| **Total** | | | **38** | **25** | **5** | **6** |
+| **Total** | | | **40** | **27** | **5** | **6** |
 
 > **Note:** POAM-018 and POAM-019 appear in both `POAM_US_FED.md` (NIST AU-9/SC-7 aspect) and `POAM_ISO42001.md` (ISO 42001 §A.9.4 universal aspect). They are counted once in the totals above (under ISO42001). POAM-022 appears in `POAM_US_FED.md` (NIST SA-9/CA-7 aspect) and is cross-referenced to `POAM_EU_ECB.md#EU-001` (EU AI Act Art. 29a aspect).
 
@@ -77,9 +77,9 @@ Which ISO 42001 Annex A controls and Clauses have POAM entries vs. which are unt
 |---|---|---|---|---|---|
 | **Critical** | 0 | 4 | 1 | 0 | 5 |
 | **High** | 2 | 13 | 2 | 2 | 19 |
-| **Moderate** | 4 | 6 | 2 | 2 | 14 |
-| **Low** | 0 | 0 | 0 | 0 | 0 |
-| **Total** | 6 | 23 | 5 | 4 | 38 |
+| **Moderate** | 5 | 6 | 2 | 2 | 15 |
+| **Low** | 1 | 0 | 0 | 0 | 1 |
+| **Total** | 8 | 23 | 5 | 4 | 40 |
 
 ---
 
@@ -87,10 +87,10 @@ Which ISO 42001 Annex A controls and Clauses have POAM entries vs. which are unt
 
 | Status | ISO42001 (ALL) | US_FED | EU_ECB | APAC_MAS | Total |
 |---|---|---|---|---|---|
-| **Open** | 5 | 12 | 4 | 4 | 25 |
+| **Open** | 7 | 12 | 4 | 4 | 27 |
 | **In Progress** | 1 | 3 | 1 | 0 | 5 |
 | **Closed** | 0 | 6 | 0 | 0 | 6 |
-| **Total** | 6 | 23 | 5 | 4 | 38 |
+| **Total** | 8 | 23 | 5 | 4 | 40 |
 
 ---
 
@@ -133,4 +133,4 @@ Which POAM entries have a corresponding Lula validation manifest:
 
 ---
 
-_This index is updated whenever any POAM file is modified. Last updated: 2026-06-08._
+_This index is updated whenever any POAM file is modified. Last updated: 2026-06-14._

@@ -1,6 +1,6 @@
 # Cybernetic Agent Governance Engine (CAGE) — One-Pager
 
-**Authors:** CAGE Engineering Team · **Last updated:** 2026-06-07 · **Status:** Release Candidate (v2.0.0-rc.3)
+**Authors:** CAGE Engineering Team · **Last updated:** 2026-06-08 · **Status:** GO — STABLE RELEASE APPROVED (v2.0.0, 2026-06-08)
 
 ---
 
@@ -17,7 +17,10 @@ The cost of inaction is concrete: a single unchecked `execute_trade_action` call
 - **Cloud KMS HSM-backed governance signing** — asymmetric signing via Google Cloud KMS; private key never leaves the HSM; HMAC-SHA256 fallback for dev/CI only
 - **Human-gated NeMo refinement** — the autonomous Langfuse → KFP → NeMo hot-reload loop is severed; all config refinements require explicit human approval with reviewer identity and rationale before applying
 - **Heterogeneous multi-model consensus** — `ConsensusModelRegistry` routes each critic persona to a distinct vLLM backend; no single model can consent to its own output
-- **Externally reconciled CBF** — the Control Barrier Function's `cash_balance` is sourced from an independently reconciled external custody ledger (Anchorage Digital, OCC-chartered) via `AnchorageGrpcLedgerProvider`; reconciled balances are KMS-signed before Redis write
+- **Externally reconciled CBF** — the Control Barrier Function's `cash_balance` is sourced from an independently reconciled external custody ledger (Anchorage Digital, OCC-chartered) via `AnchorageGrpcLedgerProvider` (**FUTURE STATE / POAM-023, target 2026-09-08 — not yet implemented**; current implementation uses Redis `WATCH/MULTI/EXEC` optimistic locking); reconciled balances will be KMS-signed before Redis write when implemented
+- **Token Quota Proxy** — per-session step-count (≤12) and token (≤100k) quota enforcement via Redis atomic Lua counters; fail-closed; HTTP 429 on quota exceeded; two-phase commit (reserve → reconcile); rollback on downstream failure (ISO 42001 Annex A.4)
+- **PII Sanitizer** — pre-ledger regex sanitization pipeline (SSN, CC, email, phone, API key/Bearer token) applied to all UCA records before WORM persistence (ISO 42001 Annex A.6)
+- **UCA Logger** — ISO 42001 Clause 6.1 UCA record builder; KMS-signed; region-gated WORM persistence (`CAGE_DEPLOYMENT_REGION` → `OSCAL_S3_BUCKET_{REGION}`); UCA types: `quota_exceeded`, `prompt_injection`, `pii_sanitization`
 
 Human oversight is enforced structurally, not by convention: the LangGraph graph pauses via `interrupt_before=["governed_trader"]` for all trades exceeding $10k or risk score > 0.7, checkpointing state to Redis and resuming only on an explicit `POST /v1/approvals/{thread_id}/resume`. The evaluator node generates a KMS-signed governance seal that must be present before the governed-trader subgraph executes — forged or absent seals return HTTP 403. After deployment, CAGE achieves a **100% pass rate** against the same red-team toolchain that previously produced catastrophic defeats.
 
@@ -30,7 +33,7 @@ Human oversight is enforced structurally, not by convention: the LangGraph graph
 | Document type         | Engineering one-pager                                                                                                                                                   |
 | Audience              | Engineering leads, compliance reviewers, AI governance evaluators                                                                                                       |
 | Companion documents   | [`README.md`](../README.md), [`COMPLIANCE.md`](../COMPLIANCE.md), [`docs/GOVERNANCE_CROSSWALK.md`](GOVERNANCE_CROSSWALK.md), [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](NEURO_SYMBOLIC_GOVERNANCE.md) |
-| Implementation status | v2.0.0-rc.3 — 2026-06-07                                                                                                                                               |
-| Production readiness  | **NO-GO** — 9 blockers remain; see [`docs/PRODUCTION_READINESS_REPORT.md`](PRODUCTION_READINESS_REPORT.md)                                                             |
+| Implementation status | v2.0.0 — 2026-06-08                                                                                                                                                    |
+| Production readiness  | **GO — STABLE RELEASE APPROVED (v2.0.0, 2026-06-08)**; see [`docs/PRODUCTION_READINESS_REPORT.md`](PRODUCTION_READINESS_REPORT.md)                                     |
 | Open issues           | File a GitHub issue for any defects or feature requests                                                                                                                 |
 | Feedback              | File a GitHub issue or suggest edits via pull request                                                                                                                   |

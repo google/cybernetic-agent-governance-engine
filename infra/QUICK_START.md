@@ -276,7 +276,6 @@ After validating the minimal stack works:
 2. **Add IAM resources** to gcp-gke target
 3. **Test full application deployment**
 4. **Migrate production** to new structure
-5. **Archive old code** in `deployment/terraform/`
 
 ## Getting Help
 

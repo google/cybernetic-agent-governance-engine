@@ -149,7 +149,7 @@ _(NIST SP 800-60 Vol. II — cataloguing all information types processed, stored
 
 ### Current State
 
-- **`config/rails/config.yml`** (lines 35–71) contains the most explicit information-type inventory in the codebase. The NeMo Guardrails `sensitive_data_detection` configuration lists **16 PII entity types** applied to both input and output rails: `EMAIL_ADDRESS`, `PHONE_NUMBER`, `PERSON`, `CREDIT_CARD`, `US_SSN`, `LOCATION`, `DATE_TIME`, `NRP`, `CRYPTO`, `US_ITIN`, `US_PASSPORT`, `US_BANK_NUMBER`, `US_DRIVER_LICENSE`, `IBAN_CODE`, `IP_ADDRESS`. This is a technically enforced PII taxonomy, not a formally catalogued information type register.
+- **`config/rails/config.yml`** (lines 35–71) contains the most explicit information-type inventory in the codebase. The NeMo Guardrails `sensitive_data_detection` configuration lists **15 PII entity types** applied to both input and output rails: `EMAIL_ADDRESS`, `PHONE_NUMBER`, `PERSON`, `CREDIT_CARD`, `US_SSN`, `LOCATION`, `DATE_TIME`, `NRP`, `CRYPTO`, `US_ITIN`, `US_PASSPORT`, `US_BANK_NUMBER`, `US_DRIVER_LICENSE`, `IBAN_CODE`, `IP_ADDRESS`. This is a technically enforced PII taxonomy, not a formally catalogued information type register.
 
 - **`src/gateway/governance/nemo/manager.py`** (lines 58–68) implements a `SafeAnalyzer` patching Presidio's `AnalyzerEngine` to enforce the same 15-entity set at detection time, with a `score_threshold=0.3` sensitivity floor. This confirms runtime enforcement of PII detection but does not constitute a formal information type catalog with SP 800-60 identifiers or data owner assignments.
 
@@ -157,7 +157,7 @@ _(NIST SP 800-60 Vol. II — cataloguing all information types processed, stored
 
 ### Gaps Identified
 
-1. **No Formal SP 800-60 Information Type Catalog:** The 16 PII entity types in `config/rails/config.yml` are detection targets, not SP 800-60 information type definitions. There is no document mapping the system's data to SP 800-60 Vol. II taxonomy entries with provisional base impact levels.
+1. **No Formal SP 800-60 Information Type Catalog:** The 15 PII entity types in `config/rails/config.yml` are detection targets, not SP 800-60 information type definitions. There is no document mapping the system's data to SP 800-60 Vol. II taxonomy entries with provisional base impact levels.
 2. **Financial Transaction Data Not Formally Typed:** The system executes trades (up to $500k for senior roles per `compliance/oscal/component-definition.yaml` line 100), stores portfolio state, and receives market data — but none of these financial information types are catalogued with sensitivity levels, data owners, or retention requirements.
 3. **AI Model Outputs Not Classified:** The system generates trade recommendations, risk scores, and governance verdicts (APPROVED/REJECTED). These AI-generated outputs are not classified as an information type, yet they drive consequential financial decisions. Under SR 11-7, model outputs have specific validation and audit requirements.
 4. **Audit Logs Not Formally Typed:** The system emits OTel spans tagged with ISO 42001 control IDs to Langfuse. Audit logs are an information type with specific NIST SP 800-53 AU control requirements and retention periods — but no audit log retention policy or classification exists.

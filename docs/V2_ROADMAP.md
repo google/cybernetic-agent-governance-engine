@@ -5,7 +5,7 @@
 | **Document Series** | CAGE Architecture Series |
 | **Version** | v2.0.0-Roadmap |
 | **Classification** | INTERNAL / FOUO |
-| **Status** | DRAFT — Pending ISSO & AO Review |
+| **Status** | RELEASED — v2.0.0 GO 2026-06-08 |
 
 ---
 
@@ -68,6 +68,24 @@ flowchart TD
     2.  `cage-compliance`: An isolated project containing only the Langfuse compliance databases, GCS audit buckets, and the compliance-bridge server.
 *   **VPC Private Service Connect**: Establish private, VPC-peered links between the execution and compliance networks to allow secure aggregation without exposing policy servers to public routing.
 *   **KMS CMEK Key Rotation**: Secure all stored secrets using GCP Cloud KMS Customer-Managed Encryption Keys with 90-day automatic HSM rotation.
+
+---
+
+### **v2.0.0 Release — Completed Items** ✅ RELEASED (2026-06-08)
+
+The following capabilities were delivered and verified as part of the CAGE v2.0.0 stable release (GO date: 2026-06-08):
+
+*   **Token Quota Proxy** (`token_quota_proxy.py`): ✅ COMPLETED — Per-session step and token budget enforcement with Redis-backed counters; fail-CLOSED on Redis unavailability.
+*   **PII Sanitizer** (`pii_sanitizer.py`): ✅ COMPLETED — 15 NeMo/Presidio entity types scrubbed from governance verdicts before external logging; integrated into the governance pipeline.
+*   **UCA Logger** (`uca_logger.py`): ✅ COMPLETED — Structured logging of Unsafe Control Action (UCA) violations with ISO 42001 evidence stamps; feeds the STPA audit trail.
+*   **Cloud KMS RSA Signing** (`kms_signer.py`): ✅ COMPLETED — Cloud KMS RSA-PKCS1-4096-SHA256 asymmetric signing is the primary governance verdict signing mechanism; HMAC-SHA256 retained as dev/CI fallback only.
+*   **SLM Sidecar Deprecation**: ✅ COMPLETED — `slm_available=False` permanent sentinel injected; SLM sidecar removed from production; OPA applies elevated confidence threshold (0.97) unconditionally.
+*   **vLLM Reasoning Model**: ✅ COMPLETED — `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` deployed as the reasoning model on `vllm-reasoning` StatefulSet.
+*   **`outlines` Library Removal**: ✅ COMPLETED — Removed due to CVE-2025-69872; replaced by vLLM native JSON-mode API.
+
+### **Future State — Post-v2.0.0 Roadmap Items**
+
+*   **AnchorageGrpcLedgerProvider** (POAM-023, target 2026-09-08): 🔴 NOT YET IMPLEMENTED — The `AnchorageGrpcLedgerProvider` for external CBF ledger reconciliation is a future-state capability. The `ControlBarrierFunction` currently uses Redis-only state. External ledger integration via gRPC is tracked as POAM-023 with a target completion date of 2026-09-08.
 
 ---
 

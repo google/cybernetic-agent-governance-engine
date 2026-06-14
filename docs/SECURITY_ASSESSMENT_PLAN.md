@@ -57,20 +57,20 @@ The CAGE System Owner has authorized this assessment per NIST SP 800-37 Rev. 2 C
 
 The assessment scope is bounded by the CAGE authorization boundary as defined in `compliance/boundary/AUTHORIZATION_BOUNDARY.md`. The following components are within the assessment scope:
 
-| Component                   | Type                        | Location                   | Assessment Priority |
-| --------------------------- | --------------------------- | -------------------------- | ------------------- |
-| CAGE Gateway                | FastAPI/gRPC Application    | GKE Namespace: `cage-prod` | Critical            |
-| NeMo Guardrails Server      | AI Safety Layer             | GKE Namespace: `cage-prod` | Critical            |
-| OPA Policy Engine           | Authorization Engine        | GKE Namespace: `cage-prod` | Critical            |
-| LangGraph Financial Advisor | AI Agent Orchestrator       | GKE Namespace: `cage-prod` | Critical            |
-| AgentSight eBPF Sidecar     | eBPF Monitoring Agent       | GKE Namespace: `cage-prod` | High                |
-| Compliance Bridge           | Audit/OSCAL Service         | GKE Namespace: `cage-prod` | High                |
-| Redis Cache                 | In-memory Data Store        | GKE Namespace: `cage-prod` | High                |
-| Cloud SQL PostgreSQL        | Relational Database         | GCP Managed Service        | High                |
-| GCS Buckets (OSCAL/Audit)   | Object Storage              | GCP Managed Service        | Moderate            |
-| GKE Network Policies        | Kubernetes Network Control  | GKE Namespace: `cage-prod` | Critical            |
-| Terraform IaC               | Infrastructure as Code      | `deployment/terraform/`    | High                |
-| GitHub Actions CI/CD        | Build & Deployment Pipeline | GitHub Cloud               | High                |
+| Component                   | Type                        | Location                          | Assessment Priority |
+| --------------------------- | --------------------------- | --------------------------------- | ------------------- |
+| CAGE Gateway                | FastAPI/gRPC Application    | GKE Namespace: `governance-stack` | Critical            |
+| NeMo Guardrails Server      | AI Safety Layer             | GKE Namespace: `governance-stack` | Critical            |
+| OPA Policy Engine           | Authorization Engine        | GKE Namespace: `governance-stack` | Critical            |
+| LangGraph Financial Advisor | AI Agent Orchestrator       | GKE Namespace: `governance-stack` | Critical            |
+| AgentSight eBPF Sidecar     | eBPF Monitoring Agent       | GKE Namespace: `governance-stack` | High                |
+| Compliance Bridge           | Audit/OSCAL Service         | GKE Namespace: `governance-stack` | High                |
+| Redis Cache                 | In-memory Data Store        | GKE Namespace: `governance-stack` | High                |
+| Cloud SQL PostgreSQL        | Relational Database         | GCP Managed Service               | High                |
+| GCS Buckets (OSCAL/Audit)   | Object Storage              | GCP Managed Service               | Moderate            |
+| GKE Network Policies        | Kubernetes Network Control  | GKE Namespace: `governance-stack` | Critical            |
+| Terraform IaC               | Infrastructure as Code      | `infra/targets/gcp-gke/`          | High                |
+| GitHub Actions CI/CD        | Build & Deployment Pipeline | GitHub Cloud                      | High                |
 
 ### 2.2 Components Out of Scope
 

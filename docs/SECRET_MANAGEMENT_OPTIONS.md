@@ -90,7 +90,7 @@ provider:
 | HashiCorp Vault     | A Vault policy granting `read` on the relevant secret paths                                 |
 
 For the GCP reference deployment, the binding can be added to
-`deployment/terraform/iam.tf`.
+`infra/targets/gcp-gke/iam.tf`.
 
 ### ClusterSecretStore — GCP example (reference deployment)
 
@@ -257,8 +257,8 @@ local variant of this pattern and can serve as a reference.
 | **Short-term (weeks)** | Option A — install ESO and migrate secrets to `ExternalSecret` manifests. Configure the `ClusterSecretStore` for your chosen provider.            |
 | **Long-term**          | Consider Option B selectively for new services that can use Workload Identity / IRSA natively; do not apply retroactively to `compliance-bridge`. |
 
-For the reference deployment, Terraform in `deployment/terraform/secrets.tf`
-manages `kubernetes_secret` resources directly. ESO adoption with any supported
+For the reference deployment, Terraform in `infra/targets/gcp-gke/` manages
+`kubernetes_secret` resources directly. ESO adoption with any supported
 backend (Vault, AWS Secrets Manager, Azure Key Vault, etc.) would reference
 those same K8s Secret names — no GCP Secret Manager dependency is required.
 

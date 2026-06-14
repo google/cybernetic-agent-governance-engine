@@ -371,17 +371,17 @@ The cybernetic-governance-engine demonstrates genuine technical sophistication i
 
 **v2.0.0 improvements since initial assessment:** Linkerd mTLS + Cilium L7 egress lockdown deployed (POAM-007 closed 2026-05-17); `outlines` CVE-2025-69872 remediated (POAM-016 closed 2026-05-29); SBOM/Trivy CI enforcement deployed (POAM-010 closed); AgentSight UI Phase 1 with eBPF observability deployed (POAM-021 closed); Cloud KMS HSM-backed asymmetric signing deployed; Lula manifests expanded from 4 to 15; SR 26-2 (Federal Reserve, April 17, 2026) adopted as primary agentic AI governance framework; CSA AARM v1.0 11-vector threat coverage integrated.
 
-**POAM Summary (authoritative source: [`docs/POAM.md`](POAM.md), v1.4, dated 2026-05-29):**
+**POAM Summary (authoritative source: [`docs/POAM_US_FED.md`](POAM_US_FED.md), dated 2026-06-08):**
 
 | Metric          | Count |
 | --------------- | ----- |
-| **Total Items** | 22    |
+| **Total Items** | 23    |
 | **Critical**    | 3     |
 | **High**        | 13    |
-| **Moderate**    | 6     |
-| **Open**        | 12    |
+| **Moderate**    | 7     |
+| **Open**        | 13    |
 | **In Progress** | 3     |
-| **Closed**      | 5     |
+| **Closed**      | 6     |
 
 However, the gap between what exists and what is required for a formal authorization decision on a HIGH-baseline system remains severe. The authorization package is 24% complete (5 of 21 required artifacts). The most critical missing artifacts — SSP (POAM-015 open), FIPS 199 categorization (POAM-009 in progress), SAP, SAR, and RAR — are still absent. Without an SSP, the Authorizing Official has no formal basis for an authorization decision.
 

@@ -27,7 +27,7 @@ We use Kubernetes `Secret` objects exclusively for resilient, cloud-agnostic sec
 
 1.  **Kubernetes Secrets (Primary Path):**
     - Secrets are injected as Environment Variables via `envFrom` / `secretRef` in Deployment manifests.
-    - Terraform manages `kubernetes_secret` resources in `deployment/terraform/secrets.tf`.
+    - Terraform manages `kubernetes_secret` resources in `infra/targets/gcp-gke/`.
     - This is standard for high-performance, cloud-portable apps.
 
 2.  **Local & OSS Development:**
@@ -48,7 +48,7 @@ We use Kubernetes `Secret` objects exclusively for resilient, cloud-agnostic sec
 - **Solution:** Decided **against** using the generic Terraform module. We will maintain our custom GKE manifest deployment strategy, co-locating Langfuse with our vLLM inference stack.
 - **Reasoning:**
   - **Cost & Overhead:** Spinning up a dedicated GKE cluster just for observability introduces massive unnecessary costs, as we already have an optimized cluster.
-  - **Latency & Egress:** Co-locating the OpenTelemetry Collector and Langfuse instances within the `governance-stack` namespace prevents cross-cluster network latency and cloud egress fees.
+  - **Latency & Egress:** Co-locating Langfuse instances within the `governance-stack` namespace prevents cross-cluster network latency and cloud egress fees. Note: the standalone OpenTelemetry Collector was deprecated 2026-05-31; telemetry now flows directly to Langfuse via native OTLP ingestion.
   - **Cohesion:** Our custom `deploy_sw.py` script dynamically orchestrates the entire Triple-Hybrid architecture. Using a generic Terraform module breaks this unified pipeline.
 
 ---
@@ -92,4 +92,4 @@ We use Kubernetes `Secret` objects exclusively for resilient, cloud-agnostic sec
 
 - Inference gateway and AgentSight ingress now portable across any Kubernetes distribution with nginx
 - GPU node selection uses the standard NVIDIA device plugin label, compatible with any Kubernetes GPU operator
-- `gateway_api_config.channel` removal means Gateway API CRDs must be installed out-of-band (Helm chart); this is documented in `deployment/terraform/README.md`
+- `gateway_api_config.channel` removal means Gateway API CRDs must be installed out-of-band (Helm chart); this is documented in `infra/README.md`

@@ -16,7 +16,7 @@
 | ISSO                      | [ISSO NAME — TBD]                                                                                                                                                     |
 | Authorizing Official (AO) | [AO NAME — TBD]                                                                                                                                                       |
 | Cloud Platform            | Google Kubernetes Engine (GKE) on Google Cloud Platform (GCP)                                                                                                         |
-| Deployment Namespace      | `cage-prod`                                                                                                                                                           |
+| Deployment Namespace      | `governance-stack`                                                                                                                                                                                    |
 | Related Documents         | `compliance/categorization/FIPS199_CATEGORIZATION.md`, `compliance/rar/RISK_ASSESSMENT_REPORT.md`, `compliance/sar/SAR_2026Q1.md`, `docs/SECURITY_ASSESSMENT_PLAN.md` |
 
 ---
@@ -37,7 +37,7 @@ The authorization boundary governs the scope of the Security Assessment Plan (`d
 
 ### 1.2 Scope
 
-The CAGE authorization boundary encompasses all hardware, software, firmware, data, people, procedures, and facilities that compose the CAGE system and are under the direct management authority of the CAGE System Owner. The boundary is instantiated within the Google Cloud Platform (GCP) project under the CAGE-designated GKE cluster and namespace (`cage-prod`).
+The CAGE authorization boundary encompasses all hardware, software, firmware, data, people, procedures, and facilities that compose the CAGE system and are under the direct management authority of the CAGE System Owner. The boundary is instantiated within the Google Cloud Platform (GCP) project under the CAGE-designated GKE cluster and namespace (`governance-stack`).
 
 ---
 
@@ -45,16 +45,16 @@ The CAGE authorization boundary encompasses all hardware, software, firmware, da
 
 ### 2.1 Boundary Statement
 
-The CAGE authorization boundary encompasses all components deployed within the `cage-prod` Kubernetes namespace on the designated GKE cluster, including all associated GCP managed services (Cloud SQL PostgreSQL, Google Cloud Storage) provisioned exclusively for the CAGE system. The boundary also includes the infrastructure-as-code (Terraform) and CI/CD pipeline (GitHub Actions) used to provision and deploy CAGE components.
+The CAGE authorization boundary encompasses all components deployed within the `governance-stack` Kubernetes namespace on the designated GKE cluster, including all associated GCP managed services (Cloud SQL PostgreSQL, Google Cloud Storage) provisioned exclusively for the CAGE system. The boundary also includes the infrastructure-as-code (Terraform) and CI/CD pipeline (GitHub Actions) used to provision and deploy CAGE components.
 
 ### 2.2 Boundary Criteria
 
 A component is **within** the CAGE authorization boundary if:
 
-- It is deployed in the `cage-prod` GKE namespace under CAGE System Owner control
+- It is deployed in the `governance-stack` GKE namespace under CAGE System Owner control
 - It is a GCP managed service (Cloud SQL, GCS) provisioned exclusively for CAGE
 - It processes, transmits, or stores one or more of the five CAGE information types (IT-001 through IT-005)
-- It is managed via CAGE Terraform infrastructure code (`deployment/terraform/`)
+- It is managed via CAGE Terraform infrastructure code (`infra/`)
 
 A component is **outside** the CAGE authorization boundary if:
 
@@ -74,16 +74,16 @@ The following table enumerates all components within the CAGE authorization boun
 
 | Component ID | Component Name              | Type                          | Location                              | Function                                                                                             | Data Types Processed           | POAM Issues                     |
 | ------------ | --------------------------- | ----------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------ | ------------------------------- |
-| COMP-001     | CAGE Gateway                | FastAPI/gRPC Application      | GKE `cage-prod` namespace             | Primary API gateway; routes requests through 5-tier governance pipeline; enforces HMAC routing seals | IT-001, IT-002, IT-004, IT-005 | POAM-012 (resolved)             |
-| COMP-002     | NeMo Guardrails Server      | AI Safety Service             | GKE `cage-prod` namespace             | Input/output safety filtering; PII detection (16 entity types); Colang rail enforcement              | IT-001, IT-002, IT-004         | —                               |
-| COMP-003     | OPA Policy Engine           | Authorization Engine          | GKE `cage-prod` namespace             | Rego-based RBAC; governance policy enforcement; trade authorization decisions                        | IT-001, IT-002, IT-005         | POAM-002 (IAM), POAM-001 (AC-2) |
-| COMP-004     | LangGraph Financial Advisor | AI Agent Orchestrator         | GKE `cage-prod` namespace             | Multi-agent LLM orchestration for investment analysis and trade recommendations                      | IT-001, IT-002, IT-004         | —                               |
-| COMP-005     | AgentSight eBPF Sidecar     | eBPF Monitoring Agent         | GKE `cage-prod` namespace (DaemonSet) | Kernel-level system call monitoring; anomaly detection; security event collection                    | IT-002, IT-003                 | —                               |
-| COMP-006     | Compliance Bridge           | Audit/OSCAL Service           | GKE `cage-prod` namespace             | OSCAL artifact generation; ISO 42001 evidence stamping; SSE compliance event streaming               | IT-003, IT-005                 | POAM-003 (mock traces)          |
-| COMP-007     | Redis Cache                 | In-Memory Data Store          | GKE `cage-prod` namespace             | Session state caching; governance decision caching; rate limiting state                              | IT-001, IT-002                 | —                               |
+| COMP-001     | CAGE Gateway                | FastAPI/gRPC Application      | GKE `governance-stack` namespace             | Primary API gateway; routes requests through 7-tier governance pipeline; enforces HMAC routing seals | IT-001, IT-002, IT-004, IT-005 | POAM-012 (resolved)             |
+| COMP-002     | NeMo Guardrails (in-process) | AI Safety Module             | GKE `governance-stack` namespace (integrated into gateway process) | Input/output safety filtering; PII detection (15 entity types); Colang rail enforcement | IT-001, IT-002, IT-004         | —                               |
+| COMP-003     | OPA Policy Engine           | Authorization Engine          | GKE `governance-stack` namespace             | Rego-based RBAC; governance policy enforcement; trade authorization decisions                        | IT-001, IT-002, IT-005         | POAM-002 (IAM), POAM-001 (AC-2) |
+| COMP-004     | LangGraph Financial Advisor | AI Agent Orchestrator         | GKE `governance-stack` namespace             | Multi-agent LLM orchestration for investment analysis and trade recommendations                      | IT-001, IT-002, IT-004         | —                               |
+| COMP-005     | AgentSight eBPF Sidecar     | eBPF Monitoring Agent         | GKE `governance-stack` namespace (DaemonSet) | Kernel-level system call monitoring; anomaly detection; security event collection                    | IT-002, IT-003                 | —                               |
+| COMP-006     | Compliance Bridge           | Audit/OSCAL Service           | GKE `governance-stack` namespace             | OSCAL artifact generation; ISO 42001 evidence stamping; SSE compliance event streaming               | IT-003, IT-005                 | POAM-003 (mock traces)          |
+| COMP-007     | Redis Cache                 | In-Memory Data Store          | GKE `governance-stack` namespace             | Session state caching; governance decision caching; rate limiting state                              | IT-001, IT-002                 | —                               |
 | COMP-008     | Cloud SQL PostgreSQL        | Relational Database           | GCP Managed Service (us-central1)     | Persistent storage for Langfuse trace data; application state                                        | IT-003, IT-004                 | POAM-014 (SC-28, CMEK)          |
 | COMP-009     | GCS Buckets (OSCAL/Audit)   | Object Storage                | GCP Managed Service (us-central1)     | OSCAL artifact storage; audit evidence archive; model artifacts                                      | IT-003, IT-005                 | POAM-014 (SC-28, CMEK)          |
-| COMP-010     | KernelDashboard UI          | Web Frontend                  | GKE `cage-prod` namespace             | Operator dashboard for AgentSight eBPF monitoring visualization                                      | IT-003                         | —                               |
+| COMP-010     | KernelDashboard UI          | Web Frontend                  | GKE `governance-stack` namespace             | Operator dashboard for AgentSight eBPF monitoring visualization                                      | IT-003                         | —                               |
 | COMP-011     | Terraform IaC               | Infrastructure as Code        | GitHub Repository + GCP State         | Reproducible infrastructure provisioning; IAM binding definitions; network configuration             | IT-005 (configuration)         | POAM-002 (broad IAM)            |
 | COMP-012     | GitHub Actions CI/CD        | Build and Deployment Pipeline | GitHub Cloud                          | Automated build, test, and deployment pipeline for CAGE services                                     | IT-005 (configuration)         | POAM-010 (no scanning)          |
 
@@ -181,10 +181,10 @@ The following ASCII diagram depicts the CAGE authorization boundary, key compone
 ```
 ╔═══════════════════════════════════════════════════════════════════════════════════════╗
 ║                    CAGE AUTHORIZATION BOUNDARY                                        ║
-║                    GKE Cluster | Namespace: cage-prod | GCP: us-central1              ║
+║                    GKE Cluster | Namespace: governance-stack | GCP: us-central1      ║
 ║                                                                                       ║
 ║  ┌─────────────────────────────────────────────────────────────────────────────────┐  ║
-║  │                       GKE cage-prod Namespace                                   │  ║
+║  │                       GKE governance-stack Namespace                            │  ║
 ║  │                                                                                 │  ║
 ║  │  ┌─────────────┐    ┌─────────────────────────────────────────────────────┐     │  ║
 ║  │  │  COMP-010   │    │         5-TIER GOVERNANCE PIPELINE                  │     │  ║
@@ -263,7 +263,7 @@ The following ASCII diagram depicts the CAGE authorization boundary, key compone
 
 Any change to the CAGE authorization boundary must be reviewed and approved before implementation. Boundary changes include:
 
-- Adding new components to the `cage-prod` namespace
+- Adding new components to the `governance-stack` namespace
 - Establishing new external system interconnections
 - Decommissioning in-scope components
 - Migrating components to different GCP regions or services

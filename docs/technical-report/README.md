@@ -4,14 +4,14 @@
 | ------------------ | ---------------------- |
 | **Classification** | PUBLIC                 |
 | **Date**           | 2026-06-03             |
-| **Version**        | 2.0.0-rc.2             |
-| **Status**         | Complete (10 documents) — GKE deployment verified 2026-06-03 |
+| **Version**        | 2.0.0                  |
+| **Status**         | Complete (10 documents) — v2.0.0 stable (GO — 2026-06-08); GKE deployment verified 2026-06-03 |
 
 ---
 
 ## Introduction
 
-The Cybernetic Governance Engine (CAGE) is a production-grade, multi-agent AI governance framework designed for regulated financial advising, deployed on Google Kubernetes Engine (GKE). CAGE v2.0.0 implements **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks — via Cloud KMS HSM-backed signing, human-gated NeMo refinement, heterogeneous multi-model consensus, and externally reconciled Control Barrier Function balances (Anchorage Digital, OCC-chartered). This technical report series documents the full system across **ten** specialized documents, covering its architecture, technology stack, agent pipeline design, neuro-symbolic governance engine, regulatory compliance posture, security controls, deployment infrastructure, an operational runbook capturing verified recovery procedures and integration test results, and a formal verification proof. Together, the documents provide a complete engineering and compliance record for security assessors, architects, compliance officers, operations teams, and AI/ML engineers evaluating or operating the system.
+The Cybernetic Governance Engine (CAGE) is a production-grade, multi-agent AI governance framework designed for regulated financial advising, deployed on Google Kubernetes Engine (GKE). CAGE v2.0.0 implements **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks — via Cloud KMS HSM-backed signing, human-gated NeMo refinement, heterogeneous multi-model consensus, and externally reconciled Control Barrier Function balances (Anchorage Digital gRPC ledger provider — **FUTURE STATE / POAM-023**, target 2026-09-08; current CBF balances are Redis-backed). This technical report series documents the full system across **ten** specialized documents, covering its architecture, technology stack, agent pipeline design, neuro-symbolic governance engine, regulatory compliance posture, security controls, deployment infrastructure, an operational runbook capturing verified recovery procedures and integration test results, and a formal verification proof. Together, the documents provide a complete engineering and compliance record for security assessors, architects, compliance officers, operations teams, and AI/ML engineers evaluating or operating the system.
 
 ---
 
@@ -36,7 +36,7 @@ The Cybernetic Governance Engine (CAGE) is a production-grade, multi-agent AI go
 
 | Fact                           | Value                                     |
 | ------------------------------ | ----------------------------------------- |
-| CAGE Version                   | 2.0.0-rc.2                                |
+| CAGE Version                   | 2.0.0                                     |
 | NIST RMF Overall Readiness     | 24%                                       |
 | System Risk Level              | HIGH (no ATO)                             |
 | Compliance Frameworks          | 19 (NIST, ISO, SEC, FINRA, GLBA, SR 26-2, EU AI Act, DORA, GDPR, EBA, MAS FEAT, MAS TRM, CSA AARM) |
@@ -51,7 +51,7 @@ The Cybernetic Governance Engine (CAGE) is a production-grade, multi-agent AI go
 | Governance Thresholds          | 22 (in `governance_thresholds.json`)      |
 | Governance Signing             | Cloud KMS HSM (RSA-PKCS1-4096-SHA256)     |
 | Consensus Architecture         | Heterogeneous (DeepSeek-R1 + Llama 3.1)   |
-| CBF Ground Truth               | Anchorage Digital (OCC-chartered, gRPC)   |
+| CBF Ground Truth               | Redis-backed (Anchorage Digital gRPC — FUTURE STATE / POAM-023, target 2026-09-08) |
 | NeMo Refinement Model          | Human-gated propose → approve → apply     |
 | NeMo PII Entity Types          | 15 (Presidio; input + output rails)       |
 | Vendor Integrations            | 2 (`src/integrations/trustlayers/`, `src/integrations/nexart/`) |

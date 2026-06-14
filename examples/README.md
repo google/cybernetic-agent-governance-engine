@@ -77,7 +77,7 @@ Multi-vector attack: Tier-1 keyword injection (`SYSTEM OVERRIDE`, `DISABLE GUARD
 
 The playground is intentionally **zero-infrastructure**: it bootstraps from repo root, loads `governance_thresholds.json` directly, imports the real `GeneratedSTPAValidator`, and runs all checks synchronously. The latency figures shown are real Python execution times — typically sub-millisecond for the deterministic layers.
 
-To test the **live** stack (with OPA server, Redis, NeMo sidecar):
+To test the **live** stack (with OPA server, Redis, NeMo Guardrails integrated into the gateway):
 
 ```bash
 # Compile fresh artifacts (includes langgraph Saga nodes)

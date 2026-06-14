@@ -206,7 +206,7 @@ Upon receiving an alert or incident report, the ISSO or IRT Lead shall perform t
 4. **AI Pipeline Suspension:** Disable LangGraph financial advisor from accepting new inference requests
 5. **Evidence Preservation:** Capture pod logs, OTel traces, and AgentSight eBPF data before any remediation:
    ```bash
-   kubectl logs -n cage-prod --all-containers --timestamps > /incident/logs-$(date +%Y%m%d%H%M).txt
+   kubectl logs -n governance-stack --all-containers --timestamps > /incident/logs-$(date +%Y%m%d%H%M).txt
    ```
 6. **External Notification:** IRT Lead notifies AO within 1 hour; ISSO prepares regulatory notification assessment
 
@@ -583,21 +583,21 @@ The following checklist shall be completed during the evidence collection phase 
 
 ### B.1 Kubernetes / GKE Evidence
 
-- [ ] Pod logs for all components in `cage-prod` namespace:
+- [ ] Pod logs for all components in `governance-stack` namespace:
   ```bash
-  kubectl logs -n cage-prod --all-containers --timestamps --since=24h > evidence/pod-logs-$(date +%Y%m%d%H%M).txt
+  kubectl logs -n governance-stack --all-containers --timestamps --since=24h > evidence/pod-logs-$(date +%Y%m%d%H%M).txt
   ```
 - [ ] Pod describe output for affected pods:
   ```bash
-  kubectl describe pods -n cage-prod > evidence/pod-describe-$(date +%Y%m%d%H%M).txt
+  kubectl describe pods -n governance-stack > evidence/pod-describe-$(date +%Y%m%d%H%M).txt
   ```
 - [ ] NetworkPolicy snapshot:
   ```bash
-  kubectl get networkpolicy -n cage-prod -o yaml > evidence/netpol-$(date +%Y%m%d%H%M).yaml
+  kubectl get networkpolicy -n governance-stack -o yaml > evidence/netpol-$(date +%Y%m%d%H%M).yaml
   ```
 - [ ] Kubernetes events from the incident window:
   ```bash
-  kubectl get events -n cage-prod --sort-by='.lastTimestamp' > evidence/k8s-events-$(date +%Y%m%d%H%M).txt
+  kubectl get events -n governance-stack --sort-by='.lastTimestamp' > evidence/k8s-events-$(date +%Y%m%d%H%M).txt
   ```
 - [ ] GKE audit log export from Cloud Logging (Admin Activity, Data Access logs)
 
@@ -643,7 +643,7 @@ The following checklist shall be completed during the evidence collection phase 
 - [ ] Cloud Flow Logs for incident time window
 - [ ] GKE network policy enforcement logs
 - [ ] External connection attempts (inbound to CAGE gateway)
-- [ ] Outbound connection attempts from `cage-prod` namespace
+- [ ] Outbound connection attempts from `governance-stack` namespace
 
 ### B.7 Evidence Preservation Requirements
 

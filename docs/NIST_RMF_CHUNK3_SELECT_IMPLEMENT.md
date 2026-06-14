@@ -405,7 +405,7 @@
 
 **Justification:**
 
-The cybernetic-governance-engine demonstrates sophisticated domain-specific controls that far exceed typical AI systems — the 5-tier governance pipeline (STPA → CBF → SLM → OPA → Consensus), NeMo Guardrails, Lula continuous compliance automation, and HMAC-sealed verdicts are enterprise-grade capabilities. However, scored against the NIST SP 800-53 Rev 5 **HIGH** baseline, the system has significant structural gaps across every control family reviewed.
+The cybernetic-governance-engine demonstrates sophisticated domain-specific controls that far exceed typical AI systems — the 7-tier governance pipeline (STPA → Aho-Corasick → CBF → [SLM — DEPRECATED] → OPA → Consensus → CausalGatekeeper), NeMo Guardrails, Lula continuous compliance automation, and KMS-sealed verdicts are enterprise-grade capabilities. However, scored against the NIST SP 800-53 Rev 5 **HIGH** baseline, the system has significant structural gaps across every control family reviewed.
 
 **Strengths driving the score up (from baseline of 0):**
 

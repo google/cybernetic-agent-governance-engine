@@ -86,7 +86,7 @@ The following categories of Personally Identifiable Information (PII) are collec
 
 ### 2.2 PII Entity Types Recognized by NeMo Guardrails
 
-The system's NeMo Guardrails PII detection layer (referenced in `config/rails/config.yml`) recognizes and can redact the following 16 PII entity types in AI model inputs and outputs:
+The system's NeMo Guardrails PII detection layer (referenced in `config/rails/config.yml`) recognizes and can redact the following 15 PII entity types in AI model inputs and outputs:
 
 1. `PERSON` — personal names
 2. `EMAIL_ADDRESS` — email addresses
@@ -103,7 +103,6 @@ The system's NeMo Guardrails PII detection layer (referenced in `config/rails/co
 13. `IP_ADDRESS` — IP addresses
 14. `URL` — URLs (when containing user identifiers)
 15. `MEDICAL_LICENSE` — medical license numbers
-16. `ORGANIZATION` — organization names (when linked to individual identity)
 
 ### 2.3 PII Not Collected
 
@@ -219,7 +218,7 @@ PII may be included in prompts submitted to the self-hosted vLLM inference servi
 
 ### 6.2 NeMo-Recognized PII Entity Retention
 
-The 16 PII entity types enumerated in §2.2 are subject to NeMo Guardrails detection. When detected in AI I/O:
+The 15 PII entity types enumerated in §2.2 are subject to NeMo Guardrails detection. When detected in AI I/O:
 
 - **Raw PII values are never persisted** in Langfuse traces
 - **Redacted placeholders** (e.g., `[PERSON]`, `[US_SSN]`) replace detected PII in stored traces
@@ -344,7 +343,7 @@ Security incidents involving PII are handled per `docs/IR_PLAN.md`, which includ
 
 | #        | Privacy Risk                                                                                                                                                                                     | Likelihood | Impact   | Mitigation                                                                                                                                                                                                    | Residual Risk |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| **PR-1** | **PII exposure in AI prompts:** User financial data (account numbers, portfolio) included in LLM prompts may be logged or cached in inference system                                             | HIGH       | HIGH     | NeMo Guardrails real-time PII detection redacts 16 entity types before LLM I/O; self-hosted vLLM ensures data does not leave GCP boundary; prompt logs redact PII before storage in Langfuse                  | MODERATE      |
+| **PR-1** | **PII exposure in AI prompts:** User financial data (account numbers, portfolio) included in LLM prompts may be logged or cached in inference system                                             | HIGH       | HIGH     | NeMo Guardrails real-time PII detection redacts 15 entity types before LLM I/O; self-hosted vLLM ensures data does not leave GCP boundary; prompt logs redact PII before storage in Langfuse                  | MODERATE      |
 | **PR-2** | **Audit log over-collection:** OTel spans may capture more PII than needed for compliance (e.g., full request body containing account numbers)                                                   | MODERATE   | HIGH     | OTel instrumentation configured to capture governance verdict and user ID only — not full request payload; compliance bridge filters spans before Langfuse storage; data minimization review required         | MODERATE      |
 | **PR-3** | **Unauthorized access to Langfuse traces:** Langfuse contains LLM interaction history including user identity and financial context                                                              | MODERATE   | HIGH     | Langfuse access restricted to ISSO and compliance roles via GCP IAM; Langfuse API key stored in Secret Manager; network policy restricts Langfuse to `governance-stack` namespace only                        | LOW           |
 | **PR-4** | **Shared HMAC key compromise (IA-5/SC-12):** CAGE_ROUTING_SEAL_SECRET exposure could allow replay attacks incorporating PII-containing payloads                                                  | LOW        | HIGH     | cage-routing-seal Secret managed via GCP Secret Manager with rotation schedule; POAM-012 tracks RuntimeError enforcement for absent key; Lula validation `lula-validation-ia5.yaml` monitors secret existence | LOW           |
@@ -362,7 +361,7 @@ Security incidents involving PII are handled per `docs/IR_PLAN.md`, which includ
 The CAGE system employs NVIDIA NeMo Guardrails with a PII detection and redaction pipeline as a primary minimization control. This layer:
 
 1. **Scans all user prompts** before they reach the vLLM inference service
-2. **Detects 16 PII entity types** (see §2.2) using the Presidio-backed `recognize_pii` action configured in `config/rails/config.yml`
+2. **Detects 15 PII entity types** (see §2.2) using the Presidio-backed `recognize_pii` action configured in `config/rails/config.yml`
 3. **Redacts detected PII** by replacing values with type tags (e.g., `[US_SSN]`, `[CREDIT_CARD]`)
 4. **Blocks high-risk prompts** containing PII types inconsistent with financial advisory context
 

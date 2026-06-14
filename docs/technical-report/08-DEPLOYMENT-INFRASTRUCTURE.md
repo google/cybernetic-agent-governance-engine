@@ -152,7 +152,7 @@ Source: `deployment/docker/`
 
 ## Terraform Infrastructure-as-Code
 
-The Terraform code is organised as a **modular monorepo** under `infra/` with reusable shared modules and explicit deployment targets. The old monolithic `deployment/terraform/` directory is superseded by this structure.
+The Terraform code is organised as a **modular monorepo** under `infra/` with reusable shared modules and explicit deployment targets. The `deployment/terraform/` directory was **removed on 2026-03-15**; `infra/` is the sole active IaC path.
 
 ### Shared Modules (`infra/modules/`)
 
@@ -202,7 +202,7 @@ All deployments go through `deploy_all.sh` using the `--target` and `--env` flag
 
 The script auto-detects the project from `.env` and performs a pre-build step (Cloud Build) before running `terraform apply` for the `gcp-gke` target.
 
-> **Note:** The legacy monolithic `deployment/terraform/` directory remains in the repository as a historical reference but is no longer the primary IaC path. All new infrastructure changes should be made in `infra/targets/` or `infra/modules/`.
+> **Note:** The `deployment/terraform/` directory was **removed on 2026-03-15**. All infrastructure changes must be made in `infra/targets/` or `infra/modules/`.
 
 ---
 

@@ -1,6 +1,6 @@
 # CAGE Architecture — Cybernetic Governance Engine
 
-> **Architecture:** 10-node governance graph with integrated safety checks, STPA-compiled policy enforcement, LangGraph Saga WAL pattern, Zero-Trust Network cluster hardening (Z3N), DoWhy causal inference validation, Redis-backed multi-agent FiscalLimitGuard, and exhaustively verified NoDirectBind safety invariant (v2.0.0-rc.2).
+> **Architecture:** 10-node governance graph with integrated safety checks, STPA-compiled policy enforcement, LangGraph Saga WAL pattern, Zero-Trust Network cluster hardening (Z3N), DoWhy causal inference validation, Redis-backed multi-agent FiscalLimitGuard, and exhaustively verified NoDirectBind safety invariant (v2.0.0).
 
 
 ---
@@ -104,7 +104,6 @@ graph TB
     LF -- Webhook /v1/webhooks/langfuse --> FA
     FA -- POST /v1/refinement/trigger --> KFP
 
-    SG --> ON
     FA -- OTel OTLP/HTTP --> LF
     GW -- OTel OTLP/HTTP --> LF
 ```
@@ -404,4 +403,4 @@ Full engineering and compliance documentation for CAGE is maintained in the [Tec
 
 ---
 
-_Architecture current as of 2026-06-08. Canonical graph: 10 nodes including mandatory NeMo input/output rails. Governance tiers: **7** (SymbolicGovernor tiers 0–6) + FiscalLimitGuard pre-reservation + Token Quota Proxy (CTRL_TQP_007) + LangGraph Saga WAL. STPA compiler active: UCAs compiled from `config/stpa_control_structure.yaml`; LangGraph Saga target added (UCA-4 fully enforced via WAL + LIFO rollback + idempotent compensating nodes). Z3N: Linkerd + Cilium deployed. POAM-007 (IA-3), POAM-010 (RA-5), POAM-016 (SI-2), POAM-020 (CM-3), POAM-021 (SI-4) closed. POAM-023 (SI-2 CVE-2025-13462) opened 2026-06-08. POAM-011 (SC-8) and POAM-012 (SC-12) remain Open. Vendor integrations isolated in `src/integrations/{vendor}/` (NexArt, TrustLayers). Redis db=1 hardened with `noeviction` + Guaranteed QoS. Lula coverage: 15 validation manifests (4 Active, 11 Stub). FiscalLimitGuard: Redis WATCH/MULTI/EXEC atomic pre-reservation prevents multi-agent OPA limit collision. Token Quota Proxy: Redis Lua atomic step/token counters; fail-CLOSED; ISO 42001 A.4. NoDirectBind safety invariant machine-verified over 19 reachable states (v2.0.0-rc.2). Test suite: **796 passing, 0 failed** (Track D — 2026-06-08). For architectural decisions, see [`docs/DEPLOYMENT_DECISION_RECORD.md`](docs/DEPLOYMENT_DECISION_RECORD.md)._
+_Architecture current as of 2026-06-08. Canonical graph: 10 nodes including mandatory NeMo input/output rails. Governance tiers: **7** (SymbolicGovernor tiers 0–6) + FiscalLimitGuard pre-reservation + Token Quota Proxy (CTRL_TQP_007) + LangGraph Saga WAL. STPA compiler active: UCAs compiled from `config/stpa_control_structure.yaml`; LangGraph Saga target added (UCA-4 fully enforced via WAL + LIFO rollback + idempotent compensating nodes). Z3N: Linkerd + Cilium deployed. POAM-007 (IA-3), POAM-010 (RA-5), POAM-016 (SI-2), POAM-020 (CM-3), POAM-021 (SI-4) closed. POAM-023 (SI-2 CVE-2025-13462) opened 2026-06-08. POAM-011 (SC-8) and POAM-012 (SC-12) remain Open. Vendor integrations isolated in `src/integrations/{vendor}/` (NexArt, TrustLayers). Redis db=1 hardened with `noeviction` + Guaranteed QoS. Lula coverage: 15 validation manifests (4 Active, 11 Stub). FiscalLimitGuard: Redis WATCH/MULTI/EXEC atomic pre-reservation prevents multi-agent OPA limit collision. Token Quota Proxy: Redis Lua atomic step/token counters; fail-CLOSED; ISO 42001 A.4. NoDirectBind safety invariant machine-verified over 19 reachable states (v2.0.0). Test suite: **796 passing, 0 failed** (Track D — 2026-06-08). For architectural decisions, see [`docs/DEPLOYMENT_DECISION_RECORD.md`](docs/DEPLOYMENT_DECISION_RECORD.md)._

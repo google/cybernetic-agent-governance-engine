@@ -10,7 +10,7 @@ Every safe generation incurs a latency penalty:
 
 1.  **Semantic Guardrails (NeMo):** ~150-300ms (Input/Output checks).
 2.  **Policy Evaluation (OPA):** ~10-50ms warm (sidecar network hop + Rego eval); up to ~20s on first evaluation after a pod rollout (cold-start). Mitigated by the OPA Decision Cache (see below).
-3.  **Syntactic Enforcement (vLLM Guided Decoding):** ~50ms (with `--guided-decoding-backend outlines`).
+3.  **Syntactic Enforcement (vLLM Native JSON-mode API):** ~50ms. The `outlines` library was removed from CAGE's client-side dependencies due to CVE-2025-69872 (diskcache pickle RCE); vLLM's native JSON-mode API is used instead.
 
 To maintain a responsive user experience (Total Response Time < 2s for simple queries), the underlying inference engine must be exceptionally fast. The [`CircuitBreaker`](../src/gateway/core/policy.py:89) in [`OPAClient`](../src/gateway/core/policy.py:131) enforces a hard latency budget of **3000ms** and emits a soft-ceiling warning at **2000ms**.
 
@@ -26,24 +26,24 @@ We utilize a dedicated, self-hosted inference node for structure enforcement, op
 
 ### Software: vLLM + Guided Decoding
 
-We use **vLLM** with **guided decoding** enabled via `--guided-decoding-backend outlines` (see [`deployment/k8s/vllm-governance.yaml`](../deployment/k8s/vllm-governance.yaml:48)).
+We use **vLLM** with its **native JSON-mode API** for structured output enforcement. The `--guided-decoding-backend outlines` flag and the `outlines` Python package have been **removed** due to CVE-2025-69872 (diskcache pickle RCE); vLLM's built-in JSON-mode decoder is used instead (see [`deployment/k8s/vllm-governance.yaml`](../deployment/k8s/vllm-governance.yaml:48)).
 
 > **Note on Prefix Caching:** Enabling `--enable-prefix-caching` on the governance node is a planned optimization that would reduce TTFT for repeated schema prefixes from ~200ms to <50ms. It is **not yet present** in the current `vllm-governance.yaml` deployment manifest and should be treated as aspirational until added.
 
-#### How Guided Decoding Works
+#### How vLLM Native JSON-Mode Works
 
 1.  **The Pattern:** Every governance request shares the same massive system prompt: "You are a governance engine. Output JSON matching this schema: { ... complex schema ... }".
-2.  **The Constraint:** vLLM's `outlines` backend enforces a Finite State Machine (FSM) over the token vocabulary, guaranteeing structurally valid JSON output.
+2.  **The Constraint:** vLLM's native JSON-mode API enforces structured output over the token vocabulary, guaranteeing structurally valid JSON output without requiring the `outlines` package.
 3.  **The Result:** Structurally guaranteed, compliant JSON responses with no post-processing parse failures.
 
-> **Note on `outlines` client-side dependency:** The `outlines` Python package has been removed from CAGE's client-side dependencies ([`pyproject.toml`](../pyproject.toml:56)) due to CVE-2025-69872 (diskcache pickle RCE). The guided JSON FSM decoder runs **server-side inside vLLM**, which bundles its own copy. CAGE never imports `outlines` directly.
+> **Note on `outlines` removal:** The `outlines` Python package has been **removed** from CAGE's dependencies ([`pyproject.toml`](../pyproject.toml:56)) due to CVE-2025-69872 (diskcache pickle RCE). vLLM's native JSON-mode API is used for all structured output enforcement. CAGE does not import or depend on `outlines`.
 
 ### Architecture Alignment
 
 | Component      | Model                              | Hosted On            | Optimization                        |
 | -------------- | ---------------------------------- | -------------------- | ----------------------------------- |
 | **Reasoning**  | `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` | Spot GPU (NVIDIA L4) | Deep semantic understanding.        |
-| **Governance** | `Qwen/Qwen2.5-7B-Instruct` *(NOT CURRENTLY DEPLOYED — aspirational)* | Spot GPU (NVIDIA L4) | Guided JSON (`outlines` backend).   |
+| **Governance** | `Qwen/Qwen2.5-7B-Instruct` *(NOT CURRENTLY DEPLOYED — aspirational)* | Spot GPU (NVIDIA L4) | Structured JSON (vLLM native JSON-mode API). |
 | **Guardrails** | NeMo Guardrails service            | CPU pod (0.5–1 vCPU, 1–2Gi RAM) | In-cluster, no GPU required.  |
 
 The reasoning model name (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`) is the default resolved by [`create_nemo_manager()`](../src/gateway/governance/nemo/manager.py:201) via the `GUARDRAILS_MODEL_NAME` / `MODEL_FAST` env vars. The governance model (`Qwen/Qwen2.5-7B-Instruct`) is declared in [`deployment/k8s/vllm-governance.yaml`](../deployment/k8s/vllm-governance.yaml:50) but is **NOT CURRENTLY DEPLOYED** — it is the aspirational governance backend.
@@ -182,8 +182,8 @@ The [`/inference/v1/chat/completions`](../src/gateway/server/inference_proxy.py:
 
 Backend routing is model-aware: requests with `"deepseek"` or `"reasoning"` in the model ID route to `VLLM_REASONING_API_BASE`; all others route to `VLLM_FAST_API_BASE` (see [`_resolve_backend_url()`](../src/gateway/server/inference_proxy.py:137)).
 
-## SLM Semantic Similarity Sidecar (Deprecated)
+## SLM Semantic Similarity Sidecar (Deprecated — Removed from Production)
 
-> **Deprecated as of v2.0.x.** The SLM sidecar has been **completely deprecated to optimize latency**. [`symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py:47) hardcodes `slm_available = False` and injects an `"slm_available": false` sentinel into every OPA payload. The Tier-2 semantic similarity check no longer executes at runtime.
+> **⚠️ DEPRECATED — REMOVED FROM PRODUCTION.** The SLM sidecar has been **completely deprecated and removed from the active governance pipeline** to optimize latency. [`symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py:47) hardcodes `slm_available = False` as a **permanent sentinel** — this value is injected into every OPA payload and will never be `True` in production. The semantic similarity check no longer executes at runtime under any configuration.
 
-The sidecar code ([`src/gateway/slm/slm_server.py`](../src/gateway/slm/slm_server.py)) and the `slm` service in [`docker-compose.yml`](../docker-compose.yml:42) remain in the repository for reference but are not active in the governance pipeline. The `slm` optional dependency group in [`pyproject.toml`](../pyproject.toml:98) (`flask`, `sentence-transformers`) is similarly retained but not installed in production images.
+The sidecar code ([`src/gateway/slm/slm_server.py`](../src/gateway/slm/slm_server.py)) and the `slm` service in [`docker-compose.yml`](../docker-compose.yml:42) remain in the repository for historical reference only and are **not active** in the governance pipeline. The `slm` optional dependency group in [`pyproject.toml`](../pyproject.toml:98) (`flask`, `sentence-transformers`) is similarly retained but not installed in production images.

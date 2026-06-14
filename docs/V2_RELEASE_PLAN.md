@@ -1,10 +1,10 @@
 # v2.0.0 Stable Release Implementation Plan
 
-**Document version:** 1.0  
-**Prepared:** 2026-06-05  
-**Repository:** `cybernetic-governance-engine` (private, GitHub)  
-**Current HEAD:** `v2.0.0-rc.2` on branch `rc-v2.0.0`  
-**Target:** `v2.0.0` stable  
+**Document version:** 1.1 (updated 2026-06-08 — v2.0.0 RELEASED)
+**Prepared:** 2026-06-05
+**Repository:** `cybernetic-governance-engine` (private, GitHub)
+**Current HEAD:** `v2.0.0` stable tag on branch `rc-v2.0.0` (GO — 2026-06-08)
+**Target:** `v2.0.0` stable — **✅ RELEASED**
 **Operator context:** Solo operator with full repository admin rights
 
 ---
@@ -26,21 +26,23 @@
 
 ### Current State
 
-The repository is at `v2.0.0-rc.2`, the HEAD of branch `rc-v2.0.0`. The RC-2 release delivered exhaustive state-space formal verification of the `NoDirectBind` safety invariant, enforced cryptographic attestation on all execution paths, and production fail-closed gates for `CBF_FAIL_OPEN` and the DoWhy causal gatekeeper. The full test suite passes: **844 passed, 28 skipped, 0 failed** against the live GKE cluster (`cage-dev`, namespace `governance-stack`).
+> **✅ v2.0.0 RELEASED — GO (2026-06-08).** All P0/P1 blockers resolved. The stable tag `v2.0.0` has been pushed to origin and the GitHub Release is published as Latest. The sections below are preserved as a historical planning record for audit traceability.
 
-### What Blocks Stable Release
+The repository was at `v2.0.0-rc.2` when this plan was prepared. The RC-2 release delivered exhaustive state-space formal verification of the `NoDirectBind` safety invariant, enforced cryptographic attestation on all execution paths, and production fail-closed gates for `CBF_FAIL_OPEN` and the DoWhy causal gatekeeper. The full test suite passes: **844 passed, 28 skipped, 0 failed** against the live GKE cluster (`cage-dev`, namespace `governance-stack`).
 
-Four P0 blockers and two P1 blockers must be resolved before `v2.0.0` can be tagged:
+### What Blocked Stable Release (All Resolved)
+
+Four P0 blockers and two P1 blockers were resolved before `v2.0.0` was tagged:
 
 | ID | Severity | Title | Status |
 |----|----------|-------|--------|
-| D-01 | 🔴 P0 | Committed secrets in working tree and git history | OPEN |
-| D-02 | 🔴 P0 | `governed-financial-advisor` pod `MinimumReplicasUnavailable` | OPEN |
-| D-04 | 🔴 P0 | HMAC seal enforcement disabled — broken Terraform wiring | OPEN |
-| D-06 | 🟠 P1 | Security-scan CronJob missing — blocks RA-5 Lula assertion | OPEN |
-| D-07 | 🟠 P1 | Pod Security Admission labels not applied | OPEN |
+| D-01 | 🔴 P0 | Committed secrets in working tree and git history | ✅ RESOLVED |
+| D-02 | 🔴 P0 | `governed-financial-advisor` pod `MinimumReplicasUnavailable` | ✅ RESOLVED |
+| D-04 | 🔴 P0 | HMAC seal enforcement disabled — broken Terraform wiring | ✅ RESOLVED |
+| D-06 | 🟠 P1 | Security-scan CronJob missing — blocks RA-5 Lula assertion | ✅ RESOLVED |
+| D-07 | 🟠 P1 | Pod Security Admission labels not applied | ✅ RESOLVED |
 
-Additionally, the NIST SP 800-53 coverage gate requires ≥45% (currently 24% at `v2.0.0-dev.1`) and the ATO process must be initiated.
+The NIST SP 800-53 coverage gate (≥45%) applies to US_FED deployments only and is not a universal release gate. ATO process was initiated as part of Sprint 3.
 
 ### Estimated Effort
 
@@ -1061,12 +1063,12 @@ python3 scripts/verify_langfuse_posture.py
 
 ### 7.5 Seal Enforcement Validation Checklist
 
-- [ ] `GOVERNANCE_SALT` present in gateway pod env (≥64 chars)
-- [ ] `CAGE_ROUTING_SEAL_SECRET` present in `advisor-secrets` (≥64 chars)
-- [ ] Unsigned request to gateway returns **403** (not 200, not 500)
-- [ ] Expired seal token returns **403**
-- [ ] Valid seal token returns **200** (or non-403 application response)
-- [ ] `scripts/verify_remote.py` passes all checks
+- [x] `GOVERNANCE_SALT` present in gateway pod env (≥64 chars)
+- [x] `CAGE_ROUTING_SEAL_SECRET` present in `advisor-secrets` (≥64 chars)
+- [x] Unsigned request to gateway returns **403** (not 200, not 500)
+- [x] Expired seal token returns **403**
+- [x] Valid seal token returns **200** (or non-403 application response)
+- [x] `scripts/verify_remote.py` passes all checks
 
 ---
 
@@ -1263,30 +1265,30 @@ Or via the GitHub UI:
 
 #### ✅ Universal Gates (all regions — must pass for any stable release)
 
-- [ ] All ISO 42001 Lula assertions pass (`lula-validation-a52.yaml`, `lula-validation-a53.yaml`, `lula-validation-a92.yaml`)
-- [ ] CSA AARM Lula assertion passes (`lula-validation-aarm-vectors.yaml`)
-- [ ] All non-NIST Lula assertions pass (ISO 42001 + CSA AARM manifests)
-- [ ] SBOM generated and validated (`deployment/k8s/sbom-cronjob.yaml` output)
-- [ ] Container image vulnerability scan passes (Trivy — no CRITICAL unmitigated)
-- [ ] Secret detection scan passes (no secrets in codebase)
-- [ ] All unit and integration tests pass (`pytest`)
-- [ ] STPA freshness check passes (`scripts/check_stpa_freshness.py`)
-- [ ] Langfuse posture verified (`scripts/verify_langfuse_posture.py`)
-- [ ] `git log --all -S "<any-credential>"` returns zero matches
-- [ ] `governed-financial-advisor` READY 1/1, AVAILABLE 1
-- [ ] No `slm-sidecar` container in advisor pod
-- [ ] `CAGE_ROUTING_SEAL_SECRET` present in `advisor-secrets` (≥64 chars)
-- [ ] `GOVERNANCE_SALT` present in `advisor-secrets` (≥64 chars)
-- [ ] `GOVERNANCE_SALT` present in gateway pod env (≥64 chars)
-- [ ] Unsigned gateway request returns 403
-- [ ] Valid signed gateway request returns 200
-- [ ] `security-scanner-cronjob` exists in `governance-stack` namespace
-- [ ] PSA labels applied to `governance-stack` (restricted), `langfuse` (baseline), `vllm` (baseline)
-- [ ] Full test suite: 0 failures
-- [ ] `git tag v2.0.0` pushed to origin
-- [ ] GitHub Release published as Latest
-- [ ] Branch `fix/v2-p0-blockers` deleted from remote
-- [ ] `terraform.auto.tfvars` confirmed gitignored (no secrets in working tree)
+- [x] All ISO 42001 Lula assertions pass (`lula-validation-a52.yaml`, `lula-validation-a53.yaml`, `lula-validation-a92.yaml`)
+- [x] CSA AARM Lula assertion passes (`lula-validation-aarm-vectors.yaml`)
+- [x] All non-NIST Lula assertions pass (ISO 42001 + CSA AARM manifests)
+- [x] SBOM generated and validated (`deployment/k8s/sbom-cronjob.yaml` output)
+- [x] Container image vulnerability scan passes (Trivy — no CRITICAL unmitigated)
+- [x] Secret detection scan passes (no secrets in codebase)
+- [x] All unit and integration tests pass (`pytest`)
+- [x] STPA freshness check passes (`scripts/check_stpa_freshness.py`)
+- [x] Langfuse posture verified (`scripts/verify_langfuse_posture.py`)
+- [x] `git log --all -S "<any-credential>"` returns zero matches
+- [x] `governed-financial-advisor` READY 1/1, AVAILABLE 1
+- [x] No `slm-sidecar` container in advisor pod
+- [x] `CAGE_ROUTING_SEAL_SECRET` present in `advisor-secrets` (≥64 chars)
+- [x] `GOVERNANCE_SALT` present in `advisor-secrets` (≥64 chars)
+- [x] `GOVERNANCE_SALT` present in gateway pod env (≥64 chars)
+- [x] Unsigned gateway request returns 403
+- [x] Valid signed gateway request returns 200
+- [x] `security-scanner-cronjob` exists in `governance-stack` namespace
+- [x] PSA labels applied to `governance-stack` (restricted), `langfuse` (baseline), `vllm` (baseline)
+- [x] Full test suite: 0 failures
+- [x] `git tag v2.0.0` pushed to origin
+- [x] GitHub Release published as Latest
+- [x] Branch `fix/v2-p0-blockers` deleted from remote
+- [x] `terraform.auto.tfvars` confirmed gitignored (no secrets in working tree)
 
 #### 🇺🇸 US_FED Gates (required for US_FED stable release only)
 
