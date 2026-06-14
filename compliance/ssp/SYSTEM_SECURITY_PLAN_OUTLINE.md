@@ -328,7 +328,7 @@ _The following documents constitute the NIST RMF authorization package and relat
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------- |
 | FIPS 199 Security Categorization      | [`compliance/categorization/FIPS199_CATEGORIZATION.md`](../categorization/FIPS199_CATEGORIZATION.md) | Draft — Pending AO Signature |
 | System Security Plan (this document)  | [`compliance/ssp/SYSTEM_SECURITY_PLAN_OUTLINE.md`](SYSTEM_SECURITY_PLAN_OUTLINE.md)                  | Stub — Pending Completion    |
-| Plan of Action and Milestones         | [`docs/POAM.md`](../../docs/POAM.md)                                                                 | Active (15 items)            |
+| Plan of Action and Milestones         | [`docs/POAM.md`](../../docs/POAM.md)                                                                                                                                 | Active (23 items)            |
 | Roles and Responsibilities            | [`docs/ROLES_AND_RESPONSIBILITIES.md`](../../docs/ROLES_AND_RESPONSIBILITIES.md)                     | Draft                        |
 | Information Type Registry             | [`compliance/oscal/information-type-registry.yaml`](../oscal/information-type-registry.yaml)         | Complete (v1.0)              |
 | Security Assessment Report (SAR)      | TBD — to be created post-assessment                                                                  | Not Started                  |

@@ -63,7 +63,7 @@ module "gke_prod" {
   project_id   = "my-project"
   region       = "us-central1"
   zone         = "us-central1-a"
-  cluster_name = "cage-prod"
+  cluster_name = "cage-governance"
   
   # Security: All enabled for NIST RMF compliance
   enable_nist_compliance         = true

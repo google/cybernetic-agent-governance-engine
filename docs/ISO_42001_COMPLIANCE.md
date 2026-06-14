@@ -61,6 +61,7 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
 
 | Control   | Description                | Enforcement Component                  | Lula Validation                                                           | Threshold                           | Critical Alert on ERROR? |
 | --------- | -------------------------- | -------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------- | ------------------------ |
+| **A.4**   | Resource Management        | Token Quota Proxy (`CTRL_TQP_007`) — per-session step-count (≤12) and token (≤100,000) quota enforcement via Redis atomic Lua counters; fail-closed HTTP 429 | N/A (no manifest)                                                         | step_count ≤ `STEP_QUOTA_MAX`; token_count ≤ `TOKEN_QUOTA_MAX` | No |
 | **A.5.2** | Social Impact Assessment   | NeMo output rail + Aho-Corasick Tier-1 | [`lula-validation-a52.yaml`](../compliance/lula/lula-validation-a52.yaml) | safety_rate ≥ 99%                   | No                       |
 | **A.5.3** | Logging and Monitoring     | OTel spans → Langfuse (all tiers)      | [`lula-validation-a53.yaml`](../compliance/lula/lula-validation-a53.yaml) | safety_rate ≥ 98%                   | No                       |
 | **A.9.2** | Data Transfer to Suppliers | Presidio PII masking (NeMo input rail) | [`lula-validation-a92.yaml`](../compliance/lula/lula-validation-a92.yaml) | safety_rate = 100% (zero tolerance) | **Yes** — CRITICAL_CONTROL |

@@ -23,8 +23,9 @@ The system is deployed as a distributed microservices architecture on GKE:
 
 4.  **Governance Sidecars/Services**:
     - `opa-service`: Open Policy Agent server.
-    - `nemo-service`: NeMo Guardrails server.
     - `langfuse-server`: Langfuse v3 observability stack (Web, Worker, ClickHouse, MinIO, Redis).
+
+> **Note:** NeMo Guardrails is integrated directly into the gateway process (in-process), not deployed as a standalone `nemo-service` sidecar.
 
 ## Prerequisites
 
@@ -37,7 +38,7 @@ The system is deployed as a distributed microservices architecture on GKE:
 
 ## Deployment Script
 
-> **⚠️ Superseded:** `deploy_sw.py` and `deployment/terraform/` are superseded. Current deployment uses `deploy_all.sh` and `infra/targets/gcp-gke/`. The instructions below are retained for historical reference only.
+> **⚠️ Superseded:** `deploy_sw.py` is superseded. `deployment/terraform/` was removed 2026-03-15; active IaC is under `infra/targets/gcp-gke/`. Current deployment uses `deploy_all.sh`. The instructions below are retained for historical reference only.
 
 The `deploy_sw.py` script is the central entry point for deploying the entire Cybernetic Governance Engine stack to GKE.
 
@@ -49,7 +50,7 @@ For production environments with pre-existing resources, follow the staged flow:
 a. **Infrastructure State Reconciliation:**
 
 ```bash
-cd deployment/terraform
+cd infra/targets/gcp-gke
 # Import existing resources (if any)
 # terraform import google_container_cluster.primary projects/<PROJECT>/zones/<ZONE>/clusters/governance-cluster
 terraform apply -auto-approve
@@ -141,15 +142,15 @@ Once tensorized, vLLM pods start in **~60–90 seconds** (vs. ~20 minutes for a 
 
 ## Terraform (Infrastructure as Code)
 
-For managing the GKE cluster and underlying VPC via Terraform:
+For managing the GKE cluster and underlying VPC via Terraform, use the active IaC directory:
 
 ```bash
-cd deployment/terraform
+cd infra/targets/gcp-gke
 terraform init
 terraform apply -var="project_id=YOUR_PROJECT_ID"
 ```
 
-The Terraform state tracks the GKE cluster, Node Pools, and Kubernetes Secret objects. The `deploy_sw.py` script respects existing infrastructure.
+> **Note:** `deployment/terraform/` was removed 2026-03-15. All active Terraform configuration is under `infra/`. The `deploy_sw.py` script respects existing infrastructure.
 
 ## Post-Deployment Verification
 

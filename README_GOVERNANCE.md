@@ -21,7 +21,7 @@ The architecture enforces "Defense in Depth" through a **7-step `SymbolicGoverno
 
 **Goal:** Input/Output safety, topical control, and **PII filtering**.
 
-NeMo Guardrails runs **before** `_run_checks()` is invoked. It is deployed as a **standalone pod** (`nemo-service`) in the `governance-stack` Kubernetes namespace — not an in-process sidecar. NeMo delegates all LLM inference to the vLLM endpoint via the `vllm_llama` engine in `config/rails/config.yml`.
+NeMo Guardrails runs **before** `_run_checks()` is invoked. It is integrated into the gateway process (not a standalone sidecar service). The `nemo-service` pod in the `governance-stack` namespace hosts the standalone Colang runtime for external callers, but the production inference path uses the in-process singleton in `src/gateway/governance/nemo/manager.py`. NeMo delegates all LLM inference to the vLLM endpoint via the `vllm_llama` engine in `config/rails/config.yml`.
 
 - **PII Filtering:** **Microsoft Presidio** (15 entity types) detects and masks PII in both user input and agent output. Spacy `en_core_web_sm` provides entity recognition.
 - **Implementation:** `src/gateway/governance/nemo/manager.py` & `config/rails/`
@@ -35,7 +35,7 @@ The `SymbolicGovernor` in `src/gateway/governance/symbolic_governor.py` is the c
 | Step | Name | Implementation | Notes |
 |------|------|---------------|-------|
 | **0** | STPA UCA Constraint Check | `stpa_validator.validate()` | Aho-Corasick keyword scan feeds this; checks for Unsafe Control Actions defined in the ontology |
-| **1** | Agentic Confidence Gate | OPA `system_authz.rego` | **OPA is the sole enforcer** of the confidence threshold (0.95 normal; 0.97 when SLM-degraded). The Python-side confidence check has been removed. |
+| **1** | Agentic Confidence Gate | OPA `system_authz.rego` | **OPA is the sole enforcer** of the confidence threshold (0.95 normal; 0.97 for EU_ECB region). The Python-side confidence check has been removed. SLM sidecar is permanently deprecated (`slm_available=false`). |
 | **2** | Control Barrier Function | `ControlBarrierFunction.verify_action()` (`cbf.py`) | Redis-backed cash balance invariant `h(x) = cash_balance − min_cash_balance ≥ 0` |
 | **2b** | OPA Policy Evaluation | `OPAClient.evaluate_policy()` | Runs **concurrently** with CBF via `asyncio.gather` — combined latency is `max(CBF_ms, OPA_ms)` |
 | **3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` | Atomically reserves the requested USD amount against the daily cap in Redis (WATCH/MULTI/EXEC) **before** the consensus gate, closing the TOCTOU race between the CBF balance check and actual trade execution. Released on any subsequent failure. |

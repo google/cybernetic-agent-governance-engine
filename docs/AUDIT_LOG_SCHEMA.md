@@ -99,7 +99,7 @@ Emitted for every **governance evaluation** (automated) and **HITL approval** (h
 | `action` | `string` | Tool or operation name (e.g., `"execute_trade"`) |
 | `params_redacted` | `object` | Action parameters with sensitive fields replaced by `"***REDACTED***"` |
 | `decision` | `string` | `"APPROVED"` or `"BLOCKED"` (governance) / `"APPROVED"` or `"REJECTED"` (HITL) |
-| `blocking_tier` | `integer` | Governance tier that blocked (0–7); `-1` if approved. See tier index below |
+| `blocking_tier` | `integer` | Governance tier that blocked (0–6); `-1` if approved. See tier index below |
 | `violations` | `string[]` | List of UCA violation strings; empty array if approved |
 | `elapsed_ms` | `float` | Total governance pipeline latency in milliseconds |
 | `thread_id` | `string` | LangGraph thread ID (HITL records only) |
@@ -125,16 +125,17 @@ This prevents PII from appearing in the audit log. The log records the *decision
 
 ### Governance Tier Index
 
+The governance pipeline is a **7-tier symbolic governor (Tiers 0–6)**. The SLM semantic similarity sidecar (formerly referenced as Tier 3) has been **deprecated** — `slm_available=false` is a permanent sentinel; it is not part of the active pipeline.
+
 | Tier | Gate | Control | Source |
 |------|------|---------|--------|
 | 0 | STPA Unsafe Control Action validation | UCA-* | `stpa_validator.py` |
 | 1 | Agentic model confidence threshold | CTRL_AGT_001 | `symbolic_governor.py` |
-| 2 | RBC/CBF Control Barrier Function | Safety filter | `safety.py` |
-| 3 | SLM similarity sidecar (Phase 4.3) | Semantic | SLM sidecar |
-| 4 | OPA policy enforcement | CTRL_OPA_001 | `system_authz.rego` |
-| 5 | Multi-agent consensus | ISO 42001 | `consensus.py` |
+| 2 | Control Barrier Function (CBF) | Safety filter | `cbf.py` |
+| 3 | OPA Rego policy enforcement (concurrent with CBF) | CTRL_OPA_001 | `system_authz.rego` |
+| 4 | Fiscal Limit Pre-Reservation (FiscalLimitGuard) | CTRL_FLG_001 | `fiscal_limit_guard.py` |
+| 5 | Multi-agent consensus | ISO 42001 A.8.4 | `symbolic_governor.py` |
 | 6 | DoWhy causal gatekeeper | Refutation | `causal_gatekeeper.py` |
-| 7 | FRIA adaptive enforcement / attestation | EU AI Act Art. 29a | `normative_provider.py` |
 
 ---
 
@@ -203,7 +204,7 @@ The following OTel span attributes are emitted alongside every evidence record, 
 | `langfuse.trace.metadata.iso.control_id` | `"A.8.4"` | |
 | `langfuse.trace.metadata.nist.control_id` | `"SC-4"` | |
 | `cage.governance.decision` | `"BLOCKED"` \| `"APPROVED"` | |
-| `cage.governance.blocking_tier` | `0`–`4` or `-1` | |
+| `cage.governance.blocking_tier` | `0`–`6` or `-1` | |
 | `cage.governance.violation_count` | `integer` | |
 | `cage.governance.elapsed_ms` | `float` | |
 | `cage.evidence.chain_hash` | SHA-256 hex | Links OTel span to the NDJSON evidence record |

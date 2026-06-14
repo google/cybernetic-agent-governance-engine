@@ -185,7 +185,6 @@ terraform apply
 - **[`app_secrets`](modules/app_secrets/)** - Kubernetes Secrets management
 - **[`gateway`](modules/gateway/)** - Inference Gateway
 - **[`governed_advisor`](modules/governed_advisor/)** - Governed Financial Advisor backend
-- **[`slm_inference`](modules/slm_inference/)** - SLM inference (deprecated, kept for reference)
 
 Each module includes:
 - ✅ `README.md` - Documentation

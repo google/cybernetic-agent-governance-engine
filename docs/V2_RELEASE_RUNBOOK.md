@@ -1,5 +1,6 @@
 # v2.0.0 Release Runbook — Phases 2–6
 
+> **Status: ✅ COMPLETE — v2.0.0 RELEASED (GO — 2026-06-08).** All phases executed. This runbook is preserved as a historical execution record for audit traceability.
 > **Prerequisites:** Phase 1 PR (`fix/v2-p0-blockers`) must be merged into `rc-v2.0.0` before starting Phase 2.
 > **Cluster:** `gke_laah-cybernetics_us-central1-a_cage-dev`, namespace `governance-stack`
 > **Project:** `laah-cybernetics`
@@ -656,25 +657,25 @@ All items must be ✅ before executing step 6.8 (tag creation). Apply the gates 
 
 #### ✅ Universal Gates (all regions — must pass for any stable release)
 
-- [ ] All ISO 42001 Lula assertions pass (`lula-validation-a52.yaml`, `lula-validation-a53.yaml`, `lula-validation-a92.yaml`)
-- [ ] CSA AARM Lula assertion passes (`lula-validation-aarm-vectors.yaml`)
-- [ ] All non-NIST Lula assertions pass (ISO 42001 + CSA AARM manifests)
-- [ ] SBOM generated and validated (`deployment/k8s/sbom-cronjob.yaml` output)
-- [ ] Container image vulnerability scan passes (Trivy — no CRITICAL unmitigated)
-- [ ] Secret detection scan passes (no secrets in codebase)
-- [ ] All unit and integration tests pass (`pytest`)
-- [ ] STPA freshness check passes (`scripts/check_stpa_freshness.py`)
-- [ ] Langfuse posture verified (`scripts/verify_langfuse_posture.py`)
-- [ ] `git log --all -S "<any-credential>"` returns zero matches for all patterns
-- [ ] `governed-financial-advisor` READY 1/1, AVAILABLE 1, no `slm-sidecar` container
-- [ ] `CAGE_ROUTING_SEAL_SECRET` in `advisor-secrets` ≥64 chars
-- [ ] `GOVERNANCE_SALT` in `advisor-secrets` ≥64 chars
-- [ ] `GOVERNANCE_SALT` in gateway pod env ≥64 chars
-- [ ] Unsigned gateway request returns HTTP 403
-- [ ] Valid signed gateway request returns HTTP 200
-- [ ] `security-scanner-cronjob` exists in `governance-stack` namespace
-- [ ] PSA labels: `governance-stack`=restricted, `langfuse`=baseline, `vllm`=baseline
-- [ ] Full test suite: 0 failures
+- [x] All ISO 42001 Lula assertions pass (`lula-validation-a52.yaml`, `lula-validation-a53.yaml`, `lula-validation-a92.yaml`)
+- [x] CSA AARM Lula assertion passes (`lula-validation-aarm-vectors.yaml`)
+- [x] All non-NIST Lula assertions pass (ISO 42001 + CSA AARM manifests)
+- [x] SBOM generated and validated (`deployment/k8s/sbom-cronjob.yaml` output)
+- [x] Container image vulnerability scan passes (Trivy — no CRITICAL unmitigated)
+- [x] Secret detection scan passes (no secrets in codebase)
+- [x] All unit and integration tests pass (`pytest`)
+- [x] STPA freshness check passes (`scripts/check_stpa_freshness.py`)
+- [x] Langfuse posture verified (`scripts/verify_langfuse_posture.py`)
+- [x] `git log --all -S "<any-credential>"` returns zero matches for all patterns
+- [x] `governed-financial-advisor` READY 1/1, AVAILABLE 1, no `slm-sidecar` container
+- [x] `CAGE_ROUTING_SEAL_SECRET` in `advisor-secrets` ≥64 chars
+- [x] `GOVERNANCE_SALT` in `advisor-secrets` ≥64 chars
+- [x] `GOVERNANCE_SALT` in gateway pod env ≥64 chars
+- [x] Unsigned gateway request returns HTTP 403
+- [x] Valid signed gateway request returns HTTP 200
+- [x] `security-scanner-cronjob` exists in `governance-stack` namespace
+- [x] PSA labels: `governance-stack`=restricted, `langfuse`=baseline, `vllm`=baseline
+- [x] Full test suite: 0 failures
 
 #### 🇺🇸 US_FED Gates (required for US_FED stable release only)
 
@@ -682,7 +683,7 @@ All items must be ✅ before executing step 6.8 (tag creation). Apply the gates 
 
 - [ ] All 10 NIST SP 800-53 Lula assertions pass (`lula-validation-ac2.yaml`, `lula-validation-ac3.yaml`, `lula-validation-au12.yaml`, `lula-validation-cm6.yaml`, `lula-validation-ia3.yaml`, `lula-validation-ia5.yaml`, `lula-validation-ir6.yaml`, `lula-validation-ra5.yaml`, `lula-validation-sc8.yaml`, `lula-validation-si2.yaml`)
 - [ ] NIST SP 800-53 coverage ≥45% (checked via `oscal_ssp_exporter.py`)
-- [ ] `security-scanner-cronjob` deployed in `governance-stack` namespace (RA-5 Lula assertion prerequisite)
+- [x] `security-scanner-cronjob` deployed in `governance-stack` namespace (RA-5 Lula assertion prerequisite)
 - [ ] ATO process initiated (OSCAL SSP PRE-AUTHORIZATION DRAFT → submitted)
 - [ ] POAM-005 (no ATO) and POAM-009 (FIPS 199 unsigned) addressed or formally accepted
 - [ ] ATO package submitted; POAM-011, POAM-012, R-21 documented

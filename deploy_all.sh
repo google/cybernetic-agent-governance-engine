@@ -219,6 +219,15 @@ deploy_terraform_target() {
   # Load environment variables
   load_env
   
+  # Reject staging — defined in Terraform schema but not yet provisioned (POAM-024, target v2.1.0)
+  if [[ "$env" == "staging" ]]; then
+    error "The 'staging' deployment posture is defined in the Terraform schema but not yet provisioned."
+    echo "  Staging is deferred to v2.1.0 (POAM-024, target 2026-12-31)."
+    echo "  See docs/CHANGE_MANAGEMENT_PROCESS.md §3.5 and docs/POAM_ISO42001.md#POAM-024."
+    echo "  Use '--env dev' or '--env prod'."
+    exit 1
+  fi
+
   # Set environment-specific banners
   if [[ "$env" == "prod" ]]; then
     echo ""

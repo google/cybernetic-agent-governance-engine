@@ -54,7 +54,7 @@ This process applies to **all changes** to the CAGE production system, including
 | **AI Model Configuration** | vLLM model updates, NeMo Guardrails configuration, LangGraph workflow changes         |
 | **Compliance Artifacts**   | OSCAL component updates, Lula validation changes, SSP updates                         |
 | **Security Configuration** | TLS certificates, IAM roles, Secret Manager entries, encryption keys                  |
-| **Monitoring/Telemetry**   | OTel Collector configuration, Langfuse settings, alerting rules                       |
+| **Monitoring/Telemetry**   | Langfuse settings, alerting rules, OTLP pipeline configuration                        |
 | **CI/CD Pipeline**         | GitHub Actions workflow changes (`.github/workflows/`)                                |
 
 ### 1.3 Exclusions
@@ -239,6 +239,23 @@ Closure actions:
 4. Notify AO if Cat-M change has been fully implemented and verified
 5. Update `CHANGELOG.md` with change summary
 
+### 3.8 Environment Promotion Order
+
+The standard promotion path for all changes is:
+
+```
+dev  →  prod
+```
+
+> **Note (v2.0.0 — POAM-024):** A `staging` pre-production environment is defined in the Terraform schema (`infra/targets/gcp-gke/variables.tf`) and is architecturally planned as an intermediate tier between `dev` and `prod`. However, the staging environment is **not yet provisioned** for v2.0.0. The intended three-tier promotion path (`dev → staging → prod`) is deferred to v2.1.0 (target: 2026-12-31). For v2.0.0, the promotion path is **dev → prod** with AO acknowledgement. The `deploy_all.sh` script rejects `--env staging` with an explicit error until staging is provisioned. See [`docs/POAM_ISO42001.md#POAM-024`](POAM_ISO42001.md).
+
+No change may be promoted directly from `dev` to `prod` without passing all CI gates on the source branch. Each promotion requires:
+
+1. All Lula validations pass
+2. `pytest` suite passes with zero failures
+3. STPA freshness check passes
+4. Langfuse posture verified
+
 ---
 
 ## 4. Change Advisory Board (CAB)
@@ -302,7 +319,7 @@ The ISSO reviews the change against the CAGE control baseline (`compliance/ssp/S
 
 Changes that potentially modify the authorization boundary include:
 
-- Adding new GCP services (new Terraform resources not in current `deployment/terraform/`)
+- Adding new GCP services (new Terraform resources not in current `infra/targets/gcp-gke/`)
 - Adding new Kubernetes namespaces or external-facing Services
 - Adding external API integrations or interconnections
 - Deploying new AI models or inference services

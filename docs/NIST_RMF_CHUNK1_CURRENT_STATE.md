@@ -32,7 +32,7 @@ The gateway implements a **multi-tier, neuro-symbolic governance pipeline** that
 
 - **Tier 0 — STPA/STAMP constraint validation** (`STPAValidator`): Evaluates deterministic Unsafe Control Actions (UCAs) against a `TradingKnowledgeGraph` ontology. Checks include SC-1 (approval token), FIN-1 (portfolio sell fraction ≤ 10 %), FIN-2 (latency ≤ 200 ms), UCA-5 (drawdown > 4.5 %), and UCA-6 (order size > 1 % of daily volume).
 - **Tier 1 — Aho-Corasick keyword scan** (`ControlBarrierFunction` + `ac_keyword_scan`): O(n) scan against 14 tier-1 prompt-injection/bypass keywords loaded from `config/governance_thresholds.json`. Falls back to O(n×m) if `pyahocorasick` is absent.
-- **Tier 2 — Control Barrier Function (CBF)** (`ControlBarrierFunction`): Discrete-time CBF maintaining a shared Redis cash-balance state. Uses WATCH/MULTI/EXEC optimistic locking with up to 5 retries for concurrent write safety. Tracks drawdown against configurable limits. **v2.0.0:** CBF is externally reconciled via `AnchorageGrpcLedgerProvider`.
+- **Tier 2 — Control Barrier Function (CBF)** (`ControlBarrierFunction`): Discrete-time CBF maintaining a shared Redis cash-balance state. Uses WATCH/MULTI/EXEC optimistic locking with up to 5 retries for concurrent write safety. Tracks drawdown against configurable limits. **v2.0.0:** External ledger reconciliation via `AnchorageGrpcLedgerProvider` is **FUTURE STATE** (POAM-023, target 2026-09-08) — not yet implemented; CBF currently uses Redis-only state.
 - **Tier 3 — SLM similarity sidecar** (`_query_slm` in `SymbolicGovernor`): **DEPRECATED in v2.0.0** — permanent `slm_available=False` sentinel injected; OPA applies elevated confidence threshold (0.97) unconditionally. The sidecar is no longer deployed.
 - **Tier 4 — OPA policy enforcement** (`OPAClient`): Async HTTP client with circuit breaker (fail-DENY after 5 failures, 30 s recovery). Queries OPA with `?explain=full` for audit trail. Latency budget enforcement: hard cap at 3000 ms (bankruptcy protocol), soft ceiling at 2000 ms.
 - **Tier 5 — Multi-agent consensus** (`ConsensusEngine`): Parallel LLM critic calls (`asyncio.gather`) from "Risk Manager" and "Compliance Officer" personas for trades above USD 10,000 threshold. Results are pushed to a background `asyncio.Queue` for post-execution audit (non-blocking hot path). **v2.0.0:** Heterogeneous multi-model consensus via `ConsensusModelRegistry`.
@@ -361,15 +361,15 @@ The `tests/` directory contains **644 tests** across 28+ test files spanning uni
 
 | Metric          | Count |
 | --------------- | ----- |
-| **Total Items** | 22    |
+| **Total Items** | 23    |
 | **Critical**    | 3     |
 | **High**        | 13    |
-| **Moderate**    | 6     |
-| **Open**        | 12    |
+| **Moderate**    | 7     |
+| **Open**        | 13    |
 | **In Progress** | 3     |
-| **Closed**      | 5     |
+| **Closed**      | 6     |
 
-**Closed items (v1.1.0–v2.0.0):** POAM-007 (Linkerd mTLS, 2026-05-17), POAM-010 (vulnerability scanning CI, closed), POAM-016 (CVE-2025-69872 `outlines` removed, 2026-05-29), POAM-020 (technical report version mismatch, 2026-05-27), POAM-021 (AgentSight remote mode, 2026-05-27).
+**Closed items (v1.1.0–v2.0.0):** POAM-003 (closed), POAM-007 (Linkerd mTLS, 2026-05-17), POAM-010 (vulnerability scanning CI, closed), POAM-016 (CVE-2025-69872 `outlines` removed, 2026-05-29), POAM-020 (technical report version mismatch, 2026-05-27), POAM-021 (AgentSight remote mode, 2026-05-27).
 
 **Critical open items:** POAM-005 (no ATO letter, CA-6), POAM-009 (FIPS 199 unsigned, RA-2), POAM-015 (no SSP, PL-2).
 

@@ -22,7 +22,7 @@ CAGE v2.0.0 provides a multi-jurisdiction, dual-layer governance architecture fo
 10. **Cloud KMS HSM-Backed Governance Signing (v2.0.0):** Asymmetric signing via Google Cloud KMS Hardware Security Module (`src/gateway/governance/kms_signer.py`). The private key never leaves the HSM; verification uses a locally-embedded public key PEM for sub-millisecond latency. Cloud Audit Logs provide external, immutable attestation of every signing operation. Replaces the prior HMAC-SHA256 self-signing pattern that was vulnerable to container-breakout key extraction.
 11. **Human-Gated NeMo Refinement (v2.0.0):** The autonomous Langfuse → KFP → NeMo hot-reload loop is severed. All config refinements are staged via `POST /v1/nemo/propose-refinement` and require explicit human approval with reviewer identity and rationale before applying — eliminating the recursive self-authentication path where a model could engineer its own privilege escalation.
 12. **Heterogeneous Multi-Model Consensus (v2.0.0):** `ConsensusModelRegistry` routes each critic persona to a distinct vLLM inference backend (DeepSeek-R1 for Risk Manager, Llama 3.1 for Compliance Officer). No single model can "consent" to its own output — system invariants are no longer vulnerable to a shared semantic blind spot.
-13. **Externally Reconciled CBF Ground Truth (v2.0.0):** The Control Barrier Function's `cash_balance` input is sourced from an independently reconciled external custody ledger (Anchorage Digital, OCC-chartered) via `AnchorageGrpcLedgerProvider`. The reconciliation daemon runs in an isolated Kubernetes namespace with its own Cilium network policy. Reconciled balances are KMS-signed before Redis write. If the verified balance is stale (TTL expired), the CBF fails closed.
+13. **Externally Reconciled CBF Ground Truth (FUTURE STATE — POAM-023):** The Control Barrier Function's `cash_balance` input is designed to be sourced from an independently reconciled external custody ledger (Anchorage Digital, OCC-chartered) via `AnchorageGrpcLedgerProvider`. **This integration is not yet implemented** — `AnchorageGrpcLedgerProvider` is tracked as POAM-023 (target: 2026-09-08). The CBF currently reads from Redis state. When implemented, reconciled balances will be KMS-signed before Redis write and the CBF will fail closed on TTL expiry.
 14. **External Normative Provider with Adaptive Gating (v2.0.0):** `src/gateway/governance/normative_provider.py` implements the 3-endpoint external normative provider integration (§2.5 Extensibility Architecture) with an **Adaptive Gating Primitive** (`enforce_fria_boundary()`) that maps the blocking semantic to CAGE's confidence boundary: Score ≥0.95 → async attestation (0ms); [0.70, 0.95) → synchronous blocking gate via DEFER queue; <0.70 → local hard deny (no external call). Supports pluggable providers (`StubNormativeProvider` for dev/CI, `TrustLayersProvider` for production). Background daemon for boot-time baseline fetch + 6-hour polling refresh.
 
 Compliance is not documented after the fact; it is enforced at the point of inference, producing both governed outputs and a cryptographically hash-chained, tamper-evident audit evidence trail in real time.
@@ -96,7 +96,7 @@ For full architectural detail, see [`docs/GATEWAY_ARCHITECTURE.md`](docs/GATEWAY
 - **Cloud KMS HSM governance signatures (v2.0.0)** — Asymmetric signing via Google Cloud KMS HSM; private key never leaves hardware. HMAC-SHA256 fallback for dev/CI. Required before any trade execution.
 - **Human-gated NeMo refinement (v2.0.0)** — All config changes staged as proposals requiring explicit human approval with reviewer identity and rationale. Severs the autonomous hot-reload loop.
 - **Heterogeneous multi-model consensus (v2.0.0)** — `ConsensusModelRegistry` routes each critic persona to a distinct vLLM backend, preventing single-model semantic blind spots.
-- **Externally reconciled CBF (v2.0.0)** — `AnchorageGrpcLedgerProvider` (Anchorage Digital, OCC-chartered) provides independently attested balances for the Control Barrier Function. KMS-signed before Redis write. Fail-closed on TTL expiry.
+- **Externally reconciled CBF (FUTURE STATE — POAM-023)** — `AnchorageGrpcLedgerProvider` (Anchorage Digital, OCC-chartered) is designed to provide independently attested balances for the Control Barrier Function. **Not yet implemented** — tracked as POAM-023 (target: 2026-09-08). CBF currently reads from Redis state.
 - **Human-in-the-loop approval gate** — LangGraph `interrupt_before=["governed_trader"]`; resume via `POST /v1/approvals/{thread_id}/resume`.
 - **W3C traceparent propagation** — full OTel trace waterfall across LangGraph → Gateway → vLLM; 100% sampling for governance decision spans.
 
@@ -138,7 +138,7 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 | Domain                                       | Status                  | Detail                                                                                                                      |
 | -------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | **AI governance enforcement**                | ✅ Implemented & tested | NeMo rails, OPA circuit breaker, Cloud KMS HSM seal (production seal enforcement active — unsigned requests return 403), HITL, CBF (externally reconciled), heterogeneous consensus, PII, STPA — all fail-closed |
-| **Evidentiary independence (v2.0.0)**        | ✅ Implemented & tested | KMS asymmetric signing, human-gated refinement, Anchorage custody reconciliation, multi-model consensus — recursive self-authentication eliminated |
+| **Evidentiary independence (v2.0.0)**        | ✅ Implemented & tested | KMS asymmetric signing, human-gated refinement, multi-model consensus — recursive self-authentication eliminated. (Anchorage custody reconciliation via `AnchorageGrpcLedgerProvider` is FUTURE STATE — POAM-023, target 2026-09-08) |
 | **Multi-Framework automated compliance**     | 🟡 Partial              | 15 Lula validation manifests (4 Active, 11 Stub) across ISO 42001, NIST SP 800-53, and CSA AARM — see [`compliance/lula/README.md`](compliance/lula/README.md) |
 | **NIST RMF Steps 1–4 (Prepare → Implement)** | 🟡 Partial              | SC-8 elevated to implemented; SC-7 reinforced; FIPS 199 unsigned; ATO not yet issued                                       |
 | **NIST RMF Step 5 (Assess)**                 | ❌ Not started          | No Security Assessment Report; no independent assessor                                                                      |
@@ -383,7 +383,7 @@ Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 
 | Metric | Count |
 |--------|-------|
-| Total Items | 24 |
+| Total Items | 23 |
 | **Closed** | **6** (POAM-003 AU-12, POAM-007 IA-3, POAM-010 RA-5, POAM-016 SI-2, POAM-020 CM-3, POAM-021 SI-4) |
 | Open | 14 (includes POAM-023 SI-2 CVE-2025-13462, opened 2026-06-08) |
 | In Progress | 3 |

@@ -35,7 +35,7 @@ The Cybernetic AI Governance Engine (CAGE) is an AI-native financial advisory pl
 - Orchestrates multi-agent LLM workflows for investment analysis and trade recommendations
 - Enforces governance policies via OPA (Open Policy Agent) Rego rules and NeMo Guardrails Colang definitions
 - Applies STPA (Systems-Theoretic Process Analysis) validation to AI decision paths
-- Detects and redacts PII in real time using NeMo Guardrails Presidio (16 entity types)
+- Detects and redacts PII in real time using NeMo Guardrails Presidio (15 entity types)
 - Produces ISO 42001-compliant audit trails via OpenTelemetry spans stored in Langfuse
 - Screens trade recommendations against OFAC sanctions lists
 - Exposes a gRPC/REST hybrid gateway for downstream consumption

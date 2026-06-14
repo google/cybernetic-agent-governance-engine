@@ -174,8 +174,9 @@ commands that produce the evidence — this is compliance-as-code thinking appli
 to operational verification.
 
 **Notable gaps:**
-- mTLS between intra-cluster services is absent (tracked as POAM-013);
-  NetworkPolicy is the primary compensating control.
+- mTLS between intra-cluster services: Linkerd mTLS + Cilium L7 egress lockdown
+  deployed 2026-05-17 (POAM-007 closed). NetworkPolicy remains as a defence-in-depth
+  compensating control.
 - The `vllm` namespace requires a POAM exception for GPU driver host-level device
   access, which conflicts with the `restricted` PSS profile.
 - Automated network policy testing (netassert/Kyverno) is documented but not

@@ -11,14 +11,13 @@
 | ------------------------- | ------------------ | --------- | ------------------------------ |
 | OPA (`opa-service`)       | `governance-stack` | ClusterIP | Migrated from `default` (R-24) |
 | Financial Advisor backend | `governance-stack` | ClusterIP | Canonical app namespace        |
-| NeMo Guardrails sidecar   | `governance-stack` | ClusterIP | Co-located with backend        |
+| NeMo Guardrails           | `governance-stack` | —         | Integrated into gateway process (in-process, not a standalone service) |
 | vLLM inference (fast)     | `governance-stack` | ClusterIP | Qwen2.5-7B-Instruct            |
 | vLLM reasoning            | `governance-stack` | ClusterIP | QwQ-32B reasoning model        |
 | Compliance Bridge         | `governance-stack` | ClusterIP | OSCAL/audit workflow           |
 | Redis (db 0)              | `governance-stack` | ClusterIP | LangGraph checkpoint store     |
 | Redis (db 1)              | `governance-stack` | ClusterIP | Evidence state store (noeviction) |
 | Langfuse web              | `governance-stack` | ClusterIP | Observability UI               |
-| OTEL Collector            | `governance-stack` | ClusterIP | Trace aggregation              |
 | AgentSight daemon         | `governance-stack` | DaemonSet | Node-level telemetry           |
 
 ---

@@ -29,7 +29,7 @@ CAGE v2.0.0 provides a **production-grade AI governance enforcement runtime**. T
 | Cloud KMS governance signature   | HSM-backed asymmetric signing via `kms_signer.py`; HMAC-SHA256 fallback in dev/CI | ✅ Implemented & tested |
 | Human-in-the-loop gate           | `interrupt_before=["governed_trader"]`; Redis-persisted checkpoint; TOCTOU remediation via `post_hitl_rehydrate` + `post_hitl_revalidate` nodes | ✅ Implemented & tested |
 | Safety check node                | Explicit OPA gate between evaluator and governed trader                   | ✅ Implemented & tested |
-| Control Barrier Function         | Redis-backed cash/drawdown invariant enforcement; externally reconciled via AnchorageGrpcLedgerProvider | ✅ Implemented & tested |
+| Control Barrier Function         | Redis-backed cash/drawdown invariant enforcement via Redis `WATCH/MULTI/EXEC` optimistic locking; external ledger reconciliation via `AnchorageGrpcLedgerProvider` is **FUTURE STATE (POAM-023, target 2026-09-08)** | ✅ Implemented & tested |
 | Aho-Corasick keyword scan        | O(n) prompt-injection detection; 14+ patterns                             | ✅ Implemented & tested |
 | Multi-agent consensus            | Unanimity required for trades > $10k; ConsensusModelRegistry              | ✅ Implemented & tested |
 | Presidio PII detection           | 15 entity types; input and output (in-process within NeMo Guardrails)      | ✅ Implemented & tested |

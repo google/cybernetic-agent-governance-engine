@@ -67,9 +67,9 @@ This assessment follows the four-step NIST SP 800-30 Rev. 1 process:
 
 ### 2.1 System Description
 
-The Cybernetic AI Governance Engine (CAGE) is an AI-native financial advisory platform deployed on Google Kubernetes Engine (GKE). It orchestrates multi-agent LLM workflows for investment analysis and trade recommendations while enforcing governance policies through a 5-tier neuro-symbolic pipeline:
+The Cybernetic AI Governance Engine (CAGE) is an AI-native financial advisory platform deployed on Google Kubernetes Engine (GKE). It orchestrates multi-agent LLM workflows for investment analysis and trade recommendations while enforcing governance policies through a 7-tier symbolic governor (Tiers 0–6):
 
-1. **NeMo Guardrails** — Input/output filtering, PII detection (16 entity types), safety rails
+1. **NeMo Guardrails** — Input/output filtering, PII detection (15 entity types), safety rails
 2. **OPA Policy Engine** — Rego-based RBAC and governance policy enforcement
 3. **STPA Validation** — Systems-Theoretic Process Analysis for AI decision paths
 4. **OFAC Screening** — Trade recommendation screening against sanctions lists
