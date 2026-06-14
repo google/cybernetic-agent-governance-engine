@@ -3,11 +3,13 @@
 **System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor
 **Document Number:** IRP-CAGE-2026-001
 **Reference:** NIST SP 800-61 Rev. 2; NIST SP 800-53 Rev. 5 IR Control Family
-**Version:** 1.0 (Draft)
-**Date:** 2026-03-06
+**Version:** 1.1 (Draft)
+**Date:** 2026-06-14
 **Classification:** UNCLASSIFIED
 **Status:** DRAFT — Pending AO Approval
 **Resolves:** POAM-008 (IR-1: No Incident Response Plan)
+
+> **v2.0.0 Release Note (2026-06-08):** CAGE v2.0.0 has been released as a stable tag. All IRT role incumbents remain `[TBD]` pending organizational action. The ATO process has been initiated (Sprint 3). This IRP remains in DRAFT status until the AO approves it and role incumbents are named. The `docs/POAM.md` reference in the table below has been superseded — see [`docs/POAM_INDEX.md`](POAM_INDEX.md) for the current multi-posture POAM structure.
 
 | Field                     | Value                                                                                                                                                                                 |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -16,7 +18,7 @@
 | ISSO                      | [ISSO NAME — TBD]                                                                                                                                                                     |
 | IRT Lead                  | [IRT LEAD NAME — TBD]                                                                                                                                                                 |
 | Authorizing Official (AO) | [AO NAME — TBD]                                                                                                                                                                       |
-| Related Documents         | `docs/POAM.md`, `compliance/sar/SAR_2026Q1.md`, `compliance/rar/RISK_ASSESSMENT_REPORT.md`, `docs/ROLES_AND_RESPONSIBILITIES.md`, `compliance/continuous-monitoring/ISCM_STRATEGY.md` |
+| Related Documents         | `docs/POAM_INDEX.md` (supersedes `docs/POAM.md`), `compliance/sar/SAR_2026Q1.md`, `compliance/rar/RISK_ASSESSMENT_REPORT.md`, `docs/ROLES_AND_RESPONSIBILITIES.md`, `compliance/continuous-monitoring/ISCM_STRATEGY.md` |
 
 ---
 

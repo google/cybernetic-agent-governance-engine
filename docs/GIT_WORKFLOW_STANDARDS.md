@@ -1,8 +1,10 @@
 # Git Workflow Standards — Cybernetic Governance Engine
 
-**Version:** 1.0  
-**Effective:** 2026-06-03  
+**Version:** 1.1
+**Effective:** 2026-06-14
 **Applies to:** All contributors to `cybernetic-governance-engine`
+
+> **v2.0.0 Release Note (2026-06-08):** The stable `v2.0.0` tag has been pushed to origin and the GitHub Release is published as Latest. The `rc-v2.0.0` branch is retained as a permanent release boundary marker per §4.3 of [`docs/V2_RELEASE_PLAN.md`](V2_RELEASE_PLAN.md). All future feature work branches from `main`. The `pre-push` hook blocks direct pushes to both `main` and `rc-v2.0.0`.
 
 This document is the authoritative reference for Git commit standards, branch naming, local setup requirements, pull request process, and protected branch workflow. Compliance is mandatory. Deviations will cause CI failures, rejected commits, or blocked pushes.
 
@@ -441,3 +443,12 @@ A single commit that touches more than ~20 files or ~500 lines (excluding genera
 ---
 
 *This document is version-controlled. Proposed changes must go through the standard PR process and require maintainer approval.*
+
+---
+
+**Document Control:**
+
+| Version | Date       | Change Summary |
+|---------|------------|----------------|
+| 1.0     | 2026-06-03 | Initial Git workflow standards |
+| 1.1     | 2026-06-14 | Added v2.0.0 release note; clarified `rc-v2.0.0` is retained as permanent release boundary marker; confirmed `pre-push` hook blocks both `main` and `rc-v2.0.0` |
