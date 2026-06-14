@@ -217,6 +217,11 @@ htmlcov/
 
 # Stale scratch/temp directories — canonical protos live in src/gateway/protos/
 temp_test/
+scratch/
+
+# Evidence directories (populated at runtime, never committed)
+examples/evidence/
+!examples/evidence/.gitkeep
 mcp-servers/infrastructure/setup.sh
 
 # Roo AI assistant configuration, rules, and state
