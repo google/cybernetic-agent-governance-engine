@@ -12,6 +12,60 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ---
 
+## [2.0.1] — 2026-06-14
+
+> Post-release security hardening and documentation audit. Covers Sprint 1 critical fixes (C-01–C-07), Sprint 2 high-severity fixes (H-08–H-16), Sprint 3 medium-severity fixes (M-01–M-24), deployment manifest corrections (#15), and a full v2.0.0 documentation consistency audit (POAM-024 staging deferral).
+
+### Fixed — Sprint 1 Critical Security Fixes (Cat-N, PR #12)
+
+- **`fix(gateway): use requested trade side instead of hardcoded buy`** (`f861396`) — Governed trader node now uses the user-requested trade side rather than always defaulting to `BUY`. Closes C-01.
+- **`fix(governance): make CBF fail-closed on Redis unavailability`** (`01b52a1`) — CBF state check now raises `GovernanceError` on Redis connection failure instead of silently allowing the request. Closes C-02.
+- **`fix(governance): enforce custom HMAC salt at startup in prod`** (`cc75b01`) — Gateway startup asserts `GOVERNANCE_SALT` is set and non-default in `CAGE_ENV=prod`. Closes C-03.
+- **`fix(advisor): add bearer token auth to financial API endpoints`** (`d48d737`) — `Depends(require_api_key)` applied to `/agent/query`. Closes C-04 (partial; remaining endpoints tracked in POAM).
+- **`fix(advisor): replace exec() with allowlisted function dispatch in transpiler`** (`fc30494`) — `exec()` removed from `transpiler.py`; replaced with an explicit allowlisted function dispatch table. Closes C-05.
+- **`fix(infra): restrict GKE master authorized networks from 0.0.0.0/0`** (`168ba6f`) — GKE master authorized networks tightened from `0.0.0.0/0` to the operator CIDR. Closes C-06.
+- **`fix(compliance): add auth to audit ingest endpoint`** (`17f31ee`) — Compliance bridge audit ingest endpoint now requires bearer token. Closes C-07.
+- **`fix(compliance): start KMS batch signer on compliance bridge startup`** (`31ec48d`) — `KMSBatchSigner` pre-warmed at startup; no longer lazy-initialized on first request.
+- **`fix(compliance): update audit workflow to current Langfuse SDK API`** (`3b2e23a`) — Audit workflow updated to Langfuse SDK v3 API surface.
+- **`fix(governance): make OPA quota rules fail-closed on missing input fields`** (`c1616fe`) — OPA quota rules now default-deny when required input fields are absent.
+- **`test(compliance): update fixtures for C-07 auth and add C-01/C-02 tests`** (`494217d`) — Regression tests for C-01, C-02, and C-07 added.
+
+### Fixed — Sprint 2 High-Severity Security Fixes (Cat-N, PR #13)
+
+- **`fix(governance): persist ISO control audit trail to Redis stream`** (`a6c6d10`) — ISO control audit events now written to a Redis stream for durable audit trail. Closes H-08.
+- **`fix(governance): add trace_id validation to causal gatekeeper ordering`** (`876473e`) — Causal gatekeeper now validates `trace_id` format before ordering check. Closes H-09.
+- **`fix(governance): sanitize PII from UCA log entries before GCS write`** (`9079829`) — PII sanitizer applied to UCA log entries before writing to GCS WORM bucket. Closes H-11.
+- **`fix(gateway): sanitize error messages returned to API callers`** (`9f43262`) — Internal exception details stripped from HTTP 500 responses. Closes H-12.
+- **`fix(gateway): enforce KMS signer activation at startup in prod`** (`362e772`) — Gateway startup asserts KMS signer is active in `CAGE_ENV=prod`. Closes H-13.
+- **`fix(governance): fail fast on missing security-sensitive env vars in prod`** (`46e19c2`) — Startup validation extended to all security-sensitive env vars. Closes H-14.
+- **`fix(governance): read CBF state atomically via Redis pipeline`** (`a50b0be`) — CBF state reads now use a Redis pipeline for atomicity. Closes H-15.
+- **`fix(governance): add input validation and integrity checks for H-08/09/11/12`** (`eb51547`) — Input validation and integrity checks added across governance modules. Closes H-16.
+- **`fix(governance): document atomic Lua quota enforcement satisfies H-10`** (`8c9d116`) — Inline documentation confirms atomic Lua script satisfies H-10 race-condition requirement.
+- **`fix(infra): harden K8s/deploy config for H-13/H-14/H-15/H-16`** (`6ba70e6`) — Kubernetes manifests hardened: resource limits, security contexts, and secret references corrected.
+- **`test(governance): add regression tests for H-08/09/10/11/12 fixes`** (`4ccd5fa`) — Regression test suite for all Sprint 2 high-severity findings.
+
+### Fixed — Sprint 3 Medium-Severity Security Fixes (Cat-N, `f6e75db`)
+
+- Remediated M-01 through M-24 medium-severity findings from the automated security audit. Includes: per-client sliding-window rate limit on MCP tool server (M-16), `/debug/*` endpoint blocking in non-dev environments, K8s namespace secondary check in dev mode guard, IBAN/SWIFT/BIC PII patterns added to sanitizer, Slack mrkdwn escaping for LLM-generated text, TOCTOU race elimination and loopback auth in lula scheduler, OSCAL YAML payload size limit (5 MB), SSE subscriber limit, demo router gated behind `CAGE_ENV=dev`, governed trader default evaluation result set to `DENIED`, user message sanitization before LLM prompt construction, Redis TLS cert verification in production, HMAC-SHA256 approval tokens replacing UUID, full SHA-256 digest in cache key, OPA HTTP decision log sink for durable audit trail, gateway container running as non-root (UID 1000), CVE-2025-3000/GHSA-rrmf-rvhw-rf47 suppressed in pip-audit scan, and targeted regression tests for M-01–M-24.
+
+### Fixed — Deployment Manifest Corrections (Cat-N, `7ec2a52`, Closes #15)
+
+- **`fix(infra): correct workload manifests for gateway, langfuse, and redis`** (`f91c0f9`) — Resource limits, image tags, and secret references corrected across gateway, Langfuse web/worker, and Redis StatefulSet manifests.
+- **`fix(infra): correct vLLM manifests and add namespace/cross-ns resources`** (`736a9d8`) — vLLM inference and reasoning manifests corrected; [`deployment/k8s/vllm-namespace.yaml`](deployment/k8s/vllm-namespace.yaml) and [`deployment/k8s/vllm-cross-namespace-services.yaml`](deployment/k8s/vllm-cross-namespace-services.yaml) added.
+- **`fix(opa): expand OPA deployment manifest and remove stale config key`** (`5608e8c`) — OPA manifest expanded with correct resource limits and decision log config; stale `decision_logs.console` key removed from [`deployment/opa_config.yaml`](deployment/opa_config.yaml).
+- **`fix(tests): update smoke and sprint3 tests for current deployment state`** (`6e79153`) — [`tests/test_langfuse_smoke.py`](tests/test_langfuse_smoke.py) and [`tests/test_sprint3_medium_severity.py`](tests/test_sprint3_medium_severity.py) updated to reflect current deployment state.
+- **`docs: add security audit report and v3 audit results artifact`** (`4f6077a`) — [`docs/SECURITY_AUDIT_REPORT.md`](docs/SECURITY_AUDIT_REPORT.md) and [`audit_results_v3.json`](audit_results_v3.json) added.
+
+### Changed — v2.0.0 Documentation Audit and Consistency Fixes (Cat-N, `f13ab2b`, Refs POAM-024)
+
+- **`docs(docs): fix critical inconsistencies in v2.0.0 release docs`** (`9eacea4`) — Release plan, runbook, roadmap, and POAM index corrected for v2.0.0 state.
+- **`docs(compliance): fix compliance artifact inconsistencies`** (`deedaeb`) — POAM, SSP outline, SAR, PIA, risk assessment, ISCM strategy, authorization boundary, FIPS 199 categorization, and threshold traceability matrix updated for consistency.
+- **`docs: update root, deployment, infra, and technical-report docs`** (`fa781a9`) — README, README_GOVERNANCE, ARCHITECTURE, deploy_all.sh, deployment README, namespace guide, infra README/QUICK_START/IMPLEMENTATION_STATUS, and all technical-report chapters updated.
+- **`docs: fix remaining docs inconsistencies; defer staging posture (POAM-024)`** (`9373ef4`) — Remaining cross-document inconsistencies resolved. Staging compliance posture verification deferred and tracked as POAM-024.
+- **`docs/SECURITY_AUDIT_REPORT.md`** — C-04 finding reclassified from "No authentication" to "Incomplete authentication coverage" (accurate: `/agent/query` is authenticated via `Depends(require_api_key)`; remaining endpoints tracked). Release decision header added: GO — STABLE RELEASE APPROVED (v2.0.0, 2026-06-08).
+
+---
+
 ## [2.0.0] — 2026-06-08
 
 > Stable release. All P0/P1 blockers resolved (Sprint 1 + Sprint 2). Track C (seal enforcement) and Track D (compliance validation) gates complete. All universal Lula assertions PASS. Trivy scan risk-accepted (POAM-023). Token Quota Proxy, PII Sanitizer, and UCA Logger active in production.
