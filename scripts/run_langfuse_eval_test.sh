@@ -49,11 +49,12 @@ info "=== STEP 1: Waiting for required GKE pods to be Running (timeout: ${POD_WA
 
 # Pods that MUST be Running before the test can proceed.
 # vllm-fast (vllm-service) and gateway are optional/best-effort.
+# NOTE: otel-collector is deprecated — traces route directly to Langfuse's native
+# OTLP endpoint (langfuse-web:3000/api/public/otel/v1/traces). No separate collector pod.
 REQUIRED_POD_SELECTORS=(
   "governed-financial-advisor"
   "vllm-reasoning"
   "opa-service"
-  "otel-collector"
   "langfuse-web"
   "redis"
 )
@@ -154,10 +155,11 @@ start_pf() {
 
 # ── Required port-forwards (test will fail without these) ─────────────────
 # IMPORTANT: Langfuse on :3000 — test default is LANGFUSE_HOST=http://localhost:3000
+# NOTE: otel-collector port-forward removed — traces route directly to Langfuse's
+# native OTLP endpoint (langfuse-web:3000/api/public/otel/v1/traces).
 start_pf backend     governed-financial-advisor  8081 80     required
 start_pf vllm-reason vllm-reasoning              8000 8000   required
 start_pf langfuse    langfuse-web                3000 80     required
-start_pf otel        otel-collector              4318 4318   required
 start_pf opa         opa-service                 8181 8181   required
 
 # ── Best-effort port-forwards (test degrades gracefully without these) ─────
@@ -245,11 +247,12 @@ check_service() {
 }
 
 # Required services with HTTP gating where possible
+# NOTE: otel-collector health check removed — traces route directly to Langfuse's
+# native OTLP endpoint (langfuse-web:3000/api/public/otel/v1/traces).
 check_service 8081 "Backend (governed-financial-advisor)" "http://localhost:8081/health"
 check_service 8000 "vLLM reasoning (judge LLM)"          "http://localhost:8000/v1/models"
 check_service 8181 "OPA policy engine"                   "http://localhost:8181/health"
 check_service 3000 "Langfuse web"                        "http://localhost:3000"
-check_service 4318 "OTel collector (TCP only — gRPC/H2)" ""   # OTel is gRPC; TCP check only
 check_service "$SLM_PORT" "SLM sidecar"                  "http://localhost:${SLM_PORT}/health"
 
 if [[ ${#health_failures[@]} -gt 0 ]]; then

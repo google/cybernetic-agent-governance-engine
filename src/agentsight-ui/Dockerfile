@@ -32,10 +32,12 @@ COPY src/agentsight-ui/ .
 
 RUN npm run build
 
-# Stage 2: Serve via Nginx
-FROM nginx:alpine
+# Stage 2: Serve via Nginx (unprivileged — runs as UID 101, satisfies PSA restricted)
+# nginxinc/nginx-unprivileged is the official drop-in replacement for nginx:alpine
+# that binds to port 8080 instead of 80 and runs as a non-root user (nginx, UID 101).
+FROM nginxinc/nginx-unprivileged:alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
-EXPOSE 80
+EXPOSE 8080
 
 CMD ["nginx", "-g", "daemon off;"]
