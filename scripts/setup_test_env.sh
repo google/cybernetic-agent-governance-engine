@@ -156,13 +156,10 @@ PF_BRIDGE_PID=$(port_forward_with_retry compliance-bridge svc/compliance-bridge 
 log "    Compliance Bridge localhost:3002 →  svc/compliance-bridge          :80   (loop pid ${PF_BRIDGE_PID})"
 
 
-# OTel collector → 4318 (best-effort; only start if service exists)
-if kubectl get svc/otel-collector -n "${NAMESPACE}" &>/dev/null; then
-  PF_OTEL_PID=$(port_forward_with_retry otel svc/otel-collector 4318:4318 -n "${NAMESPACE}")
-  log "    OTEL collector   localhost:4318  →  svc/otel-collector              :4318 (loop pid ${PF_OTEL_PID})"
-else
-  log "    OTEL collector   [skipped] (service otel-collector not found)"
-fi
+# NOTE: otel-collector port-forward intentionally omitted — the standalone OTel
+# Collector is deprecated (2026-05-31). Traces route directly to Langfuse's native
+# OTLP endpoint (langfuse-web:3000/api/public/otel/v1/traces). No svc/otel-collector
+# exists in the cluster.
 
 # OPA policy engine → 8181  (required by integration + red-team tests)
 PF_OPA_PID=$(port_forward_with_retry opa svc/opa 8181:8181 -n "${NAMESPACE}")
@@ -215,11 +212,9 @@ check_http "Langfuse             " "http://localhost:3001"
 check_http "OPA                  " "http://localhost:8181/health"
 check_http "Gateway              " "http://localhost:8080/health"
 check_http "Compliance Bridge    " "http://localhost:3002/health"
-# OTEL collector speaks gRPC/HTTP2; GET / returns 404 even when healthy.
-# Use a TCP-level check so the port-forward health probe is not a false negative.
-if kubectl get svc/otel-collector -n "${NAMESPACE}" &>/dev/null; then
-  check_tcp  "OTEL collector       " localhost 4318
-fi
+# NOTE: otel-collector health check intentionally omitted — the standalone OTel
+# Collector is deprecated (2026-05-31). Traces route directly to Langfuse's native
+# OTLP endpoint (langfuse-web:3000/api/public/otel/v1/traces).
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
@@ -240,11 +235,11 @@ echo "     Backend       : ${LOG_DIR}/pf-backend.log"
 echo "     vLLM reasoning: ${LOG_DIR}/pf-vllm.log"
 echo "     vLLM fast     : ${LOG_DIR}/pf-vllm-fast.log"
 echo "     Langfuse      : ${LOG_DIR}/pf-langfuse.log"
-echo "     OTEL          : ${LOG_DIR}/pf-otel.log"
 echo "     OPA           : ${LOG_DIR}/pf-opa.log"
 echo "     Gateway       : ${LOG_DIR}/pf-gateway.log"
 echo "     Redis         : ${LOG_DIR}/pf-redis.log"
 echo "     Compliance Br : ${LOG_DIR}/pf-compliance-bridge.log"
+echo "     (OTel collector deprecated — no pf-otel.log; traces go directly to Langfuse)"
 echo ""
 echo " 🛑  To stop all port-forward loops:"
 echo "     xargs kill < ${PF_PIDS_FILE} 2>/dev/null; pkill -f 'kubectl port-forward' || true"

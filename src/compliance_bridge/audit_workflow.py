@@ -412,7 +412,7 @@ EVIDENCE — Failing traces from the last 24 hours
 CODEBASE REFERENCE (use these paths in your fix)
   - Production gateway (Python):      src/gateway/server/hybrid_server.py
   - Financial advisor graph:          src/governed_financial_advisor/graph/
-  - OPA trade policy (Rego):          src/governed_financial_advisor/graph/governance/trade_policy.rego
+  - OPA trade policy (Rego):          config/opa/trade_policy.rego
   - System authorization policy:      deployment/system_authz.rego
   - Compliance bridge (Python):       src/compliance_bridge/
   - ISO 42001 control validators:     compliance/lula/

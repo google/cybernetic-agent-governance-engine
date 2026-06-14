@@ -22,8 +22,8 @@ services:
   agentsight-daemon:
     image: ghcr.io/agent-sight/agentsight-daemon:latest
     container_name: agentsight-daemon
-    privileged: true  # REQUIRED for eBPF
-    pid: host         # REQUIRED to see other processes
+    privileged: true # REQUIRED for eBPF
+    pid: host # REQUIRED to see other processes
     network_mode: host # REQUIRED to monitor network interfaces directly
     volumes:
       - /sys/kernel/debug:/sys/kernel/debug:rw
@@ -60,15 +60,11 @@ services:
     ports:
       - "8080:8080"
     environment:
-      # Lightweight Mode Enabled (No heavy payloads in Python logs)
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+      # Traces route directly to Langfuse's native OTLP endpoint.
+      # The standalone Jaeger/OTel Collector sidecar is deprecated and removed.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://langfuse-web:3000/api/public/otel/v1/traces
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic ${LANGFUSE_BASIC_AUTH_B64}
       - TRACE_SAMPLING_RATE=1.0
     depends_on:
       - agentsight-daemon
-
-  # Optional: Standard OTel Collector/Jaeger for the "Lightweight" APM traces
-  jaeger:
-    image: jaegertracing/all-in-one:latest
-    ports:
-      - "16686:16686" # UI
-      - "4318:4318"   # OTLP HTTP

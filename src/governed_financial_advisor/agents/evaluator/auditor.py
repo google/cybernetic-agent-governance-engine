@@ -75,10 +75,24 @@ class EvaluatorAuditor:
 
     def _init_compliance_telemetry(self) -> None:
         """
-        Lazily initializes the secondary OpenTelemetry TracerProvider 
+        Lazily initializes the secondary OpenTelemetry TracerProvider
         only if explicit compliance keys are present in the environment.
+
+        Skipped entirely when ``OTEL_TRACES_EXPORTER=none`` so that unit
+        tests (which set this via conftest.py) do not spin up a
+        ``BatchSpanProcessor`` background thread that retries failed OTLP
+        exports after pytest teardown.
         """
         if self._initialized:
+            return
+
+        # Honour the standard OTel kill-switch used by the test suite.
+        if os.environ.get("OTEL_TRACES_EXPORTER") == "none":
+            logger.debug(
+                "EvaluatorAuditor: OTEL_TRACES_EXPORTER=none — "
+                "compliance tracer disabled."
+            )
+            self._initialized = True
             return
 
         public_key = os.environ.get("LANGFUSE_COMPLIANCE_PUBLIC_KEY")

@@ -159,7 +159,7 @@ else
 fi
 
 # 6. NeMo Guardrails
-build_image "nemo-guardrails" "Dockerfile.nemo" "."
+build_image "nemo-guardrails" "deployment/docker/Dockerfile.nemo" "."
 
 echo "⏳ Waiting for all Cloud Build jobs to finish..."
 fail=0
