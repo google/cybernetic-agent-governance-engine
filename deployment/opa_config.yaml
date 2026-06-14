@@ -23,7 +23,6 @@
 # the in-cluster default so OPA still starts without error.
 decision_logs:
   console: true
-  plugin: http
   service: compliance_bridge_decision_log
 
 services:

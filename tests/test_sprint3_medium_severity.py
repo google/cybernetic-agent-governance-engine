@@ -680,8 +680,14 @@ class TestM23OpaDecisionLogConfig:
         with open("deployment/opa_config.yaml") as f:
             config = yaml.safe_load(f)
         decision_logs = config.get("decision_logs", {})
-        assert decision_logs.get("plugin") == "http", (
-            "OPA decision_logs must use 'http' plugin for durable audit sink"
+        # OPA's built-in remote decision log forwarding uses the 'service' key
+        # (not 'plugin: http' which is invalid and causes OPA to crash).
+        # M-23 compliance is satisfied by 'service: compliance_bridge_decision_log'
+        # which routes every decision to the compliance-bridge HTTP endpoint.
+        assert decision_logs.get("service") == "compliance_bridge_decision_log", (
+            "OPA decision_logs must reference compliance_bridge_decision_log service "
+            "for durable audit sink (M-23). Use 'service:' not 'plugin: http' — "
+            "the latter is an invalid plugin name that crashes OPA."
         )
 
     def test_opa_config_has_compliance_bridge_service(self):

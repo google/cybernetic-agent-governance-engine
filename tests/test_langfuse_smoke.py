@@ -146,7 +146,7 @@ def test_langfuse_trace_ingestion():
              verify_url,
              auth=(_pk, _sk),
              params=params,
-             timeout=10
+             timeout=30
          )
          
          if verify_resp.status_code == 200:

@@ -21,6 +21,11 @@ metadata:
     app: governed-financial-advisor
 spec:
   replicas: 1
+  # minReadySeconds gives the pod time to stabilise after the readiness probe
+  # first passes before the Deployment considers it "available". Without this,
+  # a pod that passes /health once but then crashes is counted as available,
+  # causing "Does not have minimum availability" in the GCP Console.
+  minReadySeconds: 10
   selector:
     matchLabels:
       app: governed-financial-advisor
@@ -59,13 +64,16 @@ spec:
               value: "8080"
             - name: GATEWAY_URL
               value: "http://gateway.governance-stack.svc.cluster.local:8080"
-            - name: REDIS_URL
-              value: "redis://:$(REDIS_PASSWORD)@redis.governance-stack.svc.cluster.local:6379"
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: redis-secret
-                  key: redis-password
+                  name: redis-credentials
+                  key: REDIS_PASSWORD
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_URL
             # vLLM endpoints — required at module load time by NeMo guardrails (vllm_client.py)
             - name: VLLM_BASE_URL
               value: "http://vllm-service.governance-stack.svc.cluster.local:8000/v1"

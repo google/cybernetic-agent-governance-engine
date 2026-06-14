@@ -32,6 +32,9 @@ spec:
       serviceAccountName: "financial-advisor-sa"
       securityContext:
         fsGroup: 65532
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       # Stable Tier: Avoid Spot nodes to prevent downtime at minReplicas=1
       affinity:
         nodeAffinity:
@@ -45,6 +48,15 @@ spec:
       containers:
         - name: langfuse-web
           image: langfuse/langfuse:3
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - containerPort: 3000
           env:
@@ -126,10 +138,6 @@ spec:
               value: "true"
             - name: LANGFUSE_S3_EVENT_UPLOAD_ENABLED
               value: "true"
-            - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
-              value: "https://storage.googleapis.com"
-            - name: AWS_ENDPOINT_URL_S3
-              value: "https://storage.googleapis.com"
             - name: LANGFUSE_S3_EVENT_UPLOAD_BUCKET
               valueFrom:
                 secretKeyRef:
@@ -137,26 +145,32 @@ spec:
                   key: bucket-name
             - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
               value: "auto"
+            - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
+              value: "https://storage.googleapis.com"
+            - name: AWS_ENDPOINT_URL_S3
+              value: "https://storage.googleapis.com"
+            - name: AWS_REGION
+              value: "auto"
             - name: AWS_S3_PATH_STYLE_ACCESS
               value: "true"
             - name: LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE
               value: "true"
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: oscal-artifact-secrets
-                  key: hmac-access-key
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: oscal-artifact-secrets
-                  key: hmac-secret-key
             - name: LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
                   name: oscal-artifact-secrets
                   key: hmac-access-key
             - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: oscal-artifact-secrets
+                  key: hmac-secret-key
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: oscal-artifact-secrets
+                  key: hmac-access-key
+            - name: AWS_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
                   name: oscal-artifact-secrets

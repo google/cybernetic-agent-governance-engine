@@ -16,7 +16,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: vllm-pdb
-  namespace: governance-stack
+  namespace: vllm-inference
 spec:
   maxUnavailable: 1
   selector:

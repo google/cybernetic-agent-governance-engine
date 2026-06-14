@@ -1,0 +1,19 @@
+# Deployed to vllm-inference namespace (PSA: baseline) — requires root for GPU access
+#
+# The vllm-inference namespace uses PSA "baseline" (not "restricted") because
+# vLLM requires elevated privileges for GPU/CUDA access. The governance-stack
+# namespace enforces PSA "restricted:latest", which is mutually exclusive with
+# the runAsNonRoot=false requirement of GPU workloads.
+#
+# Cross-namespace service discovery: governance-stack pods reach vLLM via
+# ExternalName Services defined in deployment/k8s/vllm-services.yaml.
+# These proxy vllm-service.governance-stack → vllm-service.vllm-inference.svc.cluster.local
+# so existing env vars (VLLM_BASE_URL, VLLM_FAST_API_BASE, etc.) need no changes.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vllm-inference
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/audit: baseline
