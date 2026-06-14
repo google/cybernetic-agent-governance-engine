@@ -1,10 +1,12 @@
 # Roles and Responsibilities
 
-**System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor  
-**Reference:** NIST SP 800-37 Rev. 2, NIST SP 800-53 Rev. 5  
-**Version:** 1.0 (Draft)  
-**Date:** 2026-03-06  
+**System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor
+**Reference:** NIST SP 800-37 Rev. 2, NIST SP 800-53 Rev. 5
+**Version:** 1.1 (Draft)
+**Date:** 2026-06-14
 **Status:** DRAFT — Pending AO Approval
+
+> **v2.0.0 Release Note (2026-06-08):** CAGE v2.0.0 has been released as a stable tag. All key operational role incumbents remain `[TBD]` pending organizational action (BLOCKER-09 in [`docs/PRODUCTION_READINESS_REPORT.md`](PRODUCTION_READINESS_REPORT.md)). The ATO process has been initiated as part of Sprint 3 remediation. Naming role incumbents is a prerequisite for ATO completion and for activating the Incident Response Plan ([`docs/IR_PLAN.md`](IR_PLAN.md)) and Change Management Process ([`docs/CHANGE_MANAGEMENT_PROCESS.md`](CHANGE_MANAGEMENT_PROCESS.md)).
 
 ---
 

@@ -71,11 +71,12 @@ If Cloud Build is unavailable:
 
 | Service | Config File | Purpose |
 |---------|------------|---------|
-| Gateway | `deployment/docker/cloudbuild_gateway.yaml` | Inference gateway |
+| Gateway | `deployment/docker/cloudbuild_gateway.yaml` | Inference gateway (primary — uses `_GCP_PROJECT_ID` substitution) |
+| Advisor | `deployment/docker/cloudbuild.advisor.yaml` | Governed Financial Advisor service |
 | vLLM | `deployment/docker/cloudbuild.vllm.yaml` | LLM inference engine |
 | LULA | `deployment/docker/cloudbuild.lula.yaml` | Compliance validation |
 
-> **Note:** Two Cloud Build configs exist for the Gateway: `deployment/docker/cloudbuild.gateway.yaml` (primary) and `deployment/docker/cloudbuild_gateway.yaml` (alternate with `_GCP_PROJECT_ID` substitution). Use `cloudbuild.gateway.yaml` for standard builds.
+> **Note:** Two Cloud Build configs exist for the Gateway: `deployment/docker/cloudbuild_gateway.yaml` (primary, with `_GCP_PROJECT_ID` substitution variable) and `deployment/docker/cloudbuild.gateway.yaml` (alternate). Use `cloudbuild_gateway.yaml` for standard GKE builds. The Advisor service uses `deployment/docker/cloudbuild.advisor.yaml` — trigger this via `./deploy_all.sh --target gcp-gke --env prod` or directly via `gcloud builds submit --config deployment/docker/cloudbuild.advisor.yaml`.
 
 ## MCP Server Integration
 
