@@ -1,6 +1,6 @@
 # Security & Compliance Status — CAGE v2.0.0
 
-**Date:** 2026-06-08
+**Date:** 2026-06-14
 **Status:** Public disclosure of current security posture and compliance implementation state
 
 ---
@@ -107,7 +107,7 @@ The following weaknesses are documented in [`docs/POAM_US_FED.md`](POAM_US_FED.m
 | POAM-009 | RA-2       | FIPS 199 categorization unsigned                                      | **Critical** | In Progress     | 2026-03-31  |
 | POAM-010 | RA-5       | ~~No vulnerability scanning in CI pipeline~~ **✅ Closed** — pip-audit, Trivy, Grype, CycloneDX SBOM in `security-scan.yml` | High | **Closed** | 2026-04-15 |
 | POAM-011 | SC-8       | No TLS enforcement validation test — test suite does not assert TLS 1.2+ on all endpoints | Moderate | Open | 2026-05-15 |
-| POAM-012 | SC-12      | `CAGE_ROUTING_SEAL_SECRET` bypass allows silent enforcement disable   | High         | Open            | 2026-04-01  |
+| POAM-012 | SC-12      | ~~`CAGE_ROUTING_SEAL_SECRET` bypass allows silent enforcement disable~~ **✅ Closed** — `routing_seal.py` now fails fast at import time if `GOVERNANCE_SALT` is absent (`os.environ["GOVERNANCE_SALT"]`); hardcoded `"REDACTED_SALT"` fallback removed (Sprint 1, BLOCKER-02) | High | **Closed** | 2026-06-08 |
 | POAM-013 | SI-2       | Unpinned `>=` version specifiers across Python dependencies           | High         | Open            | 2026-04-15  |
 | POAM-014 | SC-28      | No CMEK validation for Langfuse / CloudSQL encryption-at-rest         | Moderate     | Open            | 2026-05-31  |
 | POAM-015 | PL-2       | **No System Security Plan (SSP)** — `compliance/oscal/system-security-plan.yaml` is an OSCAL draft; no AO-signed SSP exists | **Critical** | Open | 2026-06-30 |

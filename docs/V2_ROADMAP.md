@@ -39,13 +39,13 @@ flowchart TD
 
 ---
 
-### **Phase 2: RMF Core Hardening (Weeks 2–6)**
+### **Phase 2: RMF Core Hardening** ✅ COMPLETED (v2.0.0, 2026-06-08)
 **Goal:** Address immediate security debt and software supply chain tracking.
 
-*   **HMAC Routing Seal Hardening**: Remove the developer fallback paths in `governance_middleware.py` and enforce strict HMAC verification across all override interfaces.
-*   **Software Bill of Materials (SBOM)**: Integrate `syft` and `grype` in the CI/CD pipeline (`.github/workflows/`) to generate container image SBOMs and block builds with unpatched CRITICAL vulnerabilities.
-*   **Immutable Image Pins**: Replace mutable `:latest` container tags with immutable `@sha256:<digest>` pins across all Kubernetes and vLLM manifests.
-*   **Jira/GitHub Issues Compliance Loop**: Extend `notifier.py` to auto-create GitHub Issues with regulatory severity tags on any `GOVERNANCE_VIOLATION` event emitted by the `GovernanceEventBus`.
+*   **HMAC Routing Seal Hardening**: ✅ COMPLETED — `routing_seal.py` now fails fast at import time if `GOVERNANCE_SALT` is absent; hardcoded `"REDACTED_SALT"` fallback removed (BLOCKER-02). `CAGE_SEAL_ENFORCEMENT=log` bypass guard added to `hybrid_server.py` (BLOCKER-03). Seal enforcement verified end-to-end (unsigned → 403, signed → 200).
+*   **Software Bill of Materials (SBOM)**: ✅ COMPLETED (partial) — `pip-audit`, Trivy, and Grype active in `.github/workflows/security-scan.yml` (POAM-010 closed). SBOM CronJob (`deployment/k8s/sbom-cronjob.yaml`) deployed. Full per-build SBOM CI integration deferred to post-v2.0.0 (POAM-006 open, target 2026-05-01).
+*   **Immutable Image Pins**: 🟡 In Progress — `openpolicyagent/opa:latest-static` still uses mutable tag (LOW-14). Pinning to digest deferred to post-v2.0.0 sprint.
+*   **Jira/GitHub Issues Compliance Loop**: 🟡 Deferred — `notifier.py` auto-issue creation for `GOVERNANCE_VIOLATION` events deferred to post-v2.0.0 roadmap.
 
 ---
 
@@ -85,7 +85,16 @@ The following capabilities were delivered and verified as part of the CAGE v2.0.
 
 ### **Future State — Post-v2.0.0 Roadmap Items**
 
+The following items are deferred from v2.0.0 and tracked in the POAM. They are candidates for the v2.1.0 release cycle.
+
 *   **AnchorageGrpcLedgerProvider** (POAM-023, target 2026-09-08): 🔴 NOT YET IMPLEMENTED — The `AnchorageGrpcLedgerProvider` for external CBF ledger reconciliation is a future-state capability. The `ControlBarrierFunction` currently uses Redis-only state. External ledger integration via gRPC is tracked as POAM-023 with a target completion date of 2026-09-08.
+*   **Immutable Image Pins** (LOW-14): 🟡 DEFERRED — Replace mutable `:latest` OPA image tag with pinned `@sha256:<digest>` across all Kubernetes manifests. Target: v2.1.0.
+*   **GitHub Issues Compliance Loop** (Phase 2 deferred): 🟡 DEFERRED — Extend `notifier.py` to auto-create GitHub Issues with regulatory severity tags on `GOVERNANCE_VIOLATION` events. Target: v2.1.0.
+*   **Redis TLS Enforcement** (POAM-011, target 2026-05-15): 🟡 DEFERRED — Enable TLS (`ssl=True`) on all Redis connections; migrate to GCP Memorystore with in-transit encryption. Target: v2.1.0.
+*   **Dependency Pinning** (POAM-013, target 2026-04-15): 🟡 DEFERRED — Replace `>=` version specifiers with exact pinned versions; adopt Dependabot for automated security scanning. Target: v2.1.0.
+*   **OPA JWT Authorization** (HIGH-10): 🟡 DEFERRED — Replace string identity comparison in `system_authz.rego` with JWT validation using `io.jwt.verify_rs256()`. Target: v2.1.0.
+*   **Staging Environment** (POAM-024, target 2026-12-31): 🟡 DEFERRED — Provision the `staging` pre-production environment to enable the full `dev → staging → prod` promotion path. Currently `dev → prod` with AO acknowledgement.
+*   **TrustLayers External Normative Provider** (POAM-022, target 2026-08-31): 🟡 IN PROGRESS — Provision `CAGE_NORMATIVE_ENDPOINT` and `CAGE_NORMATIVE_API_KEY_SECRET` to activate full EU AI Act FRIA gating. Currently operating in stub mode.
 
 ---
 

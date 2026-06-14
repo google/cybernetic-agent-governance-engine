@@ -1,11 +1,11 @@
 # Change Management Process
 
-**System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor  
-**Reference:** NIST SP 800-128 (Security-Focused Configuration Management for Information Systems); NIST SP 800-53 Rev 5 CM-3, CM-4, CM-5  
-**Version:** 1.1 (Draft)
-**Date:** 2026-06-03
-**ISSO:** [ISSO NAME — TBD]  
-**System Owner:** [SYSTEM OWNER — TBD]  
+**System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor
+**Reference:** NIST SP 800-128 (Security-Focused Configuration Management for Information Systems); NIST SP 800-53 Rev 5 CM-3, CM-4, CM-5
+**Version:** 1.2 (Draft)
+**Date:** 2026-06-14
+**ISSO:** [ISSO NAME — TBD]
+**System Owner:** [SYSTEM OWNER — TBD]
 **Status:** DRAFT — PENDING AO APPROVAL
 
 ---
@@ -120,7 +120,7 @@ The following repeatable changes are pre-approved as Standard Changes and do not
 | ~~STD-003~~ | ~~OTel Collector configuration tuning (sampling rates)~~  | **Retired** — standalone OTel Collector deprecated 2026-05-31; Langfuse integrated OTLP ingestion used directly. Sampling rate tuning now via `OTEL_EXPORTER_OTLP_ENDPOINT` env var. |
 | STD-004     | HPA (Horizontal Pod Autoscaler) replica count adjustments | `deployment/k8s/langfuse-worker-hpa.yaml` |
 | STD-005     | Documentation updates (no code/config change)             | PR review by ISSO                         |
-| STD-006     | Security scan result review and POAM milestone updates    | `docs/POAM.md` + ISSO sign-off            |
+| STD-006     | Security scan result review and POAM milestone updates    | `docs/POAM_INDEX.md` + ISSO sign-off (see [`docs/POAM_INDEX.md`](POAM_INDEX.md) for the multi-posture POAM structure) |
 
 ### 2.3 Category Examples for CAGE
 
@@ -548,7 +548,13 @@ All production changes must be traceable to a git commit in the CAGE repository.
 
 When a change remediates a POA&M item:
 
-1. Update `docs/POAM.md` with the implementation evidence (commit SHA, Lula result, date)
+1. Update the relevant POAM file with the implementation evidence (commit SHA, Lula result, date). The POAM is now structured as a multi-posture framework — update the correct file per the region scope:
+   - Universal ISO 42001 weaknesses → [`docs/POAM_ISO42001.md`](POAM_ISO42001.md)
+   - US_FED / NIST SP 800-53 weaknesses → [`docs/POAM_US_FED.md`](POAM_US_FED.md)
+   - EU_ECB / EU AI Act / DORA weaknesses → [`docs/POAM_EU_ECB.md`](POAM_EU_ECB.md)
+   - APAC_MAS / MAS FEAT weaknesses → [`docs/POAM_APAC_MAS.md`](POAM_APAC_MAS.md)
+   - Cross-region traceability index → [`docs/POAM_INDEX.md`](POAM_INDEX.md)
+   - `docs/POAM.md` is a redirect notice only — do not add new entries there
 2. Update POA&M item status: `Open` → `In Progress` → `Closed`
 3. Archive supporting evidence (Lula output, test results) in `compliance/` directory
 4. Notify ISSO for HIGH/CRITICAL POAM item closures; notify AO for CRITICAL closures
@@ -882,3 +888,5 @@ _This Change Management Process document is subject to annual review. Changes to
 | Version     | Date       | Author | Change Summary                                                            |
 | ----------- | ---------- | ------ | ------------------------------------------------------------------------- |
 | 1.0 (Draft) | 2026-03-06 | ISSO   | Initial change management process per NIST SP 800-128 / NIST RMF Phase 2A |
+| 1.1 (Draft) | 2026-06-03 | ISSO   | Added POAM-024 staging environment note (§3.8); retired STD-003 (OTel Collector deprecated 2026-05-31) |
+| 1.2 (Draft) | 2026-06-14 | ISSO   | Updated STD-006 POAM reference to multi-posture POAM_INDEX.md; updated §9.2 POAM update procedure to reflect five-file POAM structure (POAM_INDEX, POAM_ISO42001, POAM_US_FED, POAM_EU_ECB, POAM_APAC_MAS); aligned with v2.0.0 stable release (2026-06-08) |
