@@ -1,5 +1,9 @@
 # Cybernetic Governance of Agentic AI
 
+**Last Updated:** 2026-06-14 | **System Version:** v2.0.0 (stable, released 2026-06-08)
+
+> **v2.0.0 Release Note:** This document reflects the v2.0.0 stable release. Key changes since rc.3: Token Quota Proxy (`CTRL_TQP_007`) active; PII Sanitizer active; UCA Logger active; SLM sidecar permanently deprecated (`slm_available=false`); OPA confidence threshold 0.97 unconditional; vLLM reasoning model (`DeepSeek-R1-Distill-Llama-8B`) deployed; `outlines` library removed (CVE-2025-69872). See [`docs/V2_ROADMAP.md`](V2_ROADMAP.md) for the full v2.0.0 delivery summary.
+
 This document describes the **Cybernetic Governance** framework that transforms the Financial Advisor agent from a probabilistic LLM application into a deterministic, engineering-controlled system. For the full architectural detail, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## 1. Theoretical Framework: Hybrid Reasoning Architecture & STPA
@@ -94,7 +98,7 @@ All hardcoded regulatory citation strings (`SR 26-2 §IV.B`, `ISO 42001 §A.5.2`
 | `CTRL_DFR_008` | THR-DFR-008 | CSA AARM-V7 / ISO 42001 §A.8.4 | AARM Primitive | `src/gateway/governance/defer_queue.py` — DEFER State Machine *(All Regions)* |
 | `CTRL_AARM_009` | THR-AARM-009 | CSA AARM v1.0 | AARM Primitive | `src/compliance_bridge/aarm_mapper.py` — Threat Ledger *(All Regions)* |
 
-Legacy citations (e.g. `SR 26-2 §IV.B`) are preserved as `legacy_citation` fields inside baseline profiles so SIEM consumers retain backward-compatible alert matching.ne profiles so SIEM consumers retain backward-compatible alert matching.
+Legacy citations (e.g. `SR 26-2 §IV.B`) are preserved as `legacy_citation` fields inside baseline profiles so SIEM consumers retain backward-compatible alert matching.
 
 ### ControlRegistry API & Multi-Region Execution
 
