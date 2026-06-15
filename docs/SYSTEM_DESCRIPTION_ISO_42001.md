@@ -1,5 +1,7 @@
 # The Cybernetic Governance of Agentic AI: A Systems-Theoretic Analysis of ISO/IEC 42001 and the Cybernetic Agent Governance Engine (CAGE) Architecture
 
+> **Jurisdiction separation principle:** **ISO/IEC 42001:2023 is the sole universal governance baseline** for CAGE. All VSM mappings, clause references, and control IDs in this document apply to every deployment region. Jurisdiction-specific frameworks (SR 26-2, NIST AI 600-1 — US_FED; EU AI Act, GDPR, DORA — EU_ECB; MAS FEAT, MAS Notice 655 — APAC_MAS) are additive layers activated by `CAGE_DEPLOYMENT_REGION` and impose no obligations on other regions.
+
 ## 1. Introduction: The Epistemological Crisis of Autonomous Agents
 
 The transition to Agentic AI represents a shift from deterministic software to probabilistic, goal-oriented autonomy. Systems like **CAGE** (Cybernetic Agent Governance Engine) act within open-ended environments, precipitating a crisis for traditional "First-Order" governance.
@@ -21,7 +23,7 @@ The transition to Agentic AI represents a shift from deterministic software to p
 
 ## 3. CAGE Architecture & VSM Mapping
 
-**v2.0.0 System State (GO: 2026-06-08):** CAGE implements a **7-tier SymbolicGovernor** (Tiers 0–6: STPA → Aho-Corasick → CBF → [SLM — DEPRECATED] → OPA → Consensus → CausalGatekeeper) with a 10-node LangGraph StateGraph. The SLM sidecar (Tier 3) is permanently deprecated with `slm_available=False` sentinel. NeMo Guardrails is integrated into the gateway process (not a standalone sidecar). Sensitive data detection covers **15 PII entity types** via Presidio/spaCy. Implemented v2.0.0 controls include: **Token Quota Proxy** (`token_quota_proxy.py`), **PII Sanitizer** (`pii_sanitizer.py`), and **UCA Logger** (`uca_logger.py`).
+**v2.0.0 System State (GO: 2026-06-08):** CAGE implements a **7-tier SymbolicGovernor** (Tiers 0–6: STPA → Aho-Corasick → CBF → [SLM — DEPRECATED] → OPA → Consensus → CausalGatekeeper) with a 10-node LangGraph StateGraph. The SLM sidecar (Tier 3) is permanently deprecated with `slm_available=False` sentinel. NeMo Guardrails is integrated into the gateway process (not a standalone sidecar). Sensitive data detection covers **15 PII entity types** via Presidio/spaCy. Implemented v2.0.0 controls include: **Token Quota Proxy** (`token_quota_proxy.py`), **PII Sanitizer** (`pii_sanitizer.py`), and **UCA Logger** (`uca_logger.py`). All controls are ISO 42001 obligations active in every region; SR 26-2 MRM scope (CBF + DoWhy Phase 1) applies **US_FED only**.
 
 > **FUTURE STATE — AnchorageGrpcLedgerProvider (POAM-023, target 2026-09-08):** External CBF ledger reconciliation via `AnchorageGrpcLedgerProvider` is **not yet implemented**. The Control Barrier Function currently uses Redis-only state. gRPC-based external ledger integration is tracked as POAM-023.
 

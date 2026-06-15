@@ -1,6 +1,13 @@
 # Cybernetic Governance of Agentic AI
 
-**Last Updated:** 2026-06-14 | **System Version:** v2.0.0 (stable, released 2026-06-08)
+**Last Updated:** 2026-06-15 | **System Version:** v2.0.0 (stable, released 2026-06-08)
+
+> **Jurisdiction separation principle:** **ISO/IEC 42001:2023** is the **sole universal governance baseline** — every control, pipeline step, and audit artifact in this document applies to all deployment regions (`US_FED`, `EU_ECB`, `APAC_MAS`). All other regulatory frameworks are **additive, jurisdiction-specific layers** activated exclusively by the `CAGE_DEPLOYMENT_REGION` environment variable:
+> - **US_FED only:** SR 26-2 (Federal Reserve), NIST AI 600-1, NIST SP 800-53, NIST AI RMF
+> - **EU_ECB only:** EU AI Act, GDPR Art. 22, DORA
+> - **APAC_MAS only:** MAS FEAT Principles, MAS Notice 655, MAS TRM
+>
+> Controls marked *(All Regions)* are ISO 42001 obligations. Controls marked with a specific region are additive obligations for that jurisdiction only.
 
 > **v2.0.0 Release Note:** This document reflects the v2.0.0 stable release. Key changes since rc.3: Token Quota Proxy (`CTRL_TQP_007`) active; PII Sanitizer active; UCA Logger active; SLM sidecar permanently deprecated (`slm_available=false`); OPA confidence threshold 0.97 unconditional; vLLM reasoning model (`DeepSeek-R1-Distill-Llama-8B`) deployed; `outlines` library removed (CVE-2025-69872). See [`docs/V2_ROADMAP.md`](V2_ROADMAP.md) for the full v2.0.0 delivery summary.
 
@@ -89,11 +96,11 @@ All hardcoded regulatory citation strings (`SR 26-2 §IV.B`, `ISO 42001 §A.5.2`
 | Control ID | Internal ID | Primary Framework | Scope | Governing Module / Active Regions |
 |---|---|---|---|---|
 | `CTRL_AGT_001` | THR-CONF-001 | ISO 42001 §A.5.2 | Agentic | `symbolic_governor.py` — confidence check *(All Regions)* |
-| `CTRL_WAL_002` | THR-WAL-002 | ISO 42001 §A.8.4 / DORA Art. 12 | Agentic | `generated_saga_nodes.py` — WAL SAGA *(All Regions)* |
-| `CTRL_TEL_003` | THR-TEL-003 | ISO 42001 §A.9.4 | Agentic | `telemetry_provider.py`, `causal_gatekeeper.py` *(All Regions)* |
-| `CTRL_MRM_004` | THR-MRM-004 | SR 26-2 §IV — Model Risk Management | Traditional ML | `safety.py` (CBF), `causal_gatekeeper.py` *(All Regions, telemetry suppressed in EU_ECB)* |
+| `CTRL_WAL_002` | THR-WAL-002 | ISO 42001 §A.8.4 | Agentic | `generated_saga_nodes.py` — WAL SAGA *(All Regions)* · DORA Art. 12 addendum *(EU_ECB only)* |
+| `CTRL_TEL_003` | THR-TEL-003 | ISO 42001 §A.9.4 | Agentic | `telemetry_provider.py`, `causal_gatekeeper.py` *(All Regions)* · telemetry suppressed in EU_ECB per SR 26-2 "no legal force" sentinel |
+| `CTRL_MRM_004` | THR-MRM-004 | SR 26-2 §IV — Model Risk Management | Traditional ML | `safety.py` (CBF), `causal_gatekeeper.py` — **US_FED only**; ISO 42001 §A.9.4 is the universal equivalent |
 | `CTRL_OPA_005` | THR-OPA-005 | ISO 42001 §A.6.1 | Agentic | `symbolic_governor.py` — OPA policy check *(All Regions)* |
-| `CTRL_FRIA_006` | THR-FRIA-006 | EU AI Act Art. 29a | Agentic | `symbolic_governor.py` — Step 6 FRIA normative boundary + attestation *(EU_ECB only)* |
+| `CTRL_FRIA_006` | THR-FRIA-006 | EU AI Act Art. 29a | Agentic | `symbolic_governor.py` — Step 6 FRIA normative boundary + attestation — **EU_ECB only** |
 | `CTRL_CTX_007` | THR-CTX-007 | CSA AARM-V1 / ISO 42001 §A.5.3 | AARM Primitive | `src/compliance_bridge/context_accumulator.py` *(All Regions)* |
 | `CTRL_DFR_008` | THR-DFR-008 | CSA AARM-V7 / ISO 42001 §A.8.4 | AARM Primitive | `src/gateway/governance/defer_queue.py` — DEFER State Machine *(All Regions)* |
 | `CTRL_AARM_009` | THR-AARM-009 | CSA AARM v1.0 | AARM Primitive | `src/compliance_bridge/aarm_mapper.py` — Threat Ledger *(All Regions)* |
@@ -115,7 +122,9 @@ The `ControlRegistry` is a thread-safe, lock-guaranteed singleton that loads reg
 
 ---
 
-## SR 26-2 Compliance (April 2026)
+## SR 26-2 Compliance — US_FED Only (`CAGE_DEPLOYMENT_REGION=US_FED`)
+
+> **Scope:** The Federal Reserve's SR 26-2 (April 17, 2026) applies **exclusively** to `CAGE_DEPLOYMENT_REGION=US_FED` deployments. EU_ECB and APAC_MAS deployments satisfy equivalent obligations via ISO 42001 and their respective jurisdiction-specific frameworks. No SR 26-2 obligation is imposed on non-US_FED deployments.
 
 The Federal Reserve's SR 26-2 explicitly scopes generative and agentic AI systems *outside* SR 11-7's prescriptive framework, directing institutions to apply rigorous internal risk controls. CAGE addresses all four SR 26-2 examination dimensions:
 
@@ -124,7 +133,7 @@ The Federal Reserve's SR 26-2 explicitly scopes generative and agentic AI system
 | **Agentic Bounding** | Confidence threshold — `CTRL_AGT_001` (ISO 42001 §A.5.2) | `symbolic_governor.py`, `control_mappings.json` |
 | **Non-Determinism Containment** | WAL + LIFO rollback SAGA — `CTRL_WAL_002` (ISO 42001 §A.8.4) | `generated_saga_nodes.py` |
 | **World-Model Validation** | DoWhy `CausalGatekeeper` Phase 2 — `CTRL_TEL_003` (ISO 42001 §A.9.4) on live Langfuse telemetry | `causal_gatekeeper.py`, `telemetry_provider.py` |
-| **Traditional MRM (non-agentic)** | CBF formula + DoWhy coefficient validation — `CTRL_MRM_004` (SR 26-2 §IV) | `safety.py`, `causal_gatekeeper.py` (Phase 1) |
+| **Traditional MRM (non-agentic)** | CBF formula + DoWhy coefficient validation — `CTRL_MRM_004` (SR 26-2 §IV, US_FED only) | `safety.py`, `causal_gatekeeper.py` (Phase 1) |
 
 ### Agent Scope Declaration (`config/agent_scope.yaml`)
 

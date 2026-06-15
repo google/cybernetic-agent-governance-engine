@@ -155,6 +155,142 @@ replica_count  = 3
 enable_sentinel = true  # Automatic failover
 ```
 
+---
+
+## Redis Sentinel Topology & Primary Routing
+
+### Topology Overview
+
+When `enable_sentinel = true` and `architecture = "replication"`, the Bitnami
+chart deploys a StatefulSet of Redis nodes (e.g. `redis-node-0`,
+`redis-node-1`, `redis-node-2`) each running both a Redis server and a
+Sentinel sidecar. Sentinel monitors the cluster and elects one pod as the
+**primary**; the remaining pods become **read-only replicas**.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  governance-stack namespace                             │
+│                                                         │
+│  redis-node-0  ──┐                                      │
+│  redis-node-1  ──┼──► svc/redis (ClusterIP, all pods)  │
+│  redis-node-2  ──┘                                      │
+│                                                         │
+│  redis-node-1 (current primary)                         │
+│       └──────────► svc/redis-master (ClusterIP, pinned) │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Service Endpoints
+
+| Service | Selector | Use for |
+|---------|----------|---------|
+| `redis:6379` | All `redis-node-*` pods (load-balanced) | Reads, general queries |
+| `redis-master:6379` | Single primary pod only (pinned) | **Writes** (SET, INCRBY, DEL, …) |
+
+The `redis-master` Service is defined in
+[`deployment/k8s/redis-master-service.yaml`](../../../deployment/k8s/redis-master-service.yaml)
+and uses the `statefulset.kubernetes.io/pod-name` label — automatically
+applied by Kubernetes to every StatefulSet pod — to pin traffic to the
+current Sentinel primary.
+
+### The `ReadOnlyError` Problem
+
+The standard `svc/redis` ClusterIP load-balances across **all** pods
+(primary + replicas). When a client connection is routed to a replica, any
+write command fails immediately:
+
+```
+redis.exceptions.ReadOnlyError: You can't write against a read only replica.
+```
+
+This affected components such as
+[`fiscal_limit_guard.py`](../../../src/gateway/governance/fiscal_limit_guard.py)
+(which issues `INCRBY` on a daily fiscal counter) and
+[`redis_client.py`](../../../src/gateway/infrastructure/redis_client.py).
+
+**Fix:** route all write traffic through `redis-master:6379` instead of
+`redis:6379`. The `redis-master` Service selector pins connections to the
+single primary pod, so writes never land on a replica.
+
+### Configuring Clients
+
+```python
+# Writes — always use redis-master
+write_client = redis.Redis(host="redis-master", port=6379, password=...)
+
+# Reads — use the standard service (load-balanced across all nodes)
+read_client  = redis.Redis(host="redis", port=6379, password=...)
+```
+
+In pod environment variables:
+
+```yaml
+env:
+  - name: REDIS_WRITE_HOST
+    value: "redis-master"          # pinned to primary
+  - name: REDIS_READ_HOST
+    value: "redis"                 # load-balanced
+  - name: REDIS_PORT
+    value: "6379"
+  - name: REDIS_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: redis-credentials
+        key: REDIS_PASSWORD
+```
+
+### Sentinel Failover Procedure
+
+> ⚠️ **Manual step required after every Sentinel-elected failover.**
+>
+> The Bitnami Redis Sentinel chart does **not** add a dynamic role label to
+> pods after a failover. When Sentinel elects a new primary, the
+> `redis-master` Service selector must be updated to point to the new primary
+> pod name.
+
+**Step 1 — Identify the current primary via Sentinel:**
+
+```bash
+kubectl exec -n governance-stack redis-node-0 -c sentinel -- \
+  redis-cli -p 26379 \
+  -a "$(kubectl get secret redis -n governance-stack \
+        -o jsonpath='{.data.redis-password}' | base64 -d)" \
+  SENTINEL masters | grep -A1 '^ip$'
+```
+
+**Step 2 — Map the IP to a pod name:**
+
+```bash
+kubectl get pods -n governance-stack -o wide | grep redis-node
+```
+
+**Step 3 — Patch the `redis-master` selector:**
+
+```bash
+# Replace redis-node-X with the new primary pod name
+kubectl patch svc redis-master -n governance-stack \
+  -p '{"spec":{"selector":{"statefulset.kubernetes.io/pod-name":"redis-node-X"}}}'
+```
+
+**Step 4 — Verify writes succeed:**
+
+```bash
+kubectl run redis-write-test --rm -it --image=redis -- \
+  redis-cli -h redis-master -p 6379 \
+  -a "$(kubectl get secret redis-credentials -n governance-stack \
+        -o jsonpath='{.data.REDIS_PASSWORD}' | base64 -d)" \
+  SET cage:failover-test ok
+# Expected: OK
+```
+
+> 💡 **Automation note:** A future improvement is to run a small controller
+> (or a post-failover hook in Sentinel) that automatically patches the
+> `redis-master` selector when the primary changes. Until then, this is a
+> manual operational step that must be included in any runbook for Sentinel
+> failover events.
+
+---
+
 ## Persistence
 
 ### Development (No Persistence)
