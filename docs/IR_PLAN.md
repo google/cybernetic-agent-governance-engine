@@ -2,9 +2,9 @@
 
 **System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor
 **Document Number:** IRP-CAGE-2026-001
-**Reference:** NIST SP 800-61 Rev. 2; NIST SP 800-53 Rev. 5 IR Control Family
-**Version:** 1.1 (Draft)
-**Date:** 2026-06-14
+**Reference:** ISO/IEC 42001:2023 §A.10.1 (Universal Baseline); NIST SP 800-61 Rev. 2 (US_FED); DORA Art. 17–23 (EU_ECB); MAS TRM §11 (APAC_MAS)
+**Version:** 1.2 (Draft)
+**Date:** 2026-06-15
 **Classification:** UNCLASSIFIED
 **Status:** DRAFT — Pending AO Approval
 **Resolves:** POAM-008 (IR-1: No Incident Response Plan)
@@ -24,13 +24,52 @@
 
 ## 1. Purpose and Scope
 
-### 1.1 Purpose
+### 1.1 Universal Baseline (ISO 42001 A.10.1)
 
-This Incident Response Plan (IRP) establishes the policies, procedures, and responsibilities for detecting, analyzing, containing, eradicating, and recovering from security incidents affecting the Cybernetic AI Governance Engine (CAGE). This plan is developed in accordance with:
+> **Scope: Universal — applies to ALL `CAGE_DEPLOYMENT_REGION` values (US_FED, EU_ECB, APAC_MAS)**
+
+This Incident Response Plan (IRP) is grounded in **ISO/IEC 42001:2023 §A.10.1** (AI management system — continual improvement and incident management) as the universal baseline applicable to all CAGE deployments regardless of jurisdiction. All three regional deployments share the same core incident lifecycle: Detect → Analyze → Contain → Eradicate → Recover → Learn.
+
+The universal baseline requires:
+- Documented incident categories and severity levels (Section 2)
+- Defined roles and responsibilities for incident response (Section 3)
+- Detection sources covering AI-specific incident types (Section 4)
+- Containment, eradication, and recovery procedures (Section 5)
+- Post-incident review and continual improvement (Section 7)
+
+### 1.2 Jurisdictional Extensions
+
+The following jurisdiction-specific frameworks extend the universal baseline. Each adds notification obligations and regulatory reporting requirements **on top of** the ISO 42001 foundation:
+
+#### US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
+
+> **Scope: US_FED only**
 
 - **NIST SP 800-61 Rev. 2** — Computer Security Incident Handling Guide
 - **NIST SP 800-53 Rev. 5** — IR Control Family (IR-1 through IR-9)
 - **NIST SP 800-37 Rev. 2** — Risk Management Framework
+- **SR 26-2** (Federal Reserve) — AI model risk governance escalation
+
+#### EU_ECB (CAGE_DEPLOYMENT_REGION=EU_ECB)
+
+> **Scope: EU_ECB only**
+
+- **DORA Art. 17–23** — ICT-related incident classification, reporting, and management
+- **DORA Art. 19** — Major ICT incident notification to competent authority within 4 hours
+- **GDPR Art. 33** — Personal data breach notification to supervisory authority within 72 hours
+- **EU AI Act Art. 62** — Serious incident reporting for high-risk AI systems
+
+#### APAC_MAS (CAGE_DEPLOYMENT_REGION=APAC_MAS)
+
+> **Scope: APAC_MAS only**
+
+- **MAS TRM §11** — Technology risk incident management
+- **MAS TRM §11.3** — MAS notification within 1 hour for P1 incidents
+- **MAS Notice 655** — Audit logging and incident record retention requirements
+
+### 1.3 Purpose
+
+This IRP establishes the policies, procedures, and responsibilities for detecting, analyzing, containing, eradicating, and recovering from security incidents affecting the Cybernetic AI Governance Engine (CAGE).
 
 This document directly resolves POAM-008 (IR-1: No Incident Response Plan) identified in `docs/POAM.md` and the associated finding FIND-006 in `compliance/sar/SAR_2026Q1.md`.
 
@@ -43,7 +82,16 @@ This IRP applies to:
 - All security incidents that affect the confidentiality, integrity, or availability of CAGE information types (IT-001 through IT-005)
 - AI/ML-specific incidents unique to the CAGE architecture, including governance bypass events, prompt injection attacks, model manipulation, and PII exfiltration via AI outputs
 
-### 1.3 AI-Specific Incident Considerations
+### 1.5 Scope
+
+This IRP applies to:
+
+- All components within the CAGE authorization boundary (see `compliance/boundary/AUTHORIZATION_BOUNDARY.md`)
+- All personnel with access to CAGE system components, data, or infrastructure
+- All security incidents that affect the confidentiality, integrity, or availability of CAGE information types (IT-001 through IT-005)
+- AI/ML-specific incidents unique to the CAGE architecture, including governance bypass events, prompt injection attacks, model manipulation, and PII exfiltration via AI outputs
+
+### 1.6 AI-Specific Incident Considerations
 
 CAGE presents incident response challenges not covered by traditional IR frameworks:
 
@@ -52,9 +100,29 @@ CAGE presents incident response challenges not covered by traditional IR framewo
 - **Model Manipulation:** Changes to LLM model versions, NeMo Guardrails rails, or OPA Rego policies may introduce undetected behavioral changes
 - **AI Evidence Chain Integrity:** Incidents may involve tampering with ISO 42001 audit trail evidence (Langfuse traces), complicating post-incident analysis
 
+### 1.7 HITL SLA by Jurisdiction
+
+> **US_FED Only:** The SR 26-2 §3.2 Human-in-the-Loop (HITL) SLA of **4 hours** applies exclusively to `CAGE_DEPLOYMENT_REGION=US_FED` deployments. This is a US Federal Reserve supervisory requirement with no legal force in EU or APAC jurisdictions (see `.clinerules` §12.4).
+
+| Jurisdiction | HITL SLA Authority | Maximum HITL Response Time |
+| ------------ | ------------------ | -------------------------- |
+| **US_FED** | SR 26-2 §3.2 | **4 hours** |
+| **EU_ECB** | DORA Art. 10 (ICT risk management) | Per DORA operational resilience requirements |
+| **APAC_MAS** | MAS FEAT §3.2 | Per MAS FEAT accountability requirements |
+
 ### 1.4 Regulatory Context
 
-Incident response for CAGE is subject to the following regulatory notification requirements:
+Incident response for CAGE is subject to the following regulatory notification requirements, organized by jurisdiction:
+
+#### Universal (ISO 42001 A.10.1 — all regions)
+
+| Regulation | Incident Type | Notification Requirement |
+| ---------- | ------------- | ------------------------ |
+| ISO 42001 A.10.1 | Any AI system incident affecting governance controls | Internal incident log; post-incident review within 15 business days |
+
+#### US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
+
+> **Scope: US_FED only**
 
 | Regulation                | Incident Type                                              | Notification Requirement                                                         |
 | ------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
@@ -62,6 +130,31 @@ Incident response for CAGE is subject to the following regulatory notification r
 | FINRA Rules               | Broker-dealer operational incident affecting trade records | Notification per FINRA Rule 4370 Business Continuity requirements                |
 | SR 11-7 (Federal Reserve) | AI model failure or material governance breach             | Escalation to model risk management governance                                   |
 | SEC Rule 17a-4            | Destruction or loss of required audit records (IT-003)     | Preservation obligation; report to SEC if records cannot be recovered            |
+| CISA                      | Significant cyber incident                                 | Notification within 72 hours per CIRCIA requirements                             |
+
+#### EU_ECB (CAGE_DEPLOYMENT_REGION=EU_ECB)
+
+> **Scope: EU_ECB only**
+
+| Regulation | Incident Type | Notification Requirement | Timeframe |
+| ---------- | ------------- | ------------------------ | --------- |
+| DORA Art. 19 | Major ICT-related incident | Notify competent authority (ECB/NCA) | **Within 4 hours** of classification as major |
+| DORA Art. 19 | Major ICT-related incident — intermediate report | Update to competent authority | **Within 72 hours** of initial notification |
+| DORA Art. 19 | Major ICT-related incident — final report | Root cause analysis to competent authority | **Within 1 month** of incident closure |
+| GDPR Art. 33 | Personal data breach | Notify supervisory authority (DPA) | **Within 72 hours** of becoming aware |
+| GDPR Art. 34 | High-risk personal data breach | Notify affected data subjects | **Without undue delay** |
+| EU AI Act Art. 62 | Serious incident involving high-risk AI system | Notify market surveillance authority | **Immediately upon becoming aware** |
+
+#### APAC_MAS (CAGE_DEPLOYMENT_REGION=APAC_MAS)
+
+> **Scope: APAC_MAS only**
+
+| Regulation | Incident Type | Notification Requirement | Timeframe |
+| ---------- | ------------- | ------------------------ | --------- |
+| MAS TRM §11.3 | P1 technology incident (system unavailability or data breach) | Notify MAS | **Within 1 hour** of discovery |
+| MAS TRM §11.3 | P2 technology incident | Notify MAS | **Within 24 hours** of discovery |
+| MAS Notice 655 | Audit log integrity incident | Preserve all records; notify MAS if records cannot be recovered | **Immediately** |
+| MAS FEAT | AI fairness or accountability incident | Internal escalation to model risk committee | **Within 24 hours** |
 
 ---
 

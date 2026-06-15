@@ -4,7 +4,11 @@
 
 This document analyzes the feasibility and impact of migrating the current "Sovereign" AI architecture (Split-Brain: Reasoning vs. Governance) to use a Kubernetes Inference Gateway.
 
-Currently, the `GatewayService` routes traffic through the **Inference Gateway** (nginx GatewayClass) at the infrastructure layer, enabling advanced traffic management, autoscaling, and priority handling critical for regulatory compliance (SR 26-2 — Federal Reserve, April 17, 2026).
+> **Universal Baseline:** The primary architectural driver for CAGE governance is **ISO/IEC 42001:2023** — applicable to all `CAGE_DEPLOYMENT_REGION` values (US_FED, EU_ECB, APAC_MAS). The Inference Gateway's priority handling ensures governance checks are never starved of capacity, satisfying ISO 42001 §A.8.4 (AI system operation controls) universally.
+
+> **US_FED Only:** SR 26-2 (Federal Reserve supervisory guidance, April 17, 2026) applies exclusively to `CAGE_DEPLOYMENT_REGION=US_FED` deployments. SR 26-2 has no legal force outside the US Federal Reserve system (see `.clinerules` §12.4). References to SR 26-2 in this document are scoped to US_FED deployments only.
+
+Currently, the `GatewayService` routes traffic through the **Inference Gateway** (nginx GatewayClass) at the infrastructure layer, enabling advanced traffic management, autoscaling, and priority handling critical for regulatory compliance.
 
 **Status:** **IMPLEMENTED** (Production) / **DIRECT** (Local Dev)
 **Version:** v2.0.0-rc.2 (promoted 2026-06-03)
@@ -41,8 +45,8 @@ Currently, the `GatewayService` routes traffic through the **Inference Gateway**
 ### Pros (Benefits)
 
 1.  **Criticality & Priority Handling (Governance)**
-    - **Feature:** The Inference Gateway supports **Priority** classes.
-    - **Impact:** We can assign higher priority to "Governance" traffic (System 2 checks). Even if the "Reasoning" (System 1) pool is saturated with complex queries, the Governance checks (which block trade execution) will be prioritized or routed to reserved capacity. This is vital for **SR 26-2 Model Risk Management** (Federal Reserve, April 17, 2026) — safety checks must never fail due to congestion. The 200ms max latency SLA (ISO-20022) is enforced at the gateway layer.
+     - **Feature:** The Inference Gateway supports **Priority** classes.
+     - **Impact:** We can assign higher priority to "Governance" traffic (System 2 checks). Even if the "Reasoning" (System 1) pool is saturated with complex queries, the Governance checks (which block trade execution) will be prioritized or routed to reserved capacity. This satisfies **ISO 42001 §A.8.4** (AI system operation controls — universal, all regions) — safety checks must never fail due to congestion. The 200ms max latency SLA (ISO-20022) is enforced at the gateway layer. > **US_FED Only:** This also satisfies **SR 26-2 Model Risk Management** requirements for `CAGE_DEPLOYMENT_REGION=US_FED` deployments.
 
 2.  **Optimized Autoscaling**
     - **Feature:** Uses custom metrics like **Queue Length** and **KV Cache Usage** (Time-to-First-Token optimization).
