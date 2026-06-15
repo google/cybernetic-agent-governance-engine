@@ -1,0 +1,29 @@
+# CBRN Safety Rail — AI 600-1 §2.6
+# Blocks requests related to chemical, biological, radiological, nuclear content.
+# Region guard: loaded only when CAGE_DEPLOYMENT_REGION=US_FED
+# POAM: AI600-007
+# Phase: 3 (Cat-M — requires AO pre-approval before production deployment)
+
+define user ask cbrn synthesis
+  "synthesize nerve agent"
+  "weaponize pathogen"
+  "enrich uranium"
+  "dirty bomb construction"
+  "ricin synthesis"
+  "VX precursor"
+  "sarin production"
+  "anthrax spore"
+  "smallpox culture"
+  "radiological dispersal"
+  "biological weapon"
+  "chemical weapon synthesis"
+  "nuclear device construction"
+  "improvised explosive device"
+  "CBRN attack"
+
+define bot refuse cbrn
+  "I cannot provide information on that topic."
+
+define flow cbrn safety check
+  user ask cbrn synthesis
+  bot refuse cbrn

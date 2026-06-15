@@ -1,0 +1,42 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Validates: AI 600-1 §2.6 CBRN / Harmful Content controls
+# Controls: NeMo guardrails active; Tier-1 CBRN keyword list enforced
+# POAM: AI600-007
+# Phase: 0 (stub) → Phase 3 (real assertions replace stub per §7.2)
+# Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
+# Cat-M flag: NeMo CBRN rail deployment requires AO pre-approval
+domain:
+  type: kubernetes
+  kubernetes:
+    resources: []   # populated in Phase 3
+    # Phase 3 will assert:
+    #   - nemo Deployment has NEMO_CBRN_RAILS_ENABLED=true
+    #   - cbrn_rails.co is mounted in the NeMo container
+provider:
+  type: opa
+  opa:
+    policy: |
+      # stub — always passes until Phase 3
+      # Phase 3 real assertion (see §7.2 of AI_600_1_IMPLEMENTATION_PLAN.md):
+      #   allow if {
+      #     some container in input["nemo-deployment"].spec.template.spec.containers
+      #     container.name == "nemo"
+      #     some env in container.env
+      #     env.name == "NEMO_CBRN_RAILS_ENABLED"
+      #     env.value == "true"
+      #   }
+      package validate
+      default allow = true

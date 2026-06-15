@@ -1,46 +1,51 @@
 ---
 poam_file: POAM_US_FED
 region_scope: US_FED
-primary_framework: "NIST SP 800-53 Rev. 5 / NIST SP 800-37 Rev. 2"
+primary_framework: "NIST SP 800-53 Rev. 5 / NIST SP 800-37 Rev. 2 / NIST AI 600-1"
 global_baseline: ISO 42001
-version: "2.0"
-date: 2026-06-08
-supersedes: docs/POAM.md
+version: "2.2"
+date: 2026-06-15
+supersedes: "version 2.1 (2026-06-15)"
 see_also:
   - docs/POAM_ISO42001.md   # universal ISO 42001 AIMS weaknesses (all regions)
   - docs/POAM_EU_ECB.md     # EU AI Act / DORA / GDPR weaknesses (EU_ECB only)
   - docs/POAM_APAC_MAS.md   # MAS FEAT / Notice 655 / TRM weaknesses (APAC_MAS only)
   - docs/POAM_INDEX.md      # cross-region traceability matrix
+  - docs/NIST_AI_600_1_US_FED_ANALYSIS.md  # AI 600-1 gap analysis (source for AI600-xxx items)
 ---
 
 # Plan of Action and Milestones (POA&M) — US_FED
 
 **System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor
-**Reference:** NIST SP 800-37 Rev. 2, NIST SP 800-53 Rev. 5 CA-5
+**Reference:** NIST SP 800-37 Rev. 2, NIST SP 800-53 Rev. 5 CA-5, NIST AI 600-1 (July 2024)
 **Region Scope:** `CAGE_DEPLOYMENT_REGION=US_FED` only
 **Global Baseline:** ISO/IEC 42001:2023 (AI Management System Standard)
-**Version:** 2.0
-**Date:** 2026-06-08
+**Version:** 2.2
+**Date:** 2026-06-15
 **Status:** ACTIVE
 
-> **⚠️ Scope Notice:** This document tracks weaknesses against the **NIST SP 800-53 Rev. 5** control baseline and the **NIST RMF authorization process**. It applies exclusively to `US_FED` deployments. For universal ISO 42001 AIMS weaknesses (all regions), see [`docs/POAM_ISO42001.md`](POAM_ISO42001.md). For EU_ECB-specific weaknesses, see [`docs/POAM_EU_ECB.md`](POAM_EU_ECB.md). For APAC_MAS-specific weaknesses, see [`docs/POAM_APAC_MAS.md`](POAM_APAC_MAS.md).
+> **⚠️ Scope Notice:** This document tracks weaknesses against the **NIST SP 800-53 Rev. 5** control baseline, the **NIST RMF authorization process**, and **NIST AI 600-1** (Generative AI Profile). It applies exclusively to `US_FED` deployments. For universal ISO 42001 AIMS weaknesses (all regions), see [`docs/POAM_ISO42001.md`](POAM_ISO42001.md). For EU_ECB-specific weaknesses, see [`docs/POAM_EU_ECB.md`](POAM_EU_ECB.md). For APAC_MAS-specific weaknesses, see [`docs/POAM_APAC_MAS.md`](POAM_APAC_MAS.md). For the full AI 600-1 gap analysis, see [`docs/NIST_AI_600_1_US_FED_ANALYSIS.md`](NIST_AI_600_1_US_FED_ANALYSIS.md).
 
 ---
 
 ## POA&M Summary
 
-| Metric          | Count |
-| --------------- | ----- |
-| **Total Items** | 23    |
-| **Critical**    | 4     |
-| **High**        | 13    |
-| **Moderate**    | 6     |
-| **Low**         | 0     |
-| **Open**        | 12    |
-| **In Progress** | 3     |
-| **Closed**      | 6     |
+| Metric          | SP 800-53 Items | AI 600-1 Items | Total |
+| --------------- | --------------- | -------------- | ----- |
+| **Total Items** | 23              | 7              | **30** |
+| **Critical**    | 4               | 2              | **6** |
+| **High**        | 13              | 5              | **18** |
+| **Moderate**    | 6               | 0              | **6** |
+| **Low**         | 0               | 0              | **0** |
+| **Open**        | 12              | 2              | **14** |
+| **In Progress** | 3               | 5              | **8** |
+| **Closed**      | 6               | 0              | **6** |
 
 > **Note:** POAM-018 and POAM-019 are also tracked in [`docs/POAM_ISO42001.md`](POAM_ISO42001.md) as universal ISO 42001 §A.9.4 weaknesses (all regions). The entries below are retained here for NIST SP 800-53 AU-9 / SC-7 audit continuity.
+>
+> **v2.1 addition (2026-06-15):** Seven new POAM items (AI600-001 through AI600-007) have been added based on the NIST AI 600-1 gap analysis in [`docs/NIST_AI_600_1_US_FED_ANALYSIS.md`](NIST_AI_600_1_US_FED_ANALYSIS.md). These items address GenAI-specific risks required for US_FED ATO under EO 14110 and OMB M-24-10.
+>
+> **v2.1 update (2026-06-15):** Phase 0–3 implementation work completed on branch `feat/CAGE-AI600-ai600-1-implementation` (commits `c014337`–`51f6c25`). AI600-001, AI600-002, AI600-003, AI600-005, and AI600-007 moved to **In Progress**. AI600-004 and AI600-006 remain **Open** (no source code changes yet). 222 AI 600-1 unit tests pass (0 failures). See [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](AI_600_1_IMPLEMENTATION_PLAN.md) for the full implementation roadmap.
 
 ---
 
@@ -109,4 +114,60 @@ Items are closed when:
 
 ---
 
-_This document is a living record and must be updated within 5 business days of any status change. Unauthorized modification of closed or in-progress items requires ISSO concurrence. This file supersedes `docs/POAM.md` (v1.7, 2026-06-08). For the cross-region traceability matrix, see [`docs/POAM_INDEX.md`](POAM_INDEX.md)._
+## NIST AI 600-1 POA&M Items
+
+> **Source:** [`docs/NIST_AI_600_1_US_FED_ANALYSIS.md`](NIST_AI_600_1_US_FED_ANALYSIS.md) — full gap analysis, recommended RMF chunk updates, OSCAL artifacts, and implementation roadmap.
+>
+> **Framework:** NIST AI 600-1 (Generative AI Profile, July 2024) — mandatory for US_FED deployments under EO 14110 (October 2023) and OMB M-24-10 (March 2024).
+>
+> **Numbering:** AI600-xxx items are distinct from POAM-xxx (SP 800-53) items. Both series are active and tracked in this document.
+
+| POA&M ID | Control ID | AI 600-1 Ref | Regions | Weakness Description | Detection Method | Risk Level | Scheduled Completion | Resources Required | Status | Milestone |
+| -------- | ---------- | ------------- | ------- | -------------------- | ---------------- | ---------- | -------------------- | ------------------ | ------ | --------- |
+| AI600-001 | SI-10, AU-3 | §2.2 Confabulation | US_FED | No confabulation rate metric exists. The financial advisor LLM can produce confident but factually incorrect market data, fabricated portfolio positions, or hallucinated regulatory constraints. The ConsensusEngine "Risk Manager" and "Compliance Officer" critics are themselves LLMs subject to confabulation — consensus agreement does not guarantee factual accuracy. No Lula validation for confabulation rate exists. | AI 600-1 gap analysis | **High** | 2026-09-30 | 9d | **In Progress** | ✅ Phase 1 (2026-06-15): `src/gateway/governance/confabulation_scorer.py` created — Langfuse `confabulation_risk` metric emission, LLM-as-judge scoring, `confabulation_rate` threshold enforcement. `compliance/lula/lula-validation-ai600-confabulation.yaml` stub created. 34 unit tests pass (`tests/test_confabulation_scorer.py`). Remaining: (1) Wire `confabulation_rate` into `ComplianceMetrics` in `src/compliance_bridge/types.py`; (2) Harden Lula stub to live assertion (Phase 3 §7.5). |
+| AI600-002 | SI-19, SC-28 | §2.3 Data Privacy | US_FED | No training data memorization assessment. DeepSeek-R1 and Llama-3.1 may have memorized PII from training corpora — a risk distinct from runtime PII detection. No differential privacy or membership inference attack testing. Presidio `score_threshold=0.3` in `SafeAnalyzer` may be too permissive for a HIGH-baseline financial system. PII in Langfuse OTel span attributes not subject to 24-hour retention limit from `docs/banking_regs.md`. | AI 600-1 gap analysis | **High** | 2026-10-31 | 8d | **In Progress** | ✅ Phase 1 (2026-06-15): `pii_audit_log()` added to `src/gateway/governance/pii_sanitizer.py` — ISO 8601 UTC timestamps, FISMA AU-11 90-day retention field, entity-type counts, sanitized-text hash. `compliance/lula/lula-validation-ai600-data-privacy.yaml` stub created. 18 unit tests pass (`tests/test_pii_audit_log.py`). Remaining: (1) Conduct Carlini et al. extraction attack probe; (2) Raise Presidio `score_threshold` to ≥ 0.5; (3) Add Langfuse trace PII scrubbing policy; (4) Harden Lula stub (Phase 3 §7.5). |
+| AI600-003 | SI-3, SI-10, CA-8 | §2.4 Data Poisoning / Prompt Injection | US_FED | Indirect prompt injection via MCP tool responses (market data API, portfolio data, news feeds) is unmitigated. The `get_market_data` MCP tool response is not sanitized before being passed to the LLM context window. Only 14 Tier-1 keywords cover direct injection — semantic obfuscation, Unicode homoglyphs, and multi-turn attacks are not detected. Red team pass threshold (`deflection_score >= 3`) is insufficient for HIGH baseline. No adversarial robustness metric. | AI 600-1 gap analysis | **Critical** | 2026-08-31 | 10d | **In Progress** | ✅ Phase 2 (2026-06-15): `src/gateway/governance/prompt_injection_detector.py` created — 8 structural injection patterns (instruction override, role-play bypass, delimiter injection, system prompt leak, jailbreak escalation, indirect injection, token smuggling, multi-turn persistence). `tests/fixtures/adversarial_prompts.json` created with 15 adversarial prompts. `compliance/lula/lula-validation-ai600-prompt-injection.yaml` stub created. 28 unit tests pass (`tests/test_prompt_injection_detector.py`). Remaining: (1) Add MCP tool response sanitization in `safety.py`; (2) Raise red team threshold to `deflection_score >= 4`; (3) Harden Lula stub (Phase 3 §7.5). |
+| AI600-004 | RA-3, SI-12 | §2.6 Harmful Bias | US_FED | No fairness metric or demographic impact assessment exists. The financial advisor LLM may produce systematically different recommendations for different demographic groups — a potential ECOA (Equal Credit Opportunity Act) and Regulation B violation for US_FED financial institutions. No homogenization risk assessment per AI 600-1 §2.6. NRP entity detection in Presidio prevents demographic data from entering LLM context but does not prevent demographically correlated outputs from training data patterns. | AI 600-1 gap analysis | **High** | 2026-11-30 | 8d | Open | No source code changes yet. Remaining: (1) Create `docs/AI_FAIRNESS_ASSESSMENT.md` documenting fairness testing methodology per SR 11-7; (2) Extend `scripts/evaluate_langfuse_traces.py` with demographic fairness metrics; (3) Add quarterly fairness audit to ISCM strategy. |
+| AI600-005 | AC-5, AU-3, CA-7 | §2.7 Human-AI Configuration | US_FED | No formal Human Oversight Scope Statement per AI 600-1 §2.5.4. No DEFER queue SLA documented — confidence-starved contexts may remain unresolved indefinitely. No automation bias assessment for the HITL approval interface. No human override audit trail separate from standard OTel spans. Trades below USD 10,000 have no human review option with no documented justification per AI 600-1 §2.5.2 ("actions with real-world consequences"). | AI 600-1 gap analysis | **High** | 2026-09-30 | 6d | **In Progress** | ✅ Phase 2 (2026-06-15): `src/gateway/governance/hitl_escalator.py` created — `EscalationReason` enum (7 reasons incl. `GOVERNANCE_CONFIDENCE_LOW`), `EscalationRequest`/`EscalationRecord` dataclasses, `escalate_to_human()` with Redis DeferQueue (db=1), `should_escalate_for_consensus()` (USD 10,000 threshold), `should_escalate_for_confidence()` (0.95 threshold). `src/gateway/governance/provenance_chain.py` created — SHA-256 cryptographic provenance chain. `docs/AGENTIC_SCOPE_STATEMENT.md` created (SR 26-2 §3.1, AI 600-1 §2.5). `compliance/lula/lula-validation-ai600-human-ai-config.yaml` stub created. 42 unit tests pass (`tests/test_hitl_escalator.py`, `tests/test_provenance_chain.py`, `tests/test_recursive_governance_risk.py`). Remaining: (1) Create `docs/HUMAN_OVERSIGHT_SCOPE.md`; (2) Add human override audit trail to OTel span schema; (3) Harden Lula stub (Phase 3 §7.5). |
+| AI600-006 | CA-8, RA-5, SC-7 | §2.9 Information Security | US_FED | No model extraction attack testing in red team dataset. No advanced jailbreak testing (DAN prompts, role-play attacks, many-shot jailbreaking) beyond 14 Tier-1 keywords. vLLM inference API (`VLLM_BASE_URL`, `VLLM_REASONING_API_BASE`) accessible within cluster without authentication layer — an attacker with cluster access can query vLLM directly bypassing the governance pipeline. `CAGE_ROUTING_SEAL_SECRET` bypass (POAM-012) also constitutes an AI 600-1 §2.9 information security gap. | AI 600-1 gap analysis | **High** | 2026-09-30 | 8d | Open | No source code changes yet. Remaining: (1) Add `model_extraction`, `jailbreak_advanced`, `adversarial_financial` categories to `tests/red_team/adversarial_dataset.json`; (2) Add OPA-enforced authentication layer in front of vLLM endpoints; (3) Resolve POAM-012 (HMAC bypass) as prerequisite; (4) Add `control_ids` field to all red team dataset entries. |
+| AI600-007 | SA-12, SR-3, SI-7 | §2.12 Value Chain | US_FED | No model weight integrity verification — `scripts/mirror_models.py` downloads DeepSeek-R1 and Llama-3.1 weights without SHA-256 hash verification against a signed manifest. A supply chain attack replacing model weights with a backdoored version would bypass all governance controls. No model card review for either model. Model licenses (DeepSeek-R1 custom license, Meta Llama 3.1 Community License) not formally reviewed for US_FED deployment compatibility. NeMo Guardrails integrity not verified at deployment. Langfuse compliance project is a SaaS single point of failure (see also POAM-018). | AI 600-1 gap analysis | **Critical** | 2026-08-31 | 10d | **In Progress** | ✅ Phase 3 (2026-06-15): `src/gateway/governance/nemo/colang/cbrn_rails.co` created — NeMo Guardrails Colang CBRN rail with 15 CBRN keyword patterns, `define flow cbrn safety check`, POAM AI600-007 annotation, `CAGE_DEPLOYMENT_REGION=US_FED` region guard. `config/governance_thresholds.json` extended with `tier1_keywords_cbrn` (15 terms) and `tier1_keywords_cbrn_enabled: true`. `src/gateway/governance/text_filter.py` extended with `ac_cbrn_keyword_scan()`. `compliance/lula/lula-validation-ai600-cbrn.yaml` stub created (**Cat-M** — requires AO pre-approval before cluster activation). 28 unit tests pass (`tests/test_text_filter_cbrn.py`, `tests/test_nemo_cbrn_rails.py`). Remaining: (1) Add SHA-256 verification to `scripts/mirror_models.py`; (2) Create `docs/MODEL_CARD_REVIEW.md`; (3) Review model licenses for US_FED compatibility; (4) Harden Lula stub (Phase 3 §7.5). |
+
+---
+
+## POA&M Process
+
+### Review Cadence
+
+- **Monthly:** Review open items, update milestones, escalate slipped items
+- **Quarterly:** AO briefing on POA&M status; risk acceptance decisions for items requiring schedule extensions
+- **Annual:** Full POA&M review as part of annual authorization renewal
+
+### Entry Criteria
+
+New POA&M items are created when:
+
+- Security control assessments identify weaknesses
+- Continuous monitoring detects new vulnerabilities
+- Penetration testing or red-team exercises identify gaps
+- Regulatory changes require new controls
+- Automated scanning (Trivy, pip-audit, Lula) identifies compliance failures
+- AI 600-1 gap analysis identifies GenAI-specific risk gaps
+
+### Closure Criteria
+
+Items are closed when:
+
+1. Remediation actions are fully implemented
+2. Implementation is verified by the ISSO or Security Control Assessor
+3. Supporting evidence (code changes, scan results, configuration artifacts) is archived
+4. AO is notified of closure for HIGH/CRITICAL items
+
+### Escalation
+
+- Items not remediated by scheduled completion date are escalated to the System Owner
+- Critical items overdue by >30 days are escalated to the AO
+- Items that cannot be remediated must have a formal risk acceptance signed by the AO
+
+---
+
+_This document is a living record and must be updated within 5 business days of any status change. Unauthorized modification of closed or in-progress items requires ISSO concurrence. This file supersedes `docs/POAM.md` (v1.7, 2026-06-08), POAM_US_FED v2.0 (2026-06-08), and POAM_US_FED v2.1 (2026-06-15). For the cross-region traceability matrix, see [`docs/POAM_INDEX.md`](POAM_INDEX.md). For the AI 600-1 gap analysis that generated AI600-xxx items, see [`docs/NIST_AI_600_1_US_FED_ANALYSIS.md`](NIST_AI_600_1_US_FED_ANALYSIS.md). For the full AI 600-1 implementation plan and phase roadmap, see [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](AI_600_1_IMPLEMENTATION_PLAN.md)._

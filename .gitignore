@@ -241,3 +241,6 @@ antigravity.yaml
 antigravity.yml
 config/antigravity_mcp_example.json
 init_antigravity.sh
+-e 
+# AI 600-1 §2.8 — generated SBOM artifact (not committed)
+sbom.json
