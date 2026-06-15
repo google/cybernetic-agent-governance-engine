@@ -75,6 +75,7 @@ from .types import (
     SUPPORTED_CONTROLS,
     SUPPORTED_FRAMEWORKS,
     ComplianceMetrics,
+    get_control_meta,
 )
 
 # ---------------------------------------------------------------------------
@@ -320,29 +321,44 @@ async def health() -> dict:
 # ---------------------------------------------------------------------------
 # GET /v1/controls  (Tier 1.2)
 #
-# Discovery endpoint — returns the full registry of supported ISO 42001 / NIST
-# controls.  Avoids callers (Lula, agentsight-ui) hard-coding the control list.
+# Discovery endpoint — returns the registry of supported controls filtered by
+# CAGE_DEPLOYMENT_REGION.  Avoids callers (Lula, agentsight-ui) hard-coding
+# the control list.
+#
+# FINDING-06 (MEDIUM): Previously returned all entries from SUPPORTED_CONTROLS
+# (which included NIST/FedRAMP/EU AI Act) without filtering by
+# CAGE_DEPLOYMENT_REGION.  Now reads the active region at request time and
+# filters through get_control_meta(region) so each deployment only exposes
+# its applicable controls.  Adds X-CAGE-Deployment-Region response header.
 # ---------------------------------------------------------------------------
 
 @app.get(
     "/v1/controls",
     tags=["compliance"],
-    summary="List all supported compliance controls",
+    summary="List supported compliance controls for the active deployment region",
 )
 async def list_controls(
     framework: str | None = Query(
         default=None,
         description=(
-            f"Filter controls by framework short-name. "
-            f"Supported: {', '.join(sorted(['iso42001', 'eu_ai_act', 'nist_ai_rmf', 'fedramp']))}."
+            "Filter controls by framework short-name. "
+            "Supported values depend on CAGE_DEPLOYMENT_REGION. "
+            "Universal: iso42001, aarm. "
+            "US_FED adds: fedramp, nist_ai_rmf. "
+            "EU_ECB adds: eu_ai_act. "
+            "APAC_MAS adds: mas_feat."
         ),
     ),
 ) -> dict:
-    """Return the registry of supported ISO 42001 / NIST controls.
+    """Return the registry of supported controls for the active deployment region.
 
-    Pass ``?framework=eu_ai_act`` to filter to controls that are cross-referenced
-    to the EU AI Act.  Supported framework values: ``iso42001``, ``eu_ai_act``,
-    ``nist_ai_rmf``, ``fedramp``.
+    The response is filtered by ``CAGE_DEPLOYMENT_REGION`` so that each
+    deployment only exposes its applicable compliance framework controls.
+    The active region is returned in the ``X-CAGE-Deployment-Region`` response
+    header so API consumers know which region's controls are being returned.
+
+    Pass ``?framework=iso42001`` to filter to universal ISO 42001 controls.
+    Pass ``?framework=fedramp`` (US_FED only) to filter to FedRAMP controls.
 
     Response shape (unfiltered)::\n
         {\n
@@ -358,37 +374,62 @@ async def list_controls(
             ...\n
           ],\n
           \"total\": 9,\n
-          \"framework_filter\": null\n
+          \"framework_filter\": null,\n
+          \"deployment_region\": \"US_FED\"\n
         }\n
     """
-    if framework is not None and framework not in SUPPORTED_FRAMEWORKS:
+    from fastapi.responses import JSONResponse  # noqa: PLC0415 (already imported at top)
+
+    active_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
+    region_controls = get_control_meta(active_region)
+
+    # Build the set of framework names available for this region
+    region_frameworks: set[str] = set()
+    for _meta in region_controls.values():
+        region_frameworks.update(_meta.get("frameworks", {}).keys())
+
+    if framework is not None and framework not in region_frameworks:
         raise HTTPException(
             status_code=400,
             detail={
                 "error":   "UNSUPPORTED_FRAMEWORK",
                 "message": (
-                    f"Framework '{framework}' is not recognised. "
-                    f"Supported: {', '.join(SUPPORTED_FRAMEWORKS)}"
+                    f"Framework '{framework}' is not recognised for region "
+                    f"'{active_region}'. "
+                    f"Supported: {', '.join(sorted(region_frameworks))}"
                 ),
             },
         )
 
-    active_ids = SUPPORTED_CONTROLS
     if framework is not None:
-        active_ids = FRAMEWORK_CONTROLS.get(framework, [])
+        active_ids = [
+            cid for cid, meta in region_controls.items()
+            if framework in meta.get("frameworks", {})
+        ]
+    else:
+        active_ids = list(region_controls.keys())
 
     controls = [
         {
             "control_id":  cid,
-            "name":        CONTROL_META[cid]["name"],
-            "iso_clause":  CONTROL_META[cid]["iso_clause"],
-            "score_name":  CONTROL_META[cid]["scoreName"],
+            "name":        region_controls[cid]["name"],
+            "iso_clause":  region_controls[cid]["iso_clause"],
+            "score_name":  region_controls[cid]["scoreName"],
             "critical":    cid in CRITICAL_CONTROLS,
-            "frameworks":  CONTROL_META[cid].get("frameworks", {}),
+            "frameworks":  region_controls[cid].get("frameworks", {}),
         }
         for cid in active_ids
     ]
-    return {"controls": controls, "total": len(controls), "framework_filter": framework}
+    response_body = {
+        "controls":          controls,
+        "total":             len(controls),
+        "framework_filter":  framework,
+        "deployment_region": active_region,
+    }
+    return JSONResponse(
+        content=response_body,
+        headers={"X-CAGE-Deployment-Region": active_region},
+    )
 
 
 # ---------------------------------------------------------------------------
