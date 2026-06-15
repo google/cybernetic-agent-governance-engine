@@ -157,11 +157,6 @@ class GovernanceControl(Enum):
     """Per-session token and step-count quota enforcement via Redis atomic counters.
     ISO 42001 Annex A.4. Enforcement tier 2. Primary enforcer: TokenQuotaProxy."""
 
-    AGENTIC_SCOPE_STATEMENT = "agentic_scope_statement"
-    """Reference to the agentic scope statement document (SR 26-2 §3.1, AI 600-1 §2.5).
-    Declares authorized action space, HITL boundaries, and inter-agent trust model.
-    POAM: AI600-001 (secondary). Region: US_FED."""
-
 
 # ---------------------------------------------------------------------------
 # Singleton ControlRegistry
@@ -344,17 +339,37 @@ class ControlRegistry:
             # In your container entrypoint / FastAPI lifespan:
             region = os.getenv("CAGE_DEPLOYMENT_REGION", "US_FED")
             ControlRegistry.reconfigure(region)
+
+        Thread-safety note (C-13 fix):
+            The previous implementation released the lock between clearing
+            ``_instance`` and re-assigning it, creating a TOCTOU window where
+            a concurrent ``ControlRegistry()`` call could observe ``_instance
+            is None`` and construct a new instance with the *old* region.
+            In a multi-region deployment this could cause US_FED controls to
+            be evaluated against EU_ECB mappings during a baseline refresh.
+
+            The fix: load the new registry *outside* the lock (I/O-bound work
+            should not hold a lock), then swap ``_instance`` atomically inside
+            a single lock acquisition.  Concurrent readers that acquire the
+            lock between the clear and the swap will block until the swap
+            completes, then see the fully-loaded new instance.
         """
+        normalized_region = region.strip().upper()
+
+        # Build the new instance outside the lock — _load_registry() does
+        # file I/O and JSON parsing which should not block other threads.
+        new_instance = object.__new__(cls)
+        new_instance._load_registry(region=normalized_region)
+
+        # Atomically swap: clear the old singleton and install the new one
+        # in a single lock acquisition, eliminating the TOCTOU window.
         with cls._lock:
             cls._instance = None
             cls._mappings = {}
             cls._active_region = _DEFAULT_REGION
-        # Re-instantiate with the explicit region
-        instance = object.__new__(cls)
-        instance._load_registry(region=region.strip().upper())
-        with cls._lock:
-            cls._instance = instance
-        logger.info("ControlRegistry reconfigured to region: %s", region)
+            cls._instance = new_instance
+
+        logger.info("ControlRegistry reconfigured to region: %s", normalized_region)
 
     @classmethod
     def reset_for_testing(cls) -> None:

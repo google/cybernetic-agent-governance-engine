@@ -52,14 +52,16 @@ provider:
       # Check 3: No Pod uses the "default" ServiceAccount (all pods must use named SAs).
       #
       # POAM-001 remediation: formalizes account management for GKE service accounts.
-      validate if {
-        # Check 1: Every non-default ServiceAccount must have the account-purpose label.
-        every sa in input["cage-service-accounts"] {
-          sa.metadata.name == "default"
-        }
-      }
+      #
+      # C-AC2 fix: the original first validate block contained an inverted condition —
+      # `sa.metadata.name == "default"` inside `every` caused the block to pass only
+      # when ALL service accounts were named "default", which is the opposite of the
+      # intended check.  The correct assertion is that every named (non-default) SA
+      # carries the cage.io/account-purpose label, expressed as a single block below.
 
       validate if {
+        # Check 1: Every non-default ServiceAccount must have the account-purpose label.
+        # Filter to named SAs first, then assert the label is present on each.
         named_sas := [sa | sa := input["cage-service-accounts"][_]; sa.metadata.name != "default"]
         every sa in named_sas {
           sa.metadata.labels["cage.io/account-purpose"] != null

@@ -116,14 +116,20 @@ class TestCausalGatekeeperAuthorizedActionSpace:
         )
 
     def test_us_fed_baseline_references_scope_statement(self):
-        """config/compliance/US_FED_BASELINE.json must reference the scope statement."""
+        """config/compliance/US_FED_BASELINE.json must reference the scope statement.
+
+        The key is stored as a meta-key (_agentic_scope_statement) so that
+        ControlRegistry._load_registry() strips it from the control mappings dict
+        (meta-keys are prefixed with '_' per the baseline JSON schema convention).
+        """
         import json
         import pathlib
         baseline = json.loads(
             pathlib.Path("config/compliance/US_FED_BASELINE.json").read_text()
         )
-        assert "agentic_scope_statement" in baseline, (
-            "US_FED_BASELINE.json must contain 'agentic_scope_statement' field "
-            "(AI 600-1 §2.5.1 prerequisite)."
+        assert "_agentic_scope_statement" in baseline, (
+            "US_FED_BASELINE.json must contain '_agentic_scope_statement' meta-key "
+            "(AI 600-1 §2.5.1 prerequisite). Meta-keys are prefixed with '_' so "
+            "ControlRegistry does not attempt to resolve them as CTRL_* mappings."
         )
-        assert baseline["agentic_scope_statement"] == "docs/AGENTIC_SCOPE_STATEMENT.md"
+        assert baseline["_agentic_scope_statement"] == "docs/AGENTIC_SCOPE_STATEMENT.md"
