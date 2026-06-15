@@ -2,6 +2,15 @@
 
 > **Last verified:** 2026-06-02
 
+> **Universal Baseline:** Audit logging latency requirements are governed by **ISO 42001 §A.9.2** (evidence integrity) universally across all `CAGE_DEPLOYMENT_REGION` values. Jurisdiction-specific SLA authorities are listed in the table below.
+>
+> | Jurisdiction | Audit Logging SLA Authority | Max Governance Overhead |
+> |-------------|----------------------------|------------------------|
+> | **Universal** | ISO 42001 §A.9.2 | < 2s total response time |
+> | **US_FED** | NIST SP 800-53 AU-12 (additionally) | 200ms governance overhead |
+> | **EU_ECB** | DORA Art. 10 (additionally) | 200ms governance overhead |
+> | **APAC_MAS** | MAS Notice 655 (additionally) | 200ms governance overhead |
+
 This document outlines the performance strategy for the Cybernetic Governance Engine. The core philosophy is **"Latency as Currency"**: we must generate tokens fast enough to "pay for" the overhead of strict governance checks (NeMo, OPA, JSON Enforcement).
 
 ## The Governance Tax

@@ -54,9 +54,18 @@ module "gke_dev" {
 }
 ```
 
-### Production Environment (NIST Compliance)
+### Production Environment (ISO 42001 Baseline + Jurisdictional Hardening)
+
+> **Architecture Note:** `enable_nist_compliance=true` activates NIST SP 800-53 controls and is appropriate **only** for `CAGE_DEPLOYMENT_REGION=US_FED`. EU_ECB and APAC_MAS production deployments use `eu-prod.tfvars` and `apac-prod.tfvars` respectively, which set the correct regional compliance flags without activating NIST-specific hardening.
+>
+> | `CAGE_DEPLOYMENT_REGION` | Compliance Flags | Var-file |
+> |--------------------------|-----------------|----------|
+> | `US_FED` | `enable_nist_compliance=true` | `prod.tfvars` |
+> | `EU_ECB` | `enable_eu_ecb_compliance=true` | `eu-prod.tfvars` |
+> | `APAC_MAS` | `enable_apac_mas_compliance=true` | `apac-prod.tfvars` |
 
 ```hcl
+# US_FED production deployment
 module "gke_prod" {
   source = "../../modules/gcp_gke_cluster"
   
@@ -65,8 +74,8 @@ module "gke_prod" {
   zone         = "us-central1-a"
   cluster_name = "cage-governance"
   
-  # Security: All enabled for NIST RMF compliance
-  enable_nist_compliance         = true
+  # Security: All enabled for ISO 42001 baseline + NIST RMF (US_FED only)
+  enable_nist_compliance         = true  # US_FED only — do NOT set for EU_ECB or APAC_MAS
   enable_binary_authorization    = true
   enable_audit_logging           = true
   enable_cmek                    = true

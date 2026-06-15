@@ -60,12 +60,24 @@ If Cloud Build is unavailable:
 
 ## Deployment Target Matrix
 
-| Target | Environment | Build Method | Command | Use Case |
-|--------|------------|--------------|---------|----------|
-| `gcp-gke` | prod | ☁️ Cloud Build | `./deploy_all.sh --target gcp-gke --env prod` | Production deployment |
-| `gcp-gke` | dev | ☁️ Cloud Build | `./deploy_all.sh --target gcp-gke --env dev` | GKE development cluster |
-| `agnostic` | dev | 🐳 Local Docker | `./deploy_all.sh --target agnostic --env dev` | k3d/kind local cluster |
-| `docker-compose` | dev | 🐳 Local Docker | `./deploy_all.sh` | Local development |
+> **Jurisdiction Prerequisite:** Before deploying, set `CAGE_DEPLOYMENT_REGION` in your `.env` file and select the matching `--var-file`. The `--env prod` flag activates baseline hardening; jurisdiction-specific compliance posture is controlled by `CAGE_DEPLOYMENT_REGION` and the var-file.
+>
+> | `CAGE_DEPLOYMENT_REGION` | `--var-file` | GCP Region |
+> |--------------------------|-------------|------------|
+> | `US_FED` | `prod.tfvars` | `us-central1` |
+> | `EU_ECB` | `eu-prod.tfvars` | `europe-west1` |
+> | `APAC_MAS` | `apac-prod.tfvars` | `asia-southeast1` |
+
+| Target | Environment | Jurisdiction | Build Method | Command | Use Case |
+|--------|------------|-------------|--------------|---------|----------|
+| `gcp-gke` | prod | US_FED | ☁️ Cloud Build | `CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod` | US_FED production deployment |
+| `gcp-gke` | prod | EU_ECB | ☁️ Cloud Build | `CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env prod` | EU_ECB production deployment |
+| `gcp-gke` | prod | APAC_MAS | ☁️ Cloud Build | `CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod` | APAC_MAS production deployment |
+| `gcp-gke` | dev | US_FED | ☁️ Cloud Build | `CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env dev --auto-approve` | US_FED GKE dev cluster |
+| `gcp-gke` | dev | EU_ECB | ☁️ Cloud Build | `CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env dev --auto-approve` | EU_ECB GKE dev cluster |
+| `gcp-gke` | dev | APAC_MAS | ☁️ Cloud Build | `CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env dev --auto-approve` | APAC_MAS GKE dev cluster |
+| `agnostic` | dev | Any | 🐳 Local Docker | `./deploy_all.sh --target agnostic --env dev` | k3d/kind local cluster |
+| `docker-compose` | dev | Any | 🐳 Local Docker | `./deploy_all.sh` | Local development |
 
 ## Cloud Build Configuration Files
 

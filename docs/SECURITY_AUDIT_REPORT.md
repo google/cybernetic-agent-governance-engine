@@ -755,7 +755,20 @@ The following findings affect **both dev and prod** and require immediate attent
 
 ## Section 7 — Compliance Impact Summary
 
+### ISO 42001 Controls Affected
+
+> **Scope: Universal** — applies to ALL `CAGE_DEPLOYMENT_REGION` values (US_FED, EU_ECB, APAC_MAS)
+
+| Control | Finding(s) | Status |
+|---------|-----------|--------|
+| A.9.2 (Evidence Integrity) | C-08, H-03 | 🚫 KMS signing inactive |
+| A.6.1 (Risk Assessment) | C-02, H-07 | ⚠️ Safety controls fail-open |
+| A.9.1 (Audit Trail) | C-09, H-01, M-08 | 🚫 Audit trail broken |
+| A.5.2 (Governance Accountability) | C-04, C-07 | 🚫 No authentication |
+
 ### NIST SP 800-53 Controls Affected
+
+> **Scope: US_FED only** — applies exclusively when `CAGE_DEPLOYMENT_REGION=US_FED`
 
 | Control | Finding(s) | Status |
 |---------|-----------|--------|
@@ -767,15 +780,6 @@ The following findings affect **both dev and prod** and require immediate attent
 | SI-10 (Information Input Validation) | C-10, H-11, M-05 | ⚠️ Incomplete |
 | RA-5 (Vulnerability Scanning) | L-03 | ⚠️ Reporting bug |
 | IA-3 (Device Identification) | C-04, H-06 | 🚫 Not enforced |
-
-### ISO 42001 Controls Affected
-
-| Control | Finding(s) | Status |
-|---------|-----------|--------|
-| A.9.2 (Evidence Integrity) | C-08, H-03 | 🚫 KMS signing inactive |
-| A.6.1 (Risk Assessment) | C-02, H-07 | ⚠️ Safety controls fail-open |
-| A.9.1 (Audit Trail) | C-09, H-01, M-08 | 🚫 Audit trail broken |
-| A.5.2 (Governance Accountability) | C-04, C-07 | 🚫 No authentication |
 
 ---
 

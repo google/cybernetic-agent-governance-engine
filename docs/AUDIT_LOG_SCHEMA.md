@@ -179,15 +179,20 @@ Emitted every time the evidence chain is read via `PlaygroundTelemetry.read_evid
 
 ## Regulatory Compliance Mapping
 
-| Regulatory Requirement | How the Audit Log Satisfies It |
-|------------------------|-------------------------------|
-| **MiFID II Art. 25** — Recording of trade-related communications | View-access log registers every read of trade governance decisions, with accessor identity and timestamp |
-| **GDPR Art. 30** — Records of processing activities | View-access log constitutes a record of who accessed personal-data-adjacent decision records and why |
-| **ISO 42001 §6.1** — Risk treatment documentation | HITL approval records persist the human's risk treatment decision and rationale before graph resumption |
-| **ISO 42001 A.7.2** — Accountability | `reviewer` field attributes every HITL decision to a named individual |
-| **ISO 42001 A.8.4** — AI system operation controls | Governance evaluation records provide continuous evidence of operational control enforcement |
-| **NIST AI RMF GOVERN-5** — Human oversight | HITL approval records prove human review occurred before high-risk execution |
-| **DORA Art. 10** — ICT risk management continuity | Hash chain tamper evidence ensures log integrity cannot be silently compromised |
+> **Architecture Note:** ISO 42001 requirements are **universal** and apply to all `CAGE_DEPLOYMENT_REGION` values. All other frameworks are **jurisdictional** and apply only to the indicated region.
+
+| Regulatory Requirement | Jurisdiction | How the Audit Log Satisfies It |
+|------------------------|-------------|-------------------------------|
+| **ISO 42001 §6.1** — Risk treatment documentation | **Universal** (all regions) | HITL approval records persist the human's risk treatment decision and rationale before graph resumption |
+| **ISO 42001 A.7.2** — Accountability | **Universal** (all regions) | `reviewer` field attributes every HITL decision to a named individual |
+| **ISO 42001 A.8.4** — AI system operation controls | **Universal** (all regions) | Governance evaluation records provide continuous evidence of operational control enforcement |
+| **ISO 42001 A.9.2** — Evidence integrity | **Universal** (all regions) | SHA-256 hash chain ensures tamper-evident audit trail across all regions |
+| **MiFID II Art. 25** — Recording of trade-related communications | **EU_ECB only** | View-access log registers every read of trade governance decisions, with accessor identity and timestamp |
+| **GDPR Art. 30** — Records of processing activities | **EU_ECB only** | View-access log constitutes a record of who accessed personal-data-adjacent decision records and why |
+| **DORA Art. 10** — ICT risk management continuity | **EU_ECB only** | Hash chain tamper evidence ensures log integrity cannot be silently compromised |
+| **MAS Notice 655** — Audit logging requirements | **APAC_MAS only** | Append-only NDJSON evidence chain with 7-year retention satisfies MAS audit record requirements |
+| **NIST AI RMF GOVERN-5** — Human oversight | **US_FED only** | HITL approval records prove human review occurred before high-risk execution |
+| **FISMA AU-11** — Audit record retention | **US_FED only** | Evidence chain retained per US_FED baseline retention policy |
 
 ---
 

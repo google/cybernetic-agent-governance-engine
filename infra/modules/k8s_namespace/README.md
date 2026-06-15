@@ -23,6 +23,8 @@ module "namespace" {
 
 ### With Pod Security Standards (Production)
 
+> **Architecture Note:** Pod Security Admission (PSA) is a **universal Kubernetes security control** implementing **ISO 42001 §A.8.4** (AI system operation controls). PSA labels are not NIST-specific — they apply to all `CAGE_DEPLOYMENT_REGION` values. For US_FED deployments, PSA additionally satisfies NIST SP 800-53 SC-39; this is a US_FED-only additive mapping, not a universal requirement.
+
 ```hcl
 module "namespace" {
   source = "../../modules/k8s_namespace"
@@ -32,10 +34,17 @@ module "namespace" {
   enable_pod_security_standards = true
   pod_security_level           = "restricted"
   
-  labels = {
-    "compliance.nist.gov/control"  = "SC-39"
-    "compliance.nist.gov/standard" = "SP-800-53-Rev5"
+  annotations = {
+    # Universal: ISO 42001 A.8.4 — AI system operation controls (all regions)
+    "compliance.iso42001/control"        = "A.8.4"
+    "compliance.iso42001/classification" = "high"
   }
+  
+  # US_FED only: add NIST SC-39 label via a US_FED-specific overlay
+  # labels = {
+  #   "compliance.nist.gov/control"  = "SC-39"
+  #   "compliance.nist.gov/standard" = "SP-800-53-Rev5"
+  # }
 }
 ```
 

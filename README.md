@@ -2,7 +2,11 @@
 
 > **AI governance for regulated financial services — built-in, not bolted on.**
 
-![v2.0.0](https://img.shields.io/badge/version-2.0.0-brightgreen) ![796 Tests Passing](https://img.shields.io/badge/tests-796%20passing-brightgreen) ![SR 26-2](https://img.shields.io/badge/SR%2026--2-blue) ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue) ![DORA](https://img.shields.io/badge/DORA-blue) ![NIST AI RMF](https://img.shields.io/badge/NIST-AI%20RMF-blue) ![FedRAMP HIGH](https://img.shields.io/badge/FedRAMP-HIGH-blue) ![EU AI Act](https://img.shields.io/badge/EU%20AI%20Act-blue) ![MAS FEAT](https://img.shields.io/badge/MAS%20FEAT-blue) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 6](https://img.shields.io/badge/POAM%20Closed-6-brightgreen)
+![v2.0.0](https://img.shields.io/badge/version-2.0.0-brightgreen) ![796 Tests Passing](https://img.shields.io/badge/tests-796%20passing-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 6](https://img.shields.io/badge/POAM%20Closed-6-brightgreen)
+
+**Universal (all regions):** ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue)
+
+**Jurisdictional Extensions:** ![SR 26-2](https://img.shields.io/badge/US__FED-SR%2026--2-orange) ![NIST AI RMF](https://img.shields.io/badge/US__FED-NIST%20AI%20RMF-orange) ![FedRAMP HIGH](https://img.shields.io/badge/US__FED-FedRAMP%20HIGH-orange) ![EU AI Act](https://img.shields.io/badge/EU__ECB-EU%20AI%20Act-purple) ![DORA](https://img.shields.io/badge/EU__ECB-DORA-purple) ![MAS FEAT](https://img.shields.io/badge/APAC__MAS-MAS%20FEAT-green)
 
 ---
 
@@ -135,14 +139,37 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 > [!IMPORTANT]
 > **CAGE v2.0.0 has not received a NIST Authorization to Operate (ATO).** The AI governance enforcement controls (NeMo Guardrails, OPA, Cloud KMS signing, HITL, STPA, heterogeneous consensus, human-gated refinement, externally reconciled CBF) are fully implemented and tested. The full NIST RMF authorization process — Security Assessment, System Security Plan, ATO letter — has not been completed. Regulated-environment deployers must conduct their own risk assessment before production use.
 
+### Compliance Framework Scope
+
+> **Architecture Note:** ISO 42001 is the **universal baseline** active in all three deployment regions. NIST SP 800-53, EU AI Act/GDPR/DORA, and MAS FEAT are **jurisdictional extensions** active only when `CAGE_DEPLOYMENT_REGION` is set to the corresponding value. See [`docs/JURISDICTIONAL_SEPARATION_ANALYSIS.md`](docs/JURISDICTIONAL_SEPARATION_ANALYSIS.md) for the full architectural rationale.
+
+| Compliance Framework | Scope | `CAGE_DEPLOYMENT_REGION` | Status |
+| -------------------- | ----- | ------------------------ | ------ |
+| **ISO/IEC 42001:2023** | **Universal** — all regions | All values | ✅ Active |
+| **CSA AARM v1.0** | **Universal** — all regions | All values | ✅ Active |
+| **NIST SP 800-53 Rev 5** | **US_FED only** | `US_FED` | 🟡 Partial (ATO pending) |
+| **NIST AI 600-1** | **US_FED only** | `US_FED` | 🟡 Partial |
+| **FedRAMP HIGH** | **US_FED only** | `US_FED` | 🟡 Partial (ATO pending) |
+| **SR 26-2** (Federal Reserve) | **US_FED only** | `US_FED` | ✅ Implemented |
+| **EU AI Act** | **EU_ECB only** | `EU_ECB` | ✅ Implemented |
+| **GDPR Art. 22** | **EU_ECB only** | `EU_ECB` | ✅ Implemented |
+| **DORA Art. 10/12** | **EU_ECB only** | `EU_ECB` | ✅ Implemented |
+| **MAS FEAT Principles** | **APAC_MAS only** | `APAC_MAS` | ✅ Implemented |
+| **MAS Notice 655** | **APAC_MAS only** | `APAC_MAS` | ✅ Implemented |
+| **MAS TRM §4.2/§6.3** | **APAC_MAS only** | `APAC_MAS` | ✅ Implemented |
+
+> **Footnote:** SR 26-2 has no legal force outside the US Federal Reserve system. The `EU_ECB_BASELINE.json` and `APAC_MAS_BASELINE.json` profiles encode a `"no legal force"` sentinel that suppresses SR 26-2 telemetry in non-US deployments (see `.clinerules` §12.4).
+
+### Operational Security Status
+
 | Domain                                       | Status                  | Detail                                                                                                                      |
 | -------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | **AI governance enforcement**                | ✅ Implemented & tested | NeMo rails, OPA circuit breaker, Cloud KMS HSM seal (production seal enforcement active — unsigned requests return 403), HITL, CBF (externally reconciled), heterogeneous consensus, PII, STPA — all fail-closed |
 | **Evidentiary independence (v2.0.0)**        | ✅ Implemented & tested | KMS asymmetric signing, human-gated refinement, multi-model consensus — recursive self-authentication eliminated. (Anchorage custody reconciliation via `AnchorageGrpcLedgerProvider` is FUTURE STATE — POAM-023, target 2026-09-08) |
 | **Multi-Framework automated compliance**     | 🟡 Partial              | 15 Lula validation manifests (4 Active, 11 Stub) across ISO 42001, NIST SP 800-53, and CSA AARM — see [`compliance/lula/README.md`](compliance/lula/README.md) |
-| **NIST RMF Steps 1–4 (Prepare → Implement)** | 🟡 Partial              | SC-8 elevated to implemented; SC-7 reinforced; FIPS 199 unsigned; ATO not yet issued                                       |
-| **NIST RMF Step 5 (Assess)**                 | ❌ Not started          | No Security Assessment Report; no independent assessor                                                                      |
-| **NIST RMF Step 6 (Authorize)**              | ❌ Not started          | No ATO letter issued                                                                                                        |
+| **NIST RMF Steps 1–4 (Prepare → Implement)** | 🟡 Partial (US_FED only) | SC-8 elevated to implemented; SC-7 reinforced; FIPS 199 unsigned; ATO not yet issued                                       |
+| **NIST RMF Step 5 (Assess)**                 | ❌ Not started (US_FED only) | No Security Assessment Report; no independent assessor                                                                 |
+| **NIST RMF Step 6 (Authorize)**              | ❌ Not started (US_FED only) | No ATO letter issued                                                                                                    |
 | **Infrastructure security**                  | 🟡 Partial              | 13 of 23 POA&M open (6 Closed: POAM-003 AU-12, POAM-007 IA-3, POAM-010 RA-5, POAM-016 SI-2, POAM-020 CM-3, POAM-021 SI-4; POAM-023 SI-2 CVE-2025-13462 opened 2026-06-08) — see [`docs/SECURITY_STATUS.md`](docs/SECURITY_STATUS.md) |
 | **PodSecurity (restricted)**                 | ✅ Implemented          | `securityContext` (`runAsNonRoot`, `runAsUser: 65534`, `seccompProfile`, `allowPrivilegeEscalation: false`, `capabilities.drop: ALL`) applied to all 6 app deployment manifests (rc.3) |
 | **Intra-cluster mTLS**                       | ✅ Implemented          | Linkerd mTLS: SPIFFE/SVID identity for Gateway→OPA, Gateway→NeMo (POAM-007 closed)                                         |
