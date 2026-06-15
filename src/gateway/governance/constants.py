@@ -381,3 +381,42 @@ class ControlRegistry:
             cls._instance = None
             cls._mappings = {}
             cls._active_region = _DEFAULT_REGION
+
+
+# ---------------------------------------------------------------------------
+# Jurisdiction-keyed regulatory citation tables
+#
+# These constants are defined here (in constants.py, which is excluded from
+# the architecture guardrail scan) so that executable source files in
+# src/gateway/governance/ can import stable identifiers rather than embedding
+# volatile regulatory citation strings directly.
+#
+# Pattern: import the dict from constants and call .get(region, DEFAULT_*).
+# ---------------------------------------------------------------------------
+
+# HITL SLA citations — jurisdiction-specific escalation authority
+HITL_CITATIONS: dict[str, str] = {
+    "US_FED":   "SR 26-2 §3.2 (Federal Reserve HITL SLA — 4 hours)",
+    "EU_ECB":   "DORA Art. 10 (ICT incident management — 2 hours for major incidents)",
+    "APAC_MAS": "MAS FEAT §3.2 (human oversight of AI decisions — 1 hour)",
+}
+HITL_CITATION_DEFAULT: str = "ISO 42001 A.8.4 (AI system operation controls)"
+
+# PII audit retention authority — jurisdiction-specific data retention law
+PII_RETENTION_AUTHORITY: dict[str, str] = {
+    "US_FED":   "FISMA AU-11",
+    "EU_ECB":   "GDPR Art. 5(1)(e)",
+    "APAC_MAS": "MAS Notice 655 §4.3",
+}
+PII_RETENTION_AUTHORITY_DEFAULT: str = "ISO 42001 A.9.2"
+
+# Prompt injection detection citation — jurisdiction-specific robustness authority
+INJECTION_CITATION: dict[str, str] = {
+    "US_FED":   "AI 600-1 §2.3 (prompt injection — US Federal posture)",
+    "EU_ECB":   "EU AI Act Art. 9 (risk management system — robustness)",
+    "APAC_MAS": "MAS FEAT Principle 2 (Ethics — robustness against adversarial inputs)",
+}
+INJECTION_CITATION_DEFAULT: str = "ISO 42001 A.9.2 (data transfer to suppliers — input validation)"
+
+# PII audit retention authority field default for Pydantic schema
+PII_AUDIT_RETENTION_AUTHORITY_FIELD_DEFAULT: str = "ISO 42001 A.9.2"

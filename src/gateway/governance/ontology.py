@@ -14,6 +14,7 @@
 
 import logging
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 logger = logging.getLogger("Gateway.Governance.Ontology")
 
@@ -168,7 +169,8 @@ class TradingKnowledgeGraph:
     # ISO_CONTROL_MAP is retained as a backward-compat alias (universal only).
 
     # Universal ISO 42001 controls — applicable in all regions (R-1, R-5)
-    _UNIVERSAL_CONTROL_MAP: dict[str, str] = {
+    # ClassVar prevents dataclass from treating these dicts as instance fields.
+    _UNIVERSAL_CONTROL_MAP: ClassVar[dict[str, str]] = {
         "SOCIAL_IMPACT":   "A.5.2",  # Prompt Injection & Toxicity
         "LOGGING_AUDIT":   "A.5.3",  # Continuous Monitoring
         "DATA_PRIVACY":    "A.9.2",  # PII / Data Anonymisation (ISO baseline)
@@ -177,7 +179,7 @@ class TradingKnowledgeGraph:
 
     # EU_ECB-specific controls — EU AI Act / GDPR (R-3)
     # Only operative when CAGE_DEPLOYMENT_REGION=EU_ECB.
-    _EU_ECB_CONTROL_MAP: dict[str, str] = {
+    _EU_ECB_CONTROL_MAP: ClassVar[dict[str, str]] = {
         "GDPR_ART22":      "GDPR Art. 22",       # Automated individual decision-making
                                                   # (right not to be subject to solely automated
                                                   # decisions with legal / similarly significant effects)
@@ -192,7 +194,7 @@ class TradingKnowledgeGraph:
     # US_FED-specific controls — NIST SP 800-53 (R-2)
     # Only operative when CAGE_DEPLOYMENT_REGION=US_FED.
     # SR 26-2: NIST control IDs have no legal force outside US_FED.
-    _US_FED_CONTROL_MAP: dict[str, str] = {
+    _US_FED_CONTROL_MAP: ClassVar[dict[str, str]] = {
         "BOUNDARY_PROTECTION": "SC-7",   # Cilium L7 Egress Lockdown
         "TRANSMISSION_CONF":   "SC-8",   # Linkerd mTLS
         "ACCOUNT_MGMT":        "AC-2",   # Account Management
@@ -200,7 +202,7 @@ class TradingKnowledgeGraph:
 
     # Backward-compat alias — universal controls only.
     # New code must call get_control_map(region) instead.
-    ISO_CONTROL_MAP: dict[str, str] = _UNIVERSAL_CONTROL_MAP
+    ISO_CONTROL_MAP: ClassVar[dict[str, str]] = _UNIVERSAL_CONTROL_MAP
 
     @classmethod
     def get_control_map(cls, region: str) -> dict[str, str]:
