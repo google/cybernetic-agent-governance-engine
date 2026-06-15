@@ -1,0 +1,78 @@
+# lula-validation-dora-art10.yaml
+# DORA Art. 10 — ICT Operational Resilience and Audit Logging
+#
+# Asserts that the CAGE system maintains ICT operational resilience
+# controls and comprehensive audit logging as required by the Digital
+# Operational Resilience Act (DORA) Art. 10 for financial entities.
+#
+# Domain: api → compliance-bridge (Python FastAPI service)
+# Provider: opa (inline Rego)
+#
+# Regulatory basis: DORA Art. 10 — ICT Operational Resilience Testing
+# Jurisdiction: EU_ECB (CAGE_DEPLOYMENT_REGION=EU_ECB)
+# POAM: EU-DORA-001
+
+metadata:
+  annotations:
+    cage.region: EU_ECB
+    cage.compliance-posture: dora
+    cage.posture-note: "DORA Art. 10 is an EU_ECB posture requirement. This validation MUST NOT run for US_FED or APAC_MAS deployments."
+
+domain:
+  type: api
+  api-spec:
+    endpoints:
+      - name: dora_art10_status
+        url: "http://compliance-bridge.governance-stack.svc.cluster.local/v1/compliance/dora/art10"
+        method: GET
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+
+      # DORA Art. 10: ICT Operational Resilience and Audit Logging
+      # Asserts that:
+      #   1. ICT audit logging is active and capturing all required event types
+      #   2. Log retention meets DORA requirements (minimum 5 years for major incidents)
+      #   3. ICT incident classification system is operational
+      #   4. Operational resilience testing has been performed within the required cadence
+      #   5. Audit log integrity is maintained (tamper-evident storage)
+
+      # Rule 1: ICT audit logging active with required event coverage
+      validate if {
+        input.dora_art10_status.ict_audit_logging_active == true
+        input.dora_art10_status.log_retention_years >= 5
+        input.dora_art10_status.incident_classification_active == true
+        input.dora_art10_status.tamper_evident_storage == true
+        input.dora_art10_status.evidence_age_seconds < 172800
+      }
+
+      # Rule 2: Operational resilience testing cadence met
+      validate if {
+        input.dora_art10_status.ict_audit_logging_active == true
+        input.dora_art10_status.resilience_testing_days_since_last <= 365
+        input.dora_art10_status.threat_led_penetration_testing_active == true
+        input.dora_art10_status.evidence_age_seconds < 172800
+      }
+
+notes: >
+  DORA Art. 10: ICT Operational Resilience Testing.
+  The Digital Operational Resilience Act (DORA) applies to financial entities
+  operating in the EU, including those supervised by the ECB under the SSM.
+  Art. 10 requires financial entities to establish, maintain, and review a
+  sound and comprehensive ICT operational resilience testing programme.
+  Key requirements:
+  - Art. 10(1): Testing programme covering all ICT systems and applications
+  - Art. 10(2): Annual basic testing; advanced TLPT for significant entities
+  - Art. 10(4): Audit logging of all ICT-related incidents
+  - Art. 10(6): Log retention for at least 5 years for major ICT incidents
+  CAGE implements DORA Art. 10 audit logging via the Compliance Bridge
+  (src/compliance_bridge/audit_workflow.py) with OTel spans archived to
+  GCS buckets in europe-west1 (GDPR Art. 44 data residency compliance).
+  Evidence: GET /v1/compliance/dora/art10 (compliance-bridge service).
+  Staleness guard: 48 hours.
+  Jurisdiction: EU_ECB only (CAGE_DEPLOYMENT_REGION=EU_ECB).

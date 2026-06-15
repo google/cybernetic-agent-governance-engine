@@ -2,6 +2,9 @@
   "_comment": "European Central Bank / EBA / EU AI Office regional governance thresholds. Quantitative values calibrated to EBA stress-testing guidelines, DORA operational resilience requirements, and GDPR Art. 22 automated decision-making constraints. To activate: set CAGE_DEPLOYMENT_REGION=EU_ECB",
   "_schema_version": "1.1.0",
   "_region": "EU_ECB",
+  "jurisdiction": "EU_ECB",
+  "cage_deployment_region": "EU_ECB",
+  "iso_42001_baseline": true,
   "_jurisdiction": "European Union",
   "_regulatory_basis": [
     "EBA/GL/2018/02 \u2013 Stress Testing Guidelines",

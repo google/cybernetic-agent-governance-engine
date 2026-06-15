@@ -1,0 +1,84 @@
+# lula-validation-mas-notice655.yaml
+# MAS Notice 655 — Technology Risk Management Audit Logging
+#
+# Asserts that the CAGE system maintains comprehensive audit logging
+# and technology risk management controls as required by MAS Notice 655
+# (Technology Risk Management) for financial institutions in Singapore.
+#
+# Domain: api → compliance-bridge (Python FastAPI service)
+# Provider: opa (inline Rego)
+#
+# Regulatory basis: MAS Notice 655 — Technology Risk Management
+# Jurisdiction: APAC_MAS (CAGE_DEPLOYMENT_REGION=APAC_MAS)
+# POAM: APAC-MAS-N655-001
+
+metadata:
+  annotations:
+    cage.region: APAC_MAS
+    cage.compliance-posture: mas-notice-655
+    cage.posture-note: "MAS Notice 655 is an APAC_MAS posture requirement. This validation MUST NOT run for US_FED or EU_ECB deployments."
+
+domain:
+  type: api
+  api-spec:
+    endpoints:
+      - name: mas_notice655_status
+        url: "http://compliance-bridge.governance-stack.svc.cluster.local/v1/compliance/mas/notice655"
+        method: GET
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+
+      # MAS Notice 655: Technology Risk Management Audit Logging
+      # Asserts that:
+      #   1. Audit logging is active and capturing all required technology events
+      #   2. Log retention meets MAS Notice 655 requirements (minimum 5 years)
+      #   3. Technology risk management framework is documented and current
+      #   4. Incident detection and response capabilities are operational
+      #   5. Audit logs are stored within asia-southeast1 (data residency)
+
+      # Rule 1: Audit logging active with required retention and data residency
+      validate if {
+        input.mas_notice655_status.audit_logging_active == true
+        input.mas_notice655_status.log_retention_years >= 5
+        input.mas_notice655_status.data_residency_region == "asia-southeast1"
+        input.mas_notice655_status.tamper_evident_storage == true
+        input.mas_notice655_status.evidence_age_seconds < 172800
+      }
+
+      # Rule 2: Technology risk management framework operational
+      validate if {
+        input.mas_notice655_status.audit_logging_active == true
+        input.mas_notice655_status.trm_framework_documented == true
+        input.mas_notice655_status.incident_detection_active == true
+        input.mas_notice655_status.recovery_time_objective_defined == true
+        input.mas_notice655_status.evidence_age_seconds < 172800
+      }
+
+notes: >
+  MAS Notice 655: Technology Risk Management.
+  MAS Notice 655 applies to all financial institutions in Singapore and
+  mandates comprehensive technology risk management including audit logging,
+  incident management, and business continuity controls.
+  Key Notice 655 requirements:
+  - §4.3: Audit logging of all technology-related events with minimum 5-year
+    retention for significant incidents
+  - §5.1: Technology risk management framework documented and reviewed annually
+  - §6.2: Incident detection and response capabilities with defined RTO/RPO
+  - §7.1: Business continuity management with tested recovery procedures
+  Data residency: All audit logs must be stored within asia-southeast1
+  (MAS TRM Guidelines §4.2 data residency requirement). The SR 26-2
+  "no legal force" sentinel is active for APAC_MAS deployments, suppressing
+  US Federal Reserve-specific telemetry that lacks legal basis under
+  MAS Notice 655.
+  CAGE implements Notice 655 audit logging via the Compliance Bridge
+  (src/compliance_bridge/audit_workflow.py) with OTel spans archived to
+  GCS buckets in asia-southeast1.
+  Evidence: GET /v1/compliance/mas/notice655 (compliance-bridge service).
+  Staleness guard: 48 hours.
+  Jurisdiction: APAC_MAS only (CAGE_DEPLOYMENT_REGION=APAC_MAS).

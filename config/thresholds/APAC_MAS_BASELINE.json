@@ -2,6 +2,9 @@
   "_comment": "Monetary Authority of Singapore (MAS) regional governance thresholds. Quantitative values calibrated to MAS FEAT Principles fairness metrics, MAS Notice 655 operational resilience requirements, and MAS TRM Guidelines AI risk management expectations. To activate: set CAGE_DEPLOYMENT_REGION=APAC_MAS",
   "_schema_version": "1.1.0",
   "_region": "APAC_MAS",
+  "jurisdiction": "APAC_MAS",
+  "cage_deployment_region": "APAC_MAS",
+  "iso_42001_baseline": true,
   "_jurisdiction": "Singapore / APAC",
   "_regulatory_basis": [
     "MAS FEAT Principles \u2013 Fairness, Ethics, Accountability, Transparency (November 2019)",

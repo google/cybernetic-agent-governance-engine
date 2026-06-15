@@ -1,0 +1,311 @@
+system-security-plan:
+  uuid: eu-ecb-ssp-2026-0001-4000-8000-000000000001
+  metadata:
+    title: CAGE System Security Plan (EU_ECB — EU AI Act / GDPR / DORA)
+    published: '2026-06-15T00:00:00Z'
+    last-modified: '2026-06-15T00:00:00Z'
+    version: 1.0.0-draft
+    oscal-version: 1.0.4
+    remarks: 'This System Security Plan (SSP) documents the compliance controls
+      implemented for the Cybernetic AI Governance Engine (CAGE) deployed in the
+      European Central Bank (EU_ECB) jurisdiction. This SSP covers EU AI Act,
+      GDPR, and DORA compliance postures applicable to CAGE_DEPLOYMENT_REGION=EU_ECB.
+
+      CAGE_DEPLOYMENT_REGION: EU_ECB
+
+      Compliance Frameworks:
+        - ISO/IEC 42001:2023 (Universal baseline — all regions)
+        - EU AI Act (Regulation (EU) 2024/1689) — High-Risk AI classification
+        - GDPR (Regulation (EU) 2016/679) — Automated decision-making
+        - DORA (Regulation (EU) 2022/2554) — ICT operational resilience
+
+      Posture Scope: EU_ECB deployments only (CAGE_DEPLOYMENT_REGION=EU_ECB)
+
+      US_FED SSP: compliance/oscal/system-security-plan.yaml
+      APAC_MAS SSP: compliance/oscal/system-security-plan-apac-mas.yaml
+
+      Note: This SSP is NOT applicable to US_FED or APAC_MAS deployments.
+      US_FED uses NIST SP 800-53 Rev 5 HIGH baseline.
+      APAC_MAS uses MAS FEAT / MAS Notice 655 / MAS TRM baseline.
+
+      Data Residency: All data paths must remain within europe-west1 (GCP).
+      GDPR Art. 44 prohibits cross-border data transfers without adequate safeguards.
+
+      SR 26-2 "no legal force" sentinel: SR 26-2 (Federal Reserve supervisory
+      guidance) has no legal force in EU_ECB deployments. All SR 26-2 telemetry
+      is suppressed for CAGE_DEPLOYMENT_REGION=EU_ECB per .clinerules §12.4.
+
+      '
+    props:
+    - name: cage-deployment-region
+      value: EU_ECB
+    - name: cage-compliance-posture
+      value: eu-ai-act-gdpr-dora
+    - name: cage-posture-scope
+      value: eu-ecb-only
+    - name: data-residency-region
+      value: europe-west1
+    - name: authorization-status
+      value: DRAFT — EU AI Office registration pending
+    - name: high-risk-ai-classification
+      value: EU AI Act Annex III §5(b) — financial services AI
+    roles:
+    - id: system-owner
+      title: System Owner
+      description: Overall responsibility for CAGE EU_ECB deployment compliance.
+    - id: dpo
+      title: Data Protection Officer
+      description: 'GDPR Art. 37 DPO responsible for data protection compliance,
+        DPIA oversight, and Art. 22 automated decision-making safeguards.'
+    - id: isso
+      title: Information System Security Officer
+      description: 'Primary security point of contact for EU_ECB deployment.
+        Maintains SSP and coordinates DORA ICT risk assessments.'
+    - id: compliance-engineer
+      title: Compliance Engineer
+      description: 'Maintains OSCAL artifacts, operates Lula compliance-as-code
+        pipeline for EU AI Act, GDPR, and DORA controls.'
+    - id: ai-model-operator
+      title: AI Model Operator
+      description: 'Manages AI model versions, monitors FEAT metrics, coordinates
+        EU AI Act Art. 9 risk management system updates.'
+  import-profile:
+    href: ./eu-ai-act-profile.yaml
+    remarks: 'Imports the CAGE EU AI Act compliance profile covering Art. 9
+      (Risk Management), Art. 10 (Data Governance), Art. 13 (Transparency),
+      Art. 14 (Human Oversight), and Art. 17 (Quality Management System).
+      Also imports common-controls-catalog.yaml for ISO 42001 universal baseline.'
+  system-characteristics:
+    system-ids:
+    - id: cage-gke-eu-ecb
+      identifier-type: https://cage.internal/system-ids
+    system-name: Cybernetic Governance Engine (EU_ECB)
+    system-name-short: CAGE-EU
+    description: 'CAGE EU_ECB deployment — AI governance platform for financial
+      services operating under EU AI Act High-Risk AI classification (Annex III
+      §5(b)), GDPR automated decision-making constraints (Art. 22), and DORA
+      ICT operational resilience requirements (Art. 10). Deployed on GKE in
+      europe-west1 with all data paths confined to EU jurisdiction per GDPR
+      Art. 44 data residency requirements.
+
+      '
+    security-sensitivity-level: high
+    status:
+      state: under-development
+      remarks: 'EU_ECB SSP draft. EU AI Office registration and DPIA completion
+        required before production deployment.'
+    authorization-boundary:
+      description: 'The EU_ECB authorization boundary encompasses all CAGE
+        components deployed within the governance-stack Kubernetes namespace
+        on GKE in europe-west1. All data storage (GCS buckets, Cloud SQL,
+        Redis) must be provisioned in europe-west1. External interconnections
+        to Langfuse must use a self-hosted EU instance (not cloud.langfuse.com)
+        to satisfy GDPR Art. 44 data residency requirements.'
+      props:
+      - name: gcp-region
+        value: europe-west1
+      - name: data-residency-enforced
+        value: 'true'
+      - name: gdpr-art44-compliant
+        value: 'true'
+  system-implementation:
+    remarks: 'EU_ECB system implementation. All components inherit the ISO 42001
+      universal baseline from component-definition.yaml. EU-specific controls
+      are additive layers on top of the universal baseline.'
+    users:
+    - uuid: eu-ecb-user-0001-4000-8000-000000000001
+      title: EU Data Subject
+      short-name: data-subject
+      description: 'Individual investors whose personal data is processed by CAGE.
+        GDPR Art. 22(3) rights apply: right to obtain human intervention, express
+        point of view, and contest automated decisions.'
+      role-ids:
+      - api-consumer
+      props:
+      - name: gdpr-data-subject-rights
+        value: Art. 15 (access), Art. 17 (erasure), Art. 22 (automated decisions)
+    components:
+    - uuid: eu-ecb-comp-0001-4000-8000-000000000001
+      type: software
+      title: CAGE EU AI Act Risk Management System
+      description: 'EU AI Act Art. 9 risk management system implemented via
+        the Compliance Bridge service. Maintains documented risk assessments,
+        residual risk acceptance records, and post-market monitoring data for
+        the High-Risk AI classification under Annex III §5(b).'
+      purpose: 'Satisfies EU AI Act Art. 9 mandatory risk management system
+        requirement for High-Risk AI systems in financial services.'
+      status:
+        state: under-development
+      responsible-roles:
+      - role-id: ai-model-operator
+      props:
+      - name: eu-ai-act-article
+        value: Art. 9 — Risk Management System
+      - name: high-risk-classification
+        value: Annex III §5(b) — financial services
+      links:
+      - href: ../../compliance/lula/lula-validation-eu-ai-act-art9.yaml
+        rel: lula
+        text: 'Lula validation: EU AI Act Art. 9 Risk Management'
+    - uuid: eu-ecb-comp-0002-4000-8000-000000000002
+      type: software
+      title: CAGE GDPR Art. 22 Human Oversight Controls
+      description: 'GDPR Art. 22 human oversight implemented via the DEFER
+        State Machine (defer_queue.py) and HITL escalator (hitl_escalator.py).
+        EU_ECB consensus threshold of EUR 7,500 ensures more decisions receive
+        human review than the US_FED baseline.'
+      purpose: 'Satisfies GDPR Art. 22(2)(b) safeguards for automated individual
+        decision-making with legal or similarly significant effects.'
+      status:
+        state: under-development
+      responsible-roles:
+      - role-id: dpo
+      props:
+      - name: gdpr-article
+        value: Art. 22 — Automated Individual Decision-Making
+      - name: consensus-threshold-eur
+        value: '7500'
+      links:
+      - href: ../../compliance/lula/lula-validation-gdpr-art22.yaml
+        rel: lula
+        text: 'Lula validation: GDPR Art. 22 Human Oversight'
+    - uuid: eu-ecb-comp-0003-4000-8000-000000000003
+      type: software
+      title: CAGE DORA Art. 10 ICT Audit Logging
+      description: 'DORA Art. 10 ICT operational resilience implemented via
+        the Compliance Bridge audit workflow. Audit logs stored in europe-west1
+        GCS buckets with 5-year retention for major ICT incidents.'
+      purpose: 'Satisfies DORA Art. 10 ICT operational resilience testing and
+        audit logging requirements for financial entities supervised by ECB.'
+      status:
+        state: under-development
+      responsible-roles:
+      - role-id: isso
+      props:
+      - name: dora-article
+        value: Art. 10 — ICT Operational Resilience Testing
+      - name: log-retention-years
+        value: '5'
+      - name: storage-region
+        value: europe-west1
+      links:
+      - href: ../../compliance/lula/lula-validation-dora-art10.yaml
+        rel: lula
+        text: 'Lula validation: DORA Art. 10 ICT Audit Logging'
+  control-implementation:
+    description: 'CAGE EU_ECB compliance control implementations. ISO 42001
+      universal controls are inherited from component-definition.yaml. The
+      following entries document EU-specific additive controls only.'
+    implemented-requirements:
+    - uuid: eu-ecb-req-0001-4000-8000-000000000001
+      control-id: eu-ai-act-art9
+      description: 'EU AI Act Art. 9 Risk Management System implemented via
+        Compliance Bridge service. Annual risk reassessment required per Art. 9(4).
+        High-Risk AI classification documented under Annex III §5(b).'
+      props:
+      - name: implementation-status
+        value: under-development
+      - name: regulatory-citation
+        value: EU AI Act Art. 9 (Regulation (EU) 2024/1689)
+      responsible-roles:
+      - role-id: ai-model-operator
+      by-components:
+      - component-uuid: eu-ecb-comp-0001-4000-8000-000000000001
+        uuid: eu-ecb-bycomp-0001-4000-8000-000000000001
+        description: 'Risk management system documented in compliance artifacts.
+          Lula validation provides automated continuous compliance assertion.'
+        implementation-status:
+          state: under-development
+        links:
+        - href: ../../compliance/lula/lula-validation-eu-ai-act-art9.yaml
+          rel: reference
+          text: Lula automated validation for EU AI Act Art. 9
+    - uuid: eu-ecb-req-0002-4000-8000-000000000002
+      control-id: gdpr-art22
+      description: 'GDPR Art. 22 human oversight implemented via DEFER State
+        Machine and HITL escalator. EU_ECB consensus threshold EUR 7,500.
+        Data subject rights (Art. 22(3)) implemented via contest mechanism.'
+      props:
+      - name: implementation-status
+        value: under-development
+      - name: regulatory-citation
+        value: GDPR Art. 22 (Regulation (EU) 2016/679)
+      responsible-roles:
+      - role-id: dpo
+      by-components:
+      - component-uuid: eu-ecb-comp-0002-4000-8000-000000000002
+        uuid: eu-ecb-bycomp-0002-4000-8000-000000000002
+        description: 'DEFER queue and HITL escalator provide human oversight.
+          Lula validation asserts consensus threshold and audit trail presence.'
+        implementation-status:
+          state: under-development
+        links:
+        - href: ../../compliance/lula/lula-validation-gdpr-art22.yaml
+          rel: reference
+          text: Lula automated validation for GDPR Art. 22
+    - uuid: eu-ecb-req-0003-4000-8000-000000000003
+      control-id: dora-art10
+      description: 'DORA Art. 10 ICT audit logging implemented via Compliance
+        Bridge. Logs stored in europe-west1 with 5-year retention. Incident
+        classification system operational.'
+      props:
+      - name: implementation-status
+        value: under-development
+      - name: regulatory-citation
+        value: DORA Art. 10 (Regulation (EU) 2022/2554)
+      responsible-roles:
+      - role-id: isso
+      by-components:
+      - component-uuid: eu-ecb-comp-0003-4000-8000-000000000003
+        uuid: eu-ecb-bycomp-0003-4000-8000-000000000003
+        description: 'Compliance Bridge audit workflow provides DORA-compliant
+          ICT audit logging. GCS bucket in europe-west1 ensures data residency.'
+        implementation-status:
+          state: under-development
+        links:
+        - href: ../../compliance/lula/lula-validation-dora-art10.yaml
+          rel: reference
+          text: Lula automated validation for DORA Art. 10
+  back-matter:
+    resources:
+    - uuid: eu-ecb-res-0001-4000-8000-000000000001
+      title: EU AI Act (Regulation (EU) 2024/1689)
+      rlinks:
+      - href: https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32024R1689
+    - uuid: eu-ecb-res-0002-4000-8000-000000000002
+      title: GDPR (Regulation (EU) 2016/679)
+      rlinks:
+      - href: https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32016R0679
+    - uuid: eu-ecb-res-0003-4000-8000-000000000003
+      title: DORA (Regulation (EU) 2022/2554)
+      rlinks:
+      - href: https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32022R2554
+    - uuid: eu-ecb-res-0004-4000-8000-000000000004
+      title: ISO/IEC 42001:2023 Standard (Universal Baseline)
+      rlinks:
+      - href: https://www.iso.org/standard/81230.html
+    - uuid: eu-ecb-res-0005-4000-8000-000000000005
+      title: CAGE EU AI Act Lula Validation — Art. 9
+      rlinks:
+      - href: compliance/lula/lula-validation-eu-ai-act-art9.yaml
+        media-type: application/yaml
+    - uuid: eu-ecb-res-0006-4000-8000-000000000006
+      title: CAGE GDPR Lula Validation — Art. 22
+      rlinks:
+      - href: compliance/lula/lula-validation-gdpr-art22.yaml
+        media-type: application/yaml
+    - uuid: eu-ecb-res-0007-4000-8000-000000000007
+      title: CAGE DORA Lula Validation — Art. 10
+      rlinks:
+      - href: compliance/lula/lula-validation-dora-art10.yaml
+        media-type: application/yaml
+    - uuid: eu-ecb-res-0008-4000-8000-000000000008
+      title: EU_ECB Governance Thresholds Baseline
+      rlinks:
+      - href: config/thresholds/EU_ECB_BASELINE.json
+        media-type: application/json
+    - uuid: eu-ecb-res-0009-4000-8000-000000000009
+      title: EU AI Act OSCAL Profile
+      rlinks:
+      - href: compliance/oscal/eu-ai-act-profile.yaml
+        media-type: application/yaml

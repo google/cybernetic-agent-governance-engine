@@ -1,0 +1,85 @@
+# lula-validation-mas-trm-s6.yaml
+# MAS TRM §6.3 — AI and Machine Learning Controls
+#
+# Asserts that the CAGE system satisfies the Monetary Authority of Singapore
+# Technology Risk Management (TRM) Guidelines §6.3 requirements for AI and
+# machine learning controls in financial institutions.
+#
+# Domain: api → compliance-bridge (Python FastAPI service)
+# Provider: opa (inline Rego)
+#
+# Regulatory basis: MAS TRM Guidelines §6.3 — AI and Machine Learning Controls
+# Jurisdiction: APAC_MAS (CAGE_DEPLOYMENT_REGION=APAC_MAS)
+# POAM: APAC-MAS-TRM-001
+
+metadata:
+  annotations:
+    cage.region: APAC_MAS
+    cage.compliance-posture: mas-trm
+    cage.posture-note: "MAS TRM §6.3 is an APAC_MAS posture requirement. This validation MUST NOT run for US_FED or EU_ECB deployments."
+
+domain:
+  type: api
+  api-spec:
+    endpoints:
+      - name: mas_trm_s6_status
+        url: "http://compliance-bridge.governance-stack.svc.cluster.local/v1/compliance/mas/trm-s6"
+        method: GET
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+
+      # MAS TRM §6.3: AI and Machine Learning Controls
+      # Asserts that:
+      #   1. AI governance framework is documented per §6.3.1
+      #   2. Model risk management controls are active per §6.3.2
+      #   3. Confidence threshold is documented and meets MAS expectations (>= 0.96)
+      #   4. Human-in-the-loop controls are active for high-impact decisions
+      #   5. Model performance monitoring is active with defined drift thresholds
+      #   6. Data residency is confirmed within asia-southeast1 per §4.2
+
+      # Rule 1: AI governance framework and model risk controls active
+      validate if {
+        input.mas_trm_s6_status.ai_governance_framework_documented == true
+        input.mas_trm_s6_status.model_risk_management_active == true
+        input.mas_trm_s6_status.confidence_threshold >= 0.96
+        input.mas_trm_s6_status.hitl_controls_active == true
+        input.mas_trm_s6_status.evidence_age_seconds < 172800
+      }
+
+      # Rule 2: Model monitoring and data residency compliant
+      validate if {
+        input.mas_trm_s6_status.ai_governance_framework_documented == true
+        input.mas_trm_s6_status.model_performance_monitoring_active == true
+        input.mas_trm_s6_status.data_residency_region == "asia-southeast1"
+        input.mas_trm_s6_status.model_drift_threshold_defined == true
+        input.mas_trm_s6_status.evidence_age_seconds < 172800
+      }
+
+notes: >
+  MAS TRM Guidelines §6.3: AI and Machine Learning Controls.
+  The MAS Technology Risk Management (TRM) Guidelines §6.3 apply to financial
+  institutions in Singapore that deploy AI and machine learning systems.
+  CAGE is subject to TRM §6.3 as an AI-driven financial advisory system.
+  Key TRM §6.3 requirements:
+  - §6.3.1: AI governance framework documenting roles, responsibilities,
+    and accountability for AI system development and deployment
+  - §6.3.2: Model risk management controls including human-in-the-loop
+    for high-impact AI decisions above the MAS consensus threshold
+    (SGD 11,500 / USD 8,500 per APAC_MAS_BASELINE.json)
+  - §6.3.3: Model performance monitoring with defined drift thresholds
+    and automated alerting when performance degrades
+  - §4.2: Data residency — all AI model inputs, outputs, and audit logs
+    must remain within asia-southeast1 (Singapore region)
+  Confidence threshold: 0.96 (APAC_MAS_BASELINE.json min_trade_confidence)
+  per MAS TRM §6.3 requirement for documented confidence thresholds.
+  Latency SLA: 175ms maximum round-trip (APAC_MAS_BASELINE.json max_latency_ms)
+  per MAS TRM §7.2 recovery time objectives for AI-driven trade execution.
+  Evidence: GET /v1/compliance/mas/trm-s6 (compliance-bridge service).
+  Staleness guard: 48 hours.
+  Jurisdiction: APAC_MAS only (CAGE_DEPLOYMENT_REGION=APAC_MAS).

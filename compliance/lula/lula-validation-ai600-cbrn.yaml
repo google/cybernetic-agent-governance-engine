@@ -18,6 +18,12 @@
 # Phase: 0 (stub) → Phase 3 (real assertions replace stub per §7.2)
 # Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
 # Cat-M flag: NeMo CBRN rail deployment requires AO pre-approval
+metadata:
+  annotations:
+    cage.region: US_FED
+    cage.compliance-posture: nist-ai-600-1
+    cage.posture-note: "NIST AI 600-1 is a US Federal posture requirement. This validation MUST NOT run for EU_ECB or APAC_MAS deployments."
+
 domain:
   type: kubernetes
   kubernetes:
