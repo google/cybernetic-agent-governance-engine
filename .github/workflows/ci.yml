@@ -107,7 +107,15 @@ jobs:
       - name: Langfuse posture dry-run check
         run: |
           export GOOGLE_CLOUD_PROJECT="mock-dev-project"
-          export GOOGLE_CLOUD_LOCATION="us-central1"
+          # DEP-24: GOOGLE_CLOUD_LOCATION is derived from CAGE_DEPLOYMENT_REGION.
+          # US_FED → us-central1 | EU_ECB → europe-west1 | APAC_MAS → asia-southeast1
+          # Defaults to us-central1 for CI dry-run (no live cluster).
+          _region="${CAGE_DEPLOYMENT_REGION:-US_FED}"
+          case "$_region" in
+            EU_ECB)    export GOOGLE_CLOUD_LOCATION="europe-west1" ;;
+            APAC_MAS)  export GOOGLE_CLOUD_LOCATION="asia-southeast1" ;;
+            *)         export GOOGLE_CLOUD_LOCATION="us-central1" ;;
+          esac
           export LANGFUSE_HOST="http://localhost:3000"
           export LANGFUSE_PUBLIC_KEY="pk-lf-mock"
           export LANGFUSE_SECRET_KEY="sk-lf-mock"
@@ -116,11 +124,16 @@ jobs:
           export LANGFUSE_COMPLIANCE_SECRET_KEY="sk-lf-comp-mock"
           python3 scripts/verify_langfuse_posture.py --dry-run --posture development
 
-  # ── AI 600-1 Compliance Gates ──────────────────────────────────────────────
+  # ── AI 600-1 Compliance Gates (US_FED only) ────────────────────────────────
 
   lula-ai600-validation:
-    name: "Lula AI 600-1 Validation"
+    # DEP-21: AI 600-1 is a US_FED (NIST) framework. This job must not run for
+    # EU_ECB or APAC_MAS deployments. Gate on CAGE_DEPLOYMENT_REGION == 'US_FED'.
+    # EU_ECB uses EU AI Act Lula manifests (eu-ecb-compliance.yml workflow).
+    # APAC_MAS uses MAS FEAT Lula manifests (apac-mas-compliance.yml workflow).
+    name: "Lula AI 600-1 Validation (US_FED only)"
     runs-on: ubuntu-latest
+    if: vars.CAGE_DEPLOYMENT_REGION == 'US_FED' || vars.CAGE_DEPLOYMENT_REGION == ''
     needs: [pytest-logic]
     steps:
       - uses: actions/checkout@v4
@@ -224,7 +237,12 @@ jobs:
             -v --tb=short
 
   cbrn-keyword-check:
-    name: "CBRN Keyword List Validation"
+    # DEP-22: The assertion `tier1_keywords_cbrn_enabled == True` is a US_FED
+    # (NIST AI 600-1 / NeMo Guardrails) requirement. EU_ECB and APAC_MAS
+    # deployments may legitimately disable CBRN rails if not required by their
+    # jurisdiction. Gate the strict assertion on CAGE_DEPLOYMENT_REGION == 'US_FED'.
+    # The structural check (keyword list present, length >= 10) remains universal.
+    name: "CBRN Keyword List Validation (enabled assertion: US_FED only)"
     runs-on: ubuntu-latest
     needs: [license-check]
     steps:
@@ -235,15 +253,22 @@ jobs:
       - name: Validate CBRN keyword list
         run: |
           python -c "
-          import json
+          import json, os
           with open('config/governance_thresholds.json') as f:
               cfg = json.load(f)
           assert 'tier1_keywords_cbrn' in cfg, 'CBRN keyword list missing from governance_thresholds.json'
           assert len(cfg['tier1_keywords_cbrn']) >= 10, \
               f'CBRN keyword list too short: {len(cfg[\"tier1_keywords_cbrn\"])} terms (need >= 10)'
-          assert cfg.get('tier1_keywords_cbrn_enabled') == True, \
-              'tier1_keywords_cbrn_enabled must be true for US_FED deployment'
-          print(f'CBRN keywords: {len(cfg[\"tier1_keywords_cbrn\"])} terms — OK')
+          # DEP-22: Only assert enabled==True for US_FED; other jurisdictions may
+          # configure this differently per their regulatory framework.
+          region = os.environ.get('CAGE_DEPLOYMENT_REGION', 'US_FED')
+          if region == 'US_FED' or region == '':
+              assert cfg.get('tier1_keywords_cbrn_enabled') == True, \
+                  'tier1_keywords_cbrn_enabled must be true for US_FED deployment'
+              print(f'CBRN keywords: {len(cfg[\"tier1_keywords_cbrn\"])} terms, enabled=True — OK (US_FED)')
+          else:
+              enabled = cfg.get('tier1_keywords_cbrn_enabled', False)
+              print(f'CBRN keywords: {len(cfg[\"tier1_keywords_cbrn\"])} terms, enabled={enabled} — OK ({region}, assertion skipped)')
           "
       - name: Validate agentic scope statement present
         run: |

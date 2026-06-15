@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: "Security Scanning — Vulnerability & SBOM (NIST RMF: US_FED only)"
+# DEP-25: Workflow name and job names updated to clarify jurisdiction scope.
+# Universal security jobs (vuln scan, SBOM, OPA lint) run for all regions.
+# NIST SP 800-53 control identifiers in job names are labelled "US_FED reporting only"
+# to prevent EU_ECB / APAC_MAS operators from misreading them as universal requirements.
+name: "Security Scanning — Vulnerability & SBOM (Universal) + NIST RMF Gate (US_FED only)"
 
 # Regional Compliance Posture:
 # - US_FED: NIST SP 800-53 Rev 5 HIGH (this workflow's NIST gate)

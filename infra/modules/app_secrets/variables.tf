@@ -138,10 +138,17 @@ variable "model_reasoning" {
   default = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 }
 
+# DEP-09 (module): Remove "US_FED" default — the parent module (main.tf) must
+# always pass cage_deployment_region explicitly. A missing value now causes a
+# Terraform plan error rather than silently applying US_FED compliance posture.
 variable "cage_deployment_region" {
-  description = "CAGE deployment region compliance profile (US_FED, EU_ECB, APAC_MAS)"
+  description = "CAGE deployment region compliance profile (US_FED, EU_ECB, APAC_MAS). Must be passed explicitly from the parent module — no default to prevent silent US_FED posture on non-US deployments."
   type        = string
-  default     = "US_FED"
+
+  validation {
+    condition     = contains(["US_FED", "EU_ECB", "APAC_MAS"], var.cage_deployment_region)
+    error_message = "cage_deployment_region must be one of: US_FED, EU_ECB, APAC_MAS."
+  }
 }
 
 variable "routing_seal_secret" {

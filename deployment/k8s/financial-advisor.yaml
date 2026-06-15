@@ -97,8 +97,16 @@ spec:
             # GCP project/location for ADC and telemetry
             - name: GOOGLE_CLOUD_PROJECT
               value: "YOUR_GCP_PROJECT_ID"
+            # DEP-05: GOOGLE_CLOUD_LOCATION must not be hardcoded to us-central1.
+            # Sourced from advisor-secrets so deploy_all.sh / Terraform can inject
+            # the correct region per CAGE_DEPLOYMENT_REGION:
+            # US_FED → us-central1 | EU_ECB → europe-west1 | APAC_MAS → asia-southeast1
             - name: GOOGLE_CLOUD_LOCATION
-              value: "us-central1"
+              valueFrom:
+                secretKeyRef:
+                  name: advisor-secrets
+                  key: GOOGLE_CLOUD_LOCATION
+                  optional: true
             # OPA policy engine
             - name: OPA_URL
               value: "http://opa-service.governance-stack.svc.cluster.local:8181"

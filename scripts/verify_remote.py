@@ -28,8 +28,19 @@ import requests
 # Configuration
 # ---------------------------------------------------------------------------
 
-_FALLBACK_URL = "https://governed-financial-advisor-bhsafl7fda-uc.a.run.app"
-BASE_URL = os.environ.get("CAGE_GATEWAY_URL", _FALLBACK_URL).rstrip("/")
+# DEP-15: Remove hardcoded us-central1 fallback URL.
+# The previous fallback silently verified the wrong (US) endpoint when
+# CAGE_GATEWAY_URL was unset for EU_ECB or APAC_MAS deployments.
+# R-7: deployment scripts must not embed region-specific hardcoded values.
+_gateway_url = os.environ.get("CAGE_GATEWAY_URL", "")
+if not _gateway_url:
+    raise RuntimeError(
+        "CAGE_GATEWAY_URL must be explicitly set before running verify_remote.py. "
+        "There is no safe fallback URL — each deployment region has a different "
+        "gateway endpoint. Set CAGE_GATEWAY_URL to the correct endpoint for your "
+        "CAGE_DEPLOYMENT_REGION (US_FED, EU_ECB, or APAC_MAS)."
+    )
+BASE_URL = _gateway_url.rstrip("/")
 
 _GOVERNANCE_CHECK_PATH = "/governance/check"
 _GOVERNANCE_CHECK_BODY: bytes = json.dumps(

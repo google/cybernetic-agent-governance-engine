@@ -7,6 +7,24 @@ terraform {
   }
 }
 
+# DEP-11: Derive AWS_REGION from cage_deployment_region.
+# Previously hardcoded to "us-east-1" for all deployments. For EU_ECB deployments,
+# any S3-compatible client reading this secret would route to us-east-1, violating
+# GDPR Art. 44. For APAC_MAS, it would violate MAS TRM §4.2.
+# R-3, R-4: data residency must be enforced at the infrastructure layer.
+locals {
+  # Map CAGE_DEPLOYMENT_REGION to the appropriate AWS/S3-compatible region.
+  # EU_ECB → eu-west-1 (Ireland, EEA) for S3-compatible clients
+  # APAC_MAS → ap-southeast-1 (Singapore) for S3-compatible clients
+  # US_FED → us-east-1 (US East) for S3-compatible clients
+  aws_region_for_jurisdiction = {
+    "US_FED"   = "us-east-1"
+    "EU_ECB"   = "eu-west-1"
+    "APAC_MAS" = "ap-southeast-1"
+  }
+  resolved_aws_region = lookup(local.aws_region_for_jurisdiction, var.cage_deployment_region, "us-east-1")
+}
+
 resource "kubernetes_secret" "advisor_secrets" {
   metadata {
     name      = "advisor-secrets"
@@ -83,7 +101,12 @@ resource "kubernetes_secret" "gcs_credentials" {
   data = {
     "AWS_ACCESS_KEY_ID"     = var.aws_access_key_id
     "AWS_SECRET_ACCESS_KEY" = var.aws_secret_access_key
-    "AWS_REGION"            = "us-east-1"
+    # DEP-11: AWS_REGION is now derived from cage_deployment_region via locals.
+    # Previously hardcoded to "us-east-1", which caused S3-compatible clients in
+    # EU_ECB and APAC_MAS deployments to route to the wrong region (GDPR Art. 44 /
+    # MAS TRM §4.2 violation). Now: EU_ECB → eu-west-1, APAC_MAS → ap-southeast-1,
+    # US_FED → us-east-1.
+    "AWS_REGION"            = local.resolved_aws_region
     "AWS_ENDPOINT_URL"      = ""
   }
 }

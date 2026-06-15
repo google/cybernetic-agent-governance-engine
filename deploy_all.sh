@@ -46,7 +46,8 @@ ${BOLD}Targets${RESET}
 
 ${BOLD}Environments${RESET}
   dev          Development (fast iteration, minimal security)
-  prod         Production (NIST compliance, full security)
+  prod         Production (ISO 42001 baseline hardening + jurisdictional compliance
+               posture controlled by CAGE_DEPLOYMENT_REGION and --var-file)
 
 ${BOLD}Options${RESET}
   --auto-approve          Skip Terraform confirmation prompts
@@ -62,8 +63,17 @@ ${BOLD}Examples${RESET}
   # Deploy to GCP GKE (dev mode - fast iteration)
   ./deploy_all.sh --target gcp-gke --env dev --auto-approve
 
-  # Deploy to GCP GKE (prod mode - NIST compliance)
-  ./deploy_all.sh --target gcp-gke --env prod
+  # Deploy to GCP GKE (US_FED prod — ISO 42001 + NIST SP 800-53 hardening)
+  CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
+    --var-file=infra/targets/gcp-gke/prod.tfvars
+
+  # Deploy to GCP GKE (EU_ECB prod — ISO 42001 + EU AI Act / GDPR / DORA)
+  CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env prod \
+    --var-file=infra/targets/gcp-gke/eu-prod.tfvars
+
+  # Deploy to GCP GKE (APAC_MAS prod — ISO 42001 + MAS FEAT / Notice 655 / TRM)
+  CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod \
+    --var-file=infra/targets/gcp-gke/apac-prod.tfvars
 
   # Override specific variables
   ./deploy_all.sh --target gcp-gke --env dev \
@@ -139,6 +149,14 @@ load_env() {
     [[ -n "$_model_reasoning" ]] && export TF_VAR_model_reasoning="$_model_reasoning"
     [[ -n "$_model_fast" ]]     && export TF_VAR_model_fast="$_model_fast"
     [[ -n "$_model_consensus" ]] && export TF_VAR_model_consensus="$_model_consensus"
+
+    # ── DEP-02: Propagate CAGE_DEPLOYMENT_REGION to Terraform ─────────────
+    # Without this, Terraform defaults cage_deployment_region to "US_FED"
+    # silently, causing EU_ECB and APAC_MAS deployments to apply the wrong
+    # compliance posture. R-7: deployment scripts MUST propagate the region.
+    local _cage_region
+    _cage_region=$(_read_env_var CAGE_DEPLOYMENT_REGION)
+    [[ -n "$_cage_region" ]] && export TF_VAR_cage_deployment_region="$_cage_region"
 
     # ── Langfuse host (non-secret) ─────────────────────────────────────────
     local _lf_host
@@ -228,14 +246,28 @@ deploy_terraform_target() {
     exit 1
   fi
 
+  # DEP-01: Gate enable_nist_compliance on CAGE_DEPLOYMENT_REGION, not just --env prod.
+  # A prod deployment to EU_ECB or APAC_MAS must NOT activate NIST-specific
+  # infrastructure hardening (SC-7, AC-3, deletion protection, Redis replication).
+  # ISO 42001 baseline hardening is always active in prod regardless of region.
+  # R-2: NIST SP 800-53 logic MUST be gated on CAGE_DEPLOYMENT_REGION == "US_FED".
+  _cage_region="${CAGE_DEPLOYMENT_REGION:-${TF_VAR_cage_deployment_region:-}}"
+
   # Set environment-specific banners
   if [[ "$env" == "prod" ]]; then
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${GREEN}║  🔒  PROD MODE: Full security posture enabled.                   ║${RESET}"
+    echo -e "${GREEN}║  🔒  PROD MODE: ISO 42001 baseline hardening enabled.            ║${RESET}"
     echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
-    tf_args+=("-var=enable_nist_compliance=true")
+    # DEP-01: Only activate NIST-specific hardening for US_FED deployments.
+    if [[ "$_cage_region" == "US_FED" ]]; then
+      info "CAGE_DEPLOYMENT_REGION=US_FED — activating NIST SP 800-53 hardening"
+      tf_args+=("-var=enable_nist_compliance=true")
+    else
+      info "CAGE_DEPLOYMENT_REGION=${_cage_region:-unset} — NIST hardening suppressed (not US_FED)"
+      tf_args+=("-var=enable_nist_compliance=false")
+    fi
   else
     echo ""
     echo -e "${YELLOW}╔══════════════════════════════════════════════════════════════════╗${RESET}"

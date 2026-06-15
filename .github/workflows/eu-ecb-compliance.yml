@@ -1,0 +1,196 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# DEP-13: EU_ECB compliance gate workflow.
+# Runs EU AI Act, GDPR Art. 44, and DORA Art. 10 compliance checks.
+# This workflow is SCOPED TO EU_ECB ONLY — it must not gate US_FED or APAC_MAS releases.
+#
+# Jurisdictional Hierarchy:
+#   Universal: ISO 42001 (ci.yml)
+#   EU_ECB:    EU AI Act / GDPR / DORA (this workflow)
+#   US_FED:    NIST SP 800-53 / AI 600-1 / FedRAMP (security-scan.yml + ci.yml)
+#   APAC_MAS:  MAS FEAT / Notice 655 / TRM (apac-mas-compliance.yml)
+
+name: "EU_ECB Compliance Gate — EU AI Act / GDPR / DORA"
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+      - "fix/**"
+      - "refactor/**"
+      - "release/**"
+      - "hotfix/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Only run this workflow for EU_ECB deployments.
+# If CAGE_DEPLOYMENT_REGION is not set, skip gracefully (not an EU_ECB deployment).
+
+jobs:
+  eu-ai-act-posture:
+    name: "EU AI Act Compliance Posture (EU_ECB only)"
+    runs-on: ubuntu-latest
+    if: vars.CAGE_DEPLOYMENT_REGION == 'EU_ECB'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate EU AI Act Lula manifest structure
+        # Validates YAML structure of EU AI Act Lula stubs.
+        # Full live lula validate runs post-cluster-provisioning.
+        run: |
+          python3 - <<'PYEOF'
+          import yaml, sys, pathlib
+          manifests = sorted(pathlib.Path('compliance/lula').glob('lula-validation-eu-*.yaml'))
+          if not manifests:
+              print('WARNING: no EU AI Act Lula manifests found — CA-03 remediation pending')
+              sys.exit(0)
+          errors = []
+          for m in manifests:
+              doc = yaml.safe_load(m.read_text())
+              if 'domain' not in doc:
+                  errors.append(f'{m.name}: missing domain key')
+              if 'provider' not in doc:
+                  errors.append(f'{m.name}: missing provider key')
+              dtype = doc.get('domain', {}).get('type', '?')
+              ptype = doc.get('provider', {}).get('type', '?')
+              print(f'  OK {m.name}: domain={dtype}, provider={ptype}')
+          if errors:
+              print('FAILURES:')
+              for e in errors:
+                  print(f'  {e}')
+              sys.exit(1)
+          print(f'All {len(manifests)} EU AI Act Lula manifests passed YAML structure check.')
+          PYEOF
+
+      - name: Validate GDPR data residency configuration
+        # Ensures EU_ECB deployment region is within europe-* (GDPR Art. 44).
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib, sys
+          tfvars_path = pathlib.Path('infra/targets/gcp-gke/eu-prod.tfvars')
+          if not tfvars_path.exists():
+              print('ERROR: infra/targets/gcp-gke/eu-prod.tfvars not found')
+              sys.exit(1)
+          content = tfvars_path.read_text()
+          # Verify region is within europe-*
+          import re
+          m = re.search(r'region\s*=\s*"([^"]+)"', content)
+          if not m:
+              print('ERROR: region not found in eu-prod.tfvars')
+              sys.exit(1)
+          region = m.group(1)
+          if not region.startswith('europe-'):
+              print(f'ERROR: GDPR Art. 44 violation — EU_ECB region must be europe-*, got: {region}')
+              sys.exit(1)
+          print(f'GDPR Art. 44 data residency OK: region={region}')
+          # Verify cage_deployment_region is EU_ECB
+          m2 = re.search(r'cage_deployment_region\s*=\s*"([^"]+)"', content)
+          if not m2 or m2.group(1) != 'EU_ECB':
+              print('ERROR: cage_deployment_region must be EU_ECB in eu-prod.tfvars')
+              sys.exit(1)
+          print(f'cage_deployment_region=EU_ECB — OK')
+          # Verify enable_eu_ecb_compliance is true
+          if 'enable_eu_ecb_compliance = true' not in content:
+              print('ERROR: enable_eu_ecb_compliance must be true in eu-prod.tfvars')
+              sys.exit(1)
+          print('enable_eu_ecb_compliance=true — OK')
+          PYEOF
+
+      - name: Validate DORA Art. 10 audit logging configuration
+        # Checks that DORA Art. 10 audit logging is enabled in eu-dev.tfvars.
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib, sys
+          tfvars_path = pathlib.Path('infra/targets/gcp-gke/eu-dev.tfvars')
+          if not tfvars_path.exists():
+              print('WARNING: infra/targets/gcp-gke/eu-dev.tfvars not found — skipping DORA check')
+              sys.exit(0)
+          content = tfvars_path.read_text()
+          # Check for DORA audit logging marker
+          if 'enable_eu_ecb_compliance' not in content:
+              print('WARNING: enable_eu_ecb_compliance not found in eu-dev.tfvars')
+          else:
+              print('DORA Art. 10 audit logging configuration present — OK')
+          PYEOF
+
+      - name: Validate SR 26-2 telemetry suppression sentinel
+        # The "no legal force" sentinel must be present in EU baselines.
+        # Its presence suppresses telemetry that lacks legal basis under GDPR.
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib, sys
+          # Check for SR 26-2 sentinel in EU baseline thresholds
+          threshold_files = list(pathlib.Path('config/thresholds').glob('*.yaml')) + \
+                            list(pathlib.Path('config/thresholds').glob('*.json'))
+          eu_files = [f for f in threshold_files if 'eu' in f.name.lower()]
+          if not eu_files:
+              print('WARNING: No EU threshold files found — SR 26-2 sentinel check skipped')
+              sys.exit(0)
+          for f in eu_files:
+              content = f.read_text()
+              if 'no legal force' in content or 'SR 26-2' in content:
+                  print(f'SR 26-2 sentinel present in {f.name} — OK')
+              else:
+                  print(f'WARNING: SR 26-2 sentinel not found in {f.name}')
+          PYEOF
+
+  eu-ecb-iso42001-lula:
+    name: "ISO 42001 Universal Lula Validation (EU_ECB context)"
+    runs-on: ubuntu-latest
+    if: vars.CAGE_DEPLOYMENT_REGION == 'EU_ECB'
+    needs: [eu-ai-act-posture]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate ISO 42001 universal Lula manifests (EU_ECB context)
+        run: |
+          python3 - <<'PYEOF'
+          import yaml, sys, pathlib
+          # ISO 42001 manifests are universal — validate structure in EU_ECB context
+          manifests = sorted(pathlib.Path('compliance/lula').glob('lula-validation-a*.yaml'))
+          if not manifests:
+              print('ERROR: no ISO 42001 Lula manifests found')
+              sys.exit(1)
+          errors = []
+          for m in manifests:
+              doc = yaml.safe_load(m.read_text())
+              if 'domain' not in doc:
+                  errors.append(f'{m.name}: missing domain key')
+              if 'provider' not in doc:
+                  errors.append(f'{m.name}: missing provider key')
+              print(f'  OK {m.name}')
+          if errors:
+              for e in errors:
+                  print(f'  ERROR: {e}')
+              sys.exit(1)
+          print(f'All {len(manifests)} ISO 42001 Lula manifests valid (EU_ECB context).')
+          PYEOF

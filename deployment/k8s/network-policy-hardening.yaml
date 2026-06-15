@@ -14,7 +14,10 @@
 
 ---
 # Gateway: allow egress to NeMo Guardrails (not covered in network-policy.yaml)
-# SC-7, AC-4, SC-23: Guardrails service is a separate pod; explicit egress required.
+# DEP-16: Replaced NIST-specific annotations with jurisdiction-neutral cage.io labels.
+# ISO 42001 A.8.4 (boundary protection) is the universal control; NIST SC-7/AC-4/SC-23
+# are US_FED-specific citations mapped in the compliance bridge, not in K8s manifests.
+# R-2, R-8: NIST control references must not appear on universal K8s resources.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -24,9 +27,10 @@ metadata:
     app.kubernetes.io/managed-by: cage
     cage.io/component: network-security
   annotations:
-    compliance.nist.gov/control: "SC-7,AC-4,SC-23"
-    compliance.nist.gov/standard: "SP-800-53-Rev5"
-    compliance.nist.gov/last-reviewed: "2026-03-06"
+    cage.io/control: "boundary-protection,session-authenticity,information-flow"
+    cage.io/iso42001-control: "A.8.4"
+    cage.io/last-reviewed: "2026-06-15"
+    cage.io/jurisdiction-note: "US_FED maps to NIST SC-7,AC-4,SC-23; EU_ECB maps to DORA Art.10; APAC_MAS maps to MAS TRM §6.3"
 spec:
   podSelector:
     matchLabels:
@@ -45,9 +49,8 @@ spec:
 
 ---
 # Gateway: allow egress cross-namespace to vLLM inference namespace
-# SC-7: Explicit cross-namespace egress; the existing allow-vllm-egress targets
-# pods labeled app=vllm-service within governance-stack. This covers the separate
-# vllm namespace used in production GPU deployments.
+# DEP-16: Replaced NIST-specific annotations with jurisdiction-neutral cage.io labels.
+# ISO 42001 A.8.4 (boundary protection) is the universal control.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -57,9 +60,10 @@ metadata:
     app.kubernetes.io/managed-by: cage
     cage.io/component: network-security
   annotations:
-    compliance.nist.gov/control: "SC-7,AC-4"
-    compliance.nist.gov/standard: "SP-800-53-Rev5"
-    compliance.nist.gov/last-reviewed: "2026-03-06"
+    cage.io/control: "boundary-protection,information-flow"
+    cage.io/iso42001-control: "A.8.4"
+    cage.io/last-reviewed: "2026-06-15"
+    cage.io/jurisdiction-note: "US_FED maps to NIST SC-7,AC-4; EU_ECB maps to DORA Art.10; APAC_MAS maps to MAS TRM §6.3"
 spec:
   podSelector:
     matchLabels:
@@ -78,8 +82,8 @@ spec:
 
 ---
 # Compliance Bridge: allow egress to Langfuse (cross-namespace) and Minio
-# CA-7: Compliance evidence collection requires Langfuse and OSCAL artifact storage.
-# AC-4: Explicitly scope cross-namespace egress to Langfuse namespace only.
+# DEP-16: Replaced NIST-specific annotations with jurisdiction-neutral cage.io labels.
+# ISO 42001 A.9.2 (continuous monitoring) and A.8.4 (boundary protection) are universal.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -89,9 +93,10 @@ metadata:
     app.kubernetes.io/managed-by: cage
     cage.io/component: network-security
   annotations:
-    compliance.nist.gov/control: "SC-7,AC-4,CA-7"
-    compliance.nist.gov/standard: "SP-800-53-Rev5"
-    compliance.nist.gov/last-reviewed: "2026-03-06"
+    cage.io/control: "boundary-protection,information-flow,continuous-monitoring"
+    cage.io/iso42001-control: "A.8.4,A.9.2"
+    cage.io/last-reviewed: "2026-06-15"
+    cage.io/jurisdiction-note: "US_FED maps to NIST SC-7,AC-4,CA-7; EU_ECB maps to DORA Art.10; APAC_MAS maps to MAS TRM §6.3"
 spec:
   podSelector:
     matchLabels:
@@ -126,8 +131,8 @@ spec:
 
 ---
 # Lula CronJob: allow egress to Kubernetes API server and Minio only
-# CA-7: Lula performs automated compliance assessment against the cluster API.
-# SC-7: Explicit allowlist — Lula must not reach external endpoints.
+# DEP-16: Replaced NIST-specific annotations with jurisdiction-neutral cage.io labels.
+# ISO 42001 A.9.2 (continuous monitoring) and A.8.4 (boundary protection) are universal.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -137,9 +142,10 @@ metadata:
     app.kubernetes.io/managed-by: cage
     cage.io/component: network-security
   annotations:
-    compliance.nist.gov/control: "SC-7,CA-7"
-    compliance.nist.gov/standard: "SP-800-53-Rev5"
-    compliance.nist.gov/last-reviewed: "2026-03-06"
+    cage.io/control: "boundary-protection,continuous-monitoring"
+    cage.io/iso42001-control: "A.8.4,A.9.2"
+    cage.io/last-reviewed: "2026-06-15"
+    cage.io/jurisdiction-note: "US_FED maps to NIST SC-7,CA-7; EU_ECB maps to DORA Art.10; APAC_MAS maps to MAS TRM §6.3"
 spec:
   podSelector:
     matchLabels:
@@ -165,8 +171,8 @@ spec:
 
 ---
 # Gateway: allow inbound gRPC (port 50051) from orchestrator pods and ingress controller
-# SC-7: Ingress to gRPC port must be explicitly allowed (not covered in network-policy.yaml).
-# The existing allow-gateway-ingress only covers HTTP port 8080.
+# DEP-16: Replaced NIST-specific annotations with jurisdiction-neutral cage.io labels.
+# ISO 42001 A.8.4 (boundary protection) is the universal control.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -176,9 +182,10 @@ metadata:
     app.kubernetes.io/managed-by: cage
     cage.io/component: network-security
   annotations:
-    compliance.nist.gov/control: "SC-7,AC-4"
-    compliance.nist.gov/standard: "SP-800-53-Rev5"
-    compliance.nist.gov/last-reviewed: "2026-03-06"
+    cage.io/control: "boundary-protection,information-flow"
+    cage.io/iso42001-control: "A.8.4"
+    cage.io/last-reviewed: "2026-06-15"
+    cage.io/jurisdiction-note: "US_FED maps to NIST SC-7,AC-4; EU_ECB maps to DORA Art.10; APAC_MAS maps to MAS TRM §6.3"
 spec:
   podSelector:
     matchLabels:
@@ -208,7 +215,8 @@ spec:
 
 ---
 # Compliance Bridge: allow inbound HTTP from governance-stack pods (Lula health checks, internal)
-# SC-7: Compliance bridge must only be reachable from within governance-stack.
+# DEP-16: Replaced NIST-specific annotations with jurisdiction-neutral cage.io labels.
+# ISO 42001 A.8.4 (boundary protection) is the universal control.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -218,9 +226,10 @@ metadata:
     app.kubernetes.io/managed-by: cage
     cage.io/component: network-security
   annotations:
-    compliance.nist.gov/control: "SC-7,AC-4"
-    compliance.nist.gov/standard: "SP-800-53-Rev5"
-    compliance.nist.gov/last-reviewed: "2026-03-06"
+    cage.io/control: "boundary-protection,information-flow"
+    cage.io/iso42001-control: "A.8.4"
+    cage.io/last-reviewed: "2026-06-15"
+    cage.io/jurisdiction-note: "US_FED maps to NIST SC-7,AC-4; EU_ECB maps to DORA Art.10; APAC_MAS maps to MAS TRM §6.3"
 spec:
   podSelector:
     matchLabels:

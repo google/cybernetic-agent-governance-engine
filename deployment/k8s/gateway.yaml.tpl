@@ -36,17 +36,11 @@ spec:
               value: "50051"
             - name: GOOGLE_CLOUD_PROJECT
               value: "YOUR_GCP_PROJECT_ID"
-            # DEP-04: GOOGLE_CLOUD_LOCATION must be set from CAGE_DEPLOYMENT_REGION.
-            # Use gateway.yaml.tpl + envsubst for production deployments.
-            # US_FED → us-central1 | EU_ECB → europe-west1 | APAC_MAS → asia-southeast1
-            # This static value is a local-dev fallback only; deploy_all.sh renders
-            # the .tpl for GKE targets and injects the correct region.
+            # DEP-04: GOOGLE_CLOUD_LOCATION is substituted at deploy time from
+            # CAGE_DEPLOYMENT_REGION via deploy_all.sh / envsubst.
+            # US_FED → us-central1, EU_ECB → europe-west1, APAC_MAS → asia-southeast1
             - name: GOOGLE_CLOUD_LOCATION
-              valueFrom:
-                secretKeyRef:
-                  name: advisor-secrets
-                  key: GOOGLE_CLOUD_LOCATION
-                  optional: true
+              value: "${GOOGLE_CLOUD_LOCATION}"
             - name: ENABLE_LOGGING
               value: "true"
             - name: OTEL_TRACES_EXPORTER
@@ -103,21 +97,12 @@ spec:
             # SC-12 / AC-3 / POAM-012: HMAC routing seal enforcement.
             # CAGE_ENV=production activates RuntimeError at import time if
             # CAGE_ROUTING_SEAL_SECRET is absent or shorter than 32 chars.
-            # DEP-04: CAGE_ENV must not be hardcoded to "dev". For GKE production
-            # deployments use gateway.yaml.tpl rendered by deploy_all.sh which
-            # substitutes ${CAGE_ENV} from the --env flag (dev → "dev", prod → "production").
+            # DEP-04: CAGE_ENV is substituted at deploy time from the --env flag
+            # passed to deploy_all.sh (dev → "dev", prod → "production").
             - name: CAGE_ENV
-              valueFrom:
-                secretKeyRef:
-                  name: advisor-secrets
-                  key: CAGE_ENV
-                  optional: true
+              value: "${CAGE_ENV}"
             - name: ENVIRONMENT
-              valueFrom:
-                secretKeyRef:
-                  name: advisor-secrets
-                  key: CAGE_ENV
-                  optional: true
+              value: "${CAGE_ENV}"
             - name: CAGE_ROUTING_SEAL_SECRET
               valueFrom:
                 secretKeyRef:

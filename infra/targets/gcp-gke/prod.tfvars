@@ -1,5 +1,30 @@
-# Production Environment Configuration (GCP-GKE Target)
-# NIST RMF compliance, high availability, locked down
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# US_FED Production Environment Configuration (GCP-GKE Target)
+#
+# DEP-12: This file is explicitly scoped to CAGE_DEPLOYMENT_REGION=US_FED.
+# For EU_ECB production deployments, use eu-prod.tfvars.
+# For APAC_MAS production deployments, use apac-prod.tfvars.
+#
+# Jurisdiction: United States Federal
+# Primary framework: NIST SP 800-53 Rev 5 HIGH + NIST AI 600-1 + FedRAMP
+# Universal baseline: ISO 42001 (always active for all regions)
+#
+# Activate:
+#   CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
+#     --var-file=infra/targets/gcp-gke/prod.tfvars
 
 # ─── GCP Project ──────────────────────────────────────────────────────────────
 # REPLACE with your production project ID
@@ -12,8 +37,19 @@ cluster_name = "cage-prod"
 environment  = "prod"
 namespace    = "governance-stack"
 
-# ─── Security Posture (Prod: NIST RMF Compliance) ─────────────────────────────
+# ─── Jurisdiction (DEP-12: explicit US_FED scope) ─────────────────────────────
+# This must always be set explicitly — no default in variables.tf (DEP-09).
+# Activates US_FED_BASELINE.json compliance posture and NIST SP 800-53 hardening.
+# The Terraform precondition on the langfuse_events bucket (DEP-10) will validate
+# that region = "us-central1" is consistent with cage_deployment_region = "US_FED".
+cage_deployment_region = "US_FED"
+
+# ─── Security Posture (US_FED Prod: NIST SP 800-53 + ISO 42001 baseline) ──────
+# DEP-01: enable_nist_compliance is now only activated for US_FED deployments.
+# EU_ECB and APAC_MAS use enable_eu_ecb_compliance / enable_apac_mas_compliance.
 enable_nist_compliance         = true
+enable_eu_ecb_compliance       = false
+enable_apac_mas_compliance     = false
 enable_binary_authorization    = true
 enable_audit_logging           = true
 enable_cmek                    = false # Enable when KMS key is configured
@@ -51,8 +87,7 @@ gpu_node_pool_max_count     = 5
 gpu_node_pool_initial_count = 2
 
 # ─── Storage (Prod: Larger, Faster) ───────────────────────────────────────────
-minio_storage_class = "pd-ssd"
-minio_storage_size  = "500Gi"
+storage_class = "pd-ssd"
 
 model_bucket_name = "" # Defaults to ${project_id}-models
 
@@ -64,7 +99,3 @@ enable_gcs_fuse_csi = true
 
 # ─── Deployment ───────────────────────────────────────────────────────────────
 force_redeploy = false
-
-# ─── MinIO Credentials ────────────────────────────────────────────────────────
-minio_root_user = "minio-admin"
-# minio_root_password: Use GCP Secret Manager or SOPS for production
