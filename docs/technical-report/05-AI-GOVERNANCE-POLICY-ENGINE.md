@@ -1,8 +1,8 @@
 ---
 title: "AI Governance & Policy Engine"
 document: "05-AI-GOVERNANCE-POLICY-ENGINE"
-version: "2.3"
-date: "2026-06-03"
+version: "2.4"
+date: "2026-06-15"
 classification: "INTERNAL"
 project: "Cybernetic Governance Engine (CAGE)"
 ---
@@ -12,6 +12,19 @@ project: "Cybernetic Governance Engine (CAGE)"
 ## Overview
 
 The AI Governance & Policy Engine is the most complex and safety-critical component of the Cybernetic Governance Engine (CAGE). It enforces a layered, **neuro-symbolic hybrid governance** model over every agent action, combining deterministic symbolic constraints with LLM-based semantic judgment. No action reaches execution unless it passes all governance tiers. All governance is **fail-closed**: any tier failure raises `GovernanceError` and blocks the action.
+
+### Jurisdiction Baseline Summary
+
+| Framework | Scope | Applies To |
+| --------- | ----- | ---------- |
+| **ISO/IEC 42001:2023** | AI Management System — universal baseline | All regions (US_FED, EU_ECB, APAC_MAS) |
+| **CSA AARM** | AI Accountability, Risk, and Reliability Management | All regions |
+| **NIST AI 600-1** | Generative AI risk management | **US_FED only** — labelled `[US_FED only]` throughout |
+| **NIST SP 800-53** | Security and privacy controls | **US_FED only** — labelled `[US_FED only]` throughout |
+| **EU AI Act / GDPR / DORA** | EU AI regulation, data protection, operational resilience | **EU_ECB only** — labelled `[EU_ECB only]` throughout |
+| **MAS FEAT / MAS Notice 655 / MAS TRM** | MAS AI governance, technology risk | **APAC_MAS only** — labelled `[APAC_MAS only]` throughout |
+
+> **Rule:** Never treat a jurisdiction-specific framework as a prerequisite for the global stable tag or for non-applicable regions. Regional gates are additive layers only (see `.clinerules` §5).
 
 ---
 
@@ -41,9 +54,12 @@ Neither paradigm alone is sufficient. Neural systems can hallucinate; symbolic s
 
 [`SymbolicGovernor._run_checks()`](../../src/gateway/governance/symbolic_governor.py) executes seven governance tiers in strict, sequential order. A failure at any tier raises `GovernanceError` immediately; subsequent tiers are not reached. For the `EU_ECB` region, an additional 8th step (FRIA Attestation) is executed to stamp pre-market assessment compliance into the OpenTelemetry telemetry records.
 
+> **Jurisdiction baseline:** ISO/IEC 42001:2023 and CSA AARM are the universal baselines that apply to all regions. NIST AI 600-1 and NIST SP 800-53 controls are **US_FED only**. EU AI Act / GDPR / DORA controls are **EU_ECB only**. MAS FEAT / MAS Notice 655 / MAS TRM controls are **APAC_MAS only**. Jurisdiction-specific labels appear inline throughout this section.
+
 ```
 GovernanceError ← Tier 0: STPA UCA Validation
-GovernanceError ← Tier 1: Agentic Confidence Check (SR 26-2 / EU AI Act Art. 10)
+GovernanceError ← Tier 1: Agentic Confidence Check
+                           [US_FED: SR 26-2 §IV.B] [EU_ECB: EU AI Act Art. 10]
 GovernanceError ← Tier 2: Control Barrier Function (suppressed in EU_ECB)
       sentinel ← Tier 3: SLM Sidecar (Deprecated / Bypassed / slm_available=false)
 GovernanceError ← Tier 4: OPA Policy Evaluation
@@ -81,7 +97,7 @@ The `ControlRegistry` handles dynamic, thread-safe loading of active baseline ma
 flowchart TD
     A[Incoming Trade Request] --> T0[Tier 0: STPA UCA Validation]
     T0 -->|FAIL| GE0[GovernanceError BLOCKED]
-    T0 -->|PASS| T1["Tier 1: SR 26-2 §IV.B Agentic Confidence Check"]
+    T0 -->|PASS| T1["Tier 1: Agentic Confidence Check [US_FED: SR 26-2 §IV.B]"]
     T1 -->|confidence < 0.95| GE1[GovernanceError BLOCKED]
     T1 -->|PASS| T2[Tier 2: Control Barrier Function]
     T2 -->|h-x < 0| GE2[GovernanceError BLOCKED]
@@ -164,13 +180,28 @@ Concurrent modifications trigger an `asyncio.CancelledError` on `EXEC`, caught a
 
 To prevent Time-Of-Check to Time-Of-Use (TOCTOU) exploits and drift under volatile market conditions, the Redis `WATCH/MULTI/EXEC` transaction utilizes the **fresh execution price** fetched by the `post_hitl_revalidate_node` immediately prior to committing the trade, rather than relying on the stale quoted price recorded during pre-HITL evaluation. This ensures that $h(x) \geq 0$ is validated against the actual, real-time capital exposure at the moment of actuation.
 
-### Aho-Corasick Keyword Scan
+### Aho-Corasick Keyword Scan & Text Filter
 
-`ac_keyword_scan()` in [`text_filter.py`](../../src/gateway/governance/text_filter.py) performs a Tier-1 text scan using a `pyahocorasick` automaton. (`safety.py` re-exports `ac_keyword_scan` from `text_filter.py` for backward compatibility but is deprecated.)
+[`text_filter.py`](../../src/gateway/governance/text_filter.py) provides two complementary scan functions. (`safety.py` re-exports `ac_keyword_scan` from `text_filter.py` for backward compatibility but is deprecated.)
 
-- **14 keyword entries** loaded from `tier1_keywords` in `governance_thresholds.json`
-- Pattern matching runs in **O(n)** time against the request content string
-- Any match triggers an immediate `GovernanceError` before numeric checks proceed
+#### `ac_keyword_scan()` — Universal Tier-1 Keyword Scanner (All Regions)
+
+- **Purpose**: O(n) forbidden-keyword detection using a lazy-initialised `pyahocorasick` automaton; falls back to O(n×m) `any()` loop when `pyahocorasick` is not installed.
+- **Keyword source**: `tier1_keywords` list in `config/governance_thresholds.json` — **14 entries**, upper-cased by the Pydantic validator. No inline literals.
+- **Keyword validation**: Each keyword is validated via `_validate_keyword()` before being added to the automaton (H-09 ReDoS defence). Malformed keywords are logged and skipped rather than disabling the entire filter.
+- **Fail behaviour**: Any match triggers an immediate `GovernanceError` before numeric checks proceed.
+- **ISO 42001 control**: A.5.2 (Social Impact / Adversarial Robustness) — universal, all regions.
+
+#### `ac_cbrn_keyword_scan()` — CBRN Keyword Scanner **[US_FED only]**
+
+- **Purpose**: Detects Chemical, Biological, Radiological, and Nuclear (CBRN) content patterns per **NIST AI 600-1 §2.6** (CBRN Weapons or Attacks uplift risk).
+- **Activation**: Controlled by `tier1_keywords_cbrn_enabled` flag in `governance_thresholds.json`. Returns `False` immediately (no-op) when disabled — allows rollback without removing the keyword list.
+- **Keyword source**: `tier1_keywords_cbrn` list in `governance_thresholds.json`, upper-cased by the Pydantic validator.
+- **Algorithm**: O(n×m) case-insensitive substring match (not Aho-Corasick) because CBRN keywords are multi-word phrases requiring substring rather than exact word-boundary matching.
+- **Fail behaviour**: Any match logs a `🚨 CBRN keyword detected` warning and returns `True` (block).
+- **ISO 42001 control**: A.5.2 (universal baseline); **[US_FED only]** NIST AI 600-1 §2.6 CBRN uplift control.
+
+> **Jurisdiction note:** `ac_keyword_scan()` is active in all regions. `ac_cbrn_keyword_scan()` is a US_FED-only control gated by `tier1_keywords_cbrn_enabled`; it MUST NOT be treated as a prerequisite for EU_ECB or APAC_MAS deployments.
 
 ---
 
@@ -255,7 +286,7 @@ decision = "GOVERNANCE_VIOLATION" {
 [`deployment/system_authz.rego`](../../deployment/system_authz.rego):
 
 - Identity-based allow list for system principals
-- `confidence_sufficient ≥ 0.95` (SR 26-2 §IV.B agentic model confidence requirement)
+- `confidence_sufficient ≥ 0.95` (agentic model confidence requirement; **[US_FED only]** SR 26-2 §IV.B)
 
 ### Deprecated Policy Stubs
 
@@ -457,6 +488,7 @@ Pending tokens are resolved by:
 | -------- | ------- | ------- |
 | ISO 42001 | A.8.4 | AI System Operation Controls — formal pause prevents unsafe execution under ambiguous context |
 | CSA AARM | V7 | Context Window Overflow neutralization |
+| NIST SP 800-53 **[US_FED only]** | SA-9 | External System Services — `EXTERNAL_VALIDATION` reason maps to external FRIA gate |
 | STPA | UCA-7 | Agent proceeds with ambiguous context instead of parking for data injection |
 
 ---
@@ -494,7 +526,7 @@ CAGE v2.0.0 promotes **Cloud KMS HSM-backed asymmetric signing** as the primary 
 - **Signing**: `KMSSigner.sign(payload)` — executed inside Google Cloud HSM; non-exportable private key
 - **Verification**: `KMSSigner.verify(payload, signature)` — sub-millisecond local RSA verification using embedded public key PEM
 - **Non-repudiation**: Google Cloud Audit Logs provide an immutable, externally attested record of every `cloudkms.cryptoKeyVersions.useToSign` operation
-- **Compliance**: Satisfies **ISO 42001 §A.7.5** (records integrity), **NIST AU-10** (non-repudiation), **FINRA Rule 4511** (tamper-evident records)
+- **Compliance**: Satisfies **ISO 42001 §A.7.5** (records integrity, universal); **NIST AU-10** (non-repudiation, **[US_FED only]**); **FINRA Rule 4511** (tamper-evident records, **[US_FED only]**)
 - **Fallback**: If `CAGE_KMS_KEY_NAME` is unset, the signer falls back to HMAC-SHA256 with a `[KMSSigner] Falling back to HMAC` warning log — **prohibited in production**
 
 ### HMAC-SHA256 Routing Seal (Fallback / Dev-CI)
@@ -542,7 +574,7 @@ When implemented, `AnchorageGrpcLedgerProvider` will provide an externally recon
 | `stpa.uca6_max_order_volume_fraction` | 0.01       | UCA-6            |
 | `stpa.max_sell_portfolio_fraction`    | 0.10       | FIN-1            |
 | `stpa.max_latency_ms`                 | 200.0      | FIN-2, ISO-20022 |
-| `confidence.min_trade_confidence`     | 0.95       | SR 26-2 §IV.B, IA-5 — **DEPRECATED**: `OPA system_authz.rego` is now authoritative for confidence enforcement |
+| `confidence.min_trade_confidence`     | 0.95       | **[US_FED only]** SR 26-2 §IV.B, IA-5 — **DEPRECATED**: `OPA system_authz.rego` is now authoritative for confidence enforcement |
 | `consensus.threshold_usd`             | 10000.0    | CA-7             |
 | `tier1_keywords`                      | 14 entries | SI-3             |
 
@@ -626,7 +658,80 @@ The compiler reads UCA definitions (UCA-1 through UCA-9), their associated hazar
 
 ---
 
-## 13. Formal Risk Acceptances
+## 13. Pre-Ledger PII Sanitization Pipeline (ISO 42001 A.6)
+
+[`PIISanitizer`](../../src/gateway/governance/pii_sanitizer.py) implements **ISO 42001 Annex A.6** (Data Lineage and PII Leak Mitigation) as a universal pre-ledger sanitization pipeline. Every UCA compliance record written to the WORM ledger passes through this pipeline before serialization.
+
+> **Jurisdiction:** ISO 42001 A.6 is the universal baseline (all regions). The `pii_audit_log()` function additionally references FISMA AU-11 retention (90-day minimum) which is **[US_FED only]**. The IBAN and SWIFT/BIC redaction patterns (M-14) are relevant to all regions but were introduced to address EU_ECB and APAC_MAS financial identifier exposure.
+
+### 13.1 Purpose and AI Safety Risk Addressed
+
+PII leakage into immutable WORM audit ledgers creates irreversible privacy violations and regulatory exposure. The sanitizer prevents SSNs, credit card numbers, IBAN/SWIFT codes, email addresses, phone numbers, and API keys from being persisted in the governance audit trail — a risk that is particularly acute because the WORM ledger is designed to be tamper-proof and cannot be retroactively redacted.
+
+### 13.2 ISO 42001 Control Satisfied
+
+| Control | Description | Scope |
+| ------- | ----------- | ----- |
+| ISO 42001 A.6 | Data Lineage and PII Leak Mitigation — pre-ledger sanitization before WORM persistence | Universal (all regions) |
+| ISO 42001 A.7.5 | Records integrity — sanitized records are KMS-signed after sanitization | Universal (all regions) |
+| FISMA AU-11 **[US_FED only]** | Audit record retention ≥ 90 days — enforced by GCS bucket lifecycle policy | US_FED only |
+
+### 13.3 Pipeline Integration
+
+The `PIISanitizer` is invoked by the `uca_logger` immediately before writing a UCA compliance record to the GCS WORM bucket. The sanitization step runs **after** governance decisions are made and **before** KMS signing — ensuring that the signed record is already clean.
+
+```
+UCA Compliance Record
+      │
+      ▼
+PIISanitizer.sanitize_dict()   ← ISO 42001 A.6
+      │  (7 regex patterns applied sequentially)
+      ▼
+KMSSigner.sign()               ← ISO 42001 A.7.5
+      │
+      ▼
+GCS WORM Bucket (CMEK-encrypted)
+```
+
+### 13.4 Redaction Patterns
+
+Seven compiled regex patterns are applied sequentially (most-specific to least-specific to avoid partial matches):
+
+| Pattern Name | Format Detected | Replacement Token |
+| ------------ | --------------- | ----------------- |
+| SSN | `NNN-NN-NNNN` or `NNNNNNNNN`; excludes invalid ranges (000, 666, 9xx per IRS rules) | `[REDACTED_SSN]` |
+| Credit Card | Visa, MC, Amex, Discover, JCB, Diners — with optional space/dash separators | `[REDACTED_CC]` |
+| IBAN | 2-letter country code + 2 check digits + up to 30 BBAN chars (M-14) | `[REDACTED_IBAN]` |
+| SWIFT/BIC | 8 or 11 alphanumeric chars in bank+country+location+branch format (M-14) | `[REDACTED_SWIFT]` |
+| Email | RFC 5321 simplified pattern | `[REDACTED_EMAIL]` |
+| Phone | US/international formats with optional country code | `[REDACTED_PHONE]` |
+| API Key / Bearer Token | `pk-lf-*`, `sk-lf-*`, `hf_*`, `Bearer <token>` | `[REDACTED_API_KEY]` |
+
+**Design decisions:**
+- Patterns are compiled once at module import time — no per-call overhead.
+- The sanitizer is intentionally **conservative**: it may redact some non-PII strings that match patterns (e.g. a 9-digit product code resembling an SSN). This is the correct trade-off for a WORM audit ledger.
+- `sanitize_dict()` recursively sanitizes all string values in nested dicts and lists — suitable for sanitizing an entire request body or UCA record.
+- Thread-safe: all state is in compiled regex objects (immutable after init).
+
+### 13.5 Audit Record
+
+[`pii_audit_log()`](../../src/gateway/governance/pii_sanitizer.py) produces a structured JSON audit record for every PII detection event, written to the WORM ledger or a structured log sink:
+
+```json
+{
+  "event": "pii_detected",
+  "trace_id": "<langfuse-trace-id>",
+  "entity_types": ["EMAIL_ADDRESS", "SSN"],
+  "redacted": true,
+  "timestamp": "2026-06-15T12:00:00.000000Z"
+}
+```
+
+A `ValueError` is raised if `redacted=True` but `entity_types` is empty — a redaction event without identified entity types is a logic error.
+
+---
+
+## 14. Formal Risk Acceptances
 
 The following governance-related risk acceptances are documented in [`compliance/risk_acceptance/THRESHOLD_TRACEABILITY_MATRIX.md`](../../compliance/risk_acceptance/THRESHOLD_TRACEABILITY_MATRIX.md):
 
@@ -638,6 +743,266 @@ The following governance-related risk acceptances are documented in [`compliance
 
 ---
 
+## 15. NIST AI 600-1 Governance Modules **[US_FED only]**
+
+> **Scope:** This section documents governance modules that implement controls from **NIST AI 600-1** (Artificial Intelligence Risk Management Framework: Generative Artificial Intelligence). These modules are scoped exclusively to `CAGE_DEPLOYMENT_REGION=US_FED`. They MUST NOT be treated as prerequisites for the global stable tag, EU_ECB deployment, or APAC_MAS deployment. The universal baseline for all regions is ISO/IEC 42001:2023 (documented in the sections above).
+
+All five modules in this section carry a POAM item in the `AI600-*` series and are gated by `CAGE_DEPLOYMENT_REGION=US_FED` in the deployment configuration.
+
+### 15.1 Confabulation Scorer — NIST AI 600-1 §2.1 **[US_FED only]**
+
+**Source:** [`src/gateway/governance/confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py)
+**POAM:** AI600-001 | **Control:** `CTRL_AGT_001`
+
+#### Purpose and AI Safety Risk Addressed
+
+Confabulation (hallucination) is the primary reliability risk for generative AI in high-stakes financial decisions. A model that fabricates market data, regulatory citations, or trade rationale with high apparent fluency but low factual grounding can cause material harm. The confabulation scorer quantifies this risk as a numeric score and records every low-confidence event to Langfuse for audit purposes.
+
+#### ISO 42001 Control (Universal)
+
+| Control | Description |
+| ------- | ----------- |
+| ISO 42001 A.9.2 | Data Privacy and Quality — confidence scoring enforces minimum data quality standards for AI-generated outputs before they influence governance decisions |
+
+#### NIST AI 600-1 Control **[US_FED only]**
+
+| Control | Section | Description |
+| ------- | ------- | ----------- |
+| NIST AI 600-1 §2.1 | Confabulation | Implements `CTRL_AGT_001`: model confidence ≥ `CONFIDENCE_MIN_SCORE` threshold before output is accepted |
+
+#### Pipeline Integration
+
+The confabulation scorer is invoked by the `HITLEscalator` (§15.2) and by the Tier 1 Agentic Confidence Check in `SymbolicGovernor`. It does not block directly — it produces a Langfuse score payload submitted to `/api/public/scores` for audit, and sets the `blocked` flag that the caller uses to raise `GovernanceError`.
+
+```
+Model Response (confidence=0.87)
+      │
+      ▼
+score_confabulation(event)
+      │  risk_score = 1.0 - confidence = 0.13
+      ▼
+Langfuse Score Payload → POST /api/public/scores
+      │  {"name": "confabulation_risk", "value": 0.13, ...}
+      ▼
+is_confabulation_blocked(confidence) → True if confidence < CONFIDENCE_THRESHOLD
+      │
+      ▼
+HITLEscalator (EscalationReason.CONFIDENCE_LOW) or GovernanceError
+```
+
+#### Key Configuration
+
+| Parameter | Source | Default | Description |
+| --------- | ------ | ------- | ----------- |
+| `CONFIDENCE_MIN_SCORE` | Environment variable (`advisor-secrets` secretKeyRef) | Falls back to `THRESHOLDS.confidence.min_trade_confidence` (0.95) | Minimum acceptable model confidence score |
+| `CONFIDENCE_THRESHOLD` | Module-level constant | 0.95 | Resolved at import time from env var or threshold singleton |
+
+**Score formula:** `risk_score = 1.0 - confidence`. A confidence of 0.95 yields a confabulation risk score of 0.05 (low risk); a confidence of 0.50 yields 0.50 (high risk).
+
+---
+
+### 15.2 Human-in-the-Loop Escalator — NIST AI 600-1 §2.5 **[US_FED only]**
+
+**Source:** [`src/gateway/governance/hitl_escalator.py`](../../src/gateway/governance/hitl_escalator.py)
+**POAM:** AI600-004 | **Controls:** ConsensusEngine threshold, HITL escalation path
+
+#### Purpose and AI Safety Risk Addressed
+
+Autonomous AI systems operating without human oversight create accountability gaps and can execute consequential decisions that should require human judgment. The HITL Escalator formalises the escalation path from automated governance decisions to human review, ensuring that trades above the consensus threshold, below the confidence threshold, or flagged by the causal gatekeeper are routed to a named reviewer queue rather than silently blocked or silently approved.
+
+#### ISO 42001 Control (Universal)
+
+| Control | Description |
+| ------- | ----------- |
+| ISO 42001 A.8.4 | AI System Impact Assessment — human oversight is mandatory for high-impact decisions; the escalator implements the formal routing mechanism |
+
+#### NIST AI 600-1 Control **[US_FED only]**
+
+| Control | Section | Description |
+| ------- | ------- | ----------- |
+| NIST AI 600-1 §2.5 | Human-AI Configuration | Implements the human oversight requirement: escalations must be resolved within 4 hours (SR 26-2 §3.2 HITL SLA **[US_FED only]**) |
+
+#### Escalation Reasons
+
+| `EscalationReason` | Trigger | Source |
+| ------------------ | ------- | ------ |
+| `CONSENSUS_THRESHOLD` | `amount_usd > CONSENSUS_THRESHOLD_USD` (default $10,000 US_FED) | `ConsensusEngine` |
+| `CONFIDENCE_LOW` | `confidence < CONFIDENCE_MIN_SCORE` (default 0.95) | `ConfabulationScorer` |
+| `CAUSAL_BLOCK` | DoWhy placebo p-value < 0.05 or placebo effect > 0.2 | `CausalGatekeeper` |
+| `MANUAL_REVIEW` | OPA policy returns `MANUAL_REVIEW` decision | OPA Tier 4 |
+| `GOVERNANCE_CONFIDENCE_LOW` | `ConsensusEngine`'s own LLM call has low confidence (recursive governance risk) | `ConsensusEngine` |
+
+#### Pipeline Integration
+
+[`escalate_to_human()`](../../src/gateway/governance/hitl_escalator.py) builds a structured `EscalationRecord` and returns it as a dict. The caller writes the record to the `DeferQueue` ([`defer_queue.py`](../../src/gateway/governance/defer_queue.py)) or publishes it to the `governance-hitl-escalations` Pub/Sub topic. The escalation record schema:
+
+```json
+{
+  "event": "hitl_escalation",
+  "trace_id": "<langfuse-trace-id>",
+  "reason": "consensus_threshold_exceeded",
+  "amount_usd": 15000.0,
+  "confidence": null,
+  "reviewer_queue": "compliance-review",
+  "status": "pending_review",
+  "timestamp": "2026-06-15T12:00:00.000000Z"
+}
+```
+
+#### Key Configuration
+
+| Function | Parameter | Default | Description |
+| -------- | --------- | ------- | ----------- |
+| `should_escalate_for_consensus()` | `threshold_usd` | 10,000.0 | US_FED consensus threshold (region-calibrated per §7.1) |
+| `should_escalate_for_confidence()` | `threshold` | 0.95 | Confidence threshold per `CTRL_AGT_001` |
+| `EscalationRequest.reviewer_queue` | — | `"compliance-review"` | Default reviewer queue; override to `"security-review"` for injection/CBRN events |
+
+---
+
+### 15.3 Prompt Injection Detector — NIST AI 600-1 §2.3 **[US_FED only]**
+
+**Source:** [`src/gateway/governance/prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py)
+**POAM:** AI600-003 | **Controls:** CausalGatekeeper (pre-check), `CTRL_WAL_002` (WAL integrity)
+
+#### Purpose and AI Safety Risk Addressed
+
+Prompt injection is the primary adversarial attack vector against LLM-based governance systems. An attacker who can inject instructions into the model's context can override governance rails, bypass safety checks, or cause the model to produce outputs that appear compliant but are not. The prompt injection detector complements the Aho-Corasick Tier-1 keyword scanner ([`text_filter.py`](../../src/gateway/governance/text_filter.py)) with **structural/semantic pattern matching** — targeting the *structure* of injection attempts rather than specific keywords, making them harder to evade via synonym substitution.
+
+#### ISO 42001 Control (Universal)
+
+| Control | Description |
+| ------- | ----------- |
+| ISO 42001 A.5.2 | Social Impact / Adversarial Robustness — structural injection detection is a defence-in-depth layer against adversarial manipulation of the AI governance system |
+
+#### NIST AI 600-1 Control **[US_FED only]**
+
+| Control | Section | Description |
+| ------- | ------- | ----------- |
+| NIST AI 600-1 §2.3 | Data Privacy | Implements structural prompt injection detection as a pre-check before the CausalGatekeeper and WAL integrity validation (`CTRL_WAL_002`) |
+
+#### Detection Patterns
+
+Eight compiled regex patterns target structural injection signatures (not keyword lists):
+
+| Pattern Name | Example Match | Evasion Resistance |
+| ------------ | ------------- | ------------------ |
+| `ignore_previous_instructions` | `"Ignore all previous instructions"` | Handles optional `"all"` |
+| `persona_override` | `"You are now a different AI"` | Matches `different/new/another` + `AI/assistant/model/bot` |
+| `fake_system_prompt` | `"system: ["` | Targets ChatML-style injection |
+| `chatml_injection` | `"<\|im_start\|>system"` | Targets raw ChatML token injection |
+| `instruction_override` | `"### Instruction ###"` | Targets markdown-delimited override blocks |
+| `disregard_training` | `"Disregard your safety guidelines"` | Matches `training/guidelines/rules/constraints/safety` |
+| `jailbreak_dan` | `"DAN mode"`, `"do anything now"` | Targets known jailbreak phrases |
+| `role_play_bypass` | `"pretend you have no restrictions"` | Matches roleplay + restriction-removal combinations |
+
+**Detection confidence:** 0.95 for all pattern matches (high-confidence structural match). Returns `InjectionResult(detected=False, confidence=0.0)` on no match.
+
+**Fail-fast:** Returns on the first match — does not scan all patterns after a hit.
+
+#### Pipeline Integration
+
+The detector is invoked as a pre-check before the `CausalGatekeeper` (Tier 6). A positive detection result is logged with `🚨 Prompt injection detected` and the caller raises `GovernanceError` or routes to the `HITLEscalator` with `reviewer_queue="security-review"`.
+
+```
+Incoming Request Text
+      │
+      ▼
+detect_prompt_injection(text)
+      │  Checks 8 structural patterns (fail-fast on first match)
+      ├─ InjectionResult(detected=True, pattern_matched="...", confidence=0.95)
+      │       → GovernanceError / HITLEscalator (security-review)
+      └─ InjectionResult(detected=False, confidence=0.0)
+              → Continue to CausalGatekeeper (Tier 6)
+```
+
+---
+
+### 15.4 Provenance Chain — NIST AI 600-1 §2.7 **[US_FED only]**
+
+**Source:** [`src/gateway/governance/provenance_chain.py`](../../src/gateway/governance/provenance_chain.py)
+**POAM:** AI600-005 | **Controls:** AgentSight daemon, KMS signing
+
+#### Purpose and AI Safety Risk Addressed
+
+Without a cryptographic audit trail linking each governance node's inputs and outputs, it is impossible to prove that a governance decision was made correctly or to detect post-hoc tampering with the audit record. The provenance chain builds a **SHA-256 hash chain** across all LangGraph governance nodes, creating an immutable, tamper-evident record of every governance decision. Any modification to any node's input, output, or decision invalidates all subsequent chain links.
+
+#### ISO 42001 Control (Universal)
+
+| Control | Description |
+| ------- | ----------- |
+| ISO 42001 A.7.5 | Records Integrity — cryptographic hash chain provides tamper-evident evidence of governance decisions across the full pipeline |
+
+#### NIST AI 600-1 Control **[US_FED only]**
+
+| Control | Section | Description |
+| ------- | ------- | ----------- |
+| NIST AI 600-1 §2.7 | Information Integrity | Implements cryptographic provenance chain for LangGraph governance node inputs/outputs; signed with US_FED KMS key ring |
+
+#### Chain Architecture
+
+Each [`ProvenanceRecord`](../../src/gateway/governance/provenance_chain.py) contains:
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `trace_id` | `str` | Langfuse trace ID for the governed request |
+| `node_id` | `str` | LangGraph node name (e.g. `"opa_node"`, `"causal_gatekeeper"`) |
+| `input_hash` | `str` | SHA-256 hex digest of the node's input data (64 chars) |
+| `output_hash` | `str` | SHA-256 hex digest of the node's output data (64 chars) |
+| `decision` | `str` | Governance decision: `"ALLOW"` \| `"BLOCK"` \| `"ESCALATE"` |
+| `parent_hash` | `str \| None` | SHA-256 of the previous record's full dict (sorted keys); `None` for the first record |
+
+**Hash computation:** [`compute_hash(data)`](../../src/gateway/governance/provenance_chain.py) serialises the dict with `json.dumps(sort_keys=True)` before SHA-256 hashing — deterministic regardless of insertion order. Non-serialisable values are coerced to strings.
+
+**Chain integrity verification:** [`verify_chain_integrity(records)`](../../src/gateway/governance/provenance_chain.py) checks that each record's `parent_hash` matches the `chain_hash()` of the preceding record. The first record must have `parent_hash=None`. Returns `False` on any broken link.
+
+#### Production Storage
+
+In production (`CAGE_DEPLOYMENT_REGION=US_FED`), each record is:
+1. Signed with the US_FED KMS key ring via [`kms_signer.py`](../../src/gateway/governance/kms_signer.py)
+2. Written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`
+3. Monitored by the AgentSight daemon for chain integrity violations
+
+#### Pipeline Integration
+
+```
+LangGraph Governance Node (e.g. opa_node)
+      │  input_data, output_data, decision
+      ▼
+build_provenance_record(trace_id, node_id, input_data, output_data, decision, parent_hash)
+      │  Computes input_hash, output_hash; validates decision ∈ {ALLOW, BLOCK, ESCALATE}
+      ▼
+ProvenanceRecord.chain_hash()   ← becomes parent_hash for next node
+      │
+      ▼
+KMSSigner.sign(record.to_dict())
+      │
+      ▼
+GCS WORM Bucket: provenance/<date>/<trace_id>.json
+```
+
+---
+
+### 15.5 NIST AI 600-1 Module Summary **[US_FED only]**
+
+The following table summarises all NIST AI 600-1 governance modules, their POAM items, ISO 42001 universal controls, and US_FED-specific NIST AI 600-1 sections:
+
+| Module | File | POAM | ISO 42001 (Universal) | NIST AI 600-1 **[US_FED only]** | Pipeline Position |
+| ------ | ---- | ---- | --------------------- | -------------------------------- | ----------------- |
+| Confabulation Scorer | [`confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) | AI600-001 | A.9.2 (Data Quality) | §2.1 Confabulation | Post Tier 1 (confidence check) |
+| PII Sanitizer | [`pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py) | — | A.6 (Data Lineage / PII) | §2.2 Data Privacy (audit log) | Pre-WORM ledger write |
+| Prompt Injection Detector | [`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py) | AI600-003 | A.5.2 (Adversarial Robustness) | §2.3 Data Privacy (injection) | Pre Tier 6 (CausalGatekeeper) |
+| HITL Escalator | [`hitl_escalator.py`](../../src/gateway/governance/hitl_escalator.py) | AI600-004 | A.8.4 (Human Oversight) | §2.5 Human-AI Configuration | Post any tier failure requiring human review |
+| Provenance Chain | [`provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | AI600-005 | A.7.5 (Records Integrity) | §2.7 Information Integrity | Per-node, across full pipeline |
+| Text Filter (CBRN) | [`text_filter.py`](../../src/gateway/governance/text_filter.py) `ac_cbrn_keyword_scan()` | — | A.5.2 (Adversarial Robustness) | §2.6 CBRN Weapons Uplift | Pre Tier 0 (STPA) |
+
+> **Deployment gate:** All modules in this table are active only when `CAGE_DEPLOYMENT_REGION=US_FED`. They are not prerequisites for the global stable tag. EU_ECB and APAC_MAS deployments do not load these modules.
+
+---
+
 ## Summary
 
-The CAGE AI Governance & Policy Engine enforces a **neuro-symbolic, defense-in-depth** governance model across 6 active sequential tiers (0–6, plus tier 6b adaptive FRIA gate, with Tier 3 SLM deprecated), plus an optional 8th step for EU deployments. Every trade request must survive STPA semantic safety checks, confidence thresholds, a Redis-atomic Control Barrier Function, OPA Rego role-based authorization, multi-agent LLM consensus voting (two concurrent critic personas with a strict priority ladder), DoWhy causal gatekeeping, and adaptive external normative validation (§2.5) before execution is approved. All active tiers are fail-closed. The DEFER State Machine (v2.0.0) extends the decision space to four states (`ALLOW | DENY | MANUAL_REVIEW | DEFER`), now including `EXTERNAL_VALIDATION` (v2.1.0) for parking transactions in the ambiguous confidence zone while awaiting external FRIA gate responses. All thresholds are centrally managed with regulatory traceability and region-specific calibration. ISO 42001 control stamps create an auditable evidence chain on every governance event. The Policy Transpiler and STPA-to-Policy Compiler close the loop by converting regulatory requirements and STPA hazard definitions into deployable enforcement artifacts automatically.
+The CAGE AI Governance & Policy Engine enforces a **neuro-symbolic, defense-in-depth** governance model across 6 active sequential tiers (0–6, plus tier 6b adaptive FRIA gate, with Tier 3 SLM deprecated), plus an optional 8th step for EU deployments. Every trade request must survive STPA semantic safety checks, confidence thresholds, a Redis-atomic Control Barrier Function, OPA Rego role-based authorization, multi-agent LLM consensus voting (two concurrent critic personas with a strict priority ladder), DoWhy causal gatekeeping, and adaptive external normative validation before execution is approved. All active tiers are fail-closed.
+
+The **universal baseline** (ISO/IEC 42001:2023 + CSA AARM) applies to all regions. The **NIST AI 600-1 governance modules** (§15) are US_FED-only additive controls: confabulation scoring (§2.1), PII audit logging (§2.2), prompt injection detection (§2.3), CBRN keyword scanning (§2.6), HITL escalation (§2.5), and cryptographic provenance chaining (§2.7). The **PII Sanitizer** (§13) is a universal pre-ledger pipeline implementing ISO 42001 A.6 across all regions. The **Text Filter** (§4) provides universal Aho-Corasick keyword scanning with a US_FED-only CBRN extension gated by `tier1_keywords_cbrn_enabled`.
+
+The DEFER State Machine (v2.0.0) extends the decision space to four states (`ALLOW | DENY | MANUAL_REVIEW | DEFER`), now including `EXTERNAL_VALIDATION` (v2.1.0) for parking transactions in the ambiguous confidence zone while awaiting external FRIA gate responses. All thresholds are centrally managed with regulatory traceability and region-specific calibration. ISO 42001 control stamps create an auditable evidence chain on every governance event. The Policy Transpiler and STPA-to-Policy Compiler close the loop by converting regulatory requirements and STPA hazard definitions into deployable enforcement artifacts automatically.

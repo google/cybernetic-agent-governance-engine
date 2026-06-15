@@ -1,8 +1,8 @@
 ---
 title: "Cybernetic Governance Engine (CAGE) — Deployment & Infrastructure"
 document: "08-DEPLOYMENT-INFRASTRUCTURE"
-version: "2.0"
-date: "2026-06-03"
+version: "2.1"
+date: "2026-06-15"
 classification: "INTERNAL"
 ---
 
@@ -42,7 +42,8 @@ All services run in the `governance-stack` namespace. Full manifest inventory li
 | vLLM Reasoning             | `vllm-reasoning.yaml.tpl`      | —    | DeepSeek-R1-Distill-Llama-8B |
 | vLLM Fast                  | `vllm-fast.yaml.tpl`           | —    | Qwen/Qwen2.5-1.5B-Instruct   |
 | OPA                        | `deployment/k8s/opa.yaml`                     | —    | Policy engine                |
-| Redis                      | `deployment/k8s/redis-statefulset.yaml`       | 6379 | Checkpointing (db=0) + DEFER (db=1, noeviction) |
+| Redis (reads)              | `deployment/k8s/redis-statefulset.yaml`       | 6379 | Checkpointing (db=0) + DEFER (db=1, noeviction); load-balanced across all pods |
+| Redis (writes)             | `deployment/k8s/redis-master-service.yaml`    | 6379 | `redis-master` ClusterIP pinned to Sentinel primary (`redis-node-1`); write-only endpoint |
 | NeMo                       | `deployment/k8s/nemo.yaml`                    | —    | Guardrails server            |
 | MinIO                      | `deployment/k8s/minio.yaml`                   | —    | Model weight storage         |
 | Langfuse Web               | `deployment/k8s/langfuse-web.yaml`            | —    | Observability UI             |
@@ -58,6 +59,7 @@ All services run in the `governance-stack` namespace. Full manifest inventory li
 - `deployment/k8s/service-account.yaml` — Workload Identity binding for GCP APIs
 - `deployment/k8s/tensorize-job.yaml` — Kubernetes Job converting model weights to Tensorizer format on MinIO
 - `deployment/k8s/redis-config.yaml` — Redis ConfigMap enforcing `maxmemory-policy noeviction` for db=1 DEFER state safety
+- `deployment/k8s/redis-master-service.yaml` — ClusterIP Service pinned to the Sentinel primary pod (`redis-node-1`) for write traffic isolation
 
 **Vendor Integration Package (`src/integrations/`)**
 
@@ -72,7 +74,7 @@ See [`EXTENSIBILITY_ARCHITECTURE.md §2.6`](../../docs/architecture/EXTENSIBILIT
 
 ### Redis Deployment Hardening (v2.1.0)
 
-Source: `deployment/k8s/redis-config.yaml`, `deployment/k8s/redis-statefulset.yaml`, `deployment/k8s/NAMESPACE-GUIDE.md`
+Source: `deployment/k8s/redis-config.yaml`, `deployment/k8s/redis-statefulset.yaml`, `deployment/k8s/redis-master-service.yaml`, `deployment/k8s/NAMESPACE-GUIDE.md`
 
 The Redis StatefulSet has been hardened to support the DEFER state machine's fail-closed requirement. When CAGE enters an ambiguous gating state ($0.70 \le \text{Score} < 0.95$), the transaction token parked in Redis `db=1` must **never** be silently evicted.
 
@@ -86,6 +88,46 @@ The Redis StatefulSet has been hardened to support the DEFER state machine's fai
 | Image                           | `redis/redis-stack-server:latest` | Includes RedisJSON module for structured DEFER token storage    |
 | `db=0`                          | LangGraph checkpoints         | Standard caching namespace                                       |
 | `db=1`                          | DEFER state machine tokens    | High-assurance namespace — noeviction enforced                   |
+
+#### Redis Sentinel Primary Routing Service (commit `e647ea3`)
+
+Source: [`deployment/k8s/redis-master-service.yaml`](../../deployment/k8s/redis-master-service.yaml)
+
+**Problem:** The existing `svc/redis` Service selects **all** `redis-node` pods (primary + replicas) and load-balances across them. When a client lands on a replica, every write command (`SET`, `INCRBY`, `DEL`) fails with:
+
+```
+redis.exceptions.ReadOnlyError: You can't write against a read only replica.
+```
+
+This caused intermittent failures in the fiscal limit guard (`INCRBY` daily counter) and LangGraph checkpointing writes.
+
+**Solution:** A dedicated `redis-master` ClusterIP Service was added that uses the `statefulset.kubernetes.io/pod-name` label — automatically applied by Kubernetes to every StatefulSet pod — to pin traffic to a single named pod (the current Sentinel primary).
+
+**Two-endpoint write/read pattern:**
+
+| Endpoint          | Service               | Selector                                              | Purpose                          |
+| ----------------- | --------------------- | ----------------------------------------------------- | -------------------------------- |
+| `redis-master:6379` | `redis-master` (new)  | `statefulset.kubernetes.io/pod-name: redis-node-1`    | **Write traffic only** — pinned to Sentinel primary; eliminates `ReadOnlyError` |
+| `redis:6379`      | `redis` (existing)    | `app.kubernetes.io/name: redis` (all pods)            | **Read traffic** — load-balanced across primary + replicas |
+
+**Sentinel failover procedure:** The Bitnami Redis Sentinel chart does **not** add a dynamic role label to pods after a failover. If Sentinel elects a new primary, the Service selector must be updated manually:
+
+```bash
+# 1. Find the current primary via Sentinel:
+kubectl exec -n governance-stack redis-node-0 -c sentinel -- \
+  redis-cli -p 26379 -a "$(kubectl get secret redis -n governance-stack \
+    -o jsonpath='{.data.redis-password}' | base64 -d)" \
+  SENTINEL masters | grep -A1 '^ip$'
+
+# 2. Map the IP to a pod name:
+kubectl get pods -n governance-stack -o wide | grep redis-node
+
+# 3. Patch the selector to the new primary:
+kubectl patch svc redis-master -n governance-stack \
+  -p '{"spec":{"selector":{"statefulset.kubernetes.io/pod-name":"redis-node-X"}}}'
+```
+
+> **Current primary (as of 2026-06-15):** `redis-node-1`. The `scripts/setup_test_env.sh` port-forward script targets `svc/redis-master` for local development to ensure write commands succeed.
 
 ---
 
@@ -136,10 +178,38 @@ Source: `deployment/docker/`
 | --------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | Gateway                     | `deployment/docker/cloudbuild.gateway.yaml`                                               | `gcr.io/laah-cybernetics/gateway:latest` — Hybrid Gateway image           |
 | Governed Financial Advisor  | `deployment/docker/cloudbuild.advisor.yaml`                                               | `gcr.io/laah-cybernetics/governed-financial-advisor:latest` — Advisor image |
-| vLLM                        | `deployment/docker/cloudbuild.vllm.yaml`                                                  | vLLM inference image                                                      |
+| Compliance Bridge           | `deployment/docker/cloudbuild.compliance.yaml`                                            | `gcr.io/$PROJECT_ID/compliance-bridge:latest` — Compliance Bridge image   |
+| AgentSight UI               | `deployment/docker/cloudbuild.ui.yaml`                                                    | `gcr.io/$PROJECT_ID/agentsight-ui:latest` — React dashboard image         |
+| vLLM                        | `deployment/docker/cloudbuild.vllm.yaml`                                                  | `gcr.io/$PROJECT_ID/vllm-streamer:latest` — vLLM inference image          |
 | Lula                        | `deployment/docker/cloudbuild.lula.yaml`                                                  | Lula compliance validator image                                           |
 
 **Build flow**: Cloud Build trigger → Docker build → push to GCR (`gcr.io/laah-cybernetics/`) → update Kubernetes Deployment via `kubectl rollout`.
+
+### `$_SHORT_SHA` Substitution Fix (commit `e647ea3`)
+
+Cloud Build configs `cloudbuild.compliance.yaml`, `cloudbuild.ui.yaml`, and `cloudbuild.vllm.yaml` were updated to replace bare `$SHORT_SHA` (a built-in Cloud Build variable only available in trigger-based runs) with the user-defined substitution `$_SHORT_SHA`.
+
+**Problem:** When submitting builds via `gcloud builds submit` from the CLI (without a trigger), the built-in `$SHORT_SHA` variable is undefined, causing the image tag to resolve to an empty string and the build to fail.
+
+**Fix:** Each affected config now declares `_SHORT_SHA: "latest"` in its `substitutions` block. This means:
+
+| Invocation method | `$_SHORT_SHA` resolves to | Result |
+| ----------------- | ------------------------- | ------ |
+| `gcloud builds submit` (no `--substitutions`) | `"latest"` (default) | Tags image as `:latest` — safe for dev/manual builds |
+| `gcloud builds submit --substitutions=_SHORT_SHA=$(git rev-parse --short HEAD)` | short git SHA | Tags image with specific SHA — for traceability |
+| Cloud Build trigger (automatic) | short git SHA from trigger | Tags image with specific SHA — standard CI flow |
+
+```yaml
+# Pattern applied to cloudbuild.compliance.yaml, cloudbuild.ui.yaml, cloudbuild.vllm.yaml:
+substitutions:
+  _SHORT_SHA: "latest"   # defaults to :latest for CLI submissions
+
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - '--tag=gcr.io/$PROJECT_ID/<image>:latest'
+      - '--tag=gcr.io/$PROJECT_ID/<image>:$_SHORT_SHA'
+```
 
 **2026-06-03 deployment:** Both application images were built via Cloud Build and deployed to GKE cluster `gke_laah-cybernetics_us-central1-a_cage-dev`, namespace `governance-stack`. No Terraform/infrastructure files were modified. All pods verified running and healthy.
 
@@ -265,6 +335,46 @@ Langfuse is self-hosted **v3** on GKE backed by **ClickHouse + MinIO** (and Clou
 
 The worker HPA scales Langfuse worker pods automatically under trace ingestion bursts, ensuring observability data is not dropped during high-throughput governance events.
 
+### ClickHouse PSA-Compliant Security Context (commit `e647ea3`)
+
+Source: [`deployment/k8s/langfuse-db.yaml`](../../deployment/k8s/langfuse-db.yaml)
+
+The ClickHouse StatefulSet in `deployment/k8s/langfuse-db.yaml` was updated to add a Pod Security Admission (PSA) compliant `securityContext` at both the pod and container levels. This is a security hardening measure required for the `governance-stack` namespace, which enforces the `restricted` PSA profile (see `deployment/k8s/pod-security-admission.yaml`).
+
+**Pod-level `securityContext` added:**
+
+```yaml
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 101
+  seccompProfile:
+    type: RuntimeDefault
+```
+
+**Container-level `securityContext` added:**
+
+```yaml
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  runAsNonRoot: true
+  runAsUser: 101
+  seccompProfile:
+    type: RuntimeDefault
+```
+
+| Control                    | Value              | PSA Requirement Satisfied                                      |
+| -------------------------- | ------------------ | -------------------------------------------------------------- |
+| `runAsNonRoot`             | `true`             | Prevents container from running as UID 0                       |
+| `runAsUser`                | `101`              | ClickHouse default non-root UID                                |
+| `allowPrivilegeEscalation` | `false`            | Blocks `setuid`/`setgid` privilege escalation                  |
+| `capabilities.drop`        | `ALL`              | Drops all Linux capabilities; none re-added                    |
+| `seccompProfile.type`      | `RuntimeDefault`   | Applies the container runtime's default seccomp filter profile |
+
+> **ISO/IEC 42001:2023 alignment (universal):** These controls satisfy the ISO 42001 security hardening requirements applicable to all deployment regions. **CSA AARM** vector coverage is maintained. No region-specific compliance framework is implicated by this change — the `restricted` PSA profile applies uniformly across US_FED, EU_ECB, and APAC_MAS deployments.
+
 ---
 
 ## Storage Architecture
@@ -316,7 +426,7 @@ Every secure generation node in a multi-agent system incurs a "Governance Tax" (
 2. **Policy Evaluation (OPA):** ~10-50ms (Sidecar network hop + Rego eval).
 3. **Syntactic Enforcement (vLLM FSM):** ~50ms (with Prefix Caching).
 
-To maintain an end-to-end transaction latency **< 200ms** (mandated by the ISO-20022 banking SLA and enforced by STPA threshold `stpa.max_latency_ms = 200.0` for US / `150.0` for EU), CAGE treats latency as a currency. We optimize our inference and networking layers to generate tokens fast enough to "pay for" these security checks.
+To maintain an end-to-end transaction latency **< 200ms** (mandated by the ISO-20022 banking SLA and enforced by STPA threshold `stpa.max_latency_ms = 200.0`; `150.0` applies under EU_ECB jurisdiction [EU_ECB only]), CAGE treats latency as a currency. We optimize our inference and networking layers to generate tokens fast enough to "pay for" these security checks.
 
 ### 10.2 Layered Latency Mitigation Controls
 
@@ -369,7 +479,7 @@ The following table documents the typical per-request latency budget for a gover
 | **Tier 4** | OPA Policy Evaluation | ~10-50ms | **1000ms timeout** | Circuit breaker; bankruptcy at 3000ms cumulative |
 | **Tier 5** | Multi-Agent Consensus | ~200ms | ~3000ms | Parallel `asyncio.gather`; skip if < $10k threshold |
 | **Tier 6** | DoWhy Causal Gatekeeper | ~100ms | 500ms | 50 simulations; fail-open on import error |
-| **Step 8** | FRIA Attestation (EU only) | <1ms | 1ms | Non-blocking span attribute stamp |
+| **Step 8** | FRIA Attestation [EU_ECB only] | <1ms | 1ms | Non-blocking span attribute stamp |
 | **Network** | Inference Proxy → vLLM | <10ms | 50ms | httpx connection pooling; keep-alive |
 | **Inference** | vLLM TTFT (Prefix-Cached) | ~40ms | 200ms | Prefix caching; governance prompt reuse |
 | **Total** | End-to-end governance overhead | ~200ms | ~3000ms (bankruptcy) | Layered mitigations keep typical well under SLA |

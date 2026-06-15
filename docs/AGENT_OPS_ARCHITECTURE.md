@@ -3,7 +3,8 @@
 > **Core Principle:** Separate the control plane (policy) from the data plane (execution capability) to create enforceable AI governance.
 
 **Version:** v2.0.0-rc.2 (promoted 2026-06-03)
-**Primary Compliance:** ISO/IEC 42001:2023 · SR 26-2 (Federal Reserve, April 17, 2026) · CSA AARM v1.0
+**Universal Compliance Baseline:** ISO/IEC 42001:2023 · CSA AARM v1.0 *(all deployment regions)*
+**Jurisdiction-Specific Addenda:** SR 26-2 / NIST AI 600-1 / NIST SP 800-53 *(US_FED only)* · EU AI Act / GDPR / DORA *(EU_ECB only)* · MAS FEAT / MAS Notice 655 *(APAC_MAS only)*
 
 ## Architecture Pattern
 
@@ -228,16 +229,23 @@ If `post_hitl_revalidate` fails (market conditions changed), the trade is blocke
 
 ## Compliance Mapping
 
-This architecture directly supports regulatory requirements:
+This architecture directly supports regulatory requirements. Controls are grouped by jurisdiction to make regional applicability explicit.
+
+### Universal Controls (All Deployment Regions)
 
 | Requirement | Policy Layer | Capability Layer |
 |-------------|--------------|------------------|
 | **ISO 42001 A.5.2** (AI deployment control) | Documents approved deployment methods | Enforces approved methods via typed API |
+| **CSA AARM v1.0** (AI agent threat model) | 11-vector threat coverage documented | DEFER queue (V7), context accumulator (V1), consensus (V10) |
+
+### US_FED Jurisdiction Controls (`CAGE_DEPLOYMENT_REGION=US_FED`)
+
+| Requirement | Policy Layer | Capability Layer |
+|-------------|--------------|------------------|
 | **SR 26-2 §IV** (Agentic AI MRM, Federal Reserve, April 17, 2026) | Defines model risk management for agentic systems | HITL TOCTOU remediation; DEFER queue; KMS signing |
 | **NIST AI RMF** (Controlled deployment) | Defines when/why to use each method | Ensures consistent execution |
-| **SOC 2 CC8.1** (Change management) | Establishes change procedures | Logs all deployment actions |
 | **NIST SP 800-53 CM-2** (Baseline configuration) | Documents infrastructure patterns | Prevents configuration drift |
-| **CSA AARM v1.0** (AI agent threat model) | 11-vector threat coverage documented | DEFER queue (V7), context accumulator (V1), consensus (V10) |
+| **SOC 2 CC8.1** (Change management) | Establishes change procedures | Logs all deployment actions |
 
 ## Real-World Example: GKE Deployment
 

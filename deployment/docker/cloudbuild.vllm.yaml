@@ -29,7 +29,8 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 substitutions:
-  _HF_TOKEN: ""   # Override via --substitutions=_HF_TOKEN=hf_xxx at submit time
+  _HF_TOKEN: ""      # Override via --substitutions=_HF_TOKEN=hf_xxx at submit time
+  _SHORT_SHA: "latest"  # Override via --substitutions=_SHORT_SHA=$(git rev-parse --short HEAD)
 
 steps:
   - name: 'gcr.io/cloud-builders/docker'
@@ -40,7 +41,7 @@ steps:
       - '--no-cache'
       - '--build-arg=HF_TOKEN=${_HF_TOKEN}'
       - '--tag=gcr.io/$PROJECT_ID/vllm-streamer:latest'
-      - '--tag=gcr.io/$PROJECT_ID/vllm-streamer:$SHORT_SHA'
+      - '--tag=gcr.io/$PROJECT_ID/vllm-streamer:$_SHORT_SHA'
       - '.'
 
   - name: 'gcr.io/cloud-builders/docker'
@@ -49,7 +50,7 @@ steps:
 
 images:
   - 'gcr.io/$PROJECT_ID/vllm-streamer:latest'
-  - 'gcr.io/$PROJECT_ID/vllm-streamer:$SHORT_SHA'
+  - 'gcr.io/$PROJECT_ID/vllm-streamer:$_SHORT_SHA'
 
 # vLLM base image is large (~10 GB); allow up to 40 minutes.
 timeout: '2400s'

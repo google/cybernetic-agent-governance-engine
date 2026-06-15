@@ -4,6 +4,8 @@ This document outlines three key cybernetic mechanisms that power the Cybernetic
 
 These features bridge the gap between probabilistic AI output and deterministic safety guardrails, enabling real-time, mathematically grounded policy enforcement.
 
+> **Jurisdiction separation principle:** **ISO/IEC 42001:2023 is the sole universal governance baseline.** The CBF (`CTRL_MRM_004`) and DoWhy Causal Gatekeeper are ISO 42001 §A.9.4 obligations active in **all regions**. The SR 26-2 Model Risk Management (MRM) scope for these components applies **US_FED only** (`CAGE_DEPLOYMENT_REGION=US_FED`). NIST AI RMF MEASURE-2.6 applies **US_FED only**. EU_ECB and APAC_MAS deployments satisfy equivalent obligations via ISO 42001 §A.9.4 and their respective jurisdiction-specific frameworks.
+
 ---
 
 ## 1. Structural Causal Models (SCM) & Causal Gatekeeper
@@ -15,12 +17,25 @@ Generative AI models can hallucinate or degrade in unstable environments. The Ga
 
 ## Compliance Mapping
 
+### Universal Controls (All Deployment Regions — ISO 42001 Baseline)
+
 | Governance Control | Framework | Component | Notes |
 |---|---|---|---|
-| `CTRL_MRM_004` (THR-MRM-004) | SR 26-2 §IV — Model Risk Management | CBF (`safety.py`), DoWhy statistical kernel (`causal_gatekeeper.py` Phase 1) | Deterministic quantitative models: fixed formula + static γ decay; linear regression coefficient estimation |
-| `CTRL_TEL_003` (THR-TEL-003) | ISO 42001 §A.9.4 / DORA Art. 10 | DoWhy placebo refutation (`causal_gatekeeper.py` Phase 2), `telemetry_provider.py` | Agentic operational check: live Langfuse telemetry, 50 simulations per trade |
-| `CTRL_AGT_001` (THR-CONF-001) | ISO 42001 §A.5.2 | `symbolic_governor.py` confidence threshold | Agentic AI bounding — supersedes SR 26-2 §IV.B agentic scope exclusion |
-| NIST AI RMF MEASURE-2.6 | NIST AI RMF | DoWhy refutation (both phases) | Continuous world-model validation against live production telemetry |
+| `CTRL_TEL_003` (THR-TEL-003) | **ISO 42001 §A.9.4** | DoWhy placebo refutation (`causal_gatekeeper.py` Phase 2), `telemetry_provider.py` | Agentic operational check: live Langfuse telemetry, 50 simulations per trade *(All Regions)* |
+| `CTRL_AGT_001` (THR-CONF-001) | **ISO 42001 §A.5.2** | `symbolic_governor.py` confidence threshold | Agentic AI bounding *(All Regions)* |
+
+### US_FED Jurisdiction Controls (`CAGE_DEPLOYMENT_REGION=US_FED`)
+
+| Governance Control | Framework | Component | Notes |
+|---|---|---|---|
+| `CTRL_MRM_004` (THR-MRM-004) | **SR 26-2 §IV** — Model Risk Management (Federal Reserve, April 17, 2026) | CBF (`safety.py`), DoWhy statistical kernel (`causal_gatekeeper.py` Phase 1) | Deterministic quantitative models: fixed formula + static γ decay; linear regression coefficient estimation — **US_FED only** |
+| NIST AI RMF MEASURE-2.6 | **NIST AI RMF** | DoWhy refutation (both phases) | Continuous world-model validation against live production telemetry — **US_FED only** |
+
+### EU_ECB Jurisdiction Addendum (`CAGE_DEPLOYMENT_REGION=EU_ECB`)
+
+| Governance Control | Framework | Component | Notes |
+|---|---|---|---|
+| `CTRL_TEL_003` addendum | **DORA Art. 10** | `telemetry_provider.py` | DORA audit logging obligation for telemetry — **EU_ECB only** (addendum to ISO 42001 §A.9.4 base control) |
 
 All framework citations are stored in regional baseline profiles under `config/compliance/` (e.g., `US_FED_BASELINE.json`, `EU_ECB_BASELINE.json`, `APAC_MAS_BASELINE.json`) and resolved at runtime via `ControlRegistry`. The active profile is selected by the `CAGE_DEPLOYMENT_REGION` environment variable at boot. Python source files contain only stable `GovernanceControl` enum members — no hardcoded citation strings.
 
@@ -67,7 +82,7 @@ $$h(x_{t+1}) \geq 0$$
 
 If this condition is violated, the CBF emits a `[CTRL_MRM_004] SR 26-2 §IV — Model Risk Management Violation: Safety Violation (RBC/CBF)` structured violation message and is blocked. The CBF also concurrently enforces drawdown percentage limits defined in the `THRESHOLDS` singleton.
 
-The CBF formula is a **traditional, deterministic quantitative model** (fixed `min_cash_balance` floor, static `γ` decay parameter) with traceable mathematical inputs and measurable outputs — placing it squarely under **SR 26-2 Model Risk Management (CTRL_MRM_004)** scope, not agentic ISO 42001.
+The CBF formula is a **traditional, deterministic quantitative model** (fixed `min_cash_balance` floor, static `γ` decay parameter) with traceable mathematical inputs and measurable outputs. It is an ISO 42001 §A.9.4 obligation in all regions. For `US_FED` deployments, it additionally falls under **SR 26-2 Model Risk Management (`CTRL_MRM_004`)** scope — this MRM classification is **US_FED only** and does not apply to EU_ECB or APAC_MAS deployments.
 
 ### CBF Read-Only Verification
 

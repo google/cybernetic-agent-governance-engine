@@ -1,6 +1,23 @@
-o# Governance Crosswalk: Mapping Law to Logic
+# Governance Crosswalk: Mapping Law to Logic
 
 This document serves as the formal **Governance Crosswalk**, mapping high-level regulatory controls (ISO 42001, NIST RMF) to specific engineering artifacts (STPA Constraints, NeMo Rails, Rego Policies) within the Cybernetic Governance Engine, and to the **Lula validation manifests** that automatically verify compliance.
+
+## Jurisdiction Separation Principle
+
+**ISO/IEC 42001:2023 is the sole universal governance baseline.** Every control, pipeline step, and audit artifact in this document that is marked *All regions* applies to every deployment regardless of geography. All other regulatory frameworks are **additive, jurisdiction-specific layers** that are activated exclusively by the `CAGE_DEPLOYMENT_REGION` environment variable and impose no obligations on other regions.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  UNIVERSAL BASELINE (all regions: US_FED, EU_ECB, APAC_MAS)        │
+│  • ISO/IEC 42001:2023   • CSA AARM v1.0   • FIPS 140-2/3           │
+├──────────────────┬──────────────────────┬───────────────────────────┤
+│  US_FED addendum │  EU_ECB addendum     │  APAC_MAS addendum        │
+│  SR 26-2         │  EU AI Act 2024/1689 │  MAS FEAT Principles      │
+│  NIST AI 600-1   │  GDPR Art. 22        │  MAS Notice 655           │
+│  NIST SP 800-53  │  DORA 2022/2554      │  MAS TRM §4.2             │
+│  NIST RMF        │                      │                           │
+└──────────────────┴──────────────────────┴───────────────────────────┘
+```
 
 ## Regional Applicability
 
@@ -8,18 +25,20 @@ Different regulatory frameworks apply to different deployment regions. The table
 
 | Framework | Regional Applicability | Deployment Region(s) |
 | :-------- | :--------------------- | :------------------- |
+| **ISO/IEC 42001:2023** | **Universal baseline** | `US_FED`, `EU_ECB`, `APAC_MAS` |
+| **CSA AARM v1.0** | **Universal baseline** | `US_FED`, `EU_ECB`, `APAC_MAS` |
+| **FIPS 140-2/3** | **Universal baseline** | `US_FED`, `EU_ECB`, `APAC_MAS` |
+| **SR 26-2** (Federal Reserve, April 17, 2026) | **US_FED only** | `US_FED` |
+| **NIST AI 600-1** | **US_FED only** | `US_FED` |
 | **NIST SP 800-53 Rev 5** | **US_FED only** | `US_FED` |
 | **NIST RMF (SP 800-37)** | **US_FED only** | `US_FED` |
-| **ISO/IEC 42001:2023** | All regions | `US_FED`, `EU_ECB`, `APAC_MAS` |
-| **CSA AARM v1.0** | All regions | `US_FED`, `EU_ECB`, `APAC_MAS` |
-| **FIPS 140-2/3** | All regions | `US_FED`, `EU_ECB`, `APAC_MAS` |
 | **EU AI Act** (Reg. 2024/1689) | **EU_ECB only** | `EU_ECB` |
 | **DORA** (Reg. 2022/2554) | **EU_ECB only** | `EU_ECB` |
 | **GDPR Article 22** | **EU_ECB only** | `EU_ECB` |
 | **MAS FEAT Principles** | **APAC_MAS only** | `APAC_MAS` |
 | **MAS Notice 655 / MAS TRM** | **APAC_MAS only** | `APAC_MAS` |
 
-> **Note:** NIST SP 800-53 controls referenced in the crosswalk table below (e.g., `NIST Manage 2.4`, `NIST Map 1.5`) apply **only when `CAGE_DEPLOYMENT_REGION=US_FED`**. For `EU_ECB` deployments, equivalent obligations are satisfied via ISO 42001 and EU AI Act controls. For `APAC_MAS` deployments, equivalent obligations are satisfied via ISO 42001 and MAS FEAT controls.
+> **Note:** NIST SP 800-53 controls referenced in the crosswalk table below (e.g., `NIST Manage 2.4`, `NIST Map 1.5`) apply **only when `CAGE_DEPLOYMENT_REGION=US_FED`**. For `EU_ECB` deployments, equivalent obligations are satisfied via ISO 42001 and EU AI Act controls. For `APAC_MAS` deployments, equivalent obligations are satisfied via ISO 42001 and MAS FEAT controls. No US_FED, EU_ECB, or APAC_MAS obligation is imposed on deployments in other regions.
 
 ## The Crosswalk Table
 

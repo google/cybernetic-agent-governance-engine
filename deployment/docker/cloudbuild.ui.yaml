@@ -1,3 +1,10 @@
+# Substitutions:
+#   _SHORT_SHA — short git SHA for image tagging.
+#                Defaults to "latest" for CLI submissions without --substitutions.
+#                Override via: --substitutions=_SHORT_SHA=$(git rev-parse --short HEAD)
+substitutions:
+  _SHORT_SHA: "latest"
+
 steps:
   # Build the agentsight-ui image using its dedicated Dockerfile.
   # Build context is repo root so COPY instructions in the Dockerfile work correctly.
@@ -9,7 +16,7 @@ steps:
       - '--no-cache'
       - '--file=src/agentsight-ui/Dockerfile'
       - '--tag=gcr.io/$PROJECT_ID/agentsight-ui:latest'
-      - '--tag=gcr.io/$PROJECT_ID/agentsight-ui:$SHORT_SHA'
+      - '--tag=gcr.io/$PROJECT_ID/agentsight-ui:$_SHORT_SHA'
       - '.'
 
   - name: 'gcr.io/cloud-builders/docker'
@@ -18,7 +25,7 @@ steps:
 
 images:
   - 'gcr.io/$PROJECT_ID/agentsight-ui:latest'
-  - 'gcr.io/$PROJECT_ID/agentsight-ui:$SHORT_SHA'
+  - 'gcr.io/$PROJECT_ID/agentsight-ui:$_SHORT_SHA'
 
 timeout: '1200s'
 options:

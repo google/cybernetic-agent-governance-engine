@@ -56,9 +56,25 @@ spec:
                 operator: NotIn
                 values:
                 - "true"
+      # PSA restricted compliance: pod-level security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: clickhouse
         image: clickhouse/clickhouse-server:24.3
+        # PSA restricted compliance: container-level security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          runAsNonRoot: true
+          runAsUser: 101
+          seccompProfile:
+            type: RuntimeDefault
         env:
         - name: CLICKHOUSE_PASSWORD
           valueFrom:

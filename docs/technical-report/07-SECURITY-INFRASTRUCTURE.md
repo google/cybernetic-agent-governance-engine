@@ -2,8 +2,8 @@
 
 | Field              | Value                                           |
 | ------------------ | ----------------------------------------------- |
-| **Version**        | 2.1                                             |
-| **Date**           | 2026-06-03                                      |
+| **Version**        | 2.2                                             |
+| **Date**           | 2026-06-15                                      |
 | **Classification** | INTERNAL                                        |
 | **Document**       | CAGE Technical Report — Security Infrastructure |
 
@@ -28,6 +28,8 @@ CAGE implements a defense-in-depth security model across seven distinct layers. 
 > One **critical** open finding remains unresolved: unsigned FIPS 199 categorization (FIND-007). Two critical findings have been resolved: HMAC bypass vulnerability FIND-010 / POAM-012 is **CLOSED**, and intra-cluster mTLS FIND-011 / POAM-007 is **CLOSED** (Linkerd mTLS + Cilium L7 egress lockdown deployed).
 >
 > ✅ **v2.0.0-rc.2 Security Hardening Sprint (2026-06-03):** All four No-Direct-Bind architectural gaps have been closed. The `NoDirectBind` safety invariant is now machine-verified over the entire reachable state space. See §3a below and [Document 10 — Formal Verification](./10-FORMAL-VERIFICATION.md) §Step 7 for full details.
+>
+> ✅ **commit e959cc3 — Production Environment Hardening (2026-06-15):** Three additional fail-closed hardening measures have been applied: `CAGE_ENV` standardization across all production guards, fail-closed telemetry enforcement in the causal gatekeeper, and `StubNormativeProvider` production guard. See §3b, §3c, and §3d below.
 
 ---
 
@@ -128,6 +130,8 @@ Additionally, runtime exceptions during DoWhy refutation (e.g., numerical instab
 
 **Verification:** The formal proof confirms that the DoWhy-absent configuration preserves the structural `NoDirectBind` invariant (the seal path is intact), but the production startup assertion prevents this configuration from being reachable in production at all.
 
+> **Jurisdiction note:** The causal gatekeeper's Phase 1 statistical kernel (CTRL_MRM_004) is tagged with SR 26-2 MRM back-testing requirements `[US_FED only]`. Phase 2 placebo refutation (CTRL_TEL_003) is tagged with **ISO/IEC 42001:2023 §A.9.4** (universal). Regional profiles (`EU_ECB_BASELINE.json`, `APAC_MAS_BASELINE.json`) encode jurisdiction-correct citations via the `legacy_citation` / `primary_framework` fields; the `_NO_LEGAL_FORCE_MARKER` sentinel suppresses US-only citations in EU and APAC spans automatically.
+
 ### Remediation Status Summary
 
 | Gap | Description | Status | Enforcement Point |
@@ -136,6 +140,165 @@ Additionally, runtime exceptions during DoWhy refutation (e.g., numerical instab
 | Gap 2 | `govern()` path issued no seal | ✅ **CLOSED** | [`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) + [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) |
 | Gap 3 | `CBF_FAIL_OPEN=true` silently degraded gate | ✅ **CLOSED** | Module-level `RuntimeError` in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
 | Gap 4 | DoWhy absence silently removed Tier 6 | ✅ **CLOSED** | Module-level `RuntimeError` + fail-closed runtime handler in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
+
+---
+
+## 3b. Production Environment Hardening — `CAGE_ENV` Standardization (commit e959cc3)
+
+> **Classification:** Security Hardening — Pre-ATO Package Update
+> **Date:** 2026-06-15
+> **Commit:** `e959cc3`
+
+### Background
+
+Prior to this hardening, production detection logic was inconsistent across the gateway codebase. Some guards consulted `CAGE_ENV`, others fell back to a separate `ENVIRONMENT` variable, and some used neither. This created a **split-brain risk**: a pod could have `CAGE_ENV=production` set while `ENVIRONMENT` was absent or set to a non-production value, causing production guards (KMS activation, salt validation, seal enforcement, stub ledger prohibition) to be silently skipped.
+
+### Standardized Production Detection
+
+All production guards in [`src/gateway/server/hybrid_server.py`](../../src/gateway/server/hybrid_server.py) now use a single, consistent detection expression:
+
+```python
+cage_env = os.getenv("CAGE_ENV", "production").lower()
+_is_production = cage_env not in ("development", "test", "dev", "ci")
+```
+
+**Valid `CAGE_ENV` values and their effect:**
+
+| `CAGE_ENV` value | Treated as | Production guards active? |
+| ---------------- | ---------- | ------------------------- |
+| *(unset)*        | `production` (default) | ✅ Yes |
+| `production`     | Production | ✅ Yes |
+| `development`    | Non-production | ❌ No |
+| `dev`            | Non-production | ❌ No |
+| `test`           | Non-production | ❌ No |
+| `ci`             | Non-production | ❌ No |
+
+Any value not in the non-production set is treated as production. This is a **fail-safe default**: an unrecognized or missing value activates all production guards rather than silently disabling them.
+
+### Guards Unified Under `CAGE_ENV`
+
+The following startup guards in [`_gateway_lifespan()`](../../src/gateway/server/hybrid_server.py) now all derive `_is_production` from `CAGE_ENV` exclusively — the `ENVIRONMENT` variable is no longer consulted for any of these checks:
+
+| Guard | Failure Mode | Finding Addressed |
+| ----- | ------------ | ----------------- |
+| KMS signer activation (`assert_kms_active_in_production`) | `RuntimeError` at startup — pod crashes | H-05 |
+| Custom governance salt (`assert_custom_salt_in_production`) | `RuntimeError` at startup — pod crashes | C-04 |
+| `CAGE_SEAL_ENFORCEMENT=log` prohibition | `RuntimeError` at startup — pod crashes | BLOCKER-03 |
+| Stub ledger provider prohibition (`RECONCILIATION_PROVIDER=stub`) | `RuntimeError` at startup — pod crashes | BLOCKER-06 |
+
+The `/debug/*` endpoint guard in [`_DebugEndpointGuard`](../../src/gateway/server/hybrid_server.py) uses the same `CAGE_ENV` variable (allowing `dev`, `test`, `local`) to gate internal governance state exposure.
+
+### Security Significance
+
+This change eliminates the split-brain attack surface where an operator could set `ENVIRONMENT=development` (or leave it unset) while `CAGE_ENV=production` was active, bypassing all startup guards. The `ENVIRONMENT` variable is now **deprecated** for production detection purposes throughout the gateway. All new guards must use `CAGE_ENV`.
+
+---
+
+## 3c. Fail-Closed Telemetry Enforcement in Causal Gatekeeper (commit e959cc3)
+
+> **Classification:** Security Hardening — Governance Tier Integrity
+> **Date:** 2026-06-15
+> **Commit:** `e959cc3`
+> **Affected Component:** [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) — Tier 6 (DoWhy Causal Gate)
+
+### Background
+
+The causal gatekeeper (Tier 6 of the 7-tier governance pipeline) validates that the system's world-model is trustworthy before permitting high-stakes trade execution. It requires live telemetry — sourced from Langfuse governance spans — to run its DoWhy placebo refutation.
+
+Prior to this hardening, if `causal_safety_check()` was called with `current_telemetry=None` (i.e., no live telemetry was provided), the function silently fell back to **synthetic mock data** generated with a fixed `np.random.seed(42)`. This fallback had two critical security properties:
+
+1. **Predictable outputs**: The fixed seed produces identical telemetry on every call. An adversary who knew the seed could craft trade parameters that always pass the causal check against the synthetic data, regardless of actual market conditions.
+2. **Silent degradation**: The governance pipeline appeared to run Tier 6 normally while actually evaluating against fabricated data — providing false assurance of causal safety.
+
+### Remediation
+
+[`causal_safety_check()`](../../src/gateway/governance/causal_gatekeeper.py) now applies environment-aware fail-closed logic when `current_telemetry` is `None`:
+
+```python
+if current_telemetry is None:
+    _cage_env = os.getenv("CAGE_ENV", "production").lower()
+    if _cage_env not in ("development", "test", "dev", "ci"):
+        logger.error(
+            "causal_safety_check: no live telemetry provided in production "
+            "(CAGE_ENV=%s) — failing closed. Ensure LangfuseTelemetryProvider "
+            "is configured and returning data before calling this function.",
+            _cage_env,
+        )
+        return False   # ← DENY: fail closed
+    # dev/test only: fall back to mock data with warning
+    current_telemetry = generate_mock_telemetry()
+```
+
+**Behaviour by environment:**
+
+| `CAGE_ENV` | Telemetry absent | Result |
+| ---------- | ---------------- | ------ |
+| `production` (or unset) | No live telemetry | **DENY** — `return False` (fail closed) |
+| `development` / `dev` / `test` / `ci` | No live telemetry | **WARN** — falls back to `generate_mock_telemetry()` |
+
+The mock fallback (`generate_mock_telemetry()`) is retained for dev/test environments where a live Langfuse instance is not available. However, it is now **unreachable in production** — any production call without live telemetry returns `False` immediately, causing the governance pipeline to return `DENIED`.
+
+### Telemetry Freshness (Pre-existing Fail-Closed)
+
+In addition to the missing-telemetry guard, the existing `_check_telemetry_freshness()` helper enforces that the most-recent observation in the provided telemetry is not older than `TELEMETRY_MAX_STALENESS_SECONDS` (default: 300 seconds). Stale telemetry also causes a fail-closed `return False`. This freshness check is independent of the missing-telemetry guard and applies in all environments.
+
+### ISO 42001 Alignment
+
+This hardening directly supports **ISO/IEC 42001:2023 §A.9.4** (AI system operational monitoring) by ensuring that the causal validation tier always operates against real, fresh operational data in production — never against predictable synthetic data that could be gamed.
+
+---
+
+## 3d. `StubNormativeProvider` Production Guard (commit e959cc3)
+
+> **Classification:** Security Hardening — Governance Fail-Safe
+> **Date:** 2026-06-15
+> **Commit:** `e959cc3`
+> **Affected Component:** [`src/gateway/governance/normative_provider.py`](../../src/gateway/governance/normative_provider.py)
+
+### Background
+
+The `StubNormativeProvider` is a development-only implementation of the `NormativeProvider` protocol. Its `validate_fria()` method unconditionally returns `admitted=True` — meaning every FRIA boundary check passes without any external validation. This is intentional for dev/CI environments where the external normative provider (e.g. TrustLayers) is not reachable.
+
+Prior to this hardening, `StubNormativeProvider` could be instantiated in any environment, including production. If `CAGE_NORMATIVE_PROVIDER=static` (the default) was left unchanged in a production deployment, the adaptive FRIA gating mechanism would silently operate against the stub — admitting all transactions regardless of their compliance posture.
+
+### Remediation
+
+[`StubNormativeProvider.__init__()`](../../src/gateway/governance/normative_provider.py) now raises `RuntimeError` at construction time if instantiated in a production environment:
+
+```python
+def __init__(self) -> None:
+    _cage_env = os.getenv("CAGE_ENV", "production").lower()
+    _is_production = _cage_env not in ("development", "test", "dev", "ci")
+
+    if _is_production:
+        raise RuntimeError(
+            "StubNormativeProvider cannot be used in production "
+            f"(CAGE_ENV={_cage_env!r}). "
+            "Set CAGE_NORMATIVE_PROVIDER to a real provider name "
+            "(e.g. CAGE_NORMATIVE_PROVIDER=trustlayers) and ensure the "
+            "provider credentials are configured."
+        )
+```
+
+Because `StubNormativeProvider` is the implementation behind `CAGE_NORMATIVE_PROVIDER=static` (the default), this guard means that **a production deployment with the default provider configuration will fail at startup** rather than silently running with stub governance.
+
+**Behaviour by environment:**
+
+| `CAGE_ENV` | `CAGE_NORMATIVE_PROVIDER` | Result |
+| ---------- | ------------------------- | ------ |
+| `production` (or unset) | `static` (default) | `RuntimeError` at construction — pod crashes |
+| `production` (or unset) | `trustlayers` or `nexart` | Real provider instantiated — normal operation |
+| `development` / `dev` / `test` / `ci` | `static` | Stub instantiated with `WARNING` log |
+
+### Security Significance
+
+This guard closes the silent-stub attack surface: an operator who forgets to configure `CAGE_NORMATIVE_PROVIDER` in production will receive an immediate, unambiguous startup failure rather than a system that appears healthy while providing no real normative validation. The error message explicitly names the required corrective action.
+
+This is consistent with the existing pattern of production startup assertions for KMS signing, governance salt, seal enforcement mode, and stub ledger provider (see §3b).
+
+### ISO 42001 Alignment
+
+This hardening supports **ISO/IEC 42001:2023 §A.6.1** (AI risk management) and **§A.9.2** (AI system controls) by ensuring that the external normative validation gate — a mandatory component of the adaptive FRIA enforcement mechanism — cannot be silently bypassed in production through a default configuration.
 
 ---
 
@@ -463,7 +626,7 @@ CAGE v2.0.0 introduces a **Cryptographic Context Accumulator** (`src/compliance_
 
 ### 9.2 CVE-2025-69872 Remediation (`outlines` Package Removal)
 
-The `outlines` Python package was removed from all CAGE container images following the discovery of **CVE-2025-69872** (critical severity). This remediation satisfies **NIST SP 800-53 SI-2 (Flaw Remediation)** and is validated by the `compliance/lula/lula-validation-si2.yaml` Lula manifest.
+The `outlines` Python package was removed from all CAGE container images following the discovery of **CVE-2025-69872** (critical severity). This remediation satisfies **ISO/IEC 42001:2023 §A.9.3** (AI system vulnerability management) universally, and additionally satisfies **NIST SP 800-53 SI-2 (Flaw Remediation)** `[US_FED only]` as validated by the `compliance/lula/lula-validation-si2.yaml` Lula manifest.
 
 | Attribute | Value |
 | --------- | ----- |
@@ -471,7 +634,8 @@ The `outlines` Python package was removed from all CAGE container images followi
 | **Severity** | Critical |
 | **Affected Package** | `outlines` (structured output library) |
 | **Remediation** | Package removed from all images; vLLM FSM guided decoding used for `ExecutionPlan` schema compliance |
-| **NIST Control** | SI-2 (Flaw Remediation) |
+| **Universal Control** | ISO/IEC 42001:2023 §A.9.3 (AI system vulnerability management) — all regions |
+| **US_FED Control** | NIST SP 800-53 SI-2 (Flaw Remediation) `[US_FED only]` |
 | **Status** | **RESOLVED** |
 
 ---
