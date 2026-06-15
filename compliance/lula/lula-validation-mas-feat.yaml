@@ -1,0 +1,82 @@
+# lula-validation-mas-feat.yaml
+# MAS FEAT — Fairness, Ethics, Accountability, Transparency Assessment
+#
+# Asserts that the CAGE system satisfies the Monetary Authority of Singapore
+# (MAS) FEAT Principles for responsible use of AI and data analytics in
+# financial services.
+#
+# Domain: api → compliance-bridge (Python FastAPI service)
+# Provider: opa (inline Rego)
+#
+# Regulatory basis: MAS FEAT Principles (November 2019)
+# Jurisdiction: APAC_MAS (CAGE_DEPLOYMENT_REGION=APAC_MAS)
+# POAM: APAC-MAS-FEAT-001
+
+metadata:
+  annotations:
+    cage.region: APAC_MAS
+    cage.compliance-posture: mas-feat
+    cage.posture-note: "MAS FEAT is an APAC_MAS posture requirement. This validation MUST NOT run for US_FED or EU_ECB deployments."
+
+domain:
+  type: api
+  api-spec:
+    endpoints:
+      - name: mas_feat_status
+        url: "http://compliance-bridge.governance-stack.svc.cluster.local/v1/compliance/mas/feat"
+        method: GET
+
+provider:
+  type: opa
+  opa-spec:
+    rego: |
+      package lula
+
+      import future.keywords.if
+
+      # MAS FEAT: Fairness, Ethics, Accountability, Transparency
+      # Asserts that:
+      #   1. Fairness Impact Assessment (FIA) is active and current
+      #   2. Demographic parity gap is within MAS FEAT F2 threshold (8%)
+      #   3. Accountability controls are documented (human oversight chain)
+      #   4. Transparency reporting is current (within 180-day interval)
+      #   5. Ethics review has been performed within the required cadence
+
+      # Rule 1: Fairness assessment active with metrics within threshold
+      validate if {
+        input.mas_feat_status.fairness_impact_assessment_active == true
+        input.mas_feat_status.demographic_parity_gap <= 0.08
+        input.mas_feat_status.accountability_controls_documented == true
+        input.mas_feat_status.transparency_report_days_since_last <= 180
+        input.mas_feat_status.evidence_age_seconds < 172800
+      }
+
+      # Rule 2: Ethics review and explainability active
+      validate if {
+        input.mas_feat_status.fairness_impact_assessment_active == true
+        input.mas_feat_status.ethics_review_days_since_last <= 365
+        input.mas_feat_status.explainability_mechanism_active == true
+        input.mas_feat_status.evidence_age_seconds < 172800
+      }
+
+notes: >
+  MAS FEAT Principles: Fairness, Ethics, Accountability, Transparency.
+  The Monetary Authority of Singapore (MAS) FEAT Principles (November 2019)
+  apply to financial institutions using AI and data analytics in Singapore.
+  CAGE is subject to FEAT as a High-Risk AI system in financial services.
+  Key FEAT requirements:
+  - Fairness (F1): Regular testing for bias across protected characteristics
+    (gender, race, ethnicity, age, disability, nationality, religion,
+    marital_status per APAC_MAS_BASELINE.json)
+  - Fairness (F2): Quantitative fairness metric — 8% demographic parity gap
+    tolerance (APAC_MAS_BASELINE.json bias_threshold_demographic_parity)
+  - Ethics (E1): Ethical review of AI system design and deployment
+  - Accountability (A1): Defined human oversight responsibilities
+  - Transparency (T2): Periodic transparency reporting to MAS (180-day interval
+    per APAC_MAS_BASELINE.json transparency_report_interval_days)
+  CAGE implements FEAT via the FRIA module and the consensus threshold of
+  SGD 11,500 / USD 8,500 (APAC_MAS_BASELINE.json) ensuring human oversight
+  for high-impact AI decisions per MAS TRM Guidelines §6.3.2.
+  Evidence: GET /v1/compliance/mas/feat (compliance-bridge service).
+  Staleness guard: 48 hours.
+  Jurisdiction: APAC_MAS only (CAGE_DEPLOYMENT_REGION=APAC_MAS).

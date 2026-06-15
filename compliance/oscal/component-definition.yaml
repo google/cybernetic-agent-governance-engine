@@ -92,24 +92,53 @@ component-definition:
     control-implementations:
     - uuid: a7b8c9d0-e1f2-3456-abcd-567890123456
       source: https://www.iso.org/standard/81230.html
-      description: ISO/IEC 42001:2023 system constraints implemented by OPA
+      description: 'ISO/IEC 42001:2023 system constraints implemented by OPA (Universal
+        — applies to all CAGE_DEPLOYMENT_REGION values)'
       implemented-requirements:
       - uuid: b8c9d0e1-f2a3-4567-bcde-678901234567
-        control-id: SC-4
+        control-id: A.8.4
         description: 'finance_policy.rego enforces fiscal limits (junior: $5k/$10k,
           senior: $500k/$1M) and role-based access control. Manual review thresholds
-          prevent unchecked high-value trade execution.
+          prevent unchecked high-value trade execution. ISO 42001 A.8.4 operational
+          controls for AI system boundary enforcement.
 
           '
         remarks: 'Deployment verified by compliance.iso42001/enabled label on opa-compliance-status
           ConfigMap (deployment/k8s/opa.yaml). Structural assertion — label absence
-          = control not deployed.
+          = control not deployed. Universal control — applies to US_FED, EU_ECB,
+          and APAC_MAS deployments.
 
           '
         links:
         - href: ../../compliance/lula/lula-validation-sc4.yaml
           rel: lula
-          text: 'Lula validation: SC-4 Fiscal Limits'
+          text: 'Lula validation: SC-4 Fiscal Limits (US_FED scope)'
+    - uuid: a7b8c9d0-e1f2-3456-abcd-us-fed-nist01
+      source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
+      description: 'NIST SP 800-53 Rev 5 controls implemented by OPA (US_FED only
+        — CAGE_DEPLOYMENT_REGION=US_FED)'
+      props:
+      - name: cage-deployment-region
+        value: US_FED
+      - name: cage-posture-scope
+        value: us-federal-only
+      implemented-requirements:
+      - uuid: b8c9d0e1-f2a3-4567-bcde-us-fed-sc4-01
+        control-id: SC-4
+        description: 'NIST SP 800-53 SC-4 (Information in Shared System Resources):
+          finance_policy.rego enforces fiscal limits and RBAC preventing unauthorized
+          information access across shared system resources. US_FED deployment only.
+
+          '
+        remarks: 'US_FED only. NIST SC-4 maps to CAGE custom System Constraint SC-4
+          (fiscal limits). See lula-validation-sc4.yaml for automated assertion.
+          Not applicable to EU_ECB or APAC_MAS deployments.
+
+          '
+        links:
+        - href: ../../compliance/lula/lula-validation-sc4.yaml
+          rel: lula
+          text: 'Lula validation: SC-4 Fiscal Limits (US_FED)'
   - uuid: c9d0e1f2-a3b4-5678-cdef-789012345678
     title: NeMo Guardrails + Presidio PII Masking
     type: software

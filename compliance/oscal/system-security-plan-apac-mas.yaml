@@ -1,0 +1,321 @@
+system-security-plan:
+  uuid: apac-mas-ssp-2026-0001-4000-8000-000000000001
+  metadata:
+    title: CAGE System Security Plan (APAC_MAS — MAS FEAT / MAS Notice 655 / MAS TRM)
+    published: '2026-06-15T00:00:00Z'
+    last-modified: '2026-06-15T00:00:00Z'
+    version: 1.0.0-draft
+    oscal-version: 1.0.4
+    remarks: 'This System Security Plan (SSP) documents the compliance controls
+      implemented for the Cybernetic AI Governance Engine (CAGE) deployed in the
+      Monetary Authority of Singapore (APAC_MAS) jurisdiction. This SSP covers
+      MAS FEAT, MAS Notice 655, and MAS TRM compliance postures applicable to
+      CAGE_DEPLOYMENT_REGION=APAC_MAS.
+
+      CAGE_DEPLOYMENT_REGION: APAC_MAS
+
+      Compliance Frameworks:
+        - ISO/IEC 42001:2023 (Universal baseline — all regions)
+        - MAS FEAT Principles (November 2019) — Fairness, Ethics, Accountability,
+          Transparency for AI in financial services
+        - MAS Notice 655 — Technology Risk Management
+        - MAS TRM Guidelines §6.3 — AI and Machine Learning Controls
+        - MAS TRM Guidelines §4.2 — Data Residency (asia-southeast1)
+
+      Posture Scope: APAC_MAS deployments only (CAGE_DEPLOYMENT_REGION=APAC_MAS)
+
+      US_FED SSP: compliance/oscal/system-security-plan.yaml
+      EU_ECB SSP: compliance/oscal/system-security-plan-eu-ecb.yaml
+
+      Note: This SSP is NOT applicable to US_FED or EU_ECB deployments.
+      US_FED uses NIST SP 800-53 Rev 5 HIGH baseline.
+      EU_ECB uses EU AI Act / GDPR / DORA baseline.
+
+      Data Residency: All data paths must remain within asia-southeast1 (GCP).
+      MAS TRM Guidelines §4.2 requires data residency within Singapore region.
+
+      SR 26-2 "no legal force" sentinel: SR 26-2 (Federal Reserve supervisory
+      guidance) has no legal force in APAC_MAS deployments. All SR 26-2 telemetry
+      is suppressed for CAGE_DEPLOYMENT_REGION=APAC_MAS per .clinerules §12.4.
+
+      '
+    props:
+    - name: cage-deployment-region
+      value: APAC_MAS
+    - name: cage-compliance-posture
+      value: mas-feat-notice655-trm
+    - name: cage-posture-scope
+      value: apac-mas-only
+    - name: data-residency-region
+      value: asia-southeast1
+    - name: authorization-status
+      value: DRAFT — MAS notification pending
+    - name: mas-feat-classification
+      value: High-Risk AI — financial services advisory
+    roles:
+    - id: system-owner
+      title: System Owner
+      description: Overall responsibility for CAGE APAC_MAS deployment compliance.
+    - id: trm-officer
+      title: Technology Risk Management Officer
+      description: 'MAS Notice 655 TRM Officer responsible for technology risk
+        management framework, ICT incident management, and business continuity.'
+    - id: isso
+      title: Information System Security Officer
+      description: 'Primary security point of contact for APAC_MAS deployment.
+        Maintains SSP and coordinates MAS TRM risk assessments.'
+    - id: compliance-engineer
+      title: Compliance Engineer
+      description: 'Maintains OSCAL artifacts, operates Lula compliance-as-code
+        pipeline for MAS FEAT, Notice 655, and TRM controls.'
+    - id: ai-model-operator
+      title: AI Model Operator
+      description: 'Manages AI model versions, monitors FEAT fairness metrics,
+        coordinates MAS TRM §6.3 AI governance framework updates.'
+  import-profile:
+    href: ./mas-feat-profile.yaml
+    remarks: 'Imports the CAGE MAS FEAT compliance profile covering Fairness (F1,
+      F2), Ethics (E1), Accountability (A1), and Transparency (T2) principles.
+      Also imports common-controls-catalog.yaml for ISO 42001 universal baseline.'
+  system-characteristics:
+    system-ids:
+    - id: cage-gke-apac-mas
+      identifier-type: https://cage.internal/system-ids
+    system-name: Cybernetic Governance Engine (APAC_MAS)
+    system-name-short: CAGE-APAC
+    description: 'CAGE APAC_MAS deployment — AI governance platform for financial
+      services operating under MAS FEAT Principles (Fairness, Ethics, Accountability,
+      Transparency), MAS Notice 655 Technology Risk Management, and MAS TRM
+      Guidelines §6.3 AI and Machine Learning Controls. Deployed on GKE in
+      asia-southeast1 with all data paths confined to Singapore jurisdiction per
+      MAS TRM Guidelines §4.2 data residency requirements.
+
+      '
+    security-sensitivity-level: high
+    status:
+      state: under-development
+      remarks: 'APAC_MAS SSP draft. MAS notification and FEAT assessment completion
+        required before production deployment.'
+    authorization-boundary:
+      description: 'The APAC_MAS authorization boundary encompasses all CAGE
+        components deployed within the governance-stack Kubernetes namespace
+        on GKE in asia-southeast1. All data storage (GCS buckets, Cloud SQL,
+        Redis) must be provisioned in asia-southeast1. External interconnections
+        to Langfuse must use a self-hosted APAC instance to satisfy MAS TRM
+        §4.2 data residency requirements.'
+      props:
+      - name: gcp-region
+        value: asia-southeast1
+      - name: data-residency-enforced
+        value: 'true'
+      - name: mas-trm-s42-compliant
+        value: 'true'
+  system-implementation:
+    remarks: 'APAC_MAS system implementation. All components inherit the ISO 42001
+      universal baseline from component-definition.yaml. MAS-specific controls
+      are additive layers on top of the universal baseline.'
+    users:
+    - uuid: apac-mas-user-0001-4000-8000-000000000001
+      title: MAS-Regulated Financial Institution User
+      short-name: fi-user
+      description: 'Individual investors and financial institution clients whose
+        data is processed by CAGE under MAS PDPA and FEAT protections.'
+      role-ids:
+      - api-consumer
+      props:
+      - name: pdpa-data-subject-rights
+        value: PDPA Part IV — access, correction, withdrawal of consent
+    components:
+    - uuid: apac-mas-comp-0001-4000-8000-000000000001
+      type: software
+      title: CAGE MAS FEAT Fairness Assessment Engine
+      description: 'MAS FEAT Principles implementation via the FRIA module and
+        Compliance Bridge. Performs regular Fairness Impact Assessments across
+        protected characteristics (gender, race, ethnicity, age, disability,
+        nationality, religion, marital_status per APAC_MAS_BASELINE.json).
+        Demographic parity gap threshold: 8% (FEAT F2).'
+      purpose: 'Satisfies MAS FEAT Principles F1 (regular bias testing) and F2
+        (quantitative fairness metrics) for AI systems in financial services.'
+      status:
+        state: under-development
+      responsible-roles:
+      - role-id: ai-model-operator
+      props:
+      - name: mas-feat-principles
+        value: F1 (fairness testing), F2 (quantitative metrics), E1 (ethics), A1 (accountability), T2 (transparency)
+      - name: bias-threshold-demographic-parity
+        value: '0.08'
+      - name: transparency-report-interval-days
+        value: '180'
+      links:
+      - href: ../../compliance/lula/lula-validation-mas-feat.yaml
+        rel: lula
+        text: 'Lula validation: MAS FEAT Fairness Assessment'
+    - uuid: apac-mas-comp-0002-4000-8000-000000000002
+      type: software
+      title: CAGE MAS Notice 655 Audit Logging
+      description: 'MAS Notice 655 Technology Risk Management audit logging
+        implemented via the Compliance Bridge audit workflow. Audit logs stored
+        in asia-southeast1 GCS buckets with 5-year retention for significant
+        technology incidents.'
+      purpose: 'Satisfies MAS Notice 655 §4.3 audit logging and §5.1 technology
+        risk management framework requirements.'
+      status:
+        state: under-development
+      responsible-roles:
+      - role-id: trm-officer
+      props:
+      - name: mas-notice
+        value: MAS Notice 655 — Technology Risk Management
+      - name: log-retention-years
+        value: '5'
+      - name: storage-region
+        value: asia-southeast1
+      links:
+      - href: ../../compliance/lula/lula-validation-mas-notice655.yaml
+        rel: lula
+        text: 'Lula validation: MAS Notice 655 Audit Logging'
+    - uuid: apac-mas-comp-0003-4000-8000-000000000003
+      type: software
+      title: CAGE MAS TRM §6.3 AI Controls
+      description: 'MAS TRM Guidelines §6.3 AI and Machine Learning Controls
+        implemented via the AI governance framework. Confidence threshold 0.96
+        (APAC_MAS_BASELINE.json), human-in-the-loop for decisions above SGD
+        11,500 / USD 8,500, model performance monitoring with drift detection.'
+      purpose: 'Satisfies MAS TRM §6.3 AI governance framework, model risk
+        management, and §4.2 data residency requirements.'
+      status:
+        state: under-development
+      responsible-roles:
+      - role-id: ai-model-operator
+      props:
+      - name: mas-trm-section
+        value: §6.3 — AI and Machine Learning Controls
+      - name: confidence-threshold
+        value: '0.96'
+      - name: consensus-threshold-sgd
+        value: '11500'
+      - name: max-latency-ms
+        value: '175'
+      links:
+      - href: ../../compliance/lula/lula-validation-mas-trm-s6.yaml
+        rel: lula
+        text: 'Lula validation: MAS TRM §6.3 AI Controls'
+  control-implementation:
+    description: 'CAGE APAC_MAS compliance control implementations. ISO 42001
+      universal controls are inherited from component-definition.yaml. The
+      following entries document MAS-specific additive controls only.'
+    implemented-requirements:
+    - uuid: apac-mas-req-0001-4000-8000-000000000001
+      control-id: mas-feat
+      description: 'MAS FEAT Principles implemented via FRIA module. Annual
+        Fairness Impact Assessment with 8% demographic parity gap threshold.
+        Transparency reporting every 180 days per APAC_MAS_BASELINE.json.'
+      props:
+      - name: implementation-status
+        value: under-development
+      - name: regulatory-citation
+        value: MAS FEAT Principles (November 2019)
+      responsible-roles:
+      - role-id: ai-model-operator
+      by-components:
+      - component-uuid: apac-mas-comp-0001-4000-8000-000000000001
+        uuid: apac-mas-bycomp-0001-4000-8000-000000000001
+        description: 'FEAT fairness assessment engine provides automated bias
+          testing. Lula validation asserts fairness metrics within threshold.'
+        implementation-status:
+          state: under-development
+        links:
+        - href: ../../compliance/lula/lula-validation-mas-feat.yaml
+          rel: reference
+          text: Lula automated validation for MAS FEAT
+    - uuid: apac-mas-req-0002-4000-8000-000000000002
+      control-id: mas-notice-655
+      description: 'MAS Notice 655 audit logging implemented via Compliance
+        Bridge. Logs stored in asia-southeast1 with 5-year retention. TRM
+        framework documented and reviewed annually.'
+      props:
+      - name: implementation-status
+        value: under-development
+      - name: regulatory-citation
+        value: MAS Notice 655 — Technology Risk Management
+      responsible-roles:
+      - role-id: trm-officer
+      by-components:
+      - component-uuid: apac-mas-comp-0002-4000-8000-000000000002
+        uuid: apac-mas-bycomp-0002-4000-8000-000000000002
+        description: 'Compliance Bridge audit workflow provides Notice 655-compliant
+          technology audit logging. GCS bucket in asia-southeast1 ensures data
+          residency per MAS TRM §4.2.'
+        implementation-status:
+          state: under-development
+        links:
+        - href: ../../compliance/lula/lula-validation-mas-notice655.yaml
+          rel: reference
+          text: Lula automated validation for MAS Notice 655
+    - uuid: apac-mas-req-0003-4000-8000-000000000003
+      control-id: mas-trm-s6
+      description: 'MAS TRM §6.3 AI governance framework implemented. Confidence
+        threshold 0.96, HITL for high-impact decisions, model monitoring active.
+        Data residency confirmed within asia-southeast1.'
+      props:
+      - name: implementation-status
+        value: under-development
+      - name: regulatory-citation
+        value: MAS TRM Guidelines §6.3 — AI and Machine Learning Controls
+      responsible-roles:
+      - role-id: ai-model-operator
+      by-components:
+      - component-uuid: apac-mas-comp-0003-4000-8000-000000000003
+        uuid: apac-mas-bycomp-0003-4000-8000-000000000003
+        description: 'AI governance framework satisfies TRM §6.3 requirements.
+          Lula validation asserts confidence threshold and data residency.'
+        implementation-status:
+          state: under-development
+        links:
+        - href: ../../compliance/lula/lula-validation-mas-trm-s6.yaml
+          rel: reference
+          text: Lula automated validation for MAS TRM §6.3
+  back-matter:
+    resources:
+    - uuid: apac-mas-res-0001-4000-8000-000000000001
+      title: MAS FEAT Principles (November 2019)
+      rlinks:
+      - href: https://www.mas.gov.sg/publications/monographs-or-information-paper/2019/feat-principles
+    - uuid: apac-mas-res-0002-4000-8000-000000000002
+      title: MAS Notice 655 — Technology Risk Management
+      rlinks:
+      - href: https://www.mas.gov.sg/regulation/notices/notice-655
+    - uuid: apac-mas-res-0003-4000-8000-000000000003
+      title: MAS Technology Risk Management Guidelines
+      rlinks:
+      - href: https://www.mas.gov.sg/regulation/guidelines/technology-risk-management-guidelines
+    - uuid: apac-mas-res-0004-4000-8000-000000000004
+      title: ISO/IEC 42001:2023 Standard (Universal Baseline)
+      rlinks:
+      - href: https://www.iso.org/standard/81230.html
+    - uuid: apac-mas-res-0005-4000-8000-000000000005
+      title: CAGE MAS FEAT Lula Validation
+      rlinks:
+      - href: compliance/lula/lula-validation-mas-feat.yaml
+        media-type: application/yaml
+    - uuid: apac-mas-res-0006-4000-8000-000000000006
+      title: CAGE MAS Notice 655 Lula Validation
+      rlinks:
+      - href: compliance/lula/lula-validation-mas-notice655.yaml
+        media-type: application/yaml
+    - uuid: apac-mas-res-0007-4000-8000-000000000007
+      title: CAGE MAS TRM §6.3 Lula Validation
+      rlinks:
+      - href: compliance/lula/lula-validation-mas-trm-s6.yaml
+        media-type: application/yaml
+    - uuid: apac-mas-res-0008-4000-8000-000000000008
+      title: APAC_MAS Governance Thresholds Baseline
+      rlinks:
+      - href: config/thresholds/APAC_MAS_BASELINE.json
+        media-type: application/json
+    - uuid: apac-mas-res-0009-4000-8000-000000000009
+      title: MAS FEAT OSCAL Profile
+      rlinks:
+      - href: compliance/oscal/mas-feat-profile.yaml
+        media-type: application/yaml
