@@ -60,6 +60,18 @@ def _load_tier1_keywords() -> list[str]:
     return list(THRESHOLDS.tier1_keywords)  # already upper-cased by Pydantic validator
 
 
+def _load_cbrn_keywords() -> list[str]:
+    """Return the CBRN Tier-1 keyword list when enabled (AI 600-1 §2.6, US_FED only).
+
+    Returns an empty list when ``tier1_keywords_cbrn_enabled`` is False,
+    allowing the CBRN filter to be disabled without removing the keyword list
+    (rollback per .clinerules §10.1).
+    """
+    if not THRESHOLDS.tier1_keywords_cbrn_enabled:
+        return []
+    return list(THRESHOLDS.tier1_keywords_cbrn)  # already upper-cased by Pydantic validator
+
+
 def _validate_keyword(kw: str) -> bool:
     """Return True if *kw* is a valid, safe keyword for the Aho-Corasick automaton.
 
@@ -140,3 +152,34 @@ def ac_keyword_scan(text: str) -> bool:
 
     keywords = _load_tier1_keywords()
     return any(kw.upper() in upper_text for kw in keywords)
+
+
+def ac_cbrn_keyword_scan(text: str) -> bool:
+    """O(n×m) CBRN Tier-1 keyword scan — AI 600-1 §2.6 (US_FED only).
+
+    Checks the input text against the CBRN keyword list from the governance
+    threshold singleton.  Returns ``False`` immediately when
+    ``tier1_keywords_cbrn_enabled`` is ``False`` (no-op when disabled).
+
+    Uses a simple substring match (O(n×m)) rather than Aho-Corasick because
+    CBRN keywords are multi-word phrases that require case-insensitive substring
+    matching rather than exact word boundary matching.
+
+    Args:
+        text: The raw input string to scan.
+
+    Returns:
+        ``True`` if any CBRN keyword is found, ``False`` otherwise.
+    """
+    cbrn_keywords = _load_cbrn_keywords()
+    if not cbrn_keywords:
+        return False
+
+    upper_text = text.upper()
+    for kw in cbrn_keywords:
+        if kw in upper_text:
+            logger.warning(
+                "🚨 CBRN keyword detected: %r — blocking request (AI 600-1 §2.6).", kw
+            )
+            return True
+    return False

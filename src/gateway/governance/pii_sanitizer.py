@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger("Gateway.Governance.PIISanitizer")
@@ -191,6 +192,68 @@ class PIISanitizer:
             else:
                 result[key] = value
         return result
+
+
+# ---------------------------------------------------------------------------
+# pii_audit_log — AI 600-1 §2.2 structured audit record
+# ---------------------------------------------------------------------------
+
+def pii_audit_log(
+    trace_id: str,
+    entity_types: list[str],
+    redacted: bool,
+) -> dict:
+    """Return a structured audit record for PII detection events.
+
+    Produces a JSON-serialisable dict suitable for writing to the WORM ledger
+    (GCS WORM bucket, CMEK-encrypted) or emitting to a structured log sink.
+
+    FISMA AU-11 retention: 90 days minimum (enforced by GCS bucket lifecycle).
+
+    Args:
+        trace_id:     Langfuse trace ID for the governed request.
+        entity_types: List of detected PII entity types
+                      (e.g. ["PERSON", "EMAIL_ADDRESS"]).
+        redacted:     True if PII was redacted from the request.
+
+    Returns:
+        A dict with the following schema:
+        {
+            "event": "pii_detected",
+            "trace_id": str,
+            "entity_types": list[str],
+            "redacted": bool,
+            "timestamp": str,  # ISO 8601 UTC, e.g. "2026-06-15T12:00:00.000000Z"
+        }
+
+    Raises:
+        ValueError: If ``redacted=True`` but ``entity_types`` is empty
+                    (a redaction without detected entities is a logic error).
+    """
+    if redacted and not entity_types:
+        raise ValueError(
+            "pii_audit_log: entity_types must not be empty when redacted=True. "
+            "A redaction event must identify at least one PII entity type."
+        )
+
+    timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+
+    record = {
+        "event": "pii_detected",
+        "trace_id": trace_id,
+        "entity_types": entity_types,
+        "redacted": redacted,
+        "timestamp": timestamp,
+    }
+
+    logger.debug(
+        "PII audit record: trace_id=%s entity_types=%s redacted=%s",
+        trace_id,
+        entity_types,
+        redacted,
+    )
+
+    return record
 
 
 # ---------------------------------------------------------------------------

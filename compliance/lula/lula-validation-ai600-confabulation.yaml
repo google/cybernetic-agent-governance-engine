@@ -1,0 +1,34 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Validates: AI 600-1 §2.1 Confabulation controls
+# Controls: CTRL_AGT_001 (confidence ≥ 0.95), confabulation_scorer.py
+# POAM: AI600-001
+# Phase: 0 (stub) → Phase 2 (real assertions replace stub)
+# Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
+domain:
+  type: kubernetes
+  kubernetes:
+    resources: []   # populated in Phase 2
+provider:
+  type: opa
+  opa:
+    policy: |
+      # stub — always passes until Phase 2
+      # Phase 2 will assert:
+      #   - gateway Deployment has CONFIDENCE_MIN_SCORE env var set
+      #   - confabulation_scorer is active (CONFABULATION_SCORER_ENABLED=true)
+      #   - AgentSight DaemonSet is running with PROVENANCE_SIGNING_ENABLED=true
+      package validate
+      default allow = true

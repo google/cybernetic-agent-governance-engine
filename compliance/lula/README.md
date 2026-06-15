@@ -27,6 +27,11 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 | [`lula-validation-ra5.yaml`](lula-validation-ra5.yaml)   | RA-5    | NIST SP 800-53 Rev 5 | US_FED       | 🔶 Stub   | Vulnerability Scanning — Security scan CronJob check               |
 | [`lula-validation-sc8.yaml`](lula-validation-sc8.yaml)   | SC-8    | NIST SP 800-53       | US_FED       | 🔶 Stub   | Transmission Confidentiality — TLS enforcement                     |
 | [`lula-validation-si2.yaml`](lula-validation-si2.yaml)   | SI-2    | NIST SP 800-53       | US_FED       | 🔶 Stub   | Flaw Remediation — CVE patching (pip-audit CI)                     |
+| [`lula-validation-ai600-confabulation.yaml`](lula-validation-ai600-confabulation.yaml) | SI-10, AU-3 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.2 Confabulation — asserts `confabulation_rate < 0.02` over 24h window (POAM AI600-001). Requires `confabulation_rate` metric in Langfuse compliance project. |
+| [`lula-validation-ai600-data-privacy.yaml`](lula-validation-ai600-data-privacy.yaml) | SI-19, SC-28 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.3 Data Privacy — asserts PII audit log retention ≥ 90 days and Presidio score threshold ≥ 0.5 (POAM AI600-002). |
+| [`lula-validation-ai600-prompt-injection.yaml`](lula-validation-ai600-prompt-injection.yaml) | SI-3, SI-10, CA-8 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.4 Prompt Injection — asserts injection detector ConfigMap present and deflection score ≥ 4 (POAM AI600-003). |
+| [`lula-validation-ai600-human-ai-config.yaml`](lula-validation-ai600-human-ai-config.yaml) | AC-5, AU-3, CA-7 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.5 Human-AI Configuration — asserts DEFER queue SLA ≤ 4h for CRITICAL escalations and HITL audit trail present (POAM AI600-005). |
+| [`lula-validation-ai600-cbrn.yaml`](lula-validation-ai600-cbrn.yaml) | SA-12, SR-3, SI-7 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.6 / §2.12 CBRN & Value Chain — asserts CBRN keyword list ≥ 10 terms enabled and NeMo CBRN rail deployed (POAM AI600-007). **Cat-M: requires AO pre-approval before activation.** |
 
 **Legend:**
 
@@ -42,8 +47,11 @@ The active/stub split is **intentional and aligned with the posture architecture
 - **1 Active (US_FED scope):** SC-4 fiscal limits — production-ready for US Federal deployments
 - **1 Stub (ALL scope):** CSA AARM vectors — universal but requires cluster configuration
 - **10 Stub (US_FED scope):** NIST SP 800-53 controls — US Federal only; require cluster-specific namespace/resource configuration before activation
+- **5 Stub (US_FED scope):** NIST AI 600-1 controls — added in Phase 0 of the AI 600-1 implementation plan (branch `feat/CAGE-AI600-ai600-1-implementation`, 2026-06-15); require Langfuse metric availability and cluster-specific configuration before activation
 
-The 10 US_FED NIST stubs represent an **implementation gap** tracked as an open POAM item: activating all 10 would raise NIST SP 800-53 Lula coverage from 1/11 to 11/11 controls, directly supporting the US_FED release gate requirement (F-01 in [`docs/PRODUCTION_READINESS_REPORT.md`](../../docs/PRODUCTION_READINESS_REPORT.md)). The CSA AARM stub (1 manifest, ALL scope) is a separate gap affecting all regions.
+The 10 US_FED NIST SP 800-53 stubs represent an **implementation gap** tracked as an open POAM item: activating all 10 would raise NIST SP 800-53 Lula coverage from 1/11 to 11/11 controls, directly supporting the US_FED release gate requirement (F-01 in [`docs/PRODUCTION_READINESS_REPORT.md`](../../docs/PRODUCTION_READINESS_REPORT.md)). The CSA AARM stub (1 manifest, ALL scope) is a separate gap affecting all regions.
+
+The 5 US_FED NIST AI 600-1 stubs are **scaffolding stubs** created as part of Phase 0 of [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](../../docs/AI_600_1_IMPLEMENTATION_PLAN.md). They will be hardened to full assertions in Phase 3 §7.5 (Weeks 16–52). The CBRN stub (`lula-validation-ai600-cbrn.yaml`) is a **Cat-M change** requiring AO pre-approval before cluster activation per [`docs/CHANGE_MANAGEMENT_PROCESS.md`](../../docs/CHANGE_MANAGEMENT_PROCESS.md) §8.4.
 
 ---
 

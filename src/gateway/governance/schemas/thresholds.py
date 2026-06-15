@@ -122,11 +122,25 @@ class GovernanceThresholds(BaseModel):
     consensus: ConsensusThresholds
     tier1_keywords: List[str] = Field(default_factory=list)
 
+    # AI 600-1 §2.6 CBRN keyword list (US_FED only)
+    tier1_keywords_cbrn: List[str] = Field(default_factory=list)
+    tier1_keywords_cbrn_enabled: bool = False
+
+    # AI 600-1 §2.2 PII audit log settings (FISMA AU-11)
+    pii_audit_log_enabled: bool = True
+    pii_audit_retention_days: int = 90  # FISMA AU-11
+
     @field_validator("tier1_keywords")
     @classmethod
     def keywords_nonempty(cls, v: List[str]) -> List[str]:
         if not v:
             raise ValueError("tier1_keywords must contain at least one entry.")
+        return [kw.upper() for kw in v if kw.strip()]
+
+    @field_validator("tier1_keywords_cbrn")
+    @classmethod
+    def cbrn_keywords_uppercase(cls, v: List[str]) -> List[str]:
+        """Normalise CBRN keywords to uppercase for case-insensitive matching."""
         return [kw.upper() for kw in v if kw.strip()]
 
 

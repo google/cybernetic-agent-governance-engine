@@ -108,3 +108,137 @@ jobs:
           export LANGFUSE_COMPLIANCE_PUBLIC_KEY="pk-lf-comp-mock"
           export LANGFUSE_COMPLIANCE_SECRET_KEY="sk-lf-comp-mock"
           python3 scripts/verify_langfuse_posture.py --dry-run --posture development
+
+  # ── AI 600-1 Compliance Gates ──────────────────────────────────────────────
+
+  lula-ai600-validation:
+    name: "Lula AI 600-1 Validation"
+    runs-on: ubuntu-latest
+    needs: [pytest-logic]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate AI 600-1 Lula manifest structure (stub syntax check)
+        # Stub manifests have no live cluster — validate YAML structure only.
+        # Full live lula validate runs post-cluster-provisioning per Phase 3 §7.5.
+        run: |
+          python3 - <<'PYEOF'
+          import yaml, sys, pathlib
+          manifests = sorted(pathlib.Path('compliance/lula').glob('lula-validation-ai600-*.yaml'))
+          if not manifests:
+              print('ERROR: no AI 600-1 Lula manifests found')
+              sys.exit(1)
+          errors = []
+          for m in manifests:
+              doc = yaml.safe_load(m.read_text())
+              if 'domain' not in doc:
+                  errors.append(f'{m.name}: missing domain key')
+              if 'provider' not in doc:
+                  errors.append(f'{m.name}: missing provider key')
+              dtype = doc.get('domain', {}).get('type', '?')
+              ptype = doc.get('provider', {}).get('type', '?')
+              print(f'  OK {m.name}: domain={dtype}, provider={ptype}')
+          if errors:
+              print('FAILURES:')
+              for e in errors:
+                  print(f'  {e}')
+              sys.exit(1)
+          print(f'All {len(manifests)} AI 600-1 Lula manifests passed YAML structure check.')
+          PYEOF
+
+  sbom-generate:
+    name: "Generate and Validate SBOM"
+    runs-on: ubuntu-latest
+    needs: [license-check]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install cyclonedx-py
+        run: pip install cyclonedx-py
+      - name: Generate SBOM
+        run: python -m cyclonedx_py environment > sbom.json
+      - name: Validate SBOM schema
+        run: |
+          python -c "
+          import json
+          d = json.load(open('sbom.json'))
+          assert d.get('bomFormat') == 'CycloneDX', \
+            f'Unexpected bomFormat: {d.get(\"bomFormat\")!r}'
+          print(f'SBOM validated: {d.get(\"bomFormat\")} v{d.get(\"specVersion\")}')
+          "
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.json
+          retention-days: 90
+
+  ai600-unit-tests:
+    name: "AI 600-1 Unit Tests"
+    runs-on: ubuntu-latest
+    needs: [license-check]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Install dependencies
+        run: uv sync --all-groups --all-extras
+      - name: Run AI 600-1 unit tests
+        env:
+          OPENAI_API_KEY: "sk-dummy"
+          MODEL_REASONING: "casperhansen/deepseek-r1-distill-qwen-14b-awq"
+          MODEL_FAST: "Qwen/Qwen2.5-7B-Instruct"
+          VLLM_API_KEY: "dummy"
+          VLLM_GATEWAY_URL: "http://localhost:8081/v1"
+          REDIS_URL: "redis://localhost:6379/0"
+          OPA_URL: "http://localhost:8181/v1/data/governance/policy"
+          LANGFUSE_HOST: "http://localhost:3000"
+          LANGFUSE_PUBLIC_KEY: "pk-dummy"
+          LANGFUSE_SECRET_KEY: "sk-dummy"
+        run: |
+          uv run pytest \
+            tests/test_confabulation_scorer.py \
+            tests/test_pii_audit_log.py \
+            tests/test_prompt_injection_detector.py \
+            tests/test_hitl_escalator.py \
+            tests/test_provenance_chain.py \
+            tests/test_agentic_scope.py \
+            tests/test_text_filter_cbrn.py \
+            tests/test_nemo_cbrn_rails.py \
+            tests/test_recursive_governance_risk.py \
+            -v --tb=short
+
+  cbrn-keyword-check:
+    name: "CBRN Keyword List Validation"
+    runs-on: ubuntu-latest
+    needs: [license-check]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate CBRN keyword list
+        run: |
+          python -c "
+          import json
+          with open('config/governance_thresholds.json') as f:
+              cfg = json.load(f)
+          assert 'tier1_keywords_cbrn' in cfg, 'CBRN keyword list missing from governance_thresholds.json'
+          assert len(cfg['tier1_keywords_cbrn']) >= 10, \
+              f'CBRN keyword list too short: {len(cfg[\"tier1_keywords_cbrn\"])} terms (need >= 10)'
+          assert cfg.get('tier1_keywords_cbrn_enabled') == True, \
+              'tier1_keywords_cbrn_enabled must be true for US_FED deployment'
+          print(f'CBRN keywords: {len(cfg[\"tier1_keywords_cbrn\"])} terms — OK')
+          "
+      - name: Validate agentic scope statement present
+        run: |
+          test -f docs/AGENTIC_SCOPE_STATEMENT.md || \
+            (echo "ERROR: docs/AGENTIC_SCOPE_STATEMENT.md missing" && exit 1)
+          echo "Agentic scope statement present — OK"
