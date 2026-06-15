@@ -301,6 +301,7 @@ async def execute_trade_action(
     symbol: str,
     amount: float,
     currency: str,
+    confidence: float = 0.0,
     transaction_id: Optional[str] = None,
     trader_id: str = "agent_001",
     trader_role: str = "junior",
@@ -312,18 +313,32 @@ async def execute_trade_action(
     seal.  This function verifies the seal before executing the trade, ensuring
     that execution cannot proceed by ignoring the governance response.
     Satisfies: NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
+
+    Args:
+        symbol: Ticker symbol (e.g. "AAPL").
+        amount: Trade quantity (positive float).
+        currency: ISO 4217 currency code (e.g. "USD").
+        confidence: Model confidence score [0.0, 1.0].  Callers MUST supply a
+            real value — the governance pipeline enforces a minimum threshold
+            (US_FED: 0.95).  Omitting this parameter leaves the default 0.0
+            which will always fail the confidence gate.
+        transaction_id: Optional idempotency key; auto-generated if absent.
+        trader_id: Identifier of the requesting agent or user.
+        trader_role: RBAC role used for fiscal-limit enforcement.
+        dry_run: When True, governance checks run but no broker call is made.
     """
     from src.gateway.governance.routing_seal import (  # noqa: PLC0415
         verify_seal,
         SymbolicGovernorViolation,
     )
 
-    logger.info("Tool Call: execute_trade(%s, %s)", symbol, amount)
+    logger.info("Tool Call: execute_trade(%s, %s, confidence=%s)", symbol, amount, confidence)
     if not transaction_id:
         transaction_id = str(uuid.uuid4())
 
     params = {
         "symbol": symbol, "amount": amount, "currency": currency,
+        "confidence": confidence,
         "transaction_id": transaction_id, "trader_id": trader_id,
         "trader_role": trader_role, "dry_run": dry_run,
     }
@@ -350,11 +365,22 @@ async def execute_trade_action(
     if dry_run:
         return "DRY_RUN: APPROVED by OPA, Safety, and Consensus."
 
-    # Atomic state update via WATCH/MULTI/EXEC (Phase 4.1)
+    # C-05 fix: construct and validate TradeOrder BEFORE updating CBF state.
+    # If TradeOrder construction raises ValidationError (invalid symbol,
+    # negative amount, etc.) the CBF cash-balance must not be decremented —
+    # no trade was executed so no state change should occur.
+    try:
+        order = TradeOrder(**params)
+    except Exception as exc:
+        logger.error("TradeOrder validation failed before CBF update: %s", exc)
+        return f"ERROR: invalid trade parameters — {exc}"
+
+    # Atomic state update via WATCH/MULTI/EXEC (Phase 4.1).
+    # Placed AFTER TradeOrder validation so a Pydantic error cannot leave
+    # the CBF in a decremented state without a corresponding trade.
     await symbolic_governor.safety_filter.update_state(amount)
 
     try:
-        order = TradeOrder(**params)
         return await execute_trade(order)
     except Exception as exc:
         logger.error("Execution Error: %s", exc)

@@ -138,8 +138,13 @@ async def _gateway_lifespan(app: FastAPI):
     # ── Production guard: enforce KMS signer activation (H-05) ────────────────
     # assert_kms_active_in_production() raises RuntimeError if KMS is not
     # configured in prod, preventing silent fallback to no-op stub signing.
-    cage_env = os.getenv("CAGE_ENV", os.getenv("ENVIRONMENT", "production")).lower()
-    if cage_env not in ("development", "test", "dev", "ci"):
+    # C-25 fix: standardise on CAGE_ENV throughout — ENVIRONMENT is no longer
+    # consulted here to avoid the split-brain where CAGE_ENV=production but
+    # ENVIRONMENT is unset, silently skipping the KMS and salt guards.
+    cage_env = os.getenv("CAGE_ENV", "production").lower()
+    _is_production = cage_env not in ("development", "test", "dev", "ci")
+
+    if _is_production:
         try:
             from src.gateway.governance.kms_signer import assert_kms_active_in_production
             assert_kms_active_in_production()
@@ -150,16 +155,36 @@ async def _gateway_lifespan(app: FastAPI):
             )
             raise
 
+        # C-04 fix: assert_custom_salt_in_production() was previously never
+        # called automatically, allowing the well-known default GOVERNANCE_SALT
+        # to be used in production — enabling routing seal forgery.
+        try:
+            from src.gateway.governance.routing_seal import assert_custom_salt_in_production
+            assert_custom_salt_in_production()
+            logger.info("✅ GOVERNANCE_SALT custom value confirmed at startup")
+        except RuntimeError as salt_err:
+            logger.critical(
+                "🚨 STARTUP FAILURE: GOVERNANCE_SALT is the default value in "
+                "production — routing seals can be forged. Set a strong random "
+                "secret via the GOVERNANCE_SALT environment variable: %s",
+                salt_err,
+            )
+            raise
+
     # ── Production guard: prohibit log-mode seal enforcement (BLOCKER-03) ──────
-    if os.getenv("ENVIRONMENT") == "production":
-        assert os.getenv("CAGE_SEAL_ENFORCEMENT") != "log", (
-            "CAGE_SEAL_ENFORCEMENT=log is prohibited in production"
-        )
+    # C-25 fix: use CAGE_ENV (not ENVIRONMENT) for consistency.
+    if _is_production:
+        if os.getenv("CAGE_SEAL_ENFORCEMENT") == "log":
+            raise RuntimeError(
+                "CAGE_SEAL_ENFORCEMENT=log is prohibited in production — "
+                "set CAGE_SEAL_ENFORCEMENT=enforce or remove the variable."
+            )
 
     # ── Production guard: prohibit stub ledger provider (BLOCKER-06) ───────────
     # The stub provider fabricates a static $100k balance; the CBF would evaluate
     # against fake data, making the safety barrier meaningless in production.
-    if os.getenv("ENVIRONMENT") == "production" and os.getenv("RECONCILIATION_PROVIDER", "stub") == "stub":
+    # C-25 fix: use CAGE_ENV (not ENVIRONMENT) for consistency.
+    if _is_production and os.getenv("RECONCILIATION_PROVIDER", "stub") == "stub":
         raise RuntimeError(
             "RECONCILIATION_PROVIDER=stub is not allowed in production. "
             "Set a real ledger provider (e.g. RECONCILIATION_PROVIDER=anchorage)."

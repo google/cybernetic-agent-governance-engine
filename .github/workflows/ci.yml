@@ -19,6 +19,12 @@ on:
       - main
       - "feature/**"
       - "feat/**"
+      - "fix/**"
+      - "chore/**"
+      - "docs/**"
+      - "refactor/**"
+      - "ci/**"
+      - "hotfix/**"
   pull_request:
     branches:
       - main
@@ -63,6 +69,7 @@ jobs:
         run: uv sync --all-groups --all-extras
       - name: Run Pytest (unit/local)
         env:
+          CAGE_ENV: "test"
           OPENAI_API_KEY: "sk-dummy"
           MODEL_REASONING: "casperhansen/deepseek-r1-distill-qwen-14b-awq"
           MODEL_FAST: "Qwen/Qwen2.5-7B-Instruct"
@@ -192,6 +199,7 @@ jobs:
         run: uv sync --all-groups --all-extras
       - name: Run AI 600-1 unit tests
         env:
+          CAGE_ENV: "test"
           OPENAI_API_KEY: "sk-dummy"
           MODEL_REASONING: "casperhansen/deepseek-r1-distill-qwen-14b-awq"
           MODEL_FAST: "Qwen/Qwen2.5-7B-Instruct"

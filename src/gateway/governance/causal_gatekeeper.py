@@ -413,6 +413,25 @@ def causal_safety_check(params: dict, current_telemetry: Optional[pd.DataFrame] 
       return of False.
     """
     if current_telemetry is None:
+        # C-08 fix: in production, missing live telemetry is a fail-closed
+        # condition — the causal gate cannot run against synthetic data because
+        # the fixed np.random.seed(42) makes results predictable and gameable.
+        # Reserve the mock fallback for dev/test environments only.
+        import os as _os
+        _cage_env = _os.getenv("CAGE_ENV", "production").lower()
+        if _cage_env not in ("development", "test", "dev", "ci"):
+            logger.error(
+                "causal_safety_check: no live telemetry provided in production "
+                "(CAGE_ENV=%s) — failing closed. Ensure LangfuseTelemetryProvider "
+                "is configured and returning data before calling this function.",
+                _cage_env,
+            )
+            return False
+        logger.warning(
+            "causal_safety_check: no telemetry provided — using mock data "
+            "(CAGE_ENV=%s). This fallback is only acceptable in dev/test.",
+            _cage_env,
+        )
         current_telemetry = generate_mock_telemetry()
 
     amount = params.get("amount", 0.0)

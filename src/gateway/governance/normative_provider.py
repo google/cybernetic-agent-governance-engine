@@ -298,9 +298,28 @@ class StubNormativeProvider:
     """
 
     def __init__(self) -> None:
-        logger.info(
-            "StubNormativeProvider active — external normative validation is NOT "
-            "providing independent compliance ground truth."
+        import os as _os
+        _cage_env = _os.getenv("CAGE_ENV", "production").lower()
+        _is_production = _cage_env not in ("development", "test", "dev", "ci")
+
+        # C-16 fix: raise at construction time if the stub is instantiated in
+        # production.  The stub always returns admitted=True for validate_fria(),
+        # which means all FRIA boundary checks pass unconditionally — defeating
+        # the adaptive gating mechanism entirely.
+        if _is_production:
+            raise RuntimeError(
+                "StubNormativeProvider cannot be used in production "
+                f"(CAGE_ENV={_cage_env!r}). "
+                "Set CAGE_NORMATIVE_PROVIDER to a real provider name "
+                "(e.g. CAGE_NORMATIVE_PROVIDER=trustlayers) and ensure the "
+                "provider credentials are configured."
+            )
+
+        logger.warning(
+            "⚠️  StubNormativeProvider active (CAGE_ENV=%s) — external normative "
+            "validation is NOT providing independent compliance ground truth. "
+            "This provider must never be used in production.",
+            _cage_env,
         )
 
     async def fetch_baseline(self, region: str) -> NormativeBaseline:

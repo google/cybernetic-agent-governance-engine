@@ -1,36 +1,33 @@
 # lula-validation-ia3.yaml
 # NIST SP 800-53 Rev 5 — IA-3: Device Identification and Authentication
 #
-# COMPENSATING CONTROL for POAM-007 (full mTLS via Istio is Phase 3 roadmap).
+# POAM-007 STATUS: CLOSED 2026-05-17
+# Linkerd mTLS has been implemented across all intra-cluster service
+# communication in the governance-stack namespace.  This validation has been
+# updated from the previous compensating-control assertion (NetworkPolicy +
+# OPA + intent annotation) to assert the actual Linkerd mTLS posture.
 #
 # Asserts that:
-#   1. Deployments in the governance-stack namespace carry the cage.io/mtls-proxy: "true"
-#      annotation OR the security.istio.io/tlsMode: istio pod annotation
-#      (device identity via sidecar proxy intent).
-#   2. The NetworkPolicy "default-deny-ingress" exists in the governance-stack namespace
-#      (L3/L4 isolation as compensating control while full mTLS is pending).
-#   3. The OPA Deployment is running (policy-based device authentication
-#      compensating control — all inter-service calls validated by OPA).
+#   1. The Linkerd control-plane namespace exists (linkerd namespace present).
+#   2. All Deployments in governance-stack carry the
+#      linkerd.io/inject: enabled annotation on their pod template, confirming
+#      the Linkerd proxy sidecar is injected for mTLS.
+#   3. The default-deny-ingress NetworkPolicy still exists as a defence-in-depth
+#      L3/L4 control (retained post-mTLS per security hardening policy).
+#   4. The OPA Deployment is running (policy-based access enforcement layer).
 #
-# Domain: kubernetes → Deployments, NetworkPolicies, OPA Deployment
+# Domain: kubernetes → Deployments, NetworkPolicies, Namespaces
 # Provider: opa (inline Rego)
 #
 # References:
 #   - deployment/k8s/network-policy.yaml — default-deny-ingress NetworkPolicy
 #   - deployment/k8s/network-policy-hardening.yaml — hardened L3/L4 policies
-#   - deployment/k8s/opa.yaml — OPA Deployment for policy-based device authN
-#   - docs/POAM.md — POAM-007 (IA-3: no intra-cluster mTLS; HMAC only)
+#   - deployment/k8s/opa.yaml — OPA Deployment
+#   - docs/POAM.md — POAM-007 (IA-3: Linkerd mTLS — CLOSED 2026-05-17)
 #
 # OSCAL Mapping:
 #   component: cage-gateway
 #   control: ia-3
-#
-# NOTE: This is a COMPENSATING CONTROL for POAM-007.
-# Full mTLS via Istio service mesh is targeted for Phase 3 (2026-07-31).
-# Until then, device authentication is enforced via:
-#   (a) shared HMAC routing seal (cage-routing-seal secret)
-#   (b) NetworkPolicy L3/L4 segmentation (default-deny all ingress)
-#   (c) OPA policy enforcement on every inter-service request
 #
 # Namespace: governance-stack (confirmed from live cluster deployment snapshot)
 
@@ -39,6 +36,7 @@ metadata:
     cage.region: US_FED
     cage.compliance-posture: nist-sp800-53
     cage.posture-note: "NIST SP 800-53 is a US Federal posture requirement. This validation is skipped for EU_ECB and APAC_MAS deployments."
+    cage.poam-007: "CLOSED 2026-05-17 — Linkerd mTLS implemented. Validation updated from compensating-control to full mTLS assertion."
 
 domain:
   type: kubernetes
@@ -53,6 +51,8 @@ domain:
       - name: opa-deployment
         resource: deployments
         namespace: governance-stack
+      - name: linkerd-namespaces
+        resource: namespaces
 
 provider:
   type: opa
@@ -63,72 +63,78 @@ provider:
       import future.keywords.if
       import future.keywords.every
 
-      # IA-3: Device Identification and Authentication (Compensating Control)
+      # IA-3: Device Identification and Authentication — Linkerd mTLS (POAM-007 CLOSED)
       #
-      # POAM-007: Full mTLS via Istio is scheduled for Phase 3 (2026-07-31).
-      # This validation asserts the compensating controls are in place:
-      #   (1) Deployment-level mTLS intent annotation OR Istio tlsMode annotation
-      #   (2) Default-deny NetworkPolicy enforcing L3/L4 isolation
-      #   (3) OPA Deployment running for policy-based device authentication
+      # POAM-007 was closed 2026-05-17 after Linkerd mTLS was deployed across
+      # all intra-cluster service communication in governance-stack.
       #
-      # All three compensating controls must pass for IA-3 compliance.
+      # This validation asserts the full mTLS posture:
+      #   (1) Linkerd control-plane namespace exists
+      #   (2) All governance-stack Deployments have Linkerd proxy injection enabled
+      #   (3) default-deny NetworkPolicy retained as defence-in-depth
+      #   (4) OPA Deployment running for policy-based access enforcement
 
-      # Check 1: At least one Deployment carries mTLS proxy or Istio tlsMode annotation.
-      # This is an intent annotation — actual enforcement is via network policy + OPA
-      # until Istio sidecar injection is enabled in Phase 3.
-      deployments_with_mtls_intent[name] {
-        deploy := input["cage-deployments"][_]
-        name := deploy.metadata.name
-        deploy.metadata.annotations["cage.io/mtls-proxy"] == "true"
+      # Check 1: Linkerd control-plane namespace must exist.
+      linkerd_namespace_exists if {
+        some ns in input["linkerd-namespaces"]
+        ns.metadata.name == "linkerd"
       }
 
-      deployments_with_istio_tls[name] {
-        deploy := input["cage-deployments"][_]
-        name := deploy.metadata.name
-        deploy.spec.template.metadata.annotations["security.istio.io/tlsMode"] == "istio"
+      # Check 2: All Deployments in governance-stack must have Linkerd proxy
+      # injection enabled on their pod template spec.
+      # The annotation linkerd.io/inject: "enabled" on the pod template causes
+      # the Linkerd admission webhook to inject the proxy sidecar, establishing
+      # per-pod mTLS identity via SPIFFE/X.509 certificates.
+      deployments_have_linkerd_injection if {
+        every deploy in input["cage-deployments"] {
+          deploy.spec.template.metadata.annotations["linkerd.io/inject"] == "enabled"
+        }
       }
 
-      # Check 2: default-deny-ingress NetworkPolicy must exist as compensating L3/L4 control.
+      # Check 3: default-deny-ingress NetworkPolicy must still exist as
+      # defence-in-depth (L3/L4 isolation retained post-mTLS).
       default_deny_exists if {
         some np in input["cage-network-policies"]
         np.metadata.name == "default-deny-ingress"
         np.spec.policyTypes[_] == "Ingress"
       }
 
-      # Check 3: OPA Deployment must be running (policy-based device auth).
+      # Check 4: OPA Deployment must be running (policy-based access enforcement).
       opa_running if {
         input["opa-deployment"].status.readyReplicas >= 1
       }
 
       validate if {
-        # Compensating control ensemble: NetworkPolicy + OPA must both be live.
+        linkerd_namespace_exists
+        deployments_have_linkerd_injection
         default_deny_exists
         opa_running
-        # At least one Deployment carries mTLS intent annotation or Istio annotation.
-        count(deployments_with_mtls_intent) > 0
-      }
-
-      validate if {
-        # Alternative: Istio tlsMode annotation present on pod templates.
-        default_deny_exists
-        opa_running
-        count(deployments_with_istio_tls) > 0
       }
 
 notes: >
   NIST SP 800-53 Rev 5 IA-3: Device Identification and Authentication.
-  COMPENSATING CONTROL — remediates POAM-007 gap pending Phase 3 Istio mTLS deployment.
+  POAM-007 CLOSED 2026-05-17 — Linkerd mTLS implemented.
   Namespace: governance-stack (confirmed from live cluster deployment snapshot).
-  Full mTLS via Istio service mesh is scheduled for Phase 3 (target: 2026-07-31).
-  Until then, device authentication is enforced via three compensating controls:
-    (1) cage.io/mtls-proxy or security.istio.io/tlsMode annotations on Deployments
-        (intent annotation for future Istio sidecar injection).
-    (2) NetworkPolicy default-deny-ingress (L3/L4 isolation per network-policy.yaml
-        and network-policy-hardening.yaml).
-    (3) OPA Deployment running, validating every governance request against
-        deployment/system_authz.rego (policy-based device authentication).
-  All three compensating controls must be live for this validation to pass.
-  Remediation path: POAM-007 — evaluate Istio or cert-manager for workload identity
-  certificates; implement mTLS for all intra-cluster service communication by 2026-07-31.
-  See: docs/POAM.md — POAM-007 (IA-3 remediation).
+
+  This validation was updated from the previous compensating-control assertion
+  (NetworkPolicy + OPA + intent annotation) to assert the actual Linkerd mTLS
+  posture following POAM-007 closure.
+
+  Linkerd provides per-pod cryptographic identity via SPIFFE/X.509 certificates
+  issued by the Linkerd certificate authority.  The linkerd.io/inject: "enabled"
+  annotation on pod templates causes the Linkerd admission webhook to inject the
+  proxy sidecar, which transparently upgrades all intra-cluster TCP connections
+  to mTLS.  This provides cryptographic device identity verification for all
+  service-to-service communication within governance-stack.
+
+  Retained controls (defence-in-depth):
+    - default-deny-ingress NetworkPolicy (L3/L4 isolation)
+    - OPA Deployment (policy-based access enforcement on every request)
+
+  Evidence:
+    - Linkerd namespace existence confirms control-plane is deployed
+    - linkerd.io/inject: "enabled" on all pod templates confirms proxy injection
+    - NetworkPolicy and OPA assertions confirm defence-in-depth layers are live
+
+  See: docs/POAM.md — POAM-007 (IA-3: Linkerd mTLS — CLOSED 2026-05-17).
   See: compliance/continuous-monitoring/ISCM_STRATEGY.md — IA-3 monitoring cadence.
