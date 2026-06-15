@@ -9,6 +9,10 @@
 # ExternalName Services defined in deployment/k8s/vllm-services.yaml.
 # These proxy vllm-service.governance-stack → vllm-service.vllm-inference.svc.cluster.local
 # so existing env vars (VLLM_BASE_URL, VLLM_FAST_API_BASE, etc.) need no changes.
+#
+# Compliance labels use jurisdiction-neutral cage.io/* identifiers (ISO 42001 A.8.4).
+# US_FED deployments additionally satisfy NIST SC-39 via the same PSS controls.
+# See docs/JURISDICTIONAL_SEPARATION_ANALYSIS.md DEP-17 for rationale.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -17,3 +21,8 @@ metadata:
     pod-security.kubernetes.io/enforce: baseline
     pod-security.kubernetes.io/warn: baseline
     pod-security.kubernetes.io/audit: baseline
+    # ISO 42001 A.8.4 — universal AI system security control (all CAGE_DEPLOYMENT_REGION values)
+    cage.io/iso42001-control: "A.8.4"
+    cage.io/pss-profile: "baseline"
+    cage.io/pss-exception: "gpu-cuda-access"
+    app.kubernetes.io/managed-by: cage
