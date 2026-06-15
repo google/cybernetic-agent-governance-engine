@@ -58,6 +58,48 @@ _REDIS_STREAM_KEY = "iso_control:audit_trail"
 def _get_deployment_region() -> str:
     return os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
 
+
+# ---------------------------------------------------------------------------
+# FINDING-02 (CRITICAL) — Jurisdictional control mapping tables
+#
+# These maps extend the universal ISO 42001 span attributes with
+# jurisdiction-specific control identifiers.  They are only applied when
+# CAGE_DEPLOYMENT_REGION matches the corresponding jurisdiction.
+#
+# R-1: ISO 42001 evidence MUST always be produced (no region guard).
+# R-2: NIST mapping only for US_FED.
+# R-3: EU AI Act mapping only for EU_ECB.
+# R-4: MAS FEAT mapping only for APAC_MAS.
+# ---------------------------------------------------------------------------
+
+# ISO 42001 Annex A control → NIST SP 800-53 Rev 5 control (US_FED only)
+NIST_MAP: dict[str, str] = {
+    "A.5.2": "GOVERN 1.1",
+    "A.5.3": "AU-12",
+    "A.6.2": "SA-15",
+    "A.8.4": "SI-7",
+    "A.9.2": "SA-9",
+    "SC-4":  "AC-6",
+}
+
+# ISO 42001 Annex A control → EU AI Act article (EU_ECB only)
+EU_MAP: dict[str, str] = {
+    "A.5.2": "Art. 9 (Risk Management System)",
+    "A.5.3": "Art. 12 (Record-Keeping)",
+    "A.6.2": "Art. 9 §4 (Lifecycle Risk Management)",
+    "A.8.4": "Art. 13 (Transparency & Human Oversight)",
+    "A.9.2": "Art. 10 (Data Governance)",
+}
+
+# ISO 42001 Annex A control → MAS FEAT / MAS Notice 655 reference (APAC_MAS only)
+MAS_MAP: dict[str, str] = {
+    "A.5.2": "MAS FEAT Principle 2 (Ethics)",
+    "A.5.3": "MAS Notice 655 §4.3 (Audit Logging)",
+    "A.6.2": "MAS FEAT Principle 4 (Accountability)",
+    "A.8.4": "MAS FEAT Principle 3 (Transparency)",
+    "A.9.2": "MAS TRM §4.2 (Data Residency)",
+}
+
 # ---------------------------------------------------------------------------
 # Gateway version — resolved once at import time
 # ---------------------------------------------------------------------------
@@ -114,9 +156,19 @@ def stamp_iso_control(
 ) -> None:
     """Stamp ISO 42001 compliance evidence onto an active OTel span.
 
-    Sets exactly the six attributes required by the compliance-bridge audit
-    trail.  A no-op when *span* is ``None`` or falsy (e.g. tracing is
-    disabled in tests).
+    FINDING-02 (CRITICAL): The previous implementation had an inverted region
+    guard that silenced the entire function for EU_ECB and APAC_MAS deployments,
+    producing zero ISO 42001 compliance telemetry for those regions.
+
+    Correct behaviour (R-1, R-2, R-3, R-4):
+      - ISO 42001 attributes are ALWAYS stamped (universal — no region guard).
+      - NIST SP 800-53 mapping is added ONLY for US_FED (R-2).
+      - EU AI Act mapping is added ONLY for EU_ECB (R-3).
+      - MAS FEAT mapping is added ONLY for APAC_MAS (R-4).
+
+    Sets exactly the six mandatory ISO 42001 attributes plus one optional
+    jurisdictional extension attribute.  A no-op when *span* is ``None`` or
+    falsy (e.g. tracing is disabled in tests).
 
     Args:
         span:     An ``opentelemetry.trace.Span`` instance (or any object
@@ -133,25 +185,41 @@ def stamp_iso_control(
     if not span:
         return
 
-    # NIST SP 800-53 control IDs have no legal force outside US_FED — suppress
-    # per SR 26-2 suppression pattern.
-    if _get_deployment_region() != "US_FED":
-        logger.debug(
-            "stamp_iso_control: skipping nist.control_id stamping — "
-            "deployment region is '%s', not 'US_FED'.",
-            _get_deployment_region(),
-        )
-        return
-
+    region = _get_deployment_region()
     timestamp_ms: int = int(time.time() * 1000)
     evidence_chain: str = f"{control}:{tier}:{outcome}"
 
+    # Universal: ISO 42001 evidence always produced (R-1 — no region guard).
     span.set_attribute("iso42001.control",         control)
     span.set_attribute("iso42001.tier",            tier)
     span.set_attribute("iso42001.outcome",         outcome)
     span.set_attribute("iso42001.timestamp",       timestamp_ms)
     span.set_attribute("iso42001.gateway_version", _GATEWAY_VERSION)
     span.set_attribute("iso42001.evidence_chain",  evidence_chain)
+    span.set_attribute("cage.iso_framework",       "ISO/IEC 42001:2023")
+
+    # Jurisdictional extension: add region-specific control mapping (R-2/R-3/R-4).
+    if region == "US_FED":
+        # NIST SP 800-53 mapping — US_FED only (SR 26-2 suppression pattern:
+        # NIST control IDs have no legal force outside US_FED).
+        nist_ref = NIST_MAP.get(control, "")
+        if nist_ref:
+            span.set_attribute("cage.nist_control", nist_ref)
+    elif region == "EU_ECB":
+        # EU AI Act mapping — EU_ECB only.
+        eu_ref = EU_MAP.get(control, "")
+        if eu_ref:
+            span.set_attribute("cage.eu_ai_act_control", eu_ref)
+    elif region == "APAC_MAS":
+        # MAS FEAT / MAS Notice 655 mapping — APAC_MAS only.
+        mas_ref = MAS_MAP.get(control, "")
+        if mas_ref:
+            span.set_attribute("cage.mas_feat_control", mas_ref)
+
+    logger.debug(
+        "stamp_iso_control: control=%s tier=%d outcome=%s region=%s",
+        control, tier, outcome, region,
+    )
 
     # Build evaluation result dict and persist durably
     result = {
@@ -161,7 +229,7 @@ def stamp_iso_control(
         "timestamp_ms": timestamp_ms,
         "gateway_version": _GATEWAY_VERSION,
         "evidence_chain": evidence_chain,
-        "deployment_region": _get_deployment_region(),
+        "deployment_region": region,
     }
     # Keep fast local cache (bounded deque, maxlen=1000)
     _audit_trail.append(result)

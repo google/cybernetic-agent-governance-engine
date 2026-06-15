@@ -18,16 +18,31 @@ types.py — Canonical ISO 42001 control metadata and Pydantic models (CAGE v2.0
 Ported from src/langfuse-bridge/src/types.ts.
 
 This module is the single authoritative source of truth for:
-  - CONTROL_META       — control ID → name + scoreName + framework cross-refs
-                         Now includes "aarm" cross-references for CSA AARM v1.0
-  - ISO_CONTROL_MAP    — governance event name → control ID
-  - SUPPORTED_CONTROLS — ordered list of supported control IDs
-  - CRITICAL_CONTROLS  — controls requiring immediate alerting on FAIL
-  - FRAMEWORK_CONTROLS — framework name → list of control IDs  (Tier 2.1)
-  - SUPPORTED_FRAMEWORKS — sorted list of supported framework short-names
-  - EVIDENCE_SLA_SECONDS — per-control max-stale evidence window (Tier 2.5)
-  - OscalFinding       — Pydantic model for OSCAL assessment findings
-  - ComplianceMetrics  — Pydantic model for /v1/metrics response
+  - _UNIVERSAL_CONTROLS      — ISO 42001 controls applicable to ALL regions
+  - _JURISDICTIONAL_CONTROLS — region-keyed dict of framework-specific controls
+  - get_control_meta(region) — accessor returning universal + jurisdictional controls
+  - CONTROL_META             — DEPRECATED alias; use get_control_meta(region) instead.
+                               Retained for backward-compat; contains universal controls only.
+  - ISO_CONTROL_MAP          — governance event name → control ID
+  - SUPPORTED_CONTROLS       — ordered list of universal control IDs
+  - CRITICAL_CONTROLS        — controls requiring immediate alerting on FAIL
+  - FRAMEWORK_CONTROLS       — framework name → list of control IDs  (Tier 2.1)
+  - SUPPORTED_FRAMEWORKS     — sorted list of supported framework short-names
+  - _UNIVERSAL_SLA           — per-control max-stale evidence window (ISO 42001 only)
+  - _JURISDICTIONAL_SLA      — region-keyed SLA overrides for jurisdictional controls
+  - get_sla_seconds(region)  — accessor returning universal + jurisdictional SLA dict
+  - EVIDENCE_SLA_SECONDS     — DEPRECATED alias; use get_sla_seconds(region) instead.
+  - OscalFinding             — Pydantic model for OSCAL assessment findings
+  - ComplianceMetrics        — Pydantic model for /v1/metrics response
+
+FINDING-01 (CRITICAL): CONTROL_META was a flat dict mixing ISO 42001 (universal)
+with NIST SP 800-53 / FedRAMP (US_FED only) and EU AI Act (EU_ECB only) controls.
+Restructured into _UNIVERSAL_CONTROLS + _JURISDICTIONAL_CONTROLS with get_control_meta()
+accessor so each region only receives its applicable controls.
+
+FINDING-05 (HIGH): EVIDENCE_SLA_SECONDS mixed ISO and NIST SLA targets in a flat
+dict. Restructured into _UNIVERSAL_SLA + _JURISDICTIONAL_SLA with get_sla_seconds()
+accessor so the SLA monitor only alerts on controls applicable to the active region.
 
 src/governed_financial_advisor/utils/langfuse_utils.py imports ISO_CONTROL_MAP
 from here (single source of truth). src/gateway/governance/ontology.py keeps
@@ -109,26 +124,35 @@ class OscalFinding(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# CONTROL_META — control ID → display name + Langfuse score name +
-#                multi-framework cross-references (Tier 2.1)
+# FINDING-01 (CRITICAL) — Region-keyed control metadata
+#
+# _UNIVERSAL_CONTROLS: ISO 42001 controls applicable to ALL regions.
+#   No CAGE_DEPLOYMENT_REGION guard required — these always apply.
+#
+# _JURISDICTIONAL_CONTROLS: region-keyed dict of framework-specific controls.
+#   US_FED  → NIST SP 800-53 / FedRAMP HIGH controls
+#   EU_ECB  → EU AI Act (2024/1689) controls
+#   APAC_MAS → MAS FEAT / MAS Notice 655 controls
+#
+# Use get_control_meta(region) to obtain the merged view for a given region.
+# Never iterate CONTROL_META directly in new code — it is a backward-compat alias.
 #
 # frameworks: dict mapping framework short-name → clause / article reference.
-#   "iso42001"    — ISO/IEC 42001:2023 AI Management System
-#   "eu_ai_act"   — EU AI Act (2024/1689)
-#   "nist_ai_rmf" — NIST AI Risk Management Framework 1.0
-#   "fedramp"     — FedRAMP HIGH baseline (NIST SP 800-53 Rev 5)
+#   "iso42001"    — ISO/IEC 42001:2023 AI Management System  (universal)
+#   "eu_ai_act"   — EU AI Act (2024/1689)                    (EU_ECB only)
+#   "nist_ai_rmf" — NIST AI Risk Management Framework 1.0    (US_FED only)
+#   "fedramp"     — FedRAMP HIGH baseline (NIST SP 800-53 Rev 5) (US_FED only)
+#   "mas_feat"    — MAS FEAT                                  (APAC_MAS only)
 # ---------------------------------------------------------------------------
 
-CONTROL_META: dict[str, dict] = {
+_UNIVERSAL_CONTROLS: dict[str, dict] = {
     "A.5.2": {
         "name":      "Social Impact Assessment",
         "scoreName": "iso42001.A.5.2.passed",
         "iso_clause": "ISO/IEC 42001:2023 Annex A.5.2",
         "frameworks": {
-            "iso42001":    "Annex A.5.2",
-            "eu_ai_act":   "Art. 9 (Risk Management System)",
-            "nist_ai_rmf": "GOVERN 1.1, MAP 3.5",
-            "aarm":        "AARM-V2 (Goal Hijacking), AARM-V5 (Prompt Injection)",
+            "iso42001": "Annex A.5.2",
+            "aarm":     "AARM-V2 (Goal Hijacking), AARM-V5 (Prompt Injection)",
         },
     },
     "A.5.3": {
@@ -136,11 +160,8 @@ CONTROL_META: dict[str, dict] = {
         "scoreName": "iso42001.A.5.3.passed",
         "iso_clause": "ISO/IEC 42001:2023 Annex A.5.3",
         "frameworks": {
-            "iso42001":    "Annex A.5.3",
-            "eu_ai_act":   "Art. 12 (Record-Keeping)",
-            "nist_ai_rmf": "MEASURE 2.6, GOVERN 5.1",
-            "fedramp":     "AU-12 (Audit Record Generation)",
-            "aarm":        "AARM-V1 (Memory Poisoning), AARM-V8 (Temporal Deception)",
+            "iso42001": "Annex A.5.3",
+            "aarm":     "AARM-V1 (Memory Poisoning), AARM-V8 (Temporal Deception)",
         },
     },
     "A.6.2": {
@@ -148,10 +169,8 @@ CONTROL_META: dict[str, dict] = {
         "scoreName": "iso42001.A.6.2.passed",
         "iso_clause": "ISO/IEC 42001:2023 Annex A.6.2",
         "frameworks": {
-            "iso42001":    "Annex A.6.2",
-            "eu_ai_act":   "Art. 9 §4 (Lifecycle Risk Management)",
-            "nist_ai_rmf": "MANAGE 2.2, MAP 1.6",
-            "aarm":        "AARM-V6 (Reward Hacking)",
+            "iso42001": "Annex A.6.2",
+            "aarm":     "AARM-V6 (Reward Hacking)",
         },
     },
     "A.8.4": {
@@ -159,12 +178,10 @@ CONTROL_META: dict[str, dict] = {
         "scoreName": "iso42001.A.8.4.passed",
         "iso_clause": "ISO/IEC 42001:2023 Annex A.8.4",
         "frameworks": {
-            "iso42001":    "Annex A.8.4",
-            "eu_ai_act":   "Art. 13 (Transparency & Human Oversight)",
-            "nist_ai_rmf": "GOVERN 4.1, MANAGE 3.1",
-            "aarm":        "AARM-V1 (Memory Poisoning), AARM-V3 (Confused Deputy), "
-                           "AARM-V7 (Context Window Overflow / DEFER), "
-                           "AARM-V9 (Privilege Escalation)",
+            "iso42001": "Annex A.8.4",
+            "aarm":     "AARM-V1 (Memory Poisoning), AARM-V3 (Confused Deputy), "
+                        "AARM-V7 (Context Window Overflow / DEFER), "
+                        "AARM-V9 (Privilege Escalation)",
         },
     },
     "A.9.2": {
@@ -172,89 +189,147 @@ CONTROL_META: dict[str, dict] = {
         "scoreName": "iso42001.A.9.2.passed",
         "iso_clause": "ISO/IEC 42001:2023 Annex A.9.2",
         "frameworks": {
-            "iso42001":    "Annex A.9.2",
-            "eu_ai_act":   "Art. 10 (Data Governance)",
-            "nist_ai_rmf": "MAP 2.3",
-            "fedramp":     "SA-9 (External System Services)",
-            "aarm":        "AARM-V5 (Prompt Injection), AARM-V10 (Data Exfiltration)",
+            "iso42001": "Annex A.9.2",
+            "aarm":     "AARM-V5 (Prompt Injection), AARM-V10 (Data Exfiltration)",
         },
     },
+    # SC-4 is a CAGE-internal system constraint (not a NIST control).
+    # It is universal because fiscal limits and RBAC apply in all regions.
     "SC-4": {
         "name":      "Fiscal Limits and RBAC",
         "scoreName": "iso42001.SC-4.passed",
         "iso_clause": "System Constraint SC-4",
         "frameworks": {
-            "fedramp":     "AC-6 (Least Privilege), AC-3 (Access Enforcement)",
-            "aarm":        "AARM-V2 (Goal Hijacking), AARM-V3 (Confused Deputy), "
-                           "AARM-V4 (Cross-Agent Propagation), "
-                           "AARM-V9 (Privilege Escalation), "
-                           "AARM-V10 (Data Exfiltration), AARM-V11 (Model Substitution)",
-        },
-    },
-    "SA-11": {
-        "name":      "STPA Compiler — Developer Safety Testing",
-        "scoreName": "nist.SA-11.passed",
-        "iso_clause": "NIST SP 800-53 Rev 5 SA-11",
-        "frameworks": {
-            "fedramp":     "SA-11 (Developer Testing and Evaluation)",
-            "eu_ai_act":   "Art. 9 §7 (Testing Procedures)",
-            "nist_ai_rmf": "MEASURE 1.1",
-        },
-    },
-    "SC-7": {
-        "name":      "Boundary Protection — Cilium L7 Egress Lockdown",
-        "scoreName": "nist.SC-7.passed",
-        "iso_clause": "NIST SP 800-53 Rev 5 SC-7",
-        "frameworks": {
-            "fedramp":     "SC-7 (Boundary Protection)",
-            "aarm":        "AARM-V10 (Data Exfiltration)",
-        },
-    },
-    "SC-8": {
-        "name":      "Transmission Confidentiality — Linkerd mTLS",
-        "scoreName": "nist.SC-8.passed",
-        "iso_clause": "NIST SP 800-53 Rev 5 SC-8",
-        "frameworks": {
-            "fedramp":     "SC-8 (Transmission Confidentiality and Integrity)",
-            "aarm":        "AARM-V4 (Cross-Agent Propagation), AARM-V11 (Model Substitution)",
-        },
-    },
-    "AC-2": {
-        "name":      "Account Management",
-        "scoreName": "fedramp.AC-2.passed",
-        "iso_clause": "NIST SP 800-53 Rev 5 AC-2",
-        "frameworks": {
-            "fedramp": "AC-2 (Account Management)",
-        },
-    },
-    "IR-1": {
-        "name":      "Incident Response Policy and Procedures",
-        "scoreName": "fedramp.IR-1.passed",
-        "iso_clause": "NIST SP 800-53 Rev 5 IR-1",
-        "frameworks": {
-            "fedramp": "IR-1 (Incident Response Policy and Procedures)",
-        },
-    },
-    "Article 12": {
-        "name":      "Record-Keeping",
-        "scoreName": "eu_ai_act.Article_12.passed",
-        "iso_clause": "EU AI Act Art. 12",
-        "frameworks": {
-            "eu_ai_act": "Art. 12 (Record-Keeping)",
-        },
-    },
-    "Article 13": {
-        "name":      "Transparency & Human Oversight",
-        "scoreName": "eu_ai_act.Article_13.passed",
-        "iso_clause": "EU AI Act Art. 13",
-        "frameworks": {
-            "eu_ai_act": "Art. 13 (Transparency & Human Oversight)",
+            "aarm": "AARM-V2 (Goal Hijacking), AARM-V3 (Confused Deputy), "
+                    "AARM-V4 (Cross-Agent Propagation), "
+                    "AARM-V9 (Privilege Escalation), "
+                    "AARM-V10 (Data Exfiltration), AARM-V11 (Model Substitution)",
         },
     },
 }
 
-# Ordered list — order mirrors the TypeScript `as const` tuple
-SUPPORTED_CONTROLS: list[str] = list(CONTROL_META.keys())
+_JURISDICTIONAL_CONTROLS: dict[str, dict[str, dict]] = {
+    # ------------------------------------------------------------------
+    # US_FED — NIST SP 800-53 Rev 5 / FedRAMP HIGH / NIST AI 600-1
+    # CAGE_DEPLOYMENT_REGION=US_FED only. No legal force in EU_ECB or APAC_MAS.
+    # ------------------------------------------------------------------
+    "US_FED": {
+        "SA-11": {
+            "name":      "STPA Compiler — Developer Safety Testing",
+            "scoreName": "nist.SA-11.passed",
+            "iso_clause": "NIST SP 800-53 Rev 5 SA-11",
+            "frameworks": {
+                "fedramp":     "SA-11 (Developer Testing and Evaluation)",
+                "nist_ai_rmf": "MEASURE 1.1",
+            },
+        },
+        "SC-7": {
+            "name":      "Boundary Protection — Cilium L7 Egress Lockdown",
+            "scoreName": "nist.SC-7.passed",
+            "iso_clause": "NIST SP 800-53 Rev 5 SC-7",
+            "frameworks": {
+                "fedramp": "SC-7 (Boundary Protection)",
+                "aarm":    "AARM-V10 (Data Exfiltration)",
+            },
+        },
+        "SC-8": {
+            "name":      "Transmission Confidentiality — Linkerd mTLS",
+            "scoreName": "nist.SC-8.passed",
+            "iso_clause": "NIST SP 800-53 Rev 5 SC-8",
+            "frameworks": {
+                "fedramp": "SC-8 (Transmission Confidentiality and Integrity)",
+                "aarm":    "AARM-V4 (Cross-Agent Propagation), AARM-V11 (Model Substitution)",
+            },
+        },
+        "AC-2": {
+            "name":      "Account Management",
+            "scoreName": "fedramp.AC-2.passed",
+            "iso_clause": "NIST SP 800-53 Rev 5 AC-2",
+            "frameworks": {
+                "fedramp": "AC-2 (Account Management)",
+            },
+        },
+        "IR-1": {
+            "name":      "Incident Response Policy and Procedures",
+            "scoreName": "fedramp.IR-1.passed",
+            "iso_clause": "NIST SP 800-53 Rev 5 IR-1",
+            "frameworks": {
+                "fedramp": "IR-1 (Incident Response Policy and Procedures)",
+            },
+        },
+    },
+    # ------------------------------------------------------------------
+    # EU_ECB — EU AI Act (2024/1689) / GDPR / DORA
+    # CAGE_DEPLOYMENT_REGION=EU_ECB only.
+    # ------------------------------------------------------------------
+    "EU_ECB": {
+        "Article 12": {
+            "name":      "Record-Keeping",
+            "scoreName": "eu_ai_act.Article_12.passed",
+            "iso_clause": "EU AI Act Art. 12",
+            "frameworks": {
+                "eu_ai_act": "Art. 12 (Record-Keeping)",
+            },
+        },
+        "Article 13": {
+            "name":      "Transparency & Human Oversight",
+            "scoreName": "eu_ai_act.Article_13.passed",
+            "iso_clause": "EU AI Act Art. 13",
+            "frameworks": {
+                "eu_ai_act": "Art. 13 (Transparency & Human Oversight)",
+            },
+        },
+    },
+    # ------------------------------------------------------------------
+    # APAC_MAS — MAS FEAT / MAS Notice 655 / MAS TRM
+    # CAGE_DEPLOYMENT_REGION=APAC_MAS only.
+    # ------------------------------------------------------------------
+    "APAC_MAS": {
+        "MAS-FEAT-1": {
+            "name":      "Fairness Assessment",
+            "scoreName": "mas_feat.MAS_FEAT_1.passed",
+            "iso_clause": "MAS FEAT Principle 1 (Fairness)",
+            "frameworks": {
+                "mas_feat": "MAS FEAT Principle 1 — Fairness",
+            },
+        },
+    },
+}
+
+
+def get_control_meta(region: str) -> dict[str, dict]:
+    """Return controls applicable to the given deployment region.
+
+    Merges the universal ISO 42001 controls with the jurisdictional controls
+    for the specified region.  Controls from other regions are excluded so
+    that each deployment only exposes its applicable compliance framework.
+
+    Args:
+        region: CAGE_DEPLOYMENT_REGION value — one of "US_FED", "EU_ECB",
+                "APAC_MAS".  Unknown values return universal controls only.
+
+    Returns:
+        A dict mapping control_id → control metadata for the given region.
+    """
+    return {
+        **_UNIVERSAL_CONTROLS,
+        **_JURISDICTIONAL_CONTROLS.get(region, {}),
+    }
+
+
+# ---------------------------------------------------------------------------
+# CONTROL_META — DEPRECATED backward-compat alias.
+#
+# Contains universal (ISO 42001) controls only.  Existing callers that iterate
+# CONTROL_META will no longer see NIST or EU AI Act controls — this is the
+# correct behaviour for a region-agnostic context.  New code must call
+# get_control_meta(region) with the active CAGE_DEPLOYMENT_REGION.
+# ---------------------------------------------------------------------------
+
+CONTROL_META: dict[str, dict] = _UNIVERSAL_CONTROLS
+
+# Ordered list — universal controls only (region-agnostic baseline)
+SUPPORTED_CONTROLS: list[str] = list(_UNIVERSAL_CONTROLS.keys())
 
 # Controls that trigger immediate Slack/PagerDuty alert on FAIL (Step 4 of workflow)
 CRITICAL_CONTROLS: set[str] = {"A.9.2", "SC-4", "A.8.4"}
@@ -262,12 +337,13 @@ CRITICAL_CONTROLS: set[str] = {"A.9.2", "SC-4", "A.8.4"}
 # ---------------------------------------------------------------------------
 # FRAMEWORK_CONTROLS — framework short-name → list[control_id]  (Tier 2.1)
 #
-# Derived automatically from CONTROL_META so it never drifts out of sync.
-# Used by GET /v1/controls?framework=eu_ai_act to return a filtered view.
+# Derived automatically from _UNIVERSAL_CONTROLS so it never drifts out of sync.
+# Used by GET /v1/controls?framework=iso42001 to return a filtered view.
+# For jurisdictional framework filtering, callers must use get_control_meta(region).
 # ---------------------------------------------------------------------------
 
 FRAMEWORK_CONTROLS: dict[str, list[str]] = {}
-for _cid, _meta in CONTROL_META.items():
+for _cid, _meta in _UNIVERSAL_CONTROLS.items():
     for _fw in _meta.get("frameworks", {}).keys():
         FRAMEWORK_CONTROLS.setdefault(_fw, []).append(_cid)
 
@@ -275,21 +351,68 @@ for _cid, _meta in CONTROL_META.items():
 SUPPORTED_FRAMEWORKS: list[str] = sorted(FRAMEWORK_CONTROLS.keys())
 
 # ---------------------------------------------------------------------------
-# EVIDENCE_SLA_SECONDS — per-control maximum acceptable staleness (Tier 2.5)
+# FINDING-05 (HIGH) — Region-keyed SLA targets
 #
-# The SLA monitor background task fires a notifier alert when
-# evidence_age_seconds for a control exceeds its SLA threshold.
-# Controls absent from this dict are still monitored but not SLA-gated.
+# _UNIVERSAL_SLA: ISO 42001 controls only — applicable in all regions.
+# _JURISDICTIONAL_SLA: region-keyed SLA overrides for jurisdictional controls.
+#
+# The SLA monitor background task must call get_sla_seconds(region) rather
+# than iterating EVIDENCE_SLA_SECONDS directly, so that NIST SLA targets
+# (SC-7, SC-8) do not generate spurious breach alerts in EU_ECB / APAC_MAS.
 # ---------------------------------------------------------------------------
 
-EVIDENCE_SLA_SECONDS: dict[str, int] = {
-    "A.9.2": 3_600,    # PII masking — max 1 h stale
-    "SC-4":  7_200,    # Fiscal controls — max 2 h stale
-    "A.8.4": 3_600,    # STPA operation — max 1 h stale
-    "A.5.3": 14_400,   # Logging — max 4 h stale
-    "SC-8":  86_400,   # mTLS — daily is fine (infrastructure-level)
-    "SC-7":  86_400,   # Cilium L7 — daily is fine
+_UNIVERSAL_SLA: dict[str, int] = {
+    "A.9.2": 3_600,    # PII masking — max 1 h stale  (ISO 42001 A.9.2)
+    "SC-4":  7_200,    # Fiscal controls — max 2 h stale  (CAGE-internal SC-4)
+    "A.8.4": 3_600,    # STPA operation — max 1 h stale  (ISO 42001 A.8.4)
+    "A.5.3": 14_400,   # Logging — max 4 h stale  (ISO 42001 A.5.3)
 }
+
+_JURISDICTIONAL_SLA: dict[str, dict[str, int]] = {
+    # US_FED: NIST SP 800-53 infrastructure controls — daily cadence is acceptable
+    "US_FED": {
+        "SC-8":  86_400,   # mTLS — daily is fine (infrastructure-level, NIST SC-8)
+        "SC-7":  86_400,   # Cilium L7 — daily is fine (NIST SC-7)
+    },
+    # EU_ECB: DORA Art. 10 mandates tighter audit logging cadence
+    "EU_ECB": {
+        "Article 12": 14_400,  # EU AI Act Art. 12 record-keeping — max 4 h stale
+    },
+    # APAC_MAS: MAS Notice 655 audit logging
+    "APAC_MAS": {
+        "MAS-FEAT-1": 86_400,  # MAS FEAT fairness — daily assessment
+    },
+}
+
+
+def get_sla_seconds(region: str) -> dict[str, int]:
+    """Return SLA thresholds applicable to the given deployment region.
+
+    Merges the universal ISO 42001 SLA targets with the jurisdictional SLA
+    overrides for the specified region.  SLA targets for other regions are
+    excluded so the SLA monitor only alerts on applicable controls.
+
+    Args:
+        region: CAGE_DEPLOYMENT_REGION value — one of "US_FED", "EU_ECB",
+                "APAC_MAS".  Unknown values return universal SLA targets only.
+
+    Returns:
+        A dict mapping control_id → max acceptable staleness in seconds.
+    """
+    return {
+        **_UNIVERSAL_SLA,
+        **_JURISDICTIONAL_SLA.get(region, {}),
+    }
+
+
+# ---------------------------------------------------------------------------
+# EVIDENCE_SLA_SECONDS — DEPRECATED backward-compat alias.
+#
+# Contains universal (ISO 42001 + CAGE-internal) SLA targets only.
+# New code must call get_sla_seconds(region) with the active CAGE_DEPLOYMENT_REGION.
+# ---------------------------------------------------------------------------
+
+EVIDENCE_SLA_SECONDS: dict[str, int] = _UNIVERSAL_SLA
 
 # ---------------------------------------------------------------------------
 # ISO_CONTROL_MAP — governance event name → control ID

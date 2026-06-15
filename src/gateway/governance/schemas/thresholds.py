@@ -126,9 +126,40 @@ class GovernanceThresholds(BaseModel):
     tier1_keywords_cbrn: List[str] = Field(default_factory=list)
     tier1_keywords_cbrn_enabled: bool = False
 
-    # AI 600-1 §2.2 PII audit log settings (FISMA AU-11)
+    # PII audit log settings
+    # FINDING-07 (MEDIUM): pii_audit_retention_days previously hardcoded 90 days
+    # (FISMA AU-11) as the universal Pydantic default, embedding a US Federal
+    # retention requirement as the universal baseline.
+    #
+    # Retention authority by region (R-2, R-6):
+    #   US_FED   → 90 days  (FISMA AU-11)
+    #   EU_ECB   → 30 days  (GDPR Art. 5(1)(e) storage limitation principle)
+    #   APAC_MAS → 365 days (MAS Notice 655 §4.3 — 5-year retention, daily rolling)
+    #
+    # The default is now None (no hardcoded value). The compliance bridge startup
+    # must load the correct value from the applicable baseline JSON
+    # (US_FED_BASELINE.json, EU_ECB_BASELINE.json, APAC_MAS_BASELINE.json)
+    # based on CAGE_DEPLOYMENT_REGION.  The pii_audit_retention_authority field
+    # carries the applicable regulatory citation for audit evidence.
     pii_audit_log_enabled: bool = True
-    pii_audit_retention_days: int = 90  # FISMA AU-11
+    pii_audit_retention_days: int | None = Field(
+        default=None,
+        description=(
+            "PII audit log retention in days. Must be set from the applicable "
+            "baseline JSON based on CAGE_DEPLOYMENT_REGION. "
+            "US_FED: 90 (FISMA AU-11), EU_ECB: 30 (GDPR Art. 5(1)(e)), "
+            "APAC_MAS: 365 (MAS Notice 655 §4.3)."
+        ),
+    )
+    pii_audit_retention_authority: str = Field(
+        default="ISO 42001 A.9.2",
+        description=(
+            "Regulatory citation for the applicable PII audit retention requirement. "
+            "Set at startup based on CAGE_DEPLOYMENT_REGION: "
+            "US_FED → 'FISMA AU-11', EU_ECB → 'GDPR Art. 5(1)(e)', "
+            "APAC_MAS → 'MAS Notice 655 §4.3'."
+        ),
+    )
 
     @field_validator("tier1_keywords")
     @classmethod

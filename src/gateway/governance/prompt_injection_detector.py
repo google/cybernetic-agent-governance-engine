@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Prompt injection detector — AI 600-1 §2.3 control.
+"""Prompt injection detector — ISO 42001 A.9.2 universal control.
 
 Detects structural prompt injection patterns that bypass keyword-based filters.
 Complements the Aho-Corasick Tier-1 keyword scanner (text_filter.py) with
@@ -20,12 +20,27 @@ semantic/structural pattern matching for injection attempts.
 
 POAM: AI600-003
 Controls: CausalGatekeeper (pre-check), CTRL_WAL_002 (WAL integrity)
-Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
+
+FINDING-09 (MEDIUM): This module previously declared "Region: US_FED" in its
+docstring but contained no runtime CAGE_DEPLOYMENT_REGION check.  Prompt
+injection detection is a universal security control (ISO 42001 A.9.2) that
+applies in all regions.  The AI 600-1 §2.3 citation is US_FED-specific;
+EU_ECB and APAC_MAS cite equivalent controls from their applicable frameworks.
+
+Correct behaviour (R-2, R-5):
+  - Prompt injection detection itself is universal (ISO 42001 A.9.2).
+  - AI 600-1 §2.3 citation is US_FED only.
+  - EU_ECB cites EU AI Act Art. 9 (risk management system).
+  - APAC_MAS cites MAS FEAT Principle 2 (Ethics / robustness).
+
+The get_injection_regulatory_citation(region) function returns the applicable
+regulatory citation for the active deployment region.
 
 Usage::
 
     from src.gateway.governance.prompt_injection_detector import (
-        detect_prompt_injection, InjectionResult
+        detect_prompt_injection, InjectionResult,
+        get_injection_regulatory_citation,
     )
 
     result = detect_prompt_injection("Ignore all previous instructions.")
@@ -37,9 +52,42 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import Optional
+
+# ---------------------------------------------------------------------------
+# FINDING-09 (MEDIUM) — Jurisdictional regulatory citation map
+#
+# Prompt injection detection is universal (ISO 42001 A.9.2).
+# The regulatory citation for the detection event is jurisdictional.
+# ---------------------------------------------------------------------------
+
+_INJECTION_CITATION: dict[str, str] = {
+    "US_FED":   "AI 600-1 §2.3 (prompt injection — US Federal posture)",
+    "EU_ECB":   "EU AI Act Art. 9 (risk management system — robustness)",
+    "APAC_MAS": "MAS FEAT Principle 2 (Ethics — robustness against adversarial inputs)",
+}
+_INJECTION_CITATION_DEFAULT = "ISO 42001 A.9.2 (data transfer to suppliers — input validation)"
+
+
+def get_injection_regulatory_citation(region: str | None = None) -> str:
+    """Return the applicable regulatory citation for prompt injection detection.
+
+    FINDING-09: AI 600-1 §2.3 is US_FED only.  EU_ECB and APAC_MAS have
+    equivalent controls under their applicable frameworks.
+
+    Args:
+        region: CAGE_DEPLOYMENT_REGION value.  If None, reads from environment.
+
+    Returns:
+        Regulatory citation string for the applicable injection detection control.
+    """
+    active_region = region if region is not None else os.environ.get(
+        "CAGE_DEPLOYMENT_REGION", ""
+    ).strip().upper()
+    return _INJECTION_CITATION.get(active_region, _INJECTION_CITATION_DEFAULT)
 
 logger = logging.getLogger("Gateway.Governance.PromptInjectionDetector")
 

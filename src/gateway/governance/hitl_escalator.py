@@ -12,20 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Human-in-the-loop escalator — AI 600-1 §2.5 control.
+"""Human-in-the-loop escalator — ISO 42001 A.8.4 universal control.
 
 Routes governance decisions that exceed the consensus threshold or fall below
 the confidence threshold to a human reviewer via the DeferQueue.
 
 POAM: AI600-004
 Controls: ConsensusEngine (threshold USD 10,000), HITL escalation path
-Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
-SR 26-2 §3.2: HITL SLA — escalations must be resolved within 4 hours.
+
+FINDING-09 (MEDIUM): This module previously declared "Region: US_FED" in its
+docstring but contained no runtime CAGE_DEPLOYMENT_REGION check.  The SR 26-2
+§3.2 HITL SLA of 4 hours is a US Federal Reserve requirement applied universally.
+
+Correct behaviour (R-2):
+  - HITL escalation itself is universal (ISO 42001 A.8.4 human oversight).
+  - SR 26-2 §3.2 SLA enforcement (4-hour resolution) is US_FED only.
+  - EU_ECB applies DORA Art. 10 HITL requirements.
+  - APAC_MAS applies MAS FEAT §3.2 requirements.
+
+The get_hitl_sla_hours(region) function returns the applicable SLA for the
+active deployment region.  Callers must use this instead of hardcoding 4 hours.
 
 Usage::
 
     from src.gateway.governance.hitl_escalator import (
-        EscalationReason, EscalationRequest, escalate_to_human
+        EscalationReason, EscalationRequest, escalate_to_human,
+        get_hitl_sla_hours,
     )
 
     request = EscalationRequest(
@@ -41,10 +53,44 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
+
+# ---------------------------------------------------------------------------
+# FINDING-09 (MEDIUM) — Jurisdictional HITL SLA map
+#
+# SR 26-2 §3.2 (4-hour HITL SLA) is a US Federal Reserve requirement.
+# It has no legal force outside US_FED (per .clinerules §12.4).
+# EU_ECB and APAC_MAS have different HITL requirements.
+# ---------------------------------------------------------------------------
+
+_HITL_SLA_HOURS: dict[str, float] = {
+    "US_FED":   4.0,   # SR 26-2 §3.2 — Federal Reserve supervisory guidance
+    "EU_ECB":   2.0,   # DORA Art. 10 — ICT incident management (major incidents)
+    "APAC_MAS": 1.0,   # MAS FEAT §3.2 — human oversight of AI decisions
+}
+_HITL_SLA_HOURS_DEFAULT = 4.0  # ISO 42001 A.8.4 universal fallback
+
+
+def get_hitl_sla_hours(region: str | None = None) -> float:
+    """Return the applicable HITL SLA in hours for the given deployment region.
+
+    FINDING-09: SR 26-2 §3.2 (4-hour SLA) is US_FED only.  EU_ECB applies
+    DORA Art. 10; APAC_MAS applies MAS FEAT §3.2.
+
+    Args:
+        region: CAGE_DEPLOYMENT_REGION value.  If None, reads from environment.
+
+    Returns:
+        Maximum hours within which a HITL escalation must be resolved.
+    """
+    active_region = region if region is not None else os.environ.get(
+        "CAGE_DEPLOYMENT_REGION", ""
+    ).strip().upper()
+    return _HITL_SLA_HOURS.get(active_region, _HITL_SLA_HOURS_DEFAULT)
 
 logger = logging.getLogger("Gateway.Governance.HITLEscalator")
 
@@ -195,6 +241,28 @@ def should_escalate_for_consensus(amount_usd: float, threshold_usd: float = 1000
         True if ``amount_usd > threshold_usd``, False otherwise.
     """
     return amount_usd > threshold_usd
+
+
+def get_hitl_regulatory_citation(region: str | None = None) -> str:
+    """Return the applicable HITL regulatory citation for the given region.
+
+    FINDING-09: SR 26-2 §3.2 has no legal force outside US_FED.
+
+    Args:
+        region: CAGE_DEPLOYMENT_REGION value.  If None, reads from environment.
+
+    Returns:
+        Regulatory citation string for the applicable HITL requirement.
+    """
+    _HITL_CITATIONS: dict[str, str] = {
+        "US_FED":   "SR 26-2 §3.2 (Federal Reserve HITL SLA — 4 hours)",
+        "EU_ECB":   "DORA Art. 10 (ICT incident management — 2 hours for major incidents)",
+        "APAC_MAS": "MAS FEAT §3.2 (human oversight of AI decisions — 1 hour)",
+    }
+    active_region = region if region is not None else os.environ.get(
+        "CAGE_DEPLOYMENT_REGION", ""
+    ).strip().upper()
+    return _HITL_CITATIONS.get(active_region, "ISO 42001 A.8.4 (AI system operation controls)")
 
 
 def should_escalate_for_confidence(

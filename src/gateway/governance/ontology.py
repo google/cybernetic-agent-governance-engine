@@ -156,25 +156,73 @@ class TradingKnowledgeGraph:
         ))
 
     # QUAL-06: Authoritative ISO 42001 mapping from OSCAL component-definition.yaml
-    # EU-specific entries (GDPR_ART22, EU_AI_ACT_ART10, FRIA_LOGGING) are only
-    # operative when CAGE_DEPLOYMENT_REGION=EU_ECB. Consumers should check the
-    # active ControlRegistry region before referencing EU-specific keys.
-    ISO_CONTROL_MAP = {
-        "SOCIAL_IMPACT":    "A.5.2",         # Prompt Injection & Toxicity
-        "LOGGING_AUDIT":    "A.5.3",         # Continuous Monitoring
-        "DATA_PRIVACY":     "A.9.2",         # PII / Data Anonymisation (ISO baseline)
-        "FISCAL_CONTROLS":  "SC-4",          # OPA RBAC & Limits
-        # --- EU-specific authoritative citations (EU_ECB region only) ---
-        "GDPR_ART22":       "GDPR Art. 22",  # Automated individual decision-making
-                                             # (right not to be subject to solely automated
-                                             # decisions with legal / similarly significant effects)
-        "EU_AI_ACT_ART10":  "EU AI Act Art. 10",  # Data governance and management practices
-                                                   # for High-Risk AI training data (bias examination,
-                                                   # data lineage, data quality criteria)
-        "FRIA_LOGGING":     "EU AI Act Art. 29a", # Fundamental Rights Impact Assessment —
-                                                   # pre-market assessment required before
-                                                   # deploying High-Risk AI in the EU
+    #
+    # FINDING-04 (HIGH): The original ISO_CONTROL_MAP embedded EU-specific entries
+    # (GDPR_ART22, EU_AI_ACT_ART10, FRIA_LOGGING) and a NIST entry (FISCAL_CONTROLS
+    # → SC-4 was previously annotated as NIST) as class attributes with no runtime
+    # guard.  Restructured into three separate class attributes:
+    #   _UNIVERSAL_CONTROL_MAP  — ISO 42001 controls (all regions)
+    #   _EU_ECB_CONTROL_MAP     — EU AI Act / GDPR controls (EU_ECB only)
+    #   _US_FED_CONTROL_MAP     — NIST SP 800-53 controls (US_FED only)
+    # Use get_control_map(region) to obtain the merged view for a given region.
+    # ISO_CONTROL_MAP is retained as a backward-compat alias (universal only).
+
+    # Universal ISO 42001 controls — applicable in all regions (R-1, R-5)
+    _UNIVERSAL_CONTROL_MAP: dict[str, str] = {
+        "SOCIAL_IMPACT":   "A.5.2",  # Prompt Injection & Toxicity
+        "LOGGING_AUDIT":   "A.5.3",  # Continuous Monitoring
+        "DATA_PRIVACY":    "A.9.2",  # PII / Data Anonymisation (ISO baseline)
+        "FISCAL_CONTROLS": "SC-4",   # OPA RBAC & Limits (CAGE-internal system constraint)
     }
+
+    # EU_ECB-specific controls — EU AI Act / GDPR (R-3)
+    # Only operative when CAGE_DEPLOYMENT_REGION=EU_ECB.
+    _EU_ECB_CONTROL_MAP: dict[str, str] = {
+        "GDPR_ART22":      "GDPR Art. 22",       # Automated individual decision-making
+                                                  # (right not to be subject to solely automated
+                                                  # decisions with legal / similarly significant effects)
+        "EU_AI_ACT_ART10": "EU AI Act Art. 10",  # Data governance and management practices
+                                                  # for High-Risk AI training data (bias examination,
+                                                  # data lineage, data quality criteria)
+        "FRIA_LOGGING":    "EU AI Act Art. 29a",  # Fundamental Rights Impact Assessment —
+                                                  # pre-market assessment required before
+                                                  # deploying High-Risk AI in the EU
+    }
+
+    # US_FED-specific controls — NIST SP 800-53 (R-2)
+    # Only operative when CAGE_DEPLOYMENT_REGION=US_FED.
+    # SR 26-2: NIST control IDs have no legal force outside US_FED.
+    _US_FED_CONTROL_MAP: dict[str, str] = {
+        "BOUNDARY_PROTECTION": "SC-7",   # Cilium L7 Egress Lockdown
+        "TRANSMISSION_CONF":   "SC-8",   # Linkerd mTLS
+        "ACCOUNT_MGMT":        "AC-2",   # Account Management
+    }
+
+    # Backward-compat alias — universal controls only.
+    # New code must call get_control_map(region) instead.
+    ISO_CONTROL_MAP: dict[str, str] = _UNIVERSAL_CONTROL_MAP
+
+    @classmethod
+    def get_control_map(cls, region: str) -> dict[str, str]:
+        """Return the control map applicable to the given deployment region.
+
+        Merges the universal ISO 42001 control map with the jurisdictional
+        control map for the specified region.  Controls from other regions
+        are excluded so each deployment only exposes its applicable framework.
+
+        Args:
+            region: CAGE_DEPLOYMENT_REGION value — one of "US_FED", "EU_ECB",
+                    "APAC_MAS".  Unknown values return universal controls only.
+
+        Returns:
+            A dict mapping governance event name → control identifier.
+        """
+        if region == "EU_ECB":
+            return {**cls._UNIVERSAL_CONTROL_MAP, **cls._EU_ECB_CONTROL_MAP}
+        if region == "US_FED":
+            return {**cls._UNIVERSAL_CONTROL_MAP, **cls._US_FED_CONTROL_MAP}
+        # APAC_MAS and unknown regions: universal controls only
+        return dict(cls._UNIVERSAL_CONTROL_MAP)
 
     def add_uca(self, uca: STAMP_UCA):
         self.ucas[uca.id] = uca

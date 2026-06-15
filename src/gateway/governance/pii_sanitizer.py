@@ -44,9 +44,25 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from typing import Optional
+
+# ---------------------------------------------------------------------------
+# FINDING-08 (MEDIUM) — Jurisdictional retention authority citation map
+#
+# pii_audit_log() previously cited "FISMA AU-11" as the universal retention
+# authority with no CAGE_DEPLOYMENT_REGION guard.  Added a ``region`` parameter
+# so the correct citation is emitted based on the active deployment region.
+# ---------------------------------------------------------------------------
+
+_RETENTION_AUTHORITY: dict[str, str] = {
+    "US_FED":   "FISMA AU-11",
+    "EU_ECB":   "GDPR Art. 5(1)(e)",
+    "APAC_MAS": "MAS Notice 655 §4.3",
+}
+_RETENTION_AUTHORITY_DEFAULT = "ISO 42001 A.9.2"
 
 logger = logging.getLogger("Gateway.Governance.PIISanitizer")
 
@@ -202,19 +218,29 @@ def pii_audit_log(
     trace_id: str,
     entity_types: list[str],
     redacted: bool,
+    region: str | None = None,
 ) -> dict:
     """Return a structured audit record for PII detection events.
+
+    FINDING-08 (MEDIUM): Added ``region`` parameter so the correct regulatory
+    retention authority citation is emitted based on CAGE_DEPLOYMENT_REGION.
+    Previously cited "FISMA AU-11" universally with no region guard.
 
     Produces a JSON-serialisable dict suitable for writing to the WORM ledger
     (GCS WORM bucket, CMEK-encrypted) or emitting to a structured log sink.
 
-    FISMA AU-11 retention: 90 days minimum (enforced by GCS bucket lifecycle).
+    Retention authority by region (R-2, R-3, R-4):
+      US_FED   → FISMA AU-11 (90 days minimum)
+      EU_ECB   → GDPR Art. 5(1)(e) (storage limitation principle)
+      APAC_MAS → MAS Notice 655 §4.3
 
     Args:
         trace_id:     Langfuse trace ID for the governed request.
         entity_types: List of detected PII entity types
                       (e.g. ["PERSON", "EMAIL_ADDRESS"]).
         redacted:     True if PII was redacted from the request.
+        region:       CAGE_DEPLOYMENT_REGION value.  If None, reads from
+                      environment.  One of "US_FED", "EU_ECB", "APAC_MAS".
 
     Returns:
         A dict with the following schema:
@@ -223,7 +249,8 @@ def pii_audit_log(
             "trace_id": str,
             "entity_types": list[str],
             "redacted": bool,
-            "timestamp": str,  # ISO 8601 UTC, e.g. "2026-06-15T12:00:00.000000Z"
+            "timestamp": str,           # ISO 8601 UTC
+            "retention_authority": str, # jurisdiction-specific citation
         }
 
     Raises:
@@ -236,6 +263,11 @@ def pii_audit_log(
             "A redaction event must identify at least one PII entity type."
         )
 
+    active_region = region if region is not None else os.environ.get(
+        "CAGE_DEPLOYMENT_REGION", ""
+    ).strip().upper()
+    retention_authority = _RETENTION_AUTHORITY.get(active_region, _RETENTION_AUTHORITY_DEFAULT)
+
     timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
 
     record = {
@@ -244,13 +276,15 @@ def pii_audit_log(
         "entity_types": entity_types,
         "redacted": redacted,
         "timestamp": timestamp,
+        "retention_authority": retention_authority,
     }
 
     logger.debug(
-        "PII audit record: trace_id=%s entity_types=%s redacted=%s",
+        "PII audit record: trace_id=%s entity_types=%s redacted=%s retention_authority=%s",
         trace_id,
         entity_types,
         redacted,
+        retention_authority,
     )
 
     return record
