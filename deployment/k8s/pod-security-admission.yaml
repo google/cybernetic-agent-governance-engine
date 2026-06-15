@@ -14,24 +14,28 @@
 
 ---
 # Governance Stack Namespace — Restricted Security Profile
-# SC-39: All CAGE workloads must run under the restricted PSS profile.
-# This blocks: privileged containers, host namespaces, host paths, root users,
-# privilege escalation, and requires RuntimeDefault or Localhost seccomp profiles.
+# ISO 42001 A.6.1 / A.8.2: All CAGE workloads must run under the restricted PSS
+# profile. This blocks: privileged containers, host namespaces, host paths, root
+# users, privilege escalation, and requires RuntimeDefault or Localhost seccomp.
+# DEP-17: Replaced NIST SC-39 labels with jurisdiction-neutral cage.io labels.
+# SC-39 is a US_FED (NIST SP 800-53) control; PSA enforcement is universal.
+# US_FED deployments additionally satisfy SC-39 via this same configuration.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: governance-stack
   labels:
-    # Pod Security Standards labels — SC-39
+    # Pod Security Standards labels — ISO 42001 A.6.1 / A.8.2 (universal)
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/audit-version: latest
     pod-security.kubernetes.io/warn: restricted
     pod-security.kubernetes.io/warn-version: latest
-    # Compliance labels
-    compliance.nist.gov/control: "SC-39"
-    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    # Jurisdiction-neutral compliance labels (DEP-17)
+    cage.io/iso42001-control: "A.6.1"
+    cage.io/psa-profile: "restricted"
+    cage.io/jurisdiction-note: "US_FED also satisfies NIST SC-39 via this label"
     # Existing operational labels preserved
     app.kubernetes.io/managed-by: cage
 ---
@@ -39,6 +43,7 @@ metadata:
 # Langfuse is a third-party observability tool that may run processes as root
 # or require capabilities incompatible with the restricted profile.
 # Audit and warn at restricted level to surface violations for remediation.
+# DEP-17: Replaced NIST SC-39 labels with jurisdiction-neutral cage.io labels.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -50,8 +55,10 @@ metadata:
     pod-security.kubernetes.io/audit-version: latest
     pod-security.kubernetes.io/warn: restricted
     pod-security.kubernetes.io/warn-version: latest
-    compliance.nist.gov/control: "SC-39"
-    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    # Jurisdiction-neutral compliance labels (DEP-17)
+    cage.io/iso42001-control: "A.6.1"
+    cage.io/psa-profile: "baseline"
+    cage.io/jurisdiction-note: "US_FED also satisfies NIST SC-39 via this label"
     app.kubernetes.io/managed-by: cage
 ---
 # vLLM Namespace — Baseline Security Profile
@@ -59,6 +66,7 @@ metadata:
 # (e.g., /dev/nvidia*) and elevated UID. Restricted profile would break CUDA.
 # POAM exception: track remediation to restrict further when CUDA operator
 # supports non-root GPU access (target: Q3 2026).
+# DEP-17: Replaced NIST SC-39 labels with jurisdiction-neutral cage.io labels.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -70,6 +78,8 @@ metadata:
     pod-security.kubernetes.io/audit-version: latest
     pod-security.kubernetes.io/warn: restricted
     pod-security.kubernetes.io/warn-version: latest
-    compliance.nist.gov/control: "SC-39"
-    compliance.nist.gov/standard: "SP-800-53-Rev5"
+    # Jurisdiction-neutral compliance labels (DEP-17)
+    cage.io/iso42001-control: "A.6.1"
+    cage.io/psa-profile: "baseline"
+    cage.io/jurisdiction-note: "US_FED also satisfies NIST SC-39 via this label"
     app.kubernetes.io/managed-by: cage

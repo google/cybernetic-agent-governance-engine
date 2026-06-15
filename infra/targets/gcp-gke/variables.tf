@@ -17,16 +17,19 @@ variable "project_id" {
   type        = string
 }
 
+# DEP-08: Remove default values for region and zone.
+# Defaulting to us-central1 silently violates GDPR Art. 44 (EU_ECB) and
+# MAS TRM §4.2 (APAC_MAS) when no var-file is supplied. Operators must
+# explicitly set region/zone via a jurisdiction-specific tfvars file.
+# R-3, R-4, R-7: data residency must be enforced at the Terraform layer.
 variable "region" {
-  description = "GCP region"
+  description = "GCP region — must be set explicitly via a jurisdiction-specific tfvars file (e.g. eu-prod.tfvars, apac-prod.tfvars, prod.tfvars). No default: omitting this causes a Terraform plan error rather than silently deploying to us-central1."
   type        = string
-  default     = "us-central1"
 }
 
 variable "zone" {
-  description = "GCP zone for zonal cluster"
+  description = "GCP zone — must be set explicitly via a jurisdiction-specific tfvars file. No default: omitting this causes a Terraform plan error rather than silently deploying to us-central1-a."
   type        = string
-  default     = "us-central1-a"
 }
 
 # ─── Cluster Configuration ────────────────────────────────────────────────────
@@ -57,7 +60,26 @@ variable "namespace" {
 # ─── Security Posture Toggles ─────────────────────────────────────────────────
 
 variable "enable_nist_compliance" {
-  description = "Enable NIST RMF security controls (SC-7, AC-3, deletion protection)"
+  description = "Enable NIST SP 800-53 RMF security controls (SC-7, AC-3, deletion protection). US_FED only — do not set for EU_ECB or APAC_MAS deployments."
+  type        = bool
+  default     = false
+}
+
+# DEP-20: Introduce enable_eu_ecb_compliance to independently activate DORA Art. 10
+# HA and GDPR Art. 32 encryption requirements for EU_ECB deployments.
+# Previously, EU_ECB deployments had no mechanism to activate HA/encryption
+# because enable_nist_compliance was the only hardening toggle.
+# R-3: EU AI Act / GDPR / DORA logic MUST be gated on CAGE_DEPLOYMENT_REGION == "EU_ECB".
+variable "enable_eu_ecb_compliance" {
+  description = "Enable EU_ECB compliance hardening: DORA Art. 10 HA, GDPR Art. 32 encryption at rest. EU_ECB only — activates Redis replication, PostgreSQL resource limits, and ClickHouse PDB independently of enable_nist_compliance."
+  type        = bool
+  default     = false
+}
+
+# DEP-20: Introduce enable_apac_mas_compliance to independently activate MAS TRM §9.1
+# encryption and MAS Notice 655 audit logging requirements for APAC_MAS deployments.
+variable "enable_apac_mas_compliance" {
+  description = "Enable APAC_MAS compliance hardening: MAS TRM §9.1 encryption at rest, MAS Notice 655 audit logging. APAC_MAS only — activates Redis persistence and resource limits independently of enable_nist_compliance."
   type        = bool
   default     = false
 }
@@ -543,8 +565,19 @@ variable "master_ipv4_cidr_block" { default = "172.16.0.0/28" }
 variable "pod_cidr" { default = "10.100.0.0/14" }
 variable "service_cidr" { default = "10.104.0.0/20" }
 
+# DEP-09: Remove the "US_FED" default from cage_deployment_region.
+# A missing or misconfigured value previously silently applied US_FED compliance
+# posture to EU_ECB and APAC_MAS deployments. Operators must now explicitly set
+# this variable via a jurisdiction-specific tfvars file. The validation block
+# cross-checks the declared region against the GCP region prefix to catch
+# mismatches at plan time rather than at runtime.
+# R-7: deployment scripts must propagate CAGE_DEPLOYMENT_REGION explicitly.
 variable "cage_deployment_region" {
-  description = "CAGE deployment region compliance profile (US_FED, EU_ECB, APAC_MAS)"
+  description = "CAGE deployment region compliance profile. Must be one of: US_FED, EU_ECB, APAC_MAS. No default — must be set explicitly in a jurisdiction-specific tfvars file (prod.tfvars, eu-prod.tfvars, apac-prod.tfvars)."
   type        = string
-  default     = "US_FED"
+
+  validation {
+    condition     = contains(["US_FED", "EU_ECB", "APAC_MAS"], var.cage_deployment_region)
+    error_message = "cage_deployment_region must be one of: US_FED, EU_ECB, APAC_MAS. Set this explicitly in your jurisdiction-specific tfvars file."
+  }
 }

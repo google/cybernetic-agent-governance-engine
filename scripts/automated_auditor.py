@@ -53,7 +53,24 @@ _AUDITOR_GCP_PROJECT_ID = os.environ.get("AUDITOR_GCP_PROJECT_ID", "")
 # Langfuse credentials — mirrors the pattern in src/compliance_bridge/metrics.py
 _LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
 _LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", "")
-_LANGFUSE_HOST = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
+
+# DEP-03: Enforce explicit LANGFUSE_HOST for EU_ECB and APAC_MAS deployments.
+# Defaulting to cloud.langfuse.com routes audit traces to a SaaS endpoint outside
+# the deployment region, violating GDPR Art. 44 (EU_ECB) and MAS TRM §4.2 (APAC_MAS).
+# R-3, R-7: data residency must be enforced at the deployment pipeline layer.
+_cage_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "")
+_langfuse_host = os.environ.get("LANGFUSE_HOST", "")
+if not _langfuse_host:
+    if _cage_region in ("EU_ECB", "APAC_MAS"):
+        raise RuntimeError(
+            f"LANGFUSE_HOST must be explicitly set for {_cage_region} deployments "
+            "to ensure data residency compliance (GDPR Art. 44 / MAS TRM §4.2). "
+            "Do not use cloud.langfuse.com — set LANGFUSE_HOST to your in-region "
+            "Langfuse instance (e.g. http://langfuse.governance-stack.svc.cluster.local:3000)."
+        )
+    # US_FED only fallback — SaaS endpoint is acceptable for US federal deployments
+    _langfuse_host = "https://cloud.langfuse.com"
+_LANGFUSE_HOST = _langfuse_host
 
 
 # ---------------------------------------------------------------------------

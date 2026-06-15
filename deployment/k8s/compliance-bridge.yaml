@@ -87,8 +87,18 @@ spec:
             # ---------------------------------------------------------------------------
             - name: OSCAL_S3_ENDPOINT
               value: "https://storage.googleapis.com"
+            # DEP-07: OSCAL_S3_REGION must not be "auto" — it must reflect the
+            # GCS bucket region for the active jurisdiction to satisfy data residency
+            # requirements (GDPR Art. 44 / MAS TRM §4.2).
+            # Sourced from oscal-artifact-secrets so deploy_all.sh / Terraform can
+            # inject the correct region per CAGE_DEPLOYMENT_REGION:
+            # US_FED → us-central1 | EU_ECB → europe-west1 | APAC_MAS → asia-southeast1
             - name: OSCAL_S3_REGION
-              value: "auto"
+              valueFrom:
+                secretKeyRef:
+                  name: oscal-artifact-secrets
+                  key: gcs-region
+                  optional: false
             - name: OSCAL_S3_BUCKET
               valueFrom:
                 secretKeyRef:

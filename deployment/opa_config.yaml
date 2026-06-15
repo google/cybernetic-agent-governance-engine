@@ -59,13 +59,32 @@ caching:
     max_size_bytes: 1000000
 
 # 6. Labels
-# ISO 42001 compliance labels embedded in OPA status output.
-# Lula's api domain can assert these via GET /v1/status.
+# DEP-19: Add cage_deployment_region label to OPA status output so Lula's api
+# domain can assert the active jurisdiction via GET /v1/status.
+# The label value is injected at deploy time from CAGE_DEPLOYMENT_REGION env var.
+# ISO 42001 compliance labels are universal (all regions).
+# NIST SC-4 is a US_FED-only control — removed from the universal controls list.
+# R-7: OPA must expose jurisdiction metadata so jurisdiction-specific policy
+# overlays can be conditionally loaded based on CAGE_DEPLOYMENT_REGION.
 labels:
   compliance.iso42001/enabled: "true"
-  compliance.iso42001/controls: "A.5.3,SC-4,A.9.2,A.5.2"
+  compliance.iso42001/controls: "A.5.3,A.9.2,A.5.2"
   compliance.iso42001/standard: "ISO/IEC 42001:2023"
   deployment: "gke-governance-stack"
+  # DEP-19: cage_deployment_region is injected at deploy time from the environment.
+  # This label enables Lula's api domain to assert the active jurisdiction posture.
+  # Value is one of: US_FED, EU_ECB, APAC_MAS
+  cage.io/deployment-region: "${CAGE_DEPLOYMENT_REGION:-UNSET}"
+
+# DEP-19: Jurisdiction-specific OPA policy overlay mechanism.
+# The universal trade_governance.rego is always loaded.
+# Jurisdiction-specific overlays are loaded conditionally based on CAGE_DEPLOYMENT_REGION:
+#   US_FED:   us_fed_governance.rego (NIST AI 600-1 / SR 26-2 HITL rules)
+#   EU_ECB:   eu_ecb_governance.rego (EU AI Act Art. 22 / GDPR Art. 22 human oversight)
+#   APAC_MAS: apac_mas_governance.rego (MAS FEAT fairness rules / MAS Notice 655)
+# These overlay files must be mounted into the OPA pod at deploy time based on
+# CAGE_DEPLOYMENT_REGION. The deploy_all.sh script is responsible for selecting
+# the correct overlay bundle. See docs/DEPLOYMENT_RULES.md for the overlay matrix.
 
 # POLICY ALLOWLIST: Only trade_governance.rego is evaluated.
 # finance_policy.rego, generated_rules.rego, and trade_policy.rego are DEPRECATED and must NOT be added here.

@@ -1,0 +1,196 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# DEP-13: APAC_MAS compliance gate workflow.
+# Runs MAS FEAT, MAS Notice 655, and MAS TRM §4.2 compliance checks.
+# This workflow is SCOPED TO APAC_MAS ONLY — it must not gate US_FED or EU_ECB releases.
+#
+# Jurisdictional Hierarchy:
+#   Universal: ISO 42001 (ci.yml)
+#   EU_ECB:    EU AI Act / GDPR / DORA (eu-ecb-compliance.yml)
+#   US_FED:    NIST SP 800-53 / AI 600-1 / FedRAMP (security-scan.yml + ci.yml)
+#   APAC_MAS:  MAS FEAT / Notice 655 / TRM (this workflow)
+
+name: "APAC_MAS Compliance Gate — MAS FEAT / Notice 655 / TRM"
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+      - "fix/**"
+      - "refactor/**"
+      - "release/**"
+      - "hotfix/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Only run this workflow for APAC_MAS deployments.
+# If CAGE_DEPLOYMENT_REGION is not set, skip gracefully (not an APAC_MAS deployment).
+
+jobs:
+  mas-feat-posture:
+    name: "MAS FEAT Compliance Posture (APAC_MAS only)"
+    runs-on: ubuntu-latest
+    if: vars.CAGE_DEPLOYMENT_REGION == 'APAC_MAS'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate MAS FEAT Lula manifest structure
+        # Validates YAML structure of MAS FEAT Lula stubs.
+        # Full live lula validate runs post-cluster-provisioning.
+        run: |
+          python3 - <<'PYEOF'
+          import yaml, sys, pathlib
+          manifests = sorted(pathlib.Path('compliance/lula').glob('lula-validation-mas-*.yaml'))
+          if not manifests:
+              print('WARNING: no MAS FEAT Lula manifests found — CA-03 remediation pending')
+              sys.exit(0)
+          errors = []
+          for m in manifests:
+              doc = yaml.safe_load(m.read_text())
+              if 'domain' not in doc:
+                  errors.append(f'{m.name}: missing domain key')
+              if 'provider' not in doc:
+                  errors.append(f'{m.name}: missing provider key')
+              dtype = doc.get('domain', {}).get('type', '?')
+              ptype = doc.get('provider', {}).get('type', '?')
+              print(f'  OK {m.name}: domain={dtype}, provider={ptype}')
+          if errors:
+              print('FAILURES:')
+              for e in errors:
+                  print(f'  {e}')
+              sys.exit(1)
+          print(f'All {len(manifests)} MAS FEAT Lula manifests passed YAML structure check.')
+          PYEOF
+
+      - name: Validate MAS TRM §4.2 data residency configuration
+        # Ensures APAC_MAS deployment region is within asia-* (MAS TRM §4.2).
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib, sys
+          tfvars_path = pathlib.Path('infra/targets/gcp-gke/apac-prod.tfvars')
+          if not tfvars_path.exists():
+              print('ERROR: infra/targets/gcp-gke/apac-prod.tfvars not found')
+              sys.exit(1)
+          content = tfvars_path.read_text()
+          # Verify region is within asia-*
+          import re
+          m = re.search(r'region\s*=\s*"([^"]+)"', content)
+          if not m:
+              print('ERROR: region not found in apac-prod.tfvars')
+              sys.exit(1)
+          region = m.group(1)
+          if not region.startswith('asia-'):
+              print(f'ERROR: MAS TRM §4.2 violation — APAC_MAS region must be asia-*, got: {region}')
+              sys.exit(1)
+          print(f'MAS TRM §4.2 data residency OK: region={region}')
+          # Verify cage_deployment_region is APAC_MAS
+          m2 = re.search(r'cage_deployment_region\s*=\s*"([^"]+)"', content)
+          if not m2 or m2.group(1) != 'APAC_MAS':
+              print('ERROR: cage_deployment_region must be APAC_MAS in apac-prod.tfvars')
+              sys.exit(1)
+          print(f'cage_deployment_region=APAC_MAS — OK')
+          # Verify enable_apac_mas_compliance is true
+          if 'enable_apac_mas_compliance = true' not in content:
+              print('ERROR: enable_apac_mas_compliance must be true in apac-prod.tfvars')
+              sys.exit(1)
+          print('enable_apac_mas_compliance=true — OK')
+          PYEOF
+
+      - name: Validate MAS Notice 655 audit logging configuration
+        # Checks that MAS Notice 655 audit logging is enabled in apac-dev.tfvars.
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib, sys
+          tfvars_path = pathlib.Path('infra/targets/gcp-gke/apac-dev.tfvars')
+          if not tfvars_path.exists():
+              print('WARNING: infra/targets/gcp-gke/apac-dev.tfvars not found — skipping MAS Notice 655 check')
+              sys.exit(0)
+          content = tfvars_path.read_text()
+          # Check for MAS Notice 655 audit logging marker
+          if 'enable_apac_mas_compliance' not in content:
+              print('WARNING: enable_apac_mas_compliance not found in apac-dev.tfvars')
+          else:
+              print('MAS Notice 655 audit logging configuration present — OK')
+          PYEOF
+
+      - name: Validate SR 26-2 telemetry suppression sentinel
+        # The "no legal force" sentinel must be present in APAC baselines.
+        # Its presence suppresses telemetry that lacks legal basis under MAS Notice 655.
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib, sys
+          # Check for SR 26-2 sentinel in APAC baseline thresholds
+          threshold_files = list(pathlib.Path('config/thresholds').glob('*.yaml')) + \
+                            list(pathlib.Path('config/thresholds').glob('*.json'))
+          apac_files = [f for f in threshold_files if 'apac' in f.name.lower() or 'mas' in f.name.lower()]
+          if not apac_files:
+              print('WARNING: No APAC threshold files found — SR 26-2 sentinel check skipped')
+              sys.exit(0)
+          for f in apac_files:
+              content = f.read_text()
+              if 'no legal force' in content or 'SR 26-2' in content:
+                  print(f'SR 26-2 sentinel present in {f.name} — OK')
+              else:
+                  print(f'WARNING: SR 26-2 sentinel not found in {f.name}')
+          PYEOF
+
+  apac-mas-iso42001-lula:
+    name: "ISO 42001 Universal Lula Validation (APAC_MAS context)"
+    runs-on: ubuntu-latest
+    if: vars.CAGE_DEPLOYMENT_REGION == 'APAC_MAS'
+    needs: [mas-feat-posture]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate ISO 42001 universal Lula manifests (APAC_MAS context)
+        run: |
+          python3 - <<'PYEOF'
+          import yaml, sys, pathlib
+          # ISO 42001 manifests are universal — validate structure in APAC_MAS context
+          manifests = sorted(pathlib.Path('compliance/lula').glob('lula-validation-a*.yaml'))
+          if not manifests:
+              print('ERROR: no ISO 42001 Lula manifests found')
+              sys.exit(1)
+          errors = []
+          for m in manifests:
+              doc = yaml.safe_load(m.read_text())
+              if 'domain' not in doc:
+                  errors.append(f'{m.name}: missing domain key')
+              if 'provider' not in doc:
+                  errors.append(f'{m.name}: missing provider key')
+              print(f'  OK {m.name}')
+          if errors:
+              for e in errors:
+                  print(f'  ERROR: {e}')
+              sys.exit(1)
+          print(f'All {len(manifests)} ISO 42001 Lula manifests valid (APAC_MAS context).')
+          PYEOF

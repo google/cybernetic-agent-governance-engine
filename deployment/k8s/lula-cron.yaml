@@ -200,6 +200,18 @@ spec:
               envFrom:
                 - secretRef:
                     name: langfuse-compliance-secrets
+              env:
+                # DEP-18: Inject CAGE_DEPLOYMENT_REGION so the audit workflow
+                # can apply jurisdiction-specific Lula validation sets.
+                # US_FED: runs ISO 42001 + NIST SP 800-53 Lula manifests.
+                # EU_ECB: runs ISO 42001 + EU AI Act Lula manifests.
+                # APAC_MAS: runs ISO 42001 + MAS FEAT Lula manifests.
+                - name: CAGE_DEPLOYMENT_REGION
+                  valueFrom:
+                    secretKeyRef:
+                      name: advisor-secrets
+                      key: CAGE_DEPLOYMENT_REGION
+                      optional: false
               command:
                 - python3
                 - -c

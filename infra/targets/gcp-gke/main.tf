@@ -145,9 +145,26 @@ resource "google_storage_bucket" "langfuse_events" {
   }
 
   labels = {
-    environment = var.environment
-    managed-by  = "terraform"
-    purpose     = "langfuse-traces"
+    environment            = var.environment
+    managed-by             = "terraform"
+    purpose                = "langfuse-traces"
+    cage-deployment-region = lower(var.cage_deployment_region)
+  }
+
+  # DEP-10: Enforce data residency — GCS bucket region must match cage_deployment_region.
+  # Without this precondition, a misconfigured deployment could create the compliance
+  # evidence bucket in the wrong region without any Terraform-level error, silently
+  # violating GDPR Art. 44 (EU_ECB) and MAS TRM §4.2 (APAC_MAS).
+  # R-3, R-4: data residency must be enforced at the infrastructure layer.
+  lifecycle {
+    precondition {
+      condition = (
+        (var.cage_deployment_region == "EU_ECB" && startswith(var.region, "europe-")) ||
+        (var.cage_deployment_region == "APAC_MAS" && startswith(var.region, "asia-")) ||
+        (var.cage_deployment_region == "US_FED" && startswith(var.region, "us-"))
+      )
+      error_message = "GCS bucket region '${var.region}' does not satisfy data residency requirements for cage_deployment_region='${var.cage_deployment_region}'. EU_ECB requires europe-*, APAC_MAS requires asia-*, US_FED requires us-*. Check your tfvars file."
+    }
   }
 }
 
@@ -199,6 +216,20 @@ resource "google_project_iam_member" "compliance_bridge_sa_artifactregistry_writ
 
 # ─── Deploy PostgreSQL Database ───────────────────────────────────────────────
 
+# DEP-20: Derive a unified "hardening active" flag from all three jurisdiction
+# compliance toggles. This ensures EU_ECB (DORA Art. 10 HA, GDPR Art. 32
+# encryption) and APAC_MAS (MAS TRM §9.1) deployments independently activate
+# the same infrastructure hardening that US_FED activates via enable_nist_compliance.
+# R-3: EU AI Act / GDPR / DORA logic MUST be gated on CAGE_DEPLOYMENT_REGION == "EU_ECB".
+locals {
+  # Any jurisdiction-specific compliance flag activates hardening
+  any_compliance_active = (
+    var.enable_nist_compliance ||
+    var.enable_eu_ecb_compliance ||
+    var.enable_apac_mas_compliance
+  )
+}
+
 module "postgres" {
   source = "../../modules/postgres_db"
 
@@ -207,8 +238,11 @@ module "postgres" {
   storage_class             = var.storage_class
   enable_persistence        = true
   enable_backup             = false
-  resources_limits_memory   = var.enable_nist_compliance ? "4Gi" : ""
-  resources_limits_cpu      = var.enable_nist_compliance ? "2000m" : ""
+  # DEP-20: Resource limits now activate for any jurisdiction compliance flag,
+  # not only enable_nist_compliance. DORA Art. 10 and MAS TRM §9.1 both require
+  # resource guarantees for production database workloads.
+  resources_limits_memory   = local.any_compliance_active ? "4Gi" : ""
+  resources_limits_cpu      = local.any_compliance_active ? "2000m" : ""
   resources_requests_cpu    = "500m"
   resources_requests_memory = "1Gi"
 
@@ -223,12 +257,14 @@ module "redis" {
   namespace                 = module.namespace.name
   storage_size              = var.redis_storage_size
   storage_class             = var.storage_class
-  architecture              = var.enable_nist_compliance ? "replication" : "standalone"
-  replica_count             = var.enable_nist_compliance ? 3 : 1
-  enable_persistence        = var.enable_nist_compliance
-  enable_sentinel           = var.enable_nist_compliance
-  resources_limits_memory   = var.enable_nist_compliance ? "2Gi" : ""
-  resources_limits_cpu      = var.enable_nist_compliance ? "1000m" : ""
+  # DEP-20: Redis HA (replication + sentinel) now activates for EU_ECB (DORA Art. 10)
+  # and APAC_MAS (MAS TRM §9.1) in addition to US_FED (NIST SC-6).
+  architecture              = local.any_compliance_active ? "replication" : "standalone"
+  replica_count             = local.any_compliance_active ? 3 : 1
+  enable_persistence        = local.any_compliance_active
+  enable_sentinel           = local.any_compliance_active
+  resources_limits_memory   = local.any_compliance_active ? "2Gi" : ""
+  resources_limits_cpu      = local.any_compliance_active ? "1000m" : ""
   resources_requests_cpu    = "200m"
   resources_requests_memory = "512Mi"
   maxmemory                 = var.environment == "prod" ? "1024mb" : "256mb"
@@ -247,10 +283,11 @@ module "clickhouse" {
   storage_class             = var.storage_class
   replicas                  = 1
   enable_persistence        = true
-  enable_pdb                = var.enable_nist_compliance
+  # DEP-20: PDB and resource limits now activate for any jurisdiction compliance flag.
+  enable_pdb                = local.any_compliance_active
   enable_nist_compliance    = var.enable_nist_compliance
-  resources_limits_cpu      = var.enable_nist_compliance ? "3000m" : ""
-  resources_limits_memory   = var.enable_nist_compliance ? "4Gi" : ""
+  resources_limits_cpu      = local.any_compliance_active ? "3000m" : ""
+  resources_limits_memory   = local.any_compliance_active ? "4Gi" : ""
   resources_requests_cpu    = "1000m"
   resources_requests_memory = "2Gi"
 
