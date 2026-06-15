@@ -328,8 +328,24 @@ def get_control_meta(region: str) -> dict[str, dict]:
 
 CONTROL_META: dict[str, dict] = _UNIVERSAL_CONTROLS
 
-# Ordered list — universal controls only (region-agnostic baseline)
-SUPPORTED_CONTROLS: list[str] = list(_UNIVERSAL_CONTROLS.keys())
+# ---------------------------------------------------------------------------
+# SUPPORTED_CONTROLS — ordered list of ALL known control IDs.
+#
+# Includes universal ISO 42001 controls AND all jurisdictional controls
+# (US_FED, EU_ECB, APAC_MAS) so that:
+#   - FRAMEWORK_CONTROLS values are always a subset of SUPPORTED_CONTROLS
+#   - ISO_CONTROL_MAP values (universal only) are always a subset
+#   - The /v1/controls endpoint can filter by region at request time
+#
+# Note: CONTROL_META (backward-compat alias) contains universal controls only.
+# Use get_control_meta(region) to obtain the region-filtered view.
+# ---------------------------------------------------------------------------
+
+_ALL_CONTROLS: dict[str, dict] = dict(_UNIVERSAL_CONTROLS)
+for _region_controls in _JURISDICTIONAL_CONTROLS.values():
+    _ALL_CONTROLS.update(_region_controls)
+
+SUPPORTED_CONTROLS: list[str] = list(_ALL_CONTROLS.keys())
 
 # Controls that trigger immediate Slack/PagerDuty alert on FAIL (Step 4 of workflow)
 CRITICAL_CONTROLS: set[str] = {"A.9.2", "SC-4", "A.8.4"}
@@ -337,13 +353,15 @@ CRITICAL_CONTROLS: set[str] = {"A.9.2", "SC-4", "A.8.4"}
 # ---------------------------------------------------------------------------
 # FRAMEWORK_CONTROLS — framework short-name → list[control_id]  (Tier 2.1)
 #
-# Derived automatically from _UNIVERSAL_CONTROLS so it never drifts out of sync.
+# Derived automatically from ALL controls (universal + jurisdictional) so it
+# never drifts out of sync.  All control IDs in FRAMEWORK_CONTROLS are
+# guaranteed to be in SUPPORTED_CONTROLS.
 # Used by GET /v1/controls?framework=iso42001 to return a filtered view.
-# For jurisdictional framework filtering, callers must use get_control_meta(region).
+# For region-filtered views, callers must use get_control_meta(region).
 # ---------------------------------------------------------------------------
 
 FRAMEWORK_CONTROLS: dict[str, list[str]] = {}
-for _cid, _meta in _UNIVERSAL_CONTROLS.items():
+for _cid, _meta in _ALL_CONTROLS.items():
     for _fw in _meta.get("frameworks", {}).keys():
         FRAMEWORK_CONTROLS.setdefault(_fw, []).append(_cid)
 
@@ -415,7 +433,7 @@ def get_sla_seconds(region: str) -> dict[str, int]:
 EVIDENCE_SLA_SECONDS: dict[str, int] = _UNIVERSAL_SLA
 
 # ---------------------------------------------------------------------------
-# ISO_CONTROL_MAP — governance event name → control ID
+# ISO_CONTROL_MAP — governance event name → control ID (universal / ISO 42001)
 #
 # This is the canonical, single source of truth for the entire codebase.
 # All other modules must import from here rather than defining their own copy.
@@ -423,21 +441,60 @@ EVIDENCE_SLA_SECONDS: dict[str, int] = _UNIVERSAL_SLA
 # Maps governance event hook names (emitted by OTel spans in the Python nodes
 # and TypeScript gateway middleware) to the ISO 42001 Annex A control ID that
 # those events provide evidence for.
+#
+# FINDING-01 follow-up: US_FED-only entries (stpa_compile→SA-11,
+# linkerd_mtls→SC-8, cilium_l7_egress→SC-7) have been moved to
+# _JURISDICTIONAL_CONTROL_MAP["US_FED"] below.  ISO_CONTROL_MAP now contains
+# only universal (ISO 42001 / CAGE-internal) controls so that
+# SUPPORTED_CONTROLS ⊇ ISO_CONTROL_MAP.values() holds in all regions.
+# Use get_iso_control_map(region) to obtain the merged view for a given region.
 # ---------------------------------------------------------------------------
 
-ISO_CONTROL_MAP: dict[str, str] = {
+_UNIVERSAL_CONTROL_MAP: dict[str, str] = {
     "nemo_input_scan":    "A.9.2",   # Data Privacy / PII Masking
     "nemo_output_rail":   "A.5.2",   # Social Impact / Content Safety
     "opa_policy_check":   "SC-4",    # Fiscal Controls / RBAC
     "otel_trace":         "A.5.3",   # Logging & Monitoring / Audit Trail
     "stpa_validation":    "A.8.4",   # AI System Operation — STPA UCA checks
-    "stpa_compile":       "SA-11",   # Developer Safety Testing — compiler run
     "causal_gatekeeper":  "A.6.2",   # AI Lifecycle — DoWhy causal refutation
-    "linkerd_mtls":       "SC-8",    # Transmission Confidentiality — Linkerd mTLS
-    "cilium_l7_egress":   "SC-7",    # Boundary Protection — Cilium FQDN filtering
     "saga_rollback":      "A.8.4",   # AI System Operation — Saga compensating node execution
     # CAGE v2.0.0 — AARM primitives
     "context_accumulate": "A.5.3",   # Context Accumulator chain node — Logging & Monitoring
     "defer_parking":      "A.8.4",   # DEFER state machine — AI System Operation Controls
 }
+
+_JURISDICTIONAL_CONTROL_MAP: dict[str, dict[str, str]] = {
+    # US_FED — NIST SP 800-53 / FedRAMP HIGH governance event mappings.
+    # SR 26-2: these control IDs have no legal force outside US_FED.
+    "US_FED": {
+        "stpa_compile":    "SA-11",  # Developer Safety Testing — compiler run
+        "linkerd_mtls":    "SC-8",   # Transmission Confidentiality — Linkerd mTLS
+        "cilium_l7_egress": "SC-7",  # Boundary Protection — Cilium FQDN filtering
+    },
+}
+
+
+def get_iso_control_map(region: str) -> dict[str, str]:
+    """Return the governance event → control ID map for the given deployment region.
+
+    Merges the universal ISO 42001 control map with the jurisdictional
+    event mappings for the specified region.  Entries from other regions
+    are excluded so each deployment only exposes its applicable framework.
+
+    Args:
+        region: CAGE_DEPLOYMENT_REGION value — one of "US_FED", "EU_ECB",
+                "APAC_MAS".  Unknown values return universal controls only.
+
+    Returns:
+        A dict mapping governance event name → control identifier.
+    """
+    return {
+        **_UNIVERSAL_CONTROL_MAP,
+        **_JURISDICTIONAL_CONTROL_MAP.get(region, {}),
+    }
+
+
+# Backward-compat alias — universal (ISO 42001 / CAGE-internal) controls only.
+# New code must call get_iso_control_map(region) with the active CAGE_DEPLOYMENT_REGION.
+ISO_CONTROL_MAP: dict[str, str] = _UNIVERSAL_CONTROL_MAP
 

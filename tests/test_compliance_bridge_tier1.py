@@ -117,9 +117,13 @@ class TestIsoControlMapSingleSource:
         assert ISO_CONTROL_MAP["causal_gatekeeper"] == "A.6.2"
 
     def test_canonical_map_includes_network_controls(self):
-        from src.compliance_bridge.types import ISO_CONTROL_MAP
-        assert "linkerd_mtls" in ISO_CONTROL_MAP
-        assert "cilium_l7_egress" in ISO_CONTROL_MAP
+        # linkerd_mtls and cilium_l7_egress are US_FED-only (NIST SC-8 / SC-7).
+        # They are no longer in the universal ISO_CONTROL_MAP; use
+        # get_iso_control_map("US_FED") to obtain the region-merged view.
+        from src.compliance_bridge.types import get_iso_control_map
+        us_fed_map = get_iso_control_map("US_FED")
+        assert "linkerd_mtls" in us_fed_map
+        assert "cilium_l7_egress" in us_fed_map
 
 
 # ---------------------------------------------------------------------------
@@ -174,10 +178,16 @@ class TestControlsDiscoveryEndpoint:
         assert sc4["critical"] is True
 
     def test_all_supported_controls_present(self, client):
-        from src.compliance_bridge.types import SUPPORTED_CONTROLS
+        # When CAGE_DEPLOYMENT_REGION is not set the endpoint returns universal
+        # (ISO 42001) controls only.  SUPPORTED_CONTROLS now includes all
+        # jurisdictional controls too, so compare against the universal subset.
+        from src.compliance_bridge.types import get_control_meta
+        universal_ids = set(get_control_meta("").keys())
         data = client.get("/v1/controls").json()
         returned_ids = {c["control_id"] for c in data["controls"]}
-        assert set(SUPPORTED_CONTROLS) == returned_ids
+        assert universal_ids == returned_ids, (
+            f"Expected universal controls {universal_ids}, got {returned_ids}"
+        )
 
 
 # ---------------------------------------------------------------------------

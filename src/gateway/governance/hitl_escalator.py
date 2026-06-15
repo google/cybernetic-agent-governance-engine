@@ -254,15 +254,11 @@ def get_hitl_regulatory_citation(region: str | None = None) -> str:
     Returns:
         Regulatory citation string for the applicable HITL requirement.
     """
-    _HITL_CITATIONS: dict[str, str] = {
-        "US_FED":   "SR 26-2 §3.2 (Federal Reserve HITL SLA — 4 hours)",
-        "EU_ECB":   "DORA Art. 10 (ICT incident management — 2 hours for major incidents)",
-        "APAC_MAS": "MAS FEAT §3.2 (human oversight of AI decisions — 1 hour)",
-    }
+    from src.gateway.governance.constants import HITL_CITATIONS, HITL_CITATION_DEFAULT  # noqa: PLC0415
     active_region = region if region is not None else os.environ.get(
         "CAGE_DEPLOYMENT_REGION", ""
     ).strip().upper()
-    return _HITL_CITATIONS.get(active_region, "ISO 42001 A.8.4 (AI system operation controls)")
+    return HITL_CITATIONS.get(active_region, HITL_CITATION_DEFAULT)
 
 
 def should_escalate_for_confidence(

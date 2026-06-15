@@ -33,6 +33,7 @@ from functools import lru_cache
 from typing import List
 
 from pydantic import BaseModel, Field, field_validator
+from src.gateway.governance.constants import PII_AUDIT_RETENTION_AUTHORITY_FIELD_DEFAULT as _PII_RETENTION_DEFAULT
 
 logger = logging.getLogger("Gateway.Governance.Schemas")
 
@@ -152,7 +153,7 @@ class GovernanceThresholds(BaseModel):
         ),
     )
     pii_audit_retention_authority: str = Field(
-        default="ISO 42001 A.9.2",
+        default=_PII_RETENTION_DEFAULT,
         description=(
             "Regulatory citation for the applicable PII audit retention requirement. "
             "Set at startup based on CAGE_DEPLOYMENT_REGION: "
