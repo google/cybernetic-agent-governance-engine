@@ -57,12 +57,10 @@ from typing import Optional
 # so the correct citation is emitted based on the active deployment region.
 # ---------------------------------------------------------------------------
 
-_RETENTION_AUTHORITY: dict[str, str] = {
-    "US_FED":   "FISMA AU-11",
-    "EU_ECB":   "GDPR Art. 5(1)(e)",
-    "APAC_MAS": "MAS Notice 655 §4.3",
-}
-_RETENTION_AUTHORITY_DEFAULT = "ISO 42001 A.9.2"
+from src.gateway.governance.constants import (
+    PII_RETENTION_AUTHORITY as _RETENTION_AUTHORITY,
+    PII_RETENTION_AUTHORITY_DEFAULT as _RETENTION_AUTHORITY_DEFAULT,
+)
 
 logger = logging.getLogger("Gateway.Governance.PIISanitizer")
 

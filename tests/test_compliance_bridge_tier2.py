@@ -88,7 +88,9 @@ class TestMultiFrameworkRegistry:
     def test_eu_ai_act_controls_present(self):
         from src.compliance_bridge.types import FRAMEWORK_CONTROLS
         assert "eu_ai_act" in FRAMEWORK_CONTROLS
-        assert len(FRAMEWORK_CONTROLS["eu_ai_act"]) >= 4
+        # EU_ECB jurisdictional controls: Article 12, Article 13 (2 entries after
+        # jurisdictional separation refactor — previously mixed with universal controls)
+        assert len(FRAMEWORK_CONTROLS["eu_ai_act"]) >= 2
 
     def test_fedramp_controls_present(self):
         from src.compliance_bridge.types import FRAMEWORK_CONTROLS
@@ -141,8 +143,11 @@ class TestMultiFrameworkRegistry:
         assert data["framework_filter"] is None
 
     def test_eu_ai_act_filter_returns_subset(self, client):
-        all_data = client.get("/v1/controls").json()
-        eu_data  = client.get("/v1/controls?framework=eu_ai_act").json()
+        # eu_ai_act is an EU_ECB-only framework; the endpoint must be called
+        # with CAGE_DEPLOYMENT_REGION=EU_ECB to expose those controls.
+        with patch.dict(os.environ, {"CAGE_DEPLOYMENT_REGION": "EU_ECB"}):
+            all_data = client.get("/v1/controls").json()
+            eu_data  = client.get("/v1/controls?framework=eu_ai_act").json()
         assert eu_data["total"] < all_data["total"]
         assert eu_data["framework_filter"] == "eu_ai_act"
         # Every returned control must have eu_ai_act in its frameworks
@@ -153,7 +158,9 @@ class TestMultiFrameworkRegistry:
             )
 
     def test_fedramp_filter_returns_subset(self, client):
-        data = client.get("/v1/controls?framework=fedramp").json()
+        # fedramp is a US_FED-only framework; set the region accordingly.
+        with patch.dict(os.environ, {"CAGE_DEPLOYMENT_REGION": "US_FED"}):
+            data = client.get("/v1/controls?framework=fedramp").json()
         assert data["total"] >= 1
         for c in data["controls"]:
             assert "fedramp" in c["frameworks"]

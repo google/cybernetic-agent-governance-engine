@@ -157,7 +157,8 @@ class TestOscalExporterUnit:
 
     def test_framework_props_embedded(self):
         from src.compliance_bridge.oscal_exporter import build_oscal_assessment_results
-        # A.5.2 maps to iso42001, eu_ai_act, nist_ai_rmf
+        # A.5.2 is a universal ISO 42001 control — maps to iso42001 and aarm.
+        # eu_ai_act is an EU_ECB-only framework and does not apply to A.5.2.
         findings = build_oscal_assessment_results(
             findings=[_make_finding("A.5.2")],
             audit_id="fw-test",
@@ -165,7 +166,7 @@ class TestOscalExporterUnit:
         fw_props = [p for p in findings[0]["props"] if p["name"] == "framework"]
         fw_values = {p["value"] for p in fw_props}
         assert "iso42001" in fw_values
-        assert "eu_ai_act" in fw_values
+        assert "aarm" in fw_values
 
     def test_reviewed_controls_contains_all_finding_controls(self):
         from src.compliance_bridge.oscal_exporter import build_oscal_assessment_results

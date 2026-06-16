@@ -380,7 +380,11 @@ async def list_controls(
     """
     from fastapi.responses import JSONResponse  # noqa: PLC0415 (already imported at top)
 
-    active_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
+    # Default to "" (empty string) when CAGE_DEPLOYMENT_REGION is not set so that
+    # get_control_meta("") returns only universal ISO 42001 controls.  Defaulting
+    # to "US_FED" was incorrect — it caused NIST SP 800-53 controls to appear in
+    # region-agnostic contexts (e.g. test environments, APAC_MAS deployments).
+    active_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
     region_controls = get_control_meta(active_region)
 
     # Build the set of framework names available for this region
