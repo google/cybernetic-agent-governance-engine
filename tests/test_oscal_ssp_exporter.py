@@ -461,7 +461,11 @@ class TestControlMeta:
     def test_stpa_controls_registered(self) -> None:
         assert "A.8.4" in CONTROL_META, "A.8.4 (AI System Operation) must be in CONTROL_META"
         assert "A.6.2" in CONTROL_META, "A.6.2 (AI Lifecycle) must be in CONTROL_META"
-        assert "SA-11" in CONTROL_META, "SA-11 (STPA Compiler) must be in CONTROL_META"
+        # SA-11 is a US_FED-only (NIST SP 800-53) control — not in the universal
+        # CONTROL_META alias.  Use get_control_meta("US_FED") to verify it exists.
+        from src.compliance_bridge.types import get_control_meta
+        us_fed_meta = get_control_meta("US_FED")
+        assert "SA-11" in us_fed_meta, "SA-11 (STPA Compiler) must be in US_FED control meta"
 
     def test_all_controls_have_score_name(self) -> None:
         for ctrl, meta in CONTROL_META.items():
@@ -473,8 +477,13 @@ class TestControlMeta:
         assert ISO_CONTROL_MAP["stpa_validation"] == "A.8.4"
 
     def test_stpa_compile_in_iso_map(self) -> None:
-        assert "stpa_compile" in ISO_CONTROL_MAP
-        assert ISO_CONTROL_MAP["stpa_compile"] == "SA-11"
+        # stpa_compile → SA-11 is a US_FED-only (NIST SP 800-53 SA-11) mapping.
+        # It is no longer in the universal ISO_CONTROL_MAP; use
+        # get_iso_control_map("US_FED") to obtain the region-merged view.
+        from src.compliance_bridge.types import get_iso_control_map
+        us_fed_map = get_iso_control_map("US_FED")
+        assert "stpa_compile" in us_fed_map
+        assert us_fed_map["stpa_compile"] == "SA-11"
 
     def test_causal_gatekeeper_in_iso_map(self) -> None:
         assert "causal_gatekeeper" in ISO_CONTROL_MAP
@@ -484,7 +493,13 @@ class TestControlMeta:
         assert "A.8.4" in CRITICAL_CONTROLS, "STPA operation controls must be critical"
 
     def test_supported_controls_matches_control_meta(self) -> None:
-        assert set(SUPPORTED_CONTROLS) == set(CONTROL_META.keys())
+        # SUPPORTED_CONTROLS now includes universal + all jurisdictional controls.
+        # CONTROL_META is a backward-compat alias for universal controls only.
+        # Verify that all CONTROL_META keys are present in SUPPORTED_CONTROLS
+        # (superset relationship, not strict equality).
+        assert set(CONTROL_META.keys()).issubset(set(SUPPORTED_CONTROLS)), (
+            "CONTROL_META contains control IDs not present in SUPPORTED_CONTROLS"
+        )
 
 
 # ---------------------------------------------------------------------------
