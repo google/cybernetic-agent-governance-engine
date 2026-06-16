@@ -1,0 +1,199 @@
+name: Compliance Matrix
+
+on:
+  # Allow existing per-region workflows to invoke this workflow
+  workflow_call:
+    inputs:
+      lula_version:
+        description: "Lula binary version to install"
+        type: string
+        required: false
+        default: "v0.10.0"
+
+  # Allow manual triggering from the GitHub Actions UI
+  workflow_dispatch:
+    inputs:
+      lula_version:
+        description: "Lula binary version to install"
+        type: string
+        required: false
+        default: "v0.10.0"
+
+  # Run automatically on pushes to integration branches
+  push:
+    branches:
+      - main
+      - develop
+
+# Cancel in-progress runs for the same ref to avoid resource waste
+concurrency:
+  group: compliance-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  # Default lula version; overridden by workflow_call/workflow_dispatch input
+  LULA_VERSION: ${{ inputs.lula_version || 'v0.10.0' }}
+
+# ---------------------------------------------------------------------------
+# Job 1: Universal ISO 42001 Gates
+# Runs first, unconditionally, for all regions.
+# Source: docs/V2_RELEASE_PLAN.md §5.1
+# ---------------------------------------------------------------------------
+jobs:
+  universal-iso42001:
+    name: "Universal ISO 42001 Gates"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+
+      - name: Install Lula binary
+        run: |
+          LULA_VERSION="${{ env.LULA_VERSION }}"
+          echo "Installing Lula ${LULA_VERSION}..."
+          curl -sSL \
+            "https://github.com/defenseunicorns/lula/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64" \
+            -o /usr/local/bin/lula
+          chmod +x /usr/local/bin/lula
+          lula version
+
+      - name: Gate 0.1 — Core unit tests (if tests/core/ exists)
+        run: |
+          if [ -d "tests/core" ]; then
+            echo "Running core unit tests..."
+            pytest tests/core/ -v
+          else
+            echo "::warning::tests/core/ not found — skipping core unit tests"
+          fi
+
+      - name: Gate 0.2 — STPA freshness check
+        run: python3 scripts/check_stpa_freshness.py
+
+      - name: Gate 0.3 — Langfuse posture verification
+        run: python3 scripts/verify_langfuse_posture.py
+        env:
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+
+      - name: Gate 0.4a — ISO 42001 Lula validation (A.5.2)
+        run: lula validate -f compliance/lula/lula-validation-a52.yaml
+
+      - name: Gate 0.4b — ISO 42001 Lula validation (A.5.3)
+        run: lula validate -f compliance/lula/lula-validation-a53.yaml
+
+      - name: Gate 0.4c — ISO 42001 Lula validation (A.9.2)
+        run: lula validate -f compliance/lula/lula-validation-a92.yaml
+
+      - name: Gate 0.4d — ISO 42001 Lula validation (AARM vectors)
+        run: lula validate -f compliance/lula/lula-validation-aarm-vectors.yaml
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Regional Posture Gates (2×3 matrix)
+  # Runs after universal-iso42001 passes.
+  # Source: docs/V2_RELEASE_PLAN.md §5.2–§5.4
+  # ---------------------------------------------------------------------------
+  regional-posture:
+    name: "Regional Posture (${{ matrix.region }} / ${{ matrix.environment }})"
+    needs: [universal-iso42001]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      # MANDATORY: all matrix cells must run even if one fails.
+      # A single regional failure must not suppress other regions' results.
+      fail-fast: false
+      matrix:
+        environment: [dev, prod]
+        region: [US_FED, EU_ECB, APAC_MAS]
+
+    # Regional jobs must not silently pass on error
+    continue-on-error: false
+
+    env:
+      CAGE_ENV: ${{ matrix.environment }}
+      CAGE_REGION: ${{ matrix.region }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+
+      - name: Install Lula binary
+        run: |
+          LULA_VERSION="${{ env.LULA_VERSION }}"
+          echo "Installing Lula ${LULA_VERSION}..."
+          curl -sSL \
+            "https://github.com/defenseunicorns/lula/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64" \
+            -o /usr/local/bin/lula
+          chmod +x /usr/local/bin/lula
+          lula version
+
+      - name: Install OPA binary (US_FED only)
+        if: matrix.region == 'US_FED'
+        run: |
+          echo "Installing OPA for US_FED posture..."
+          curl -sSL \
+            "https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static" \
+            -o /usr/local/bin/opa
+          chmod +x /usr/local/bin/opa
+          opa version
+
+      - name: Make orchestrator script executable
+        run: chmod +x scripts/run_matrix_tests.sh
+
+      - name: Run compliance matrix tests
+        run: ./scripts/run_matrix_tests.sh ${{ matrix.environment }} ${{ matrix.region }}
+        env:
+          CAGE_ENV: ${{ matrix.environment }}
+          CAGE_REGION: ${{ matrix.region }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+          # US_FED credentials (only used when CAGE_REGION=US_FED)
+          KUBECONFIG: ${{ secrets.KUBECONFIG_US_FED }}
+          # EU_ECB credentials (only used when CAGE_REGION=EU_ECB)
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS_EU_ECB }}
+          # APAC_MAS credentials (only used when CAGE_REGION=APAC_MAS)
+          GOOGLE_CREDENTIALS_APAC: ${{ secrets.GOOGLE_CREDENTIALS_APAC_MAS }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compliance-results-${{ matrix.region }}-${{ matrix.environment }}
+          path: |
+            compliance-results/
+            pytest-results/
+          if-no-files-found: ignore
+          retention-days: 30
