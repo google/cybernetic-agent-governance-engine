@@ -39,6 +39,9 @@ mirror.log
 # Project Specific
 opa
 !config/opa/
+!compliance/postures/us_fed/opa/
+!compliance/postures/eu_ecb/opa/
+!compliance/postures/apac_mas/opa/
 verification_*.txt
 *.bak
 last_run_results.json
