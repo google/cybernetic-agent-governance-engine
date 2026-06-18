@@ -382,11 +382,16 @@ class TestMetricsSummaryEndpoint:
         assert data["overall_pass_rate"] < 1.0
 
     def test_summary_controls_dict_has_all_supported(self, client):
-        from src.compliance_bridge.types import SUPPORTED_CONTROLS
+        # The summary endpoint returns region-filtered controls via get_control_meta(region).
+        # With CAGE_DEPLOYMENT_REGION unset (empty string), only universal ISO 42001
+        # controls are returned — jurisdictional controls (SA-11, SC-7, etc.) are
+        # correctly excluded.  Use get_control_meta("") to match the endpoint's behaviour.
+        from src.compliance_bridge.types import get_control_meta
+        expected_controls = list(get_control_meta("").keys())
         with patch("src.compliance_bridge.main.get_compliance_metrics",
                    new=AsyncMock(side_effect=self._mock_metrics_factory())):
             data = client.get("/v1/metrics/summary").json()
-        for cid in SUPPORTED_CONTROLS:
+        for cid in expected_controls:
             assert cid in data["controls"], f"{cid} missing from summary controls"
 
     def test_summary_respects_window_hours(self, client):
