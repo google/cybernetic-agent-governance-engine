@@ -94,22 +94,28 @@ spec:
             httpGet:
               path: /health
               port: 3001
-            initialDelaySeconds: 5
+            # dowhy + matplotlib import takes ~100s on first startup.
+            # initialDelaySeconds must exceed that to avoid premature liveness kills.
+            initialDelaySeconds: 150
             periodSeconds: 30
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /health
               port: 3001
-            initialDelaySeconds: 5
+            # Allow full startup before routing traffic.
+            initialDelaySeconds: 150
             periodSeconds: 10
-          # Reduced vs. Node.js — Python FastAPI + uvicorn is lighter
+            failureThreshold: 3
+          # Memory increased from 256Mi to 512Mi to accommodate dowhy + matplotlib
+          # (causal gatekeeper Tier 6 — No-Direct-Bind Gap 4 fix).
           resources:
             requests:
               cpu: "50m"
-              memory: "128Mi"
+              memory: "256Mi"
             limits:
               cpu: "200m"
-              memory: "256Mi"
+              memory: "512Mi"
 ---
 apiVersion: v1
 kind: Service
