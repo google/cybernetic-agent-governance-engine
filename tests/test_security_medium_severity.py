@@ -294,11 +294,13 @@ class TestM10SafetyRateMetric:
         )
         assert m.safety_rate is None
 
-    def test_metrics_module_uses_limit_1000(self):
+    def test_metrics_module_uses_limit_100(self):
+        # M-10: Langfuse API enforces a maximum of 100 traces per request.
+        # The limit was corrected from 1000 → 100 to comply with the API constraint.
         import inspect
         from src.compliance_bridge import metrics
         source = inspect.getsource(metrics)
-        assert "limit=1000" in source, "Langfuse trace list must use limit=1000"
+        assert "limit=100" in source, "Langfuse trace list must use limit=100 (API maximum)"
 
 
 # ---------------------------------------------------------------------------

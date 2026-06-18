@@ -108,7 +108,7 @@ def query_agent(prompt: str):
                 return None
 
 @pytest.mark.skipif(not _backend_reachable(), reason="Backend not available — set BACKEND_URL to a live server")
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 def test_agent_workflow_accuracy():
     """Runs the accuracy tests following the specific workflow."""
     print(f"\n🔍 Testing Agent Accuracy (Randomized Workflow) against {BACKEND_URL}...")

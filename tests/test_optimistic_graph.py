@@ -34,11 +34,6 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-try:
-    from langchain.agents import AgentExecutor
-except ImportError:
-    pytest.skip("AgentExecutor not found in langchain.agents", allow_module_level=True)
-
 from langgraph.graph.state import CompiledStateGraph
 
 from src.governed_financial_advisor.graph.graph import create_graph

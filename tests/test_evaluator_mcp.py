@@ -18,11 +18,6 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-try:
-    from langchain.agents import AgentExecutor
-except ImportError:
-    pytest.skip("AgentExecutor not found in langchain.agents", allow_module_level=True)
-
 import sys
 import os
 
@@ -41,8 +36,6 @@ logger = logging.getLogger("TestEvaluatorMCP")
 
 @pytest.mark.asyncio
 async def test_evaluator_tools():
-    pytest.skip("requires live LangChain agent and MCP server — run manually with services available")
-
     logger.info("--- Testing Evaluator Agent Tools (MCP Integration) ---")
 
     # 1. Check Market Status

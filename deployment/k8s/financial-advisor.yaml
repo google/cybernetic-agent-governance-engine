@@ -169,6 +169,12 @@ kind: Service
 metadata:
   name: governed-financial-advisor
   namespace: governance-stack
+  annotations:
+    # NEG annotation: required for GKE Ingress (gce class) to route traffic to
+    # ClusterIP services. The NEG controller creates Network Endpoint Groups
+    # that the GCE load balancer uses directly instead of kube-proxy NodePort.
+    # Without this, governance-ingress cannot create a valid backend service.
+    cloud.google.com/neg: '{"ingress": true}'
 spec:
   selector:
     app: governed-financial-advisor
@@ -176,4 +182,5 @@ spec:
     - port: 80
       targetPort: 8080
       protocol: TCP
+      name: http
   type: ClusterIP

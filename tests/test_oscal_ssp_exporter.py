@@ -55,7 +55,7 @@ from src.gateway.governance.stpa_compiler import ControlStructureModel, load_con
 # ---------------------------------------------------------------------------
 
 _FULL_YAML_PATH = (
-    Path(__file__).resolve().parents[2]
+    Path(__file__).resolve().parents[1]
     / "config"
     / "stpa_control_structure.yaml"
 )
