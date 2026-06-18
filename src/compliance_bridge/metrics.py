@@ -173,11 +173,12 @@ def _fetch_from_langfuse_sync(
     langfuse = _make_app_langfuse()
     window_start = datetime.now(tz=timezone.utc) - timedelta(hours=window_hours)
 
-    # M-10: Expand window to 1000 traces to avoid under-counting in busy deployments
+    # M-10: Langfuse API enforces limit <= 100. Use 100 (the maximum) to capture
+    # as many traces as possible within the look-back window.
     traces_response = langfuse.trace.list(
         tags=[f"control:{control_id}"],
         from_timestamp=window_start,
-        limit=1000,
+        limit=100,
     )
 
     total_traces = 0
