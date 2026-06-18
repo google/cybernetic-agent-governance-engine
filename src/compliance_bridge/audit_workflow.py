@@ -848,46 +848,53 @@ async def run_audit_workflow(oscal_yaml: str, audit_id: str) -> dict:
                 "[audit_workflow] Step 5 (remediation advisor) failed (non-fatal): %s", exc
             )
 
-    async def _step6_bg() -> None:
-        """Step 6 — AARM Conformance Report Card (fire-and-forget)."""
-        try:
-            from .aarm_mapper import build_aarm_conformance_report  # noqa: PLC0415
-            aarm_report = build_aarm_conformance_report(
-                findings   = findings,
-                audit_id   = audit_id,
-                chain_root = chain_root,
-            )
-            aarm_report_json = aarm_report.model_dump_json(indent=2)
-            if os.environ.get("OSCAL_S3_ENDPOINT"):
-                try:
-                    key = await put_oscal_artifact(
-                        f"{audit_id}/aarm_conformance", aarm_report_json
-                    )
-                    logger.info("[audit_workflow] AARM conformance report persisted: %s", key)
-                except Exception as exc:
-                    logger.warning(
-                        "[audit_workflow] AARM report persistence failed (non-fatal): %s", exc
-                    )
-            logger.info(
-                "[audit_workflow] AARM conformance report: posture=%s "
-                "neutralized=%d partial=%d exposed=%d",
-                aarm_report.overall_posture,
-                aarm_report.neutralized,
-                aarm_report.partial,
-                aarm_report.exposed,
-            )
-        except Exception as exc:
-            logger.warning(
-                "[audit_workflow] Step 6 (AARM conformance report) failed (non-fatal): %s", exc
-            )
+    # Step 6 — AARM Conformance Report Card.
+    # The report is always generated synchronously so the artifact key can be
+    # returned in the response.  Persistence to GCS/S3 is attempted when
+    # OSCAL_S3_ENDPOINT is configured; if storage is unavailable the key is
+    # still returned as a logical identifier (<audit_id>/aarm_conformance.json).
+    aarm_report_artifact: str | None = None
+    try:
+        from .aarm_mapper import build_aarm_conformance_report  # noqa: PLC0415
+        aarm_report = build_aarm_conformance_report(
+            findings   = findings,
+            audit_id   = audit_id,
+            chain_root = chain_root,
+        )
+        aarm_report_json = aarm_report.model_dump_json(indent=2)
+        # Logical artifact key — always set so callers can reference the report.
+        aarm_report_artifact = f"{audit_id}/aarm_conformance.json"
+        if os.environ.get("OSCAL_S3_ENDPOINT"):
+            try:
+                persisted_key = await put_oscal_artifact(
+                    f"{audit_id}/aarm_conformance", aarm_report_json
+                )
+                logger.info("[audit_workflow] AARM conformance report persisted: %s", persisted_key)
+                aarm_report_artifact = persisted_key
+            except Exception as exc:
+                logger.warning(
+                    "[audit_workflow] AARM report persistence failed (non-fatal): %s", exc
+                )
+        logger.info(
+            "[audit_workflow] AARM conformance report: posture=%s "
+            "neutralized=%d partial=%d exposed=%d artifact=%s",
+            aarm_report.overall_posture,
+            aarm_report.neutralized,
+            aarm_report.partial,
+            aarm_report.exposed,
+            aarm_report_artifact,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[audit_workflow] Step 6 (AARM conformance report) failed (non-fatal): %s", exc
+        )
 
-    # Schedule all three background tasks concurrently (non-blocking)
+    # Schedule remaining background tasks (Steps 3c and 5) concurrently (non-blocking)
     asyncio.create_task(_step3c_eval_dataset_bg())
     asyncio.create_task(_step5_bg())
-    asyncio.create_task(_step6_bg())
 
     logger.info(
-        "[audit_workflow] Audit complete (Steps 3c/5/6 running in background): "
+        "[audit_workflow] Audit complete (Steps 3c/5 running in background): "
         "audit_id=%s findings=%d alerted=%s chain_root=%s… integrity=%s",
         audit_id, len(findings), alerted, chain_root[:16], chain_integrity_valid,
     )
@@ -900,12 +907,12 @@ async def run_audit_workflow(oscal_yaml: str, audit_id: str) -> dict:
         "ingested":              ingested,
         "alerted":               alerted,
         "alert_targets":         alert_targets,
-        # Steps 5/6 run in background — remediation fields reflect deferred state
+        # Step 5 runs in background — remediation fields reflect deferred state
         "remediation_sent":      False,
         "remediation_text":      None,
         "advisor_error":         None,
         "chain_root":            chain_root,
         "chain_length":          chain_length,
         "chain_integrity_valid": chain_integrity_valid,
-        "aarm_report_artifact":  None,
+        "aarm_report_artifact":  aarm_report_artifact,
     }

@@ -454,6 +454,10 @@ async def get_metrics_summary(
 ) -> dict:
     """Return a single compliance posture snapshot across all supported controls.
 
+    The control set is filtered by CAGE_DEPLOYMENT_REGION so that the summary
+    only includes controls relevant to the active deployment region — consistent
+    with the /v1/controls endpoint.
+
     Response shape::\n
         {\n
           \"overall_pass_rate\": 0.94,\n
@@ -465,6 +469,11 @@ async def get_metrics_summary(
           \"controls\":          { \"A.5.2\": <ComplianceMetrics>, ... }\n
         }\n
     """
+    # Use region-filtered controls — consistent with /v1/controls endpoint.
+    # CAGE_DEPLOYMENT_REGION="" returns universal ISO 42001 controls only.
+    active_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+    region_control_ids: list[str] = list(get_control_meta(active_region).keys())
+
     results: dict = {}
     failing: list[str] = []
     critical_fails: list[str] = []
@@ -486,18 +495,18 @@ async def get_metrics_summary(
 
     try:
         await asyncio.wait_for(
-            asyncio.gather(*[_fetch(cid) for cid in SUPPORTED_CONTROLS]),
+            asyncio.gather(*[_fetch(cid) for cid in region_control_ids]),
             timeout=25.0,
         )
     except asyncio.TimeoutError:
         logger.warning("[metrics/summary] gather timed out after 25s — returning partial results")
 
-    passing_count = len(SUPPORTED_CONTROLS) - len(failing)
-    overall_rate  = passing_count / len(SUPPORTED_CONTROLS) if SUPPORTED_CONTROLS else 1.0
+    passing_count = len(region_control_ids) - len(failing)
+    overall_rate  = passing_count / len(region_control_ids) if region_control_ids else 1.0
 
     return {
         "overall_pass_rate": round(overall_rate, 4),
-        "total_controls":    len(SUPPORTED_CONTROLS),
+        "total_controls":    len(region_control_ids),
         "passing_controls":  passing_count,
         "failing_controls":  sorted(failing),
         "critical_fails":    sorted(critical_fails),

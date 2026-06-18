@@ -113,7 +113,9 @@ def test_langfuse_trace_ingestion():
     }
 
     logger.info(f"Ingesting trace {unique_trace_id} to {ingestion_url}")
-    # Send multiple events in a row to force ClickHouse to flush the buffer
+    # Send multiple events in a row to force ClickHouse to flush the buffer.
+    # A 0.5s inter-request delay prevents Langfuse worker queue saturation
+    # (which causes HTTP 500 on back-to-back test runs).
     for i in range(1, 11):
          logger.info(f"Ingesting trace {i}/10: {unique_trace_id}")
          try:
@@ -123,10 +125,13 @@ def test_langfuse_trace_ingestion():
              pytest.skip(f"Langfuse host {_host} timed out or is unreachable — port-forward not active.")
          logger.info(f"Ingestion response text: {resp.text}")
          assert resp.status_code == 207, f"Ingestion failed with status code {resp.status_code}: {resp.text}"
+         time.sleep(0.5)  # throttle: give Langfuse worker time to drain between POSTs
     logger.info("✅ Ingestion endpoint returned HTTP 207 (Accepted into queue).")
-    
-    # Wait for ClickHouse persistence (asynchronous queue)
+
+    # Wait for ClickHouse persistence (asynchronous queue).
+    # 3s head-start lets ClickHouse begin processing the batch before polling starts.
     logger.info("Waiting for ClickHouse persistence...")
+    time.sleep(3)
     # Increase time slightly to give queue processing breathing room
     time.sleep(10)
     

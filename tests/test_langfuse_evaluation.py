@@ -470,7 +470,7 @@ def post_scores_to_langfuse(trace_id: str, scores: Dict[str, float], query: str,
 
 @pytest.mark.integration
 @pytest.mark.slow
-@pytest.mark.timeout(300)  # LLM judge evaluation: multiple vLLM calls with max_tokens=4096
+@pytest.mark.timeout(900)  # 8 backend queries (~45s each on single L4 GPU) + judge calls ≈ 420s
 def test_langfuse_llm_judge_evaluation():
     """
     Integration test: evaluate governed financial advisor using Langfuse LLM-as-Judge.

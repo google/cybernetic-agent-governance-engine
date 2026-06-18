@@ -35,6 +35,11 @@ metadata:
   namespace: governance-stack
   annotations:
     kubernetes.io/ingress.class: "gce"
+    # NEG annotation: required for GKE Ingress to route to ClusterIP services.
+    # Without this, the GCE ingress controller cannot create backend services
+    # for ClusterIP-type services. The NEG controller creates Network Endpoint
+    # Groups that the load balancer uses directly.
+    # Applied to both governed-financial-advisor and langfuse-web services.
     # H-15: Force HTTPS redirect — HTTP requests are redirected to HTTPS
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"

@@ -57,11 +57,11 @@ The Cybernetic Governance Engine (CAGE) is a production-grade, multi-agent AI go
 | Vendor Integrations            | 2 (`src/integrations/trustlayers/`, `src/integrations/nexart/`) |
 | Lula Validation Manifests      | 15 (4 Active, 11 Stub — see [`compliance/lula/README.md`](../../compliance/lula/README.md)) |
 | Open Critical Findings         | 1 (FIND-007 FIPS 199 unsigned — POAM-009) |
-| Open High Findings             | 9 (POAM-001, 002, 003, 008, 013, 018, 019, 022, plus POAM-011 SC-8 Open, POAM-012 SC-12 Open) |
+| Open High Findings             | 8 (POAM-001, 002, 008, 013, 018, 019, 022, POAM-011 SC-8; POAM-003 closed; POAM-012 SC-12 closed 2026-06-08) |
 | Resolved Critical Findings     | 2 (FIND-010 HMAC bypass — resolved; FIND-011 mTLS — POAM-007 closed) |
 | AARM Vectors Neutralized       | 10/11 (V11 PARTIAL — POAM-022)            |
 | Red Team Payloads              | 290+                                      |
-| Automated Tests                | **844 passing, 0 failed, 24 skipped** (2026-06-03 GKE cycle) |
+| Automated Tests                | **796 passing, 0 failed, 148 skipped** (v2.0.0 stable, 2026-06-08) |
 | Audit Log Retention            | 7 years                                   |
 | Latency SLA                    | 200ms US / 150ms EU (ISO-20022)           |
 | Primary LLM (Reasoning)        | DeepSeek-R1-Distill-Llama-8B (AWQ)        |

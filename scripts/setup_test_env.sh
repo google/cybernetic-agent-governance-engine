@@ -125,25 +125,29 @@ log "🚀  Starting port-forwards (namespace: ${NAMESPACE}) …"
 PF_BACKEND_PID=$(port_forward_with_retry backend svc/governed-financial-advisor 8081:80 -n "${NAMESPACE}")
 log "    Backend          localhost:8081  →  svc/governed-financial-advisor :80   (loop pid ${PF_BACKEND_PID})"
 
-# vLLM reasoning (DeepSeek R1) → 8000
-# Note: Using pod/ prefix + label selector since service is missing in some dev environments
-VLLM_REASONING_POD=$(kubectl get pods -n "${NAMESPACE}" -l app=vllm-reasoning -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+# vLLM pods live in the dedicated vllm-inference namespace (not governance-stack).
+# Port numbers match VLLM_REASONING_API_BASE (18082) and VLLM_FAST_API_BASE (18081) in .env.
+VLLM_NAMESPACE="${VLLM_K8S_NAMESPACE:-vllm-inference}"
+
+# vLLM reasoning (DeepSeek R1) → 18082
+# Try pod-level forward first (avoids service-level load-balancing latency); fall back to svc.
+VLLM_REASONING_POD=$(kubectl get pods -n "${VLLM_NAMESPACE}" -l app=vllm-reasoning -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 if [[ -n "${VLLM_REASONING_POD}" ]]; then
-  PF_VLLM_PID=$(port_forward_with_retry vllm pod/"${VLLM_REASONING_POD}" 8000:8000 -n "${NAMESPACE}")
-  log "    vLLM reasoning   localhost:8000  →  pod/${VLLM_REASONING_POD}        :8000 (loop pid ${PF_VLLM_PID})"
+  PF_VLLM_PID=$(port_forward_with_retry vllm pod/"${VLLM_REASONING_POD}" 18082:8000 -n "${VLLM_NAMESPACE}")
+  log "    vLLM reasoning   localhost:18082 →  pod/${VLLM_REASONING_POD}        :8000 (loop pid ${PF_VLLM_PID})"
 else
-  PF_VLLM_PID=$(port_forward_with_retry vllm svc/vllm-reasoning 8000:8000 -n "${NAMESPACE}")
-  log "    vLLM reasoning   localhost:8000  →  svc/vllm-reasoning              :8000 (loop pid ${PF_VLLM_PID}) [fallback]"
+  PF_VLLM_PID=$(port_forward_with_retry vllm svc/vllm-reasoning 18082:8000 -n "${VLLM_NAMESPACE}")
+  log "    vLLM reasoning   localhost:18082 →  svc/vllm-reasoning              :8000 (loop pid ${PF_VLLM_PID}) [fallback]"
 fi
 
-# vLLM fast inference (Qwen) → 8001
-VLLM_INFERENCE_POD=$(kubectl get pods -n "${NAMESPACE}" -l app=vllm-inference -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+# vLLM fast inference (Qwen2.5-7B-Instruct) → 18081
+VLLM_INFERENCE_POD=$(kubectl get pods -n "${VLLM_NAMESPACE}" -l app=vllm-inference -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 if [[ -n "${VLLM_INFERENCE_POD}" ]]; then
-  PF_VLLM_FAST_PID=$(port_forward_with_retry vllm-fast pod/"${VLLM_INFERENCE_POD}" 8001:8000 -n "${NAMESPACE}")
-  log "    vLLM fast        localhost:8001  →  pod/${VLLM_INFERENCE_POD}       :8000 (loop pid ${PF_VLLM_FAST_PID})"
+  PF_VLLM_FAST_PID=$(port_forward_with_retry vllm-fast pod/"${VLLM_INFERENCE_POD}" 18081:8000 -n "${VLLM_NAMESPACE}")
+  log "    vLLM fast        localhost:18081 →  pod/${VLLM_INFERENCE_POD}       :8000 (loop pid ${PF_VLLM_FAST_PID})"
 else
-  PF_VLLM_FAST_PID=$(port_forward_with_retry vllm-fast svc/vllm-service 8001:8000 -n "${NAMESPACE}")
-  log "    vLLM fast        localhost:8001  →  svc/vllm-service                :8000 (loop pid ${PF_VLLM_FAST_PID}) [fallback]"
+  PF_VLLM_FAST_PID=$(port_forward_with_retry vllm-fast svc/vllm-service 18081:8000 -n "${VLLM_NAMESPACE}")
+  log "    vLLM fast        localhost:18081 →  svc/vllm-service                :8000 (loop pid ${PF_VLLM_FAST_PID}) [fallback]"
 fi
 
 # Langfuse web UI — governance-stack-2 exposes :3000, governance-stack uses :80
@@ -206,8 +210,8 @@ check_tcp() {
 }
 
 check_http "Backend              " "http://localhost:8081/health"
-check_http "vLLM reasoning       " "http://localhost:8000/v1/models"
-check_http "vLLM fast inference  " "http://localhost:8001/v1/models"
+check_http "vLLM reasoning       " "http://localhost:18082/v1/models"
+check_http "vLLM fast inference  " "http://localhost:18081/v1/models"
 check_http "Langfuse             " "http://localhost:3001"
 check_http "OPA                  " "http://localhost:8181/health"
 check_http "Gateway              " "http://localhost:8080/health"
@@ -232,8 +236,8 @@ echo "     uv run pytest tests/ --run-integration -m 'integration or red_team' -
 echo ""
 echo " 📋  Port-forward logs (each loop appends on reconnect):"
 echo "     Backend       : ${LOG_DIR}/pf-backend.log"
-echo "     vLLM reasoning: ${LOG_DIR}/pf-vllm.log"
-echo "     vLLM fast     : ${LOG_DIR}/pf-vllm-fast.log"
+echo "     vLLM reasoning: ${LOG_DIR}/pf-vllm.log        (localhost:18082 → vllm-inference/svc/vllm-reasoning:8000)"
+echo "     vLLM fast     : ${LOG_DIR}/pf-vllm-fast.log   (localhost:18081 → vllm-inference/svc/vllm-service:8000)"
 echo "     Langfuse      : ${LOG_DIR}/pf-langfuse.log"
 echo "     OPA           : ${LOG_DIR}/pf-opa.log"
 echo "     Gateway       : ${LOG_DIR}/pf-gateway.log"

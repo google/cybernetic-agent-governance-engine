@@ -152,6 +152,33 @@ def get_checkpointer(redis_url: str | None = None) -> BaseCheckpointSaver:
     try:
         from langgraph.checkpoint.redis import AsyncRedisSaver
 
+        # R-13 capability probe: verify the connected Redis instance supports
+        # RedisJSON (JSON.SET command).  AsyncRedisSaver requires RedisJSON at
+        # runtime; plain Redis (e.g. Bitnami redis:latest) will reject JSON.SET
+        # with "unknown command" causing every graph.ainvoke() to return HTTP 500.
+        # We probe synchronously here (at startup) so the fallback fires before
+        # any request is served, rather than on the first live request.
+        try:
+            import redis as _redis_sync
+            _probe_client = _redis_sync.from_url(redis_url, socket_connect_timeout=2, socket_timeout=2)
+            _probe_client.execute_command("JSON.SET", "__cage_probe__", "$", '{"ok":1}')
+            _probe_client.delete("__cage_probe__")
+            _probe_client.close()
+            logger.info("RedisJSON capability probe passed — JSON.SET is supported.")
+        except _redis_sync.exceptions.ResponseError as probe_exc:
+            if "unknown command" in str(probe_exc).lower() or "json" in str(probe_exc).lower():
+                return _set_memory_fallback_alerts(
+                    f"Redis instance does not support RedisJSON (JSON.SET rejected): {probe_exc}. "
+                    "Deploy Redis Stack (redis/redis-stack) to enable persistent checkpointing."
+                )
+            # Other ResponseError (e.g. WRONGTYPE) — not a capability gap, proceed
+            logger.warning("RedisJSON probe returned unexpected ResponseError (proceeding): %s", probe_exc)
+        except Exception as probe_exc:
+            # Connection failure during probe — fall back
+            return _set_memory_fallback_alerts(
+                f"Redis connectivity probe failed: {probe_exc}"
+            )
+
         logger.info("Using AsyncRedisSaver at %s", redis_url)
         os.environ["CHECKPOINTER_TYPE"] = "redis"
         _CHECKPOINTER_TYPE = "redis"

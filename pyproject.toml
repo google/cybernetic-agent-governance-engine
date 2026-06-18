@@ -42,6 +42,8 @@ dev = [
     "fakeredis[lua]>=2.35.1",
     "pytest-timeout>=2.4.0",
     "bcrypt>=5.0.0",
+    # kfp: Kubeflow Pipelines SDK — required by test_pipeline_compilation.py
+    "kfp>=2.0,<3.0",
 ]
 
 deployment = [
@@ -64,7 +66,6 @@ gateway = [
     "en-core-web-sm",
     "opentelemetry-instrumentation-fastapi>=0.58b0",
     "opentelemetry-instrumentation-requests>=0.58b0",
-    "dowhy>=0.11.0",
 ]
 
 advisor = [
@@ -90,6 +91,10 @@ compliance = [
     # (activated via STORAGE_BACKEND=s3 env var; not used in GCP/GKE posture)
     "boto3>=1.35.0",
     "PyYAML>=6.0.0",
+    # dowhy: causal gatekeeper (Tier 6) — required by compliance-bridge defer queue
+    # (No-Direct-Bind Gap 4). Moved from gateway extras so the compliance-bridge
+    # image picks it up via --extra compliance without pulling all gateway deps.
+    "dowhy>=0.11,<0.12",
 ]
 
 langfuse = [
@@ -152,12 +157,6 @@ exclude = [".venv"]
 [tool.codespell]
 ignore-words-list = "rouge"
 skip = "./locust_env/*,uv.lock,.venv,./frontend,**/*.ipynb"
-
-[tool.pytest.ini_options]
-pythonpath = "."
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
-asyncio_default_test_loop_scope = "function"
 
 [build-system]
 requires = ["uv_build>=0.8.14,<0.9.0"]

@@ -19,11 +19,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 pytestmark = pytest.mark.unit
 
-try:
-    from langchain.agents import AgentExecutor
-except ImportError:
-    pytest.skip("AgentExecutor not found in langchain.agents", allow_module_level=True)
-
 from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.graph.nodes.safety_node import (
     safety_check_node,
