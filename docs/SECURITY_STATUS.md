@@ -46,9 +46,9 @@ CAGE v2.0.0 provides a **production-grade AI governance enforcement runtime**. T
 | PII Sanitizer                    | Pre-ledger regex sanitization pipeline (SSN, CC, email, phone, API key/Bearer token) applied to all UCA records before WORM persistence. ISO 42001 Annex A.6. | ✅ Implemented (fix/track-b-v2-release-gates) |
 | UCA Logger                       | ISO 42001 Clause 6.1 UCA record builder; KMS-signed (HMAC-SHA256 stub in `CAGE_ENV=test`); region-gated WORM persistence (`CAGE_DEPLOYMENT_REGION` → `OSCAL_S3_BUCKET_{REGION}`); UCA types: `quota_exceeded`, `prompt_injection`, `pii_sanitization`. | ✅ Implemented (fix/track-b-v2-release-gates) |
 
-### Compliance Automation (15 Lula Validation Manifests — 4 Active, 11 Stub)
+### Compliance Automation (26 Lula Validation Manifests — 4 Active, 22 Stub)
 
-Automated continuous compliance assessment covers **15 Lula validation manifests** in `compliance/lula/`. Of these, **4 are Active** (production-ready, enabled in the Lula CronJob) and **11 are Stubs** (logic complete but requiring cluster-specific namespace/resource name configuration before activation). See [`compliance/lula/README.md`](../compliance/lula/README.md) for the full status table and activation instructions.
+Automated continuous compliance assessment covers **26 Lula validation manifests** in `compliance/lula/`. Of these, **4 are Active** (production-ready, enabled in the Lula CronJob) and **22 are Stubs** (logic complete but requiring cluster-specific namespace/resource name configuration before activation). The 22 stubs span: 1 CSA AARM (ALL scope), 10 NIST SP 800-53 (US_FED), 5 NIST AI 600-1 (US_FED), 3 EU AI Act/GDPR/DORA (EU_ECB), and 3 MAS FEAT/Notice 655/TRM (APAC_MAS). See [`compliance/lula/README.md`](../compliance/lula/README.md) for the full status table and activation instructions.
 
 | Control   | Standard        | Region Scope | Description                                       | Threshold            | Lula Validation              | Status |
 | --------- | --------------- | ------------ | ------------------------------------------------- | -------------------- | ---------------------------- | ------ |
@@ -107,7 +107,7 @@ The following weaknesses are documented in [`docs/POAM_US_FED.md`](POAM_US_FED.m
 | POAM-009 | RA-2       | FIPS 199 categorization unsigned                                      | **Critical** | In Progress     | 2026-03-31  |
 | POAM-010 | RA-5       | ~~No vulnerability scanning in CI pipeline~~ **✅ Closed** — pip-audit, Trivy, Grype, CycloneDX SBOM in `security-scan.yml` | High | **Closed** | 2026-04-15 |
 | POAM-011 | SC-8       | No TLS enforcement validation test — test suite does not assert TLS 1.2+ on all endpoints | Moderate | Open | 2026-05-15 |
-| POAM-012 | SC-12      | ~~`CAGE_ROUTING_SEAL_SECRET` bypass allows silent enforcement disable~~ **✅ Closed** — `routing_seal.py` now fails fast at import time if `GOVERNANCE_SALT` is absent (`os.environ["GOVERNANCE_SALT"]`); hardcoded `"REDACTED_SALT"` fallback removed (Sprint 1, BLOCKER-02) | High | **Closed** | 2026-06-08 |
+| POAM-012 | SC-12      | ~~`CAGE_ROUTING_SEAL_SECRET` bypass allows silent enforcement disable~~ **✅ Closed** — `routing_seal.py` now fails fast at import time if `GOVERNANCE_SALT` is absent; hardcoded `"REDACTED_SALT"` fallback removed (Sprint 1, BLOCKER-02). `CAGE_SEAL_ENFORCEMENT=log` bypass guard added to `hybrid_server.py` (BLOCKER-03). Seal enforcement verified end-to-end (unsigned → 403, signed → 200). | High | **Closed** | 2026-06-08 |
 | POAM-013 | SI-2       | Unpinned `>=` version specifiers across Python dependencies           | High         | Open            | 2026-04-15  |
 | POAM-014 | SC-28      | No CMEK validation for Langfuse / CloudSQL encryption-at-rest         | Moderate     | Open            | 2026-05-31  |
 | POAM-015 | PL-2       | **No System Security Plan (SSP)** — `compliance/oscal/system-security-plan.yaml` is an OSCAL draft; no AO-signed SSP exists | **Critical** | Open | 2026-06-30 |
