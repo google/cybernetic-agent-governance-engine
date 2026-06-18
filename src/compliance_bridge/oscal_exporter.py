@@ -293,8 +293,13 @@ def findings_from_metrics_dict(
                 remarks=f"Evidence collection error: {data['error']}",
             ))
             continue
-        sr = data.get("safety_rate", 1.0)
-        result: OscalResult = cast(OscalResult, "PASS" if sr >= 1.0 else "FAIL")
+        sr = data.get("safety_rate")
+        # M-10: safety_rate is None when no traces exist — treat as NOT_APPLICABLE
+        # (no evidence yet) rather than crashing or falsely reporting PASS/FAIL.
+        if sr is None:
+            result: OscalResult = cast(OscalResult, "NOT_APPLICABLE")
+        else:
+            result = cast(OscalResult, "PASS" if sr >= 1.0 else "FAIL")
         findings.append(OscalFinding(
             control_id=cid,
             result=result,
