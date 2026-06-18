@@ -21,7 +21,7 @@
 # RedisJSON module, causing AsyncRedisSaver to fail with:
 #   "unknown command 'JSON.SET'"
 #
-# This manifest deploys redis/redis-stack-server:latest which bundles:
+# This manifest deploys redis/redis-stack-server:7.4.0-v3 which bundles:
 #   - RedisJSON  (required by langgraph-checkpoint-redis AsyncRedisSaver)
 #   - RediSearch (optional, available for future use)
 #
@@ -30,8 +30,12 @@
 #   redis://:${REDIS_PASSWORD}@redis-stack.governance-stack.svc.cluster.local:6379
 #
 # PSA compliance: governance-stack namespace is restricted.
-# This manifest uses runAsNonRoot=true, runAsUser=999, capabilities.drop=ALL,
-# allowPrivilegeEscalation=false, seccompProfile=RuntimeDefault.
+# This manifest uses:
+#   1. allowPrivilegeEscalation=false  — container securityContext
+#   2. capabilities.drop=["ALL"]       — container securityContext
+#   3. runAsNonRoot=true               — pod + container securityContext
+#   4. seccompProfile.type=RuntimeDefault — pod + container securityContext
+# runAsUser/runAsGroup set to 999 (redis) to satisfy the restricted policy.
 #
 # Related:
 #   - src/governed_financial_advisor/graph/checkpointer.py (AsyncRedisSaver)
@@ -62,6 +66,10 @@ spec:
         tier: control-plane
         cage.governance/component: evidence-state-store
     spec:
+      # ── Pod-level security context ────────────────────────────────────────
+      # Satisfies PodSecurity "restricted:latest":
+      #   • runAsNonRoot=true
+      #   • seccompProfile.type=RuntimeDefault
       securityContext:
         runAsNonRoot: true
         fsGroup: 999
@@ -92,11 +100,20 @@ spec:
             limits:
               cpu: "1"
               memory: "5Gi"
+          # ── Container-level security context ───────────────────────────────
+          # Satisfies PodSecurity "restricted:latest":
+          #   • allowPrivilegeEscalation=false
+          #   • capabilities.drop=["ALL"]
+          #   • runAsNonRoot=true
+          #   • seccompProfile.type=RuntimeDefault
+          # runAsUser/runAsGroup set to 999 (redis) because redis-stack-server
+          # defaults to root; explicit UID/GID forces non-root execution.
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false  # Required for AOF persistence writes
             runAsNonRoot: true
             runAsUser: 999                 # Standard redis UID
+            runAsGroup: 999
             capabilities:
               drop:
                 - ALL
