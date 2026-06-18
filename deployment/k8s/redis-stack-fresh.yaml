@@ -1,0 +1,148 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# ============================================================================
+# Redis Stack StatefulSet — CAGE v2.0.0 LangGraph Checkpoint Store
+# ============================================================================
+#
+# Replaces the plain Bitnami Redis cluster for the LangGraph checkpoint backend.
+# The Bitnami redis-node StatefulSet (plain Redis) does NOT include the
+# RedisJSON module, causing AsyncRedisSaver to fail with:
+#   "unknown command 'JSON.SET'"
+#
+# This manifest deploys redis/redis-stack-server:latest which bundles:
+#   - RedisJSON  (required by langgraph-checkpoint-redis AsyncRedisSaver)
+#   - RediSearch (optional, available for future use)
+#
+# Service name: redis-stack (ClusterIP :6379)
+# The financial-advisor REDIS_URL secret must be updated to point here:
+#   redis://:${REDIS_PASSWORD}@redis-stack.governance-stack.svc.cluster.local:6379
+#
+# PSA compliance: governance-stack namespace is restricted.
+# This manifest uses runAsNonRoot=true, runAsUser=999, capabilities.drop=ALL,
+# allowPrivilegeEscalation=false, seccompProfile=RuntimeDefault.
+#
+# Related:
+#   - src/governed_financial_advisor/graph/checkpointer.py (AsyncRedisSaver)
+#   - src/compliance_bridge/evidence_stream.py (db=1 consumer)
+#   - deployment/k8s/redis-config.yaml (ConfigMap reused here)
+# ============================================================================
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-stack
+  namespace: governance-stack
+  labels:
+    app: redis-stack
+    tier: control-plane
+    cage.governance/component: evidence-state-store
+    cage.governance/redis-json: "true"
+spec:
+  serviceName: redis-stack
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-stack
+  template:
+    metadata:
+      labels:
+        app: redis-stack
+        tier: control-plane
+        cage.governance/component: evidence-state-store
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis-stack
+          image: redis/redis-stack-server:7.4.0-v3
+          # redis/redis-stack-server uses /entrypoint.sh as ENTRYPOINT which
+          # loads RedisJSON + RediSearch modules before starting redis-server.
+          # Pass config via REDIS_ARGS env var (the documented override mechanism).
+          # Do NOT override command/args — that bypasses module loading.
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_PASSWORD
+            - name: REDIS_ARGS
+              value: "--requirepass $(REDIS_PASSWORD) --maxmemory 4gb --maxmemory-policy noeviction --appendonly no --save '' --databases 16 --loglevel notice"
+          ports:
+            - containerPort: 6379
+              name: redis
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "1"
+              memory: "5Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false  # Required for AOF persistence writes
+            runAsNonRoot: true
+            runAsUser: 999                 # Standard redis UID
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: redis-stack-data
+              mountPath: /data
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - "redis-cli -a $REDIS_PASSWORD ping | grep -q PONG"
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-stack-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-stack
+  namespace: governance-stack
+  labels:
+    app: redis-stack
+    tier: control-plane
+    cage.governance/component: evidence-state-store
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6379
+      targetPort: 6379
+      name: redis
+  selector:
+    app: redis-stack
