@@ -88,7 +88,7 @@ def _build_reasoner_llm():
         model=os.getenv("MODEL_REASONING"),
         base_url=api_base,
         temperature=0.6,
-        max_tokens=4096,  # Restored: context pruning keeps input ~6k tokens, leaving ~10k for CoT reasoning
+        max_tokens=1024,  # DeepSeek reasoning model has max_model_len=2048; keep output ≤1024
     )
 
 
