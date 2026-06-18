@@ -107,7 +107,7 @@ def analyst_thinker_node(state: DataAnalystState):
             model=model_name,
             base_url=_reasoning_base,
             temperature=0.6,
-            max_tokens=4096
+            max_tokens=1024  # DeepSeek reasoning model has max_model_len=2048; keep output ≤1024
         )
 
         sys_msg = SystemMessage(content=(
@@ -228,28 +228,21 @@ def analyst_reporter_node(state: DataAnalystState):
             model=model_name,
             base_url=_reporter_fast_base,
             temperature=0.3, # Slight creativity for summarization
-            max_tokens=1024
+            max_tokens=400  # Qwen fast model has max_model_len=2048; keep output ≤400 to leave room for input+system prompt
         )
 
         sys_prompt = SystemMessage(content=(
-            "You are a Senior Financial Data Analyst. "
-            "Review the raw market data provided and provide an EXTREMELY detailed, comprehensive VERBAL analysis "
-            "answering the user's implicit or explicit question about the stock. "
-            "CRITICAL: DO NOT copy-paste the data tables. You MUST interpret the data into written paragraphs.\n\n"
-            "To achieve a perfect analytical score, you MUST:\n"
-            "1. State the stock's absolute highest and absolute lowest closing price during the provided period.\n"
-            "2. Calculate and state the overall percentage change from the first day to the last day.\n"
-            "3. Identify at least two key trends or potential support/resistance levels based on price and volume clusters.\n"
-            "4. Format your response into well-structured paragraphs with bold headers (e.g., **Key Metrics**, **Trend Analysis**).\n\n"
-            "Your analysis MUST be comprehensive and read like a full equity research report's executive summary. "
-            "Do not provide simple summaries. Be thorough and specific. Do NOT hallucinate future dates or data not in the table."
+            "You are a Financial Data Analyst. Summarize the market data below in 3-4 sentences covering: "
+            "price range, trend direction, and key insight. Be concise and factual."
         ))
 
         # Extract just the user query and the tool output to avoid Llama getting confused by intermediate steps
         user_msg = state["messages"][0].content
-        tool_data = state["messages"][-1].content if hasattr(state["messages"][-1], "content") else str(state["messages"][-1])
+        raw_tool_data = state["messages"][-1].content if hasattr(state["messages"][-1], "content") else str(state["messages"][-1])
+        # Truncate tool data to ~800 chars to stay within 2048-token context window (input + output ≤ 2048)
+        tool_data = str(raw_tool_data)[:800] if len(str(raw_tool_data)) > 800 else str(raw_tool_data)
         
-        prompt = f"User Request: {user_msg}\n\nRaw Market Data:\n{tool_data}\n\nPlease provide your detailed verbal analysis report based ONLY on the data above. DO NOT return tables."
+        prompt = f"User Request: {user_msg}\n\nMarket Data:\n{tool_data}\n\nProvide a brief analysis."
 
         from langchain_core.messages import HumanMessage
         messages = [sys_prompt, HumanMessage(content=prompt)]
