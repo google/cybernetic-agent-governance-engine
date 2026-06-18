@@ -20,12 +20,12 @@ This index provides a single-page view across all four POAM files. It is the aut
 | File | Region Scope | Primary Framework | Entries | Open | In Progress | Closed |
 |---|---|---|---|---|---|---|
 | [`docs/POAM_ISO42001.md`](POAM_ISO42001.md) | ALL | ISO/IEC 42001:2023 | 8 | 7 | 1 | 0 |
-| [`docs/POAM_US_FED.md`](POAM_US_FED.md) | US_FED | NIST SP 800-53 Rev. 5 | 23 | 11 | 3 | 7 |
+| [`docs/POAM_US_FED.md`](POAM_US_FED.md) | US_FED | NIST SP 800-53 Rev. 5 + NIST AI 600-1 | 30 | 13 | 8 | 7 |
 | [`docs/POAM_EU_ECB.md`](POAM_EU_ECB.md) | EU_ECB | EU AI Act / DORA / GDPR | 5 | 4 | 1 | 0 |
 | [`docs/POAM_APAC_MAS.md`](POAM_APAC_MAS.md) | APAC_MAS | MAS FEAT / Notice 655 / TRM | 4 | 4 | 0 | 0 |
-| **Total** | | | **40** | **26** | **5** | **7** |
+| **Total** | | | **47** | **28** | **10** | **7** |
 
-> **Note:** POAM-018 and POAM-019 appear in both `POAM_US_FED.md` (NIST AU-9/SC-7 aspect) and `POAM_ISO42001.md` (ISO 42001 §A.9.4 universal aspect). They are counted once in the totals above (under ISO42001). POAM-022 appears in `POAM_US_FED.md` (NIST SA-9/CA-7 aspect) and is cross-referenced to `POAM_EU_ECB.md#EU-001` (EU AI Act Art. 29a aspect).
+> **Note:** POAM-018 and POAM-019 appear in both `POAM_US_FED.md` (NIST AU-9/SC-7 aspect) and `POAM_ISO42001.md` (ISO 42001 §A.9.4 universal aspect). They are counted once in the totals above (under ISO42001). POAM-022 appears in `POAM_US_FED.md` (NIST SA-9/CA-7 aspect) and is cross-referenced to `POAM_EU_ECB.md#EU-001` (EU AI Act Art. 29a aspect). `POAM_US_FED.md` v2.2 (2026-06-15) added 7 NIST AI 600-1 items (AI600-001 through AI600-007), raising the US_FED entry count from 23 to 30.
 
 ---
 
@@ -73,28 +73,28 @@ Which ISO 42001 Annex A controls and Clauses have POAM entries vs. which are unt
 
 ## Severity Summary by Region
 
-| Severity | ISO42001 (ALL) | US_FED | EU_ECB | APAC_MAS | Total |
-|---|---|---|---|---|---|
-| **Critical** | 0 | 4 | 1 | 0 | 5 |
-| **High** | 2 | 12 | 2 | 2 | 18 |
-| **Moderate** | 5 | 6 | 2 | 2 | 15 |
-| **Low** | 1 | 0 | 0 | 0 | 1 |
-| **Total** | 8 | 22 | 5 | 4 | 39 |
+| Severity | ISO42001 (ALL) | US_FED SP800-53 | US_FED AI600-1 | EU_ECB | APAC_MAS | Total |
+|---|---|---|---|---|---|---|
+| **Critical** | 0 | 4 | 2 | 1 | 0 | 7 |
+| **High** | 2 | 12 | 5 | 2 | 2 | 23 |
+| **Moderate** | 5 | 6 | 0 | 2 | 2 | 15 |
+| **Low** | 1 | 0 | 0 | 0 | 0 | 1 |
+| **Total** | 8 | 22 | 7 | 5 | 4 | 46 |
 
-> **Note:** POAM-012 (SC-12, High) closed 2026-06-08 — `routing_seal.py` fail-fast guard implemented (Sprint 1, BLOCKER-02). US_FED open count reduced from 12 to 11; High severity count reduced from 13 to 12.
+> **Note:** POAM-012 (SC-12, High) closed 2026-06-08 — `routing_seal.py` fail-fast guard implemented (Sprint 1, BLOCKER-02) and `CAGE_SEAL_ENFORCEMENT=log` bypass guard added (BLOCKER-03). US_FED SP800-53 open count reduced from 12 to 11. Seven NIST AI 600-1 items (AI600-001 through AI600-007) added in POAM_US_FED v2.1 (2026-06-15).
 
 ---
 
 ## Status Summary by Region
 
-| Status | ISO42001 (ALL) | US_FED | EU_ECB | APAC_MAS | Total |
-|---|---|---|---|---|---|
-| **Open** | 7 | 11 | 4 | 4 | 26 |
-| **In Progress** | 1 | 3 | 1 | 0 | 5 |
-| **Closed** | 0 | 7 | 0 | 0 | 7 |
-| **Total** | 8 | 21 | 5 | 4 | 38 |
+| Status | ISO42001 (ALL) | US_FED SP800-53 | US_FED AI600-1 | EU_ECB | APAC_MAS | Total |
+|---|---|---|---|---|---|---|
+| **Open** | 7 | 11 | 2 | 4 | 4 | 28 |
+| **In Progress** | 1 | 3 | 5 | 1 | 0 | 10 |
+| **Closed** | 0 | 7 | 0 | 0 | 0 | 7 |
+| **Total** | 8 | 21 | 7 | 5 | 4 | 45 |
 
-> **Note:** Totals above reflect POAM-012 closure (2026-06-08). The File Registry table counts 23 entries for US_FED (original entry count); the Status Summary reflects 21 active entries (23 − 2 closed entries added since initial count: POAM-012 + POAM-020 closed post-v2.0.0-rc.3).
+> **Note:** Totals above reflect POAM-012 closure (2026-06-08) and the addition of 7 NIST AI 600-1 items in POAM_US_FED v2.1 (2026-06-15). The File Registry table counts 30 entries for US_FED (23 SP 800-53 + 7 AI 600-1). The Status Summary reflects 21 active SP 800-53 entries (23 − 2 closed post-v2.0.0-rc.3: POAM-012 + POAM-020) plus 7 AI 600-1 entries.
 
 ---
 
@@ -137,4 +137,4 @@ Which POAM entries have a corresponding Lula validation manifest:
 
 ---
 
-_This index is updated whenever any POAM file is modified. Last updated: 2026-06-14._
+_This index is updated whenever any POAM file is modified. Last updated: 2026-06-17._
