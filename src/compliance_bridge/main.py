@@ -226,7 +226,7 @@ app = FastAPI(
         "ISO 42001 Compliance Evidence Aggregator + CSA AARM Conformance Engine — "
         "Python FastAPI replacement for langfuse-bridge (TypeScript). CAGE v2.0.0."
     ),
-    version="2.0.0",
+    version="0.1.0",
     lifespan=lifespan,
 )
 
@@ -315,7 +315,7 @@ async def events_stream(request: Request) -> EventSourceResponse:
 
 @app.get("/health", tags=["health"])
 async def health() -> dict:
-    return {"status": "ok", "service": "compliance-bridge", "version": "2.0.0"}
+    return {"status": "ok", "service": "compliance-bridge", "version": "0.1.0"}
 
 
 # ---------------------------------------------------------------------------

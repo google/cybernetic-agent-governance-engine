@@ -253,7 +253,7 @@ root_app = FastAPI(
         "External REST endpoints removed — use MCP over SSE or the internal "
         "/governance/* and /v1/* surfaces."
     ),
-    version="2.0.0",
+    version="0.1.0",
     lifespan=_gateway_lifespan,
 )
 
