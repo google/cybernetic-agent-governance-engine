@@ -6,7 +6,7 @@
 | **Date**             | 2026-06-03                                                                        |
 | **Classification**   | INTERNAL                                                                          |
 | **Document Series**  | CAGE Technical Report                                                             |
-| **Status**           | ACTIVE — v2.0.0 stable (GO — 2026-06-08; GKE deployment verified 2026-06-03; **844 passing, 0 failed, 24 skipped**) |
+| **Status**           | ACTIVE — v0.1.0 tagged and merged to main; stability not declared; GKE deployment verified 2026-06-03; **844 passing, 0 failed, 24 skipped** |
 | **Reference**        | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/` |
 
 ---
@@ -179,7 +179,7 @@ The subgraph is structured so that no trade call can be made without successfull
 
 ---
 
-## 5a. DEFER Queue and Context Accumulator (v2.0.0)
+## 5a. DEFER Queue and Context Accumulator (v0.1.0)
 
 ### DEFER State Machine (AARM-V7)
 
@@ -241,7 +241,7 @@ CAGE enforces mandatory human oversight on all trade execution via LangGraph's i
 
 The graph is compiled with `interrupt_before=["governed_trader"]`. When execution reaches this node, the graph suspends and persists its current state to Redis via `AsyncRedisSaver` before returning control to the API layer. The `approval_node` prepares a `trade_payload` containing the `expires_at` TTL timestamp and the structural `ExecutionPlan`. Importantly, the `approval_node` exposes `max_slippage_pct` to the UI, allowing the human reviewer to inspect and, if necessary, tighten the slippage tolerance before submitting their approval.
 
-The AgentSight KernelDashboard (Phase 1, v2.0.0-rc.1) surfaces `hitl_expires_at` as a live countdown timer per pending telemetry item, and `price_fresh` / `price_stale` as a ΔP drift badge — giving operators real-time visibility into HITL expiry and price movement without leaving the dashboard.
+The AgentSight KernelDashboard (Phase 1, v0.1.0-rc.1) surfaces `hitl_expires_at` as a live countdown timer per pending telemetry item, and `price_fresh` / `price_stale` as a ΔP drift badge — giving operators real-time visibility into HITL expiry and price movement without leaving the dashboard.
 
 ### State Preparation
 

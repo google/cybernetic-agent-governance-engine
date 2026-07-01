@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-audit_workflow.py — 6-step compliance audit pipeline (CAGE v2.0.0).
+audit_workflow.py — 6-step compliance audit pipeline (CAGE v0.1.0).
 
 Ports complianceAuditWorkflow.ts + remediationAdvisorStep.ts
 
@@ -21,7 +21,7 @@ Steps:
   1. Persist raw OSCAL YAML to GCS/S3 (idempotent — skip if exists)
   2. Parse OSCAL YAML → list[OscalFinding]  (deterministic, zero-LLM)
      2b. Append each finding to the SHA-256 hash-chained ContextAccumulator
-         (AARM Context Accumulator mandate, CAGE v2.0.0)
+         (AARM Context Accumulator mandate, CAGE v0.1.0)
   3. Ingest findings as compliance scores into the dedicated Langfuse
      compliance project (separate from application performance metrics)
   4. Filter FAIL findings for CRITICAL_CONTROLS → notify_critical_failure()
@@ -696,7 +696,7 @@ async def _step5_remediation_advisor(
 
 async def run_audit_workflow(oscal_yaml: str, audit_id: str) -> dict:
     """
-    Execute the 6-step compliance audit pipeline (CAGE v2.0.0).
+    Execute the 6-step compliance audit pipeline (CAGE v0.1.0).
 
     Returns:
         {
@@ -732,7 +732,7 @@ async def run_audit_workflow(oscal_yaml: str, audit_id: str) -> dict:
         for finding in findings
     ]
 
-    # Step 2b — SHA-256 hash-chained Context Accumulator (AARM mandate, CAGE v2.0.0)
+    # Step 2b — SHA-256 hash-chained Context Accumulator (AARM mandate, CAGE v0.1.0)
     # Append every OSCAL finding as a chained node, then seal to lock the chain.
     # ISO 42001 A.5.3: tamper-evident chain of custody for session state.
     accumulator = ContextAccumulator(audit_id=audit_id)

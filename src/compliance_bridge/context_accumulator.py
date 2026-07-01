@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-context_accumulator.py — Cryptographic Hash-Chained Context Accumulator (CAGE v2.0.0)
+context_accumulator.py — Cryptographic Hash-Chained Context Accumulator (CAGE v0.1.0)
 
 AARM Conformance: Satisfies the "Context Accumulator" mandate from the Cloud Security
 Alliance (CSA) Autonomous Agent Risk Management (AARM) specification — an append-only,

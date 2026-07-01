@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-normative_provider.py — External Normative Provider Interface (CAGE v2.0.0)
+normative_provider.py — External Normative Provider Interface (CAGE v0.1.0)
 ===========================================================================
 
 Implements §2.5 of EXTENSIBILITY_ARCHITECTURE.md: the 3-endpoint integration

@@ -14,9 +14,9 @@
 
 """
 tests/test_context_accumulator.py — Unit tests for the cryptographic hash-chained
-Context Accumulator (CAGE v2.0.0).
+Context Accumulator (CAGE v0.1.0).
 
-Verification invariants (approved in CAGE v2.0.0 architectural review):
+Verification invariants (approved in CAGE v0.1.0 architectural review):
   1. Single-node chain round-trips correctly (append → verify_integrity passes).
   2. Multi-node chain (N findings) links correctly.
   3. CHAIN_SEALED sentinel increases length by 1 and embeds chain_root.
@@ -179,7 +179,7 @@ def test_seal_payload_contains_chain_root():
 def test_tamper_node0_detected_at_node0():
     """Mutating node 0's payload causes verify_integrity to fail at node 0.
 
-    This is the critical invariant required by the CAGE v2.0.0 architectural
+    This is the critical invariant required by the CAGE v0.1.0 architectural
     review: the structural failure must be caught at the mutated node.
     """
     acc = ContextAccumulator(audit_id="tamper-audit-001")

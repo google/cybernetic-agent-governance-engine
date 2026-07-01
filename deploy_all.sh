@@ -115,6 +115,7 @@ load_env() {
     local _env _cluster _namespace _registry _storage _cold_tier
     local _vllm_reasoning _vllm_fast _vllm_gateway _opa _redis _s3_ep _s3_bkt
     local _model_reasoning _model_fast _model_consensus
+    local _project _region
 
     _env=$(_read_env_var ENVIRONMENT)
     _cluster=$(_read_env_var K8S_CLUSTER_NAME)
@@ -132,6 +133,14 @@ load_env() {
     _model_reasoning=$(_read_env_var MODEL_REASONING)
     _model_fast=$(_read_env_var MODEL_FAST)
     _model_consensus=$(_read_env_var MODEL_CONSENSUS)
+    # DEP-22: Propagate GOOGLE_CLOUD_PROJECT → TF_VAR_project_id.
+    # variables.tf declares project_id with no default (DEP-08 data-residency
+    # guard). Without this mapping the chain relies solely on terraform.auto.tfvars
+    # or dev.tfvars, breaking programmatic use (e.g. CI without a tfvars file).
+    _project=$(_read_env_var GOOGLE_CLOUD_PROJECT)
+    # DEP-22: Propagate GOOGLE_CLOUD_LOCATION → TF_VAR_region.
+    # Same rationale as project_id — region has no default in variables.tf.
+    _region=$(_read_env_var GOOGLE_CLOUD_LOCATION)
 
     [[ -n "$_env" ]]            && export TF_VAR_environment="$_env"
     [[ -n "$_cluster" ]]        && export TF_VAR_cluster_name="$_cluster"
@@ -149,6 +158,8 @@ load_env() {
     [[ -n "$_model_reasoning" ]] && export TF_VAR_model_reasoning="$_model_reasoning"
     [[ -n "$_model_fast" ]]     && export TF_VAR_model_fast="$_model_fast"
     [[ -n "$_model_consensus" ]] && export TF_VAR_model_consensus="$_model_consensus"
+    [[ -n "$_project" ]]        && export TF_VAR_project_id="$_project"
+    [[ -n "$_region" ]]         && export TF_VAR_region="$_region"
 
     # ── DEP-02: Propagate CAGE_DEPLOYMENT_REGION to Terraform ─────────────
     # Without this, Terraform defaults cage_deployment_region to "US_FED"

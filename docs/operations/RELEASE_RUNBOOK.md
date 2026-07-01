@@ -1,7 +1,7 @@
-# v2.0.0 Release Runbook — Phases 2–6
+# v0.1.0 Release Runbook — Phases 2–6
 
-> **Status: ✅ COMPLETE — v2.0.0 RELEASED (GO — 2026-06-08).** All phases executed. This runbook is preserved as a historical execution record for audit traceability.
-> **Prerequisites:** Phase 1 PR (`fix/v2-p0-blockers`) must be merged into `rc-v2.0.0` before starting Phase 2.
+> **Status: ⚠️ PHASES EXECUTED — v0.1.0 TAGGED / STABILITY NOT DECLARED (as of 2026-07-01).** All runbook phases have been executed. The `v0.1.0` Git tag has been applied and `rc-v0.1.0` merged to `main`, but v0.1.0 has **not** been declared a stable release. This runbook is preserved as an execution record for audit traceability.
+> **Prerequisites:** Phase 1 PR (`fix/v2-p0-blockers`) must be merged into `rc-v0.1.0` before starting Phase 2.
 > **Cluster:** `gke_YOUR_GCP_PROJECT_ID_us-central1-a_cage-dev`, namespace `governance-stack`
 > **Project:** `YOUR_GCP_PROJECT_ID`
 
@@ -232,7 +232,7 @@ cd /tmp && rm -rf cage-filter-test
 ### 3.5 — Suspend Branch Protection (Repo Admin)
 
 1. Go to GitHub → Repository Settings → Branches
-2. Edit the `rc-v2.0.0` branch protection rule
+2. Edit the `rc-v0.1.0` branch protection rule
 3. Temporarily disable: "Require pull request before merging", "Require status checks", "Restrict who can push"
 4. Also disable protection on `main`
 5. **Record the timestamp of suspension**
@@ -261,14 +261,14 @@ git remote add origin https://github.com/YOUR_GCP_PROJECT_ID/cybernetic-governan
 # Or if remote already exists:
 # git remote set-url origin https://github.com/YOUR_GCP_PROJECT_ID/cybernetic-governance-engine.git
 
-git push --force-with-lease origin rc-v2.0.0
+git push --force-with-lease origin rc-v0.1.0
 git push --force-with-lease origin main
 ```
 
 ### 3.9 — Re-Enable Branch Protection
 
 1. Return to GitHub → Repository Settings → Branches
-2. Restore all branch protection settings on `rc-v2.0.0` and `main`
+2. Restore all branch protection settings on `rc-v0.1.0` and `main`
 3. **Complete within 15 minutes of suspension**
 4. Record timestamp of restoration
 
@@ -296,7 +296,7 @@ cd /tmp && rm -rf cage-verify
 ```bash
 cd /Users/larsahlfors/Code/cybernetic-governance-engine
 git fetch origin
-git reset --hard origin/rc-v2.0.0
+git reset --hard origin/rc-v0.1.0
 ```
 
 ---
@@ -564,9 +564,9 @@ for LULA_FILE in compliance/lula/lula-validation-*.yaml; do
   lula validate -f "$LULA_FILE"
 done
 # Expected: all 15 assertions pass, including RA-5 (security-scanner-cronjob present)
-# NOTE: As of v2.0.0-rc.3, only 4 of 15 manifests are Active (a52, a53, a92, sc4).
+# NOTE: As of v0.1.0-rc.3, only 4 of 15 manifests are Active (a52, a53, a92, sc4).
 # The remaining 11 are Stubs requiring cluster-specific configuration.
-# All 15 must be activated and passing before the stable v2.0.0 tag is applied.
+# All 15 must be activated and passing before the stable v0.1.0 tag is applied.
 # See compliance/lula/README.md for activation instructions.
 ```
 
@@ -611,7 +611,7 @@ Assemble the following documents and submit to the Authorizing Official (AO):
 
 ```bash
 cd /Users/larsahlfors/Code/cybernetic-governance-engine
-git tag -a v2.0.0 -m "chore(release): stable v2.0.0
+git tag -a v0.1.0 -m "chore(release): stable v0.1.0
 
 - Resolved P0 blockers: D-01 (secrets), D-02 (pod availability), D-04 (HMAC seal), D-06 (security scan), D-07 (PSA labels)
 - NIST SP 800-53 coverage ≥45%
@@ -619,17 +619,17 @@ git tag -a v2.0.0 -m "chore(release): stable v2.0.0
 - All 15 Lula assertions passing
 - Full test suite: 0 failures"
 
-git push origin v2.0.0
+git push origin v0.1.0
 ```
 
 ### 6.9 — Publish GitHub Release
 
 ```bash
-gh release create v2.0.0 \
+gh release create v0.1.0 \
   --notes-file CHANGELOG.md \
-  --target rc-v2.0.0 \
+  --target rc-v0.1.0 \
   --verify-tag \
-  --title "v2.0.0 — Stable Release"
+  --title "v0.1.0 — Stable Release"
 # Mark as Latest in GitHub UI
 ```
 

@@ -1,5 +1,5 @@
 # lula-validation-aarm-vectors.yaml
-# AARM Threat Vector Conformance Validation (CAGE v2.0.0)
+# AARM Threat Vector Conformance Validation (CAGE v0.1.0)
 #
 # Validates that the CAGE compliance bridge reports conformance against all
 # 11 CSA Autonomous Agent Risk Management (AARM) threat vectors.
@@ -79,7 +79,7 @@ provider:
       }
 
 notes: >
-  CSA AARM Threat Vector Conformance (CAGE v2.0.0).
+  CSA AARM Threat Vector Conformance (CAGE v0.1.0).
   Validates machine-readable proof that CAGE control points neutralize all 11
   AARM attack vectors defined in the Cloud Security Alliance Autonomous Agent
   Risk Management (AARM) specification.

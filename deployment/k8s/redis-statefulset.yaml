@@ -28,7 +28,7 @@
 #   - cage-redis-config ConfigMap: exists (created 2026-05-31)
 #
 # ============================================================================
-# Redis StatefulSet — CAGE v2.0.0 Evidence State Store
+# Redis StatefulSet — CAGE v0.1.0 Evidence State Store
 # ============================================================================
 #
 # Dual-purpose Redis instance:

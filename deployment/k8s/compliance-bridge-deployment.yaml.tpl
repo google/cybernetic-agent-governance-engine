@@ -5,7 +5,7 @@ metadata:
   namespace: ${NAMESPACE}
   labels:
     app: compliance-bridge
-    app.kubernetes.io/version: "2.0.0"
+    app.kubernetes.io/version: "0.1.0"
 spec:
   replicas: 1
   selector:

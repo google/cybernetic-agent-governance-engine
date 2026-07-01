@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-tests/test_aarm_mapper.py — Unit tests for the AARM Threat Vector ledger (CAGE v2.0.0).
+tests/test_aarm_mapper.py — Unit tests for the AARM Threat Vector ledger (CAGE v0.1.0).
 
 Verifies:
   - All 11 AARM vectors are present in the ledger

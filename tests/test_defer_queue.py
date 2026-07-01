@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-tests/test_defer_queue.py — Unit tests for the DEFER state machine primitive (CAGE v2.0.0).
+tests/test_defer_queue.py — Unit tests for the DEFER state machine primitive (CAGE v0.1.0).
 
 Uses fakeredis for hermetic Redis simulation (no live cluster required).
 Tests verify Redis isolation semantics (db=1 namespace) and all DeferQueue operations.
@@ -147,7 +147,7 @@ def _token(
 # ---------------------------------------------------------------------------
 
 def test_defer_confidence_threshold_is_070():
-    """The Confidence-Starvation Boundary must be exactly 0.70 (v2.0.0 decision)."""
+    """The Confidence-Starvation Boundary must be exactly 0.70 (v0.1.0 decision)."""
     assert DEFER_CONFIDENCE_THRESHOLD == 0.70
 
 

@@ -1096,7 +1096,7 @@ implementations. This is required for the ATO package under EO 14110 / OMB M-24-
        title: CAGE AI 600-1 Governance Profile
        description: >
          NIST AI 600-1 (July 2024) Generative AI Profile implementation
-         for CAGE v2.0.0 US_FED deployment.
+         for CAGE v0.1.0 US_FED deployment.
        control-implementations:
          - uuid: <generate-uuid>
            source: https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf

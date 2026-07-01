@@ -37,7 +37,7 @@ services:
       - OPA_URL=http://opa:8181/v1/data/trade/governance
       - CAGE_SEAL_ENFORCEMENT=log # Log-only in dev — don't block missing seals
       - SLM_BASE_URL=http://slm:5000
-      # v2.0.0: override in .env to test EU_ECB or APAC_MAS compliance posture locally
+      # v0.1.0: override in .env to test EU_ECB or APAC_MAS compliance posture locally
       - CAGE_DEPLOYMENT_REGION=${CAGE_DEPLOYMENT_REGION:-US_FED}
 
   app:

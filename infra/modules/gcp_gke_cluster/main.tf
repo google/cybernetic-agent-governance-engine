@@ -348,6 +348,23 @@ resource "google_container_node_pool" "gpu_nodes" {
   lifecycle {
     ignore_changes = [
       initial_node_count,
+
+      # ── Immutable / GKE-managed fields that diverge from config after creation ──
+      #
+      # node_locations: live pool was created with a single zone (us-central1-a);
+      #   dev.tfvars lists three zones. Immutable — any change forces destroy+recreate,
+      #   which would drain vllm-inference and vllm-reasoning GPU workloads.
+      node_locations,
+
+      # node_config: covers all immutable node_config sub-fields including:
+      #   - spot: live pool is on-demand (spot=false); dev.tfvars sets spot=true.
+      #     The `spot` field is immutable on GKE node pools — changing it forces
+      #     destroy+recreate. Ignoring the entire node_config block prevents this.
+      #   - labels/resource_labels: GKE auto-adds goog-gke-* and nvidia.com/gpu labels
+      #     post-creation that are not in the Terraform config.
+      #   - network_config: GKE auto-populates pod_range and enable_private_nodes
+      #     from the cluster's VPC-native config.
+      node_config,
     ]
   }
 

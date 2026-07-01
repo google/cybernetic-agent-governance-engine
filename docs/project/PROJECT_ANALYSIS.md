@@ -43,8 +43,8 @@ the repository, suggesting the template is missing or not yet committed.
 
 ## 2. CI/CD Pipeline Design and Enforcement Mechanisms
 
-The `ci.yml` pipeline triggers on pushes to `rc-v2.0.0` and `feature/**`
-branches, and on PRs targeting `rc-v2.0.0`. It runs **four parallel jobs**, each
+The `ci.yml` pipeline triggers on pushes to `rc-v0.1.0` and `feature/**`
+branches, and on PRs targeting `rc-v0.1.0`. It runs **four parallel jobs**, each
 independently scoped:
 
 | Job | Mechanism | Notable Design |
@@ -65,7 +65,7 @@ infrastructure. This is a deliberate "hermetic CI" design that enables fast,
 reliable feedback on every push.
 
 **Relationship to `license_guard.yml`:** The `license_guard.yml` workflow is a
-separate, more rigorous license check that runs only on `main`, `rc-v2.0.0`, and
+separate, more rigorous license check that runs only on `main`, `rc-v0.1.0`, and
 `release/**` branches. It uses `pip-licenses` to generate a full dependency
 license JSON and grep-blocks GPL/AGPL/LGPL. This is architecturally distinct from
 the header check in `ci.yml` — one checks source file headers, the other checks
@@ -123,7 +123,7 @@ against the subject line. Merge commits are explicitly exempted. Exceeding 72
 characters produces a warning rather than a hard failure — a deliberate choice to
 avoid blocking legitimate long summaries while still signaling the convention.
 
-**`pre-push` hook**: Blocks direct pushes to `main` and `rc-v2.0.0` by checking
+**`pre-push` hook**: Blocks direct pushes to `main` and `rc-v0.1.0` by checking
 `git symbolic-ref HEAD`. This is a local mirror of the server-side branch
 protection rules, catching the error before the push reaches GitHub.
 

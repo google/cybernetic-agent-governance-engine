@@ -233,7 +233,7 @@ component-definition:
     title: AARM Conformance Engine
     type: software
     description: 'CSA AARM (Autonomous Agent Risk Management) conformance layer introduced
-      in CAGE v2.0.0. Consists of three integrated primitives: (1) SHA-256 hash-chained
+      in CAGE v0.1.0. Consists of three integrated primitives: (1) SHA-256 hash-chained
       Context Accumulator (context_accumulator.py) providing tamper-evident session
       state logging; (2) DEFER State Machine (defer_queue.py) implementing a formal
       fourth governance decision state for confidence-starved execution contexts;
@@ -251,7 +251,7 @@ component-definition:
     - role-id: provider
     props:
     - name: software-version
-      value: 2.0.0
+      value: 0.1.0
     - name: aarm-spec-version
       value: CSA-AARM-v1.0
     - name: defer-confidence-threshold
@@ -331,7 +331,7 @@ component-definition:
           controls by implementing a formal pause state for ambiguous execution contexts,
           preventing unsafe AI operation under data starvation.'
         remarks: 'Three-way Confidence-Starvation Boundary: 0.95 (execute), 0.70-0.95
-          (review), <0.70 (defer). Approved CAGE v2.0.0 architectural decision.'
+          (review), <0.70 (defer). Approved CAGE v0.1.0 architectural decision.'
   back-matter:
     resources:
     - uuid: f2a3b4c5-d6e7-8901-fabc-012345678901
