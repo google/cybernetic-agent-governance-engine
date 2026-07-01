@@ -16,145 +16,129 @@
 # Redis Stack StatefulSet — CAGE v2.0.0 LangGraph Checkpoint Store
 # ============================================================================
 #
-# Replaces the plain Bitnami Redis cluster for the LangGraph checkpoint backend.
-# The Bitnami redis-node StatefulSet (plain Redis) does NOT include the
-# RedisJSON module, causing AsyncRedisSaver to fail with:
-#   "unknown command 'JSON.SET'"
+# Standalone redis/redis-stack-server Deployment used for fresh-state
+# caching (LangGraph checkpoints, evidence stream).
 #
-# This manifest deploys redis/redis-stack-server:7.4.0-v3 which bundles:
-#   - RedisJSON  (required by langgraph-checkpoint-redis AsyncRedisSaver)
-#   - RediSearch (optional, available for future use)
-#
-# Service name: redis-stack (ClusterIP :6379)
-# The financial-advisor REDIS_URL secret must be updated to point here:
-#   redis://:${REDIS_PASSWORD}@redis-stack.governance-stack.svc.cluster.local:6379
-#
-# PSA compliance: governance-stack namespace is restricted.
-# This manifest uses:
+# PodSecurity "restricted:latest" compliance:
 #   1. allowPrivilegeEscalation=false  — container securityContext
 #   2. capabilities.drop=["ALL"]       — container securityContext
 #   3. runAsNonRoot=true               — pod + container securityContext
 #   4. seccompProfile.type=RuntimeDefault — pod + container securityContext
-# runAsUser/runAsGroup set to 999 (redis) to satisfy the restricted policy.
+#
+# Redis Stack Server runs as UID 999 (redis) when launched as non-root.
+# The image supports non-root operation; runAsUser/runAsGroup are set
+# explicitly to UID 999 to satisfy the restricted policy.
 #
 # Related:
-#   - src/governed_financial_advisor/graph/checkpointer.py (AsyncRedisSaver)
-#   - src/compliance_bridge/evidence_stream.py (db=1 consumer)
-#   - deployment/k8s/redis-config.yaml (ConfigMap reused here)
+#   - deployment/k8s/redis-config.yaml (cage-redis-config ConfigMap)
+#   - deployment/k8s/redis-credentials-secret.yaml (redis-credentials Secret)
 # ============================================================================
----
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
-  name: redis-stack
+  name: redis-stack-fresh
   namespace: governance-stack
   labels:
-    app: redis-stack
+    app: redis-stack-fresh
     tier: control-plane
-    cage.governance/component: evidence-state-store
-    cage.governance/redis-json: "true"
+    cage.governance/component: redis-stack-fresh
 spec:
-  serviceName: redis-stack
   replicas: 1
   selector:
     matchLabels:
-      app: redis-stack
+      app: redis-stack-fresh
   template:
     metadata:
       labels:
-        app: redis-stack
+        app: redis-stack-fresh
         tier: control-plane
-        cage.governance/component: evidence-state-store
+        cage.governance/component: redis-stack-fresh
     spec:
       # ── Pod-level security context ────────────────────────────────────────
       # Satisfies PodSecurity "restricted:latest":
-      #   • runAsNonRoot=true
-      #   • seccompProfile.type=RuntimeDefault
+      #   • runAsNonRoot=true  (violation 3)
+      #   • seccompProfile     (violation 4)
       securityContext:
         runAsNonRoot: true
-        fsGroup: 999
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: redis-stack
-          image: redis/redis-stack-server:7.4.0-v3
-          # redis/redis-stack-server uses /entrypoint.sh as ENTRYPOINT which
-          # loads RedisJSON + RediSearch modules before starting redis-server.
-          # Pass config via REDIS_ARGS env var (the documented override mechanism).
-          # Do NOT override command/args — that bypasses module loading.
+          image: redis/redis-stack-server:latest
+          args:
+            - "redis-server"
+            - "/usr/local/etc/redis/redis.conf"
+            - "--requirepass"
+            - "$(REDIS_PASSWORD)"
+            - "--loadmodule"
+            - "/opt/redis-stack/lib/rejson.so"
+            - "--loadmodule"
+            - "/opt/redis-stack/lib/redisearch.so"
           env:
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: redis-credentials
-                  key: REDIS_PASSWORD
-            - name: REDIS_ARGS
-              value: "--requirepass $(REDIS_PASSWORD) --maxmemory 4gb --maxmemory-policy noeviction --appendonly no --save '' --databases 16 --loglevel notice"
+                  key: redis-password
           ports:
             - containerPort: 6379
               name: redis
           resources:
             requests:
               cpu: "500m"
-              memory: "2Gi"
+              memory: "512Mi"
             limits:
               cpu: "1"
-              memory: "5Gi"
+              memory: "1Gi"
           # ── Container-level security context ───────────────────────────────
           # Satisfies PodSecurity "restricted:latest":
-          #   • allowPrivilegeEscalation=false
-          #   • capabilities.drop=["ALL"]
-          #   • runAsNonRoot=true
-          #   • seccompProfile.type=RuntimeDefault
+          #   • allowPrivilegeEscalation=false  (violation 1)
+          #   • capabilities.drop=["ALL"]       (violation 2)
+          #   • runAsNonRoot=true               (violation 3)
+          #   • seccompProfile.type=RuntimeDefault (violation 4)
           # runAsUser/runAsGroup set to 999 (redis) because redis-stack-server
-          # defaults to root; explicit UID/GID forces non-root execution.
+          # defaults to root; explicit UID forces non-root execution.
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false  # Required for AOF persistence writes
-            runAsNonRoot: true
-            runAsUser: 999                 # Standard redis UID
-            runAsGroup: 999
             capabilities:
               drop:
                 - ALL
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
             seccompProfile:
               type: RuntimeDefault
           volumeMounts:
-            - name: redis-stack-data
-              mountPath: /data
+            - name: config
+              mountPath: /usr/local/etc/redis
+              readOnly: true
           livenessProbe:
             tcpSocket:
               port: 6379
             initialDelaySeconds: 15
             periodSeconds: 20
-            failureThreshold: 3
           readinessProbe:
-            exec:
-              command:
-                - sh
-                - -c
-                - "redis-cli -a $REDIS_PASSWORD ping | grep -q PONG"
-            initialDelaySeconds: 10
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 5
             periodSeconds: 10
-            failureThreshold: 3
-  volumeClaimTemplates:
-    - metadata:
-        name: redis-stack-data
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 10Gi
+      volumes:
+        - name: config
+          configMap:
+            name: cage-redis-config
+            items:
+              - key: redis.conf
+                path: redis.conf
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: redis-stack
+  name: redis-stack-fresh
   namespace: governance-stack
   labels:
-    app: redis-stack
+    app: redis-stack-fresh
     tier: control-plane
-    cage.governance/component: evidence-state-store
+    cage.governance/component: redis-stack-fresh
 spec:
   type: ClusterIP
   ports:
@@ -162,4 +146,4 @@ spec:
       targetPort: 6379
       name: redis
   selector:
-    app: redis-stack
+    app: redis-stack-fresh

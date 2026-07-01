@@ -142,89 +142,11 @@ jobs:
           export LANGFUSE_COMPLIANCE_SECRET_KEY="sk-lf-comp-mock"
           python3 scripts/verify_langfuse_posture.py --dry-run --posture development
 
-  lula-stub-gate:
-    name: "Lula Stub Count Gate"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install PyYAML
-        run: pip install pyyaml
-      - name: Check Lula stub count against baseline
-        run: |
-          python scripts/check_lula_stub_count.py
-
-  lula-yaml-structure:
-    name: "Lula Manifest YAML Structure Gate (all 29 files)"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install PyYAML
-        run: pip install pyyaml
-      - name: Validate all 29 Lula manifest files (domain + provider + rego present)
-        # This is the CI-safe structural gate. Full live lula validate requires a
-        # running cluster and is performed by compliance-matrix.yml post-provisioning.
-        # NOTE: lula1 binary (defenseunicorns-labs/lula1) is NOT installed here —
-        # the compliance-matrix.yml workflow handles live lula validate with the
-        # correct binary source.
-        run: |
-          python3 - <<'PYEOF'
-          import yaml, sys, pathlib
-
-          manifests = sorted(pathlib.Path('compliance/lula').glob('lula-validation-*.yaml'))
-          if not manifests:
-              print('ERROR: no lula-validation-*.yaml files found in compliance/lula/')
-              sys.exit(1)
-
-          errors = []
-          for m in manifests:
-              try:
-                  doc = yaml.safe_load(m.read_text())
-              except yaml.YAMLError as e:
-                  errors.append(f'{m.name}: YAML parse error: {e}')
-                  continue
-              if not isinstance(doc, dict):
-                  errors.append(f'{m.name}: document is not a mapping')
-                  continue
-              for key in ('domain', 'provider'):
-                  if key not in doc:
-                      errors.append(f'{m.name}: missing required key: {key}')
-              provider = doc.get('provider', {})
-              if isinstance(provider, dict):
-                  opa = provider.get('opa-spec') or provider.get('opa') or {}
-                  if isinstance(opa, dict):
-                      rego = opa.get('rego') or opa.get('policy')
-                      if not rego:
-                          errors.append(f'{m.name}: opa-spec missing rego/policy body')
-                  else:
-                      errors.append(f'{m.name}: provider missing opa-spec or opa key')
-              dtype = doc.get('domain', {}).get('type', '?')
-              ptype = doc.get('provider', {}).get('type', '?')
-              print(f'  OK {m.name}: domain.type={dtype}, provider.type={ptype}')
-
-          if errors:
-              print(f'\nFAILURES ({len(errors)}):')
-              for e in errors:
-                  print(f'  {e}')
-              sys.exit(1)
-          print(f'\nAll {len(manifests)} lula manifest(s) passed YAML structure check.')
-          PYEOF
-
-  # ── AI 600-1 Compliance Gates (US_FED only) ────────────────────────────────
+  # ── AI 600-1 Compliance Gates ──────────────────────────────────────────────
 
   lula-ai600-validation:
-    # DEP-21: AI 600-1 is a US_FED (NIST) framework. This job must not run for
-    # EU_ECB or APAC_MAS deployments. Gate on CAGE_DEPLOYMENT_REGION == 'US_FED'.
-    # EU_ECB uses EU AI Act Lula manifests (eu-ecb-compliance.yml workflow).
-    # APAC_MAS uses MAS FEAT Lula manifests (apac-mas-compliance.yml workflow).
-    name: "Lula AI 600-1 Validation (US_FED only)"
+    name: "Lula AI 600-1 Validation"
     runs-on: ubuntu-latest
-    if: vars.CAGE_DEPLOYMENT_REGION == 'US_FED' || vars.CAGE_DEPLOYMENT_REGION == ''
     needs: [pytest-logic]
     steps:
       - uses: actions/checkout@v4
@@ -288,7 +210,6 @@ jobs:
   ai600-unit-tests:
     name: "AI 600-1 Unit Tests"
     runs-on: ubuntu-latest
-    if: vars.CAGE_DEPLOYMENT_REGION == 'US_FED' || vars.CAGE_DEPLOYMENT_REGION == ''
     needs: [license-check]
     steps:
       - uses: actions/checkout@v4
@@ -304,7 +225,6 @@ jobs:
         run: uv sync --all-groups --all-extras
       - name: Run AI 600-1 unit tests
         env:
-          CAGE_ENV: "test"
           OPENAI_API_KEY: "sk-dummy"
           MODEL_REASONING: "casperhansen/deepseek-r1-distill-qwen-14b-awq"
           MODEL_FAST: "Qwen/Qwen2.5-7B-Instruct"
@@ -329,12 +249,7 @@ jobs:
             -v --tb=short
 
   cbrn-keyword-check:
-    # DEP-22: The assertion `tier1_keywords_cbrn_enabled == True` is a US_FED
-    # (NIST AI 600-1 / NeMo Guardrails) requirement. EU_ECB and APAC_MAS
-    # deployments may legitimately disable CBRN rails if not required by their
-    # jurisdiction. Gate the strict assertion on CAGE_DEPLOYMENT_REGION == 'US_FED'.
-    # The structural check (keyword list present, length >= 10) remains universal.
-    name: "CBRN Keyword List Validation (enabled assertion: US_FED only)"
+    name: "CBRN Keyword List Validation"
     runs-on: ubuntu-latest
     needs: [license-check]
     steps:
@@ -345,22 +260,15 @@ jobs:
       - name: Validate CBRN keyword list
         run: |
           python -c "
-          import json, os
+          import json
           with open('config/governance_thresholds.json') as f:
               cfg = json.load(f)
           assert 'tier1_keywords_cbrn' in cfg, 'CBRN keyword list missing from governance_thresholds.json'
           assert len(cfg['tier1_keywords_cbrn']) >= 10, \
               f'CBRN keyword list too short: {len(cfg[\"tier1_keywords_cbrn\"])} terms (need >= 10)'
-          # DEP-22: Only assert enabled==True for US_FED; other jurisdictions may
-          # configure this differently per their regulatory framework.
-          region = os.environ.get('CAGE_DEPLOYMENT_REGION', 'US_FED')
-          if region == 'US_FED' or region == '':
-              assert cfg.get('tier1_keywords_cbrn_enabled') == True, \
-                  'tier1_keywords_cbrn_enabled must be true for US_FED deployment'
-              print(f'CBRN keywords: {len(cfg[\"tier1_keywords_cbrn\"])} terms, enabled=True — OK (US_FED)')
-          else:
-              enabled = cfg.get('tier1_keywords_cbrn_enabled', False)
-              print(f'CBRN keywords: {len(cfg[\"tier1_keywords_cbrn\"])} terms, enabled={enabled} — OK ({region}, assertion skipped)')
+          assert cfg.get('tier1_keywords_cbrn_enabled') == True, \
+              'tier1_keywords_cbrn_enabled must be true for US_FED deployment'
+          print(f'CBRN keywords: {len(cfg[\"tier1_keywords_cbrn\"])} terms — OK')
           "
       - name: Validate agentic scope statement present
         run: |

@@ -1,5 +1,5 @@
 # CAGE Compliance & Governance Posture Framework
-**CAGE Version:** 0.1.0 (CSA AARM Conformance Release)
+**CAGE Version:** 2.0.0 (CSA AARM Conformance Release)
 **Last Evaluated:** 2026-06-15
 
 ---
@@ -146,7 +146,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     *   `lula-validation-sc8.yaml` (NIST SP 800-53 SC-8) — Transmission confidentiality / TLS enforcement
     *   `lula-validation-si2.yaml` (NIST SP 800-53 SI-2) — Flaw remediation / CVE patching (pip-audit CI)
 
-    **🔶 Stub (5)** — NIST AI 600-1 (**US_FED only**); Phase 0 scaffolding added 2026-06-15; require Langfuse metric availability and cluster-specific configuration before activation (see [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](docs/compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md)):
+    **🔶 Stub (5)** — NIST AI 600-1 (**US_FED only**); Phase 0 scaffolding added 2026-06-15; require Langfuse metric availability and cluster-specific configuration before activation (see [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](docs/AI_600_1_IMPLEMENTATION_PLAN.md)):
     *   `lula-validation-ai600-confabulation.yaml` (AI 600-1 §2.1, controls: SI-10, AU-3, POAM AI600-001) — Confabulation / hallucination detection; asserts `confabulation_rate < 0.02` over 24 h window via `confabulation_scorer.py`
     *   `lula-validation-ai600-data-privacy.yaml` (AI 600-1 §2.2, controls: SI-19, SC-28, POAM AI600-002) — Data privacy / PII sanitization; asserts PII audit log retention ≥ 90 days and Presidio score threshold ≥ 0.5
     *   `lula-validation-ai600-prompt-injection.yaml` (AI 600-1 §2.3, controls: SI-3, SI-10, CA-8, POAM AI600-003) — Prompt injection detection; asserts injection detector ConfigMap present and deflection score ≥ 4
@@ -154,7 +154,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     *   `lula-validation-ai600-cbrn.yaml` (AI 600-1 §2.6 / §2.12, controls: SA-12, SR-3, SI-7, POAM AI600-007) — CBRN content filtering; asserts CBRN keyword list ≥ 10 terms enabled and NeMo CBRN rail deployed. **⚠️ Cat-M: requires AO pre-approval before cluster activation.**
 
 ### G. NIST AI 600-1 Generative AI Risk Management (US_FED Profile)
-*   **Status:** Phase 0 Scaffolding Complete (2026-06-15). Full assertions target Phase 2–3 per [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](docs/compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md).
+*   **Status:** Phase 0 Scaffolding Complete (2026-06-15). Full assertions target Phase 2–3 per [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](docs/AI_600_1_IMPLEMENTATION_PLAN.md).
 *   **Jurisdiction:** `US_FED` only (`CAGE_DEPLOYMENT_REGION=US_FED`). NIST AI 600-1 controls are **not** applied to `EU_ECB` or `APAC_MAS` deployments.
 *   **Mechanism:** NIST AI 600-1 ("Artificial Intelligence Risk Management Framework: Generative Artificial Intelligence Profile") defines risk controls specific to generative AI systems. CAGE implements the following AI 600-1 risk domains as runtime controls, each backed by a Lula validation stub:
 
@@ -167,11 +167,11 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     | §2.6 / §2.12 | CBRN & Value Chain | NeMo `cbrn_rails.co` — Tier-1 keyword list; NeMo CBRN rail deployed | `lula-validation-ai600-cbrn.yaml` | AI600-007 |
 
 *   **Companion Documentation:**
-    *   [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](docs/compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md) — phased implementation plan (Phase 0–3, Weeks 1–52)
-    *   [`docs/NIST_AI_600_1_US_FED_ANALYSIS.md`](docs/compliance/us_fed/NIST_AI_600_1_US_FED_ANALYSIS.md) — gap analysis and control mapping
+    *   [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](docs/AI_600_1_IMPLEMENTATION_PLAN.md) — phased implementation plan (Phase 0–3, Weeks 1–52)
+    *   [`docs/NIST_AI_600_1_US_FED_ANALYSIS.md`](docs/NIST_AI_600_1_US_FED_ANALYSIS.md) — gap analysis and control mapping
     *   [`compliance/lula/README.md`](compliance/lula/README.md) — full Lula validation status table including AI 600-1 stubs
 
-### H. Continuous Audit Event Loop & Compliance Bridge API (v0.1.0)
+### H. Continuous Audit Event Loop & Compliance Bridge API (v2.0.0)
 *   **Status:** Implemented & Active.
 *   **Mechanism:** In CAGE v0.1.0, the Compliance Bridge service (`src/compliance_bridge/main.py`) acts as the central hub for automated compliance scoring and threat ledger reporting. It exposes fourteen REST endpoints:
     1.  `GET /health` — Kubernetes liveness probe.
@@ -190,7 +190,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     14. `GET /v1/events/stream` — SSE governance event stream consumed by the AgentSight UI KernelDashboard.
 
 ### I. Dependency Security — `diskcache` CVE-2025-69872 Remediation
-*   **Status:** Remediated in v0.1.0.
+*   **Status:** Remediated in v2.0.0.
 *   **Mechanism:** **CVE-2025-69872 in `diskcache`** (transitive dependency via `outlines`; `outlines` removed to eliminate the dependency) — a pickle deserialization RCE vulnerability in the `diskcache` package, which was a transitive dependency pulled in by `outlines`. The `outlines` package was removed from all CAGE service dependencies to eliminate `diskcache` from the dependency tree. Structured-output generation previously provided by `outlines` is now handled via vLLM's native JSON-mode API. No CAGE service imports `outlines` or `diskcache` at runtime. The removal is enforced by `pip-audit` and Trivy scans in `.github/workflows/security-scan.yml` (POAM-010 closed). Regulated-environment deployers should verify their own dependency trees do not re-introduce `outlines` via transitive dependencies.
 *   **Compliance Mapping:** NIST SP 800-53 SI-2 (Flaw Remediation); ISO/IEC 42001 §A.9.3 (Supplier Relationships).
 

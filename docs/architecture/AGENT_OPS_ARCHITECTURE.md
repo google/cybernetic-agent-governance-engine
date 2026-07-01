@@ -2,7 +2,7 @@
 
 > **Core Principle:** Separate the control plane (policy) from the data plane (execution capability) to create enforceable AI governance.
 
-**Version:** v0.1.0-rc.2 (promoted 2026-06-03)
+**Version:** v2.0.0-rc.2 (promoted 2026-06-03)
 **Universal Compliance Baseline:** ISO/IEC 42001:2023 · CSA AARM v1.0 *(all deployment regions)*
 **Jurisdiction-Specific Addenda:** SR 26-2 / NIST AI 600-1 / NIST SP 800-53 *(US_FED only)* · EU AI Act / GDPR / DORA *(EU_ECB only)* · MAS FEAT / MAS Notice 655 *(APAC_MAS only)*
 
