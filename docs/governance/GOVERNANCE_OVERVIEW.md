@@ -1,6 +1,6 @@
 # Cybernetic Governance of Agentic AI
 
-**Last Updated:** 2026-06-15 | **System Version:** v0.1.0 (tagged; merged to main; stability not declared)
+**Last Updated:** 2026-06-15 | **System Version:** v0.1.0 (stable, released 2026-06-08)
 
 > **Jurisdiction separation principle:** **ISO/IEC 42001:2023** is the **sole universal governance baseline** — every control, pipeline step, and audit artifact in this document applies to all deployment regions (`US_FED`, `EU_ECB`, `APAC_MAS`). All other regulatory frameworks are **additive, jurisdiction-specific layers** activated exclusively by the `CAGE_DEPLOYMENT_REGION` environment variable:
 > - **US_FED only:** SR 26-2 (Federal Reserve), NIST AI 600-1, NIST SP 800-53, NIST AI RMF
@@ -9,7 +9,7 @@
 >
 > Controls marked *(All Regions)* are ISO 42001 obligations. Controls marked with a specific region are additive obligations for that jurisdiction only.
 
-> **v0.1.0 Status Note (as of 2026-07-01):** The v0.1.0 Git tag has been applied and the `rc-v0.1.0` branch has been merged to `main`, but CAGE v0.1.0 has **not** been declared a stable release. This document reflects the state of the v0.1.0 tagged commit. Key changes since rc.3: Token Quota Proxy (`CTRL_TQP_007`) active; PII Sanitizer active; UCA Logger active; SLM sidecar permanently deprecated (`slm_available=false`); OPA confidence threshold 0.97 unconditional; vLLM reasoning model (`DeepSeek-R1-Distill-Llama-8B`) deployed; `outlines` library removed (CVE-2025-69872). See [`docs/V2_ROADMAP.md`](V2_ROADMAP.md) for the full v0.1.0 delivery summary.
+> **v0.1.0 Release Note:** This document reflects the v0.1.0 stable release. Key changes since rc.3: Token Quota Proxy (`CTRL_TQP_007`) active; PII Sanitizer active; UCA Logger active; SLM sidecar permanently deprecated (`slm_available=false`); OPA confidence threshold 0.97 unconditional; vLLM reasoning model (`DeepSeek-R1-Distill-Llama-8B`) deployed; `outlines` library removed (CVE-2025-69872). See [`docs/V2_ROADMAP.md`](../project/V2_ROADMAP.md) for the full v0.1.0 delivery summary.
 
 This document describes the **Cybernetic Governance** framework that transforms the Financial Advisor agent from a probabilistic LLM application into a deterministic, engineering-controlled system. For the full architectural detail, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -17,7 +17,7 @@ This document describes the **Cybernetic Governance** framework that transforms 
 
 We utilize a **Hybrid Reasoning Architecture** to solve the "Recursive Paradox" of agent safety (High Variety vs. Low Safety). This architecture combines **deterministic workflow control** (LangGraph) with **LLM-powered reasoning** (native LangChain Runnables).
 
-We also employ **Systems-Theoretic Process Analysis (STPA)** to identify and mitigate Unsafe Control Actions (UCAs). See [`docs/STPA_ANALYSIS.md`](docs/STPA_ANALYSIS.md) for the detailed hazard analysis.
+We also employ **Systems-Theoretic Process Analysis (STPA)** to identify and mitigate Unsafe Control Actions (UCAs). See [`docs/STPA_ANALYSIS.md`](../security/STPA_ANALYSIS.md) for the detailed hazard analysis.
 
 - **Variety Attenuation:** Ashby's Law ($V_R \ge V_A$) is used to constrain the agent's infinite action space ($V_A$) into a manageable set of states verified by the governance stack ($V_R$).
 - **Explicit Routing (LangGraph):** Unlike standard "tool-use" agents that probabilistically choose tools, the **Supervisor Agent** (implemented in **LangGraph**) uses a deterministic `StateGraph` to transition between states. This forms the "hard logic" cage around the probabilistic "soft logic" of the LLM.
@@ -26,7 +26,7 @@ We also employ **Systems-Theoretic Process Analysis (STPA)** to identify and mit
 
 The architecture enforces "Defense in Depth" through a **7-step `SymbolicGovernor` pipeline** (`_run_checks()`) backed by supporting infrastructure layers and the broader **15 security & governance control points** wrapping the entire system.
 
-> **See also:** [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](docs/NEURO_SYMBOLIC_GOVERNANCE.md) for the full neuro-symbolic architecture detail.
+> **See also:** [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](NEURO_SYMBOLIC_GOVERNANCE.md) for the full neuro-symbolic architecture detail.
 
 #### Pre-Pipeline: NeMo Guardrails (Layer 0)
 

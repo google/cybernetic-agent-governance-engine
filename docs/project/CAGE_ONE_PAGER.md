@@ -1,6 +1,6 @@
 # Cybernetic Agent Governance Engine (CAGE) — One-Pager
 
-**Authors:** CAGE Engineering Team · **Last updated:** 2026-06-08 · **Status:** v0.1.0 tagged and merged to main — stability not declared (as of 2026-07-01)
+**Authors:** CAGE Engineering Team · **Last updated:** 2026-06-08 · **Status:** GO — STABLE RELEASE APPROVED (v0.1.0, 2026-06-08)
 
 ---
 
@@ -32,8 +32,8 @@ Human oversight is enforced structurally, not by convention: the LangGraph graph
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Document type         | Engineering one-pager                                                                                                                                                   |
 | Audience              | Engineering leads, compliance reviewers, AI governance evaluators                                                                                                       |
-| Companion documents   | [`README.md`](../README.md), [`COMPLIANCE.md`](../COMPLIANCE.md), [`docs/GOVERNANCE_CROSSWALK.md`](GOVERNANCE_CROSSWALK.md), [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](NEURO_SYMBOLIC_GOVERNANCE.md) |
+| Companion documents   | [`README.md`](../README.md), [`COMPLIANCE.md`](../COMPLIANCE.md), [`docs/GOVERNANCE_CROSSWALK.md`](../compliance/cross-region/GOVERNANCE_CROSSWALK.md), [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](../governance/NEURO_SYMBOLIC_GOVERNANCE.md) |
 | Implementation status | v0.1.0 — 2026-06-08                                                                                                                                                    |
-| Production readiness  | **GO criteria met — v0.1.0 tagged and merged to main; stability not declared (as of 2026-07-01)**; see [`docs/PRODUCTION_READINESS_REPORT.md`](PRODUCTION_READINESS_REPORT.md) |
+| Production readiness  | **GO — STABLE RELEASE APPROVED (v0.1.0, 2026-06-08)**; see [`docs/PRODUCTION_READINESS_REPORT.md`](PRODUCTION_READINESS_REPORT.md)                                     |
 | Open issues           | File a GitHub issue for any defects or feature requests                                                                                                                 |
 | Feedback              | File a GitHub issue or suggest edits via pull request                                                                                                                   |

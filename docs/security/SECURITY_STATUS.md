@@ -1,13 +1,13 @@
 # Security & Compliance Status — CAGE v0.1.0
 
-**Date:** 2026-06-14
+**Date:** 2026-06-23
 **Status:** Public disclosure of current security posture and compliance implementation state
 
 ---
 
 ## Summary
 
-CAGE v0.1.0 provides a **production-grade AI governance enforcement runtime**. The AI-layer controls (NeMo Guardrails, OPA policy enforcement, Cloud KMS HSM-backed asymmetric signing with HMAC-SHA256 dev/CI fallback, HITL with TOCTOU remediation, LangGraph safety nodes, DEFER state machine, SHA-256 hash-chained context accumulator) are fully implemented and tested. However, the full **NIST Risk Management Framework (RMF) authorization process has not been completed**, and several infrastructure-level security controls have known gaps documented in [`docs/POAM.md`](POAM.md).
+CAGE v0.1.0 provides a **production-grade AI governance enforcement runtime**. The AI-layer controls (NeMo Guardrails, OPA policy enforcement, Cloud KMS HSM-backed asymmetric signing with HMAC-SHA256 dev/CI fallback, HITL with TOCTOU remediation, LangGraph safety nodes, DEFER state machine, SHA-256 hash-chained context accumulator) are fully implemented and tested. However, the full **NIST Risk Management Framework (RMF) authorization process has not been completed**, and several infrastructure-level security controls have known gaps documented in [`docs/POAM.md`](../compliance/cross-region/POAM.md).
 
 > [!IMPORTANT]
 > This system has **not received an Authorization to Operate (ATO)** from a NIST-designated Authorizing Official. It has not undergone a formal Security Assessment. Deployers in regulated environments must complete their own risk assessment before production use.
@@ -92,7 +92,7 @@ The NIST RMF is a six-step process. The table below reflects the current state f
 
 ### Infrastructure Security Gaps (from POA&M)
 
-The following weaknesses are documented in [`docs/POAM_US_FED.md`](POAM_US_FED.md) (v2.0, 2026-06-08 — authoritative for US_FED). Items marked **Closed** were resolved; see POAM_US_FED.md for full closure evidence. For universal ISO 42001 AIMS weaknesses (all regions), see [`docs/POAM_ISO42001.md`](POAM_ISO42001.md). For the cross-region traceability matrix, see [`docs/POAM_INDEX.md`](POAM_INDEX.md):
+The following weaknesses are documented in [`docs/POAM_US_FED.md`](../compliance/us_fed/POAM_US_FED.md) (v2.0, 2026-06-08 — authoritative for US_FED). Items marked **Closed** were resolved; see POAM_US_FED.md for full closure evidence. For universal ISO 42001 AIMS weaknesses (all regions), see [`docs/POAM_ISO42001.md`](../compliance/universal/POAM_ISO42001.md). For the cross-region traceability matrix, see [`docs/POAM_INDEX.md`](../compliance/cross-region/POAM_INDEX.md):
 
 | ID       | Control    | Weakness                                                              | Severity     | Status          | Target Date |
 | -------- | ---------- | --------------------------------------------------------------------- | ------------ | --------------- | ----------- |
@@ -103,18 +103,18 @@ The following weaknesses are documented in [`docs/POAM_US_FED.md`](POAM_US_FED.m
 | POAM-005 | CA-6       | **No Authorization to Operate (ATO) letter**                          | **Critical** | Open            | 2026-06-30  |
 | POAM-006 | CM-8       | No SBOM in CI/CD pipeline                                             | High         | Open            | 2026-05-01  |
 | POAM-007 | IA-3       | ~~No intra-cluster mTLS~~ **✅ Closed** — Linkerd SPIFFE/SVID deployed | High         | **Closed**      | 2026-05-17  |
-| POAM-008 | IR-1       | No formal Incident Response Plan                                      | High         | Open            | 2026-04-30  |
+| POAM-008 | IR-1       | ~~No formal Incident Response Plan~~ **🔄 In Progress** — `docs/INCIDENT_RESPONSE_PLAN.md` created (2026-06-23); pending AO sign-off | High | In Progress | 2026-07-31  |
 | POAM-009 | RA-2       | FIPS 199 categorization unsigned                                      | **Critical** | In Progress     | 2026-03-31  |
 | POAM-010 | RA-5       | ~~No vulnerability scanning in CI pipeline~~ **✅ Closed** — pip-audit, Trivy, Grype, CycloneDX SBOM in `security-scan.yml` | High | **Closed** | 2026-04-15 |
-| POAM-011 | SC-8       | No TLS enforcement validation test — test suite does not assert TLS 1.2+ on all endpoints | Moderate | Open | 2026-05-15 |
+| POAM-011 | SC-8       | ~~No TLS enforcement validation test~~ **✅ Closed** — `test_tls_plaintext_rejected()` + `test_tls_minimum_version()` added to `tests/test_gateway_connectivity.py` (2026-06-23) | Moderate | **Closed** | 2026-06-23 |
 | POAM-012 | SC-12      | ~~`CAGE_ROUTING_SEAL_SECRET` bypass allows silent enforcement disable~~ **✅ Closed** — `routing_seal.py` now fails fast at import time if `GOVERNANCE_SALT` is absent; hardcoded `"REDACTED_SALT"` fallback removed (Sprint 1, BLOCKER-02). `CAGE_SEAL_ENFORCEMENT=log` bypass guard added to `hybrid_server.py` (BLOCKER-03). Seal enforcement verified end-to-end (unsigned → 403, signed → 200). | High | **Closed** | 2026-06-08 |
-| POAM-013 | SI-2       | Unpinned `>=` version specifiers across Python dependencies           | High         | Open            | 2026-04-15  |
-| POAM-014 | SC-28      | No CMEK validation for Langfuse / CloudSQL encryption-at-rest         | Moderate     | Open            | 2026-05-31  |
+| POAM-013 | SI-2       | ~~Unpinned `>=` version specifiers~~ **🔄 In Progress** — `.github/workflows/dependency-review.yml` added (warns on `>=` specifiers); blocking on HIGH/CRITICAL CVE PRs (2026-06-23) | High | In Progress | 2026-08-15  |
+| POAM-014 | SC-28      | ~~No CMEK validation for Langfuse / CloudSQL encryption-at-rest~~ **🔄 In Progress** — `validate_cmek_configuration()` added to `compliance_bridge/cmek_guard.py`; checked in `lifespan()` startup (2026-06-23). Pending: Cloud KMS key provisioning in prod.tfvars. | Moderate | In Progress | 2026-07-31  |
 | POAM-015 | PL-2       | **No System Security Plan (SSP)** — `compliance/oscal/system-security-plan.yaml` is an OSCAL draft; no AO-signed SSP exists | **Critical** | Open | 2026-06-30 |
 | POAM-016 | SI-2       | ~~CVE-2025-69872 (diskcache) RCE~~ **✅ Closed** — `outlines` removed from gateway deps | Moderate | **Closed** | 2026-05-29 |
 | POAM-017 | SI-2       | CVE-2026-4810 (google-adk): code injection; upgrade blocked by OTel SDK version conflict | Moderate | Open | 2026-07-31 |
-| POAM-018 | AU-9       | Langfuse compliance project credentials fail silently when absent     | High         | Open            | 2026-07-15  |
-| POAM-019 | AU-9, SC-7 | Terraform fallback silently collapses dual-project telemetry isolation | High        | Open            | 2026-07-15  |
+| POAM-018 | AU-9       | ~~Langfuse compliance project credentials fail silently~~ **✅ Closed** — `_validate_langfuse_credentials()` now raises `RuntimeError` in non-dev environments; `/health` endpoint reports `langfuse_compliance_configured` status (2026-06-23) | High | **Closed** | 2026-06-23  |
+| POAM-019 | AU-9, SC-7 | ~~Terraform fallback silently collapses dual-project telemetry isolation~~ **✅ Closed** — `lifecycle.precondition` added to `app_secrets` module call in `main.tf`; `variables.tf` adds `nullable=false` + validation blocks on compliance key vars (2026-06-23) | High | **Closed** | 2026-06-23 |
 | POAM-020 | CM-3       | ~~Technical report README version mismatch~~ **✅ Closed** — aligned to v0.1.0 | Moderate | **Closed** | 2026-06-15 |
 | POAM-021 | SI-4       | ~~AgentSight eBPF exporter in console mode~~ **✅ Closed** — `exporter.type: "remote"` confirmed | High | **Closed** | 2026-07-15 |
 | POAM-022 | SA-9, CA-7 | External Normative Provider operating in stub mode (TrustLayers credentials not provisioned) | Moderate | In Progress | 2026-08-31 |
@@ -123,9 +123,9 @@ The following weaknesses are documented in [`docs/POAM_US_FED.md`](POAM_US_FED.m
 ### Testing Gaps
 
 - **~~`automated_auditor.py` uses synthetic mock traces`~~** — POAM-003 closed 2026-06-05. Live OSCAL assessment results now generated from Langfuse compliance metrics via compliance-bridge REST API.
-- **No SBOM** — no Software Bill of Materials is generated per build (POAM-006). Note: vulnerability scanning (POAM-010) is now closed — pip-audit, Trivy, and Grype are active in CI.
-- **No TLS enforcement test** — `tests/test_gateway_connectivity.py` does not assert TLS 1.2+ on all endpoints (POAM-011).
-- **Langfuse compliance credentials not validated at startup** — silent failure if compliance project keys are absent (POAM-018).
+- **~~No SBOM~~** — POAM-006 **In Progress**: `.github/workflows/sbom.yml` creates CycloneDX SBOMs for gateway and compliance-bridge on every push (2026-06-23). Pending: first CI run to produce SBOM artifact.
+- **~~No TLS enforcement test~~** — POAM-011 **✅ Closed**: `test_tls_plaintext_rejected()` + `test_tls_minimum_version()` added to `tests/test_gateway_connectivity.py` (2026-06-23).
+- **~~Langfuse compliance credentials not validated at startup~~** — POAM-018 **✅ Closed**: `_validate_langfuse_credentials()` now raises `RuntimeError` in non-dev environments (2026-06-23).
 
 ---
 
@@ -187,15 +187,15 @@ Before deploying CAGE in a regulated financial environment:
 
 | Document                            | Location                                                                                                                                                           |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| POA&M Index (all regions)           | [`docs/POAM_INDEX.md`](POAM_INDEX.md)                                                                                                                              |
-| POA&M — ISO 42001 universal (ALL)   | [`docs/POAM_ISO42001.md`](POAM_ISO42001.md)                                                                                                                        |
-| POA&M — US_FED (NIST SP 800-53)     | [`docs/POAM_US_FED.md`](POAM_US_FED.md)                                                                                                                            |
-| POA&M — EU_ECB (EU AI Act / DORA)   | [`docs/POAM_EU_ECB.md`](POAM_EU_ECB.md)                                                                                                                            |
-| POA&M — APAC_MAS (MAS FEAT)         | [`docs/POAM_APAC_MAS.md`](POAM_APAC_MAS.md)                                                                                                                        |
-| NIST RMF Current-State Inventory    | [`docs/NIST_RMF_CHUNK1_CURRENT_STATE.md`](NIST_RMF_CHUNK1_CURRENT_STATE.md)                                                                                        |
-| NIST RMF Gap Analysis (Steps 2–5)   | [`docs/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md) — [`NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](NIST_RMF_CHUNK5_MONITOR_ROADMAP.md) |
-| ISO 42001 Compliance Detail         | [`docs/ISO_42001_COMPLIANCE.md`](ISO_42001_COMPLIANCE.md)                                                                                                          |
+| POA&M Index (all regions)           | [`docs/POAM_INDEX.md`](../compliance/cross-region/POAM_INDEX.md)                                                                                                                              |
+| POA&M — ISO 42001 universal (ALL)   | [`docs/POAM_ISO42001.md`](../compliance/universal/POAM_ISO42001.md)                                                                                                                        |
+| POA&M — US_FED (NIST SP 800-53)     | [`docs/POAM_US_FED.md`](../compliance/us_fed/POAM_US_FED.md)                                                                                                                            |
+| POA&M — EU_ECB (EU AI Act / DORA)   | [`docs/POAM_EU_ECB.md`](../compliance/eu_ecb/POAM_EU_ECB.md)                                                                                                                            |
+| POA&M — APAC_MAS (MAS FEAT)         | [`docs/POAM_APAC_MAS.md`](../compliance/apac_mas/POAM_APAC_MAS.md)                                                                                                                        |
+| NIST RMF Current-State Inventory    | [`docs/NIST_RMF_CHUNK1_CURRENT_STATE.md`](../compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md)                                                                                        |
+| NIST RMF Gap Analysis (Steps 2–5)   | [`docs/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](../compliance/us_fed/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md) — [`NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](../compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md) |
+| ISO 42001 Compliance Detail         | [`docs/ISO_42001_COMPLIANCE.md`](../compliance/universal/ISO_42001_COMPLIANCE.md)                                                                                                          |
 | Security Assessment Plan            | [`docs/SECURITY_ASSESSMENT_PLAN.md`](SECURITY_ASSESSMENT_PLAN.md)                                                                                                  |
-| Governance Crosswalk                | [`docs/GOVERNANCE_CROSSWALK.md`](GOVERNANCE_CROSSWALK.md)                                                                                                          |
+| Governance Crosswalk                | [`docs/GOVERNANCE_CROSSWALK.md`](../compliance/cross-region/GOVERNANCE_CROSSWALK.md)                                                                                                          |
 | SR 26-2 (Federal Reserve)           | Federal Reserve Supervisory Letter SR 26-2, April 17, 2026 — Agentic AI Governance                                                                                 |
 | CSA AARM v1.0                       | Cloud Security Alliance AI Risk Management v1.0 — 11-vector threat taxonomy                                                                                        |

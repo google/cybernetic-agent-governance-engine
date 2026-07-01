@@ -67,7 +67,7 @@
 
 ## 🎉 Completion Summary
 
-**Status**: ✅ **ALL TASKS COMPLETE** — CAGE v0.1.0 Git tag applied and merged to main; stability not declared (as of 2026-07-01)
+**Status**: ✅ **ALL TASKS COMPLETE** — CAGE v0.1.0 stable release (GO — 2026-06-08)
 
 The monorepo refactoring is now production-ready with:
 

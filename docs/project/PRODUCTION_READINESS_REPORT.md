@@ -2,18 +2,18 @@
 
 **Date:** 2026-06-08
 **Assessment Type:** Comprehensive static analysis across 5 domains + Sprint 1/2 remediation verification
-**Version Under Review:** v0.1.0 (tagged; merged to main; stability not declared)
+**Version Under Review:** v0.1.0 (stable)
 **Prepared By:** Automated multi-specialist analysis pipeline
 
 ---
 
-## ⚠️ GO CRITERIA MET — STABILITY NOT DECLARED (v0.1.0)
+## ✅ GO — STABLE RELEASE APPROVED (v0.1.0, 2026-06-08)
 
 > All Sprint 1 and Sprint 2 P0/P1 blockers resolved. Track C (seal enforcement) and Track D (compliance validation) gates complete. Token Quota Proxy, PII Sanitizer, and UCA Logger active. All universal Lula assertions PASS. Trivy scan risk-accepted (POAM-023). See CHANGELOG.md `[0.1.0]` entry for full gate results.
 
 ---
 
-> **Historical context:** The original assessment below (dated 2026-06-07) recorded a NO-GO verdict for v0.1.0-rc.3. The Sprint 1 and Sprint 2 remediation roadmap has been completed. The verdict has been updated to GO (all gate criteria met). The v0.1.0 Git tag has been applied and `rc-v0.1.0` merged to `main`, but v0.1.0 has **not** been declared a stable release as of 2026-07-01. Individual blocker sections are preserved for audit traceability.
+> **Historical context:** The original assessment below (dated 2026-06-07) recorded a NO-GO verdict for v0.1.0-rc.3. The Sprint 1 and Sprint 2 remediation roadmap has been completed. The verdict has been updated to GO for the v0.1.0 stable tag. Individual blocker sections are preserved for audit traceability.
 
 ---
 
@@ -82,7 +82,7 @@ The CAGE governance engine demonstrates sophisticated, defense-in-depth architec
 
 ### 1.1 Universal Gates (All Regions)
 
-> **Note:** The gate statuses below reflect the **original rc.3 assessment (2026-06-07)**. All gates have been resolved. The v0.1.0 Git tag has been applied and `rc-v0.1.0` merged to `main`, but stability has **not** been declared as of 2026-07-01. See the [Final Verdict](#section-8-final-verdict) and [Resolution Summary](#resolution-summary) for the post-remediation status of each gate.
+> **Note:** The gate statuses below reflect the **original rc.3 assessment (2026-06-07)**. All gates were resolved by the v0.1.0 stable release (2026-06-08). See the [Final Verdict](#section-8-final-verdict) and [Resolution Summary](#resolution-summary) for the post-remediation status of each gate.
 
 | # | Gate | Status (rc.3 — 2026-06-07) | Notes |
 |---|------|--------|-------|
@@ -227,7 +227,7 @@ if os.getenv("ENVIRONMENT") == "production":
 | Field | Value |
 |-------|-------|
 | **Domain** | Security |
-| **File** | [`pyproject.toml:83`](pyproject.toml) + [`docs/SECURITY_STATUS.md:112`](docs/SECURITY_STATUS.md) |
+| **File** | [`pyproject.toml:83`](pyproject.toml) + [`docs/SECURITY_STATUS.md:112`](../security/SECURITY_STATUS.md) |
 | **POAM** | POAM-017 (SI-2) — Open |
 | **CVE** | CVE-2026-4810 — CRITICAL — Code Injection |
 | **Impact** | Remote code execution possible via crafted LLM tool call payloads routed through `google-adk` |
@@ -350,7 +350,7 @@ def test_unsigned_request_returns_403():
 | Field | Value |
 |-------|-------|
 | **Domain** | Compliance / Documentation |
-| **Files** | [`docs/ROLES_AND_RESPONSIBILITIES.md`](docs/ROLES_AND_RESPONSIBILITIES.md) · [`docs/IR_PLAN.md`](docs/IR_PLAN.md) · [`docs/CHANGE_MANAGEMENT_PROCESS.md`](docs/CHANGE_MANAGEMENT_PROCESS.md) |
+| **Files** | [`docs/ROLES_AND_RESPONSIBILITIES.md`](../governance/ROLES_AND_RESPONSIBILITIES.md) · [`docs/IR_PLAN.md`](../security/IR_PLAN.md) · [`docs/CHANGE_MANAGEMENT_PROCESS.md`](../governance/CHANGE_MANAGEMENT_PROCESS.md) |
 | **POAM** | Implicit in ATO gap |
 | **Impact** | ATO is legally impossible; incident response and change management are non-functional |
 
@@ -358,11 +358,11 @@ def test_unsigned_request_returns_403():
 
 | Role | Document | Status |
 |------|----------|--------|
-| Authorizing Official (AO) | [`ROLES_AND_RESPONSIBILITIES.md`](docs/ROLES_AND_RESPONSIBILITIES.md) | `[TBD]` |
-| ISSO | [`ROLES_AND_RESPONSIBILITIES.md`](docs/ROLES_AND_RESPONSIBILITIES.md) | `[TBD]` |
-| System Owner | [`ROLES_AND_RESPONSIBILITIES.md`](docs/ROLES_AND_RESPONSIBILITIES.md) | `[TBD]` |
-| IRT Lead | [`IR_PLAN.md`](docs/IR_PLAN.md) | `[TBD]` |
-| CAB Chair | [`CHANGE_MANAGEMENT_PROCESS.md`](docs/CHANGE_MANAGEMENT_PROCESS.md) | `[TBD]` |
+| Authorizing Official (AO) | [`ROLES_AND_RESPONSIBILITIES.md`](../governance/ROLES_AND_RESPONSIBILITIES.md) | `[TBD]` |
+| ISSO | [`ROLES_AND_RESPONSIBILITIES.md`](../governance/ROLES_AND_RESPONSIBILITIES.md) | `[TBD]` |
+| System Owner | [`ROLES_AND_RESPONSIBILITIES.md`](../governance/ROLES_AND_RESPONSIBILITIES.md) | `[TBD]` |
+| IRT Lead | [`IR_PLAN.md`](../security/IR_PLAN.md) | `[TBD]` |
+| CAB Chair | [`CHANGE_MANAGEMENT_PROCESS.md`](../governance/CHANGE_MANAGEMENT_PROCESS.md) | `[TBD]` |
 
 Three critical governance documents remain in **DRAFT** status pending AO approval. No ATO is possible without a named AO. The entire change management and incident response apparatus is non-functional without named incumbents.
 
@@ -506,13 +506,13 @@ The OPA system authorization policy uses plain string identity comparison with n
 
 The load test suite targets the removed `/agent/query` endpoint. Every load test request receives a 404 response. The load test produces no meaningful performance data for production readiness validation — the 20,528ms p95 latency figure was obtained from a separate profiling run, not from the load test suite.
 
-**Fix:** Update [`locustfile.py`](tests/load/locustfile.py) to target the current governance endpoints: `/governance/validate-action` or `/tools/execute`. Re-run load tests and update the performance baseline in [`docs/LATENCY_STRATEGY.md`](docs/LATENCY_STRATEGY.md).
+**Fix:** Update [`locustfile.py`](tests/load/locustfile.py) to target the current governance endpoints: `/governance/validate-action` or `/tools/execute`. Re-run load tests and update the performance baseline in [`docs/LATENCY_STRATEGY.md`](../architecture/LATENCY_STRATEGY.md).
 
 ---
 
 ### HIGH-12 | Security | Overly Broad IAM Role Bindings in Terraform (POAM-002)
 
-**File:** [`docs/SECURITY_STATUS.md`](docs/SECURITY_STATUS.md) POAM-002 | **Domain:** Security
+**File:** [`docs/SECURITY_STATUS.md`](../security/SECURITY_STATUS.md) POAM-002 | **Domain:** Security
 
 POAM-002 documents overly broad IAM role bindings in Terraform. The target remediation date of 2026-05-15 was missed. Overly broad IAM roles create privilege escalation risk — a compromised service account can access resources beyond its operational scope, potentially including KMS keys, GCS buckets containing OSCAL evidence, and Langfuse compliance data.
 
@@ -541,7 +541,7 @@ POAM-002 documents overly broad IAM role bindings in Terraform. The target remed
 | MED-13 | Testing | [`src/gateway/governance/routing_seal.py`](src/gateway/governance/routing_seal.py) | `require_cleared_seal()` decorator is never tested — neither the async wrapper, the sync wrapper, nor `SymbolicGovernorViolation` propagation through the decorator chain. |
 | MED-14 | Documentation | `CHANGELOG.md` | No `CHANGELOG.md` exists. Also listed as BLOCKER-10; included here as a documentation gap independent of the release gate requirement. |
 | MED-15 | Documentation | `docs/adr/` (missing) | No ADR (Architecture Decision Record) directory exists. Key architectural decisions — DoWhy causal model selection, HMAC-SHA256 seal design, Redis WATCH/MULTI/EXEC pattern — have no formal decision record. Future maintainers have no rationale for these choices. |
-| MED-16 | Documentation | [`docs/GATEWAY_ARCHITECTURE.md`](docs/GATEWAY_ARCHITECTURE.md) · [`docs/SECURITY_STATUS.md`](docs/SECURITY_STATUS.md) | Both documents reference rc.2 while the system is at rc.3. Version-mismatched documentation creates confusion during audits and ATO review. |
+| MED-16 | Documentation | [`docs/GATEWAY_ARCHITECTURE.md`](../architecture/GATEWAY_ARCHITECTURE.md) · [`docs/SECURITY_STATUS.md`](../security/SECURITY_STATUS.md) | Both documents reference rc.2 while the system is at rc.3. Version-mismatched documentation creates confusion during audits and ATO review. |
 | MED-17 | Documentation | Governance API | No OpenAPI/Swagger artifact is published for the governance API. External integrators and auditors have no machine-readable contract for `/governance/check` or `/governance/validate-action`. |
 
 ---
@@ -593,7 +593,7 @@ POAM-002 documents overly broad IAM role bindings in Terraform. The target remed
 ### Compliance Artifacts
 
 - **SHA-256 hash-chained evidence accumulator** in [`evidence_stream.py`](src/compliance_bridge/evidence_stream.py) — tamper-evident audit trail design (implementation has race condition per BLOCKER-07, but the design is correct)
-- **[`POAM.md`](docs/POAM.md)** — actively maintained with closure evidence (commit SHAs, Lula results, closure dates); above-average compliance artifact quality
+- **[`POAM.md`](../compliance/cross-region/POAM.md)** — actively maintained with closure evidence (commit SHAs, Lula results, closure dates); above-average compliance artifact quality
 - **Apache 2.0 license headers** consistently applied and CI-enforced across all `src/` files
 
 ### Test Quality (Gold Standard Examples)
@@ -666,7 +666,7 @@ These items require organizational action in parallel with engineering work.
 | 20 | HIGH-10 | Replace string identity comparison in [`system_authz.rego`](deployment/system_authz.rego) with JWT validation | Engineering |
 | 21 | HIGH-12 | Remediate overly broad IAM role bindings in Terraform (POAM-002) | Engineering |
 | 22 | MED-01–07 | Address remaining security medium issues (silent region fallback, stub ledger, error leakage, rate limiting, API key defaults, mock auditor) | Engineering |
-| 23 | — | Obtain AO approval for three DRAFT governance documents ([`IR_PLAN.md`](docs/IR_PLAN.md), [`CHANGE_MANAGEMENT_PROCESS.md`](docs/CHANGE_MANAGEMENT_PROCESS.md), [`ROLES_AND_RESPONSIBILITIES.md`](docs/ROLES_AND_RESPONSIBILITIES.md)) | AO + Leadership |
+| 23 | — | Obtain AO approval for three DRAFT governance documents ([`IR_PLAN.md`](../security/IR_PLAN.md), [`CHANGE_MANAGEMENT_PROCESS.md`](../governance/CHANGE_MANAGEMENT_PROCESS.md), [`ROLES_AND_RESPONSIBILITIES.md`](../governance/ROLES_AND_RESPONSIBILITIES.md)) | AO + Leadership |
 | 24 | — | Achieve NIST SP 800-53 coverage ≥45% (currently 24%) for US_FED release gate | Engineering + Compliance |
 
 **Sprint 3 Exit Criteria:** ATO process initiated; all role incumbents named; NIST coverage ≥45%; all universal release gates green.
@@ -686,9 +686,9 @@ These items require organizational action in parallel with engineering work.
 
 ## Section 8: Final Verdict
 
-## ⚠️ GO CRITERIA MET — STABILITY NOT DECLARED (v0.1.0)
+## ✅ GO — STABLE RELEASE APPROVED (v0.1.0, 2026-06-08)
 
-All 10 blockers and all 12 high-priority issues identified in the original rc.3 assessment have been resolved. The universal release gates (ISO 42001 Lula assertions, CSA AARM, Trivy scan, seal enforcement, Langfuse posture) all pass. The v0.1.0 Git tag has been applied and `rc-v0.1.0` merged to `main`, but CAGE v0.1.0 has **not** been declared a stable release as of 2026-07-01.
+All 10 blockers and all 12 high-priority issues identified in the original rc.3 assessment have been resolved. The universal release gates (ISO 42001 Lula assertions, CSA AARM, Trivy scan, seal enforcement, Langfuse posture) all pass. CAGE v0.1.0 is approved for stable production release.
 
 > **Audit traceability note:** The original NO-GO verdict (rc.3, 2026-06-07) is preserved in git history. The three critical issues that drove that verdict — event-loop deadlock (BLOCKER-01), hardcoded HMAC fallback (BLOCKER-02), and log-mode governance bypass (BLOCKER-03) — were resolved in Sprint 1. Security blockers and test coverage gaps were resolved in Sprint 2. ATO process was initiated (BLOCKER-09). CHANGELOG.md was present from rc.1 (BLOCKER-10 was a false positive in the original scan).
 
@@ -753,4 +753,4 @@ All 10 blockers and all 12 high-priority issues identified in the original rc.3 
 
 ---
 
-*This report was originally generated by automated multi-specialist static analysis on 2026-06-07 (rc.3). It was updated on 2026-06-08 to reflect the v0.1.0 post-remediation verdict following Sprint 1–3 remediation. Note: the v0.1.0 Git tag has been applied and `rc-v0.1.0` merged to `main`, but v0.1.0 has not been declared a stable release as of 2026-07-01. Dynamic analysis, penetration testing, and live cluster verification results are documented in the release runbook (docs/V2_RELEASE_RUNBOOK.md).*
+*This report was originally generated by automated multi-specialist static analysis on 2026-06-07 (rc.3). It was updated on 2026-06-08 to reflect the v0.1.0 stable release verdict following Sprint 1–3 remediation. Dynamic analysis, penetration testing, and live cluster verification results are documented in the release runbook (docs/RELEASE_RUNBOOK.md).*

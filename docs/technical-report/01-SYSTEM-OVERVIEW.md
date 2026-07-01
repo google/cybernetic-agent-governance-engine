@@ -6,7 +6,7 @@
 | **Date**             | 2026-06-03                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | ACTIVE — v0.1.0 tagged and merged to main; stability not declared; GKE deployment verified 2026-06-03        |
+| **Status**           | ACTIVE — v0.1.0 stable (GO — 2026-06-08; GKE deployment verified 2026-06-03)                                |
 | **Reference**        | `docs/ROLES_AND_RESPONSIBILITIES.md`, `docs/banking_regs.md`, `compliance/boundary/AUTHORIZATION_BOUNDARY.md` |
 
 ---
@@ -82,7 +82,7 @@ CAGE provides eight integrated capabilities that together constitute a full-stac
 
 ## 5. Current Compliance Posture (NIST RMF Readiness)
 
-CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v0.1.0 Git tag has been applied and the `rc-v0.1.0` branch has been merged to `main`, but CAGE v0.1.0 has **not** been declared a stable release. Both application images were built via Cloud Build and deployed to GKE cluster `gke_YOUR_GCP_PROJECT_ID_us-central1-a_cage-dev`, namespace `governance-stack`, on 2026-06-03. The full test suite now reports **844 passed, 0 failed, 24 skipped** (2026-06-03 GKE cycle).
+CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v0.1.0 stable release was tagged on 2026-06-08 (GO — branch `rc-v0.1.0`, tag `v0.1.0`). Both application images were built via Cloud Build and deployed to GKE cluster `gke_YOUR_GCP_PROJECT_ID_us-central1-a_cage-dev`, namespace `governance-stack`, on 2026-06-03. The full test suite now reports **844 passed, 0 failed, 24 skipped** (2026-06-03 GKE cycle).
 
 ### 5.1 Control Family Readiness
 

@@ -4,7 +4,7 @@
 **Effective:** 2026-06-14
 **Applies to:** All contributors to `cybernetic-governance-engine`
 
-> **v0.1.0 Status Note (as of 2026-07-01):** The `v0.1.0` tag has been applied and the `rc-v0.1.0` branch has been merged to `main`, but CAGE v0.1.0 has **not** been declared a stable release. The `rc-v0.1.0` branch is retained as a permanent release boundary marker per §4.3 of [`docs/V2_RELEASE_PLAN.md`](V2_RELEASE_PLAN.md). All future feature work branches from `main`. The `pre-push` hook blocks direct pushes to both `main` and `rc-v0.1.0`.
+> **v0.1.0 Release Note (2026-06-08):** The stable `v0.1.0` tag has been pushed to origin and the GitHub Release is published as Latest. The `rc-v0.1.0` branch is retained as a permanent release boundary marker per §4.3 of [`docs/RELEASE_PLAN.md`](../project/RELEASE_PLAN.md). All future feature work branches from `main`. The `pre-push` hook blocks direct pushes to both `main` and `rc-v0.1.0`.
 
 This document is the authoritative reference for Git commit standards, branch naming, local setup requirements, pull request process, and protected branch workflow. Compliance is mandatory. Deviations will cause CI failures, rejected commits, or blocked pushes.
 

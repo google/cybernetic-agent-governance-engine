@@ -40,7 +40,7 @@ All of the following must be satisfied before executing Phase 4.
 | P-6 | Langfuse compliance project credentials configured | `kubectl get secret advisor-secrets -n governance-stack -o jsonpath='{.data.LANGFUSE_COMPLIANCE_PUBLIC_KEY}'` — non-empty |
 | P-7 | GKE credentials available locally | `gcloud container clusters get-credentials` succeeds (see §3.1) |
 
-> **POAM-018 Note:** If `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `LANGFUSE_COMPLIANCE_SECRET_KEY` are absent from `advisor-secrets`, the compliance-bridge will silently drop all OSCAL ingest calls and the `✅ OSCAL results ingested` marker will never appear. Verify P-6 before proceeding. See [`docs/POAM.md`](POAM.md) POAM-018.
+> **POAM-018 Note:** If `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `LANGFUSE_COMPLIANCE_SECRET_KEY` are absent from `advisor-secrets`, the compliance-bridge will silently drop all OSCAL ingest calls and the `✅ OSCAL results ingested` marker will never appear. Verify P-6 before proceeding. See [`docs/POAM.md`](../cross-region/POAM.md) POAM-018.
 
 ---
 
@@ -264,7 +264,7 @@ grep -A5 "ingest-response" lula-poam-evidence.log
 ```
 
 Common causes:
-- **LANGFUSE credentials absent (POAM-018):** Verify `LANGFUSE_COMPLIANCE_PUBLIC_KEY` is set in `advisor-secrets`. If absent, configure per [`docs/POAM.md`](POAM.md) POAM-018 remediation steps.
+- **LANGFUSE credentials absent (POAM-018):** Verify `LANGFUSE_COMPLIANCE_PUBLIC_KEY` is set in `advisor-secrets`. If absent, configure per [`docs/POAM.md`](../cross-region/POAM.md) POAM-018 remediation steps.
 - **compliance-bridge not running:** `kubectl rollout restart deployment/compliance-bridge -n governance-stack`
 - **GCS bucket unreachable:** Check `OSCAL_S3_BUCKET` env var in the compliance-bridge deployment and verify GCS IAM permissions.
 
@@ -272,7 +272,7 @@ Common causes:
 
 ### 5.4 — Individual Control Validation Failures
 
-If the OSCAL result file shows a control as `not-satisfied`, this is a compliance finding, not a Phase 4 execution failure. Document the failing control(s) and open a new POAM item per the entry criteria in [`docs/POAM.md`](POAM.md) §POA&M Process.
+If the OSCAL result file shows a control as `not-satisfied`, this is a compliance finding, not a Phase 4 execution failure. Document the failing control(s) and open a new POAM item per the entry criteria in [`docs/POAM.md`](../cross-region/POAM.md) §POA&M Process.
 
 Controls and their thresholds:
 
@@ -308,7 +308,7 @@ A successful Phase 4 run provides evidence supporting closure or status update f
 
 ### 6.3 — Closure Procedure
 
-Per [`docs/POAM.md`](POAM.md) §Closure Criteria, items are closed when:
+Per [`docs/POAM.md`](../cross-region/POAM.md) §Closure Criteria, items are closed when:
 
 1. Remediation actions are fully implemented ✓ (Phases 1–3 complete)
 2. Implementation is verified by the ISSO or Security Control Assessor ← **Phase 4 provides this verification**
@@ -317,7 +317,7 @@ Per [`docs/POAM.md`](POAM.md) §Closure Criteria, items are closed when:
 
 After Phase 4 succeeds:
 1. Archive both evidence files to the compliance evidence store
-2. Update [`docs/POAM.md`](POAM.md) — mark affected items `Closed` with closure date `2026-06-05` and reference `lula-poam-evidence.log`
+2. Update [`docs/POAM.md`](../cross-region/POAM.md) — mark affected items `Closed` with closure date `2026-06-05` and reference `lula-poam-evidence.log`
 3. Notify AO of closure for any HIGH-severity items per the monthly review cadence
 
 ---
@@ -340,9 +340,9 @@ See [`compliance/lula/README.md`](../compliance/lula/README.md) for the full val
 
 | Document | Purpose |
 |---|---|
-| [`docs/V2_RELEASE_RUNBOOK.md`](V2_RELEASE_RUNBOOK.md) | Full v0.1.0 release runbook (Phases 1–6) |
-| [`docs/V2_RELEASE_PLAN.md`](V2_RELEASE_PLAN.md) | Release plan and dependency ordering |
-| [`docs/POAM.md`](POAM.md) | Plan of Action and Milestones |
+| [`docs/RELEASE_RUNBOOK.md`](../../operations/RELEASE_RUNBOOK.md) | Full release runbook (Phases 1–6) |
+| [`docs/RELEASE_PLAN.md`](../../project/RELEASE_PLAN.md) | Release plan and dependency ordering |
+| [`docs/POAM.md`](../cross-region/POAM.md) | Plan of Action and Milestones |
 | [`compliance/lula/README.md`](../compliance/lula/README.md) | Lula validation coverage and activation guide |
 | [`deployment/k8s/lula-cron.yaml`](../deployment/k8s/lula-cron.yaml) | CronJob manifest (lula-audit + lula-sc4-watch) |
 | [`deployment/k8s/lula-rbac.yaml`](../deployment/k8s/lula-rbac.yaml) | RBAC for lula-auditor ServiceAccount |
