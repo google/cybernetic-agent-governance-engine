@@ -91,6 +91,44 @@ The SLA is returned by `get_hitl_sla_hours(region)` in `hitl_escalator.py`.
 
 ---
 
+## Automated Governance Thresholds
+
+**Source:** [`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py)
+
+The `SymbolicGovernor` Tier 7 FRIA zone classification determines whether a governance decision is handled automatically or escalated to human review. The thresholds are named constants enforced at runtime:
+
+### FRIA Zone Classification
+
+| Score | Zone | Disposition | Human Required? |
+|---|---|---|---|
+| score ≥ `FRIA_ZONE_ALLOW` (0.95) | ALLOW | Async attestation — automated pass | No |
+| `FRIA_ZONE_DEFER` (0.70) ≤ score < 0.95 | DEFER | Synchronous blocking gate — human review | **Yes** |
+| score < `FRIA_ZONE_DEFER` (0.70) | BLOCK | Hard block | **Yes** |
+
+The DEFER zone maps directly to the DeferQueue escalation path. A DEFER decision writes an escalation record to the queue and blocks the request until a human reviewer resolves it within the applicable SLA (see [SLA Requirements by Region](#sla-requirements-by-region)).
+
+### Consensus Requirement
+
+Trades with `amount ≥ $10,000 USD` require multi-critic consensus (Tier 6) before reaching the FRIA zone classifier. The consensus engine invokes multiple LLM critics with a **30-second hard timeout** per critic call. Unanimity is required; a single dissenting critic escalates the decision to human review via the DeferQueue.
+
+### Causal Lock Escalation
+
+**Source:** [`src/gateway/governance/causal_gatekeeper.py`](src/gateway/governance/causal_gatekeeper.py)
+
+When the causal gatekeeper's marginal risk boundary condition is triggered:
+
+```
+(0.5 + estimate.value × amount) > CAUSAL_LOCK_RISK_BOUNDARY  (0.95)
+```
+
+the request is escalated to human review. This condition indicates that the causal effect of the proposed trade, combined with the trade amount, pushes the system into a high-risk region of the causal model's state space.
+
+Additional causal lock conditions that trigger human escalation:
+- `PlaceboTreatmentRefuter` p-value < `CAUSAL_LOCK_P_VALUE_THRESHOLD` (0.05) — causal estimate is not robust
+- Placebo effect magnitude > `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` (0.2) — spurious causal signal detected
+
+---
+
 ## Reviewer Workflow
 
 1. **Alert received:** DeferQueue Pub/Sub message triggers reviewer notification (email/Slack/PagerDuty)

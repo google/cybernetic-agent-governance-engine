@@ -972,6 +972,71 @@ CAGE v0.1.0's distributed transaction layer introduces new failure modes and sta
    python3 scripts/release_stale_limit.py --token <token_id>
    ```
 
+## 10. Governance Threshold Reference
+
+This section provides a quick-reference table of all key governance thresholds for operators and SREs. The **single source of truth** for all thresholds is [`config/governance_thresholds.json`](../../config/governance_thresholds.json), loaded and validated by the [`GovernanceThresholds`](../../src/gateway/governance/schemas/thresholds.py) Pydantic model at startup. Region-specific overrides are in `config/thresholds/{REGION}_BASELINE.json`.
+
+### 10.1 Quick-Reference Threshold Table
+
+| Threshold | Value | Source Constant / Key | Component | Notes |
+| --------- | ----- | --------------------- | --------- | ----- |
+| CBF decay rate γ | `∈ (0,1)` — `0.5` (US_FED/APAC_MAS), `0.6` (EU_ECB) | `cbf.gamma` | [`cbf.py`](../../src/gateway/governance/cbf.py) | Discrete-time CBF condition: `h(S(t+1)) ≥ (1−γ)·h(S(t))` |
+| CBF min cash balance | `1000.0` | `cbf.min_cash_balance` | [`cbf.py`](../../src/gateway/governance/cbf.py) | Barrier function: `h(x) = cash_balance − 1000.0` |
+| `FRIA_ZONE_ALLOW` | `0.95` | `FRIA_ZONE_ALLOW` | [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) | `confidence ≥ 0.95` → autonomous clearance |
+| `FRIA_ZONE_DEFER` | `0.70` | `FRIA_ZONE_DEFER` | [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) | `0.70 ≤ confidence < 0.95` → synchronous FRIA gate |
+| Confabulation block threshold | `0.95` | `CONFIDENCE_THRESHOLD` | [`confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) | Block when `confidence < 0.95`; `risk_score = 1.0 − confidence` |
+| Causal risk boundary | `0.95` | `CAUSAL_LOCK_RISK_BOUNDARY` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | Block when `(0.5 + estimate.value × amount) > 0.95` |
+| Causal p-value threshold | `0.05` | `CAUSAL_LOCK_P_VALUE_THRESHOLD` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | PlaceboTreatmentRefuter: block when `p_value < 0.05` |
+| Causal placebo effect magnitude | `0.2` | `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | Block when `|placebo_effect| > 0.2` |
+| PlaceboTreatmentRefuter simulations | `50` | hardcoded in `causal_safety_check()` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | 50 placebo simulations per causal check |
+| Consensus threshold (US_FED) | `$10,000` | `consensus.threshold_usd` | [`consensus.py`](../../src/gateway/governance/consensus.py) | Trades `> $10k` require two-critic LLM consensus |
+| Consensus timeout | `30 seconds` | `asyncio.gather` timeout | [`consensus.py`](../../src/gateway/governance/consensus.py) | Both critics dispatched concurrently; 30s wall-clock limit |
+| Fiscal daily cap | `$500,000` | `FISCAL_DAILY_CAP_USD` env var | [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) | Stored in integer cents; 86,400s rolling window |
+| Fiscal window | `86,400 seconds` | hardcoded rolling window | [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) | 24-hour rolling window |
+| Fiscal reservation TTL | `300 seconds` | hardcoded TTL | [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) | Reclaims limits from crashed nodes |
+| Routing seal TTL | `30 seconds` | hardcoded in `generate_seal()` | [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) | HMAC-SHA256 seal format: `<expire_ts_hex>.<action_slug>.<hmac_hex>` |
+| Causal cache TTL | `60 seconds` | `_CAUSAL_CACHE_TTL_SECONDS` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | Redis cache for DoWhy causal estimates |
+| DEFER token TTL | `4 hours` | hardcoded in `defer_queue.py` | [`defer_queue.py`](../../src/gateway/governance/defer_queue.py) | Parked requests expire after 4h; auto-escalated |
+| Telemetry max staleness | `300 seconds` | `TELEMETRY_MAX_STALENESS_SECONDS` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | Stale telemetry → fail-closed `return False` |
+| OPA circuit breaker threshold | `5 failures` | hardcoded in `OPAClient` | [`core/policy.py`](../../src/gateway/core/policy.py) | 5 consecutive failures → circuit open; DENY on open |
+| OPA circuit recovery window | `30 seconds` | hardcoded in `OPAClient` | [`core/policy.py`](../../src/gateway/core/policy.py) | Circuit resets after 30s |
+| NeMo action threshold cache TTL | `60 seconds` | hardcoded in advisor actions | [`nemo_actions.py`](../../src/governed_financial_advisor/governance/nemo_actions.py) | Hot-reload without service restart |
+
+### 10.2 Region-Specific Threshold Overrides
+
+Key thresholds differ by deployment region. The active profile is loaded from `config/thresholds/{CAGE_DEPLOYMENT_REGION}_BASELINE.json`:
+
+| Threshold | `US_FED` | `EU_ECB` | `APAC_MAS` | Regulatory Rationale |
+| --------- | -------- | -------- | ---------- | -------------------- |
+| Min. agentic confidence | `0.95` | `0.97` | `0.95` | EU AI Act Art. 9 stricter risk management |
+| Drawdown limit | `5%` | `4%` | `5%` | EBA stress-test adverse scenario |
+| CBF gamma (γ) | `0.5` | `0.6` | `0.5` | CRD VI / EBA SREP capital buffer |
+| Consensus threshold | `$10,000` | `$7,500` | `$5,000` | GDPR Art. 22; MAS FEAT A1 human oversight |
+| Max order volume fraction | `1%` | `0.5%` | `1%` | MiFID II market integrity / MAR Art. 12 |
+| Max latency (ms) | `200` | `150` | `200` | DORA Art. 10 operational resilience |
+
+### 10.3 Threshold Validation at Startup
+
+All thresholds are validated at startup by the [`GovernanceThresholds`](../../src/gateway/governance/schemas/thresholds.py) Pydantic model:
+
+```bash
+# Verify thresholds load correctly (from inside the gateway pod)
+kubectl exec -n governance-stack deploy/gateway -- \
+  python3 -c "
+from src.gateway.governance.schemas.thresholds import THRESHOLDS
+print(f'CBF gamma: {THRESHOLDS.cbf.gamma}')
+print(f'Consensus threshold: \${THRESHOLDS.consensus.threshold_usd:,.0f}')
+print(f'Min confidence: {THRESHOLDS.confidence.min_trade_confidence}')
+print('Thresholds OK')
+"
+```
+
+**Fail-fast startup:** [`load_and_validate_thresholds()`](../../src/gateway/governance/schemas/thresholds.py) calls `sys.exit(1)` on validation failure — a misconfigured threshold file prevents the gateway from starting rather than silently using invalid values.
+
+**Runtime hot-reload:** NeMo actions reload thresholds with a 60-second TTL. The `max_slippage_pct` threshold can be updated at runtime via `POST /api/governance/thresholds` from the AgentSight KernelDashboard without a service restart.
+
+---
+
 ### 6.2 Runbook: Resolving Ghost-State OOM Crash Escalations
 
 **Symptom:** A container crashes due to Out-Of-Memory (OOM) or node eviction after reserving the fiscal daily limit but before OPA could confirm execution. The state is locked in a ghost state, and downstream requests return `BLOCKED`.

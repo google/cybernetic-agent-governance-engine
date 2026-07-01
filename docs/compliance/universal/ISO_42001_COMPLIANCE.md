@@ -33,11 +33,11 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
 ### Clause 8: Operation
 
 - **8.1 Operational planning and control:**
-  - **Implementation:** The **TypeScript Governance Gateway** acts as the operational control point, enforcing policies on all AI actions via three-tier semantic shielding.
+  - **Implementation:** The **Governance Gateway** acts as the operational control point, enforcing policies on all AI actions via the **7-tier Symbolic Governor pipeline** ([`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py)): NoDirectBind invariant → PII sanitization → CBF + OPA concurrent → Causal gatekeeper → Confabulation scoring → Consensus → FRIA zones.
   - **Code:** [`src/gateway/server/governance_middleware.py`](../src/gateway/server/governance_middleware.py)
 - **8.2 AI Risk Assessment:**
-  - **Implementation:** The **Symbolic Governor** performs real-time risk assessment (STPA, CBF) on every tool call. OPA Rego policies enforce fiscal limits and RBAC.
-  - **Code:** [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](../src/governed_financial_advisor/governance/policy/trade_governance.rego)
+  - **Implementation:** The **7-tier Symbolic Governor** performs real-time risk assessment (STPA, CBF, causal SCM) on every tool call. OPA Rego policies enforce fiscal limits and RBAC. The Control Barrier Function provides a formal mathematical safety guarantee via `h(S(t+1)) ≥ (1−γ)·h(S(t))`.
+  - **Code:** [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](../src/governed_financial_advisor/governance/policy/trade_governance.rego), [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py)
 
 ### Clause 9: Performance Evaluation
 
@@ -81,8 +81,77 @@ The machine-readable OSCAL Component Definition linking each control to its tech
 
 ---
 
+## Mathematical Safety Controls
+
+This section documents the formal mathematical foundations of the CAGE governance kernel as they relate to ISO 42001 Annex A controls.
+
+### CBF Condition and Barrier Function (A.6.1 — Risk Assessment)
+
+The Control Barrier Function ([`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py)) provides a formal proof of safety for the financial state machine:
+
+- **Safe set:** `S = {x ∈ ℝⁿ : h(x) ≥ 0}`
+- **Barrier function:** `h(x) = cash_balance − min_cash_balance`
+- **Discrete-time CBF condition:** `h(S(t+1)) ≥ (1−γ)·h(S(t))` where `γ ∈ (0,1)`
+
+If the CBF condition is satisfied at every time step, the system is mathematically guaranteed to remain in the safe set `S`. Any proposed trade that would violate the condition is denied before execution.
+
+### 7-Tier Symbolic Governor Pipeline (A.8.4 — AI System Operation Controls)
+
+The 7-tier pipeline ([`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py)) is the primary runtime enforcement mechanism for ISO 42001 A.8.4:
+
+| Tier | Control | ISO 42001 Mapping |
+|------|---------|-------------------|
+| 1 — NoDirectBind | Structural tool-binding invariant | A.8.4 (operation controls) |
+| 2 — PII sanitization | Presidio + regex scrubbing | A.9.2 (data transfer to suppliers) |
+| 3 — CBF + OPA concurrent | Barrier function + policy engine | A.6.1 (risk assessment) |
+| 4 — Causal gatekeeper | SCM + PlaceboTreatmentRefuter | A.6.1 (risk assessment) |
+| 5 — Confabulation scoring | `risk_score = 1.0 − confidence` | A.5.2 (social impact assessment) |
+| 6 — Consensus | ≥$10k trades, 30s timeout, multi-model quorum | A.8.4 (operation controls) |
+| 7 — FRIA zones | `FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70` | A.6.1 (risk assessment) |
+
+### FRIA Zone Thresholds (A.6.1)
+
+The FRIA zone thresholds define three access-control tiers for AI-generated recommendations:
+
+| Score Range | Zone | Action |
+|-------------|------|--------|
+| ≥ 0.95 | `FRIA_ZONE_ALLOW` | Async attestation — no blocking |
+| 0.70 – 0.95 | `FRIA_ZONE_DEFER` | Synchronous blocking gate — HITL required |
+| < 0.70 | BLOCK | Hard deny — no override path |
+
+### Confabulation Risk Formula (A.5.2)
+
+The confabulation scorer ([`src/gateway/governance/confabulation_scorer.py`](../src/gateway/governance/confabulation_scorer.py)) computes:
+
+```
+risk_score = 1.0 − confidence
+```
+
+A `risk_score` above the configured threshold triggers a `DEFER` (HITL escalation) or `DENY` decision. This maps to ISO 42001 A.5.2 (social impact assessment) by ensuring that low-confidence AI outputs are never autonomously executed.
+
+### Causal Marginal Risk Boundary (A.6.1)
+
+The causal gatekeeper ([`src/gateway/governance/causal_gatekeeper.py`](../src/gateway/governance/causal_gatekeeper.py)) applies a marginal risk boundary:
+
+```
+(0.5 + estimate.value × amount) > 0.95  →  DENY
+```
+
+The `PlaceboTreatmentRefuter` runs 50 simulations with significance threshold p < 0.05 and minimum effect size |eff| > 0.2 to validate causal estimates before they are used in the boundary check.
+
+### Fiscal Limit Parameters (A.4 — Resource Management)
+
+| Parameter | Value | Enforcement |
+|-----------|-------|-------------|
+| Daily cap | $500,000 USD (integer cents) | [`fiscal_limit_guard.py`](../src/gateway/governance/fiscal_limit_guard.py) |
+| Window | 86,400 seconds | Redis key TTL |
+| Retry policy | Exponential backoff: `_RETRY_BASE_MS × 2^attempt` | Atomic WATCH/MULTI/EXEC |
+| Fail mode | Fail-closed | Redis error → rejected token |
+
+---
+
 ## System Description (Annex A)
 
 - **A.1 AI System Lifecycle:** Managed via the LangGraph workflow ([`src/governed_financial_advisor/graph/graph.py`](../src/governed_financial_advisor/graph/graph.py)).
-- **A.2 Data Quality:** Enforced via `STPAValidator` checks on data inputs (e.g., Latency thresholds).
+- **A.2 Data Quality:** Enforced via `GeneratedSTPAValidator` checks on data inputs (e.g., latency thresholds, order volume fractions). The 7-tier Symbolic Governor pipeline ([`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py)) provides the primary runtime enforcement layer.
 - **A.5.2/A.5.3/A.9.2/SC-4:** Automatically validated every 6 hours by the Lula CronJob ([`deployment/k8s/lula-cron.yaml`](../deployment/k8s/lula-cron.yaml)).

@@ -1,7 +1,7 @@
 # CAGE Documentation Index
 
-**System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor  
-**Last updated:** 2026-06-24
+**System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor
+**Last updated:** 2026-07-01
 
 This directory is organised using a **hybrid layout**: function-based top-level sections, with compliance artefacts further sub-divided by jurisdiction. This mirrors the system's own architectural principle: ISO 42001 as the universal baseline, with jurisdiction-specific addenda for US_FED, EU_ECB, and APAC_MAS.
 
@@ -95,18 +95,42 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 
 ---
 
+## Mathematical Formalism — Quick Reference
+
+The following documents contain the primary mathematical formalism for the CAGE governance kernel. All formalism is derived from and cross-referenced to the source implementations listed below.
+
+| Document | Formalism Covered | Primary Source |
+|---|---|---|
+| [technical-report/10-FORMAL-VERIFICATION.md](technical-report/10-FORMAL-VERIFICATION.md) | CBF safe-set definition, routing seal HMAC proof, provenance chain integrity, fiscal limit invariant | [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py), [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) |
+| [governance/CAUSAL_AND_CBF_GOVERNANCE.md](governance/CAUSAL_AND_CBF_GOVERNANCE.md) | Discrete-time CBF condition `h(S(t+1)) ≥ (1−γ)·h(S(t))`, causal SCM, confabulation scoring, consensus protocol | [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py), [`src/gateway/governance/causal_gatekeeper.py`](../src/gateway/governance/causal_gatekeeper.py) |
+| [governance/GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | 7-tier symbolic governor pipeline, STPA UCAs (FIN-1, FIN-2, UCA-5, UCA-6), mathematical invariants | [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/ontology.py`](../src/gateway/governance/ontology.py) |
+| [governance/NEURO_SYMBOLIC_GOVERNANCE.md](governance/NEURO_SYMBOLIC_GOVERNANCE.md) | Formal safety properties, FRIA zone thresholds (`FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70`), regional compliance invariants | [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py) |
+| [architecture/GATEWAY_ARCHITECTURE.md](architecture/GATEWAY_ARCHITECTURE.md) | CBF layer integration, routing seal enforcement, governance pipeline data-flow | [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py), [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) |
+
+### Key Named Constants (source: [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py))
+
+| Constant | Value | Role |
+|---|---|---|
+| `CAUSAL_LOCK_P_VALUE_THRESHOLD` | `0.05` | Significance threshold for PlaceboTreatmentRefuter (Tier 4) |
+| `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` | `0.2` | Maximum tolerated placebo effect magnitude |
+| `CAUSAL_LOCK_RISK_BOUNDARY` | `0.95` | Risk boundary above which causal lock is enforced |
+| `FRIA_ZONE_ALLOW` | `0.95` | Confidence floor for autonomous approval (Tier 7) |
+| `FRIA_ZONE_DEFER` | `0.70` | Confidence floor for deferred human review (Tier 7) |
+
+---
+
 ## `governance/` — Policies, Oversight & Roles
 
 | File | Description |
 |---|---|
-| [GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | CAGE governance framework overview |
+| [GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | CAGE governance framework overview — **7-tier pipeline, STPA UCAs, mathematical invariants** |
 | [AGENTIC_SCOPE_STATEMENT.md](governance/AGENTIC_SCOPE_STATEMENT.md) | Agentic system scope statement |
 | [HUMAN_OVERSIGHT_SCOPE.md](governance/HUMAN_OVERSIGHT_SCOPE.md) | Human oversight scope definition |
 | [ROLES_AND_RESPONSIBILITIES.md](governance/ROLES_AND_RESPONSIBILITIES.md) | Roles and responsibilities |
 | [CHANGE_MANAGEMENT_PROCESS.md](governance/CHANGE_MANAGEMENT_PROCESS.md) | Change management process |
 | [MODEL_CARD_REVIEW.md](governance/MODEL_CARD_REVIEW.md) | AI model card review |
-| [CAUSAL_AND_CBF_GOVERNANCE.md](governance/CAUSAL_AND_CBF_GOVERNANCE.md) | Causal & CBF governance |
-| [NEURO_SYMBOLIC_GOVERNANCE.md](governance/NEURO_SYMBOLIC_GOVERNANCE.md) | Neuro-symbolic governance layer |
+| [CAUSAL_AND_CBF_GOVERNANCE.md](governance/CAUSAL_AND_CBF_GOVERNANCE.md) | Causal & CBF governance — **CBF condition, causal SCM, confabulation, consensus** |
+| [NEURO_SYMBOLIC_GOVERNANCE.md](governance/NEURO_SYMBOLIC_GOVERNANCE.md) | Neuro-symbolic governance layer — **formal safety properties, FRIA zones, regional compliance** |
 
 ---
 
@@ -133,7 +157,7 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 | [DUAL_PROJECT_ARCHITECTURE.md](architecture/DUAL_PROJECT_ARCHITECTURE.md) | Dual-project architecture |
 | [EXTENSIBILITY_ARCHITECTURE.md](architecture/EXTENSIBILITY_ARCHITECTURE.md) | Extensibility architecture |
 | [AGENT_OPS_ARCHITECTURE.md](architecture/AGENT_OPS_ARCHITECTURE.md) | Agent operations architecture |
-| [GATEWAY_ARCHITECTURE.md](architecture/GATEWAY_ARCHITECTURE.md) | Inference gateway architecture (overview) |
+| [GATEWAY_ARCHITECTURE.md](architecture/GATEWAY_ARCHITECTURE.md) | Inference gateway architecture (overview) — **CBF layer, routing seal, governance pipeline** |
 | [INFERENCE_GATEWAY_ARCHITECTURE.md](architecture/INFERENCE_GATEWAY_ARCHITECTURE.md) | Inference gateway architecture (detail) |
 | [LATENCY_STRATEGY.md](architecture/LATENCY_STRATEGY.md) | Latency strategy |
 | [AUDIT_LOG_SCHEMA.md](architecture/AUDIT_LOG_SCHEMA.md) | Audit log schema |
@@ -171,7 +195,7 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 
 ## `technical-report/` — Technical Report Series
 
-The `technical-report/` directory contains the sequentially numbered technical report.  
+The `technical-report/` directory contains the sequentially numbered technical report.
 See [technical-report/README.md](technical-report/README.md) for the full index.
 
 | File | Description |
@@ -185,4 +209,4 @@ See [technical-report/README.md](technical-report/README.md) for the full index.
 | [07-SECURITY-INFRASTRUCTURE.md](technical-report/07-SECURITY-INFRASTRUCTURE.md) | Security infrastructure |
 | [08-DEPLOYMENT-INFRASTRUCTURE.md](technical-report/08-DEPLOYMENT-INFRASTRUCTURE.md) | Deployment infrastructure |
 | [09-OPERATIONAL-RUNBOOK.md](technical-report/09-OPERATIONAL-RUNBOOK.md) | Operational runbook |
-| [10-FORMAL-VERIFICATION.md](technical-report/10-FORMAL-VERIFICATION.md) | Formal verification |
+| [10-FORMAL-VERIFICATION.md](technical-report/10-FORMAL-VERIFICATION.md) | Formal verification — **CBF, routing seal, provenance chain, fiscal limit** |

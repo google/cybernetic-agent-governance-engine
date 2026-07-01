@@ -140,7 +140,7 @@ Phase 3  Weeks 16–52  →  +77%  Architectural uplift
 | Clause                     | Title                    | CAGE Implementation                            |
 | -------------------------- | ------------------------ | ---------------------------------------------- |
 | 6 — Planning               | Risk-based AI planning   | `execution_analyst` risk-based plan generation |
-| 8 — Operation              | Runtime AI controls      | `symbolic_governor` 7-tier enforcement (tiers 0–6) |
+| 8 — Operation              | Runtime AI controls      | `symbolic_governor` 7-tier symbolic governor pipeline (Tiers 0–6 + Tier 6b adaptive FRIA gate): STPA UCA validation → agentic confidence → CBF → SLM (deprecated) → OPA → consensus → causal gatekeeper → FRIA |
 | 9 — Performance Evaluation | Monitoring & measurement | `EvaluatorAuditor` (`src/governed_financial_advisor/agents/evaluator/`) + Lula 6h CronJob |
 | 10 — Improvement           | Continual improvement    | HITL interrupt + POAM tracking                 |
 
@@ -612,6 +612,109 @@ To add a new regulatory jurisdiction (e.g., `UK_FCA` for the UK Financial Conduc
 | 4 | `_FRAMEWORK_FILE_MAP` in `oscal_ssp_exporter.py` | Register the new framework ID (one line) |
 
 **No Python code changes are required** for steps 1–3. The `ControlRegistry`, `SymbolicGovernor`, `CausalGatekeeper`, and `FrameworkRouter` all dynamically load regional configuration from these JSON files at runtime.
+
+---
+
+## 16. Mathematical Safety Controls
+
+This section formalises the mathematical safety invariants that underpin CAGE's compliance posture. All constants are sourced from [`config/governance_thresholds.json`](../../config/governance_thresholds.json) and the named constants in the respective source modules.
+
+### 16.1 Control Barrier Function (CBF) — ISO 42001 A.8.4
+
+**Source:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)
+
+The Control Barrier Function enforces the core financial safety invariant using control theory formalism. The safe set `S` and barrier function `h` are defined as:
+
+```
+Safe set:        S = {x ∈ ℝⁿ : h(x) ≥ 0}
+Barrier function: h(x) = cash_balance − min_cash_balance
+```
+
+The discrete-time CBF condition that must hold at every governance step is:
+
+```
+h(S(t+1)) ≥ (1−γ) · h(S(t))     where γ ∈ (0,1)
+```
+
+| Parameter | Value | Source |
+| --------- | ----- | ------ |
+| `min_cash_balance` | `1000.0` | `cbf.min_cash_balance` in `governance_thresholds.json` |
+| `γ` (decay rate) | `0.5` (US_FED/APAC_MAS), `0.6` (EU_ECB) | `cbf.gamma` — region-calibrated |
+
+The CBF is enforced atomically via Redis `WATCH/MULTI/EXEC` (5 retries on contention). A violation of `h(x) ≥ 0` raises `GovernanceError` immediately (fail-closed). The CBF is re-evaluated at execution time by `post_hitl_revalidate_node` using the fresh live price to prevent TOCTOU exploits.
+
+**ISO 42001 mapping:** A.8.4 (AI System Operation Controls — runtime safety invariant enforcement).
+
+### 16.2 FRIA Zone Thresholds
+
+The Adaptive FRIA Gate (Tier 6b) maps model confidence to three decision zones. These constants are defined in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py):
+
+| Constant | Value | Zone | Compliance Mapping |
+| -------- | ----- | ---- | ------------------ |
+| `FRIA_ZONE_ALLOW` | `0.95` | `confidence ≥ 0.95` → autonomous clearance | ISO 42001 A.8.4; EU AI Act Art. 29a (EU_ECB) |
+| `FRIA_ZONE_DEFER` | `0.70` | `0.70 ≤ confidence < 0.95` → synchronous FRIA gate | CSA AARM V7; ISO 42001 A.8.4 |
+| *(implicit deny)* | `< 0.70` | `confidence < 0.70` → Confidence-Starvation Boundary | ISO 42001 A.8.4; CSA AARM V7 |
+
+### 16.3 Fiscal Limit Guard — ISO 42001 A.8.4 / SC-4
+
+**Source:** [`src/gateway/governance/fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py)
+
+The `FiscalLimitGuard` enforces a hard daily spending cap to prevent race conditions where parallel agent threads collectively exceed the authorized limit:
+
+| Parameter | Value | Notes |
+| --------- | ----- | ----- |
+| Daily cap | **$500,000 USD** | Configurable via `FISCAL_DAILY_CAP_USD` env var |
+| Cap storage | Integer cents | Prevents floating-point precision errors |
+| Window | **86,400 seconds** | Rolling 24-hour window |
+| Retry strategy | Exponential backoff: `_RETRY_BASE_MS × 2^attempt` | Redis `WATCH/MULTI/EXEC` contention handling |
+| Reservation TTL | 300 seconds | Reclaims limits from crashed nodes automatically |
+
+Headroom is pre-reserved in Redis *after* concurrent CBF+OPA validation (closing the TOCTOU race). Unused limits are returned via `release(token)` on Saga rollback. If Redis is unavailable, the trade is blocked (fail-closed).
+
+**ISO 42001 mapping:** A.8.4 (AI System Operation Controls); **[US_FED only]** NIST SP 800-53 SC-4 (Information in Shared Resources).
+
+### 16.4 HMAC-SHA256 Routing Seal
+
+**Source:** [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py)
+
+Every approved governance decision is sealed with an HMAC-SHA256 routing seal before execution is permitted. The seal format is:
+
+```
+<expire_ts_hex>.<action_slug>.<hmac_hex>
+```
+
+| Field | Description |
+| ----- | ----------- |
+| `expire_ts_hex` | Hex-encoded Unix timestamp of seal expiry |
+| `action_slug` | URL-safe slug identifying the governed action |
+| `hmac_hex` | HMAC-SHA256 hex digest over `expire_ts_hex.action_slug` |
+
+| Parameter | Value | Notes |
+| --------- | ----- | ----- |
+| TTL | **30 seconds** | Seals expire 30s after issuance; prevents replay attacks |
+| Algorithm | HMAC-SHA256 | FIPS-approved; constant-time `hmac.compare_digest` for verification |
+| Secret | `CAGE_ROUTING_SEAL_SECRET` | Kubernetes `Secret` object; ≥ 64 characters required in production |
+
+The seal is verified by [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py) before any trade execution. A missing, expired, or invalid seal returns HTTP 401 (fail-closed). This satisfies the `NoDirectBind` invariant: there is no code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`.
+
+**ISO 42001 mapping:** A.7.5 (Records Integrity — cryptographic seal on every governance approval).
+
+### 16.5 7-Tier Symbolic Governor Pipeline Reference
+
+The full mathematical pipeline is documented in [Document 05 — AI Governance & Policy Engine](./05-AI-GOVERNANCE-POLICY-ENGINE.md) §16. The pipeline enforces the following invariant chain in strict sequential order:
+
+```
+STPA UCAs (Tier 0)
+  → Confidence ≥ threshold (Tier 1)
+    → h(S(t+1)) ≥ (1−γ)·h(S(t)) [CBF] (Tier 2)
+      → OPA Rego ALLOW (Tier 4)  ← concurrent with Tier 2 via asyncio.gather
+        → Consensus (amount ≤ threshold OR unanimous APPROVE) (Tier 5)
+          → (0.5 + estimate.value × amount) ≤ 0.95 [Causal] (Tier 6)
+            → FRIA zone check (Tier 6b)
+              → SEAL_ISSUED → EXECUTED
+```
+
+All tiers are fail-closed. A violation at any tier raises `GovernanceError` and prevents execution. The routing seal (§16.4) is issued only after all tiers pass, satisfying the `NoDirectBind` formal invariant verified in [`proof/model.py`](../../proof/model.py).
 
 ---
 

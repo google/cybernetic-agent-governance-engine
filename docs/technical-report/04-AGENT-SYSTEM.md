@@ -401,4 +401,93 @@ All tools are implemented as LangChain-compatible callables and are registered e
 
 ---
 
+## 13. Agent Governance Integration
+
+This section documents how agents interact with the 7-tier symbolic governor pipeline. All agent tool calls are mediated by [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py).
+
+### 13.1 NoDirectBind Invariant and `@governed_tool`
+
+The **NoDirectBind invariant** (Tier 1) is the foundational structural guarantee of the agent governance model. It is enforced via the `@governed_tool` decorator:
+
+- Every tool that an agent may call must be registered through the `@governed_tool` decorator.
+- The decorator intercepts the call before it reaches the actuator and routes it through `SymbolicGovernor._run_checks()`.
+- **No code path exists** from agent intent to trade execution that bypasses this decorator. Direct binding from an agent to an actuator (e.g., calling `execute_trade` without a valid routing seal) is structurally prohibited — the `GovernanceMiddleware` rejects any `/tools/execute` request that does not carry a valid `X-CAGE-Routing-Seal` header.
+
+This invariant ensures that even if an agent is compromised or produces a malformed output, it cannot actuate a trade without traversing the full 7-tier pipeline.
+
+### 13.2 How Agents Traverse the 7-Tier Pipeline
+
+When an agent calls a governed tool (e.g., `execute_trade_action`), the following sequence executes:
+
+```
+Agent tool call (via @governed_tool)
+        │
+        ▼
+POST /governance/validate-action
+        │
+        ▼
+SymbolicGovernor._run_checks()
+  Tier 1: NoDirectBind check — tool call arrived via @governed_tool?
+  Tier 2: PII sanitization — 7 regex patterns applied to params
+  Tier 3: asyncio.gather(cbf_check, opa_check)
+           ├─ CBF: h(S(t+1)) ≥ (1−γ)·h(S(t)) verified against Redis balance
+           └─ OPA: trade.governance Rego policy evaluated
+  Tier 4: Causal gatekeeper — SCM + PlaceboTreatmentRefuter (60s Redis cache)
+  Tier 5: Confabulation scoring — risk_score = 1.0 − confidence
+  Tier 6: Consensus — required if amount ≥ $10,000 USD (30s timeout)
+  Tier 7: FRIA zone classification — ALLOW / DEFER / DENY
+        │
+        ▼
+Routing seal issued: <expire_ts_hex>.<action_slug>.<hmac_hex>
+        │
+        ▼
+Actuator verifies seal via hmac.compare_digest() before firing
+```
+
+### 13.3 Consensus Requirement for High-Value Trades
+
+For trades at or above the **$10,000 USD consensus threshold** (`consensus.threshold_usd` in `governance_thresholds.json`), the `ConsensusEngine` (Tier 6) requires unanimous approval from two heterogeneous LLM-backed critic personas before the trade can proceed:
+
+| Critic | Model | Governance Role |
+|--------|-------|----------------|
+| Risk Manager | `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` | Financial risk assessment |
+| Compliance Officer | `meta-llama/Llama-3.1-8B-Instruct` | Regulatory compliance check |
+
+Both critics are queried **concurrently** via `asyncio.gather()` with a 30-second timeout. The heterogeneous model design (different architectures and training data) neutralizes **AARM-V9 Semantic Blind Spot** — a single model cannot detect its own compliance violations.
+
+**Decision outcomes:**
+
+| Critic Votes | Result |
+|-------------|--------|
+| Unanimous `APPROVE` | Trade proceeds to FRIA zone check |
+| Unanimous `REJECT` | Trade blocked; `GovernanceError` raised |
+| Split vote or any `ESCALATE` | Routed to `hitl_escalator.py` for human review |
+| Unanimous `ERROR` | Escalated (fail-closed; prevents DoS bypass) |
+
+Trades below $10,000 receive an immediate `SKIPPED` result with zero LLM calls, preserving the 200ms ISO-20022 latency SLA.
+
+### 13.4 FRIA Zone Classification for Agent Outputs
+
+Every agent output that reaches the governance pipeline is classified into one of three FRIA zones based on the agent's reported confidence score:
+
+| Zone | Threshold | Agent Behavior |
+|------|-----------|---------------|
+| `ALLOW` | confidence ≥ 0.95 (`FRIA_ZONE_ALLOW`) | Async attestation; execution proceeds immediately |
+| `DEFER` | 0.70 ≤ confidence < 0.95 (`FRIA_ZONE_DEFER`) | Synchronous blocking gate; agent output parked in Redis `db=1` (4-hour TTL); resolved via `POST /v1/defer/{id}/inject` or `POST /v1/defer/{id}/escalate` |
+| `DENY` | confidence < 0.70 | Hard denial; agent output rejected at confidence-starvation boundary |
+
+The FRIA zone thresholds are sourced from `governance_thresholds.json` and enforced in the `normative_provider.py` Tier 7 step. For `EU_ECB` deployments, every FRIA classification additionally stamps an attestation on the OTel span (EU AI Act Art. 29a / DORA Art. 10). This step is a no-op for `US_FED` and `APAC_MAS`.
+
+### 13.5 Agent-Level Confabulation Scoring
+
+The `ConfabulationScorer` (Tier 5) computes a risk score for every agent output:
+
+```
+risk_score = 1.0 − confidence
+```
+
+This score is emitted as a structured Langfuse score payload (`confabulation_risk`) for every governed request, enabling operators to monitor agent reliability trends in the compliance Langfuse project. The `EvaluatorAgent` is responsible for computing and writing the `confidence` field to `AgentState` before the `safety_check` node invokes the governance pipeline.
+
+---
+
 _End of Document — CAGE Technical Report 04_

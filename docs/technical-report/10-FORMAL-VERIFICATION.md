@@ -288,6 +288,201 @@ Additionally, runtime causal gatekeeper errors (previously silently skipped via 
 
 ---
 
+## Step 8: Control Barrier Functions — Formal Safety Invariant
+
+**Source:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)
+
+### Mathematical Formulation
+
+The CAGE financial state machine is governed by a **discrete-time Control Barrier Function (CBF)** (Ames et al., IEEE TAC 2017). The CBF provides a formal certificate that the system's cash balance can never enter an unsafe state, regardless of the sequence of agent actions.
+
+**Safe set:**
+
+$$\mathcal{S} = \{ x \in \mathbb{R}^n : h(x) \geq 0 \}$$
+
+**Barrier function (cash solvency):**
+
+$$h(x) = \text{cash\_balance} - \text{min\_cash\_balance}$$
+
+The system is safe when `h(x) ≥ 0`. Bankruptcy (`cash_balance < min_cash_balance`) corresponds to `h(x) < 0`.
+
+**Discrete-time CBF condition:**
+
+$$h(S(t+1)) \geq (1 - \gamma) \cdot h(S(t)) \quad \forall\, t, \quad \gamma \in (0, 1)$$
+
+where `γ` is the decay rate (configured via `THRESHOLDS.cbf.gamma`). This condition ensures that the barrier function cannot decrease faster than the geometric rate `(1 − γ)` per step.
+
+**CBF Invariance Theorem:** If `h(S(0)) ≥ 0` and the discrete-time CBF condition holds at every step `t`, then `h(S(t)) ≥ 0` for all `t ≥ 0`. The system trajectory remains within the safe set `S` indefinitely.
+
+**Enforcement in code:**
+
+```python
+h_t      = cash_balance - min_cash_balance        # h(S(t))
+h_next   = (cash_balance - cost) - min_cash_balance  # h(S(t+1))
+required = (1.0 - gamma) * h_t                    # CBF threshold
+
+if h_next < required or h_next < 0:
+    # UNSAFE — barrier certificate violated
+```
+
+### Atomic Redis Implementation
+
+The CBF state is shared across stateless Cloud Run instances via Redis. To eliminate the TOCTOU window between the barrier check and the state commit, CAGE provides two enforcement layers:
+
+**Layer 1 — WATCH/MULTI/EXEC optimistic locking** (`update_state()`, `rollback_state()`):
+
+1. `WATCH safety:current_cash` — marks the key for observation
+2. Read current balance; compute `h(S(t+1))`
+3. `MULTI` / `SET safety:current_cash <new_balance>` / `EXEC`
+4. If another process modified the key between steps 1–3, `EXEC` returns `nil`; the guard retries up to `_MAX_RETRIES = 5` times before raising `RuntimeError`
+
+**Layer 2 — Lua atomic check+commit** (`atomic_verify_and_commit()`):
+
+The `LUA_ATOMIC_CBF` script collapses the CBF check and state commit into a **single Redis Lua hop**, eliminating the TOCTOU window entirely. The Lua script replicates the exact CBF formula atomically inside Redis:
+
+```lua
+local h_t    = current - min_cash
+local h_next = next_cash - min_cash
+local required_h_next = (1.0 - gamma) * h_t
+
+if h_next < required_h_next or h_next < 0 then
+    return {0, "UNSAFE: ...", tostring(current)}
+end
+redis.call('SET', KEYS[1], tostring(next_cash))
+return {1, "COMMITTED", tostring(next_cash)}
+```
+
+The Lua script is loaded via `SCRIPT LOAD` / `EVALSHA` with automatic NOSCRIPT retry on SHA eviction. KMS signature verification must occur in Python before calling this method — Redis Lua has no cryptographic FFI.
+
+**Retry policy:** `_MAX_RETRIES = 5` for both WATCH/MULTI/EXEC and Lua paths. On exhaustion, `RuntimeError` is raised and the trade is blocked (fail-closed).
+
+**Read-only verification:** `verify_action()` uses a pipelined (non-transactional) batch GET for atomic state snapshot — it does **not** participate in the WATCH/MULTI/EXEC pipeline and does not modify Redis state.
+
+---
+
+## Step 9: Routing Seal Integrity
+
+**Source:** [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py)
+
+The Routing Seal is a short-lived HMAC-SHA256 token issued by the Hybrid Gateway after a successful governance approval. Downstream actuators **must** verify the seal before executing any trade. This closes the direct-bind shortcut: execution cannot proceed by ignoring the HTTP governance response.
+
+### Seal Format
+
+```
+<expire_ts_hex>.<action_slug>.<hmac_hex>
+```
+
+| Field | Description |
+|-------|-------------|
+| `expire_ts_hex` | Unix timestamp (seconds) of expiry, hex-encoded |
+| `action_slug` | Action name lowercased, underscores replaced with hyphens, truncated to 32 chars |
+| `hmac_hex` | Lowercase hex-encoded HMAC-SHA256 digest |
+
+### Cryptographic Contract
+
+**Key:** `GOVERNANCE_SALT` environment variable (≥ 32 bytes in production; enforced by `assert_custom_salt_in_production()` at import time).
+
+**Message:** `<expire_hex>.<action_slug>.` + canonical JSON payload, where the payload is `json.dumps({"action": action, **params}, sort_keys=True, separators=(",", ":"))` — sorted keys ensure deterministic serialization regardless of dict insertion order.
+
+**Algorithm:** HMAC-SHA256 (`hmac.new(_HMAC_KEY, message, hashlib.sha256).hexdigest()`).
+
+**TTL:** 30 seconds (configurable via `GOVERNANCE_SEAL_TTL_S`). Seals expire after this window; `verify_seal()` checks `time.time() > expire_ts` before HMAC verification.
+
+**Timing-attack resistance:** HMAC comparison uses `hmac.compare_digest(received_sig, expected_sig)` — constant-time comparison that prevents timing-based forgery attacks.
+
+**Fail-raised contract:** `verify_seal()` raises `SymbolicGovernorViolation` on any failure (malformed, expired, action mismatch, HMAC mismatch). This makes it impossible for callers to silently ignore a failed verification — the exception propagates unless explicitly caught.
+
+### Verification Flow
+
+```
+generate_seal(action, params)
+  → expire_ts = now + 30s
+  → seal = f"{expire_hex}.{action_slug}.{hmac_hex}"
+
+verify_seal(seal, action, params)
+  1. Split on "." → 3 parts (malformed → SymbolicGovernorViolation)
+  2. Parse expire_hex → check time.time() > expire_ts (expired → raise)
+  3. Check action_slug matches expected (mismatch → raise)
+  4. Recompute HMAC; hmac.compare_digest(received, expected) (mismatch → raise)
+  5. Return True
+```
+
+---
+
+## Step 10: Provenance Hash Chain
+
+**Source:** [`src/gateway/governance/provenance_chain.py`](../../src/gateway/governance/provenance_chain.py)
+
+The provenance chain builds a cryptographic audit trail linking each LangGraph governance node's input and output. It satisfies **NIST AU-10** (non-repudiation), **ISO 42001 §A.7.5** (records integrity), and **AARM-V1** (Memory Poisoning neutralization).
+
+### Hash Chain Construction
+
+Each governance node execution produces a `ProvenanceRecord`:
+
+```
+record_n = ProvenanceRecord(
+    trace_id    = <Langfuse trace ID>,
+    node_id     = <LangGraph node name>,
+    input_hash  = SHA-256(json.dumps(input_data,  sort_keys=True)),
+    output_hash = SHA-256(json.dumps(output_data, sort_keys=True)),
+    decision    = "ALLOW" | "BLOCK" | "ESCALATE",
+    parent_hash = chain_hash(record_{n-1})   # None for first record
+)
+```
+
+**Chain hash:** `chain_hash(record) = SHA-256(json.dumps(record.to_dict(), sort_keys=True))`
+
+**Deterministic serialization:** All hashes use `json.dumps(..., sort_keys=True, separators=(",", ":"))` with non-serializable values coerced to strings. This guarantees identical digests regardless of Python dict insertion order.
+
+**Tamper detection:** Any mutation at node `k` produces `chain_hash(record_k) ≠ expected_k`, which is detectable by `verify_chain_integrity()` in O(n) time:
+
+$$\forall n: \text{record\_hash}_n = \text{SHA256}(\text{prev\_hash}_{n-1} \| \text{content\_json}_n)$$
+
+**Complexity:** O(n) construction and O(n) verification — linear in the number of governance nodes traversed per request.
+
+**Valid decisions:** `ALLOW`, `BLOCK`, `ESCALATE` — `build_provenance_record()` raises `ValueError` for any other value, preventing silent chain corruption from invalid decision strings.
+
+In production, each record is signed with the KMS key ring via [`src/gateway/governance/kms_signer.py`](../../src/gateway/governance/kms_signer.py) and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`.
+
+---
+
+## Step 11: FiscalLimitGuard — Quantitative Implementation Details
+
+**Source:** [`src/gateway/governance/fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py)
+
+Step 5 above provides the formal race-condition proof for `FiscalLimitGuard`. This step documents the quantitative implementation parameters verified against the source.
+
+### Implementation Constants
+
+| Parameter | Value | Source |
+|-----------|-------|--------|
+| Default daily cap | **$500,000 USD** | `daily_cap_usd=500_000.0` (env: `FISCAL_DAILY_CAP_USD`) |
+| Storage format | **Integer cents** | `amount_cents = int(round(amount_usd * 100))` — avoids float precision errors |
+| Rolling window | **86,400 seconds** (24 hours) | `window_seconds=86_400` |
+| Reservation TTL | 300 seconds | Ghost-state auto-expiry via Redis `EXPIRE` |
+| Max retries | **5** | `_MAX_RETRIES = 5` |
+| Retry base | 5 ms | `_RETRY_BASE_MS = 5` |
+
+### Exponential Backoff
+
+On WATCH/MULTI/EXEC conflict, the guard retries with exponential backoff plus random jitter:
+
+$$\text{backoff}(\text{attempt}) = \frac{\_\text{RETRY\_BASE\_MS} \times 2^{\text{attempt}} + \text{jitter}(0, 5)}{1000} \text{ seconds}$$
+
+where `jitter(0, 5)` is a uniform random integer in `[0, 5]` milliseconds. This prevents thundering-herd collisions when many agents retry simultaneously.
+
+**Fail-closed:** If all `_MAX_RETRIES` attempts fail (Redis error or persistent contention), `_atomic_increment` returns `-2` and the reservation is rejected — the trade is blocked. Redis unavailability never produces a false ALLOW.
+
+### Window Key Schema
+
+```
+fiscal:daily_limit:{YYYY-MM-DD}   (UTC date, e.g. "fiscal:daily_limit:2026-07-01")
+```
+
+The key is set with `EXPIRE window_seconds` on every write, ensuring automatic reclamation after the 24-hour window even if no explicit release occurs.
+
+---
+
 ## Overall Verification Summary
 
 | Step | Claim | Verdict |
@@ -299,5 +494,9 @@ Additionally, runtime causal gatekeeper errors (previously silently skipped via 
 | 5 | FiscalLimitGuard race-condition proof | **PASS** |
 | 6 | KMS HSM non-repudiation proof | **PASS** |
 | 7 | NoDirectBind invariant — exhaustive state-space proof over 19 reachable states | **PASS** |
+| 8 | CBF discrete-time invariance — `h(S(t+1)) ≥ (1−γ)·h(S(t))`, Lua atomic enforcement | **PASS** |
+| 9 | Routing seal integrity — HMAC-SHA256, 30s TTL, `hmac.compare_digest` constant-time | **PASS** |
+| 10 | Provenance hash chain — SHA-256, O(n) tamper detection, deterministic serialization | **PASS** |
+| 11 | FiscalLimitGuard quantitative parameters — $500k cap, 86400s window, exponential backoff | **PASS** |
 
-**Overall verdict: BOUNDED with one known partial control (AARM-V11 / POAM-022).** The partial control does not affect the safety invariant — the DEFER state machine (AARM-V7) provides a local fail-safe when external normative validation is unavailable. The NoDirectBind invariant (Step 7) is machine-verified: there is no reachable state in which an agent reaches `EXECUTED` without a cryptographically resolved `ALLOW`.
+**Overall verdict: BOUNDED with one known partial control (AARM-V11 / POAM-022).** The partial control does not affect the safety invariant — the DEFER state machine (AARM-V7) provides a local fail-safe when external normative validation is unavailable. The NoDirectBind invariant (Step 7) is machine-verified: there is no reachable state in which an agent reaches `EXECUTED` without a cryptographically resolved `ALLOW`. Steps 8–11 document the formal mathematical properties of the CBF barrier certificate, routing seal cryptographic contract, provenance hash chain, and FiscalLimitGuard quantitative parameters as verified against the production source code.
