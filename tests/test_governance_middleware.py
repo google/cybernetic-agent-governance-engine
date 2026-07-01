@@ -382,6 +382,7 @@ class TestValidateActionEndpoint:
         mock_symbolic_governor.validate_action.assert_awaited_once_with(
             action="execute_trade",
             params={"amount": 100, "symbol": "AAPL"},
+            policy_version_id=None,
         )
 
     def test_validate_action_missing_action_field_returns_422(self, client):

@@ -66,6 +66,11 @@ gateway = [
     "en-core-web-sm",
     "opentelemetry-instrumentation-fastapi>=0.58b0",
     "opentelemetry-instrumentation-requests>=0.58b0",
+    # CTRL_KMS_001: Cloud KMS asymmetric governance signer (H-05).
+    # Required by src/gateway/governance/kms_signer.py — KMSGovernanceSigner.from_env()
+    # hard-fails at startup if this package is absent. The legacy HMAC fallback
+    # has been removed; KMS signing is mandatory in production.
+    "google-cloud-kms>=2.0.0",
 ]
 
 advisor = [
@@ -94,7 +99,12 @@ compliance = [
     # dowhy: causal gatekeeper (Tier 6) — required by compliance-bridge defer queue
     # (No-Direct-Bind Gap 4). Moved from gateway extras so the compliance-bridge
     # image picks it up via --extra compliance without pulling all gateway deps.
-    "dowhy>=0.11,<0.12",
+    # Upgraded to >=0.12: dowhy 0.11.x eagerly imported econml at module load,
+    # which pulled numpy.distutils (removed in NumPy 2.0). dowhy 0.12+ made
+    # econml optional — no eager import, fully compatible with NumPy 2.x.
+    # Our usage (CausalModel, backdoor.linear_regression, placebo_treatment_refuter)
+    # is unchanged across 0.11→0.12.
+    "dowhy>=0.12,<0.13",
 ]
 
 langfuse = [
@@ -114,6 +124,22 @@ lint = [
     "codespell>=2.2.0",
     "types-pyyaml>=6.0.12.20240917",
     "types-requests>=2.32.0.20240914",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
+markers = [
+    "local: safe to run with no live services (CI default)",
+    "unit: pure unit test, no I/O",
+    "integration: requires live services via port-forward",
+    "gke: requires live GKE cluster",
+    "slow: long-running test (timeout >= 300s)",
+    "regression: regression guard",
+    "us_fed: US_FED region-specific test",
+    "eu_ecb: EU_ECB region-specific test",
+    "apac_mas: APAC_MAS region-specific test",
 ]
 
 [tool.ruff]

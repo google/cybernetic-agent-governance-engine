@@ -154,7 +154,7 @@ The existing `ControlRegistry` JSON profile format generalizes naturally to non-
 ```jsonc
 // PROPOSED: config/compliance/PHARMA_GxP_21CFR11.json
 {
-  "_schema_version": "2.0.0",
+  "_schema_version": "0.1.0",
   "_region": "US_FDA",
   "_domain": "pharmaceutical",
   "_primary_prudential_authority": "FDA / CDER / CBER",
@@ -477,9 +477,9 @@ The path to multi-domain extensibility is a configuration exercise, not a rewrit
 
 | Document                                                              | Relationship                                            |
 | --------------------------------------------------------------------- | ------------------------------------------------------- |
-| [CAUSAL_AND_CBF_GOVERNANCE.md](../CAUSAL_AND_CBF_GOVERNANCE.md)       | Detailed CBF mathematical formulation and DoWhy design  |
-| [GATEWAY_ARCHITECTURE.md](../GATEWAY_ARCHITECTURE.md)                 | Full inference gateway architecture                     |
-| [NEURO_SYMBOLIC_GOVERNANCE.md](../NEURO_SYMBOLIC_GOVERNANCE.md)       | SymbolicGovernor pipeline deep-dive                     |
+| [CAUSAL_AND_CBF_GOVERNANCE.md](../governance/CAUSAL_AND_CBF_GOVERNANCE.md)       | Detailed CBF mathematical formulation and DoWhy design  |
+| [GATEWAY_ARCHITECTURE.md](GATEWAY_ARCHITECTURE.md)                 | Full inference gateway architecture                     |
+| [NEURO_SYMBOLIC_GOVERNANCE.md](../governance/NEURO_SYMBOLIC_GOVERNANCE.md)       | SymbolicGovernor pipeline deep-dive                     |
 | [Technical Report Series](../technical-report/README.md)              | Complete 10-document engineering record                 |
 | [config/compliance/README.md](../../../config/compliance/README.md)   | Regional profile specification and authoring guide      |
 | [DUAL_PROJECT_ARCHITECTURE.md](DUAL_PROJECT_ARCHITECTURE.md)         | Dual-project telemetry isolation design and threat model |

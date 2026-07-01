@@ -1,0 +1,45 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+component-definition:
+  uuid: 0ddb2190-5503-51f2-97c5-1a4ed5e97a1c
+  metadata:
+    title: CAGE Validation — ISO001 TOKEN QUOTA (ISO-001)
+    last-modified: '2026-07-01T13:18:54Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: "Auto-converted from standalone lula validation format.\nRegion: ALL. Posture: iso42001.\nNotes: ISO 42001 §A.4: AI System Resource Controls — Token Quota OPA Injection (ISO-001). Asserts that the governed-financial-advisor Deployment:\n  (1) Is Running with ≥1 ready replica in governance-stack namespace.\n  (2) Has REDIS_URL env var configured (required for get_redis_quota_snapshot() in\n      policy_loader.py to read live token counters from Redis db=2).\nThe OPA trade_governance.rego token quota rules (ISO-001) only activate when REDIS_URL is present and quota_available=true — meaning the Redis connection succeeded and returned live counter data. STPA hazard H-7: TokenQuotaProxy fail-OPEN when Redis unavailable. CTRL_TQP_007 (lula-validation-tqp007.yaml) validates the sidecar fail-closed posture; this manifest validates the OPA-side quota injection. POAM reference: ISO-001 (POAM_ISO42001.md)."
+  components:
+  - uuid: a30eb71f-447c-53aa-8891-bb1b7db73afa
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: 3f2c9f85-c105-5d35-898d-e7fde67638ef
+      source: https://www.iso.org/standard/81230.html
+      description: 'Control implementation for ISO001 TOKEN QUOTA (ISO-001). Region: ALL. Posture: iso42001.'
+      implemented-requirements:
+      - uuid: b73bcc6c-d919-5368-bbd3-77f142eb54dd
+        control-id: A.4
+        description: Automated lula validation for ISO001 TOKEN QUOTA (ISO-001).
+        links:
+        - href: '#9c4c3db2-8fc7-5959-ba63-38e6ffd6ecc9'
+          rel: lula
+  back-matter:
+    resources:
+    - uuid: 9c4c3db2-8fc7-5959-ba63-38e6ffd6ecc9
+      title: Lula Validation — ISO001 TOKEN QUOTA (ISO-001)
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: governed-financial-advisor-deployment\n      resource: deployments\n      namespace: governance-stack\n      filters:\n      - field: metadata.name\n        value: governed-financial-advisor\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# ISO 42001 §A.4 — Token Quota OPA Injection (ISO-001)\\n#\\n# Check 1: The governed-financial-advisor Deployment is running with ≥1 ready replica.\\n# Check 2: The REDIS_URL env var is set (required for quota snapshot reads).\\n# Check 3: The OPA policy configmap/volume contains token quota rule markers.\\n#          (Full runtime validation requires an OPA policy evaluation test —\\n#           that is performed in unit tests, not this Lula manifest.)\\n\\nadvisor_running if {\\n  input[\\\"governed-financial-advisor-deployment\\\"].status.readyReplicas >= 1\\n}\\n\\nadvisor_has_redis_url if {\\n  some container in input[\\\"governed-financial-advisor-deployment\\\"].spec.template.spec.containers\\n  some env in container.env\\n  env.name == \\\"REDIS_URL\\\"\\n  env.value != \\\"\\\"\\n}\\n\\nvalidate if {\\n  advisor_running\\n  advisor_has_redis_url\\n}\\n\"\n"

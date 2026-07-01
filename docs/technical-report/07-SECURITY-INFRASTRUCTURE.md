@@ -432,7 +432,7 @@ Verification: `cilium monitor --type l7 --from-label role=sovereign-agent`
 
 ## 5. Secret Management
 
-Source: [`docs/SECRET_MANAGEMENT_OPTIONS.md`](../SECRET_MANAGEMENT_OPTIONS.md)
+Source: [`docs/SECRET_MANAGEMENT_OPTIONS.md`](../security/SECRET_MANAGEMENT_OPTIONS.md)
 
 ### Current Kubernetes Secrets (3 Objects in `governance-stack`)
 
@@ -673,7 +673,7 @@ Source: [`tests/red_team/`](../../tests/red_team/), [`src/governed_financial_adv
 
 ## 11. Security Assessment Findings Summary
 
-Sources: [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md), [`docs/SECURITY_ASSESSMENT_PLAN.md`](../SECURITY_ASSESSMENT_PLAN.md), [`docs/POAM.md`](../POAM.md)
+Sources: [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md), [`docs/SECURITY_ASSESSMENT_PLAN.md`](../security/SECURITY_ASSESSMENT_PLAN.md), [`docs/POAM.md`](../compliance/cross-region/POAM.md)
 
 > ⚠️ **Overall Assessment: HIGH Risk — ATO Not Recommended**
 
@@ -694,9 +694,9 @@ Sources: [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md), [
 
 | Document                                                               | Purpose                            |
 | ---------------------------------------------------------------------- | ---------------------------------- |
-| [`docs/SECURITY_ASSESSMENT_PLAN.md`](../SECURITY_ASSESSMENT_PLAN.md)   | Security Assessment Plan (SAP)     |
-| [`docs/IR_PLAN.md`](../IR_PLAN.md)                                     | Incident Response Plan (draft)     |
-| [`docs/CHANGE_MANAGEMENT_PROCESS.md`](../CHANGE_MANAGEMENT_PROCESS.md) | Change Management Process          |
+| [`docs/SECURITY_ASSESSMENT_PLAN.md`](../security/SECURITY_ASSESSMENT_PLAN.md)   | Security Assessment Plan (SAP)     |
+| [`docs/IR_PLAN.md`](../security/IR_PLAN.md)                                     | Incident Response Plan (draft)     |
+| [`docs/CHANGE_MANAGEMENT_PROCESS.md`](../governance/CHANGE_MANAGEMENT_PROCESS.md) | Change Management Process          |
 | [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md)   | Security Assessment Report Q1 2026 |
 
 ---

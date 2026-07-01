@@ -350,3 +350,54 @@ component-definition:
       title: CSA Autonomous Agent Risk Management (AARM) Specification v1.0
       rlinks:
       - href: https://cloudsecurityalliance.org/research/topics/aarm
+
+  # ---------------------------------------------------------------------------
+  # ISO-004 addition: TokenQuotaProxy component — CTRL_TQP_007
+  # Added 2026-06-23 per ISO 42001 §A.8.4 universal control gap analysis.
+  # Controls the fail-closed behavior of the TokenQuotaProxy when Redis is
+  # unavailable. Prevents denial-of-governance via resource exhaustion (H-7).
+  # ---------------------------------------------------------------------------
+  - uuid: tqp007-component-0001-0000-0000-000000000001
+    title: TokenQuotaProxy
+    type: software
+    description: >
+      Kubernetes sidecar that enforces per-agent token spending quotas to
+      prevent resource exhaustion and denial-of-governance attacks. Uses Redis
+      as a distributed counter backend. When Redis is unavailable, the proxy
+      must fail-CLOSED (deny all inference requests) rather than fail-OPEN
+      (allow uncapped token spending). CTRL_TQP_007 asserts that the fail-closed
+      behavior is configured at deployment time.
+
+    purpose: >
+      Prevents denial-of-governance via uncapped LLM token spending. Implements
+      ISO 42001 §A.8.4 AI System Operation Controls (resource constraint enforcement)
+      and is a compensating control for STPA hazard H-7.
+
+    responsible-roles:
+    - role-id: provider
+
+    control-implementations:
+    - uuid: tqp007-ctrl-impl-0001-0000-0000-000000000001
+      source: https://www.iso.org/standard/81230.html
+      description: ISO/IEC 42001:2023 Annex A.8.4 controls implemented by TokenQuotaProxy
+      implemented-requirements:
+      - uuid: tqp007-req-0001-0000-0000-000000000001
+        control-id: A.8.4
+        description: >
+          CTRL_TQP_007: TokenQuotaProxy enforces token spending quotas to prevent
+          resource exhaustion. When Redis is unavailable, TOKEN_QUOTA_FAIL_CLOSED=true
+          causes the proxy to deny all inference requests rather than allowing uncapped
+          spending (fail-open). This implements ISO 42001 §A.8.4 AI System Operation
+          Controls — specifically the requirement that AI system resource constraints
+          are enforced even during dependency failures.
+
+        remarks: >
+          Implemented as an env var TOKEN_QUOTA_FAIL_CLOSED=true on the
+          token-quota-proxy Deployment in the governance-stack namespace.
+          Lula validation asserts this configuration is present at runtime.
+          STPA hazard: H-7 (TokenQuotaProxy fail-OPEN scenario).
+          POAM reference: ISO-004 (POAM_ISO42001.md).
+
+        links:
+        - href: ../../compliance/lula/lula-validation-tqp007.yaml
+          rel: lula

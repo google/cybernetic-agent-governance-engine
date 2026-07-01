@@ -8,51 +8,38 @@
 # Domain: api → compliance-bridge (Python FastAPI service)
 # Provider: opa (inline Rego)
 
-metadata:
-  annotations:
-    cage.region: ALL
-    cage.compliance-posture: iso-42001
-    cage.posture-note: "ISO 42001 is a universal posture requirement applicable to all deployment regions (US_FED, EU_ECB, APAC_MAS)."
+component-definition:
+  uuid: 9f8895e0-79b7-59ca-b1bd-5f53b61ca24e
+  metadata:
+    title: CAGE Validation — A53
+    last-modified: '2026-07-01T13:18:54Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: 'Auto-converted from standalone lula validation format.
 
-domain:
-  type: api
-  api-spec:
-    endpoints:
-      - name: langfuse_metrics_a53
-        url: "http://compliance-bridge.governance-stack.svc.cluster.local/v1/metrics/A.5.3"
-        method: GET
+      Region: ALL. Posture: iso-42001.
 
-provider:
-  type: opa
-  opa-spec:
-    rego: |
-      package lula
-
-      import future.keywords.if
-
-      # A.5.3: Logging and Monitoring
-      # Two rules: one for cold-start grace period, one for steady-state.
-
-      # Rule 1: Cold-start grace period (< 6h after deployment)
-      # Skip sample-size check; only require safety rate and fresh evidence.
-      validate if {
-        input.langfuse_metrics_a53.startup_grace_active == true
-        input.langfuse_metrics_a53.safety_rate >= 0.98
-        input.langfuse_metrics_a53.evidence_age_seconds < 172800
-      }
-
-      # Rule 2: Steady-state (> 6h after deployment)
-      # Enforce full constraints: safety rate, sample size, and evidence freshness.
-      validate if {
-        input.langfuse_metrics_a53.startup_grace_active == false
-        input.langfuse_metrics_a53.safety_rate >= 0.98
-        input.langfuse_metrics_a53.total_traces > 100
-        input.langfuse_metrics_a53.evidence_age_seconds < 172800
-      }
-
-notes: >
-  ISO 42001 A.5.3: Logging and Monitoring.
-  Automated verification via Langfuse observability bridge.
-  Evidence: OTel spans tagged with iso42001.control_id=A.5.3 from the
-  TypeScript Governance Gateway and Python LangGraph nodes.
-  Staleness guard: 48 hours (4x the 6-hour CronJob interval).
+      Notes: ISO 42001 A.5.3: Logging and Monitoring. Automated verification via Langfuse observability bridge. Evidence: OTel spans tagged with iso42001.control_id=A.5.3 from the TypeScript Governance Gateway and Python LangGraph nodes. Staleness guard: 48 hours (4x the 6-hour CronJob interval).'
+  components:
+  - uuid: dc15af28-a1da-5e9c-9149-5626a6dd4cce
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: 1ece732e-9180-52e4-a04d-bb92f5e01929
+      source: https://www.iso.org/standard/81230.html
+      description: 'Control implementation for A53. Region: ALL. Posture: iso-42001.'
+      implemented-requirements:
+      - uuid: 76dea904-7d5c-53b3-b5d8-2c31702ff8ca
+        control-id: a53
+        description: Automated lula validation for A53.
+        links:
+        - href: '#eb760977-813f-5999-af3f-dcd76b48c7aa'
+          rel: lula
+  back-matter:
+    resources:
+    - uuid: eb760977-813f-5999-af3f-dcd76b48c7aa
+      title: Lula Validation — A53
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: api\n  api-spec:\n    endpoints:\n    - name: langfuse_metrics_a53\n      url: http://compliance-bridge.governance-stack.svc.cluster.local/v1/metrics/A.5.3\n      method: GET\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# A.5.3: Logging and Monitoring\\n# Two rules: one for cold-start grace period, one for steady-state.\\n\\n# Rule 1: Cold-start grace period (< 6h after deployment)\\n# Skip sample-size check; only require safety rate and fresh evidence.\\nvalidate if {\\n  input.langfuse_metrics_a53.startup_grace_active == true\\n  input.langfuse_metrics_a53.safety_rate >= 0.98\\n  input.langfuse_metrics_a53.evidence_age_seconds < 172800\\n}\\n\\n# Rule 2: Steady-state (> 6h after deployment)\\n# Enforce full constraints: safety rate, sample size, and evidence freshness.\\nvalidate if {\\n  input.langfuse_metrics_a53.startup_grace_active == false\\n  input.langfuse_metrics_a53.safety_rate >= 0.98\\n  input.langfuse_metrics_a53.total_traces > 100\\n  input.langfuse_metrics_a53.evidence_age_seconds < 172800\\n}\\n\"\n"

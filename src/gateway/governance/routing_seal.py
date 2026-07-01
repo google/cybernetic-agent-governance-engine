@@ -323,5 +323,5 @@ def require_cleared_seal(
 # This ensures the check runs before any seal is generated or verified.
 # ---------------------------------------------------------------------------
 import os as _os
-if _os.environ.get("CAGE_ENV", "dev").lower() == "prod":
+if _os.environ.get("CAGE_ENV", "prod").lower() == "prod":  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
     assert_custom_salt_in_production()

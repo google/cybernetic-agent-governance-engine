@@ -146,3 +146,61 @@ allow = "GOVERNANCE_VIOLATION" if {
     input.action == "prompt_injection_check"
     contains(lower(input.content), "system override")
 }
+
+# ---------------------------------------------------------------------------
+# ISO-001 / ISO 42001 §A.4 — Token Quota Rules
+# Consumes live Redis token quota counters injected via policy_loader.with_redis_quota().
+#
+# The `token_quota` object is merged into the OPA input document before evaluation.
+# If quota data is unavailable (quota_source == "degraded"), these rules are
+# suppressed — the primary RBAC gate still applies, avoiding false positives.
+#
+# Key fields from input.token_quota:
+#   quota_exhausted:    bool — True if remaining_tokens <= 0
+#   below_min_reserve:  bool — True if remaining < 5% of budget
+#   quota_available:    bool — False if Redis was unreachable (degraded mode)
+#   quota_source:       "redis" | "degraded"
+#
+# POAM: ISO-001 (POAM_ISO42001.md)
+# Related: CTRL_TQP_007 (lula-validation-tqp007.yaml), H-7 STPA hazard
+# ---------------------------------------------------------------------------
+
+# Token quota exhausted → hard DENY (H-7: prevent uncapped resource consumption)
+allow = "DENY" if {
+    input.action == "execute_trade"
+    quota := input.token_quota
+    quota.quota_available == true
+    quota.quota_exhausted == true
+}
+
+# Token quota below minimum reserve → degrade to MANUAL_REVIEW
+# (preserves human oversight when budget is nearly exhausted)
+allow = "MANUAL_REVIEW" if {
+    input.action == "execute_trade"
+    quota := input.token_quota
+    quota.quota_available == true
+    quota.quota_exhausted == false
+    quota.below_min_reserve == true
+    # Only override if primary RBAC gate would otherwise ALLOW
+    # (avoid overriding existing DENY decisions)
+    not _rbac_deny
+}
+
+# Internal helper: primary RBAC gate would deny this request
+_rbac_deny if {
+    input.action == "execute_trade"
+    lower(input.trader_role) == "junior"
+    input.amount > 10000
+}
+
+_rbac_deny if {
+    input.action == "execute_trade"
+    lower(input.trader_role) == "senior"
+    input.amount > 1000000
+}
+
+_rbac_deny if {
+    input.action != "market_analysis"
+    not lower(input.trader_role) in allowed_roles
+}
+

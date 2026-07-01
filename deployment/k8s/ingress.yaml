@@ -12,75 +12,64 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# H-15: TLS termination added for all paths.
-# Langfuse contains compliance evidence, audit traces, and LLM interaction logs
-# (which may contain PII and financial data).  Transmitting these over HTTP
-# violates SC-8 (Transmission Confidentiality) and GDPR Art. 32.
+# POAM-011 / SC-8: TLS termination for the gateway service.
+#
+# This Ingress terminates TLS at the GCE load balancer level using a
+# GCP ManagedCertificate (gateway-managed-cert) bound to the hostname
+# gateway.laah.altostrat.com.  Plaintext HTTP is disabled via
+# kubernetes.io/ingress.allow-http: "false".
+#
+# TLS certificate provisioning:
+#   GCP ManagedCertificate CRD (networking.gke.io/v1) is used.
+#   The certificate is provisioned automatically by GCP once DNS resolves.
+#   DNS zone: laah-altostrat-zone (Cloud DNS, project laah-cybernetics)
+#   A record: gateway.laah.altostrat.com → 34.102.203.30
+#
+#   ManagedCertificate resource: deployment/k8s/managed-certificate.yaml
+#   Provisioning takes 10–60 minutes after DNS propagation.
 #
 # Prerequisites:
-#   1. cert-manager installed in the cluster:
-#      kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
-#   2. ClusterIssuer configured (see deployment/k8s/cert-manager-issuer.yaml)
-#   3. DNS A record pointing governance.example.com to the ingress IP
+#   - gateway Service must be type: NodePort (see deployment/k8s/gateway.yaml)
+#   - ManagedCertificate gateway-managed-cert must exist in governance-stack
+#   - DNS A record gateway.laah.altostrat.com must resolve to ingress IP
 #
 # To obtain the ingress IP after apply:
-#   kubectl get ingress governance-ingress -n governance-stack -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+#   kubectl get ingress gateway-ingress -n governance-stack \
+#     -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+#
+# To check ManagedCertificate status:
+#   kubectl describe managedcertificate gateway-managed-cert -n governance-stack
 #
 # NIST SP 800-53: SC-8 (Transmission Confidentiality and Integrity)
+# NIST SP 800-52 Rev. 2: TLS 1.2 minimum for federal information systems
 # GDPR Art. 32: Security of processing — encryption in transit
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: governance-ingress
+  name: gateway-ingress
   namespace: governance-stack
   annotations:
+    # GCE ingress class — this cluster uses the GCE ingress controller,
+    # not nginx.  nginx.ingress.kubernetes.io/* annotations are ignored here.
     kubernetes.io/ingress.class: "gce"
-    # NEG annotation: required for GKE Ingress to route to ClusterIP services.
-    # Without this, the GCE ingress controller cannot create backend services
-    # for ClusterIP-type services. The NEG controller creates Network Endpoint
-    # Groups that the load balancer uses directly.
-    # Applied to both governed-financial-advisor and langfuse-web services.
-    # H-15: Force HTTPS redirect — HTTP requests are redirected to HTTPS
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/hsts: "true"
-    nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
-    nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload";
-      more_set_headers "Content-Security-Policy: default-src 'self'; frame-ancestors 'none';";
-      more_set_headers "X-Content-Type-Options: nosniff";
-      more_set_headers "X-Frame-Options: DENY";
-    # cert-manager will provision and renew the TLS certificate automatically
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # SC-8 / POAM-011: Disable plaintext HTTP — all traffic must use TLS 1.2+
+    # (NIST SP 800-52 Rev. 2).  The GCE load balancer will return 404 on
+    # port 80 when this is set to "false".
+    kubernetes.io/ingress.allow-http: "false"
+    # GCP ManagedCertificate — replaces the self-signed gateway-tls-secret.
+    # Certificate is auto-provisioned for gateway.laah.altostrat.com.
+    networking.gke.io/managed-certificates: "gateway-managed-cert"
 spec:
-  # H-15: TLS termination — cert-manager provisions the certificate
-  tls:
-    - hosts:
-        - governance.example.com   # Replace with actual domain
-      secretName: governance-ingress-tls
+  # TLS is handled by the GCP ManagedCertificate annotation above.
+  # The self-signed tls.secretName reference has been removed.
   rules:
-  - host: governance.example.com   # Replace with actual domain
-    http:
-      paths:
-      - path: /agent
-        pathType: Prefix
-        backend:
-          service:
-            name: governed-financial-advisor
-            port:
-              number: 80
-      - path: /langfuse
-        pathType: Prefix
-        backend:
-          service:
-            name: langfuse-web
-            port:
-              number: 80
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: langfuse-web
-            port:
-              number: 80
+    - host: gateway.laah.altostrat.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 8080

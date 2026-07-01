@@ -19,10 +19,10 @@ This index provides a single-page view across all four POAM files. It is the aut
 
 | File | Region Scope | Primary Framework | Entries | Open | In Progress | Closed |
 |---|---|---|---|---|---|---|
-| [`docs/POAM_ISO42001.md`](POAM_ISO42001.md) | ALL | ISO/IEC 42001:2023 | 8 | 7 | 1 | 0 |
-| [`docs/POAM_US_FED.md`](POAM_US_FED.md) | US_FED | NIST SP 800-53 Rev. 5 + NIST AI 600-1 | 30 | 13 | 8 | 7 |
-| [`docs/POAM_EU_ECB.md`](POAM_EU_ECB.md) | EU_ECB | EU AI Act / DORA / GDPR | 5 | 4 | 1 | 0 |
-| [`docs/POAM_APAC_MAS.md`](POAM_APAC_MAS.md) | APAC_MAS | MAS FEAT / Notice 655 / TRM | 4 | 4 | 0 | 0 |
+| [`docs/POAM_ISO42001.md`](../universal/POAM_ISO42001.md) | ALL | ISO/IEC 42001:2023 | 8 | 7 | 1 | 0 |
+| [`docs/POAM_US_FED.md`](../us_fed/POAM_US_FED.md) | US_FED | NIST SP 800-53 Rev. 5 + NIST AI 600-1 | 30 | 13 | 8 | 7 |
+| [`docs/POAM_EU_ECB.md`](../eu_ecb/POAM_EU_ECB.md) | EU_ECB | EU AI Act / DORA / GDPR | 5 | 4 | 1 | 0 |
+| [`docs/POAM_APAC_MAS.md`](../apac_mas/POAM_APAC_MAS.md) | APAC_MAS | MAS FEAT / Notice 655 / TRM | 4 | 4 | 0 | 0 |
 | **Total** | | | **47** | **28** | **10** | **7** |
 
 > **Note:** POAM-018 and POAM-019 appear in both `POAM_US_FED.md` (NIST AU-9/SC-7 aspect) and `POAM_ISO42001.md` (ISO 42001 §A.9.4 universal aspect). They are counted once in the totals above (under ISO42001). POAM-022 appears in `POAM_US_FED.md` (NIST SA-9/CA-7 aspect) and is cross-referenced to `POAM_EU_ECB.md#EU-001` (EU AI Act Art. 29a aspect). `POAM_US_FED.md` v2.2 (2026-06-15) added 7 NIST AI 600-1 items (AI600-001 through AI600-007), raising the US_FED entry count from 23 to 30.

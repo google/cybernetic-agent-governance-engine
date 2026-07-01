@@ -1352,7 +1352,7 @@ Use this pattern as the template for the missing `eu-ecb-compliance-gate` and `a
 
 ### 9.6 Correctly Scoped POAM — `docs/POAM_US_FED.md`
 
-[`docs/POAM_US_FED.md`](docs/POAM_US_FED.md) demonstrates the correct pattern for jurisdiction-scoped documentation with explicit `region_scope: US_FED` frontmatter. Use this pattern as the template for all jurisdiction-specific documentation.
+[`docs/POAM_US_FED.md`](../us_fed/POAM_US_FED.md) demonstrates the correct pattern for jurisdiction-scoped documentation with explicit `region_scope: US_FED` frontmatter. Use this pattern as the template for all jurisdiction-specific documentation.
 
 ---
 

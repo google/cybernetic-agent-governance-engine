@@ -110,7 +110,7 @@ CAGE is in active NIST RMF implementation. As of the assessment date, the system
 | Langfuse compliance credentials fail silently when absent  | **Open** (POAM-018) |
 | Terraform dual-project fallback defeats telemetry isolation | **Open** (POAM-019) |
 
-The most significant systemic gap is the absence of an SSP (POAM-015). No ATO recommendation can be issued until the SSP, FIPS 199 categorization signature, and remaining critical findings are resolved. See [`docs/POAM.md`](../POAM.md) for the full Plan of Action and Milestones.
+The most significant systemic gap is the absence of an SSP (POAM-015). No ATO recommendation can be issued until the SSP, FIPS 199 categorization signature, and remaining critical findings are resolved. See [`docs/POAM.md`](../compliance/cross-region/POAM.md) for the full Plan of Action and Milestones.
 
 ---
 

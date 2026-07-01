@@ -382,8 +382,8 @@ docs/
 │   ├── HITL_TOCTOU_REMEDIATION.md
 │   └── CAUSAL_AND_CBF_GOVERNANCE.md
 ├── release/                         # Release planning & runbooks
-│   ├── V2_RELEASE_PLAN.md
-│   ├── V2_RELEASE_RUNBOOK.md
+│   ├── RELEASE_PLAN.md
+│   ├── RELEASE_RUNBOOK.md
 │   ├── V2_ROADMAP.md
 │   └── PHASE4_LULA_VALIDATION_PLAN.md
 ├── nist-rmf/                        # NIST RMF chunked documents

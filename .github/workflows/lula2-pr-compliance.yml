@@ -1,0 +1,104 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# ── lula2-pr-compliance.yml ────────────────────────────────────────────────────
+# Lula2 PR Compliance Impact Crawler
+#
+# Uses lula2 (defenseunicorns/lula — the SvelteKit/Node.js GitOps UI tool) to
+# analyze pull requests for compliance-impacting file changes and post a summary
+# comment on the PR.
+#
+# IMPORTANT: lula2 is NOT the same as lula1 (defenseunicorns-labs/lula1).
+#   lula1 = Go CLI that runs `lula validate` against live Kubernetes clusters
+#   lula2 = Node.js tool for GitOps compliance tracking and PR impact analysis
+#
+# This workflow is ADDITIVE — it does not replace lula1 runtime validation.
+# lula1 live validation is performed by compliance-matrix.yml post-cluster-provisioning.
+#
+# Trigger: pull_request targeting main
+# Output:  PR comment summarising compliance-impacting file changes
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: Lula2 PR Compliance Crawler
+
+on:
+  pull_request:
+    branches:
+      - main
+    # Only run when compliance-relevant paths change
+    paths:
+      - "compliance/**"
+      - "src/gateway/governance/**"
+      - "src/compliance_bridge/**"
+      - "config/compliance/**"
+      - "config/thresholds/**"
+      - "config/oscal/**"
+      - "deployment/k8s/**"
+      - "infra/**"
+      - ".github/workflows/**"
+
+# Minimal permissions — only needs PR read + write for comments
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  lula2-crawl:
+    name: "Lula2 Compliance Impact Analysis"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run lula2 PR compliance crawler
+        # lula2 crawl analyzes changed files in the PR and posts a compliance
+        # impact summary comment. Uses npx so no installation is required.
+        # GITHUB_TOKEN is used to read PR file list and post the comment.
+        env:
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          PULL_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Running lula2 compliance impact analysis on PR #${PULL_NUMBER}..."
+          npx lula2 crawl --post-mode=comment 2>&1 || {
+            echo "::warning::lula2 crawl exited non-zero — compliance impact comment may not have been posted"
+            echo "This is non-fatal: lula2 crawl is an advisory tool, not a blocking gate."
+            exit 0
+          }
+
+      - name: Summarise compliance-impacting paths
+        # Fallback summary if lula2 crawl does not post a comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # List changed files that touch compliance-relevant paths
+          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | \
+            grep -E "^(compliance/|src/gateway/governance/|src/compliance_bridge/|config/compliance/|config/thresholds/|config/oscal/|deployment/k8s/|infra/|\.github/workflows/)" || true)
+          if [ -n "$CHANGED" ]; then
+            echo "Compliance-relevant files changed in this PR:"
+            echo "$CHANGED"
+          else
+            echo "No compliance-relevant files changed."
+          fi

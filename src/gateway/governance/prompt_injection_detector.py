@@ -18,6 +18,13 @@ Detects structural prompt injection patterns that bypass keyword-based filters.
 Complements the Aho-Corasick Tier-1 keyword scanner (text_filter.py) with
 semantic/structural pattern matching for injection attempts.
 
+Also detects **indirect / MCP tool response injection** via
+``detect_indirect_injection()``.  Tool response injection is a distinct attack
+vector where adversarial content is smuggled inside structured tool call results
+(e.g., a malicious web-search result or database row that contains hidden
+instruction overrides).  AI 600-1 §2.3 Phase 4 requires sanitization of both
+direct user input and indirect tool response content (P1-AI2).
+
 POAM: AI600-003
 Controls: CausalGatekeeper (pre-check), CTRL_WAL_002 (WAL integrity)
 
@@ -39,13 +46,21 @@ regulatory citation for the active deployment region.
 Usage::
 
     from src.gateway.governance.prompt_injection_detector import (
-        detect_prompt_injection, InjectionResult,
-        get_injection_regulatory_citation,
+        detect_prompt_injection, detect_indirect_injection,
+        InjectionResult, get_injection_regulatory_citation,
     )
 
     result = detect_prompt_injection("Ignore all previous instructions.")
     if result.detected:
         # block and log to uca_logger
+        ...
+
+    tool_result = detect_indirect_injection(
+        tool_name="web_search",
+        tool_response=search_result_text,
+    )
+    if tool_result.detected:
+        # reject tool response before feeding to agent
         ...
 """
 
@@ -144,6 +159,52 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ),
 ]
 
+# ---------------------------------------------------------------------------
+# Indirect injection patterns — for MCP tool response sanitization (AI600-003)
+#
+# These patterns target adversarial content smuggled inside tool call results:
+# web search snippets, database rows, API responses, etc.  Distinct from
+# direct user-input injection because the attack surface is the tool output
+# pipeline rather than the user's prompt text.
+# ---------------------------------------------------------------------------
+
+_INDIRECT_INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    (
+        "tool_response_injection",
+        # Attempts to embed instruction overrides inside structured tool response tags
+        re.compile(
+            r"(?:<tool_response>|<result>|<output>).*?"
+            r"(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions|context|guidelines)",
+            re.IGNORECASE | re.DOTALL,
+        ),
+    ),
+    (
+        "context_smuggling",
+        # Injection via specially crafted data values (e.g., JSON field containing instructions)
+        re.compile(
+            r"(?:SYSTEM_OVERRIDE|HIDDEN_INSTRUCTION|SECRET_PROMPT|\[INST\])\s*[:=]\s*",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "data_exfiltration_probe",
+        # Financial data exfiltration patterns commonly used in indirect injection probes
+        re.compile(
+            r"(?:exfiltrate|transmit|send|forward|relay)\s+(?:all\s+)?(?:account|portfolio|balance|trade|financial)\s+(?:data|information|records|details)\s+to",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "authority_claim_injection",
+        # Fake authority claims injected via tool responses to override governance
+        re.compile(
+            r"(?:as\s+(?:the\s+)?(?:system\s+administrator|root\s+user|super\s+admin|compliance\s+officer))"
+            r"\s*,?\s+(?:I\s+(?:authorize|grant|allow|permit|instruct)|you\s+(?:must|should|shall|are\s+required\s+to))",
+            re.IGNORECASE,
+        ),
+    ),
+]
+
 
 # ---------------------------------------------------------------------------
 # InjectionResult — structured detection result
@@ -204,8 +265,62 @@ def detect_prompt_injection(text: str) -> InjectionResult:
 
 
 def get_injection_patterns() -> list[str]:
-    """Return the list of active injection pattern names.
+    """Return the list of active direct injection pattern names.
 
     Used by tests to verify 100% pattern coverage.
     """
     return [name for name, _ in _INJECTION_PATTERNS]
+
+
+def get_indirect_injection_patterns() -> list[str]:
+    """Return the list of active indirect injection pattern names.
+
+    Used by tests to verify 100% indirect pattern coverage (AI600-003).
+    """
+    return [name for name, _ in _INDIRECT_INJECTION_PATTERNS]
+
+
+# ---------------------------------------------------------------------------
+# detect_indirect_injection — MCP tool response sanitization (AI600-003)
+# ---------------------------------------------------------------------------
+
+def detect_indirect_injection(
+    tool_name: str,
+    tool_response: str,
+) -> InjectionResult:
+    """Detect adversarial content smuggled inside an MCP tool response.
+
+    Checks the tool response text against the indirect injection patterns in
+    ``_INDIRECT_INJECTION_PATTERNS``.  Called by the governance middleware
+    after every MCP tool invocation, before the response is fed back to the
+    agent (AI 600-1 §2.3 Phase 4, NIST NIST_AI_600_1_US_FED_ANALYSIS P1-AI2).
+
+    Args:
+        tool_name:     Name of the MCP tool that produced the response
+                       (e.g. ``"web_search"``, ``"execute_trade_action"``).
+        tool_response: The raw string content returned by the tool call.
+
+    Returns:
+        An ``InjectionResult`` with ``detected=True`` if any indirect
+        injection pattern matches, ``detected=False`` otherwise.
+    """
+    if not tool_response:
+        return InjectionResult(detected=False, pattern_matched=None, confidence=0.0)
+
+    for pattern_name, pattern in _INDIRECT_INJECTION_PATTERNS:
+        if pattern.search(tool_response):
+            logger.warning(
+                "🚨 Indirect injection detected in MCP tool response: "
+                "tool=%s pattern=%s preview=%r "
+                "(AI 600-1 §2.3 — rejecting tool response)",
+                tool_name,
+                pattern_name,
+                tool_response[:120],
+            )
+            return InjectionResult(
+                detected=True,
+                pattern_matched=f"indirect:{pattern_name}",
+                confidence=0.95,
+            )
+
+    return InjectionResult(detected=False, pattern_matched=None, confidence=0.0)

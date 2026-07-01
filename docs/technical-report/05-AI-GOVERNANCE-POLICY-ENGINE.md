@@ -30,14 +30,14 @@ The AI Governance & Policy Engine is the most complex and safety-critical compon
 
 ## 1. Governance Philosophy
 
-CAGE implements neuro-symbolic hybrid governance (see [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](../NEURO_SYMBOLIC_GOVERNANCE.md)) — a defense-in-depth approach grounded in two complementary paradigms:
+CAGE implements neuro-symbolic hybrid governance (see [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](../governance/NEURO_SYMBOLIC_GOVERNANCE.md)) — a defense-in-depth approach grounded in two complementary paradigms:
 
 - **Neural (semantic)**: LLM consensus critics in `ConsensusEngine` provide contextual judgment for high-value trades, detecting nuanced compliance violations that symbolic rules cannot express.
 - **Symbolic (deterministic)**: STPA/STAMP unsafe control action checks, Control Barrier Functions, Aho-Corasick keyword scans, and OPA Rego policies enforce hard constraints regardless of LLM state.
 
 Neither paradigm alone is sufficient. Neural systems can hallucinate; symbolic systems cannot reason over context. The pipeline requires both.
 
-**Four Governance Automation Patterns** (see [`docs/GOVERNANCE_CROSSWALK.md`](../GOVERNANCE_CROSSWALK.md)):
+**Four Governance Automation Patterns** (see [`docs/GOVERNANCE_CROSSWALK.md`](../compliance/cross-region/GOVERNANCE_CROSSWALK.md)):
 
 | Pattern                      | Mechanism                                                     |
 | ---------------------------- | ------------------------------------------------------------- |
@@ -125,7 +125,7 @@ Non-deterministic or context-free tiers (such as Tier 0 STPA, Tier 1 Agentic Con
 
 ## 3. STPA/STAMP Safety Analysis — Tier 0
 
-Full analysis: [`docs/STPA_ANALYSIS.md`](../STPA_ANALYSIS.md).
+Full analysis: [`docs/STPA_ANALYSIS.md`](../security/STPA_ANALYSIS.md).
 
 [`GeneratedSTPAValidator`](../../src/gateway/governance/generated_stpa_validator.py) enforces **9 Unsafe Control Actions (UCAs)** derived from STAMP hazard analysis of the CAGE financial control loop (UCA-1 through UCA-9, compiled by `stpa_compiler.py`). Each UCA maps to a threshold in `governance_thresholds.json`. The STPA check runs synchronously as Step 0 (`cage.stpa_check` OTel span), always first.
 

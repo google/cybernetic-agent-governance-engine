@@ -125,6 +125,17 @@ spec:
               value: "http/protobuf"
             - name: TRACE_SAMPLING_RATE
               value: "0.01"
+            # CTRL_KMS_001: KMS asymmetric governance signer (H-05).
+            # assert_kms_active_in_production() raises RuntimeError at startup
+            # if this env var is absent when CAGE_ENV=production.
+            # Also present via envFrom: advisor-secrets, but declared explicitly
+            # here for auditability and to match the gateway pattern.
+            - name: KMS_GOVERNANCE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: advisor-secrets
+                  key: KMS_GOVERNANCE_KEY
+                  optional: true
             - name: HUGGING_FACE_HUB_TOKEN
               valueFrom:
                 secretKeyRef:

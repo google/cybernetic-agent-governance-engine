@@ -290,4 +290,4 @@ The following frameworks apply **only** when `CAGE_DEPLOYMENT_REGION=APAC_MAS`:
 | **MAS FEAT Principles** | Singapore-specific AI fairness, ethics, accountability, transparency controls | Active |
 | **MAS Notice 655 / MAS TRM §4.2** | Audit logging; data residency within `asia-southeast1` | Active |
 
-> **POA&M:** 23 open items (POAM-001 through POAM-023). See [`docs/POAM.md`](POAM.md) and [`docs/POAM_INDEX.md`](POAM_INDEX.md) for the full cross-region traceability matrix.
+> **POA&M:** 23 open items (POAM-001 through POAM-023). See [`docs/POAM.md`](../compliance/cross-region/POAM.md) and [`docs/POAM_INDEX.md`](../compliance/cross-region/POAM_INDEX.md) for the full cross-region traceability matrix.

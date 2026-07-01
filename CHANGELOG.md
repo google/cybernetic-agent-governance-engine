@@ -2,9 +2,9 @@
 
 All notable changes to the Cybernetic Governance Engine (CAGE) are documented in this file.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v0.1.0.html).
 
-> **Change record authority:** Per `.clinerules` §8.5 and `docs/CHANGE_MANAGEMENT_PROCESS.md`, every Cat-N (Normal) and Cat-M (Major) change must be recorded here before the associated tag is pushed. This file is referenced by the `gh release create` runbook step in `docs/V2_RELEASE_RUNBOOK.md` §6.9.
+> **Change record authority:** Per `.clinerules` §8.5 and `docs/CHANGE_MANAGEMENT_PROCESS.md`, every Cat-N (Normal) and Cat-M (Major) change must be recorded here before the associated tag is pushed. This file is referenced by the `gh release create` runbook step in `docs/RELEASE_RUNBOOK.md` §6.9.
 
 ---
 
@@ -61,17 +61,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ### Changed — Documentation Audit and Consistency Fixes (Cat-N, `f13ab2b`, Refs POAM-024)
 
-- **`docs(docs): fix critical inconsistencies in v2.0.0 release docs`** (`9eacea4`) — Release plan, runbook, roadmap, and POAM index corrected for v2.0.0 state.
+- **`docs(docs): fix critical inconsistencies in v0.1.0 release docs`** (`9eacea4`) — Release plan, runbook, roadmap, and POAM index corrected for v0.1.0 state.
 - **`docs(compliance): fix compliance artifact inconsistencies`** (`deedaeb`) — POAM, SSP outline, SAR, PIA, risk assessment, ISCM strategy, authorization boundary, FIPS 199 categorization, and threshold traceability matrix updated for consistency.
 - **`docs: update root, deployment, infra, and technical-report docs`** (`fa781a9`) — README, README_GOVERNANCE, ARCHITECTURE, deploy_all.sh, deployment README, namespace guide, infra README/QUICK_START/IMPLEMENTATION_STATUS, and all technical-report chapters updated.
 - **`docs: fix remaining docs inconsistencies; defer staging posture (POAM-024)`** (`9373ef4`) — Remaining cross-document inconsistencies resolved. Staging compliance posture verification deferred and tracked as POAM-024.
-- **`docs/SECURITY_AUDIT_REPORT.md`** — C-04 finding reclassified from "No authentication" to "Incomplete authentication coverage". Release decision header added: GO — STABLE RELEASE APPROVED (v2.0.0, 2026-06-08).
+- **`docs/SECURITY_AUDIT_REPORT.md`** — C-04 finding reclassified from "No authentication" to "Incomplete authentication coverage". Release decision header added: GO — STABLE RELEASE APPROVED (v0.1.0, 2026-06-08).
 
 ---
 
-## [2.0.0-original] — 2026-06-08
+## [0.1.0-original] — 2026-06-08
 
-> Original gate verification commit: `8352708`. Preserved here for audit trail. The `v2.0.0` tag was re-pointed to the release boundary commit on 2026-06-14 to incorporate security hardening (C-01–C-07, H-08–H-16, M-01–M-24). No downstream system had consumed `v2.0.0` prior to re-tagging.
+> Original gate verification commit: `8352708`. Preserved here for audit trail. The `v0.1.0` tag was re-pointed to the release boundary commit on 2026-06-14 to incorporate security hardening (C-01–C-07, H-08–H-16, M-01–M-24). No downstream system had consumed `v0.1.0` prior to re-tagging.
 
 > Stable release. All P0/P1 blockers resolved (Sprint 1 + Sprint 2). Track C (seal enforcement) and Track D (compliance validation) gates complete. All universal Lula assertions PASS. Trivy scan risk-accepted (POAM-023). Token Quota Proxy, PII Sanitizer, and UCA Logger active in production.
 
@@ -112,7 +112,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ### Docs
 
-- docs: update markdown files to reflect v2.0.0-rc.3 state — corrected stale `deployment/terraform/` path references in `infra/ROLLBACK_PROCEDURES.md` and `infra/DEPLOYMENT_GUIDE.md` to active `infra/targets/gcp-gke/`; updated POAM-007 mTLS status from pending to closed (Linkerd mTLS implemented 2026-05-17) in `compliance/pia/PRIVACY_IMPACT_ASSESSMENT.md`; added historical notice to `plans/path-b-deployment-plan.md`; replaced stale "module not extracted yet" markers in `infra/targets/agnostic/README.md` with accurate module completion status.
+- docs: update markdown files to reflect v0.1.0-rc.3 state — corrected stale `deployment/terraform/` path references in `infra/ROLLBACK_PROCEDURES.md` and `infra/DEPLOYMENT_GUIDE.md` to active `infra/targets/gcp-gke/`; updated POAM-007 mTLS status from pending to closed (Linkerd mTLS implemented 2026-05-17) in `compliance/pia/PRIVACY_IMPACT_ASSESSMENT.md`; added historical notice to `plans/path-b-deployment-plan.md`; replaced stale "module not extracted yet" markers in `infra/targets/agnostic/README.md` with accurate module completion status.
 
 ### Track C & D — Seal Enforcement + Compliance Validation — [CR-2026-TQP-001] (Cat-N, 2026-06-08)
 
@@ -159,7 +159,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ### Post-Release CI & Infra Fixes (Cat-S, 2026-06-08 – 2026-06-09)
 
-> These fixes were discovered during CI execution after the local release gate verification at `7d5990c`. They are included in the v2.0.0 stable tag (moved to `8ce3cae`) because: (a) the STPA freshness CI gate and security scan were provably failing at the original tag commit; (b) the IAM bindings are deployment prerequisites without which Cloud Build cannot push images; (c) the tag had never been pushed to a public remote, making recreation safe. No application logic was changed.
+> These fixes were discovered during CI execution after the local release gate verification at `7d5990c`. They are included in the v0.1.0 stable tag (moved to `8ce3cae`) because: (a) the STPA freshness CI gate and security scan were provably failing at the original tag commit; (b) the IAM bindings are deployment prerequisites without which Cloud Build cannot push images; (c) the tag had never been pushed to a public remote, making recreation safe. No application logic was changed.
 >
 > Commits: `d3408a8`, `46a908d` (PR #9), `030cf88` (PR #10), `51c5df2` (PR #11), `8ce3cae`.
 
@@ -180,7 +180,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 | Version | Date | Test Results | Key Theme |
 |---------|------|--------------|-----------|
 | [Unreleased] | — | — | Post-stable backlog |
-| [2.0.0] | 2026-06-14 | 796 passed, 0 failed, 148 skipped | Stable release: Token Quota Proxy, PII Sanitizer, UCA Logger, CTRL_TQP_007, gateway CVE remediation, seal enforcement, all universal Lula assertions PASS; Sprint 1–3 security hardening (C-01–C-07, H-08–H-16, M-01–M-24) |
+| [0.1.0] | 2026-06-14 | 796 passed, 0 failed, 148 skipped | Stable release: Token Quota Proxy, PII Sanitizer, UCA Logger, CTRL_TQP_007, gateway CVE remediation, seal enforcement, all universal Lula assertions PASS; Sprint 1–3 security hardening (C-01–C-07, H-08–H-16, M-01–M-24) |
 
 ---
 

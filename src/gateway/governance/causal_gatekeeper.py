@@ -35,9 +35,16 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
+import networkx as nx
 import numpy as np
 import pandas as pd
 from opentelemetry import trace
+
+# networkx ≥3.x renamed d_separated → d_separation.is_d_separator.
+# Patch the missing attribute so dowhy 0.12 can find it at runtime.
+if not hasattr(nx.algorithms, "d_separated"):
+    from networkx.algorithms.d_separation import is_d_separator as _is_d_separator
+    nx.algorithms.d_separated = _is_d_separator
 
 try:
     from dowhy import CausalModel as _CausalModel

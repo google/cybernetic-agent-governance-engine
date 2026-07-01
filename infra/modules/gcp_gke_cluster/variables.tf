@@ -64,6 +64,12 @@ variable "enable_private_master_endpoint" {
   default     = false
 }
 
+variable "enable_private_nodes" {
+  description = "Enable private nodes (no external IPs on node VMs). Required when org policy constraints/compute.vmExternalIpAccess is enforced. Nodes use Cloud NAT for egress. Independent of enable_nist_compliance."
+  type        = bool
+  default     = false
+}
+
 # ─── Network Configuration ───────────────────────────────────────────────────
 
 variable "network" {
