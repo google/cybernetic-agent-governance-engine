@@ -40,22 +40,6 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 | [`lula-validation-ai600-human-ai-config.yaml`](lula-validation-ai600-human-ai-config.yaml) | AC-5, AU-3, CA-7 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.5 Human-AI Configuration — asserts DEFER queue SLA ≤ 4h for CRITICAL escalations and HITL audit trail present (POAM AI600-005). |
 | [`lula-validation-ai600-cbrn.yaml`](lula-validation-ai600-cbrn.yaml) | SA-12, SR-3, SI-7 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.6 / §2.12 CBRN & Value Chain — asserts CBRN keyword list ≥ 10 terms enabled and NeMo CBRN rail deployed (POAM AI600-007). **Cat-M: requires AO pre-approval before activation.** |
 
-### EU_ECB Controls (EU AI Act / GDPR / DORA — EU_ECB only)
-
-| Validation File                                          | Control | Standard             | Region Scope | Status    | Description                                                        |
-| -------------------------------------------------------- | ------- | -------------------- | ------------ | --------- | ------------------------------------------------------------------ |
-| [`lula-validation-eu-ai-act-art9.yaml`](lula-validation-eu-ai-act-art9.yaml) | Art. 9 | EU AI Act | EU_ECB | 🔶 Stub | EU AI Act Art. 9 Risk Management System — asserts risk management system active, risk identification complete, residual risk accepted, and evidence not stale (POAM EU-AI-ACT-001). |
-| [`lula-validation-gdpr-art22.yaml`](lula-validation-gdpr-art22.yaml) | Art. 22 | GDPR | EU_ECB | 🔶 Stub | GDPR Art. 22 Human Oversight — asserts HITL active, consensus threshold ≤ EUR 7,500, human review SLA ≤ 24h, and data subject rights implemented (POAM EU-GDPR-001). |
-| [`lula-validation-dora-art10.yaml`](lula-validation-dora-art10.yaml) | Art. 10 | DORA | EU_ECB | 🔶 Stub | DORA Art. 10 ICT Audit Logging — asserts ICT audit logging active, log retention ≥ 5 years, incident classification active, and tamper-evident storage (POAM EU-DORA-001). |
-
-### APAC_MAS Controls (MAS FEAT / MAS Notice 655 / MAS TRM — APAC_MAS only)
-
-| Validation File                                          | Control | Standard             | Region Scope | Status    | Description                                                        |
-| -------------------------------------------------------- | ------- | -------------------- | ------------ | --------- | ------------------------------------------------------------------ |
-| [`lula-validation-mas-feat.yaml`](lula-validation-mas-feat.yaml) | FEAT F1/F2/E1/A1/T2 | MAS FEAT | APAC_MAS | 🔶 Stub | MAS FEAT Fairness Assessment — asserts FIA active, demographic parity gap ≤ 8%, accountability documented, transparency report ≤ 180 days (POAM APAC-MAS-FEAT-001). |
-| [`lula-validation-mas-notice655.yaml`](lula-validation-mas-notice655.yaml) | §4.3, §5.1 | MAS Notice 655 | APAC_MAS | 🔶 Stub | MAS Notice 655 Audit Logging — asserts audit logging active, log retention ≥ 5 years, data residency in asia-southeast1, and TRM framework documented (POAM APAC-MAS-N655-001). |
-| [`lula-validation-mas-trm-s6.yaml`](lula-validation-mas-trm-s6.yaml) | §6.3, §4.2 | MAS TRM | APAC_MAS | 🔶 Stub | MAS TRM §6.3 AI Controls — asserts AI governance framework documented, confidence threshold ≥ 0.96, HITL active, model monitoring active, and data residency in asia-southeast1 (POAM APAC-MAS-TRM-001). |
-
 **Legend:**
 
 - ✅ **Active** — Validation is production-ready and enabled in the Lula CronJob
@@ -70,17 +54,11 @@ The active/stub split is **intentional and aligned with the posture architecture
 - **1 Active (US_FED scope):** SC-4 fiscal limits — production-ready for US Federal deployments
 - **1 Stub (ALL scope):** CSA AARM vectors — universal but requires cluster configuration. **Note:** This validation is listed as `Status: 🔶 Stub` and counted as 1 stub (ALL scope). It is NOT counted as an active validation for release gate purposes until real assertions replace the stub. See CA-05 remediation note below.
 - **10 Stub (US_FED scope):** NIST SP 800-53 controls — US Federal only; require cluster-specific namespace/resource configuration before activation
-- **5 Stub (US_FED scope):** NIST AI 600-1 controls — added in Phase 0 of the AI 600-1 implementation plan; require Langfuse metric availability and cluster-specific configuration before activation. All five files carry `cage.region: US_FED` machine-readable metadata annotations (CA-02 remediation).
-- **3 Stub (EU_ECB scope):** EU AI Act / GDPR / DORA controls — added in PR #4 (CA-03 remediation); require compliance-bridge EU endpoint configuration before activation
-- **3 Stub (APAC_MAS scope):** MAS FEAT / MAS Notice 655 / MAS TRM controls — added in PR #4 (CA-03 remediation); require compliance-bridge APAC endpoint configuration before activation
-
-> **CA-05 Remediation Note:** The `lula-validation-aarm-vectors.yaml` file is a `🔶 Stub` (always returns `true`). It is **not** counted as an active validation in the posture architecture alignment above. The previous README incorrectly listed it as both "Stub" and "1 Active (ALL scope)" simultaneously. This has been corrected: the AARM validation is a stub and is excluded from the active count and from the release gate list until real assertions replace the stub per the POAM.
+- **5 Stub (US_FED scope):** NIST AI 600-1 controls — added in Phase 0 of the AI 600-1 implementation plan (branch `feat/CAGE-AI600-ai600-1-implementation`, 2026-06-15); require Langfuse metric availability and cluster-specific configuration before activation
 
 The 10 US_FED NIST SP 800-53 stubs represent an **implementation gap** tracked as an open POAM item: activating all 10 would raise NIST SP 800-53 Lula coverage from 1/11 to 11/11 controls, directly supporting the US_FED release gate requirement (F-01 in [`docs/PRODUCTION_READINESS_REPORT.md`](../../docs/PRODUCTION_READINESS_REPORT.md)). The CSA AARM stub (1 manifest, ALL scope) is a separate gap affecting all regions.
 
 The 5 US_FED NIST AI 600-1 stubs are **scaffolding stubs** created as part of Phase 0 of [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](../../docs/AI_600_1_IMPLEMENTATION_PLAN.md). They will be hardened to full assertions in Phase 3 §7.5 (Weeks 16–52). The CBRN stub (`lula-validation-ai600-cbrn.yaml`) is a **Cat-M change** requiring AO pre-approval before cluster activation per [`docs/CHANGE_MANAGEMENT_PROCESS.md`](../../docs/CHANGE_MANAGEMENT_PROCESS.md) §8.4.
-
-The 6 new EU_ECB and APAC_MAS stubs (3 each) were introduced in PR #4 to satisfy the CA-03 finding from [`docs/JURISDICTIONAL_SEPARATION_ANALYSIS.md`](../../docs/JURISDICTIONAL_SEPARATION_ANALYSIS.md). They require compliance-bridge endpoint configuration (`/v1/compliance/eu-ai-act/art9`, `/v1/compliance/gdpr/art22`, `/v1/compliance/dora/art10`, `/v1/compliance/mas/feat`, `/v1/compliance/mas/notice655`, `/v1/compliance/mas/trm-s6`) before activation.
 
 ---
 
