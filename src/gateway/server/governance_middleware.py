@@ -64,6 +64,21 @@ _ENVIRONMENT: str = (
     os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
 ).lower()
 
+_IS_PRODUCTION: bool = _ENVIRONMENT not in ("development", "test", "dev", "ci")
+
+# CAGE-SEC-001: CAGE_SEAL_ENFORCEMENT=log is prohibited in production.
+# In log mode, requests with invalid routing seals are allowed through with only
+# a warning — this creates a bypass vector equivalent to disabling seal enforcement.
+# Mirror of the CBF_FAIL_OPEN guard in symbolic_governor.py (No-Direct-Bind §3).
+if _SEAL_ENFORCEMENT == "log" and _IS_PRODUCTION:
+    raise RuntimeError(
+        f"CAGE STARTUP FAILURE (CAGE-SEC-001): CAGE_SEAL_ENFORCEMENT=log is set in "
+        f"environment '{_ENVIRONMENT}'. Log mode allows requests with invalid routing "
+        f"seals to pass through — this is a governance bypass vector equivalent to "
+        f"disabling seal enforcement. Set CAGE_SEAL_ENFORCEMENT=enforce (the default) "
+        f"or set CAGE_ENV=development to bypass (not for production use)."
+    )
+
 
 def _is_dev_environment() -> bool:
     """M-15: Secondary check using K8s namespace to prevent CAGE_ENV spoofing.

@@ -103,6 +103,40 @@ class GovernanceError(Exception):
 
 
 # ---------------------------------------------------------------------------
+# FRIA Confidence-Starvation Boundary — three-zone enforcement thresholds
+# ---------------------------------------------------------------------------
+# These constants define the three enforcement zones for the adaptive FRIA
+# (Fundamental Rights Impact Assessment) tier (Tier 7 of the governance
+# pipeline).  They are read at module load time and may be overridden via
+# environment variables for staged rollouts or regional tuning.
+#
+# Zone semantics (CAGE v0.1.0 architectural decision — see ontology.py UCA-7):
+#
+#   FRIA_ZONE_ALLOW  (confidence ≥ FRIA_ZONE_ALLOW):
+#     Autonomous clearance.  The external normative provider is contacted
+#     asynchronously (fire-and-forget) — the trade is not blocked while
+#     waiting for the FRIA attestation.  OPA system_authz.rego enforces
+#     this boundary via the ALLOW path.
+#
+#   FRIA_ZONE_DEFER  (FRIA_ZONE_DEFER ≤ confidence < FRIA_ZONE_ALLOW):
+#     Synchronous blocking gate.  The external normative provider must
+#     return before the trade proceeds.  Maps to MANUAL_REVIEW in OPA.
+#     Human sign-off is required.
+#
+#   DENY zone        (confidence < FRIA_ZONE_DEFER):
+#     Hard abort.  The external normative provider is never contacted.
+#     The trade is blocked immediately.  Maps to DEFER in OPA (route to
+#     DeferQueue for automated data-hydration, not human triage).
+#
+# AARM mapping: CSA AARM-V7 "Context Window Overflow"
+# ISO 42001 mapping: A.8.4 (AI System Operation Controls)
+# Implementation: src/gateway/governance/normative_provider.py,
+#                 src/gateway/governance/defer_queue.py
+FRIA_ZONE_ALLOW: float = float(os.getenv("FRIA_ZONE_ALLOW", "0.95"))
+FRIA_ZONE_DEFER: float = float(os.getenv("FRIA_ZONE_DEFER", "0.70"))
+
+
+# ---------------------------------------------------------------------------
 # SymbolicGovernor
 # ---------------------------------------------------------------------------
 
@@ -481,11 +515,12 @@ class SymbolicGovernor:
         # 6b. Adaptive FRIA Enforcement (External Normative Provider)
         # When CAGE_NORMATIVE_PROVIDER != "static", the enforcement semantic
         # is dynamically determined by the consensus confidence score:
-        #   Score ≥ 0.95 → ALLOW → async attestation (fire-and-forget)
-        #   0.70 ≤ Score < 0.95 → DEFER → synchronous blocking gate
-        #   Score < 0.70 → DENY → hard abort, no external call
+        #   Score ≥ FRIA_ZONE_ALLOW (default 0.95) → async attestation (fire-and-forget)
+        #   FRIA_ZONE_DEFER ≤ Score < FRIA_ZONE_ALLOW → synchronous blocking gate
+        #   Score < FRIA_ZONE_DEFER (default 0.70) → hard abort, no external call
         # Positioned AFTER all local tiers — if local governance already
         # DENY'd, the external provider is never contacted.
+        # Override via env: FRIA_ZONE_ALLOW, FRIA_ZONE_DEFER (module-level constants).
         _normative_provider_name = os.getenv("CAGE_NORMATIVE_PROVIDER", "static")
         if tool_name == "execute_trade" and _normative_provider_name != "static" and not violations:
             try:

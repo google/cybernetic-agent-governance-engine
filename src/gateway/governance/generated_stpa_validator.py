@@ -125,13 +125,54 @@ class GeneratedSTPAValidator:
             return f"STPA Violation UCA-5: Evaluation error — failing closed ({exc})."
 
     def _check_uca_6(self, action_name: str, params: dict) -> str | None:
-        """UCA-6: Agent submits market order exceeding allowable fraction of daily volume."""
+        """UCA-6: Agent submits market order exceeding allowable fraction of daily volume.
+
+        Condition: order_size > uca6_max_order_volume_fraction × daily_vol
+
+        Both ``order_size`` and ``daily_vol`` must be present in *params*.
+        If either is missing the check fails closed (returns a violation string)
+        so that an incomplete payload cannot silently bypass the slippage guard.
+
+        Threshold source: THRESHOLDS.stpa.uca6_max_order_volume_fraction
+        (config/governance_thresholds.json → stpa.uca6_max_order_volume_fraction)
+        Ontology reference: UCA-6 / H-Slippage: Liquidity Risk
+        """
         try:
             if action_name != "execute_trade":
                 return None
-            # Composite condition: order_size > threshold_ref(stpa.uca6_max_order_volume_fraction) * daily_vol
-            # Implement custom logic here.
-            pass
+
+            fraction = THRESHOLDS.stpa.uca6_max_order_volume_fraction
+
+            order_size = params.get("order_size")
+            daily_vol = params.get("daily_vol")
+
+            if order_size is None:
+                logger.warning("UCA-6: missing param `order_size` — failing closed.")
+                return "STPA Violation UCA-6: Missing required param `order_size`."
+            if daily_vol is None:
+                logger.warning("UCA-6: missing param `daily_vol` — failing closed.")
+                return "STPA Violation UCA-6: Missing required param `daily_vol`."
+
+            order_size_f = float(order_size)
+            daily_vol_f = float(daily_vol)
+
+            if daily_vol_f <= 0:
+                logger.warning(
+                    "UCA-6: `daily_vol` is non-positive (%.4f) — failing closed.", daily_vol_f
+                )
+                return (
+                    f"STPA Violation UCA-6: `daily_vol` must be positive "
+                    f"(got {daily_vol_f:.4f})."
+                )
+
+            limit = fraction * daily_vol_f
+            if order_size_f > limit:
+                return (
+                    f"STPA Violation UCA-6: Agent submits market order exceeding allowable "
+                    f"fraction of daily volume. "
+                    f"(order_size={order_size_f:.4f} > {fraction} × daily_vol={daily_vol_f:.4f} "
+                    f"= {limit:.4f})"
+                )
             return None
         except Exception as exc:
             logger.error("Error evaluating UCA-6: %s", exc)
