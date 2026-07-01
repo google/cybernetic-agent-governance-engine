@@ -92,6 +92,23 @@ from urllib3.util.retry import Retry
 pytestmark = pytest.mark.integration
 
 # ---------------------------------------------------------------------------
+# US_FED region skip guard
+# ---------------------------------------------------------------------------
+# Tests that assert FedRAMP / NIST SP 800-53 / AI 600-1 specific control IDs
+# (e.g. "fedramp", "SC-7", "SA-11") are only meaningful for US_FED deployments.
+# EU_ECB and APAC_MAS postures use different framework mappings and must not
+# be required to satisfy US_FED jurisdictional assertions.
+
+_REGION = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
+_SKIP_US_FED = pytest.mark.skipif(
+    _REGION not in ("US_FED", ""),
+    reason=(
+        f"US_FED-specific framework filter tests skipped for region {_REGION!r}. "
+        "FedRAMP/NIST SP 800-53/AI 600-1 assertions apply to US_FED only."
+    ),
+)
+
+# ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
@@ -301,6 +318,7 @@ class TestHealthAndDiscovery:
 # Group 2: Framework filter
 # ---------------------------------------------------------------------------
 
+@_SKIP_US_FED
 class TestFrameworkFilter:
     @pytest.mark.parametrize("framework,expected_subset", [
         # eu_ai_act is EU_ECB-only; with CAGE_DEPLOYMENT_REGION=US_FED no EU controls
@@ -757,7 +775,7 @@ _EXPECTED_ROUTES: list[tuple[str, str, str]] = [
     ("/v1/oscal/assessment-results",     "get",  "compliance"),
     ("/v1/prompts/{name}",               "get",  "prompts"),
     ("/v1/events/stream",                "get",  "events"),
-    # CAGE v2.0.0 — AARM primitives
+    # CAGE v0.1.0 — AARM primitives
     ("/v1/aarm/conformance-report",      "get",  "compliance"),
     ("/v1/defer/pending",                "get",  "governance"),
     ("/v1/defer/{defer_id}/inject",      "post", "governance"),
@@ -1179,7 +1197,7 @@ class TestSlaAndEvalDataset:
 
 
 # ---------------------------------------------------------------------------
-# Group 15: Context Accumulator chain fields (CAGE v2.0.0)
+# Group 15: Context Accumulator chain fields (CAGE v0.1.0)
 # Feature: SHA-256 hash-chained Context Accumulator embedded in audit pipeline.
 # Every /v1/audit/ingest response must include chain_root, chain_length, and
 # chain_integrity_valid. chain_root is a 64-hex-char SHA-256 digest.
@@ -1190,7 +1208,7 @@ class TestContextAccumulatorChain:
     """
     Gate: Context Accumulator chain metadata returned on every audit response.
 
-    Verifies that the CAGE v2.0.0 SHA-256 hash-chaining is operational on the
+    Verifies that the CAGE v0.1.0 SHA-256 hash-chaining is operational on the
     live GKE instance and that the chain is intact after each audit run.
     """
 
@@ -1202,7 +1220,7 @@ class TestContextAccumulatorChain:
         assert "chain_root" in data, (
             "audit ingest response missing 'chain_root' — "
             "ContextAccumulator not wired into audit_workflow.py Step 2b. "
-            "Ensure the v2.0.0 image is deployed."
+            "Ensure the v0.1.0 image is deployed."
         )
         chain_root = data["chain_root"]
         assert chain_root is not None, "chain_root must not be None for a completed audit"
@@ -1241,7 +1259,7 @@ class TestContextAccumulatorChain:
         chain_len = data.get("chain_length")
         findings  = data.get("findings_count")
         if chain_len is None or findings is None:
-            pytest.skip("chain_length or findings_count missing — v2.0.0 image may not be deployed")
+            pytest.skip("chain_length or findings_count missing — v0.1.0 image may not be deployed")
         assert chain_len == findings + 1, (
             f"chain_length ({chain_len}) != findings_count+1 ({findings+1}). "
             "Every OscalFinding must be appended, plus one CHAIN_SEALED node."
@@ -1263,7 +1281,7 @@ class TestContextAccumulatorChain:
 
 
 # ---------------------------------------------------------------------------
-# Group 16: AARM Conformance Report endpoint (CAGE v2.0.0)
+# Group 16: AARM Conformance Report endpoint (CAGE v0.1.0)
 # Feature: GET /v1/aarm/conformance-report
 # Returns machine-readable AARM Conformance Report Card (11 threat vectors).
 # Per-vector verdicts: NEUTRALIZED | PARTIAL | EXPOSED.
@@ -1283,7 +1301,7 @@ class TestAarmConformanceReport:
         r = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90)
         assert r.status_code == 200, (
             f"/v1/aarm/conformance-report returned {r.status_code}. "
-            "Ensure CAGE v2.0.0 image is deployed. "
+            "Ensure CAGE v0.1.0 image is deployed. "
             f"Body: {r.text[:300]}"
         )
 
@@ -1392,7 +1410,7 @@ class TestAarmConformanceReport:
 
 
 # ---------------------------------------------------------------------------
-# Group 17: DEFER queue endpoints (CAGE v2.0.0)
+# Group 17: DEFER queue endpoints (CAGE v0.1.0)
 # Feature: GET /v1/defer/pending, POST /v1/defer/{id}/inject, /escalate
 # Redis db=1, noeviction — isolated DeferQueue for AARM-V7 neutralization.
 # ---------------------------------------------------------------------------
@@ -1501,13 +1519,13 @@ class TestDeferQueueEndpoints:
         """
         # indirect test: if /v1/events/stream is reachable, the event bus
         # is operational. We verify the new types don't crash by confirming
-        # the service version is 2.0.0 (set when AARM routes were added).
+        # the service version is 0.1.0 (set when AARM routes were added).
         data = session.get(f"{BASE_URL}/health", timeout=10).json()
         version = data.get("version", "0.0.0")
         major, minor, _ = (int(x) for x in version.split("."))
-        assert (major, minor) >= (2, 0), (
-            f"Expected compliance-bridge version >= 2.0.0 (AARM primitives), "
-            f"got {version}. The pre-v2.0.0 image may still be deployed. "
+        assert (major, minor) >= (0, 1), (
+            f"Expected compliance-bridge version >= 0.1.0 (AARM primitives), "
+            f"got {version}. The pre-v0.1.0 image may still be deployed. "
             "Re-run: gcloud builds submit --config=cloudbuild.compliance.yaml ."
         )
 

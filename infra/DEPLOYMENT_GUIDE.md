@@ -158,7 +158,7 @@ enable_binary_authorization = true
 
 ### Regional Deployment Configurations
 
-CAGE v2.0.0 implements a **boot contract** requiring `CAGE_DEPLOYMENT_REGION` to be explicitly declared in every container manifest. The `ControlRegistry` singleton reads this variable at first instantiation and loads the corresponding `config/compliance/*_BASELINE.json` profile. **Omitting this variable causes a silent fallback to `US_FED`**, which is unacceptable for EU or APAC production deployments.
+CAGE v0.1.0 implements a **boot contract** requiring `CAGE_DEPLOYMENT_REGION` to be explicitly declared in every container manifest. The `ControlRegistry` singleton reads this variable at first instantiation and loads the corresponding `config/compliance/*_BASELINE.json` profile. **Omitting this variable causes a silent fallback to `US_FED`**, which is unacceptable for EU or APAC production deployments.
 
 **Supported Values:**
 

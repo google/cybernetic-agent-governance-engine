@@ -18,6 +18,17 @@ Mirror HuggingFace models to an S3-compatible object store (MinIO, AWS S3, etc.)
 Replaces the former gsutil-based upload with boto3, making this script
 compatible with any S3-compatible endpoint (MinIO, AWS S3, Wasabi, etc.).
 
+AI600-007 / SA-12 / SR-3 / SI-7 — Model Weight Integrity Verification:
+  After each model download, SHA-256 digests of selected anchor files
+  (config.json, tokenizer.json) are computed and verified against the signed
+  manifest in ``config/model_hashes.json``.
+
+  Set ``MODEL_WEIGHT_VERIFICATION_STRICT=true`` to abort on mismatch (default:
+  warn-only to avoid blocking critical infrastructure bootstraps).
+
+  A verification result OTel span is emitted with attribute:
+    supply_chain.model_integrity_verified=true/false
+
 Configuration via environment variables:
   S3_BUCKET_NAME      — target bucket (required)
   S3_ENDPOINT_URL     — custom endpoint, e.g. http://minio:9000 (optional for AWS)
@@ -28,8 +39,12 @@ Configuration via environment variables:
   MODEL_FAST          — HuggingFace model ID for the fast/governance model
   MODEL_REASONING     — HuggingFace model ID for the reasoning model
   HUGGING_FACE_HUB_TOKEN — token for gated model access (optional)
+  MODEL_WEIGHT_VERIFICATION_STRICT — "true" to abort on hash mismatch (default: warn)
 """
 
+import hashlib
+import json
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -41,11 +56,27 @@ from huggingface_hub import snapshot_download
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 # Configuration — S3_BUCKET_NAME is required; no placeholder default permitted.
 BUCKET_NAME = os.environ["S3_BUCKET_NAME"]
 ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL") or None
 REGION_NAME = os.environ.get("S3_REGION_NAME", "us-east-1")
 PATH_STYLE = os.environ.get("S3_PATH_STYLE", "").lower() in ("1", "true", "yes")
+
+# AI600-007: Model weight integrity verification mode.
+# STRICT=true → abort on hash mismatch; STRICT=false (default) → warn and continue.
+_VERIFICATION_STRICT = os.environ.get("MODEL_WEIGHT_VERIFICATION_STRICT", "").lower() == "true"
+
+# Canonical path to the signed model hash manifest (relative to repo root).
+_MANIFEST_PATH = Path(__file__).parent.parent.parent / "config" / "model_hashes.json"
+
+# Anchor filenames whose hashes are checked for integrity.  We verify config.json
+# and tokenizer.json as lightweight integrity anchors — these files ship with every
+# HuggingFace model snapshot and are small enough to hash locally.  Weight shard
+# files (*.safetensors, *.bin) are too large for a static manifest; a future Phase 3
+# improvement will add cosign/sigstore attestation for those files.
+_INTEGRITY_ANCHORS = frozenset(["config.json", "tokenizer.json", "tokenizer_config.json"])
 
 
 def get_base_model_name(model_id: str) -> str:
@@ -80,6 +111,136 @@ def _get_s3_client() -> boto3.client:
         region_name=REGION_NAME,
         config=config,
     )
+
+
+def _sha256_file(path: Path) -> str:
+    """Compute the SHA-256 hex digest of a file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _load_hash_manifest() -> dict:
+    """Load the signed model hash manifest from config/model_hashes.json.
+
+    Returns an empty dict if the manifest file does not exist, logging a
+    warning (non-fatal in non-strict mode).
+    """
+    if not _MANIFEST_PATH.exists():
+        logger.warning(
+            "[AI600-007] Model hash manifest not found at %s — "
+            "integrity verification will be skipped for all models. "
+            "Ensure config/model_hashes.json is committed to the repository.",
+            _MANIFEST_PATH,
+        )
+        return {}
+    try:
+        with open(_MANIFEST_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        logger.error("[AI600-007] Failed to parse model hash manifest: %s", exc)
+        return {}
+
+
+def verify_model_integrity(local_model_dir: Path, model_id: str) -> bool:
+    """Verify the integrity of downloaded model anchor files against the signed manifest.
+
+    Computes SHA-256 digests of anchor files (config.json, tokenizer.json,
+    tokenizer_config.json) in the downloaded model directory and compares
+    them to the expected digests in config/model_hashes.json.
+
+    Args:
+        local_model_dir: Path to the local model snapshot directory.
+        model_id:        HuggingFace model ID (e.g. "deepseek-ai/DeepSeek-R1-Distill-Llama-8B").
+
+    Returns:
+        ``True`` if all available anchor files pass verification or no manifest
+        entries exist for this model (non-blocking default).
+        ``False`` if any anchor file hash does not match the manifest.
+    """
+    manifest = _load_hash_manifest()
+    model_hashes = manifest.get(model_id, {})
+
+    if not model_hashes:
+        logger.warning(
+            "[AI600-007] No hash manifest entries for model '%s' — "
+            "skipping integrity verification. Add entries to config/model_hashes.json.",
+            model_id,
+        )
+        # Emit OTel span attribute if available (best-effort — OTel may not be configured)
+        _emit_integrity_span(model_id, verified=False, reason="no_manifest_entries")
+        return True  # Non-blocking: treat as unverified rather than failing
+
+    all_passed = True
+    verified_count = 0
+    failed_files: list[str] = []
+
+    for anchor_filename in _INTEGRITY_ANCHORS:
+        anchor_path = local_model_dir / anchor_filename
+        if not anchor_path.exists():
+            continue  # Anchor file not present in this model snapshot — skip
+
+        expected_hash = model_hashes.get(anchor_filename)
+        if not expected_hash:
+            logger.debug(
+                "[AI600-007] No manifest entry for %s/%s — skipping.",
+                model_id, anchor_filename,
+            )
+            continue
+
+        actual_hash = _sha256_file(anchor_path)
+        if actual_hash == expected_hash:
+            logger.info(
+                "[AI600-007] ✅ %s/%s SHA-256 verified: %s",
+                model_id, anchor_filename, actual_hash[:16] + "…",
+            )
+            verified_count += 1
+        else:
+            logger.error(
+                "[AI600-007] ❌ HASH MISMATCH: %s/%s\n"
+                "  Expected: %s\n"
+                "  Actual:   %s\n"
+                "  This may indicate a supply chain attack or corrupted download.",
+                model_id, anchor_filename, expected_hash, actual_hash,
+            )
+            all_passed = False
+            failed_files.append(anchor_filename)
+
+    if all_passed:
+        logger.info(
+            "[AI600-007] ✅ Model integrity verified: model=%s files_checked=%d",
+            model_id, verified_count,
+        )
+        _emit_integrity_span(model_id, verified=True, reason=f"anchors_verified:{verified_count}")
+    else:
+        logger.error(
+            "[AI600-007] ❌ Model integrity FAILED: model=%s failed_files=%s",
+            model_id, ", ".join(failed_files),
+        )
+        _emit_integrity_span(model_id, verified=False, reason=f"hash_mismatch:{','.join(failed_files)}")
+
+    return all_passed
+
+
+def _emit_integrity_span(model_id: str, verified: bool, reason: str) -> None:
+    """Emit an OTel span with supply_chain.model_integrity_verified attribute.
+
+    Best-effort — if OpenTelemetry is not configured, the span is a no-op.
+    AI600-007: SA-12 / SR-3 / SI-7 supply chain integrity evidence.
+    """
+    try:
+        from opentelemetry import trace  # noqa: PLC0415
+
+        tracer = trace.get_tracer("deployment.mirror_models")
+        with tracer.start_as_current_span("supply_chain.model_integrity_check") as span:
+            span.set_attribute("supply_chain.model_id", model_id)
+            span.set_attribute("supply_chain.model_integrity_verified", verified)
+            span.set_attribute("supply_chain.integrity_reason", reason)
+            span.set_attribute("supply_chain.poam_ref", "AI600-007")
+    except Exception:
+        pass  # OTel not configured — span is non-critical
 
 
 def upload_to_s3(local_path: Path, s3_prefix: str, s3_client: boto3.client) -> None:
@@ -131,6 +292,24 @@ def mirror_models() -> None:
             except Exception as exc:
                 print(f"❌ Download failed for {model_id}: {exc}")
                 continue
+
+            # AI600-007: SHA-256 integrity verification after download
+            # Verify anchor files (config.json, tokenizer.json) against signed manifest.
+            print(f"🔐 Verifying model integrity for {model_id}...")
+            integrity_ok = verify_model_integrity(local_model_dir, model_id)
+            if not integrity_ok:
+                if _VERIFICATION_STRICT:
+                    print(
+                        f"❌ [AI600-007] STRICT MODE: Aborting upload of {model_id} due to "
+                        "hash mismatch. Set MODEL_WEIGHT_VERIFICATION_STRICT=false to skip "
+                        "(not recommended)."
+                    )
+                    continue
+                else:
+                    print(
+                        f"⚠️ [AI600-007] Hash mismatch for {model_id} — proceeding with upload "
+                        "(warn-only mode). Set MODEL_WEIGHT_VERIFICATION_STRICT=true to abort."
+                    )
 
             try:
                 upload_to_s3(local_model_dir, model_id, s3)

@@ -1,6 +1,6 @@
 # CAGE Architecture — Cybernetic Governance Engine
 
-> **Architecture:** 10-node governance graph with integrated safety checks, STPA-compiled policy enforcement, LangGraph Saga WAL pattern, Zero-Trust Network cluster hardening (Z3N), DoWhy causal inference validation, Redis-backed multi-agent FiscalLimitGuard, and exhaustively verified NoDirectBind safety invariant (v2.0.0).
+> **Architecture:** 10-node governance graph with integrated safety checks, STPA-compiled policy enforcement, LangGraph Saga WAL pattern, Zero-Trust Network cluster hardening (Z3N), DoWhy causal inference validation, Redis-backed multi-agent FiscalLimitGuard, and exhaustively verified NoDirectBind safety invariant (v0.1.0).
 
 
 ---
@@ -128,7 +128,7 @@ Three KFP components:
 
 The pipeline is named "green-stack" because it operates as the "self-healing" layer of the governance stack — when the compliance bridge reports degraded safety rates, the pipeline automatically triggers NeMo Guardrails policy hot-reloading in-process without human intervention. This is the **cybernetic feedback** component of CAGE.
 
-**Current status:** Fully implemented and validated. The `POST /v1/refinement/trigger` endpoint enqueues a Kubeflow Pipelines (KFP) refinement run. A reactive `POST /v1/webhooks/langfuse` webhook receiver automatically triggers KFP runs when the safety score drops below the 0.95 threshold, utilizing a 5-minute cooldown gate (`REFINEMENT_COOLDOWN_SECONDS=300`) and a 10-sample minimum (`REFINEMENT_MIN_SAMPLES=10`) to prevent policy flapping during noisy bursts. The final step of the KFP pipeline calls the hot-reload `POST /v1/nemo/apply-refinement` endpoint on the backend to apply and reload new guardrails in-process without pod restarts. **v2.0.0 note:** All NeMo config refinements require explicit human approval via `POST /v1/nemo/propose-refinement` before the apply step executes — the autonomous hot-reload loop is human-gated.
+**Current status:** Fully implemented and validated. The `POST /v1/refinement/trigger` endpoint enqueues a Kubeflow Pipelines (KFP) refinement run. A reactive `POST /v1/webhooks/langfuse` webhook receiver automatically triggers KFP runs when the safety score drops below the 0.95 threshold, utilizing a 5-minute cooldown gate (`REFINEMENT_COOLDOWN_SECONDS=300`) and a 10-sample minimum (`REFINEMENT_MIN_SAMPLES=10`) to prevent policy flapping during noisy bursts. The final step of the KFP pipeline calls the hot-reload `POST /v1/nemo/apply-refinement` endpoint on the backend to apply and reload new guardrails in-process without pod restarts. **v0.1.0 note:** All NeMo config refinements require explicit human approval via `POST /v1/nemo/propose-refinement` before the apply step executes — the autonomous hot-reload loop is human-gated.
 
 ---
 
@@ -380,7 +380,7 @@ GKE Cluster (governance-stack namespace)
 
 ---
 
-For architectural decisions, see [`docs/DEPLOYMENT_DECISION_RECORD.md`](docs/DEPLOYMENT_DECISION_RECORD.md).
+For architectural decisions, see [`docs/DEPLOYMENT_DECISION_RECORD.md`](../operations/DEPLOYMENT_DECISION_RECORD.md).
 
 ---
 
@@ -403,4 +403,4 @@ Full engineering and compliance documentation for CAGE is maintained in the [Tec
 
 ---
 
-_Architecture current as of 2026-06-08. Canonical graph: 10 nodes including mandatory NeMo input/output rails. Governance tiers: **7** (SymbolicGovernor tiers 0–6) + FiscalLimitGuard pre-reservation + Token Quota Proxy (CTRL_TQP_007) + LangGraph Saga WAL. STPA compiler active: UCAs compiled from `config/stpa_control_structure.yaml`; LangGraph Saga target added (UCA-4 fully enforced via WAL + LIFO rollback + idempotent compensating nodes). Z3N: Linkerd + Cilium deployed. POAM-007 (IA-3), POAM-010 (RA-5), POAM-016 (SI-2), POAM-020 (CM-3), POAM-021 (SI-4) closed. POAM-023 (SI-2 CVE-2025-13462) opened 2026-06-08. POAM-011 (SC-8) and POAM-012 (SC-12) remain Open. Vendor integrations isolated in `src/integrations/{vendor}/` (NexArt, TrustLayers). Redis db=1 hardened with `noeviction` + Guaranteed QoS. Lula coverage: 15 validation manifests (4 Active, 11 Stub). FiscalLimitGuard: Redis WATCH/MULTI/EXEC atomic pre-reservation prevents multi-agent OPA limit collision. Token Quota Proxy: Redis Lua atomic step/token counters; fail-CLOSED; ISO 42001 A.4. NoDirectBind safety invariant machine-verified over 19 reachable states (v2.0.0). Test suite: **796 passing, 0 failed** (Track D — 2026-06-08). For architectural decisions, see [`docs/DEPLOYMENT_DECISION_RECORD.md`](docs/DEPLOYMENT_DECISION_RECORD.md)._
+_Architecture current as of 2026-06-08. Canonical graph: 10 nodes including mandatory NeMo input/output rails. Governance tiers: **7** (SymbolicGovernor tiers 0–6) + FiscalLimitGuard pre-reservation + Token Quota Proxy (CTRL_TQP_007) + LangGraph Saga WAL. STPA compiler active: UCAs compiled from `config/stpa_control_structure.yaml`; LangGraph Saga target added (UCA-4 fully enforced via WAL + LIFO rollback + idempotent compensating nodes). Z3N: Linkerd + Cilium deployed. POAM-007 (IA-3), POAM-010 (RA-5), POAM-016 (SI-2), POAM-020 (CM-3), POAM-021 (SI-4) closed. POAM-023 (SI-2 CVE-2025-13462) opened 2026-06-08. POAM-011 (SC-8) and POAM-012 (SC-12) remain Open. Vendor integrations isolated in `src/integrations/{vendor}/` (NexArt, TrustLayers). Redis db=1 hardened with `noeviction` + Guaranteed QoS. Lula coverage: 15 validation manifests (4 Active, 11 Stub). FiscalLimitGuard: Redis WATCH/MULTI/EXEC atomic pre-reservation prevents multi-agent OPA limit collision. Token Quota Proxy: Redis Lua atomic step/token counters; fail-CLOSED; ISO 42001 A.4. NoDirectBind safety invariant machine-verified over 19 reachable states (v0.1.0). Test suite: **796 passing, 0 failed** (Track D — 2026-06-08). For architectural decisions, see [`docs/DEPLOYMENT_DECISION_RECORD.md`](../operations/DEPLOYMENT_DECISION_RECORD.md)._

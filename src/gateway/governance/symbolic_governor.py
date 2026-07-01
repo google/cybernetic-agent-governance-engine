@@ -720,6 +720,7 @@ class SymbolicGovernor:
         self,
         action: str,
         params: Dict[str, Any],
+        policy_version_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Validate a structured tool execution payload — Unified Gateway path.
 
@@ -756,12 +757,21 @@ class SymbolicGovernor:
             span.set_attribute("langfuse.observation.name", "cage.validate_action")
             span.set_attribute(
                 "langfuse.observation.input",
-                json.dumps({"action": action, "params": params})[:2000],
+                json.dumps({"action": action, "params": params, "policy_version_id": policy_version_id})[:2000],
             )
 
             t0 = time.time()
 
             try:
+                # ── Version-Pinning Enforcement Layer ────────────────────────
+                if policy_version_id is not None:
+                    active_hash = ControlRegistry().active_hash
+                    if policy_version_id != active_hash:
+                        raise GovernanceError(
+                            f"Substrate Policy Drift Detected. Session pinned to version signature '{policy_version_id}', "
+                            f"but active runtime baseline has evolved to hash '{active_hash}'."
+                        )
+
                 # ── Full 7-tier governance pipeline ──────────────────────────
                 # _run_checks() executes: STPA → Confidence → CBF+OPA (parallel)
                 # → Fiscal Limit Pre-Reservation → Consensus → Causal → FRIA.

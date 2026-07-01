@@ -91,11 +91,19 @@ class GatewayClient:
             return choices[0].get("message", {}).get("content", "")
         return data.get("response", "")
 
+    async def get_policy_version(self, timeout: float = 10.0) -> str:
+        """Queries the Hybrid Gateway's discovery engine for the valid active baseline signature."""
+        client = await self._ensure_client()
+        response = await client.get("/governance/policy-version", timeout=timeout)
+        response.raise_for_status()
+        return response.json()["active_hash"]
+
     @side_effect_node(kind="api_call", external_system="gateway_api")
     async def validate_action(
         self,
         action: str,
         params: Dict[str, Any],
+        policy_version_id: Optional[str] = None,
         timeout: float = 60.0,
     ) -> Dict[str, Any]:
         """Submit a tool execution plan to the Gateway for governance validation.
@@ -119,12 +127,13 @@ class GatewayClient:
         parent-child relationship, making the audit trail unreadable.
 
         Args:
-            action:   Tool / policy action name (e.g. ``"execute_trade"``).
-            params:   Structured execution plan parameters dict.
-            timeout:  HTTP timeout in seconds (default 60s).  OPA cold-start
-                      can take up to 20s on the first evaluation after a pod
-                      rollout; 60s covers that with a safety margin.  Warm
-                      steady-state evaluations complete in 30–80ms.
+            action:            Tool / policy action name (e.g. ``"execute_trade"``).
+            params:            Structured execution plan parameters dict.
+            policy_version_id: Pinned baseline policy version signature hash (optional).
+            timeout:           HTTP timeout in seconds (default 60s).  OPA cold-start
+                               can take up to 20s on the first evaluation after a pod
+                               rollout; 60s covers that with a safety margin.  Warm
+                               steady-state evaluations complete in 30–80ms.
 
         Returns:
             Dict with keys:
@@ -147,13 +156,58 @@ class GatewayClient:
         headers: Dict[str, str] = {"Content-Type": "application/json"}
         otel_inject(headers)  # Injects W3C 'traceparent' from current span context
 
-        payload = {"action": action, "params": params}
+        payload = {
+            "action": action,
+            "params": params,
+            "policy_version_id": policy_version_id,
+        }
         response = await client.post(
             "/governance/validate-action",
             json=payload,
             headers=headers,
             timeout=timeout,
         )
+
+        if response.status_code == 403:
+            try:
+                result = response.json()
+                if "violations" in result and any("Substrate Policy Drift Detected" in v for v in result["violations"]):
+                    logger.warning("Substrate drift caught during session. Fetching updated baseline pin and replaying.")
+                    fresh_version_id = await self.get_policy_version(timeout=timeout)
+                    payload["policy_version_id"] = fresh_version_id
+                    
+                    retry_response = await client.post(
+                        "/governance/validate-action",
+                        json=payload,
+                        headers=headers,
+                        timeout=timeout,
+                    )
+                    if retry_response.status_code == 403:
+                        logger.error("Consecutive policy drift check failed. Cluster synchronization boundary out-of-bounds.")
+                    retry_response.raise_for_status()
+                    result = retry_response.json()
+                    
+                    verdict = result.get("verdict", "DENIED")
+                    if verdict == "DENIED":
+                        violations = result.get("violations", ["governance denied"])
+                        logger.warning(
+                            "🚫 validate_action DENIED by Gateway (after retry): action=%s violations=%s",
+                            action, violations,
+                        )
+                        raise PermissionError(
+                            f"Governance DENIED '{action}': {'; '.join(violations)}"
+                        )
+                    logger.info(
+                        "✅ validate_action APPROVED by Gateway (after retry): action=%s latency=%.1fms",
+                        action, result.get("latency_ms", 0),
+                    )
+                    return result
+            except PermissionError:
+                raise
+            except Exception as exc:
+                logger.error("Failed to recover from policy drift: %s", exc)
+                response.raise_for_status()
+
         response.raise_for_status()
         result: Dict[str, Any] = response.json()
 

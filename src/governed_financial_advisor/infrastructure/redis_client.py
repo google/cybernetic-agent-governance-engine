@@ -153,7 +153,7 @@ class AsyncRedisClient:
             )
             if self.use_tls:
                 pool_kwargs["ssl"] = True
-                cage_env = os.getenv("CAGE_ENV", "dev").lower()
+                cage_env = os.getenv("CAGE_ENV", "prod").lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
                 if cage_env == "dev":
                     # In dev mode, allow optional cert verification with a warning
                     pool_kwargs["ssl_cert_reqs"] = ssl.CERT_OPTIONAL

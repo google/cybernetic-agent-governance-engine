@@ -17,44 +17,38 @@
 #   - deployment/k8s/generated/gateway-deployment.yaml — OTLP endpoint config
 #   - src/gateway/server/governance_middleware.py — span emission source
 
-metadata:
-  annotations:
-    cage.region: US_FED
-    cage.compliance-posture: nist-sp800-53
-    cage.posture-note: "NIST SP 800-53 is a US Federal posture requirement. This validation is skipped for EU_ECB and APAC_MAS deployments."
+component-definition:
+  uuid: cf25a83a-cdbb-5eb4-a4dd-8a3812a4a76e
+  metadata:
+    title: CAGE Validation — AU12
+    last-modified: '2026-07-01T13:18:54Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: 'Auto-converted from standalone lula validation format.
 
-domain:
-  type: kubernetes
-  kubernetes-spec:
+      Region: US_FED. Posture: nist-sp800-53.
+
+      Notes: NIST SP 800-53 Rev 5 AU-12: Audit Record Generation. Verifies that Langfuse (the native OTLP audit record sink) is live and ready. Services ship traces directly to langfuse-web:3000/api/public/otel/v1/traces using OTEL_EXPORTER_OTLP_ENDPOINT — no intermediate OTel Collector is deployed. Each governance decision span includes the required AU-12 fields: iso42001.control, iso42001.verdict, user, and timestamp. Evidence: OTel spans from src/gateway/server/governance_middleware.py and LangGraph governance nodes ingested directly by Langfuse. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — AU-12 monitoring cadence.'
+  components:
+  - uuid: ce18ebc3-50f2-550a-9fbc-503d5114c06f
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: 257ab77e-1020-5595-a07b-a8ae59511c0d
+      source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
+      description: 'Control implementation for AU12. Region: US_FED. Posture: nist-sp800-53.'
+      implemented-requirements:
+      - uuid: 4405db85-a4ec-513f-bc34-161e9935bf04
+        control-id: au12
+        description: Automated lula validation for AU12.
+        links:
+        - href: '#610ee241-76a3-5f1f-b41d-613019559b15'
+          rel: lula
+  back-matter:
     resources:
-      - name: langfuse-web-deployment
-        resource: deployments
-        namespace: governance-stack
-
-provider:
-  type: opa
-  opa-spec:
-    rego: |
-      package lula
-
-      import future.keywords.if
-
-      # AU-12: Audit Record Generation
-      # Verifies the Langfuse web deployment is present and has at least 1
-      # ready replica, confirming the audit record sink is operational.
-      # Required audit fields emitted per span: iso42001.control, iso42001.verdict,
-      # user, timestamp — enforced by governance_middleware.py and LangGraph nodes.
-      validate if {
-        input["langfuse-web-deployment"].status.readyReplicas >= 1
-      }
-
-notes: >
-  NIST SP 800-53 Rev 5 AU-12: Audit Record Generation.
-  Verifies that Langfuse (the native OTLP audit record sink) is live and ready.
-  Services ship traces directly to langfuse-web:3000/api/public/otel/v1/traces
-  using OTEL_EXPORTER_OTLP_ENDPOINT — no intermediate OTel Collector is deployed.
-  Each governance decision span includes the required AU-12 fields:
-  iso42001.control, iso42001.verdict, user, and timestamp.
-  Evidence: OTel spans from src/gateway/server/governance_middleware.py and
-  LangGraph governance nodes ingested directly by Langfuse.
-  See: compliance/continuous-monitoring/ISCM_STRATEGY.md — AU-12 monitoring cadence.
+    - uuid: 610ee241-76a3-5f1f-b41d-613019559b15
+      title: Lula Validation — AU12
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: langfuse-web-deployment\n      resource: deployments\n      namespace: governance-stack\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# AU-12: Audit Record Generation\\n# Verifies the Langfuse web deployment is present and has at least 1\\n# ready replica, confirming the audit record sink is operational.\\n# Required audit fields emitted per span: iso42001.control, iso42001.verdict,\\n# user, timestamp — enforced by governance_middleware.py and LangGraph nodes.\\nvalidate if {\\n  input[\\\"langfuse-web-deployment\\\"].status.readyReplicas >= 1\\n}\\n\"\n"

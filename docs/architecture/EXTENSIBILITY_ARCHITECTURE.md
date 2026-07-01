@@ -5,7 +5,7 @@
 | **Classification** | PUBLIC                    |
 | **Date**           | 2026-06-03                |
 | **Version**        | 2.3.0                     |
-| **Status**         | Current State + Roadmap (v2.0.0-rc.2; GKE deployment verified 2026-06-03) |
+| **Status**         | Current State + Roadmap (v0.1.0-rc.2; GKE deployment verified 2026-06-03) |
 
 ---
 
@@ -25,7 +25,7 @@ This document describes both the **current implementation** (grounded in source 
 
 ## Part 1 — Current Implementation (Verified)
 
-The following capabilities are implemented, tested, and operational in the CAGE v2.0.0 codebase.
+The following capabilities are implemented, tested, and operational in the CAGE v0.1.0 codebase.
 
 ### 1.1 The Domain-Agnostic Kernel
 
@@ -93,7 +93,7 @@ The [`SymbolicGovernor`](../../../src/gateway/governance/symbolic_governor.py) o
 | 0    | STPA/UCA Validator         | Hazard analysis predicates from YAML control structure  | None            |
 | 1    | Agentic Confidence Check   | `confidence_score ≥ threshold`                          | None            |
 | 2    | Control Barrier Function   | `h(x) ≥ 0` (state-space boundary)                      | None            |
-| 3    | SLM Sidecar                | ~~Semantic similarity `≥ threshold`~~ **Deprecated** — bypassed via `slm_available=false` sentinel; Tier 3 is a no-op in v2.0.0 | None |
+| 3    | SLM Sidecar                | ~~Semantic similarity `≥ threshold`~~ **Deprecated** — bypassed via `slm_available=false` sentinel; Tier 3 is a no-op in v0.1.0 | None |
 | 4    | OPA Rego Policy            | Declarative policy rules (externalized)                 | None            |
 | 5    | Multi-Model Consensus      | Heterogeneous critic agreement                          | None            |
 | 6    | DoWhy Causal Gatekeeper    | Placebo refutation `p-value ≥ 0.05`                     | None            |
@@ -103,7 +103,7 @@ Every tier's decision boundary is parameterized through [`governance_thresholds.
 
 ### 1.5 Fail-Closed Posture
 
-The CBF engine defaults to `BLOCKED` when its state source (Redis) is unreachable. This is the `CBF_FAIL_OPEN=false` enforcement verified in the v2.0.0 integration test suite (136/136 passing against live GKE `cage-dev` cluster).
+The CBF engine defaults to `BLOCKED` when its state source (Redis) is unreachable. This is the `CBF_FAIL_OPEN=false` enforcement verified in the v0.1.0 integration test suite (136/136 passing against live GKE `cage-dev` cluster).
 
 The system will not permit an action it cannot independently verify as safe. This property is invariant across all domains.
 
@@ -154,7 +154,7 @@ The existing `ControlRegistry` JSON profile format generalizes naturally to non-
 ```jsonc
 // PROPOSED: config/compliance/PHARMA_GxP_21CFR11.json
 {
-  "_schema_version": "2.0.0",
+  "_schema_version": "0.1.0",
   "_region": "US_FDA",
   "_domain": "pharmaceutical",
   "_primary_prudential_authority": "FDA / CDER / CBER",
@@ -477,9 +477,9 @@ The path to multi-domain extensibility is a configuration exercise, not a rewrit
 
 | Document                                                              | Relationship                                            |
 | --------------------------------------------------------------------- | ------------------------------------------------------- |
-| [CAUSAL_AND_CBF_GOVERNANCE.md](../CAUSAL_AND_CBF_GOVERNANCE.md)       | Detailed CBF mathematical formulation and DoWhy design  |
-| [GATEWAY_ARCHITECTURE.md](../GATEWAY_ARCHITECTURE.md)                 | Full inference gateway architecture                     |
-| [NEURO_SYMBOLIC_GOVERNANCE.md](../NEURO_SYMBOLIC_GOVERNANCE.md)       | SymbolicGovernor pipeline deep-dive                     |
+| [CAUSAL_AND_CBF_GOVERNANCE.md](../governance/CAUSAL_AND_CBF_GOVERNANCE.md)       | Detailed CBF mathematical formulation and DoWhy design  |
+| [GATEWAY_ARCHITECTURE.md](GATEWAY_ARCHITECTURE.md)                 | Full inference gateway architecture                     |
+| [NEURO_SYMBOLIC_GOVERNANCE.md](../governance/NEURO_SYMBOLIC_GOVERNANCE.md)       | SymbolicGovernor pipeline deep-dive                     |
 | [Technical Report Series](../technical-report/README.md)              | Complete 10-document engineering record                 |
 | [config/compliance/README.md](../../../config/compliance/README.md)   | Regional profile specification and authoring guide      |
 | [DUAL_PROJECT_ARCHITECTURE.md](DUAL_PROJECT_ARCHITECTURE.md)         | Dual-project telemetry isolation design and threat model |

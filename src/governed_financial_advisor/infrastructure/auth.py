@@ -47,7 +47,7 @@ async def require_api_key(
         HTTPException(401): If credentials are missing or invalid.
     """
     api_key = os.environ.get("CAGE_API_KEY", "")
-    cage_env = os.environ.get("CAGE_ENV", "dev").lower()
+    cage_env = os.environ.get("CAGE_ENV", "prod").lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
 
     # In dev with no API key configured, allow through with warning.
     # This preserves local development ergonomics without compromising prod.

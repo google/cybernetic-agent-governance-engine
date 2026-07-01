@@ -1,5 +1,5 @@
 # CAGE Compliance & Governance Posture Framework
-**CAGE Version:** 2.0.0 (CSA AARM Conformance Release)
+**CAGE Version:** 0.1.0 (CSA AARM Conformance Release)
 **Last Evaluated:** 2026-06-15
 
 ---
@@ -8,7 +8,7 @@
 
 > **CRITICAL CONTEXT FOR AUDITORS:** CAGE provides the built-in technical enforcement controls, automated runtime guardrails, and programmatic evidence generation required to prove compliance. It does **not** automatically grant organizational or certified compliance. Full certification requires institutional audits, independent assessments, and formal administrative authorization.
 
-> **Jurisdictional Architecture:** CAGE deploys to three regions controlled by `CAGE_DEPLOYMENT_REGION`. **ISO 42001** is the **universal baseline** active in all regions. NIST SP 800-53, EU AI Act/GDPR/DORA, and MAS FEAT are **jurisdictional extensions** active only in their respective regions. See [`docs/JURISDICTIONAL_SEPARATION_ANALYSIS.md`](docs/JURISDICTIONAL_SEPARATION_ANALYSIS.md) for the full architectural rationale.
+> **Jurisdictional Architecture:** CAGE deploys to three regions controlled by `CAGE_DEPLOYMENT_REGION`. **ISO 42001** is the **universal baseline** active in all regions. NIST SP 800-53, EU AI Act/GDPR/DORA, and MAS FEAT are **jurisdictional extensions** active only in their respective regions. See [`docs/JURISDICTIONAL_SEPARATION_ANALYSIS.md`](docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md) for the full architectural rationale.
 
 ---
 
@@ -89,7 +89,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 ### A. SR 26-2 Model Risk Management Partitioning
 *   **Status:** Strictly Scoped & Partitioned.
 *   **Mechanism:** Traditional, deterministic safety formulas and back-testable statistical structures (the causal regression kernel) are isolated under `CTRL_MRM_004`. CAGE intentionally decouples these from fluid agent workflows, fulfilling the Federal Reserve mandate to apply targeted, rigorous mathematical validation to traditional predictive blocks while shielding them from non-deterministic LLM variance.
-*   **Companion Documentation:** For details on mathematical CBF equations and regression validation, see [docs/CAUSAL_AND_CBF_GOVERNANCE.md](docs/CAUSAL_AND_CBF_GOVERNANCE.md) and [docs/STPA_ANALYSIS.md](docs/STPA_ANALYSIS.md).
+*   **Companion Documentation:** For details on mathematical CBF equations and regression validation, see [docs/CAUSAL_AND_CBF_GOVERNANCE.md](docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md) and [docs/STPA_ANALYSIS.md](docs/security/STPA_ANALYSIS.md).
 
 ### B. ISO/IEC 42001 & DORA (Digital Operational Resilience Act)
 *   **Status:** Technical Controls Implemented & Observable.
@@ -98,8 +98,8 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     *   **Continuous Telemetry Validation (DORA Art. 10):** Real-time Langfuse OpenTelemetry spans are piped through the placebo refuter at runtime to verify that the agent's world-model matches execution reality, rather than drifting on synthetic variables.
     *   **Tamper-Proof Audit Logging:** All decisions and system exceptions generate a cryptographically hash-chained SHA-256 ledger (`cage-intent/1.0`) to satisfy strict non-repudiation and lifecycle logging policies.
 *   **Companion Documentation:** 
-    *   For detail on the STPA control structure compiling to OPA/NeMo/Saga, see [docs/STPA_ANALYSIS.md](docs/STPA_ANALYSIS.md).
-    *   For detailed symbolic governor and hybrid logic flow, see [README_GOVERNANCE.md](README_GOVERNANCE.md) and [docs/NEURO_SYMBOLIC_GOVERNANCE.md](docs/NEURO_SYMBOLIC_GOVERNANCE.md).
+    *   For detail on the STPA control structure compiling to OPA/NeMo/Saga, see [docs/STPA_ANALYSIS.md](docs/security/STPA_ANALYSIS.md).
+    *   For detailed symbolic governor and hybrid logic flow, see [README_GOVERNANCE.md](README_GOVERNANCE.md) and [docs/NEURO_SYMBOLIC_GOVERNANCE.md](docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md).
 
 ### C. European Union AI Act, GDPR, and EBA Hard Law Baseline (EU_ECB Profile)
 *   **Status:** Technical Controls Mapped & Telemetry Attested.
@@ -121,7 +121,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     *   **Programmatic Evidence:** The automated script `oscal_ssp_exporter.py` automatically compiles these exact control configurations and implementation narratives into the authoritative 1,330-line Open Security Controls Assessment Language (OSCAL) document on every build pipeline run. OSCAL artifacts are persisted to GCS using the native GCS SDK (boto3 S3-compat fallback) at schema version **OSCAL v1.0.4**.
     *   **KMS Batch Signing for Audit Evidence:** All OSCAL findings and AARM conformance reports are asymmetrically signed via Google Cloud KMS HSM (`src/gateway/governance/kms_signer.py`) before GCS persistence. The private key never leaves the HSM; Cloud Audit Logs provide external, immutable attestation of every signing operation. This constitutes the audit evidence chain for FedRAMP HIGH AU-9 and AU-10.
     *   **⚠️ Gaps to Authorization:** The CAGE software runtime does not inherently possess an official **Authority to Operate (ATO)**. To close this loop, the parent organization must deploy independent assessors to complete RMF Step 5 (Assess) and Step 6 (Authorize), as well as remediate the remaining 11 open infrastructure POA&M infrastructure tickets.
-*   **Companion Documentation:** For infrastructure configurations, Linkerd policy files, and security posture tracking, see [docs/SECURITY_STATUS.md](docs/SECURITY_STATUS.md) and [docs/POAM.md](docs/POAM.md).
+*   **Companion Documentation:** For infrastructure configurations, Linkerd policy files, and security posture tracking, see [docs/SECURITY_STATUS.md](docs/security/SECURITY_STATUS.md) and [docs/POAM.md](docs/compliance/cross-region/POAM.md).
 
 ### F. Lula Automated Compliance Validation (20 Manifests — 4 Active, 16 Stub)
 *   **Status:** Partially Automated.
@@ -146,7 +146,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     *   `lula-validation-sc8.yaml` (NIST SP 800-53 SC-8) — Transmission confidentiality / TLS enforcement
     *   `lula-validation-si2.yaml` (NIST SP 800-53 SI-2) — Flaw remediation / CVE patching (pip-audit CI)
 
-    **🔶 Stub (5)** — NIST AI 600-1 (**US_FED only**); Phase 0 scaffolding added 2026-06-15; require Langfuse metric availability and cluster-specific configuration before activation (see [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](docs/AI_600_1_IMPLEMENTATION_PLAN.md)):
+    **🔶 Stub (5)** — NIST AI 600-1 (**US_FED only**); Phase 0 scaffolding added 2026-06-15; require Langfuse metric availability and cluster-specific configuration before activation (see [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](docs/compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md)):
     *   `lula-validation-ai600-confabulation.yaml` (AI 600-1 §2.1, controls: SI-10, AU-3, POAM AI600-001) — Confabulation / hallucination detection; asserts `confabulation_rate < 0.02` over 24 h window via `confabulation_scorer.py`
     *   `lula-validation-ai600-data-privacy.yaml` (AI 600-1 §2.2, controls: SI-19, SC-28, POAM AI600-002) — Data privacy / PII sanitization; asserts PII audit log retention ≥ 90 days and Presidio score threshold ≥ 0.5
     *   `lula-validation-ai600-prompt-injection.yaml` (AI 600-1 §2.3, controls: SI-3, SI-10, CA-8, POAM AI600-003) — Prompt injection detection; asserts injection detector ConfigMap present and deflection score ≥ 4
@@ -154,7 +154,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     *   `lula-validation-ai600-cbrn.yaml` (AI 600-1 §2.6 / §2.12, controls: SA-12, SR-3, SI-7, POAM AI600-007) — CBRN content filtering; asserts CBRN keyword list ≥ 10 terms enabled and NeMo CBRN rail deployed. **⚠️ Cat-M: requires AO pre-approval before cluster activation.**
 
 ### G. NIST AI 600-1 Generative AI Risk Management (US_FED Profile)
-*   **Status:** Phase 0 Scaffolding Complete (2026-06-15). Full assertions target Phase 2–3 per [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](docs/AI_600_1_IMPLEMENTATION_PLAN.md).
+*   **Status:** Phase 0 Scaffolding Complete (2026-06-15). Full assertions target Phase 2–3 per [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](docs/compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md).
 *   **Jurisdiction:** `US_FED` only (`CAGE_DEPLOYMENT_REGION=US_FED`). NIST AI 600-1 controls are **not** applied to `EU_ECB` or `APAC_MAS` deployments.
 *   **Mechanism:** NIST AI 600-1 ("Artificial Intelligence Risk Management Framework: Generative Artificial Intelligence Profile") defines risk controls specific to generative AI systems. CAGE implements the following AI 600-1 risk domains as runtime controls, each backed by a Lula validation stub:
 
@@ -167,13 +167,13 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     | §2.6 / §2.12 | CBRN & Value Chain | NeMo `cbrn_rails.co` — Tier-1 keyword list; NeMo CBRN rail deployed | `lula-validation-ai600-cbrn.yaml` | AI600-007 |
 
 *   **Companion Documentation:**
-    *   [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](docs/AI_600_1_IMPLEMENTATION_PLAN.md) — phased implementation plan (Phase 0–3, Weeks 1–52)
-    *   [`docs/NIST_AI_600_1_US_FED_ANALYSIS.md`](docs/NIST_AI_600_1_US_FED_ANALYSIS.md) — gap analysis and control mapping
+    *   [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](docs/compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md) — phased implementation plan (Phase 0–3, Weeks 1–52)
+    *   [`docs/NIST_AI_600_1_US_FED_ANALYSIS.md`](docs/compliance/us_fed/NIST_AI_600_1_US_FED_ANALYSIS.md) — gap analysis and control mapping
     *   [`compliance/lula/README.md`](compliance/lula/README.md) — full Lula validation status table including AI 600-1 stubs
 
-### H. Continuous Audit Event Loop & Compliance Bridge API (v2.0.0)
+### H. Continuous Audit Event Loop & Compliance Bridge API (v0.1.0)
 *   **Status:** Implemented & Active.
-*   **Mechanism:** In CAGE v2.0.0, the Compliance Bridge service (`src/compliance_bridge/main.py`) acts as the central hub for automated compliance scoring and threat ledger reporting. It exposes fourteen REST endpoints:
+*   **Mechanism:** In CAGE v0.1.0, the Compliance Bridge service (`src/compliance_bridge/main.py`) acts as the central hub for automated compliance scoring and threat ledger reporting. It exposes fourteen REST endpoints:
     1.  `GET /health` — Kubernetes liveness probe.
     2.  `GET /v1/controls` — Discovery endpoint; returns the full registry of supported ISO 42001 / NIST controls.
     3.  `GET /v1/metrics/summary` — Aggregate compliance posture across all supported controls in a single response.
@@ -190,7 +190,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     14. `GET /v1/events/stream` — SSE governance event stream consumed by the AgentSight UI KernelDashboard.
 
 ### I. Dependency Security — `diskcache` CVE-2025-69872 Remediation
-*   **Status:** Remediated in v2.0.0.
+*   **Status:** Remediated in v0.1.0.
 *   **Mechanism:** **CVE-2025-69872 in `diskcache`** (transitive dependency via `outlines`; `outlines` removed to eliminate the dependency) — a pickle deserialization RCE vulnerability in the `diskcache` package, which was a transitive dependency pulled in by `outlines`. The `outlines` package was removed from all CAGE service dependencies to eliminate `diskcache` from the dependency tree. Structured-output generation previously provided by `outlines` is now handled via vLLM's native JSON-mode API. No CAGE service imports `outlines` or `diskcache` at runtime. The removal is enforced by `pip-audit` and Trivy scans in `.github/workflows/security-scan.yml` (POAM-010 closed). Regulated-environment deployers should verify their own dependency trees do not re-introduce `outlines` via transitive dependencies.
 *   **Compliance Mapping:** NIST SP 800-53 SI-2 (Flaw Remediation); ISO/IEC 42001 §A.9.3 (Supplier Relationships).
 
@@ -206,7 +206,7 @@ The **architecture guardrail** (`test_governance_architecture.py`) scans all bus
 3.  **Active Control Verification:** Ensures every control code defined in the system registry has a physical, verified invocation point in the gateway's execution paths.
 4.  **Regional Profile Parity:** Ensures every `CTRL_*` key across all three regional profiles has a corresponding `GovernanceControl` enum member.
 
-The **FrameworkRouter test matrix** (`test_framework_router.py`, ~40 tests) locks down the v2.0.0 Crown Jewel Decoupling:
+The **FrameworkRouter test matrix** (`test_framework_router.py`, ~40 tests) locks down the v0.1.0 Crown Jewel Decoupling:
 1.  **JSON schema integrity** for all four OSCAL routing files (`NIST`, `ISO42001`, `EU_AI_ACT`, `MAS_FEAT`).
 2.  **Cache identity** — `FrameworkRouter.get()` returns identical instance; no double-load on repeated calls.
 3.  **Cache isolation** — loading NIST does not pollute the EU_AI_ACT cache entry.
@@ -222,10 +222,10 @@ The **FrameworkRouter test matrix** (`test_framework_router.py`, ~40 tests) lock
 
 To help you navigate the full regulatory documentation suite:
 
-*   **Executive Overview:** [docs/CAGE_ONE_PAGER.md](docs/CAGE_ONE_PAGER.md) — 1-page overview of the business case and architecture.
+*   **Executive Overview:** [docs/CAGE_ONE_PAGER.md](docs/project/CAGE_ONE_PAGER.md) — 1-page overview of the business case and architecture.
 *   **Detailed Governance Architecture:** [README_GOVERNANCE.md](README_GOVERNANCE.md) — Walkthrough of the 15-tier SymbolicGovernor and the decoupled abstraction layer.
 *   **System Architecture Spec:** [ARCHITECTURE.md](ARCHITECTURE.md) — System-wide component structure, database schemas, and request-response pathways.
-*   **Security Posture & Milestones:** [docs/SECURITY_STATUS.md](docs/SECURITY_STATUS.md) and [docs/POAM.md](docs/POAM.md) — Precise POAM checklists and NIST RMF coverage tracking.
-*   **STPA & Hazard Analysis:** [docs/STPA_ANALYSIS.md](docs/STPA_ANALYSIS.md) — Breakdown of UCAs 1-9 and the STPA-to-Policy compiler specification.
-*   **Causal & CBF Design:** [docs/CAUSAL_AND_CBF_GOVERNANCE.md](docs/CAUSAL_AND_CBF_GOVERNANCE.md) — DoWhy regression kernel placebo refuter and discrete-time CBF mathematics.
+*   **Security Posture & Milestones:** [docs/SECURITY_STATUS.md](docs/security/SECURITY_STATUS.md) and [docs/POAM.md](docs/compliance/cross-region/POAM.md) — Precise POAM checklists and NIST RMF coverage tracking.
+*   **STPA & Hazard Analysis:** [docs/STPA_ANALYSIS.md](docs/security/STPA_ANALYSIS.md) — Breakdown of UCAs 1-9 and the STPA-to-Policy compiler specification.
+*   **Causal & CBF Design:** [docs/CAUSAL_AND_CBF_GOVERNANCE.md](docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md) — DoWhy regression kernel placebo refuter and discrete-time CBF mathematics.
 *   **Full Technical Report Series:** [docs/technical-report/README.md](docs/technical-report/README.md) — 10-document technical report series detailing individual domains.

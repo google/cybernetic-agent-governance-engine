@@ -1,0 +1,122 @@
+name: SBOM Generation
+# POAM-006 / NIST SP 800-53 CM-8 / ISO 42001 §A.8.3
+# Generates CycloneDX SBOMs for all CAGE container images after each build.
+# Uploads SBOM artifacts to GCS and fails the build if CRITICAL CVEs are found
+# (except allowlisted items in .trivyignore).
+
+on:
+  push:
+    branches: [main, "feat/**"]
+    paths:
+      - "src/**"
+      - "Dockerfile*"
+      - "pyproject.toml"
+      - "uv.lock"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "Dockerfile*"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+env:
+  REGISTRY: gcr.io
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  SBOM_BUCKET: ${{ secrets.SBOM_GCS_BUCKET }}
+
+permissions:
+  contents: read
+  id-token: write  # for Workload Identity Federation
+
+jobs:
+  sbom-scan:
+    name: Generate SBOM and Scan for CVEs
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - name: gateway
+            dockerfile: Dockerfile
+            image_suffix: gateway
+          - name: compliance-bridge
+            dockerfile: src/compliance_bridge/Dockerfile
+            image_suffix: compliance-bridge
+      fail-fast: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (Workload Identity)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update && sudo apt-get install -y trivy
+
+      - name: Set image tag
+        id: tag
+        run: |
+          echo "IMAGE_TAG=${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "IMAGE_REF=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ matrix.service.image_suffix }}:${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Build container image
+        run: |
+          docker build \
+            -f ${{ matrix.service.dockerfile }} \
+            -t ${{ steps.tag.outputs.IMAGE_REF }} \
+            .
+
+      # POAM-006: Generate CycloneDX SBOM for this container image
+      - name: Generate CycloneDX SBOM
+        run: |
+          trivy image \
+            --format cyclonedx \
+            --output sbom-${{ matrix.service.name }}.cdx.json \
+            ${{ steps.tag.outputs.IMAGE_REF }}
+          echo "✅ SBOM generated: sbom-${{ matrix.service.name }}.cdx.json"
+
+      # POAM-006: Fail if CRITICAL CVEs are found (except .trivyignore allowlist)
+      - name: Scan for CRITICAL CVEs
+        run: |
+          trivy image \
+            --format table \
+            --severity CRITICAL,HIGH \
+            --ignorefile .trivyignore \
+            --exit-code 1 \
+            ${{ steps.tag.outputs.IMAGE_REF }}
+        continue-on-error: false  # Hard fail on CRITICAL CVEs
+
+      - name: Upload SBOM as GitHub Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.service.name }}-${{ github.sha }}
+          path: sbom-${{ matrix.service.name }}.cdx.json
+          retention-days: 90
+
+      # Upload SBOM to GCS for long-term compliance evidence
+      - name: Upload SBOM to GCS
+        run: |
+          gcloud storage cp \
+            sbom-${{ matrix.service.name }}.cdx.json \
+            gs://${{ env.SBOM_BUCKET }}/sboms/${{ github.sha }}/sbom-${{ matrix.service.name }}.cdx.json
+          echo "✅ SBOM uploaded to gs://${{ env.SBOM_BUCKET }}/sboms/${{ github.sha }}/sbom-${{ matrix.service.name }}.cdx.json"
+        if: env.SBOM_BUCKET != ''
+
+      - name: Summary
+        run: |
+          echo "## SBOM Generation Summary — ${{ matrix.service.name }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | \`${{ steps.tag.outputs.IMAGE_REF }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| SBOM Format | CycloneDX |" >> $GITHUB_STEP_SUMMARY
+          echo "| POAM Reference | POAM-006 (CM-8 / ISO 42001 §A.8.3) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Artifact | \`sbom-${{ matrix.service.name }}.cdx.json\` |" >> $GITHUB_STEP_SUMMARY

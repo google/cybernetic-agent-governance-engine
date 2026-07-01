@@ -63,7 +63,7 @@ GovernanceEventType = Literal[
     "AUDIT_FINDING",
     "GOVERNANCE_VIOLATION",
     "REMEDIATION_GENERATED",
-    # CAGE v2.0.0 — AARM primitives
+    # CAGE v0.1.0 — AARM primitives
     "CONTEXT_CHAIN_SEALED",   # emitted when the SHA-256 hash chain is sealed after each audit
     "DEFER_PARKING",          # emitted when an execution context is parked in the DEFER queue
     "DEFER_RESOLVED",         # emitted when a deferred token is resolved (ESCALATED/INJECTED/EXPIRED)

@@ -65,6 +65,33 @@ from src.gateway.governance.constants import (
 logger = logging.getLogger("Gateway.Governance.PIISanitizer")
 
 # ---------------------------------------------------------------------------
+# AI600-002 — Presidio score threshold (configurable per jurisdiction).
+#
+# Presidio's entity recognizer returns a confidence score in [0.0, 1.0].
+# Entities with score < PRESIDIO_SCORE_THRESHOLD are treated as non-PII.
+# Default: 0.5 (balanced precision/recall for US_FED financial data).
+# EU_ECB / APAC_MAS deployments may use a higher threshold (e.g. 0.65) to
+# reduce false positives in multilingual contexts.
+#
+# Set PRESIDIO_SCORE_THRESHOLD env var to override at runtime.
+# POAM: AI600-002 — Langfuse PII scrubbing policy: see docs/PII_SCRUBBING_POLICY.md
+# ---------------------------------------------------------------------------
+
+PRESIDIO_SCORE_THRESHOLD: float = float(
+    os.environ.get("PRESIDIO_SCORE_THRESHOLD", "0.5")
+)
+
+# LANGFUSE_PII_SCRUBBING_ENABLED: When set to "true", the pii_audit_log()
+# function applies the PIISanitizer to Langfuse span input/output fields
+# before emitting them.  This prevents PII from appearing in compliance
+# audit traces, satisfying AI 600-1 §2.2 and GDPR Art. 25 data minimisation.
+# See docs/PII_SCRUBBING_POLICY.md for the full scrubbing field policy.
+_LANGFUSE_PII_SCRUBBING_ENABLED: bool = (
+    os.environ.get("LANGFUSE_PII_SCRUBBING_ENABLED", "true").lower() == "true"
+)
+
+
+# ---------------------------------------------------------------------------
 # Compiled PII patterns — ordered from most-specific to least-specific to
 # avoid partial matches (e.g. SSN before phone, CC before generic numbers).
 # ---------------------------------------------------------------------------

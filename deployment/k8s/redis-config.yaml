@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # ============================================================================
-# Redis Configuration — CAGE v2.0.0 Evidence State Store
+# Redis Configuration — CAGE v0.1.0 Evidence State Store
 # ============================================================================
 #
 # This ConfigMap configures Redis for dual-purpose operation:

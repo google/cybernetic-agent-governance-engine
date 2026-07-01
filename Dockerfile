@@ -44,7 +44,8 @@ COPY pyproject.toml uv.lock ./
 # --extra advisor pulls langgraph, langchain, yfinance, google-adk,
 #                  opentelemetry-exporter-gcp-trace etc.
 # --extra langfuse pulls the langfuse SDK and observability helpers.
-RUN uv sync --frozen --no-dev --extra advisor --extra langfuse --extra gateway --no-install-project
+# --extra compliance pulls dowhy (Tier 6 causal gatekeeper, No-Direct-Bind Gap 4)
+RUN uv sync --frozen --no-dev --extra advisor --extra langfuse --extra gateway --extra compliance --no-install-project
 
 # Install spaCy large model via direct wheel URL (avoids CDN redirect failures)
 RUN pip install --no-cache-dir \

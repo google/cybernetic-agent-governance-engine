@@ -108,6 +108,12 @@ variable "enable_private_master_endpoint" {
   default     = false
 }
 
+variable "enable_private_nodes" {
+  description = "Enable private nodes (no external IPs on node VMs). Required when org policy constraints/compute.vmExternalIpAccess is enforced. Nodes use Cloud NAT for egress. Independent of enable_nist_compliance."
+  type        = bool
+  default     = false
+}
+
 variable "enable_pod_security_standards" {
   description = "Enable Pod Security Standards in namespace"
   type        = bool
@@ -211,12 +217,6 @@ variable "gpu_node_pool_initial_count" {
   description = "Initial GPU node count"
   type        = number
   default     = 1
-}
-
-variable "gpu_node_pool_name" {
-  description = "Name of the GPU node pool — used as cloud.google.com/gke-nodepool nodeSelector so the cluster autoscaler can match it at scale-from-zero time (nvidia.com/gpu.product is only applied post-startup by the device plugin)"
-  type        = string
-  default     = "gpu-node-pool-nvidia-tesla-t4"
 }
 
 variable "gpu_node_pool_spot" {
@@ -446,17 +446,37 @@ variable "langfuse_secret_key" {
 }
 
 variable "langfuse_compliance_public_key" {
-  description = "Langfuse compliance project public key (from LANGFUSE_COMPLIANCE_PUBLIC_KEY)"
+  description = "Langfuse compliance project public key (from LANGFUSE_COMPLIANCE_PUBLIC_KEY). REQUIRED when enable_nist_compliance=true. Leaving this empty when enable_nist_compliance=true defeats the AU-9 dual-project telemetry isolation architecture (POAM-019)."
   type        = string
   sensitive   = true
+  nullable    = false
   default     = ""
+
+  validation {
+    # POAM-019: Prevent silent collapse of dual-project telemetry isolation.
+    # When enable_nist_compliance=true this key MUST be a distinct cage-compliance
+    # project key.  An empty value silently falls back to the app project,
+    # defeating AU-9 evidentiary independence.
+    # NOTE: Terraform validates variables in isolation — we cannot reference
+    # var.enable_nist_compliance here. The precondition in main.tf enforces
+    # the cross-variable constraint at plan time.
+    condition     = var.langfuse_compliance_public_key == "" || length(var.langfuse_compliance_public_key) >= 10
+    error_message = "langfuse_compliance_public_key must be a valid Langfuse API key (≥10 chars) or empty string. An empty value is only valid when enable_nist_compliance=false. (POAM-019)"
+  }
 }
 
 variable "langfuse_compliance_secret_key" {
-  description = "Langfuse compliance project secret key (from LANGFUSE_COMPLIANCE_SECRET_KEY)"
+  description = "Langfuse compliance project secret key (from LANGFUSE_COMPLIANCE_SECRET_KEY). REQUIRED when enable_nist_compliance=true. Leaving this empty when enable_nist_compliance=true defeats the AU-9 dual-project telemetry isolation architecture (POAM-019)."
   type        = string
   sensitive   = true
+  nullable    = false
   default     = ""
+
+  validation {
+    # POAM-019: Same constraint as langfuse_compliance_public_key.
+    condition     = var.langfuse_compliance_secret_key == "" || length(var.langfuse_compliance_secret_key) >= 10
+    error_message = "langfuse_compliance_secret_key must be a valid Langfuse API key (≥10 chars) or empty string. An empty value is only valid when enable_nist_compliance=false. (POAM-019)"
+  }
 }
 
 variable "langfuse_host" {
@@ -492,11 +512,17 @@ variable "governance_salt" {
   default     = ""
 }
 
+# DEP-21: Remove default = "" from routing_seal_secret.
+# A missing or empty value previously caused terraform apply to silently write
+# an empty string into advisor-secrets.CAGE_ROUTING_SEAL_SECRET, triggering
+# RuntimeError: CAGE STARTUP FAILURE in the gateway on every apply that ran
+# without a populated terraform.auto.tfvars. Removing the default forces a
+# Terraform plan error rather than a silent runtime failure.
+# The value must always be supplied via terraform.auto.tfvars (gitignored).
 variable "routing_seal_secret" {
-  description = "Gateway routing seal secret (from CAGE_ROUTING_SEAL_SECRET)"
+  description = "Gateway routing seal secret (from CAGE_ROUTING_SEAL_SECRET). No default — must be supplied via terraform.auto.tfvars (gitignored). Omitting this causes a Terraform plan error rather than silently writing an empty secret that crashes the gateway."
   type        = string
   sensitive   = true
-  default     = ""
 }
 
 variable "hf_token" {

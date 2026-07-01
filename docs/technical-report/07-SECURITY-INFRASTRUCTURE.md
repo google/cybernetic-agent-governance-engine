@@ -27,7 +27,7 @@ CAGE implements a defense-in-depth security model across seven distinct layers. 
 >
 > One **critical** open finding remains unresolved: unsigned FIPS 199 categorization (FIND-007). Two critical findings have been resolved: HMAC bypass vulnerability FIND-010 / POAM-012 is **CLOSED**, and intra-cluster mTLS FIND-011 / POAM-007 is **CLOSED** (Linkerd mTLS + Cilium L7 egress lockdown deployed).
 >
-> ✅ **v2.0.0-rc.2 Security Hardening Sprint (2026-06-03):** All four No-Direct-Bind architectural gaps have been closed. The `NoDirectBind` safety invariant is now machine-verified over the entire reachable state space. See §3a below and [Document 10 — Formal Verification](./10-FORMAL-VERIFICATION.md) §Step 7 for full details.
+> ✅ **v0.1.0-rc.2 Security Hardening Sprint (2026-06-03):** All four No-Direct-Bind architectural gaps have been closed. The `NoDirectBind` safety invariant is now machine-verified over the entire reachable state space. See §3a below and [Document 10 — Formal Verification](./10-FORMAL-VERIFICATION.md) §Step 7 for full details.
 >
 > ✅ **commit e959cc3 — Production Environment Hardening (2026-06-15):** Three additional fail-closed hardening measures have been applied: `CAGE_ENV` standardization across all production guards, fail-closed telemetry enforcement in the causal gatekeeper, and `StubNormativeProvider` production guard. See §3b, §3c, and §3d below.
 
@@ -67,13 +67,13 @@ Explicit allow rules cover: agent server → gateway, gateway → OPA, gateway �
 
 ---
 
-## 3a. Remediation Update — Closure of Ungated Variant Vulnerabilities (v2.0.0-rc.2)
+## 3a. Remediation Update — Closure of Ungated Variant Vulnerabilities (v0.1.0-rc.2)
 
 > **Classification:** Security Hardening — Pre-ATO Package Update
 > **Date:** 2026-06-03
 > **Sprint:** No-Direct-Bind Formal Verification Lock
 
-The v2.0.0-rc.2 security hardening sprint closed four architectural gaps identified during formal analysis of the `NoDirectBind` safety invariant. The invariant is defined as:
+The v0.1.0-rc.2 security hardening sprint closed four architectural gaps identified during formal analysis of the `NoDirectBind` safety invariant. The invariant is defined as:
 
 $$\text{NoDirectBind} \equiv (\text{phase} = \texttt{EXECUTED}) \Rightarrow (\text{resolvedAllow} = \texttt{TRUE})$$
 
@@ -432,7 +432,7 @@ Verification: `cilium monitor --type l7 --from-label role=sovereign-agent`
 
 ## 5. Secret Management
 
-Source: [`docs/SECRET_MANAGEMENT_OPTIONS.md`](../SECRET_MANAGEMENT_OPTIONS.md)
+Source: [`docs/SECRET_MANAGEMENT_OPTIONS.md`](../security/SECRET_MANAGEMENT_OPTIONS.md)
 
 ### Current Kubernetes Secrets (3 Objects in `governance-stack`)
 
@@ -618,7 +618,7 @@ All third-party compliance and attestation provider adapters are isolated under 
 
 ### 9.1 Cryptographic Context Accumulator (AARM-V1)
 
-CAGE v2.0.0 introduces a **Cryptographic Context Accumulator** (`src/compliance_bridge/context_accumulator.py`) to seal audit evidence against retroactive tampering or Memory Poisoning attempts. 
+CAGE v0.1.0 introduces a **Cryptographic Context Accumulator** (`src/compliance_bridge/context_accumulator.py`) to seal audit evidence against retroactive tampering or Memory Poisoning attempts. 
 *   **SHA-256 Hash-Chaining:** Every emitted `OscalFinding` is chained cryptographically to its predecessor. The `record_hash` for finding $n$ is calculated as `SHA-256(prev_hash || content_json)`.
 *   **Seal Sentinel:** Each audit execution is capped by a `CHAIN_SEALED` sentinel payload. The compliance API validates `chain_root`, `chain_length`, and `chain_integrity_valid` on all reads, satisfying **ISO 42001 Annex A.5.3** evidence logging controls.
 
@@ -673,7 +673,7 @@ Source: [`tests/red_team/`](../../tests/red_team/), [`src/governed_financial_adv
 
 ## 11. Security Assessment Findings Summary
 
-Sources: [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md), [`docs/SECURITY_ASSESSMENT_PLAN.md`](../SECURITY_ASSESSMENT_PLAN.md), [`docs/POAM.md`](../POAM.md)
+Sources: [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md), [`docs/SECURITY_ASSESSMENT_PLAN.md`](../security/SECURITY_ASSESSMENT_PLAN.md), [`docs/POAM.md`](../compliance/cross-region/POAM.md)
 
 > ⚠️ **Overall Assessment: HIGH Risk — ATO Not Recommended**
 
@@ -694,9 +694,9 @@ Sources: [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md), [
 
 | Document                                                               | Purpose                            |
 | ---------------------------------------------------------------------- | ---------------------------------- |
-| [`docs/SECURITY_ASSESSMENT_PLAN.md`](../SECURITY_ASSESSMENT_PLAN.md)   | Security Assessment Plan (SAP)     |
-| [`docs/IR_PLAN.md`](../IR_PLAN.md)                                     | Incident Response Plan (draft)     |
-| [`docs/CHANGE_MANAGEMENT_PROCESS.md`](../CHANGE_MANAGEMENT_PROCESS.md) | Change Management Process          |
+| [`docs/SECURITY_ASSESSMENT_PLAN.md`](../security/SECURITY_ASSESSMENT_PLAN.md)   | Security Assessment Plan (SAP)     |
+| [`docs/IR_PLAN.md`](../security/IR_PLAN.md)                                     | Incident Response Plan (draft)     |
+| [`docs/CHANGE_MANAGEMENT_PROCESS.md`](../governance/CHANGE_MANAGEMENT_PROCESS.md) | Change Management Process          |
 | [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md)   | Security Assessment Report Q1 2026 |
 
 ---

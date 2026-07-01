@@ -76,7 +76,7 @@ services:
       - OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic ${LANGFUSE_BASIC_AUTH_B64}
       # SLM sidecar endpoint — matches the compose service name 'slm'
       - SLM_BASE_URL=http://slm:5000
-      # v2.0.0 REQUIRED: ControlRegistry regional compliance profile selector.
+      # v0.1.0 REQUIRED: ControlRegistry regional compliance profile selector.
       # Override in .env: CAGE_DEPLOYMENT_REGION=EU_ECB
       # Supported values: US_FED | EU_ECB | APAC_MAS
       - CAGE_DEPLOYMENT_REGION=${CAGE_DEPLOYMENT_REGION:-US_FED}
@@ -112,7 +112,7 @@ services:
       # Langfuse v3 native OTLP ingestion — no separate collector needed.
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://langfuse-web:3000/api/public/otel/v1/traces
       - OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic ${LANGFUSE_BASIC_AUTH_B64}
-      # v2.0.0 REQUIRED: must match the gateway service's CAGE_DEPLOYMENT_REGION.
+      # v0.1.0 REQUIRED: must match the gateway service's CAGE_DEPLOYMENT_REGION.
       - CAGE_DEPLOYMENT_REGION=${CAGE_DEPLOYMENT_REGION:-US_FED}
     # No live src mount — image must be rebuilt on code change (Phase 6.2).
     # HIGH-03 FIX: Use env_file instead of mounting .env as a volume. Mounting

@@ -122,7 +122,7 @@ if ENABLE_TRACING and _FASTAPI_INSTRUMENTOR_AVAILABLE and FastAPIInstrumentor is
     )  # Only trace meaningful agent routes; health/docs/scanners are excluded
 app.include_router(tools_router)
 
-if os.environ.get("CAGE_ENV", "dev").lower() == "dev":
+if os.environ.get("CAGE_ENV", "prod").lower() == "dev":  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
     from src.governed_financial_advisor.demo.router import demo_router
     app.include_router(demo_router)
     logger.warning("Demo endpoints enabled — do not use in production")
@@ -295,7 +295,7 @@ async def query_agent(
         _governance_context = {
             "risk_threshold": getattr(_Config, "RISK_THRESHOLD", None),
             "safety_threshold": os.environ.get("NEMO_SAFETY_THRESHOLD", "0.95"),
-            "cage_env": os.environ.get("CAGE_ENV", "dev"),
+            "cage_env": os.environ.get("CAGE_ENV", "prod"),  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
         }
 
         # Check cache first (only for cacheable query types)

@@ -157,6 +157,16 @@ while IFS= read -r line || [ -n "$line" ]; do
             REDIS_URL)
                 export TF_VAR_redis_url="$var_value"
                 ;;
+
+            # DEP-22: GCP project and region — variables.tf declares both with no
+            # default (DEP-08 data-residency guard). Map from standard GCP env vars
+            # so the chain works without relying solely on terraform.auto.tfvars.
+            GOOGLE_CLOUD_PROJECT)
+                export TF_VAR_project_id="$var_value"
+                ;;
+            GOOGLE_CLOUD_LOCATION)
+                export TF_VAR_region="$var_value"
+                ;;
         esac
     fi
 done < "$PROJECT_ROOT/$ENV_FILE"

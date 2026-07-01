@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-aarm_mapper.py — AARM Threat Vector Ledger (CAGE v2.0.0)
+aarm_mapper.py — AARM Threat Vector Ledger (CAGE v0.1.0)
 
 AARM Conformance: Satisfies the "Native AARM Threat Vector Mapping" mandate from
 the CSA Autonomous Agent Risk Management (AARM) specification — machine-readable
@@ -113,7 +113,7 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "src/compliance_bridge/audit_workflow.py",
         ],
         notes=(
-            "SHA-256 hash-chained Context Accumulator (CAGE v2.0.0) provides "
+            "SHA-256 hash-chained Context Accumulator (CAGE v0.1.0) provides "
             "tamper-evident append-only session state logging. Any poisoning attempt "
             "breaks the chain at the mutated node and is detected by verify_integrity()."
         ),
@@ -246,7 +246,7 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
             "src/gateway/governance/defer_queue.py",
         ],
         notes=(
-            "DEFER state machine (CAGE v2.0.0) parks execution context when "
+            "DEFER state machine (CAGE v0.1.0) parks execution context when "
             "confidence_score < 0.70 (Confidence-Starvation Boundary), preventing "
             "the agent from proceeding on fundamentally incomplete context. "
             "DeferQueue provides Redis-backed low-latency parking pending data injection."

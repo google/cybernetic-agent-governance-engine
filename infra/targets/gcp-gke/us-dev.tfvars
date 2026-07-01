@@ -87,6 +87,10 @@ enable_binary_authorization    = false
 enable_audit_logging           = false  # Enable in prod: SR 26-2 §IV.D / AU-2
 enable_cmek                    = false  # Enable in prod: SC-12 / SC-13
 enable_private_master_endpoint = false  # Enable in prod: SC-7 / AC-17
+# GCP org policy constraints/compute.vmExternalIpAccess blocks external IPs on
+# node VMs. Enable private nodes so nodes use Cloud NAT (nat-router-us-central1)
+# for egress instead. Master endpoint remains public (kubectl access preserved).
+enable_private_nodes           = true
 enable_pod_security_standards  = false  # Apply manually via pod-security-admission.yaml
 
 # US Dev: open access (prod must restrict to corporate VPN CIDR)
@@ -117,7 +121,6 @@ gpu_node_pool_machine_type  = "g2-standard-8"
 gpu_node_pool_min_count     = 1
 gpu_node_pool_max_count     = 2
 gpu_node_pool_initial_count = 1
-gpu_node_pool_name          = "gpu-node-pool-nvidia-l4"
 gpu_node_pool_spot          = true  # Spot VMs for dev cost optimisation
 gpu_node_locations          = ["us-central1-a", "us-central1-b", "us-central1-c"]
 

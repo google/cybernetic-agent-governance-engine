@@ -161,7 +161,7 @@ Source: `deployment/docker/`
 | NeMo              | `Dockerfile.nemo`                              | NeMo base                 | Guardrails server                                                                      |
 | Main              | `Dockerfile`                                   | Python 3.11-slim          | Governed Financial Advisor; `google-adk>=1.28.1` (advisor extras)                      |
 
-> **Note:** The Compliance Bridge base image is `python:3.12-slim` (NOT `python:3.11-slim`). This was updated in v2.0.0 to align with the Python ≥3.10, <3.13 constraint and to pick up 3.12 performance improvements.
+> **Note:** The Compliance Bridge base image is `python:3.12-slim` (NOT `python:3.11-slim`). This was updated in v0.1.0 to align with the Python ≥3.10, <3.13 constraint and to pick up 3.12 performance improvements.
 
 **Root-Level Compose Files**
 
@@ -418,7 +418,7 @@ Nine `NetworkPolicy` objects are applied within the `governance-stack` namespace
 
 ## Latency Strategy
 
-Source: [`docs/LATENCY_STRATEGY.md`](../../docs/LATENCY_STRATEGY.md)
+Source: [`docs/LATENCY_STRATEGY.md`](../architecture/LATENCY_STRATEGY.md)
 
 ### 10.1 Latency as Currency Philosophy
 Every secure generation node in a multi-agent system incurs a "Governance Tax" (overhead):

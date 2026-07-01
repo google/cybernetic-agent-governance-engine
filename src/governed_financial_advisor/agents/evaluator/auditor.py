@@ -239,7 +239,7 @@ class EvaluatorAuditor:
             "quality_score": quality_score,
             "violations_count": len(violations),
             "policy_rules_evaluated": [step.get("action", "") for step in steps],
-            "cage_version": "2.0.0"
+            "cage_version": "0.1.0"
         }
 
         # Handle path where OpenTelemetry is not available or initialized

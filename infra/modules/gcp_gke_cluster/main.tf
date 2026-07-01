@@ -47,10 +47,13 @@ resource "google_container_cluster" "primary" {
   deletion_protection = var.enable_nist_compliance ? true : false
 
   # ─── SC-7: Private Cluster Configuration ───────────────────────────────────
-  # Dev: Public nodes for easier access
+  # Dev: Public nodes for easier access (unless org policy forces private nodes)
   # Prod: Private nodes with NAT for outbound traffic
+  # enable_private_nodes can be set independently of enable_nist_compliance to
+  # satisfy constraints/compute.vmExternalIpAccess org policy without activating
+  # the full NIST compliance stack (Redis HA, PDB, audit logging, etc.).
   dynamic "private_cluster_config" {
-    for_each = var.enable_nist_compliance ? [1] : []
+    for_each = (var.enable_nist_compliance || var.enable_private_nodes) ? [1] : []
     content {
       enable_private_nodes    = true
       enable_private_endpoint = var.enable_private_master_endpoint
@@ -345,89 +348,27 @@ resource "google_container_node_pool" "gpu_nodes" {
   lifecycle {
     ignore_changes = [
       initial_node_count,
+
+      # ── Immutable / GKE-managed fields that diverge from config after creation ──
+      #
+      # node_locations: live pool was created with a single zone (us-central1-a);
+      #   dev.tfvars lists three zones. Immutable — any change forces destroy+recreate,
+      #   which would drain vllm-inference and vllm-reasoning GPU workloads.
+      node_locations,
+
+      # node_config: covers all immutable node_config sub-fields including:
+      #   - spot: live pool is on-demand (spot=false); dev.tfvars sets spot=true.
+      #     The `spot` field is immutable on GKE node pools — changing it forces
+      #     destroy+recreate. Ignoring the entire node_config block prevents this.
+      #   - labels/resource_labels: GKE auto-adds goog-gke-* and nvidia.com/gpu labels
+      #     post-creation that are not in the Terraform config.
+      #   - network_config: GKE auto-populates pod_range and enable_private_nodes
+      #     from the cluster's VPC-native config.
+      node_config,
     ]
   }
 
   # Ensure cluster is fully created before adding GPU node pool
-  depends_on = [
-    google_container_cluster.primary,
-    google_container_node_pool.primary_nodes,
-  ]
-}
-
-# ─── Secondary GPU Node Pool (On-Demand Fallback) ─────────────────────────────
-
-resource "google_container_node_pool" "gpu_nodes_ondemand" {
-  count = var.enable_gpu_node_pool ? 1 : 0
-
-  name     = "gpu-node-pool-${var.gpu_type}-ondemand"
-  cluster  = google_container_cluster.primary.id
-  location       = var.zone
-  node_locations = var.gpu_node_locations
-
-  # Fallback starts at 0 and scales up dynamically when spot is unavailable
-  initial_node_count = 0
-
-  autoscaling {
-    min_node_count = 0
-    max_node_count = 1
-  }
-
-  node_config {
-    machine_type = var.gpu_node_pool_machine_type
-    disk_size_gb = var.gpu_node_pool_disk_size
-    disk_type    = var.gpu_node_pool_disk_type
-    spot         = false # On-Demand Fallback
-
-    guest_accelerator {
-      type  = var.gpu_type
-      count = var.gpu_count
-      gpu_driver_installation_config {
-        gpu_driver_version = "DEFAULT"
-      }
-    }
-
-    # Match primary node pool scope format exactly to avoid mismatch warnings
-    oauth_scopes = [
-      "https://www.googleapis.com/auth/cloud-platform",
-    ]
-
-    workload_metadata_config {
-      mode = "GKE_METADATA"
-    }
-
-    shielded_instance_config {
-      enable_secure_boot          = true
-      enable_integrity_monitoring = true
-    }
-
-    labels = merge(
-      {
-        workload-type                       = "gpu"
-        gpu-type                            = var.gpu_type
-        environment                         = var.environment
-        "nvidia.com/gpu"                    = "true"
-        "cloud.google.com/gke-provisioning" = "on-demand"
-      },
-      var.gpu_node_pool_labels
-    )
-
-    metadata = {
-      disable-legacy-endpoints = "true"
-    }
-  }
-
-  management {
-    auto_repair  = true
-    auto_upgrade = true
-  }
-
-  lifecycle {
-    ignore_changes = [
-      initial_node_count,
-    ]
-  }
-
   depends_on = [
     google_container_cluster.primary,
     google_container_node_pool.primary_nodes,

@@ -30,14 +30,14 @@ The AI Governance & Policy Engine is the most complex and safety-critical compon
 
 ## 1. Governance Philosophy
 
-CAGE implements neuro-symbolic hybrid governance (see [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](../NEURO_SYMBOLIC_GOVERNANCE.md)) — a defense-in-depth approach grounded in two complementary paradigms:
+CAGE implements neuro-symbolic hybrid governance (see [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](../governance/NEURO_SYMBOLIC_GOVERNANCE.md)) — a defense-in-depth approach grounded in two complementary paradigms:
 
 - **Neural (semantic)**: LLM consensus critics in `ConsensusEngine` provide contextual judgment for high-value trades, detecting nuanced compliance violations that symbolic rules cannot express.
 - **Symbolic (deterministic)**: STPA/STAMP unsafe control action checks, Control Barrier Functions, Aho-Corasick keyword scans, and OPA Rego policies enforce hard constraints regardless of LLM state.
 
 Neither paradigm alone is sufficient. Neural systems can hallucinate; symbolic systems cannot reason over context. The pipeline requires both.
 
-**Four Governance Automation Patterns** (see [`docs/GOVERNANCE_CROSSWALK.md`](../GOVERNANCE_CROSSWALK.md)):
+**Four Governance Automation Patterns** (see [`docs/GOVERNANCE_CROSSWALK.md`](../compliance/cross-region/GOVERNANCE_CROSSWALK.md)):
 
 | Pattern                      | Mechanism                                                     |
 | ---------------------------- | ------------------------------------------------------------- |
@@ -125,7 +125,7 @@ Non-deterministic or context-free tiers (such as Tier 0 STPA, Tier 1 Agentic Con
 
 ## 3. STPA/STAMP Safety Analysis — Tier 0
 
-Full analysis: [`docs/STPA_ANALYSIS.md`](../STPA_ANALYSIS.md).
+Full analysis: [`docs/STPA_ANALYSIS.md`](../security/STPA_ANALYSIS.md).
 
 [`GeneratedSTPAValidator`](../../src/gateway/governance/generated_stpa_validator.py) enforces **9 Unsafe Control Actions (UCAs)** derived from STAMP hazard analysis of the CAGE financial control loop (UCA-1 through UCA-9, compiled by `stpa_compiler.py`). Each UCA maps to a threshold in `governance_thresholds.json`. The STPA check runs synchronously as Step 0 (`cage.stpa_check` OTel span), always first.
 
@@ -440,11 +440,11 @@ Every consensus check emits OpenTelemetry span attributes for the audit trail:
 
 ---
 
-## 7a. DEFER State Machine — Confidence-Starvation Bypass (v2.0.0)
+## 7a. DEFER State Machine — Confidence-Starvation Bypass (v0.1.0)
 
 Source: [`src/gateway/governance/defer_queue.py`](../../src/gateway/governance/defer_queue.py)
 
-CAGE v2.0.0 extends the governance tri-state decision (`ALLOW | DENY | MANUAL_REVIEW`) to **four states** by introducing `DEFER`. This satisfies the CSA AARM specification's **Deferral Service** mandate — providing a formal state for situational ambiguity that avoids forcing a brittle binary allow/deny choice.
+CAGE v0.1.0 extends the governance tri-state decision (`ALLOW | DENY | MANUAL_REVIEW`) to **four states** by introducing `DEFER`. This satisfies the CSA AARM specification's **Deferral Service** mandate — providing a formal state for situational ambiguity that avoids forcing a brittle binary allow/deny choice.
 
 ### Confidence-Starvation Boundary
 
@@ -493,7 +493,7 @@ Pending tokens are resolved by:
 
 ---
 
-## 8. DoWhy Causal Gatekeeper — Tier 6 (v2.0.0)
+## 8. DoWhy Causal Gatekeeper — Tier 6 (v0.1.0)
 
 The **DoWhy Causal Gatekeeper** ([`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)) serves as CAGE's final mathematical validation layer—the "Lock" on the CAGE. It utilizes **Microsoft DoWhy** causal inference and placebo simulation to confirm that the system's world-model is structurally sound before high-stakes trade actions.
 
@@ -508,7 +508,7 @@ The gatekeeper enforces two complementary validation phases:
 
 ## 8.2 FiscalLimitGuard Concurrency Control
 
-To prevent race conditions where multiple parallel agent execution threads concurrently read the same daily OPA limit and execute trades that in aggregate exceed the limit ("race to the rail"), CAGE v2.0.0 introduces the **FiscalLimitGuard** (`src/gateway/governance/fiscal_limit_guard.py`).
+To prevent race conditions where multiple parallel agent execution threads concurrently read the same daily OPA limit and execute trades that in aggregate exceed the limit ("race to the rail"), CAGE v0.1.0 introduces the **FiscalLimitGuard** (`src/gateway/governance/fiscal_limit_guard.py`).
 *   **Redis Atomic Transactions:** Uses Redis `WATCH/MULTI/EXEC` optimistic locking. If another thread updates the cap during OPA validation, the current pipeline commits are rejected, retrying with exponential backoff and jitter.
 *   **Headroom Pre-Reservation (Step 3):** Headroom is reserved in Redis *after* concurrent CBF+OPA (Steps 2+4), closing the TOCTOU race. Default daily cap: **$500,000 USD** (`FISCAL_DAILY_CAP_USD` env var). Cap stored in **cents** for integer precision. Fail-closed: if Redis is unavailable, the trade is blocked.
 *   **Release & Expiry:** Unused limits are dynamically returned to Redis via `release(token)` by the Saga engine on transaction rollback, while a **300s TTL** reclaims limits from crashed nodes.
@@ -517,7 +517,7 @@ To prevent race conditions where multiple parallel agent execution threads concu
 
 ## 9. Governance Signing: Cloud KMS HSM (Primary) + HMAC-SHA256 (Fallback)
 
-CAGE v2.0.0 promotes **Cloud KMS HSM-backed asymmetric signing** as the primary governance signing mechanism, replacing HMAC-SHA256 as the primary. HMAC-SHA256 is retained as a fallback for development and CI environments only.
+CAGE v0.1.0 promotes **Cloud KMS HSM-backed asymmetric signing** as the primary governance signing mechanism, replacing HMAC-SHA256 as the primary. HMAC-SHA256 is retained as a fallback for development and CI environments only.
 
 ### Cloud KMS HSM Signing (Primary — Production)
 
@@ -561,7 +561,7 @@ When implemented, `AnchorageGrpcLedgerProvider` will provide an externally recon
 - `@lru_cache(maxsize=1)` singleton — loaded once at startup via the module-level `THRESHOLDS` constant
 - [`load_and_validate_thresholds()`](../../src/gateway/governance/schemas/thresholds.py) at line 138: calls `sys.exit(1)` on validation failure — **fail-fast startup**
 - NeMo actions hot-reload with 60-second TTL
-- **v2.0.0-rc.1:** `max_slippage_pct` is now operator-adjustable at runtime via `POST /api/governance/thresholds` from the AgentSight KernelDashboard slider (0–10%, step 0.1); persisted to the running threshold store without service restart
+- **v0.1.0-rc.1:** `max_slippage_pct` is now operator-adjustable at runtime via `POST /api/governance/thresholds` from the AgentSight KernelDashboard slider (0–10%, step 0.1); persisted to the running threshold store without service restart
 
 **22 tracked thresholds** with full regulatory traceability (see [`compliance/risk_acceptance/THRESHOLD_TRACEABILITY_MATRIX.md`](../../compliance/risk_acceptance/THRESHOLD_TRACEABILITY_MATRIX.md)):
 
@@ -1005,4 +1005,4 @@ The CAGE AI Governance & Policy Engine enforces a **neuro-symbolic, defense-in-d
 
 The **universal baseline** (ISO/IEC 42001:2023 + CSA AARM) applies to all regions. The **NIST AI 600-1 governance modules** (§15) are US_FED-only additive controls: confabulation scoring (§2.1), PII audit logging (§2.2), prompt injection detection (§2.3), CBRN keyword scanning (§2.6), HITL escalation (§2.5), and cryptographic provenance chaining (§2.7). The **PII Sanitizer** (§13) is a universal pre-ledger pipeline implementing ISO 42001 A.6 across all regions. The **Text Filter** (§4) provides universal Aho-Corasick keyword scanning with a US_FED-only CBRN extension gated by `tier1_keywords_cbrn_enabled`.
 
-The DEFER State Machine (v2.0.0) extends the decision space to four states (`ALLOW | DENY | MANUAL_REVIEW | DEFER`), now including `EXTERNAL_VALIDATION` (v2.1.0) for parking transactions in the ambiguous confidence zone while awaiting external FRIA gate responses. All thresholds are centrally managed with regulatory traceability and region-specific calibration. ISO 42001 control stamps create an auditable evidence chain on every governance event. The Policy Transpiler and STPA-to-Policy Compiler close the loop by converting regulatory requirements and STPA hazard definitions into deployable enforcement artifacts automatically.
+The DEFER State Machine (v0.1.0) extends the decision space to four states (`ALLOW | DENY | MANUAL_REVIEW | DEFER`), now including `EXTERNAL_VALIDATION` (v2.1.0) for parking transactions in the ambiguous confidence zone while awaiting external FRIA gate responses. All thresholds are centrally managed with regulatory traceability and region-specific calibration. ISO 42001 control stamps create an auditable evidence chain on every governance event. The Policy Transpiler and STPA-to-Policy Compiler close the loop by converting regulatory requirements and STPA hazard definitions into deployable enforcement artifacts automatically.

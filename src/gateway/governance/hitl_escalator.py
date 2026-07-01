@@ -57,7 +57,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 # ---------------------------------------------------------------------------
 # FINDING-09 (MEDIUM) — Jurisdictional HITL SLA map
@@ -274,3 +274,97 @@ def should_escalate_for_confidence(
         True if ``confidence < threshold``, False otherwise.
     """
     return confidence < threshold
+
+
+def hitl_override_audit_span(
+    trace_id: str,
+    reviewer_id: str,
+    decision: str,
+    reason: str,
+    original_escalation_reason: str = "",
+    span: Any = None,
+) -> dict:
+    """Emit a structured OTel audit span for a human reviewer override decision.
+
+    Called when a human reviewer resolves a HITL escalation — either approving
+    a previously blocked action (override), confirming the block (uphold), or
+    requesting further review (defer).  Provides a tamper-evident audit trail
+    of all human override decisions for ISO 42001 A.8.4 and AI 600-1 §2.5.
+
+    The span carries the following attributes on the active OTel span (if *span*
+    is provided) and always returns a dict with the same fields for logging.
+
+    OTel span attributes (ISO 42001 §A.8.4 evidence):
+        hitl.reviewer_id               — pseudonymised reviewer identifier
+        hitl.decision                  — OVERRIDE | UPHOLD | DEFER
+        hitl.reason                    — free-text review justification (≤500 chars)
+        hitl.original_escalation_reason — the EscalationReason.value that triggered escalation
+        hitl.override_ts               — ISO 8601 UTC timestamp of the override decision
+        hitl.trace_id                  — Langfuse trace ID of the governed request
+        langfuse.trace.metadata.iso.control_id     — A.8.4
+        langfuse.trace.metadata.iso.requirement    — Human Oversight and Control
+
+    Args:
+        trace_id:                   Langfuse trace ID of the governed request.
+        reviewer_id:                Pseudonymised reviewer identifier (e.g. "reviewer-123").
+        decision:                   One of "OVERRIDE", "UPHOLD", or "DEFER".
+        reason:                     Free-text justification for the decision (≤500 chars).
+        original_escalation_reason: The ``EscalationReason.value`` that triggered escalation.
+        span:                       Active OTel span to set attributes on (optional).
+
+    Returns:
+        Dict containing all audit fields for logging / DeferQueue persistence.
+    """
+    override_ts = datetime.now(tz=timezone.utc).isoformat()
+    decision_upper = decision.upper().strip()
+
+    if decision_upper not in ("OVERRIDE", "UPHOLD", "DEFER"):
+        logger.warning(
+            "[AI600-005] hitl_override_audit_span: unknown decision '%s' — "
+            "expected OVERRIDE, UPHOLD, or DEFER. Proceeding with value as-is.",
+            decision,
+        )
+
+    audit_record = {
+        "event": "hitl_override_audit",
+        "trace_id": trace_id,
+        "reviewer_id": reviewer_id,
+        "decision": decision_upper,
+        "reason": str(reason)[:500],  # Cap at 500 chars
+        "original_escalation_reason": original_escalation_reason,
+        "override_ts": override_ts,
+        "poam_ref": "AI600-005",
+        "iso_control": "A.8.4",
+    }
+
+    # Stamp ISO 42001 A.8.4 evidence attributes on the active OTel span.
+    if span is not None:
+        try:
+            span.set_attribute("hitl.reviewer_id", reviewer_id)
+            span.set_attribute("hitl.decision", decision_upper)
+            span.set_attribute("hitl.reason", str(reason)[:500])
+            span.set_attribute("hitl.original_escalation_reason", original_escalation_reason)
+            span.set_attribute("hitl.override_ts", override_ts)
+            span.set_attribute("hitl.trace_id", trace_id)
+            span.set_attribute("langfuse.trace.metadata.iso.control_id", "A.8.4")
+            span.set_attribute(
+                "langfuse.trace.metadata.iso.requirement", "Human Oversight and Control"
+            )
+            span.set_attribute("langfuse.trace.metadata.poam_ref", "AI600-005")
+        except Exception as exc:
+            logger.warning(
+                "[AI600-005] Failed to set OTel span attributes for HITL override audit: %s",
+                exc,
+            )
+
+    logger.info(
+        "[AI600-005] HITL override audit: trace_id=%s reviewer=%s decision=%s reason=%r "
+        "original_reason=%s control=A.8.4",
+        trace_id,
+        reviewer_id,
+        decision_upper,
+        str(reason)[:80],
+        original_escalation_reason,
+    )
+
+    return audit_record

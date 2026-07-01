@@ -111,3 +111,9 @@ variable "oscal_s3_bucket" {
 variable "oscal_s3_region" {
   type = string
 }
+
+variable "cage_env" {
+  description = "Runtime environment for the compliance bridge (development, staging, production). Controls KMS/Langfuse startup enforcement."
+  type        = string
+  default     = "development"
+}
