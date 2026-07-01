@@ -1,11 +1,11 @@
-# CAGE v2.0 & NIST RMF Step 7 Security Roadmap
+# CAGE v0.1 & NIST RMF Step 7 Security Roadmap
 
 | Field | Value |
 |---|---|
 | **Document Series** | CAGE Architecture Series |
 | **Version** | v0.1.0-Roadmap |
 | **Classification** | INTERNAL / FOUO |
-| **Status** | TAGGED — v0.1.0 Git tag applied and merged to main; stability not declared (as of 2026-07-01) |
+| **Status** | RELEASED — v0.1.0 GO 2026-06-08 |
 
 ---
 
@@ -71,9 +71,9 @@ flowchart TD
 
 ---
 
-### **v0.1.0 Release — Completed Items** ⚠️ TAGGED / STABILITY NOT DECLARED (as of 2026-07-01)
+### **v0.1.0 Release — Completed Items** ✅ RELEASED (2026-06-08)
 
-The following capabilities were delivered and verified as part of the CAGE v0.1.0 tagged commit. The v0.1.0 Git tag has been applied and `rc-v0.1.0` merged to `main`, but v0.1.0 has **not** been declared a stable release:
+The following capabilities were delivered and verified as part of the CAGE v0.1.0 stable release (GO date: 2026-06-08):
 
 *   **Token Quota Proxy** (`token_quota_proxy.py`): ✅ COMPLETED — Per-session step and token budget enforcement with Redis-backed counters; fail-CLOSED on Redis unavailability.
 *   **PII Sanitizer** (`pii_sanitizer.py`): ✅ COMPLETED — 15 NeMo/Presidio entity types scrubbed from governance verdicts before external logging; integrated into the governance pipeline.

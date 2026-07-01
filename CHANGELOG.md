@@ -65,7 +65,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 - **`docs(compliance): fix compliance artifact inconsistencies`** (`deedaeb`) — POAM, SSP outline, SAR, PIA, risk assessment, ISCM strategy, authorization boundary, FIPS 199 categorization, and threshold traceability matrix updated for consistency.
 - **`docs: update root, deployment, infra, and technical-report docs`** (`fa781a9`) — README, README_GOVERNANCE, ARCHITECTURE, deploy_all.sh, deployment README, namespace guide, infra README/QUICK_START/IMPLEMENTATION_STATUS, and all technical-report chapters updated.
 - **`docs: fix remaining docs inconsistencies; defer staging posture (POAM-024)`** (`9373ef4`) — Remaining cross-document inconsistencies resolved. Staging compliance posture verification deferred and tracked as POAM-024.
-- **`docs/SECURITY_AUDIT_REPORT.md`** — C-04 finding reclassified from "No authentication" to "Incomplete authentication coverage". Release decision header updated: GO criteria met — v0.1.0 tagged and merged to main; stability not declared.
+- **`docs/SECURITY_AUDIT_REPORT.md`** — C-04 finding reclassified from "No authentication" to "Incomplete authentication coverage". Release decision header added: GO — STABLE RELEASE APPROVED (v0.1.0, 2026-06-08).
 
 ---
 
@@ -159,7 +159,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ### Post-Release CI & Infra Fixes (Cat-S, 2026-06-08 – 2026-06-09)
 
-> These fixes were discovered during CI execution after the local release gate verification at `7d5990c`. They are included in the v0.1.0 tagged commit (moved to `8ce3cae`) because: (a) the STPA freshness CI gate and security scan were provably failing at the original tag commit; (b) the IAM bindings are deployment prerequisites without which Cloud Build cannot push images; (c) the tag had never been pushed to a public remote, making recreation safe. No application logic was changed. Note: the v0.1.0 Git tag has been applied and `rc-v0.1.0` merged to `main`, but v0.1.0 has **not** been declared a stable release.
+> These fixes were discovered during CI execution after the local release gate verification at `7d5990c`. They are included in the v0.1.0 stable tag (moved to `8ce3cae`) because: (a) the STPA freshness CI gate and security scan were provably failing at the original tag commit; (b) the IAM bindings are deployment prerequisites without which Cloud Build cannot push images; (c) the tag had never been pushed to a public remote, making recreation safe. No application logic was changed.
 >
 > Commits: `d3408a8`, `46a908d` (PR #9), `030cf88` (PR #10), `51c5df2` (PR #11), `8ce3cae`.
 

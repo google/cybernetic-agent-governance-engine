@@ -1,10 +1,10 @@
-# v0.1.0 Stable Release Implementation Plan
+# Release Plan
 
-**Document version:** 1.1 (updated 2026-06-08 — v0.1.0 tagged; stability not declared)
+**Document version:** 1.1 (updated 2026-06-08 — v0.1.0 RELEASED)
 **Prepared:** 2026-06-05
 **Repository:** `cybernetic-governance-engine` (private, GitHub)
-**Current HEAD:** `v0.1.0` tag applied on `rc-v0.1.0`; branch merged to `main` — stability not declared
-**Target:** `v0.1.0` stable — **⚠️ TAGGED / NOT DECLARED STABLE**
+**Current HEAD:** `v0.1.0` stable tag on branch `rc-v0.1.0` (GO — 2026-06-08)
+**Target:** `v0.1.0` stable — **✅ RELEASED**
 **Operator context:** Solo operator with full repository admin rights
 
 ---
@@ -19,6 +19,7 @@
 6. [Phase 4: Terraform Apply + GKE Deployment](#6-phase-4-terraform-apply--gke-deployment)
 7. [Phase 5: Seal Enforcement Verification](#7-phase-5-seal-enforcement-verification)
 8. [Phase 6: Pre-Release Checklist](#8-phase-6-pre-release-checklist)
+9. [Phase 7: Production Promotion Checklist](#9-phase-7-production-promotion-checklist)
 
 ---
 
@@ -26,7 +27,7 @@
 
 ### Current State
 
-> **⚠️ v0.1.0 TAGGED — STABILITY NOT DECLARED (as of 2026-07-01).** All P0/P1 blockers have been resolved. The `v0.1.0` Git tag has been applied and `rc-v0.1.0` has been merged to `main`, but v0.1.0 has **not** been declared a stable release. The sections below are preserved as a planning record for audit traceability.
+> **✅ v0.1.0 RELEASED — GO (2026-06-08).** All P0/P1 blockers resolved. The stable tag `v0.1.0` has been pushed to origin and the GitHub Release is published as Latest. The sections below are preserved as a historical planning record for audit traceability.
 
 The repository was at `v0.1.0-rc.2` when this plan was prepared. The RC-2 release delivered exhaustive state-space formal verification of the `NoDirectBind` safety invariant, enforced cryptographic attestation on all execution paths, and production fail-closed gates for `CBF_FAIL_OPEN` and the DoWhy causal gatekeeper. The full test suite passes: **844 passed, 28 skipped, 0 failed** against the live GKE cluster (`cage-dev`, namespace `governance-stack`).
 
@@ -109,7 +110,7 @@ Phase 6: Pre-Release Checklist + Tag
 | History rewrite **before** `v0.1.0-rc.1` promotion | The D-01 gate is explicitly tied to RC promotion in the CHANGELOG promotion path. |
 | D-07 PSA **before** D-06 CronJob | Applying `restricted` PSA to `governance-stack` will reject any pod (including the Trivy scanner CronJob) that lacks a compliant `securityContext`. The CronJob manifest must be written with a compliant context, and PSA must be applied first. |
 | D-04 Terraform apply **before** D-02 pod restart | The advisor pod reads `CAGE_ROUTING_SEAL_SECRET` and `GOVERNANCE_SALT` from `advisor-secrets`. If the pod restarts before those keys exist in the Secret, it will start with empty values. |
-| All changes via PR — **no direct push** | [`docs/GIT_WORKFLOW_STANDARDS.md`](docs/GIT_WORKFLOW_STANDARDS.md) §6.1 and §6.5 prohibit direct push to `main`, `rc-v0.1.0`, and `release/**`. The pre-push hook enforces this locally; GitHub branch protection enforces it server-side. |
+| All changes via PR — **no direct push** | [`docs/GIT_WORKFLOW_STANDARDS.md`](../operations/GIT_WORKFLOW_STANDARDS.md) §6.1 and §6.5 prohibit direct push to `main`, `rc-v0.1.0`, and `release/**`. The pre-push hook enforces this locally; GitHub branch protection enforces it server-side. |
 
 ---
 
@@ -129,7 +130,7 @@ git pull origin rc-v0.1.0
 git checkout -b fix/v2-p0-blockers
 ```
 
-> **Branch name check:** `fix/v2-p0-blockers` = 18 characters after the `fix/` prefix — within the 30-character limit per [`docs/GIT_WORKFLOW_STANDARDS.md`](docs/GIT_WORKFLOW_STANDARDS.md) §3.2.
+> **Branch name check:** `fix/v2-p0-blockers` = 18 characters after the `fix/` prefix — within the 30-character limit per [`docs/GIT_WORKFLOW_STANDARDS.md`](../operations/GIT_WORKFLOW_STANDARDS.md) §3.2.
 
 ---
 
@@ -617,7 +618,7 @@ kubectl get secret hf-token-secret -n governance-stack \
 
 ### 5.1 Why Force-Push Is Required Here
 
-[`docs/GIT_WORKFLOW_STANDARDS.md`](docs/GIT_WORKFLOW_STANDARDS.md) §6.5 states: *"Force-pushing to `main`, `rc-v*`, or `release/**` is never acceptable under any circumstances."* However, D-01 remediation requires rewriting the git history to remove committed secrets — this is a one-time, admin-gated exception that is explicitly documented in the promotion path. The procedure below minimises the window during which branch protection is suspended.
+[`docs/GIT_WORKFLOW_STANDARDS.md`](../operations/GIT_WORKFLOW_STANDARDS.md) §6.5 states: *"Force-pushing to `main`, `rc-v*`, or `release/**` is never acceptable under any circumstances."* However, D-01 remediation requires rewriting the git history to remove committed secrets — this is a one-time, admin-gated exception that is explicitly documented in the promotion path. The procedure below minimises the window during which branch protection is suspended.
 
 ### 5.2 Pre-Rewrite Checklist
 
@@ -794,7 +795,7 @@ git reset --hard origin/rc-v0.1.0
 
 **Prerequisites:** Phase 3 complete (history rewritten, branch protection restored).
 **Requires:** GCP credentials (`gcloud auth application-default login`), `kubectl` context `gke_laah-cybernetics_us-central1-a_cage-dev`, Terraform ≥1.5.0.
-**Cloud Build rule:** Per [`docs/DEPLOYMENT_RULES.md`](docs/DEPLOYMENT_RULES.md), all GKE image deployments must use Cloud Build. Manual `kubectl apply` is permitted only for non-image resources (Secrets, CronJobs, namespace labels).
+**Cloud Build rule:** Per [`docs/DEPLOYMENT_RULES.md`](../operations/DEPLOYMENT_RULES.md), all GKE image deployments must use Cloud Build. Manual `kubectl apply` is permitted only for non-image resources (Secrets, CronJobs, namespace labels).
 
 ### 6.1 Pre-Apply Checks
 
@@ -1152,7 +1153,7 @@ kubectl logs -n governance-stack -l job-name=lula-manual-run
 # Expected: all 4 Active assertions PASS (a52, a53, a92, sc4).
 # 22 Stub manifests require cluster-specific configuration before activation.
 # See compliance/lula/README.md for activation instructions.
-# NOTE: v0.1.0 Git tag has been applied and rc-v0.1.0 merged to main, but stability has not been declared. 4 Active manifests were passing at Track D verification (2026-06-08).
+# NOTE: v0.1.0 stable tag was applied with 4 Active manifests passing (Track D, 2026-06-08).
 
 kubectl delete job lula-manual-run -n governance-stack
 ```
@@ -1213,6 +1214,8 @@ The ATO (Authority to Operate) process must be **initiated** (not completed) bef
 - **POAM-011 (SC-8):** Transmission confidentiality — TLS termination gap
 - **POAM-012 (SC-12):** Cryptographic key management — KMS integration incomplete
 - **R-21:** `NeMoOTelCallback.current_span` race condition — known open issue
+
+> **Production Promotion Checklist:** Before executing §8.8 (tag creation), work through the full ordered gate list in [`docs/operations/RELEASE_RUNBOOK.md` — Phase 7](../operations/RELEASE_RUNBOOK.md#phase-7--production-promotion-checklist). That checklist is the single authoritative gate list for any stable release and supersedes the abbreviated checklist in §8.10 below.
 
 ### 8.8 Tag Procedure
 
@@ -1333,4 +1336,29 @@ These issues are documented and accepted for v0.1.0. They must appear in the POA
 
 ---
 
-*This document is version-controlled. Any changes must go through the standard PR process targeting `rc-v0.1.0` or `main` per [`docs/GIT_WORKFLOW_STANDARDS.md`](docs/GIT_WORKFLOW_STANDARDS.md).*
+## 9. Phase 7: Production Promotion Checklist
+
+**Authority:** `.clinerules` §5, `docs/governance/CHANGE_MANAGEMENT_PROCESS.md` §3.8, `docs/operations/RELEASE_RUNBOOK.md` Phase 7.
+
+The full, ordered, actionable gate list is maintained in the runbook to keep it co-located with the execution steps:
+
+> **→ [`docs/operations/RELEASE_RUNBOOK.md` — Phase 7: Production Promotion Checklist](../operations/RELEASE_RUNBOOK.md#phase-7--production-promotion-checklist)**
+
+That section is the single source of truth for pre-promotion verification. It covers:
+
+| Section | Scope |
+|---------|-------|
+| §7.1 Pre-Promotion Environment Verification | `CAGE_ENV=prod`, `CAGE_DEPLOYMENT_REGION`, Terraform flags |
+| §7.2 Secret Verification | `CAGE_ROUTING_SEAL_SECRET`, `GOVERNANCE_SALT`, dev placeholder check, git history scan |
+| §7.3 Universal Release Gates | Lula (a52/a53/a92/aarm), stub-count, SBOM, Trivy, secret detection, pytest, STPA, Langfuse posture, gateway seal, cluster health |
+| §7.4 POAM Review | Open findings, risk acceptance, closure evidence |
+| §7.5 Region-Specific Gates | US_FED (NIST ≥45%, ATO), EU_ECB (FRIA, GDPR residency, DORA, sentinel), APAC_MAS (MAS FEAT, TRM §4.2, Notice 655, sentinel) |
+| §7.6 Git and Release Tagging | Branch, CI green, CHANGELOG, annotated tag, GitHub Release |
+| §7.7 Post-Promotion Verification | Rollout status, smoke test, audit log, Langfuse traces, 30-min error rate |
+| §7.8 Phase 1–4 Hardening Traceability | Maps D-01/D-02/D-04/D-06/D-07 blockers to checklist items |
+
+**Do not apply a stable tag until every applicable item in §7.1–§7.6 is checked.**
+
+---
+
+*This document is version-controlled. Any changes must go through the standard PR process targeting `rc-v0.1.0` or `main` per [`docs/GIT_WORKFLOW_STANDARDS.md`](../operations/GIT_WORKFLOW_STANDARDS.md).*

@@ -5,7 +5,7 @@
 | **Classification** | PUBLIC                 |
 | **Date**           | 2026-06-03             |
 | **Version**        | 0.1.0                  |
-| **Status**         | Complete (10 documents) — v0.1.0 tagged and merged to main; stability not declared; GKE deployment verified 2026-06-03 |
+| **Status**         | Complete (10 documents) — v0.1.0 stable (GO — 2026-06-08); GKE deployment verified 2026-06-03 |
 
 ---
 
@@ -61,7 +61,7 @@ The Cybernetic Governance Engine (CAGE) is a production-grade, multi-agent AI go
 | Resolved Critical Findings     | 2 (FIND-010 HMAC bypass — resolved; FIND-011 mTLS — POAM-007 closed) |
 | AARM Vectors Neutralized       | 10/11 (V11 PARTIAL — POAM-022)            |
 | Red Team Payloads              | 290+                                      |
-| Automated Tests                | **796 passing, 0 failed, 148 skipped** (v0.1.0 tagged commit, 2026-06-08 run; stability not declared) |
+| Automated Tests                | **796 passing, 0 failed, 148 skipped** (v0.1.0 stable, 2026-06-08) |
 | Audit Log Retention            | 7 years                                   |
 | Latency SLA                    | 200ms US / 150ms EU (ISO-20022)           |
 | Primary LLM (Reasoning)        | DeepSeek-R1-Distill-Llama-8B (AWQ)        |

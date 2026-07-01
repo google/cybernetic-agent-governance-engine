@@ -6,7 +6,7 @@
 **Date:** 2026-06-14
 **Status:** DRAFT — Pending AO Approval
 
-> **v0.1.0 Status Note (as of 2026-07-01):** The v0.1.0 Git tag has been applied and the `rc-v0.1.0` branch has been merged to `main`, but CAGE v0.1.0 has **not** been declared a stable release. All key operational role incumbents remain `[TBD]` pending organizational action (BLOCKER-09 in [`docs/PRODUCTION_READINESS_REPORT.md`](PRODUCTION_READINESS_REPORT.md)). The ATO process has been initiated as part of Sprint 3 remediation. Naming role incumbents is a prerequisite for ATO completion and for activating the Incident Response Plan ([`docs/IR_PLAN.md`](IR_PLAN.md)) and Change Management Process ([`docs/CHANGE_MANAGEMENT_PROCESS.md`](CHANGE_MANAGEMENT_PROCESS.md)).
+> **v0.1.0 Release Note (2026-06-08):** CAGE v0.1.0 has been released as a stable tag. All key operational role incumbents remain `[TBD]` pending organizational action (BLOCKER-09 in [`docs/PRODUCTION_READINESS_REPORT.md`](../project/PRODUCTION_READINESS_REPORT.md)). The ATO process has been initiated as part of Sprint 3 remediation. Naming role incumbents is a prerequisite for ATO completion and for activating the Incident Response Plan ([`docs/IR_PLAN.md`](../security/IR_PLAN.md)) and Change Management Process ([`docs/CHANGE_MANAGEMENT_PROCESS.md`](CHANGE_MANAGEMENT_PROCESS.md)).
 
 ---
 

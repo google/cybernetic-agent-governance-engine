@@ -9,7 +9,7 @@
 **Status:** DRAFT — Pending AO Approval
 **Resolves:** POAM-008 (IR-1: No Incident Response Plan)
 
-> **v0.1.0 Status Note (as of 2026-07-01):** The v0.1.0 Git tag has been applied and the `rc-v0.1.0` branch has been merged to `main`, but CAGE v0.1.0 has **not** been declared a stable release. All IRT role incumbents remain `[TBD]` pending organizational action. The ATO process has been initiated (Sprint 3). This IRP remains in DRAFT status until the AO approves it and role incumbents are named. The `docs/POAM.md` reference in the table below has been superseded — see [`docs/POAM_INDEX.md`](POAM_INDEX.md) for the current multi-posture POAM structure.
+> **v0.1.0 Release Note (2026-06-08):** CAGE v0.1.0 has been released as a stable tag. All IRT role incumbents remain `[TBD]` pending organizational action. The ATO process has been initiated (Sprint 3). This IRP remains in DRAFT status until the AO approves it and role incumbents are named. The `docs/POAM.md` reference in the table below has been superseded — see [`docs/POAM_INDEX.md`](../compliance/cross-region/POAM_INDEX.md) for the current multi-posture POAM structure.
 
 | Field                     | Value                                                                                                                                                                                 |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

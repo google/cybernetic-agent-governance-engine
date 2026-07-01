@@ -5,7 +5,7 @@
 | **Classification** | INTERNAL                  |
 | **Date**           | 2026-06-03                |
 | **Version**        | 2.1                       |
-| **Status**         | Current — v0.1.0 tagged and merged to main; stability not declared; GKE deployment verified 2026-06-03; **844 passing, 0 failed, 24 skipped** (`test_results/run_20260603T103414.txt`); NoDirectBind invariant machine-verified over 19 reachable states |
+| **Status**         | Current — v0.1.0 stable (GO — 2026-06-08); GKE deployment verified 2026-06-03; **844 passing, 0 failed, 24 skipped** (`test_results/run_20260603T103414.txt`); NoDirectBind invariant machine-verified over 19 reachable states |
 | **Series**         | CAGE Technical Report — Document 10 / 10 |
 
 As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v0.1.0 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
