@@ -1,10 +1,10 @@
-# v2.0.0 Stable Release Implementation Plan
+# v0.1.0 Stable Release Implementation Plan
 
-**Document version:** 1.1 (updated 2026-06-08 — v2.0.0 RELEASED)
+**Document version:** 1.1 (updated 2026-06-08 — v0.1.0 tagged; stability not declared)
 **Prepared:** 2026-06-05
 **Repository:** `cybernetic-governance-engine` (private, GitHub)
-**Current HEAD:** `v2.0.0` stable tag on branch `rc-v2.0.0` (GO — 2026-06-08)
-**Target:** `v2.0.0` stable — **✅ RELEASED**
+**Current HEAD:** `v0.1.0` tag applied on `rc-v0.1.0`; branch merged to `main` — stability not declared
+**Target:** `v0.1.0` stable — **⚠️ TAGGED / NOT DECLARED STABLE**
 **Operator context:** Solo operator with full repository admin rights
 
 ---
@@ -26,13 +26,13 @@
 
 ### Current State
 
-> **✅ v2.0.0 RELEASED — GO (2026-06-08).** All P0/P1 blockers resolved. The stable tag `v2.0.0` has been pushed to origin and the GitHub Release is published as Latest. The sections below are preserved as a historical planning record for audit traceability.
+> **⚠️ v0.1.0 TAGGED — STABILITY NOT DECLARED (as of 2026-07-01).** All P0/P1 blockers have been resolved. The `v0.1.0` Git tag has been applied and `rc-v0.1.0` has been merged to `main`, but v0.1.0 has **not** been declared a stable release. The sections below are preserved as a planning record for audit traceability.
 
-The repository was at `v2.0.0-rc.2` when this plan was prepared. The RC-2 release delivered exhaustive state-space formal verification of the `NoDirectBind` safety invariant, enforced cryptographic attestation on all execution paths, and production fail-closed gates for `CBF_FAIL_OPEN` and the DoWhy causal gatekeeper. The full test suite passes: **844 passed, 28 skipped, 0 failed** against the live GKE cluster (`cage-dev`, namespace `governance-stack`).
+The repository was at `v0.1.0-rc.2` when this plan was prepared. The RC-2 release delivered exhaustive state-space formal verification of the `NoDirectBind` safety invariant, enforced cryptographic attestation on all execution paths, and production fail-closed gates for `CBF_FAIL_OPEN` and the DoWhy causal gatekeeper. The full test suite passes: **844 passed, 28 skipped, 0 failed** against the live GKE cluster (`cage-dev`, namespace `governance-stack`).
 
 ### What Blocked Stable Release (All Resolved)
 
-Four P0 blockers and two P1 blockers were resolved before `v2.0.0` was tagged:
+Four P0 blockers and two P1 blockers were resolved before `v0.1.0` was tagged:
 
 | ID | Severity | Title | Status |
 |----|----------|-------|--------|
@@ -71,7 +71,7 @@ Phase 1: Working Tree Remediation (no cluster access needed)
 │  D-06 CronJob manifest creation (1 new file)
 │  D-07 Terraform PSA variable + k8s_namespace module update (2 files)
 │  D-02 recover_advisor.sh namespace fix (1 file)
-│  └─→ Branch: fix/v2-p0-blockers → PR → squash merge to rc-v2.0.0
+│  └─→ Branch: fix/v2-p0-blockers → PR → squash merge to rc-v0.1.0
 │
 Phase 2: Credential Rotation (external service access required)
 │  MUST complete before Phase 3 — treat all exposed credentials as compromised
@@ -79,7 +79,7 @@ Phase 2: Credential Rotation (external service access required)
 │
 Phase 3: Git History Rewrite (temporary branch protection suspension)
 │  MUST follow Phase 2 (rotate before rewriting — rewrite does not revoke)
-│  MUST complete before RC promotion to v2.0.0-rc.1 label
+│  MUST complete before RC promotion to v0.1.0-rc.1 label
 │  Procedure: disable protection → filter-repo → force-push → re-enable
 │
 Phase 4: Terraform Apply + GKE Deployment
@@ -106,26 +106,26 @@ Phase 6: Pre-Release Checklist + Tag
 | Rule | Rationale |
 |------|-----------|
 | Rotate credentials **before** history rewrite | Rewriting history does not revoke live credentials. Rotation must happen first so the window of exposure is closed before the rewrite. |
-| History rewrite **before** `v2.0.0-rc.1` promotion | The D-01 gate is explicitly tied to RC promotion in the CHANGELOG promotion path. |
+| History rewrite **before** `v0.1.0-rc.1` promotion | The D-01 gate is explicitly tied to RC promotion in the CHANGELOG promotion path. |
 | D-07 PSA **before** D-06 CronJob | Applying `restricted` PSA to `governance-stack` will reject any pod (including the Trivy scanner CronJob) that lacks a compliant `securityContext`. The CronJob manifest must be written with a compliant context, and PSA must be applied first. |
 | D-04 Terraform apply **before** D-02 pod restart | The advisor pod reads `CAGE_ROUTING_SEAL_SECRET` and `GOVERNANCE_SALT` from `advisor-secrets`. If the pod restarts before those keys exist in the Secret, it will start with empty values. |
-| All changes via PR — **no direct push** | [`docs/GIT_WORKFLOW_STANDARDS.md`](docs/GIT_WORKFLOW_STANDARDS.md) §6.1 and §6.5 prohibit direct push to `main`, `rc-v2.0.0`, and `release/**`. The pre-push hook enforces this locally; GitHub branch protection enforces it server-side. |
+| All changes via PR — **no direct push** | [`docs/GIT_WORKFLOW_STANDARDS.md`](docs/GIT_WORKFLOW_STANDARDS.md) §6.1 and §6.5 prohibit direct push to `main`, `rc-v0.1.0`, and `release/**`. The pre-push hook enforces this locally; GitHub branch protection enforces it server-side. |
 
 ---
 
 ## 3. Phase 1: Working Tree Remediation
 
 **Prerequisites:** None — all changes are local file edits.  
-**Branch:** `fix/v2-p0-blockers` (branched from `rc-v2.0.0`)  
-**PR target:** `rc-v2.0.0`  
+**Branch:** `fix/v2-p0-blockers` (branched from `rc-v0.1.0`)  
+**PR target:** `rc-v0.1.0`  
 **Merge strategy:** Squash merge  
 **PR title:** `fix(infra): remediate D-01 D-02 D-04 D-06 D-07 p0 blockers`
 
 ### 3.1 Branch Setup
 
 ```bash
-git checkout rc-v2.0.0
-git pull origin rc-v2.0.0
+git checkout rc-v0.1.0
+git pull origin rc-v0.1.0
 git checkout -b fix/v2-p0-blockers
 ```
 
@@ -413,7 +413,7 @@ git push origin fix/v2-p0-blockers
 
 Open a PR on GitHub:
 - **Title:** `fix(infra): remediate D-01 D-02 D-04 D-06 D-07 p0 blockers`
-- **Target branch:** `rc-v2.0.0`
+- **Target branch:** `rc-v0.1.0`
 - Complete all sections of `.github/pull_request_template.md`
 - Wait for CI to pass (License Guard + CI suite)
 - Squash merge
@@ -428,7 +428,7 @@ git remote prune origin
 
 ## 4. Phase 2: Credential Rotation
 
-**Prerequisites:** Phase 1 PR merged to `rc-v2.0.0`.  
+**Prerequisites:** Phase 1 PR merged to `rc-v0.1.0`.  
 **Requires:** External service access — GCP Console, Langfuse UI, HuggingFace account.  
 **Critical:** All credentials must be rotated **before** the git history rewrite in Phase 3. Rewriting history does not revoke live credentials. Treat all exposed credentials as compromised from the moment this plan is executed.
 
@@ -611,9 +611,9 @@ kubectl get secret hf-token-secret -n governance-stack \
 ## 5. Phase 3: Git History Rewrite
 
 **Prerequisites:** Phase 2 (credential rotation) complete.  
-**Timing:** Must complete before promoting `rc-v2.0.0` to `v2.0.0-rc.1` label.  
+**Timing:** Must complete before promoting `rc-v0.1.0` to `v0.1.0-rc.1` label.  
 **Risk level:** HIGH — this permanently rewrites repository history. All collaborators (if any) must re-clone after this operation.  
-**Operator action required:** Temporary suspension of branch protection on `rc-v2.0.0` as repository admin.
+**Operator action required:** Temporary suspension of branch protection on `rc-v0.1.0` as repository admin.
 
 ### 5.1 Why Force-Push Is Required Here
 
@@ -623,8 +623,8 @@ kubectl get secret hf-token-secret -n governance-stack \
 
 ```bash
 # 1. Confirm all credentials have been rotated (Phase 2 complete)
-# 2. Confirm the working tree is clean on rc-v2.0.0
-git checkout rc-v2.0.0
+# 2. Confirm the working tree is clean on rc-v0.1.0
+git checkout rc-v0.1.0
 git status
 # Expected: nothing to commit, working tree clean
 
@@ -693,7 +693,7 @@ git log --all --oneline | grep -E "200da00|72f8f3d|6b14314|18c5bac|bf4e84c"
 ### 5.5 Suspend Branch Protection (Repo Admin Action)
 
 1. Navigate to: `https://github.com/<owner>/cybernetic-governance-engine/settings/branches`
-2. Click **Edit** on the `rc-v2.0.0` branch protection rule
+2. Click **Edit** on the `rc-v0.1.0` branch protection rule
 3. **Uncheck** "Require a pull request before merging"
 4. **Uncheck** "Require status checks to pass before merging"
 5. **Uncheck** "Restrict who can push to matching branches" (if enabled)
@@ -708,9 +708,9 @@ git log --all --oneline | grep -E "200da00|72f8f3d|6b14314|18c5bac|bf4e84c"
 # Work on the actual repository clone
 cd /Users/larsahlfors/Code/cybernetic-governance-engine
 
-# Ensure you are on rc-v2.0.0 and up to date
-git checkout rc-v2.0.0
-git pull origin rc-v2.0.0
+# Ensure you are on rc-v0.1.0 and up to date
+git checkout rc-v0.1.0
+git pull origin rc-v0.1.0
 
 # Run git filter-repo (this rewrites ALL history on ALL branches in the clone)
 git filter-repo \
@@ -738,7 +738,7 @@ git log --all -S "hf_" --oneline
 git remote add origin git@github.com:<owner>/cybernetic-governance-engine.git
 
 # Force-push with lease (safer than --force — fails if remote has moved)
-git push --force-with-lease origin rc-v2.0.0
+git push --force-with-lease origin rc-v0.1.0
 
 # Also push main if it was affected (filter-repo rewrites all refs)
 git push --force-with-lease origin main
@@ -747,7 +747,7 @@ git push --force-with-lease origin main
 ### 5.8 Re-Enable Branch Protection (Immediately)
 
 1. Navigate back to: `https://github.com/<owner>/cybernetic-governance-engine/settings/branches`
-2. Click **Edit** on the `rc-v2.0.0` branch protection rule
+2. Click **Edit** on the `rc-v0.1.0` branch protection rule
 3. Re-enable all previously disabled settings
 4. Click **Save changes**
 5. **Record the time** of re-enablement
@@ -773,7 +773,7 @@ git show 200da00 2>/dev/null | grep -iE "(password|secret|token)" | head -5
 # Expected: no credential strings in output
 
 # Verify the working tree is still correct
-git checkout rc-v2.0.0
+git checkout rc-v0.1.0
 python -m pytest tests/ -x -q --timeout=30 2>&1 | tail -5
 # Expected: tests pass (or skip) with no failures
 ```
@@ -785,7 +785,7 @@ All local clones (including the working copy) must be reset after the force-push
 ```bash
 cd /Users/larsahlfors/Code/cybernetic-governance-engine
 git fetch origin
-git reset --hard origin/rc-v2.0.0
+git reset --hard origin/rc-v0.1.0
 ```
 
 ---
@@ -847,7 +847,7 @@ kubectl get secret advisor-secrets -n governance-stack \
 
 ### 6.3 Step 4b: Cloud Build Trigger — D-02 Pod Restart
 
-The working tree [`deployment/k8s/financial-advisor.yaml`](deployment/k8s/financial-advisor.yaml) is already remediated (single `advisor` container, no `slm-sidecar`). The Phase 1 PR merged this to `rc-v2.0.0`. Trigger Cloud Build to apply it:
+The working tree [`deployment/k8s/financial-advisor.yaml`](deployment/k8s/financial-advisor.yaml) is already remediated (single `advisor` container, no `slm-sidecar`). The Phase 1 PR merged this to `rc-v0.1.0`. Trigger Cloud Build to apply it:
 
 ```bash
 # Option 1: Using the deployment script (recommended per DEPLOYMENT_RULES.md)
@@ -1075,7 +1075,7 @@ python3 scripts/verify_langfuse_posture.py
 ## 8. Phase 6: Pre-Release Checklist
 
 **Prerequisites:** All prior phases complete.
-**This phase gates the final `v2.0.0` tag.**
+**This phase gates the final `v0.1.0` tag.**
 
 ### 8.1 Secret Hygiene Verification
 
@@ -1152,7 +1152,7 @@ kubectl logs -n governance-stack -l job-name=lula-manual-run
 # Expected: all 4 Active assertions PASS (a52, a53, a92, sc4).
 # 22 Stub manifests require cluster-specific configuration before activation.
 # See compliance/lula/README.md for activation instructions.
-# NOTE: v2.0.0 stable tag was applied with 4 Active manifests passing (Track D, 2026-06-08).
+# NOTE: v0.1.0 Git tag has been applied and rc-v0.1.0 merged to main, but stability has not been declared. 4 Active manifests were passing at Track D verification (2026-06-08).
 
 kubectl delete job lula-manual-run -n governance-stack
 ```
@@ -1161,7 +1161,7 @@ kubectl delete job lula-manual-run -n governance-stack
 
 > **US_FED ONLY** — This check applies exclusively to `CAGE_DEPLOYMENT_REGION=US_FED` deployments. Skip for the global stable tag; required before US_FED production promotion.
 
-**Current state:** 24% at `v2.0.0-dev.1`. Gate requires ≥45%.
+**Current state:** 24% at `v0.1.0-dev.1`. Gate requires ≥45%.
 
 ```bash
 # Check current NIST coverage from the compliance bridge
@@ -1219,46 +1219,46 @@ The ATO (Authority to Operate) process must be **initiated** (not completed) bef
 All gates must be green before tagging. Execute the following **only after** all checklist items above are confirmed:
 
 ```bash
-# Ensure you are on the latest rc-v2.0.0 HEAD
-git checkout rc-v2.0.0
-git pull origin rc-v2.0.0
+# Ensure you are on the latest rc-v0.1.0 HEAD
+git checkout rc-v0.1.0
+git pull origin rc-v0.1.0
 git log --oneline -3
 # Confirm the HEAD is the squash commit from fix/v2-p0-blockers
 
 # Create the annotated tag
-git tag -a v2.0.0 \
-  -m "chore(release): stable v2.0.0
+git tag -a v0.1.0 \
+  -m "chore(release): stable v0.1.0
 
-Promotion from v2.0.0-rc.2 after closure of D-01, D-02, D-04.
+Promotion from v0.1.0-rc.2 after closure of D-01, D-02, D-04.
 All P0 blockers resolved. HMAC seal enforcement active.
 US_FED deployment requires separate NIST ≥45% and ATO gates (.clinerules §5.2).
 Full test suite: 844+ passed, 0 failed."
 
 # Push the tag
-git push origin v2.0.0
+git push origin v0.1.0
 
 # Verify the tag is on the remote
-git ls-remote --tags origin | grep v2.0.0
-# Expected: refs/tags/v2.0.0
+git ls-remote --tags origin | grep v0.1.0
+# Expected: refs/tags/v0.1.0
 ```
 
 ### 8.9 GitHub Release Creation
 
 ```bash
 # Create the GitHub Release using the GitHub CLI
-gh release create v2.0.0 \
-  --title "v2.0.0 — Stable Release" \
+gh release create v0.1.0 \
+  --title "v0.1.0 — Stable Release" \
   --notes-file CHANGELOG.md \
-  --target rc-v2.0.0 \
+  --target rc-v0.1.0 \
   --verify-tag
 ```
 
 Or via the GitHub UI:
 1. Navigate to `https://github.com/<owner>/cybernetic-governance-engine/releases/new`
-2. Select tag: `v2.0.0`
-3. Target: `rc-v2.0.0`
-4. Title: `v2.0.0 — Stable Release`
-5. Description: Copy the `[v2.0.0-rc.2]` and `[v2.0.0]` sections from [`CHANGELOG.md`](CHANGELOG.md)
+2. Select tag: `v0.1.0`
+3. Target: `rc-v0.1.0`
+4. Title: `v0.1.0 — Stable Release`
+5. Description: Copy the `[v0.1.0-rc.2]` and `[v0.1.0]` sections from [`CHANGELOG.md`](CHANGELOG.md)
 6. Mark as **Latest release**
 7. Click **Publish release**
 
@@ -1288,7 +1288,7 @@ Or via the GitHub UI:
 - [x] `security-scanner-cronjob` exists in `governance-stack` namespace
 - [x] PSA labels applied to `governance-stack` (restricted), `langfuse` (baseline), `vllm` (baseline)
 - [x] Full test suite: 0 failures
-- [x] `git tag v2.0.0` pushed to origin
+- [x] `git tag v0.1.0` pushed to origin
 - [x] GitHub Release published as Latest
 - [x] Branch `fix/v2-p0-blockers` deleted from remote
 - [x] `terraform.auto.tfvars` confirmed gitignored (no secrets in working tree)
@@ -1321,9 +1321,9 @@ Or via the GitHub UI:
 
 ---
 
-## Appendix: Known Open Issues (Non-Blocking for v2.0.0)
+## Appendix: Known Open Issues (Non-Blocking for v0.1.0)
 
-These issues are documented and accepted for v2.0.0. They must appear in the POA&M.
+These issues are documented and accepted for v0.1.0. They must appear in the POA&M.
 
 | ID | Control | Issue | Mitigation |
 |----|---------|-------|------------|
@@ -1333,4 +1333,4 @@ These issues are documented and accepted for v2.0.0. They must appear in the POA
 
 ---
 
-*This document is version-controlled. Any changes must go through the standard PR process targeting `rc-v2.0.0` or `main` per [`docs/GIT_WORKFLOW_STANDARDS.md`](docs/GIT_WORKFLOW_STANDARDS.md).*
+*This document is version-controlled. Any changes must go through the standard PR process targeting `rc-v0.1.0` or `main` per [`docs/GIT_WORKFLOW_STANDARDS.md`](docs/GIT_WORKFLOW_STANDARDS.md).*

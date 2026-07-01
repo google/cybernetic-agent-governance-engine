@@ -103,14 +103,14 @@ class TradingKnowledgeGraph:
             detection_pattern="order_size > 0.01 * daily_vol"
         ))
 
-        # UCA-7: DEFER — Confidence-Starvation Boundary (CAGE v2.0.0 architectural decision)
+        # UCA-7: DEFER — Confidence-Starvation Boundary (CAGE v0.1.0 architectural decision)
         #
         # The DEFER state is NOT an error state — it is an automated data-hydration trigger.
         # When confidence_score < 0.70 AND OPA would have returned MANUAL_REVIEW, forcing a
         # human operator into the loop introduces massive operational fatigue because the context
         # window is either fundamentally corrupted or missing critical state data.
         #
-        # Confidence-Starvation Boundary (three-way split, CAGE v2.0.0):
+        # Confidence-Starvation Boundary (three-way split, CAGE v0.1.0):
         #   confidence ≥ 0.95  →  ALLOW / DENY (Autonomous Clearance via system_authz.rego)
         #   0.70 ≤ confidence < 0.95  →  MANUAL_REVIEW (human sign-off required)
         #   confidence < 0.70  →  DEFER (route to automated data-hydration loop)

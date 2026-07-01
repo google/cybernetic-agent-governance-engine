@@ -1,6 +1,6 @@
 # Cybernetic Agent Governance Engine (CAGE) — One-Pager
 
-**Authors:** CAGE Engineering Team · **Last updated:** 2026-06-08 · **Status:** GO — STABLE RELEASE APPROVED (v2.0.0, 2026-06-08)
+**Authors:** CAGE Engineering Team · **Last updated:** 2026-06-08 · **Status:** v0.1.0 tagged and merged to main — stability not declared (as of 2026-07-01)
 
 ---
 
@@ -10,9 +10,9 @@ Regulated industries deploying agentic AI face a fundamental audit gap: LLM-base
 
 The cost of inaction is concrete: a single unchecked `execute_trade_action` call can bypass drawdown limits, leak PII in the response payload, and produce no evidence of the policy evaluation that should have blocked it. Automated red-team exercises against naive gateway implementations routinely achieve **100% adversarial success rates** on RBAC-002 (excessive permissions) and PII-004 (data leakage) attack classes.
 
-**CAGE v2.0.0** is an open-source, Python-first governance runtime that wraps every LLM call and tool invocation in a deterministic, 7-tier policy enforcement pipeline — without sacrificing production latency. The architecture is bifurcated: application logic (a LangGraph `StateGraph` multi-agent pipeline) is fully decoupled from the cloud provider, while a dedicated **Inference Gateway** (`src/gateway/`) handles all model traffic through a split-brain topology routing to two specialized vLLM pools (DeepSeek-R1 for reasoning; Llama 3.1 for structured governance output). The governance stack executes on every request: Aho-Corasick keyword scan → NeMo Guardrails (Colang 2.x + in-process Presidio PII) → STPA hazard validator → OPA policy engine → Control Barrier Function → multi-agent consensus → causal gatekeeper → adaptive FRIA gate. The SLM sidecar (formerly Tier 3) has been deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. All compliance mapping is performed by the Python OSCAL exporter (`src/compliance_bridge/oscal_exporter.py`), achieving sub-millisecond audit-trail generation.
+**CAGE v0.1.0** is an open-source, Python-first governance runtime that wraps every LLM call and tool invocation in a deterministic, 7-tier policy enforcement pipeline — without sacrificing production latency. The architecture is bifurcated: application logic (a LangGraph `StateGraph` multi-agent pipeline) is fully decoupled from the cloud provider, while a dedicated **Inference Gateway** (`src/gateway/`) handles all model traffic through a split-brain topology routing to two specialized vLLM pools (DeepSeek-R1 for reasoning; Llama 3.1 for structured governance output). The governance stack executes on every request: Aho-Corasick keyword scan → NeMo Guardrails (Colang 2.x + in-process Presidio PII) → STPA hazard validator → OPA policy engine → Control Barrier Function → multi-agent consensus → causal gatekeeper → adaptive FRIA gate. The SLM sidecar (formerly Tier 3) has been deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. All compliance mapping is performed by the Python OSCAL exporter (`src/compliance_bridge/oscal_exporter.py`), achieving sub-millisecond audit-trail generation.
 
-**v2.0.0 introduces evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
+**v0.1.0 introduces evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
 
 - **Cloud KMS HSM-backed governance signing** — asymmetric signing via Google Cloud KMS; private key never leaves the HSM; HMAC-SHA256 fallback for dev/CI only
 - **Human-gated NeMo refinement** — the autonomous Langfuse → KFP → NeMo hot-reload loop is severed; all config refinements require explicit human approval with reviewer identity and rationale before applying
@@ -33,7 +33,7 @@ Human oversight is enforced structurally, not by convention: the LangGraph graph
 | Document type         | Engineering one-pager                                                                                                                                                   |
 | Audience              | Engineering leads, compliance reviewers, AI governance evaluators                                                                                                       |
 | Companion documents   | [`README.md`](../README.md), [`COMPLIANCE.md`](../COMPLIANCE.md), [`docs/GOVERNANCE_CROSSWALK.md`](GOVERNANCE_CROSSWALK.md), [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](NEURO_SYMBOLIC_GOVERNANCE.md) |
-| Implementation status | v2.0.0 — 2026-06-08                                                                                                                                                    |
-| Production readiness  | **GO — STABLE RELEASE APPROVED (v2.0.0, 2026-06-08)**; see [`docs/PRODUCTION_READINESS_REPORT.md`](PRODUCTION_READINESS_REPORT.md)                                     |
+| Implementation status | v0.1.0 — 2026-06-08                                                                                                                                                    |
+| Production readiness  | **GO criteria met — v0.1.0 tagged and merged to main; stability not declared (as of 2026-07-01)**; see [`docs/PRODUCTION_READINESS_REPORT.md`](PRODUCTION_READINESS_REPORT.md) |
 | Open issues           | File a GitHub issue for any defects or feature requests                                                                                                                 |
 | Feedback              | File a GitHub issue or suggest edits via pull request                                                                                                                   |

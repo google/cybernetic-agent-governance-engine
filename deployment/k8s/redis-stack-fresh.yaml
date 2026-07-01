@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # ============================================================================
-# Redis Stack StatefulSet — CAGE v2.0.0 LangGraph Checkpoint Store
+# Redis Stack StatefulSet — CAGE v0.1.0 LangGraph Checkpoint Store
 # ============================================================================
 #
 # Replaces the plain Bitnami Redis cluster for the LangGraph checkpoint backend.

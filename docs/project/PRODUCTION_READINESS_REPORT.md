@@ -1,19 +1,19 @@
-# CAGE v2.0.0 — Production Readiness Assessment
+# CAGE v0.1.0 — Production Readiness Assessment
 
 **Date:** 2026-06-08
 **Assessment Type:** Comprehensive static analysis across 5 domains + Sprint 1/2 remediation verification
-**Version Under Review:** v2.0.0 (stable)
+**Version Under Review:** v0.1.0 (tagged; merged to main; stability not declared)
 **Prepared By:** Automated multi-specialist analysis pipeline
 
 ---
 
-## ✅ GO — STABLE RELEASE APPROVED (v2.0.0, 2026-06-08)
+## ⚠️ GO CRITERIA MET — STABILITY NOT DECLARED (v0.1.0)
 
-> All Sprint 1 and Sprint 2 P0/P1 blockers resolved. Track C (seal enforcement) and Track D (compliance validation) gates complete. Token Quota Proxy, PII Sanitizer, and UCA Logger active. All universal Lula assertions PASS. Trivy scan risk-accepted (POAM-023). See CHANGELOG.md `[2.0.0]` entry for full gate results.
+> All Sprint 1 and Sprint 2 P0/P1 blockers resolved. Track C (seal enforcement) and Track D (compliance validation) gates complete. Token Quota Proxy, PII Sanitizer, and UCA Logger active. All universal Lula assertions PASS. Trivy scan risk-accepted (POAM-023). See CHANGELOG.md `[0.1.0]` entry for full gate results.
 
 ---
 
-> **Historical context:** The original assessment below (dated 2026-06-07) recorded a NO-GO verdict for v2.0.0-rc.3. The Sprint 1 and Sprint 2 remediation roadmap has been completed. The verdict has been updated to GO for the v2.0.0 stable tag. Individual blocker sections are preserved for audit traceability.
+> **Historical context:** The original assessment below (dated 2026-06-07) recorded a NO-GO verdict for v0.1.0-rc.3. The Sprint 1 and Sprint 2 remediation roadmap has been completed. The verdict has been updated to GO (all gate criteria met). The v0.1.0 Git tag has been applied and `rc-v0.1.0` merged to `main`, but v0.1.0 has **not** been declared a stable release as of 2026-07-01. Individual blocker sections are preserved for audit traceability.
 
 ---
 
@@ -46,7 +46,7 @@ The CAGE governance engine demonstrates sophisticated, defense-in-depth architec
 | Performance & Scalability | 7.0/10 | ✅ Pass (causal gatekeeper deadlock fixed, BLOCKER-01) |
 | Documentation & Maintainability | 8.5/10 | ✅ Pass |
 
-### Key Metrics at a Glance (v2.0.0 — 2026-06-08)
+### Key Metrics at a Glance (v0.1.0 — 2026-06-08)
 
 | Metric | Value | Target | Status |
 |--------|-------|--------|--------|
@@ -63,7 +63,7 @@ The CAGE governance engine demonstrates sophisticated, defense-in-depth architec
 | Seal enforcement (U-15/U-16) | PASS | Required | ✅ Track C complete |
 | Universal Lula assertions | All 4 PASS | Required | ✅ Track D complete |
 
-### Issue Distribution (v2.0.0 — post-remediation)
+### Issue Distribution (v0.1.0 — post-remediation)
 
 | Severity | Count | Status |
 |----------|-------|--------|
@@ -82,32 +82,32 @@ The CAGE governance engine demonstrates sophisticated, defense-in-depth architec
 
 ### 1.1 Universal Gates (All Regions)
 
-> **Note:** The gate statuses below reflect the **original rc.3 assessment (2026-06-07)**. All gates were resolved by the v2.0.0 stable release (2026-06-08). See the [Final Verdict](#section-8-final-verdict) and [Resolution Summary](#resolution-summary) for the post-remediation status of each gate.
+> **Note:** The gate statuses below reflect the **original rc.3 assessment (2026-06-07)**. All gates have been resolved. The v0.1.0 Git tag has been applied and `rc-v0.1.0` merged to `main`, but stability has **not** been declared as of 2026-07-01. See the [Final Verdict](#section-8-final-verdict) and [Resolution Summary](#resolution-summary) for the post-remediation status of each gate.
 
 | # | Gate | Status (rc.3 — 2026-06-07) | Notes |
 |---|------|--------|-------|
-| U-01 | All ISO 42001 Lula assertions pass (`lula-validation-a52`, `a53`, `a92`) | ⚠️ Unverified → ✅ **PASS (v2.0.0)** | Files exist in `compliance/lula/`; no CI run results confirming pass |
-| U-02 | CSA AARM Lula assertion passes (`lula-validation-aarm-vectors.yaml`) | ⚠️ Unverified → ✅ **PASS (v2.0.0)** | File exists; no confirmed CI pass |
-| U-03 | SBOM generated and validated | ❌ FAIL → ✅ **PASS (v2.0.0)** | POAM-006 open; [`scripts/generate_sbom.py`](scripts/generate_sbom.py) exists but not integrated into CI pipeline |
-| U-04 | Container image vulnerability scan — Trivy, no CRITICAL unmitigated | ❌ FAIL → ✅ **PASS (v2.0.0)** | CVE-2026-4810 in `google-adk` patched; `.trivyignore` + Cilium egress lockdown for residual CVE-2025-13462 (POAM-023, risk accepted) |
+| U-01 | All ISO 42001 Lula assertions pass (`lula-validation-a52`, `a53`, `a92`) | ⚠️ Unverified → ✅ **PASS (v0.1.0)** | Files exist in `compliance/lula/`; no CI run results confirming pass |
+| U-02 | CSA AARM Lula assertion passes (`lula-validation-aarm-vectors.yaml`) | ⚠️ Unverified → ✅ **PASS (v0.1.0)** | File exists; no confirmed CI pass |
+| U-03 | SBOM generated and validated | ❌ FAIL → ✅ **PASS (v0.1.0)** | POAM-006 open; [`scripts/generate_sbom.py`](scripts/generate_sbom.py) exists but not integrated into CI pipeline |
+| U-04 | Container image vulnerability scan — Trivy, no CRITICAL unmitigated | ❌ FAIL → ✅ **PASS (v0.1.0)** | CVE-2026-4810 in `google-adk` patched; `.trivyignore` + Cilium egress lockdown for residual CVE-2025-13462 (POAM-023, risk accepted) |
 | U-05 | Secret detection scan passes (zero secrets in codebase) | ✅ PASS | No real credentials found in source; only placeholder defaults |
-| U-06 | All unit and integration tests pass (pytest — 0 failures) | ⚠️ Unknown → ✅ **PASS (v2.0.0)** | 796 tests passing, 0 failed; governance API surface covered (BLOCKER-08 resolved) |
+| U-06 | All unit and integration tests pass (pytest — 0 failures) | ⚠️ Unknown → ✅ **PASS (v0.1.0)** | 796 tests passing, 0 failed; governance API surface covered (BLOCKER-08 resolved) |
 | U-07 | STPA freshness check passes | ✅ PASS | [`scripts/check_stpa_freshness.py`](scripts/check_stpa_freshness.py) exists and is wired into CI |
-| U-08 | Langfuse posture verified | ⚠️ Unverified → ✅ **PASS (v2.0.0)** | [`scripts/verify_langfuse_posture.py`](scripts/verify_langfuse_posture.py) verified with rotated keys |
-| U-09 | `governed-financial-advisor` READY 1/1, AVAILABLE 1 | ⚠️ Unverified → ✅ **PASS (v2.0.0)** | D-02 resolved; single `advisor` container, no `slm-sidecar` |
-| U-10 | `CAGE_ROUTING_SEAL_SECRET` present in `advisor-secrets` (≥64 chars) | ⚠️ Conditional → ✅ **PASS (v2.0.0)** | Hardcoded fallback removed (BLOCKER-02); fail-fast guard active |
-| U-11 | `GOVERNANCE_SALT` present in `advisor-secrets` (≥64 chars) | ❌ FAIL → ✅ **PASS (v2.0.0)** | Hardcoded fallback removed from [`routing_seal.py`](src/gateway/governance/routing_seal.py); `os.environ["GOVERNANCE_SALT"]` enforced |
-| U-12 | Unsigned gateway request returns 403 | ⚠️ Unverified → ✅ **PASS (v2.0.0)** | `CAGE_SEAL_ENFORCEMENT=log` bypass guard added (BLOCKER-03); enforce mode required in production |
-| U-13 | Valid signed gateway request returns 200 | ⚠️ Unverified → ✅ **PASS (v2.0.0)** | Verified via Phase 5 seal enforcement verification |
-| U-14 | `security-scanner-cronjob` exists in `governance-stack` namespace | ⚠️ Unverified → ✅ **PASS (v2.0.0)** | [`deployment/k8s/security-scan-cronjob.yaml`](deployment/k8s/security-scan-cronjob.yaml) applied (D-06) |
-| U-15 | PSA labels applied (`governance-stack=restricted`, `langfuse=baseline`, `vllm=baseline`) | ⚠️ Unverified → ✅ **PASS (v2.0.0)** | PSA labels applied via Terraform + `pod-security-admission.yaml` (D-07) |
-| U-16 | `git tag v2.0.0` pushed to origin | ❌ FAIL → ✅ **PASS (v2.0.0)** | Stable tag `v2.0.0` pushed to origin 2026-06-08 |
-| U-17 | GitHub Release published as Latest | ❌ FAIL → ✅ **PASS (v2.0.0)** | GitHub Release published as Latest 2026-06-08 |
+| U-08 | Langfuse posture verified | ⚠️ Unverified → ✅ **PASS (v0.1.0)** | [`scripts/verify_langfuse_posture.py`](scripts/verify_langfuse_posture.py) verified with rotated keys |
+| U-09 | `governed-financial-advisor` READY 1/1, AVAILABLE 1 | ⚠️ Unverified → ✅ **PASS (v0.1.0)** | D-02 resolved; single `advisor` container, no `slm-sidecar` |
+| U-10 | `CAGE_ROUTING_SEAL_SECRET` present in `advisor-secrets` (≥64 chars) | ⚠️ Conditional → ✅ **PASS (v0.1.0)** | Hardcoded fallback removed (BLOCKER-02); fail-fast guard active |
+| U-11 | `GOVERNANCE_SALT` present in `advisor-secrets` (≥64 chars) | ❌ FAIL → ✅ **PASS (v0.1.0)** | Hardcoded fallback removed from [`routing_seal.py`](src/gateway/governance/routing_seal.py); `os.environ["GOVERNANCE_SALT"]` enforced |
+| U-12 | Unsigned gateway request returns 403 | ⚠️ Unverified → ✅ **PASS (v0.1.0)** | `CAGE_SEAL_ENFORCEMENT=log` bypass guard added (BLOCKER-03); enforce mode required in production |
+| U-13 | Valid signed gateway request returns 200 | ⚠️ Unverified → ✅ **PASS (v0.1.0)** | Verified via Phase 5 seal enforcement verification |
+| U-14 | `security-scanner-cronjob` exists in `governance-stack` namespace | ⚠️ Unverified → ✅ **PASS (v0.1.0)** | [`deployment/k8s/security-scan-cronjob.yaml`](deployment/k8s/security-scan-cronjob.yaml) applied (D-06) |
+| U-15 | PSA labels applied (`governance-stack=restricted`, `langfuse=baseline`, `vllm=baseline`) | ⚠️ Unverified → ✅ **PASS (v0.1.0)** | PSA labels applied via Terraform + `pod-security-admission.yaml` (D-07) |
+| U-16 | `git tag v0.1.0` pushed to origin | ❌ FAIL → ✅ **PASS (v0.1.0)** | Stable tag `v0.1.0` pushed to origin 2026-06-08 |
+| U-17 | GitHub Release published as Latest | ❌ FAIL → ✅ **PASS (v0.1.0)** | GitHub Release published as Latest 2026-06-08 |
 | U-18 | `terraform.auto.tfvars` confirmed gitignored | ✅ PASS | Confirmed in [`.gitignore`](.gitignore) |
 
 **Universal Gate Summary (rc.3 — 2026-06-07):** 3 PASS · 4 FAIL · 9 Unverified/Conditional · **Overall: ❌ FAIL**
 
-**Universal Gate Summary (v2.0.0 — 2026-06-08):** 18 PASS · 0 FAIL · **Overall: ✅ PASS**
+**Universal Gate Summary (v0.1.0 — 2026-06-08):** 18 PASS · 0 FAIL · **Overall: ✅ PASS**
 
 ---
 
@@ -387,7 +387,7 @@ Three critical governance documents remain in **DRAFT** status pending AO approv
 
 ## Section 3: High Priority Issues (Must Fix Before Stable Release)
 
-> All 12 high priority issues must be resolved before the stable v2.0.0 tag is applied. They do not individually block all production traffic but collectively represent unacceptable risk for a regulated financial AI system.
+> All 12 high priority issues must be resolved before the stable v0.1.0 tag is applied. They do not individually block all production traffic but collectively represent unacceptable risk for a regulated financial AI system.
 
 ---
 
@@ -636,7 +636,7 @@ These items must be resolved before a single production request is routed throug
 
 ### Sprint 2 — Short-term (Week 2, before stable release tag)
 
-These items must be resolved before `git tag v2.0.0` is applied.
+These items must be resolved before `git tag v0.1.0` is applied.
 
 | # | ID | Action | Owner |
 |---|----|--------|-------|
@@ -686,9 +686,9 @@ These items require organizational action in parallel with engineering work.
 
 ## Section 8: Final Verdict
 
-## ✅ GO — STABLE RELEASE APPROVED (v2.0.0, 2026-06-08)
+## ⚠️ GO CRITERIA MET — STABILITY NOT DECLARED (v0.1.0)
 
-All 10 blockers and all 12 high-priority issues identified in the original rc.3 assessment have been resolved. The universal release gates (ISO 42001 Lula assertions, CSA AARM, Trivy scan, seal enforcement, Langfuse posture) all pass. CAGE v2.0.0 is approved for stable production release.
+All 10 blockers and all 12 high-priority issues identified in the original rc.3 assessment have been resolved. The universal release gates (ISO 42001 Lula assertions, CSA AARM, Trivy scan, seal enforcement, Langfuse posture) all pass. The v0.1.0 Git tag has been applied and `rc-v0.1.0` merged to `main`, but CAGE v0.1.0 has **not** been declared a stable release as of 2026-07-01.
 
 > **Audit traceability note:** The original NO-GO verdict (rc.3, 2026-06-07) is preserved in git history. The three critical issues that drove that verdict — event-loop deadlock (BLOCKER-01), hardcoded HMAC fallback (BLOCKER-02), and log-mode governance bypass (BLOCKER-03) — were resolved in Sprint 1. Security blockers and test coverage gaps were resolved in Sprint 2. ATO process was initiated (BLOCKER-09). CHANGELOG.md was present from rc.1 (BLOCKER-10 was a false positive in the original scan).
 
@@ -712,7 +712,7 @@ All 10 blockers and all 12 high-priority issues identified in the original rc.3 
 
 ---
 
-## Appendix: Issue Count Summary (v2.0.0 — post-remediation)
+## Appendix: Issue Count Summary (v0.1.0 — post-remediation)
 
 ### By Severity
 
@@ -753,4 +753,4 @@ All 10 blockers and all 12 high-priority issues identified in the original rc.3 
 
 ---
 
-*This report was originally generated by automated multi-specialist static analysis on 2026-06-07 (rc.3). It was updated on 2026-06-08 to reflect the v2.0.0 stable release verdict following Sprint 1–3 remediation. Dynamic analysis, penetration testing, and live cluster verification results are documented in the release runbook (docs/V2_RELEASE_RUNBOOK.md).*
+*This report was originally generated by automated multi-specialist static analysis on 2026-06-07 (rc.3). It was updated on 2026-06-08 to reflect the v0.1.0 post-remediation verdict following Sprint 1–3 remediation. Note: the v0.1.0 Git tag has been applied and `rc-v0.1.0` merged to `main`, but v0.1.0 has not been declared a stable release as of 2026-07-01. Dynamic analysis, penetration testing, and live cluster verification results are documented in the release runbook (docs/V2_RELEASE_RUNBOOK.md).*

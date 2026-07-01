@@ -2,7 +2,7 @@
 
 > **AI governance for regulated financial services — built-in, not bolted on.**
 
-![v2.0.0](https://img.shields.io/badge/version-2.0.0-brightgreen) ![796 Tests Passing](https://img.shields.io/badge/tests-796%20passing-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 6](https://img.shields.io/badge/POAM%20Closed-6-brightgreen)
+![v0.1.0](https://img.shields.io/badge/version-0.1.0-brightgreen) ![796 Tests Passing](https://img.shields.io/badge/tests-796%20passing-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 6](https://img.shields.io/badge/POAM%20Closed-6-brightgreen)
 
 **Universal (all regions):** ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue)
 
@@ -12,7 +12,7 @@
 
 ## The CAGE Product Offering
 
-CAGE v2.0.0 provides a multi-jurisdiction, dual-layer governance architecture for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
+CAGE v0.1.0 provides a multi-jurisdiction, dual-layer governance architecture for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
 
 1.  **The Governance Gateway:** A high-performance inference proxy and MCP tool server that enforces a 7-tier symbolic governance model (STPA/UCA validation, agentic confidence check, Control Barrier Function, OPA Rego, multi-agent consensus, causal gatekeeper, and adaptive FRIA gate) combined with network and runtime hardening (Linkerd mTLS, Cilium L7, eBPF telemetry). The SLM sidecar (formerly Tier 3) has been deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. It acts as the "Controller" in our Controller-Plant architecture, intercepting all agent-to-tool and agent-to-LLM communications.
 2.  **The Reusable Agent Harness:** A set of deterministic LangGraph factories (`OpaNodeConfig`/`NemoNodeConfig`) that allow developers to wrap *any* agentic workflow in mandatory, non-bypassable governance guardrails.
@@ -23,11 +23,11 @@ CAGE v2.0.0 provides a multi-jurisdiction, dual-layer governance architecture fo
 7.  **The Cryptographic Hash-Chained Context Accumulator (AARM-V1):** SHA-256 hash-chained, append-only log of every `OscalFinding`. Each node's `record_hash` is `SHA-256(prev_hash || content_json)`, sealing an unalterable chain-of-custody that detects any Memory Poisoning attempt at the mutated node. Satisfies **ISO 42001 Annex A.5.3** and neutralizes **AARM-V1**.
 8.  **The DEFER State Machine Primitive (AARM-V7):** Extends the OPA tri-state (`ALLOW | DENY | MANUAL_REVIEW`) to four states. When `confidence_score < 0.70` (Confidence-Starvation Boundary), execution is parked in a Redis-backed `DeferQueue` (`db=1`, `noeviction`) pending automated data injection — preventing the agent from proceeding on fundamentally incomplete context. Satisfies **ISO 42001 Annex A.8.4** and neutralizes **AARM-V7**.
 9.  **Native AARM Threat Vector Mapping (11-Vector Ledger):** Machine-readable proof that specific CAGE control points neutralize all 11 CSA AARM threat vectors. `GET /v1/aarm/conformance-report` returns a live `NEUTRALIZED | PARTIAL | EXPOSED` verdict per vector, auto-serialized to GCS/S3 on every Lula audit run.
-10. **Cloud KMS HSM-Backed Governance Signing (v2.0.0):** Asymmetric signing via Google Cloud KMS Hardware Security Module (`src/gateway/governance/kms_signer.py`). The private key never leaves the HSM; verification uses a locally-embedded public key PEM for sub-millisecond latency. Cloud Audit Logs provide external, immutable attestation of every signing operation. Replaces the prior HMAC-SHA256 self-signing pattern that was vulnerable to container-breakout key extraction.
-11. **Human-Gated NeMo Refinement (v2.0.0):** The autonomous Langfuse → KFP → NeMo hot-reload loop is severed. All config refinements are staged via `POST /v1/nemo/propose-refinement` and require explicit human approval with reviewer identity and rationale before applying — eliminating the recursive self-authentication path where a model could engineer its own privilege escalation.
-12. **Heterogeneous Multi-Model Consensus (v2.0.0):** `ConsensusModelRegistry` routes each critic persona to a distinct vLLM inference backend (DeepSeek-R1 for Risk Manager, Llama 3.1 for Compliance Officer). No single model can "consent" to its own output — system invariants are no longer vulnerable to a shared semantic blind spot.
+10. **Cloud KMS HSM-Backed Governance Signing (v0.1.0):** Asymmetric signing via Google Cloud KMS Hardware Security Module (`src/gateway/governance/kms_signer.py`). The private key never leaves the HSM; verification uses a locally-embedded public key PEM for sub-millisecond latency. Cloud Audit Logs provide external, immutable attestation of every signing operation. Replaces the prior HMAC-SHA256 self-signing pattern that was vulnerable to container-breakout key extraction.
+11. **Human-Gated NeMo Refinement (v0.1.0):** The autonomous Langfuse → KFP → NeMo hot-reload loop is severed. All config refinements are staged via `POST /v1/nemo/propose-refinement` and require explicit human approval with reviewer identity and rationale before applying — eliminating the recursive self-authentication path where a model could engineer its own privilege escalation.
+12. **Heterogeneous Multi-Model Consensus (v0.1.0):** `ConsensusModelRegistry` routes each critic persona to a distinct vLLM inference backend (DeepSeek-R1 for Risk Manager, Llama 3.1 for Compliance Officer). No single model can "consent" to its own output — system invariants are no longer vulnerable to a shared semantic blind spot.
 13. **Externally Reconciled CBF Ground Truth (FUTURE STATE — POAM-023):** The Control Barrier Function's `cash_balance` input is designed to be sourced from an independently reconciled external custody ledger (Anchorage Digital, OCC-chartered) via `AnchorageGrpcLedgerProvider`. **This integration is not yet implemented** — `AnchorageGrpcLedgerProvider` is tracked as POAM-023 (target: 2026-09-08). The CBF currently reads from Redis state. When implemented, reconciled balances will be KMS-signed before Redis write and the CBF will fail closed on TTL expiry.
-14. **External Normative Provider with Adaptive Gating (v2.0.0):** `src/gateway/governance/normative_provider.py` implements the 3-endpoint external normative provider integration (§2.5 Extensibility Architecture) with an **Adaptive Gating Primitive** (`enforce_fria_boundary()`) that maps the blocking semantic to CAGE's confidence boundary: Score ≥0.95 → async attestation (0ms); [0.70, 0.95) → synchronous blocking gate via DEFER queue; <0.70 → local hard deny (no external call). Supports pluggable providers (`StubNormativeProvider` for dev/CI, `TrustLayersProvider` for production). Background daemon for boot-time baseline fetch + 6-hour polling refresh.
+14. **External Normative Provider with Adaptive Gating (v0.1.0):** `src/gateway/governance/normative_provider.py` implements the 3-endpoint external normative provider integration (§2.5 Extensibility Architecture) with an **Adaptive Gating Primitive** (`enforce_fria_boundary()`) that maps the blocking semantic to CAGE's confidence boundary: Score ≥0.95 → async attestation (0ms); [0.70, 0.95) → synchronous blocking gate via DEFER queue; <0.70 → local hard deny (no external call). Supports pluggable providers (`StubNormativeProvider` for dev/CI, `TrustLayersProvider` for production). Background daemon for boot-time baseline fetch + 6-hour polling refresh.
 
 Compliance is not documented after the fact; it is enforced at the point of inference, producing both governed outputs and a cryptographically hash-chained, tamper-evident audit evidence trail in real time.
 
@@ -92,14 +92,14 @@ For full architectural detail, see [`docs/GATEWAY_ARCHITECTURE.md`](docs/GATEWAY
 - **DEFER State Machine Primitive (AARM-V7)** — `src/gateway/governance/defer_queue.py` parks execution context in Redis `db=1` (`noeviction`) when `confidence_score < 0.70`. The `GET /v1/defer/pending`, `POST /v1/defer/{id}/inject`, and `POST /v1/defer/{id}/escalate` endpoints manage the queue lifecycle. Neutralizes **AARM-V7 Context Window Overflow**; satisfies **ISO 42001 A.8.4** (UCA-7).
 - **Native AARM 11-Vector Threat Ledger** — `src/compliance_bridge/aarm_mapper.py` provides a static, version-pinned ledger mapping all 11 CSA AARM vectors to specific CAGE control points. `GET /v1/aarm/conformance-report` returns per-vector `NEUTRALIZED | PARTIAL | EXPOSED` verdicts with optional vLLM narrative enrichment. Report auto-serialized to GCS/S3 on every Lula audit run.
 - **Governance-as-Code Demo** — `examples/governance_demo.py` is a 3-act CLI walkthrough of v1.0.0 features (Concurrency Race, HITL Rationale, and Hash-Chain Verification).
-- **Multi-Jurisdiction Compliance Engine (v2.0.0)** — `CAGE_DEPLOYMENT_REGION` env var activates one of three regional compliance postures (`US_FED`, `EU_ECB`, `APAC_MAS`) at boot, loading the correct JSON control profile, numeric thresholds, and OSCAL framework routing table with zero code changes.
+- **Multi-Jurisdiction Compliance Engine (v0.1.0)** — `CAGE_DEPLOYMENT_REGION` env var activates one of three regional compliance postures (`US_FED`, `EU_ECB`, `APAC_MAS`) at boot, loading the correct JSON control profile, numeric thresholds, and OSCAL framework routing table with zero code changes.
 - **Chaos Agent Playground** — `examples/chaos_agent_playground.py` provides a zero-infrastructure local demo intercepting five adversarial scenarios (A–E: governance tiers; D: Saga LIFO rollback; E: ghost-state OOM crash recovery) across the full governance stack.
 - **OSCAL-compliant compliance bridge** — SSE event bus with 7-year audit retention; ISO 42001, FedRAMP HIGH, and EU AI Act evidence artifacts via Langfuse dual-project setup.
 - **Langfuse observability** — LLM chain-of-thought, tool use, governance verdicts, and compliance scores captured without blocking inference.
 - **Kubernetes-native secret management** — all secrets injected as environment variables via K8s `Secret` objects; no Google Secret Manager.
-- **Cloud KMS HSM governance signatures (v2.0.0)** — Asymmetric signing via Google Cloud KMS HSM; private key never leaves hardware. HMAC-SHA256 fallback for dev/CI. Required before any trade execution.
-- **Human-gated NeMo refinement (v2.0.0)** — All config changes staged as proposals requiring explicit human approval with reviewer identity and rationale. Severs the autonomous hot-reload loop.
-- **Heterogeneous multi-model consensus (v2.0.0)** — `ConsensusModelRegistry` routes each critic persona to a distinct vLLM backend, preventing single-model semantic blind spots.
+- **Cloud KMS HSM governance signatures (v0.1.0)** — Asymmetric signing via Google Cloud KMS HSM; private key never leaves hardware. HMAC-SHA256 fallback for dev/CI. Required before any trade execution.
+- **Human-gated NeMo refinement (v0.1.0)** — All config changes staged as proposals requiring explicit human approval with reviewer identity and rationale. Severs the autonomous hot-reload loop.
+- **Heterogeneous multi-model consensus (v0.1.0)** — `ConsensusModelRegistry` routes each critic persona to a distinct vLLM backend, preventing single-model semantic blind spots.
 - **Externally reconciled CBF (FUTURE STATE — POAM-023)** — `AnchorageGrpcLedgerProvider` (Anchorage Digital, OCC-chartered) is designed to provide independently attested balances for the Control Barrier Function. **Not yet implemented** — tracked as POAM-023 (target: 2026-09-08). CBF currently reads from Redis state.
 - **Human-in-the-loop approval gate** — LangGraph `interrupt_before=["governed_trader"]`; resume via `POST /v1/approvals/{thread_id}/resume`.
 - **W3C traceparent propagation** — full OTel trace waterfall across LangGraph → Gateway → vLLM; 100% sampling for governance decision spans.
@@ -137,7 +137,7 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 ## Security & Compliance Status
 
 > [!IMPORTANT]
-> **CAGE v2.0.0 has not received a NIST Authorization to Operate (ATO).** The AI governance enforcement controls (NeMo Guardrails, OPA, Cloud KMS signing, HITL, STPA, heterogeneous consensus, human-gated refinement, externally reconciled CBF) are fully implemented and tested. The full NIST RMF authorization process — Security Assessment, System Security Plan, ATO letter — has not been completed. Regulated-environment deployers must conduct their own risk assessment before production use.
+> **CAGE v0.1.0 has not received a NIST Authorization to Operate (ATO).** The AI governance enforcement controls (NeMo Guardrails, OPA, Cloud KMS signing, HITL, STPA, heterogeneous consensus, human-gated refinement, externally reconciled CBF) are fully implemented and tested. The full NIST RMF authorization process — Security Assessment, System Security Plan, ATO letter — has not been completed. Regulated-environment deployers must conduct their own risk assessment before production use.
 
 ### Compliance Framework Scope
 
@@ -165,7 +165,7 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 | Domain                                       | Status                  | Detail                                                                                                                      |
 | -------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | **AI governance enforcement**                | ✅ Implemented & tested | NeMo rails, OPA circuit breaker, Cloud KMS HSM seal (production seal enforcement active — unsigned requests return 403), HITL, CBF (externally reconciled), heterogeneous consensus, PII, STPA — all fail-closed |
-| **Evidentiary independence (v2.0.0)**        | ✅ Implemented & tested | KMS asymmetric signing, human-gated refinement, multi-model consensus — recursive self-authentication eliminated. (Anchorage custody reconciliation via `AnchorageGrpcLedgerProvider` is FUTURE STATE — ISO-001 in [`docs/POAM_ISO42001.md`](docs/POAM_ISO42001.md), target 2026-09-08) |
+| **Evidentiary independence (v0.1.0)**        | ✅ Implemented & tested | KMS asymmetric signing, human-gated refinement, multi-model consensus — recursive self-authentication eliminated. (Anchorage custody reconciliation via `AnchorageGrpcLedgerProvider` is FUTURE STATE — ISO-001 in [`docs/POAM_ISO42001.md`](docs/POAM_ISO42001.md), target 2026-09-08) |
 | **Multi-Framework automated compliance**     | 🟡 Partial              | 26 Lula validation manifests (4 Active, 22 Stub) across ISO 42001, NIST SP 800-53, NIST AI 600-1, EU AI Act/GDPR/DORA, MAS FEAT/Notice 655/TRM, and CSA AARM — see [`compliance/lula/README.md`](compliance/lula/README.md) |
 | **NIST RMF Steps 1–4 (Prepare → Implement)** | 🟡 Partial (US_FED only) | SC-8 elevated to implemented; SC-7 reinforced; FIPS 199 unsigned; ATO not yet issued                                       |
 | **NIST RMF Step 5 (Assess)**                 | ❌ Not started (US_FED only) | No Security Assessment Report; no independent assessor                                                                 |
@@ -195,8 +195,8 @@ Copy `.env.example` to `.env` and configure at minimum:
 | Variable                                         | Description                                          |
 | ------------------------------------------------ | ---------------------------------------------------- |
 | `CAGE_DEPLOYMENT_REGION`                         | Deployment region baseline (`US_FED`, `EU_ECB`, `APAC_MAS`; default is `US_FED`) |
-| `KMS_GOVERNANCE_KEY`                             | Cloud KMS key resource name for HSM-backed governance signing (v2.0.0) |
-| `KMS_GOVERNANCE_PUBLIC_PEM`                      | Path to public key PEM for local signature verification (v2.0.0) |
+| `KMS_GOVERNANCE_KEY`                             | Cloud KMS key resource name for HSM-backed governance signing (v0.1.0) |
+| `KMS_GOVERNANCE_PUBLIC_PEM`                      | Path to public key PEM for local signature verification (v0.1.0) |
 | `GOVERNANCE_SALT`                                | _(Legacy)_ HMAC salt — used as fallback when KMS is not configured |
 | `NEMO_AUTO_APPLY_ENABLED`                        | Set `true` to bypass human-gated refinement (dev/CI only; default `false`) |
 | `RECONCILIATION_PROVIDER`                        | Custody provider (`stub` or `anchorage`; default `stub`) |
@@ -254,9 +254,9 @@ cybernetic-governance-engine/
 ├── src/
 │   ├── gateway/
 │   │   ├── governance/               # SymbolicGovernor, STPAValidator, NeMo manager
-│   │   │   ├── kms_signer.py         # v2.0.0: Cloud KMS HSM-backed governance signer
-│   │   │   ├── consensus.py          # v2.0.0: ConsensusModelRegistry + heterogeneous consensus
-│   │   │   ├── normative_provider.py  # v2.0.0: External Normative Provider + Adaptive Gating Primitive
+│   │   │   ├── kms_signer.py         # v0.1.0: Cloud KMS HSM-backed governance signer
+│   │   │   ├── consensus.py          # v0.1.0: ConsensusModelRegistry + heterogeneous consensus
+│   │   │   ├── normative_provider.py  # v0.1.0: External Normative Provider + Adaptive Gating Primitive
 │   │   │   ├── stpa_compiler.py      # STPA-to-Policy compiler CLI (OPA/NeMo/Python/LangGraph)
 │   │   │   ├── oscal_ssp_exporter.py # Automated OSCAL SSP patcher
 │   │   │   ├── generated_stpa_validator.py  # Auto-generated from YAML
@@ -280,23 +280,23 @@ cybernetic-governance-engine/
 │   │   └── governance/
 │   │       ├── defer_queue.py        # AARM-V7: Redis DEFER state machine (db=1, noeviction)
 │   │       └── ...                   # SymbolicGovernor, STPAValidator, NeMo manager
-│   ├── integrations/                 # v2.0.0: Vendor-isolated third-party adapters
+│   ├── integrations/                 # v0.1.0: Vendor-isolated third-party adapters
 │   │   ├── nexart/                   # NexArt SDK attestation adapter + provider
 │   │   └── trustlayers/              # TrustLayers normative provider adapter
 │   └── agentsight-ui/                # React/TypeScript operator dashboard
 ├── config/
 │   ├── stpa_control_structure.yaml   # Single source of truth for all STPA UCAs
 │   ├── governance_thresholds.json    # All numeric thresholds (THRESHOLDS singleton)
-│   ├── compliance/                   # v2.0.0: Regional control-mapping JSON profiles
+│   ├── compliance/                   # v0.1.0: Regional control-mapping JSON profiles
 │   │   ├── US_FED_BASELINE.json      #   SR 26-2 / NIST AI RMF / ISO 42001
 │   │   ├── EU_ECB_BASELINE.json      #   EU AI Act / DORA / GDPR / EBA
 │   │   ├── APAC_MAS_BASELINE.json    #   MAS FEAT / MAS TRM / ISO 42001
-│   │   └── reconciliation_worker.py  #   v2.0.0: External ledger reconciliation daemon + AnchorageGrpcLedgerProvider
-│   ├── thresholds/                   # v2.0.0: Regionalized numeric threshold profiles
+│   │   └── reconciliation_worker.py  #   v0.1.0: External ledger reconciliation daemon + AnchorageGrpcLedgerProvider
+│   ├── thresholds/                   # v0.1.0: Regionalized numeric threshold profiles
 │   │   ├── US_FED_BASELINE.json
 │   │   ├── EU_ECB_BASELINE.json
 │   │   └── APAC_MAS_BASELINE.json
-│   ├── oscal/framework_mappings/     # v2.0.0: OSCAL exporter UCA routing tables (FrameworkRouter)
+│   ├── oscal/framework_mappings/     # v0.1.0: OSCAL exporter UCA routing tables (FrameworkRouter)
 │   │   ├── NIST_SP800_53.json
 │   │   ├── ISO_42001.json
 │   │   ├── EU_AI_ACT.json
@@ -368,13 +368,13 @@ All third-party dependencies are accessed via standard package management. Key l
 | [fakeredis](https://github.com/cunla/fakeredis-py)                  | BSD-3      | In-memory Redis emulator for unit tests       |
 | [google-adk](https://github.com/google/adk-python)                  | Apache 2.0 | Google Agent Development Kit (advisor extras, ≥1.28.1) |
 
-> **Removed packages:** `outlines` was removed in v2.0.0 due to **CVE-2025-69872** (critical severity). Structured-output generation previously provided by `outlines` is now handled via vLLM's native JSON-mode API.
+> **Removed packages:** `outlines` was removed in v0.1.0 due to **CVE-2025-69872** (critical severity). Structured-output generation previously provided by `outlines` is now handled via vLLM's native JSON-mode API.
 
 Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 
 ---
 
-## What's New in v2.0.0
+## What's New in v0.1.0
 
 > **Release date:** 2026-06-08 — Stable release: Token Quota Proxy, PII Sanitizer, UCA Logger, gateway CVE remediation, seal enforcement verification, all universal Lula assertions PASS
 
@@ -386,7 +386,7 @@ Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 
 - **`fix(infra)`: P0 blocker remediation (D-01, D-02, D-04, D-06, D-07)** — PodSecurity `restricted`-compliant `securityContext` applied to all 6 app deployment manifests (`runAsNonRoot`, `runAsUser: 65534`, `seccompProfile: RuntimeDefault`, `allowPrivilegeEscalation: false`, `capabilities.drop: ALL`). Security-scan CronJob deployed (closes D-06 / POAM-010 RA-5 dependency). PSA labels applied via Terraform (`enable_pod_security_standards=true`). `GOVERNANCE_SALT` moved to `secretKeyRef` in `live_deployment.yaml`.
 
-- **`fix`: CI failures resolved** — STPA freshness check now passes after re-running the STPA compiler. License headers added to `src/integrations/nexart/tests/__init__.py`, `src/gateway/protos/nemo_pb2.py`, and `src/gateway/protos/nemo_pb2_grpc.py`. CI workflow branch triggers corrected (`main → rc-v2.0.0`).
+- **`fix`: CI failures resolved** — STPA freshness check now passes after re-running the STPA compiler. License headers added to `src/integrations/nexart/tests/__init__.py`, `src/gateway/protos/nemo_pb2.py`, and `src/gateway/protos/nemo_pb2_grpc.py`. CI workflow branch triggers corrected (`main → rc-v0.1.0`).
 
 - **`fix(infra)`: Lula-audit CronJob self-perpetuating failure resolved** — Stale Job deletion logic corrected; `lula-sc4-watch` patched to `lula:0.9.5` (resolves `ImagePullBackOff`). `Dockerfile.lula` rewritten as multi-stage `go-build` from source (v0.9.5). `scripts/build_images.sh` fixed: `SHORT_SHA` substitution added for `vllm-streamer` build.
 
@@ -398,15 +398,15 @@ Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 - **`.gitignore` hardening** — `terraform.auto.tfvars`, `temp_test/`, test result artifacts (`test_results_*.txt`, `junit*.xml`, `coverage.xml`, `.coverage`, `htmlcov/`) excluded.
 - **Stale `temp_test/` directory removed** — Byte-for-byte duplicates of canonical proto files at `src/gateway/protos/` removed from index and disk.
 
-### Test Results (v2.0.0 stable — 2026-06-08, cluster: cage-dev)
+### Test Results (v0.1.0 tagged commit — 2026-06-08 run, cluster: cage-dev; stability not declared)
 
 | Suite | Passed | Failed | Notes |
 |-------|--------|--------|-------|
 | Full suite (`uv run pytest tests/ --run-integration`) | **796** | **0** | 148 skipped — 0 regressions (Track D 2026-06-08, cluster: cage-dev) |
 
-> **Note:** An earlier rc.2 run recorded 844 passes against a stable port-forward session. The v2.0.0 stable count of 796 reflects the rc.3 run against a freshly restarted cluster; the 25 Langfuse port-forward timeout failures from that session were resolved before the stable tag was applied (2026-06-08). No governance logic regressions.
+> **Note:** An earlier rc.2 run recorded 844 passes against a stable port-forward session. The v0.1.0 count of 796 reflects the rc.3 run against a freshly restarted cluster; the 25 Langfuse port-forward timeout failures from that session were resolved before the tag was applied (2026-06-08). The v0.1.0 Git tag has been applied and `rc-v0.1.0` merged to `main`, but v0.1.0 has **not** been declared a stable release. No governance logic regressions.
 
-### POAM Status (v2.0.0)
+### POAM Status (v0.1.0)
 
 | Metric | Count | Notes |
 |--------|-------|-------|
@@ -428,4 +428,4 @@ Apache 2.0 — see [`LICENSE`](LICENSE)
 
 This is not an officially supported Google product. This project is not eligible for the Google Open Source Software Vulnerability Rewards Program.
 
-_CAGE v2.0.0 — 2026-06-08 — Stable Release: Token Quota Proxy, PII Sanitizer, UCA Logger, CTRL_TQP_007, gateway CVE remediation, seal enforcement verification_
+_CAGE v0.1.0 — 2026-06-08 — Stable Release: Token Quota Proxy, PII Sanitizer, UCA Logger, CTRL_TQP_007, gateway CVE remediation, seal enforcement verification_

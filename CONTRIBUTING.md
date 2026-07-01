@@ -28,7 +28,7 @@ bash scripts/setup_git_hooks.sh
 This installs:
 - A **commit message template** (`.gitmessage`) shown in your editor on every `git commit`
 - A **commit-msg hook** that rejects non-Conventional-Commits messages
-- A **pre-push hook** that blocks direct pushes to `main` and `rc-v2.0.0`
+- A **pre-push hook** that blocks direct pushes to `main` and `rc-v0.1.0`
 
 ---
 
@@ -160,8 +160,8 @@ feat(gateway): add Redis rate limiter
 2. Update `CHANGELOG.md` — add release date under the version header
 3. Create an **annotated tag**:
    ```bash
-   git tag -a v2.0.0 -m "release: v2.0.0 — Cybernetic Governance Engine GA"
-   git push origin v2.0.0
+   git tag -a v0.1.0 -m "release: v0.1.0 — Cybernetic Governance Engine GA"
+   git push origin v0.1.0
    ```
 4. Merge the integration branch into `main` via merge commit
 5. Create a GitHub Release from the tag, copying the CHANGELOG section as the body
@@ -172,7 +172,7 @@ feat(gateway): add Redis rate limiter
 v<MAJOR>.<MINOR>.<PATCH>[-<pre-release>]
 ```
 
-Examples: `v2.0.0`, `v2.0.0-rc.1`, `v2.1.0-dev.1`
+Examples: `v0.1.0`, `v0.1.0-rc.1`, `v2.1.0-dev.1`
 
 ---
 

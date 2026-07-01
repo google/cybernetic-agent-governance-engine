@@ -13,13 +13,13 @@
 # limitations under the License.
 
 """
-aarm_report_generator.py — vLLM narrative generator for AARM Conformance Reports (CAGE v2.0.0)
+aarm_report_generator.py — vLLM narrative generator for AARM Conformance Reports (CAGE v0.1.0)
 
 Generates per-vector prose narratives for the AARM Conformance Report Card by
 calling the out-of-band vLLM diagnostic sidecar — the same sovereign endpoint
 used by Step 5 of the audit workflow (remediation advisory generation).
 
-Concurrency design (Q4 architectural decision, CAGE v2.0.0):
+Concurrency design (Q4 architectural decision, CAGE v0.1.0):
   11 vectors are fanned out concurrently via asyncio.gather(), but the raw
   concurrency is bounded by an asyncio.Semaphore(3) to prevent rate-limit
   dropouts (HTTP 429) on the sovereign vLLM endpoint.  This matches the fan-out

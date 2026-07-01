@@ -94,7 +94,7 @@ Which ISO 42001 Annex A controls and Clauses have POAM entries vs. which are unt
 | **Closed** | 0 | 7 | 0 | 0 | 0 | 7 |
 | **Total** | 8 | 21 | 7 | 5 | 4 | 45 |
 
-> **Note:** Totals above reflect POAM-012 closure (2026-06-08) and the addition of 7 NIST AI 600-1 items in POAM_US_FED v2.1 (2026-06-15). The File Registry table counts 30 entries for US_FED (23 SP 800-53 + 7 AI 600-1). The Status Summary reflects 21 active SP 800-53 entries (23 − 2 closed post-v2.0.0-rc.3: POAM-012 + POAM-020) plus 7 AI 600-1 entries.
+> **Note:** Totals above reflect POAM-012 closure (2026-06-08) and the addition of 7 NIST AI 600-1 items in POAM_US_FED v2.1 (2026-06-15). The File Registry table counts 30 entries for US_FED (23 SP 800-53 + 7 AI 600-1). The Status Summary reflects 21 active SP 800-53 entries (23 − 2 closed post-v0.1.0-rc.3: POAM-012 + POAM-020) plus 7 AI 600-1 entries.
 
 ---
 

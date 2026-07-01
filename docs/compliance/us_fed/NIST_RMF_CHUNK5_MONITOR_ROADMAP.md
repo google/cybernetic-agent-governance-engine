@@ -4,8 +4,8 @@
 
 **Classification:** For Official Use Only (FOUO)
 **Prepared:** 2026-06-01
-**System:** Cybernetic Governance Engine (CAGE) v2.0.0 — GKE-hosted AI Governance Platform
-**Document Status:** Final Synthesis — references all prior chunk findings; updated for v2.0.0
+**System:** Cybernetic Governance Engine (CAGE) v0.1.0 — GKE-hosted AI Governance Platform
+**Document Status:** Final Synthesis — references all prior chunk findings; updated for v0.1.0
 **Additional Frameworks:** SR 26-2 (Federal Reserve, April 17, 2026), CSA AARM v1.0
 
 ---
@@ -52,13 +52,13 @@ The system implements a **two-tier monitoring approach** that partially addresse
 **Tier 3 — Application-Level OTel Tracing (continuous):**
 [`src/gateway/infrastructure/telemetry.py`](src/gateway/infrastructure/telemetry.py:31) provides an OTel tracer factory consumed by all gateway modules. [`src/gateway/observability/mcp_tracing.py`](src/gateway/observability/mcp_tracing.py:46) monkey-patches `ToolManager.call_tool` to inject W3C trace context into every MCP tool invocation, bridging SSE transport gaps and producing complete Langfuse waterfall traces.
 
-**OTel Export Pipeline (v2.0.0):**
+**OTel Export Pipeline (v0.1.0):**
 The standalone OTel Collector (`opentelemetry-collector-contrib`) has been **deprecated 2026-05-31**. Services now export OTLP traces directly to Langfuse's integrated OTLP ingestion endpoint at `http://langfuse-web:3000/api/public/otel/v1/traces`, eliminating the collector as an intermediary. W3C `traceparent` propagation is preserved end-to-end via `patch_mcp_tools()` in `src/gateway/observability/mcp_tracing.py`.
 
-**DEFER Queue Monitoring (v2.0.0 — AARM-V7):**
+**DEFER Queue Monitoring (v0.1.0 — AARM-V7):**
 [`src/gateway/governance/defer_queue.py`](src/gateway/governance/defer_queue.py) implements the DEFER state machine for confidence-starved contexts. Redis db=1 (noeviction policy) stores deferred governance decisions pending human review. The DEFER queue is monitored via SSE events (`DEFER_QUEUED`, `DEFER_RESOLVED`) published to the `GovernanceEventBus` and visible in the AgentSight KernelDashboard. Queue depth and resolution latency are tracked as OTel metrics.
 
-**AgentSight UI Phase 1 (v2.0.0):**
+**AgentSight UI Phase 1 (v0.1.0):**
 [`src/agentsight-ui/`](src/agentsight-ui/) — React/Vite frontend with eBPF kernel observability. [`deployment/agentsight/agentsight-config.yaml`](deployment/agentsight/agentsight-config.yaml:19) deploys an eBPF daemon targeting `python3` processes, intercepting SSL/TLS via OpenSSL uprobes and monitoring syscalls (`execve`, `openat`, `connect`, `socket`, `bind`). **✅ POAM-021 RESOLVED:** Exporter is configured as `type: "remote"`, targeting `http://agentsight-dashboard:8080`. The prior gap (console mode) has been corrected. `KernelDashboard.tsx` displays real-time governance events, DEFER queue state, and eBPF syscall telemetry.
 
 **SSE Real-Time Event Bus:**
@@ -450,11 +450,11 @@ The **Cybernetic Governance Engine (CAGE)** is a GKE-hosted AI governance platfo
 - Periodic assessment cadence exists (6h Lula Critical, daily High, weekly Medium, 60s SC-4 watch): +5 points
 - Alert/notification pipeline exists (Slack/PagerDuty capable): +5 points
 - **✅ RESOLVED (POAM-021):** AgentSight exporter confirmed as `"remote"` mode targeting `http://agentsight-dashboard:8080`
-- **v2.0.0 additions:** DEFER queue monitoring (AARM-V7), SHA-256 hash-chained context accumulator (AARM-V1), KMS batch-signed OSCAL artifacts, SR 26-2 framework adopted, CSA AARM v1.0 11-vector threat coverage
+- **v0.1.0 additions:** DEFER queue monitoring (AARM-V7), SHA-256 hash-chained context accumulator (AARM-V1), KMS batch-signed OSCAL artifacts, SR 26-2 framework adopted, CSA AARM v1.0 11-vector threat coverage
 - Deducted: No ISCM strategy doc (−20), no POA&M (−20), no status reporting format (−10), no decommission controls (−10), no SP 800-53 ongoing assessment (−25)
 
 ---
 
-_Document prepared as part of the 5-chunk NIST RMF analysis series for the Cybernetic Governance Engine. This is a living document — update after each Phase completion milestone. Updated 2026-06-01 for CAGE v2.0.0._
+_Document prepared as part of the 5-chunk NIST RMF analysis series for the Cybernetic Governance Engine. This is a living document — update after each Phase completion milestone. Updated 2026-06-01 for CAGE v0.1.0._
 
 _References: NIST SP 800-37 Rev 2, SP 800-53 Rev 5, SP 800-137, SP 800-18 Rev 1, FIPS 199, FIPS 200, ISO/IEC 42001:2023, NIST SP 800-161r1, SR 26-2 (Federal Reserve, April 17, 2026), CSA AARM v1.0._

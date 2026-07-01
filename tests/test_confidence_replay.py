@@ -15,7 +15,7 @@
 """
 Confidence Score Replay Test Suite
 ===================================
-Canonical proof fixture for the July 2026 proof surface review (v2.0.0-rc.2).
+Canonical proof fixture for the July 2026 proof surface review (v0.1.0-rc.2).
 
 Demonstrates the three-phase changed-condition replay flow:
   Phase 1 — PARK:     Token with confidence < 0.70 is parked in Redis db=1

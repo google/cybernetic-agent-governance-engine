@@ -55,14 +55,14 @@ resource "kubernetes_deployment" "agentsight_ui" {
           image_pull_policy = "Always"
 
           port {
-            container_port = 80
+            container_port = 8080
             name           = "http"
           }
 
           readiness_probe {
             http_get {
               path = "/"
-              port = 80
+              port = 8080
             }
             initial_delay_seconds = 5
             period_seconds        = 10
@@ -73,7 +73,7 @@ resource "kubernetes_deployment" "agentsight_ui" {
           liveness_probe {
             http_get {
               path = "/"
-              port = 80
+              port = 8080
             }
             initial_delay_seconds = 10
             period_seconds        = 15
@@ -112,7 +112,7 @@ resource "kubernetes_service" "agentsight_ui" {
 
     port {
       port        = 8080
-      target_port = 80
+      target_port = 8080
       protocol    = "TCP"
       name        = "http"
     }

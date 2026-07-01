@@ -1,6 +1,6 @@
 # Compliance Bridge Module
 
-Deploys the CAGE v2.0.0 ISO 42001 compliance bridge service — a standalone FastAPI microservice providing OSCAL audit ingestion, AARM threat vector conformance reporting, DEFER queue lifecycle management, and a real-time SSE event bus.
+Deploys the CAGE v0.1.0 ISO 42001 compliance bridge service — a standalone FastAPI microservice providing OSCAL audit ingestion, AARM threat vector conformance reporting, DEFER queue lifecycle management, and a real-time SSE event bus.
 
 ## Features
 

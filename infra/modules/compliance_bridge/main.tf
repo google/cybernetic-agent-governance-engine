@@ -14,7 +14,7 @@ resource "kubernetes_deployment" "compliance_bridge" {
     labels = {
       app                             = "compliance-bridge"
       "compliance.iso42001/component" = "evidence-bridge"
-      "app.kubernetes.io/version"     = "2.0.0"
+      "app.kubernetes.io/version"     = "0.1.0"
     }
   }
 
@@ -50,6 +50,16 @@ resource "kubernetes_deployment" "compliance_bridge" {
           env {
             name  = "PORT"
             value = "3001"
+          }
+
+          env {
+            name  = "CAGE_ENV"
+            value = var.cage_env
+          }
+
+          env {
+            name  = "ENVIRONMENT"
+            value = var.cage_env
           }
 
           env {
@@ -205,8 +215,10 @@ resource "kubernetes_deployment" "compliance_bridge" {
               path = "/health"
               port = 3001
             }
-            initial_delay_seconds = 5
+            initial_delay_seconds = 120
             period_seconds        = 30
+            timeout_seconds       = 5
+            failure_threshold     = 3
           }
 
           readiness_probe {
@@ -214,8 +226,10 @@ resource "kubernetes_deployment" "compliance_bridge" {
               path = "/health"
               port = 3001
             }
-            initial_delay_seconds = 5
+            initial_delay_seconds = 120
             period_seconds        = 10
+            timeout_seconds       = 5
+            failure_threshold     = 3
           }
         }
       }

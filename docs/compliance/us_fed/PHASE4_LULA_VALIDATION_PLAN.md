@@ -13,7 +13,7 @@
 
 ## 1. Purpose
 
-This plan documents the execution steps, success criteria, and POAM closure guidance for Phase 4 of the v2.0.0 post-rename migration. Phase 4 validates that the `lula-audit` CronJob — which runs all active ISO 42001 / NIST SP 800-53 compliance validations — continues to pass correctly after the repository rename and GKE redeployment performed in Phases 1–3.
+This plan documents the execution steps, success criteria, and POAM closure guidance for Phase 4 of the v0.1.0 post-rename migration. Phase 4 validates that the `lula-audit` CronJob — which runs all active ISO 42001 / NIST SP 800-53 compliance validations — continues to pass correctly after the repository rename and GKE redeployment performed in Phases 1–3.
 
 A successful Phase 4 run produces two POAM closure artifacts:
 
@@ -340,7 +340,7 @@ See [`compliance/lula/README.md`](../compliance/lula/README.md) for the full val
 
 | Document | Purpose |
 |---|---|
-| [`docs/V2_RELEASE_RUNBOOK.md`](V2_RELEASE_RUNBOOK.md) | Full v2.0.0 release runbook (Phases 1–6) |
+| [`docs/V2_RELEASE_RUNBOOK.md`](V2_RELEASE_RUNBOOK.md) | Full v0.1.0 release runbook (Phases 1–6) |
 | [`docs/V2_RELEASE_PLAN.md`](V2_RELEASE_PLAN.md) | Release plan and dependency ordering |
 | [`docs/POAM.md`](POAM.md) | Plan of Action and Milestones |
 | [`compliance/lula/README.md`](../compliance/lula/README.md) | Lula validation coverage and activation guide |

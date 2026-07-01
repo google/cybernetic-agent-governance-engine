@@ -13,72 +13,17 @@
 # limitations under the License.
 
 """
-kms_signer.py — Cloud KMS Asymmetric Governance Signer (Priority 1)
-====================================================================
+kms_signer.py — Multi-Cloud KMS Asymmetric Governance Signer (Priority 1)
+========================================================================
 
-Provides Google Cloud KMS asymmetric signing for governance plans.  The
-previous in-process HMAC ``GOVERNANCE_SALT`` self-signing pattern has been
-**removed** — it created a recursive self-authentication vulnerability where
-the signing key lived in the same process memory as both the signer
-(evaluator_node) and the verifier (explainer_node).
-
-Architecture
-------------
-::
-
-    ┌──────────────────────┐        ┌──────────────────────┐
-    │   evaluator_node.py  │  gRPC  │   Google Cloud KMS   │
-    │   (sign request)     │───────►│   HSM-backed key     │
-    │                      │◄───────│   (private key never  │
-    │                      │  sig   │    leaves the HSM)    │
-    └──────────────────────┘        └──────────────────────┘
-                                              │
-                                    Cloud Audit Logs
-                                    (immutable, external)
-                                              │
-    ┌──────────────────────┐                  ▼
-    │  explainer_node.py   │   Verifies with public key
-    │  (verify signature)  │   embedded at build time
-    │                      │   (no KMS call needed)
-    └──────────────────────┘
-
-Security properties
--------------------
-1. **Non-repudiation**: The private signing key never leaves the KMS HSM.
-   A forensic auditor can request the Cloud Audit Log for the key ring
-   and confirm exactly when and by what workload identity a signature was
-   created.
-
-2. **Separation of duties**: The signer (evaluator_node) calls KMS to
-   produce a signature.  The verifier (explainer_node) uses only the public
-   key — it never has access to the signing key material.
-
-3. **External trust anchor**: The trust root (KMS HSM) is outside the
-   application's control plane.  A compromised container cannot forge a
-   signature without calling KMS, and that call is logged externally.
-
-No fallback
------------
-The legacy HMAC ``GOVERNANCE_SALT`` fallback has been permanently removed.
-If KMS is unavailable, ``sign()`` raises ``RuntimeError`` immediately so
-the failure is explicit and audit-visible rather than silently degraded.
-Use ``CAGE_ENV=development`` or ``CAGE_ENV=test`` to skip the startup
-assertion in non-production environments; signing will still require KMS.
-
-Environment variables
----------------------
-  KMS_GOVERNANCE_KEY         — Full KMS key version resource name, e.g.:
-                                projects/my-proj/locations/us-central1/
-                                keyRings/cage-governance/cryptoKeys/
-                                plan-signer/cryptoKeyVersions/1
-  KMS_GOVERNANCE_PUBLIC_PEM  — Path to the PEM-encoded public key file
-                                (embedded at container build time).
-                                If unset, the public key is fetched from
-                                KMS on first use (slower, but works).
+Provides Cloud KMS asymmetric signing for governance plans across multi-target
+cloud infrastructure: Google Cloud KMS (GCP), AWS KMS (AWS), and Azure Key Vault
+Managed HSM (Azure).
 """
 
 from __future__ import annotations
 
+import abc
 import hashlib
 import json
 import logging
@@ -91,7 +36,7 @@ logger = logging.getLogger("Gateway.Governance.KMSSigner")
 _tracer = otel_trace.get_tracer(__name__)
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Global Configuration (Module-level for mock support in unit tests)
 # ---------------------------------------------------------------------------
 
 _KMS_KEY_VERSION: str = os.environ.get("KMS_GOVERNANCE_KEY", "")
@@ -99,46 +44,199 @@ _PUBLIC_PEM_PATH: str = os.environ.get("KMS_GOVERNANCE_PUBLIC_PEM", "")
 
 
 def _canonicalise_plan(plan: dict) -> bytes:
-    """Produce a deterministic byte representation of a governance plan.
-
-    Uses ``json.dumps(sort_keys=True)`` with compact separators to guarantee
-    byte-stable serialization — identical to the hash chain strategy in
-    ``examples/telemetry.py``.
-    """
+    """Produce a deterministic byte representation of a governance plan."""
     return json.dumps(plan, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 # ---------------------------------------------------------------------------
-# KMS Governance Signer
+# Abstract KMS Provider Strategy
+# ---------------------------------------------------------------------------
+
+
+class BaseKMSProvider(abc.ABC):
+    """Abstract base provider for cloud-native HSM asymmetric signing."""
+
+    @abc.abstractmethod
+    def sign_digest(self, digest: bytes) -> bytes:
+        """Sign a 32-byte SHA-256 digest returning signature bytes."""
+        pass
+
+    @abc.abstractmethod
+    def get_public_key_pem(self) -> bytes:
+        """Fetch the public key PEM from the cloud provider."""
+        pass
+
+    @property
+    @abc.abstractmethod
+    def provider_name(self) -> str:
+        """Returns provider name identifier for telemetry."""
+        pass
+
+
+class GCPKMSProvider(BaseKMSProvider):
+    """Google Cloud KMS HSM provider."""
+
+    def __init__(self, key_version_name: str, kms_client: object | None = None) -> None:
+        self._key_version_name = key_version_name
+        self._kms_client = kms_client
+        if not kms_client and key_version_name:
+            try:
+                from google.cloud import kms  # type: ignore[import]
+                self._kms_client = kms.KeyManagementServiceClient()
+                logger.info("[GCPKMSProvider] Client initialised for key: %s", self._key_version_name)
+            except Exception as exc:
+                raise RuntimeError(f"[GCPKMSProvider] KMS client init failed: {exc}") from exc
+
+    @property
+    def provider_name(self) -> str:
+        return "KMS_ASYMMETRIC"
+
+    def sign_digest(self, digest: bytes) -> bytes:
+        from google.cloud.kms_v1.types import service as kms_service  # type: ignore[import]
+
+        response = self._kms_client.asymmetric_sign(  # type: ignore[union-attr]
+            request=kms_service.AsymmetricSignRequest(
+                name=self._key_version_name,
+                digest=kms_service.Digest(sha256=digest),
+            )
+        )
+        return response.signature
+
+    def get_public_key_pem(self) -> bytes:
+        response = self._kms_client.get_public_key(name=self._key_version_name)  # type: ignore[union-attr]
+        return response.pem.encode("utf-8")
+
+
+class AWSKMSProvider(BaseKMSProvider):
+    """AWS KMS HSM provider."""
+
+    def __init__(self, key_id: str) -> None:
+        if not key_id:
+            raise RuntimeError(
+                "[AWSKMSProvider] AWS_KMS_KEY_ID is not set. "
+                "Set it to the AWS KMS Key ID or ARN."
+            )
+        try:
+            import boto3  # type: ignore[import]
+        except ImportError as exc:
+            raise RuntimeError(
+                "[AWSKMSProvider] boto3 is not installed. "
+                "Install with: pip install boto3"
+            ) from exc
+
+        self._key_id = key_id
+        try:
+            self._client = boto3.client("kms")
+            logger.info("[AWSKMSProvider] Client initialised for key: %s", self._key_id)
+        except Exception as exc:
+            raise RuntimeError(f"[AWSKMSProvider] AWS KMS client init failed: {exc}") from exc
+
+    @property
+    def provider_name(self) -> str:
+        return "AWS_KMS"
+
+    def sign_digest(self, digest: bytes) -> bytes:
+        response = self._client.sign(
+            KeyId=self._key_id,
+            Message=digest,
+            MessageType="DIGEST",
+            SigningAlgorithm="ECDSA_SHA_256",
+        )
+        return response["Signature"]
+
+    def get_public_key_pem(self) -> bytes:
+        response = self._client.get_public_key(KeyId=self._key_id)
+        pub_der = response["PublicKey"]
+        from cryptography.hazmat.primitives import serialization
+        key = serialization.load_der_public_key(pub_der)
+        return key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+
+
+class AzureKMSProvider(BaseKMSProvider):
+    """Azure Key Vault Managed HSM provider."""
+
+    def __init__(self, vault_url: str, key_name: str) -> None:
+        if not vault_url or not key_name:
+            raise RuntimeError(
+                "[AzureKMSProvider] AZURE_KEYVAULT_URL and AZURE_KMS_KEY_NAME must be set."
+            )
+        try:
+            from azure.identity import DefaultAzureCredential  # type: ignore[import]
+            from azure.keyvault.keys import KeyClient  # type: ignore[import]
+            from azure.keyvault.keys.crypto import CryptographyClient  # type: ignore[import]
+        except ImportError as exc:
+            raise RuntimeError(
+                "[AzureKMSProvider] azure-keyvault-keys is not installed. "
+                "Install with: pip install azure-keyvault-keys azure-identity"
+            ) from exc
+
+        self._vault_url = vault_url
+        self._key_name = key_name
+        try:
+            credential = DefaultAzureCredential()
+            key_client = KeyClient(vault_url=vault_url, credential=credential)
+            self._key = key_client.get_key(key_name)
+            self._crypto_client = CryptographyClient(self._key, credential=credential)
+            logger.info("[AzureKMSProvider] Client initialised for key: %s", self._key_name)
+        except Exception as exc:
+            raise RuntimeError(f"[AzureKMSProvider] Azure client init failed: {exc}") from exc
+
+    @property
+    def provider_name(self) -> str:
+        return "AZURE_KEYVAULT_HSM"
+
+    def sign_digest(self, digest: bytes) -> bytes:
+        from azure.keyvault.keys.crypto import SignatureAlgorithm  # type: ignore[import]
+
+        result = self._crypto_client.sign(SignatureAlgorithm.es256, digest)
+        return result.signature
+
+    def get_public_key_pem(self) -> bytes:
+        from cryptography.hazmat.primitives import serialization
+        jwk = self._key.key
+        if jwk.kty == "EC":
+            from cryptography.hazmat.primitives.asymmetric import ec
+            curve_cls = getattr(ec, jwk.crv.replace("-", "_").upper(), ec.SECP256R1)
+            public_numbers = ec.EllipticCurvePublicNumbers(
+                int.from_bytes(jwk.x, "big"),
+                int.from_bytes(jwk.y, "big"),
+                curve_cls(),
+            )
+            key = public_numbers.public_key()
+            return key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+        raise NotImplementedError(f"Azure Key Vault JWK key type {jwk.kty} not implemented")
+
+
+# ---------------------------------------------------------------------------
+# Multi-Cloud KMS Governance Signer
 # ---------------------------------------------------------------------------
 
 
 class KMSGovernanceSigner:
-    """Asymmetric governance signature generator backed by Google Cloud KMS.
-
-    Usage::
-
-        signer = KMSGovernanceSigner.from_env()
-        signature = signer.sign(plan_dict)
-        is_valid  = signer.verify(plan_dict, signature)
-
-    ``sign()`` calls ``asymmetricSign`` on the KMS HSM.
-    ``verify()`` uses the locally-embedded public key (no KMS call needed).
-
-    There is no HMAC fallback.  If KMS is unavailable, ``sign()`` raises
-    ``RuntimeError`` so the failure is explicit and audit-visible.
-    """
+    """Asymmetric governance signature generator supporting multi-cloud targets."""
 
     def __init__(
         self,
         kms_client: object | None = None,
         key_version_name: str = "",
         public_key_pem: bytes = b"",
+        provider: BaseKMSProvider | None = None,
     ) -> None:
         self._kms_client = kms_client
         self._key_version_name = key_version_name
         self._public_key_pem = public_key_pem
-        self._kms_active = kms_client is not None and bool(key_version_name)
+        self._provider = provider
+
+        if not self._provider and (kms_client is not None or key_version_name):
+            self._provider = GCPKMSProvider(key_version_name=key_version_name, kms_client=kms_client)
+
+        self._kms_active = kms_client is not None and bool(key_version_name) if provider is None else provider is not None
 
     @property
     def is_kms_active(self) -> bool:
@@ -147,60 +245,75 @@ class KMSGovernanceSigner:
 
     @property
     def signing_algorithm(self) -> str:
-        """Returns the active signing algorithm identifier for audit tagging."""
-        return "KMS_ASYMMETRIC" if self._kms_active else "HMAC_SHA256_FALLBACK"
+        """Returns active signing algorithm and provider identifier."""
+        if not self._kms_active:
+            return "HMAC_SHA256_FALLBACK"
+        return self._provider.provider_name if self._provider else "KMS_ASYMMETRIC"
 
     @classmethod
     def from_env(cls) -> "KMSGovernanceSigner":
-        """Construct from environment variables.
+        """Construct from environment variables based on CAGE_KMS_PROVIDER."""
+        provider_name = os.environ.get("CAGE_KMS_PROVIDER", "gcp").lower()
+        provider: BaseKMSProvider | None = None
+        kms_client = None
+        key_version = _KMS_KEY_VERSION
 
-        Raises ``RuntimeError`` if ``KMS_GOVERNANCE_KEY`` is not set or the
-        ``google-cloud-kms`` package is not installed.  There is no HMAC
-        fallback — failures must be explicit.
-        """
-        if not _KMS_KEY_VERSION:
-            raise RuntimeError(
-                "[KMSSigner] KMS_GOVERNANCE_KEY is not set. "
-                "Set it to the full Cloud KMS key version resource name. "
-                "The legacy HMAC GOVERNANCE_SALT fallback has been removed. "
-                "See CTRL_KMS_001 in control_mappings.json."
-            )
-
-        try:
-            from google.cloud import kms  # type: ignore[import]
-        except ImportError as exc:
-            raise RuntimeError(
-                "[KMSSigner] google-cloud-kms is not installed. "
-                "Install with: pip install google-cloud-kms"
-            ) from exc
-
-        try:
-            kms_client = kms.KeyManagementServiceClient()
-            logger.info(
-                "[KMSSigner] Cloud KMS client initialised for key: %s",
-                _KMS_KEY_VERSION,
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"[KMSSigner] KMS client init failed: {exc}. "
-                "Check workload identity / ADC credentials."
-            ) from exc
+        if provider_name == "gcp":
+            if not key_version:
+                raise RuntimeError(
+                    "[KMSSigner] KMS_GOVERNANCE_KEY is not set. "
+                    "Set it to the full Cloud KMS key version resource name. "
+                    "The legacy HMAC GOVERNANCE_SALT fallback has been removed. "
+                    "See CTRL_KMS_001 in control_mappings.json."
+                )
+            try:
+                from google.cloud import kms  # type: ignore[import]
+            except ImportError as exc:
+                raise RuntimeError(
+                    "[KMSSigner] google-cloud-kms is not installed. "
+                    "Install with: pip install google-cloud-kms"
+                ) from exc
+            try:
+                kms_client = kms.KeyManagementServiceClient()
+                logger.info("[KMSSigner] Cloud KMS client initialised for key: %s", key_version)
+            except Exception as exc:
+                raise RuntimeError(f"[KMSSigner] KMS client init failed: {exc}. Check workload identity / ADC credentials.") from exc
+            provider = GCPKMSProvider(key_version_name=key_version, kms_client=kms_client)
+        elif provider_name == "aws":
+            key_id = os.environ.get("AWS_KMS_KEY_ID", "")
+            provider = AWSKMSProvider(key_id)
+        elif provider_name == "azure":
+            vault_url = os.environ.get("AZURE_KEYVAULT_URL", "")
+            key_name = os.environ.get("AZURE_KMS_KEY_NAME", "")
+            provider = AzureKMSProvider(vault_url, key_name)
+        else:
+            raise RuntimeError(f"Unknown CAGE_KMS_PROVIDER '{provider_name}'. Use 'gcp', 'aws', or 'azure'.")
 
         public_key_pem = b""
-        # Load public key — prefer local PEM file (build-time embed)
-        if _PUBLIC_PEM_PATH and os.path.isfile(_PUBLIC_PEM_PATH):
-            with open(_PUBLIC_PEM_PATH, "rb") as f:
+        public_pem_path = _PUBLIC_PEM_PATH or os.environ.get("KMS_GOVERNANCE_PUBLIC_PEM", "")
+        if public_pem_path and os.path.isfile(public_pem_path):
+            with open(public_pem_path, "rb") as f:
                 public_key_pem = f.read()
-            logger.info("[KMSSigner] Public key loaded from: %s", _PUBLIC_PEM_PATH)
-        else:
-            # Fetch from KMS (first-use bootstrap)
+            logger.info("[KMSSigner] Public key loaded from: %s", public_pem_path)
+            if provider:
+                try:
+                    remote_pem = provider.get_public_key_pem()
+                    if public_key_pem.strip().replace(b"\n", b"") != remote_pem.strip().replace(b"\n", b""):
+                        logger.error(
+                            "[%s] CRITICAL: Local PEM validation failed. Does not match Remote HSM Key!",
+                            provider.provider_name,
+                        )
+                    else:
+                        logger.info(
+                            "[%s] Local PEM successfully validated against HSM.",
+                            provider.provider_name,
+                        )
+                except Exception as exc:
+                    logger.warning("[KMSSigner] Could not validate local PEM against remote HSM: %s", exc)
+        elif provider:
             try:
-                response = kms_client.get_public_key(name=_KMS_KEY_VERSION)
-                public_key_pem = response.pem.encode("utf-8")
-                logger.info(
-                    "[KMSSigner] Public key fetched from KMS "
-                    "(embed in container image for production)."
-                )
+                public_key_pem = provider.get_public_key_pem()
+                logger.info("[KMSSigner] Public key fetched from KMS provider (%s).", provider_name)
             except Exception as pk_exc:
                 raise RuntimeError(
                     f"[KMSSigner] Failed to fetch public key from KMS: {pk_exc}. "
@@ -209,24 +322,12 @@ class KMSGovernanceSigner:
 
         return cls(
             kms_client=kms_client,
-            key_version_name=_KMS_KEY_VERSION,
+            key_version_name=key_version,
             public_key_pem=public_key_pem,
+            provider=provider,
         )
 
-    # ------------------------------------------------------------------
-    # Sign
-    # ------------------------------------------------------------------
-
     def sign(self, plan: dict) -> str:
-        """Sign a governance plan and return the hex-encoded signature.
-
-        Computes SHA-256 digest of the canonical plan, calls
-        ``asymmetricSign`` on the KMS HSM, and returns the hex-encoded
-        signature bytes.
-
-        Raises:
-            RuntimeError: If KMS signing fails.  There is no HMAC fallback.
-        """
         if not self._kms_active:
             raise RuntimeError(
                 "[KMSSigner] sign() called but KMS is not active. "
@@ -239,30 +340,29 @@ class KMSGovernanceSigner:
             return self._kms_sign(plan_bytes)
 
     def _kms_sign(self, plan_bytes: bytes) -> str:
-        """Sign via Cloud KMS asymmetricSign API.
-
-        Raises ``RuntimeError`` on failure — no HMAC fallback.
-        """
         try:
-            from google.cloud.kms_v1.types import service as kms_service  # type: ignore[import]
-
             digest = hashlib.sha256(plan_bytes).digest()
+            if self._provider:
+                sig_bytes = self._provider.sign_digest(digest)
+            elif self._kms_client:
+                from google.cloud.kms_v1.types import service as kms_service  # type: ignore[import]
+                response = self._kms_client.asymmetric_sign(  # type: ignore[union-attr]
+                    request=kms_service.AsymmetricSignRequest(
+                        name=self._key_version_name,
+                        digest=kms_service.Digest(sha256=digest),
+                    ),
+                )
+                sig_bytes = response.signature
+            else:
+                raise RuntimeError("No active provider or client available.")
 
-            response = self._kms_client.asymmetric_sign(  # type: ignore[union-attr]
-                request=kms_service.AsymmetricSignRequest(
-                    name=self._key_version_name,
-                    digest=kms_service.Digest(sha256=digest),
-                ),
-            )
-
-            signature_hex = response.signature.hex()
+            signature_hex = sig_bytes.hex()
             logger.info(
                 "[KMSSigner] KMS signature generated: %s... (key=%s)",
                 signature_hex[:16],
-                self._key_version_name.split("/")[-1],
+                self._key_version_name.split("/")[-1] if self._key_version_name else "default",
             )
             return signature_hex
-
         except Exception as exc:
             logger.critical(
                 json.dumps({
@@ -278,58 +378,36 @@ class KMSGovernanceSigner:
                 "The HMAC fallback has been removed. Fix KMS connectivity."
             ) from exc
 
-    # ------------------------------------------------------------------
-    # Verify
-    # ------------------------------------------------------------------
-
     def verify(self, plan: dict, signature_hex: str) -> bool:
-        """Verify a governance signature against a plan.
-
-        Uses the RSA/EC public key to verify the KMS-produced signature
-        locally — no KMS gRPC call needed.
-
-        Returns:
-            True if the signature is valid.
-        """
         if not signature_hex:
             return False
-
         if not self._public_key_pem:
             raise RuntimeError(
                 "[KMSSigner] verify() called but no public key is loaded. "
                 "Ensure KMS_GOVERNANCE_PUBLIC_PEM is set or KMS bootstrap succeeded."
             )
-
         plan_bytes = _canonicalise_plan(plan)
         return self._kms_verify(plan_bytes, signature_hex)
 
     def _kms_verify(self, plan_bytes: bytes, signature_hex: str) -> bool:
-        """Verify using the KMS public key (local, no gRPC call)."""
         try:
             from cryptography.hazmat.primitives import hashes, serialization
-            from cryptography.hazmat.primitives.asymmetric import (
-                ec,
-                padding,
-                utils as asym_utils,
-            )
+            from cryptography.hazmat.primitives.asymmetric import ec, padding, utils as asym_utils
 
             public_key = serialization.load_pem_public_key(self._public_key_pem)
             signature_bytes = bytes.fromhex(signature_hex)
             digest = hashlib.sha256(plan_bytes).digest()
 
-            # Support both RSA and EC keys
             if hasattr(public_key, "verify"):
                 try:
-                    # Try EC first (Cloud KMS default for signing)
-                    public_key.verify(  # type: ignore[union-attr]
+                    public_key.verify(
                         signature_bytes,
                         digest,
                         ec.ECDSA(asym_utils.Prehashed(hashes.SHA256())),
                     )
                     return True
                 except (TypeError, AttributeError):
-                    # Try RSA-PSS
-                    public_key.verify(  # type: ignore[union-attr]
+                    public_key.verify(
                         signature_bytes,
                         digest,
                         padding.PSS(
@@ -339,30 +417,16 @@ class KMSGovernanceSigner:
                         asym_utils.Prehashed(hashes.SHA256()),
                     )
                     return True
-
         except Exception as exc:
-            logger.warning(
-                "[KMSSigner] KMS public key verification failed: %s",
-                exc,
-            )
+            logger.warning("[KMSSigner] KMS public key verification failed: %s", exc)
             return False
-
         return False
 
-
-# ---------------------------------------------------------------------------
-# Module-level singleton (lazy init)
-# ---------------------------------------------------------------------------
 
 _signer: Optional[KMSGovernanceSigner] = None
 
 
 def get_governance_signer() -> KMSGovernanceSigner:
-    """Return the module-level KMSGovernanceSigner singleton.
-
-    Lazily initialised on first call.  Thread-safe because Python's GIL
-    guarantees atomic reference assignment.
-    """
     global _signer
     if _signer is None:
         _signer = KMSGovernanceSigner.from_env()
@@ -370,11 +434,6 @@ def get_governance_signer() -> KMSGovernanceSigner:
 
 
 def assert_kms_active_in_production() -> None:
-    """Raise RuntimeError if HMAC fallback is active in a production environment.
-
-    Call this during application startup. Safe to call multiple times.
-    Checks CAGE_ENV / ENVIRONMENT to determine if production rules apply.
-    """
     env = (os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")).lower()
     if env in ("development", "test", "dev", "ci"):
         return

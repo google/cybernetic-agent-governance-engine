@@ -1,5 +1,5 @@
 # CAGE Compliance & Governance Posture Framework
-**CAGE Version:** 2.0.0 (CSA AARM Conformance Release)
+**CAGE Version:** 0.1.0 (CSA AARM Conformance Release)
 **Last Evaluated:** 2026-06-15
 
 ---
@@ -171,9 +171,9 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     *   [`docs/NIST_AI_600_1_US_FED_ANALYSIS.md`](docs/compliance/us_fed/NIST_AI_600_1_US_FED_ANALYSIS.md) — gap analysis and control mapping
     *   [`compliance/lula/README.md`](compliance/lula/README.md) — full Lula validation status table including AI 600-1 stubs
 
-### H. Continuous Audit Event Loop & Compliance Bridge API (v2.0.0)
+### H. Continuous Audit Event Loop & Compliance Bridge API (v0.1.0)
 *   **Status:** Implemented & Active.
-*   **Mechanism:** In CAGE v2.0.0, the Compliance Bridge service (`src/compliance_bridge/main.py`) acts as the central hub for automated compliance scoring and threat ledger reporting. It exposes fourteen REST endpoints:
+*   **Mechanism:** In CAGE v0.1.0, the Compliance Bridge service (`src/compliance_bridge/main.py`) acts as the central hub for automated compliance scoring and threat ledger reporting. It exposes fourteen REST endpoints:
     1.  `GET /health` — Kubernetes liveness probe.
     2.  `GET /v1/controls` — Discovery endpoint; returns the full registry of supported ISO 42001 / NIST controls.
     3.  `GET /v1/metrics/summary` — Aggregate compliance posture across all supported controls in a single response.
@@ -190,7 +190,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
     14. `GET /v1/events/stream` — SSE governance event stream consumed by the AgentSight UI KernelDashboard.
 
 ### I. Dependency Security — `diskcache` CVE-2025-69872 Remediation
-*   **Status:** Remediated in v2.0.0.
+*   **Status:** Remediated in v0.1.0.
 *   **Mechanism:** **CVE-2025-69872 in `diskcache`** (transitive dependency via `outlines`; `outlines` removed to eliminate the dependency) — a pickle deserialization RCE vulnerability in the `diskcache` package, which was a transitive dependency pulled in by `outlines`. The `outlines` package was removed from all CAGE service dependencies to eliminate `diskcache` from the dependency tree. Structured-output generation previously provided by `outlines` is now handled via vLLM's native JSON-mode API. No CAGE service imports `outlines` or `diskcache` at runtime. The removal is enforced by `pip-audit` and Trivy scans in `.github/workflows/security-scan.yml` (POAM-010 closed). Regulated-environment deployers should verify their own dependency trees do not re-introduce `outlines` via transitive dependencies.
 *   **Compliance Mapping:** NIST SP 800-53 SI-2 (Flaw Remediation); ISO/IEC 42001 §A.9.3 (Supplier Relationships).
 
@@ -206,7 +206,7 @@ The **architecture guardrail** (`test_governance_architecture.py`) scans all bus
 3.  **Active Control Verification:** Ensures every control code defined in the system registry has a physical, verified invocation point in the gateway's execution paths.
 4.  **Regional Profile Parity:** Ensures every `CTRL_*` key across all three regional profiles has a corresponding `GovernanceControl` enum member.
 
-The **FrameworkRouter test matrix** (`test_framework_router.py`, ~40 tests) locks down the v2.0.0 Crown Jewel Decoupling:
+The **FrameworkRouter test matrix** (`test_framework_router.py`, ~40 tests) locks down the v0.1.0 Crown Jewel Decoupling:
 1.  **JSON schema integrity** for all four OSCAL routing files (`NIST`, `ISO42001`, `EU_AI_ACT`, `MAS_FEAT`).
 2.  **Cache identity** — `FrameworkRouter.get()` returns identical instance; no double-load on repeated calls.
 3.  **Cache isolation** — loading NIST does not pollute the EU_AI_ACT cache entry.

@@ -3,7 +3,7 @@
 
 **Document version:** 1.0.0
 **Date:** 2026-06-15
-**Scope:** Analysis of NIST AI 600-1 (Artificial Intelligence Risk Management Framework: Generative Artificial Intelligence Profile, July 2024) against CAGE v2.0.0 agentic AI capabilities, with specific recommendations for updating existing NIST RMF documentation under the `CAGE_DEPLOYMENT_REGION=US_FED` jurisdiction.
+**Scope:** Analysis of NIST AI 600-1 (Artificial Intelligence Risk Management Framework: Generative Artificial Intelligence Profile, July 2024) against CAGE v0.1.0 agentic AI capabilities, with specific recommendations for updating existing NIST RMF documentation under the `CAGE_DEPLOYMENT_REGION=US_FED` jurisdiction.
 **Authority:** NIST AI 600-1 (July 26, 2024), NIST AI RMF 1.0 (January 2023), NIST SP 800-53 Rev. 5, SR 26-2 (Federal Reserve, April 17, 2026)
 **Prerequisite reading:** `docs/NIST_RMF_CHUNK1_CURRENT_STATE.md` through `docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`, `docs/POAM_US_FED.md`
 
@@ -108,7 +108,7 @@ An ATO package that satisfies **only AI 600-1** would be rejected because:
 
 NIST AI 600-1 (July 2024) is the Generative AI Profile of the NIST AI Risk Management Framework (AI RMF 1.0). It identifies **12 unique risk categories** specific to generative and agentic AI systems and maps them to the four AI RMF core functions: **GOVERN, MAP, MEASURE, MANAGE**. For US federal deployments (`CAGE_DEPLOYMENT_REGION=US_FED`), AI 600-1 is now a de facto companion to NIST SP 800-53 Rev. 5 for any system deploying large language models (LLMs) or agentic AI pipelines.
 
-CAGE v2.0.0 is an **agentic AI governance platform** that deploys a 7-tier neuro-symbolic governance pipeline over a multi-agent LangGraph StateGraph. It processes LLM-generated financial advisory outputs, executes trades via MCP tool calls, and operates a multi-agent consensus engine with "Risk Manager" and "Compliance Officer" personas. This makes CAGE a **dual-role system** under AI 600-1: it is simultaneously a **GenAI deployer** (it deploys vLLM inference for the governed financial advisor) and a **GenAI governance operator** (it enforces policy over those outputs). Both roles carry distinct AI 600-1 obligations.
+CAGE v0.1.0 is an **agentic AI governance platform** that deploys a 7-tier neuro-symbolic governance pipeline over a multi-agent LangGraph StateGraph. It processes LLM-generated financial advisory outputs, executes trades via MCP tool calls, and operates a multi-agent consensus engine with "Risk Manager" and "Compliance Officer" personas. This makes CAGE a **dual-role system** under AI 600-1: it is simultaneously a **GenAI deployer** (it deploys vLLM inference for the governed financial advisor) and a **GenAI governance operator** (it enforces policy over those outputs). Both roles carry distinct AI 600-1 obligations.
 
 ### Key Findings
 
@@ -390,7 +390,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 
 **Current Coverage:**
 - **HITL approval gate:** `wait_for_approval` LangGraph node requires human approval for trades above the consensus threshold (USD 10,000)
-- **HITL TOCTOU remediation:** `post_hitl_rehydrate` and `post_hitl_revalidate` nodes prevent time-of-check/time-of-use race conditions (v2.0.0)
+- **HITL TOCTOU remediation:** `post_hitl_rehydrate` and `post_hitl_revalidate` nodes prevent time-of-check/time-of-use race conditions (v0.1.0)
 - **DEFER queue (AARM-V7):** [`src/gateway/governance/defer_queue.py`](src/gateway/governance/defer_queue.py) — confidence-starved contexts queued for human review rather than hard-denied
 - **ConsensusEngine threshold:** Trades above USD 10,000 require multi-agent consensus before human review
 - **LLM remediation advisory:** Step 5 of audit workflow requires `human_review_required: true` before applying LLM suggestions
@@ -585,7 +585,7 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 |-----------|---------|-----------------|-----------------|
 | C1-U1 | §1.1 Governance & Policy Enforcement | Add note: Tier-1 keyword scan covers **direct** prompt injection only. Indirect injection via MCP tool responses (market data, portfolio data) is an open gap per AI 600-1 §2.4. | §4.4 Data Poisoning |
 | C1-U2 | §1.1 Governance & Policy Enforcement | Add note: ConsensusEngine LLM critics are themselves subject to confabulation risk (AI 600-1 §2.2). Consensus agreement does not guarantee factual accuracy — only policy compliance. | §4.2 Confabulation |
-| C1-U3 | §1.1 Governance & Policy Enforcement | Add note: HITL TOCTOU is remediated (v2.0.0), but automation bias and human oversight scope documentation remain open gaps per AI 600-1 §2.7. | §4.7 Human-AI Config |
+| C1-U3 | §1.1 Governance & Policy Enforcement | Add note: HITL TOCTOU is remediated (v0.1.0), but automation bias and human oversight scope documentation remain open gaps per AI 600-1 §2.7. | §4.7 Human-AI Config |
 | C1-U4 | §2.1 Compliance & OSCAL | Add note: 15 Lula manifests cover ISO 42001 + NIST SP 800-53 + CSA AARM. **Zero manifests cover AI 600-1 risk categories.** AI 600-1 Lula validations are required for US_FED ATO. | §4.2, §4.4, §4.7 |
 | C1-U5 | §4.1 Observability & Audit | Add note: OTel spans capture model name but not structured output provenance (model version, temperature, context hash). AI 600-1 §2.8 requires provenance tracking for GenAI outputs. | §4.8 Info Integrity |
 | C1-U6 | §6 Summary Table | Add new row: **AI 600-1 GenAI Risk Coverage** — Current Coverage: **None** — Notes: 12 AI 600-1 risk categories unaddressed; 7 new POAM items required. | All §4.x |

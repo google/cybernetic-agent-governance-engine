@@ -514,6 +514,7 @@ module "compliance_bridge" {
   alert_channel          = "console"
   oscal_s3_bucket        = google_storage_bucket.langfuse_events.name
   oscal_s3_region        = var.region
+  cage_env               = "development"
 
   depends_on = [module.langfuse, module.vllm]
 }
@@ -545,7 +546,7 @@ module "gateway" {
   project_id              = var.project_id
   region                  = var.region
   enable_logging          = "true"
-  cage_env                = "production"
+  cage_env                = "development"
   redis_host              = module.redis.service_name
   redis_password          = module.redis.password
   vllm_base_url           = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"

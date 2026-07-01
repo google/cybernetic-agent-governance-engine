@@ -4,7 +4,7 @@
 
 This directory contains the **Kubeflow Pipelines v2** pipeline definition that implements CAGE's self-correcting governance feedback loop — the system that gives the **Cybernetic** Governance Engine its name.
 
-> **⚠️ v2.0.0 Change — Human-Gated Refinement:** In v2.0.0, the autonomous NeMo hot-reload loop has been severed. The pipeline no longer calls `POST /v1/nemo/apply-refinement` directly. Instead, it calls `POST /v1/nemo/propose-refinement`, which stages the refinement as a proposal requiring explicit human approval (reviewer identity + rationale) before any config change is applied. This eliminates the recursive self-authentication path where a model could engineer its own privilege escalation. Set `NEMO_AUTO_APPLY_ENABLED=true` to bypass human gating in dev/CI environments only.
+> **⚠️ v0.1.0 Change — Human-Gated Refinement:** In v0.1.0, the autonomous NeMo hot-reload loop has been severed. The pipeline no longer calls `POST /v1/nemo/apply-refinement` directly. Instead, it calls `POST /v1/nemo/propose-refinement`, which stages the refinement as a proposal requiring explicit human approval (reviewer identity + rationale) before any config change is applied. This eliminates the recursive self-authentication path where a model could engineer its own privilege escalation. Set `NEMO_AUTO_APPLY_ENABLED=true` to bypass human gating in dev/CI environments only.
 
 ## Pipeline: `governance_pipeline`
 
@@ -42,7 +42,7 @@ _submit_kfp_run()            ← Kubeflow Pipelines SDK (kfp.Client)
 └───────────────────────────────────────────────────────────┘
 ```
 
-The full loop is: **Langfuse score → webhook → KFP pipeline → evaluate → propose refinement → human approval → apply**. In v2.0.0, a human reviewer must explicitly approve all NeMo config changes before they take effect. The `NEMO_AUTO_APPLY_ENABLED=true` flag bypasses this gate for dev/CI environments only.
+The full loop is: **Langfuse score → webhook → KFP pipeline → evaluate → propose refinement → human approval → apply**. In v0.1.0, a human reviewer must explicitly approve all NeMo config changes before they take effect. The `NEMO_AUTO_APPLY_ENABLED=true` flag bypasses this gate for dev/CI environments only.
 
 ### Components
 
@@ -50,7 +50,7 @@ The full loop is: **Langfuse score → webhook → KFP pipeline → evaluate →
 | ----- | ------------- | ------ |
 | 1 | `fetch_compliance_metrics` | Fetches windowed safety scores from the Compliance Bridge for a specific ISO 42001 control |
 | 2 | `evaluate_governance_metrics` | Compares `safety_rate` to `safety_threshold` (default: 0.95); returns `PASS` or `FAIL` |
-| 3 | `trigger_nemo_refinement` | On FAIL, calls `POST /v1/nemo/propose-refinement` to stage a refinement proposal for human approval (v2.0.0); auto-applies only when `NEMO_AUTO_APPLY_ENABLED=true` |
+| 3 | `trigger_nemo_refinement` | On FAIL, calls `POST /v1/nemo/propose-refinement` to stage a refinement proposal for human approval (v0.1.0); auto-applies only when `NEMO_AUTO_APPLY_ENABLED=true` |
 
 ### Trigger Mechanisms
 

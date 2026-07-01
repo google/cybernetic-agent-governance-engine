@@ -108,7 +108,7 @@ def build_oscal_assessment_results(
         window_hours:     Evidence look-back window (embedded in finding props).
         system_name:      System name embedded in the OSCAL metadata title.
         assessor:         Party responsible for the assessment.
-        chain_root:       SHA-256 root of the Context Accumulator chain (CAGE v2.0.0).
+        chain_root:       SHA-256 root of the Context Accumulator chain (CAGE v0.1.0).
         chain_sealed_utc: ISO-8601 UTC timestamp when the chain was sealed.
         cer_uris:         Optional mapping of control_id → NexArt CER URI for external
                           attestation links.  When present, each finding entry gets an
@@ -149,7 +149,7 @@ def build_oscal_assessment_results(
             props.append({"name": "evidence_age_seconds", "value": str(int(f.evidence_age_s))})
         for fw in control_frameworks.get(f.control_id, []):
             props.append({"name": "framework", "value": fw})
-        # AARM vector cross-references (CAGE v2.0.0)
+        # AARM vector cross-references (CAGE v0.1.0)
         for vid in aarm_vector_by_control.get(f.control_id, []):
             vector_meta = AARM_THREAT_VECTORS.get(vid)
             props.append({
@@ -242,7 +242,7 @@ def build_oscal_assessment_results(
                             ],
                         }
                     ],
-                    # CAGE v2.0.0 AARM Context Accumulator chain provenance
+                    # CAGE v0.1.0 AARM Context Accumulator chain provenance
                     "props": [
                         p for p in [
                             {"name": "context-accumulator-chain-root", "value": chain_root}

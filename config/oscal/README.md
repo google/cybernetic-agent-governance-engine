@@ -4,9 +4,9 @@ This directory contains the external JSON framework routing tables consumed by t
 
 ## Purpose
 
-In CAGE v2.0.0, the UCA-to-control cross-walk tables that previously lived as hardcoded Python dicts (`_UCA_TO_NIST`, `_UCA_TO_EU_AI_ACT`, etc.) have been **fully decoupled** into these data files.
+In CAGE v0.1.0, the UCA-to-control cross-walk tables that previously lived as hardcoded Python dicts (`_UCA_TO_NIST`, `_UCA_TO_EU_AI_ACT`, etc.) have been **fully decoupled** into these data files.
 
-This is the "Crown Jewel Decoupling" described in the v2.0.0 architecture brief:
+This is the "Crown Jewel Decoupling" described in the v0.1.0 architecture brief:
 - Adding a new jurisdiction requires only a new JSON file — zero Python changes.
 - Regulatory updates (e.g. a new EU AI Act amendment) are a config PR, not a code PR.
 - CI pipelines can validate JSON schema independently of unit tests.

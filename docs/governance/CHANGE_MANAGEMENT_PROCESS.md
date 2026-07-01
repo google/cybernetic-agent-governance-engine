@@ -247,7 +247,7 @@ The standard promotion path for all changes is:
 dev  →  prod
 ```
 
-> **Note (v2.0.0 — POAM-024):** A `staging` pre-production environment is defined in the Terraform schema (`infra/targets/gcp-gke/variables.tf`) and is architecturally planned as an intermediate tier between `dev` and `prod`. However, the staging environment is **not yet provisioned** for v2.0.0. The intended three-tier promotion path (`dev → staging → prod`) is deferred to v2.1.0 (target: 2026-12-31). For v2.0.0, the promotion path is **dev → prod** with AO acknowledgement. The `deploy_all.sh` script rejects `--env staging` with an explicit error until staging is provisioned. See [`docs/POAM_ISO42001.md#POAM-024`](POAM_ISO42001.md).
+> **Note (v0.1.0 — POAM-024):** A `staging` pre-production environment is defined in the Terraform schema (`infra/targets/gcp-gke/variables.tf`) and is architecturally planned as an intermediate tier between `dev` and `prod`. However, the staging environment is **not yet provisioned** for v0.1.0. The intended three-tier promotion path (`dev → staging → prod`) is deferred to v2.1.0 (target: 2026-12-31). For v0.1.0, the promotion path is **dev → prod** with AO acknowledgement. The `deploy_all.sh` script rejects `--env staging` with an explicit error until staging is provisioned. See [`docs/POAM_ISO42001.md#POAM-024`](POAM_ISO42001.md).
 
 No change may be promoted directly from `dev` to `prod` without passing all CI gates on the source branch. Each promotion requires:
 
@@ -889,4 +889,4 @@ _This Change Management Process document is subject to annual review. Changes to
 | ----------- | ---------- | ------ | ------------------------------------------------------------------------- |
 | 1.0 (Draft) | 2026-03-06 | ISSO   | Initial change management process per NIST SP 800-128 / NIST RMF Phase 2A |
 | 1.1 (Draft) | 2026-06-03 | ISSO   | Added POAM-024 staging environment note (§3.8); retired STD-003 (OTel Collector deprecated 2026-05-31) |
-| 1.2 (Draft) | 2026-06-14 | ISSO   | Updated STD-006 POAM reference to multi-posture POAM_INDEX.md; updated §9.2 POAM update procedure to reflect five-file POAM structure (POAM_INDEX, POAM_ISO42001, POAM_US_FED, POAM_EU_ECB, POAM_APAC_MAS); aligned with v2.0.0 stable release (2026-06-08) |
+| 1.2 (Draft) | 2026-06-14 | ISSO   | Updated STD-006 POAM reference to multi-posture POAM_INDEX.md; updated §9.2 POAM update procedure to reflect five-file POAM structure (POAM_INDEX, POAM_ISO42001, POAM_US_FED, POAM_EU_ECB, POAM_APAC_MAS); aligned with v0.1.0 tagged commit (tag applied, merged to main; stability not declared as of 2026-07-01) |

@@ -1,6 +1,6 @@
 # CAGE Security Audit Report
 **Date:** 2026-06-12
-**Release decision:** GO — STABLE RELEASE APPROVED (v2.0.0, 2026-06-08). This audit report was produced prior to the GO decision; findings documented here were evaluated as part of the release gate process. The GO decision stands — see [`docs/PRODUCTION_READINESS_REPORT.md`](PRODUCTION_READINESS_REPORT.md) for the full gate evaluation.
+**Release decision:** GO criteria met — all release gates pass. The v0.1.0 Git tag has been applied and `rc-v0.1.0` merged to `main`, but v0.1.0 has **not** been declared a stable release (as of 2026-07-01). This audit report was produced prior to the GO criteria being met; findings documented here were evaluated as part of the release gate process. See [`docs/PRODUCTION_READINESS_REPORT.md`](PRODUCTION_READINESS_REPORT.md) for the full gate evaluation.
 **Scope:** Full codebase review — gateway, compliance bridge, governed financial advisor, infrastructure/deployment
 **Postures:** Dev (relaxed) and Prod (hardened)
 **Auditor:** Automated multi-agent review

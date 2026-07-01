@@ -7,7 +7,7 @@
 **Scope:** Read-only inventory of existing codebase capabilities across five governance dimensions.
 **Purpose:** Input for subsequent NIST RMF gap-analysis chunks (Chunks 2–5).
 **Constraint:** No NIST RMF gaps are identified here; gap analysis is deferred to Chunk 2.
-**System Version:** CAGE v2.0.0-rc.2 (promoted 2026-06-03)
+**System Version:** CAGE v0.1.0-rc.2 (promoted 2026-06-03)
 **Overall NIST RMF Readiness:** 24% (NIST SP 800-53 Rev 5 HIGH baseline)
 **Primary Compliance Frameworks:** ISO/IEC 42001:2023 (primary), SR 26-2 (Federal Reserve, April 17, 2026), NIST SP 800-53 Rev 5 HIGH (FedRAMP in progress), CSA AARM v1.0
 
@@ -32,10 +32,10 @@ The gateway implements a **multi-tier, neuro-symbolic governance pipeline** that
 
 - **Tier 0 — STPA/STAMP constraint validation** (`STPAValidator`): Evaluates deterministic Unsafe Control Actions (UCAs) against a `TradingKnowledgeGraph` ontology. Checks include SC-1 (approval token), FIN-1 (portfolio sell fraction ≤ 10 %), FIN-2 (latency ≤ 200 ms), UCA-5 (drawdown > 4.5 %), and UCA-6 (order size > 1 % of daily volume).
 - **Tier 1 — Aho-Corasick keyword scan** (`ControlBarrierFunction` + `ac_keyword_scan`): O(n) scan against 14 tier-1 prompt-injection/bypass keywords loaded from `config/governance_thresholds.json`. Falls back to O(n×m) if `pyahocorasick` is absent.
-- **Tier 2 — Control Barrier Function (CBF)** (`ControlBarrierFunction`): Discrete-time CBF maintaining a shared Redis cash-balance state. Uses WATCH/MULTI/EXEC optimistic locking with up to 5 retries for concurrent write safety. Tracks drawdown against configurable limits. **v2.0.0:** External ledger reconciliation via `AnchorageGrpcLedgerProvider` is **FUTURE STATE** (POAM-023, target 2026-09-08) — not yet implemented; CBF currently uses Redis-only state.
-- **Tier 3 — SLM similarity sidecar** (`_query_slm` in `SymbolicGovernor`): **DEPRECATED in v2.0.0** — permanent `slm_available=False` sentinel injected; OPA applies elevated confidence threshold (0.97) unconditionally. The sidecar is no longer deployed.
+- **Tier 2 — Control Barrier Function (CBF)** (`ControlBarrierFunction`): Discrete-time CBF maintaining a shared Redis cash-balance state. Uses WATCH/MULTI/EXEC optimistic locking with up to 5 retries for concurrent write safety. Tracks drawdown against configurable limits. **v0.1.0:** External ledger reconciliation via `AnchorageGrpcLedgerProvider` is **FUTURE STATE** (POAM-023, target 2026-09-08) — not yet implemented; CBF currently uses Redis-only state.
+- **Tier 3 — SLM similarity sidecar** (`_query_slm` in `SymbolicGovernor`): **DEPRECATED in v0.1.0** — permanent `slm_available=False` sentinel injected; OPA applies elevated confidence threshold (0.97) unconditionally. The sidecar is no longer deployed.
 - **Tier 4 — OPA policy enforcement** (`OPAClient`): Async HTTP client with circuit breaker (fail-DENY after 5 failures, 30 s recovery). Queries OPA with `?explain=full` for audit trail. Latency budget enforcement: hard cap at 3000 ms (bankruptcy protocol), soft ceiling at 2000 ms.
-- **Tier 5 — Multi-agent consensus** (`ConsensusEngine`): Parallel LLM critic calls (`asyncio.gather`) from "Risk Manager" and "Compliance Officer" personas for trades above USD 10,000 threshold. Results are pushed to a background `asyncio.Queue` for post-execution audit (non-blocking hot path). **v2.0.0:** Heterogeneous multi-model consensus via `ConsensusModelRegistry`.
+- **Tier 5 — Multi-agent consensus** (`ConsensusEngine`): Parallel LLM critic calls (`asyncio.gather`) from "Risk Manager" and "Compliance Officer" personas for trades above USD 10,000 threshold. Results are pushed to a background `asyncio.Queue` for post-execution audit (non-blocking hot path). **v0.1.0:** Heterogeneous multi-model consensus via `ConsensusModelRegistry`.
 - **Tier 6 — Causal gating** (`CausalGatekeeper`): Causal inference gate preventing spurious correlations from driving trade decisions.
 
 **NeMo Guardrails layer** (`config/rails/`): Colang 2.x flows define four active control flows:
@@ -47,13 +47,13 @@ The gateway implements a **multi-tier, neuro-symbolic governance pipeline** that
 
 **ISO 42001 evidence stamping** (`stamp_iso_control` in `iso_control.py`): Every governance decision stamps six mandatory attributes on the active OTel span: `iso42001.control`, `iso42001.tier`, `iso42001.outcome`, `iso42001.timestamp`, `iso42001.gateway_version`, `iso42001.evidence_chain`.
 
-**Cloud KMS HSM-backed asymmetric governance signing** (`kms_signer.py`): v2.0.0 replaces HMAC-SHA256 as the primary signing mechanism. `KMSSigner` uses Cloud KMS asymmetric keys (HSM-backed) for governance verdict signing. HMAC-SHA256 remains as dev/CI fallback only.
+**Cloud KMS HSM-backed asymmetric governance signing** (`kms_signer.py`): v0.1.0 replaces HMAC-SHA256 as the primary signing mechanism. `KMSSigner` uses Cloud KMS asymmetric keys (HSM-backed) for governance verdict signing. HMAC-SHA256 remains as dev/CI fallback only.
 
 **HMAC routing seal** (`governance_middleware.py`): `X-CAGE-Routing-Seal` header (HMAC-SHA256 of body bytes) enforced on the `/governance/check` endpoint. Configurable enforcement vs. log-only mode. In production, superseded by KMS asymmetric signing.
 
 **DEFER state machine** (`defer_queue.py`): AARM-V7 implementation. Confidence-starved contexts are queued to Redis db=1 (noeviction policy) rather than hard-denied, enabling asynchronous human review. Implements the DEFER disposition in the governance state machine.
 
-**HITL TOCTOU remediation**: v2.0.0 adds `post_hitl_rehydrate` and `post_hitl_revalidate` LangGraph nodes to prevent time-of-check/time-of-use race conditions in human-in-the-loop approval flows.
+**HITL TOCTOU remediation**: v0.1.0 adds `post_hitl_rehydrate` and `post_hitl_revalidate` LangGraph nodes to prevent time-of-check/time-of-use race conditions in human-in-the-loop approval flows.
 
 **External Normative Provider** (`normative_provider.py`): Adaptive FRIA (Fundamental Rights Impact Assessment) gating for EU AI Act compliance. Tri-state enforcement: Score ≥ 0.95 → async attestation; [0.70, 0.95) → synchronous blocking via DEFER queue; < 0.70 → local hard deny.
 
@@ -88,7 +88,7 @@ The gateway implements a **multi-tier, neuro-symbolic governance pipeline** that
 
 ### 1.3 Coverage Assessment: **Strong**
 
-> The governance enforcement stack is multi-layered, fail-closed, and deeply instrumented. All threshold literals are centralized in a Pydantic-validated singleton. STPA UCAs map directly to Colang flows. OPA operates with a circuit breaker and latency budget. v2.0.0 adds: Cloud KMS HSM-backed asymmetric signing (primary), DEFER queue (AARM-V7) for confidence-starved contexts, SHA-256 hash-chained context accumulator (AARM-V1), HITL TOCTOU remediation, External Normative Provider with adaptive FRIA gating, and heterogeneous multi-model consensus via ConsensusModelRegistry. The SLM sidecar is permanently deprecated with `slm_available=False` sentinel.
+> The governance enforcement stack is multi-layered, fail-closed, and deeply instrumented. All threshold literals are centralized in a Pydantic-validated singleton. STPA UCAs map directly to Colang flows. OPA operates with a circuit breaker and latency budget. v0.1.0 adds: Cloud KMS HSM-backed asymmetric signing (primary), DEFER queue (AARM-V7) for confidence-starved contexts, SHA-256 hash-chained context accumulator (AARM-V1), HITL TOCTOU remediation, External Normative Provider with adaptive FRIA gating, and heterogeneous multi-model consensus via ConsensusModelRegistry. The SLM sidecar is permanently deprecated with `slm_available=False` sentinel.
 
 ---
 
@@ -98,9 +98,9 @@ The gateway implements a **multi-tier, neuro-symbolic governance pipeline** that
 
 The **compliance bridge** (`src/compliance_bridge/`) is a standalone FastAPI microservice that implements a fully automated, 5-step ISO 42001 compliance audit pipeline:
 
-1. **Step 1 — Artifact persistence**: Writes raw OSCAL YAML to GCS/S3 (idempotent, skipped if `OSCAL_S3_ENDPOINT` is absent). **v2.0.0:** KMS batch signing (`kms_batch_signer.py`) signs OSCAL artifacts before persistence.
+1. **Step 1 — Artifact persistence**: Writes raw OSCAL YAML to GCS/S3 (idempotent, skipped if `OSCAL_S3_ENDPOINT` is absent). **v0.1.0:** KMS batch signing (`kms_batch_signer.py`) signs OSCAL artifacts before persistence.
 2. **Step 2 — Deterministic OSCAL parsing** (`parse_oscal_yaml`): Zero-LLM, Pydantic-validated extraction of `OscalFinding` objects from Lula assessment result YAML. Handles OSCAL v1.0.4 structure, maps `satisfied`/`not-satisfied` states, and extracts `safety_rate` and `evidence_age_seconds` props.
-3. **Step 3 — Langfuse ingestion**: Findings are pushed as scored traces to a dedicated compliance Langfuse project (separate from application performance traces). Each finding creates a trace tagged `compliance`, `iso-42001`, `lula`, and `control:<id>`. **v2.0.0:** Direct Langfuse OTLP ingestion at `http://langfuse-web:3000/api/public/otel/v1/traces` — standalone OTel Collector **deprecated 2026-05-31**.
+3. **Step 3 — Langfuse ingestion**: Findings are pushed as scored traces to a dedicated compliance Langfuse project (separate from application performance traces). Each finding creates a trace tagged `compliance`, `iso-42001`, `lula`, and `control:<id>`. **v0.1.0:** Direct Langfuse OTLP ingestion at `http://langfuse-web:3000/api/public/otel/v1/traces` — standalone OTel Collector **deprecated 2026-05-31**.
 4. **Step 4 — Critical failure alerting**: FAIL findings on `CRITICAL_CONTROLS` (A.9.2, SC-4) trigger synchronous `Notifier` alerts.
 5. **Step 5 — LLM remediation advisory** (conditional): If critical failures exist and `VLLM_BASE_URL` is set, calls vLLM to generate structured remediation recommendations. All LLM advisory outputs are logged to compliance Langfuse with `human_review_required: true`.
 
@@ -159,7 +159,7 @@ All Lula manifests include a cold-start grace period rule (< 6 hours post-deploy
 
 ### 2.3 Coverage Assessment: **Strong**
 
-> OSCAL, Lula, and the compliance bridge implement a closed-loop automated compliance pipeline for **15 controls** (ISO 42001 + NIST SP 800-53 + CSA AARM). The component definition, Lula manifests, metrics aggregation, and audit pipeline are all production-quality. v2.0.0 adds: KMS batch signing for OSCAL artifacts, direct Langfuse OTLP ingestion (OTel Collector deprecated 2026-05-31), AARM threat ledger validation, and cadenced Lula scheduling (Critical=6h, High=daily, Medium=weekly). The full NIST SP 800-53 HIGH baseline (~300 controls) is not yet mapped.
+> OSCAL, Lula, and the compliance bridge implement a closed-loop automated compliance pipeline for **15 controls** (ISO 42001 + NIST SP 800-53 + CSA AARM). The component definition, Lula manifests, metrics aggregation, and audit pipeline are all production-quality. v0.1.0 adds: KMS batch signing for OSCAL artifacts, direct Langfuse OTLP ingestion (OTel Collector deprecated 2026-05-31), AARM threat ledger validation, and cadenced Lula scheduling (Critical=6h, High=daily, Medium=weekly). The full NIST SP 800-53 HIGH baseline (~300 controls) is not yet mapped.
 
 ---
 
@@ -173,7 +173,7 @@ All Lula manifests include a cold-start grace period rule (< 6 hours post-deploy
 - Allow gateway ingress (port 8080) only from pods labeled `cage.io/role: orchestrator` or from the `ingress-nginx` namespace (policy 3)
 - Selective egress allows: OPA on 8181 (policy 4), Redis on 6379 (policy 5), DNS on 53 (policy 6), vLLM on 8000 (policy 7), OPA ingress health checks (policy 8), Langfuse OTLP on 3000 (policy 9) — **Note:** OTLP collector ports 4317/4318 removed; direct Langfuse OTLP ingestion used since 2026-05-31.
 
-**Linkerd mTLS + Cilium L7 egress lockdown** (v2.0.0, POAM-007 closed 2026-05-17): `deployment/k8s/linkerd-mtls-policy.yaml` enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths. `deployment/k8s/cilium-egress-lockdown.yaml` enforces FQDN allowlist for all egress traffic, preventing lateral movement.
+**Linkerd mTLS + Cilium L7 egress lockdown** (v0.1.0, POAM-007 closed 2026-05-17): `deployment/k8s/linkerd-mtls-policy.yaml` enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths. `deployment/k8s/cilium-egress-lockdown.yaml` enforces FQDN allowlist for all egress traffic, preventing lateral movement.
 
 **Terraform IAM** (`deployment/terraform/iam.tf`): GCP Workload Identity Federation for two service accounts:
 
@@ -225,7 +225,7 @@ Two deprecated stub packages exist for historical tracking: `finance` and `finan
 
 ### 3.3 Coverage Assessment: **Partial**
 
-> Network microsegmentation is strong (default-deny with selective egress). OPA policies cover RBAC, fiscal limits, and confidence enforcement. **v2.0.0 improvements:** Linkerd mTLS + Cilium L7 egress lockdown deployed (POAM-007 closed 2026-05-17); Cloud KMS HSM-backed asymmetric signing replaces HMAC as primary; `outlines` CVE-2025-69872 remediated (POAM-016 closed 2026-05-29); SBOM CronJob deployed with pip-audit/Trivy enforcement (POAM-010 closed). Remaining gaps: Terraform IAM coverage minimal (2 service accounts, no least-privilege role bindings beyond `workloadIdentityUser`); no Pod Security Admission policies; no secrets rotation automation.
+> Network microsegmentation is strong (default-deny with selective egress). OPA policies cover RBAC, fiscal limits, and confidence enforcement. **v0.1.0 improvements:** Linkerd mTLS + Cilium L7 egress lockdown deployed (POAM-007 closed 2026-05-17); Cloud KMS HSM-backed asymmetric signing replaces HMAC as primary; `outlines` CVE-2025-69872 remediated (POAM-016 closed 2026-05-29); SBOM CronJob deployed with pip-audit/Trivy enforcement (POAM-010 closed). Remaining gaps: Terraform IAM coverage minimal (2 service accounts, no least-privilege role bindings beyond `workloadIdentityUser`); no Pod Security Admission policies; no secrets rotation automation.
 
 ---
 
@@ -233,7 +233,7 @@ Two deprecated stub packages exist for historical tracking: `finance` and `finan
 
 ### 4.1 What Capability Exists
 
-**OTel export pipeline (v2.0.0):** The standalone OTel Collector (`opentelemetry-collector-contrib`) has been **deprecated 2026-05-31**. Services now export OTLP traces directly to Langfuse's integrated OTLP ingestion endpoint at `http://langfuse-web:3000/api/public/otel/v1/traces`. W3C `traceparent` propagation is preserved end-to-end.
+**OTel export pipeline (v0.1.0):** The standalone OTel Collector (`opentelemetry-collector-contrib`) has been **deprecated 2026-05-31**. Services now export OTLP traces directly to Langfuse's integrated OTLP ingestion endpoint at `http://langfuse-web:3000/api/public/otel/v1/traces`. W3C `traceparent` propagation is preserved end-to-end.
 
 **AgentSight UI** (`src/agentsight-ui/`): React/Vite frontend with eBPF kernel observability. Phase 1 deployed: `KernelDashboard.tsx` displays real-time governance events from the SSE event bus. eBPF daemon (`deployment/agentsight/agentsight-config.yaml`) targets `python3` processes, intercepting SSL/TLS via OpenSSL uprobes and monitoring syscalls (`execve`, `openat`, `connect`, `socket`, `bind`). Exporter configured as `type: "remote"` targeting `http://agentsight-dashboard:8080` (POAM-021 closed 2026-05-27).
 
@@ -275,7 +275,7 @@ Two deprecated stub packages exist for historical tracking: `finance` and `finan
 
 ### 4.3 Coverage Assessment: **Strong**
 
-> OTel instrumentation is pervasive: every governance tier stamps ISO 42001 evidence attributes. MCP distributed tracing bridges the SSE transport gap. The compliance bridge provides closed-loop audit ingestion and real-time SSE alerting. **v2.0.0:** Direct Langfuse OTLP ingestion (OTel Collector deprecated 2026-05-31); AgentSight UI Phase 1 with eBPF kernel observability deployed (POAM-021 closed); DEFER queue monitoring via Redis db=1 noeviction. The main gap is the `TraceAuditor`, which still relies on mock trace data rather than a live Cloud Trace or OTLP query (POAM-003 open).
+> OTel instrumentation is pervasive: every governance tier stamps ISO 42001 evidence attributes. MCP distributed tracing bridges the SSE transport gap. The compliance bridge provides closed-loop audit ingestion and real-time SSE alerting. **v0.1.0:** Direct Langfuse OTLP ingestion (OTel Collector deprecated 2026-05-31); AgentSight UI Phase 1 with eBPF kernel observability deployed (POAM-021 closed); DEFER queue monitoring via Redis db=1 noeviction. The main gap is the `TraceAuditor`, which still relies on mock trace data rather than a live Cloud Trace or OTLP query (POAM-003 open).
 
 ---
 
@@ -347,8 +347,8 @@ The `tests/` directory contains **644 tests** across 28+ test files spanning uni
 | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **1. Governance & Policy Enforcement**    | `ControlBarrierFunction`, `SymbolicGovernor` (7-tier), `STPAValidator`, `TradingKnowledgeGraph`, `ConsensusEngine` (ConsensusModelRegistry), `OPAClient`/`CircuitBreaker`, `stamp_iso_control`, NeMo manager/server/actions, Colang flows, `THRESHOLDS` singleton, `trade.governance` + `system.authz` Rego, `KMSSigner`, `DeferQueue`, `ContextAccumulator`, `NormativeProvider`, `CausalGatekeeper` | **Strong**             | 7-tier neuro-symbolic pipeline; 10-node LangGraph StateGraph; fail-closed; Cloud KMS HSM-backed asymmetric signing (primary); DEFER queue (AARM-V7); SHA-256 hash-chained context accumulator (AARM-V1); HITL TOCTOU remediation; SLM sidecar permanently deprecated |
 | **2. Compliance & OSCAL**                 | `run_audit_workflow`, `parse_oscal_yaml`, `get_compliance_metrics`, `compliance/oscal/component-definition.yaml`, **15 Lula validation manifests** (ISO 42001 + NIST SP 800-53 + CSA AARM), compliance-bridge FastAPI, SSE event bus, `kms_batch_signer.py`, `lula_scheduler.py`                | **Strong**             | Closed-loop automated compliance for 15 controls; OSCAL v1.0.4; KMS batch signing for OSCAL artifacts; direct Langfuse OTLP (OTel Collector deprecated 2026-05-31); cadenced Lula scheduling (Critical=6h, High=daily, Medium=weekly) |
-| **3. Security Controls & Infrastructure** | 9 NetworkPolicy objects (default-deny), Linkerd mTLS (`linkerd-mtls-policy.yaml`), Cilium L7 egress lockdown (`cilium-egress-lockdown.yaml`), `iam.tf` (2 Workload Identity SAs), `networking.tf` (Cloud NAT), `opa_config.yaml`, `system_authz.rego`, `trade_governance.rego`, `governance_thresholds.json` | **Partial**            | v2.0.0: Linkerd mTLS + Cilium L7 deployed (POAM-007 closed); `outlines` CVE-2025-69872 remediated (POAM-016 closed); SBOM/Trivy CI enforcement (POAM-010 closed); remaining gaps: Terraform IAM minimal, no Pod Security Admission, no secrets rotation |
-| **4. Observability & Audit**              | `get_tracer`, `patch_mcp_tools`, `stamp_iso_control`, `run_audit_workflow`, `get_compliance_metrics`, `EvaluatorAuditor`, `TraceAuditor`, `_AUDIT_QUEUE`/`_background_audit_worker`, `GovernanceEventBus`, AgentSight UI (React/Vite + eBPF), direct Langfuse OTLP                              | **Strong**             | v2.0.0: Direct Langfuse OTLP ingestion (OTel Collector deprecated 2026-05-31); AgentSight UI Phase 1 with eBPF kernel observability (POAM-021 closed); DEFER queue monitoring; `TraceAuditor` still uses mock trace source (POAM-003 open) |
+| **3. Security Controls & Infrastructure** | 9 NetworkPolicy objects (default-deny), Linkerd mTLS (`linkerd-mtls-policy.yaml`), Cilium L7 egress lockdown (`cilium-egress-lockdown.yaml`), `iam.tf` (2 Workload Identity SAs), `networking.tf` (Cloud NAT), `opa_config.yaml`, `system_authz.rego`, `trade_governance.rego`, `governance_thresholds.json` | **Partial**            | v0.1.0: Linkerd mTLS + Cilium L7 deployed (POAM-007 closed); `outlines` CVE-2025-69872 remediated (POAM-016 closed); SBOM/Trivy CI enforcement (POAM-010 closed); remaining gaps: Terraform IAM minimal, no Pod Security Admission, no secrets rotation |
+| **4. Observability & Audit**              | `get_tracer`, `patch_mcp_tools`, `stamp_iso_control`, `run_audit_workflow`, `get_compliance_metrics`, `EvaluatorAuditor`, `TraceAuditor`, `_AUDIT_QUEUE`/`_background_audit_worker`, `GovernanceEventBus`, AgentSight UI (React/Vite + eBPF), direct Langfuse OTLP                              | **Strong**             | v0.1.0: Direct Langfuse OTLP ingestion (OTel Collector deprecated 2026-05-31); AgentSight UI Phase 1 with eBPF kernel observability (POAM-021 closed); DEFER queue monitoring; `TraceAuditor` still uses mock trace source (POAM-003 open) |
 | **5. Testing & Verification**             | **644 tests** across 28+ test files — unit, integration, red-team, load, evaluation; `test_symbolic_governor.py`, `test_compliance_bridge.py`, `test_trade_governance_rego.py`, `test_nemo_actions.py`, `test_red_teaming.py`; OPA snapshots; `scripts/run_agent_benchmark.py`, `scripts/verify_colang_locally.py` | **Strong**             | Broad coverage including adversarial/red-team; live OPA tests correctly gated; `TraceAuditor` tests use mock data (POAM-003 open)                                                                   |
 
 ---
@@ -369,7 +369,7 @@ The `tests/` directory contains **644 tests** across 28+ test files spanning uni
 | **In Progress** | 3     |
 | **Closed**      | 6     |
 
-**Closed items (v1.1.0–v2.0.0):** POAM-003 (closed), POAM-007 (Linkerd mTLS, 2026-05-17), POAM-010 (vulnerability scanning CI, closed), POAM-016 (CVE-2025-69872 `outlines` removed, 2026-05-29), POAM-020 (technical report version mismatch, 2026-05-27), POAM-021 (AgentSight remote mode, 2026-05-27).
+**Closed items (v1.1.0–v0.1.0):** POAM-003 (closed), POAM-007 (Linkerd mTLS, 2026-05-17), POAM-010 (vulnerability scanning CI, closed), POAM-016 (CVE-2025-69872 `outlines` removed, 2026-05-29), POAM-020 (technical report version mismatch, 2026-05-27), POAM-021 (AgentSight remote mode, 2026-05-27).
 
 **Critical open items:** POAM-005 (no ATO letter, CA-6), POAM-009 (FIPS 199 unsigned, RA-2), POAM-015 (no SSP, PL-2).
 

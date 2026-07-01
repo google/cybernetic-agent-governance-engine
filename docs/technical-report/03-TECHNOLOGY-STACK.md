@@ -179,7 +179,7 @@ Third-party compliance provider adapters are architecturally isolated in `src/in
 | **SSE (EventSource)** | Real-time events      | Consumes `{BACKEND_URL}/v1/events/stream`; 5 s polling fallback on connection loss |
 | **protobuf-js**       | Proto deserialization | `src/protos/gateway.js`, `src/agentsight-ui/src/protos/gateway.ts`                                   |
 
-**Phase 1 additions (v2.0.0-rc.1):** [`KernelDashboard.tsx`](../../src/agentsight-ui/src/KernelDashboard.tsx) adds `useCallback` for `saveSlippage` (POSTs to `/api/governance/thresholds`), a 1-second `setInterval` tick for HITL TTL countdown, `formatCountdown()` and `priceDrift()` helper functions, and extended `TelemetryItem` / `GovernanceEvent` interfaces with `hitl_expires_at`, `price_fresh`, `price_stale` fields. [`KernelDashboard.css`](../../src/agentsight-ui/src/KernelDashboard.css) adds `.slippage-control`, `.drift-badge` (with `drift-pulse` animation), `.hitl-ttl`, and `.hitl-ttl-expired` styles.
+**Phase 1 additions (v0.1.0-rc.1):** [`KernelDashboard.tsx`](../../src/agentsight-ui/src/KernelDashboard.tsx) adds `useCallback` for `saveSlippage` (POSTs to `/api/governance/thresholds`), a 1-second `setInterval` tick for HITL TTL countdown, `formatCountdown()` and `priceDrift()` helper functions, and extended `TelemetryItem` / `GovernanceEvent` interfaces with `hitl_expires_at`, `price_fresh`, `price_stale` fields. [`KernelDashboard.css`](../../src/agentsight-ui/src/KernelDashboard.css) adds `.slippage-control`, `.drift-badge` (with `drift-pulse` animation), `.hitl-ttl`, and `.hitl-ttl-expired` styles.
 
 ---
 

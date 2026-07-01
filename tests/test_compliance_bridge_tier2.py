@@ -187,7 +187,7 @@ class TestRemediationGeneratedEventType:
         import typing
         args = set(typing.get_args(GovernanceEventType))
         # Original contract — these three MUST always be present.
-        # CAGE v2.0.0 added AARM primitives (CONTEXT_CHAIN_SEALED, etc.)
+        # CAGE v0.1.0 added AARM primitives (CONTEXT_CHAIN_SEALED, etc.)
         # which are validated separately; use subset check to avoid
         # breaking when new event types are added.
         required = {"AUDIT_FINDING", "GOVERNANCE_VIOLATION", "REMEDIATION_GENERATED"}

@@ -6,14 +6,14 @@
 | **Date**             | 2026-06-03                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | ACTIVE — v2.0.0 stable (GO — 2026-06-08; GKE deployment verified 2026-06-03)                                |
+| **Status**           | ACTIVE — v0.1.0 tagged and merged to main; stability not declared; GKE deployment verified 2026-06-03        |
 | **Reference**        | `docs/ROLES_AND_RESPONSIBILITIES.md`, `docs/banking_regs.md`, `compliance/boundary/AUTHORIZATION_BOUNDARY.md` |
 
 ---
 
 ## 1. System Identity
 
-The **Cybernetic Agent Governance Engine (CAGE)** v2.0.0 is a production-grade, multi-agent AI governance framework purpose-built for regulated financial advising. CAGE runs on Google Kubernetes Engine (GKE) and is designed from the ground up to satisfy the overlapping — and often conflicting — compliance obligations facing AI systems deployed in financial services contexts.
+The **Cybernetic Agent Governance Engine (CAGE)** v0.1.0 is a production-grade, multi-agent AI governance framework purpose-built for regulated financial advising. CAGE runs on Google Kubernetes Engine (GKE) and is designed from the ground up to satisfy the overlapping — and often conflicting — compliance obligations facing AI systems deployed in financial services contexts.
 
 ### 1.1 Core Problem Solved
 
@@ -74,7 +74,7 @@ CAGE provides eight integrated capabilities that together constitute a full-stac
 
 6. **Red Team Adversarial Testing Harness** — A built-in evaluation harness with 290+ adversarial payloads tests governance robustness against prompt injection, jailbreak attempts, and governance bypass patterns. Red team results feed directly into the POA&M remediation cycle.
 
-7. **Real-Time Audit Observability** — OpenTelemetry traces are emitted per inference request and forwarded to Langfuse. An AgentSight eBPF DaemonSet provides kernel-level system call telemetry. The KernelDashboard UI (AgentSight Phase 1, v2.0.0-rc.1) surfaces real-time governance verdicts, agent state transitions, and anomaly signals for operators — including a live `max_slippage_pct` slider (0–10%, persisted via `POST /api/governance/thresholds`), per-item ΔP price-drift badges (green/yellow/red with pulse animation), and HITL TTL countdown timers for pending approvals.
+7. **Real-Time Audit Observability** — OpenTelemetry traces are emitted per inference request and forwarded to Langfuse. An AgentSight eBPF DaemonSet provides kernel-level system call telemetry. The KernelDashboard UI (AgentSight Phase 1, v0.1.0-rc.1) surfaces real-time governance verdicts, agent state transitions, and anomaly signals for operators — including a live `max_slippage_pct` slider (0–10%, persisted via `POST /api/governance/thresholds`), per-item ΔP price-drift badges (green/yellow/red with pulse animation), and HITL TTL countdown timers for pending approvals.
 
 8. **Multi-Jurisdiction Compliance Engine** — Dynamic loading of regional compliance profiles (`config/compliance/`), governance thresholds (`config/thresholds/`), and OSCAL framework routing tables (`config/oscal/framework_mappings/`) via the `CAGE_DEPLOYMENT_REGION` environment variable. Supports three regulatory jurisdictions — `US_FED` (NIST SP 800-53, SR 26-2, FINRA/SEC), `EU_ECB` (EU AI Act, DORA, GDPR Art. 22, EBA/GL/2023/02, with mandatory Fundamental Rights Impact Assessment and SR 26-2 telemetry suppression), and `APAC_MAS` (MAS FEAT Principles, MAS TRM Guidelines, MAS Notice 655). Adding a new jurisdiction is a config-only operation requiring no Python code changes.
 
@@ -82,7 +82,7 @@ CAGE provides eight integrated capabilities that together constitute a full-stac
 
 ## 5. Current Compliance Posture (NIST RMF Readiness)
 
-CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v2.0.0 stable release was tagged on 2026-06-08 (GO — branch `rc-v2.0.0`, tag `v2.0.0`). Both application images were built via Cloud Build and deployed to GKE cluster `gke_laah-cybernetics_us-central1-a_cage-dev`, namespace `governance-stack`, on 2026-06-03. The full test suite now reports **844 passed, 0 failed, 24 skipped** (2026-06-03 GKE cycle).
+CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v0.1.0 Git tag has been applied and the `rc-v0.1.0` branch has been merged to `main`, but CAGE v0.1.0 has **not** been declared a stable release. Both application images were built via Cloud Build and deployed to GKE cluster `gke_laah-cybernetics_us-central1-a_cage-dev`, namespace `governance-stack`, on 2026-06-03. The full test suite now reports **844 passed, 0 failed, 24 skipped** (2026-06-03 GKE cycle).
 
 ### 5.1 Control Family Readiness
 
