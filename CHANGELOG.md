@@ -8,6 +8,46 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ---
 
+## [Unreleased] — 2026-07-01
+
+### Added
+
+- Mathematical formalism documentation across all major docs:
+  - Discrete-time CBF condition `h(S(t+1)) ≥ (1−γ)·h(S(t))` in formal verification docs
+  - HMAC-SHA256 routing seal format documented in architecture and governance docs
+  - Causal marginal risk boundary formula `(0.5 + estimate.value × amount) > 0.95` documented
+  - Confabulation risk score formula `risk_score = 1.0 − confidence` documented
+  - Consensus protocol boolean logic and thresholds documented
+  - STPA UCA inequalities (FIN-1, FIN-2, UCA-5, UCA-6) documented
+  - FRIA zone thresholds (0.95/0.70) documented across governance docs
+  - FiscalLimitGuard quantitative parameters ($500k daily cap, 86,400s window, exponential backoff) documented
+  - Provenance SHA-256 hash chain construction documented
+- Named constants promoted in source code:
+  - `CAUSAL_LOCK_P_VALUE_THRESHOLD = 0.05`
+  - `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE = 0.2`
+  - `CAUSAL_LOCK_RISK_BOUNDARY = 0.95`
+  - `FRIA_ZONE_ALLOW = 0.95`
+  - `FRIA_ZONE_DEFER = 0.70`
+
+### Updated
+
+- `docs/technical-report/10-FORMAL-VERIFICATION.md` — Steps 8–11 added (CBF, Routing Seal, Provenance Chain, FiscalLimitGuard)
+- `docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md` — Lua atomic script, marginal risk boundary, confabulation scoring, consensus protocol sections added
+- `docs/governance/GOVERNANCE_OVERVIEW.md` — 7-tier pipeline, mathematical invariants, STPA UCAs sections added
+- `docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md` — Symbolic governor architecture, formal safety properties, regional compliance mapping sections added
+- `docs/architecture/GATEWAY_ARCHITECTURE.md` — Governance pipeline, CBF layer, routing seal sections added
+- `docs/technical-report/01-SYSTEM-OVERVIEW.md` — Formal safety guarantees and governance architecture sections added
+- `docs/technical-report/02-ARCHITECTURE.md` — Governance kernel mathematical foundations and STPA safety analysis sections added
+- `docs/technical-report/04-AGENT-SYSTEM.md` — Agent governance integration section added
+- `README.md` — Mathematical foundations section added
+- `COMPLIANCE.md` — Mathematical safety invariants and STPA UCAs sections added
+- `docs/technical-report/README.md` — Mathematical formalism summary table added
+- `docs/compliance/universal/SYSTEM_DESCRIPTION_ISO_42001.md` — Mathematical Safety Controls (§5), STPA UCAs (§6), and 7-tier pipeline (§4.4) sections added
+- `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` — Automated Governance Thresholds section added
+- `docs/project/PRODUCTION_READINESS_REPORT.md` — Mathematical Safety Verification section added
+
+---
+
 ## [Unreleased]
 
 ---

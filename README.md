@@ -106,6 +106,107 @@ For full architectural detail, see [`docs/GATEWAY_ARCHITECTURE.md`](docs/archite
 
 ---
 
+## Mathematical Foundations & Formal Safety Guarantees
+
+CAGE's runtime safety properties are grounded in formal mathematical constructs implemented directly in source code. The following summarises the key formalisms; full derivations are in [`docs/technical-report/10-FORMAL-VERIFICATION.md`](docs/technical-report/10-FORMAL-VERIFICATION.md) and [`docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md`](docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md).
+
+### Control Barrier Function (CBF)
+
+Source: [`src/gateway/governance/cbf.py`](src/gateway/governance/cbf.py)
+
+The safe set is defined as `S = {x ∈ ℝⁿ : h(x) ≥ 0}` where the barrier function is:
+
+```
+h(x) = cash_balance − min_cash_balance
+```
+
+The discrete-time CBF condition enforced at every governance tick is:
+
+```
+h(S(t+1)) ≥ (1−γ) · h(S(t)),   γ ∈ (0,1)
+```
+
+This guarantees that the cash balance never drops below the minimum threshold in a single step — the decay factor `γ` bounds the maximum permissible drawdown per evaluation cycle. The CBF currently reads from Redis state; external reconciliation via `AnchorageGrpcLedgerProvider` is tracked as POAM-023.
+
+### 7-Tier Symbolic Governor Pipeline
+
+Source: [`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py)
+
+Every agent action passes through seven sequential tiers before execution is permitted:
+
+| Tier | Name | Mechanism |
+|------|------|-----------|
+| **1** | NoDirectBind invariant | Structural binding check — prevents direct tool invocation without governance wrapper |
+| **2** | PII sanitization | Five compiled regex patterns (SSN, credit card, email, phone, API key/Bearer) applied before any persistence |
+| **3** | CBF + OPA concurrent | `asyncio.gather` runs Control Barrier Function and OPA Rego evaluation in parallel |
+| **4** | Causal gatekeeper | SCM + `PlaceboTreatmentRefuter` (50 sims, p < 0.05, \|eff\| > 0.2) validates world-model integrity |
+| **5** | Confabulation scoring | `risk_score = 1.0 − confidence`; blocks when score exceeds threshold |
+| **6** | Consensus gate | Heterogeneous multi-model consensus required for trades ≥ $10k; 30 s timeout |
+| **7** | FRIA zones | `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70`; scores below 0.70 hard-deny locally |
+
+### Confabulation Risk Formula
+
+Source: [`src/gateway/governance/confabulation_scorer.py`](src/gateway/governance/confabulation_scorer.py)
+
+```
+risk_score = 1.0 − confidence
+```
+
+Scores ≥ 0.95 pass immediately (async attestation, 0 ms overhead). Scores in [0.70, 0.95) enter the DEFER queue for synchronous blocking review. Scores < 0.70 are hard-denied without an external call.
+
+### Causal Marginal Risk Boundary
+
+Source: [`src/gateway/governance/causal_gatekeeper.py`](src/gateway/governance/causal_gatekeeper.py)
+
+A trade action is blocked when the marginal risk expression exceeds the safety boundary:
+
+```
+(0.5 + estimate.value × amount) > 0.95
+```
+
+The `PlaceboTreatmentRefuter` runs 50 simulations; the causal effect is considered spurious (and the action blocked) when p ≥ 0.05 or |effect| ≤ 0.2.
+
+### Routing Seal Integrity
+
+Source: [`src/gateway/governance/routing_seal.py`](src/gateway/governance/routing_seal.py)
+
+Every governance decision is sealed with an HMAC-SHA256 token in the format:
+
+```
+<expire_ts_hex>.<action_slug>.<hmac_hex>
+```
+
+Tokens carry a 30-second TTL. Unsigned or expired requests return HTTP 403.
+
+### Provenance Hash Chain
+
+Source: [`src/gateway/governance/provenance_chain.py`](src/gateway/governance/provenance_chain.py)
+
+SHA-256 hash chain with O(n) construction. Each node's `record_hash` is `SHA-256(prev_hash ‖ content_json)`, producing a tamper-evident chain-of-custody that detects any mutation at the altered node.
+
+### Fiscal Limit Guard
+
+Source: [`src/gateway/governance/fiscal_limit_guard.py`](src/gateway/governance/fiscal_limit_guard.py)
+
+- Daily cap: **$500,000** over an 86,400 s rolling window
+- Redis `WATCH/MULTI/EXEC` optimistic-lock pre-reservation prevents multi-agent "race to the rail"
+- Exponential backoff on contention; fail-closed on Redis unavailability
+
+### STPA Unsafe Control Actions (UCAs)
+
+Source: [`src/gateway/governance/ontology.py`](src/gateway/governance/ontology.py)
+
+| UCA ID | Condition | Enforcement |
+|--------|-----------|-------------|
+| **FIN-1** | `trade_value > position_limit` | OPA Rego + GeneratedSTPAValidator |
+| **FIN-2** | `portfolio_concentration > 0.25` | OPA Rego + GeneratedSTPAValidator |
+| **UCA-5** | `order_size > 0.1 × daily_volume` | Saga compensating node + HITL escalation |
+| **UCA-6** | `order_size > fraction × daily_vol` | Saga compensating node + HITL escalation |
+
+Full STPA hazard analysis: [`docs/security/STPA_ANALYSIS.md`](docs/security/STPA_ANALYSIS.md)
+
+---
+
 ## Deployment Policy
 
 CAGE enforces strict deployment rules to ensure compliance and consistency:
