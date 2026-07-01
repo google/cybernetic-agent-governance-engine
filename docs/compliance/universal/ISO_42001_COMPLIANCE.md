@@ -6,7 +6,7 @@
 
 This document maps the **Neuro-Cybernetic Governance** implementation to the clauses of **ISO/IEC 42001**. The architecture implements a **Continuous Compliance** model: NeMo and OPA handle live enforcement, Langfuse captures evidence, and **Lula** periodically audits both to generate OSCAL Assessment Results that serve as machine-readable proof for auditors.
 
-> **Jurisdiction separation principle:** **ISO/IEC 42001:2023 is the sole universal governance baseline** for CAGE. Every clause mapping, Annex A control, and Lula validation in this document applies to **all deployment regions** (`US_FED`, `EU_ECB`, `APAC_MAS`). Jurisdiction-specific frameworks (SR 26-2, NIST AI 600-1, EU AI Act, GDPR, DORA, MAS FEAT, MAS Notice 655) are **additive layers** that extend — but never replace — the ISO 42001 baseline. They are activated exclusively by `CAGE_DEPLOYMENT_REGION` and impose no obligations on other regions. See [`docs/GOVERNANCE_CROSSWALK.md`](../cross-region/GOVERNANCE_CROSSWALK.md) for the full regional applicability matrix.
+> **Jurisdiction separation principle:** **ISO/IEC 42001:2023 is the sole universal governance baseline** for CAGE. Every clause mapping, Annex A control, and Lula validation in this document applies to **all deployment regions** (`US_FED`, `EU_ECB`, `APAC_MAS`). Jurisdiction-specific frameworks (SR 26-2, NIST AI 600-1, EU AI Act, GDPR, DORA, MAS FEAT, MAS Notice 655) are **additive layers** that extend — but never replace — the ISO 42001 baseline. They are activated exclusively by `CAGE_DEPLOYMENT_REGION` and impose no obligations on other regions. See [`docs/GOVERNANCE_CROSSWALK.md`](GOVERNANCE_CROSSWALK.md) for the full regional applicability matrix.
 
 ---
 

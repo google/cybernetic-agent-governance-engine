@@ -27,7 +27,7 @@ CAGE implements a defense-in-depth security model across seven distinct layers. 
 >
 > One **critical** open finding remains unresolved: unsigned FIPS 199 categorization (FIND-007). Two critical findings have been resolved: HMAC bypass vulnerability FIND-010 / POAM-012 is **CLOSED**, and intra-cluster mTLS FIND-011 / POAM-007 is **CLOSED** (Linkerd mTLS + Cilium L7 egress lockdown deployed).
 >
-> ✅ **v0.1.0-rc.2 Security Hardening Sprint (2026-06-03):** All four No-Direct-Bind architectural gaps have been closed. The `NoDirectBind` safety invariant is now machine-verified over the entire reachable state space. See §3a below and [Document 10 — Formal Verification](./10-FORMAL-VERIFICATION.md) §Step 7 for full details.
+> ✅ **v2.0.0-rc.2 Security Hardening Sprint (2026-06-03):** All four No-Direct-Bind architectural gaps have been closed. The `NoDirectBind` safety invariant is now machine-verified over the entire reachable state space. See §3a below and [Document 10 — Formal Verification](./10-FORMAL-VERIFICATION.md) §Step 7 for full details.
 >
 > ✅ **commit e959cc3 — Production Environment Hardening (2026-06-15):** Three additional fail-closed hardening measures have been applied: `CAGE_ENV` standardization across all production guards, fail-closed telemetry enforcement in the causal gatekeeper, and `StubNormativeProvider` production guard. See §3b, §3c, and §3d below.
 

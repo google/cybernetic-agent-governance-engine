@@ -4,7 +4,7 @@
 
 The Gateway acts as the central orchestrator and compliance enforcement point for the AI financial advisor. It implements a **Kubernetes Inference Gateway** architecture, abstracting a "Split-Brain" topology that routes tasks between a high-capacity Reasoning Model (`DeepSeek-R1-Distill-Llama-8B`) and a low-latency Governance Model (`Meta-Llama-3.1-8B-Instruct`). Both models are hosted on cost-optimized **Spot/preemptible GPU nodes** (NVIDIA L4). (GKE is the reference deployment; other Kubernetes distributions are supported)
 
-**Version:** v0.1.0 (stable, released 2026-06-14)
+**Version:** v2.0.0-rc.3 (promoted 2026-06-07)
 **Universal Compliance Baseline:** ISO/IEC 42001:2023 · CSA AARM v1.0 *(all deployment regions)*
 **Jurisdiction-Specific Addenda:** SR 26-2 / NIST AI 600-1 / NIST SP 800-53 *(US_FED only)* · EU AI Act / GDPR / DORA *(EU_ECB only)* · MAS FEAT / MAS Notice 655 *(APAC_MAS only)*
 
@@ -259,6 +259,36 @@ The following frameworks apply regardless of `CAGE_DEPLOYMENT_REGION`:
 | **CSA AARM v1.0** | 11-vector AI agent threat model — all mitigations active in all regions | Active |
 | **OSCAL v1.0.4** | Machine-readable artifact persistence to GCS | Active |
 | **Lula** | 15 Lula validation manifests (4 Active, 11 Stub — see [`compliance/lula/README.md`](../compliance/lula/README.md)) | Active (4 of 15) |
+
+### US_FED Jurisdiction Addendum (`CAGE_DEPLOYMENT_REGION=US_FED`)
+
+The following frameworks apply **only** when `CAGE_DEPLOYMENT_REGION=US_FED`:
+
+| Framework | Scope | Status |
+|-----------|-------|--------|
+| **SR 26-2** (Federal Reserve, April 17, 2026) | Agentic AI model risk management; HITL SLA 4h; MRM scope for CBF + DoWhy | Active |
+| **NIST AI 600-1** | Confabulation scoring, HITL escalation, prompt injection detection, provenance chain, CBRN filtering | Active |
+| **NIST SP 800-53 Rev 5 HIGH** | 24% readiness; FedRAMP ATO in progress | In Progress |
+| **NIST AI RMF** (SP 800-37) | MEASURE-2.6 continuous world-model validation | Active |
+
+### EU_ECB Jurisdiction Addendum (`CAGE_DEPLOYMENT_REGION=EU_ECB`)
+
+The following frameworks apply **only** when `CAGE_DEPLOYMENT_REGION=EU_ECB`:
+
+| Framework | Scope | Status |
+|-----------|-------|--------|
+| **EU AI Act** (Reg. 2024/1689) Art. 29a | Adaptive FRIA gating; OTel attestation stamp on every span | Active |
+| **GDPR** Art. 22 | Automated decision-making; 24h PII retention limit | Active |
+| **DORA** (Reg. 2022/2554) Art. 10 | Audit logging obligation; telemetry suppression sentinel | Active |
+
+### APAC_MAS Jurisdiction Addendum (`CAGE_DEPLOYMENT_REGION=APAC_MAS`)
+
+The following frameworks apply **only** when `CAGE_DEPLOYMENT_REGION=APAC_MAS`:
+
+| Framework | Scope | Status |
+|-----------|-------|--------|
+| **MAS FEAT Principles** | Singapore-specific AI fairness, ethics, accountability, transparency controls | Active |
+| **MAS Notice 655 / MAS TRM §4.2** | Audit logging; data residency within `asia-southeast1` | Active |
 
 ### US_FED Jurisdiction Addendum (`CAGE_DEPLOYMENT_REGION=US_FED`)
 
