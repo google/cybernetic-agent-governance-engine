@@ -1153,7 +1153,7 @@ kubectl logs -n governance-stack -l job-name=lula-manual-run
 # Expected: all 4 Active assertions PASS (a52, a53, a92, sc4).
 # 22 Stub manifests require cluster-specific configuration before activation.
 # See compliance/lula/README.md for activation instructions.
-# NOTE: v0.1.0 stable tag was applied with 4 Active manifests passing (Track D, 2026-06-08).
+# NOTE: v2.0.0 stable tag was applied with 4 Active manifests passing (Track D, 2026-06-08).
 
 kubectl delete job lula-manual-run -n governance-stack
 ```
