@@ -180,7 +180,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 | Version | Date | Test Results | Key Theme |
 |---------|------|--------------|-----------|
 | [Unreleased] | — | — | Post-stable backlog |
-| [0.1.0] | 2026-06-14 | 796 passed, 0 failed, 148 skipped | Stable release: Token Quota Proxy, PII Sanitizer, UCA Logger, CTRL_TQP_007, gateway CVE remediation, seal enforcement, all universal Lula assertions PASS; Sprint 1–3 security hardening (C-01–C-07, H-08–H-16, M-01–M-24) |
+| [2.0.0] | 2026-06-14 | 796 passed, 0 failed, 148 skipped | Stable release: Token Quota Proxy, PII Sanitizer, UCA Logger, CTRL_TQP_007, gateway CVE remediation, seal enforcement, all universal Lula assertions PASS; Sprint 1–3 security hardening (C-01–C-07, H-08–H-16, M-01–M-24) |
 
 ---
 

@@ -197,16 +197,15 @@ spec:
             runAsUser: 1000
             seccompProfile:
               type: RuntimeDefault
-          # Memory increased from 512Mi to 1Gi to accommodate dowhy + matplotlib
-          # full import chain (causal gatekeeper Tier 6 — No-Direct-Bind Gap 4 fix).
-          # 512Mi was insufficient; pod OOMKilled (exit 137) after ~90s startup.
+          # Memory increased from 256Mi to 512Mi to accommodate dowhy + matplotlib
+          # (causal gatekeeper Tier 6 — No-Direct-Bind Gap 4 fix).
           resources:
             requests:
               cpu: "50m"
-              memory: "512Mi"
+              memory: "256Mi"
             limits:
-              cpu: "500m"
-              memory: "1Gi"
+              cpu: "200m"
+              memory: "512Mi"
 
 ---
 apiVersion: v1

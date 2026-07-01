@@ -20,11 +20,11 @@ This document is the authoritative Plan of Action and Milestones (POAM) for the 
 
 ## Status Legend
 
-| Status | Meaning |
-|--------|---------|
-| `OPEN` | Finding identified, remediation not started |
-| `IN_PROGRESS` | Remediation underway |
-| `CLOSED` | Remediation complete, verified by Lula or equivalent evidence |
+| ID | Control | Weakness | Severity | Status | Target Date |
+|----|---------|----------|----------|--------|-------------|
+| POAM-023 | SI-2 | CVE-2025-13462 in `libpython3.11` (python:3.12-slim-bookworm base layer) — 19 CRITICAL CVEs; no Debian bookworm fix available as of 2026-06-08; suppressed via `.trivyignore`; Cilium egress lockdown reduces exploitability; risk accepted with review date 2026-09-08 | Critical | Open | 2026-09-08 |
+
+> POAM-023 is tracked in [`docs/POAM_US_FED.md`](POAM_US_FED.md) and [`docs/SECURITY_STATUS.md`](SECURITY_STATUS.md). The gateway Dockerfile was pinned to `python:3.12-slim-bookworm` with `apt-get upgrade -y` applied at build time; residual CVE-2025-13462 (`libpython3.11`) has no Debian bookworm fix as of 2026-06-08 and is suppressed via `.trivyignore` with Cilium egress lockdown reducing exploitability. The OPA runtime injection deferral (CTRL_TQP_007 secondary enforcement) is tracked separately as ISO-001 in [`docs/POAM_ISO42001.md`](POAM_ISO42001.md).
 
 ---
 
