@@ -351,8 +351,8 @@ This architecture can be applied to any agent operation:
 
 ## Related Documentation
 
-- [Deployment Rules](DEPLOYMENT_RULES.md) - Specific policies for CAGE deployment
-- [MCP Integration Guide](MCP_INTEGRATION_GUIDE.md) - Setting up MCP servers
+- [Deployment Rules](../operations/DEPLOYMENT_RULES.md) - Specific policies for CAGE deployment
+- [MCP Integration Guide](../operations/MCP_INTEGRATION_GUIDE.md) - Setting up MCP servers
 - [Infrastructure MCP Server](../mcp-servers/infrastructure/README.md) - Tool reference
 
 ## Conclusion

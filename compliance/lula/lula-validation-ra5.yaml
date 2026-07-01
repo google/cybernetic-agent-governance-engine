@@ -18,46 +18,38 @@
 #
 # Namespace: governance-stack (confirmed from live cluster deployment snapshot)
 
-metadata:
-  annotations:
-    cage.region: US_FED
-    cage.compliance-posture: nist-sp800-53
-    cage.posture-note: "NIST SP 800-53 is a US Federal posture requirement. This validation is skipped for EU_ECB and APAC_MAS deployments."
+component-definition:
+  uuid: 2a8c1f51-012c-5939-9c55-ac9b8f185c2c
+  metadata:
+    title: CAGE Validation — RA5
+    last-modified: '2026-07-01T13:18:54Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: 'Auto-converted from standalone lula validation format.
 
-domain:
-  type: kubernetes
-  kubernetes-spec:
+      Region: US_FED. Posture: nist-sp800-53.
+
+      Notes: NIST SP 800-53 Rev 5 RA-5: Vulnerability Monitoring and Scanning. Namespace: governance-stack (confirmed from live cluster deployment snapshot). CI/CD pipeline scanning is implemented via .github/workflows/security-scan.yml (Trivy container scanning + SAST); this Lula validation covers the continuous in-cluster scanning requirement per NIST RA-5 continuous monitoring. The sbom-cronjob (deployment/k8s/sbom-cronjob.yaml) provides the in-cluster CronJob evidence. Apply it with: kubectl apply -f deployment/k8s/sbom-cronjob.yaml See: compliance/continuous-monitoring/ISCM_STRATEGY.md — RA-5 monitoring cadence. See: docs/POAM.md — RA-5 POAM remediation item.'
+  components:
+  - uuid: aee40988-d903-59fe-abef-2e2d24a084fa
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: 6957afe5-394b-5641-b059-4d210795dc00
+      source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
+      description: 'Control implementation for RA5. Region: US_FED. Posture: nist-sp800-53.'
+      implemented-requirements:
+      - uuid: 4647ae49-b402-5fcd-919b-8a39244aa7f6
+        control-id: ra5
+        description: Automated lula validation for RA5.
+        links:
+        - href: '#7a32a7bb-2f37-54ce-a16f-1435d2607512'
+          rel: lula
+  back-matter:
     resources:
-      - name: security-scanner-cronjob
-        resource: cronjobs
-        namespace: governance-stack
-
-provider:
-  type: opa
-  opa-spec:
-    rego: |
-      package lula
-
-      import future.keywords.if
-
-      # RA-5: Vulnerability Monitoring and Scanning
-      # Verifies a security scanning CronJob is present in the cluster.
-      # The CronJob should run Trivy or equivalent vulnerability scanner on a
-      # regular schedule (minimum weekly per ISCM cadence).
-      # NOTE: This is a structural assertion — it confirms the scanner is deployed.
-      # Review CronJob execution history separately for scan result evidence.
-      validate if {
-        input["security-scanner-cronjob"].metadata.name != null
-        input["security-scanner-cronjob"].spec.schedule != null
-      }
-
-notes: >
-  NIST SP 800-53 Rev 5 RA-5: Vulnerability Monitoring and Scanning.
-  Namespace: governance-stack (confirmed from live cluster deployment snapshot).
-  CI/CD pipeline scanning is implemented via .github/workflows/security-scan.yml
-  (Trivy container scanning + SAST); this Lula validation covers the continuous
-  in-cluster scanning requirement per NIST RA-5 continuous monitoring.
-  The sbom-cronjob (deployment/k8s/sbom-cronjob.yaml) provides the in-cluster
-  CronJob evidence. Apply it with: kubectl apply -f deployment/k8s/sbom-cronjob.yaml
-  See: compliance/continuous-monitoring/ISCM_STRATEGY.md — RA-5 monitoring cadence.
-  See: docs/POAM.md — RA-5 POAM remediation item.
+    - uuid: 7a32a7bb-2f37-54ce-a16f-1435d2607512
+      title: Lula Validation — RA5
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: security-scanner-cronjob\n      resource: cronjobs\n      namespace: governance-stack\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# RA-5: Vulnerability Monitoring and Scanning\\n# Verifies a security scanning CronJob is present in the cluster.\\n# The CronJob should run Trivy or equivalent vulnerability scanner on a\\n# regular schedule (minimum weekly per ISCM cadence).\\n# NOTE: This is a structural assertion — it confirms the scanner is deployed.\\n# Review CronJob execution history separately for scan result evidence.\\nvalidate if {\\n  input[\\\"security-scanner-cronjob\\\"].metadata.name != null\\n  input[\\\"security-scanner-cronjob\\\"].spec.schedule != null\\n}\\n\"\n"

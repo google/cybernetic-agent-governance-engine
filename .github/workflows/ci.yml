@@ -82,6 +82,24 @@ jobs:
           LANGFUSE_SECRET_KEY: "sk-dummy"
         run: uv run pytest tests/ -m local -v
 
+  eu-ecb-bias-eval:
+    name: EU_ECB LLM Bias Evaluation
+    runs-on: ubuntu-latest
+    if: vars.CAGE_DEPLOYMENT_REGION == 'EU_ECB'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+      - name: Install dependencies
+        run: uv sync --all-groups --all-extras
+      - name: Run EU_ECB bias metrics tests
+        env:
+          CAGE_DEPLOYMENT_REGION: EU_ECB
+          VLLM_FAST_API_BASE: ${{ vars.VLLM_FAST_API_BASE || 'http://localhost:8001/v1' }}
+        run: |
+          pytest compliance/postures/eu_ecb/llm_eval/ -v --timeout=300
+
   stpa-freshness-check:
     name: "STPA Artifact Freshness Check"
     runs-on: ubuntu-latest
@@ -123,6 +141,79 @@ jobs:
           export LANGFUSE_COMPLIANCE_PUBLIC_KEY="pk-lf-comp-mock"
           export LANGFUSE_COMPLIANCE_SECRET_KEY="sk-lf-comp-mock"
           python3 scripts/verify_langfuse_posture.py --dry-run --posture development
+
+  lula-stub-gate:
+    name: "Lula Stub Count Gate"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PyYAML
+        run: pip install pyyaml
+      - name: Check Lula stub count against baseline
+        run: |
+          python scripts/check_lula_stub_count.py
+
+  lula-yaml-structure:
+    name: "Lula Manifest YAML Structure Gate (all 29 files)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PyYAML
+        run: pip install pyyaml
+      - name: Validate all 29 Lula manifest files (domain + provider + rego present)
+        # This is the CI-safe structural gate. Full live lula validate requires a
+        # running cluster and is performed by compliance-matrix.yml post-provisioning.
+        # NOTE: lula1 binary (defenseunicorns-labs/lula1) is NOT installed here —
+        # the compliance-matrix.yml workflow handles live lula validate with the
+        # correct binary source.
+        run: |
+          python3 - <<'PYEOF'
+          import yaml, sys, pathlib
+
+          manifests = sorted(pathlib.Path('compliance/lula').glob('lula-validation-*.yaml'))
+          if not manifests:
+              print('ERROR: no lula-validation-*.yaml files found in compliance/lula/')
+              sys.exit(1)
+
+          errors = []
+          for m in manifests:
+              try:
+                  doc = yaml.safe_load(m.read_text())
+              except yaml.YAMLError as e:
+                  errors.append(f'{m.name}: YAML parse error: {e}')
+                  continue
+              if not isinstance(doc, dict):
+                  errors.append(f'{m.name}: document is not a mapping')
+                  continue
+              for key in ('domain', 'provider'):
+                  if key not in doc:
+                      errors.append(f'{m.name}: missing required key: {key}')
+              provider = doc.get('provider', {})
+              if isinstance(provider, dict):
+                  opa = provider.get('opa-spec') or provider.get('opa') or {}
+                  if isinstance(opa, dict):
+                      rego = opa.get('rego') or opa.get('policy')
+                      if not rego:
+                          errors.append(f'{m.name}: opa-spec missing rego/policy body')
+                  else:
+                      errors.append(f'{m.name}: provider missing opa-spec or opa key')
+              dtype = doc.get('domain', {}).get('type', '?')
+              ptype = doc.get('provider', {}).get('type', '?')
+              print(f'  OK {m.name}: domain.type={dtype}, provider.type={ptype}')
+
+          if errors:
+              print(f'\nFAILURES ({len(errors)}):')
+              for e in errors:
+                  print(f'  {e}')
+              sys.exit(1)
+          print(f'\nAll {len(manifests)} lula manifest(s) passed YAML structure check.')
+          PYEOF
 
   # ── AI 600-1 Compliance Gates (US_FED only) ────────────────────────────────
 
@@ -197,6 +288,7 @@ jobs:
   ai600-unit-tests:
     name: "AI 600-1 Unit Tests"
     runs-on: ubuntu-latest
+    if: vars.CAGE_DEPLOYMENT_REGION == 'US_FED' || vars.CAGE_DEPLOYMENT_REGION == ''
     needs: [license-check]
     steps:
       - uses: actions/checkout@v4

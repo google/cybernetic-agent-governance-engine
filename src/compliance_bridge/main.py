@@ -186,7 +186,7 @@ async def lifespan(app: FastAPI):
     if _KMS_ENABLED:
         await _batch_signer.start()
         logger.info("✅ KMS batch signer started")
-        _env_for_kms = os.environ.get("CAGE_ENV", "dev").lower()
+        _env_for_kms = os.environ.get("CAGE_ENV", "prod").lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
         if _env_for_kms == "prod":
             _batch_signer.assert_kms_active_in_production()
     else:
@@ -315,7 +315,45 @@ async def events_stream(request: Request) -> EventSourceResponse:
 
 @app.get("/health", tags=["health"])
 async def health() -> dict:
-    return {"status": "ok", "service": "compliance-bridge", "version": "0.1.0"}
+    """Liveness + dependency connectivity check (POAM-018).
+
+    Returns HTTP 200 with detailed dependency status so Kubernetes health
+    probes and operators can detect silent configuration failures without
+    tailing pod logs.
+
+    Fields:
+        status:                      "ok" if the service is alive.
+        service:                     Service name.
+        version:                     CAGE compliance-bridge version.
+        langfuse_compliance_configured: True if LANGFUSE_COMPLIANCE_PUBLIC_KEY
+                                      and LANGFUSE_COMPLIANCE_SECRET_KEY are set.
+        langfuse_app_configured:     True if LANGFUSE_PUBLIC_KEY and
+                                      LANGFUSE_SECRET_KEY are set.
+        oscal_storage_configured:    True if OSCAL_S3_ENDPOINT is set,
+                                      indicating artifact storage is available.
+        environment:                 Active CAGE_ENV / ENVIRONMENT value.
+    """
+    langfuse_compliance_configured = bool(
+        os.environ.get("LANGFUSE_COMPLIANCE_PUBLIC_KEY")
+        and os.environ.get("LANGFUSE_COMPLIANCE_SECRET_KEY")
+    )
+    langfuse_app_configured = bool(
+        os.environ.get("LANGFUSE_PUBLIC_KEY")
+        and os.environ.get("LANGFUSE_SECRET_KEY")
+    )
+    oscal_storage_configured = bool(os.environ.get("OSCAL_S3_ENDPOINT"))
+    active_env = os.environ.get("CAGE_ENV", os.environ.get("ENVIRONMENT", "prod")).lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
+
+    return {
+        "status": "ok",
+        "service": "compliance-bridge",
+        "version": "0.1.0",
+        "langfuse_compliance_configured": langfuse_compliance_configured,
+        "langfuse_app_configured": langfuse_app_configured,
+        "oscal_storage_configured": oscal_storage_configured,
+        "environment": active_env,
+    }
+
 
 
 # ---------------------------------------------------------------------------

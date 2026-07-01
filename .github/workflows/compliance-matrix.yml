@@ -5,19 +5,19 @@ on:
   workflow_call:
     inputs:
       lula_version:
-        description: "Lula binary version to install"
+        description: "Lula1 binary version to install (defenseunicorns-labs/lula1)"
         type: string
         required: false
-        default: "v0.10.0"
+        default: "v0.9.5"
 
   # Allow manual triggering from the GitHub Actions UI
   workflow_dispatch:
     inputs:
       lula_version:
-        description: "Lula binary version to install"
+        description: "Lula1 binary version to install (defenseunicorns-labs/lula1)"
         type: string
         required: false
-        default: "v0.10.0"
+        default: "v0.9.5"
 
   # Run automatically on pushes to integration branches
   push:
@@ -32,13 +32,16 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.11"
-  # Default lula version; overridden by workflow_call/workflow_dispatch input
-  LULA_VERSION: ${{ inputs.lula_version || 'v0.10.0' }}
+  # NOTE: lula1 (defenseunicorns-labs/lula1) is the Go CLI compliance validator.
+  # lula2 (defenseunicorns/lula) is a separate SvelteKit UI tool — do NOT use
+  # github.com/defenseunicorns/lula for binary downloads; that repo no longer
+  # ships the Go CLI. See: https://github.com/defenseunicorns-labs/lula1
+  LULA_VERSION: ${{ inputs.lula_version || 'v0.9.5' }}
 
 # ---------------------------------------------------------------------------
 # Job 1: Universal ISO 42001 Gates
 # Runs first, unconditionally, for all regions.
-# Source: docs/V2_RELEASE_PLAN.md §5.1
+# Source: docs/RELEASE_PLAN.md §5.1
 # ---------------------------------------------------------------------------
 jobs:
   universal-iso42001:
@@ -64,14 +67,22 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
-      - name: Install Lula binary
+      - name: Install Lula1 binary
+        # lula1 moved to defenseunicorns-labs/lula1 when defenseunicorns/lula
+        # was repurposed for the lula2 SvelteKit UI. Always download from the
+        # correct repo. Falls back to go install if the release asset 404s.
         run: |
           LULA_VERSION="${{ env.LULA_VERSION }}"
-          echo "Installing Lula ${LULA_VERSION}..."
-          curl -sSL \
-            "https://github.com/defenseunicorns/lula/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64" \
-            -o /usr/local/bin/lula
-          chmod +x /usr/local/bin/lula
+          LULA_URL="https://github.com/defenseunicorns-labs/lula1/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64"
+          echo "Installing lula1 ${LULA_VERSION} from defenseunicorns-labs/lula1..."
+          if curl -fsSL "${LULA_URL}" -o /usr/local/bin/lula 2>/dev/null; then
+            chmod +x /usr/local/bin/lula
+            echo "lula1 installed via release binary"
+          else
+            echo "Release binary not found at ${LULA_URL} — falling back to go install"
+            go install github.com/defenseunicorns-labs/lula1/cmd/lula@${LULA_VERSION}
+            cp "$(go env GOPATH)/bin/lula" /usr/local/bin/lula
+          fi
           lula version
 
       - name: Gate 0.1 — Core unit tests (if tests/core/ exists)
@@ -108,7 +119,7 @@ jobs:
   # ---------------------------------------------------------------------------
   # Job 2: Regional Posture Gates (2×3 matrix)
   # Runs after universal-iso42001 passes.
-  # Source: docs/V2_RELEASE_PLAN.md §5.2–§5.4
+  # Source: docs/RELEASE_PLAN.md §5.2–§5.4
   # ---------------------------------------------------------------------------
   regional-posture:
     name: "Regional Posture (${{ matrix.region }} / ${{ matrix.environment }})"
@@ -149,14 +160,20 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
-      - name: Install Lula binary
+      - name: Install Lula1 binary
+        # lula1 moved to defenseunicorns-labs/lula1. See universal-iso42001 job comment.
         run: |
           LULA_VERSION="${{ env.LULA_VERSION }}"
-          echo "Installing Lula ${LULA_VERSION}..."
-          curl -sSL \
-            "https://github.com/defenseunicorns/lula/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64" \
-            -o /usr/local/bin/lula
-          chmod +x /usr/local/bin/lula
+          LULA_URL="https://github.com/defenseunicorns-labs/lula1/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64"
+          echo "Installing lula1 ${LULA_VERSION} from defenseunicorns-labs/lula1..."
+          if curl -fsSL "${LULA_URL}" -o /usr/local/bin/lula 2>/dev/null; then
+            chmod +x /usr/local/bin/lula
+            echo "lula1 installed via release binary"
+          else
+            echo "Release binary not found at ${LULA_URL} — falling back to go install"
+            go install github.com/defenseunicorns-labs/lula1/cmd/lula@${LULA_VERSION}
+            cp "$(go env GOPATH)/bin/lula" /usr/local/bin/lula
+          fi
           lula version
 
       - name: Install OPA binary (US_FED only)

@@ -12,29 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Validates: AI 600-1 §2.1 Confabulation controls
-# Controls: CTRL_AGT_001 (confidence ≥ 0.95), confabulation_scorer.py
-# POAM: AI600-001
-# Phase: 0 (stub) → Phase 2 (real assertions replace stub)
-# Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
-metadata:
-  annotations:
-    cage.region: US_FED
-    cage.compliance-posture: nist-ai-600-1
-    cage.posture-note: "NIST AI 600-1 is a US Federal posture requirement. This validation MUST NOT run for EU_ECB or APAC_MAS deployments."
-
-domain:
-  type: kubernetes
-  kubernetes:
-    resources: []   # populated in Phase 2
-provider:
-  type: opa
-  opa:
-    policy: |
-      # stub — always passes until Phase 2
-      # Phase 2 will assert:
-      #   - gateway Deployment has CONFIDENCE_MIN_SCORE env var set
-      #   - confabulation_scorer is active (CONFABULATION_SCORER_ENABLED=true)
-      #   - AgentSight DaemonSet is running with PROVENANCE_SIGNING_ENABLED=true
-      package validate
-      default allow = true
+component-definition:
+  uuid: 9866ff93-ebe0-5f19-b959-f48ddf5a5ce2
+  metadata:
+    title: CAGE Validation — AI600 CONFABULATION
+    last-modified: '2026-07-01T13:18:54Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: "Auto-converted from standalone lula validation format.\nRegion: US_FED. Posture: nist-ai-600-1.\nNotes: NIST AI 600-1 §2.1: Confabulation (hallucination) controls. Phase 2 assertions (CTRL_AGT_001):\n  (1) gateway Deployment must have CONFIDENCE_MIN_SCORE env var set (≥0.95).\n      Confirms confabulation_scorer.py CONFIDENCE_THRESHOLD is active.\n  (2) gateway Deployment must have CONFABULATION_SCORER_ENABLED=true,\n      confirming the scorer is not disabled via env override.\n  (3) AgentSight DaemonSet must have PROVENANCE_SIGNING_ENABLED=true,\n      confirming provenance attestation is active for confabulation tracking.\nComplianceMetrics.confabulation_rate now populated by compliance-bridge via Langfuse score queries (name=\"confabulation_risk\"). Remediates: AI600-001 (POAM_US_FED.md)."
+  components:
+  - uuid: 29d8b3c3-cacf-5625-8e5d-d00f5681a5cc
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: 4d0b9cad-c710-52d8-a3cc-4e15304f7cf2
+      source: https://lula.dev
+      description: 'Control implementation for AI600 CONFABULATION. Region: US_FED. Posture: nist-ai-600-1.'
+      implemented-requirements:
+      - uuid: b28b63df-b309-51e1-a390-3601ed28b918
+        control-id: ai600-confabulation
+        description: Automated lula validation for AI600 CONFABULATION.
+        links:
+        - href: '#6696df43-4c0c-5b58-8a37-7d4975263b0f'
+          rel: lula
+  back-matter:
+    resources:
+    - uuid: 6696df43-4c0c-5b58-8a37-7d4975263b0f
+      title: Lula Validation — AI600 CONFABULATION
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: gateway-deployment\n      resource: deployments\n      namespace: governance-stack\n      filters:\n      - field: metadata.name\n        value: gateway\n    - name: agentsight-daemonset\n      resource: daemonsets\n      namespace: governance-stack\n      filters:\n      - field: metadata.name\n        value: agentsight\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# AI 600-1 §2.1 Confabulation Controls\\n#\\n# Check 1: gateway Deployment has CONFIDENCE_MIN_SCORE env var set\\n# Check 2: gateway Deployment has CONFABULATION_SCORER_ENABLED=true\\n# Check 3: AgentSight DaemonSet running with PROVENANCE_SIGNING_ENABLED=true\\n\\ngateway_has_confidence_threshold if {\\n  some container in input[\\\"gateway-deployment\\\"].spec.template.spec.containers\\n  container.name == \\\"gateway\\\"\\n  some env in container.env\\n  env.name == \\\"CONFIDENCE_MIN_SCORE\\\"\\n  env.value != \\\"\\\"\\n}\\n\\ngateway_has_confabulation_scorer if {\\n  some container in input[\\\"gateway-deployment\\\"].spec.template.spec.containers\\n  container.name == \\\"gateway\\\"\\n  some env in container.env\\n  env.name == \\\"CONFABULATION_SCORER_ENABLED\\\"\\n  env.value == \\\"true\\\"\\n}\\n\\nagentsight_has_provenance_signing if {\\n  some container in input[\\\"agentsight-daemonset\\\"].spec.template.spec.containers\\n  some env in container.env\\n  env.name == \\\"PROVENANCE_SIGNING_ENABLED\\\"\\n  env.value == \\\"true\\\"\\n}\\n\\nvalidate if {\\n  gateway_has_confidence_threshold\\n  gateway_has_confabulation_scorer\\n  agentsight_has_provenance_signing\\n}\\n\"\n"

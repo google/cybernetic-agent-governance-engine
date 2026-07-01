@@ -31,110 +31,34 @@
 #
 # Namespace: governance-stack (confirmed from live cluster deployment snapshot)
 
-metadata:
-  annotations:
-    cage.region: US_FED
-    cage.compliance-posture: nist-sp800-53
-    cage.posture-note: "NIST SP 800-53 is a US Federal posture requirement. This validation is skipped for EU_ECB and APAC_MAS deployments."
-    cage.poam-007: "CLOSED 2026-05-17 — Linkerd mTLS implemented. Validation updated from compensating-control to full mTLS assertion."
-
-domain:
-  type: kubernetes
-  kubernetes-spec:
+component-definition:
+  uuid: f9dc196a-c256-50dc-8884-955eb90df5a6
+  metadata:
+    title: CAGE Validation — IA3
+    last-modified: '2026-07-01T13:18:54Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: "Auto-converted from standalone lula validation format.\nRegion: US_FED. Posture: nist-sp800-53.\nNotes: NIST SP 800-53 Rev 5 IA-3: Device Identification and Authentication. POAM-007 CLOSED 2026-05-17 — Linkerd mTLS implemented. Namespace: governance-stack (confirmed from live cluster deployment snapshot).\nThis validation was updated from the previous compensating-control assertion (NetworkPolicy + OPA + intent annotation) to assert the actual Linkerd mTLS posture following POAM-007 closure.\nLinkerd provides per-pod cryptographic identity via SPIFFE/X.509 certificates issued by the Linkerd certificate authority.  The linkerd.io/inject: \"enabled\" annotation on pod templates causes the Linkerd admission webhook to inject the proxy sidecar, which transparently upgrades all intra-cluster TCP connections to mTLS.  This provides cryptographic device identity verification for all service-to-service communication within governance-stack.\nRetained controls (defence-in-depth):\n  - default-deny-ingress NetworkPolicy (L3/L4 isolation)\n  - OPA Deployment (policy-based access enforcement on every request)\n\nEvidence:\n  - Linkerd namespace existence confirms control-plane is deployed\n  - linkerd.io/inject: \"enabled\" on all pod templates confirms proxy injection\n  - NetworkPolicy and OPA assertions confirm defence-in-depth layers are live\n\nSee: docs/POAM.md — POAM-007 (IA-3: Linkerd mTLS — CLOSED 2026-05-17). See: compliance/continuous-monitoring/ISCM_STRATEGY.md — IA-3 monitoring cadence."
+  components:
+  - uuid: fb5c6ee6-5166-560c-afa9-9327e94bb14b
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: b0982882-d418-5f5f-b01c-c473cbb86fba
+      source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
+      description: 'Control implementation for IA3. Region: US_FED. Posture: nist-sp800-53.'
+      implemented-requirements:
+      - uuid: a92a8532-0edd-5c5f-800e-a112ff570d38
+        control-id: ia3
+        description: Automated lula validation for IA3.
+        links:
+        - href: '#976c6d03-26a0-5071-86ec-98978bdc5a7e'
+          rel: lula
+  back-matter:
     resources:
-      - name: cage-deployments
-        resource: deployments
-        namespace: governance-stack
-      - name: cage-network-policies
-        resource: networkpolicies
-        namespace: governance-stack
-      - name: opa-deployment
-        resource: deployments
-        namespace: governance-stack
-      - name: linkerd-namespaces
-        resource: namespaces
-
-provider:
-  type: opa
-  opa-spec:
-    rego: |
-      package lula
-
-      import future.keywords.if
-      import future.keywords.every
-
-      # IA-3: Device Identification and Authentication — Linkerd mTLS (POAM-007 CLOSED)
-      #
-      # POAM-007 was closed 2026-05-17 after Linkerd mTLS was deployed across
-      # all intra-cluster service communication in governance-stack.
-      #
-      # This validation asserts the full mTLS posture:
-      #   (1) Linkerd control-plane namespace exists
-      #   (2) All governance-stack Deployments have Linkerd proxy injection enabled
-      #   (3) default-deny NetworkPolicy retained as defence-in-depth
-      #   (4) OPA Deployment running for policy-based access enforcement
-
-      # Check 1: Linkerd control-plane namespace must exist.
-      linkerd_namespace_exists if {
-        some ns in input["linkerd-namespaces"]
-        ns.metadata.name == "linkerd"
-      }
-
-      # Check 2: All Deployments in governance-stack must have Linkerd proxy
-      # injection enabled on their pod template spec.
-      # The annotation linkerd.io/inject: "enabled" on the pod template causes
-      # the Linkerd admission webhook to inject the proxy sidecar, establishing
-      # per-pod mTLS identity via SPIFFE/X.509 certificates.
-      deployments_have_linkerd_injection if {
-        every deploy in input["cage-deployments"] {
-          deploy.spec.template.metadata.annotations["linkerd.io/inject"] == "enabled"
-        }
-      }
-
-      # Check 3: default-deny-ingress NetworkPolicy must still exist as
-      # defence-in-depth (L3/L4 isolation retained post-mTLS).
-      default_deny_exists if {
-        some np in input["cage-network-policies"]
-        np.metadata.name == "default-deny-ingress"
-        np.spec.policyTypes[_] == "Ingress"
-      }
-
-      # Check 4: OPA Deployment must be running (policy-based access enforcement).
-      opa_running if {
-        input["opa-deployment"].status.readyReplicas >= 1
-      }
-
-      validate if {
-        linkerd_namespace_exists
-        deployments_have_linkerd_injection
-        default_deny_exists
-        opa_running
-      }
-
-notes: >
-  NIST SP 800-53 Rev 5 IA-3: Device Identification and Authentication.
-  POAM-007 CLOSED 2026-05-17 — Linkerd mTLS implemented.
-  Namespace: governance-stack (confirmed from live cluster deployment snapshot).
-
-  This validation was updated from the previous compensating-control assertion
-  (NetworkPolicy + OPA + intent annotation) to assert the actual Linkerd mTLS
-  posture following POAM-007 closure.
-
-  Linkerd provides per-pod cryptographic identity via SPIFFE/X.509 certificates
-  issued by the Linkerd certificate authority.  The linkerd.io/inject: "enabled"
-  annotation on pod templates causes the Linkerd admission webhook to inject the
-  proxy sidecar, which transparently upgrades all intra-cluster TCP connections
-  to mTLS.  This provides cryptographic device identity verification for all
-  service-to-service communication within governance-stack.
-
-  Retained controls (defence-in-depth):
-    - default-deny-ingress NetworkPolicy (L3/L4 isolation)
-    - OPA Deployment (policy-based access enforcement on every request)
-
-  Evidence:
-    - Linkerd namespace existence confirms control-plane is deployed
-    - linkerd.io/inject: "enabled" on all pod templates confirms proxy injection
-    - NetworkPolicy and OPA assertions confirm defence-in-depth layers are live
-
-  See: docs/POAM.md — POAM-007 (IA-3: Linkerd mTLS — CLOSED 2026-05-17).
-  See: compliance/continuous-monitoring/ISCM_STRATEGY.md — IA-3 monitoring cadence.
+    - uuid: 976c6d03-26a0-5071-86ec-98978bdc5a7e
+      title: Lula Validation — IA3
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: cage-deployments\n      resource: deployments\n      namespace: governance-stack\n    - name: cage-network-policies\n      resource: networkpolicies\n      namespace: governance-stack\n    - name: opa-deployment\n      resource: deployments\n      namespace: governance-stack\n    - name: linkerd-namespaces\n      resource: namespaces\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\nimport future.keywords.every\\n\\n# IA-3: Device Identification and Authentication — Linkerd mTLS (POAM-007 CLOSED)\\n#\\n# POAM-007 was closed 2026-05-17 after Linkerd mTLS was deployed across\\n# all intra-cluster service communication in governance-stack.\\n#\\n# This validation asserts the full mTLS posture:\\n#   (1) Linkerd control-plane namespace exists\\n#   (2) All governance-stack Deployments have Linkerd proxy injection enabled\\n#   (3) default-deny NetworkPolicy retained as defence-in-depth\\n#   (4) OPA Deployment running for policy-based access enforcement\\n\\n# Check 1: Linkerd control-plane namespace must exist.\\nlinkerd_namespace_exists if {\\n  some ns in input[\\\"linkerd-namespaces\\\"]\\n  ns.metadata.name == \\\"linkerd\\\"\\n}\\n\\n# Check 2: All Deployments in governance-stack must have Linkerd proxy\\n# injection enabled on their pod template spec.\\n# The annotation linkerd.io/inject: \\\"enabled\\\" on the pod template causes\\n# the Linkerd admission webhook to inject the proxy sidecar, establishing\\n# per-pod mTLS identity via SPIFFE/X.509 certificates.\\ndeployments_have_linkerd_injection if {\\n  every deploy in input[\\\"cage-deployments\\\"] {\\n    deploy.spec.template.metadata.annotations[\\\"linkerd.io/inject\\\"] == \\\"enabled\\\"\\n  }\\n}\\n\\n# Check 3: default-deny-ingress NetworkPolicy must still exist as\\n# defence-in-depth (L3/L4 isolation retained post-mTLS).\\ndefault_deny_exists if {\\n  some np in input[\\\"cage-network-policies\\\"]\\n  np.metadata.name == \\\"default-deny-ingress\\\"\\n  np.spec.policyTypes[_] == \\\"Ingress\\\"\\n}\\n\\n# Check 4: OPA Deployment must be running (policy-based access enforcement).\\nopa_running if {\\n  input[\\\"opa-deployment\\\"].status.readyReplicas >= 1\\n}\\n\\nvalidate if {\\n  linkerd_namespace_exists\\n  deployments_have_linkerd_injection\\n  default_deny_exists\\n  opa_running\\n}\\n\"\n"

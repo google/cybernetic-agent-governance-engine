@@ -124,9 +124,19 @@ def pytest_configure(config: pytest.Config) -> None:
     # Integration tests: force OPA_URL to the locally port-forwarded instance.
     # The .env file may contain the cluster-internal address (http://opa:8181/...)
     # which is unreachable from the developer workstation — always override to localhost.
-    os.environ["OPA_URL"] = os.environ.get(
-        "OPA_URL_TEST_OVERRIDE",
-        "http://localhost:8181/v1/data/trade/governance",
+    # OPA data path is region-aware: each deployment region has its own policy namespace.
+    _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
+    _opa_paths = {
+        "US_FED": "http://localhost:8181/v1/data/trade/governance",
+        "EU_ECB": "http://localhost:8181/v1/data/eu_ecb/governance",
+        "APAC_MAS": "http://localhost:8181/v1/data/apac_mas/governance",
+    }
+    os.environ.setdefault(
+        "OPA_URL",
+        os.environ.get(
+            "OPA_URL_TEST_OVERRIDE",
+            _opa_paths.get(_region, _opa_paths["US_FED"]),
+        ),
     )
     # Disable OPA Redis decision cache in all test runs to prevent cross-test
     # cache pollution (a warm cache from test_opa_allow would cause test_opa_deny

@@ -185,7 +185,7 @@ SC-4 (OPA ConfigMap label compliance) has continuous drift detection via the 60-
 [`fetch_langfuse_metrics.py`](fetch_langfuse_metrics.py:32) provides a CLI script querying Langfuse for GENERATION observations (TTFT metrics) and SPAN observations for governance overhead (`injection`, `identity-tag`, `financial-advisor-sa` spans). This is a developer tool, not a scheduled reporting mechanism.
 
 **Kubernetes Health Checks:**
-[`deployment/deploy_sw.py`](deployment/deploy_sw.py:1264) implements `verify_pod_health()` which checks for OOMKilled containers post-deployment. The compliance bridge [`GET /health`](src/compliance_bridge/main.py:227) returns `{"status": "ok", "version": "2.0.0"}`.
+[`deployment/deploy_sw.py`](deployment/deploy_sw.py:1264) implements `verify_pod_health()` which checks for OOMKilled containers post-deployment. The compliance bridge [`GET /health`](src/compliance_bridge/main.py:227) returns `{"status": "ok", "version": "0.1.0"}`.
 
 #### Gaps
 

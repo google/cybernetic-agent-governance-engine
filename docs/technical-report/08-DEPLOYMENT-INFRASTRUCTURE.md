@@ -418,7 +418,7 @@ Nine `NetworkPolicy` objects are applied within the `governance-stack` namespace
 
 ## Latency Strategy
 
-Source: [`docs/LATENCY_STRATEGY.md`](../../docs/LATENCY_STRATEGY.md)
+Source: [`docs/LATENCY_STRATEGY.md`](../architecture/LATENCY_STRATEGY.md)
 
 ### 10.1 Latency as Currency Philosophy
 Every secure generation node in a multi-agent system incurs a "Governance Tax" (overhead):

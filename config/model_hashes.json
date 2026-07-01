@@ -1,0 +1,47 @@
+{
+  "_comment": "Model weight integrity manifest — AI600-007 / SA-12 / SR-3 / SI-7",
+  "_instructions": [
+    "This file maps HuggingFace model IDs to SHA-256 digests of their anchor files.",
+    "Anchor files are small deterministic files that ship with every HuggingFace",
+    "model snapshot: config.json, tokenizer.json, tokenizer_config.json.",
+    "",
+    "To update this file after downloading a new model snapshot:",
+    "  python3 -c \"",
+    "  import hashlib, json; from pathlib import Path",
+    "  def sha256(p): h=hashlib.sha256(); [h.update(c) for c in iter(lambda: open(p,'rb').read(65536), b'')]; return h.hexdigest()",
+    "  anchors = ['config.json','tokenizer.json','tokenizer_config.json']",
+    "  base = Path('/path/to/downloaded/model')  # replace with actual path",
+    "  print(json.dumps({f: sha256(base/f) for f in anchors if (base/f).exists()}, indent=2))",
+    "  \"",
+    "",
+    "IMPORTANT: These hashes must be reviewed by a security engineer and committed",
+    "via a signed commit before being used in production deployments.",
+    "See docs/MODEL_CARD_REVIEW.md for license and security review status."
+  ],
+  "_last_updated": "2026-06-23",
+  "_reviewed_by": "TBD — requires security engineer sign-off before production use",
+  "deepseek-ai/DeepSeek-R1-Distill-Llama-8B": {
+    "_note": "DeepSeek-R1-Distill-Llama-8B — config/tokenizer anchor hashes.",
+    "_source": "https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+    "_license": "DeepSeek License v1.0 — see docs/MODEL_CARD_REVIEW.md for US_FED compatibility assessment",
+    "_action_required": "POPULATE: Run sha256 computation against downloaded snapshot and commit signed hash values before production deployment. Placeholder zeroes must be replaced with real digests.",
+    "config.json": "PLACEHOLDER_REQUIRES_SECURITY_REVIEW",
+    "tokenizer.json": "PLACEHOLDER_REQUIRES_SECURITY_REVIEW",
+    "tokenizer_config.json": "PLACEHOLDER_REQUIRES_SECURITY_REVIEW"
+  },
+  "meta-llama/Meta-Llama-3.1-8B-Instruct": {
+    "_note": "Meta-Llama-3.1-8B-Instruct — config/tokenizer anchor hashes.",
+    "_source": "https://huggingface.co/meta-llama/Meta-Llama-3.1-8B-Instruct",
+    "_license": "Meta Llama 3.1 Community License — see docs/MODEL_CARD_REVIEW.md for US_FED compatibility assessment",
+    "_action_required": "POPULATE: Run sha256 computation against downloaded snapshot and commit signed hash values before production deployment. Placeholder zeroes must be replaced with real digests.",
+    "config.json": "PLACEHOLDER_REQUIRES_SECURITY_REVIEW",
+    "tokenizer.json": "PLACEHOLDER_REQUIRES_SECURITY_REVIEW",
+    "tokenizer_config.json": "PLACEHOLDER_REQUIRES_SECURITY_REVIEW"
+  },
+  "nvidia/NeMo-Guardrails": {
+    "_note": "NeMo Guardrails runtime — not downloaded via mirror_models.py.",
+    "_license": "Apache 2.0 — universally compatible",
+    "_install_path": "pip install nemo-guardrails (see pyproject.toml)",
+    "_integrity_method": "pip hash verification via uv.lock / requirements.txt pinning (POAM-013)"
+  }
+}

@@ -28,7 +28,7 @@
 #   2  — Phase 0 (universal) gate failure
 #   3  — Phase 1 (regional) gate failure
 #
-# Source of truth for gate requirements: docs/V2_RELEASE_PLAN.md §5.1–§5.4
+# Source of truth for gate requirements: docs/RELEASE_PLAN.md §5.1–§5.4
 
 set -euo pipefail
 
@@ -102,7 +102,7 @@ info "  Timestamp   : $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 # ---------------------------------------------------------------------------
 # Phase 0 — Universal ISO 42001 Gates
 # These gates ALWAYS run regardless of region or environment.
-# Source: docs/V2_RELEASE_PLAN.md §5.1
+# Source: docs/RELEASE_PLAN.md §5.1
 # ---------------------------------------------------------------------------
 header "Phase 0 — Universal ISO 42001 Gates"
 
@@ -172,7 +172,7 @@ success "Phase 0 — All universal ISO 42001 gates passed"
 
 # ---------------------------------------------------------------------------
 # Phase 1 — Regional Posture Gates
-# Source: docs/V2_RELEASE_PLAN.md §5.2–§5.4
+# Source: docs/RELEASE_PLAN.md §5.2–§5.4
 # ---------------------------------------------------------------------------
 header "Phase 1 — Regional Posture Gates (${CAGE_REGION} / ${CAGE_ENV})"
 
@@ -182,7 +182,7 @@ case "${CAGE_REGION}" in
 
   # -------------------------------------------------------------------------
   # US_FED — NIST SP 800-53 posture
-  # Source: docs/V2_RELEASE_PLAN.md §5.2
+  # Source: docs/RELEASE_PLAN.md §5.2
   # -------------------------------------------------------------------------
   US_FED)
     echo ""
@@ -227,7 +227,7 @@ case "${CAGE_REGION}" in
 
   # -------------------------------------------------------------------------
   # EU_ECB — EU AI Act / GDPR / DORA posture
-  # Source: docs/V2_RELEASE_PLAN.md §5.3
+  # Source: docs/RELEASE_PLAN.md §5.3
   # -------------------------------------------------------------------------
   EU_ECB)
     echo ""
@@ -261,7 +261,7 @@ case "${CAGE_REGION}" in
 
   # -------------------------------------------------------------------------
   # APAC_MAS — MAS FEAT / MAS Notice 655 / MAS TRM posture
-  # Source: docs/V2_RELEASE_PLAN.md §5.4
+  # Source: docs/RELEASE_PLAN.md §5.4
   # -------------------------------------------------------------------------
   APAC_MAS)
     echo ""

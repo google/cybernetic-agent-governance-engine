@@ -74,6 +74,7 @@ module "gke" {
   enable_audit_logging           = var.enable_audit_logging
   enable_cmek                    = var.enable_cmek
   enable_private_master_endpoint = var.enable_private_master_endpoint
+  enable_private_nodes           = var.enable_private_nodes
 
   # NIST-specific configuration
   authorized_networks = var.authorized_networks
@@ -562,25 +563,28 @@ module "gateway" {
 module "governed_advisor" {
   source = "../../modules/governed_advisor"
 
-  namespace               = module.namespace.name
-  image                   = "gcr.io/${var.project_id}/governed-financial-advisor:latest"
-  replicas                = var.enable_nist_compliance ? 2 : 1
-  project_id              = var.project_id
-  region                  = var.region
-  enable_logging          = "true"
-  redis_host              = module.redis.service_name
-  redis_password          = module.redis.password
-  model_fast              = var.model_fast
-  model_reasoning         = var.model_reasoning
-  model_consensus         = var.model_reasoning
-  vllm_base_url           = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_fast_api_base      = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
-  vllm_reasoning_api_base = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
-  opa_url                 = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
+  namespace                = module.namespace.name
+  image                    = "gcr.io/${var.project_id}/governed-financial-advisor:latest"
+  replicas                 = var.enable_nist_compliance ? 2 : 1
+  project_id               = var.project_id
+  region                   = var.region
+  enable_logging           = "true"
+  redis_host               = module.redis.service_name
+  redis_password           = module.redis.password
+  model_fast               = var.model_fast
+  model_reasoning          = var.model_reasoning
+  model_consensus          = var.model_reasoning
+  vllm_base_url            = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
+  vllm_fast_api_base       = "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1"
+  vllm_reasoning_api_base  = "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1"
+  opa_url                  = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
   # Langfuse web service exposes port 3000 (not 80) — corrected from initial misconfiguration.
-  langfuse_host           = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
-  governance_salt         = var.governance_salt
-  gateway_url             = "http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080"
+  langfuse_host            = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
+  governance_salt          = var.governance_salt
+  gateway_url              = "http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080"
+  # Workload Identity: annotate financial-advisor-sa KSA so it can impersonate
+  # the GCP SA and access GCS without a key file (fixes vllm-reasoning 403 on GCS).
+  gcp_service_account_name = "financial-advisor-sa"
 
   depends_on = [module.gateway, module.langfuse, module.vllm, module.opa]
 }
@@ -641,10 +645,6 @@ module "app_secrets" {
   langfuse_compliance_public_key = var.langfuse_compliance_public_key
   langfuse_compliance_secret_key = var.langfuse_compliance_secret_key
 
-  # Prod precondition: fail the plan if compliance keys are missing or identical
-  # to the operations keys. This enforces AU-9 audit integrity at plan time.
-  # enable_nist_compliance is not passed to app_secrets module (not declared there).
-
   oscal_api_key = "DUMMY_API_KEY_FOR_LOCAL_DEV"
 
   opa_url = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
@@ -652,4 +652,34 @@ module "app_secrets" {
   cage_deployment_region = var.cage_deployment_region
 
   depends_on = [module.langfuse, module.postgres, module.clickhouse]
+}
+
+# POAM-019 enforcement: fail the plan if compliance keys are missing when
+# enable_nist_compliance=true.  lifecycle { precondition } is only valid inside
+# resource blocks, not module blocks, so this terraform_data resource carries
+# the guard.  It runs at plan time and provides a clear error message citing
+# the POAM item and remediation path.
+resource "terraform_data" "poam_019_compliance_key_guard" {
+  lifecycle {
+    precondition {
+      condition = !(var.enable_nist_compliance && (
+        var.langfuse_compliance_public_key == "" ||
+        var.langfuse_compliance_secret_key == "" ||
+        var.langfuse_compliance_public_key == var.langfuse_public_key ||
+        var.langfuse_compliance_secret_key == var.langfuse_secret_key
+      ))
+      error_message = <<-EOT
+        [POAM-019] AU-9 dual-project telemetry isolation violated.
+        When enable_nist_compliance=true, the Langfuse compliance project keys
+        (langfuse_compliance_public_key / langfuse_compliance_secret_key) must be:
+          (1) Non-empty
+          (2) Distinct from the application project keys (langfuse_public_key / langfuse_secret_key)
+        An empty or identical compliance key silently collapses the dual-project
+        architecture, defeating evidentiary independence for NIST SP 800-53 AU-9.
+        Remediation: Set langfuse_compliance_public_key and langfuse_compliance_secret_key
+        to valid cage-compliance Langfuse project credentials in prod.tfvars.
+        See docs/POAM_US_FED.md#POAM-019.
+      EOT
+    }
+  }
 }

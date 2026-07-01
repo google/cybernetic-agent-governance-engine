@@ -26,7 +26,7 @@ Each file follows this schema:
 
 ```json
 {
-  "_schema_version": "2.0.0",
+  "_schema_version": "0.1.0",
   "_framework_id": "FRAMEWORK_ID",
   "_framework_label": "Human-readable framework name",
   "_framework_source": "https://canonical-url",

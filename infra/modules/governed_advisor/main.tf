@@ -21,6 +21,16 @@ terraform {
   }
 }
 
+resource "kubernetes_service_account" "financial_advisor" {
+  metadata {
+    name      = "financial-advisor-sa"
+    namespace = var.namespace
+    annotations = {
+      "iam.gke.io/gcp-service-account" = "${var.gcp_service_account_name}@${var.project_id}.iam.gserviceaccount.com"
+    }
+  }
+}
+
 resource "kubernetes_deployment" "governed_advisor" {
   metadata {
     name      = "governed-financial-advisor"

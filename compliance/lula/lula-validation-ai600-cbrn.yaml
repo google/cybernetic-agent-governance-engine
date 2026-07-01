@@ -12,37 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Validates: AI 600-1 §2.6 CBRN / Harmful Content controls
-# Controls: NeMo guardrails active; Tier-1 CBRN keyword list enforced
-# POAM: AI600-007
-# Phase: 0 (stub) → Phase 3 (real assertions replace stub per §7.2)
-# Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
-# Cat-M flag: NeMo CBRN rail deployment requires AO pre-approval
-metadata:
-  annotations:
-    cage.region: US_FED
-    cage.compliance-posture: nist-ai-600-1
-    cage.posture-note: "NIST AI 600-1 is a US Federal posture requirement. This validation MUST NOT run for EU_ECB or APAC_MAS deployments."
+component-definition:
+  uuid: 6acba40f-8ccd-57ba-97a5-8c8e1cf74fbe
+  metadata:
+    title: CAGE Validation — AI600 CBRN
+    last-modified: '2026-07-01T13:18:54Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: 'Auto-converted from standalone lula validation format.
 
-domain:
-  type: kubernetes
-  kubernetes:
-    resources: []   # populated in Phase 3
-    # Phase 3 will assert:
-    #   - nemo Deployment has NEMO_CBRN_RAILS_ENABLED=true
-    #   - cbrn_rails.co is mounted in the NeMo container
-provider:
-  type: opa
-  opa:
-    policy: |
-      # stub — always passes until Phase 3
-      # Phase 3 real assertion (see §7.2 of AI_600_1_IMPLEMENTATION_PLAN.md):
-      #   allow if {
-      #     some container in input["nemo-deployment"].spec.template.spec.containers
-      #     container.name == "nemo"
-      #     some env in container.env
-      #     env.name == "NEMO_CBRN_RAILS_ENABLED"
-      #     env.value == "true"
-      #   }
-      package validate
-      default allow = true
+      Region: US_FED. Posture: nist-ai-600-1.'
+  components:
+  - uuid: d506b15e-33e0-5b74-bc72-a2c110097e72
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: 608b9bba-fe54-5ab9-b9d3-34a8bbe0e805
+      source: https://lula.dev
+      description: 'Control implementation for AI600 CBRN. Region: US_FED. Posture: nist-ai-600-1.'
+      implemented-requirements:
+      - uuid: edcb75a3-6a4d-5a0e-99b4-b8bbeef477ac
+        control-id: ai600-cbrn
+        description: Automated lula validation for AI600 CBRN.
+        links:
+        - href: '#c22aae36-cf49-5a33-9857-a5b869dd091f'
+          rel: lula
+  back-matter:
+    resources:
+    - uuid: c22aae36-cf49-5a33-9857-a5b869dd091f
+      title: Lula Validation — AI600 CBRN
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: kubernetes\n  kubernetes:\n    resources: []\nprovider:\n  type: opa\n  opa:\n    policy: '# stub — always passes until Phase 3\n\n      # Phase 3 real assertion (see §7.2 of AI_600_1_IMPLEMENTATION_PLAN.md):\n\n      #   allow if {\n\n      #     some container in input[\"nemo-deployment\"].spec.template.spec.containers\n\n      #     container.name == \"nemo\"\n\n      #     some env in container.env\n\n      #     env.name == \"NEMO_CBRN_RAILS_ENABLED\"\n\n      #     env.value == \"true\"\n\n      #   }\n\n      package validate\n\n      default allow = true\n\n      '\n"

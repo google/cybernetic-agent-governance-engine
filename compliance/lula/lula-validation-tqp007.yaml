@@ -1,0 +1,45 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+component-definition:
+  uuid: c0be590a-584c-5103-90a8-1db6bf900941
+  metadata:
+    title: CAGE Validation — TQP007 (CTRL_TQP_007)
+    last-modified: '2026-07-01T13:18:54Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: "Auto-converted from standalone lula validation format.\nRegion: ALL. Posture: iso42001.\nNotes: ISO 42001 §A.8.4: AI System Operation Controls — TokenQuotaProxy fail-closed. Asserts that the TokenQuotaProxy Deployment:\n  (1) Is Running with ≥1 ready replica in governance-stack namespace.\n  (2) Has REDIS_URL env var set (points to a running Redis instance).\n  (3) Has TOKEN_QUOTA_FAIL_CLOSED=true env var set, ensuring quota enforcement\n      fails CLOSED (deny all) rather than OPEN (allow uncapped) when Redis is\n      unavailable.\nSTPA hazard H-7: TokenQuotaProxy Redis connection failure causes quota enforcement to fail-OPEN, enabling denial-of-governance via resource exhaustion. CTRL_TQP_007 compensates by requiring fail-closed behavior. POAM reference: ISO-004 (POAM_ISO42001.md). OSCAL mapping: compliance/oscal/component-definition.yaml, component tqp007."
+  components:
+  - uuid: 963fd02f-e09a-5110-8678-75f1ef7e10f8
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: fa3a2446-e669-51fb-89d0-809f86be5882
+      source: https://www.iso.org/standard/81230.html
+      description: 'Control implementation for TQP007 (CTRL_TQP_007). Region: ALL. Posture: iso42001.'
+      implemented-requirements:
+      - uuid: 14246452-86b5-58f7-abc8-9ef7f2a9e9f1
+        control-id: A.8.4
+        description: Automated lula validation for TQP007 (CTRL_TQP_007).
+        links:
+        - href: '#7ce8309c-ecfc-5208-ba63-f6d01d8335b0'
+          rel: lula
+  back-matter:
+    resources:
+    - uuid: 7ce8309c-ecfc-5208-ba63-f6d01d8335b0
+      title: Lula Validation — TQP007 (CTRL_TQP_007)
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: token-quota-proxy-deployment\n      resource: deployments\n      namespace: governance-stack\n      filters:\n      - field: metadata.name\n        value: token-quota-proxy\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# ISO 42001 §A.8.4 — TokenQuotaProxy fail-closed control (CTRL_TQP_007)\\n#\\n# Check 1: token-quota-proxy Deployment is Running with ≥1 ready replica\\n# Check 2: REDIS_URL env var is set on the Deployment\\n# Check 3: TOKEN_QUOTA_FAIL_CLOSED=true env var is set\\n\\ntqp_running if {\\n  input[\\\"token-quota-proxy-deployment\\\"].status.readyReplicas >= 1\\n}\\n\\ntqp_has_redis_url if {\\n  some container in input[\\\"token-quota-proxy-deployment\\\"].spec.template.spec.containers\\n  some env in container.env\\n  env.name == \\\"REDIS_URL\\\"\\n  env.value != \\\"\\\"\\n}\\n\\ntqp_fail_closed if {\\n  some container in input[\\\"token-quota-proxy-deployment\\\"].spec.template.spec.containers\\n  some env in container.env\\n  env.name == \\\"TOKEN_QUOTA_FAIL_CLOSED\\\"\\n  env.value == \\\"true\\\"\\n}\\n\\nvalidate if {\\n  tqp_running\\n  tqp_has_redis_url\\n  tqp_fail_closed\\n}\\n\"\n"

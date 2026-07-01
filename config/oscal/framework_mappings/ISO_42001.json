@@ -1,6 +1,6 @@
 {
   "_comment": "ISO/IEC 42001:2023 UCA-to-control routing table for the OSCAL SSP Exporter. ISO Annex A clauses are embedded alongside NIST entries; this file covers the standalone ISO42001 framework export path. Loaded at runtime by FrameworkRouter.",
-  "_schema_version": "2.0.0",
+  "_schema_version": "0.1.0",
   "_last_updated": "2026-05-23",
   "_framework_id": "ISO42001",
   "_framework_label": "ISO/IEC 42001:2023 — AI Management System Standard",

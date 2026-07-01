@@ -12,61 +12,38 @@
 # Jurisdiction: EU_ECB (CAGE_DEPLOYMENT_REGION=EU_ECB)
 # POAM: EU-AI-ACT-001
 
-metadata:
-  annotations:
-    cage.region: EU_ECB
-    cage.compliance-posture: eu-ai-act
-    cage.posture-note: "EU AI Act Art. 9 is an EU_ECB posture requirement. This validation MUST NOT run for US_FED or APAC_MAS deployments."
+component-definition:
+  uuid: 76439699-18db-5ea9-b9a9-9c5fae6bef97
+  metadata:
+    title: CAGE Validation — EU AI ACT ART9
+    last-modified: '2026-07-01T13:18:54Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: 'Auto-converted from standalone lula validation format.
 
-domain:
-  type: api
-  api-spec:
-    endpoints:
-      - name: eu_ai_act_art9_status
-        url: "http://compliance-bridge.governance-stack.svc.cluster.local/v1/compliance/eu-ai-act/art9"
-        method: GET
+      Region: EU_ECB. Posture: eu-ai-act.
 
-provider:
-  type: opa
-  opa-spec:
-    rego: |
-      package lula
-
-      import future.keywords.if
-
-      # EU AI Act Art. 9: Risk Management System
-      # Asserts that:
-      #   1. A risk management system is active and documented
-      #   2. Risk identification and analysis has been performed
-      #   3. Residual risk is within acceptable bounds
-      #   4. Risk management records are not stale (< 365 days)
-
-      # Rule 1: Risk management system active with current records
-      validate if {
-        input.eu_ai_act_art9_status.risk_management_system_active == true
-        input.eu_ai_act_art9_status.risk_identification_complete == true
-        input.eu_ai_act_art9_status.residual_risk_accepted == true
-        input.eu_ai_act_art9_status.evidence_age_days < 365
-        input.eu_ai_act_art9_status.high_risk_classification_documented == true
-      }
-
-      # Rule 2: Continuous monitoring of risk measures active
-      validate if {
-        input.eu_ai_act_art9_status.risk_management_system_active == true
-        input.eu_ai_act_art9_status.continuous_monitoring_enabled == true
-        input.eu_ai_act_art9_status.post_market_monitoring_active == true
-        input.eu_ai_act_art9_status.evidence_age_days < 365
-      }
-
-notes: >
-  EU AI Act Art. 9: Risk Management System for High-Risk AI.
-  CAGE is classified as a High-Risk AI system under EU AI Act Annex III §5(b)
-  (AI systems used in financial services for creditworthiness assessment and
-  risk scoring). Art. 9 mandates a documented risk management system covering:
-  (a) identification and analysis of known and foreseeable risks;
-  (b) estimation and evaluation of risks that may emerge when used as intended;
-  (c) evaluation of risks based on post-market monitoring data;
-  (d) adoption of suitable risk management measures.
-  Evidence: GET /v1/compliance/eu-ai-act/art9 (compliance-bridge service).
-  Staleness guard: 365 days (annual reassessment required per Art. 9(4)).
-  Jurisdiction: EU_ECB only (CAGE_DEPLOYMENT_REGION=EU_ECB).
+      Notes: EU AI Act Art. 9: Risk Management System for High-Risk AI. CAGE is classified as a High-Risk AI system under EU AI Act Annex III §5(b) (AI systems used in financial services for creditworthiness assessment and risk scoring). Art. 9 mandates a documented risk management system covering: (a) identification and analysis of known and foreseeable risks; (b) estimation and evaluation of risks that may emerge when used as intended; (c) evaluation of risks based on post-market monitoring data; (d) adoption of suitable risk management measures. Evidence: GET /v1/compliance/eu-ai-act/art9 (compliance-bridge service). Staleness guard: 365 days (annual reassessment required per Art. 9(4)). Jurisdiction: EU_ECB only (CAGE_DEPLOYMENT_REGION=EU_ECB).'
+  components:
+  - uuid: af6edb46-06ac-5854-9745-9667579adfbb
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: 58d1a2f5-47d9-594b-805f-3316a2fdc129
+      source: https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32024R1689
+      description: 'Control implementation for EU AI ACT ART9. Region: EU_ECB. Posture: eu-ai-act.'
+      implemented-requirements:
+      - uuid: 5f274328-f25a-5a19-8d0a-4a103d341baf
+        control-id: eu-ai-act-art9
+        description: Automated lula validation for EU AI ACT ART9.
+        links:
+        - href: '#bf519130-9b51-584d-b88c-d2357f5ab16f'
+          rel: lula
+  back-matter:
+    resources:
+    - uuid: bf519130-9b51-584d-b88c-d2357f5ab16f
+      title: Lula Validation — EU AI ACT ART9
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: api\n  api-spec:\n    endpoints:\n    - name: eu_ai_act_art9_status\n      url: http://compliance-bridge.governance-stack.svc.cluster.local/v1/compliance/eu-ai-act/art9\n      method: GET\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# EU AI Act Art. 9: Risk Management System\\n# Asserts that:\\n#   1. A risk management system is active and documented\\n#   2. Risk identification and analysis has been performed\\n#   3. Residual risk is within acceptable bounds\\n#   4. Risk management records are not stale (< 365 days)\\n\\n# Rule 1: Risk management system active with current records\\nvalidate if {\\n  input.eu_ai_act_art9_status.risk_management_system_active == true\\n  input.eu_ai_act_art9_status.risk_identification_complete == true\\n  input.eu_ai_act_art9_status.residual_risk_accepted == true\\n  input.eu_ai_act_art9_status.evidence_age_days < 365\\n  input.eu_ai_act_art9_status.high_risk_classification_documented == true\\n}\\n\\n# Rule 2: Continuous monitoring of risk measures active\\nvalidate if {\\n  input.eu_ai_act_art9_status.risk_management_system_active == true\\n  input.eu_ai_act_art9_status.continuous_monitoring_enabled == true\\n  input.eu_ai_act_art9_status.post_market_monitoring_active == true\\n  input.eu_ai_act_art9_status.evidence_age_days < 365\\n}\\n\"\n"

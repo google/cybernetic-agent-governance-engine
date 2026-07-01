@@ -1,200 +1,139 @@
-# CAGE Agentic Scope Statement
+# Agentic Scope Statement
 
-**Authority**: NIST AI 600-1 §2.5.1, §2.5.4 | SR 26-2 §3.1 | EO 14110 §4.2
-**Region**: US_FED (`CAGE_DEPLOYMENT_REGION=US_FED`)
-**Version**: 1.0
-**Date**: 2026-06-15
-**POAM Reference**: AI600-004
+**System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor (GFA)
+**Version:** v0.1.0
+**Date:** 2026-07-01
+**Authority:** AI 600-1 §2.5.1, SR 26-2 §3.1
+**POAM Reference:** AI600-004
 
 ---
 
-## 1. Authorized Action Space
+## 1. System Identification
 
-The Cybernetic Governance Engine (CAGE) `governed-financial-advisor` is authorized to
-perform the following actions on behalf of authenticated users:
+| Field | Value |
+|---|---|
+| System Name | Governed Financial Advisor (GFA) |
+| System Owner | CAGE Platform Team |
+| GCP Project | YOUR_GCP_PROJECT_ID |
+| Cluster | cage-dev (GKE, us-central1-a) |
+| Namespace | governance-stack |
+| Deployment Region | US_FED (primary), EU_ECB, APAC_MAS |
 
-| Action | Authorization | Constraint |
+---
+
+## 2. Authorized Action Space (AI 600-1 §2.5.1)
+
+The GFA agent is authorized to perform the following actions within its defined scope:
+
+### 2.1 Permitted Tool Calls
+
+| Tool | Description | Constraint |
 |---|---|---|
-| Read market data | ✅ Authorized | Read-only; no write to external systems |
-| Generate advisory text | ✅ Authorized | Subject to NeMo guardrails and OPA policy |
-| Query portfolio state | ✅ Authorized | Read-only via `get_portfolio` tool |
-| Retrieve earnings reports | ✅ Authorized | Read-only via `get_market_data` tool |
-| Execute trades | ⛔ **NOT authorized** | No direct trade execution; advisory only |
-| Transfer funds | ⛔ **NOT authorized** | Outside authorized action space |
-| Modify account settings | ⛔ **NOT authorized** | Outside authorized action space |
-| Access external APIs | ⛔ **NOT authorized** | Except pre-approved market data endpoints |
+| `get_portfolio` | Retrieve portfolio holdings | Read-only; no state mutation |
+| `get_market_data` | Fetch real-time market prices | Read-only; external API |
+| `analyze_risk` | Compute portfolio risk metrics | Computation only |
+| `execute_trade` | Submit a trade order | Requires HITL approval when amount_usd > $10,000 |
+| `explain_decision` | Generate explainability report | Read-only; audit artifact |
+| `evaluate_compliance` | Run OPA policy evaluation | Read-only; governance check |
 
-### 1.1 Scope Limitation Enforcement
+### 2.2 Prohibited Actions
 
-The authorized action space is enforced at three independent layers:
-
-1. **OPA Policy Engine** (`src/gateway/governance/langgraph_harness/opa_node_factory.py`):
-   Evaluates every tool call against `config/opa/system_authz.rego`. Any tool not
-   explicitly listed in the `allowed_tools` set is denied with a `GovernanceError`.
-
-2. **Routing Seal** (`src/gateway/governance/routing_seal.py`):
-   Every approved governance decision is sealed with an HMAC-SHA256 token
-   (`GOVERNANCE_SALT` key, ≥64 chars). Downstream actuators MUST verify the seal
-   before executing any action. Seal TTL: 30 seconds (`GOVERNANCE_SEAL_TTL_S`).
-
-3. **CausalGatekeeper** (`src/gateway/governance/causal_gatekeeper.py`):
-   Performs DoWhy causal inference + placebo refutation before any high-stakes action.
-   Fails closed when the world-model is untrustworthy (p-value < 0.05 or placebo
-   effect > 0.2).
+- Direct database writes outside approved tool interfaces
+- Exfiltration of PII or portfolio data to unapproved endpoints
+- Bypassing the CAGE Gateway HMAC routing seal
+- Executing trades without ConsensusEngine approval above threshold
+- Accessing resources outside the `governance-stack` namespace without cross-namespace proxy
 
 ---
 
-## 2. Human Oversight Boundaries
+## 3. Agentic Boundaries (SR 26-2 §3.1)
 
-### 2.1 Consensus Threshold
+### 3.1 Human-in-the-Loop (HITL) Escalation Triggers
 
-Per `config/thresholds/US_FED_BASELINE.json` → `consensus.threshold_usd`:
+Per `config/thresholds/governance_thresholds.json`:
 
-- **Threshold**: USD 10,000
-- **Enforcement**: `ConsensusEngine` (`src/gateway/governance/consensus.py`)
-- **Behavior**: Any advisory action involving amounts > USD 10,000 triggers a
-  two-critic consensus check (Risk Manager + Compliance Officer personas on
-  distinct model backends). A split vote or unanimous ERROR escalates to HITL.
+- **Trade amount > $10,000 USD**: Mandatory HITL approval via `hitl_escalator`
+- **Risk score > 0.8**: Escalation to human reviewer
+- **Consensus disagreement**: When fast model and reasoning model diverge beyond threshold
+- **OPA policy DENY**: Automatic block; human review required before retry
 
-### 2.2 Confidence Threshold
+### 3.2 Causal Gatekeeper Constraints
 
-Per `config/thresholds/US_FED_BASELINE.json` → `confidence.min_trade_confidence`:
+The `CausalGatekeeper` enforces the authorized action space at runtime:
+- Blocks tool calls with `amount == 0` (no-op guard)
+- Validates action type against the permitted tool list
+- Logs all blocked actions to the audit trail (Langfuse + Redis)
 
-- **Threshold**: 0.95 (95%)
-- **Enforcement**: `CTRL_AGT_001` via OPA `system_authz.rego`
-- **Behavior**: Any LLM response with `confidence < 0.95` is blocked and logged
-  as a confabulation event via `confabulation_scorer.py`.
+### 3.3 Routing Seal Enforcement
 
-### 2.3 HITL Escalation Path
-
-When the consensus threshold is exceeded or confidence is below threshold, the
-`hitl_escalator.py` module routes the request to the human review queue:
-
-1. `EscalationRequest` is created with `reason`, `amount_usd`, and `confidence`
-2. Escalation record is written to `defer_queue` (Redis db=1, `noeviction` policy)
-3. Compliance review team receives the escalation via the configured queue
-4. SLA: escalations must be resolved within 4 hours (SR 26-2 §3.2)
-
-### 2.4 Override Audit Trail
-
-All governance overrides and escalations are logged to the WORM ledger via
-`src/gateway/governance/uca_logger.py`:
-
-- **Storage**: GCS WORM bucket (`OSCAL_S3_BUCKET_US_FED`, `us-central1`)
-- **Signing**: KMS-signed (`KMSGovernanceSigner`, US_FED key ring)
-- **Retention**: 90 days minimum (FISMA AU-11)
-- **Format**: ISO 42001 Clause 6.1 UCA records (YAML, cryptographically signed)
+All inter-service requests are signed with an HMAC routing seal (`CAGE_ROUTING_SEAL_SECRET`).
+Unsigned requests return HTTP 403. The seal includes:
+- Action type
+- Payload hash
+- Timestamp (replay protection)
 
 ---
 
-## 3. Inter-Agent Trust Model
+## 4. Recursive Governance Risk (AI 600-1 §2.1, §2.5.3)
 
-### 3.1 Trusted Orchestrator
+The GFA architecture introduces a **recursive governance risk**: the AI governance layer itself
+(gateway, ConsensusEngine, OPA policy engine) relies on LLM inference to make governance
+decisions. If the LLM confabulates or produces incorrect governance outputs, the governance
+layer may fail to block unsafe actions — or may incorrectly block safe ones.
 
-The CAGE gateway (`src/gateway/server/hybrid_server.py`) is the **sole trusted
-orchestrator**. No peer-to-peer agent calls are permitted without routing seal
-verification.
+### 4.1 Mitigations
 
-### 3.2 Trust Hierarchy
+| Risk | Mitigation |
+|---|---|
+| Recursive confabulation in governance | ConsensusEngine cross-validates fast model (Qwen2.5-7B) against reasoning model (DeepSeek-R1) |
+| Governance layer LLM failure | OPA policy engine provides deterministic fallback (no LLM dependency) |
+| Routing seal bypass | HMAC seal enforced at gateway; unsigned requests return HTTP 403 |
+| HITL escalation failure | Threshold-based escalation is deterministic (amount_usd > $10,000) |
+| Audit trail manipulation | Immutable audit log in Redis + Langfuse; KMS-signed evidence |
 
-```
-CAGE Gateway (trusted orchestrator)
-  ├── ConsensusEngine (internal — same trust boundary)
-  ├── CausalGatekeeper (internal — same trust boundary)
-  ├── NeMo Guardrails (internal — same trust boundary)
-  └── governed-financial-advisor (downstream — requires routing seal)
-        └── Market Data API (external — read-only, pre-approved)
-```
+### 4.2 ConsensusEngine Design
 
-### 3.3 Inter-Agent Call Requirements
-
-Any call from the `governed-financial-advisor` to an external service MUST:
-
-1. Present a valid routing seal (HMAC-SHA256, `GOVERNANCE_SALT` key)
-2. Have passed OPA policy evaluation (`ALLOW` decision)
-3. Have passed the CausalGatekeeper check
-4. Be within the authorized action space (§1 above)
-
-Calls that fail any of these checks raise `SymbolicGovernorViolation` and are
-logged to the UCA WORM ledger.
-
-### 3.4 No Peer-to-Peer Agent Calls
-
-CAGE does not implement peer-to-peer agent communication. All inter-component
-calls are mediated by the gateway. This eliminates the AI 600-1 §2.5.3 risk of
-unverified inter-agent trust propagation.
+The `ConsensusEngine` (`src/gateway/governance/consensus.py`) mitigates recursive governance
+risk by requiring agreement between two independent model paths before high-value actions
+proceed. Disagreement triggers HITL escalation per AI 600-1 §2.5.3.
 
 ---
 
-## 4. Scope Limitation Enforcement Mechanism
+## 5. Compliance Posture
 
-| Mechanism | File | AI 600-1 Control |
+| Framework | Status | Reference |
 |---|---|---|
-| OPA policy evaluation | `src/gateway/governance/langgraph_harness/opa_node_factory.py` | §2.5.1 |
-| Routing seal verification | `src/gateway/governance/routing_seal.py` | §2.5.4 |
-| CausalGatekeeper | `src/gateway/governance/causal_gatekeeper.py` | §2.3 |
-| ConsensusEngine threshold | `src/gateway/governance/consensus.py` | §2.5.2 |
-| HITL escalator | `src/gateway/governance/hitl_escalator.py` | §2.5.2 |
-| Confabulation scorer | `src/gateway/governance/confabulation_scorer.py` | §2.1 |
-| Prompt injection detector | `src/gateway/governance/prompt_injection_detector.py` | §2.3 |
-| NeMo CBRN rails | `src/gateway/governance/nemo/colang/cbrn_rails.co` | §2.6 |
+| ISO/IEC 42001 | Implemented | `compliance/lula/lula-validation-a52.yaml` |
+| NIST SP 800-53 | Implemented (≥45% coverage) | `compliance/lula/lula-validation-nist-*.yaml` |
+| CSA AARM | Implemented | `compliance/lula/lula-validation-aarm-vectors.yaml` |
+| EU AI Act | Implemented | `compliance/lula/lula-validation-eu-fria.yaml` |
+| MAS FEAT | Implemented | `compliance/postures/apac_mas/` |
+| SR 26-2 | Implemented | Telemetry suppression sentinel active |
 
 ---
 
-## 5. Override Audit Trail
+## 5. Data Residency
 
-All governance decisions (ALLOW, BLOCK, ESCALATE) are recorded in the UCA WORM
-ledger via `src/gateway/governance/uca_logger.py`. The audit trail includes:
-
-- `compliance_event_id`: UUID v4 prefixed with `UCA-`
-- `timestamp`: ISO 8601 UTC
-- `uca_type`: `quota_exceeded` | `prompt_injection` | `pii_sanitization` | `hitl_escalation`
-- `agent_id`: authenticated agent identifier
-- `block_reason`: human-readable reason for the governance decision
-- `cryptographic_signature`: KMS-signed (production) or HMAC-SHA256 stub (test)
-- `deployment_region`: `US_FED` (enforces data residency in `us-central1`)
-- `worm_path`: GCS path for the signed record
-
----
-
-## 6. Recursive Governance Risk
-
-The `ConsensusEngine` uses LLM inference to govern LLM outputs — creating a
-recursive governance risk where AI 600-1 confabulation risks in the governance
-layer propagate to the governed system.
-
-### 6.1 Mitigation
-
-The `governance_layer_confidence_check` in `consensus.py` applies the same
-`CONFIDENCE_MIN_SCORE` threshold (0.95) to the ConsensusEngine's own LLM calls.
-If the governance LLM call has `confidence < 0.95`, the request is escalated to
-HITL rather than silently allowed.
-
-### 6.2 Residual Risk
-
-The ConsensusEngine uses two distinct model backends (DeepSeek-R1 for Risk Manager,
-Llama 3.1 for Compliance Officer) to reduce correlated failure risk. However, both
-models share the same training data distribution, which means correlated confabulation
-on novel financial scenarios remains a residual risk.
-
-**Compensating control**: The CausalGatekeeper provides a non-LLM causal inference
-check that is independent of the LLM confidence scores.
-
----
-
-## 7. SR 26-2 Compliance Evidence
-
-| SR 26-2 Requirement | CAGE Implementation | Evidence |
+| Region | Data Path | Constraint |
 |---|---|---|
-| §2.5.1 Authorized action space | OPA policy + routing seal | `opa_node_factory.py`, `routing_seal.py` |
-| §2.5.2 Human oversight | ConsensusEngine + HITL escalator | `consensus.py`, `hitl_escalator.py` |
-| §2.5.3 Inter-agent trust | Gateway-only orchestration | `hybrid_server.py` |
-| §2.5.4 Scope limitation | CausalGatekeeper + OPA | `causal_gatekeeper.py` |
-| §3.1 Scope statement | This document | `docs/AGENTIC_SCOPE_STATEMENT.md` |
-| §3.2 HITL SLA (4 hours) | DeferQueue TTL + escalation | `defer_queue.py`, `hitl_escalator.py` |
+| US_FED | us-central1 | NIST SP 800-53 data boundary |
+| EU_ECB | europe-west1 | GDPR Art. 44 / EU AI Act |
+| APAC_MAS | asia-southeast1 | MAS TRM §4.2 / MAS Notice 655 |
+
+All storage paths are gated on `CAGE_DEPLOYMENT_REGION` environment variable.
 
 ---
 
-*Document end — CAGE Agentic Scope Statement v1.0*
-*Authority: NIST AI 600-1 §2.5, SR 26-2 §3.1, EO 14110 §4.2*
-*Next review: 2026-09-15 (quarterly) or upon any SR 26-2 amendment*
+## 6. ATO Package References (AI 600-1 §2.5.4)
+
+- **OSCAL SSP:** `compliance/oscal/`
+- **POAM:** `docs/POAM.md`
+- **STPA Analysis:** `compliance/stpa/`
+- **Lula Validations:** `compliance/lula/`
+- **OPA Policies:** `compliance/postures/us_fed/opa/`
+- **GDPR DPIA:** `docs/GDPR_DPIA.md`
+- **FRIA Attestation:** `docs/FRIA_ATTESTATION.md`
+
+---
+
+*This document satisfies AI 600-1 §2.5.1 (Agentic Scope Statement) and SR 26-2 §3.1 (Model Risk Management — Authorized Action Space) requirements for the CAGE ATO package.*

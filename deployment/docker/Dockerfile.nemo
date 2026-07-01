@@ -47,7 +47,8 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Install gateway extras which include nemoguardrails, grpcio, presidio, spaCy.
 # --no-dev skips test/lint extras; --no-install-project avoids the project
 # package install step (source is imported directly via PYTHONPATH=/app).
-RUN uv sync --frozen --no-dev --extra gateway --no-install-project
+# --extra compliance pulls dowhy (Tier 6 causal gatekeeper, No-Direct-Bind Gap 4)
+RUN uv sync --frozen --no-dev --extra gateway --extra compliance --no-install-project
 
 # Install grpcio-tools into the venv so we can generate protobuf bindings.
 # uv manages the venv so we use `uv pip install` (not bare pip).

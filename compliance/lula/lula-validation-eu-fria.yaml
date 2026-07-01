@@ -1,0 +1,45 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+component-definition:
+  uuid: 2ed0f8fd-6e9e-5bff-870b-a604fcaf8f4d
+  metadata:
+    title: CAGE Validation — EU FRIA (EU-001)
+    last-modified: '2026-07-01T13:18:54Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: "Auto-converted from standalone lula validation format.\nRegion: EU_ECB. Posture: eu_ai_act.\nNotes: EU AI Act Art. 29a: Fundamental Rights Impact Assessment gating (EU-001). Asserts that the cage-gateway Deployment in EU_ECB:\n  (1) Is Running with ≥1 ready replica.\n  (2) CAGE_NORMATIVE_PROVIDER is set to a non-stub value (e.g. \"trustlayers\").\n      \"static\" is NOT permitted in EU_ECB — it means FRIA gating is bypassed.\n  (3) CAGE_NORMATIVE_ENDPOINT is set to the TrustLayers API URL.\nFailure means FRIA validation is in stub mode: all governance decisions are self-admitted without independent external compliance validation, which does not satisfy EU AI Act Art. 29a for High-Risk AI systems. POAM reference: EU-001 (POAM_EU_ECB.md). See also: docs/FRIA_ATTESTATION.md for the full FRIA document."
+  components:
+  - uuid: 8c303a7e-01aa-5f29-8517-978957c411f9
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: 3e5c5cbb-a661-56be-9742-ed8e86fe38f9
+      source: https://lula.dev
+      description: 'Control implementation for EU FRIA (EU-001). Region: EU_ECB. Posture: eu_ai_act.'
+      implemented-requirements:
+      - uuid: e30d88ac-5dd8-5a04-b6f3-5eaf024e508e
+        control-id: EU_AI_ACT_ART29A
+        description: Automated lula validation for EU FRIA (EU-001).
+        links:
+        - href: '#3b422f73-7da4-5147-8c46-8abe44f82892'
+          rel: lula
+  back-matter:
+    resources:
+    - uuid: 3b422f73-7da4-5147-8c46-8abe44f82892
+      title: Lula Validation — EU FRIA (EU-001)
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: cage-gateway-deployment\n      resource: deployments\n      namespace: governance-stack\n      filters:\n      - field: metadata.name\n        value: cage-gateway\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# EU AI Act Art. 29a — FRIA Gating (EU-001 / CTRL_FRIA_006)\\n#\\n# Check 1: cage-gateway Deployment is Running with ≥1 ready replica.\\n# Check 2: CAGE_NORMATIVE_PROVIDER env var is set and NOT \\\"static\\\".\\n#          \\\"static\\\" means FRIA gating is in stub mode — not permitted in EU_ECB.\\n# Check 3: CAGE_NORMATIVE_ENDPOINT env var is set (TrustLayers API URL).\\n\\ngateway_running if {\\n  input[\\\"cage-gateway-deployment\\\"].status.readyReplicas >= 1\\n}\\n\\nnormative_provider_not_static if {\\n  some container in input[\\\"cage-gateway-deployment\\\"].spec.template.spec.containers\\n  some env in container.env\\n  env.name == \\\"CAGE_NORMATIVE_PROVIDER\\\"\\n  env.value != \\\"\\\"\\n  env.value != \\\"static\\\"\\n}\\n\\nnormative_endpoint_set if {\\n  some container in input[\\\"cage-gateway-deployment\\\"].spec.template.spec.containers\\n  some env in container.env\\n  env.name == \\\"CAGE_NORMATIVE_ENDPOINT\\\"\\n  env.value != \\\"\\\"\\n}\\n\\nvalidate if {\\n  gateway_running\\n  normative_provider_not_static\\n  normative_endpoint_set\\n}\\n\"\n"

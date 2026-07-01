@@ -92,6 +92,23 @@ from urllib3.util.retry import Retry
 pytestmark = pytest.mark.integration
 
 # ---------------------------------------------------------------------------
+# US_FED region skip guard
+# ---------------------------------------------------------------------------
+# Tests that assert FedRAMP / NIST SP 800-53 / AI 600-1 specific control IDs
+# (e.g. "fedramp", "SC-7", "SA-11") are only meaningful for US_FED deployments.
+# EU_ECB and APAC_MAS postures use different framework mappings and must not
+# be required to satisfy US_FED jurisdictional assertions.
+
+_REGION = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
+_SKIP_US_FED = pytest.mark.skipif(
+    _REGION not in ("US_FED", ""),
+    reason=(
+        f"US_FED-specific framework filter tests skipped for region {_REGION!r}. "
+        "FedRAMP/NIST SP 800-53/AI 600-1 assertions apply to US_FED only."
+    ),
+)
+
+# ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
@@ -301,6 +318,7 @@ class TestHealthAndDiscovery:
 # Group 2: Framework filter
 # ---------------------------------------------------------------------------
 
+@_SKIP_US_FED
 class TestFrameworkFilter:
     @pytest.mark.parametrize("framework,expected_subset", [
         # eu_ai_act is EU_ECB-only; with CAGE_DEPLOYMENT_REGION=US_FED no EU controls
@@ -1501,7 +1519,7 @@ class TestDeferQueueEndpoints:
         """
         # indirect test: if /v1/events/stream is reachable, the event bus
         # is operational. We verify the new types don't crash by confirming
-        # the service version is 2.0.0 (set when AARM routes were added).
+        # the service version is 0.1.0 (set when AARM routes were added).
         data = session.get(f"{BASE_URL}/health", timeout=10).json()
         version = data.get("version", "0.0.0")
         major, minor, _ = (int(x) for x in version.split("."))

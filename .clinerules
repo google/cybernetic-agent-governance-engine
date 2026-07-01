@@ -1,6 +1,6 @@
 # CAGE Software Delivery Lifecycle — Agent Rule Set
 # Authority: docs/GIT_WORKFLOW_STANDARDS.md, docs/DEPLOYMENT_RULES.md,
-#            docs/V2_RELEASE_PLAN.md, docs/CHANGE_MANAGEMENT_PROCESS.md,
+#            docs/RELEASE_PLAN.md, docs/CHANGE_MANAGEMENT_PROCESS.md,
 #            .github/pull_request_template.md, .github/workflows/ci.yml
 # These rules are NON-NEGOTIABLE. They are always active, always evaluated,
 # and always applied regardless of the nature of the task being performed.
@@ -136,7 +136,7 @@
 
 # ============================================================
 # SECTION 4 — VERSIONING & RELEASE STRATEGY
-# Source: docs/V2_RELEASE_PLAN.md, docs/V2_RELEASE_RUNBOOK.md
+# Source: docs/RELEASE_PLAN.md, docs/RELEASE_RUNBOOK.md
 # ============================================================
 
 # 4.1 SEMANTIC VERSIONING: All releases follow SemVer (MAJOR.MINOR.PATCH).
@@ -172,7 +172,7 @@
 
 # ============================================================
 # SECTION 5 — RELEASE GATE REQUIREMENTS
-# Source: docs/V2_RELEASE_PLAN.md §8
+# Source: docs/RELEASE_PLAN.md §8
 # ============================================================
 
 # 5.1 UNIVERSAL GATES (all regions — must pass for ANY stable release):
@@ -289,7 +289,7 @@
 
 # ============================================================
 # SECTION 8 — FEATURE FREEZE & ENVIRONMENT PROMOTION
-# Source: docs/V2_RELEASE_PLAN.md §4.6, docs/CHANGE_MANAGEMENT_PROCESS.md §2
+# Source: docs/RELEASE_PLAN.md §4.6, docs/CHANGE_MANAGEMENT_PROCESS.md §2
 # ============================================================
 
 # 8.1 FEATURE FREEZE triggers when rc-v<X.Y.Z> is branched from main.
@@ -320,7 +320,7 @@
 
 # ============================================================
 # SECTION 9 — SECRET & CREDENTIAL HYGIENE
-# Source: docs/V2_RELEASE_PLAN.md §3.2, docs/GIT_WORKFLOW_STANDARDS.md §6
+# Source: docs/RELEASE_PLAN.md §3.2, docs/GIT_WORKFLOW_STANDARDS.md §6
 # ============================================================
 
 # 9.1 NEVER commit secrets, credentials, API keys, passwords, tokens,

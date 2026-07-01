@@ -2,7 +2,7 @@
 
 ## Cybernetic Governance Engine (CAGE)
 
-**Document version:** 2.0.0
+**Document version:** 0.1.0
 **Date:** 2026-06-03
 **Scope:** Read-only inventory of existing codebase capabilities across five governance dimensions.
 **Purpose:** Input for subsequent NIST RMF gap-analysis chunks (Chunks 2–5).
@@ -357,7 +357,7 @@ The `tests/` directory contains **644 tests** across 28+ test files spanning uni
 
 ## 7. POAM Summary (as of 2026-05-29)
 
-> Authoritative source: [`docs/POAM.md`](POAM.md) (v1.4, dated 2026-05-29)
+> Authoritative source: [`docs/POAM.md`](../cross-region/POAM.md) (v1.4, dated 2026-05-29)
 
 | Metric          | Count |
 | --------------- | ----- |

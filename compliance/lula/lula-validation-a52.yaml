@@ -7,50 +7,38 @@
 # Domain: api → compliance-bridge (Python FastAPI service)
 # Provider: opa (inline Rego)
 
-metadata:
-  annotations:
-    cage.region: ALL
-    cage.compliance-posture: iso-42001
-    cage.posture-note: "ISO 42001 is a universal posture requirement applicable to all deployment regions (US_FED, EU_ECB, APAC_MAS)."
+component-definition:
+  uuid: 34fc2130-2067-594e-ab35-a482257f2117
+  metadata:
+    title: CAGE Validation — A52
+    last-modified: '2026-07-01T13:18:54Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: 'Auto-converted from standalone lula validation format.
 
-domain:
-  type: api
-  api-spec:
-    endpoints:
-      - name: langfuse_metrics_a52
-        url: "http://compliance-bridge.governance-stack.svc.cluster.local/v1/metrics/A.5.2"
-        method: GET
+      Region: ALL. Posture: iso-42001.
 
-provider:
-  type: opa
-  opa-spec:
-    rego: |
-      package lula
-
-      import future.keywords.if
-
-      # A.5.2: Social Impact Assessment — toxicity and prompt injection blocking
-      # Threshold: 99% (higher than A.5.3 because PII/social-harm failures are critical)
-
-      # Rule 1: Cold-start grace period
-      validate if {
-        input.langfuse_metrics_a52.startup_grace_active == true
-        input.langfuse_metrics_a52.safety_rate >= 0.99
-        input.langfuse_metrics_a52.evidence_age_seconds < 172800
-      }
-
-      # Rule 2: Steady-state
-      validate if {
-        input.langfuse_metrics_a52.startup_grace_active == false
-        input.langfuse_metrics_a52.safety_rate >= 0.99
-        input.langfuse_metrics_a52.total_traces > 100
-        input.langfuse_metrics_a52.evidence_age_seconds < 172800
-      }
-
-notes: >
-  ISO 42001 A.5.2: Social Impact Assessment.
-  Automated verification that NeMo Guardrails output rails and the
-  Aho-Corasick Tier-1 heuristic block toxic/injected content.
-  Evidence: OTel spans tagged iso42001.control_id=A.5.2 (TIER_1_HEURISTIC)
-  from stpaGovernanceMiddleware.ts and nemo_output_rail traces from Python.
-  Staleness guard: 48 hours.
+      Notes: ISO 42001 A.5.2: Social Impact Assessment. Automated verification that NeMo Guardrails output rails and the Aho-Corasick Tier-1 heuristic block toxic/injected content. Evidence: OTel spans tagged iso42001.control_id=A.5.2 (TIER_1_HEURISTIC) from stpaGovernanceMiddleware.ts and nemo_output_rail traces from Python. Staleness guard: 48 hours.'
+  components:
+  - uuid: ae692849-778e-572f-a4b1-88627efd1ef8
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: aa0f365e-7e2d-538a-95d1-c994b78ff302
+      source: https://www.iso.org/standard/81230.html
+      description: 'Control implementation for A52. Region: ALL. Posture: iso-42001.'
+      implemented-requirements:
+      - uuid: 6a8eb074-850a-57b0-8198-0b7a929b92b1
+        control-id: a52
+        description: Automated lula validation for A52.
+        links:
+        - href: '#40037dad-ee78-523f-97dc-1f73fabf7d41'
+          rel: lula
+  back-matter:
+    resources:
+    - uuid: 40037dad-ee78-523f-97dc-1f73fabf7d41
+      title: Lula Validation — A52
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: api\n  api-spec:\n    endpoints:\n    - name: langfuse_metrics_a52\n      url: http://compliance-bridge.governance-stack.svc.cluster.local/v1/metrics/A.5.2\n      method: GET\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# A.5.2: Social Impact Assessment — toxicity and prompt injection blocking\\n# Threshold: 99% (higher than A.5.3 because PII/social-harm failures are critical)\\n\\n# Rule 1: Cold-start grace period\\nvalidate if {\\n  input.langfuse_metrics_a52.startup_grace_active == true\\n  input.langfuse_metrics_a52.safety_rate >= 0.99\\n  input.langfuse_metrics_a52.evidence_age_seconds < 172800\\n}\\n\\n# Rule 2: Steady-state\\nvalidate if {\\n  input.langfuse_metrics_a52.startup_grace_active == false\\n  input.langfuse_metrics_a52.safety_rate >= 0.99\\n  input.langfuse_metrics_a52.total_traces > 100\\n  input.langfuse_metrics_a52.evidence_age_seconds < 172800\\n}\\n\"\n"

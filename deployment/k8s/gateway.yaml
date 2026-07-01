@@ -83,8 +83,8 @@ spec:
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: redis-secret
-                  key: redis-password
+                  name: redis-credentials
+                  key: REDIS_PASSWORD
             - name: REDIS_URL
               valueFrom:
                 secretKeyRef:
@@ -187,8 +187,15 @@ spec:
       protocol: TCP
       port: 8080
       targetPort: 8080
+      # POAM-011 / SC-8: NodePort required for GCE Ingress backend.
+      # GCE load balancer routes HTTPS traffic (terminated at ingress) to this
+      # NodePort.  Port-forward for local dev still uses port 8080.
+      nodePort: 30080
     - name: grpc
       protocol: TCP
       port: 50051
       targetPort: 50051
-  type: ClusterIP
+  # POAM-011 / SC-8: Changed from ClusterIP to NodePort so the GCE Ingress
+  # (gateway-ingress) can use this service as a backend for TLS-terminated
+  # HTTPS traffic.  See deployment/k8s/ingress.yaml.
+  type: NodePort

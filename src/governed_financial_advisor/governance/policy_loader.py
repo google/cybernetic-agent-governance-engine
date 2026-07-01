@@ -134,3 +134,175 @@ class PolicyLoader:
             blob_name,
         )
         return hazards
+
+
+# ---------------------------------------------------------------------------
+# ISO-001 / ISO 42001 §A.4 — Redis Token Quota Snapshot
+# ---------------------------------------------------------------------------
+# Injects live Redis token quota counters into the OPA input document so that
+# trade_governance.rego can gate decisions based on remaining inference budget.
+#
+# Architecture:
+#   - TokenQuotaProxy writes per-agent token counters to Redis db=2 using
+#     the key pattern: cage:quota:{agent_id}:tokens_used (int)
+#   - This helper reads those counters and returns a snapshot dict that callers
+#     merge into the OPA input document before policy evaluation.
+#   - On Redis unavailability, behaviour is governed by REDIS_QUOTA_FAIL_CLOSED:
+#       True  → raises RuntimeError (fail-closed; all trades require MANUAL_REVIEW)
+#       False → returns a degraded snapshot with quota_available=True (fail-open)
+#   - Default: fail-OPEN to avoid false positives in dev/CI (ISO-001 CTRL_TQP_007
+#     records the fail-closed posture at the sidecar level).
+#
+# POAM: ISO-001 (POAM_ISO42001.md §A.4)
+# Related: CTRL_TQP_007 (lula-validation-tqp007.yaml), H-7 STPA hazard
+# ---------------------------------------------------------------------------
+
+import os as _os
+
+_REDIS_QUOTA_FAIL_CLOSED: bool = (
+    _os.getenv("REDIS_QUOTA_FAIL_CLOSED", "false").lower() == "true"
+)
+_REDIS_QUOTA_DB: int = 2           # db=2 reserved for TokenQuotaProxy counters
+_REDIS_QUOTA_KEY_PREFIX: str = "cage:quota"
+_DEFAULT_TOKEN_BUDGET: int = 100_000  # tokens per agent per window
+
+
+def get_redis_quota_snapshot(
+    agent_id: str,
+    *,
+    redis_url: str | None = None,
+    token_budget: int = _DEFAULT_TOKEN_BUDGET,
+    min_reserve_fraction: float = 0.05,
+) -> dict:
+    """Read live token quota counters from Redis and return an OPA input snapshot.
+
+    The returned dict is suitable for merging into an existing OPA input document
+    under the ``token_quota`` key::
+
+        opa_input = {
+            "action": "execute_trade",
+            "amount": 5000,
+            "trader_role": "junior",
+            **get_redis_quota_snapshot("financial-advisor"),
+        }
+        # → opa_input["token_quota"]["remaining_tokens"] is populated
+
+    On Redis unavailability the function either:
+    - **Fails-open** (default, REDIS_QUOTA_FAIL_CLOSED=false): returns a degraded
+      snapshot with ``quota_available=True`` and a warning. Governance continues.
+    - **Fails-closed** (REDIS_QUOTA_FAIL_CLOSED=true): raises RuntimeError.
+      The OPA caller should catch this and return ``MANUAL_REVIEW``.
+
+    Args:
+        agent_id:              Agent identifier — must match the TokenQuotaProxy
+                               counter key pattern ``cage:quota:{agent_id}:*``.
+        redis_url:             Redis connection URL. Defaults to the ``REDIS_URL``
+                               environment variable, or the in-cluster default.
+        token_budget:          Per-window token budget (default: 100,000 tokens).
+        min_reserve_fraction:  Fraction of budget that must remain before the
+                               policy downgrades to MANUAL_REVIEW (default: 5%).
+
+    Returns:
+        Dict with a single top-level key ``token_quota`` containing:
+        - ``agent_id``           — echoed from caller
+        - ``tokens_used``        — counter from Redis (int)
+        - ``token_budget``       — configured budget (int)
+        - ``remaining_tokens``   — budget − tokens_used (int)
+        - ``quota_exhausted``    — True if remaining_tokens <= 0
+        - ``below_min_reserve``  — True if remaining < min_reserve_fraction * budget
+        - ``quota_available``    — True if quota data was read successfully
+        - ``quota_source``       — "redis" | "degraded" (for OTel attribution)
+
+    Raises:
+        RuntimeError: Only when REDIS_QUOTA_FAIL_CLOSED=true and Redis is
+                      unreachable. Callers should treat this as MANUAL_REVIEW.
+    """
+    _url = redis_url or _os.getenv(
+        "REDIS_URL",
+        "redis://redis-stack.governance-stack.svc.cluster.local:6379",
+    )
+    key = f"{_REDIS_QUOTA_KEY_PREFIX}:{agent_id}:tokens_used"
+    min_reserve = int(min_reserve_fraction * token_budget)
+
+    try:
+        # Lazy import to avoid mandatory redis dependency in non-quota code paths.
+        import redis as _redis_lib  # type: ignore[import-untyped]
+
+        client = _redis_lib.from_url(
+            _url,
+            db=_REDIS_QUOTA_DB,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+            decode_responses=True,
+        )
+        raw = client.get(key)
+        tokens_used = int(raw) if raw is not None else 0
+        remaining = token_budget - tokens_used
+
+        quota_snapshot = {
+            "agent_id": agent_id,
+            "tokens_used": tokens_used,
+            "token_budget": token_budget,
+            "remaining_tokens": remaining,
+            "quota_exhausted": remaining <= 0,
+            "below_min_reserve": remaining < min_reserve,
+            "quota_available": True,
+            "quota_source": "redis",
+        }
+        logger.debug(
+            "[ISO-001] Token quota snapshot for agent=%s: used=%d budget=%d remaining=%d",
+            agent_id, tokens_used, token_budget, remaining,
+        )
+        return {"token_quota": quota_snapshot}
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[ISO-001] Redis token quota unavailable for agent=%s (%s: %s). "
+            "REDIS_QUOTA_FAIL_CLOSED=%s",
+            agent_id, type(exc).__name__, exc, _REDIS_QUOTA_FAIL_CLOSED,
+        )
+        if _REDIS_QUOTA_FAIL_CLOSED:
+            raise RuntimeError(
+                f"[ISO-001] Redis quota unavailable for agent={agent_id!r} "
+                f"and REDIS_QUOTA_FAIL_CLOSED=true — failing closed. "
+                f"Governance: treat as MANUAL_REVIEW."
+            ) from exc
+
+        # Fail-open: return degraded snapshot
+        return {
+            "token_quota": {
+                "agent_id": agent_id,
+                "tokens_used": 0,
+                "token_budget": token_budget,
+                "remaining_tokens": token_budget,
+                "quota_exhausted": False,
+                "below_min_reserve": False,
+                "quota_available": False,   # signals degraded mode to OPA
+                "quota_source": "degraded",
+            }
+        }
+
+
+def with_redis_quota(
+    opa_input: Dict[str, Any],
+    agent_id: str,
+    **quota_kwargs: Any,
+) -> Dict[str, Any]:
+    """Merge a live Redis token quota snapshot into an existing OPA input dict.
+
+    Convenience wrapper around ``get_redis_quota_snapshot()`` for single-call
+    OPA input enrichment. Returns a new dict (does not mutate the original).
+
+    Example::
+
+        opa_input = with_redis_quota(
+            {"action": "execute_trade", "amount": 5000, "trader_role": "junior"},
+            agent_id="financial-advisor",
+        )
+        # opa_input["token_quota"]["remaining_tokens"] is now populated
+
+    On fail-closed RuntimeError, the caller receives the exception unmodified.
+    """
+    snapshot = get_redis_quota_snapshot(agent_id, **quota_kwargs)
+    return {**opa_input, **snapshot}
+

@@ -54,6 +54,15 @@ hazards:
   - id: H-6
     description: "Prompt injection causes agent to bypass governance controls."
     severity: critical
+  - id: H-7
+    # ISO-002: TokenQuotaProxy fail-CLOSED scenario
+    # Added 2026-06-23 per ISO 42001 §A.8.4 universal control gap (ISO-002).
+    # Redis unavailability causes quota enforcement to fail-OPEN, allowing
+    # uncapped token spending that could exhaust inference budget and enable
+    # denial-of-governance via resource exhaustion.
+    # Compensating action: TOKEN_QUOTA_FAIL_CLOSED=true in TokenQuotaProxy Deployment.
+    description: "TokenQuotaProxy Redis connection failure causes quota enforcement to fail-OPEN, allowing uncapped token spending (resource exhaustion / denial-of-governance)."
+    severity: high
 
 # ---------------------------------------------------------------------------
 # Control Actions — the actuators the controller can invoke

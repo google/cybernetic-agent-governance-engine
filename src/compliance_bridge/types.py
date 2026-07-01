@@ -72,6 +72,12 @@ class ComplianceMetrics(BaseModel):
     evidence_age_seconds: float = Field(ge=0)
     startup_grace_active: bool
     startup_grace_remaining_hours: float = Field(ge=0)
+    # AI600-001: Confabulation / hallucination scoring fields.
+    # None until the first confabulation_risk Langfuse score is observed.
+    # confabulation_rate = confabulation_blocked_traces / total_traces
+    # when total_traces > 0; None otherwise.
+    confabulation_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    confabulation_blocked_traces: int = Field(default=0, ge=0)
 
 
 # ---------------------------------------------------------------------------

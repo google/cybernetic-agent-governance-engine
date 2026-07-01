@@ -26,6 +26,16 @@ NAMESPACE="${NAMESPACE:-governance-stack}"
 LOG_DIR="${TMPDIR:-/tmp}"
 CSV_PREFIX="${LOG_DIR}/locust_report"
 
+# ============================================================
+# LOAD TEST SAFETY LIMITS — DO NOT REMOVE
+# These limits prevent service degradation on live GKE.
+# Adjust only with coordinator sign-off.
+# ============================================================
+MAX_USERS="${LOAD_TEST_MAX_USERS:-50}"
+SPAWN_RATE="${LOAD_TEST_SPAWN_RATE:-5}"
+RUN_TIME="${LOAD_TEST_RUN_TIME:-5m}"
+GATEWAY_URL="${LOAD_TEST_GATEWAY_URL:-http://localhost:8080}"
+
 echo -e "${CYAN}🚀 [Locust Load Test] Initializing GKE load validation...${NC}"
 
 # 1. Ensure locust is installed
@@ -39,13 +49,13 @@ echo -e "${CYAN}🎛️  Applying HorizontalPodAutoscaler to GKE...${NC}"
 kubectl apply -f deployment/k8s/gateway-hpa.yaml -n "${NAMESPACE}"
 
 # 3. Launch Locust in background
-echo -e "${CYAN}⚡ Starting 1-minute headless Locust load test against http://localhost:8080/health...${NC}"
+echo -e "${CYAN}⚡ Starting headless Locust load test against ${GATEWAY_URL}/health (users=${MAX_USERS}, spawn-rate=${SPAWN_RATE}, run-time=${RUN_TIME})...${NC}"
 locust -f tests/load/locustfile.py \
-  --host http://localhost:8080 \
+  --host "${GATEWAY_URL}" \
   --headless \
-  -u 50 \
-  -r 10 \
-  --run-time 1m \
+  --users "${MAX_USERS}" \
+  --spawn-rate "${SPAWN_RATE}" \
+  --run-time "${RUN_TIME}" \
   --agent-endpoint /health \
   --csv "${CSV_PREFIX}" \
   --only-summary \

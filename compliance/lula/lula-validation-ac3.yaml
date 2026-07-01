@@ -16,47 +16,38 @@
 #
 # Namespace: governance-stack (confirmed from live cluster deployment snapshot)
 
-metadata:
-  annotations:
-    cage.region: US_FED
-    cage.compliance-posture: nist-sp800-53
-    cage.posture-note: "NIST SP 800-53 is a US Federal posture requirement. This validation is skipped for EU_ECB and APAC_MAS deployments."
+component-definition:
+  uuid: bf1cba97-1e27-5806-b6f5-f04499ef0a96
+  metadata:
+    title: CAGE Validation — AC3
+    last-modified: '2026-07-01T13:18:54Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: 'Auto-converted from standalone lula validation format.
 
-domain:
-  type: kubernetes
-  kubernetes-spec:
+      Region: US_FED. Posture: nist-sp800-53.
+
+      Notes: NIST SP 800-53 Rev 5 AC-3: Access Enforcement. Namespace: governance-stack (confirmed from live cluster deployment snapshot). Automated verification that OPA is live and enforcing access control policies for every governance decision. The canonical Rego policy (deployment/system_authz.rego) implements RBAC-based trade limits: junior traders ≤ $5k, senior traders ≤ $500k, with fail-closed defaults for all unrecognized roles or actions. This validation also checks the opa-compliance-status ConfigMap label to confirm the ISO 42001 compliance configuration is applied (mirrors lula-validation-sc4.yaml). See: compliance/continuous-monitoring/ISCM_STRATEGY.md — AC-3 monitoring cadence.'
+  components:
+  - uuid: 319247ba-1fb5-5c62-99a7-24771b750845
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: b8efdf73-2801-5ce0-a588-b486e87bd490
+      source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
+      description: 'Control implementation for AC3. Region: US_FED. Posture: nist-sp800-53.'
+      implemented-requirements:
+      - uuid: dc9af4f2-aeef-55ae-ac99-95eeed7f3521
+        control-id: ac3
+        description: Automated lula validation for AC3.
+        links:
+        - href: '#73f98590-b9c9-52da-bfac-27cf03ae46af'
+          rel: lula
+  back-matter:
     resources:
-      - name: opa-deployment
-        resource: deployments
-        namespace: governance-stack
-      - name: opa-compliance-status
-        resource: configmaps
-        namespace: governance-stack
-
-provider:
-  type: opa
-  opa-spec:
-    rego: |
-      package lula
-
-      import future.keywords.if
-
-      # AC-3: Access Enforcement
-      # Verifies the OPA Deployment is present and ready, and that the
-      # compliance ConfigMap is labelled as ISO 42001 enabled — confirming
-      # the access enforcement layer is live and correctly configured.
-      validate if {
-        input["opa-deployment"].status.readyReplicas >= 1
-        input["opa-compliance-status"].metadata.labels["compliance.iso42001/enabled"] == "true"
-      }
-
-notes: >
-  NIST SP 800-53 Rev 5 AC-3: Access Enforcement.
-  Namespace: governance-stack (confirmed from live cluster deployment snapshot).
-  Automated verification that OPA is live and enforcing access control policies
-  for every governance decision. The canonical Rego policy (deployment/system_authz.rego)
-  implements RBAC-based trade limits: junior traders ≤ $5k, senior traders ≤ $500k,
-  with fail-closed defaults for all unrecognized roles or actions.
-  This validation also checks the opa-compliance-status ConfigMap label to confirm
-  the ISO 42001 compliance configuration is applied (mirrors lula-validation-sc4.yaml).
-  See: compliance/continuous-monitoring/ISCM_STRATEGY.md — AC-3 monitoring cadence.
+    - uuid: 73f98590-b9c9-52da-bfac-27cf03ae46af
+      title: Lula Validation — AC3
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: opa-deployment\n      resource: deployments\n      namespace: governance-stack\n    - name: opa-compliance-status\n      resource: configmaps\n      namespace: governance-stack\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# AC-3: Access Enforcement\\n# Verifies the OPA Deployment is present and ready, and that the\\n# compliance ConfigMap is labelled as ISO 42001 enabled — confirming\\n# the access enforcement layer is live and correctly configured.\\nvalidate if {\\n  input[\\\"opa-deployment\\\"].status.readyReplicas >= 1\\n  input[\\\"opa-compliance-status\\\"].metadata.labels[\\\"compliance.iso42001/enabled\\\"] == \\\"true\\\"\\n}\\n\"\n"

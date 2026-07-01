@@ -70,7 +70,7 @@ The Privacy Impact Assessment ([`compliance/pia/PRIVACY_IMPACT_ASSESSMENT.md`](.
 
 > **NIST SP 800-53 gates apply to US_FED deployments only.** EU_ECB stable releases are gated on EU AI Act compliance. APAC_MAS stable releases are gated on MAS FEAT compliance.
 
-**Sources:** [`docs/NIST_RMF_CHUNK1_CURRENT_STATE.md`](../NIST_RMF_CHUNK1_CURRENT_STATE.md) through [`docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](../NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)
+**Sources:** [`docs/NIST_RMF_CHUNK1_CURRENT_STATE.md`](../compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md) through [`docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](../compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)
 
 ### 3.1 Overall Readiness
 
@@ -85,7 +85,7 @@ The Privacy Impact Assessment ([`compliance/pia/PRIVACY_IMPACT_ASSESSMENT.md`](.
 | CA (Security Assessment)             | 19%      | Lula 6h CronJob; SAR target 2026Q1                                                                                  |
 | CM (Configuration Management)        | 32%      | `config/governance_thresholds.json`; Terraform IaC                                                                         |
 | IA (Identification & Authentication) | 15%      | HMAC routing seals; no MFA; no account management procedures                                                        |
-| IR (Incident Response)               | 28%      | [`docs/IR_PLAN.md`](../IR_PLAN.md) (draft); `GovernanceEventBus`                                                    |
+| IR (Incident Response)               | 28%      | [`docs/IR_PLAN.md`](../security/IR_PLAN.md) (draft); `GovernanceEventBus`                                                    |
 | RA (Risk Assessment)                 | 15%      | [`compliance/rar/RISK_ASSESSMENT_REPORT.md`](../../compliance/rar/RISK_ASSESSMENT_REPORT.md); Lula automated checks |
 | SC (System & Communications)         | 33%      | `NetworkPolicy` enforcement; **Linkerd mTLS (FIND-011 resolved)**              |
 | SI (System & Information Integrity)  | 42%      | Presidio PII detection; NeMo guardrails; Aho-Corasick scanning                                                      |
@@ -96,7 +96,7 @@ The AU (Audit & Accountability) family is the strongest at 54%, driven by the ma
 
 ## 4. NIST RMF 7-Step Readiness
 
-**Sources:** [`docs/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](../NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md) through [`docs/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md`](../NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)
+**Sources:** [`docs/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](../compliance/us_fed/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md) through [`docs/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md`](../compliance/us_fed/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)
 
 ### 4.1 Step-by-Step Scores
 
@@ -111,7 +111,7 @@ No ATO (Authorization to Operate) has been granted. The security assessor determ
 
 ### 4.2 ATO Progression Roadmap
 
-**Source:** [`docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](../NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)
+**Source:** [`docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](../compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)
 
 The phased roadmap targets continuous ATO posture over a 52-week horizon:
 
@@ -133,7 +133,7 @@ Phase 3  Weeks 16–52  →  +77%  Architectural uplift
 
 ## 5. ISO/IEC 42001:2023 AI Management System Compliance
 
-**Sources:** [`docs/ISO_42001_COMPLIANCE.md`](../ISO_42001_COMPLIANCE.md), [`docs/SYSTEM_DESCRIPTION_ISO_42001.md`](../SYSTEM_DESCRIPTION_ISO_42001.md)
+**Sources:** [`docs/ISO_42001_COMPLIANCE.md`](../compliance/universal/ISO_42001_COMPLIANCE.md), [`docs/SYSTEM_DESCRIPTION_ISO_42001.md`](../compliance/universal/SYSTEM_DESCRIPTION_ISO_42001.md)
 
 ### 5.1 Clause Mapping
 
