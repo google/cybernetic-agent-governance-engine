@@ -71,16 +71,22 @@ if _CBF_FAIL_OPEN and _IS_PRODUCTION:
 
 # Gap 4 fix: DoWhy absence in production silently removes Tier 6 (causal
 # gatekeeper).  Fail fast so the gap is surfaced at startup, not at runtime.
+# Catches Exception (not just ImportError) because some dowhy versions import
+# numpy.distutils at module level, which raises ModuleNotFoundError (a subclass
+# of ImportError) when numpy>=2.0 is installed — that error propagates as a
+# generic exception from within dowhy's own import chain.
 if _IS_PRODUCTION:
     try:
         import dowhy as _dowhy_probe  # noqa: F401
-    except ImportError:
+    except Exception:
         raise RuntimeError(
-            "CAGE STARTUP FAILURE (No-Direct-Bind Gap 4): 'dowhy' is not installed. "
+            "CAGE STARTUP FAILURE (No-Direct-Bind Gap 4): 'dowhy' is not installed "
+            "or failed to import (e.g. numpy>=2.0 incompatibility). "
             "The DoWhy causal gatekeeper (Tier 6) is a mandatory component of the "
             "No-Direct-Bind governance gate in production. Without it, an agent can "
             "reach EXECUTED without causal world-model validation. "
-            "Install dowhy: pip install dowhy, or set CAGE_ENV=development to bypass."
+            "Install a numpy-2.x-compatible dowhy (>=0.12), or set CAGE_ENV=development "
+            "to bypass (not for production use)."
         )
 
 
