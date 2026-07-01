@@ -163,3 +163,31 @@ def get_injection_patterns() -> list[str]:
     Used by tests to verify 100% pattern coverage.
     """
     return [name for name, _ in _INJECTION_PATTERNS]
+
+
+def detect_indirect_injection(tool_name: str, response_text: str) -> InjectionResult:
+    """Detect indirect prompt injection in an MCP tool response (AI 600-1 §2.3).
+
+    Alias for ``detect_prompt_injection`` scoped to tool response sanitisation.
+    Called by ``governance_middleware.sanitize_mcp_tool_response()`` after every
+    MCP tool invocation to prevent tool-response-borne injection attacks.
+
+    Args:
+        tool_name:     Name of the MCP tool that produced the response (logged
+                       on detection for SIEM correlation).
+        response_text: Raw string content returned by the tool call.
+
+    Returns:
+        An ``InjectionResult`` with ``detected=True`` if any structural
+        injection pattern is found in the tool response, ``detected=False``
+        otherwise.
+    """
+    result = detect_prompt_injection(response_text)
+    if result.detected:
+        logger.warning(
+            "🚨 [AI600-003] Indirect injection detected in tool response: "
+            "tool=%s pattern=%s (AI 600-1 §2.3 — blocking response)",
+            tool_name,
+            result.pattern_matched,
+        )
+    return result
