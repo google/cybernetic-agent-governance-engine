@@ -67,7 +67,7 @@
 
 ## 🎉 Completion Summary
 
-**Status**: ✅ **ALL TASKS COMPLETE** — CAGE v2.0.0 stable release (GO — 2026-06-08)
+**Status**: ✅ **ALL TASKS COMPLETE** — CAGE v0.1.0 stable release (GO — 2026-06-08)
 
 The monorepo refactoring is now production-ready with:
 

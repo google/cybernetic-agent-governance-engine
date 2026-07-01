@@ -102,6 +102,109 @@ def test_factual_regression():
         assert "paris" in content
     logger.info("✅ Factual Regression Passed: Paris found in response.")
 
+
+# ---------------------------------------------------------------------------
+# POAM-011: TLS Enforcement Tests
+# SC-8 — Transmission Confidentiality and Integrity
+#
+# These tests verify that the gateway enforces TLS 1.2+ on all connections.
+# They are skipped automatically when GATEWAY_URL is not set (i.e., in CI
+# unit test mode without a live gateway).  Set GATEWAY_URL to a running
+# gateway endpoint to run these tests in integration/staging.
+# ---------------------------------------------------------------------------
+
+_GATEWAY_URL_SET = bool(os.getenv("GATEWAY_URL"))
+# POAM-011 fix: read GATEWAY_HTTPS_URL directly so the TLS test can target the
+# ingress HTTPS endpoint independently of the HTTP port-forward used by other
+# tests.  Fall back to replacing http:// → https:// only when GATEWAY_HTTPS_URL
+# is not explicitly set (preserves backward-compat for callers that set only
+# GATEWAY_URL to an https:// URL).
+_GATEWAY_HTTPS_URL = os.getenv(
+    "GATEWAY_HTTPS_URL",
+    (os.getenv("GATEWAY_URL", "")).replace("http://", "https://"),
+)
+
+
+@pytest.mark.skipif(
+    not _GATEWAY_URL_SET,
+    reason="GATEWAY_URL not set — TLS tests require a live gateway endpoint (POAM-011)",
+)
+@pytest.mark.integration
+def test_tls_plaintext_rejected():
+    """Verify the gateway rejects or redirects plaintext HTTP connections (POAM-011 / SC-8).
+
+    The gateway must not serve traffic over plaintext HTTP — all connections
+    must be encrypted (TLS 1.2+ per NIST SP 800-52 Rev. 2).
+
+    Expected outcome: Either the gateway returns HTTP 301/302 redirect to HTTPS,
+    or it returns HTTP 400 Bad Request on the plaintext port.  A 200 OK on
+    plaintext is a test failure.
+    """
+    http_url = GATEWAY_URL.replace("https://", "http://")
+    try:
+        res = requests.get(f"{http_url}/health", timeout=5, allow_redirects=False)
+        # Accept: 301/302 (redirect to HTTPS) or 400 (bad request — TLS required)
+        assert res.status_code in (301, 302, 400, 403), (
+            f"[POAM-011] Gateway accepted plaintext HTTP connection! "
+            f"status={res.status_code}. Expected redirect (30x) or rejection (400/403). "
+            f"All traffic must use TLS 1.2+ (SC-8)."
+        )
+        logger.info(
+            "✅ [POAM-011] Plaintext HTTP correctly rejected or redirected: status=%d",
+            res.status_code,
+        )
+    except requests.exceptions.ConnectionError:
+        # Connection refused on plaintext port is also acceptable
+        logger.info("✅ [POAM-011] Plaintext HTTP connection refused — TLS enforced.")
+    except requests.exceptions.SSLError as exc:
+        # SSL handshake on HTTP port = configuration error
+        pytest.fail(f"[POAM-011] Unexpected SSLError on plaintext port: {exc}")
+
+
+@pytest.mark.skipif(
+    not _GATEWAY_URL_SET,
+    reason="GATEWAY_URL not set — TLS tests require a live gateway endpoint (POAM-011)",
+)
+@pytest.mark.integration
+def test_tls_minimum_version():
+    """Verify the gateway's TLS certificate uses TLS 1.2 or higher (POAM-011 / SC-8).
+
+    NIST SP 800-52 Rev. 2 requires TLS 1.2 minimum for federal information
+    systems. TLS 1.0 and 1.1 must be disabled.
+    """
+    import ssl  # noqa: PLC0415
+    import socket  # noqa: PLC0415
+    from urllib.parse import urlparse  # noqa: PLC0415
+
+    parsed = urlparse(_GATEWAY_HTTPS_URL)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 443
+
+    # Create a context that only allows TLS 1.2+
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.check_hostname = False  # staging certs may use internal CA
+    ctx.verify_mode = ssl.CERT_NONE  # integration test — full cert validation is infra responsibility
+
+    try:
+        with socket.create_connection((host, port), timeout=5) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host) as tls_sock:
+                proto = tls_sock.version()
+                logger.info("✅ [POAM-011] TLS handshake succeeded: protocol=%s host=%s:%d", proto, host, port)
+                assert proto in ("TLSv1.2", "TLSv1.3"), (
+                    f"[POAM-011] Gateway is using deprecated TLS version '{proto}'. "
+                    "TLS 1.2+ is required (SC-8, NIST SP 800-52 Rev. 2)."
+                )
+    except ssl.SSLError as exc:
+        pytest.fail(
+            f"[POAM-011] TLS handshake failed for {host}:{port}: {exc}. "
+            "Verify the gateway is configured with a valid TLS certificate."
+        )
+    except ConnectionRefusedError:
+        pytest.skip(f"[POAM-011] Gateway not reachable at {host}:{port} — skipping TLS version check.")
+
+
 if __name__ == "__main__":
     test_chat_proxy()
     asyncio.run(test_mcp_connection())
+

@@ -125,7 +125,7 @@ Copy [`.env.example`](../.env.example) to `.env` and fill in your values.
 | `REDIS_URL`       | `redis://localhost:6379`                      | Redis for state management                         |
 | `GOVERNANCE_SALT` | _(required)_                                  | HMAC salt for the governance gateway               |
 | `K8S_NAMESPACE`   | `governance-stack`                            | Kubernetes namespace (used by `setup_test_env.sh`) |
-| `CAGE_DEPLOYMENT_REGION` | `US_FED`                             | Regional compliance profile (`US_FED` \| `EU_ECB` \| `APAC_MAS`). Required by v2.0.0 boot contract. |
+| `CAGE_DEPLOYMENT_REGION` | `US_FED`                             | Regional compliance profile (`US_FED` \| `EU_ECB` \| `APAC_MAS`). Required by v0.1.0 boot contract. |
 
 ---
 

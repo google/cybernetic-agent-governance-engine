@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-audit_workflow.py — 6-step compliance audit pipeline (CAGE v2.0.0).
+audit_workflow.py — 6-step compliance audit pipeline (CAGE v0.1.0).
 
 Ports complianceAuditWorkflow.ts + remediationAdvisorStep.ts
 
@@ -21,7 +21,7 @@ Steps:
   1. Persist raw OSCAL YAML to GCS/S3 (idempotent — skip if exists)
   2. Parse OSCAL YAML → list[OscalFinding]  (deterministic, zero-LLM)
      2b. Append each finding to the SHA-256 hash-chained ContextAccumulator
-         (AARM Context Accumulator mandate, CAGE v2.0.0)
+         (AARM Context Accumulator mandate, CAGE v0.1.0)
   3. Ingest findings as compliance scores into the dedicated Langfuse
      compliance project (separate from application performance metrics)
   4. Filter FAIL findings for CRITICAL_CONTROLS → notify_critical_failure()
@@ -102,11 +102,25 @@ logger = logging.getLogger(__name__)
 # producing empty audit metrics.
 # ---------------------------------------------------------------------------
 
-def _validate_langfuse_credentials() -> None:
-    """Emit a WARNING if any Langfuse credential env vars are missing or empty.
+# POAM-018 flag: _CAGE_ENV_STRICT determines whether missing compliance credentials
+# are a RuntimeError (production) or a WARNING (development/test).
+# Mirrors the pattern in governance_middleware.py for CAGE_ROUTING_SEAL_SECRET.
+_CAGE_ENV_STRICT = os.environ.get("CAGE_ENV", os.environ.get("ENVIRONMENT", "prod")).lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
+_CAGE_ENV_IS_DEV = _CAGE_ENV_STRICT in ("dev", "development", "test", "ci")
 
-    Does NOT raise — compliance audit steps are non-fatal by design.
-    Fires once at module import time so the gap is visible in startup logs.
+
+def _validate_langfuse_credentials() -> None:
+    """Validate Langfuse credential env vars at startup (POAM-018).
+
+    - In **non-development environments**: raises ``RuntimeError`` if compliance
+      or application Langfuse credentials are absent.  This causes a fast-fail
+      at service startup, making missing config visible immediately rather than
+      silently producing empty audit metrics for the entire deployment lifetime.
+    - In **development/test environments**: emits a WARNING log instead of
+      raising, preserving developer UX for local runs without credentials.
+
+    POAM-018: AU-9 / §A.9.4 — Langfuse compliance project credentials fail
+    silently when absent.  This guard closes that gap.
     """
     missing: list[str] = []
 
@@ -120,12 +134,23 @@ def _validate_langfuse_credentials() -> None:
         if not os.environ.get(var):
             missing.append(var)
 
-    if missing:
-        logger.warning(
-            "Langfuse compliance credentials not configured — audit metrics will not be "
-            "recorded. Set %s. "
-            "(LANGFUSE_HOST defaults to https://cloud.langfuse.com if unset.)",
-            ", ".join(missing),
+    if not missing:
+        return
+
+    msg = (
+        f"Langfuse compliance credentials not configured — audit metrics will not be "
+        f"recorded.  Missing: {', '.join(missing)}.  "
+        f"(LANGFUSE_HOST defaults to https://cloud.langfuse.com if unset.)  "
+        f"Set these env vars in prod.tfvars / K8s Secret 'advisor-secrets'. "
+        f"(POAM-018 / AU-9 / ISO 42001 §A.9.4)"
+    )
+
+    if _CAGE_ENV_IS_DEV:
+        logger.warning("[POAM-018] %s", msg)
+    else:
+        raise RuntimeError(
+            f"[POAM-018] {msg}  "
+            "To bypass in local dev, set CAGE_ENV=development or ENVIRONMENT=development."
         )
 
 
@@ -671,7 +696,7 @@ async def _step5_remediation_advisor(
 
 async def run_audit_workflow(oscal_yaml: str, audit_id: str) -> dict:
     """
-    Execute the 6-step compliance audit pipeline (CAGE v2.0.0).
+    Execute the 6-step compliance audit pipeline (CAGE v0.1.0).
 
     Returns:
         {
@@ -707,7 +732,7 @@ async def run_audit_workflow(oscal_yaml: str, audit_id: str) -> dict:
         for finding in findings
     ]
 
-    # Step 2b — SHA-256 hash-chained Context Accumulator (AARM mandate, CAGE v2.0.0)
+    # Step 2b — SHA-256 hash-chained Context Accumulator (AARM mandate, CAGE v0.1.0)
     # Append every OSCAL finding as a chained node, then seal to lock the chain.
     # ISO 42001 A.5.3: tamper-evident chain of custody for session state.
     accumulator = ContextAccumulator(audit_id=audit_id)

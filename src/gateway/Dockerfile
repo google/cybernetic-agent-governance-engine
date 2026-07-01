@@ -40,7 +40,8 @@ ENV PATH="/app/.venv/bin:$PATH"
 # --frozen enforces the lockfile; --no-dev skips test/lint extras.
 # --no-install-project installs only deps before the source tree is copied.
 # Install both gateway AND advisor extras (gateway imports from governed_financial_advisor)
-RUN uv sync --frozen --no-dev --extra gateway --extra advisor --no-install-project
+# --extra compliance pulls dowhy (Tier 6 causal gatekeeper, No-Direct-Bind Gap 4)
+RUN uv sync --frozen --no-dev --extra gateway --extra advisor --extra compliance --no-install-project
 
 # Download spaCy large model via direct wheel URL (avoids CDN redirect failures).
 # Use uv pip install so the package lands in the uv-managed venv — never bypass

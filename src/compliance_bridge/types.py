@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-types.py — Canonical ISO 42001 control metadata and Pydantic models (CAGE v2.0.0).
+types.py — Canonical ISO 42001 control metadata and Pydantic models (CAGE v0.1.0).
 
 Ported from src/langfuse-bridge/src/types.ts.
 
@@ -72,6 +72,12 @@ class ComplianceMetrics(BaseModel):
     evidence_age_seconds: float = Field(ge=0)
     startup_grace_active: bool
     startup_grace_remaining_hours: float = Field(ge=0)
+    # AI600-001: Confabulation / hallucination scoring fields.
+    # None until the first confabulation_risk Langfuse score is observed.
+    # confabulation_rate = confabulation_blocked_traces / total_traces
+    # when total_traces > 0; None otherwise.
+    confabulation_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    confabulation_blocked_traces: int = Field(default=0, ge=0)
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +124,7 @@ class OscalFinding(BaseModel):
     evidence_age_s: float | None = Field(default=None, ge=0)
     finding_id:  str
     remarks:     str | None = None
-    # Optional position in the Context Accumulator chain (CAGE v2.0.0)
+    # Optional position in the Context Accumulator chain (CAGE v0.1.0)
     # Populated by audit_workflow after the ContextAccumulator appends the finding.
     chain_index: int | None = None
 
@@ -458,7 +464,7 @@ _UNIVERSAL_CONTROL_MAP: dict[str, str] = {
     "stpa_validation":    "A.8.4",   # AI System Operation — STPA UCA checks
     "causal_gatekeeper":  "A.6.2",   # AI Lifecycle — DoWhy causal refutation
     "saga_rollback":      "A.8.4",   # AI System Operation — Saga compensating node execution
-    # CAGE v2.0.0 — AARM primitives
+    # CAGE v0.1.0 — AARM primitives
     "context_accumulate": "A.5.3",   # Context Accumulator chain node — Logging & Monitoring
     "defer_parking":      "A.8.4",   # DEFER state machine — AI System Operation Controls
 }

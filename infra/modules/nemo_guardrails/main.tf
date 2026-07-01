@@ -132,6 +132,11 @@ resource "kubernetes_deployment" "nemo_guardrails" {
           }
 
           env {
+            name  = "CAGE_ENV"
+            value = "development"
+          }
+
+          env {
             name  = "NEMO_CONFIG_PATH"
             value = "/etc/nemo/config"
           }

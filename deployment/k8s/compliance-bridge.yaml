@@ -21,7 +21,7 @@ metadata:
   labels:
     app: compliance-bridge
     compliance.iso42001/component: "evidence-bridge"
-    app.kubernetes.io/version: "2.0.0"
+    app.kubernetes.io/version: "0.1.0"
 spec:
   replicas: 1
   selector:
@@ -159,6 +159,12 @@ spec:
                 secretKeyRef:
                   name: redis-credentials
                   key: REDIS_URL
+
+            # CAGE_DEPLOYMENT_REGION controls which compliance framework controls
+            # are active (US_FED → NIST SP 800-53 / FedRAMP; EU_ECB → EU AI Act;
+            # APAC_MAS → MAS FEAT). Without this, only universal ISO 42001 controls load.
+            - name: CAGE_DEPLOYMENT_REGION
+              value: "US_FED"
 
             - name: PORT
               value: "3001"

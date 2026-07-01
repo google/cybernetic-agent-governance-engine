@@ -48,7 +48,7 @@ async def require_internal_token(
         HTTPException(401): If credentials are missing or invalid.
     """
     token = os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "")
-    cage_env = os.environ.get("CAGE_ENV", "dev").lower()
+    cage_env = os.environ.get("CAGE_ENV", "prod").lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
 
     # In dev with no token configured, allow through with warning.
     # This preserves local development ergonomics without compromising prod.

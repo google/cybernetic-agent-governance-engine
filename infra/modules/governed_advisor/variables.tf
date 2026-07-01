@@ -153,3 +153,9 @@ variable "alphavantage_api_key" {
   type    = string
   default = ""
 }
+
+variable "gcp_service_account_name" {
+  description = "Name (not email) of the GCP service account used for Workload Identity binding on the financial-advisor-sa KSA"
+  type        = string
+  default     = "financial-advisor-sa"
+}

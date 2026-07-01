@@ -49,6 +49,7 @@ from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.kms_signer import get_governance_signer
+from src.gateway.governance.prompt_injection_detector import detect_indirect_injection
 
 logger = logging.getLogger("Gateway.GovernanceMiddleware")
 
@@ -238,6 +239,42 @@ async def tier1_keyword_check(text: str, span: Any = None) -> Optional[str]:
     return None
 
 
+async def sanitize_mcp_tool_response(
+    tool_name: str,
+    response_text: str,
+    span: Any = None,
+) -> Optional[str]:
+    """Sanitize an MCP tool response for indirect injection (AI 600-1 §2.3, AI600-003).
+
+    Checks the tool response against the indirect injection pattern set in
+    ``prompt_injection_detector.detect_indirect_injection()``.  Called in the
+    governance middleware after every MCP tool invocation, before the response
+    is returned to the agent pipeline.
+
+    Args:
+        tool_name:     Name of the MCP tool that produced the response.
+        response_text: The raw string content returned by the tool call.
+        span:          Active OTel span for evidence stamping (optional).
+
+    Returns:
+        A violation description string if indirect injection was detected,
+        ``None`` if the response is clean.
+    """
+    result = detect_indirect_injection(tool_name, response_text)
+    if result.detected:
+        stamp_iso_control(span, tier=2, control="A.9.2", outcome="BLOCK")
+        logger.warning(
+            "🔴 [AI600-003] MCP tool response rejected: tool=%s pattern=%s \"\n"
+            "(ISO 42001 A.9.2 — indirect injection blocked)",
+            tool_name,
+            result.pattern_matched,
+        )
+        return f"indirect_injection:{result.pattern_matched}"
+    stamp_iso_control(span, tier=2, control="A.9.2", outcome="PASS")
+    return None
+
+
+
 # ---------------------------------------------------------------------------
 # Minimal FastAPI sub-application for the middleware surface
 # (mounted by mcp_tool_server under /governance)
@@ -292,6 +329,7 @@ class ValidateActionRequest(BaseModel):
     """Payload for POST /governance/validate-action."""
     action: str
     params: Dict[str, Any]
+    policy_version_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +480,13 @@ async def _emit_refusal_receipt(
         )
 
 
+@governance_app.get("/policy-version")
+async def get_policy_version_endpoint() -> JSONResponse:
+    """Retrieve the active policy hash for session pinning verification."""
+    from src.gateway.governance.constants import ControlRegistry
+    return JSONResponse(content={"active_hash": ControlRegistry().active_hash})
+
+
 @governance_app.post("/validate-action")
 async def validate_action_endpoint(
     request: Request,
@@ -494,6 +539,7 @@ async def validate_action_endpoint(
         result = await symbolic_governor.validate_action(
             action=body.action,
             params=body.params,
+            policy_version_id=body.policy_version_id,
         )
         return JSONResponse(content=result)
 

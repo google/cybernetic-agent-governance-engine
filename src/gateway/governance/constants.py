@@ -64,6 +64,7 @@ Usage::
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -103,7 +104,7 @@ def _require_env(key: str, fallback: str, *, sensitive: bool = True) -> str:
     value = os.environ.get(key)
     if value:
         return value
-    cage_env = os.environ.get("CAGE_ENV", "dev").lower()
+    cage_env = os.environ.get("CAGE_ENV", "prod").lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
     if cage_env == "prod" and sensitive:
         raise RuntimeError(
             f"Required environment variable {key!r} is not set in production. "
@@ -183,9 +184,10 @@ class ControlRegistry:
     """
 
     _instance: "ControlRegistry | None" = None
-    _lock: threading.Lock = threading.Lock()
+    _lock: threading.RLock = threading.RLock()
     _mappings: Dict[str, Any] = {}
     _active_region: str = _DEFAULT_REGION
+    _active_hash: str = ""
 
     # Paths
     _REPO_ROOT: Path = Path(__file__).resolve().parents[3]
@@ -215,6 +217,26 @@ class ControlRegistry:
         ``"APAC_MAS"``) or ``"LEGACY"`` if the fallback file was used.
         """
         return self.__class__._active_region
+
+    @property
+    def active_hash(self) -> str:
+        """Read-only access to the pinned baseline profile hash."""
+        with self.__class__._lock:
+            return self.__class__._active_hash
+
+    @classmethod
+    def _coerce_floats(cls, data: Any) -> Any:
+        """Recursively normalizes floats to standard decimal format strings to prevent token discrepancies."""
+        if isinstance(data, dict):
+            return {k: cls._coerce_floats(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [cls._coerce_floats(item) for item in data]
+        elif isinstance(data, float):
+            # Normalize float representation consistently
+            if data.is_integer():
+                return int(data)
+            return round(data, 6)
+        return data
 
     # ------------------------------------------------------------------
     # Internal loading
@@ -258,11 +280,21 @@ class ControlRegistry:
             # Strip meta-keys that start with "_"
             self._mappings = {k: v for k, v in raw.items() if not k.startswith("_")}
             self.__class__._active_region = region
+            
+            # Canonical stringification: sorted keys, compact separators
+            normalized_raw = self._coerce_floats(raw)
+            canonical_json = json.dumps(normalized_raw, sort_keys=True, separators=(',', ':'))
+            computed_hash = hashlib.sha256(canonical_json.encode('utf-8')).hexdigest()
+
+            with self.__class__._lock:
+                self.__class__._active_hash = computed_hash
+
             logger.info(
-                "✅ ControlRegistry loaded %d control mappings from %s (region: %s)",
+                "✅ ControlRegistry loaded %d control mappings from %s (region: %s, hash: %s)",
                 len(self._mappings),
                 config_path,
                 region,
+                computed_hash[:12],
             )
         except FileNotFoundError:
             raise RuntimeError(
@@ -367,6 +399,7 @@ class ControlRegistry:
             cls._instance = None
             cls._mappings = {}
             cls._active_region = _DEFAULT_REGION
+            cls._active_hash = ""
             cls._instance = new_instance
 
         logger.info("ControlRegistry reconfigured to region: %s", normalized_region)

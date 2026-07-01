@@ -1,16 +1,16 @@
-# Formal Verification and Completeness Proof (CAGE v2.0.0)
+# Formal Verification and Completeness Proof (CAGE v0.1.0)
 
 | Field              | Value                     |
 | ------------------ | ------------------------- |
 | **Classification** | INTERNAL                  |
 | **Date**           | 2026-06-03                |
 | **Version**        | 2.1                       |
-| **Status**         | Current — v2.0.0 stable (GO — 2026-06-08); GKE deployment verified 2026-06-03; **844 passing, 0 failed, 24 skipped** (`test_results/run_20260603T103414.txt`); NoDirectBind invariant machine-verified over 19 reachable states |
+| **Status**         | Current — v0.1.0 stable (GO — 2026-06-08); GKE deployment verified 2026-06-03; **844 passing, 0 failed, 24 skipped** (`test_results/run_20260603T103414.txt`); NoDirectBind invariant machine-verified over 19 reachable states |
 | **Series**         | CAGE Technical Report — Document 10 / 10 |
 
-As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v2.0.0 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
+As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v0.1.0 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
 
-Below is the formal state-space and structural analysis of the system, including the resolution of previously identified unbounded states through the v2.0.0 architectural enhancements.
+Below is the formal state-space and structural analysis of the system, including the resolution of previously identified unbounded states through the v0.1.0 architectural enhancements.
 
 ### Primary Regulatory Framework
 
@@ -223,7 +223,7 @@ The gated architecture has exactly **one** reachable `EXECUTED` state, and in th
 
 ### Closure of the Direct-Bind Shortcut (Gap 2)
 
-Prior to v2.0.0-rc.2, the `SymbolicGovernor` exposed two code paths into `_run_checks()`:
+Prior to v0.1.0-rc.2, the `SymbolicGovernor` exposed two code paths into `_run_checks()`:
 
 | Path | Seal issued? | Satisfies NoDirectBind? |
 | ---- | ------------ | ----------------------- |
@@ -232,7 +232,7 @@ Prior to v2.0.0-rc.2, the `SymbolicGovernor` exposed two code paths into `_run_c
 
 A caller that caught `GovernanceError` from the old `govern()` path and proceeded to execution would reach `EXECUTED` without a resolved seal — a direct-bind violation identical to the ungated counterexample above.
 
-**Remediation (v2.0.0-rc.2):**
+**Remediation (v0.1.0-rc.2):**
 
 [`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) now issues a routing seal on approval and returns it as a `str`. The seal is generated via [`routing_seal.generate_seal()`](../../src/gateway/governance/routing_seal.py) inside a `cage.routing_seal` OTel span, after `_run_checks()` has completed all 7 tiers. [`governance_middleware.enforce_governance()`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers. [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) calls `verify_seal()` before executing the trade — a missing or invalid seal produces an immediate `BLOCKED` response.
 

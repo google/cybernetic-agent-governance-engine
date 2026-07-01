@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-defer_queue.py — DEFER State Machine Primitive (CAGE v2.0.0)
+defer_queue.py — DEFER State Machine Primitive (CAGE v0.1.0)
 
 AARM Conformance: Satisfies the "Deferral Service" mandate from the CSA AARM
 specification — a formal state for situational ambiguity or data starvation that
@@ -25,7 +25,7 @@ Architecture:
   but the accompanying confidence score is below the "Confidence-Starvation Boundary"
   threshold (default: 0.70 — see UCA-7 in ontology.py).
 
-  Confidence-Starvation Boundary (approved architectural decision, CAGE v2.0.0):
+  Confidence-Starvation Boundary (approved architectural decision, CAGE v0.1.0):
     ≥ 0.95  →  ALLOW/DENY (Autonomous Clearance via system_authz.rego)
     0.70–0.95 → MANUAL_REVIEW (human operator sign-off required)
     < 0.70  →  DEFER (context fundamentally corrupted or missing critical state;
@@ -338,7 +338,7 @@ class DeferQueue:
 # DEFER_CONFIDENCE_THRESHOLD — module-level constant
 # ---------------------------------------------------------------------------
 
-#: The "Confidence-Starvation Boundary" (CAGE v2.0.0 architectural decision).
+#: The "Confidence-Starvation Boundary" (CAGE v0.1.0 architectural decision).
 #: Execution context with confidence below this threshold routes to DEFER rather
 #: than MANUAL_REVIEW, preventing operational fatigue from fundamentally incomplete
 #: context windows. See UCA-7 in src/gateway/governance/ontology.py.
@@ -373,7 +373,7 @@ async def replay_evaluate(
     """Phase 3 — Re-evaluate a parked token against the confidence threshold.
 
     This is the canonical re-evaluation entry point for the three-phase
-    confidence-score replay flow (CAGE v2.0.0):
+    confidence-score replay flow (CAGE v0.1.0):
 
       Phase 1 — PARK:    Token with confidence < DEFER_CONFIDENCE_THRESHOLD
                          is parked in Redis db=1 via DeferQueue.park().

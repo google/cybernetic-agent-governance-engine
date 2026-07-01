@@ -19,52 +19,38 @@
 #
 # Namespace: governance-stack (confirmed from live cluster deployment snapshot)
 
-metadata:
-  annotations:
-    cage.region: US_FED
-    cage.compliance-posture: nist-sp800-53
-    cage.posture-note: "NIST SP 800-53 is a US Federal posture requirement. This validation is skipped for EU_ECB and APAC_MAS deployments."
+component-definition:
+  uuid: f1e70118-589f-520e-9ecf-d6783dfb5391
+  metadata:
+    title: CAGE Validation — CM6
+    last-modified: '2026-07-01T13:18:54Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: 'Auto-converted from standalone lula validation format.
 
-domain:
-  type: kubernetes
-  kubernetes-spec:
+      Region: US_FED. Posture: nist-sp800-53.
+
+      Notes: NIST SP 800-53 Rev 5 CM-6: Configuration Settings. Namespace: governance-stack (confirmed from live cluster deployment snapshot). Automated verification that governance thresholds and NeMo Guardrails configuration are deployed as Kubernetes ConfigMaps, ensuring the baseline security configuration is active and cluster-immutable (vs. local file edits). The governance thresholds (config/governance_thresholds.json) define the fiscal and risk limits enforced by OPA; the NeMo Guardrails config (config/rails/) defines the output rail and content filtering rules. This validation also addresses the CM-6/SI-7 POAM items flagged in docs/NIST_RMF_CHUNK1_CURRENT_STATE.md regarding deprecated Rego stub confusion. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — CM-6 monitoring cadence. See: docs/POAM.md — CM-6 POAM remediation item.'
+  components:
+  - uuid: d5fa035a-4fb3-5485-88a4-347630f5fe50
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: 9dec443c-138b-578d-9255-d6f67fc95c5b
+      source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
+      description: 'Control implementation for CM6. Region: US_FED. Posture: nist-sp800-53.'
+      implemented-requirements:
+      - uuid: 7054ff11-50ab-5798-80b5-7f28c918da9a
+        control-id: cm6
+        description: Automated lula validation for CM6.
+        links:
+        - href: '#d3a42dd5-3cf9-5ee5-baae-5b72ebd497ab'
+          rel: lula
+  back-matter:
     resources:
-      - name: governance-thresholds-config
-        resource: configmaps
-        namespace: governance-stack
-      - name: nemo-guardrails-config
-        resource: configmaps
-        namespace: governance-stack
-
-provider:
-  type: opa
-  opa-spec:
-    rego: |
-      package lula
-
-      import future.keywords.if
-
-      # CM-6: Configuration Settings
-      # Verifies that the governance configuration ConfigMaps are present in the
-      # cluster, confirming that the baseline configuration settings (thresholds,
-      # NeMo Guardrails rules) are deployed and available to the governed services.
-      # CM-6 requires that configuration settings are documented, applied, and
-      # monitored for unauthorized changes.
-      validate if {
-        input["governance-thresholds-config"].metadata.name != null
-        input["nemo-guardrails-config"].metadata.name != null
-      }
-
-notes: >
-  NIST SP 800-53 Rev 5 CM-6: Configuration Settings.
-  Namespace: governance-stack (confirmed from live cluster deployment snapshot).
-  Automated verification that governance thresholds and NeMo Guardrails
-  configuration are deployed as Kubernetes ConfigMaps, ensuring the baseline
-  security configuration is active and cluster-immutable (vs. local file edits).
-  The governance thresholds (config/governance_thresholds.json) define the fiscal
-  and risk limits enforced by OPA; the NeMo Guardrails config (config/rails/)
-  defines the output rail and content filtering rules.
-  This validation also addresses the CM-6/SI-7 POAM items flagged in
-  docs/NIST_RMF_CHUNK1_CURRENT_STATE.md regarding deprecated Rego stub confusion.
-  See: compliance/continuous-monitoring/ISCM_STRATEGY.md — CM-6 monitoring cadence.
-  See: docs/POAM.md — CM-6 POAM remediation item.
+    - uuid: d3a42dd5-3cf9-5ee5-baae-5b72ebd497ab
+      title: Lula Validation — CM6
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: governance-thresholds-config\n      resource: configmaps\n      namespace: governance-stack\n    - name: nemo-guardrails-config\n      resource: configmaps\n      namespace: governance-stack\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# CM-6: Configuration Settings\\n# Verifies that the governance configuration ConfigMaps are present in the\\n# cluster, confirming that the baseline configuration settings (thresholds,\\n# NeMo Guardrails rules) are deployed and available to the governed services.\\n# CM-6 requires that configuration settings are documented, applied, and\\n# monitored for unauthorized changes.\\nvalidate if {\\n  input[\\\"governance-thresholds-config\\\"].metadata.name != null\\n  input[\\\"nemo-guardrails-config\\\"].metadata.name != null\\n}\\n\"\n"

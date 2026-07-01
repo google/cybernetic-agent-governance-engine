@@ -4,7 +4,7 @@
 | ------------------ | ------------------------- |
 | **Classification** | PUBLIC                    |
 | **Date**           | 2026-06-03                |
-| **Version**        | 2.0.0-rc.1                |
+| **Version**        | 0.1.0-rc.1                |
 | **Status**         | Implemented & Verified (GKE deployment confirmed 2026-06-03) |
 
 ---
@@ -222,9 +222,9 @@ Step 5 is the only cross-project operation: it reads failing traces from the app
 
 > ⚠️ **POAM-018 (AU-9) — Open:** If `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `LANGFUSE_COMPLIANCE_SECRET_KEY` are not set, the compliance project client initializes with empty credentials. Langfuse SDK calls will fail silently (no exception raised — the SDK logs a warning and drops the trace). This means **audit evidence collection fails without any visible error** unless Langfuse SDK logs are monitored.
 >
-> **Remediation (scheduled 2026-07-15):** Add startup validation in `audit_workflow.py` that raises `RuntimeError` if compliance credentials are empty in non-dev environments; add `/health` check that reports compliance Langfuse connectivity status. See [`docs/POAM.md` POAM-018](../POAM.md).
+> **Remediation (scheduled 2026-07-15):** Add startup validation in `audit_workflow.py` that raises `RuntimeError` if compliance credentials are empty in non-dev environments; add `/health` check that reports compliance Langfuse connectivity status. See [`docs/POAM.md` POAM-018](../compliance/cross-region/POAM.md).
 
-This is documented as a known gap in [NIST_RMF_CHUNK4](../NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md):
+This is documented as a known gap in [NIST_RMF_CHUNK4](../compliance/us_fed/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md):
 
 > *"Compliance Langfuse project is a separate credential from the main project. `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `LANGFUSE_COMPLIANCE_SECRET_KEY` must be configured. If these env vars are absent, the compliance project fails silently — a critical evidence collection gap."*
 
@@ -259,7 +259,7 @@ kubectl exec -n governance-stack deploy/governed-financial-advisor -- env | grep
 >
 > **Impact:** If `prod.tfvars` does not define compliance credentials (which it currently does not by default), production deployment has no telemetry isolation — all audit evidence flows to the same Langfuse project as application metrics.
 >
-> **Remediation (scheduled 2026-07-15):** Remove the Terraform fallback; make compliance credentials a required variable with no default; add compliance credentials to `prod.tfvars` template; add a Terraform `validation` block requiring non-empty compliance keys when `enable_compliance_bridge = true`. See [`docs/POAM.md` POAM-019](../POAM.md).
+> **Remediation (scheduled 2026-07-15):** Remove the Terraform fallback; make compliance credentials a required variable with no default; add compliance credentials to `prod.tfvars` template; add a Terraform `validation` block requiring non-empty compliance keys when `enable_compliance_bridge = true`. See [`docs/POAM.md` POAM-019](../compliance/cross-region/POAM.md).
 
 ---
 
@@ -284,10 +284,10 @@ This would be a Terraform infrastructure change, not a code change. The Python c
 | Document                                                                  | Relationship                                           |
 | ------------------------------------------------------------------------- | ------------------------------------------------------ |
 | [02-ARCHITECTURE.md §9.2](../technical-report/02-ARCHITECTURE.md)         | Brief mention of dual-project setup                    |
-| [NIST_RMF_CHUNK4](../NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)                | Documents the silent failure gap                       |
+| [NIST_RMF_CHUNK4](../compliance/us_fed/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)                | Documents the silent failure gap                       |
 | [EXTENSIBILITY_ARCHITECTURE.md §2.4](EXTENSIBILITY_ARCHITECTURE.md)      | References telemetry isolation as implementation requirement |
 | [infra/ENV_INTEGRATION.md](../../infra/ENV_INTEGRATION.md)                | Credential mapping for both projects                   |
 | [compliance-bridge.yaml](../../deployment/k8s/compliance-bridge.yaml)     | K8s deployment with dual secret mounts                 |
 | [app_secrets/main.tf](../../infra/modules/app_secrets/main.tf)            | Terraform provisioning of separate K8s secrets         |
-| [docs/POAM.md POAM-018](../POAM.md)                                       | Silent credential failure — open remediation item      |
-| [docs/POAM.md POAM-019](../POAM.md)                                       | Terraform fallback defeats isolation — open remediation item |
+| [docs/POAM.md POAM-018](../compliance/cross-region/POAM.md)                                       | Silent credential failure — open remediation item      |
+| [docs/POAM.md POAM-019](../compliance/cross-region/POAM.md)                                       | Terraform fallback defeats isolation — open remediation item |

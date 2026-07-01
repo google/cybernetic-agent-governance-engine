@@ -1,6 +1,6 @@
 [project]
 name = "cybernetic-governance-engine"
-version = "2.0.0"
+version = "0.1.0"
 description = "CAGE — Cybernetic AI Governance Engine"
 authors = [{ name = "OSS Maintainer", email = "oss-maintainer@example.com" }]
 license = "Apache-2.0"
@@ -114,6 +114,22 @@ lint = [
     "codespell>=2.2.0",
     "types-pyyaml>=6.0.12.20240917",
     "types-requests>=2.32.0.20240914",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
+markers = [
+    "local: safe to run with no live services (CI default)",
+    "unit: pure unit test, no I/O",
+    "integration: requires live services via port-forward",
+    "gke: requires live GKE cluster",
+    "slow: long-running test (timeout >= 300s)",
+    "regression: regression guard",
+    "us_fed: US_FED region-specific test",
+    "eu_ecb: EU_ECB region-specific test",
+    "apac_mas: APAC_MAS region-specific test",
 ]
 
 [tool.ruff]

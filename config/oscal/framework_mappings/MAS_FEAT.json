@@ -1,6 +1,6 @@
 {
   "_comment": "MAS FEAT Principles (Fairness, Ethics, Accountability, Transparency) UCA-to-principle routing table for the OSCAL SSP Exporter. Applicable to AI systems deployed by MAS-regulated financial institutions in Singapore under TRM Guidelines §13. Loaded at runtime by FrameworkRouter.",
-  "_schema_version": "2.0.0",
+  "_schema_version": "0.1.0",
   "_last_updated": "2026-05-23",
   "_framework_id": "MAS_FEAT",
   "_framework_label": "MAS FEAT Principles (Fairness, Ethics, Accountability, Transparency)",
