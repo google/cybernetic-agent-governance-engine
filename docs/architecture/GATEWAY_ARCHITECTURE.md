@@ -290,4 +290,34 @@ The following frameworks apply **only** when `CAGE_DEPLOYMENT_REGION=APAC_MAS`:
 | **MAS FEAT Principles** | Singapore-specific AI fairness, ethics, accountability, transparency controls | Active |
 | **MAS Notice 655 / MAS TRM §4.2** | Audit logging; data residency within `asia-southeast1` | Active |
 
+### US_FED Jurisdiction Addendum (`CAGE_DEPLOYMENT_REGION=US_FED`)
+
+The following frameworks apply **only** when `CAGE_DEPLOYMENT_REGION=US_FED`:
+
+| Framework | Scope | Status |
+|-----------|-------|--------|
+| **SR 26-2** (Federal Reserve, April 17, 2026) | Agentic AI model risk management; HITL SLA 4h; MRM scope for CBF + DoWhy | Active |
+| **NIST AI 600-1** | Confabulation scoring, HITL escalation, prompt injection detection, provenance chain, CBRN filtering | Active |
+| **NIST SP 800-53 Rev 5 HIGH** | 24% readiness; FedRAMP ATO in progress | In Progress |
+| **NIST AI RMF** (SP 800-37) | MEASURE-2.6 continuous world-model validation | Active |
+
+### EU_ECB Jurisdiction Addendum (`CAGE_DEPLOYMENT_REGION=EU_ECB`)
+
+The following frameworks apply **only** when `CAGE_DEPLOYMENT_REGION=EU_ECB`:
+
+| Framework | Scope | Status |
+|-----------|-------|--------|
+| **EU AI Act** (Reg. 2024/1689) Art. 29a | Adaptive FRIA gating; OTel attestation stamp on every span | Active |
+| **GDPR** Art. 22 | Automated decision-making; 24h PII retention limit | Active |
+| **DORA** (Reg. 2022/2554) Art. 10 | Audit logging obligation; telemetry suppression sentinel | Active |
+
+### APAC_MAS Jurisdiction Addendum (`CAGE_DEPLOYMENT_REGION=APAC_MAS`)
+
+The following frameworks apply **only** when `CAGE_DEPLOYMENT_REGION=APAC_MAS`:
+
+| Framework | Scope | Status |
+|-----------|-------|--------|
+| **MAS FEAT Principles** | Singapore-specific AI fairness, ethics, accountability, transparency controls | Active |
+| **MAS Notice 655 / MAS TRM §4.2** | Audit logging; data residency within `asia-southeast1` | Active |
+
 > **POA&M:** 23 open items (POAM-001 through POAM-023). See [`docs/POAM.md`](../compliance/cross-region/POAM.md) and [`docs/POAM_INDEX.md`](../compliance/cross-region/POAM_INDEX.md) for the full cross-region traceability matrix.
