@@ -73,6 +73,45 @@ CAUSAL_CACHE_TTL_SECONDS: int = int(
     os.getenv("CAUSAL_CACHE_TTL_SECONDS", "60")
 )
 
+# ---------------------------------------------------------------------------
+# Causal lock thresholds — Phase 2 (CTRL_TEL_003) and Phase 1 risk boundary
+# ---------------------------------------------------------------------------
+# These three constants define the three conditions that trigger a CAUSAL LOCK
+# (i.e. causal_safety_check() returns False, blocking the trade).
+#
+# CAUSAL_LOCK_P_VALUE_THRESHOLD (Phase 2 — placebo refutation):
+#   If the placebo treatment refuter's p-value is below this threshold, the
+#   null hypothesis (no spurious effect) is rejected at the 5% significance
+#   level.  The world-model's causal assumptions cannot be trusted.
+#   Rationale: standard frequentist significance level; consistent with
+#   SR 26-2 MRM back-testing requirements (CTRL_TEL_003).
+CAUSAL_LOCK_P_VALUE_THRESHOLD: float = float(
+    os.getenv("CAUSAL_LOCK_P_VALUE_THRESHOLD", "0.05")
+)
+
+# CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE (Phase 2 — placebo refutation):
+#   If the absolute value of the placebo refuter's new_effect exceeds this
+#   threshold, the estimated causal effect is considered unreliable regardless
+#   of the p-value.  Catches cases where the refuter finds a large spurious
+#   effect that is not statistically significant due to high variance.
+#   Rationale: 0.2 corresponds to a "medium" effect size (Cohen's d ≈ 0.2)
+#   in the normalised risk_score space [0, 1].
+CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE: float = float(
+    os.getenv("CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE", "0.2")
+)
+
+# CAUSAL_LOCK_RISK_BOUNDARY (Phase 1 — marginal risk boundary):
+#   If (0.5 + estimated_marginal_effect) exceeds this threshold, the proposed
+#   trade is predicted to push the system's risk score above the safety
+#   boundary.  The baseline risk is modelled as 0.5 (neutral market state);
+#   the estimated_marginal_effect is the linear regression coefficient
+#   multiplied by the trade amount.
+#   Rationale: 0.95 leaves a 5% safety margin below the maximum risk score
+#   of 1.0, consistent with the CBF γ=0.5 decay factor.
+CAUSAL_LOCK_RISK_BOUNDARY: float = float(
+    os.getenv("CAUSAL_LOCK_RISK_BOUNDARY", "0.95")
+)
+
 # NOTE: Timestamp-based ordering is a best-effort approximation. For production,
 # use span parentId relationships via OpenTelemetry context propagation.
 #
@@ -594,21 +633,25 @@ def causal_safety_check(params: dict, current_telemetry: Optional[pd.DataFrame] 
             tel_span.set_attribute("causal.placebo_p_value",    float(p_value) if p_value is not None else -1.0)
             tel_span.set_attribute("causal.placebo_new_effect", float(new_effect) if new_effect is not None else 0.0)
 
-            if p_value is not None and not np.isnan(p_value) and float(p_value) < 0.05:
+            if p_value is not None and not np.isnan(p_value) and float(p_value) < CAUSAL_LOCK_P_VALUE_THRESHOLD:
                 logger.warning(
-                    "[%s] CAUSAL LOCK: Placebo p-value %.4f < 0.05 — world-model untrustworthy.",
+                    "[%s] CAUSAL LOCK: Placebo p-value %.4f < %.2f — world-model untrustworthy.",
                     GovernanceControl.TELEMETRY_LIVE_VALIDATION.value, p_value,
+                    CAUSAL_LOCK_P_VALUE_THRESHOLD,
                 )
                 tel_span.set_attribute("causal.lock_reason", "p_value_threshold")
+                tel_span.set_attribute("causal.lock_p_value_threshold", CAUSAL_LOCK_P_VALUE_THRESHOLD)
                 _causal_cache_set_sync(cache_key, False, "p_value_threshold")
                 return False
 
-            if abs(new_effect) > 0.2:
+            if abs(new_effect) > CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE:
                 logger.warning(
-                    "[%s] CAUSAL LOCK: Placebo effect %.4f > 0.2 — world-model untrustworthy.",
+                    "[%s] CAUSAL LOCK: Placebo effect %.4f > %.2f — world-model untrustworthy.",
                     GovernanceControl.TELEMETRY_LIVE_VALIDATION.value, new_effect,
+                    CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE,
                 )
                 tel_span.set_attribute("causal.lock_reason", "placebo_effect_magnitude")
+                tel_span.set_attribute("causal.lock_effect_magnitude_threshold", CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE)
                 _causal_cache_set_sync(cache_key, False, "placebo_effect_magnitude")
                 return False
 
@@ -616,9 +659,8 @@ def causal_safety_check(params: dict, current_telemetry: Optional[pd.DataFrame] 
         # Phase 1 continued: marginal risk boundary check (MRM scope)
         # ------------------------------------------------------------------
         estimated_marginal_effect = estimate.value * amount
-        MAX_RISK_THRESHOLD = 0.95
 
-        if (0.5 + estimated_marginal_effect) > MAX_RISK_THRESHOLD:
+        if (0.5 + estimated_marginal_effect) > CAUSAL_LOCK_RISK_BOUNDARY:
             logger.warning(
                 "[%s] CAUSAL LOCK: Proposed action predicted to exceed safety boundary.",
                 GovernanceControl.TRADITIONAL_MRM_VALIDATION.value,
