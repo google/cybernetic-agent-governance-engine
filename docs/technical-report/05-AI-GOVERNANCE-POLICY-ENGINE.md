@@ -999,6 +999,133 @@ The following table summarises all NIST AI 600-1 governance modules, their POAM 
 
 ---
 
+## 16. Mathematical Policy Invariants
+
+This section formalises the key mathematical invariants enforced by the 7-tier symbolic governor pipeline. All constants are sourced from [`config/governance_thresholds.json`](../../config/governance_thresholds.json) and the named constants in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py).
+
+### 16.1 7-Tier Pipeline — Formal Summary
+
+The [`SymbolicGovernor._run_checks()`](../../src/gateway/governance/symbolic_governor.py) pipeline executes the following tiers in strict sequential order. Each tier is fail-closed: a violation at tier *k* raises `GovernanceError` and prevents tiers *k+1 … 6* from executing.
+
+| Tier | Name | Key Invariant / Mechanism | Fail Behavior |
+| ---- | ---- | ------------------------- | ------------- |
+| 0 | STPA UCA Validation | `trade_value ≤ position_limit`, `portfolio_concentration ≤ 0.25`, `order_size ≤ 0.1 × daily_volume` | `GovernanceError` |
+| 1 | Agentic Confidence Check | `confidence ≥ 0.95` (US_FED/APAC_MAS) or `≥ 0.97` (EU_ECB) | `GovernanceError` |
+| 2 | Control Barrier Function | `h(S(t+1)) ≥ (1−γ)·h(S(t))`, `h(x) = cash_balance − min_cash_balance` | `GovernanceError` |
+| 3 | SLM Sidecar | Deprecated / bypassed (`slm_available=False` sentinel) | Sentinel only |
+| 4 | OPA Policy Evaluation | `trade.governance` Rego package; `asyncio.gather` concurrent with CBF (Tier 2+4 concurrent) | `GovernanceError`; DENY on circuit open |
+| 5 | Multi-Agent Consensus | `amount > consensus_threshold_usd` → two LLM critics via `asyncio.gather`; 30s timeout | `GovernanceError` |
+| 6 | Causal Gatekeeper | `(0.5 + estimate.value × amount) ≤ 0.95`; PlaceboTreatmentRefuter 50 sims, p < 0.05, \|eff\| > 0.2 | `GovernanceError` |
+| 6b | Adaptive FRIA Gate | Confidence-mapped: `≥ 0.95` async; `[0.70, 0.95)` sync gate; `< 0.70` deny | `GovernanceError` (DENY path) |
+
+> **Note:** Tiers 2 (CBF) and 4 (OPA) are dispatched concurrently via `asyncio.gather` within the pipeline to minimise latency while preserving fail-closed semantics — both must pass before Tier 5 executes.
+
+### 16.2 FRIA Zone Thresholds and Decision Semantics
+
+The Adaptive FRIA Gate (Tier 6b) maps model confidence to one of three decision zones. The zone boundaries are named constants in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py):
+
+| Constant | Value | Zone | Decision Semantics |
+| -------- | ----- | ---- | ------------------ |
+| `FRIA_ZONE_ALLOW` | `0.95` | Allow zone: `confidence ≥ 0.95` | Autonomous clearance — external normative provider called asynchronously (non-blocking) |
+| `FRIA_ZONE_DEFER` | `0.70` | Defer zone: `0.70 ≤ confidence < 0.95` | Synchronous gate — execution blocked until external FRIA validation resolves |
+| *(implicit)* | `< 0.70` | Deny zone: `confidence < 0.70` | Confidence-Starvation Boundary — `GovernanceError` raised immediately |
+
+### 16.3 Confabulation Risk Formula
+
+The confabulation risk score is computed by [`src/gateway/governance/confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) as:
+
+```
+risk_score = 1.0 − confidence
+```
+
+A model response with `confidence = 0.95` yields `risk_score = 0.05` (low risk). A response with `confidence = 0.50` yields `risk_score = 0.50` (high risk). The score is submitted to Langfuse as a `confabulation_risk` evaluation metric. Execution is blocked when `confidence < CONFIDENCE_THRESHOLD` (default `0.95`).
+
+### 16.4 Causal Marginal Risk Boundary
+
+The [`causal_safety_check()`](../../src/gateway/governance/causal_gatekeeper.py) function enforces a marginal risk boundary derived from the DoWhy linear regression estimate:
+
+```
+(0.5 + estimate.value × amount) > CAUSAL_LOCK_RISK_BOUNDARY
+```
+
+Where the named constants are:
+
+| Constant | Value | Meaning |
+| -------- | ----- | ------- |
+| `CAUSAL_LOCK_RISK_BOUNDARY` | `0.95` | Maximum acceptable marginal risk score |
+| `CAUSAL_LOCK_P_VALUE_THRESHOLD` | `0.05` | PlaceboTreatmentRefuter significance threshold |
+| `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` | `0.2` | Minimum placebo effect magnitude to flag corruption |
+
+If the marginal risk score exceeds `0.95`, or if the PlaceboTreatmentRefuter detects a statistically significant placebo effect (`p_value < 0.05` or `|placebo_effect| > 0.2`), the gatekeeper raises `GovernanceError` (fail-closed).
+
+### 16.5 Consensus Boolean Logic
+
+The [`ConsensusEngine`](../../src/gateway/governance/consensus.py) activates only for trades exceeding the regional `consensus_threshold_usd`. The two LLM critic personas are dispatched concurrently via `asyncio.gather` with a **30-second timeout**:
+
+```
+consensus_required = (amount > consensus_threshold_usd)
+
+# US_FED default:
+consensus_threshold_usd = $10,000
+
+# Concurrent dispatch:
+[risk_manager_vote, compliance_officer_vote] = asyncio.gather(
+    critic_a.evaluate(request),
+    critic_b.evaluate(request),
+    timeout=30s
+)
+```
+
+The decision priority ladder (highest to lowest):
+
+1. All critics `ERROR` → `APPROVE` (fail-open on total LLM unavailability)
+2. All critics `REJECT` → `REJECT` → `GovernanceError`
+3. Split `APPROVE` + `REJECT` → `ESCALATE` → `GovernanceError`
+4. Any critic `ESCALATE` → `ESCALATE` → `GovernanceError`
+5. All critics `APPROVE` → `APPROVE` (unanimous — trade proceeds)
+
+---
+
+## 17. STPA Policy Enforcement
+
+The STPA/STAMP safety analysis defines **9 Unsafe Control Actions (UCAs)** enforced by [`GeneratedSTPAValidator`](../../src/gateway/governance/generated_stpa_validator.py) at Tier 0. The financial UCAs are formally specified as inequalities in [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py) and compiled into the validator by [`src/gateway/governance/stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py).
+
+### 17.1 Financial UCA Inequalities
+
+| UCA ID | Name | Formal Inequality | Threshold Source |
+| ------ | ---- | ----------------- | ---------------- |
+| FIN-1 | Portfolio Fraction Exceeded | `trade_value > position_limit` | `stpa.max_sell_portfolio_fraction = 0.10` |
+| FIN-2 | Concentration Limit Breach | `portfolio_concentration > 0.25` | `ontology.py` semantic constraint |
+| UCA-5 | Order Volume Fraction | `order_size > 0.1 × daily_volume` | `stpa.uca5_drawdown_threshold_pct = 4.5%` |
+| UCA-6 | Slippage Risk | `order_size > fraction × daily_vol` | `stpa.uca6_max_order_volume_fraction = 0.01` |
+
+> **FIN-1:** Blocks any trade where the notional value exceeds the portfolio position limit (`trade_value > position_limit`). Enforced by `GeneratedSTPAValidator.validate_generated()` using `stpa.max_sell_portfolio_fraction`.
+>
+> **FIN-2:** Blocks trades that would cause portfolio concentration to exceed 25% in a single asset (`portfolio_concentration > 0.25`). Enforced via the `TradingKnowledgeGraph` semantic constraint in [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py).
+>
+> **UCA-5:** Blocks orders where `order_size > 0.1 × daily_volume` — prevents market-moving orders that could cause adverse price impact. The drawdown threshold (`4.5%`) is the primary numeric gate; the volume fraction is the secondary structural gate.
+>
+> **UCA-6:** Blocks orders where `order_size > fraction × daily_vol` using the configurable `uca6_max_order_volume_fraction = 0.01` (1% of daily volume). This is the slippage risk guard.
+
+### 17.2 TradingKnowledgeGraph Semantic Constraints
+
+[`TradingKnowledgeGraph`](../../src/gateway/governance/ontology.py) in [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py) maintains an ontology of valid trading patterns. UCA-7 checks every request against known semantic constraints — blocking trades that structurally violate domain invariants even if all numeric thresholds pass. This provides a symbolic safety net that cannot be bypassed by numeric threshold manipulation.
+
+### 17.3 STPA Compiler and Artifact Generation
+
+[`src/gateway/governance/stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) compiles [`config/stpa_control_structure.yaml`](../../config/stpa_control_structure.yaml) into four enforcement artifact types at build time:
+
+| Output | Generated File | Enforcement Mechanism |
+| ------ | -------------- | --------------------- |
+| OPA Rego rules | `deployment/system_authz.rego` extensions | Deterministic per-UCA policy checks |
+| NeMo Colang rails | Colang 2.x flow definitions | Guardrail content-safety rules |
+| Python validator | `src/gateway/governance/generated_stpa_validator.py` | Runtime `STPAValidator` with per-UCA check methods |
+| LangGraph Saga nodes | `src/gateway/governance/generated_saga_nodes.py` | WAL ledger, LIFO rollback, ghost-state recovery |
+
+The STPA freshness check ([`scripts/check_stpa_freshness.py`](../../scripts/check_stpa_freshness.py)) is enforced by CI on every push to ensure that generated artifacts remain synchronized with the YAML source definition.
+
+---
+
 ## Summary
 
 The CAGE AI Governance & Policy Engine enforces a **neuro-symbolic, defense-in-depth** governance model across 6 active sequential tiers (0–6, plus tier 6b adaptive FRIA gate, with Tier 3 SLM deprecated), plus an optional 8th step for EU deployments. Every trade request must survive STPA semantic safety checks, confidence thresholds, a Redis-atomic Control Barrier Function, OPA Rego role-based authorization, multi-agent LLM consensus voting (two concurrent critic personas with a strict priority ladder), DoWhy causal gatekeeping, and adaptive external normative validation before execution is approved. All active tiers are fail-closed.

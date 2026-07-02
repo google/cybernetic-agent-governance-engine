@@ -240,6 +240,113 @@ CM-6, RA-5), enabling automated compliance-as-code assertion against the SSP. Th
 
 ---
 
+## 7. Mathematical Formalism Analysis
+
+**Added:** 2026-07-01
+**Scope:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py), [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py), [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py), [`src/gateway/governance/consensus.py`](../../src/gateway/governance/consensus.py), [`src/gateway/governance/constants.py`](../../src/gateway/governance/constants.py)
+
+### 7.1 Summary of Mathematical Foundations
+
+CAGE's governance kernel is grounded in four distinct mathematical disciplines, each mapped to a concrete runtime enforcement mechanism:
+
+| Discipline | Mechanism | Runtime Artifact |
+|---|---|---|
+| **Control Barrier Functions (CBF)** | Financial safety envelope | [`cbf.py`](../../src/gateway/governance/cbf.py) |
+| **Structural Causal Models (SCM)** | Causal inference gating | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) |
+| **Systems Theoretic Process Analysis (STPA)** | Unsafe Control Action enumeration | [`ontology.py`](../../src/gateway/governance/ontology.py), [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
+| **Probabilistic confidence scoring** | Confabulation detection and FRIA zone routing | [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
+
+This multi-discipline approach is architecturally distinctive: rather than relying on a single formal method, CAGE composes four complementary frameworks into a layered pipeline where each tier addresses a different failure mode.
+
+### 7.2 Control Barrier Function — Financial Safety
+
+The CBF implementation in [`cbf.py`](../../src/gateway/governance/cbf.py) enforces a **financial safe set** defined as:
+
+```
+S = {x ∈ ℝⁿ : h(x) ≥ 0}
+```
+
+where the barrier function is:
+
+```
+h(x) = cash_balance − min_cash_balance
+```
+
+The discrete-time CBF condition that must hold across every governance decision is:
+
+```
+h(S(t+1)) ≥ (1−γ) · h(S(t)),   γ ∈ (0,1)
+```
+
+This condition guarantees that the cash buffer decays at most geometrically — the system can never be driven to insolvency in a single step, regardless of the action proposed by the LLM agent. The decay parameter `γ` is a tunable conservatism knob: smaller `γ` enforces a tighter safety margin.
+
+**Architectural significance:** The CBF check runs concurrently with OPA policy evaluation in Tier 3 of the symbolic governor pipeline (via `asyncio.gather`), ensuring neither check can be bypassed by the other. A CBF violation is a hard block — it does not fall through to human review.
+
+### 7.3 7-Tier Symbolic Governor Pipeline — Formal Governance Architecture
+
+The [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) implements a **strictly ordered, fail-closed pipeline** of seven tiers. Each tier is a distinct formal check with a defined mathematical or logical basis:
+
+| Tier | Name | Formal Basis | Failure Mode |
+|---|---|---|---|
+| 1 | **NoDirectBind invariant** | State-space exhaustive verification | Hard block — no bypass |
+| 2 | **PII sanitization** | Entity-type regex + NLP classifier (15 types) | Redact before logging |
+| 3 | **CBF + OPA concurrent** | CBF condition + Rego policy (`asyncio.gather`) | Hard block on either failure |
+| 4 | **Causal gatekeeper** | SCM + PlaceboTreatmentRefuter (`p < 0.05`) | Hard block if causal lock triggered |
+| 5 | **Confabulation scoring** | `risk_score = 1.0 − confidence` | Escalate if `risk_score > threshold` |
+| 6 | **Consensus** | Quorum vote (≥$10k trades, 30s timeout) | Defer to human if quorum not reached |
+| 7 | **FRIA zones** | Threshold routing (`FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70`) | Allow / Defer / Block |
+
+The pipeline is **monotonically restrictive**: a decision that passes Tier 1 can still be blocked by any subsequent tier, but a decision blocked by an early tier cannot be unblocked by a later one. This property is enforced by the sequential structure of the governor and is not dependent on any single tier's correctness.
+
+### 7.4 STPA UCA Coverage
+
+The STPA analysis in [`ontology.py`](../../src/gateway/governance/ontology.py) encodes **Unsafe Control Actions (UCAs)** as runtime-enforceable predicates. The current UCA set covers financial trading hazards:
+
+| UCA ID | Predicate | Hazard Class |
+|---|---|---|
+| **FIN-1** | `trade_value > position_limit` | Position concentration |
+| **FIN-2** | `portfolio_concentration > 0.25` | Portfolio diversification |
+| **UCA-5** | `order_size > 0.1 × daily_volume` | Market impact |
+| **UCA-6** | `order_size > fraction × daily_vol` | Parameterised market impact |
+
+These UCAs are compiled by [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) into OPA Rego policies, NeMo Colang rails, and Python validators — eliminating the "Natural Language Tax" between human-readable safety specifications and running enforcement code. The STPA freshness check in CI (`scripts/check_stpa_freshness.py`) ensures compiled artifacts remain synchronized with the UCA source definitions.
+
+**Coverage gap:** The current 9 UCAs cover single-agent, single-trade hazards. Multi-agent coordination hazards and cross-region data-flow hazards are not yet enumerated; this is tracked as a v2.1.0 roadmap item in [V2_ROADMAP.md](V2_ROADMAP.md).
+
+### 7.5 Causal Inference Integration
+
+The [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) integrates **DoWhy Structural Causal Models** as a Tier 4 governance check. The gatekeeper:
+
+1. Fits a causal model to the proposed action's context
+2. Runs a `PlaceboTreatmentRefuter` to test whether the causal effect is spurious
+3. Blocks the action if `p_value < CAUSAL_LOCK_P_VALUE_THRESHOLD (0.05)` **and** the placebo effect magnitude exceeds `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE (0.2)`
+
+The named constants governing this check are defined in [`constants.py`](../../src/gateway/governance/constants.py):
+
+```python
+CAUSAL_LOCK_P_VALUE_THRESHOLD        = 0.05
+CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE = 0.2
+CAUSAL_LOCK_RISK_BOUNDARY            = 0.95
+```
+
+**Architectural significance:** Causal inference at the governance layer is a novel pattern — most AI governance frameworks rely on statistical correlation or rule-based checks. The SCM approach provides a principled basis for distinguishing genuine causal relationships from spurious correlations in the agent's reasoning, reducing the risk of the agent exploiting confounded signals in market data.
+
+### 7.6 Named Constants as Governance Policy
+
+The [`constants.py`](../../src/gateway/governance/constants.py) module externalises all governance thresholds as named constants, making the mathematical policy explicit and auditable without reading implementation code:
+
+| Constant | Value | Governance Role |
+|---|---|---|
+| `CAUSAL_LOCK_P_VALUE_THRESHOLD` | `0.05` | Causal significance gate (Tier 4) |
+| `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` | `0.2` | Spurious effect tolerance (Tier 4) |
+| `CAUSAL_LOCK_RISK_BOUNDARY` | `0.95` | Risk boundary for causal lock enforcement |
+| `FRIA_ZONE_ALLOW` | `0.95` | Autonomous approval confidence floor (Tier 7) |
+| `FRIA_ZONE_DEFER` | `0.70` | Human-review confidence floor (Tier 7) |
+
+Any change to these constants constitutes a change to the mathematical governance policy and must follow the Cat-N change management process (5 business days minimum, CAB review) per [`docs/governance/CHANGE_MANAGEMENT_PROCESS.md`](../governance/CHANGE_MANAGEMENT_PROCESS.md).
+
+---
+
 ## Cross-Cutting Patterns and Relationships
 
 | Pattern | Where it appears |

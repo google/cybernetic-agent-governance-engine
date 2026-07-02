@@ -66,6 +66,122 @@ The **Evaluator** performs a "Dry Run":
 
 The **Explainer** ensures the output is grounded in reality, addressing the "Black Box" problem and "Post-Hoc Rationalization".
 
-## 5. Conclusion
+### 4.4. 7-Tier Symbolic Governor Pipeline
 
-By implementing CAGE, we move from "Rule-Based Guardrails" to **"Agentic Governance"**. The Evaluator Agent acts as a cybernetic regulator, ensuring that the system remains viable and compliant within the high-stakes environment of Corporate Finance.
+The [`SymbolicGovernor`](src/gateway/governance/symbolic_governor.py) implements a 7-tier pipeline that every agent action must traverse before execution. Each tier is a distinct safety layer with formal properties:
+
+| Tier | Name | Mechanism | Formal Property |
+| :--- | :--- | :-------- | :-------------- |
+| **Tier 1** | NoDirectBind invariant | Aho-Corasick keyword scan | Bright-line block — no override |
+| **Tier 2** | PII sanitization | Presidio/spaCy (15 entity types) | Pre-ledger redaction |
+| **Tier 3** | CBF + OPA concurrent | `asyncio.gather()` | Fail-closed on Redis/OPA unavailability |
+| **Tier 4** | Causal gatekeeper | SCM + `PlaceboTreatmentRefuter` | World-model consistency |
+| **Tier 5** | Confabulation scoring | `risk_score = 1.0 − confidence` | Hallucination detection |
+| **Tier 6** | Consensus | ≥$10k trades, 30s timeout | Multi-critic unanimity |
+| **Tier 7** | FRIA zones | `FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70` | Human oversight gate |
+
+## 5. Mathematical Safety Controls
+
+This section documents the formal mathematical invariants enforced by the CAGE governance kernel. All formulas are implemented in the source files referenced below.
+
+### 5.1. Control Barrier Functions (CBF)
+
+**Source:** [`src/gateway/governance/cbf.py`](src/gateway/governance/cbf.py)
+
+The CBF enforces fiscal safety as a forward-invariance condition on the system state space.
+
+- **Safe set:** `S = {x ∈ ℝⁿ : h(x) ≥ 0}`
+- **Barrier function:** `h(x) = cash_balance − min_cash_balance`
+- **Discrete-time CBF condition:** `h(S(t+1)) ≥ (1−γ)·h(S(t))` where `γ ∈ (0,1)`
+
+The CBF condition guarantees that the system cannot transition from a safe state to an unsafe state in a single step. The decay parameter `γ` controls the rate at which the safety margin is permitted to shrink. CBF state is read atomically via a Redis pipeline (fail-closed on unavailability).
+
+### 5.2. FRIA Zone Thresholds
+
+**Source:** [`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py)
+
+The Fundamental Rights Impact Assessment (FRIA) zone thresholds determine the disposition of each governance decision at Tier 7:
+
+| Score Range | Zone | Action |
+| :---------- | :--- | :----- |
+| score ≥ `FRIA_ZONE_ALLOW` (0.95) | ALLOW | Async attestation — automated |
+| `FRIA_ZONE_DEFER` (0.70) ≤ score < 0.95 | DEFER | Synchronous blocking gate — human review required |
+| score < `FRIA_ZONE_DEFER` (0.70) | BLOCK | Hard block — human required |
+
+Named constants: `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70`
+
+### 5.3. Confabulation Risk Score
+
+**Source:** [`src/gateway/governance/confabulation_scorer.py`](src/gateway/governance/confabulation_scorer.py)
+
+The confabulation (hallucination) risk score is computed as the complement of the model's self-reported confidence:
+
+```
+risk_score = 1.0 − confidence
+```
+
+A `risk_score` approaching 1.0 indicates high hallucination risk. The score feeds into the Tier 7 FRIA zone classification.
+
+### 5.4. Causal Marginal Risk Boundary
+
+**Source:** [`src/gateway/governance/causal_gatekeeper.py`](src/gateway/governance/causal_gatekeeper.py)
+
+The causal gatekeeper applies a marginal risk boundary to prevent trades whose causal effect estimate pushes the system into an unsafe region:
+
+```
+(0.5 + estimate.value × amount) > CAUSAL_LOCK_RISK_BOUNDARY
+```
+
+Named constants:
+- `CAUSAL_LOCK_RISK_BOUNDARY = 0.95`
+- `CAUSAL_LOCK_P_VALUE_THRESHOLD = 0.05`
+- `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE = 0.2`
+
+The `PlaceboTreatmentRefuter` runs 50 simulations; a refutation is triggered when `p < 0.05` and `|effect| > 0.2`, indicating the causal estimate is not robust to placebo treatment.
+
+### 5.5. Routing Seal Integrity
+
+**Source:** [`src/gateway/governance/routing_seal.py`](src/gateway/governance/routing_seal.py)
+
+Every request traversing the governance gateway must carry a valid HMAC-SHA256 routing seal. The seal format is:
+
+```
+<expire_ts_hex>.<action_slug>.<hmac_hex>
+```
+
+- **Algorithm:** HMAC-SHA256 keyed on `GOVERNANCE_SALT` (≥64 chars, fail-fast at startup)
+- **TTL:** 30 seconds (`expire_ts_hex` encodes the expiry Unix timestamp)
+- **Enforcement:** `CAGE_SEAL_ENFORCEMENT=enforce` required in production; `log` mode is prohibited
+
+### 5.6. Fiscal Limit Guard Parameters
+
+**Source:** [`src/gateway/governance/fiscal_limit_guard.py`](src/gateway/governance/fiscal_limit_guard.py)
+
+The `FiscalLimitGuard` enforces a hard daily spending cap using Redis atomic operations:
+
+| Parameter | Value | Description |
+| :-------- | :---- | :---------- |
+| Daily cap | $500,000 USD | Stored as integer cents in Redis |
+| Window | 86,400 seconds | Rolling 24-hour window |
+| Retry backoff | `_RETRY_BASE_MS × 2^attempt` | Exponential backoff on Redis contention |
+
+State is managed via Redis `WATCH`/`MULTI`/`EXEC` atomic transactions. The guard is fail-closed: Redis unavailability blocks the trade.
+
+## 6. STPA Unsafe Control Actions
+
+**Source:** [`src/gateway/governance/ontology.py`](src/gateway/governance/ontology.py)
+
+System-Theoretic Process Analysis (STPA) identifies the following Unsafe Control Actions (UCAs) that the governance kernel is designed to prevent. These are enforced by the `GeneratedSTPAValidator` and logged by the `UCALogger`.
+
+| UCA ID | Condition | Description |
+| :----- | :-------- | :---------- |
+| **FIN-1** | `trade_value > position_limit` | Trade value exceeds the position limit — concentration risk |
+| **FIN-2** | `portfolio_concentration > 0.25` | Portfolio concentration exceeds 25% in a single asset |
+| **UCA-5** | `order_size > 0.1 × daily_volume` | Order size exceeds 10% of daily volume — market impact risk |
+| **UCA-6** | `order_size > fraction × daily_vol` | Order size exceeds the parameterised fraction of daily volume |
+
+All UCA violations are recorded as 16-field compliance records, signed with KMS (HMAC-SHA256), and written to the region-gated WORM bucket (`CAGE_DEPLOYMENT_REGION`).
+
+## 7. Conclusion
+
+By implementing CAGE, we move from "Rule-Based Guardrails" to **"Agentic Governance"**. The Evaluator Agent acts as a cybernetic regulator, ensuring that the system remains viable and compliant within the high-stakes environment of Corporate Finance. The 7-tier `SymbolicGovernor` pipeline, grounded in Control Barrier Function theory and causal inference, provides mathematically verifiable safety guarantees that satisfy ISO/IEC 42001:2023 Annex A obligations across all deployment regions.

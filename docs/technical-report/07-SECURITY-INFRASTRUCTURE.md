@@ -612,9 +612,65 @@ All third-party compliance and attestation provider adapters are isolated under 
 | TLS (external)          | TLS 1.2+                   | External service connections     | ✅ FIPS-compliant        | No intra-cluster equivalent      |
 | Intra-cluster transport | **Linkerd mTLS**           | Service-to-service               | ✅ FIPS-compliant        | **FIND-011 RESOLVED** — Linkerd mTLS |
 | Context Evidence Chain  | SHA-256 Hash Chain         | OscalFindings integrity tracking | ✅ FIPS-approved         | None — fully implemented         |
+| Provenance Hash Chain   | SHA-256 Hash Chain         | LangGraph governance node audit trail | ✅ FIPS-approved    | None — fully implemented         |
 | Session token expiry    | N/A (expiry policy)        | Session tokens ≤ 8h              | N/A                      | No rotation schedule (FIND-012)  |
 
 **FIPS 140-2/3 Assessment**: HMAC-SHA256 is a FIPS-approved algorithm. Intra-cluster mTLS is now enforced via Linkerd (FIND-011 resolved), satisfying FIPS transport requirements for all service-to-service communication within the `governance-stack` namespace.
+
+### 9.0 Cryptographic Integrity — Routing Seal and Provenance Chain
+
+#### HMAC-SHA256 Routing Seal
+
+**Source:** [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py)
+
+Every governance approval is sealed with an HMAC-SHA256 routing seal before execution is permitted. The seal format is:
+
+```
+<expire_ts_hex>.<action_slug>.<hmac_hex>
+```
+
+| Field | Description |
+| ----- | ----------- |
+| `expire_ts_hex` | Hex-encoded Unix timestamp of seal expiry |
+| `action_slug` | URL-safe slug identifying the governed action |
+| `hmac_hex` | HMAC-SHA256 hex digest over `expire_ts_hex.action_slug` |
+
+| Parameter | Value | Security Property |
+| --------- | ----- | ----------------- |
+| TTL | **30 seconds** | Prevents replay attacks; seal expires 30s after issuance |
+| Algorithm | HMAC-SHA256 | FIPS-approved; constant-time `hmac.compare_digest` prevents timing side-channels |
+| Secret | `CAGE_ROUTING_SEAL_SECRET` | Kubernetes `Secret` object; ≥ 64 characters enforced in production |
+| Enforcement | [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py) | Missing or invalid seal → HTTP 401 (fail-closed) |
+
+The routing seal satisfies the `NoDirectBind` formal invariant: there is no code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`. This was machine-verified over the full reachable state space in [`proof/model.py`](../../proof/model.py) (see §3a, Gap 2).
+
+**ISO 42001 mapping:** A.7.5 (Records Integrity). **[US_FED only]** NIST AU-10 (Non-repudiation).
+
+#### SHA-256 Provenance Hash Chain
+
+**Source:** [`src/gateway/governance/provenance_chain.py`](../../src/gateway/governance/provenance_chain.py)
+
+The provenance chain builds a tamper-evident SHA-256 hash chain across all LangGraph governance nodes. Any modification to any node's input, output, or decision invalidates all subsequent chain links.
+
+**Hash computation:** [`compute_hash(data)`](../../src/gateway/governance/provenance_chain.py) serialises the dict with `json.dumps(sort_keys=True)` before SHA-256 hashing — **deterministic sorted-key JSON** regardless of insertion order. Non-serialisable values are coerced to strings.
+
+**Chain construction complexity:** O(n) — each record's `parent_hash` is the SHA-256 of the preceding record's full dict (sorted keys). The first record has `parent_hash=None`.
+
+```
+ProvenanceRecord[0]  (parent_hash=None)
+      │  chain_hash() = SHA-256(json.dumps(record_0, sort_keys=True))
+      ▼
+ProvenanceRecord[1]  (parent_hash=chain_hash[0])
+      │  chain_hash() = SHA-256(json.dumps(record_1, sort_keys=True))
+      ▼
+ProvenanceRecord[n]  (parent_hash=chain_hash[n-1])
+```
+
+**Chain integrity verification:** [`verify_chain_integrity(records)`](../../src/gateway/governance/provenance_chain.py) checks that each record's `parent_hash` matches the `chain_hash()` of the preceding record. Returns `False` on any broken link — O(n) verification.
+
+**ISO 42001 mapping:** A.7.5 (Records Integrity — universal). **[US_FED only]** NIST AI 600-1 §2.7 (Information Integrity).
+
+---
 
 ### 9.1 Cryptographic Context Accumulator (AARM-V1)
 
@@ -637,6 +693,59 @@ The `outlines` Python package was removed from all CAGE container images followi
 | **Universal Control** | ISO/IEC 42001:2023 §A.9.3 (AI system vulnerability management) — all regions |
 | **US_FED Control** | NIST SP 800-53 SI-2 (Flaw Remediation) `[US_FED only]` |
 | **Status** | **RESOLVED** |
+
+---
+
+## 9.3 Financial Safety Controls
+
+This section documents the mathematical safety controls that enforce financial integrity at the governance layer. These controls are complementary to the cryptographic controls in §9.0–§9.2 and operate on the financial state of the system.
+
+### Control Barrier Function (CBF)
+
+**Source:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)
+
+The Control Barrier Function enforces the core financial safety invariant using control theory formalism. The safe set and barrier function are:
+
+```
+Safe set:         S = {x ∈ ℝⁿ : h(x) ≥ 0}
+Barrier function: h(x) = cash_balance − min_cash_balance
+```
+
+The discrete-time CBF condition enforced at every governance step:
+
+```
+h(S(t+1)) ≥ (1−γ) · h(S(t))     where γ ∈ (0,1)
+```
+
+| Parameter | Value | Region |
+| --------- | ----- | ------ |
+| `min_cash_balance` | `1000.0` | All regions |
+| `γ` (decay rate) | `0.5` | US_FED, APAC_MAS |
+| `γ` (decay rate) | `0.6` | EU_ECB (stricter CRD VI buffer) |
+
+**Enforcement mechanism:** Redis `WATCH/MULTI/EXEC` atomic transaction (5 retries on contention). A violation of `h(x) ≥ 0` raises `GovernanceError` immediately (fail-closed). The CBF is re-evaluated at execution time by `post_hitl_revalidate_node` using the fresh live price to prevent TOCTOU exploits.
+
+**Security significance:** The CBF is the primary financial safety gate. Setting `CBF_FAIL_OPEN=true` in production raises a `RuntimeError` at startup (Gap 3 remediation — see §3a), preventing any degraded-gate configuration from reaching production.
+
+**ISO 42001 mapping:** A.8.4 (AI System Operation Controls). **[US_FED only]** NIST SP 800-53 SC-4.
+
+### Fiscal Limit Guard
+
+**Source:** [`src/gateway/governance/fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py)
+
+The `FiscalLimitGuard` prevents race conditions where parallel agent threads collectively exceed the authorized daily spending limit:
+
+| Parameter | Value | Notes |
+| --------- | ----- | ----- |
+| Daily cap | **$500,000 USD** | Configurable via `FISCAL_DAILY_CAP_USD` env var |
+| Cap storage | Integer cents | Prevents floating-point precision errors in financial arithmetic |
+| Window | **86,400 seconds** | Rolling 24-hour window |
+| Retry strategy | Exponential backoff: `_RETRY_BASE_MS × 2^attempt` | Handles Redis `WATCH/MULTI/EXEC` contention |
+| Reservation TTL | 300 seconds | Reclaims limits from crashed nodes automatically |
+
+**Headroom pre-reservation:** Fiscal headroom is reserved in Redis *after* concurrent CBF+OPA validation (Tiers 2+4), closing the TOCTOU race window. Unused limits are returned via `release(token)` on Saga LIFO rollback. If Redis is unavailable, the trade is blocked (fail-closed).
+
+**ISO 42001 mapping:** A.8.4 (AI System Operation Controls). **[US_FED only]** NIST SP 800-53 SC-4 (Information in Shared Resources).
 
 ---
 

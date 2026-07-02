@@ -637,3 +637,164 @@ On threshold breach, a `langfuse.webhook.threshold_breach` OTel event is emitted
 
 ---
 
+## 11. Governance Kernel Mathematical Foundations
+
+This section documents the mathematical formalism underlying each component of the CAGE governance kernel. All formulas are implemented in [`src/gateway/governance/`](../../src/gateway/governance/).
+
+### 11.1 Control Barrier Function (CBF)
+
+**Source:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)
+
+The CBF layer provides a formal cash-balance safety guarantee. The **safe set** is:
+
+```
+S = {x ∈ ℝⁿ : h(x) ≥ 0}
+```
+
+The **barrier function** maps system state to a scalar safety margin:
+
+```
+h(x) = cash_balance − min_cash_balance
+```
+
+where `min_cash_balance = $1,000 USD` (configurable). The **discrete-time CBF condition** that must hold at every governance check:
+
+```
+h(S(t+1)) ≥ (1 − γ) · h(S(t))     γ ∈ (0, 1), default γ = 0.5
+```
+
+This condition guarantees `h(S(t)) ≥ 0` for all `t` — the cash balance never falls below `min_cash_balance`. The Redis atomic implementation uses `WATCH/MULTI/EXEC` optimistic locking with `_MAX_RETRIES = 5`. `verify_action()` is **read-only** at check time; the actual debit is performed by `FiscalLimitGuard`.
+
+### 11.2 Causal Gatekeeper — SCM with Backdoor Adjustment
+
+**Source:** [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)
+
+The causal gatekeeper uses a **Structural Causal Model (SCM)** with `backdoor.linear_regression` to estimate the causal effect of a proposed trade on portfolio risk. The **marginal risk boundary** that triggers a causal block:
+
+```
+(0.5 + estimate.value × amount) > 0.95
+```
+
+If this condition is met, the trade is blocked regardless of OPA or CBF results.
+
+**PlaceboTreatmentRefuter validation:** 50 simulations are run against live telemetry. A statistically significant placebo effect indicates poisoned model assumptions:
+
+- p-value < 0.05 → model assumptions violated → BLOCK
+- |placebo effect| > 0.2 → effect size too large → BLOCK
+
+Results are cached in Redis by `(action_type, market_regime)` with a **60-second TTL** (`CAUSAL_CACHE_TTL_SECONDS`). Cache hits skip both SCM phases entirely. Fails closed if telemetry is stale (> `TELEMETRY_MAX_STALENESS_SECONDS`, default 300s).
+
+### 11.3 Confabulation Risk Formula
+
+**Source:** [`src/gateway/governance/confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py)
+
+The confabulation risk score is computed as:
+
+```
+risk_score = 1.0 − confidence
+```
+
+A confidence of 0.95 yields `risk_score = 0.05` — the maximum tolerated confabulation risk. Requests where `confidence < CONFIDENCE_MIN_SCORE` (default 0.95) are blocked. The score is emitted as a structured Langfuse score payload (`confabulation_risk`) for every governed request. Implements `CTRL_AGT_001` (NIST AI 600-1 §2.1).
+
+### 11.4 Consensus Boolean Logic
+
+**Source:** [`src/gateway/governance/consensus.py`](../../src/gateway/governance/consensus.py)
+
+Multi-model consensus is required for trades ≥ **$10,000 USD** (`consensus.threshold_usd` in `governance_thresholds.json`). Two heterogeneous critic personas are queried concurrently via `asyncio.gather()` with a **30-second timeout**:
+
+| Critic | Model | Role |
+|--------|-------|------|
+| Risk Manager | `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` | Financial risk assessment |
+| Compliance Officer | `meta-llama/Llama-3.1-8B-Instruct` | Regulatory compliance check |
+
+**Decision logic:**
+
+| Outcome | Condition | Result |
+|---------|-----------|--------|
+| PASS | Unanimous `APPROVE` | Trade proceeds |
+| BLOCK | Unanimous `REJECT` | Trade blocked |
+| ESCALATE | Split vote or any `ESCALATE` | Human review required |
+| ESCALATE | Unanimous `ERROR` | Fail-closed (DoS bypass prevention) |
+
+Trades below $10,000 receive an immediate `SKIPPED` result with zero LLM calls.
+
+### 11.5 Fiscal Limit Guard — $500k Daily Cap
+
+**Source:** [`src/gateway/governance/fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py)
+
+The `FiscalLimitGuard` enforces a **$500,000 USD daily cap** (`FISCAL_DAILY_CAP_USD` env var) stored in **integer cents** for precision. The cap resets on an **86,400-second rolling window**.
+
+Atomic pre-reservation uses `WATCH/MULTI/EXEC` optimistic locking. On Redis contention, the guard retries with **exponential backoff**:
+
+```
+wait_ms = _RETRY_BASE_MS × 2^attempt
+```
+
+Fail-closed: if Redis is unavailable, the trade is blocked. A `ReservationToken` with a **300-second TTL** is returned on success; if the agent crashes before execution, the cap is automatically reclaimed.
+
+### 11.6 Provenance SHA-256 Hash Chain
+
+**Source:** [`src/gateway/governance/provenance_chain.py`](../../src/gateway/governance/provenance_chain.py)
+
+Each `ProvenanceRecord` is linked to its predecessor via SHA-256:
+
+```
+record_hash_n = SHA-256(parent_hash_{n-1} || sorted_key_json(record_n))
+```
+
+**Deterministic sorted-key JSON serialization** ensures reproducibility across Python versions and runtimes. Chain construction is **O(n)** in the number of governance nodes. `verify_chain_integrity()` validates the full chain on demand. In production, records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`.
+
+### 11.7 HMAC-SHA256 Routing Seal
+
+**Source:** [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py)
+
+On governance approval, a short-lived routing seal is issued in the format:
+
+```
+<expire_ts_hex>.<action_slug>.<hmac_hex>
+```
+
+| Field | Description |
+|-------|-------------|
+| `expire_ts_hex` | Unix timestamp (hex) at which the seal expires |
+| `action_slug` | Normalized action identifier (e.g., `execute_trade`) |
+| `hmac_hex` | HMAC-SHA256 over `expire_ts_hex + "." + action_slug` using `CAGE_ROUTING_SEAL_SECRET` |
+
+**Security properties:** 30-second TTL; constant-time `hmac.compare_digest()` prevents timing-oracle attacks. Cloud KMS HSM asymmetric signing is the production primary; HMAC-SHA256 is the dev/CI fallback only.
+
+---
+
+## 12. STPA Safety Analysis
+
+**Source:** [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py)
+
+CAGE implements System-Theoretic Process Analysis (STPA) to identify and enforce constraints against Unsafe Control Actions (UCAs). The UCA definitions are codified in the ontology module and validated at Tier 0 of the symbolic governor pipeline by `STPAValidator.validate()`.
+
+### 12.1 Financial UCAs (FIN series)
+
+These UCAs define hard financial safety boundaries:
+
+| UCA ID | Condition | Description |
+|--------|-----------|-------------|
+| **FIN-1** | `trade_value > position_limit` | Trade value exceeds the per-position limit; blocks over-concentration in a single instrument |
+| **FIN-2** | `portfolio_concentration > 0.25` | Portfolio concentration exceeds 25%; enforces diversification constraint |
+
+### 12.2 Order Sizing UCAs (UCA series)
+
+These UCAs constrain order size relative to market liquidity:
+
+| UCA ID | Condition | Description |
+|--------|-----------|-------------|
+| **UCA-5** | `order_size > 0.1 × daily_volume` | Order exceeds 10% of daily trading volume; prevents market impact |
+| **UCA-6** | `order_size > fraction × daily_vol` | Generalized fraction-based order size limit; `fraction` is configurable per asset class |
+
+### 12.3 STPA Integration in the Pipeline
+
+UCA validation runs at **Tier 0** — before any other governance check — ensuring that structurally unsafe actions are rejected immediately without consuming CBF, OPA, or consensus resources. Thresholds are sourced from `src/gateway/governance/safety_params.json` and `governance_thresholds.json`.
+
+The `_extract_trade_payload()` function in `src/governed_financial_advisor/graph/nodes/safety_node.py` passes the optional STPA-required fields (`drawdown`, `order_size`, `daily_vol`) through to the trade payload, enabling UCA-5 and UCA-6 checks to operate on live market data.
+
+UCA violations are logged to the WORM audit trail via `UCALogger` and surfaced as structured OTel span attributes for operator visibility in Langfuse.
+
+---
+

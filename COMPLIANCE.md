@@ -84,11 +84,124 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 
 ---
 
-## 2. In-Depth Control Implementations
+## 2. Mathematical Safety Invariants
+
+The following formal invariants are implemented directly in source code and enforced at runtime on every governance evaluation. Full derivations are in [`docs/technical-report/10-FORMAL-VERIFICATION.md`](docs/technical-report/10-FORMAL-VERIFICATION.md) and [`docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md`](docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md).
+
+### 2.1 Control Barrier Function (CBF)
+
+**Source:** [`src/gateway/governance/cbf.py`](src/gateway/governance/cbf.py) · **Control:** `CTRL_MRM_004`
+
+The safe set is `S = {x ∈ ℝⁿ : h(x) ≥ 0}` where the barrier function is:
+
+```
+h(x) = cash_balance − min_cash_balance
+```
+
+The discrete-time CBF condition enforced at every governance tick:
+
+```
+h(S(t+1)) ≥ (1−γ) · h(S(t)),   γ ∈ (0,1)
+```
+
+This guarantees the cash balance never drops below the minimum threshold in a single step. The decay factor `γ` bounds the maximum permissible drawdown per evaluation cycle. CBF currently reads from Redis state; external reconciliation via `AnchorageGrpcLedgerProvider` is FUTURE STATE (POAM-023, target 2026-09-08).
+
+### 2.2 Confabulation Risk Formula
+
+**Source:** [`src/gateway/governance/confabulation_scorer.py`](src/gateway/governance/confabulation_scorer.py) · **Control:** `CTRL_AGT_001`
+
+```
+risk_score = 1.0 − confidence
+```
+
+| Score Range | Action |
+|-------------|--------|
+| ≥ 0.95 (`FRIA_ZONE_ALLOW`) | Async attestation — 0 ms overhead |
+| [0.70, 0.95) (`FRIA_ZONE_DEFER`) | Synchronous blocking gate via DEFER queue |
+| < 0.70 | Local hard deny — no external call |
+
+### 2.3 Causal Marginal Risk Boundary
+
+**Source:** [`src/gateway/governance/causal_gatekeeper.py`](src/gateway/governance/causal_gatekeeper.py) · **Control:** `CTRL_TEL_003`
+
+A trade action is blocked when:
+
+```
+(0.5 + estimate.value × amount) > 0.95
+```
+
+The `PlaceboTreatmentRefuter` runs **50 simulations**; the causal effect is considered spurious (action blocked) when **p ≥ 0.05** or **|effect| ≤ 0.2**.
+
+### 2.4 FRIA Zone Thresholds
+
+**Source:** [`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py) · **Control:** `CTRL_FRIA_006`
+
+| Constant | Value | Semantic |
+|----------|-------|----------|
+| `FRIA_ZONE_ALLOW` | `0.95` | Confidence floor for immediate async pass |
+| `FRIA_ZONE_DEFER` | `0.70` | Confidence floor for DEFER queue entry |
+
+Scores below `FRIA_ZONE_DEFER` trigger a local hard deny without invoking the external normative provider.
+
+### 2.5 Fiscal Limit Guard Parameters
+
+**Source:** [`src/gateway/governance/fiscal_limit_guard.py`](src/gateway/governance/fiscal_limit_guard.py) · **Control:** `CTRL_MRM_004`
+
+| Parameter | Value |
+|-----------|-------|
+| Daily cap | **$500,000** |
+| Rolling window | **86,400 s** (24 h) |
+| Contention strategy | Exponential backoff |
+| Redis failure mode | Fail-closed (blocks request) |
+
+### 2.6 Provenance Hash Chain Integrity
+
+**Source:** [`src/gateway/governance/provenance_chain.py`](src/gateway/governance/provenance_chain.py) · **Control:** `CTRL_CTX_007`
+
+SHA-256 hash chain with O(n) construction:
+
+```
+record_hash[n] = SHA-256(record_hash[n-1] ‖ content_json[n])
+```
+
+Any mutation of node `k` invalidates all hashes for nodes `k … n`, making tampering detectable at O(1) per node during verification.
+
+### 2.7 Routing Seal Integrity
+
+**Source:** [`src/gateway/governance/routing_seal.py`](src/gateway/governance/routing_seal.py) · **Control:** `CTRL_MRM_004`
+
+HMAC-SHA256 token format:
+
+```
+<expire_ts_hex>.<action_slug>.<hmac_hex>
+```
+
+TTL: **30 seconds**. Unsigned or expired requests return HTTP 403.
+
+---
+
+## 3. STPA Unsafe Control Actions (UCAs)
+
+**Source:** [`src/gateway/governance/ontology.py`](src/gateway/governance/ontology.py), [`config/stpa_control_structure.yaml`](config/stpa_control_structure.yaml)
+
+The STPA-to-Policy Compiler (`src/gateway/governance/stpa_compiler.py`) ingests the declarative YAML control structure and auto-generates OPA Rego policies, NeMo Colang rails, Python validator classes, and LangGraph Saga compensating sub-graphs from the following UCA definitions:
+
+| UCA ID | Condition | Generated Enforcement Artifact |
+|--------|-----------|-------------------------------|
+| **FIN-1** | `trade_value > position_limit` | OPA Rego rule + `GeneratedSTPAValidator` |
+| **FIN-2** | `portfolio_concentration > 0.25` | OPA Rego rule + `GeneratedSTPAValidator` |
+| **UCA-5** | `order_size > 0.1 × daily_volume` | Saga compensating node + HITL escalation |
+| **UCA-6** | `order_size > fraction × daily_vol` | Saga compensating node + HITL escalation |
+
+Full STPA hazard analysis (UCAs 1–9, Saga pattern, FiscalLimitGuard): [`docs/security/STPA_ANALYSIS.md`](docs/security/STPA_ANALYSIS.md)
+
+---
+
+## 4. In-Depth Control Implementations
 
 ### A. SR 26-2 Model Risk Management Partitioning
 *   **Status:** Strictly Scoped & Partitioned.
-*   **Mechanism:** Traditional, deterministic safety formulas and back-testable statistical structures (the causal regression kernel) are isolated under `CTRL_MRM_004`. CAGE intentionally decouples these from fluid agent workflows, fulfilling the Federal Reserve mandate to apply targeted, rigorous mathematical validation to traditional predictive blocks while shielding them from non-deterministic LLM variance.
+*   **Mechanism:** Traditional, deterministic safety formulas and back-testable statistical structures (the causal regression kernel) are isolated under `CTRL_MRM_004`. CAGE intentionally decouples these from fluid agent workflows, fulfilling the Federal Reserve mandate to apply targeted, rigorous mathematical validation to traditional predictive blocks while shielding them from non-deterministic LLM variance. The discrete-time CBF condition `h(S(t+1)) ≥ (1−γ)·h(S(t))` (see §2.1 above) is the primary mathematical invariant validated under this control.
 *   **Companion Documentation:** For details on mathematical CBF equations and regression validation, see [docs/CAUSAL_AND_CBF_GOVERNANCE.md](docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md) and [docs/STPA_ANALYSIS.md](docs/security/STPA_ANALYSIS.md).
 
 ### B. ISO/IEC 42001 & DORA (Digital Operational Resilience Act)
@@ -196,7 +309,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 
 ---
 
-## 3. Automated Posture Enforcement (CI/CD Guardrails)
+## 5. Automated Posture Enforcement (CI/CD Guardrails)
 
 To guarantee that compliance claims never drift from physical codebase state, permanent regression tests are established in `tests/test_governance_architecture.py` and `tests/test_framework_router.py`.
 

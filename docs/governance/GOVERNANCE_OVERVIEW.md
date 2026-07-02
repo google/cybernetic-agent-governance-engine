@@ -88,6 +88,144 @@ The following components are essential infrastructure but are **not** numbered g
 
 ---
 
+## Symbolic Governor Pipeline
+
+> **Source:** [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
+
+The `SymbolicGovernor._run_checks()` method implements a strict **7-tier sequential pipeline**. Every tool execution request must pass all applicable tiers before a routing seal is issued. The tiers below use 1-based numbering aligned to the source implementation; the existing Step 0–6 table in §2 uses 0-based numbering for historical reasons — both refer to the same pipeline.
+
+### 7-Tier Pipeline
+
+| Tier | Name | Key Invariant / Action | Source Module |
+|------|------|------------------------|---------------|
+| **1** | NoDirectBind invariant check | No LLM output may bind directly to an executable action without passing the full governance pipeline | `symbolic_governor.py` |
+| **2** | PII sanitization | Microsoft Presidio (15 entity types) masks PII in request payload before any downstream evaluation | `nemo/manager.py`, `privacy.py` |
+| **3** | CBF + OPA concurrent evaluation | `asyncio.gather(cbf_check, opa_check)` — combined latency = `max(CBF_ms, OPA_ms)` | `cbf.py`, OPA `system_authz.rego` |
+| **4** | Causal gatekeeper | DoWhy `CausalModel` + Placebo Treatment Refuter (50 sims, p < 0.05, \|eff\| > 0.2) | `causal_gatekeeper.py` |
+| **5** | Confabulation scoring | `risk_score = 1.0 − confidence`; score ≥ 0.95 → BLOCK | `confabulation_scorer.py` |
+| **6** | Consensus (high-value trades) | Boolean unanimity via `asyncio.gather`; threshold $10,000 USD; 30 s timeout | `consensus.py` |
+| **7** | FRIA zone classification | Fundamental Rights Impact Assessment — score-based zone assignment (ALLOW / DEFER / BLOCK) | `symbolic_governor.py` |
+
+### NoDirectBind Invariant
+
+The **NoDirectBind invariant** is the foundational safety property of the pipeline:
+
+> *No output produced by an LLM may be bound directly to an executable action (trade, API call, state mutation) without first passing through the full `SymbolicGovernor._run_checks()` pipeline.*
+
+This invariant is enforced structurally: the `@governed_tool` decorator intercepts every tool call at the gateway boundary and invokes `_run_checks()` before any execution occurs. A routing seal (`X-CAGE-Routing-Seal`) is issued **only** after all 7 tiers complete successfully.
+
+### Tier 3 — Concurrent CBF + OPA Evaluation
+
+Tier 3 runs the Control Barrier Function check and the OPA policy evaluation **concurrently** using `asyncio.gather`:
+
+```python
+cbf_result, opa_result = await asyncio.gather(cbf_check(), opa_check())
+```
+
+Both checks must pass. The combined latency is `max(CBF_ms, OPA_ms)` rather than the sum, reducing p99 pipeline latency.
+
+### FRIA Zone Decision Semantics (Tier 7)
+
+The Fundamental Rights Impact Assessment (FRIA) at Tier 7 classifies each request into one of three zones based on a composite governance score:
+
+| Zone | Score Condition | Decision | Mechanism |
+|------|----------------|----------|-----------|
+| **ALLOW** | score ≥ `FRIA_ZONE_ALLOW` (0.95) | Proceed; async attestation emitted | OTel span stamped with EU AI Act Art. 29a attestation |
+| **DEFER** | 0.70 ≤ score < 0.95 (`FRIA_ZONE_DEFER`) | Synchronous blocking gate | Request held; pushed to DEFER queue (Redis db=1, 4 h TTL) for human review |
+| **BLOCK** | score < 0.70 | Hard deny | Request rejected; violation logged with `[CTRL_FRIA_006]` prefix |
+
+Constants: `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70` (defined in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)).
+
+---
+
+## Mathematical Governance Invariants
+
+The following formal conditions are evaluated at runtime. A violation of any invariant causes the pipeline to halt and the request to be denied.
+
+### Control Barrier Function (CBF) — Tier 3
+
+**Barrier function:** `h(x) = cash_balance − min_cash_balance`
+
+**Discrete-time CBF condition** (must hold at every time step):
+
+```
+h(S(t+1)) ≥ (1−γ) · h(S(t))
+```
+
+where γ ∈ (0, 1] is the decay parameter (default γ = 0.5). If `h(S(t)) ≥ 0` and the condition holds for all t, then `h(S(t)) ≥ 0` for all t ≥ 0 — the cash balance never falls below `min_cash_balance`.
+
+> **Source:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)
+
+### Confabulation Risk Score — Tier 5
+
+```
+risk_score = 1.0 − confidence
+```
+
+**Decision rule:** if `risk_score ≥ 0.95` (equivalently, `confidence ≤ 0.05`) → **BLOCK**. The threshold guards against LLM outputs with near-zero grounding confidence being passed to execution.
+
+> **Source:** [`src/gateway/governance/confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py)
+
+### Causal Marginal Risk Boundary — Tier 4
+
+The causal gatekeeper blocks a trade when the estimated marginal effect of `trade_amount` on `risk_score` pushes the predicted risk above the safety boundary:
+
+```
+(0.5 + estimate.value × amount) > 0.95  →  LOCK (trade blocked)
+```
+
+Additionally, the Placebo Treatment Refuter (50 simulations) must confirm the world-model is trustworthy: if the placebo still detects a significant effect (p < 0.05 **or** |effect| > 0.2), the model is deemed unreliable and the trade is blocked.
+
+> **Source:** [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)
+
+### FRIA Zone Boundaries — Tier 7
+
+```
+score ≥ 0.95              →  ALLOW  (async attestation)
+0.70 ≤ score < 0.95       →  DEFER  (synchronous blocking gate)
+score < 0.70              →  BLOCK  (hard deny)
+```
+
+> **Source:** [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
+
+---
+
+## STPA Unsafe Control Actions
+
+> **Source:** [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py)
+
+The STPA (Systems-Theoretic Process Analysis) ontology defines Unsafe Control Actions (UCAs) as formal inequalities. The `GeneratedSTPAValidator` evaluates these constraints on every request; any violation halts the pipeline at Tier 1 (Step 0 in the 0-based table).
+
+### Financial UCAs (FIN-*)
+
+| UCA ID | Inequality Condition | Hazard Description |
+|--------|---------------------|--------------------|
+| **FIN-1** | `trade_value > position_limit` | Trade value exceeds the authorised position limit — unsafe control action |
+| **FIN-2** | `portfolio_concentration > 0.25` | Single-asset concentration exceeds 25% of portfolio — unsafe control action |
+
+### General UCAs (UCA-*)
+
+| UCA ID | Inequality Condition | Hazard Description |
+|--------|---------------------|--------------------|
+| **UCA-2** | `risk_score > 0.8` (missing action) | Required risk-mitigation action is absent when risk score exceeds 0.8 |
+| **UCA-5** | `order_size > 0.1 × daily_volume` | Order size exceeds 10% of daily volume — market-impact unsafe action |
+| **UCA-6** | `order_size > fraction × daily_vol` | Order size exceeds the permitted fraction of daily volume — STPA Violation |
+| **UCA-7** | `market_volatility > threshold` | Action taken during excessive market volatility — timing unsafe control action |
+
+### Regional Control Maps
+
+The ontology defines three regional control maps activated by `CAGE_DEPLOYMENT_REGION`:
+
+| Region | Activated By | Additive Obligations |
+|--------|-------------|----------------------|
+| **US_FED** | `CAGE_DEPLOYMENT_REGION=US_FED` | NIST SP 800-53, SR 26-2 §IV, NIST AI RMF |
+| **EU_ECB** | `CAGE_DEPLOYMENT_REGION=EU_ECB` | EU AI Act Art. 29a, GDPR Art. 22, DORA Art. 12 |
+| **APAC_MAS** | `CAGE_DEPLOYMENT_REGION=APAC_MAS` | MAS FEAT Principles, MAS Notice 655, MAS TRM §4.2 |
+
+All UCAs above are evaluated in **all regions** as part of the ISO 42001 universal baseline. Regional control maps add jurisdiction-specific thresholds and reporting obligations on top of the universal UCA set.
+
+---
+
 ## Decoupled Governance Abstraction (Option 3 & Multi-Region Productization)
 
 All hardcoded regulatory citation strings (`SR 26-2 §IV.B`, `ISO 42001 §A.5.2`, etc.) have been removed from Python business logic. The system now uses a multi-region two-layer abstraction layer that dynamically adapts depending on the `CAGE_DEPLOYMENT_REGION` environment variable (`US_FED`, `EU_ECB`, `APAC_MAS`):

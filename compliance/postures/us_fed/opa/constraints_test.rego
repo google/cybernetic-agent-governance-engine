@@ -18,6 +18,8 @@
 
 package governed_financial_advisor.governance.policy.trade_governance_test
 
+import rego.v1
+
 import data.trade.governance
 
 # ---------------------------------------------------------------------------

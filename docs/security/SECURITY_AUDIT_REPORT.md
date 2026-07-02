@@ -849,5 +849,106 @@ The following findings affect **both dev and prod** and require immediate attent
 
 ---
 
+## Section 8 — Mathematical Formalism of Security Controls
+
+### 8.1 Cryptographic Controls Verification
+
+The CAGE governance kernel employs two independent cryptographic primitives to ensure request integrity and audit-trail tamper-evidence.
+
+#### Routing Seal — HMAC-SHA256
+
+Every inbound governance request carries a routing seal produced by [`src/gateway/governance/routing_seal.py`](src/gateway/governance/routing_seal.py). The seal format is:
+
+```
+<expire_ts_hex>.<action_slug>.<hmac_hex>
+```
+
+- **Algorithm:** HMAC-SHA256 keyed on `GOVERNANCE_SALT` (≥ 64 chars, stored in Kubernetes Secret `advisor-secrets`)
+- **TTL:** 30 seconds — `expire_ts = int(time.time()) + 30`; seals with `expire_ts < now` are rejected
+- **Comparison:** `hmac.compare_digest` (constant-time) prevents timing-oracle attacks
+- **Production guard:** `assert_custom_salt_in_production()` must be called at startup; the default salt `"cage-default-salt-change-in-production"` is rejected when `CAGE_ENV=prod` (see finding C-03)
+
+#### Provenance Hash Chain — SHA-256
+
+The provenance chain ([`src/gateway/governance/provenance_chain.py`](src/gateway/governance/provenance_chain.py)) links every governance decision into a tamper-evident ledger:
+
+- **Hash function:** SHA-256 over deterministic sorted-key JSON serialisation of each event
+- **Chain construction:** O(n) — each node carries `hash(prev_hash || event_json)`
+- **Integrity property:** Any modification to a historical event invalidates all subsequent hashes, making retroactive tampering detectable
+
+| Primitive | Algorithm | Key material | Comparison | Source |
+|-----------|-----------|-------------|------------|--------|
+| Routing seal | HMAC-SHA256 | `GOVERNANCE_SALT` (K8s Secret) | `hmac.compare_digest` | [`routing_seal.py`](src/gateway/governance/routing_seal.py) |
+| Provenance chain | SHA-256 | N/A (hash chain) | Full-hash equality | [`provenance_chain.py`](src/gateway/governance/provenance_chain.py) |
+
+---
+
+### 8.2 Financial Safety Controls
+
+The financial safety layer is grounded in **Control Barrier Function (CBF)** theory, providing a formal mathematical guarantee that the system state never leaves the safe set.
+
+#### Safe Set Definition
+
+```
+S = {x ∈ ℝⁿ : h(x) ≥ 0}
+```
+
+where the barrier function `h` is defined as:
+
+```
+h(x) = cash_balance − min_cash_balance
+```
+
+`h(x) ≥ 0` holds if and only if the current cash balance is at or above the configured minimum. Source: [`src/gateway/governance/cbf.py`](src/gateway/governance/cbf.py).
+
+#### Discrete-Time CBF Condition
+
+The CBF enforces forward invariance of `S` across discrete time steps:
+
+```
+h(S(t+1)) ≥ (1−γ) · h(S(t))     where γ ∈ (0,1)
+```
+
+- `γ` is the decay parameter (configurable); smaller `γ` enforces a tighter safety margin
+- If the condition is violated for a proposed trade, the trade is **DENIED** before execution
+- Redis state reads are performed atomically via `WATCH/MULTI/EXEC` with `_MAX_RETRIES=5` to prevent stale-state race conditions (see finding H-07)
+
+#### Fiscal Limit Guard
+
+[`src/gateway/governance/fiscal_limit_guard.py`](src/gateway/governance/fiscal_limit_guard.py) enforces a hard daily spending cap:
+
+| Parameter | Value |
+|-----------|-------|
+| Daily cap | $500,000 USD (stored as integer cents to avoid float precision errors) |
+| Window | 86,400 seconds (UTC calendar day) |
+| Redis key | `fiscal:daily_limit:{YYYY-MM-DD}` |
+| Retry policy | Exponential backoff: `_RETRY_BASE_MS × 2^attempt` |
+| Fail mode | **Fail-closed** — Redis error → rejected token |
+
+---
+
+### 8.3 Governance Pipeline Security
+
+The 7-tier Symbolic Governor ([`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py)) is the primary security enforcement boundary. Each tier is a distinct security control:
+
+| Tier | Name | Security Function | Fail Mode |
+|------|------|-------------------|-----------|
+| **1** | NoDirectBind invariant | Prevents direct tool binding without governance wrapper; structural security boundary | DENY — invariant violation blocks execution |
+| **2** | PII sanitization | Strips PII from all inputs before downstream processing (Presidio + regex) | DENY — unsanitized input blocked |
+| **3** | CBF + OPA concurrent | `asyncio.gather` runs CBF barrier check and OPA policy evaluation in parallel | DENY — either failure blocks |
+| **4** | Causal gatekeeper | SCM causal model + `PlaceboTreatmentRefuter` (50 sims, p < 0.05, \|eff\| > 0.2); marginal risk boundary: `(0.5 + estimate.value × amount) > 0.95` | DENY — causal risk exceeded |
+| **5** | Confabulation scoring | `risk_score = 1.0 − confidence`; high confabulation risk triggers DEFER or DENY | DEFER/DENY — risk_score threshold |
+| **6** | Consensus | Required for trades ≥ $10,000; 30-second timeout; heterogeneous multi-model quorum | DENY — no consensus within timeout |
+| **7** | FRIA zones | `FRIA_ZONE_ALLOW = 0.95` (async attestation); `FRIA_ZONE_DEFER = 0.70` (sync gate lower bound); score < 0.70 → BLOCK | BLOCK/DEFER/ALLOW by score |
+
+**NoDirectBind as a Security Boundary:** Tier 1 enforces that no tool call can bypass the governance pipeline. Any attempt to invoke a governed tool without passing through the 7-tier pipeline is structurally impossible — the binding is enforced at the Python import level, not by convention.
+
+**FRIA Zone Access Control:** The Tier 7 FRIA zone thresholds function as a three-level access control decision:
+- Score ≥ 0.95 → `ALLOW` (async attestation, no blocking)
+- 0.70 ≤ score < 0.95 → `DEFER` (synchronous blocking gate — HITL required)
+- Score < 0.70 → `BLOCK` (hard deny, no override path)
+
+---
+
 *Report generated: 2026-06-12. Next review scheduled: 2026-09-12.*
 *This report should be treated as CONFIDENTIAL and shared only with authorized personnel.*

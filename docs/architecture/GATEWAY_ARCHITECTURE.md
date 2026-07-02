@@ -247,6 +247,119 @@ UCA Logger → GCS WORM bucket (region-gated path)
 
 ---
 
+## Governance Pipeline
+
+The 7-tier symbolic governance pipeline is implemented in [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) and executed by `SymbolicGovernor._run_checks()` for every `execute_trade` action. Tiers execute in strict sequential order except where noted.
+
+| Tier | Name | Key Invariant / Threshold |
+|------|------|--------------------------|
+| **Tier 1** | NoDirectBind invariant | All tool calls must arrive via `@governed_tool` decorator; direct binding to actuators is structurally prohibited |
+| **Tier 2** | PII sanitization | 7 compiled regex patterns applied before any ledger write; active in all regions |
+| **Tier 3** | CBF + OPA concurrent | `asyncio.gather(cbf_check, opa_check)` — both checks fire simultaneously to minimize latency |
+| **Tier 4** | Causal gatekeeper | SCM with `backdoor.linear_regression`; PlaceboTreatmentRefuter (50 sims, p < 0.05, \|eff\| > 0.2) |
+| **Tier 5** | Confabulation scoring | `risk_score = 1.0 − confidence`; blocks when `confidence < CONFIDENCE_MIN_SCORE` (default 0.95) |
+| **Tier 6** | Consensus | Required for trades ≥ $10,000 USD; 30-second timeout; heterogeneous DeepSeek-R1 + Llama 3.1 critics |
+| **Tier 7** | FRIA zones | `FRIA_ZONE_ALLOW ≥ 0.95` → async attestation; `FRIA_ZONE_DEFER ≥ 0.70` → synchronous blocking gate; `< 0.70` → hard DENY |
+
+### Tier 3 Concurrent Execution
+
+CBF (Tier 3a) and OPA (Tier 3b) are fired **simultaneously** via:
+
+```python
+cbf_result, opa_result = await asyncio.gather(cbf_check, opa_check)
+```
+
+This design keeps the combined latency equal to `max(t_cbf, t_opa)` rather than their sum. The TOCTOU race between the two checks is closed by the `FiscalLimitGuard` atomic pre-reservation step that follows.
+
+### FRIA Zone Decision Semantics
+
+| Zone | Confidence Threshold | Behavior |
+|------|---------------------|----------|
+| `FRIA_ZONE_ALLOW` | ≥ 0.95 | Non-blocking async attestation; execution proceeds immediately |
+| `FRIA_ZONE_DEFER` | 0.70 – 0.95 | Synchronous blocking gate; context parked in Redis `db=1` (4-hour TTL) |
+| DENY | < 0.70 | Hard DENY; confidence-starvation boundary |
+
+EU_ECB deployments additionally stamp a Fundamental Rights Impact Assessment (FRIA) attestation on every OTel span (EU AI Act Art. 29a). This step is a no-op for `US_FED` and `APAC_MAS`.
+
+---
+
+## Control Barrier Function Layer
+
+The **Control Barrier Function (CBF)** layer provides a mathematically grounded cash-balance safety guarantee. Implementation: [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py).
+
+### Safe Set Definition
+
+The CBF defines a safe set **S** over the system state space:
+
+```
+S = {x ∈ ℝⁿ : h(x) ≥ 0}
+```
+
+where the barrier function **h** is:
+
+```
+h(x) = cash_balance − min_cash_balance
+```
+
+With `min_cash_balance = $1,000 USD` (configurable via `governance_thresholds.json`).
+
+### Discrete-Time CBF Condition
+
+For the system to remain in the safe set across time steps, the following invariant must hold at every governance check:
+
+```
+h(S(t+1)) ≥ (1 − γ) · h(S(t))     where γ ∈ (0, 1)
+```
+
+The decay coefficient `γ = 0.5` is the default. This condition ensures `h(S(t)) ≥ 0` for all `t` — i.e., the cash balance never falls below `min_cash_balance` — provided the invariant holds at `t = 0`.
+
+### Redis Atomic Implementation
+
+The CBF check is implemented as an atomic Redis transaction using the `WATCH/MULTI/EXEC` optimistic locking pattern with `_MAX_RETRIES = 5`:
+
+```
+WATCH cage:cbf:cash_balance
+  balance = GET cage:cbf:cash_balance
+  if h(balance − trade_amount) < (1 − γ) · h(balance):
+      UNWATCH; raise GovernanceError("CBF violation")
+MULTI
+  # read-only verify_action() does NOT modify state here
+EXEC
+```
+
+`verify_action()` is **read-only** at governance-check time — it does not debit the balance. The actual debit is performed by the `FiscalLimitGuard` atomic pre-reservation step after both CBF and OPA pass.
+
+> **POAM-023:** External ledger reconciliation via `AnchorageGrpcLedgerProvider` (gRPC) is a planned future enhancement that will eliminate reliance on Redis-cached balances for safety-critical checks. The current Redis implementation is the production baseline.
+
+---
+
+## Request Authentication & Routing Seal
+
+Every governance-approved action is attested by a short-lived **routing seal** that the downstream actuator must verify before firing. Implementation: [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py).
+
+### Seal Format
+
+The routing seal is an HMAC-SHA256 token with the following wire format:
+
+```
+<expire_ts_hex>.<action_slug>.<hmac_hex>
+```
+
+| Field | Description |
+|-------|-------------|
+| `expire_ts_hex` | Unix timestamp (hex) at which the seal expires |
+| `action_slug` | Normalized action identifier (e.g., `execute_trade`) |
+| `hmac_hex` | HMAC-SHA256 over `expire_ts_hex + "." + action_slug` using `CAGE_ROUTING_SEAL_SECRET` |
+
+### Security Properties
+
+- **30-second TTL:** Seals expire 30 seconds after issuance. Replay attacks using a captured seal are blocked after the TTL window.
+- **Constant-time comparison:** Seal verification uses `hmac.compare_digest()` to prevent timing-oracle attacks.
+- **Primary signing:** Cloud KMS HSM asymmetric signing is the production primary (see `src/gateway/governance/kms_signer.py`). HMAC-SHA256 is the dev/CI fallback only.
+- **Fail-closed:** Any request to `/tools/execute` without a valid seal is rejected by `GovernanceMiddleware` before reaching the tool handler.
+
+---
+
 ## Compliance Framework References
 
 ### Universal Baseline (All Deployment Regions)

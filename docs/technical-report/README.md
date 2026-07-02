@@ -28,7 +28,7 @@ The Cybernetic Governance Engine (CAGE) is a production-grade, multi-agent AI go
 | 07  | Security Infrastructure       | [`07-SECURITY-INFRASTRUCTURE.md`](07-SECURITY-INFRASTRUCTURE.md)         | Defense-in-depth security — authorization boundary (9 NetworkPolicy objects), **Cloud KMS HSM-backed governance signing** (v0.1.0: asymmetric signing via HSM replacing HMAC self-signing) + routing seal, OPA RBAC, secret management (Kubernetes-native secrets via Terraform), two-layer PII protection (NeMo + Presidio, **15 entity types**), 7-year audit logging, AgentSight eBPF monitoring, cryptographic controls, **externally reconciled CBF** (v0.1.0: Anchorage Digital OCC-chartered custody, KMS-signed balances), red team coverage, and all open security findings |
 | 08  | Deployment & Infrastructure   | [`08-DEPLOYMENT-INFRASTRUCTURE.md`](08-DEPLOYMENT-INFRASTRUCTURE.md)     | Full deployment architecture — 16-service Kubernetes topology, Kubernetes Inference Gateway (ADR-002 nginx GatewayClass), Docker image inventory, Cloud Build CI/CD pipelines, modular Terraform IaC (`infra/targets/` + `infra/modules/`), vLLM GPU configuration (DeepSeek-R1 AWQ on L4), Langfuse self-hosted deployment, storage backends, network policies, latency strategy (200ms ISO-20022 SLA), **Redis db=1 noeviction** (v0.1.0: Guaranteed QoS, `maxmemory-policy noeviction` for DEFER state machine), and operational runbooks |
 | 09  | Operational Runbook           | [`09-OPERATIONAL-RUNBOOK.md`](09-OPERATIONAL-RUNBOOK.md)                 | Verified operational procedures — vLLM model update verification, `governed-financial-advisor` CrashLoopBackOff recovery, full integration test results (**844 passing, 0 failed, 24 skipped** as of 2026-06-03 GKE cycle, up from 644 in v0.1.0-rc.1 and 152 in 2026-03-08 session), 7 code fixes (2026-03-08) + 4 production + 5 test fixture fixes (2026-06-03) applied, known connectivity-only failure classification, Saga engine ghost-state recovery, **v0.1.0 procedures** (KMS HSM signing verification, DEFER queue inspection, dual-project Langfuse credential validation, normative provider boot-time baseline check), and **2026-06-03 GKE deployment cycle** (Section 9: Cloud Build image builds, 4-cycle fix history, production code fixes, test fixture fixes, environment fix). |
-| 10  | Formal Verification           | [`10-FORMAL-VERIFICATION.md`](10-FORMAL-VERIFICATION.md)                 | Composite Verification Framework (CVF) proof — STPA hazard completeness (UCA-5/FIN-1 TOCTOU eliminated), VSM structural completeness (algedonic feedback loop closed), hybrid automata reachability (ghost state eliminated), **AARM 11-vector neutralization table** (10/11 NEUTRALIZED; V11 PARTIAL pending POAM-022), **FiscalLimitGuard race-condition proof** (Redis WATCH/MULTI/EXEC optimistic lock invariant), and **Cloud KMS HSM non-repudiation proof** (ISO 42001 §A.7.5, NIST AU-10, FINRA Rule 4511). **v1.1 (2026-05-31).** |
+| 10  | Formal Verification           | [`10-FORMAL-VERIFICATION.md`](10-FORMAL-VERIFICATION.md)                 | Composite Verification Framework (CVF) proof — STPA hazard completeness (UCA-5/FIN-1 TOCTOU eliminated), VSM structural completeness (algedonic feedback loop closed), hybrid automata reachability (ghost state eliminated), **AARM 11-vector neutralization table** (10/11 NEUTRALIZED; V11 PARTIAL pending POAM-022), **FiscalLimitGuard race-condition proof** (Redis WATCH/MULTI/EXEC optimistic lock invariant), and **Cloud KMS HSM non-repudiation proof** (ISO 42001 §A.7.5, NIST AU-10, FINRA Rule 4511). **Steps 8–11 (added):** discrete-time **Control Barrier Function** proof (`h(S(t+1)) ≥ (1−γ)·h(S(t))`), **Routing Seal Integrity** (HMAC-SHA256 30 s TTL token format), **Provenance Hash Chain** (SHA-256 O(n) construction, tamper-detection at O(1) per node), and **FiscalLimitGuard quantitative parameters** ($500k daily cap, 86,400 s window, exponential backoff). **v1.1 (2026-05-31).** |
 
 ---
 
@@ -67,6 +67,32 @@ The Cybernetic Governance Engine (CAGE) is a production-grade, multi-agent AI go
 | Primary LLM (Reasoning)        | DeepSeek-R1-Distill-Llama-8B (AWQ)        |
 | Primary LLM (Fast)             | Meta-Llama-3.1-8B-Instruct                |
 | Technical Report Documents     | 10 (TR-01 through TR-10)                  |
+
+---
+
+## Mathematical Formalism Summary
+
+The following key formulas appear across the technical report series. Each formula is implemented directly in source code and enforced at runtime; the table provides a cross-reference to the primary document where the derivation or proof appears.
+
+| Formula / Invariant | Expression | Source File | Primary TR Document |
+|---------------------|------------|-------------|---------------------|
+| **CBF safe set** | `S = {x ∈ ℝⁿ : h(x) ≥ 0}` | [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py) | [TR-10](10-FORMAL-VERIFICATION.md), [TR-05](05-AI-GOVERNANCE-POLICY-ENGINE.md) |
+| **CBF barrier function** | `h(x) = cash_balance − min_cash_balance` | [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py) | [TR-10](10-FORMAL-VERIFICATION.md) |
+| **Discrete-time CBF condition** | `h(S(t+1)) ≥ (1−γ)·h(S(t)), γ ∈ (0,1)` | [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py) | [TR-10](10-FORMAL-VERIFICATION.md) |
+| **Confabulation risk score** | `risk_score = 1.0 − confidence` | [`src/gateway/governance/confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) | [TR-05](05-AI-GOVERNANCE-POLICY-ENGINE.md) |
+| **FRIA zone — allow threshold** | `FRIA_ZONE_ALLOW = 0.95` | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) | [TR-05](05-AI-GOVERNANCE-POLICY-ENGINE.md) |
+| **FRIA zone — defer threshold** | `FRIA_ZONE_DEFER = 0.70` | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) | [TR-05](05-AI-GOVERNANCE-POLICY-ENGINE.md) |
+| **Causal marginal risk boundary** | `(0.5 + estimate.value × amount) > 0.95` | [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | [TR-05](05-AI-GOVERNANCE-POLICY-ENGINE.md), [TR-10](10-FORMAL-VERIFICATION.md) |
+| **PlaceboTreatmentRefuter criteria** | 50 sims, p < 0.05, \|eff\| > 0.2 | [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | [TR-05](05-AI-GOVERNANCE-POLICY-ENGINE.md) |
+| **Routing seal token format** | `<expire_ts_hex>.<action_slug>.<hmac_hex>` (30 s TTL) | [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py) | [TR-10](10-FORMAL-VERIFICATION.md), [TR-07](07-SECURITY-INFRASTRUCTURE.md) |
+| **Provenance hash chain** | `record_hash[n] = SHA-256(record_hash[n-1] ‖ content_json[n])` | [`src/gateway/governance/provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | [TR-10](10-FORMAL-VERIFICATION.md) |
+| **Fiscal daily cap** | $500,000 over 86,400 s rolling window | [`src/gateway/governance/fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) | [TR-10](10-FORMAL-VERIFICATION.md), [TR-05](05-AI-GOVERNANCE-POLICY-ENGINE.md) |
+| **STPA UCA FIN-1** | `trade_value > position_limit` | [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py) | [TR-05](05-AI-GOVERNANCE-POLICY-ENGINE.md) |
+| **STPA UCA FIN-2** | `portfolio_concentration > 0.25` | [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py) | [TR-05](05-AI-GOVERNANCE-POLICY-ENGINE.md) |
+| **STPA UCA-5** | `order_size > 0.1 × daily_volume` | [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py) | [TR-05](05-AI-GOVERNANCE-POLICY-ENGINE.md) |
+| **STPA UCA-6** | `order_size > fraction × daily_vol` | [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py) | [TR-05](05-AI-GOVERNANCE-POLICY-ENGINE.md) |
+
+For full derivations and proofs, see [`10-FORMAL-VERIFICATION.md`](10-FORMAL-VERIFICATION.md). For the governance pipeline design that applies these formulas at runtime, see [`05-AI-GOVERNANCE-POLICY-ENGINE.md`](05-AI-GOVERNANCE-POLICY-ENGINE.md). For the causal and CBF mathematical background, see [`docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md`](../governance/CAUSAL_AND_CBF_GOVERNANCE.md).
 
 ---
 

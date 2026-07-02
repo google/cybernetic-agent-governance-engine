@@ -44,6 +44,7 @@ This document is the authoritative Plan of Action and Milestones (POAM) for the 
 | [POAM-2026-025](#poam-2026-025-ai-600-1-26-cbrn-harmful-content-stub-validation) | AI 600-1 §2.6 | NIST AI 600-1 | US_FED | OPEN |
 | [POAM-2026-026](#poam-2026-026-iso-42001-a84-tokenquotaproxy-stub-validation) | ISO 42001 A.8.4 | ISO 42001 | Universal | OPEN |
 | [POAM-2026-027](#poam-2026-027-docs-poammd-absent-from-repository) | Structural | Governance | Universal | CLOSED |
+| [POAM-2026-028](#poam-2026-028-ra-5--si-2--langchain-ghsa-gr75-jv2w-4656-and-related-transitive-cves) | RA-5 / SI-2 | NIST SP 800-53 | US_FED | CLOSED |
 | [EU-DORA-001](#eu-dora-001-dora-art-10-compliance-bridge-endpoint-not-implemented) | DORA Art. 10 | DORA | EU_ECB | OPEN |
 | [EU-AI-ACT-001](#eu-ai-act-001-eu-ai-act-art-9-risk-management-endpoint-not-implemented) | EU AI Act Art. 9 | EU AI Act | EU_ECB | OPEN |
 | [EU-GDPR-001](#eu-gdpr-001-gdpr-art-22-human-oversight-endpoint-not-implemented) | GDPR Art. 22 | GDPR | EU_ECB | OPEN |
@@ -442,6 +443,26 @@ This document is the authoritative Plan of Action and Milestones (POAM) for the 
 | `lula-validation-mas-feat.yaml` | MAS FEAT | Fairness/Ethics/Accountability/Transparency | APAC_MAS | ACTIVE (endpoint pending — APAC-MAS-FEAT-001) |
 | `lula-validation-mas-notice655.yaml` | MAS Notice 655 | Technology Risk Management | APAC_MAS | ACTIVE (endpoint pending — APAC-MAS-N655-001) |
 | `lula-validation-mas-trm-s6.yaml` | MAS TRM | §6.3 AI/ML Controls | APAC_MAS | ACTIVE (endpoint pending — APAC-MAS-TRM-001) |
+
+---
+
+### POAM-2026-028: RA-5 / SI-2 — langchain GHSA-gr75-jv2w-4656 and related transitive CVEs
+
+| Field | Value |
+|-------|-------|
+| **Status** | CLOSED |
+| **Control** | NIST SP 800-53 Rev 5 RA-5 — Vulnerability Monitoring and Scanning; SI-2 — Flaw Remediation |
+| **Manifest** | `compliance/lula/lula-validation-ra5.yaml` (supporting evidence) |
+| **Region Scope** | US_FED |
+| **Deferred Since** | 2026-07-02 |
+| **Target Remediation** | 2026-07-02 (same-day fix) |
+| **Owner** | Security Engineering |
+| **Risk** | `langchain<1.3.9` carries GHSA-gr75-jv2w-4656 (prompt injection via tool-call message deserialization). Transitive packages `langsmith<0.8.18` (GHSA-f4xh-w4cj-qxq8) and `python-multipart<0.0.31` (CVE-2026-53538/53539/53540) were also resolved to vulnerable versions. All three had upstream fix releases available. |
+| **Remediation** | Bumped `langchain>=1.3.9` in `pyproject.toml` [advisor] extra and ran `uv lock`. Resolved versions: `langchain==1.3.11`, `langsmith==0.9.5`, `python-multipart==0.0.32`. No `--ignore-vuln` suppression required — all CVEs resolved by upgrade. |
+| **Closure Criteria** | `pip-audit` scan passes without new suppressions for these CVE IDs; `uv.lock` pins fixed versions. |
+| **Closed** | 2026-07-02 |
+| **Commit SHA** | TBD — populated post-merge of feat/CGE-018-governance-hardening |
+| **Lula Result** | N/A (dependency upgrade, not a Lula-validated control) |
 
 ---
 
