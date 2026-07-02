@@ -25,6 +25,7 @@ dependencies = [
     "uvicorn>=0.29.0",
     "sse-starlette>=1.0.0",
     "openai>=1.0.0",
+    "cryptography>=48.0.1",
 ]
 
 requires-python = ">=3.10,<3.13"
@@ -71,7 +72,9 @@ gateway = [
 advisor = [
     "langgraph>=1.1.0",
     "langgraph-checkpoint-redis",
-    "langchain>=1.1.0",
+    # langchain>=1.3.9: fixes GHSA-gr75-jv2w-4656 (prompt injection via
+    # tool-call message deserialization). Minimum bumped from 1.1.0.
+    "langchain>=1.3.9",
     "langchain-core>=1.1.0",
     "langchain-openai>=0.1.0",
     "langchain-mcp-adapters>=0.2.0",
@@ -94,7 +97,7 @@ compliance = [
     # dowhy: causal gatekeeper (Tier 6) — required by compliance-bridge defer queue
     # (No-Direct-Bind Gap 4). Moved from gateway extras so the compliance-bridge
     # image picks it up via --extra compliance without pulling all gateway deps.
-    "dowhy>=0.11,<0.12",
+    "dowhy>=0.12",
 ]
 
 langfuse = [

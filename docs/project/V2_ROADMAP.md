@@ -98,6 +98,41 @@ The following items are deferred from v0.1.0 and tracked in the POAM. They are c
 
 ---
 
+## Mathematical Formalism Completeness
+
+> **Status as of 2026-07-01:** Mathematical formalism documentation is **complete for v0.1.0**. All kernel invariants are documented in primary governance and technical-report docs and cross-referenced to source implementations.
+
+### v0.1.0 — Documented Mathematical Foundations
+
+The following mathematical formalisms have been fully documented across the CAGE governance documentation suite:
+
+| Formalism | Document | Source Implementation |
+|---|---|---|
+| **Control Barrier Function (CBF)** — safe set `S = {x ∈ ℝⁿ : h(x) ≥ 0}`, barrier `h(x) = cash_balance − min_cash_balance`, discrete-time condition `h(S(t+1)) ≥ (1−γ)·h(S(t))` | [CAUSAL_AND_CBF_GOVERNANCE.md](../governance/CAUSAL_AND_CBF_GOVERNANCE.md), [10-FORMAL-VERIFICATION.md](../technical-report/10-FORMAL-VERIFICATION.md) | [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py) |
+| **7-Tier Symbolic Governor Pipeline** — NoDirectBind → PII → CBF+OPA → Causal SCM → Confabulation → Consensus → FRIA | [GOVERNANCE_OVERVIEW.md](../governance/GOVERNANCE_OVERVIEW.md) | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
+| **Causal SCM + PlaceboTreatmentRefuter** — `p_value < CAUSAL_LOCK_P_VALUE_THRESHOLD (0.05)`, placebo effect magnitude `< 0.2` | [CAUSAL_AND_CBF_GOVERNANCE.md](../governance/CAUSAL_AND_CBF_GOVERNANCE.md) | [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) |
+| **Confabulation scoring** — `risk_score = 1.0 − confidence` | [GOVERNANCE_OVERVIEW.md](../governance/GOVERNANCE_OVERVIEW.md) | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
+| **Consensus protocol** — ≥$10k trades, 30s timeout | [CAUSAL_AND_CBF_GOVERNANCE.md](../governance/CAUSAL_AND_CBF_GOVERNANCE.md) | [`src/gateway/governance/consensus.py`](../../src/gateway/governance/consensus.py) |
+| **FRIA zones** — `FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70` | [NEURO_SYMBOLIC_GOVERNANCE.md](../governance/NEURO_SYMBOLIC_GOVERNANCE.md) | [`src/gateway/governance/constants.py`](../../src/gateway/governance/constants.py) |
+| **Fiscal limit invariant** — hard stop on `cash_balance < min_cash_balance` | [10-FORMAL-VERIFICATION.md](../technical-report/10-FORMAL-VERIFICATION.md) | [`src/gateway/governance/fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) |
+| **Routing seal HMAC proof** — HMAC-SHA256 with `GOVERNANCE_SALT`, expiry-bound token | [10-FORMAL-VERIFICATION.md](../technical-report/10-FORMAL-VERIFICATION.md) | [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
+| **Provenance chain integrity** — append-only hash chain over governance verdicts | [10-FORMAL-VERIFICATION.md](../technical-report/10-FORMAL-VERIFICATION.md) | [`src/gateway/governance/provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) |
+| **STPA UCAs** — FIN-1 (`trade_value > position_limit`), FIN-2 (`portfolio_concentration > 0.25`), UCA-5 (`order_size > 0.1 × daily_volume`), UCA-6 (`order_size > fraction × daily_vol`) | [GOVERNANCE_OVERVIEW.md](../governance/GOVERNANCE_OVERVIEW.md) | [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py) |
+
+### v2.x — Planned Mathematical Formalism Extensions
+
+The following mathematical formalism work is deferred to the v2.x release cycle:
+
+| Item | Target | Description |
+|---|---|---|
+| **Formal proofs (Coq/Lean)** | v2.2.0 | Machine-checked proofs of the CBF discrete-time condition and NoDirectBind invariant; eliminates reliance on test-based verification alone |
+| **Extended STPA analysis** | v2.1.0 | Expand UCA coverage beyond the current 9 UCAs to cover multi-agent coordination hazards and cross-region data-flow hazards |
+| **AnchorageGrpcLedgerProvider** (POAM-023) | 2026-09-08 | External CBF ledger reconciliation via gRPC; extends the CBF safe-set to include cross-session state |
+| **Quantitative FEAT fairness metrics** | v2.1.0 | Formal fairness metrics (F2) for MAS FEAT compliance; DoWhy causal gatekeeper mapped but quantitative metrics pending |
+| **Lyapunov stability analysis** | v2.2.0 | Formal stability proof for the CBF decay parameter `γ ∈ (0,1)` under adversarial input sequences |
+
+---
+
 ## ATO Readiness Milestones
 
 > **⚠️ US_FED ONLY — Regional Scoping Notice:** The ATO readiness milestones below apply exclusively to **`US_FED` deployments** under the NIST SP 800-53 authorization framework. `EU_ECB` and `APAC_MAS` deployments have separate compliance milestones governed by their respective regional frameworks — they are **not** subject to NIST ATO requirements.

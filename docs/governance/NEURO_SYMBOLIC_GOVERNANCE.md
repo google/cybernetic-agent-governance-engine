@@ -182,3 +182,208 @@ All regulatory citations are decoupled from Python execution code via the `Gover
 |---|---|---|---|
 | `CTRL_FRIA_006` | **EU AI Act Art. 29a** | `symbolic_governor.py` Step 6 — `enforce_fria_boundary()` + OTel stamp | FRIA normative boundary enforcement + attestation stamped on OTel span attributes — **EU_ECB only** |
 | `CTRL_WAL_002` addendum | **DORA Art. 12** | `generated_saga_nodes.py` WAL SAGA nodes | DORA operational resilience logging obligation — **EU_ECB only** (addendum to ISO 42001 §A.8.4 base control) |
+
+---
+
+## Symbolic Governor Architecture
+
+> **Source:** [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
+
+### 7-Tier Pipeline Diagram
+
+The `SymbolicGovernor._run_checks()` method executes the following tiers in strict sequential order. A failure at any tier halts the pipeline and denies the request.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                  SymbolicGovernor._run_checks()                     │
+│                                                                     │
+│  Tier 1 ──► NoDirectBind invariant check                            │
+│      │      (LLM output must not bind directly to executable action) │
+│      ▼                                                              │
+│  Tier 2 ──► PII sanitization                                        │
+│      │      (Presidio — 15 entity types masked before evaluation)   │
+│      ▼                                                              │
+│  Tier 3 ──► CBF + OPA concurrent evaluation                         │
+│      │      asyncio.gather(cbf_check, opa_check)                    │
+│      │      latency = max(CBF_ms, OPA_ms)                           │
+│      ▼                                                              │
+│  Tier 4 ──► Causal gatekeeper                                       │
+│      │      (DoWhy CausalModel + PlaceboTreatmentRefuter)           │
+│      ▼                                                              │
+│  Tier 5 ──► Confabulation scoring                                   │
+│      │      risk_score = 1.0 − confidence; threshold 0.95           │
+│      ▼                                                              │
+│  Tier 6 ──► Consensus (high-value trades ≥ $10k)                   │
+│      │      asyncio.gather — unanimity required; 30 s timeout       │
+│      ▼                                                              │
+│  Tier 7 ──► FRIA zone classification                                │
+│             score ≥ 0.95 → ALLOW (async attestation)               │
+│             0.70 ≤ score < 0.95 → DEFER (blocking gate)            │
+│             score < 0.70 → BLOCK (hard deny)                        │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ (all tiers pass)
+                    KMS Routing Seal issued
+                    (X-CAGE-Routing-Seal header)
+```
+
+### Tier 3 — Concurrent CBF + OPA Execution
+
+Tier 3 is the only tier that executes two sub-checks in parallel. The implementation uses `asyncio.gather` so that the Control Barrier Function and the OPA policy evaluation run concurrently:
+
+```python
+cbf_result, opa_result = await asyncio.gather(
+    cbf_check(),   # src/gateway/governance/cbf.py
+    opa_check(),   # OPA system_authz.rego via OPAClient
+)
+```
+
+Both results must be `ALLOW` for the tier to pass. The combined latency is `max(CBF_ms, OPA_ms)` rather than their sum.
+
+### FRIA Zone Decision Boundaries (Tier 7)
+
+The Fundamental Rights Impact Assessment at Tier 7 uses two threshold constants to partition the governance score space:
+
+| Constant | Value | Zone | Decision Semantics |
+|----------|-------|------|--------------------|
+| `FRIA_ZONE_ALLOW` | `0.95` | ALLOW | Score ≥ 0.95 → request proceeds; async OTel attestation emitted (EU AI Act Art. 29a) |
+| `FRIA_ZONE_DEFER` | `0.70` | DEFER | 0.70 ≤ score < 0.95 → synchronous blocking gate; request pushed to DEFER queue (Redis db=1, 4 h TTL) |
+| *(implicit)* | `< 0.70` | BLOCK | Score < 0.70 → hard deny; violation logged with `[CTRL_FRIA_006]` prefix |
+
+The FRIA enforcement path (`enforce_fria_boundary()`) runs only when `CAGE_NORMATIVE_PROVIDER != "static"`. The OTel attestation stamp is always applied for `EU_ECB` deployments regardless of the normative provider setting.
+
+---
+
+## Formal Safety Properties
+
+This section states the mathematical safety properties that the governance pipeline is designed to enforce. Each property is derived directly from the source implementation.
+
+### CBF Invariance Theorem
+
+**Barrier function:** `h(x) = cash_balance − min_cash_balance`
+
+**Discrete-time CBF condition:**
+
+```
+h(S(t+1)) ≥ (1−γ) · h(S(t))
+```
+
+**Theorem:** If `h(S(0)) ≥ 0` (initial state is safe) and the condition `h(S(t+1)) ≥ (1−γ)·h(S(t))` holds for all t ≥ 0, then `h(S(t)) ≥ 0` for all t ≥ 0.
+
+**Proof sketch:** By induction. Base case: `h(S(0)) ≥ 0` by assumption. Inductive step: if `h(S(t)) ≥ 0` then `h(S(t+1)) ≥ (1−γ)·h(S(t)) ≥ 0` since γ ∈ (0,1]. Therefore the cash balance never falls below `min_cash_balance` as long as every proposed state transition satisfies the CBF condition.
+
+Parameters: γ = 0.5 (default), `min_cash_balance` = $1,000 (US_FED/APAC_MAS), 4% drawdown floor for EU_ECB.
+
+> **Source:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)
+
+### NoDirectBind Invariant — Formal Statement
+
+Let `LLM_output` be any token sequence produced by the language model and `exec(·)` be any executable action (trade, API call, state mutation). The NoDirectBind invariant requires:
+
+```
+∀ LLM_output: exec(LLM_output) is permitted
+    only if SymbolicGovernor._run_checks(LLM_output) = ALLOW
+```
+
+Equivalently, there is no code path from LLM inference to tool execution that bypasses `_run_checks()`. This is enforced structurally by the `@governed_tool` decorator at the gateway boundary — the decorator intercepts every tool call and invokes the full 7-tier pipeline before any execution occurs.
+
+> **Source:** [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
+
+### Confabulation Risk Formula
+
+```
+risk_score = 1.0 − confidence
+```
+
+**Decision rule:**
+
+```
+risk_score ≥ 0.95  →  BLOCK  (confidence ≤ 0.05)
+risk_score < 0.95  →  PASS   (confidence > 0.05)
+```
+
+The threshold of 0.95 ensures that only LLM outputs with meaningful grounding confidence (> 5%) are permitted to proceed to execution tiers.
+
+> **Source:** [`src/gateway/governance/confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py)
+
+### Causal Marginal Risk Boundary
+
+The causal gatekeeper enforces a safety boundary on the estimated marginal effect of `trade_amount` on `risk_score`:
+
+```
+(0.5 + estimate.value × amount) > 0.95  →  LOCK (trade blocked)
+```
+
+where `estimate.value` is the Average Treatment Effect (ATE) estimated via backdoor linear regression on the causal graph:
+
+```
+market_volatility → trade_amount → risk_score
+market_volatility → risk_score
+```
+
+Additionally, the **Placebo Treatment Refuter** (50 simulations) validates world-model integrity:
+
+```
+p < 0.05  OR  |placebo_effect| > 0.2  →  BLOCK (world-model untrustworthy)
+```
+
+**Fail-safe:** any exception in the causal pipeline returns `False` (blocks the trade). Causal validity must be positively proven; it cannot be assumed.
+
+> **Source:** [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)
+
+---
+
+## Regional Compliance Mapping
+
+> **Source:** [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py)
+
+The ontology defines three regional control maps. The active map is selected at runtime by the `CAGE_DEPLOYMENT_REGION` environment variable. ISO 42001 controls apply universally to all regions; regional maps add jurisdiction-specific obligations on top.
+
+### How `CAGE_DEPLOYMENT_REGION` Gates Regional Behaviour
+
+```bash
+export CAGE_DEPLOYMENT_REGION=US_FED    # Federal Reserve / NIST obligations
+export CAGE_DEPLOYMENT_REGION=EU_ECB    # EU AI Act / GDPR / DORA obligations
+export CAGE_DEPLOYMENT_REGION=APAC_MAS  # MAS FEAT / MAS Notice 655 / MAS TRM obligations
+```
+
+The `ControlRegistry` singleton reads this variable at startup and loads the corresponding baseline profile from `config/compliance/{REGION}_BASELINE.json`. All `CTRL_*` control IDs resolve to region-specific framework citations via this registry. No Python source changes are required to add or modify a regional mapping — it is a JSON-only operation.
+
+### US_FED Regional Control Map (`CAGE_DEPLOYMENT_REGION=US_FED`)
+
+| Control | Framework | Pipeline Tier | Obligation |
+|---------|-----------|--------------|------------|
+| `CTRL_MRM_004` | SR 26-2 §IV — Model Risk Management (Federal Reserve, April 17, 2026) | Tier 3 (CBF) + Tier 4 (Causal) | Deterministic formula validation + causal coefficient back-testing |
+| NIST AI RMF MEASURE-2.6 | NIST AI RMF | Tier 4 (Causal) | Explicit CONTROL transitions + continuous world-model MEASURE validation |
+| NIST SP 800-53 | NIST SP 800-53 (10 Lula assertions) | All tiers | Access control, audit, system integrity controls |
+| `CTRL_AGT_001` | ISO 42001 §A.5.2 + NIST AI 600-1 | Tier 3 (OPA) | Agentic AI bounding; confidence threshold ≥ 0.95 |
+| Consensus threshold | SR 26-2 §IV.B | Tier 6 | $10,000 USD threshold for multi-agent consensus |
+
+### EU_ECB Regional Control Map (`CAGE_DEPLOYMENT_REGION=EU_ECB`)
+
+| Control | Framework | Pipeline Tier | Obligation |
+|---------|-----------|--------------|------------|
+| `CTRL_FRIA_006` | EU AI Act Art. 29a | Tier 7 (FRIA) | Fundamental Rights Impact Assessment; ALLOW/DEFER/BLOCK zone enforcement + OTel attestation |
+| GDPR Art. 22 | GDPR | Tier 7 (FRIA) | Automated decision-making safeguards; DEFER zone triggers human review |
+| `CTRL_WAL_002` addendum | DORA Art. 12 | WAL SAGA nodes | Operational resilience logging obligation |
+| Telemetry suppression | SR 26-2 "no legal force" sentinel | Tier 4 (Causal) | Causal gatekeeper suppressed in EU_ECB; GDPR / MAS Notice 655 telemetry restriction |
+| Consensus threshold | EU AI Act | Tier 6 | $7,500 USD threshold (lower than US_FED) |
+| Data residency | GDPR Art. 44 | All storage paths | All GCS writes and Langfuse sinks must remain within `europe-west1` |
+
+### APAC_MAS Regional Control Map (`CAGE_DEPLOYMENT_REGION=APAC_MAS`)
+
+| Control | Framework | Pipeline Tier | Obligation |
+|---------|-----------|--------------|------------|
+| MAS FEAT Principles | MAS FEAT | All tiers | Fairness, Ethics, Accountability, Transparency obligations |
+| MAS Notice 655 | MAS Notice 655 | Tier 4 (Causal) | Audit logging enabled; telemetry suppression sentinel active |
+| MAS TRM §4.2 | MAS TRM | All storage paths | All data paths must remain within `asia-southeast1` |
+| Consensus threshold | MAS FEAT | Tier 6 | $5,000 USD threshold (most conservative) |
+| SR 26-2 sentinel | "no legal force" | Tier 4 (Causal) | Telemetry suppression active — same sentinel as EU_ECB |
+
+### Cross-Region Shared-Module Guard Obligation
+
+Any change to [`src/gateway/governance/`](../../src/gateway/governance/) or [`src/compliance_bridge/`](../../src/compliance_bridge/) affects all three regional deployments simultaneously. Per the CAGE shared-module policy:
+
+- New storage paths, GCS writes, Langfuse sinks, or telemetry exports in shared modules **must** be gated on `CAGE_DEPLOYMENT_REGION` to prevent silent cross-region data leakage (GDPR Art. 44 / MAS TRM §4.2).
+- The "no legal force" SR 26-2 sentinel in EU and APAC baselines must never be removed — its presence suppresses telemetry that lacks legal basis under GDPR / MAS Notice 655.
+- Cross-region impact must be declared in the PR description for any PR touching these modules (US_FED, EU_ECB, and APAC_MAS impact sections required).

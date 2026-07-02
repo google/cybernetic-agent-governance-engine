@@ -1,6 +1,6 @@
 # Release Plan
 
-**Document version:** 1.1 (updated 2026-06-08 — v0.1.0 RELEASED)
+**Document version:** 1.2 (updated 2026-07-01 — mathematical formalism documentation complete)
 **Prepared:** 2026-06-05
 **Repository:** `cybernetic-governance-engine` (private, GitHub)
 **Current HEAD:** `v0.1.0` stable tag on branch `rc-v0.1.0` (GO — 2026-06-08)
@@ -1266,6 +1266,27 @@ Or via the GitHub UI:
 7. Click **Publish release**
 
 ### 8.10 Final Release Checklist
+
+### Documentation Completeness — Mathematical Formalism (added 2026-07-01)
+
+As of 2026-07-01, mathematical formalism documentation has been added to all major governance and technical-report documents. The following table records the documentation state for audit traceability:
+
+| Formalism | Document(s) | Source | Status |
+|---|---|---|---|
+| CBF safe set `S = {x ∈ ℝⁿ : h(x) ≥ 0}` and barrier `h(x) = cash_balance − min_cash_balance` | [10-FORMAL-VERIFICATION.md](../technical-report/10-FORMAL-VERIFICATION.md), [CAUSAL_AND_CBF_GOVERNANCE.md](../governance/CAUSAL_AND_CBF_GOVERNANCE.md) | [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py) | ✅ Documented |
+| Discrete-time CBF condition `h(S(t+1)) ≥ (1−γ)·h(S(t))`, `γ ∈ (0,1)` | [CAUSAL_AND_CBF_GOVERNANCE.md](../governance/CAUSAL_AND_CBF_GOVERNANCE.md) | [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py) | ✅ Documented |
+| 7-tier symbolic governor pipeline (Tiers 1–7) | [GOVERNANCE_OVERVIEW.md](../governance/GOVERNANCE_OVERVIEW.md) | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) | ✅ Documented |
+| STPA UCAs: FIN-1, FIN-2, UCA-5, UCA-6 | [GOVERNANCE_OVERVIEW.md](../governance/GOVERNANCE_OVERVIEW.md) | [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py) | ✅ Documented |
+| Causal SCM + PlaceboTreatmentRefuter (`p < 0.05`, magnitude `< 0.2`) | [CAUSAL_AND_CBF_GOVERNANCE.md](../governance/CAUSAL_AND_CBF_GOVERNANCE.md) | [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | ✅ Documented |
+| Confabulation scoring `risk_score = 1.0 − confidence` | [GOVERNANCE_OVERVIEW.md](../governance/GOVERNANCE_OVERVIEW.md) | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) | ✅ Documented |
+| Consensus protocol (≥$10k trades, 30s timeout) | [CAUSAL_AND_CBF_GOVERNANCE.md](../governance/CAUSAL_AND_CBF_GOVERNANCE.md) | [`src/gateway/governance/consensus.py`](../../src/gateway/governance/consensus.py) | ✅ Documented |
+| FRIA zones (`FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70`) | [NEURO_SYMBOLIC_GOVERNANCE.md](../governance/NEURO_SYMBOLIC_GOVERNANCE.md) | [`src/gateway/governance/constants.py`](../../src/gateway/governance/constants.py) | ✅ Documented |
+| Routing seal HMAC proof | [10-FORMAL-VERIFICATION.md](../technical-report/10-FORMAL-VERIFICATION.md), [GATEWAY_ARCHITECTURE.md](../architecture/GATEWAY_ARCHITECTURE.md) | [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py) | ✅ Documented |
+| Provenance chain integrity | [10-FORMAL-VERIFICATION.md](../technical-report/10-FORMAL-VERIFICATION.md) | [`src/gateway/governance/provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | ✅ Documented |
+| Fiscal limit invariant | [10-FORMAL-VERIFICATION.md](../technical-report/10-FORMAL-VERIFICATION.md) | [`src/gateway/governance/fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) | ✅ Documented |
+| Named constants index | [docs/README.md](../README.md) | [`src/gateway/governance/constants.py`](../../src/gateway/governance/constants.py) | ✅ Documented |
+
+This documentation state satisfies the documentation completeness gate for v0.1.0. Formal machine-checked proofs (Coq/Lean) are deferred to v2.2.0 per [V2_ROADMAP.md](V2_ROADMAP.md).
 
 ### Release Gate Checklist
 

@@ -684,6 +684,88 @@ These items require organizational action in parallel with engineering work.
 
 ---
 
+## Section 7b: Mathematical Safety Verification
+
+> **Added 2026-07-01.** This section documents the formal mathematical safety properties of the CAGE governance kernel and their verification status as of v0.1.0.
+
+### Control Barrier Function (CBF) Invariance
+
+**Source:** [`src/gateway/governance/cbf.py`](src/gateway/governance/cbf.py)
+
+| Property | Formula | Status |
+|---|---|---|
+| Safe set definition | `S = {x ∈ ℝⁿ : h(x) ≥ 0}` | ✅ Implemented |
+| Barrier function | `h(x) = cash_balance − min_cash_balance` | ✅ Implemented |
+| Discrete-time CBF condition | `h(S(t+1)) ≥ (1−γ)·h(S(t))`, `γ ∈ (0,1)` | ✅ Implemented |
+| Fail-closed on Redis unavailability | `GovernanceError` raised on connection failure | ✅ Verified (C-02) |
+| Atomic state reads | Redis pipeline (`WATCH`/`MULTI`/`EXEC`) | ✅ Verified (H-15) |
+
+The CBF invariance proof guarantees that the system cannot transition from a safe fiscal state to an unsafe one in a single governance step. The decay parameter `γ` is configurable; the default enforces a conservative safety margin.
+
+### STPA UCA Coverage
+
+**Source:** [`src/gateway/governance/ontology.py`](src/gateway/governance/ontology.py), [`src/gateway/governance/generated_stpa_validator.py`](src/gateway/governance/generated_stpa_validator.py)
+
+| UCA ID | Condition | Enforcement Point | Status |
+|---|---|---|---|
+| **FIN-1** | `trade_value > position_limit` | `GeneratedSTPAValidator` | ✅ Active |
+| **FIN-2** | `portfolio_concentration > 0.25` | `GeneratedSTPAValidator` | ✅ Active |
+| **UCA-5** | `order_size > 0.1 × daily_volume` | `GeneratedSTPAValidator` | ✅ Active |
+| **UCA-6** | `order_size > fraction × daily_vol` | `GeneratedSTPAValidator` | ✅ Active |
+
+All UCA violations are logged by [`UCALogger`](src/gateway/governance/uca_logger.py) as 16-field KMS-signed compliance records written to the region-gated WORM bucket. STPA freshness check passes (gate U-09 — ✅ Green).
+
+### Routing Seal Integrity Verification
+
+**Source:** [`src/gateway/governance/routing_seal.py`](src/gateway/governance/routing_seal.py)
+
+| Property | Value | Status |
+|---|---|---|
+| Algorithm | HMAC-SHA256 | ✅ Verified |
+| Seal format | `<expire_ts_hex>.<action_slug>.<hmac_hex>` | ✅ Documented |
+| TTL | 30 seconds | ✅ Enforced |
+| Key source | `GOVERNANCE_SALT` env var (≥64 chars, fail-fast) | ✅ Verified (BLOCKER-02 resolved) |
+| Comparison | `hmac.compare_digest()` — constant-time | ✅ Verified |
+| Unsigned request → 403 | Gate U-15 | ✅ Green |
+| Valid signed request → 200 | Gate U-16 | ✅ Green |
+
+### Provenance Chain Integrity
+
+**Source:** [`src/compliance_bridge/evidence_stream.py`](src/compliance_bridge/evidence_stream.py)
+
+| Property | Implementation | Status |
+|---|---|---|
+| Hash algorithm | SHA-256 | ✅ Implemented |
+| Chain construction | `new_hash = sha256(prev_hash + payload)` | ✅ Implemented |
+| Concurrency safety | `asyncio.Lock()` on chain update | ✅ Verified (BLOCKER-07 resolved) |
+| Tamper evidence | Each record links to predecessor | ✅ Implemented |
+
+### Fiscal Limit Guard Parameters
+
+**Source:** [`src/gateway/governance/fiscal_limit_guard.py`](src/gateway/governance/fiscal_limit_guard.py)
+
+| Parameter | Value | Status |
+|---|---|---|
+| Daily spending cap | $500,000 USD (stored as integer cents) | ✅ Active |
+| Rolling window | 86,400 seconds | ✅ Active |
+| Retry strategy | Exponential backoff: `_RETRY_BASE_MS × 2^attempt` | ✅ Implemented |
+| Redis client | `redis.asyncio` (non-blocking) | ✅ Verified (BLOCKER-05 resolved) |
+| Fail-closed | Redis unavailability blocks trade | ✅ Verified |
+
+### Named Safety Constants (Source of Truth)
+
+The following named constants are defined in [`src/gateway/governance/causal_gatekeeper.py`](src/gateway/governance/causal_gatekeeper.py) and [`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py):
+
+| Constant | Value | Purpose |
+|---|---|---|
+| `CAUSAL_LOCK_RISK_BOUNDARY` | `0.95` | Marginal risk boundary for causal lock |
+| `CAUSAL_LOCK_P_VALUE_THRESHOLD` | `0.05` | PlaceboTreatmentRefuter significance threshold |
+| `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` | `0.2` | Minimum effect size for refutation |
+| `FRIA_ZONE_ALLOW` | `0.95` | FRIA ALLOW zone lower bound |
+| `FRIA_ZONE_DEFER` | `0.70` | FRIA DEFER zone lower bound |
+
+---
+
 ## Section 8: Final Verdict
 
 ## ✅ GO — STABLE RELEASE APPROVED (v0.1.0, 2026-06-08)

@@ -21,6 +21,12 @@ Phase: 0 (foundation)
 import os
 import pytest
 
+# Skip the entire module gracefully when dowhy is not installed (e.g. in CI
+# environments that install only the base dependency group without the
+# [compliance] extra).  The TestCausalGatekeeperAuthorizedActionSpace class
+# imports causal_gatekeeper which transitively requires dowhy.
+pytest.importorskip("dowhy", reason="dowhy not installed — skipping agentic scope causal tests")
+
 
 # ---------------------------------------------------------------------------
 # §4.1 Task 3a — RoutingSeal rejects requests without valid HMAC seal

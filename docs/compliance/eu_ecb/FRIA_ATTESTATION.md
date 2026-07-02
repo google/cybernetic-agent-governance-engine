@@ -98,7 +98,54 @@ This document records the FRIA for the EU_ECB deployment profile.
 
 ---
 
-## 5. TrustLayers FRIA Validation (EU AI Act Art. 29a — External Validation)
+## 5. FRIA Zone Mathematical Definition
+
+The CAGE governance kernel implements a three-zone FRIA scoring model in Tier 7 of the Symbolic Governor pipeline ([`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)). This model operationalises the EU AI Act Art. 29a requirement for proportionate human oversight of High-Risk AI decisions.
+
+### 5.1 Zone Thresholds
+
+| Constant | Value | Zone | Enforcement Action |
+|----------|-------|------|--------------------|
+| `FRIA_ZONE_ALLOW` | `0.95` | Allow zone | Async attestation — decision proceeds without blocking; FRIA record written asynchronously |
+| `FRIA_ZONE_DEFER` | `0.70` | Defer zone lower bound | Synchronous blocking gate — decision is held pending HITL review |
+| *(implicit)* | `< 0.70` | Block zone | Hard BLOCK — decision denied; no override path available |
+
+### 5.2 FRIA Score Computation
+
+The FRIA score is a composite of the confabulation risk score and the causal gatekeeper estimate, normalised to `[0, 1]`:
+
+```
+fria_score = 1.0 − risk_score
+           = confidence          (when risk_score = 1.0 − confidence)
+```
+
+A higher `fria_score` indicates higher confidence and lower fundamental-rights risk. The three zones map to EU AI Act Art. 29a as follows:
+
+| Score Range | FRIA Zone | EU AI Act Art. 29a Mapping |
+|-------------|-----------|---------------------------|
+| `fria_score ≥ 0.95` | ALLOW | Deployer has verified the system operates within intended purpose; async attestation sufficient |
+| `0.70 ≤ fria_score < 0.95` | DEFER | Human oversight required before action; deployer must ensure meaningful human review (Art. 29a §2) |
+| `fria_score < 0.70` | BLOCK | System output is inadmissible; fundamental rights risk too high for any action |
+
+### 5.3 Relationship to Existing FRIA Controls
+
+The mathematical thresholds complement the qualitative FRIA controls documented in §4:
+
+- **§4.1 Non-discrimination (Art. 21):** The DEFER zone (`0.70 ≤ score < 0.95`) ensures that recommendations with moderate uncertainty are always reviewed by a human before affecting a client — directly mitigating demographic bias risk.
+- **§4.3 Effective remedy (Art. 47):** The BLOCK zone (`score < 0.70`) provides an absolute safety net: no AI recommendation with high fundamental-rights risk can be autonomously executed, preserving the client's right to challenge decisions made by a human reviewer rather than an opaque algorithm.
+- **§4.2 Data protection (Art. 8):** The FRIA score is computed after PII sanitization (Tier 2) — the score never incorporates raw PII, satisfying GDPR Art. 25 data minimisation.
+
+### 5.4 TrustLayers Integration
+
+When `CAGE_NORMATIVE_PROVIDER=trustlayers`, every decision with `fria_score < 0.95` (i.e., in the DEFER or BLOCK zone) is submitted to TrustLayers for independent FRIA validation before the zone decision is finalised. TrustLayers may upgrade a DEFER to ALLOW or downgrade an ALLOW to DEFER based on its own assessment. The Langfuse trace records `fria.path` as one of:
+- `ASYNC_ATTESTED` — score ≥ 0.95, async path
+- `SYNC_GATE_ADMITTED` — 0.70 ≤ score < 0.95, TrustLayers admitted
+- `SYNC_GATE_DEFERRED` — 0.70 ≤ score < 0.95, HITL required
+- `BLOCKED` — score < 0.70, hard deny
+
+---
+
+## 6. TrustLayers FRIA Validation (EU AI Act Art. 29a — External Validation)
 
 The `normative_provider.py` module implements adaptive FRIA enforcement gating:
 - When `CAGE_NORMATIVE_PROVIDER=trustlayers` and TrustLayers credentials are configured, every execute_trade decision with confidence < 0.95 is submitted to TrustLayers for independent FRIA validation before action
@@ -130,7 +177,7 @@ The `normative_provider.py` module implements adaptive FRIA enforcement gating:
 
 ---
 
-## 6. Conclusions
+## 7. Conclusions
 
 | Rights Category | Risk Level | Mitigation Status |
 |---|---|---|
@@ -139,11 +186,11 @@ The `normative_provider.py` module implements adaptive FRIA enforcement gating:
 | Effective remedy (Art. 47) | Low | Explainability chain + HITL override implemented |
 | Equal treatment (Art. 20) | Moderate | Same as non-discrimination |
 
-**Overall residual risk:** **Moderate** — acceptable for controlled deployment with mandatory HITL for high-value transactions.
+**Overall residual risk:** **Moderate** — acceptable for controlled deployment with mandatory HITL for high-value transactions. The FRIA zone thresholds (§5) provide a mathematical enforcement layer that ensures no high-risk decision (score < 0.70) can be autonomously executed.
 
 ---
 
-## 7. Sign-Off
+## 8. Sign-Off
 
 | Role | Name | Date | Signature |
 |---|---|---|---|

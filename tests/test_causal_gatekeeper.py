@@ -24,6 +24,12 @@ import pandas as pd
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 
+# Skip the entire module gracefully when dowhy is not installed (e.g. in CI
+# environments that install only the base dependency group without the
+# [compliance] extra).  This prevents a hard collection error from propagating
+# to the AI 600-1 Unit Tests job.
+pytest.importorskip("dowhy", reason="dowhy not installed — skipping causal gatekeeper tests")
+
 pytestmark = pytest.mark.local
 
 

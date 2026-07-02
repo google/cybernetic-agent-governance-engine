@@ -26,6 +26,52 @@ Human oversight is enforced structurally, not by convention: the LangGraph graph
 
 ---
 
+## Mathematical Foundations
+
+The CAGE governance kernel is grounded in formal mathematical theory, providing provable safety guarantees rather than best-effort heuristics.
+
+### Control Barrier Function — Financial Safety
+
+```
+h(S(t+1)) ≥ (1−γ)·h(S(t))     where h(x) = cash_balance − min_cash_balance
+```
+
+This discrete-time CBF condition ([`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py)) guarantees that the system state never leaves the safe set `S = {x ∈ ℝⁿ : h(x) ≥ 0}`. Any proposed trade that would violate the condition is denied before execution. State reads are atomic (Redis `WATCH/MULTI/EXEC`, `_MAX_RETRIES=5`).
+
+### 7-Tier Symbolic Governor Pipeline
+
+| Tier | Control | Key Invariant |
+|------|---------|---------------|
+| 1 | NoDirectBind | No tool call bypasses the governance wrapper |
+| 2 | PII sanitization | All inputs scrubbed before downstream processing |
+| 3 | CBF + OPA concurrent | `asyncio.gather` — barrier check + policy engine in parallel |
+| 4 | Causal gatekeeper | SCM + PlaceboTreatmentRefuter (50 sims, p < 0.05, \|eff\| > 0.2); marginal risk boundary: `(0.5 + estimate.value × amount) > 0.95` |
+| 5 | Confabulation scoring | `risk_score = 1.0 − confidence` |
+| 6 | Consensus | ≥$10k trades, 30s timeout, heterogeneous multi-model quorum |
+| 7 | FRIA zones | `FRIA_ZONE_ALLOW=0.95` / `FRIA_ZONE_DEFER=0.70` / score < 0.70 → BLOCK |
+
+Source: [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py)
+
+### FRIA Zone Thresholds (EU AI Act Art. 29a)
+
+| Score | Zone | Action |
+|-------|------|--------|
+| ≥ 0.95 | ALLOW | Async attestation |
+| 0.70 – 0.95 | DEFER | Synchronous HITL gate |
+| < 0.70 | BLOCK | Hard deny |
+
+### Key Invariants
+
+| Invariant | Formula / Mechanism |
+|-----------|---------------------|
+| NoDirectBind | Structural — enforced at Python import level |
+| Confabulation risk | `risk_score = 1.0 − confidence` |
+| Causal lock | `(0.5 + estimate.value × amount) > 0.95` → DENY |
+| Fiscal cap | $500k/day (integer cents), 86,400s window, exponential backoff |
+| Provenance chain | SHA-256 hash chain, O(n) construction, sorted-key JSON |
+
+---
+
 ## Status of This Document
 
 | Attribute             | Value                                                                                                                                                                   |
