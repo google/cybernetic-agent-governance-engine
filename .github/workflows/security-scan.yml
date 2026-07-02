@@ -215,8 +215,14 @@ jobs:
         run: |
           if find . -name "*_test.rego" -not -path "*/node_modules/*" \
                | grep -q .; then
-            find . -name "*_test.rego" -not -path "*/node_modules/*" \
-              | xargs opa test
+            # Pass both the test-file directory AND the policy-file directory so
+            # that data.trade.governance (declared in
+            # src/governed_financial_advisor/governance/policy/trade_governance.rego)
+            # is visible to the test bundle in compliance/postures/us_fed/opa/.
+            opa test \
+              compliance/postures/us_fed/opa/ \
+              src/governed_financial_advisor/governance/policy/ \
+              -v
           else
             echo "No OPA test files found — skipping opa test"
           fi
