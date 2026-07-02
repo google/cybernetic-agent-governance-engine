@@ -71,7 +71,9 @@ gateway = [
 advisor = [
     "langgraph>=1.1.0",
     "langgraph-checkpoint-redis",
-    "langchain>=1.1.0",
+    # langchain>=1.3.9: fixes GHSA-gr75-jv2w-4656 (prompt injection via
+    # tool-call message deserialization). Minimum bumped from 1.1.0.
+    "langchain>=1.3.9",
     "langchain-core>=1.1.0",
     "langchain-openai>=0.1.0",
     "langchain-mcp-adapters>=0.2.0",
