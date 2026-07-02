@@ -36,8 +36,6 @@ jobs:
           fail-on-severity: high
           # Allow these licenses (Apache 2.0, MIT, BSD variants, PSF)
           allow-licenses: Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, Python-2.0
-          # Deny GPL-licensed dependencies (incompatible with CAGE's Apache 2.0 license)
-          deny-licenses: GPL-2.0, GPL-3.0, AGPL-3.0
           # Comment on the PR with dependency review results
           comment-summary-in-pr: always
 

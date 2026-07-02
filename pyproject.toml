@@ -94,7 +94,7 @@ compliance = [
     # dowhy: causal gatekeeper (Tier 6) — required by compliance-bridge defer queue
     # (No-Direct-Bind Gap 4). Moved from gateway extras so the compliance-bridge
     # image picks it up via --extra compliance without pulling all gateway deps.
-    "dowhy>=0.11,<0.12",
+    "dowhy>=0.12",
 ]
 
 langfuse = [
