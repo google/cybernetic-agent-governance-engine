@@ -1,3 +1,7 @@
+# NOTE: This manifest contains GKE-specific node selectors for GPU and spot instance scheduling.
+# For other Kubernetes distributions, replace the GKE-specific nodeSelector labels with the
+# platform-equivalent labels documented inline. The GPU resource requests (nvidia.com/gpu)
+# are standard Kubernetes and work on any cluster with the NVIDIA device plugin installed.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -127,6 +131,11 @@ ${ARGS}
       nodeSelector:
         # Use the standard GKE GPU node label — nvidia.com/gpu.product is NOT
         # applied by GKE and will prevent scheduling on all node types.
+        # GPU node selector — platform equivalents:
+        #   GKE:       cloud.google.com/gke-gpu: "true"
+        #   EKS:       (no direct equivalent; use k8s.amazonaws.com/accelerator instead)
+        #   AKS:       (no direct equivalent; use accelerator label instead)
+        #   On-prem:   (remove; rely on nvidia.com/gpu resource request)
         cloud.google.com/gke-gpu: "true"
 ${NODE_SELECTOR}
       tolerations:
@@ -134,6 +143,11 @@ ${NODE_SELECTOR}
           operator: "Equal"
           value: "present"
           effect: "NoSchedule"
+        # Spot/preemptible node toleration — platform equivalents:
+        #   GKE:    cloud.google.com/gke-spot: "true"
+        #   EKS:    eks.amazonaws.com/capacityType: SPOT
+        #   AKS:    kubernetes.azure.com/scalesetpriority: spot
+        #   On-prem: Remove this toleration; use PriorityClass instead
         - key: "cloud.google.com/gke-spot"
           operator: "Equal"
           value: "true"

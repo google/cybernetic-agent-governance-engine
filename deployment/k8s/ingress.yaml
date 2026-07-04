@@ -1,44 +1,27 @@
-# Copyright 2026 Google LLC
+# Standard nginx ingress — compatible with any Kubernetes cluster (GKE, EKS, AKS, OpenShift, vanilla k8s).
+# Requires: nginx ingress controller (https://kubernetes.github.io/ingress-nginx/)
+# For TLS: use cert-manager (https://cert-manager.io/) or provide a pre-existing Secret named 'cage-tls'.
+# For GKE-specific GCE L7 load balancer + ManagedCertificate, see deployment/k8s/gcp/ingress-gke.yaml
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 # POAM-011 / SC-8: TLS termination for the gateway service.
 #
-# This Ingress terminates TLS at the GCE load balancer level using a
-# GCP ManagedCertificate (gateway-managed-cert) bound to the hostname
-# gateway.laah.altostrat.com.  Plaintext HTTP is disabled via
-# kubernetes.io/ingress.allow-http: "false".
+# This Ingress terminates TLS at the nginx ingress controller using either:
+#   a) cert-manager with a ClusterIssuer (recommended for automated renewal), or
+#   b) a manually provisioned Secret named 'cage-tls' in the governance-stack namespace.
 #
-# TLS certificate provisioning:
-#   GCP ManagedCertificate CRD (networking.gke.io/v1) is used.
-#   The certificate is provisioned automatically by GCP once DNS resolves.
-#   DNS zone: laah-altostrat-zone (Cloud DNS, project laah-cybernetics)
-#   A record: gateway.laah.altostrat.com → 34.102.203.30
-#
-#   ManagedCertificate resource: deployment/k8s/managed-certificate.yaml
-#   Provisioning takes 10–60 minutes after DNS propagation.
+# TLS certificate provisioning (cert-manager):
+#   Annotate with cert-manager.io/cluster-issuer: "letsencrypt-prod" and ensure
+#   cert-manager is installed: https://cert-manager.io/docs/installation/
+#   The certificate is provisioned automatically once DNS resolves.
 #
 # Prerequisites:
-#   - gateway Service must be type: NodePort (see deployment/k8s/gateway.yaml)
-#   - ManagedCertificate gateway-managed-cert must exist in governance-stack
-#   - DNS A record gateway.laah.altostrat.com must resolve to ingress IP
+#   - nginx ingress controller installed (https://kubernetes.github.io/ingress-nginx/)
+#   - TLS Secret 'cage-tls' exists in governance-stack namespace, OR cert-manager is configured
+#   - DNS record gateway.laah.altostrat.com must resolve to the nginx ingress LoadBalancer IP
 #
 # To obtain the ingress IP after apply:
 #   kubectl get ingress gateway-ingress -n governance-stack \
 #     -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
-#
-# To check ManagedCertificate status:
-#   kubectl describe managedcertificate gateway-managed-cert -n governance-stack
 #
 # NIST SP 800-53: SC-8 (Transmission Confidentiality and Integrity)
 # NIST SP 800-52 Rev. 2: TLS 1.2 minimum for federal information systems
@@ -49,14 +32,8 @@ metadata:
   name: gateway-ingress
   namespace: governance-stack
   annotations:
-    # GCE ingress class — this cluster uses the GCE ingress controller,
-    # not nginx.  nginx.ingress.kubernetes.io/* annotations are ignored here.
-    kubernetes.io/ingress.class: "gce"
-    # NEG annotation: required for GKE Ingress to route to ClusterIP services.
-    # Without this, the GCE ingress controller cannot create backend services
-    # for ClusterIP-type services. The NEG controller creates Network Endpoint
-    # Groups that the load balancer uses directly.
-    # Applied to both governed-financial-advisor and langfuse-web services.
+    # Standard nginx ingress class — works on any Kubernetes distribution.
+    kubernetes.io/ingress.class: "nginx"
     # H-15: Force HTTPS redirect — HTTP requests are redirected to HTTPS
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
@@ -68,11 +45,18 @@ metadata:
       more_set_headers "Content-Security-Policy: default-src 'self'; frame-ancestors 'none';";
       more_set_headers "X-Content-Type-Options: nosniff";
       more_set_headers "X-Frame-Options: DENY";
-    # cert-manager will provision and renew the TLS certificate automatically
+    # cert-manager will provision and renew the TLS certificate automatically.
+    # Remove this annotation if providing a pre-existing Secret named 'cage-tls'.
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
-  # TLS is handled by the GCP ManagedCertificate annotation above.
-  # The self-signed tls.secretName reference has been removed.
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - gateway.laah.altostrat.com
+      # cert-manager will create and manage this Secret automatically when the
+      # cert-manager.io/cluster-issuer annotation is set above.
+      # For manual TLS: create a Secret named 'cage-tls' with tls.crt and tls.key.
+      secretName: cage-tls
   rules:
     - host: gateway.laah.altostrat.com
       http:

@@ -40,6 +40,10 @@ spec:
       containers:
         # Main Agent Container
         - name: ingress-agent
+          # To use a different registry (e.g., ECR, ACR, Docker Hub), override IMAGE_REGISTRY:
+          #   image: ${IMAGE_REGISTRY:-gcr.io}/laah-cybernetics/governed-financial-advisor:latest
+          # Or use kustomize: kustomize edit set image gcr.io/laah-cybernetics/governed-financial-advisor=<your-registry>/governed-financial-advisor:latest
+          # IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
           image: gcr.io/laah-cybernetics/governed-financial-advisor:latest
           imagePullPolicy: Always
           ports:

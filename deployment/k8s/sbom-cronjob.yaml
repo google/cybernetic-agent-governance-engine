@@ -190,6 +190,10 @@ spec:
           # ----------------------------------------------------------------
           initContainers:
             - name: gcs-preflight
+              # To use a different registry (e.g., ECR, ACR, Docker Hub), override IMAGE_REGISTRY:
+              #   image: ${IMAGE_REGISTRY:-gcr.io}/google.com/cloudsdktool/cloud-sdk:slim
+              # Or use kustomize: kustomize edit set image gcr.io/google.com/cloudsdktool/cloud-sdk=<your-registry>/cloud-sdk:slim
+              # IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
               image: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
               command:
                 - /bin/bash

@@ -18,6 +18,10 @@ spec:
       serviceAccountName: financial-advisor-sa
       containers:
         - name: gateway
+          # To use a different registry (e.g., ECR, ACR, Docker Hub), override IMAGE_REGISTRY:
+          #   image: ${IMAGE_REGISTRY:-gcr.io}/laah-cybernetics/gateway:latest
+          # Or use kustomize: kustomize edit set image gcr.io/laah-cybernetics/gateway=<your-registry>/gateway:latest
+          # IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
           image: gcr.io/laah-cybernetics/gateway:latest
           imagePullPolicy: Always
           ports:
