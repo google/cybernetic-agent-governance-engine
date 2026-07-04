@@ -28,6 +28,10 @@
 #                Passed as a build-time ARG; not baked into the image layer.
 # ──────────────────────────────────────────────────────────────────────────────
 
+# IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
+# To push to a different registry (e.g., ECR, ACR, Docker Hub), replace gcr.io/$PROJECT_ID
+# with your registry prefix. Example for Artifact Registry:
+#   us-central1-docker.pkg.dev/$PROJECT_ID/governance-stack
 substitutions:
   _HF_TOKEN: ""      # Override via --substitutions=_HF_TOKEN=hf_xxx at submit time
   _SHORT_SHA: "latest"  # Override via --substitutions=_SHORT_SHA=$(git rev-parse --short HEAD)
