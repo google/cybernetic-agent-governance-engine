@@ -21,15 +21,10 @@ terraform {
   }
 }
 
-resource "kubernetes_service_account" "financial_advisor" {
-  metadata {
-    name      = "financial-advisor-sa"
-    namespace = var.namespace
-    annotations = {
-      "iam.gke.io/gcp-service-account" = "${var.gcp_service_account_name}@${var.project_id}.iam.gserviceaccount.com"
-    }
-  }
-}
+# NOTE: kubernetes_service_account "financial-advisor-sa" is intentionally
+# created at the top-level target (infra/targets/gcp-gke/main.tf) as a
+# standalone resource so that module.vllm and module.vllm_reasoning can
+# depend on it without creating a circular dependency through this module.
 
 resource "kubernetes_deployment" "governed_advisor" {
   metadata {
