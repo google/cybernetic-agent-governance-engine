@@ -473,6 +473,22 @@ The path to multi-domain extensibility is a configuration exercise, not a rewrit
 
 ---
 
+## Platform Portability
+
+CAGE's driver-based extensibility model ensures the governance kernel is not tied to any specific cloud provider or Kubernetes distribution. The three key extension points are:
+
+| Extension Point | GCP Driver | AWS Driver | Azure Driver | On-Prem / Agnostic |
+|---|---|---|---|---|
+| **KMS / Audit Signing** | `GCPKMSProvider` (Cloud KMS) | `AWSKMSProvider` (AWS KMS) | `AzureKMSProvider` (Azure Key Vault) | HashiCorp Vault |
+| **Evidence Storage** | `GCSStorageBackend` (Cloud Storage) | `S3StorageBackend` (S3-compatible) | `S3StorageBackend` (Azure Blob via S3 interop) | `LocalStorageBackend` (filesystem / MinIO) |
+| **Ingress / TLS** | GCE L7 + ManagedCertificate (`deployment/k8s/gcp/`) | AWS ALB Ingress Controller | Azure Application Gateway | nginx ingress (`deployment/k8s/ingress.yaml`) |
+
+All three extension points are selected at runtime via environment variables (`KMS_PROVIDER`, `STORAGE_BACKEND`, `ingressClassName`) — no code changes are required to switch between providers.
+
+> **For PA Lead reviewers:** This architecture is consistent with the Kubernetes extension NonProduct classification: CAGE works with any Kubernetes 1.24+ cluster. GCP integrations are optional drivers, not core dependencies. See [`infra/targets/agnostic/`](../../infra/targets/agnostic/) for the cloud-agnostic Terraform deployment target.
+
+---
+
 ## Related Documentation
 
 | Document                                                              | Relationship                                            |

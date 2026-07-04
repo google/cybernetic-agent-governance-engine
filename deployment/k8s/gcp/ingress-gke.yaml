@@ -1,0 +1,69 @@
+# GKE-specific ingress configuration using GCE L7 load balancer and ManagedCertificate.
+# This file is ONLY compatible with Google Kubernetes Engine (GKE).
+# For other Kubernetes distributions, use deployment/k8s/ingress.yaml (nginx ingress).
+#
+# POAM-011 / SC-8: TLS termination for the gateway service.
+#
+# This Ingress terminates TLS at the GCE load balancer level using a
+# GCP ManagedCertificate (gateway-managed-cert) bound to the hostname
+# gateway.laah.altostrat.com.  Plaintext HTTP is disabled via
+# kubernetes.io/ingress.allow-http: "false".
+#
+# TLS certificate provisioning:
+#   GCP ManagedCertificate CRD (networking.gke.io/v1) is used.
+#   The certificate is provisioned automatically by GCP once DNS resolves.
+#   DNS zone: laah-altostrat-zone (Cloud DNS, project laah-cybernetics)
+#   A record: gateway.laah.altostrat.com → 34.102.203.30
+#
+#   ManagedCertificate resource: see the ManagedCertificate block below.
+#   Provisioning takes 10–60 minutes after DNS propagation.
+#
+# Prerequisites:
+#   - gateway Service must be type: NodePort (see deployment/k8s/gateway.yaml)
+#   - ManagedCertificate gateway-managed-cert must exist in governance-stack
+#   - DNS A record gateway.laah.altostrat.com must resolve to ingress IP
+#
+# To obtain the ingress IP after apply:
+#   kubectl get ingress gateway-ingress -n governance-stack \
+#     -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+#
+# To check ManagedCertificate status:
+#   kubectl describe managedcertificate gateway-managed-cert -n governance-stack
+#
+# NIST SP 800-53: SC-8 (Transmission Confidentiality and Integrity)
+# NIST SP 800-52 Rev. 2: TLS 1.2 minimum for federal information systems
+# GDPR Art. 32: Security of processing — encryption in transit
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: gateway-managed-cert
+  namespace: governance-stack
+spec:
+  domains:
+    - gateway.laah.altostrat.com
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway-ingress
+  namespace: governance-stack
+  annotations:
+    # GCE ingress class — GKE-only. Uses the GCE L7 load balancer controller.
+    kubernetes.io/ingress.class: "gce"
+    # Bind the GCP ManagedCertificate for automatic TLS provisioning.
+    networking.gke.io/managed-certificates: "gateway-managed-cert"
+    # H-15: Disable plaintext HTTP — all traffic must be HTTPS.
+    kubernetes.io/ingress.allow-http: "false"
+spec:
+  # TLS is handled by the GCP ManagedCertificate annotation above.
+  rules:
+    - host: gateway.laah.altostrat.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 8080
