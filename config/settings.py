@@ -59,7 +59,10 @@ class Config:
     
     # --- INFRASTRUCTURE ---
     GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT")
-    GOOGLE_CLOUD_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    # GOOGLE_CLOUD_LOCATION: Required only when using GCP KMS or GCS.
+    # Set explicitly (e.g., "us-central1", "europe-west1", "asia-southeast1").
+    # Leave unset when using non-GCP storage/KMS backends.
+    GOOGLE_CLOUD_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "")
     PORT = int(os.getenv("PORT", 8080))
     REDIS_URL = os.getenv("REDIS_URL", "")
     GOVERNANCE_SALT = os.getenv("GOVERNANCE_SALT")  # Legacy fallback — see kms_signer.py
@@ -77,8 +80,9 @@ class Config:
     OPA_AUTH_TOKEN = os.getenv("OPA_AUTH_TOKEN")
     SANDBOX_URL = os.getenv("SANDBOX_URL")
 
-    # --- NEW: GKE INFERENCE GATEWAY ---
+    # --- KUBERNETES INFERENCE GATEWAY ---
     # If this is set, GatewayClient will route all requests here.
+    # Supports any Kubernetes-hosted vLLM/inference server (GKE, EKS, AKS, on-prem, etc.)
     # Otherwise, it falls back to the split-brain URLs above.
     VLLM_GATEWAY_URL = os.getenv("VLLM_GATEWAY_URL")
 
