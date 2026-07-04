@@ -22,9 +22,10 @@ logger = logging.getLogger(__name__)
 
 class GatewayClient:
     def __init__(self):
-        # Mode 1: GKE Inference Gateway (Unified Endpoint) - Production
+        # Mode 1: Kubernetes Inference Gateway (Unified Endpoint) - Production
+        # Supports any Kubernetes-hosted vLLM/inference server (GKE, EKS, AKS, on-prem, etc.)
         if Config.VLLM_GATEWAY_URL:
-            logger.info(f"🚀 Using GKE Inference Gateway: {Config.VLLM_GATEWAY_URL}")
+            logger.info(f"🚀 Using Kubernetes Inference Gateway: {Config.VLLM_GATEWAY_URL}")
             self.mode = "gateway"
             self.gateway_client = AsyncOpenAI(
                 base_url=Config.VLLM_GATEWAY_URL,
@@ -76,7 +77,7 @@ class GatewayClient:
                 extra_body["guided_regex"] = kwargs.pop("guided_regex")
     
             # In Gateway mode, we might want to pass priority headers in the future.
-            # For now, relying on the model name in the body is sufficient for GKE routing.
+            # For now, relying on the model name in the body is sufficient for Kubernetes routing.
     
             if extra_body:
                 kwargs["extra_body"] = extra_body

@@ -15,16 +15,15 @@
 """
 storage.py
 
-Durable OSCAL artifact persistence via the native GCS Python SDK
-(google-cloud-storage).  Uses Application Default Credentials (ADC) /
-Workload Identity on GKE — no HMAC keys or AWS SDK required.
+Durable OSCAL artifact persistence via S3-compatible storage (default) or
+the native GCS Python SDK (google-cloud-storage).
 
 For multi-cloud portability, the storage backend is selected via the
 STORAGE_BACKEND environment variable:
-  - "gcs"  (default on GCP/GKE) — uses google-cloud-storage + ADC
-  - "s3"   (AWS / MinIO / Cloudflare R2) — uses boto3 S3-compat API
+  - "s3"   (default) — S3-compatible: MinIO, AWS S3, Ceph, GCS via interop
+  - "gcs"  (Google Cloud Storage native client, ADC / Workload Identity)
 
-GCS configuration (STORAGE_BACKEND=gcs or unset):
+GCS configuration (STORAGE_BACKEND=gcs):
   OSCAL_S3_BUCKET   — GCS bucket name (reuses the same env var for compat)
   GCS_PROJECT_ID    — optional GCP project ID (inferred from ADC if unset)
 
@@ -66,7 +65,10 @@ def _get_storage_backend() -> str:
     M-21: Selecting the backend at import time caused failures in test
     environments where STORAGE_BACKEND is not set until after module load.
     """
-    return os.environ.get("STORAGE_BACKEND", "gcs").lower()
+    # STORAGE_BACKEND: "s3" (default, S3-compatible: MinIO, AWS S3, Ceph, GCS via interop)
+    #                  "gcs" (Google Cloud Storage native client)
+    #                  "local" (local filesystem, for development/testing)
+    return os.environ.get("STORAGE_BACKEND", "s3").lower()
 
 # ---------------------------------------------------------------------------
 # Lazy client singletons
