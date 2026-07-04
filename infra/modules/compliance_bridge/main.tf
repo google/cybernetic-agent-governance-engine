@@ -202,11 +202,11 @@ resource "kubernetes_deployment" "compliance_bridge" {
           resources {
             requests = {
               cpu    = "50m"
-              memory = "128Mi"
+              memory = "512Mi"
             }
             limits = {
               cpu    = "200m"
-              memory = "256Mi"
+              memory = "1Gi"
             }
           }
 
