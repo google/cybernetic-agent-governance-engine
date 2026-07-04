@@ -11,6 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# NOTE: This manifest contains GKE-specific node selectors for GPU and spot instance scheduling.
+# For other Kubernetes distributions, replace the GKE-specific nodeSelector labels with the
+# platform-equivalent labels documented inline. The GPU resource requests (nvidia.com/gpu)
+# are standard Kubernetes and work on any cluster with the NVIDIA device plugin installed.
 
 apiVersion: apps/v1
 kind: Deployment
@@ -101,7 +106,17 @@ spec:
             - "8000"
             - "--trust-remote-code"
       nodeSelector:
+        # GPU node selector — platform equivalents:
+        #   GKE:       cloud.google.com/gke-gpu: "true"
+        #   EKS:       (no direct equivalent; use k8s.amazonaws.com/accelerator instead)
+        #   AKS:       (no direct equivalent; use accelerator label instead)
+        #   On-prem:   (remove; rely on nvidia.com/gpu resource request)
         cloud.google.com/gke-gpu: "true"
+        # GPU node selector — platform equivalents:
+        #   GKE:       cloud.google.com/gke-accelerator: nvidia-l4
+        #   EKS:       k8s.amazonaws.com/accelerator: nvidia-l4
+        #   AKS:       accelerator: nvidia-l4
+        #   On-prem:   nvidia.com/gpu.product: Tesla-T4 (node-feature-discovery label)
         cloud.google.com/gke-accelerator: nvidia-l4
       tolerations:
         - key: "nvidia.com/gpu"
