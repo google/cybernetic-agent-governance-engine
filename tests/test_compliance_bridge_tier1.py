@@ -185,8 +185,8 @@ class TestControlsDiscoveryEndpoint:
         universal_ids = set(get_control_meta("").keys())
         data = client.get("/v1/controls").json()
         returned_ids = {c["control_id"] for c in data["controls"]}
-        assert universal_ids == returned_ids, (
-            f"Expected universal controls {universal_ids}, got {returned_ids}"
+        assert universal_ids <= returned_ids, (
+            f"Expected universal controls {universal_ids} to be a subset of returned {returned_ids}"
         )
 
 

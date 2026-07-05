@@ -86,18 +86,28 @@ def generate_workflow():
     ]
 
 def query_agent(prompt: str):
-    """Sends a query to the agent."""
+    """Sends a query to the agent.
+
+    Injects the CAGE_API_KEY as a Bearer token so that the advisor's
+    require_api_key() dependency (auth.py) does not reject the request
+    with HTTP 401.  When CAGE_API_KEY is unset the header is omitted and
+    the dev-mode bypass in auth.py applies (CAGE_ENV=dev + no key).
+    """
     user_id = str(uuid.uuid4())
     url = f"{BACKEND_URL}/agent/query"
     payload = {
         "prompt": prompt,
         "user_id": user_id
     }
-    
+    headers: dict = {}
+    cage_api_key = os.environ.get("CAGE_API_KEY", "")
+    if cage_api_key:
+        headers["Authorization"] = f"Bearer {cage_api_key}"
+
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            response = requests.post(url, json=payload, timeout=300)
+            response = requests.post(url, json=payload, headers=headers, timeout=300)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:

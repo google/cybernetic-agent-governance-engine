@@ -70,7 +70,14 @@ class TestKfpComponentEndpoint:
         pipeline_mod = importlib.import_module(
             "src.governed_financial_advisor.pipelines.green_stack_pipeline"
         )
-        return inspect.getsource(pipeline_mod.trigger_nemo_refinement)
+        component = pipeline_mod.trigger_nemo_refinement
+        # KFP @component wraps the function in a PythonComponent object.
+        # Use python_func to get the original unwrapped function for source inspection.
+        if hasattr(component, "python_func"):
+            return inspect.getsource(component.python_func)
+        elif hasattr(component, "__wrapped__"):
+            return inspect.getsource(component.__wrapped__)
+        return inspect.getsource(component)
 
     def test_calls_apply_refinement_not_trigger(self):
         """R-LOOP-1: must NOT reference /v1/refinement/trigger."""
@@ -106,10 +113,15 @@ class TestKfpComponentEndpoint:
         pipeline_mod = importlib.import_module(
             "src.governed_financial_advisor.pipelines.green_stack_pipeline"
         )
-        # Call the raw function (without KFP wrapping)
-        fn = pipeline_mod.trigger_nemo_refinement.__wrapped__ if hasattr(
-            pipeline_mod.trigger_nemo_refinement, "__wrapped__"
-        ) else pipeline_mod.trigger_nemo_refinement
+        # Call the raw function (without KFP wrapping).
+        # KFP v2 @dsl.component exposes .python_func; functools.wraps sets __wrapped__.
+        component = pipeline_mod.trigger_nemo_refinement
+        if hasattr(component, "python_func"):
+            fn = component.python_func
+        elif hasattr(component, "__wrapped__"):
+            fn = component.__wrapped__
+        else:
+            fn = component
         result = fn(verdict="PASS: safety_rate=0.99", backend_url="http://localhost")
         assert result == "NO_ACTION"
 

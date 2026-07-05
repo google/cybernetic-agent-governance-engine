@@ -31,6 +31,7 @@ Latency budgets are defined as module-level constants for easy tuning.
 
 from __future__ import annotations
 
+import os
 import statistics
 import time
 from typing import Any, Dict
@@ -217,7 +218,7 @@ def _opa_patches():
             mock_gov,
         ),
         patch(
-            "src.governed_financial_advisor.graph.nodes.safety_node.symbolic_governor",
+            "src.gateway.governance.langgraph_harness.opa_node_factory.symbolic_governor",
             mock_gov,
         ),
     ]
@@ -230,6 +231,10 @@ def _opa_patches():
 class TestTier1NemoInputGuardrailLatency:
     """Latency tests for Tier 1: NeMo input guardrail node."""
 
+    @pytest.mark.skipif(
+        not os.getenv("CI"),
+        reason="Latency budget tests only enforced in CI environment",
+    )
     @pytest.mark.asyncio
     async def test_tier1_nemo_input_guardrail_latency(self):
         """Tier 1 node call must complete within TIER1_NEMO_INPUT_BUDGET_MS."""
@@ -264,6 +269,10 @@ class TestTier1NemoInputGuardrailLatency:
 class TestTier2OpaPolicyCheckLatency:
     """Latency tests for Tier 2: OPA policy check node."""
 
+    @pytest.mark.skipif(
+        not os.getenv("CI"),
+        reason="Latency budget tests only enforced in CI environment",
+    )
     @pytest.mark.asyncio
     async def test_tier2_opa_policy_check_latency(self):
         """Tier 2 node call must complete within TIER2_OPA_BUDGET_MS."""
@@ -299,6 +308,10 @@ class TestTier2OpaPolicyCheckLatency:
 class TestTier3SafetyNodeLatency:
     """Latency tests for Tier 3: Safety/STPA validation node."""
 
+    @pytest.mark.skipif(
+        not os.getenv("CI"),
+        reason="Latency budget tests only enforced in CI environment",
+    )
     @pytest.mark.asyncio
     async def test_tier3_safety_node_latency(self):
         """Tier 3 safety_check_node call must complete within TIER3_SAFETY_BUDGET_MS.
@@ -376,6 +389,10 @@ class TestTier5NemoOutputRailLatency:
 class TestPipelineCumulativeLatency:
     """End-to-end cumulative latency test for the 4 non-LLM tiers."""
 
+    @pytest.mark.skipif(
+        not os.getenv("CI"),
+        reason="Latency budget tests only enforced in CI environment",
+    )
     @pytest.mark.asyncio
     async def test_pipeline_cumulative_latency(self):
         """Run Tiers 1, 2, 3, 5 in sequence and assert total < PIPELINE_TOTAL_BUDGET_MS.

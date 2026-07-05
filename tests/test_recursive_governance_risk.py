@@ -60,7 +60,7 @@ GOVERNANCE_CONFIDENCE_THRESHOLD = 0.95
 # Advisor-layer confidence threshold (same value, independent check)
 ADVISOR_CONFIDENCE_THRESHOLD = CONFIDENCE_THRESHOLD
 
-SCOPE_STATEMENT_PATH = pathlib.Path("docs/AGENTIC_SCOPE_STATEMENT.md")
+SCOPE_STATEMENT_PATH = pathlib.Path("docs/governance/AGENTIC_SCOPE_STATEMENT.md")
 
 
 # ---------------------------------------------------------------------------

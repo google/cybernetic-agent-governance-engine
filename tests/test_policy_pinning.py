@@ -50,6 +50,7 @@ async def test_symbolic_governor_version_matching(registry, mock_dependencies):
     opa_client, safety_filter, consensus_engine = mock_dependencies
     gov = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
 
+    ControlRegistry.reconfigure("US_FED")
     active_hash = registry.active_hash
     assert active_hash != ""  # Should be populated from baseline loading
 
