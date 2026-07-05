@@ -177,6 +177,17 @@ jobs:
               sys.exit(1)
           print(f'All {len(manifests)} AI 600-1 Lula manifests passed YAML structure check.')
           PYEOF
+      - name: Assert lula manifest count matches README
+        run: |
+          DISK_COUNT=$(ls compliance/lula/lula-validation-*.yaml 2>/dev/null | wc -l | tr -d ' ')
+          README_COUNT=$(grep -c 'lula-validation-.*\.yaml' compliance/lula/README.md | tr -d ' ')
+          echo "Manifests on disk (compliance/lula/): $DISK_COUNT"
+          echo "Manifests referenced in README: $README_COUNT"
+          if [ "$DISK_COUNT" != "$README_COUNT" ]; then
+            echo "ERROR: Manifest count mismatch. Add new manifests to compliance/lula/README.md or move drafts to compliance/lula/drafts/."
+            exit 1
+          fi
+          echo "OK: manifest count consistent ($DISK_COUNT)"
 
   sbom-generate:
     name: "Generate and Validate SBOM"
@@ -273,6 +284,6 @@ jobs:
           "
       - name: Validate agentic scope statement present
         run: |
-          test -f docs/AGENTIC_SCOPE_STATEMENT.md || \
-            (echo "ERROR: docs/AGENTIC_SCOPE_STATEMENT.md missing" && exit 1)
+          test -f docs/governance/AGENTIC_SCOPE_STATEMENT.md || \
+            (echo "ERROR: docs/governance/AGENTIC_SCOPE_STATEMENT.md missing" && exit 1)
           echo "Agentic scope statement present — OK"

@@ -145,11 +145,11 @@ The default `max_slippage_pct` (2.0%) is the reviewer-facing default in `Approva
 
 | File | Change |
 |------|--------|
-| [`governed_trader_graph.py`](file:///Users/larsahlfors/Code/cybernetic-governance-engine/src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) | +3 nodes (`post_hitl_rehydrate`, `post_hitl_revalidate`, `drift_blocked`); +3 state fields; updated graph wiring |
-| [`approval_node.py`](file:///Users/larsahlfors/Code/cybernetic-governance-engine/src/governed_financial_advisor/graph/nodes/approval_node.py) | `goto="executor"` → `goto="post_hitl_rehydrate"`; `expires_at` added to interrupt payload; `max_slippage_pct` added to `approval_decision` |
-| [`agent_nodes.py`](file:///Users/larsahlfors/Code/cybernetic-governance-engine/src/governed_financial_advisor/graph/nodes/agent_nodes.py) | `data_analyst_ticker` forwarded to subgraph state |
-| [`server.py`](file:///Users/larsahlfors/Code/cybernetic-governance-engine/src/governed_financial_advisor/server.py) | `max_slippage_pct` field on `ApprovalResumeRequest`; TTL expiry guard on `/resume` returning HTTP 410 |
-| [`test_hitl_toctou_revalidation.py`](file:///Users/larsahlfors/Code/cybernetic-governance-engine/tests/test_hitl_toctou_revalidation.py) | [NEW] 10+ unit tests, no live services required |
+| [`governed_trader_graph.py`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) | +3 nodes (`post_hitl_rehydrate`, `post_hitl_revalidate`, `drift_blocked`); +3 state fields; updated graph wiring |
+| [`approval_node.py`](../../src/governed_financial_advisor/graph/nodes/approval_node.py) | `goto="executor"` → `goto="post_hitl_rehydrate"`; `expires_at` added to interrupt payload; `max_slippage_pct` added to `approval_decision` |
+| [`agent_nodes.py`](../../src/governed_financial_advisor/graph/nodes/agent_nodes.py) | `data_analyst_ticker` forwarded to subgraph state |
+| [`server.py`](../../src/governed_financial_advisor/server.py) | `max_slippage_pct` field on `ApprovalResumeRequest`; TTL expiry guard on `/resume` returning HTTP 410 |
+| [`test_hitl_toctou_revalidation.py`](../../tests/test_hitl_toctou_revalidation.py) | [NEW] 10+ unit tests, no live services required |
 
 ## DEFER Queue — Confidence-Starved Context Handling
 

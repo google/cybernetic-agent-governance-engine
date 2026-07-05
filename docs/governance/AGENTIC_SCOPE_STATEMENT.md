@@ -190,7 +190,7 @@ check that is independent of the LLM confidence scores.
 | §2.5.2 Human oversight | ConsensusEngine + HITL escalator | `consensus.py`, `hitl_escalator.py` |
 | §2.5.3 Inter-agent trust | Gateway-only orchestration | `hybrid_server.py` |
 | §2.5.4 Scope limitation | CausalGatekeeper + OPA | `causal_gatekeeper.py` |
-| §3.1 Scope statement | This document | `docs/AGENTIC_SCOPE_STATEMENT.md` |
+| §3.1 Scope statement | This document | `docs/governance/AGENTIC_SCOPE_STATEMENT.md` |
 | §3.2 HITL SLA (4 hours) | DeferQueue TTL + escalation | `defer_queue.py`, `hitl_escalator.py` |
 
 ---

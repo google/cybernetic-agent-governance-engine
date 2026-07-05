@@ -1,8 +1,8 @@
 # Repository Cleanup Plan — CAGE / Cybernetic Governance Engine
 
-**Prepared:** 2026-06-14  
-**Scope:** Full repository audit of `/Users/larsahlfors/Code/cybernetic-governance-engine`  
-**Status:** Recommendation only — no files have been moved or deleted
+**Prepared:** 2026-06-14
+**Scope:** Full repository audit of the CAGE project root
+**Status:** Partially implemented — some recommendations from this plan have been actioned; see git history for details
 
 ---
 
