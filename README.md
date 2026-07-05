@@ -2,11 +2,24 @@
 
 > **AI governance for regulated financial services — built-in, not bolted on.**
 
-![v0.1.0](https://img.shields.io/badge/version-0.1.0-brightgreen) ![796 Tests Passing](https://img.shields.io/badge/tests-796%20passing-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 6](https://img.shields.io/badge/POAM%20Closed-6-brightgreen)
+![v0.1.0](https://img.shields.io/badge/version-0.1.0-brightgreen) ![796 Tests Passing](https://img.shields.io/badge/tests-796%20passing-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 7](https://img.shields.io/badge/POAM%20Closed-7-brightgreen)
 
 **Universal (all regions):** ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue)
 
 **Jurisdictional Extensions:** ![SR 26-2](https://img.shields.io/badge/US__FED-SR%2026--2-orange) ![NIST AI RMF](https://img.shields.io/badge/US__FED-NIST%20AI%20RMF-orange) ![FedRAMP HIGH](https://img.shields.io/badge/US__FED-FedRAMP%20HIGH-orange) ![EU AI Act](https://img.shields.io/badge/EU__ECB-EU%20AI%20Act-purple) ![DORA](https://img.shields.io/badge/EU__ECB-DORA-purple) ![MAS FEAT](https://img.shields.io/badge/APAC__MAS-MAS%20FEAT-green)
+
+---
+
+## Test Status
+
+| Suite | Result | Date |
+|---|---|---|
+| Unit tests | ✅ 1,161 passed / 0 failed | 2026-07-05 |
+| Integration tests (GKE) | ✅ 120 passed / 0 failed | 2026-07-05 |
+| Total | ✅ 1,281 passed / 32 skipped / 0 failed | 2026-07-05 |
+
+Tests run against live GKE cluster `gke_laah-cybernetics_us-central1-a_cage-dev` (namespace: `governance-stack`).
+Skipped tests: EU_ECB region-specific tests and CI-only latency budget tests.
 
 ---
 
@@ -366,6 +379,16 @@ docker compose up
 # Verify gateway health
 curl http://localhost:8080/health
 ```
+
+#### Local Development Overlay
+
+For local development with hot-reload and relaxed resource limits, use the dev overlay:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+```
+
+> ⚠️ **Do not use `docker-compose.dev.yml` in staging or production.** It disables production-grade resource constraints and is intended for local development only.
 
 ### Run Tests
 
