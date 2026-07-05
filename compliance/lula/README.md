@@ -8,6 +8,8 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 
 ---
 
+> **Note:** Draft/incomplete manifests are stored in [`drafts/`](drafts/README.md) and are excluded from the authoritative count below.
+
 ## Validation Coverage
 
 ### Universal Controls (ISO 42001 — ALL regions)
@@ -18,6 +20,8 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 | [`lula-validation-a53.yaml`](lula-validation-a53.yaml)   | A.5.3   | ISO 42001            | ALL          | ✅ Active | Logging and Monitoring — Langfuse safety rate ≥ 98%                |
 | [`lula-validation-a92.yaml`](lula-validation-a92.yaml)   | A.9.2   | ISO 42001            | ALL          | ✅ Active | Data Transfer to Suppliers — Presidio PII leak rate = 0%           |
 | [`lula-validation-aarm-vectors.yaml`](lula-validation-aarm-vectors.yaml) | CSA AARM v1.0 | CSA AARM | ALL | 🔶 Stub | CSA AARM v1.0 11-vector threat coverage validation |
+| [`lula-validation-tqp007.yaml`](lula-validation-tqp007.yaml)             | A.8.4         | ISO 42001 | ALL | ✅ Active | TokenQuotaProxy fail-closed (CTRL_TQP_007) — asserts tqp_running, tqp_has_redis_url, tqp_fail_closed |
+| [`lula-validation-iso001-token-quota.yaml`](lula-validation-iso001-token-quota.yaml) | A.4 | ISO 42001 | ALL | ✅ Active | Token Quota OPA Injection (ISO-001) — asserts advisor_running, advisor_has_redis_url, advisor_has_quota_markers |
 
 ### US_FED Controls (NIST SP 800-53 / NIST AI 600-1 — US_FED only)
 
@@ -39,6 +43,15 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 | [`lula-validation-ai600-prompt-injection.yaml`](lula-validation-ai600-prompt-injection.yaml) | SI-3, SI-10, CA-8 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.4 Prompt Injection — asserts injection detector ConfigMap present and deflection score ≥ 4 (POAM AI600-003). |
 | [`lula-validation-ai600-human-ai-config.yaml`](lula-validation-ai600-human-ai-config.yaml) | AC-5, AU-3, CA-7 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.5 Human-AI Configuration — asserts DEFER queue SLA ≤ 4h for CRITICAL escalations and HITL audit trail present (POAM AI600-005). |
 | [`lula-validation-ai600-cbrn.yaml`](lula-validation-ai600-cbrn.yaml) | SA-12, SR-3, SI-7 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.6 / §2.12 CBRN & Value Chain — asserts CBRN keyword list ≥ 10 terms enabled and NeMo CBRN rail deployed (POAM AI600-007). **Cat-M: requires AO pre-approval before activation.** |
+
+### EU_ECB Controls (EU AI Act / GDPR / DORA — EU_ECB only)
+
+| Validation File                                                          | Control         | Standard             | Region Scope | Status    | Description                                                        |
+| ------------------------------------------------------------------------ | --------------- | -------------------- | ------------ | --------- | ------------------------------------------------------------------ |
+| [`lula-validation-eu-fria.yaml`](lula-validation-eu-fria.yaml)           | Art. 29a        | EU AI Act            | EU_ECB       | ✅ Active | FRIA Gating (EU-001) — asserts gateway_running, normative_provider_not_static, normative_endpoint_set |
+| [`lula-validation-eu-ai-act-art9.yaml`](lula-validation-eu-ai-act-art9.yaml) | Art. 9     | EU AI Act            | EU_ECB       | 🔶 Stub   | Risk Management System — compliance-bridge endpoint check          |
+| [`lula-validation-gdpr-art22.yaml`](lula-validation-gdpr-art22.yaml)     | Art. 22         | GDPR                 | EU_ECB       | 🔶 Stub   | Automated Decision-Making — human oversight endpoint check         |
+| [`lula-validation-dora-art10.yaml`](lula-validation-dora-art10.yaml)     | Art. 10         | DORA                 | EU_ECB       | 🔶 Stub   | ICT Resilience Testing — audit logging endpoint check              |
 
 **Legend:**
 

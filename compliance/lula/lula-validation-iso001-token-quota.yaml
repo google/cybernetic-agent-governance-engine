@@ -19,7 +19,7 @@ component-definition:
     last-modified: '2026-07-01T13:18:54Z'
     version: 1.0.0
     oscal-version: 1.1.2
-    remarks: "Auto-converted from standalone lula validation format.\nRegion: ALL. Posture: iso42001.\nNotes: ISO 42001 §A.4: AI System Resource Controls — Token Quota OPA Injection (ISO-001). Asserts that the governed-financial-advisor Deployment:\n  (1) Is Running with ≥1 ready replica in governance-stack namespace.\n  (2) Has REDIS_URL env var configured (required for get_redis_quota_snapshot() in\n      policy_loader.py to read live token counters from Redis db=2).\nThe OPA trade_governance.rego token quota rules (ISO-001) only activate when REDIS_URL is present and quota_available=true — meaning the Redis connection succeeded and returned live counter data. STPA hazard H-7: TokenQuotaProxy fail-OPEN when Redis unavailable. CTRL_TQP_007 (lula-validation-tqp007.yaml) validates the sidecar fail-closed posture; this manifest validates the OPA-side quota injection. POAM reference: ISO-001 (POAM_ISO42001.md)."
+    remarks: "Auto-converted from standalone lula validation format.\nRegion: ALL. Posture: iso42001.\nNotes: ISO 42001 §A.4: AI System Resource Controls — Token Quota OPA Injection (ISO-001). Asserts that the governed-financial-advisor Deployment matches required state signatures."
   components:
   - uuid: a30eb71f-447c-53aa-8891-bb1b7db73afa
     type: software
@@ -42,4 +42,57 @@ component-definition:
       title: Lula Validation — ISO001 TOKEN QUOTA (ISO-001)
       rlinks:
       - href: lula.dev
-      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: governed-financial-advisor-deployment\n      resource: deployments\n      namespace: governance-stack\n      filters:\n      - field: metadata.name\n        value: governed-financial-advisor\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# ISO 42001 §A.4 — Token Quota OPA Injection (ISO-001)\\n#\\n# Check 1: The governed-financial-advisor Deployment is running with ≥1 ready replica.\\n# Check 2: The REDIS_URL env var is set (required for quota snapshot reads).\\n# Check 3: The OPA policy configmap/volume contains token quota rule markers.\\n#          (Full runtime validation requires an OPA policy evaluation test —\\n#           that is performed in unit tests, not this Lula manifest.)\\n\\nadvisor_running if {\\n  input[\\\"governed-financial-advisor-deployment\\\"].status.readyReplicas >= 1\\n}\\n\\nadvisor_has_redis_url if {\\n  some container in input[\\\"governed-financial-advisor-deployment\\\"].spec.template.spec.containers\\n  some env in container.env\\n  env.name == \\\"REDIS_URL\\\"\\n  env.value != \\\"\\\"\\n}\\n\\nvalidate if {\\n  advisor_running\\n  advisor_has_redis_url\\n}\\n\"\n"
+      description: |
+        domain:
+          type: kubernetes
+          kubernetes-spec:
+            resources:
+            - name: governed-financial-advisor-deployment
+              resource: deployments
+              namespace: governance-stack
+              filters:
+              - field: metadata.name
+                value: governed-financial-advisor
+            - name: opa-policy-configmap
+              resource: configmaps
+              namespace: governance-stack
+              filters:
+              - field: metadata.name
+                value: opa-policy
+        provider:
+          type: opa
+          opa-spec:
+            rego: |
+              package lula
+
+              import future.keywords.if
+
+              # ISO 42001 §A.4 — Token Quota OPA Injection (ISO-001)
+              #
+              # Check 1: The governed-financial-advisor Deployment is running with ≥1 ready replica.
+              # Check 2: The REDIS_URL env var is set (required for quota snapshot reads).
+              # Check 3: The OPA policy configmap contains token quota rule markers.
+
+              advisor_running if {
+                input["governed-financial-advisor-deployment"].status.readyReplicas >= 1
+              }
+
+              advisor_has_redis_url if {
+                some container in input["governed-financial-advisor-deployment"].spec.template.spec.containers
+                some env in container.env
+                env.name == "REDIS_URL"
+                env.value != ""
+              }
+
+              advisor_has_quota_markers if {
+                some filename in object.keys(input["opa-policy-configmap"].data)
+                policy_content := input["opa-policy-configmap"].data[filename]
+                contains(policy_content, "quota_available")
+                contains(policy_content, "token_quota")
+              }
+
+              validate if {
+                advisor_running
+                advisor_has_redis_url
+                advisor_has_quota_markers
+              }
