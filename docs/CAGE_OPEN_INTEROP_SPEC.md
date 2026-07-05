@@ -574,6 +574,116 @@ Approve or reject a staged AI safety guardrails refinement proposal. Requires
 
 ---
 
+### 5.9 AI Safety Guardrails Refinement — List Pending
+
+#### `GET /v1/nemo/proposals/pending`
+
+List all staged AI safety guardrails refinement proposals awaiting human
+review.
+
+**Response 200 OK:**
+```json
+{
+  "pending": [
+    {
+      "proposal_id": "uuid",
+      "control_id": "A.9.2",
+      "verdict": "TIGHTEN",
+      "staged_at": "2026-07-05T01:00:00Z"
+    }
+  ],
+  "count": 2
+}
+```
+
+---
+
+### 5.10 AI Safety Guardrails Refinement — Legacy Apply
+
+#### `POST /v1/nemo/apply-refinement`
+
+Legacy gated endpoint. In production, routes to the proposal/approval flow
+described in Sections 5.7–5.8.
+
+**Request body:** Same as `POST /v1/nemo/propose-refinement`.
+
+---
+
+### 5.11 Observability Webhook Receiver
+
+#### `POST /v1/webhooks/langfuse`
+
+Webhook receiver that triggers the governance refinement pipeline when safety
+metrics breach configured thresholds.
+
+**Request body:**
+```json
+{
+  "type": "score",
+  "name": "safety_rate",
+  "value": 0.72,
+  "traceId": "trace-uuid",
+  "data": {}
+}
+```
+
+**Response 200 OK:**
+```json
+{
+  "status": "triggered | cooldown | deferred | ignored | threshold_ok"
+}
+```
+
+---
+
+### 5.12 Tool Execution
+
+#### `POST /tools/execute`
+
+Execute a named tool with full governance enforcement. For `execute_trade`,
+the Gateway Service validates the action and verifies the routing seal before
+actuation. Requires `X-API-Key` and `X-CAGE-Routing-Seal` headers.
+
+**Required headers:** `X-API-Key`, `X-CAGE-Routing-Seal`
+
+**Request body:**
+```json
+{
+  "tool_name": "execute_trade",
+  "params": {
+    "symbol": "AAPL",
+    "amount": 5000.0,
+    "currency": "USD",
+    "confidence": 0.91,
+    "trader_id": "u-001",
+    "trader_role": "senior"
+  }
+}
+```
+
+**Supported `tool_name` values:**
+
+| Tool name | Description | Governance |
+|---|---|---|
+| `check_market_status` | Market data lookup | None |
+| `get_market_sentiment` | Sentiment analysis | None |
+| `simulate_governance_check` | Dry-run governance simulation | None |
+| `trigger_safety_intervention` | Lock system | None |
+| `verify_content_safety` | AI safety guardrails content check | None |
+| `evaluate_policy` | Policy evaluation engine assessment | None |
+| `execute_trade` | Governed trade execution | Full 7-tier pipeline via Gateway Service |
+
+**Response 200 OK:**
+```json
+{
+  "status": "SUCCESS",
+  "output": "string",
+  "trace_id": "otel-trace-id"
+}
+```
+
+---
+
 ## 6. Real-Time Event Streams
 
 ### 6.1 Governance Event Stream
@@ -662,6 +772,27 @@ token is streamed.
 | `is_final` | `bool` | `true` on the last chunk |
 | `input_tokens` | `int32` | Input token count (final chunk only) |
 | `output_tokens` | `int32` | Output token count (final chunk only) |
+
+---
+
+### 7.2 `rpc ExecuteTool(ToolRequest) returns (ToolResponse)`
+
+Unary RPC. Execute a named tool via gRPC with governance enforcement.
+
+**`ToolRequest` message fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `tool_name` | `string` | Tool identifier |
+| `params_json` | `string` | JSON-encoded parameters |
+
+**`ToolResponse` message fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `output` | `string` | Tool output |
+| `error` | `string` | Error message if failed |
+| `status` | `string` | `SUCCESS` or `ERROR` |
 
 ---
 
@@ -791,6 +922,20 @@ Request body for `POST /agent/query`.
 | `prompt` | `string` | Yes |
 | `user_id` | `string` | Yes |
 | `thread_id` | `string` | Yes |
+
+---
+
+### 8.7 `ApprovalResumeRequest`
+
+Request body for `POST /v1/approvals/{thread_id}/resume`.
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `approved` | `boolean` | Yes | — |
+| `reviewer` | `string` | Yes | Non-empty |
+| `rationale` | `string` | Yes | Minimum 10 characters |
+| `comment` | `string` | Yes | — |
+| `max_slippage_pct` | `float` | Yes | 0.0–100.0 |
 
 ---
 
@@ -1022,293 +1167,3 @@ in flight.
 
 *End of CAGE Open Interoperability Specification — Developer Preview Spec v1.0-preview*
 
-### 8.7 `ApprovalResumeRequest`
-
-Request body for `POST /v1/approvals/{thread_id}/resume`.
-
-| Field | Type | Required | Constraints |
-|---|---|---|---|
-| `approved` | `boolean` | Yes | — |
-| `reviewer` | `string` | Yes | Non-empty |
-| `rationale` | `string` | Yes | Minimum 10 characters |
-| `comment` | `string` | Yes | — |
-| `max_slippage_pct` | `float` | Yes | 0.0–100.0 |
-
----
-
-### 7.2 `rpc ExecuteTool(ToolRequest) returns (ToolResponse)`
-
-Unary RPC. Execute a named tool via gRPC with governance enforcement.
-
-**`ToolRequest` message fields:**
-
-| Field | Type | Description |
-|---|---|---|
-| `tool_name` | `string` | Tool identifier |
-| `params_json` | `string` | JSON-encoded parameters |
-
-**`ToolResponse` message fields:**
-
-| Field | Type | Description |
-|---|---|---|
-| `output` | `string` | Tool output |
-| `error` | `string` | Error message if failed |
-| `status` | `string` | `SUCCESS` or `ERROR` |
-
----
-
-### 5.9 AI Safety Guardrails Refinement — List Pending
-
-#### `GET /v1/nemo/proposals/pending`
-
-List all staged AI safety guardrails refinement proposals awaiting human
-review.
-
-**Response 200 OK:**
-```json
-{
-  "pending": [
-    {
-      "proposal_id": "uuid",
-      "control_id": "A.9.2",
-      "verdict": "TIGHTEN",
-      "staged_at": "2026-07-05T01:00:00Z"
-    }
-  ],
-  "count": 2
-}
-```
-
----
-
-### 5.10 AI Safety Guardrails Refinement — Legacy Apply
-
-#### `POST /v1/nemo/apply-refinement`
-
-Legacy gated endpoint. In production, routes to the proposal/approval flow
-described in Sections 5.7–5.8.
-
-**Request body:** Same as `POST /v1/nemo/propose-refinement`.
-
----
-
-### 5.11 Observability Webhook Receiver
-
-#### `POST /v1/webhooks/langfuse`
-
-Webhook receiver that triggers the governance refinement pipeline when safety
-metrics breach configured thresholds.
-
-**Request body:**
-```json
-{
-  "type": "score",
-  "name": "safety_rate",
-  "value": 0.72,
-  "traceId": "trace-uuid",
-  "data": {}
-}
-```
-
-**Response 200 OK:**
-```json
-{
-  "status": "triggered | cooldown | deferred | ignored | threshold_ok"
-}
-```
-
----
-
-### 5.12 Tool Execution
-
-#### `POST /tools/execute`
-
-Execute a named tool with full governance enforcement. For `execute_trade`,
-the Gateway Service validates the action and verifies the routing seal before
-actuation. Requires `X-API-Key` and `X-CAGE-Routing-Seal` headers.
-
-**Required headers:** `X-API-Key`, `X-CAGE-Routing-Seal`
-
-**Request body:**
-```json
-{
-  "tool_name": "execute_trade",
-  "params": {
-    "symbol": "AAPL",
-    "amount": 5000.0,
-    "currency": "USD",
-    "confidence": 0.91,
-    "trader_id": "u-001",
-    "trader_role": "senior"
-  }
-}
-```
-
-**Supported `tool_name` values:**
-
-| Tool name | Description | Governance |
-|---|---|---|
-| `check_market_status` | Market data lookup | None |
-| `get_market_sentiment` | Sentiment analysis | None |
-| `simulate_governance_check` | Dry-run governance simulation | None |
-| `trigger_safety_intervention` | Lock system | None |
-| `verify_content_safety` | AI safety guardrails content check | None |
-| `evaluate_policy` | Policy evaluation engine assessment | None |
-| `execute_trade` | Governed trade execution | Full 7-tier pipeline via Gateway Service |
-
-**Response 200 OK:**
-```json
-{
-  "status": "SUCCESS",
-  "output": "string",
-  "trace_id": "otel-trace-id"
-}
-```
-
----
-
-### 4.4 Per-Control Compliance Metrics
-
-#### `GET /v1/metrics/{control_id}`
-
-Per-control compliance metrics. Results are cached with a 5-minute TTL.
-Queries the observability and tracing platform for traces tagged with the
-specified control identifier.
-
-**Path parameters:**
-
-| Parameter | Description |
-|---|---|
-| `control_id` | Must be a value in the supported controls registry |
-
-**Query parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `window_hours` | `int` | `24` | Lookback window in hours |
-
-**Response 200 OK** — see [`ComplianceMetrics`](#81-compliancemetrics) schema:
-```json
-{
-  "control_id": "A.9.2",
-  "safety_rate": 0.97,
-  "total_traces": 1420,
-  "blocked_traces": 43,
-  "passed_traces": 1377,
-  "window_hours": 24.0,
-  "last_event_utc": "2026-07-05T01:00:00Z",
-  "evidence_age_seconds": 120.4,
-  "startup_grace_active": false,
-  "startup_grace_remaining_hours": 0.0,
-  "confabulation_rate": 0.02,
-  "confabulation_blocked_traces": 28
-}
-```
-
-**Response 404 Not Found:** Unknown `control_id`.
-
----
-
-### 4.5 OSCAL Assessment Results Export
-
-#### `GET /v1/oscal/assessment-results`
-
-Generate an OSCAL 1.1.2 Assessment Results document from live compliance
-metrics.
-
-**Query parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `window_hours` | `int` | `24` | Lookback window in hours |
-| `format` | `json\|yaml` | `json` | Output format |
-| `audit_id` | `string` | — | Attach results to an existing audit record |
-
-**Response 200 OK:** OSCAL Assessment Results document.
-`Content-Type: application/json` or `application/yaml` depending on `format`.
-
----
-
-### 4.6 CSA AARM Conformance Report
-
-#### `GET /v1/aarm/conformance-report`
-
-Generate an on-demand CSA AARM Conformance Report Card covering 11 threat
-vectors.
-
-**Query parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `window_hours` | `int` | `24` | Lookback window in hours |
-| `format` | `json\|yaml` | `json` | Output format |
-| `include_narrative` | `bool` | `false` | Include AI-generated narrative |
-| `audit_id` | `string` | — | Attach results to an existing audit record |
-
-**Response 200 OK:** AARM Conformance Report Card document.
-
----
-
-### 4.7 Compliance Telemetry History
-
-#### `GET /v1/telemetry/history`
-
-Paginated historical compliance telemetry from the observability and tracing
-platform.
-
-**Query parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `page` | `int` | `1` | Page number |
-| `limit` | `int` | `20` | Items per page |
-| `before_timestamp` | `string` | — | ISO 8601 cursor for pagination |
-
-**Response 200 OK:**
-```json
-{
-  "telemetry": [
-    {
-      "traceId": "string",
-      "controlId": "A.9.2",
-      "result": "PASS",
-      "safetyRate": 0.97,
-      "timestamp": "2026-07-05T01:00:00Z"
-    }
-  ],
-  "hasMore": true,
-  "page": 1,
-  "limit": 20
-}
-```
-
----
-
-### 2.4 OpenTelemetry Trace Propagation
-
-All services accept and propagate the W3C `traceparent` header for distributed
-tracing correlation.
-
-```
-traceparent: 00-<trace-id>-<span-id>-<flags>
-```
-
----
-
-### 2.5 Data Residency and Region Guard
-
-All shared governance modules enforce strict data residency via the
-`CAGE_DEPLOYMENT_REGION` configuration value. Any storage write, telemetry
-export, or observability sink is gated on the active region:
-
-| Region token | Data residency |
-|---|---|
-| `US_FED` | United States federal-approved regions |
-| `EU_ECB` | `europe-west1` only |
-| `APAC_MAS` | `asia-southeast1` only |
-
-The EU and APAC baselines include a regulatory sentinel that suppresses
-telemetry lacking legal basis under GDPR and MAS Notice 655. This sentinel
-must never be removed.
-
----
