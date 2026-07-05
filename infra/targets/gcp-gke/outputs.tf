@@ -123,6 +123,7 @@ output "langfuse_url" {
 output "langfuse_public_key" {
   description = "Langfuse API public key"
   value       = module.langfuse.public_key
+  sensitive   = true
 }
 
 output "langfuse_secret_key" {

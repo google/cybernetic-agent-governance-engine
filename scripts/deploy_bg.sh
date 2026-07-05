@@ -210,9 +210,11 @@ launch_background() {
 
   # Prepare log file.
   mkdir -p "$LOG_DIR"
+  chmod 700 "$LOG_DIR"
   local timestamp
   timestamp=$(date +%Y%m%d-%H%M%S)
   local log_file="$LOG_DIR/deploy-${timestamp}.log"
+  touch "$log_file" && chmod 600 "$log_file"
 
   # Write a header to the log so it's immediately identifiable.
   {
