@@ -1,0 +1,15 @@
+{
+    "input": {
+        "action": "execute_trade",
+        "trader_role": "senior",
+        "amount": 250000,
+        "currency": "USD",
+        "token_quota": {
+            "quota_available": true,
+            "quota_exhausted": false,
+            "below_min_reserve": false,
+            "quota_source": "redis"
+        }
+    },
+    "expected_allow": "ALLOW"
+}
