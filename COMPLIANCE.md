@@ -1,5 +1,5 @@
 # CAGE Compliance & Governance Posture Framework
-**CAGE Version:** 2.0.0 (CSA AARM Conformance Release)
+**CAGE Version:** v0.1.0
 **Last Evaluated:** 2026-06-15
 
 ---
