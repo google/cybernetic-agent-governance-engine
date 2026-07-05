@@ -283,7 +283,7 @@ class ControlRegistry:
             with open(config_path, "r") as fh:
                 raw = json.load(fh)
             # Strip meta-keys that start with "_"
-            self._mappings = {k: v for k, v in raw.items() if not k.startswith("_")}
+            self._mappings = {k: v for k, v in raw.items() if not k.startswith("_") and isinstance(v, dict)}
             self.__class__._active_region = region
             
             # Canonical stringification: sorted keys, compact separators
@@ -404,7 +404,6 @@ class ControlRegistry:
             cls._instance = None
             cls._mappings = {}
             cls._active_region = _DEFAULT_REGION
-            cls._active_hash = ""
             cls._instance = new_instance
 
         logger.info("ControlRegistry reconfigured to region: %s", normalized_region)

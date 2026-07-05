@@ -263,7 +263,7 @@ def get_storage_backend(bucket_name: Optional[str] = None) -> StorageInterface:
       AWS_SECRET_ACCESS_KEY=<minio-secret-key>
       S3_BUCKET_NAME=<bucket-name>
     """
-    backend = os.environ.get("STORAGE_BACKEND", "s3").lower()
+    backend = os.environ.get("STORAGE_BACKEND", "gcs").lower()
     if backend == "local":
         base_dir = os.environ.get("LOCAL_STORAGE_DIR")
         return LocalStorage(base_dir=base_dir)

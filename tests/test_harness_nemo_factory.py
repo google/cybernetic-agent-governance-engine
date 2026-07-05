@@ -22,6 +22,7 @@ produce nodes with correct:
   - Configurable state keys and extractors
 """
 
+import os
 from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -67,15 +68,16 @@ class TestNemoGuardrailNodeFactory:
         """validate_with_nemo returning (False, reason) → blocked."""
         node = create_nemo_guardrail_node(NemoNodeConfig())
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-            return_value=MagicMock(),
-        ), patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
-            new_callable=AsyncMock,
-            return_value=(False, "STPA Violation UCA-7: bypass attempt"),
-        ):
-            result = await node(_state_with_message("BYPASS-ALL-LIMITS"))
+        with patch.dict(os.environ, {"CAGE_SEAL_ENFORCEMENT": "enforce"}):
+            with patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+                return_value=MagicMock(),
+            ), patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
+                new_callable=AsyncMock,
+                return_value=(False, "STPA Violation UCA-7: bypass attempt"),
+            ):
+                result = await node(_state_with_message("BYPASS-ALL-LIMITS"))
 
         assert result["guardrail_blocked"] is True
         assert "STPA" in result["guardrail_reason"] or "bypass" in result["guardrail_reason"].lower()
@@ -103,15 +105,16 @@ class TestNemoGuardrailNodeFactory:
         """Exception during validate_with_nemo → blocked (fail-closed)."""
         node = create_nemo_guardrail_node(NemoNodeConfig())
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-            return_value=MagicMock(),
-        ), patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("vLLM down"),
-        ):
-            result = await node(_state_with_message("safe input"))
+        with patch.dict(os.environ, {"CAGE_SEAL_ENFORCEMENT": "enforce"}):
+            with patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+                return_value=MagicMock(),
+            ), patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("vLLM down"),
+            ):
+                result = await node(_state_with_message("safe input"))
 
         assert result["guardrail_blocked"] is True
         assert "GUARDRAIL_ERROR" in result["guardrail_reason"]
@@ -163,15 +166,16 @@ class TestNemoGuardrailNodeFactory:
             reason_state_key="my_reason",
         ))
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-            return_value=MagicMock(),
-        ), patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
-            new_callable=AsyncMock,
-            return_value=(False, "blocked!"),
-        ):
-            result = await node(_state_with_message("bad input"))
+        with patch.dict(os.environ, {"CAGE_SEAL_ENFORCEMENT": "enforce"}):
+            with patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+                return_value=MagicMock(),
+            ), patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
+                new_callable=AsyncMock,
+                return_value=(False, "blocked!"),
+            ):
+                result = await node(_state_with_message("bad input"))
 
         assert result["my_blocked"] is True
         assert result["my_reason"] == "blocked!"
@@ -208,11 +212,12 @@ class TestNemoGuardrailNodeFactory:
         """If get_nemo_rails() raises → blocked."""
         node = create_nemo_guardrail_node(NemoNodeConfig())
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-            side_effect=RuntimeError("NeMo unavailable"),
-        ):
-            result = await node(_state_with_message("test input"))
+        with patch.dict(os.environ, {"CAGE_SEAL_ENFORCEMENT": "enforce"}):
+            with patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+                side_effect=RuntimeError("NeMo unavailable"),
+            ):
+                result = await node(_state_with_message("test input"))
 
         assert result["guardrail_blocked"] is True
         assert "GUARDRAIL_ERROR" in result["guardrail_reason"]

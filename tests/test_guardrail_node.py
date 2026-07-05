@@ -27,6 +27,7 @@ The helper _build_state() wraps a string into the list format expected by
 _extract_user_input() in guardrail_node.py.
 """
 
+import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -60,16 +61,17 @@ async def test_guardrail_blocks_unsafe_input():
     """validate_with_nemo returning (False, reason) → state.guardrail_blocked == True."""
     from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_guardrail_node
 
-    with patch(
-        "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-        return_value=MagicMock(),
-    ):
+    with patch.dict(os.environ, {"CAGE_SEAL_ENFORCEMENT": "enforce"}):
         with patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
-            new_callable=AsyncMock,
-            return_value=(False, "STPA Violation UCA-7: bypass attempt detected"),
+            "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+            return_value=MagicMock(),
         ):
-            result = await nemo_guardrail_node(_build_state("BYPASS-ALL-LIMITS now"))
+            with patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
+                new_callable=AsyncMock,
+                return_value=(False, "STPA Violation UCA-7: bypass attempt detected"),
+            ):
+                result = await nemo_guardrail_node(_build_state("BYPASS-ALL-LIMITS now"))
 
     assert result["guardrail_blocked"] is True
     assert (
@@ -103,16 +105,17 @@ async def test_guardrail_fail_closed_on_exception():
     """If validate_with_nemo raises, the node must block (fail-closed)."""
     from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_guardrail_node
 
-    with patch(
-        "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-        return_value=MagicMock(),
-    ):
+    with patch.dict(os.environ, {"CAGE_SEAL_ENFORCEMENT": "enforce"}):
         with patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("vLLM connection refused"),
+            "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+            return_value=MagicMock(),
         ):
-            result = await nemo_guardrail_node(_build_state("safe-looking input"))
+            with patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("vLLM connection refused"),
+            ):
+                result = await nemo_guardrail_node(_build_state("safe-looking input"))
 
     assert result["guardrail_blocked"] is True
     assert "GUARDRAIL_ERROR" in result["guardrail_reason"]
@@ -174,11 +177,12 @@ async def test_guardrail_fail_closed_when_rails_init_fails():
     """If get_nemo_rails() raises RuntimeError, the node must block (fail-closed)."""
     from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_guardrail_node
 
-    with patch(
-        "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-        side_effect=RuntimeError("NeMo manager not available"),
-    ):
-        result = await nemo_guardrail_node(_build_state("What is my portfolio balance?"))
+    with patch.dict(os.environ, {"CAGE_SEAL_ENFORCEMENT": "enforce"}):
+        with patch(
+            "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+            side_effect=RuntimeError("NeMo manager not available"),
+        ):
+            result = await nemo_guardrail_node(_build_state("What is my portfolio balance?"))
 
     assert result["guardrail_blocked"] is True
     assert "GUARDRAIL_ERROR" in result["guardrail_reason"]
