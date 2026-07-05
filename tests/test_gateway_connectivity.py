@@ -124,10 +124,28 @@ _GATEWAY_HTTPS_URL = os.getenv(
     (os.getenv("GATEWAY_URL", "")).replace("http://", "https://"),
 )
 
+# TLS tests require a real ingress endpoint — skip when GATEWAY_URL points at a
+# localhost port-forward (plain HTTP) or when GATEWAY_HTTPS_URL is not set to a
+# non-localhost HTTPS URL.  Port-forwards terminate TLS at the GKE Ingress layer
+# and expose only plain HTTP locally, so TLS assertions cannot be validated.
+_GATEWAY_TLS_BASE_URL = os.getenv("GATEWAY_TLS_BASE_URL", "")
+_TLS_TESTS_RUNNABLE = bool(
+    _GATEWAY_TLS_BASE_URL
+    or (
+        _GATEWAY_HTTPS_URL
+        and not _GATEWAY_HTTPS_URL.startswith("https://localhost")
+        and not _GATEWAY_HTTPS_URL.startswith("https://127.")
+    )
+)
+
 
 @pytest.mark.skipif(
-    not _GATEWAY_URL_SET,
-    reason="GATEWAY_URL not set — TLS tests require a live gateway endpoint (POAM-011)",
+    not _TLS_TESTS_RUNNABLE,
+    reason=(
+        "TLS tests require GATEWAY_TLS_BASE_URL or a non-localhost GATEWAY_HTTPS_URL "
+        "pointing at the GKE Ingress HTTPS endpoint (POAM-011). "
+        "localhost port-forwards expose plain HTTP only — TLS is terminated at the Ingress."
+    ),
 )
 @pytest.mark.integration
 def test_tls_plaintext_rejected():
@@ -162,8 +180,12 @@ def test_tls_plaintext_rejected():
 
 
 @pytest.mark.skipif(
-    not _GATEWAY_URL_SET,
-    reason="GATEWAY_URL not set — TLS tests require a live gateway endpoint (POAM-011)",
+    not _TLS_TESTS_RUNNABLE,
+    reason=(
+        "TLS tests require GATEWAY_TLS_BASE_URL or a non-localhost GATEWAY_HTTPS_URL "
+        "pointing at the GKE Ingress HTTPS endpoint (POAM-011). "
+        "localhost port-forwards expose plain HTTP only — TLS is terminated at the Ingress."
+    ),
 )
 @pytest.mark.integration
 def test_tls_minimum_version():
