@@ -122,7 +122,14 @@ class TestCausalGatekeeperAuthorizedActionSpace:
         )
 
     def test_us_fed_baseline_references_scope_statement(self):
-        """config/compliance/US_FED_BASELINE.json must reference the scope statement."""
+        """config/compliance/US_FED_BASELINE.json must contain the agentic_scope_statement
+        control-mapping entry with required regulatory metadata fields.
+
+        AGENTIC_SCOPE_STATEMENT was promoted from a plain document-path pointer to a
+        full GovernanceControl entry (SR 26-2 §3.1, AI 600-1 §2.5) so that it can be
+        resolved by ControlRegistry.get_mapping() and appear in SIEM audit trails.
+        The document path is captured in the 'description' field.
+        """
         import json
         import pathlib
         baseline = json.loads(
@@ -132,4 +139,20 @@ class TestCausalGatekeeperAuthorizedActionSpace:
             "US_FED_BASELINE.json must contain 'agentic_scope_statement' field "
             "(AI 600-1 §2.5.1 prerequisite)."
         )
-        assert baseline["agentic_scope_statement"] == "docs/AGENTIC_SCOPE_STATEMENT.md"
+        entry = baseline["agentic_scope_statement"]
+        assert isinstance(entry, dict), (
+            "agentic_scope_statement must be a control-mapping dict (not a plain string) "
+            "so that ControlRegistry.get_mapping() can resolve it. "
+            f"Got: {type(entry).__name__!r}"
+        )
+        assert entry.get("legacy_citation"), (
+            "agentic_scope_statement control-mapping is missing 'legacy_citation' — "
+            "required for SIEM backward-compatibility."
+        )
+        assert entry.get("primary_framework"), (
+            "agentic_scope_statement control-mapping is missing 'primary_framework'."
+        )
+        assert "AGENTIC_SCOPE_STATEMENT.md" in entry.get("description", ""), (
+            "agentic_scope_statement description must reference the scope statement "
+            "document path (docs/AGENTIC_SCOPE_STATEMENT.md) for traceability."
+        )
