@@ -30,6 +30,7 @@ output "web_url" {
 output "public_key" {
   description = "Langfuse public key"
   value       = random_id.public_key.hex
+  sensitive   = true
 }
 
 output "secret_key" {
