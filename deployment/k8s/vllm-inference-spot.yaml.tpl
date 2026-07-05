@@ -27,6 +27,11 @@
 # governance-stack (PSA: restricted) is incompatible with GPU workloads.
 # Cross-namespace service discovery is handled by ExternalName Services in
 # deployment/k8s/vllm-services.yaml (governance-stack → vllm-inference).
+#
+# NOTE: This manifest contains GKE-specific node selectors for GPU and spot instance scheduling.
+# For other Kubernetes distributions, replace the GKE-specific nodeSelector labels with the
+# platform-equivalent labels documented inline. The GPU resource requests (nvidia.com/gpu)
+# are standard Kubernetes and work on any cluster with the NVIDIA device plugin installed.
 
 apiVersion: apps/v1
 kind: Deployment
@@ -62,6 +67,11 @@ spec:
               preference:
                 matchExpressions:
                   - key: cloud.google.com/gke-spot
+                    # Spot/preemptible node selector — platform equivalents:
+                    #   GKE:    cloud.google.com/gke-spot: "true"
+                    #   EKS:    eks.amazonaws.com/capacityType: SPOT
+                    #   AKS:    kubernetes.azure.com/scalesetpriority: spot
+                    #   On-prem: Remove this selector; use PriorityClass instead
                     operator: In
                     values:
                       - "true"
@@ -69,6 +79,11 @@ spec:
               preference:
                 matchExpressions:
                   - key: cloud.google.com/gke-accelerator
+                    # GPU node selector — platform equivalents:
+                    #   GKE:       cloud.google.com/gke-accelerator: nvidia-l4
+                    #   EKS:       k8s.amazonaws.com/accelerator: nvidia-l4
+                    #   AKS:       accelerator: nvidia-l4
+                    #   On-prem:   nvidia.com/gpu.product: Tesla-T4 (node-feature-discovery label)
                     operator: In
                     values:
                       - nvidia-l4
@@ -211,6 +226,11 @@ spec:
       # is insufficient to guarantee scheduling on accelerator nodes when mixed node
       # pools exist. Preferred node affinity (above) handles Spot vs on-demand preference.
       nodeSelector:
+        # GPU node selector — platform equivalents:
+        #   GKE:       cloud.google.com/gke-accelerator: nvidia-l4
+        #   EKS:       k8s.amazonaws.com/accelerator: nvidia-l4
+        #   AKS:       accelerator: nvidia-l4
+        #   On-prem:   nvidia.com/gpu.product: Tesla-T4 (node-feature-discovery label)
         cloud.google.com/gke-accelerator: nvidia-l4
       tolerations:
         - key: "cloud.google.com/gke-spot"

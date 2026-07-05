@@ -336,6 +336,21 @@ module "nemo_guardrails" {
   depends_on = [module.gke, module.vllm]
 }
 
+# ─── financial-advisor-sa ServiceAccount ──────────────────────────────────────
+# Hoisted out of module.governed_advisor so that module.vllm and
+# module.vllm_reasoning can depend on it without creating a circular dependency.
+resource "kubernetes_service_account" "financial_advisor_sa" {
+  metadata {
+    name      = "financial-advisor-sa"
+    namespace = module.namespace.name
+    annotations = {
+      "iam.gke.io/gcp-service-account" = "financial-advisor-sa@${var.project_id}.iam.gserviceaccount.com"
+    }
+  }
+
+  depends_on = [module.namespace]
+}
+
 # ─── Deploy vLLM Inference Engine ──────────────────────────────────────────────
 
 module "vllm" {
@@ -389,7 +404,7 @@ module "vllm" {
     }
   ]
 
-  depends_on = [module.gke]
+  depends_on = [module.gke, kubernetes_service_account.financial_advisor_sa]
 }
 
 # ─── Deploy vLLM Reasoning Engine ──────────────────────────────────────────────
@@ -448,7 +463,7 @@ module "vllm_reasoning" {
     }
   ]
 
-  depends_on = [module.gke]
+  depends_on = [module.gke, kubernetes_service_account.financial_advisor_sa]
 }
 
 # ─── Deploy Langfuse Observability ─────────────────────────────────────────────

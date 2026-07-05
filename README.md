@@ -10,6 +10,33 @@
 
 ---
 
+## Platform Compatibility
+
+CAGE is a **Kubernetes-native, cloud-agnostic** AI governance engine. The core governance kernel — OPA policy enforcement, NeMo Guardrails, SymbolicGovernor, Control Barrier Functions, and the LangGraph audit harness — runs on **any conformant Kubernetes 1.24+ cluster** without modification.
+
+| Deployment Target | Kubernetes | Cloud Provider | Status |
+|---|---|---|---|
+| GKE (Google Kubernetes Engine) | ✅ Any GKE channel | GCP (optional integrations) | Production-ready |
+| EKS (Amazon Elastic Kubernetes Service) | ✅ Any EKS version | AWS (optional integrations) | Supported |
+| AKS (Azure Kubernetes Service) | ✅ Any AKS version | Azure (optional integrations) | Supported |
+| OpenShift | ✅ 4.12+ | On-prem / any cloud | Supported |
+| Vanilla Kubernetes | ✅ 1.24+ | On-prem / any cloud | Supported |
+
+### Optional GCP Integrations
+
+The following GCP services are **optional drivers** — the system functions fully without them using the listed alternatives:
+
+| GCP Service | Purpose | Alternative |
+|---|---|---|
+| Cloud KMS | Audit log signing | AWS KMS, Azure Key Vault, HashiCorp Vault |
+| Cloud Storage (GCS) | OSCAL evidence storage | AWS S3, MinIO, local filesystem |
+| GKE Workload Identity | Pod-level IAM | AWS IRSA, Azure Workload Identity, static credentials |
+| Cloud Build | CI/CD | GitHub Actions, GitLab CI, any OCI-compatible CI |
+
+> **For PA Lead reviewers:** CAGE's classification as a NonProduct is consistent with the Kubernetes extension guidance: a Kubernetes extension is nonProduct if it works with any Kubernetes cluster (not just GKE), even if it is intended primarily for GCP customers. See [`infra/targets/agnostic/`](infra/targets/agnostic/) for the cloud-agnostic Terraform deployment target.
+
+---
+
 ## The CAGE Product Offering
 
 CAGE v0.1.0 provides a multi-jurisdiction, dual-layer governance architecture for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
