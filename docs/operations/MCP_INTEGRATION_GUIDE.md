@@ -28,15 +28,17 @@ Antigravity supports both **local subprocess** and **secure cloud-based** MCP se
 
 For local custom tools (e.g. CAGE infrastructure management or GPU orchestrators), always use the absolute path to your project's virtual environment python executable. This ensures all python dependencies are found and loaded cleanly:
 
+> **Note:** Replace `<path-to-project>` with the absolute path to your local clone of this repository (e.g. the output of `pwd` from the project root).
+
 ```json
 "cage-infrastructure": {
-  "command": "/Users/yourusername/Code/cybernetic-governance-engine/.venv/bin/python",
+  "command": "<path-to-project>/.venv/bin/python",
   "args": [
     "-m",
     "mcp_servers.infrastructure"
   ],
   "env": {
-    "PROJECT_ROOT": "/Users/yourusername/Code/cybernetic-governance-engine"
+    "PROJECT_ROOT": "<path-to-project>"
   }
 }
 ```
@@ -62,7 +64,7 @@ For servers installed under your local `~/.mcp` directory, you can run them usin
 "langfuse": {
   "command": "node",
   "args": [
-    "/Users/yourusername/.mcp/node_modules/.bin/melt-langfuse-mcp"
+    "<path-to-mcp-node-modules>/.bin/melt-langfuse-mcp"
   ],
   "env": {
     "LANGFUSE_PUBLIC_KEY": "${env:LANGFUSE_PUBLIC_KEY}",

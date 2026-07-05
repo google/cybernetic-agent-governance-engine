@@ -144,16 +144,16 @@ Add to `~/.gemini/antigravity/mcp_config.json` using **absolute paths**:
       "command": "/usr/bin/python3",
       "args": ["-m", "mcp_servers.infrastructure"],
       "env": {
-        "PROJECT_ROOT": "/Users/yourusername/Code/cybernetic-governance-engine"
+        "PROJECT_ROOT": "<path-to-project>"
       }
     }
   }
 }
 ```
 
-**Important:** 
+**Important:**
 - Use `which python3` to get the absolute path to Python
-- Replace PROJECT_ROOT with your actual project path
+- Replace `<path-to-project>` with the absolute path to your local clone of this repository (e.g. the output of `pwd` from the project root)
 
 ### For Roo Code
 

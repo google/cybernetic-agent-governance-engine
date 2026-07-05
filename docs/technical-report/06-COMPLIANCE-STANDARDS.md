@@ -273,7 +273,7 @@ This tool dynamically compiles STPA hazards (UCAs) and control implementations i
 
 Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule ([`deployment/k8s/lula-cron.yaml`](../../deployment/k8s/lula-cron.yaml)). RBAC permissions are defined in [`deployment/k8s/lula-rbac.yaml`](../../deployment/k8s/lula-rbac.yaml).
 
-**15 total Lula manifests — all Active** (full Kubernetes domain checks):
+**15 manifests listed below (4 Active, 11 Stub)** — this table covers the original US_FED and universal controls. For the complete 21-manifest inventory including EU_ECB, APAC_MAS, and NIST AI 600-1 stubs, see [`compliance/lula/README.md`](../../compliance/lula/README.md).
 
 | Manifest                                                                                         | Control         | Kubernetes Check                                                                 |
 | ------------------------------------------------------------------------------------------------ | --------------- | -------------------------------------------------------------------------------- |

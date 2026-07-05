@@ -26,6 +26,7 @@ dependencies = [
     "sse-starlette>=1.0.0",
     "openai>=1.0.0",
     "cryptography>=48.0.1",
+    "pytest-cov>=7.1.0",
 ]
 
 requires-python = ">=3.10,<3.13"
