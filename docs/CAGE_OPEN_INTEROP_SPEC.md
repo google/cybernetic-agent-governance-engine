@@ -3,6 +3,7 @@
 > **Version:** 1.0-preview
 > **Audience:** External software publishers and integration partners
 > **Status:** Developer Preview — subject to change before general availability
+> **Distribution:** Cleared for external distribution — sanitized per security review 2026-07-05
 
 ---
 
