@@ -1030,16 +1030,33 @@ async def defer_inject(
         queue    = DeferQueue(client)
         resolved = await queue.resolve(defer_id, "INJECTED", injection_data=body.injection_data)
         await client.aclose()
+        if resolved is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id},
+            )
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail={"error": "DEFER_INJECT_FAILED", "message": str(exc)})
-
-    if resolved is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id},
+        # redis.exceptions.ConnectionError inherits from RedisError → Exception,
+        # NOT from Python's built-in ConnectionError.  Detect by errno or message
+        # so the integration test's skip guard fires on 503 instead of 500:
+        #   if r.status_code == 503: pytest.skip("Redis db=1 unavailable")
+        exc_str = str(exc)
+        is_conn_err = (
+            isinstance(exc, (ConnectionError, OSError))
+            or "Connect call failed" in exc_str
+            or "Connection refused" in exc_str
+            or "Cannot assign requested address" in exc_str
+            or "ConnectionError" in type(exc).__name__
         )
+        if is_conn_err:
+            logger.warning("[defer/inject] Redis connection error: %s", exc)
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "DEFER_QUEUE_UNAVAILABLE", "message": exc_str},
+            )
+        raise HTTPException(status_code=500, detail={"error": "DEFER_INJECT_FAILED", "message": exc_str})
 
     # Publish DEFER_RESOLVED SSE event
     try:
@@ -1094,16 +1111,31 @@ async def defer_escalate(
         queue    = DeferQueue(client)
         resolved = await queue.resolve(defer_id, "ESCALATED")
         await client.aclose()
+        if resolved is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id},
+            )
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail={"error": "DEFER_ESCALATE_FAILED", "message": str(exc)})
-
-    if resolved is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": "DEFER_TOKEN_NOT_FOUND", "defer_id": defer_id},
+        # redis.exceptions.ConnectionError inherits from RedisError → Exception,
+        # NOT from Python's built-in ConnectionError.  Detect by message pattern.
+        exc_str = str(exc)
+        is_conn_err = (
+            isinstance(exc, (ConnectionError, OSError))
+            or "Connect call failed" in exc_str
+            or "Connection refused" in exc_str
+            or "Cannot assign requested address" in exc_str
+            or "ConnectionError" in type(exc).__name__
         )
+        if is_conn_err:
+            logger.warning("[defer/escalate] Redis connection error: %s", exc)
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "DEFER_QUEUE_UNAVAILABLE", "message": exc_str},
+            )
+        raise HTTPException(status_code=500, detail={"error": "DEFER_ESCALATE_FAILED", "message": exc_str})
 
     # Publish DEFER_RESOLVED SSE event
     try:

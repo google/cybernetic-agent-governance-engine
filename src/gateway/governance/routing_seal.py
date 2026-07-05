@@ -62,7 +62,15 @@ import os
 import time
 from typing import Any, Callable, TypeVar
 
+from src.gateway.governance.constants import GovernanceControl  # noqa: E402
+
 logger = logging.getLogger(__name__)
+
+# The routing seal enforces the authorized action space declared in the
+# agentic scope statement (SR 26-2 §3.1, AI 600-1 §2.5).  Any action that
+# passes seal verification is implicitly attested to be within the scope
+# defined by this control.
+_SCOPE_CONTROL = GovernanceControl.AGENTIC_SCOPE_STATEMENT
 
 F = TypeVar("F", bound=Callable[..., Any])
 
