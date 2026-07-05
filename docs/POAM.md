@@ -419,7 +419,7 @@ This document is the authoritative Plan of Action and Milestones (POAM) for the 
 | `lula-validation-a92.yaml` | ISO 42001 | A.9.2 Data Transfer to Suppliers | Universal | ACTIVE |
 | `lula-validation-aarm-vectors.yaml` | CSA AARM | All 11 threat vectors | Universal | ACTIVE |
 | `lula-validation-iso001-token-quota.yaml` | ISO 42001 | A.4 Token Quota OPA Injection | Universal | ACTIVE (Phase 1) |
-| `lula-validation-tqp007.yaml` | ISO 42001 | A.8.4 TokenQuotaProxy fail-closed | Universal | **STUB** — POAM-2026-026 |
+| `lula-validation-tqp007.yaml` | ISO 42001 | A.8.4 TokenQuotaProxy fail-closed | Universal | ACTIVE |
 | `lula-validation-ac2.yaml` | NIST SP 800-53 | AC-2 Account Management | US_FED | ACTIVE |
 | `lula-validation-ac3.yaml` | NIST SP 800-53 | AC-3 Access Enforcement | US_FED | ACTIVE |
 | `lula-validation-au12.yaml` | NIST SP 800-53 | AU-12 Audit Record Generation | US_FED | ACTIVE |
@@ -438,7 +438,7 @@ This document is the authoritative Plan of Action and Milestones (POAM) for the 
 | `lula-validation-ai600-prompt-injection.yaml` | NIST AI 600-1 | §2.3 Prompt Injection | US_FED | ACTIVE (Phase 2) |
 | `lula-validation-dora-art10.yaml` | DORA | Art. 10 ICT Resilience | EU_ECB | ACTIVE (endpoint pending — EU-DORA-001) |
 | `lula-validation-eu-ai-act-art9.yaml` | EU AI Act | Art. 9 Risk Management | EU_ECB | ACTIVE (endpoint pending — EU-AI-ACT-001) |
-| `lula-validation-eu-fria.yaml` | EU AI Act | Art. 29a FRIA Gating | EU_ECB | ACTIVE (provider stub — EU-001) |
+| `lula-validation-eu-fria.yaml` | EU AI Act | Art. 29a FRIA Gating | EU_ECB | ACTIVE |
 | `lula-validation-gdpr-art22.yaml` | GDPR | Art. 22 Automated Decisions | EU_ECB | ACTIVE (endpoint pending — EU-GDPR-001) |
 | `lula-validation-mas-feat.yaml` | MAS FEAT | Fairness/Ethics/Accountability/Transparency | APAC_MAS | ACTIVE (endpoint pending — APAC-MAS-FEAT-001) |
 | `lula-validation-mas-notice655.yaml` | MAS Notice 655 | Technology Risk Management | APAC_MAS | ACTIVE (endpoint pending — APAC-MAS-N655-001) |

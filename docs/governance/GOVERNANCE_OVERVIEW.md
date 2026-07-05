@@ -1,13 +1,6 @@
 # Cybernetic Governance of Agentic AI
 
-**Last Updated:** 2026-06-15 | **System Version:** v2.0.0 (stable, released 2026-06-08)
-
-> **Jurisdiction separation principle:** **ISO/IEC 42001:2023** is the **sole universal governance baseline** — every control, pipeline step, and audit artifact in this document applies to all deployment regions (`US_FED`, `EU_ECB`, `APAC_MAS`). All other regulatory frameworks are **additive, jurisdiction-specific layers** activated exclusively by the `CAGE_DEPLOYMENT_REGION` environment variable:
-> - **US_FED only:** SR 26-2 (Federal Reserve), NIST AI 600-1, NIST SP 800-53, NIST AI RMF
-> - **EU_ECB only:** EU AI Act, GDPR Art. 22, DORA
-> - **APAC_MAS only:** MAS FEAT Principles, MAS Notice 655, MAS TRM
->
-> Controls marked *(All Regions)* are ISO 42001 obligations. Controls marked with a specific region are additive obligations for that jurisdiction only.
+**Last Updated:** 2026-06-15 | **System Version:** v0.1.0
 
 > **Jurisdiction separation principle:** **ISO/IEC 42001:2023** is the **sole universal governance baseline** — every control, pipeline step, and audit artifact in this document applies to all deployment regions (`US_FED`, `EU_ECB`, `APAC_MAS`). All other regulatory frameworks are **additive, jurisdiction-specific layers** activated exclusively by the `CAGE_DEPLOYMENT_REGION` environment variable:
 > - **US_FED only:** SR 26-2 (Federal Reserve), NIST AI 600-1, NIST SP 800-53, NIST AI RMF
