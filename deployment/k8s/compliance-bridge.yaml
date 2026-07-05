@@ -39,6 +39,10 @@ spec:
       serviceAccountName: financial-advisor-sa
       containers:
         - name: compliance-bridge
+          # To use a different registry (e.g., ECR, ACR, Docker Hub), override IMAGE_REGISTRY:
+          #   image: ${IMAGE_REGISTRY:-gcr.io}/laah-cybernetics/compliance-bridge:latest
+          # Or use kustomize: kustomize edit set image gcr.io/laah-cybernetics/compliance-bridge=<your-registry>/compliance-bridge:latest
+          # IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
           image: gcr.io/laah-cybernetics/compliance-bridge:latest
           imagePullPolicy: Always
           securityContext:
@@ -81,12 +85,12 @@ spec:
                   key: secret-key
 
             # ---------------------------------------------------------------------------
-            # S3-compatible GCS artifact storage (ISO 42001 A.7.5 evidence)
-            # GCS exposes an S3-compatible XML/JSON API — no GCS-native SDK needed.
-            # HMAC keys: https://cloud.google.com/storage/docs/authentication/hmackeys
+            # S3-compatible artifact storage (ISO 42001 A.7.5 evidence)
+            # Supports any S3-compatible backend: AWS S3, MinIO, Ceph, or GCS via interop.
+            # GCS interop: https://cloud.google.com/storage/docs/authentication/hmackeys
             # ---------------------------------------------------------------------------
             - name: OSCAL_S3_ENDPOINT
-              value: "https://storage.googleapis.com"
+              value: ""  # Set to your S3-compatible endpoint: https://s3.amazonaws.com, http://minio:9000, or https://storage.googleapis.com (GCS)
             # DEP-07: OSCAL_S3_REGION must not be "auto" — it must reflect the
             # GCS bucket region for the active jurisdiction to satisfy data residency
             # requirements (GDPR Art. 44 / MAS TRM §4.2).

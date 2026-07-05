@@ -188,6 +188,10 @@ spec:
             # Deployment's secret refs (LANGFUSE_* keys) via envFrom.
             # ----------------------------------------------------------------
             - name: lula
+              # To use a different registry (e.g., ECR, ACR, Docker Hub), override IMAGE_REGISTRY:
+              #   image: ${IMAGE_REGISTRY:-gcr.io}/laah-cybernetics/compliance-bridge:latest
+              # Or use kustomize: kustomize edit set image gcr.io/laah-cybernetics/compliance-bridge=<your-registry>/compliance-bridge:latest
+              # IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
               image: gcr.io/laah-cybernetics/compliance-bridge:latest
               securityContext:
                 allowPrivilegeEscalation: false

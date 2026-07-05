@@ -48,7 +48,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 # --no-dev skips test/lint extras; --no-install-project avoids the project
 # package install step (source is imported directly via PYTHONPATH=/app).
 # --extra compliance pulls dowhy (Tier 6 causal gatekeeper, No-Direct-Bind Gap 4)
-RUN uv sync --frozen --no-dev --extra gateway --extra compliance --no-install-project
+RUN uv sync --frozen --no-dev --extra gateway --extra compliance --extra advisor --no-install-project
 
 # Install grpcio-tools into the venv so we can generate protobuf bindings.
 # uv manages the venv so we use `uv pip install` (not bare pip).

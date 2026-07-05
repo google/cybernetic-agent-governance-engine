@@ -131,10 +131,10 @@ if [[ -f "deployment/docker/cloudbuild.vllm.yaml" ]]; then
   hf_token=${HUGGING_FACE_HUB_TOKEN:-$HF_TOKEN}
   if [[ -n "$hf_token" ]]; then
     gcloud builds submit --config "deployment/docker/cloudbuild.vllm.yaml" \
-      --project "$PROJECT_ID" --substitutions="SHORT_SHA=${SHORT_SHA},_HF_TOKEN=$hf_token" . > "/tmp/build_vllm.log" 2>&1 &
+      --project "$PROJECT_ID" --substitutions="_SHORT_SHA=${SHORT_SHA},_HF_TOKEN=$hf_token" . > "/tmp/build_vllm.log" 2>&1 &
   else
     gcloud builds submit --config "deployment/docker/cloudbuild.vllm.yaml" \
-      --project "$PROJECT_ID" --substitutions="SHORT_SHA=${SHORT_SHA}" . > "/tmp/build_vllm.log" 2>&1 &
+      --project "$PROJECT_ID" --substitutions="_SHORT_SHA=${SHORT_SHA}" . > "/tmp/build_vllm.log" 2>&1 &
   fi
   wait_for_pids+=("$!")
 else
