@@ -1,5 +1,16 @@
 {
-  "agentic_scope_statement": "docs/AGENTIC_SCOPE_STATEMENT.md",
+  "agentic_scope_statement": {
+    "internal_id": "DOC-SCOPE-001",
+    "primary_framework": "SR 26-2 \u00a73.1",
+    "co_frameworks": [
+      "AI 600-1 \u00a72.5",
+      "NIST AI RMF GOVERN-1.1",
+      "ISO 42001 \u00a7A.2.2"
+    ],
+    "legacy_citation": "SR 26-2 \u00a7III.A",
+    "scope": "agentic",
+    "description": "Reference to the agentic scope statement document (docs/AGENTIC_SCOPE_STATEMENT.md) that declares the authorized action space, HITL boundaries, and inter-agent trust model. Required under SR 26-2 \u00a73.1 and AI 600-1 \u00a72.5 before any agentic system may be deployed in a regulated environment."
+  },
   "_baseline_type": "additive_regional_layer",
   "_global_baseline": "ISO_42001",
   "_region": "US_FED",
