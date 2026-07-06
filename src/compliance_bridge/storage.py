@@ -68,7 +68,7 @@ def _get_storage_backend() -> str:
     # STORAGE_BACKEND: "s3" (default, S3-compatible: MinIO, AWS S3, Ceph, GCS via interop)
     #                  "gcs" (Google Cloud Storage native client)
     #                  "local" (local filesystem, for development/testing)
-    return os.environ.get("STORAGE_BACKEND", "gcs").lower()
+    return os.environ.get("STORAGE_BACKEND", "s3").lower()
 
 # ---------------------------------------------------------------------------
 # Lazy client singletons

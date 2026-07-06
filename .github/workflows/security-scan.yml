@@ -273,8 +273,7 @@ jobs:
           mkdir -p compliance/sbom
           python scripts/generate_sbom.py \
             --type python \
-            --output-dir compliance/sbom \
-            --dry-run
+            --output-dir compliance/sbom
 
       - name: Generate filesystem SBOM with Syft
         run: |
@@ -383,3 +382,27 @@ jobs:
 
       - name: NIST RMF gate
         run: echo "NIST RMF gate active for US_FED deployment"
+
+  # ---------------------------------------------------------------------------
+  # Job 7: Secret Scanning (Gitleaks)
+  # Universal security hygiene — runs for ALL regions (US_FED, EU_ECB, APAC_MAS)
+  # Scans full commit history for accidentally committed secrets, credentials,
+  # or API keys. Addresses the "secret detection" coverage gap noted in the
+  # workflow header comment.
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: "Secret Scanning (Gitleaks)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
