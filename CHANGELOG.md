@@ -8,7 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ---
 
-## [Unreleased] — 2026-07-01
+## [Unreleased]
+
+---
+
+## [0.2.0] — 2026-07-06
+
+> **Minor release — governance hardening, CI/CD improvements, and platform-agnostic storage default.**
+> 69 commits, 151 files changed since v0.1.0. All universal Lula assertions PASS (a52, a53, a92, aarm-vectors). Trivy risk-accepted (POAM-023). Full test suite: 0 failures. Change category: Cat-N (Standard).
 
 ### Added
 
@@ -28,6 +35,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
   - `CAUSAL_LOCK_RISK_BOUNDARY = 0.95`
   - `FRIA_ZONE_ALLOW = 0.95`
   - `FRIA_ZONE_DEFER = 0.70`
+- **CI: `lint` job** — ruff check, ruff format --check, and mypy type-check against `src/` added to `.github/workflows/ci.yml` (Cat-S, PR #29)
+- **CI: Gitleaks secret-scanning job** — full commit-history scan for accidentally committed credentials added to `.github/workflows/security-scan.yml` (Cat-S, PR #29)
+
+### Changed
+
+- **`STORAGE_BACKEND` default changed `gcs` → `s3`** in `src/compliance_bridge/storage.py` and `src/governed_financial_advisor/infrastructure/storage.py` — S3-compatible (MinIO/AWS S3) is now the agnostic default; GCS native client remains selectable via `STORAGE_BACKEND=gcs` (Cat-S, PR #29)
+- **SBOM generation**: removed `--dry-run` flag from `scripts/generate_sbom.py` invocation in security-scan workflow — SBOMs are now written to `compliance/sbom/` on every scan run (Cat-S, PR #29)
 
 ### Updated
 
@@ -45,10 +59,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 - `docs/compliance/universal/SYSTEM_DESCRIPTION_ISO_42001.md` — Mathematical Safety Controls (§5), STPA UCAs (§6), and 7-tier pipeline (§4.4) sections added
 - `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` — Automated Governance Thresholds section added
 - `docs/project/PRODUCTION_READINESS_REPORT.md` — Mathematical Safety Verification section added
-
----
-
-## [Unreleased]
 
 ---
 
@@ -220,9 +230,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 | Version | Date | Test Results | Key Theme |
 |---------|------|--------------|-----------|
 | [Unreleased] | — | — | Post-stable backlog |
-| [2.0.0] | 2026-06-14 | 796 passed, 0 failed, 148 skipped | Stable release: Token Quota Proxy, PII Sanitizer, UCA Logger, CTRL_TQP_007, gateway CVE remediation, seal enforcement, all universal Lula assertions PASS; Sprint 1–3 security hardening (C-01–C-07, H-08–H-16, M-01–M-24) |
+| [0.2.0] | 2026-07-06 | 0 failures | Governance hardening, math formalism docs, CI lint + Gitleaks, platform-agnostic storage default, 55 test failures fixed |
+| [0.1.0] | 2026-06-14 | 796 passed, 0 failed, 148 skipped | Stable release: Token Quota Proxy, PII Sanitizer, UCA Logger, CTRL_TQP_007, gateway CVE remediation, seal enforcement, all universal Lula assertions PASS; Sprint 1–3 security hardening (C-01–C-07, H-08–H-16, M-01–M-24) |
 
 ---
 
-[Unreleased]: https://github.com/laah-cybernetics/cybernetic-governance-engine/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/laah-cybernetics/cybernetic-governance-engine/releases/tag/v0.1.0
+[Unreleased]: https://github.com/lahlfors/cybernetic-governance-engine/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/lahlfors/cybernetic-governance-engine/releases/tag/v0.2.0
+[0.1.0]: https://github.com/lahlfors/cybernetic-governance-engine/releases/tag/v0.1.0
