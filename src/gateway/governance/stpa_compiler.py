@@ -94,21 +94,15 @@ class HazardModel(BaseModel):
 
 
 class ConditionModel(BaseModel):
-    param: Optional[str] = None
-    operator: Optional[
-        Literal[
-            "is_null",
-            "is_false",
-            "is_true",
-            "greater_than",
-            "less_than",
-            "equals",
-        ]
-    ] = None
-    threshold_ref: Optional[str] = None  # e.g. "stpa.max_latency_ms"
-    threshold: Optional[float] = None  # literal value
-    semantic_pattern: Optional[str] = None
-    composite: Optional[str] = None  # free-form expression for complex conditions
+    param: str | None = None
+    operator: (
+        Literal["is_null", "is_false", "is_true", "greater_than", "less_than", "equals"]
+        | None
+    ) = None
+    threshold_ref: str | None = None  # e.g. "stpa.max_latency_ms"
+    threshold: float | None = None  # literal value
+    semantic_pattern: str | None = None
+    composite: str | None = None  # free-form expression for complex conditions
 
 
 class OpaRuleModel(BaseModel):
@@ -132,11 +126,11 @@ class ParameterMappingModel(BaseModel):
     Both keys must follow the pattern ``forward.<key>`` or ``compensating.<key>``.
     """
 
-    forward_key: str   # e.g. "transaction_id" from the forward action's context_data
+    forward_key: str  # e.g. "transaction_id" from the forward action's context_data
     compensating_key: str  # e.g. "target_tx_id" expected by the compensating API call
 
     @classmethod
-    def from_yaml_dict(cls, raw: dict[str, str]) -> list["ParameterMappingModel"]:
+    def from_yaml_dict(cls, raw: dict[str, str]) -> list[ParameterMappingModel]:
         """Parse {'forward.transaction_id': 'compensating.target_tx_id', ...}."""
         mappings = []
         for fwd, comp in raw.items():
@@ -171,7 +165,7 @@ class SagaModel(BaseModel):
     parameter_mapping: list[ParameterMappingModel] = Field(default_factory=list)
     # [CTRL_WAL_002] fields — control how the forward WAL node executes the action.
     execution_type: ExecutionType = "local"
-    mcp_tool_name: Optional[str] = None
+    mcp_tool_name: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -183,12 +177,13 @@ class SagaModel(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def _validate_mcp_tool_name(self) -> "SagaModel":
+    def _validate_mcp_tool_name(self) -> SagaModel:
         if self.execution_type == "mcp_tool" and not self.mcp_tool_name:
             raise ValueError(
                 "SagaModel: mcp_tool_name is required when execution_type='mcp_tool'."
             )
         return self
+
 
 class UCAModel(BaseModel):
     id: str
@@ -198,12 +193,12 @@ class UCAModel(BaseModel):
     description: str
     condition: ConditionModel
     enforcement: list[EnforcementTarget]
-    opa_rule: Optional[OpaRuleModel] = None
-    nemo_rail: Optional[NemoRailModel] = None
-    langgraph_saga: Optional[SagaModel] = None
+    opa_rule: OpaRuleModel | None = None
+    nemo_rail: NemoRailModel | None = None
+    langgraph_saga: SagaModel | None = None
 
     @model_validator(mode="after")
-    def _validate_enforcement_deps(self) -> "UCAModel":
+    def _validate_enforcement_deps(self) -> UCAModel:
         if "opa" in self.enforcement or "all" in self.enforcement:
             if self.opa_rule is None:
                 raise ValueError(
@@ -227,14 +222,14 @@ class ConstraintModel(BaseModel):
     description: str
     logic: str
     scope: list[str]
-    uca_ref: Optional[str] = None
+    uca_ref: str | None = None
 
 
 class RbacRoleModel(BaseModel):
     name: str
     allowed_actions: list[str]
-    trade_limits: Optional[dict[str, Any]] = None
-    restrictions: Optional[list[dict[str, Any]]] = None
+    trade_limits: dict[str, Any] | None = None
+    restrictions: list[dict[str, Any]] | None = None
 
 
 class RbacRulesModel(BaseModel):
@@ -258,7 +253,7 @@ class ControlStructureModel(BaseModel):
     control_actions: list[dict[str, Any]]  # kept flexible for param specs
     unsafe_control_actions: list[UCAModel]
     safety_constraints: list[ConstraintModel]
-    rbac_rules: Optional[RbacRulesModel] = None
+    rbac_rules: RbacRulesModel | None = None
 
     @field_validator("unsafe_control_actions")
     @classmethod
@@ -374,7 +369,9 @@ def generate_opa(cs: ControlStructureModel) -> str:
                         )
             elif cond.composite:
                 lines.append(f"    # composite: {cond.composite}")
-                lines.append("    # NOTE: complex composite condition — enforce via Python validator.")
+                lines.append(
+                    "    # NOTE: complex composite condition — enforce via Python validator."
+                )
                 lines.append("    false  # placeholder: evaluated in STPAValidator")
 
             lines.append(f'    msg := "{uca.opa_rule.message}"')
@@ -423,7 +420,10 @@ def generate_opa(cs: ControlStructureModel) -> str:
                         denylist.extend(r.get("currency_denylist", []))
 
                 denylist_str = (
-                    " ".join(f'"{c}"' not in [""] and f'input.currency != "{c}"' for c in denylist)
+                    " ".join(
+                        f'"{c}"' not in [""] and f'input.currency != "{c}"'
+                        for c in denylist
+                    )
                     if denylist
                     else ""
                 )
@@ -509,7 +509,7 @@ def generate_nemo(cs: ControlStructureModel) -> str:
             f"# {uca.id}: {uca.description}",
             f"flow {rail.flow_name}",
             f'  bot say "{rail.message}"',
-            f"  await LogSafetyAuditAction",
+            "  await LogSafetyAuditAction",
             "",
         ]
 
@@ -528,8 +528,12 @@ def generate_nemo(cs: ControlStructureModel) -> str:
         flow = uca.nemo_rail.flow_name
         if cond.semantic_pattern:
             lines.append(f"  # Pattern: {cond.semantic_pattern}")
-            lines.append(f"  await {_pascal(flow)}CheckAction as $check_{uca.id.lower().replace('-','_')}")
-            lines.append(f"  if $check_{uca.id.lower().replace('-','_')}.detected == true")
+            lines.append(
+                f"  await {_pascal(flow)}CheckAction as $check_{uca.id.lower().replace('-', '_')}"
+            )
+            lines.append(
+                f"  if $check_{uca.id.lower().replace('-', '_')}.detected == true"
+            )
             lines.append(f"    await {flow}")
             lines.append("")
     lines.append("")
@@ -567,14 +571,14 @@ def generate_python(cs: ControlStructureModel) -> str:
         )
 
         body_lines: list[str] = [
-            f'    def {method_name}(self, action_name: str, params: dict) -> str | None:',
+            f"    def {method_name}(self, action_name: str, params: dict) -> str | None:",
             f'        """{uca.id}: {uca.description}"""',
-            f'        try:',
+            "        try:",
         ]
 
         if uca.action != "*":
             body_lines.append(f'            if action_name != "{uca.action}":')
-            body_lines.append(f'                return None')
+            body_lines.append("                return None")
 
         param = cond.param
         op = cond.operator
@@ -582,48 +586,48 @@ def generate_python(cs: ControlStructureModel) -> str:
         if param and op == "is_null":
             body_lines += [
                 f'            if params.get("{param}") is None:',
-                f'                return (',
+                "                return (",
                 f'                    "STPA Violation {uca.id}: {uca.description}"',
-                f'                )',
+                "                )",
             ]
         elif param and op == "is_false":
             body_lines += [
                 f'            if params.get("{param}") is False:',
-                f'                return (',
+                "                return (",
                 f'                    "STPA Violation {uca.id}: {uca.description}"',
-                f'                )',
+                "                )",
             ]
         elif param and op == "greater_than" and cond.threshold_ref:
             # Map dot-path to THRESHOLDS singleton access
             attr_path = cond.threshold_ref.replace(".", ".")
             body_lines += [
-                f'            threshold = THRESHOLDS.{attr_path}',
+                f"            threshold = THRESHOLDS.{attr_path}",
                 f'            val = params.get("{param}")',
-                f'            if val is None:',
+                "            if val is None:",
                 f'                logger.warning("{uca.id}: missing param `{param}` — failing closed.")',
                 f'                return "STPA Violation {uca.id}: Missing required param `{param}`."',
-                f'            if float(val) > threshold:',
-                f'                return (',
+                "            if float(val) > threshold:",
+                "                return (",
                 f'                    f"STPA Violation {uca.id}: {uca.description} '
                 f'({{float(val):.4f}} > {{threshold}})"',
-                f'                )',
+                "                )",
             ]
         elif param and op == "greater_than" and cond.threshold is not None:
             body_lines += [
                 f'            val = params.get("{param}")',
-                f'            if val is not None and float(val) > {cond.threshold}:',
+                f"            if val is not None and float(val) > {cond.threshold}:",
                 f'                return "STPA Violation {uca.id}: {uca.description}"',
             ]
         elif cond.composite:
             body_lines += [
-                f'            # Composite condition: {cond.composite}',
-                f'            # Implement custom logic here.',
-                f'            pass',
+                f"            # Composite condition: {cond.composite}",
+                "            # Implement custom logic here.",
+                "            pass",
             ]
 
         body_lines += [
-            f'            return None',
-            f'        except Exception as exc:',
+            "            return None",
+            "        except Exception as exc:",
             f'            logger.error("Error evaluating {uca.id}: %s", exc)',
             f'            return f"STPA Violation {uca.id}: Evaluation error — failing closed ({{exc}})."',
             "",
@@ -708,11 +712,7 @@ def generate_langgraph(cs: ControlStructureModel) -> str:  # noqa: C901
          compensating node.
        - Routes to ``human_review`` if a compensating node itself fails.
     """
-    saga_ucas = [
-        u
-        for u in cs.unsafe_control_actions
-        if "langgraph" in u.enforcement
-    ]
+    saga_ucas = [u for u in cs.unsafe_control_actions if "langgraph" in u.enforcement]
 
     if not saga_ucas:
         return (
@@ -747,58 +747,62 @@ def generate_langgraph(cs: ControlStructureModel) -> str:  # noqa: C901
             "",
         ]
 
-    lines: list[str] = [
-        _banner(),
-        f"# System: {cs.system.name} v{cs.system.version}",
-        "#",
-        "# LangGraph Saga compensating sub-graphs generated from STPA UCAs.",
-        "# Each forward node implements Write-Ahead Logging (WAL) to prevent",
-        "# ghost state after mid-transaction crashes.  Each compensating node",
-        "# is strictly idempotent via a derived idempotency_key.",
-        "#",
-        "# [CTRL_WAL_002] Compliance Note:",
-        "#   Forward nodes with execution_type=mcp_tool emit a real async MCP tool",
-        "#   invocation (via GatewayMCPClient) instead of a stub placeholder.  This",
-        "#   satisfies the CTRL_WAL_002 requirement for atomic transaction guarantees",
-        "#   to be provable in production, not merely declared in policy documents.",
-        "#   See config/control_mappings.json for the active regulatory framework.",
-        "# DO NOT EDIT — regenerate with:",
-        "#   python -m src.gateway.governance.stpa_compiler compile --targets langgraph",
-        "",
-        "from __future__ import annotations",
-        "",
-        "import datetime",
-        "import hashlib",
-        "import logging",
-        "from typing import Any",
-        "",
-        "from src.governed_financial_advisor.graph.state import AgentState, LedgerEntry",
-        "",
-    ] + mcp_import_lines + [
-        "logger = logging.getLogger(\"Gateway.Governance.GeneratedSagaNodes\")",
-        "",
-        "",
-        "# ---------------------------------------------------------------------------",
-        "# Helpers",
-        "# ---------------------------------------------------------------------------",
-        "",
-        "def _derive_idempotency_key(transaction_id: str, action: str) -> str:",
-        "    \"\"\"Deterministically derive an idempotency key for a compensating action.\"\"\"",
-        "    raw = f\"{transaction_id}:{action}\"",
-        "    return hashlib.sha256(raw.encode()).hexdigest()[:32]",
-        "",
-        "",
-        "def _utcnow() -> str:",
-        "    return datetime.datetime.now(datetime.timezone.utc).isoformat()",
-        "",
-        "",
-        "def _next_sequence_id(state: AgentState) -> int:",
-        "    \"\"\"Return the next monotonically increasing sequence_id for the ledger.\"\"\"",
-        "    txns = state.get(\"completed_transactions\") or []",
-        "    return (max(t[\"sequence_id\"] for t in txns) + 1) if txns else 0",
-        "",
-        "",
-    ]
+    lines: list[str] = (
+        [
+            _banner(),
+            f"# System: {cs.system.name} v{cs.system.version}",
+            "#",
+            "# LangGraph Saga compensating sub-graphs generated from STPA UCAs.",
+            "# Each forward node implements Write-Ahead Logging (WAL) to prevent",
+            "# ghost state after mid-transaction crashes.  Each compensating node",
+            "# is strictly idempotent via a derived idempotency_key.",
+            "#",
+            "# [CTRL_WAL_002] Compliance Note:",
+            "#   Forward nodes with execution_type=mcp_tool emit a real async MCP tool",
+            "#   invocation (via GatewayMCPClient) instead of a stub placeholder.  This",
+            "#   satisfies the CTRL_WAL_002 requirement for atomic transaction guarantees",
+            "#   to be provable in production, not merely declared in policy documents.",
+            "#   See config/control_mappings.json for the active regulatory framework.",
+            "# DO NOT EDIT — regenerate with:",
+            "#   python -m src.gateway.governance.stpa_compiler compile --targets langgraph",
+            "",
+            "from __future__ import annotations",
+            "",
+            "import datetime",
+            "import hashlib",
+            "import logging",
+            "from typing import Any",
+            "",
+            "from src.governed_financial_advisor.graph.state import AgentState, LedgerEntry",
+            "",
+        ]
+        + mcp_import_lines
+        + [
+            'logger = logging.getLogger("Gateway.Governance.GeneratedSagaNodes")',
+            "",
+            "",
+            "# ---------------------------------------------------------------------------",
+            "# Helpers",
+            "# ---------------------------------------------------------------------------",
+            "",
+            "def _derive_idempotency_key(transaction_id: str, action: str) -> str:",
+            '    """Deterministically derive an idempotency key for a compensating action."""',
+            '    raw = f"{transaction_id}:{action}"',
+            "    return hashlib.sha256(raw.encode()).hexdigest()[:32]",
+            "",
+            "",
+            "def _utcnow() -> str:",
+            "    return datetime.datetime.now(datetime.timezone.utc).isoformat()",
+            "",
+            "",
+            "def _next_sequence_id(state: AgentState) -> int:",
+            '    """Return the next monotonically increasing sequence_id for the ledger."""',
+            '    txns = state.get("completed_transactions") or []',
+            '    return (max(t["sequence_id"] for t in txns) + 1) if txns else 0',
+            "",
+            "",
+        ]
+    )
 
     # -----------------------------------------------------------------------
     # Forward nodes (WAL pattern) + Compensating nodes (idempotent)
@@ -815,7 +819,7 @@ def generate_langgraph(cs: ControlStructureModel) -> str:  # noqa: C901
 
         # Build context extraction lines from parameter_mapping
         mapping_lines = [
-            f"    {pm.compensating_key} = context_data.get(\"{pm.forward_key}\")"
+            f'    {pm.compensating_key} = context_data.get("{pm.forward_key}")'
             for pm in saga.parameter_mapping
         ] or ["    pass  # no parameter_mapping defined"]
         comp_kwarg_lines = [
@@ -824,7 +828,6 @@ def generate_langgraph(cs: ControlStructureModel) -> str:  # noqa: C901
         ]
         mapping_str = "\n".join(mapping_lines)
         comp_kwargs_str = "\n".join(comp_kwarg_lines)
-
 
         # ---- Forward WAL node -------------------------------------------------
         # [CTRL_WAL_002] emit a real execution block based on execution_type.
@@ -838,100 +841,107 @@ def generate_langgraph(cs: ControlStructureModel) -> str:  # noqa: C901
                 "    # (Aho-Corasick → NeMo → STPA → OPA → CBF → Consensus → DoWhy)",
                 "    # before executing the trade, ensuring atomicity guarantees are",
                 "    # proven in production and not merely declared in policy documents.",
-                f"    result: dict[str, Any] = asyncio.get_event_loop().run_until_complete(",
-                f"        _get_mcp_client().call_tool(",
-                f"            name=\"{saga.mcp_tool_name}\",",
+                "    result: dict[str, Any] = asyncio.get_event_loop().run_until_complete(",
+                "        _get_mcp_client().call_tool(",
+                f'            name="{saga.mcp_tool_name}",',
                 "            arguments={k: v for k, v in state.items()",
-                "                       if k in (\"amount\", \"symbol\", \"account_id\",",
-                "                                \"trader_role\", \"approval_token\")},",
-                f"        )",
-                f"    )",
+                '                       if k in ("amount", "symbol", "account_id",',
+                '                                "trader_role", "approval_token")},',
+                "        )",
+                "    )",
             ]
         else:
             step2_lines = [
-                f"    # Step 2: LOCAL stub — wire to a real implementation before promoting",
-                f"    # to production.  See execution_type field in stpa_control_structure.yaml.",
-                f"    # To use MCP: set execution_type: mcp_tool + mcp_tool_name in the YAML",
-                f"    # and regenerate with: python -m src.gateway.governance.stpa_compiler compile",
-                f"    result: dict[str, Any] = {{}}  # STUB: replace before production",
+                "    # Step 2: LOCAL stub — wire to a real implementation before promoting",
+                "    # to production.  See execution_type field in stpa_control_structure.yaml.",
+                "    # To use MCP: set execution_type: mcp_tool + mcp_tool_name in the YAML",
+                "    # and regenerate with: python -m src.gateway.governance.stpa_compiler compile",
+                "    result: dict[str, Any] = {}  # STUB: replace before production",
             ]
 
-        lines += [
-            f"# --- {uca_id}: {uca.description} ---",
-            f"# [CTRL_WAL_002] execution_type: {saga.execution_type}" + (
-                f" | mcp_tool_name: {saga.mcp_tool_name}" if saga.mcp_tool_name else ""
-            ),
-            "",
-            f"def {fwd_fn}(state: AgentState) -> dict[str, Any]:",
-            f"    \"\"\"WAL forward node for {uca_id} ({saga.forward_action}).",
-            "    ",
-            "    Step 1: Write PENDING intent to ledger (yielded to checkpointer).",
-            f"    Step 2: Execute via {saga.execution_type} — {saga.mcp_tool_name or 'local stub'}.",
-            "    Step 3: Confirm COMPLETED in the ledger.",
-            "    ",
-            "    This node MUST be wrapped in a try/except by the caller.",
-            "    On exception, the PENDING entry persists so saga_router_node",
-            "    can reconcile ghost state on the next execution.",
-            "    \"\"\"",
-            "    seq_id = _next_sequence_id(state)",
-            "    intent: LedgerEntry = {",
-            "        \"sequence_id\": seq_id,",
-            "        \"timestamp\": _utcnow(),",
-            f"        \"uca_ref\": \"{uca_id}\",",
-            f"        \"action\": \"{saga.forward_action}\",",
-            "        \"idempotency_key\": \"\",  # populated after API call returns tx_id",
-            "        \"status\": \"PENDING\",",
-            "        \"context_data\": {},",
-            "    }",
-            "    # Step 1: Persist WAL intent BEFORE the API call",
-            f"    logger.info(\"{uca_id}: writing PENDING intent seq_id=%s\", seq_id)",
-            "    yield {\"completed_transactions\": [intent]}",
-            "",
-        ] + step2_lines + [
-            "    tx_id: str = result.get(\"transaction_id\", \"\")",
-            "",
-            "    # Step 3: Mark COMPLETED",
-            "    confirmed: LedgerEntry = {",
-            "        \"sequence_id\": seq_id,",
-            "        \"timestamp\": _utcnow(),",
-            f"        \"uca_ref\": \"{uca_id}\",",
-            f"        \"action\": \"{saga.forward_action}\",",
-            f"        \"idempotency_key\": _derive_idempotency_key(tx_id, \"{saga.compensating_action}\"),",
-            "        \"status\": \"COMPLETED\",",
-            "        \"context_data\": result,",
-            "    }",
-            f"    logger.info(\"{uca_id}: action COMPLETED tx_id=%s\", tx_id)",
-            "    return {\"completed_transactions\": [confirmed]}",
-            "",
-            "",
-        ]
+        lines += (
+            [
+                f"# --- {uca_id}: {uca.description} ---",
+                f"# [CTRL_WAL_002] execution_type: {saga.execution_type}"
+                + (
+                    f" | mcp_tool_name: {saga.mcp_tool_name}"
+                    if saga.mcp_tool_name
+                    else ""
+                ),
+                "",
+                f"def {fwd_fn}(state: AgentState) -> dict[str, Any]:",
+                f'    """WAL forward node for {uca_id} ({saga.forward_action}).',
+                "    ",
+                "    Step 1: Write PENDING intent to ledger (yielded to checkpointer).",
+                f"    Step 2: Execute via {saga.execution_type} — {saga.mcp_tool_name or 'local stub'}.",
+                "    Step 3: Confirm COMPLETED in the ledger.",
+                "    ",
+                "    This node MUST be wrapped in a try/except by the caller.",
+                "    On exception, the PENDING entry persists so saga_router_node",
+                "    can reconcile ghost state on the next execution.",
+                '    """',
+                "    seq_id = _next_sequence_id(state)",
+                "    intent: LedgerEntry = {",
+                '        "sequence_id": seq_id,',
+                '        "timestamp": _utcnow(),',
+                f'        "uca_ref": "{uca_id}",',
+                f'        "action": "{saga.forward_action}",',
+                '        "idempotency_key": "",  # populated after API call returns tx_id',
+                '        "status": "PENDING",',
+                '        "context_data": {},',
+                "    }",
+                "    # Step 1: Persist WAL intent BEFORE the API call",
+                f'    logger.info("{uca_id}: writing PENDING intent seq_id=%s", seq_id)',
+                '    yield {"completed_transactions": [intent]}',
+                "",
+            ]
+            + step2_lines
+            + [
+                '    tx_id: str = result.get("transaction_id", "")',
+                "",
+                "    # Step 3: Mark COMPLETED",
+                "    confirmed: LedgerEntry = {",
+                '        "sequence_id": seq_id,',
+                '        "timestamp": _utcnow(),',
+                f'        "uca_ref": "{uca_id}",',
+                f'        "action": "{saga.forward_action}",',
+                f'        "idempotency_key": _derive_idempotency_key(tx_id, "{saga.compensating_action}"),',
+                '        "status": "COMPLETED",',
+                '        "context_data": result,',
+                "    }",
+                f'    logger.info("{uca_id}: action COMPLETED tx_id=%s", tx_id)',
+                '    return {"completed_transactions": [confirmed]}',
+                "",
+                "",
+            ]
+        )
 
         # ---- Compensating node (idempotent) -----------------------------------
         lines += [
             f"def {comp_fn}(state: AgentState) -> dict[str, Any]:",
-            f"    \"\"\"Idempotent compensating node for {uca_id} ({saga.compensating_action}).",
+            f'    """Idempotent compensating node for {uca_id} ({saga.compensating_action}).',
             "    ",
             f"    Reads the most-recent COMPLETED ledger entry for '{saga.forward_action}'",
             f"    with uca_ref=={uca_id!r}, extracts parameters via parameter_mapping,",
             "    and calls the reverse API.",
             "    The idempotency_key prevents double-refunds across LangGraph retries.",
-            "    \"\"\"",
-            "    txns = state.get(\"completed_transactions\") or []",
+            '    """',
+            '    txns = state.get("completed_transactions") or []',
             "    target = next(",
             "        (",
             "            t for t in reversed(txns)",
-            f"            if t[\"uca_ref\"] == \"{uca_id}\"",
-            f"            and t[\"action\"] == \"{saga.forward_action}\"",
-            "            and t[\"status\"] == \"COMPLETED\"",
+            f'            if t["uca_ref"] == "{uca_id}"',
+            f'            and t["action"] == "{saga.forward_action}"',
+            '            and t["status"] == "COMPLETED"',
             "        ),",
             "        None,",
             "    )",
             "    if target is None:",
-            f"        logger.warning(\"{uca_id}: no COMPLETED ledger entry — nothing to compensate.\")",
-            "        return {\"safety_status\": \"ESCALATED\"}",
+            f'        logger.warning("{uca_id}: no COMPLETED ledger entry — nothing to compensate.")',
+            '        return {"safety_status": "ESCALATED"}',
             "",
-            "    context_data = target[\"context_data\"]",
-            "    idempotency_key = target[\"idempotency_key\"]",
+            '    context_data = target["context_data"]',
+            '    idempotency_key = target["idempotency_key"]',
             "",
             "    # Extract parameters via parameter_mapping",
             mapping_str,
@@ -944,21 +954,21 @@ def generate_langgraph(cs: ControlStructureModel) -> str:  # noqa: C901
             "        # )",
             f"        logger.info(\"{uca_id}: '{saga.compensating_action}' executed. key=%s\", idempotency_key)",
             "        rollback_entry: LedgerEntry = dict(target)  # type: ignore[assignment]",
-            "        rollback_entry[\"status\"] = \"ROLLED_BACK\"",
-            "        rollback_entry[\"timestamp\"] = _utcnow()",
+            '        rollback_entry["status"] = "ROLLED_BACK"',
+            '        rollback_entry["timestamp"] = _utcnow()',
             "        return {",
-            "            \"completed_transactions\": [rollback_entry],",
-            "            \"safety_status\": \"BLOCKED\",",
+            '            "completed_transactions": [rollback_entry],',
+            '            "safety_status": "BLOCKED",',
             "        }",
             "    except Exception as exc:",
-            f"        logger.error(\"{uca_id}: compensating action FAILED key=%s err=%s\", idempotency_key, exc)",
+            f'        logger.error("{uca_id}: compensating action FAILED key=%s err=%s", idempotency_key, exc)',
             "        partial_entry: LedgerEntry = dict(target)  # type: ignore[assignment]",
-            "        partial_entry[\"status\"] = \"PARTIAL_FAILURE\"",
-            "        partial_entry[\"timestamp\"] = _utcnow()",
+            '        partial_entry["status"] = "PARTIAL_FAILURE"',
+            '        partial_entry["timestamp"] = _utcnow()',
             "        return {",
-            "            \"completed_transactions\": [partial_entry],",
-            "            \"safety_status\": \"ESCALATED\",",
-            "            \"next_step\": \"human_review\",",
+            '            "completed_transactions": [partial_entry],',
+            '            "safety_status": "ESCALATED",',
+            '            "next_step": "human_review",',
             "        }",
             "",
             "",
@@ -975,64 +985,64 @@ def generate_langgraph(cs: ControlStructureModel) -> str:  # noqa: C901
         "# ---------------------------------------------------------------------------",
         "",
         "def saga_router_node(state: AgentState) -> dict[str, Any]:",
-        "    \"\"\"Deterministic LIFO rollback router for all Saga compensating nodes.",
+        '    """Deterministic LIFO rollback router for all Saga compensating nodes.',
         "    ",
         "    1. Ghost-state recovery: escalates to human_review on PENDING entries.",
         "    2. LIFO rollback: traverses COMPLETED entries in reverse sequence_id order",
         "       and delegates to the appropriate compensating node function.",
         "    3. Unhandled UCA escalation: escalates if no compensating node is registered.",
-        "    \"\"\"",
+        '    """',
         "    txns = sorted(",
-        "        state.get(\"completed_transactions\") or [],",
-        "        key=lambda t: t[\"sequence_id\"],",
+        '        state.get("completed_transactions") or [],',
+        '        key=lambda t: t["sequence_id"],',
         "        reverse=True,",
         "    )",
         "",
         "    # Ghost-state reconciliation",
-        "    pending = [t for t in txns if t[\"status\"] == \"PENDING\"]",
+        '    pending = [t for t in txns if t["status"] == "PENDING"]',
         "    if pending:",
         "        logger.warning(",
-        "            \"saga_router: %d PENDING entries detected — possible ghost state crash.\",",
+        '            "saga_router: %d PENDING entries detected — possible ghost state crash.",',
         "            len(pending),",
         "        )",
         "        return {",
-        "            \"safety_status\": \"ESCALATED\",",
-        "            \"next_step\": \"human_review\",",
-        "            \"governance_summary\": (",
-        "                f\"Saga Router: ghost state detected ({len(pending)} PENDING entries). \"",
-        "                \"Manual reconciliation required.\"",
+        '            "safety_status": "ESCALATED",',
+        '            "next_step": "human_review",',
+        '            "governance_summary": (',
+        '                f"Saga Router: ghost state detected ({len(pending)} PENDING entries). "',
+        '                "Manual reconciliation required."',
         "            ),",
         "        }",
         "",
         "    # LIFO rollback routing",
-        "    rollback_targets = [t for t in txns if t[\"status\"] == \"COMPLETED\"]",
+        '    rollback_targets = [t for t in txns if t["status"] == "COMPLETED"]',
         "    if not rollback_targets:",
-        "        logger.info(\"saga_router: no COMPLETED entries to roll back.\")",
-        "        return {\"safety_status\": \"BLOCKED\"}",
+        '        logger.info("saga_router: no COMPLETED entries to roll back.")',
+        '        return {"safety_status": "BLOCKED"}',
         "",
         "    next_target = rollback_targets[0]",
-        "    uca_ref = next_target[\"uca_ref\"]",
-        "    action = next_target[\"action\"]",
+        '    uca_ref = next_target["uca_ref"]',
+        '    action = next_target["action"]',
         "",
     ]
 
     for uca_id, fwd_action, comp_fn in router_cases:
         lines += [
-            f"    if uca_ref == \"{uca_id}\" and action == \"{fwd_action}\":",
-            f"        logger.info(\"saga_router: delegating to {comp_fn} seq_id=%s\", next_target[\"sequence_id\"])",
+            f'    if uca_ref == "{uca_id}" and action == "{fwd_action}":',
+            f'        logger.info("saga_router: delegating to {comp_fn} seq_id=%s", next_target["sequence_id"])',
             f"        return {comp_fn}(state)",
             "",
         ]
 
     lines += [
         "    logger.error(",
-        "        \"saga_router: no compensating node for uca_ref=%s action=%s\",",
+        '        "saga_router: no compensating node for uca_ref=%s action=%s",',
         "        uca_ref, action,",
         "    )",
         "    return {",
-        "        \"safety_status\": \"ESCALATED\",",
-        "        \"next_step\": \"human_review\",",
-        "        \"governance_summary\": f\"Saga Router: unhandled uca_ref={uca_ref} action={action}.\",",
+        '        "safety_status": "ESCALATED",',
+        '        "next_step": "human_review",',
+        '        "governance_summary": f"Saga Router: unhandled uca_ref={uca_ref} action={action}.",',
         "    }",
         "",
     ]
@@ -1069,7 +1079,9 @@ def compile_control_structure(
 ) -> CompileResult:
     """Compile the control structure into governance artifacts."""
     result = CompileResult()
-    effective_targets = targets if "all" not in targets else ["opa", "nemo", "python", "langgraph"]
+    effective_targets = (
+        targets if "all" not in targets else ["opa", "nemo", "python", "langgraph"]
+    )
 
     if "opa" in effective_targets:
         try:
@@ -1090,7 +1102,6 @@ def compile_control_structure(
             result.errors.append(f"LangGraph Saga generation failed: {exc}")
 
     if "python" in effective_targets:
-
         try:
             result.python_content = generate_python(cs)
         except Exception as exc:
@@ -1154,7 +1165,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     # compile
-    compile_p = sub.add_parser("compile", help="Compile control structure to artifacts.")
+    compile_p = sub.add_parser(
+        "compile", help="Compile control structure to artifacts."
+    )
     compile_p.add_argument(
         "--input",
         type=Path,
@@ -1257,7 +1270,9 @@ def cmd_compile(args: argparse.Namespace) -> int:
             print(sep + "LANGGRAPH SAGA NODES" + sep + result.langgraph_content)
         return 0
 
-    write_artifacts(result, args.opa_out, args.nemo_out, args.python_out, args.langgraph_out)
+    write_artifacts(
+        result, args.opa_out, args.nemo_out, args.python_out, args.langgraph_out
+    )
     print("✅ STPA compiler finished. Artifacts written:")
     if result.opa_content:
         print(f"   OPA Rego  → {args.opa_out}")
