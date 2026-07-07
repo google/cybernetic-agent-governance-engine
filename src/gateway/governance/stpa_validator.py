@@ -42,7 +42,9 @@ warnings.warn(
     stacklevel=2,
 )
 
-from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator  # noqa: E402
+from src.gateway.governance.generated_stpa_validator import (
+    GeneratedSTPAValidator,
+)
 
 
 class STPAValidator(GeneratedSTPAValidator):

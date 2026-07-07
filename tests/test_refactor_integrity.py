@@ -125,9 +125,7 @@ class TestOPAGuardrailIntegrity:
         (or ``_evaluate_policy_internal``).  Inspected at AST level to catch
         decorator-based registration without executing any server code.
         """
-        mcp_server_path = pathlib.Path(
-            "src/gateway/server/mcp_tool_server.py"
-        )
+        mcp_server_path = pathlib.Path("src/gateway/server/mcp_tool_server.py")
         assert mcp_server_path.exists(), "mcp_tool_server.py not found"
 
         source = mcp_server_path.read_text()
@@ -168,9 +166,7 @@ class TestOPAGuardrailIntegrity:
         capability (expected).  If it is absent AND evaluate_policy is back,
         something has regressed.
         """
-        mcp_server_path = pathlib.Path(
-            "src/gateway/server/mcp_tool_server.py"
-        )
+        mcp_server_path = pathlib.Path("src/gateway/server/mcp_tool_server.py")
         assert mcp_server_path.exists(), "mcp_tool_server.py not found"
 
         source = mcp_server_path.read_text()

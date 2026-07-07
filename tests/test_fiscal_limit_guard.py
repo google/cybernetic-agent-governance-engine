@@ -27,21 +27,22 @@ Tests run against fakeredis (no live Redis required) and exercise:
 
 from __future__ import annotations
 
-import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
-pytest.importorskip("fakeredis", reason="fakeredis required for fiscal_limit_guard tests")
+pytest.importorskip(
+    "fakeredis", reason="fakeredis required for fiscal_limit_guard tests"
+)
 
 import fakeredis.aioredis  # type: ignore[import]
 
-from src.gateway.governance.fiscal_limit_guard import FiscalLimitGuard, ReservationToken
-
+from src.gateway.governance.fiscal_limit_guard import FiscalLimitGuard
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 async def redis_client() -> fakeredis.aioredis.FakeRedis:
@@ -63,6 +64,7 @@ async def guard(redis_client: fakeredis.aioredis.FakeRedis) -> FiscalLimitGuard:
 # ---------------------------------------------------------------------------
 # Test 1: Single-agent happy path
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_single_agent_reservation_accepted(guard: FiscalLimitGuard) -> None:
@@ -93,8 +95,11 @@ async def test_current_spend_and_remaining(guard: FiscalLimitGuard) -> None:
 # Test 2: Multi-agent race condition — the core correctness test
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
-async def test_second_agent_rejected_when_limit_exceeded(guard: FiscalLimitGuard) -> None:
+async def test_second_agent_rejected_when_limit_exceeded(
+    guard: FiscalLimitGuard,
+) -> None:
     """
     Simulates two agents simultaneously targeting $300k each against a $500k cap.
     The first must succeed; the second must be atomically rejected.
@@ -131,6 +136,7 @@ async def test_fourth_agent_rejected_after_three(guard: FiscalLimitGuard) -> Non
 # ---------------------------------------------------------------------------
 # Test 3: Release path (Saga rollback restores capacity)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_release_restores_capacity(guard: FiscalLimitGuard) -> None:
@@ -176,8 +182,11 @@ async def test_double_release_does_not_go_negative(guard: FiscalLimitGuard) -> N
 # Test 4: Redis failure — fail-closed behaviour
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
-async def test_redis_failure_fails_closed(redis_client: fakeredis.aioredis.FakeRedis) -> None:
+async def test_redis_failure_fails_closed(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
     """
     If Redis is unreachable during reserve(), the guard must fail CLOSED
     (return a rejected token) to prevent the agent from bypassing the limit.
@@ -212,6 +221,7 @@ async def test_redis_release_failure_is_logged_not_raised(
 # ---------------------------------------------------------------------------
 # Test 5: Edge cases
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_empty_redis_returns_zero_spend(guard: FiscalLimitGuard) -> None:

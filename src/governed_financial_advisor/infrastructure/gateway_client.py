@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
 from opentelemetry.propagate import inject as otel_inject
@@ -38,13 +38,15 @@ _GATEWAY_URL_DEFAULT = "http://localhost:8080"
 class GatewayClient:
     """Singleton async HTTP client that calls the governance gateway."""
 
-    _instance: Optional["GatewayClient"] = None
+    _instance: GatewayClient | None = None
 
-    def __new__(cls) -> "GatewayClient":
+    def __new__(cls) -> GatewayClient:
         if cls._instance is None:
             instance = super().__new__(cls)
-            instance._http: Optional[httpx.AsyncClient] = None
-            instance._base_url: str = os.environ.get("GATEWAY_URL", _GATEWAY_URL_DEFAULT)
+            instance._http: httpx.AsyncClient | None = None
+            instance._base_url: str = os.environ.get(
+                "GATEWAY_URL", _GATEWAY_URL_DEFAULT
+            )
             cls._instance = instance
         return cls._instance
 
@@ -102,10 +104,10 @@ class GatewayClient:
     async def validate_action(
         self,
         action: str,
-        params: Dict[str, Any],
-        policy_version_id: Optional[str] = None,
+        params: dict[str, Any],
+        policy_version_id: str | None = None,
         timeout: float = 60.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Submit a tool execution plan to the Gateway for governance validation.
 
         This is the **Option 2: Unified Gateway Governance Routing** client
@@ -153,7 +155,7 @@ class GatewayClient:
         # Inject the active OTel span context so the Gateway's governance child
         # spans (cage.validate_action → cage.cbf_action_check + cage.opa_action_check
         # → cage.routing_seal) attach to the GFA's cage.tool_execute parent span.
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {"Content-Type": "application/json"}
         otel_inject(headers)  # Injects W3C 'traceparent' from current span context
 
         payload = {
@@ -171,11 +173,15 @@ class GatewayClient:
         if response.status_code == 403:
             try:
                 result = response.json()
-                if "violations" in result and any("Substrate Policy Drift Detected" in v for v in result["violations"]):
-                    logger.warning("Substrate drift caught during session. Fetching updated baseline pin and replaying.")
+                if "violations" in result and any(
+                    "Substrate Policy Drift Detected" in v for v in result["violations"]
+                ):
+                    logger.warning(
+                        "Substrate drift caught during session. Fetching updated baseline pin and replaying."
+                    )
                     fresh_version_id = await self.get_policy_version(timeout=timeout)
                     payload["policy_version_id"] = fresh_version_id
-                    
+
                     retry_response = await client.post(
                         "/governance/validate-action",
                         json=payload,
@@ -183,23 +189,27 @@ class GatewayClient:
                         timeout=timeout,
                     )
                     if retry_response.status_code == 403:
-                        logger.error("Consecutive policy drift check failed. Cluster synchronization boundary out-of-bounds.")
+                        logger.error(
+                            "Consecutive policy drift check failed. Cluster synchronization boundary out-of-bounds."
+                        )
                     retry_response.raise_for_status()
                     result = retry_response.json()
-                    
+
                     verdict = result.get("verdict", "DENIED")
                     if verdict == "DENIED":
                         violations = result.get("violations", ["governance denied"])
                         logger.warning(
                             "🚫 validate_action DENIED by Gateway (after retry): action=%s violations=%s",
-                            action, violations,
+                            action,
+                            violations,
                         )
                         raise PermissionError(
                             f"Governance DENIED '{action}': {'; '.join(violations)}"
                         )
                     logger.info(
                         "✅ validate_action APPROVED by Gateway (after retry): action=%s latency=%.1fms",
-                        action, result.get("latency_ms", 0),
+                        action,
+                        result.get("latency_ms", 0),
                     )
                     return result
             except PermissionError:
@@ -209,14 +219,15 @@ class GatewayClient:
                 response.raise_for_status()
 
         response.raise_for_status()
-        result: Dict[str, Any] = response.json()
+        result: dict[str, Any] = response.json()
 
         verdict = result.get("verdict", "DENIED")
         if verdict == "DENIED":
             violations = result.get("violations", ["governance denied"])
             logger.warning(
                 "🚫 validate_action DENIED by Gateway: action=%s violations=%s",
-                action, violations,
+                action,
+                violations,
             )
             raise PermissionError(
                 f"Governance DENIED '{action}': {'; '.join(violations)}"
@@ -224,7 +235,8 @@ class GatewayClient:
 
         logger.info(
             "✅ validate_action APPROVED by Gateway: action=%s latency=%.1fms",
-            action, result.get("latency_ms", 0),
+            action,
+            result.get("latency_ms", 0),
         )
         return result
 

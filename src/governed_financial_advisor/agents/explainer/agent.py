@@ -15,7 +15,6 @@
 """Explainer Agent (System 3 Monitoring) - Faithfulness & Reporting"""
 
 from config.settings import MODEL_FAST
-from src.governed_financial_advisor.utils.prompt_utils import Content, Part, Prompt, PromptData
 
 EXPLAINER_FALLBACK_PROMPT = """You are the **Explainer Agent**, the final node in the CAGE governance pipeline.
 Your role is to verify **Faithfulness** and translate technical execution results into a user-friendly response.
@@ -48,30 +47,39 @@ Before answering, verify:
 After generating the response, call `transfer_to_agent("supervisor")` or end the turn.
 """
 
+
 def get_explainer_instruction() -> str:
     from src.governed_financial_advisor.utils.langfuse_utils import get_managed_prompt
+
     return get_managed_prompt("agent/explainer", EXPLAINER_FALLBACK_PROMPT)
 
+
 import os
-from langchain_openai import ChatOpenAI
 from typing import Any
+
+from langchain_openai import ChatOpenAI
+
 
 def create_explainer_agent(model_name: str = MODEL_FAST) -> Any:
     """Factory to create the Explainer agent (Native LangChain)."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise EnvironmentError("OPENAI_API_KEY must be set — no default is allowed in production")
-    
+        raise OSError(
+            "OPENAI_API_KEY must be set — no default is allowed in production"
+        )
+
     # Relaxed handling of model names - trust the environment config
-         
+
     _fast_api_base = os.getenv("VLLM_FAST_API_BASE")
     if not _fast_api_base:
-        raise RuntimeError("VLLM_FAST_API_BASE must be set — no localhost fallback in production")
+        raise RuntimeError(
+            "VLLM_FAST_API_BASE must be set — no localhost fallback in production"
+        )
     llm = ChatOpenAI(
         model=model_name,
         base_url=_fast_api_base,
         api_key=api_key,
         temperature=0.0,
-        max_tokens=1024  # Fast model has 4096 total context; cap output to leave room for input
+        max_tokens=1024,  # Fast model has 4096 total context; cap output to leave room for input
     )
     return llm

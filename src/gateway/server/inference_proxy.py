@@ -35,22 +35,22 @@ import logging
 import os
 import time
 import uuid as _uuid
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import Any
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from opentelemetry import trace
-from pydantic import BaseModel, Field
 
-from src.gateway.governance.text_filter import ac_keyword_scan
 from src.gateway.governance.iso_control import stamp_iso_control
-from src.gateway.governance.nemo.manager import verify_input, verify_and_mask_output
-from src.governed_financial_advisor.infrastructure.config_manager import config_manager
-from src.governed_financial_advisor.utils.privacy import scrub_pii
+from src.gateway.governance.nemo.manager import verify_and_mask_output, verify_input
+from src.gateway.governance.text_filter import ac_keyword_scan
 from src.gateway.governance.token_quota_proxy import _get_token_quota_proxy
 from src.gateway.governance.uca_logger import _get_uca_logger
+from src.governed_financial_advisor.infrastructure.config_manager import config_manager
+from src.governed_financial_advisor.utils.privacy import scrub_pii
 
 # ---------------------------------------------------------------------------
 # SymbolicGovernor singleton — imported lazily to avoid circular imports.
@@ -66,13 +66,16 @@ def _get_symbolic_governor():
     if _symbolic_governor is None:
         try:
             from src.gateway.governance.singletons import symbolic_governor
+
             _symbolic_governor = symbolic_governor
         except Exception as exc:
             logger.warning(
                 "⚠️ InferenceProxy: Could not import symbolic_governor (%s) — "
-                "NeMo actions will use fail-open defaults.", exc
+                "NeMo actions will use fail-open defaults.",
+                exc,
             )
     return _symbolic_governor
+
 
 logger = logging.getLogger("Gateway.InferenceProxy")
 
@@ -89,13 +92,14 @@ def _safe_error_response(exc: Exception, status_code: int = 500) -> dict:
     logger.error("Request failed [correlation_id=%s]", correlation_id, exc_info=exc)
     return {"error": "Internal server error", "correlation_id": correlation_id}
 
+
 # ---------------------------------------------------------------------------
 # Module-level pooled httpx client (R-06 fix — connection pooling)
 # ---------------------------------------------------------------------------
 # A single AsyncClient is reused across all requests, enabling HTTP/1.1
 # keep-alive and connection pooling to vLLM backends.  The client is
 # initialised lazily on first use and lives for the process lifetime.
-_http_client: Optional[httpx.AsyncClient] = None
+_http_client: httpx.AsyncClient | None = None
 
 
 def _get_http_client() -> httpx.AsyncClient:
@@ -124,7 +128,7 @@ async def _shutdown_http_client() -> None:
 
 async def _stream_vllm(
     target_url: str,
-    body: Dict[str, Any],
+    body: dict[str, Any],
     api_key: str,
     span: Any = None,
     request_start_ns: int = 0,
@@ -148,8 +152,8 @@ async def _stream_vllm(
             logger.error("vLLM streaming backend returned %s", resp.status_code)
             # Emit a single SSE error event so the client can surface it
             yield (
-                f"data: {{\"error\": \"vLLM backend error {resp.status_code}\", "
-                f"\"detail\": {json.dumps(error_body.decode(errors='replace'))}}}\n\n"
+                f'data: {{"error": "vLLM backend error {resp.status_code}", '
+                f'"detail": {json.dumps(error_body.decode(errors="replace"))}}}\n\n'
             ).encode()
             return
         async for chunk in resp.aiter_bytes():
@@ -162,10 +166,13 @@ async def _stream_vllm(
                     ttft_ms = (now_ns - request_start_ns) / 1_000_000
                     completion_start_iso = datetime.now(timezone.utc).isoformat()
                     span.set_attribute("gen_ai.ttft_ms", round(ttft_ms, 2))
-                    span.set_attribute("gen_ai.completion_start_time", completion_start_iso)
+                    span.set_attribute(
+                        "gen_ai.completion_start_time", completion_start_iso
+                    )
                     logger.debug(
                         "⚡ TTFT captured: %.1fms (streaming, model=%s)",
-                        ttft_ms, body.get("model", "unknown"),
+                        ttft_ms,
+                        body.get("model", "unknown"),
                     )
                     _ttft_recorded = True
                 yield chunk
@@ -179,22 +186,25 @@ def _resolve_backend_url(model_id: str) -> str:
     return config_manager.get("VLLM_FAST_API_BASE", base)
 
 
-def _create_blocked_response(reason: str) -> Dict[str, Any]:
+def _create_blocked_response(reason: str) -> dict[str, Any]:
     import time
+
     ts = int(time.time())
     return {
         "id": f"chatcmpl-{ts}",
         "object": "chat.completion",
         "created": ts,
         "model": "nemo-guardrails",
-        "choices": [{
-            "index": 0,
-            "finish_reason": "stop",
-            "message": {
-                "role": "assistant",
-                "content": f"I cannot fulfill this request due to security policies: {reason}",
-            },
-        }],
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": f"I cannot fulfill this request due to security policies: {reason}",
+                },
+            }
+        ],
         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
 
@@ -215,7 +225,11 @@ async def chat_completions(
 
     body = await request.json()
     requested_model = body.get("model", "default")
-    model_id = os.getenv("MODEL_FAST", "default") if requested_model == "default" else requested_model
+    model_id = (
+        os.getenv("MODEL_FAST", "default")
+        if requested_model == "default"
+        else requested_model
+    )
     body["model"] = model_id
     messages = body.get("messages", [])
 
@@ -228,18 +242,24 @@ async def chat_completions(
         if span.is_recording():
             safe_messages = [
                 {**m, "content": scrub_pii(m.get("content", ""))}
-                if isinstance(m.get("content"), str) else m
+                if isinstance(m.get("content"), str)
+                else m
                 for m in messages
             ]
             span.set_attribute("gen_ai.operation.name", "chat")
             span.set_attribute("gen_ai.system", "cage-inference-proxy")
             span.set_attribute("gen_ai.request.model", model_id)
             span.set_attribute("gen_ai.input.messages", json.dumps(safe_messages))
-            span.set_attribute("gen_ai.request.streaming", body.get("stream", False) is True)
+            span.set_attribute(
+                "gen_ai.request.streaming", body.get("stream", False) is True
+            )
 
         last_user_msg = next(
-            (m.get("content", "") for m in reversed(messages)
-             if m.get("role") == "user" and m.get("content")),
+            (
+                m.get("content", "")
+                for m in reversed(messages)
+                if m.get("role") == "user" and m.get("content")
+            ),
             "",
         )
 
@@ -291,16 +311,23 @@ async def chat_completions(
                 # Call pre_check() once here so NeMo actions read pre-computed
                 # STPA/CBF results from context instead of calling back into the
                 # governor (breaks the re-entrant dependency loop).
-                pre_check_results: Optional[dict] = None
+                pre_check_results: dict | None = None
                 governor = _get_symbolic_governor()
                 if governor is not None:
                     # Extract governance params from the request body
                     governance_params = {
                         k: body[k]
                         for k in (
-                            "approval_token", "amount", "symbol", "latency_ms",
-                            "drawdown_pct", "order_size", "daily_vol",
-                            "confidence", "risk_assessed", "compliance_checked",
+                            "approval_token",
+                            "amount",
+                            "symbol",
+                            "latency_ms",
+                            "drawdown_pct",
+                            "order_size",
+                            "daily_vol",
+                            "confidence",
+                            "risk_assessed",
+                            "compliance_checked",
                         )
                         if k in body
                     }
@@ -309,15 +336,20 @@ async def chat_completions(
                         logger.debug(
                             "🔍 InferenceProxy: pre_check complete "
                             "(stpa_allowed=%s, cbf_allowed=%s)",
-                            pre_check_results.get("stpa_result", {}).get("allowed", "?"),
+                            pre_check_results.get("stpa_result", {}).get(
+                                "allowed", "?"
+                            ),
                             pre_check_results.get("cbf_result", {}).get("allowed", "?"),
                         )
                     except Exception as pre_exc:
                         logger.warning(
                             "⚠️ InferenceProxy: pre_check failed (%s) — "
-                            "NeMo actions will use fail-open defaults.", pre_exc
+                            "NeMo actions will use fail-open defaults.",
+                            pre_exc,
                         )
-                nemo_result = await verify_input(rails, last_user_msg, pre_check_results=pre_check_results)
+                nemo_result = await verify_input(
+                    rails, last_user_msg, pre_check_results=pre_check_results
+                )
                 if not nemo_result.is_safe:
                     stamp_iso_control(span, tier=3, control="A.6.1.2", outcome="BLOCK")
                     blocked = _create_blocked_response(nemo_result.reason)
@@ -345,7 +377,13 @@ async def chat_completions(
             stamp_iso_control(span, tier=4, control="A.5.3", outcome="STREAM")
             logger.info("Streaming response: model=%s", model_id)
             return StreamingResponse(
-                _stream_vllm(target_url, body, api_key, span=span, request_start_ns=request_start_ns),
+                _stream_vllm(
+                    target_url,
+                    body,
+                    api_key,
+                    span=span,
+                    request_start_ns=request_start_ns,
+                ),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -361,10 +399,14 @@ async def chat_completions(
                 headers={"Authorization": f"Bearer {api_key}"},
             )
             if resp.status_code >= 400:
-                logger.error("vLLM backend returned %s: %s", resp.status_code, resp.text[:200])
+                logger.error(
+                    "vLLM backend returned %s: %s", resp.status_code, resp.text[:200]
+                )
                 raise HTTPException(
                     status_code=resp.status_code,
-                    detail=resp.json() if resp.text else {"error": "vLLM backend error"},
+                    detail=resp.json()
+                    if resp.text
+                    else {"error": "vLLM backend error"},
                 )
             vllm_response = resp.json()
         except HTTPException:
@@ -374,7 +416,7 @@ async def chat_completions(
             raise HTTPException(status_code=500, detail=safe_err)
 
         # 5. Output filtering / PII masking
-        if "choices" in vllm_response and vllm_response["choices"]:
+        if vllm_response.get("choices"):
             choice = vllm_response["choices"][0]
             message = choice.get("message", {})
 
@@ -385,7 +427,9 @@ async def chat_completions(
                         if raw_args:
                             safe_args = await verify_and_mask_output(rails, raw_args)
                             tool_call["function"]["arguments"] = (
-                                safe_args.strip() if isinstance(safe_args, str) else str(safe_args)
+                                safe_args.strip()
+                                if isinstance(safe_args, str)
+                                else str(safe_args)
                             )
             elif message.get("content"):
                 safe_content = await verify_and_mask_output(rails, message["content"])
@@ -397,6 +441,8 @@ async def chat_completions(
             if "content" in safe_choice and isinstance(safe_choice["content"], str):
                 safe_choice["content"] = scrub_pii(safe_choice["content"])
             span.set_attribute("gen_ai.output.messages", json.dumps([safe_choice]))
-            span.set_attribute("gen_ai.response.model", vllm_response.get("model", model_id))
+            span.set_attribute(
+                "gen_ai.response.model", vllm_response.get("model", model_id)
+            )
 
         return JSONResponse(content=vllm_response)

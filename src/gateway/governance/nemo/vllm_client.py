@@ -12,23 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import json
-from typing import Any, List, Optional, AsyncIterator
+import logging
 import os
+from collections.abc import AsyncIterator
+from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import BaseMessage, AIMessageChunk, AIMessage
-from langchain_core.outputs import ChatGenerationChunk, ChatResult, ChatGeneration
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 try:
-    from src.governed_financial_advisor.infrastructure.config_manager import config_manager
+    from src.governed_financial_advisor.infrastructure.config_manager import (
+        config_manager,
+    )
 except ImportError:
+
     class _MockConfigManager:
         def get(self, key: str, default: Any = None) -> Any:
             return os.environ.get(key, default)
+
     config_manager = _MockConfigManager()
 
 # Configure Logging
@@ -44,6 +49,7 @@ def _truncate(value: str, max_chars: int = _VLLM_SPAN_ATTR_MAX_CHARS) -> str:
     if len(value) <= max_chars:
         return value
     return value[:max_chars] + " [TRUNCATED]"
+
 
 # ---------------------------------------------------------------------------
 # Per-rail timeout constants
@@ -62,7 +68,9 @@ ADVISOR_VLLM_TIMEOUT_SECONDS: float = float(
 class VLLMLLM(BaseChatModel):
     """Custom LangChain-compatible wrapper for vLLM using LiteLLM."""
 
-    model_name: str = config_manager.get("GUARDRAILS_MODEL_NAME", config_manager.get("MODEL_FAST"))
+    model_name: str = config_manager.get(
+        "GUARDRAILS_MODEL_NAME", config_manager.get("MODEL_FAST")
+    )
     api_base: str = config_manager.get("VLLM_BASE_URL")
     api_key: str = config_manager.get("VLLM_API_KEY", "EMPTY")
     # Per-instance timeout — defaults to NeMo rail budget since this class is
@@ -73,14 +81,24 @@ class VLLMLLM(BaseChatModel):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if not self.api_base:
-            raise RuntimeError("VLLM_BASE_URL must be set — no localhost fallback in production")
-        logger.debug("VLLMLLM initialized with model=%s, base=%s", self.model_name, self.api_base)
+            raise RuntimeError(
+                "VLLM_BASE_URL must be set — no localhost fallback in production"
+            )
+        logger.debug(
+            "VLLMLLM initialized with model=%s, base=%s", self.model_name, self.api_base
+        )
 
     @property
     def _llm_type(self) -> str:
         return "vllm"
 
-    def _generate(self, messages: List[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> ChatResult:
         """Call the vLLM model via LiteLLM."""
         with tracer.start_as_current_span("nemo.guardrails.llm.generate") as span:
             span.set_attribute("gen_ai.operation.name", "chat")
@@ -111,10 +129,18 @@ class VLLMLLM(BaseChatModel):
                 span.set_attribute("gen_ai.request.model", model_id)
                 span.set_attribute("nemo.vllm.api_base", api_base)
 
-                logger.debug("Calling vLLM via litellm... model=%s base=%s", model_id, api_base)
+                logger.debug(
+                    "Calling vLLM via litellm... model=%s base=%s", model_id, api_base
+                )
 
                 # Format messages for litellm
-                formatted_messages = [{"role": m.type if m.type != "ai" else "assistant", "content": m.content} for m in messages]
+                formatted_messages = [
+                    {
+                        "role": m.type if m.type != "ai" else "assistant",
+                        "content": m.content,
+                    }
+                    for m in messages
+                ]
                 # Map 'human' to 'user' if needed
                 for m in formatted_messages:
                     if m["role"] == "human":
@@ -132,7 +158,7 @@ class VLLMLLM(BaseChatModel):
                     api_key=self.api_key,
                     messages=formatted_messages,
                     stop=stop,
-                    **kwargs
+                    **kwargs,
                 )
 
                 content = response.choices[0].message.content
@@ -142,9 +168,16 @@ class VLLMLLM(BaseChatModel):
                 )
                 # Record token usage when available
                 if getattr(response, "usage", None):
-                    span.set_attribute("gen_ai.usage.input_tokens", response.usage.prompt_tokens or 0)
-                    span.set_attribute("gen_ai.usage.output_tokens", response.usage.completion_tokens or 0)
-                return ChatResult(generations=[ChatGeneration(message=AIMessage(content=content))])
+                    span.set_attribute(
+                        "gen_ai.usage.input_tokens", response.usage.prompt_tokens or 0
+                    )
+                    span.set_attribute(
+                        "gen_ai.usage.output_tokens",
+                        response.usage.completion_tokens or 0,
+                    )
+                return ChatResult(
+                    generations=[ChatGeneration(message=AIMessage(content=content))]
+                )
 
             except Exception as e:
                 span.record_exception(e)
@@ -152,15 +185,29 @@ class VLLMLLM(BaseChatModel):
                 logger.error("Failed to call vLLM: %s", e)
                 raise
 
-    async def _acall(self, messages: List[BaseMessage], stop: Optional[List[str]] = None, run_manager: Any = None, **kwargs: Any) -> str:
+    async def _acall(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> str:
         """NeMo 0.10.0+ Compat: Wraps _agenerate to return string."""
         if not messages:
             return ""
-            
-        result = await self._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+        result = await self._agenerate(
+            messages, stop=stop, run_manager=run_manager, **kwargs
+        )
         return result.generations[0].message.content
 
-    async def _agenerate(self, messages: List[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> ChatResult:
         """Async call to the vLLM model via LiteLLM."""
         with tracer.start_as_current_span("nemo.guardrails.llm.agenerate") as span:
             span.set_attribute("gen_ai.operation.name", "chat")
@@ -172,7 +219,11 @@ class VLLMLLM(BaseChatModel):
 
                 model_id = self.model_name.replace("openai/", "")
 
-                logger.debug("VLLMLLM using model_id='%s' (original='%s')", model_id, self.model_name)
+                logger.debug(
+                    "VLLMLLM using model_id='%s' (original='%s')",
+                    model_id,
+                    self.model_name,
+                )
 
                 # Dynamic Routing Logic (Async)
                 api_base = self.api_base
@@ -190,9 +241,19 @@ class VLLMLLM(BaseChatModel):
                 span.set_attribute("gen_ai.request.model", model_id)
                 span.set_attribute("nemo.vllm.api_base", api_base)
 
-                logger.debug("Async Calling vLLM via litellm... model=%s base=%s", model_id, api_base)
+                logger.debug(
+                    "Async Calling vLLM via litellm... model=%s base=%s",
+                    model_id,
+                    api_base,
+                )
 
-                formatted_messages = [{"role": m.type if m.type != "ai" else "assistant", "content": m.content} for m in messages]
+                formatted_messages = [
+                    {
+                        "role": m.type if m.type != "ai" else "assistant",
+                        "content": m.content,
+                    }
+                    for m in messages
+                ]
                 for m in formatted_messages:
                     if m["role"] == "human":
                         m["role"] = "user"
@@ -215,15 +276,20 @@ class VLLMLLM(BaseChatModel):
                     messages=formatted_messages,
                     stop=stop,
                     timeout=self.timeout,
-                    **kwargs
+                    **kwargs,
                 )
                 completion_message = response.choices[0].message
                 content = completion_message.content or ""
 
                 # Record token usage when available
                 if getattr(response, "usage", None):
-                    span.set_attribute("gen_ai.usage.input_tokens", response.usage.prompt_tokens or 0)
-                    span.set_attribute("gen_ai.usage.output_tokens", response.usage.completion_tokens or 0)
+                    span.set_attribute(
+                        "gen_ai.usage.input_tokens", response.usage.prompt_tokens or 0
+                    )
+                    span.set_attribute(
+                        "gen_ai.usage.output_tokens",
+                        response.usage.completion_tokens or 0,
+                    )
 
                 tool_calls = getattr(completion_message, "tool_calls", None)
                 if tool_calls:
@@ -234,25 +300,49 @@ class VLLMLLM(BaseChatModel):
                             try:
                                 args = json.loads(args)
                             except json.JSONDecodeError as e:
-                                logger.warning("Failed to parse tool_call arguments as JSON: %s. args=%r", e, args)
-                        lc_tool_calls.append({
-                            "name": t.function.name,
-                            "args": args,
-                            "id": t.id
-                        })
+                                logger.warning(
+                                    "Failed to parse tool_call arguments as JSON: %s. args=%r",
+                                    e,
+                                    args,
+                                )
+                        lc_tool_calls.append(
+                            {"name": t.function.name, "args": args, "id": t.id}
+                        )
                     logger.debug("vLLM Response Tool Calls: %s", lc_tool_calls)
                     span.set_attribute(
                         "gen_ai.output.messages",
-                        _truncate(json.dumps([{"role": "assistant", "content": content, "tool_calls": lc_tool_calls}])),
+                        _truncate(
+                            json.dumps(
+                                [
+                                    {
+                                        "role": "assistant",
+                                        "content": content,
+                                        "tool_calls": lc_tool_calls,
+                                    }
+                                ]
+                            )
+                        ),
                     )
-                    return ChatResult(generations=[ChatGeneration(message=AIMessage(content=content, tool_calls=lc_tool_calls))])
+                    return ChatResult(
+                        generations=[
+                            ChatGeneration(
+                                message=AIMessage(
+                                    content=content, tool_calls=lc_tool_calls
+                                )
+                            )
+                        ]
+                    )
                 else:
                     logger.debug("vLLM Response Content: %s...", content[:100])
                     span.set_attribute(
                         "gen_ai.output.messages",
-                        _truncate(json.dumps([{"role": "assistant", "content": content}])),
+                        _truncate(
+                            json.dumps([{"role": "assistant", "content": content}])
+                        ),
                     )
-                    return ChatResult(generations=[ChatGeneration(message=AIMessage(content=content))])
+                    return ChatResult(
+                        generations=[ChatGeneration(message=AIMessage(content=content))]
+                    )
 
             except Exception as e:
                 span.record_exception(e)
@@ -260,7 +350,13 @@ class VLLMLLM(BaseChatModel):
                 logger.error("❌ Failed to initialize/call vLLM: %s", e)
                 raise
 
-    async def _astream(self, messages: List[BaseMessage], stop: Optional[List[str]] = None, run_manager: Any = None, **kwargs: Any) -> AsyncIterator[ChatGenerationChunk]:
+    async def _astream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatGenerationChunk]:
         """
         Enables Optimistic Streaming for NeMo Guardrails.
         """
@@ -273,10 +369,20 @@ class VLLMLLM(BaseChatModel):
                 import litellm
 
                 model_id = self.model_name
-                if not model_id.startswith("/") and not model_id.startswith("openai/") and "gpt" not in model_id:
+                if (
+                    not model_id.startswith("/")
+                    and not model_id.startswith("openai/")
+                    and "gpt" not in model_id
+                ):
                     model_id = f"openai/{model_id}"
 
-                formatted_messages = [{"role": m.type if m.type != "ai" else "assistant", "content": m.content} for m in messages]
+                formatted_messages = [
+                    {
+                        "role": m.type if m.type != "ai" else "assistant",
+                        "content": m.content,
+                    }
+                    for m in messages
+                ]
                 for m in formatted_messages:
                     if m["role"] == "human":
                         m["role"] = "user"
@@ -294,7 +400,7 @@ class VLLMLLM(BaseChatModel):
                     api_key=self.api_key,
                     stream=True,
                     stop=stop,
-                    **kwargs
+                    **kwargs,
                 )
 
                 collected_content: list[str] = []
@@ -303,14 +409,25 @@ class VLLMLLM(BaseChatModel):
                     if content:
                         collected_content.append(content)
                         # Yield it as a LangChain Chunk for NeMo
-                        yield ChatGenerationChunk(message=AIMessageChunk(content=content))
+                        yield ChatGenerationChunk(
+                            message=AIMessageChunk(content=content)
+                        )
                         # Optional: Notify callbacks
                         if run_manager:
                             await run_manager.on_llm_new_token(content)
 
                 span.set_attribute(
                     "gen_ai.output.messages",
-                    _truncate(json.dumps([{"role": "assistant", "content": "".join(collected_content)}])),
+                    _truncate(
+                        json.dumps(
+                            [
+                                {
+                                    "role": "assistant",
+                                    "content": "".join(collected_content),
+                                }
+                            ]
+                        )
+                    ),
                 )
 
             except Exception as e:

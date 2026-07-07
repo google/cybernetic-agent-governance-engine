@@ -73,7 +73,6 @@ import logging
 import os
 import sys
 import textwrap
-import uuid as _uuid_mod
 from pathlib import Path
 from typing import Any
 
@@ -95,7 +94,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_INPUT = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
 _DEFAULT_SSP = _REPO_ROOT / "compliance" / "oscal" / "system-security-plan.yaml"
 _DEFAULT_COMP_DEF = _REPO_ROOT / "compliance" / "oscal" / "component-definition.yaml"
-_DEFAULT_PATCH_OUT = _REPO_ROOT / "compliance" / "oscal" / "stpa_compiler_ssp_patch.yaml"
+_DEFAULT_PATCH_OUT = (
+    _REPO_ROOT / "compliance" / "oscal" / "stpa_compiler_ssp_patch.yaml"
+)
 
 # Stable UUIDs for the STPA compiler artifacts — deterministic so the SSP diff
 # is minimal across re-runs (no UUID churn).
@@ -136,9 +137,9 @@ REGIONAL_PROFILES: dict[str, dict] = {
 # Maps CAGE_DEPLOYMENT_REGION to the FrameworkRouter key used for UCA cross-walk.
 # US_FED → NIST, EU_ECB → EU_AI_ACT, APAC_MAS → MAS_FEAT.
 _REGION_TO_FRAMEWORK_KEY: dict[str, str] = {
-    "US_FED":    "NIST",
-    "EU_ECB":    "EU_AI_ACT",
-    "APAC_MAS":  "MAS_FEAT",
+    "US_FED": "NIST",
+    "EU_ECB": "EU_AI_ACT",
+    "APAC_MAS": "MAS_FEAT",
 }
 
 
@@ -190,10 +191,10 @@ _OSCAL_MAPPINGS_DIR: Path = _REPO_ROOT / "config" / "oscal" / "framework_mapping
 # To add a new jurisdiction: drop a JSON file into the mappings dir and add
 # an entry here.  Zero Python changes required in generate_ssp_patch().
 _FRAMEWORK_FILE_MAP: dict[str, str] = {
-    "NIST":      "NIST_SP800_53",
-    "ISO42001":  "ISO_42001",
+    "NIST": "NIST_SP800_53",
+    "ISO42001": "ISO_42001",
     "EU_AI_ACT": "EU_AI_ACT",
-    "MAS_FEAT":  "MAS_FEAT",
+    "MAS_FEAT": "MAS_FEAT",
 }
 
 
@@ -213,7 +214,7 @@ class FrameworkRouter:
         narrative_template (str): ``str.format()`` template for by-component narratives.
     """
 
-    _cache: dict[str, "FrameworkRouter"] = {}
+    _cache: dict[str, FrameworkRouter] = {}
 
     def __init__(self, framework_id: str) -> None:
         fid = framework_id.strip().upper()
@@ -232,7 +233,7 @@ class FrameworkRouter:
                 f"FrameworkRouter: mapping file not found at {json_path}. "
                 f"Ensure config/oscal/framework_mappings/{file_stem}.json exists."
             )
-        with open(json_path, "r") as fh:
+        with open(json_path) as fh:
             data = json.load(fh)
 
         self.framework_id: str = data["_framework_id"]
@@ -243,11 +244,13 @@ class FrameworkRouter:
         self.narrative_template: str = data["narrative_template"]
         logger.info(
             "FrameworkRouter: loaded '%s' from %s (%d UCA entries)",
-            self.framework_id, json_path, len(self.uca_mappings),
+            self.framework_id,
+            json_path,
+            len(self.uca_mappings),
         )
 
     @classmethod
-    def get(cls, framework_id: str) -> "FrameworkRouter":
+    def get(cls, framework_id: str) -> FrameworkRouter:
         """Return a cached FrameworkRouter for the given framework ID."""
         fid = framework_id.strip().upper()
         if fid not in cls._cache:
@@ -279,9 +282,7 @@ class FrameworkRouter:
         lines = []
         for uca in ucas:
             controls = self.controls_for_uca(uca.id)
-            ctrl_str = ", ".join(
-                f"{c} ({self.describe(c)})" for c in controls
-            )
+            ctrl_str = ", ".join(f"{c} ({self.describe(c)})" for c in controls)
             lines.append(
                 f"  {uca.id} ({uca.uca_type}): {uca.description}\n"
                 f"    → {self.framework_id}: {ctrl_str}"
@@ -296,6 +297,7 @@ class FrameworkRouter:
                 if ctrl not in seen:
                     seen.append(ctrl)
         return seen
+
 
 # ---------------------------------------------------------------------------
 # Z3N Network Hardening — SC-7 / SC-8 SSP narrative mapping
@@ -396,24 +398,26 @@ def generate_ssp_patch(
     # Narrative prose is rendered by the FrameworkRouter from the external JSON template.
     by_components = []
     for i, ctrl in enumerate(all_framework_controls):
-        by_components.append({
-            "component-uuid": _STPA_COMPONENT_UUID,
-            "uuid": f"{_STPA_BY_COMP_UUID[:-4]}{i:04d}",
-            "description": router.format_narrative(ctrl, cs.unsafe_control_actions),
-            "implementation-status": {"state": "implemented"},
-            "links": [
-                {
-                    "href": "../../config/stpa_control_structure.yaml",
-                    "rel": "reference",
-                    "text": "STPA control structure YAML (source of truth)",
-                },
-                {
-                    "href": "../../config/opa/generated_stpa_policy.rego",
-                    "rel": "reference",
-                    "text": "Generated OPA Rego policy",
-                },
-            ],
-        })
+        by_components.append(
+            {
+                "component-uuid": _STPA_COMPONENT_UUID,
+                "uuid": f"{_STPA_BY_COMP_UUID[:-4]}{i:04d}",
+                "description": router.format_narrative(ctrl, cs.unsafe_control_actions),
+                "implementation-status": {"state": "implemented"},
+                "links": [
+                    {
+                        "href": "../../config/stpa_control_structure.yaml",
+                        "rel": "reference",
+                        "text": "STPA control structure YAML (source of truth)",
+                    },
+                    {
+                        "href": "../../config/opa/generated_stpa_policy.rego",
+                        "rel": "reference",
+                        "text": "Generated OPA Rego policy",
+                    },
+                ],
+            }
+        )
 
     requirement: dict[str, Any] = {
         "uuid": _STPA_IMPL_UUID,
@@ -428,9 +432,9 @@ def generate_ssp_patch(
             Compiler source: src/gateway/governance/stpa_compiler.py
             Control structure (source of truth): config/stpa_control_structure.yaml
             Generated artifacts:
-              - config/opa/generated_stpa_policy.rego    (OPA Rego — {len([u for u in cs.unsafe_control_actions if 'opa' in u.enforcement or 'all' in u.enforcement])} UCAs)
-              - config/rails/generated_stpa_rails.co     (NeMo Colang — {len([u for u in cs.unsafe_control_actions if 'nemo' in u.enforcement or 'all' in u.enforcement])} UCAs)
-              - src/gateway/governance/generated_stpa_validator.py (Python — {len([u for u in cs.unsafe_control_actions if 'python' in u.enforcement or 'all' in u.enforcement])} UCAs)
+              - config/opa/generated_stpa_policy.rego    (OPA Rego — {len([u for u in cs.unsafe_control_actions if "opa" in u.enforcement or "all" in u.enforcement])} UCAs)
+              - config/rails/generated_stpa_rails.co     (NeMo Colang — {len([u for u in cs.unsafe_control_actions if "nemo" in u.enforcement or "all" in u.enforcement])} UCAs)
+              - src/gateway/governance/generated_stpa_validator.py (Python — {len([u for u in cs.unsafe_control_actions if "python" in u.enforcement or "all" in u.enforcement])} UCAs)
 
             Target compliance framework: {framework_label}
             Framework reference: {framework_source}
@@ -452,8 +456,14 @@ def generate_ssp_patch(
             {"name": "target-framework", "value": framework_label},
             {"name": "artifact-opa", "value": "config/opa/generated_stpa_policy.rego"},
             {"name": "artifact-nemo", "value": "config/rails/generated_stpa_rails.co"},
-            {"name": "artifact-python", "value": "src/gateway/governance/generated_stpa_validator.py"},
-            {"name": "compiler-source", "value": "src/gateway/governance/stpa_compiler.py"},
+            {
+                "name": "artifact-python",
+                "value": "src/gateway/governance/generated_stpa_validator.py",
+            },
+            {
+                "name": "compiler-source",
+                "value": "src/gateway/governance/stpa_compiler.py",
+            },
         ],
         "responsible-roles": [{"role-id": "compliance-engineer"}],
         "by-components": by_components,
@@ -477,22 +487,25 @@ def generate_component_entry(cs: ControlStructureModel) -> dict[str, Any]:
     impl_requirements = []
     for i, ctrl in enumerate(all_iso):
         uca_list = [
-            u.id for u in cs.unsafe_control_actions
+            u.id
+            for u in cs.unsafe_control_actions
             if ctrl in iso_router.controls_for_uca(u.id)
         ]
-        impl_requirements.append({
-            "uuid": f"{_STPA_REQ_UUID_PREFIX}-{i:04d}00{i}",
-            "control-id": ctrl,
-            "description": (
-                f"STPA compiler generates deterministic enforcement artifacts for "
-                f"{ctrl} ({iso_router.describe(ctrl)}) from config/stpa_control_structure.yaml. "
-                f"UCAs: {', '.join(uca_list)}."
-            ),
-            "remarks": (
-                "Implemented via stpa_compiler.py compile command. "
-                "Re-run on any YAML change to keep artifacts in sync."
-            ),
-        })
+        impl_requirements.append(
+            {
+                "uuid": f"{_STPA_REQ_UUID_PREFIX}-{i:04d}00{i}",
+                "control-id": ctrl,
+                "description": (
+                    f"STPA compiler generates deterministic enforcement artifacts for "
+                    f"{ctrl} ({iso_router.describe(ctrl)}) from config/stpa_control_structure.yaml. "
+                    f"UCAs: {', '.join(uca_list)}."
+                ),
+                "remarks": (
+                    "Implemented via stpa_compiler.py compile command. "
+                    "Re-run on any YAML change to keep artifacts in sync."
+                ),
+            }
+        )
 
     return {
         "uuid": _STPA_COMPONENT_UUID,
@@ -515,7 +528,10 @@ def generate_component_entry(cs: ControlStructureModel) -> dict[str, Any]:
         "props": [
             {"name": "software-version", "value": cs.system.version},
             {"name": "source-file", "value": "src/gateway/governance/stpa_compiler.py"},
-            {"name": "control-structure-input", "value": "config/stpa_control_structure.yaml"},
+            {
+                "name": "control-structure-input",
+                "value": "config/stpa_control_structure.yaml",
+            },
             {"name": "last-compiled", "value": now},
             {"name": "uca-count", "value": str(len(cs.unsafe_control_actions))},
         ],
@@ -556,9 +572,9 @@ def _apply_ssp_patch(
         ssp = yaml.safe_load(fh)
 
     try:
-        impl_reqs: list[dict] = (
-            ssp["system-security-plan"]["control-implementation"]["implemented-requirements"]
-        )
+        impl_reqs: list[dict] = ssp["system-security-plan"]["control-implementation"][
+            "implemented-requirements"
+        ]
     except (KeyError, TypeError) as exc:
         logger.error("Cannot navigate SSP to implemented-requirements: %s", exc)
         return False
@@ -568,7 +584,9 @@ def _apply_ssp_patch(
 
     # Append new block
     impl_reqs.append(patch_block)
-    ssp["system-security-plan"]["control-implementation"]["implemented-requirements"] = impl_reqs
+    ssp["system-security-plan"]["control-implementation"][
+        "implemented-requirements"
+    ] = impl_reqs
 
     # Update metadata timestamps
     now = _now_iso()
@@ -582,7 +600,9 @@ def _apply_ssp_patch(
         return True
 
     with open(ssp_path, "w") as fh:
-        yaml.dump(ssp, fh, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            ssp, fh, allow_unicode=True, default_flow_style=False, sort_keys=False
+        )
 
     logger.info("✅ SSP patched → %s", ssp_path)
     return True
@@ -620,7 +640,9 @@ def _apply_component_patch(
         return True
 
     with open(comp_path, "w") as fh:
-        yaml.dump(comp_def, fh, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            comp_def, fh, allow_unicode=True, default_flow_style=False, sort_keys=False
+        )
 
     logger.info("✅ Component definition patched → %s", comp_path)
     return True
@@ -648,12 +670,18 @@ def _write_standalone_patch(
         print("\n" + "=" * 80)
         print("STANDALONE PATCH (dry-run)")
         print("=" * 80)
-        print(yaml.dump(doc, allow_unicode=True, default_flow_style=False, sort_keys=False))
+        print(
+            yaml.dump(
+                doc, allow_unicode=True, default_flow_style=False, sort_keys=False
+            )
+        )
         return
 
     patch_path.parent.mkdir(parents=True, exist_ok=True)
     with open(patch_path, "w") as fh:
-        yaml.dump(doc, fh, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            doc, fh, allow_unicode=True, default_flow_style=False, sort_keys=False
+        )
     logger.info("✅ Standalone patch → %s", patch_path)
 
 
@@ -683,23 +711,36 @@ def _build_parser() -> argparse.ArgumentParser:
 
     exp = sub.add_parser("export", help="Export compiler state to OSCAL SSP patch.")
     exp.add_argument(
-        "--input", type=Path, default=_DEFAULT_INPUT, metavar="YAML",
+        "--input",
+        type=Path,
+        default=_DEFAULT_INPUT,
+        metavar="YAML",
         help=f"Control structure YAML (default: {_DEFAULT_INPUT})",
     )
     exp.add_argument(
-        "--ssp", type=Path, default=_DEFAULT_SSP, metavar="FILE",
+        "--ssp",
+        type=Path,
+        default=_DEFAULT_SSP,
+        metavar="FILE",
         help=f"Target SSP YAML (default: {_DEFAULT_SSP})",
     )
     exp.add_argument(
-        "--component-def", type=Path, default=_DEFAULT_COMP_DEF, metavar="FILE",
+        "--component-def",
+        type=Path,
+        default=_DEFAULT_COMP_DEF,
+        metavar="FILE",
         help=f"Target component-definition YAML (default: {_DEFAULT_COMP_DEF})",
     )
     exp.add_argument(
-        "--patch-out", type=Path, default=_DEFAULT_PATCH_OUT, metavar="FILE",
+        "--patch-out",
+        type=Path,
+        default=_DEFAULT_PATCH_OUT,
+        metavar="FILE",
         help=f"Standalone patch output (default: {_DEFAULT_PATCH_OUT})",
     )
     exp.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Print patch blocks without writing any files.",
     )
     exp.add_argument(
@@ -753,8 +794,12 @@ def cmd_export(args: argparse.Namespace) -> int:
     component_entry = generate_component_entry(cs)
 
     ok_ssp = _apply_ssp_patch(args.ssp, patch_block, dry_run=args.dry_run)
-    ok_comp = _apply_component_patch(args.component_def, component_entry, dry_run=args.dry_run)
-    _write_standalone_patch(args.patch_out, patch_block, component_entry, cs, dry_run=args.dry_run)
+    ok_comp = _apply_component_patch(
+        args.component_def, component_entry, dry_run=args.dry_run
+    )
+    _write_standalone_patch(
+        args.patch_out, patch_block, component_entry, cs, dry_run=args.dry_run
+    )
 
     if not ok_ssp:
         print("⚠️  SSP patch failed — check logs above.", file=sys.stderr)
@@ -770,7 +815,9 @@ def cmd_export(args: argparse.Namespace) -> int:
         print(f"   Standalone patch→ {args.patch_out}")
         print(f"   Framework       : {router.label}")
         print(f"   UCAs exported   : {len(cs.unsafe_control_actions)}")
-        print(f"   Controls mapped : {len(router.all_controls(cs.unsafe_control_actions))}")
+        print(
+            f"   Controls mapped : {len(router.all_controls(cs.unsafe_control_actions))}"
+        )
         # Coverage metric is region-specific — only emit the NIST coverage label
         # for US_FED deployments; other regions use their own coverage_metric key.
         coverage_metric = regional_profile["coverage_metric"]

@@ -13,21 +13,20 @@
 # limitations under the License.
 
 from operator import add
-from typing import Annotated, Any, Literal, Optional, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
-
 
 # ---------------------------------------------------------------------------
 # Transaction Ledger schema (Write-Ahead Log for Saga rollbacks)
 # ---------------------------------------------------------------------------
 
 LedgerEntryStatus = Literal[
-    "PENDING",        # Intent written before API call (WAL)
-    "COMPLETED",      # API call succeeded and ledger confirmed
-    "ROLLED_BACK",    # Compensating action completed successfully
-    "PARTIAL_FAILURE",# Compensating action failed mid-way
+    "PENDING",  # Intent written before API call (WAL)
+    "COMPLETED",  # API call succeeded and ledger confirmed
+    "ROLLED_BACK",  # Compensating action completed successfully
+    "PARTIAL_FAILURE",  # Compensating action failed mid-way
 ]
 
 
@@ -44,6 +43,7 @@ class LedgerEntry(TypedDict):
         context_data:    Payload the compensating node needs to issue the reversal
                          (e.g. {'transaction_id': '...', 'amount': 500, 'account': 'A'}).
     """
+
     sequence_id: int
     timestamp: str
     uca_ref: str
@@ -65,37 +65,45 @@ class AgentState(TypedDict):
         "governed_trader",
         "explainer",
         "human_review",
-        "FINISH"
+        "FINISH",
     ]
 
     # Risk Loop Control
     risk_status: Literal["UNKNOWN", "APPROVED", "REJECTED_REVISE"]
     risk_feedback: str | None
-    loop_count: int | None # Track recursion depth for Safety Breaker
+    loop_count: int | None  # Track recursion depth for Safety Breaker
 
     # Safety & Optimization Control
     safety_status: Literal["APPROVED", "BLOCKED", "ESCALATED", "SKIPPED"]
-    governance_signature: str | None # Cryptographic-style approval from Evaluator
+    governance_signature: str | None  # Cryptographic-style approval from Evaluator
 
     # User Profile
     risk_attitude: str | None
     investment_period: str | None
 
     # Execution Data
-    reasoning_output: str | None # Holds the Thinker's logic for the Doer
-    execution_plan_output: str | dict | None # Holds the structured plan (System 4 Output)
-    data_analyst_ticker: str | None # Holds the ticker identified by Data Analyst Planner
+    reasoning_output: str | None  # Holds the Thinker's logic for the Doer
+    execution_plan_output: (
+        str | dict | None
+    )  # Holds the structured plan (System 4 Output)
+    data_analyst_ticker: (
+        str | None
+    )  # Holds the ticker identified by Data Analyst Planner
 
     # CAGE / System 3 Control Signals
-    evaluation_result: dict[str, Any] | None # The Evaluator's Verdict & Simulation Results
-    opa_results: dict[str, Any] | None # Detailed policy engine outputs for the Auditor
-    execution_result: dict[str, Any] | None # The Executor's Technical Output (System 1)
-    governance_summary: str | None # Final auditor report for the UI
+    evaluation_result: (
+        dict[str, Any] | None
+    )  # The Evaluator's Verdict & Simulation Results
+    opa_results: dict[str, Any] | None  # Detailed policy engine outputs for the Auditor
+    execution_result: (
+        dict[str, Any] | None
+    )  # The Executor's Technical Output (System 1)
+    governance_summary: str | None  # Final auditor report for the UI
 
-    user_id: str # User Identity
+    user_id: str  # User Identity
 
     # Telemetry
-    latency_stats: dict[str, float] | None # For Bankruptcy Protocol (cumulative spend)
+    latency_stats: dict[str, float] | None  # For Bankruptcy Protocol (cumulative spend)
 
     # Saga Transaction Ledger (Write-Ahead Log)
     # Append-only via operator.add reducer — sorted by sequence_id DESC for LIFO rollback.
@@ -104,7 +112,9 @@ class AgentState(TypedDict):
     completed_transactions: Annotated[list[LedgerEntry], add]
 
     # Human-in-the-loop Approval (Phase 1b — LangGraph interrupt/Command pattern)
-    approval_required: bool  # default False — set True when trade value > $10k OR risk_score > 0.7
+    approval_required: (
+        bool  # default False — set True when trade value > $10k OR risk_score > 0.7
+    )
     # approval_decision schema: {
     #   "approved":  bool,
     #   "reviewer":  str,   — ISO 42001 A.7.2 accountability attribution
@@ -113,14 +123,14 @@ class AgentState(TypedDict):
     #   "comment":   str,   — optional supplementary note (legacy field)
     #   "timestamp": str,   — ISO-8601 UTC
     # }
-    approval_decision: Optional[dict[str, Any]]
-    hitl_expires_at: Optional[str]  # TTL expiration timestamp for pending state
+    approval_decision: dict[str, Any] | None
+    hitl_expires_at: str | None  # TTL expiration timestamp for pending state
 
     # NeMo Guardrail Gate (ADR 2026-03-09 — mandatory first-node enforcement)
     # Set by nemo_guardrail_node before any agent processes the input.
     # graph.py routes to END immediately when guardrail_blocked is True.
     guardrail_blocked: bool  # default False
-    guardrail_reason: str    # empty string when not blocked
+    guardrail_reason: str  # empty string when not blocked
 
     # NeMo Output Rail (ADR 2026-03-09b — mandatory final-node enforcement)
     # Set True by nemo_output_rail_node after output screening/masking runs.

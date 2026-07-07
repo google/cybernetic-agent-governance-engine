@@ -90,10 +90,19 @@ def create_secret_from_file(
         print(f"🔒 Secret {secret_name} exists. Updating...")
         run_command(["kubectl", "delete", "secret", secret_name, "-n", namespace])
 
-    from_file_arg = f"--from-file={key}={file_path}" if key else f"--from-file={file_path}"
-    run_command([
-        "kubectl", "create", "secret", "generic", secret_name,
-        "-n", namespace,
-        from_file_arg,
-    ])
+    from_file_arg = (
+        f"--from-file={key}={file_path}" if key else f"--from-file={file_path}"
+    )
+    run_command(
+        [
+            "kubectl",
+            "create",
+            "secret",
+            "generic",
+            secret_name,
+            "-n",
+            namespace,
+            from_file_arg,
+        ]
+    )
     print(f"✅ Secret {secret_name} created from file {file_path}.")

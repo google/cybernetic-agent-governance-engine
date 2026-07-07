@@ -4,6 +4,7 @@
 # Run: uv run pytest tests/test_pii_sanitizer.py -m local -v
 
 import pytest
+
 from src.gateway.governance.pii_sanitizer import PIISanitizer, _get_pii_sanitizer
 
 

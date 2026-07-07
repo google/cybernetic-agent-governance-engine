@@ -14,9 +14,6 @@
 
 """Prompt for the financial_coordinator_agent."""
 
-from config.settings import MODEL_FAST
-from src.governed_financial_advisor.utils.prompt_utils import Content, Part, Prompt, PromptData
-
 FINANCIAL_COORDINATOR_FALLBACK_PROMPT = """Role: Act as a specialized financial advisory assistant.
 Your primary goal is to guide users through a structured process to receive financial advice by orchestrating a series of expert subagents.
 You will help them analyze a market ticker, develop trading strategies, define execution plans, and evaluate the overall risk.
@@ -67,6 +64,10 @@ If the user agrees to execute (e.g., "Yes", "Execute strategy 1"), you MUST rout
 Call `route_request(intent='TRADING_STRATEGY')` (which handles execution in this context).
 """
 
+
 def get_financial_coordinator_instruction() -> str:
     from src.governed_financial_advisor.utils.langfuse_utils import get_managed_prompt
-    return get_managed_prompt("agent/financial_coordinator", FINANCIAL_COORDINATOR_FALLBACK_PROMPT)
+
+    return get_managed_prompt(
+        "agent/financial_coordinator", FINANCIAL_COORDINATOR_FALLBACK_PROMPT
+    )

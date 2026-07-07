@@ -52,7 +52,6 @@ from __future__ import annotations
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -117,15 +116,23 @@ class MockTelemetryProvider(BaseTelemetryProvider):
         """Generate deterministic synthetic telemetry."""
         np.random.seed(self._seed)
         market_volatility = np.random.uniform(0.1, 0.9, n_samples)
-        trade_amount = np.random.normal(5000, 1000, n_samples) - (market_volatility * 2000)
+        trade_amount = np.random.normal(5000, 1000, n_samples) - (
+            market_volatility * 2000
+        )
         trade_amount = np.clip(trade_amount, 100, 10_000)
-        risk_score = (market_volatility * 0.5) + (trade_amount / 10_000 * 0.5) + np.random.normal(0, 0.05, n_samples)
+        risk_score = (
+            (market_volatility * 0.5)
+            + (trade_amount / 10_000 * 0.5)
+            + np.random.normal(0, 0.05, n_samples)
+        )
         risk_score = np.clip(risk_score, 0.0, 1.0)
-        return pd.DataFrame({
-            "market_volatility": market_volatility,
-            "trade_amount": trade_amount,
-            "risk_score": risk_score,
-        })
+        return pd.DataFrame(
+            {
+                "market_volatility": market_volatility,
+                "trade_amount": trade_amount,
+                "risk_score": risk_score,
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -155,13 +162,13 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
     def __init__(
         self,
         langfuse_client: object,
-        fallback: Optional[BaseTelemetryProvider] = None,
+        fallback: BaseTelemetryProvider | None = None,
     ) -> None:
         self._client = langfuse_client
         self._fallback = fallback or MockTelemetryProvider()
 
     @classmethod
-    def from_env(cls) -> "LangfuseTelemetryProvider":
+    def from_env(cls) -> LangfuseTelemetryProvider:
         """Construct from LANGFUSE_* environment variables.
 
         Required env vars:
@@ -256,11 +263,13 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
                     and trade_amount is not None
                     and risk_score is not None
                 ):
-                    rows.append({
-                        "market_volatility": float(market_vol),
-                        "trade_amount": float(trade_amount),
-                        "risk_score": float(risk_score),
-                    })
+                    rows.append(
+                        {
+                            "market_volatility": float(market_vol),
+                            "trade_amount": float(trade_amount),
+                            "risk_score": float(risk_score),
+                        }
+                    )
 
             if len(rows) < MIN_SAMPLES:
                 logger.warning(
@@ -275,13 +284,15 @@ class LangfuseTelemetryProvider(BaseTelemetryProvider):
 
             logger.info(
                 "[CTRL_TEL_003] LangfuseTelemetryProvider returning %d live samples "
-                "for DoWhy causal model.", len(rows)
+                "for DoWhy causal model.",
+                len(rows),
             )
             return pd.DataFrame(rows)
 
         except Exception as exc:
             logger.error(
                 "[CTRL_TEL_003] LangfuseTelemetryProvider fetch failed (%s) — "
-                "falling back to MockTelemetryProvider.", exc
+                "falling back to MockTelemetryProvider.",
+                exc,
             )
             return self._fallback.get_latest_data(n_samples)

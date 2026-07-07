@@ -14,29 +14,42 @@
 
 """Execution_analyst_agent (Planner) - System 4 Feedforward Engine"""
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from config.settings import MODEL_REASONING
 
+
 # Define the Pydantic schema for the execution plan
 class PlanStep(BaseModel):
     id: str = Field(description="Unique identifier for the step")
-    action: str = Field(description="Action to perform (e.g., execute_trade, check_price)")
+    action: str = Field(
+        description="Action to perform (e.g., execute_trade, check_price)"
+    )
     description: str = Field(description="Description of what this step does")
     parameters: dict[str, Any] = Field(description="Parameters for the action")
 
+
 class ExecutionPlan(BaseModel):
     plan_id: str = Field(description="Unique identifier for the plan")
-    strategy_name: str = Field(description="Name of the strategy (e.g., 'Conservative Dividend Growth')")
-    rationale: str = Field(description="Detailed explanation of why this strategy fits the user profile")
+    strategy_name: str = Field(
+        description="Name of the strategy (e.g., 'Conservative Dividend Growth')"
+    )
+    rationale: str = Field(
+        description="Detailed explanation of why this strategy fits the user profile"
+    )
     risk_factors: list[str] = Field(description="List of identified risk factors")
     steps: list[PlanStep] = Field(description="Ordered list of execution steps")
 
     # Context Fields
-    user_risk_attitude: Optional[str] = Field(None, description="The user's stated risk attitude")
-    user_investment_period: Optional[str] = Field(None, description="The user's investment horizon")
+    user_risk_attitude: str | None = Field(
+        None, description="The user's stated risk attitude"
+    )
+    user_investment_period: str | None = Field(
+        None, description="The user's investment horizon"
+    )
+
 
 EXECUTION_ANALYST_FALLBACK_PROMPT = """You are the **Execution Analyst (Planner)**, the "System 4 Feedforward" engine of the CAGE architecture.
 Your role is to translate high-level user intent into a concrete, machine-verifiable **Execution Plan**.
@@ -75,14 +88,22 @@ If your previous plan was REJECTED by the Evaluator, you will receive `risk_feed
 You MUST revise your plan to address the specific feedback (e.g., "Market Closed" -> "Schedule for Open").
 """
 
+
 def get_execution_analyst_instruction() -> str:
     from src.governed_financial_advisor.utils.langfuse_utils import get_managed_prompt
-    return get_managed_prompt("agent/execution_analyst", EXECUTION_ANALYST_FALLBACK_PROMPT)
 
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from config.settings import Config
+    return get_managed_prompt(
+        "agent/execution_analyst", EXECUTION_ANALYST_FALLBACK_PROMPT
+    )
+
+
 import json as _json
+
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_openai import ChatOpenAI
+
+from config.settings import Config
+
 
 def create_execution_analyst_agent(model_name: str = MODEL_REASONING):
     """Factory to create execution analyst agent.
@@ -108,13 +129,15 @@ def create_execution_analyst_agent(model_name: str = MODEL_REASONING):
             # This is a vLLM-specific extra_body parameter passed directly to the API.
             # It does NOT use tool-calling, so no --enable-auto-tool-choice needed.
             "extra_body": {"guided_json": schema}
-        }
+        },
     )
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", get_execution_analyst_instruction()),
-        MessagesPlaceholder(variable_name="messages"),
-    ])
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", get_execution_analyst_instruction()),
+            MessagesPlaceholder(variable_name="messages"),
+        ]
+    )
 
     chain = prompt | llm
     return chain
@@ -127,6 +150,7 @@ def parse_execution_plan(raw_content: str) -> ExecutionPlan:
     <think>...</think> reasoning blocks before the JSON payload.
     """
     import re
+
     # Strip DeepSeek <think>...</think> reasoning blocks
     cleaned = re.sub(r"<think>.*?</think>", "", raw_content, flags=re.DOTALL).strip()
     # Extract JSON object (first {...} block)

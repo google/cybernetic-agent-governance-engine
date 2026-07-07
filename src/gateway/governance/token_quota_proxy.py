@@ -65,7 +65,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger("Gateway.Governance.TokenQuotaProxy")
 
@@ -182,7 +182,7 @@ class QuotaCheckResult:
     accumulated_tokens: int
     step_quota_max: int
     token_quota_max: int
-    block_reason: Optional[str]
+    block_reason: str | None
     session_ttl: int
 
 
@@ -217,12 +217,12 @@ class TokenQuotaProxy:
         self._token_quota_max = token_quota_max
         self._session_ttl = session_ttl
         # SHA hashes loaded at init time via _load_scripts()
-        self._sha_check: Optional[str] = None
-        self._sha_rollback: Optional[str] = None
-        self._sha_reconcile: Optional[str] = None
+        self._sha_check: str | None = None
+        self._sha_rollback: str | None = None
+        self._sha_reconcile: str | None = None
 
     @classmethod
-    def from_env(cls) -> "TokenQuotaProxy":
+    def from_env(cls) -> TokenQuotaProxy:
         """Construct from environment variables.
 
         Environment variables:
@@ -285,7 +285,8 @@ class TokenQuotaProxy:
         except Exception as exc:
             logger.error(
                 "TokenQuotaProxy: failed to load Lua scripts: %s — "
-                "all requests will be BLOCKED (fail-closed).", exc
+                "all requests will be BLOCKED (fail-closed).",
+                exc,
             )
             raise
 
@@ -346,7 +347,9 @@ class TokenQuotaProxy:
         except Exception as exc:
             logger.error(
                 "TokenQuotaProxy.check_and_increment: Redis error agent=%s err=%s "
-                "— failing CLOSED.", agent_id, exc
+                "— failing CLOSED.",
+                agent_id,
+                exc,
             )
             raise QuotaExceededError(
                 agent_id=agent_id,
@@ -376,15 +379,21 @@ class TokenQuotaProxy:
         if quota_result.allowed:
             logger.info(
                 "TokenQuotaProxy: ALLOWED agent=%s steps=%d/%d tokens=%d/%d",
-                agent_id, steps, self._step_quota_max,
-                tokens, self._token_quota_max,
+                agent_id,
+                steps,
+                self._step_quota_max,
+                tokens,
+                self._token_quota_max,
             )
         else:
             logger.warning(
-                "TokenQuotaProxy: BLOCKED agent=%s reason=%s "
-                "steps=%d/%d tokens=%d/%d",
-                agent_id, reason, steps, self._step_quota_max,
-                tokens, self._token_quota_max,
+                "TokenQuotaProxy: BLOCKED agent=%s reason=%s steps=%d/%d tokens=%d/%d",
+                agent_id,
+                reason,
+                steps,
+                self._step_quota_max,
+                tokens,
+                self._token_quota_max,
             )
 
         return quota_result
@@ -421,13 +430,18 @@ class TokenQuotaProxy:
             delta = actual_tokens_used - reserved_tokens
             logger.debug(
                 "TokenQuotaProxy.reconcile: agent=%s reserved=%d actual=%d delta=%+d",
-                agent_id, reserved_tokens, actual_tokens_used, delta,
+                agent_id,
+                reserved_tokens,
+                actual_tokens_used,
+                delta,
             )
         except Exception as exc:
             # Non-fatal: log and continue.  The block is already enforced.
             logger.warning(
                 "TokenQuotaProxy.reconcile: Redis error agent=%s err=%s "
-                "— token counter may be slightly over-reserved.", agent_id, exc
+                "— token counter may be slightly over-reserved.",
+                agent_id,
+                exc,
             )
 
     async def rollback_step(
@@ -457,14 +471,17 @@ class TokenQuotaProxy:
             )
             logger.info(
                 "TokenQuotaProxy.rollback: agent=%s reserved_tokens=%d rolled back",
-                agent_id, reserved_tokens,
+                agent_id,
+                reserved_tokens,
             )
         except Exception as exc:
             # Non-fatal: log and continue.  The downstream failure is already
             # propagating; a rollback failure is a secondary concern.
             logger.warning(
                 "TokenQuotaProxy.rollback: Redis error agent=%s err=%s "
-                "— step counter may be slightly over-counted.", agent_id, exc
+                "— step counter may be slightly over-counted.",
+                agent_id,
+                exc,
             )
 
     async def reset_session(self, agent_id: str) -> None:
@@ -480,11 +497,14 @@ class TokenQuotaProxy:
         ]
         try:
             await self._redis.delete(*keys)
-            logger.info("TokenQuotaProxy.reset_session: agent=%s keys deleted", agent_id)
+            logger.info(
+                "TokenQuotaProxy.reset_session: agent=%s keys deleted", agent_id
+            )
         except Exception as exc:
             logger.warning(
                 "TokenQuotaProxy.reset_session: Redis error agent=%s err=%s",
-                agent_id, exc,
+                agent_id,
+                exc,
             )
 
     async def get_session_state(self, agent_id: str) -> dict:
@@ -512,7 +532,8 @@ class TokenQuotaProxy:
         except Exception as exc:
             logger.warning(
                 "TokenQuotaProxy.get_session_state: Redis error agent=%s err=%s",
-                agent_id, exc,
+                agent_id,
+                exc,
             )
             return {
                 "agent_id": agent_id,
@@ -529,7 +550,7 @@ class TokenQuotaProxy:
 # Module-level singleton (lazy init)
 # ---------------------------------------------------------------------------
 
-_token_quota_proxy: Optional[TokenQuotaProxy] = None
+_token_quota_proxy: TokenQuotaProxy | None = None
 
 
 def _get_token_quota_proxy() -> TokenQuotaProxy:

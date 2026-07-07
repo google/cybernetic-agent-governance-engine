@@ -12,4 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-fatal: path 'src/governed_financial_advisor/agents/governed_trader/agent.py' exists on disk, but not in '703ce5e'
+"""Governed Trader Agent — trade execution agent with governance guardrails.
+
+The governed trader is implemented as a LangGraph subgraph in
+``src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py``.
+This module provides the ``create_governed_trader_agent`` factory used by the
+``__init__.py`` public API.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def create_governed_trader_agent(**kwargs: Any) -> Any:
+    """Return the compiled governed-trader LangGraph subgraph.
+
+    This is a thin factory wrapper around the subgraph defined in
+    ``governed_trader_graph``.  Keyword arguments are forwarded to the
+    subgraph compiler (e.g. ``checkpointer``, ``interrupt_before``).
+
+    Returns
+    -------
+    CompiledStateGraph
+        A compiled LangGraph state machine ready for ``ainvoke`` / ``astream``.
+    """
+    from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+        governed_trader_graph,
+    )
+
+    logger.debug("create_governed_trader_agent: returning compiled subgraph")
+    return governed_trader_graph

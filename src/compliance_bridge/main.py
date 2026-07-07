@@ -38,7 +38,7 @@ from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, BackgroundTasks
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -57,11 +57,13 @@ def _ensure_langfuse_imported() -> None:
     """Populate the module-level ``Langfuse`` name on first call."""
     global Langfuse
     if Langfuse is None:
-        from langfuse import Langfuse as _LF  # noqa: PLC0415
+        from langfuse import Langfuse as _LF
+
         Langfuse = _LF
 
-from .auth import require_internal_token
+
 from .audit_workflow import run_audit_workflow
+from .auth import require_internal_token
 from .cmek_guard import validate_cmek_configuration
 from .lula_scheduler import run_lula_scheduler
 from .metrics import get_compliance_metrics
@@ -71,9 +73,7 @@ from .sse_events import event_bus
 from .types import (
     CONTROL_META,
     CRITICAL_CONTROLS,
-    FRAMEWORK_CONTROLS,
     SUPPORTED_CONTROLS,
-    SUPPORTED_FRAMEWORKS,
     ComplianceMetrics,
     get_control_meta,
 )
@@ -127,8 +127,9 @@ def _get_app_langfuse() -> Any:
     if _app_langfuse is None:
         # Populate the module-level Langfuse name (no-op if already patched by tests)
         _ensure_langfuse_imported()
-        import sys as _sys  # noqa: PLC0415  — stdlib, safe inside guard
-        _LangfuseCls = getattr(_sys.modules[__name__], "Langfuse")
+        import sys as _sys
+
+        _LangfuseCls = _sys.modules[__name__].Langfuse
         _app_langfuse = _LangfuseCls(
             public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
             secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
@@ -141,6 +142,7 @@ def _get_app_langfuse() -> Any:
 # Lifespan — initialise Langfuse on startup
 # ---------------------------------------------------------------------------
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("🔄 compliance-bridge starting up…")
@@ -149,7 +151,7 @@ async def lifespan(app: FastAPI):
     # POAM-012 / NIST SC-12: Fail fast if CAGE_ROUTING_SEAL_SECRET is
     # absent or is a known development default in non-dev environments.
     # ------------------------------------------------------------------
-    _env  = os.environ.get("ENVIRONMENT", "development").lower()
+    _env = os.environ.get("ENVIRONMENT", "development").lower()
     _seal = os.environ.get("CAGE_ROUTING_SEAL_SECRET", "")
     _DEV_DEFAULTS = {"dev", "development", "changeme", "secret", "test", ""}
     if _env not in ("development", "dev", "test", "ci") and _seal in _DEV_DEFAULTS:
@@ -170,7 +172,8 @@ async def lifespan(app: FastAPI):
     if _cmek["cmek_enabled"]:
         logger.info(
             "✅ CMEK enabled: %s (bucket_verified=%s)",
-            _cmek["key_name"], _cmek["bucket_verified"],
+            _cmek["key_name"],
+            _cmek["bucket_verified"],
         )
 
     _get_app_langfuse()  # eager init so first request isn't slow
@@ -181,20 +184,24 @@ async def lifespan(app: FastAPI):
     # must be explicitly enabled in production via env var.
     # assert_kms_active_in_production() enforces KMS mode in prod.
     # ------------------------------------------------------------------
-    from .kms_batch_signer import _ENABLED as _KMS_ENABLED, get_batch_signer as _get_batch_signer  # noqa: PLC0415
+    from .kms_batch_signer import _ENABLED as _KMS_ENABLED
+    from .kms_batch_signer import get_batch_signer as _get_batch_signer
+
     _batch_signer = _get_batch_signer()
     if _KMS_ENABLED:
         await _batch_signer.start()
         logger.info("✅ KMS batch signer started")
-        _env_for_kms = os.environ.get("CAGE_ENV", "prod").lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
+        _env_for_kms = os.environ.get(
+            "CAGE_ENV", "prod"
+        ).lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
         if _env_for_kms == "prod":
             _batch_signer.assert_kms_active_in_production()
     else:
         logger.info("ℹ️ KMS batch signer disabled (KMS_BATCH_ENABLED != true)")
 
     # Start background tasks
-    _sla_task  = asyncio.create_task(run_sla_monitor(),     name="sla-monitor")
-    _lula_task = asyncio.create_task(run_lula_scheduler(),  name="lula-scheduler")
+    _sla_task = asyncio.create_task(run_sla_monitor(), name="sla-monitor")
+    _lula_task = asyncio.create_task(run_lula_scheduler(), name="lula-scheduler")
 
     logger.info(
         "✅ compliance-bridge ready on port %s. Supported controls: %s",
@@ -213,7 +220,6 @@ async def lifespan(app: FastAPI):
         logger.info("🛑 compliance-bridge shutting down.")
         if _app_langfuse is not None:
             _app_langfuse.flush()
-
 
 
 # ---------------------------------------------------------------------------
@@ -237,8 +243,8 @@ app = FastAPI(
 
 # M-13: Build CORS origin list without empty strings (empty string allows all origins)
 _cors_origins: list[str] = [
-    "http://localhost:5173",   # Vite dev server default
-    "http://localhost:3000",   # Alternative dev port
+    "http://localhost:5173",  # Vite dev server default
+    "http://localhost:3000",  # Alternative dev port
     "http://127.0.0.1:5173",
     "http://127.0.0.1:3000",
 ]
@@ -270,6 +276,7 @@ app.add_middleware(
 # and the subscriber queue is removed from GovernanceEventBus automatically.
 # ---------------------------------------------------------------------------
 
+
 @app.get("/v1/events/stream", tags=["events"], summary="SSE governance event stream")
 async def events_stream(request: Request) -> EventSourceResponse:
     """Stream governance events as Server-Sent Events.
@@ -288,11 +295,13 @@ async def events_stream(request: Request) -> EventSourceResponse:
         try:
             async for gov_event in event_bus.subscribe():
                 if await request.is_disconnected():
-                    logger.info("[events_stream] SSE client disconnected (detected in loop).")
+                    logger.info(
+                        "[events_stream] SSE client disconnected (detected in loop)."
+                    )
                     break
                 yield {
                     "event": "governance-event",
-                    "data":  json.dumps(gov_event),
+                    "data": json.dumps(gov_event),
                 }
         except asyncio.CancelledError:
             pass
@@ -304,7 +313,7 @@ async def events_stream(request: Request) -> EventSourceResponse:
 
     return EventSourceResponse(
         _generator(),
-        ping=30,           # send SSE comment ping every 30 s to prevent proxy timeouts
+        ping=30,  # send SSE comment ping every 30 s to prevent proxy timeouts
         ping_message_factory=lambda: ": heartbeat",
     )
 
@@ -312,6 +321,7 @@ async def events_stream(request: Request) -> EventSourceResponse:
 # ---------------------------------------------------------------------------
 # GET /health — liveness probe for Kubernetes
 # ---------------------------------------------------------------------------
+
 
 @app.get("/health", tags=["health"])
 async def health() -> dict:
@@ -338,11 +348,12 @@ async def health() -> dict:
         and os.environ.get("LANGFUSE_COMPLIANCE_SECRET_KEY")
     )
     langfuse_app_configured = bool(
-        os.environ.get("LANGFUSE_PUBLIC_KEY")
-        and os.environ.get("LANGFUSE_SECRET_KEY")
+        os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")
     )
     oscal_storage_configured = bool(os.environ.get("OSCAL_S3_ENDPOINT"))
-    active_env = os.environ.get("CAGE_ENV", os.environ.get("ENVIRONMENT", "prod")).lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
+    active_env = os.environ.get(
+        "CAGE_ENV", os.environ.get("ENVIRONMENT", "prod")
+    ).lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
 
     return {
         "status": "ok",
@@ -353,7 +364,6 @@ async def health() -> dict:
         "oscal_storage_configured": oscal_storage_configured,
         "environment": active_env,
     }
-
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +379,7 @@ async def health() -> dict:
 # filters through get_control_meta(region) so each deployment only exposes
 # its applicable controls.  Adds X-CAGE-Deployment-Region response header.
 # ---------------------------------------------------------------------------
+
 
 @app.get(
     "/v1/controls",
@@ -416,7 +427,9 @@ async def list_controls(
           \"deployment_region\": \"US_FED\"\n
         }\n
     """
-    from fastapi.responses import JSONResponse  # noqa: PLC0415 (already imported at top)
+    from fastapi.responses import (
+        JSONResponse,
+    )
 
     # Default to "" (empty string) when CAGE_DEPLOYMENT_REGION is not set so that
     # get_control_meta("") returns only universal ISO 42001 controls.  Defaulting
@@ -434,7 +447,7 @@ async def list_controls(
         raise HTTPException(
             status_code=400,
             detail={
-                "error":   "UNSUPPORTED_FRAMEWORK",
+                "error": "UNSUPPORTED_FRAMEWORK",
                 "message": (
                     f"Framework '{framework}' is not recognised for region "
                     f"'{active_region}'. "
@@ -445,7 +458,8 @@ async def list_controls(
 
     if framework is not None:
         active_ids = [
-            cid for cid, meta in region_controls.items()
+            cid
+            for cid, meta in region_controls.items()
             if framework in meta.get("frameworks", {})
         ]
     else:
@@ -453,19 +467,19 @@ async def list_controls(
 
     controls = [
         {
-            "control_id":  cid,
-            "name":        region_controls[cid]["name"],
-            "iso_clause":  region_controls[cid]["iso_clause"],
-            "score_name":  region_controls[cid]["scoreName"],
-            "critical":    cid in CRITICAL_CONTROLS,
-            "frameworks":  region_controls[cid].get("frameworks", {}),
+            "control_id": cid,
+            "name": region_controls[cid]["name"],
+            "iso_clause": region_controls[cid]["iso_clause"],
+            "score_name": region_controls[cid]["scoreName"],
+            "critical": cid in CRITICAL_CONTROLS,
+            "frameworks": region_controls[cid].get("frameworks", {}),
         }
         for cid in active_ids
     ]
     response_body = {
-        "controls":          controls,
-        "total":             len(controls),
-        "framework_filter":  framework,
+        "controls": controls,
+        "total": len(controls),
+        "framework_filter": framework,
         "deployment_region": active_region,
     }
     return JSONResponse(
@@ -482,13 +496,16 @@ async def list_controls(
 # from Lula and agentsight-ui.
 # ---------------------------------------------------------------------------
 
+
 @app.get(
     "/v1/metrics/summary",
     tags=["compliance"],
     summary="Aggregate compliance metrics across all controls",
 )
 async def get_metrics_summary(
-    window_hours: int = Query(default=24, ge=1, le=720, description="Look-back window in hours"),
+    window_hours: int = Query(
+        default=24, ge=1, le=720, description="Look-back window in hours"
+    ),
 ) -> dict:
     """Return a single compliance posture snapshot across all supported controls.
 
@@ -523,7 +540,11 @@ async def get_metrics_summary(
             results[cid] = m.model_dump()
             # A control is "failing" when safety_rate < 1.0 and not in grace period
             # M-10: safety_rate is None when no traces exist — treat as not-failing
-            if m.safety_rate is not None and m.safety_rate < 1.0 and not m.startup_grace_active:
+            if (
+                m.safety_rate is not None
+                and m.safety_rate < 1.0
+                and not m.startup_grace_active
+            ):
                 failing.append(cid)
                 if cid in CRITICAL_CONTROLS:
                     critical_fails.append(cid)
@@ -537,19 +558,23 @@ async def get_metrics_summary(
             timeout=25.0,
         )
     except asyncio.TimeoutError:
-        logger.warning("[metrics/summary] gather timed out after 25s — returning partial results")
+        logger.warning(
+            "[metrics/summary] gather timed out after 25s — returning partial results"
+        )
 
     passing_count = len(region_control_ids) - len(failing)
-    overall_rate  = passing_count / len(region_control_ids) if region_control_ids else 1.0
+    overall_rate = (
+        passing_count / len(region_control_ids) if region_control_ids else 1.0
+    )
 
     return {
         "overall_pass_rate": round(overall_rate, 4),
-        "total_controls":    len(region_control_ids),
-        "passing_controls":  passing_count,
-        "failing_controls":  sorted(failing),
-        "critical_fails":    sorted(critical_fails),
-        "window_hours":      window_hours,
-        "controls":          results,
+        "total_controls": len(region_control_ids),
+        "passing_controls": passing_count,
+        "failing_controls": sorted(failing),
+        "critical_fails": sorted(critical_fails),
+        "window_hours": window_hours,
+        "controls": results,
     }
 
 
@@ -566,15 +591,24 @@ async def get_metrics_summary(
 #   audit_id (str, optional)        — supply a stable ID; auto-generated if absent
 # ---------------------------------------------------------------------------
 
+
 @app.get(
     "/v1/oscal/assessment-results",
     tags=["compliance"],
     summary="Export current compliance posture as OSCAL Assessment Results (NIST OSCAL 1.1.2)",
 )
 async def export_oscal_assessment_results(
-    window_hours: int = Query(default=24, ge=1, le=720, description="Evidence look-back window"),
-    format: str = Query(default="json", pattern="^(json|yaml)$", description="Response format: json or yaml"),
-    audit_id: str | None = Query(default=None, description="Audit ID (auto-generated if absent)"),
+    window_hours: int = Query(
+        default=24, ge=1, le=720, description="Evidence look-back window"
+    ),
+    format: str = Query(
+        default="json",
+        pattern="^(json|yaml)$",
+        description="Response format: json or yaml",
+    ),
+    audit_id: str | None = Query(
+        default=None, description="Audit ID (auto-generated if absent)"
+    ),
 ) -> JSONResponse:
     """Generate an OSCAL Assessment Results document from live metrics.
 
@@ -604,7 +638,9 @@ async def export_oscal_assessment_results(
             )
             controls_data[cid] = m.model_dump()
         except asyncio.TimeoutError:
-            logger.warning("[oscal-export] Per-fetch timeout for %s — storing error result", cid)
+            logger.warning(
+                "[oscal-export] Per-fetch timeout for %s — storing error result", cid
+            )
             controls_data[cid] = {"error": f"fetch timeout after 8s for {cid}"}
         except Exception as exc:
             logger.warning("[oscal-export] Failed to fetch %s: %s", cid, exc)
@@ -616,7 +652,9 @@ async def export_oscal_assessment_results(
             timeout=25.0,
         )
     except asyncio.TimeoutError:
-        logger.warning("[oscal-export] gather timed out after 25s — returning partial results")
+        logger.warning(
+            "[oscal-export] gather timed out after 25s — returning partial results"
+        )
 
     findings = findings_from_metrics_dict(controls_data, _audit_id)
     doc = build_oscal_assessment_results(
@@ -627,18 +665,23 @@ async def export_oscal_assessment_results(
 
     if format == "yaml":
         try:
-            import yaml  # noqa: PLC0415  — optional dep: PyYAML
+            import yaml
+
             content = yaml.dump(doc, default_flow_style=False, allow_unicode=True)
             return JSONResponse(
                 content={"yaml": content, "audit_id": _audit_id},
-                headers={"Content-Disposition": f'attachment; filename="assessment-results-{_audit_id}.yaml"'},
+                headers={
+                    "Content-Disposition": f'attachment; filename="assessment-results-{_audit_id}.yaml"'
+                },
             )
         except ImportError:
             logger.warning("[oscal-export] PyYAML not installed — falling back to JSON")
 
     return JSONResponse(
         content={"document": doc, "audit_id": _audit_id},
-        headers={"Content-Disposition": f'attachment; filename="assessment-results-{_audit_id}.json"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="assessment-results-{_audit_id}.json"'
+        },
     )
 
 
@@ -648,6 +691,7 @@ async def export_oscal_assessment_results(
 # Poll endpoint for async audit results.  POST /v1/audit/ingest stores results
 # here so callers can retrieve them after an async ingest.
 # ---------------------------------------------------------------------------
+
 
 @app.get(
     "/v1/audit/status/{audit_id}",
@@ -683,6 +727,7 @@ async def get_audit_status(audit_id: str) -> JSONResponse:
 # Lula Rego accesses this as: input.langfuse_metrics_<controlId>
 # ---------------------------------------------------------------------------
 
+
 @app.get(
     "/v1/metrics/{control_id}",
     response_model=ComplianceMetrics,
@@ -691,13 +736,15 @@ async def get_audit_status(audit_id: str) -> JSONResponse:
 )
 async def get_metrics(
     control_id: str,
-    window_hours: int = Query(default=24, ge=1, le=720, description="Look-back window in hours"),
+    window_hours: int = Query(
+        default=24, ge=1, le=720, description="Look-back window in hours"
+    ),
 ) -> ComplianceMetrics:
     if control_id not in SUPPORTED_CONTROLS:
         raise HTTPException(
             status_code=400,
             detail={
-                "error":   "UNSUPPORTED_CONTROL",
+                "error": "UNSUPPORTED_CONTROL",
                 "message": (
                     f"Control ID '{control_id}' is not supported. "
                     f"Supported: {', '.join(SUPPORTED_CONTROLS)}"
@@ -709,7 +756,9 @@ async def get_metrics(
         metrics = await get_compliance_metrics(control_id, window_hours)
         return metrics
     except Exception as exc:
-        logger.error("[compliance-bridge] Failed to fetch metrics for %s: %s", control_id, exc)
+        logger.error(
+            "[compliance-bridge] Failed to fetch metrics for %s: %s", control_id, exc
+        )
         raise HTTPException(
             status_code=500,
             detail={"error": "METRICS_FETCH_FAILED", "message": str(exc)},
@@ -725,9 +774,10 @@ async def get_metrics(
 # Body: { oscal_yaml: str, audit_id?: str }
 # ---------------------------------------------------------------------------
 
+
 class AuditIngestRequest(BaseModel):
     oscal_yaml: str | None = None
-    audit_id:   str | None = None
+    audit_id: str | None = None
 
 
 async def _run_audit_workflow_background(oscal_yaml: str, audit_id: str) -> None:
@@ -735,51 +785,63 @@ async def _run_audit_workflow_background(oscal_yaml: str, audit_id: str) -> None
     try:
         result = await run_audit_workflow(oscal_yaml, audit_id)
         payload = {
-            "phase":            "done",
-            "status":           "ok",
-            "audit_id":         audit_id,
-            "findings_count":   result["findings_count"],
-            "artifact_key":     result["artifact_key"],
-            "ingested":         result["ingested"],
-            "alerted":          result["alerted"],
-            "alert_targets":    result["alert_targets"],
+            "phase": "done",
+            "status": "ok",
+            "audit_id": audit_id,
+            "findings_count": result["findings_count"],
+            "artifact_key": result["artifact_key"],
+            "ingested": result["ingested"],
+            "alerted": result["alerted"],
+            "alert_targets": result["alert_targets"],
             "remediation_sent": result["remediation_sent"],
             "remediation_text": result["remediation_text"],
-            "advisor_error":    result["advisor_error"],
+            "advisor_error": result["advisor_error"],
             "remediation_per_control": result.get("per_control", []),
             # CAGE v0.1.0 AARM fields
-            "chain_root":            result.get("chain_root"),
-            "chain_length":          result.get("chain_length"),
+            "chain_root": result.get("chain_root"),
+            "chain_length": result.get("chain_length"),
             "chain_integrity_valid": result.get("chain_integrity_valid"),
-            "aarm_report_artifact":  result.get("aarm_report_artifact"),
+            "aarm_report_artifact": result.get("aarm_report_artifact"),
         }
         _set_audit_status(audit_id, payload)
     except ValueError as exc:
         logger.error("[compliance-bridge] Async Audit ingest parse error: %s", exc)
-        _set_audit_status(audit_id, {
-            "phase": "error", "audit_id": audit_id,
-            "error": "OSCAL_PARSE_ERROR", "message": str(exc),
-        })
+        _set_audit_status(
+            audit_id,
+            {
+                "phase": "error",
+                "audit_id": audit_id,
+                "error": "OSCAL_PARSE_ERROR",
+                "message": str(exc),
+            },
+        )
     except Exception as exc:
         logger.error("[compliance-bridge] Async Audit ingest failed: %s", exc)
-        _set_audit_status(audit_id, {
-            "phase": "error", "audit_id": audit_id,
-            "error": "AUDIT_INGEST_FAILED", "message": str(exc),
-        })
+        _set_audit_status(
+            audit_id,
+            {
+                "phase": "error",
+                "audit_id": audit_id,
+                "error": "AUDIT_INGEST_FAILED",
+                "message": str(exc),
+            },
+        )
 
 
 @app.post("/v1/audit/ingest", tags=["compliance"], summary="Ingest OSCAL audit result")
 async def audit_ingest(
     body: AuditIngestRequest,
     background_tasks: BackgroundTasks,
-    background: bool = Query(default=False, description="Run ingestion in the background asynchronously"),
+    background: bool = Query(
+        default=False, description="Run ingestion in the background asynchronously"
+    ),
     _auth: str = Depends(require_internal_token),
 ) -> JSONResponse:
     if not body.oscal_yaml or not body.oscal_yaml.strip():
         raise HTTPException(
             status_code=400,
             detail={
-                "error":   "MISSING_OSCAL_YAML",
+                "error": "MISSING_OSCAL_YAML",
                 "message": "Request body must contain { oscal_yaml: string }",
             },
         )
@@ -796,7 +858,9 @@ async def audit_ingest(
     _set_audit_status(audit_id, {"phase": "running", "audit_id": audit_id})
 
     if background:
-        background_tasks.add_task(_run_audit_workflow_background, body.oscal_yaml, audit_id)
+        background_tasks.add_task(
+            _run_audit_workflow_background, body.oscal_yaml, audit_id
+        )
         return JSONResponse(
             content={
                 "phase": "running",
@@ -813,50 +877,59 @@ async def audit_ingest(
     try:
         result = await run_audit_workflow(body.oscal_yaml, audit_id)
         payload = {
-            "phase":            "done",
-            "status":           "ok",
-            "audit_id":         audit_id,
-            "findings_count":   result["findings_count"],
-            "artifact_key":     result["artifact_key"],
-            "ingested":         result["ingested"],
-            "alerted":          result["alerted"],
-            "alert_targets":    result["alert_targets"],
+            "phase": "done",
+            "status": "ok",
+            "audit_id": audit_id,
+            "findings_count": result["findings_count"],
+            "artifact_key": result["artifact_key"],
+            "ingested": result["ingested"],
+            "alerted": result["alerted"],
+            "alert_targets": result["alert_targets"],
             "remediation_sent": result["remediation_sent"],
             "remediation_text": result["remediation_text"],
-            "advisor_error":    result["advisor_error"],
+            "advisor_error": result["advisor_error"],
             # Per-control advisory breakdown (Tier 3.1). Empty list when
             # no LLM advisory was generated (VLLM_BASE_URL unset, etc.).
             "remediation_per_control": result.get("per_control", []),
             # CAGE v0.1.0 AARM fields
-            "chain_root":            result.get("chain_root"),
-            "chain_length":          result.get("chain_length"),
+            "chain_root": result.get("chain_root"),
+            "chain_length": result.get("chain_length"),
             "chain_integrity_valid": result.get("chain_integrity_valid"),
-            "aarm_report_artifact":  result.get("aarm_report_artifact"),
+            "aarm_report_artifact": result.get("aarm_report_artifact"),
         }
         _set_audit_status(audit_id, payload)
         return JSONResponse(content=payload)
     except ValueError as exc:
         # parse_oscal_yaml raises ValueError on invalid YAML
         logger.error("[compliance-bridge] Audit ingest parse error: %s", exc)
-        _set_audit_status(audit_id, {
-            "phase": "error", "audit_id": audit_id,
-            "error": "OSCAL_PARSE_ERROR", "message": str(exc),
-        })
+        _set_audit_status(
+            audit_id,
+            {
+                "phase": "error",
+                "audit_id": audit_id,
+                "error": "OSCAL_PARSE_ERROR",
+                "message": str(exc),
+            },
+        )
         raise HTTPException(
             status_code=422,
             detail={"error": "OSCAL_PARSE_ERROR", "message": str(exc)},
         )
     except Exception as exc:
         logger.error("[compliance-bridge] Audit ingest failed: %s", exc)
-        _set_audit_status(audit_id, {
-            "phase": "error", "audit_id": audit_id,
-            "error": "AUDIT_INGEST_FAILED", "message": str(exc),
-        })
+        _set_audit_status(
+            audit_id,
+            {
+                "phase": "error",
+                "audit_id": audit_id,
+                "error": "AUDIT_INGEST_FAILED",
+                "message": str(exc),
+            },
+        )
         raise HTTPException(
             status_code=500,
             detail={"error": "AUDIT_INGEST_FAILED", "message": str(exc)},
         )
-
 
 
 # ---------------------------------------------------------------------------
@@ -866,19 +939,26 @@ async def audit_ingest(
 # Dual-path: on-demand via this endpoint AND auto-generated by the audit pipeline.
 # ---------------------------------------------------------------------------
 
+
 @app.get(
     "/v1/aarm/conformance-report",
     tags=["compliance"],
     summary="AARM Conformance Report Card (CSA AARM v1.0 — 11 threat vectors)",
 )
 async def get_aarm_conformance_report(
-    window_hours: int = Query(default=24, ge=1, le=720, description="Evidence look-back window"),
-    format: str = Query(default="json", pattern="^(json|yaml)$", description="Response format"),
+    window_hours: int = Query(
+        default=24, ge=1, le=720, description="Evidence look-back window"
+    ),
+    format: str = Query(
+        default="json", pattern="^(json|yaml)$", description="Response format"
+    ),
     include_narrative: bool = Query(
         default=False,
         description="Enrich with vLLM prose narratives (11 concurrent calls, Semaphore=3)",
     ),
-    audit_id: str | None = Query(default=None, description="Audit ID (auto-generated if absent)"),
+    audit_id: str | None = Query(
+        default=None, description="Audit ID (auto-generated if absent)"
+    ),
 ) -> JSONResponse:
     """Generate an on-demand AARM Conformance Report Card.
 
@@ -892,9 +972,11 @@ async def get_aarm_conformance_report(
     diagnostic sidecar generates prose for each vector (asyncio.Semaphore(3)
     concurrency cap to prevent 429 saturation).
     """
-    from .aarm_mapper import build_aarm_conformance_report  # noqa: PLC0415
-    from .aarm_report_generator import enrich_report_with_narratives  # noqa: PLC0415
-    from .oscal_exporter import findings_from_metrics_dict  # noqa: PLC0415 - already imported but guards against import cycle
+    from .aarm_mapper import build_aarm_conformance_report
+    from .aarm_report_generator import enrich_report_with_narratives
+    from .oscal_exporter import (
+        findings_from_metrics_dict,
+    )
 
     _audit_id = audit_id or f"aarm-ondemand-{int(time.time())}"
     controls_data: dict = {}
@@ -913,10 +995,12 @@ async def get_aarm_conformance_report(
             timeout=25.0,
         )
     except asyncio.TimeoutError:
-        logger.warning("[aarm-report] gather timed out after 25s — returning partial results")
+        logger.warning(
+            "[aarm-report] gather timed out after 25s — returning partial results"
+        )
 
     findings = findings_from_metrics_dict(controls_data, _audit_id)
-    report   = build_aarm_conformance_report(findings, audit_id=_audit_id)
+    report = build_aarm_conformance_report(findings, audit_id=_audit_id)
     report_dict = report.model_dump()
 
     if include_narrative:
@@ -928,18 +1012,25 @@ async def get_aarm_conformance_report(
 
     if format == "yaml":
         try:
-            import yaml  # noqa: PLC0415 — optional dep
-            content = yaml.dump(report_dict, default_flow_style=False, allow_unicode=True)
+            import yaml
+
+            content = yaml.dump(
+                report_dict, default_flow_style=False, allow_unicode=True
+            )
             return JSONResponse(
                 content={"yaml": content, "audit_id": _audit_id},
-                headers={"Content-Disposition": f'attachment; filename="aarm-conformance-{_audit_id}.yaml"'},
+                headers={
+                    "Content-Disposition": f'attachment; filename="aarm-conformance-{_audit_id}.yaml"'
+                },
             )
         except ImportError:
             logger.warning("[aarm-report] PyYAML not installed — falling back to JSON")
 
     return JSONResponse(
         content={"report": report_dict, "audit_id": _audit_id},
-        headers={"Content-Disposition": f'attachment; filename="aarm-conformance-{_audit_id}.json"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="aarm-conformance-{_audit_id}.json"'
+        },
     )
 
 
@@ -950,13 +1041,16 @@ async def get_aarm_conformance_report(
 # (CAGE v0.1.0 — DEFER State Machine endpoints)
 # ---------------------------------------------------------------------------
 
+
 @app.get(
     "/v1/defer/pending",
     tags=["governance"],
     summary="List pending DEFER queue tokens (parked execution contexts)",
 )
 async def list_defer_pending(
-    limit: int = Query(default=50, ge=1, le=200, description="Maximum tokens to return"),
+    limit: int = Query(
+        default=50, ge=1, le=200, description="Maximum tokens to return"
+    ),
 ) -> JSONResponse:
     """Return all execution contexts currently parked in the DEFER queue.
 
@@ -966,21 +1060,26 @@ async def list_defer_pending(
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
     # Return a lightweight stub when Redis is unavailable in non-production environments
     if not redis_url:
-        return JSONResponse(content={"pending": [], "count": 0, "note": "REDIS_URL not configured"})
+        return JSONResponse(
+            content={"pending": [], "count": 0, "note": "REDIS_URL not configured"}
+        )
 
     try:
-        import redis.asyncio as aioredis  # noqa: PLC0415
-        from src.gateway.governance.defer_queue import DeferQueue  # noqa: PLC0415
+        import redis.asyncio as aioredis
+
+        from src.gateway.governance.defer_queue import DeferQueue
 
         client = aioredis.from_url(redis_url, db=1, decode_responses=True)
-        queue  = DeferQueue(client)
+        queue = DeferQueue(client)
         tokens = await queue.list_pending(limit=limit)
         await client.aclose()
 
-        return JSONResponse(content={
-            "pending": [t.model_dump() for t in tokens],
-            "count":   len(tokens),
-        })
+        return JSONResponse(
+            content={
+                "pending": [t.model_dump() for t in tokens],
+                "count": len(tokens),
+            }
+        )
     except Exception as exc:
         logger.warning("[defer/pending] Failed to fetch pending tokens: %s", exc)
         raise HTTPException(
@@ -1013,11 +1112,12 @@ async def defer_inject(
     # Import DeferQueue — isolate ImportError / RuntimeError (e.g. missing
     # optional gateway deps like 'dowhy') from the token-not-found 404 path.
     try:
-        import redis.asyncio as aioredis  # noqa: PLC0415
+        import redis.asyncio as aioredis
+
         try:
-            from src.gateway.governance.defer_queue import DeferQueue  # noqa: PLC0415
+            from src.gateway.governance.defer_queue import DeferQueue
         except ImportError:
-            from gateway.governance.defer_queue import DeferQueue  # noqa: PLC0415
+            from gateway.governance.defer_queue import DeferQueue
     except (ImportError, RuntimeError) as exc:
         logger.warning("[defer/inject] DeferQueue import failed: %s", exc)
         raise HTTPException(
@@ -1026,9 +1126,11 @@ async def defer_inject(
         )
 
     try:
-        client   = aioredis.from_url(redis_url, db=1, decode_responses=True)
-        queue    = DeferQueue(client)
-        resolved = await queue.resolve(defer_id, "INJECTED", injection_data=body.injection_data)
+        client = aioredis.from_url(redis_url, db=1, decode_responses=True)
+        queue = DeferQueue(client)
+        resolved = await queue.resolve(
+            defer_id, "INJECTED", injection_data=body.injection_data
+        )
         await client.aclose()
         if resolved is None:
             raise HTTPException(
@@ -1056,24 +1158,30 @@ async def defer_inject(
                 status_code=503,
                 detail={"error": "DEFER_QUEUE_UNAVAILABLE", "message": exc_str},
             )
-        raise HTTPException(status_code=500, detail={"error": "DEFER_INJECT_FAILED", "message": exc_str})
+        raise HTTPException(
+            status_code=500, detail={"error": "DEFER_INJECT_FAILED", "message": exc_str}
+        )
 
     # Publish DEFER_RESOLVED SSE event
     try:
-        await event_bus.publish({
-            "type":       "DEFER_RESOLVED",
-            "traceId":    resolved.defer_id,
-            "controlId":  "A.8.4",
-            "result":     None,
-            "safetyRate": None,
-            "auditId":    resolved.thread_id,
-            "resolution": "INJECTED",
-            "timestamp":  resolved.resolved_at_utc or "",
-        })
+        await event_bus.publish(
+            {
+                "type": "DEFER_RESOLVED",
+                "traceId": resolved.defer_id,
+                "controlId": "A.8.4",
+                "result": None,
+                "safetyRate": None,
+                "auditId": resolved.thread_id,
+                "resolution": "INJECTED",
+                "timestamp": resolved.resolved_at_utc or "",
+            }
+        )
     except Exception:
         pass
 
-    return JSONResponse(content={"status": "resolved", "defer_id": defer_id, "resolution": "INJECTED"})
+    return JSONResponse(
+        content={"status": "resolved", "defer_id": defer_id, "resolution": "INJECTED"}
+    )
 
 
 @app.post(
@@ -1094,11 +1202,12 @@ async def defer_escalate(
     # Import DeferQueue — isolate ImportError / RuntimeError (e.g. missing
     # optional gateway deps like 'dowhy') from the token-not-found 404 path.
     try:
-        import redis.asyncio as aioredis  # noqa: PLC0415
+        import redis.asyncio as aioredis
+
         try:
-            from src.gateway.governance.defer_queue import DeferQueue  # noqa: PLC0415
+            from src.gateway.governance.defer_queue import DeferQueue
         except ImportError:
-            from gateway.governance.defer_queue import DeferQueue  # noqa: PLC0415
+            from gateway.governance.defer_queue import DeferQueue
     except (ImportError, RuntimeError) as exc:
         logger.warning("[defer/escalate] DeferQueue import failed: %s", exc)
         raise HTTPException(
@@ -1107,8 +1216,8 @@ async def defer_escalate(
         )
 
     try:
-        client   = aioredis.from_url(redis_url, db=1, decode_responses=True)
-        queue    = DeferQueue(client)
+        client = aioredis.from_url(redis_url, db=1, decode_responses=True)
+        queue = DeferQueue(client)
         resolved = await queue.resolve(defer_id, "ESCALATED")
         await client.aclose()
         if resolved is None:
@@ -1135,24 +1244,31 @@ async def defer_escalate(
                 status_code=503,
                 detail={"error": "DEFER_QUEUE_UNAVAILABLE", "message": exc_str},
             )
-        raise HTTPException(status_code=500, detail={"error": "DEFER_ESCALATE_FAILED", "message": exc_str})
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "DEFER_ESCALATE_FAILED", "message": exc_str},
+        )
 
     # Publish DEFER_RESOLVED SSE event
     try:
-        await event_bus.publish({
-            "type":       "DEFER_RESOLVED",
-            "traceId":    resolved.defer_id,
-            "controlId":  "A.8.4",
-            "result":     None,
-            "safetyRate": None,
-            "auditId":    resolved.thread_id,
-            "resolution": "ESCALATED",
-            "timestamp":  resolved.resolved_at_utc or "",
-        })
+        await event_bus.publish(
+            {
+                "type": "DEFER_RESOLVED",
+                "traceId": resolved.defer_id,
+                "controlId": "A.8.4",
+                "result": None,
+                "safetyRate": None,
+                "auditId": resolved.thread_id,
+                "resolution": "ESCALATED",
+                "timestamp": resolved.resolved_at_utc or "",
+            }
+        )
     except Exception:
         pass
 
-    return JSONResponse(content={"status": "escalated", "defer_id": defer_id, "resolution": "ESCALATED"})
+    return JSONResponse(
+        content={"status": "escalated", "defer_id": defer_id, "resolution": "ESCALATED"}
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1166,16 +1282,23 @@ async def defer_escalate(
 #   cache_ttl_seconds (default: 300)
 # ---------------------------------------------------------------------------
 
-@app.get("/v1/prompts/{name}", tags=["prompts"], summary="Fetch a Langfuse prompt by name")
+
+@app.get(
+    "/v1/prompts/{name}", tags=["prompts"], summary="Fetch a Langfuse prompt by name"
+)
 async def get_prompt(
     name: str,
     label: str = Query(default="production", description="Langfuse prompt label"),
-    cache_ttl_seconds: int = Query(default=300, ge=0, description="Cache TTL in seconds"),
+    cache_ttl_seconds: int = Query(
+        default=300, ge=0, description="Cache TTL in seconds"
+    ),
 ) -> dict:
     langfuse = _get_app_langfuse()
 
     def _fetch_sync() -> dict:
-        prompt = langfuse.get_prompt(name, label=label, cache_ttl_seconds=cache_ttl_seconds)
+        prompt = langfuse.get_prompt(
+            name, label=label, cache_ttl_seconds=cache_ttl_seconds
+        )
         text = (
             prompt.prompt
             if isinstance(prompt.prompt, str)
@@ -1199,10 +1322,12 @@ async def get_prompt(
 # Compliance Telemetry History API
 # ---------------------------------------------------------------------------
 
+
 def _get_compliance_api() -> Any:
     """Initialize the Langfuse API client for the compliance project."""
     _ensure_langfuse_imported()
     from langfuse.api import LangfuseAPI
+
     return LangfuseAPI(
         username=os.environ.get("LANGFUSE_COMPLIANCE_PUBLIC_KEY", ""),
         password=os.environ.get("LANGFUSE_COMPLIANCE_SECRET_KEY", ""),
@@ -1220,7 +1345,7 @@ def safe_map_trace(t: Any) -> dict:
     result = metadata.get("lula_result", None)
     safety_rate = metadata.get("safety_rate", None)
     audit_id = metadata.get("audit_id", "")
-    
+
     # Safely identify event type
     event_type = "AUDIT_FINDING"
     tags = t.tags or []
@@ -1228,23 +1353,25 @@ def safe_map_trace(t: Any) -> dict:
         event_type = "REMEDIATION_GENERATED"
     elif result == "FAIL" and control_id in CRITICAL_CONTROLS:
         event_type = "GOVERNANCE_VIOLATION"
-        
+
     # Get control name
     control_name = control_id
     if control_id in CONTROL_META:
         control_name = CONTROL_META[control_id].get("name", control_id)
-        
+
     timestamp_str = ""
     if t.timestamp:
         if hasattr(t.timestamp, "isoformat"):
             timestamp_str = t.timestamp.isoformat()
         else:
             timestamp_str = str(t.timestamp)
-            
+
     model_name = metadata.get("model", None)
-    
+
     return {
-        "id": f"{audit_id}-{control_id}-{timestamp_str}" if audit_id and control_id else t.id,
+        "id": f"{audit_id}-{control_id}-{timestamp_str}"
+        if audit_id and control_id
+        else t.id,
         "traceId": t.id,
         "spanName": control_name or t.name or "Compliance Trace",
         "timestamp": timestamp_str,
@@ -1266,7 +1393,9 @@ def safe_map_trace(t: Any) -> dict:
 async def get_telemetry_history(
     page: int = Query(default=1, ge=1, description="Page number"),
     limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
-    before_timestamp: str | None = Query(default=None, description="Cursor timestamp for pagination"),
+    before_timestamp: str | None = Query(
+        default=None, description="Cursor timestamp for pagination"
+    ),
 ) -> dict:
     """Fetch paginated historical compliance telemetry.
 
@@ -1274,25 +1403,27 @@ async def get_telemetry_history(
     and protect against race conditions from concurrent live SSE streams.
     """
     from datetime import datetime
-    
+
     to_ts = None
     if before_timestamp:
         try:
             # Parse ISO 8601 strings (replacing Zulu if needed)
             to_ts = datetime.fromisoformat(before_timestamp.replace("Z", "+00:00"))
         except Exception as e:
-            logger.warning("[telemetry/history] Failed to parse before_timestamp: %s", e)
+            logger.warning(
+                "[telemetry/history] Failed to parse before_timestamp: %s", e
+            )
 
     try:
         api = _get_compliance_api()
-        
+
         def _fetch():
             return api.trace.list(page=page, limit=limit, to_timestamp=to_ts)
-            
+
         traces = await asyncio.to_thread(_fetch)
-        
+
         mapped = [safe_map_trace(t) for t in traces.data]
-        
+
         # Determine if more pages exist using traces.meta if available, otherwise fallback to limit length
         has_more = len(mapped) == limit
         if hasattr(traces, "meta") and traces.meta:
@@ -1313,7 +1444,6 @@ async def get_telemetry_history(
             status_code=500,
             detail={"error": "HISTORY_FETCH_FAILED", "message": str(exc)},
         )
-
 
 
 # ---------------------------------------------------------------------------

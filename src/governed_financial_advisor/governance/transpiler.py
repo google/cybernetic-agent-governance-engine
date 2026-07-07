@@ -27,7 +27,6 @@ import logging
 import os
 import re
 import textwrap
-from typing import Optional
 
 # ---------------------------------------------------------------------------
 # C-05: Safe dispatch — replaces any exec() of LLM-generated code.
@@ -77,25 +76,20 @@ def _safe_dispatch(generated_code: str, context: dict) -> dict:
     func_node = tree.body.func
     func_name = func_node.id if isinstance(func_node, ast.Name) else None
     if func_name not in ALLOWED_FUNCTIONS:
-        raise ValueError(
-            f"Function '{func_name}' is not in the governance allowlist"
-        )
+        raise ValueError(f"Function '{func_name}' is not in the governance allowlist")
 
     dispatch_map = {
         name: context[name] for name in ALLOWED_FUNCTIONS if name in context
     }
     if func_name not in dispatch_map:
-        raise ValueError(
-            f"Function '{func_name}' not available in current context"
-        )
+        raise ValueError(f"Function '{func_name}' not available in current context")
 
     # Extract literal arguments only — no arbitrary expressions allowed.
     args = [ast.literal_eval(arg) for arg in tree.body.args]
-    kwargs = {
-        kw.arg: ast.literal_eval(kw.value) for kw in tree.body.keywords
-    }
+    kwargs = {kw.arg: ast.literal_eval(kw.value) for kw in tree.body.keywords}
 
     return dispatch_map[func_name](*args, **kwargs)
+
 
 logger = logging.getLogger("governance.transpiler")
 
@@ -104,7 +98,7 @@ logger = logging.getLogger("governance.transpiler")
 # If the library is absent (e.g. minimal test environment), the name is set to
 # None and the transpiler falls back to deterministic templates.
 try:
-    from langchain_openai import ChatOpenAI  # noqa: F401
+    from langchain_openai import ChatOpenAI
 except ImportError:
     ChatOpenAI = None  # type: ignore[assignment,misc]
 
@@ -112,6 +106,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Judge Agent — lightweight verifier that checks generated code quality
 # ---------------------------------------------------------------------------
+
 
 class JudgeAgent:
     """Evaluates LLM-generated policy code for correctness.
@@ -152,9 +147,7 @@ class JudgeAgent:
         try:
             tree = ast.parse(code)
         except SyntaxError as exc:
-            logger.warning(
-                "JudgeAgent: Python AST parse failed: %s", exc
-            )
+            logger.warning("JudgeAgent: Python AST parse failed: %s", exc)
             return False
 
         has_function = any(
@@ -162,9 +155,7 @@ class JudgeAgent:
             for node in ast.walk(tree)
         )
         if not has_function:
-            logger.warning(
-                "JudgeAgent: Python code contains no function definitions"
-            )
+            logger.warning("JudgeAgent: Python code contains no function definitions")
             return False
 
         return True
@@ -176,9 +167,7 @@ class JudgeAgent:
         so we verify the mandatory structural tokens that every valid governance
         policy fragment must contain.
         """
-        missing = [
-            tok for tok in self._REGO_REQUIRED_TOKENS if tok not in code
-        ]
+        missing = [tok for tok in self._REGO_REQUIRED_TOKENS if tok not in code]
         if missing:
             logger.warning(
                 "JudgeAgent: Rego fragment missing required tokens: %s",
@@ -256,16 +245,26 @@ class PolicyTranspiler:
         if ChatOpenAI is not None:
             try:
                 api_key = os.environ.get("OPENAI_API_KEY", "not-needed-for-local")
-                api_base = os.environ.get("OPENAI_API_BASE") or os.environ.get("VLLM_FAST_API_BASE")
-                model = os.environ.get("TRANSPILER_MODEL") or os.environ.get("MODEL_FAST")
+                api_base = os.environ.get("OPENAI_API_BASE") or os.environ.get(
+                    "VLLM_FAST_API_BASE"
+                )
+                model = os.environ.get("TRANSPILER_MODEL") or os.environ.get(
+                    "MODEL_FAST"
+                )
                 kwargs: dict = {"model": model, "api_key": api_key}
                 if api_base:
                     kwargs["base_url"] = api_base
                 self._llm = ChatOpenAI(**kwargs)
                 self.use_llm = True
-                logger.debug("PolicyTranspiler: LLM initialised (model=%s, base_url=%s)", model, api_base)
+                logger.debug(
+                    "PolicyTranspiler: LLM initialised (model=%s, base_url=%s)",
+                    model,
+                    api_base,
+                )
             except Exception as exc:
-                logger.warning("PolicyTranspiler: LLM unavailable (%s) — using templates", exc)
+                logger.warning(
+                    "PolicyTranspiler: LLM unavailable (%s) — using templates", exc
+                )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -322,9 +321,13 @@ class PolicyTranspiler:
                 code = self._generate_with_llm(prompt)
                 if self._judge.verify(code):
                     return code
-                logger.warning("PolicyTranspiler: judge rejected LLM output, using template")
+                logger.warning(
+                    "PolicyTranspiler: judge rejected LLM output, using template"
+                )
             except Exception as exc:
-                logger.warning("PolicyTranspiler: LLM call failed (%s), using template", exc)
+                logger.warning(
+                    "PolicyTranspiler: LLM call failed (%s), using template", exc
+                )
 
         # Template fallback
         func_name = self._safe_func_name(uca.hazard or "check")
@@ -362,9 +365,13 @@ class PolicyTranspiler:
                 code = self._generate_with_llm(prompt)
                 if self._judge.verify(code):
                     return code
-                logger.warning("PolicyTranspiler: judge rejected LLM rego output, using template")
+                logger.warning(
+                    "PolicyTranspiler: judge rejected LLM rego output, using template"
+                )
             except Exception as exc:
-                logger.warning("PolicyTranspiler: LLM rego call failed (%s), using template", exc)
+                logger.warning(
+                    "PolicyTranspiler: LLM rego call failed (%s), using template", exc
+                )
 
         return _REGO_POLICY_TEMPLATE
 

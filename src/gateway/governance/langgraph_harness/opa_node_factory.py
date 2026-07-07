@@ -29,14 +29,15 @@ Domain-specific state access is injected via ``OpaNodeConfig.payload_extractor``
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Literal
+from collections.abc import Callable
+from typing import Any
 
 from opentelemetry import trace
 
+from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.langgraph_harness.types import OpaNodeConfig, StateDict
 from src.gateway.governance.singletons import symbolic_governor
 from src.gateway.governance.symbolic_governor import GovernanceError
-from src.gateway.governance.iso_control import stamp_iso_control
 
 logger = logging.getLogger("gateway.governance.langgraph_harness.opa_node_factory")
 tracer = trace.get_tracer("src.gateway.governance.langgraph_harness.opa_node_factory")
@@ -46,6 +47,7 @@ tracer = trace.get_tracer("src.gateway.governance.langgraph_harness.opa_node_fac
 # Compliance scoring helper — optional, imported at call-time to avoid
 # hard-coupling the harness to the governed_financial_advisor package.
 # ---------------------------------------------------------------------------
+
 
 def _score_compliance(thread_id: str, control: str, passed: bool, comment: str) -> None:
     """Best-effort compliance scoring via OTel span events.
@@ -57,6 +59,7 @@ def _score_compliance(thread_id: str, control: str, passed: bool, comment: str) 
         from src.governed_financial_advisor.utils.langfuse_utils import (
             score_compliance_event,
         )
+
         score_compliance_event(thread_id, control, passed=passed, comment=comment)
     except ImportError:
         # Harness is used in a project that doesn't have langfuse_utils —
@@ -71,6 +74,7 @@ def _score_compliance(thread_id: str, control: str, passed: bool, comment: str) 
 # ---------------------------------------------------------------------------
 # Node factory
 # ---------------------------------------------------------------------------
+
 
 def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
     """Return an async LangGraph node function that enforces OPA policy.
@@ -96,9 +100,7 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
         ``workflow.add_node()``.
     """
 
-    _thread_id_fn = config.thread_id_extractor or (
-        lambda s: s.get("thread_id", "")
-    )
+    _thread_id_fn = config.thread_id_extractor or (lambda s: s.get("thread_id", ""))
 
     async def opa_safety_node(state: StateDict) -> dict[str, Any]:
         with tracer.start_as_current_span("governance.opa_safety_node") as span:
@@ -138,9 +140,7 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
 
             # ----- 3. Invoke OPA via SymbolicGovernor -----
             try:
-                await symbolic_governor.govern(
-                    config.policy_action_name, opa_input
-                )
+                await symbolic_governor.govern(config.policy_action_name, opa_input)
                 logger.info(
                     "✅ Safety Check PASSED: %s",
                     opa_input.get("action", config.policy_action_name),
@@ -220,13 +220,9 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
 
             except Exception as exc:
                 # Fail-closed: deny rather than silently bypass
-                logger.error(
-                    "Safety Check Error (fail-closed): %s", exc
-                )
+                logger.error("Safety Check Error (fail-closed): %s", exc)
                 span.record_exception(exc)
-                span.set_status(
-                    trace.Status(trace.StatusCode.ERROR, str(exc))
-                )
+                span.set_status(trace.Status(trace.StatusCode.ERROR, str(exc)))
                 span.set_attribute("governance.decision", "BLOCKED")
                 span.set_attribute("governance.blocked", True)
                 stamp_iso_control(
@@ -241,15 +237,14 @@ def create_opa_safety_node(config: OpaNodeConfig) -> Callable:
                 }
 
     # Preserve a human-readable function name for LangGraph introspection
-    opa_safety_node.__qualname__ = (
-        f"opa_safety_node[{config.policy_action_name}]"
-    )
+    opa_safety_node.__qualname__ = f"opa_safety_node[{config.policy_action_name}]"
     return opa_safety_node
 
 
 # ---------------------------------------------------------------------------
 # Router factory
 # ---------------------------------------------------------------------------
+
 
 def create_opa_safety_router(
     status_state_key: str = "safety_status",

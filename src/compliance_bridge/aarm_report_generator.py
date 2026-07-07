@@ -39,7 +39,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
 
 from .aarm_mapper import (
     AARM_THREAT_VECTORS,
@@ -54,20 +53,18 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _NARRATIVE_SEM = asyncio.Semaphore(3)
-_MAX_TOKENS    = int(os.environ.get("AARM_NARRATIVE_MAX_TOKENS", "512"))
-_TIMEOUT_SEC   = int(os.environ.get("AARM_NARRATIVE_TIMEOUT_MS", "25000")) / 1000
+_MAX_TOKENS = int(os.environ.get("AARM_NARRATIVE_MAX_TOKENS", "512"))
+_TIMEOUT_SEC = int(os.environ.get("AARM_NARRATIVE_TIMEOUT_MS", "25000")) / 1000
 
 
 # ---------------------------------------------------------------------------
 # Template fallback — deterministic, no LLM required
 # ---------------------------------------------------------------------------
 
+
 def _template_narrative(result: AARMVectorResult) -> str:
     """Produce a deterministic prose narrative when vLLM is unavailable."""
-    ctrl_summary = ", ".join(
-        f"{cid}={v}"
-        for cid, v in result.control_results.items()
-    )
+    ctrl_summary = ", ".join(f"{cid}={v}" for cid, v in result.control_results.items())
     return (
         f"AARM {result.vector_id} ({result.name}) — {result.status}. "
         f"Severity: {result.aarm_severity}. "
@@ -82,12 +79,13 @@ def _template_narrative(result: AARMVectorResult) -> str:
 # _build_narrative_prompt — construct the LLM prompt for one vector
 # ---------------------------------------------------------------------------
 
+
 def _build_narrative_prompt(result: AARMVectorResult) -> str:
     ctrl_lines = "\n".join(
         f"  - {cid}: {v}" for cid, v in result.control_results.items()
     )
     vector_meta = AARM_THREAT_VECTORS.get(result.vector_id)
-    impl_files  = "\n".join(
+    impl_files = "\n".join(
         f"  - {f}" for f in (vector_meta.implementation_files if vector_meta else [])
     )
     return f"""You are a cybersecurity engineer writing the AARM Conformance Report Card
@@ -125,9 +123,10 @@ REQUIRED FORMAT:
 # generate_aarm_narrative — single vector, semaphore-bounded
 # ---------------------------------------------------------------------------
 
+
 async def generate_aarm_narrative(
-    result:     AARMVectorResult,
-    vllm_base:  str,
+    result: AARMVectorResult,
+    vllm_base: str,
     model_name: str,
 ) -> str:
     """Generate a prose narrative for one AARM vector using the vLLM sidecar.
@@ -145,14 +144,14 @@ async def generate_aarm_narrative(
     """
     async with _NARRATIVE_SEM:
         try:
-            from openai import AsyncOpenAI  # noqa: PLC0415 — lazy import
+            from openai import AsyncOpenAI
 
             _api_key = os.environ.get("VLLM_API_KEY")
             if not _api_key:
                 raise RuntimeError("VLLM_API_KEY not set — falling back to template")
 
             client = AsyncOpenAI(base_url=vllm_base, api_key=_api_key)
-            prompt  = _build_narrative_prompt(result)
+            prompt = _build_narrative_prompt(result)
 
             response = await asyncio.wait_for(
                 client.chat.completions.create(
@@ -165,7 +164,8 @@ async def generate_aarm_narrative(
             text = (response.choices[0].message.content or "").strip()
             logger.info(
                 "[aarm_report_generator] ✅ Narrative generated for %s (%d chars)",
-                result.vector_id, len(text),
+                result.vector_id,
+                len(text),
             )
             return text
 
@@ -177,7 +177,8 @@ async def generate_aarm_narrative(
         except Exception as exc:
             logger.warning(
                 "[aarm_report_generator] vLLM error for %s (%s) — using template fallback",
-                result.vector_id, exc,
+                result.vector_id,
+                exc,
             )
 
     return _template_narrative(result)
@@ -186,6 +187,7 @@ async def generate_aarm_narrative(
 # ---------------------------------------------------------------------------
 # enrich_report_with_narratives — enrich all 11 vectors concurrently
 # ---------------------------------------------------------------------------
+
 
 async def enrich_report_with_narratives(
     report: AARMConformanceReport,
@@ -201,7 +203,7 @@ async def enrich_report_with_narratives(
         Dict mapping vector_id → prose narrative string.
         Always returns all 11 entries (template fallback on any error).
     """
-    vllm_base  = os.environ.get("VLLM_BASE_URL", "")
+    vllm_base = os.environ.get("VLLM_BASE_URL", "")
     model_name = (
         os.environ.get("REMEDIATION_MODEL")
         or os.environ.get("MODEL_REASONING")

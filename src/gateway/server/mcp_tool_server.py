@@ -31,36 +31,38 @@ from __future__ import annotations
 import asyncio
 import collections
 import inspect
-import json
 import logging
 import os
 import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel
 
 sys.path.append(".")
 
-from src.gateway.core.tools import execute_trade, TradeOrder
-from src.gateway.core.market import market_service
-from src.gateway.governance.singletons import symbolic_governor, opa_client
-from src.gateway.governance.symbolic_governor import GovernanceError
-from src.gateway.governance.nemo.manager import initialize_rails, validate_with_nemo, verify_input
-from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
-from src.gateway.server.governance_middleware import enforce_governance, enforce_routing_seal
-from src.gateway.observability.mcp_tracing import patch_mcp_tools
-from src.governed_financial_advisor.tools.market_data_tool import get_market_data
-from src.governed_financial_advisor.infrastructure.config_manager import config_manager
-from src.gateway.tracing_setup import setup_tracing
-
 from opentelemetry import trace
+
+from src.gateway.core.tools import TradeOrder, execute_trade
+from src.gateway.governance.nemo.manager import (
+    initialize_rails,
+    validate_with_nemo,
+)
+from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
+from src.gateway.governance.singletons import opa_client, symbolic_governor
+from src.gateway.observability.mcp_tracing import patch_mcp_tools
+from src.gateway.server.governance_middleware import (
+    enforce_governance,
+    enforce_routing_seal,
+)
+from src.gateway.tracing_setup import setup_tracing
+from src.governed_financial_advisor.infrastructure.config_manager import config_manager
+from src.governed_financial_advisor.tools.market_data_tool import get_market_data
 
 logger = logging.getLogger("Gateway.MCPToolServer")
 tracer = trace.get_tracer("gateway.mcp_tool_server")
@@ -88,9 +90,7 @@ async def _check_rate_limit(client_ip: str) -> bool:
     now = time.monotonic()
     cutoff = now - _RATE_LIMIT_WINDOW_SECONDS
     async with _rate_limit_lock:
-        bucket = _rate_limit_buckets.setdefault(
-            client_ip, collections.deque()
-        )
+        bucket = _rate_limit_buckets.setdefault(client_ip, collections.deque())
         # Evict expired timestamps
         while bucket and bucket[0] < cutoff:
             bucket.popleft()
@@ -117,16 +117,21 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 CAGE MCP Tool Server Starting...")
     vllm_base = config_manager.get("VLLM_BASE_URL")
     if not vllm_base:
-        raise RuntimeError("VLLM_BASE_URL must be set — no localhost fallback in production.")
+        raise RuntimeError(
+            "VLLM_BASE_URL must be set — no localhost fallback in production."
+        )
     vllm_api_key = config_manager.get("VLLM_API_KEY")
     if not vllm_api_key:
-        raise RuntimeError("VLLM_API_KEY must be set — no 'EMPTY' fallback in production.")
+        raise RuntimeError(
+            "VLLM_API_KEY must be set — no 'EMPTY' fallback in production."
+        )
 
     # 4. Initialise NeMo rails and store on app state
     app.state.nemo_rails = initialize_rails()
 
     # 5. Start consensus background audit worker (Phase 4.4)
     from src.gateway.governance.consensus import _background_audit_worker
+
     audit_task = asyncio.create_task(_background_audit_worker())
     app.state.audit_task = audit_task
 
@@ -153,7 +158,12 @@ try:
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
     _SCANNER_NOISE_PREFIXES = (
-        "/.git", "/.env", "/wp-admin", "/phpmyadmin", "/admin", "/actuator",
+        "/.git",
+        "/.env",
+        "/wp-admin",
+        "/phpmyadmin",
+        "/admin",
+        "/actuator",
     )
 
     def _server_request_hook(span, scope):
@@ -161,7 +171,9 @@ try:
             return
         method = scope.get("method", "").upper()
         path = scope.get("path", "")
-        if method not in {"GET", "POST"} or path.lower().startswith(_SCANNER_NOISE_PREFIXES):
+        if method not in {"GET", "POST"} or path.lower().startswith(
+            _SCANNER_NOISE_PREFIXES
+        ):
             span.set_attribute("otel.drop", True)
             span.set_recording(False)
             return
@@ -210,7 +222,7 @@ mcp = FastMCP(
 @mcp.tool()
 async def simulate_governance_check(
     target_tool: str, target_params: dict, risk_profile: str = "Medium"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Dry-run simulation of the Symbolic Governor on a proposed action.
 
     This is a SIMULATION ONLY — it calls ``symbolic_governor.verify()`` in
@@ -219,7 +231,9 @@ async def simulate_governance_check(
     committing to a trade.  Mandatory enforcement happens in infrastructure
     via the ``safety_check`` LangGraph node (direct OPA invocation).
     """
-    logger.info("🔍 Simulating governance check for: %s (Risk: %s)", target_tool, risk_profile)
+    logger.info(
+        "🔍 Simulating governance check for: %s (Risk: %s)", target_tool, risk_profile
+    )
     vp = {**target_params, "risk_profile": risk_profile}
     result = await symbolic_governor.verify(target_tool, vp)
     violations = result.get("violations", [])
@@ -227,7 +241,9 @@ async def simulate_governance_check(
         "status": "APPROVED" if not violations else "REJECTED",
         "violations": violations,
         "opa_results": result.get("opa_results"),
-        "message": "No violations detected." if not violations else "; ".join(violations),
+        "message": "No violations detected."
+        if not violations
+        else "; ".join(violations),
     }
 
 
@@ -239,7 +255,7 @@ async def _evaluate_policy_internal(
     trader_role: str = "junior",
     user_id: str = "anonymous",
     risk_profile: str = "neutral",
-    description: Optional[str] = None,
+    description: str | None = None,
     dry_run: bool = True,
 ) -> str:
     """Internal OPA policy evaluation helper (no longer an MCP-exposed tool).
@@ -262,7 +278,12 @@ async def _evaluate_policy_internal(
         span.set_attribute("governance.trader_role", trader_role)
         span.set_attribute("governance.amount", amount)
 
-        logger.info("Tool Call: evaluate_policy(action=%s, trader_role=%s, amount=%s)", action, trader_role, amount)
+        logger.info(
+            "Tool Call: evaluate_policy(action=%s, trader_role=%s, amount=%s)",
+            action,
+            trader_role,
+            amount,
+        )
         params = {
             "action": action,
             "amount": amount,
@@ -281,10 +302,10 @@ async def _evaluate_policy_internal(
             span.set_attribute("opa.decision", result_str)
             if result_str == "ALLOW":
                 span.set_attribute("opa.allowed", True)
-                return f"APPROVED: trade permitted by OPA policy"
+                return "APPROVED: trade permitted by OPA policy"
             elif result_str == "MANUAL_REVIEW":
                 span.set_attribute("opa.allowed", False)
-                return f"MANUAL_REVIEW: trade requires human approval"
+                return "MANUAL_REVIEW: trade requires human approval"
             else:
                 span.set_attribute("opa.allowed", False)
                 return f"DENIED: trade blocked by OPA policy (decision={result_str})"
@@ -302,7 +323,7 @@ async def execute_trade_action(
     amount: float,
     currency: str,
     confidence: float = 0.0,
-    transaction_id: Optional[str] = None,
+    transaction_id: str | None = None,
     trader_id: str = "agent_001",
     trader_role: str = "junior",
     dry_run: bool = False,
@@ -327,20 +348,26 @@ async def execute_trade_action(
         trader_role: RBAC role used for fiscal-limit enforcement.
         dry_run: When True, governance checks run but no broker call is made.
     """
-    from src.gateway.governance.routing_seal import (  # noqa: PLC0415
-        verify_seal,
+    from src.gateway.governance.routing_seal import (
         SymbolicGovernorViolation,
+        verify_seal,
     )
 
-    logger.info("Tool Call: execute_trade(%s, %s, confidence=%s)", symbol, amount, confidence)
+    logger.info(
+        "Tool Call: execute_trade(%s, %s, confidence=%s)", symbol, amount, confidence
+    )
     if not transaction_id:
         transaction_id = str(uuid.uuid4())
 
     params = {
-        "symbol": symbol, "amount": amount, "currency": currency,
+        "symbol": symbol,
+        "amount": amount,
+        "currency": currency,
         "confidence": confidence,
-        "transaction_id": transaction_id, "trader_id": trader_id,
-        "trader_role": trader_role, "dry_run": dry_run,
+        "transaction_id": transaction_id,
+        "trader_id": trader_id,
+        "trader_role": trader_role,
+        "dry_run": dry_run,
     }
 
     try:
@@ -392,6 +419,7 @@ async def execute_trade_action(
 async def trigger_safety_intervention(reason: str = "Unknown") -> str:
     """Trigger an immediate safety intervention to lock the system."""
     from src.gateway.infrastructure.redis_client import redis_client as gw_redis
+
     if gw_redis:
         await gw_redis.set("safety_violation", reason)
     logger.warning("🛑 SAFETY INTERVENTION TRIGGERED: %s", reason)
@@ -433,16 +461,17 @@ app.mount("/mcp", mcp.sse_app())
 # HTTP tool dispatch (internal use — supports GatewayClient HTTP calls)
 # ---------------------------------------------------------------------------
 
+
 class ToolExecutionRequest(BaseModel):
     tool_name: str
-    params: Dict[str, Any]
+    params: dict[str, Any]
 
 
 @app.post("/tools/execute")
 async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Request):
     """Execute a named tool via HTTP.  Requires X-CAGE-Routing-Seal."""
     # M-20: Per-client rate limiting (sliding window)
-    client_ip: str = (request.client.host if request.client else "unknown")
+    client_ip: str = request.client.host if request.client else "unknown"
     if not await _check_rate_limit(client_ip):
         logger.warning("Rate limit exceeded for client %s", client_ip)
         raise HTTPException(
@@ -456,7 +485,7 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
     body_bytes = await request.body()
     enforce_routing_seal(request, body_bytes)
 
-    tool_map: Dict[str, Any] = {
+    tool_map: dict[str, Any] = {
         "simulate_governance_check": simulate_governance_check,
         "check_safety_constraints": simulate_governance_check,  # legacy alias — deprecated
         "trigger_safety_intervention": trigger_safety_intervention,
@@ -497,7 +526,7 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
 
-    from src.governed_financial_advisor.utils.telemetry import configure_telemetry, logger as tl
+    from src.governed_financial_advisor.utils.telemetry import configure_telemetry
 
     configure_telemetry()
     http_port = int(os.getenv("PORT", "8080"))

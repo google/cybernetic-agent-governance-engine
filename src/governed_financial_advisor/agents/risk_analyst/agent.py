@@ -20,10 +20,13 @@ and generates structured constraints for the Policy Transpiler.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from src.governed_financial_advisor.governance.structs import ConstraintLogic, ProposedUCA  # re-export
 from src.governed_financial_advisor.governance.policy_loader import PolicyLoader
+from src.governed_financial_advisor.governance.structs import (  # re-export
+    ConstraintLogic,
+    ProposedUCA,
+)
 
 logger = logging.getLogger("agents.risk_analyst")
 
@@ -31,11 +34,15 @@ logger = logging.getLogger("agents.risk_analyst")
 # System prompt builder
 # ---------------------------------------------------------------------------
 
-_FALLBACK_HAZARDS: List[Dict[str, Any]] = [
+_FALLBACK_HAZARDS: list[dict[str, Any]] = [
     {
         "hazard": "H-1: Excessive Slippage",
         "description": "Market order size exceeds 1% of daily volume causing significant price impact.",
-        "logic": {"variable": "order_size", "operator": ">", "threshold": "0.01 * daily_volume"},
+        "logic": {
+            "variable": "order_size",
+            "operator": ">",
+            "threshold": "0.01 * daily_volume",
+        },
     },
     {
         "hazard": "H-2: Portfolio Drawdown",
@@ -50,7 +57,7 @@ _FALLBACK_HAZARDS: List[Dict[str, Any]] = [
 ]
 
 
-def _load_hazards() -> List[Dict[str, Any]]:
+def _load_hazards() -> list[dict[str, Any]]:
     """Load STAMP hazards from GCS via PolicyLoader, falling back to defaults on any error.
 
     Always instantiates PolicyLoader so that tests can patch
@@ -59,7 +66,7 @@ def _load_hazards() -> List[Dict[str, Any]]:
     when the env var is absent; load_stamp_hazards will raise (or the mock will
     intercept) before any real network call is made.
     """
-    import os  # noqa: PLC0415
+    import os
 
     bucket = os.environ.get("STAMP_HAZARDS_BUCKET", "stamp-hazards-default")
     blob = os.environ.get("STAMP_HAZARDS_BLOB", "stamp_hazards.yaml")
@@ -67,16 +74,16 @@ def _load_hazards() -> List[Dict[str, Any]]:
         loader = PolicyLoader(bucket_name=bucket)
         return loader.load_stamp_hazards(blob)
     except Exception as exc:
-        logger.warning("Could not load STAMP hazards from GCS (%s) — using defaults", exc)
+        logger.warning(
+            "Could not load STAMP hazards from GCS (%s) — using defaults", exc
+        )
     return _FALLBACK_HAZARDS
 
 
 def get_risk_analyst_instruction() -> str:
     """Build the Risk Analyst system prompt including current STAMP hazards."""
     hazards = _load_hazards()
-    hazard_lines = "\n".join(
-        f"  - {h['hazard']}: {h['description']}" for h in hazards
-    )
+    hazard_lines = "\n".join(f"  - {h['hazard']}: {h['description']}" for h in hazards)
     return (
         "You are a Risk Analyst specialising in STAMP/STPA for AI-driven financial systems.\n\n"
         "Your goal is to identify Unsafe Control Actions (UCAs) by analysing system behaviour\n"
