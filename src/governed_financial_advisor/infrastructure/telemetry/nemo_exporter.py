@@ -44,7 +44,7 @@ _ACTION_TO_ISO_CONTROL: dict[str, str] = {
     "InvokeVllmFallbackAction":   "A.6.1.2",
 }
 
-# Explicit whitelist of action names that must always be traced, even when they
+# Explicit allowlist of action names that must always be traced, even when they
 # do not match the "check" / "guard" / "detect" keyword heuristic.
 _TRACED_ACTION_NAMES: frozenset[str] = frozenset(_ACTION_TO_ISO_CONTROL.keys())
 
@@ -90,7 +90,7 @@ class NeMoOTelCallback(StreamingHandler):
         """
         # We focus on "check" actions which usually imply a guardrail
         # e.g., 'self_check_input', 'detect_jailbreak', 'check_hallucination'
-        # and on any explicitly whitelisted safety action names.
+        # and on any explicitly allowlisted safety action names.
         if "check" in action or "guard" in action or "detect" in action or action in _TRACED_ACTION_NAMES:
             iso_control = _ACTION_TO_ISO_CONTROL.get(action, "A.6.2.8")
             span = tracer.start_span(f"guardrail.intervention.{action}")

@@ -223,7 +223,7 @@ async def custom_self_check_input(context: Optional[dict] = None, llm: Optional[
             span.set_attribute("nemo.action.outcome", "ALLOW")
             return True
 
-        # STAGE 1: WHITELIST - Fast-path for known-safe financial queries (0ms)
+        # STAGE 1: ALLOWLIST - Fast-path for known-safe financial queries (0ms)
         financial_keywords = [
             "portfolio", "diversification", "risk", "return", "stock", "bond",
             "etf", "fund", "asset", "allocation", "rebalance", "sharpe",
@@ -234,11 +234,11 @@ async def custom_self_check_input(context: Optional[dict] = None, llm: Optional[
 
         if any(keyword in text for keyword in financial_keywords):
             logger.debug("HybridSelfCheckInput: STAGE 1 ALLOW (financial keyword)")
-            span.set_attribute("nemo.action.stage", "WHITELIST")
+            span.set_attribute("nemo.action.stage", "ALLOWLIST")
             span.set_attribute("nemo.action.outcome", "ALLOW")
             return True
 
-        # STAGE 2: BLACKLIST - Fast-path for obvious jailbreak attempts (0ms)
+        # STAGE 2: BLOCKLIST - Fast-path for obvious jailbreak attempts (0ms)
         jailbreak_patterns = [
             "ignore previous instructions", "ignore all previous",
             "dan mode", "developer mode", "repeat your prompt",
@@ -249,7 +249,7 @@ async def custom_self_check_input(context: Optional[dict] = None, llm: Optional[
 
         if any(pattern in text for pattern in jailbreak_patterns):
             logger.warning("HybridSelfCheckInput: STAGE 2 BLOCK (jailbreak pattern)")
-            span.set_attribute("nemo.action.stage", "BLACKLIST")
+            span.set_attribute("nemo.action.stage", "BLOCKLIST")
             span.set_attribute("nemo.action.outcome", "BLOCK")
             return False
 
@@ -282,7 +282,7 @@ async def custom_self_check_output(context: Optional[dict] = None, llm: Optional
 
     Three-stage approach:
     1. Safe financial content → ALLOW (0ms) [~80% of outputs]
-    2. Harmful pattern blacklist → BLOCK (0ms) [~2% of outputs]
+    2. Harmful pattern blocklist → BLOCK (0ms) [~2% of outputs]
     3. LLM-based semantic check → EVALUATE (2-5s) [~18% of outputs]
     """
     with _tracer.start_as_current_span("nemo.action.self_check_output") as span:
@@ -316,7 +316,7 @@ async def custom_self_check_output(context: Optional[dict] = None, llm: Optional
             span.set_attribute("nemo.action.outcome", "ALLOW")
             return True
 
-        # STAGE 2: BLACKLIST - Harmful patterns (block immediately)
+        # STAGE 2: BLOCKLIST - Harmful patterns (block immediately)
         harmful_patterns = [
             "guaranteed returns", "risk-free investment", "can't lose",
             "insider information", "sure thing", "100% profit",
@@ -325,7 +325,7 @@ async def custom_self_check_output(context: Optional[dict] = None, llm: Optional
 
         if any(pattern in text for pattern in harmful_patterns):
             logger.warning("HybridSelfCheckOutput: STAGE 2 BLOCK (harmful pattern)")
-            span.set_attribute("nemo.action.stage", "BLACKLIST")
+            span.set_attribute("nemo.action.stage", "BLOCKLIST")
             span.set_attribute("nemo.action.outcome", "BLOCK")
             return False
 
