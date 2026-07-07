@@ -22,10 +22,10 @@ SC-1 enforcement delegates to STPAValidator (single source of truth) when
 available; falls back to inline check if STPAValidator cannot be imported.
 """
 
-import os
 import json
 import logging
-from typing import Any, Dict, List
+import os
+from typing import Any
 
 logger = logging.getLogger("EvaluatorAuditor")
 
@@ -36,6 +36,7 @@ logger = logging.getLogger("EvaluatorAuditor")
 # ---------------------------------------------------------------------------
 try:
     from src.gateway.governance.stpa_validator import STPAValidator
+
     _stpa_validator = STPAValidator()
     _USE_STPA = True
 except ImportError:
@@ -102,57 +103,77 @@ class EvaluatorAuditor:
         if public_key and secret_key:
             try:
                 # Lazy-load OpenTelemetry SDK components to prevent overhead/exceptions
+                import base64
+
+                from opentelemetry.sdk.resources import Resource
                 from opentelemetry.sdk.trace import TracerProvider
                 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-                from opentelemetry.sdk.resources import Resource
                 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
-                import base64
 
                 # Standard OTel Http Span Exporter package
                 try:
-                    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as OTLPHttpSpanExporter
+                    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+                        OTLPSpanExporter as OTLPHttpSpanExporter,
+                    )
                 except ImportError:
-                    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPHttpSpanExporter
+                    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+                        OTLPHttpSpanExporter,
+                    )
 
-                logger.info("Initializing dedicated CAGE Compliance TracerProvider (100% Sampling)...")
-                
+                logger.info(
+                    "Initializing dedicated CAGE Compliance TracerProvider (100% Sampling)..."
+                )
+
                 # Build isolated OTLP endpoint auth header mapping Langfuse OTel specs
-                credentials = f"{public_key}:{secret_key}".encode("utf-8")
+                credentials = f"{public_key}:{secret_key}".encode()
                 auth_header = f"Basic {base64.b64encode(credentials).decode('utf-8')}"
-                
-                resource = Resource.create(attributes={
-                    "service.name": "cage-compliance-audit",
-                    "service.environment": os.environ.get("CAGE_ENV", "production")
-                })
+
+                resource = Resource.create(
+                    attributes={
+                        "service.name": "cage-compliance-audit",
+                        "service.environment": os.environ.get("CAGE_ENV", "production"),
+                    }
+                )
 
                 # Force OTLP endpoint to native compliance collection paths
                 endpoint = f"{host.rstrip('/')}/api/public/otel"
                 exporter = OTLPHttpSpanExporter(
                     endpoint=endpoint,
                     headers={"Authorization": auth_header},
-                    timeout=5 # Strict 5s timeout
+                    timeout=5,  # Strict 5s timeout
                 )
 
                 provider = TracerProvider(resource=resource, sampler=ALWAYS_ON)
                 provider.add_span_processor(BatchSpanProcessor(exporter))
-                self._compliance_tracer = provider.get_tracer("CAGE.EvaluatorAuditor.Compliance")
-                logger.info("✅ EvaluatorAuditor: Compliance tracer initialized successfully.")
-                
+                self._compliance_tracer = provider.get_tracer(
+                    "CAGE.EvaluatorAuditor.Compliance"
+                )
+                logger.info(
+                    "✅ EvaluatorAuditor: Compliance tracer initialized successfully."
+                )
+
             except Exception as e:
-                logger.error(f"POAM-003 Failure: Failed to initialize compliance OTel provider: {str(e)}. Falling back to default.")
+                logger.error(
+                    f"POAM-003 Failure: Failed to initialize compliance OTel provider: {e!s}. Falling back to default."
+                )
                 self._compliance_tracer = None
         else:
             # Clean fallback to default global provider for local/test environments
             try:
                 import opentelemetry.trace as trace_api
-                self._compliance_tracer = trace_api.get_tracer("CAGE.EvaluatorAuditor.Default")
+
+                self._compliance_tracer = trace_api.get_tracer(
+                    "CAGE.EvaluatorAuditor.Default"
+                )
             except Exception:
-                logger.warning("OpenTelemetry API not present. Compliance tracing will execute via standard logging.")
+                logger.warning(
+                    "OpenTelemetry API not present. Compliance tracing will execute via standard logging."
+                )
                 self._compliance_tracer = None
 
         self._initialized = True
 
-    def audit_trace(self, trace: Dict[str, Any]) -> Dict[str, Any]:
+    def audit_trace(self, trace: dict[str, Any]) -> dict[str, Any]:
         """
         Evaluate an agent trace and return an audit result dict.
 
@@ -172,8 +193,8 @@ class EvaluatorAuditor:
         """
         self._init_compliance_telemetry()
 
-        steps: List[Dict[str, Any]] = trace.get("plan", {}).get("steps", [])
-        violations: List[str] = []
+        steps: list[dict[str, Any]] = trace.get("plan", {}).get("steps", [])
+        violations: list[str] = []
         safety_deductions = 0.0
         governance_bonus = 0.0
 
@@ -239,7 +260,7 @@ class EvaluatorAuditor:
             "quality_score": quality_score,
             "violations_count": len(violations),
             "policy_rules_evaluated": [step.get("action", "") for step in steps],
-            "cage_version": "0.1.0"
+            "cage_version": "0.1.0",
         }
 
         # Handle path where OpenTelemetry is not available or initialized
@@ -252,31 +273,44 @@ class EvaluatorAuditor:
         else:
             try:
                 # Execute genuine OpenTelemetry Span injection
-                with self._compliance_tracer.start_as_current_span("evaluator_auditor.audit_trace") as span:
+                with self._compliance_tracer.start_as_current_span(
+                    "evaluator_auditor.audit_trace"
+                ) as span:
                     span.set_attribute("iso42001.standard", "ISO/IEC 42001:2023")
                     span.set_attribute("iso42001.control_id", "A.5.3")
-                    span.set_attribute("iso42001.outcome", "PASSED" if verdict == "PASS" else "BLOCKED")
-                    span.set_attribute("iso42001.metadata", json.dumps(sanitized_metadata))
-                    
+                    span.set_attribute(
+                        "iso42001.outcome", "PASSED" if verdict == "PASS" else "BLOCKED"
+                    )
+                    span.set_attribute(
+                        "iso42001.metadata", json.dumps(sanitized_metadata)
+                    )
+
                     # Inject standardized tags format for Langfuse indexing
-                    span.set_attribute("langfuse.trace.tags", json.dumps([
-                        "iso-42001", 
-                        "control:A.5.3", 
-                        f"verdict:{verdict}"
-                    ]))
+                    span.set_attribute(
+                        "langfuse.trace.tags",
+                        json.dumps(
+                            ["iso-42001", "control:A.5.3", f"verdict:{verdict}"]
+                        ),
+                    )
 
                     # Emit structured Span Event matching continuous verification requirements
                     passed_flag = "1" if verdict == "PASS" else "0"
                     score_value = "1.0" if verdict == "PASS" else "0.0"
-                    
-                    span.add_event("compliance.score", {
-                        "compliance.control_id": "A.5.3",
-                        "compliance.passed": passed_flag,
-                        "compliance.score": score_value,
-                        "compliance.comment": f"Automated structural runtime verification assertion: {verdict}"
-                    })
 
-                    logger.info("Compliance attestation trace emitted for control A.5.3 with outcome: %s", verdict)
+                    span.add_event(
+                        "compliance.score",
+                        {
+                            "compliance.control_id": "A.5.3",
+                            "compliance.passed": passed_flag,
+                            "compliance.score": score_value,
+                            "compliance.comment": f"Automated structural runtime verification assertion: {verdict}",
+                        },
+                    )
+
+                    logger.info(
+                        "Compliance attestation trace emitted for control A.5.3 with outcome: %s",
+                        verdict,
+                    )
             except Exception as exc:
                 logger.error("Failed to emit compliance attestation trace: %s", exc)
 

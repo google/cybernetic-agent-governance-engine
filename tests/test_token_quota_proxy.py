@@ -3,16 +3,16 @@
 # Marker: @pytest.mark.local — CI-gated, no external dependencies.
 # Run: uv run pytest tests/test_token_quota_proxy.py -m local -v
 
-import pytest
 from unittest.mock import AsyncMock
+
+import pytest
 
 pytest.importorskip("fakeredis", reason="fakeredis required")
 import fakeredis.aioredis
 
 from src.gateway.governance.token_quota_proxy import (
-    TokenQuotaProxy,
     QuotaExceededError,
-    QuotaCheckResult,
+    TokenQuotaProxy,
 )
 
 

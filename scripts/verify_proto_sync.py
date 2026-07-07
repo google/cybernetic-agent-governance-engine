@@ -20,6 +20,7 @@ src/agentsight-ui/gateway_protos/ are identical.
 Run: python scripts/verify_proto_sync.py
 Exit 0 = in sync. Exit 1 = diverged (CI failure).
 """
+
 import sys
 from pathlib import Path
 
@@ -34,6 +35,7 @@ PROTO_PAIRS = [
     ),
 ]
 
+
 def main():
     all_ok = True
     for canonical, copy_ in PROTO_PAIRS:
@@ -46,13 +48,17 @@ def main():
             all_ok = False
             continue
         if canonical.read_bytes() != copy_.read_bytes():
-            print(f"FAIL: proto files diverged!\n  {canonical}\n  {copy_}", file=sys.stderr)
+            print(
+                f"FAIL: proto files diverged!\n  {canonical}\n  {copy_}",
+                file=sys.stderr,
+            )
             all_ok = False
         else:
             print(f"OK: {canonical.name} in sync")
     if not all_ok:
         sys.exit(1)
     print("All proto files in sync.")
+
 
 if __name__ == "__main__":
     main()

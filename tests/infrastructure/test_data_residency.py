@@ -175,7 +175,10 @@ class TestEUECBDataResidency:
         # Only assert the positive EU region if the bucket name embeds a region
         # (e.g. "cage-eu-ecb-cold-europe-west1"). Generic names like
         # "cage-cold-tier" are acceptable without a region substring.
-        if any(region_hint in bucket for region_hint in ("europe-", "us-", "asia-", "australia-")):
+        if any(
+            region_hint in bucket
+            for region_hint in ("europe-", "us-", "asia-", "australia-")
+        ):
             _assert_eu_region(bucket, "COLD_TIER_BUCKET")
 
     # ------------------------------------------------------------------
@@ -198,7 +201,10 @@ class TestEUECBDataResidency:
         bucket = os.environ.get("OSCAL_S3_BUCKET", "")
         if not bucket:
             pytest.skip("OSCAL_S3_BUCKET not set — skipping residency check")
-        if any(region_hint in bucket for region_hint in ("europe-", "us-", "asia-", "australia-")):
+        if any(
+            region_hint in bucket
+            for region_hint in ("europe-", "us-", "asia-", "australia-")
+        ):
             _assert_eu_region(bucket, "OSCAL_S3_BUCKET")
 
     # ------------------------------------------------------------------
@@ -240,7 +246,9 @@ class TestEUECBDataResidency:
 
         baseline_path = pathlib.Path("config/compliance/EU_ECB_BASELINE.json")
         if not baseline_path.exists():
-            pytest.skip(f"{baseline_path} not found — skipping baseline residency check")
+            pytest.skip(
+                f"{baseline_path} not found — skipping baseline residency check"
+            )
         content = baseline_path.read_text()
         assert _REQUIRED_EU_REGION in content, (
             f"EU_ECB_BASELINE.json must reference '{_REQUIRED_EU_REGION}'"

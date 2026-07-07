@@ -15,9 +15,10 @@
 import pytest
 
 pytestmark = pytest.mark.unit
-from unittest.mock import MagicMock, patch, AsyncMock
-import httpx
+from unittest.mock import AsyncMock, MagicMock, patch
+
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
+
 
 @pytest.mark.asyncio
 async def test_gateway_client_reuses_http_client():
@@ -32,7 +33,9 @@ async def test_gateway_client_reuses_http_client():
 
         # Mock the response
         mock_response = MagicMock()
-        mock_response.json.return_value = {"choices": [{"message": {"content": "Test Response"}}]}
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "Test Response"}}]
+        }
         mock_client_instance.post.return_value = mock_response
 
         # Instantiate GatewayClient (Lazy initialization)

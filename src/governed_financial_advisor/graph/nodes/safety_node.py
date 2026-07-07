@@ -39,7 +39,7 @@ to use MCP client or any agent-visible tool dispatch.
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal
+from typing import Any
 
 from src.gateway.governance.langgraph_harness import (
     OpaNodeConfig,
@@ -53,6 +53,7 @@ logger = logging.getLogger("SafetyNode")
 # ---------------------------------------------------------------------------
 # Domain-specific payload extractor
 # ---------------------------------------------------------------------------
+
 
 def _extract_trade_payload(state: dict[str, Any]) -> dict[str, Any]:
     """Map the financial advisor's AgentState into the OPA ``execute_trade`` input.

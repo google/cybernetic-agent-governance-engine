@@ -35,26 +35,33 @@ from __future__ import annotations
 
 import importlib
 import inspect
-import re
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_server_app():
     """Import the FastAPI app with NeMo / Redis mocked out."""
     with (
-        patch("src.gateway.governance.nemo.manager.load_rails", return_value=MagicMock()),
-        patch("src.governed_financial_advisor.graph.graph.create_graph", return_value=MagicMock()),
+        patch(
+            "src.gateway.governance.nemo.manager.load_rails", return_value=MagicMock()
+        ),
+        patch(
+            "src.governed_financial_advisor.graph.graph.create_graph",
+            return_value=MagicMock(),
+        ),
         patch("src.governed_financial_advisor.utils.telemetry.configure_telemetry"),
-        patch("opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"),
+        patch(
+            "opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"
+        ),
     ):
         import src.governed_financial_advisor.server as srv
+
         importlib.reload(srv)
         return srv.app
 
@@ -62,6 +69,7 @@ def _get_server_app():
 # ---------------------------------------------------------------------------
 # R-LOOP-1: KFP pipeline component uses the correct endpoint
 # ---------------------------------------------------------------------------
+
 
 class TestKfpComponentEndpoint:
     """The trigger_nemo_refinement KFP component must call /v1/nemo/apply-refinement."""
@@ -90,9 +98,9 @@ class TestKfpComponentEndpoint:
     def test_calls_correct_endpoint(self):
         """R-LOOP-1: must reference /v1/nemo/propose-refinement or /v1/nemo/apply-refinement."""
         src = self._get_source()
-        assert "/v1/nemo/propose-refinement" in src or "/v1/nemo/apply-refinement" in src, (
-            "trigger_nemo_refinement does not call the correct NeMo refinement endpoint."
-        )
+        assert (
+            "/v1/nemo/propose-refinement" in src or "/v1/nemo/apply-refinement" in src
+        ), "trigger_nemo_refinement does not call the correct NeMo refinement endpoint."
 
     def test_payload_has_correct_fields(self):
         """R-LOOP-1: payload must include control_id, verdict, and source fields."""
@@ -130,12 +138,14 @@ class TestKfpComponentEndpoint:
 # R-LOOP-2 / R-LOOP-3: Langfuse webhook filtering
 # ---------------------------------------------------------------------------
 
+
 class TestLangfuseWebhook:
     """POST /v1/webhooks/langfuse must filter events correctly."""
 
     @pytest.fixture(autouse=True)
     def reset_cooldown(self):
         import src.governed_financial_advisor.server as srv
+
         srv._last_refinement_triggered_at = 0.0
         yield
         srv._last_refinement_triggered_at = 0.0
@@ -143,19 +153,34 @@ class TestLangfuseWebhook:
     @pytest.fixture
     def client(self):
         with (
-            patch("src.gateway.governance.nemo.manager.load_rails", return_value=MagicMock()),
-            patch("src.governed_financial_advisor.graph.graph.create_graph", return_value=MagicMock()),
+            patch(
+                "src.gateway.governance.nemo.manager.load_rails",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.governed_financial_advisor.graph.graph.create_graph",
+                return_value=MagicMock(),
+            ),
             patch("src.governed_financial_advisor.utils.telemetry.configure_telemetry"),
-            patch("opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"),
+            patch(
+                "opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"
+            ),
         ):
             import src.governed_financial_advisor.server as srv
+
             return TestClient(srv.app, raise_server_exceptions=True)
 
     def test_non_score_event_ignored(self, client):
         """R-LOOP-2: trace-created events must be acknowledged but not acted on."""
         resp = client.post(
             "/v1/webhooks/langfuse",
-            json={"type": "trace-created", "name": "", "value": 0.0, "traceId": "abc", "data": {}},
+            json={
+                "type": "trace-created",
+                "name": "",
+                "value": 0.0,
+                "traceId": "abc",
+                "data": {},
+            },
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "ignored"
@@ -242,24 +267,35 @@ class TestLangfuseWebhook:
 # R-LOOP-4 / R-LOOP-5: POST /v1/nemo/apply-refinement
 # ---------------------------------------------------------------------------
 
+
 class TestApplyRefinement:
     """POST /v1/nemo/apply-refinement must reload the rails singleton."""
 
     @pytest.fixture
     def client(self):
         with (
-            patch("src.gateway.governance.nemo.manager.load_rails", return_value=MagicMock()),
-            patch("src.governed_financial_advisor.graph.graph.create_graph", return_value=MagicMock()),
+            patch(
+                "src.gateway.governance.nemo.manager.load_rails",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.governed_financial_advisor.graph.graph.create_graph",
+                return_value=MagicMock(),
+            ),
             patch("src.governed_financial_advisor.utils.telemetry.configure_telemetry"),
-            patch("opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"),
+            patch(
+                "opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"
+            ),
         ):
             import src.governed_financial_advisor.server as srv
+
             return TestClient(srv.app, raise_server_exceptions=False)
 
     @pytest.fixture(autouse=True)
     def enable_auto_apply(self, monkeypatch):
         """Enable legacy auto-apply for these tests (they test reload mechanics)."""
         import src.governed_financial_advisor.server as srv
+
         monkeypatch.setattr(srv, "_NEMO_AUTO_APPLY", True)
 
     def test_successful_reload(self, client):
@@ -304,7 +340,9 @@ class TestApplyRefinement:
     def test_minimum_required_fields(self, client):
         """Source field is optional; omitting it must not cause a 422."""
         new_rails = MagicMock()
-        with patch("src.governed_financial_advisor.server.load_rails", return_value=new_rails):
+        with patch(
+            "src.governed_financial_advisor.server.load_rails", return_value=new_rails
+        ):
             resp = client.post(
                 "/v1/nemo/apply-refinement",
                 json={"control_id": "A.9.2", "verdict": "FAIL"},
@@ -321,6 +359,7 @@ class TestApplyRefinement:
 # R-LOOP-6: Cooldown gate — policy flapping prevention
 # ---------------------------------------------------------------------------
 
+
 class TestWebhookCooldown:
     """POST /v1/webhooks/langfuse must enforce a cooldown window between triggers."""
 
@@ -336,6 +375,7 @@ class TestWebhookCooldown:
     def reset_cooldown(self):
         """Reset the module-level cooldown clock before every test."""
         import src.governed_financial_advisor.server as srv
+
         srv._last_refinement_triggered_at = 0.0
         yield
         srv._last_refinement_triggered_at = 0.0
@@ -343,12 +383,21 @@ class TestWebhookCooldown:
     @pytest.fixture
     def client(self):
         with (
-            patch("src.gateway.governance.nemo.manager.load_rails", return_value=MagicMock()),
-            patch("src.governed_financial_advisor.graph.graph.create_graph", return_value=MagicMock()),
+            patch(
+                "src.gateway.governance.nemo.manager.load_rails",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.governed_financial_advisor.graph.graph.create_graph",
+                return_value=MagicMock(),
+            ),
             patch("src.governed_financial_advisor.utils.telemetry.configure_telemetry"),
-            patch("opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"),
+            patch(
+                "opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"
+            ),
         ):
             import src.governed_financial_advisor.server as srv
+
             return TestClient(srv.app, raise_server_exceptions=True)
 
     def test_first_trigger_accepted(self, client):
@@ -357,25 +406,35 @@ class TestWebhookCooldown:
             "src.governed_financial_advisor.server._submit_kfp_run",
             return_value={"run_id": None, "status": "dry_run", "kfp_endpoint": ""},
         ):
-            resp = client.post("/v1/webhooks/langfuse", json=self._SCORE_BELOW_THRESHOLD)
+            resp = client.post(
+                "/v1/webhooks/langfuse", json=self._SCORE_BELOW_THRESHOLD
+            )
         assert resp.status_code == 200
         assert resp.json()["status"] == "triggered"
 
     def test_second_trigger_during_cooldown_blocked(self, client):
         """R-LOOP-6: Second event during the cooldown window must return status=cooldown."""
-        import src.governed_financial_advisor.server as srv
-        import time
 
         _fake_kfp = {"run_id": None, "status": "dry_run", "kfp_endpoint": ""}
 
-        with patch("src.governed_financial_advisor.server._submit_kfp_run", return_value=_fake_kfp):
+        with patch(
+            "src.governed_financial_advisor.server._submit_kfp_run",
+            return_value=_fake_kfp,
+        ):
             # First trigger — arms the cooldown
-            resp1 = client.post("/v1/webhooks/langfuse", json=self._SCORE_BELOW_THRESHOLD)
+            resp1 = client.post(
+                "/v1/webhooks/langfuse", json=self._SCORE_BELOW_THRESHOLD
+            )
         assert resp1.json()["status"] == "triggered"
 
         # Second trigger — cooldown is active (timestamp was set above, no time has passed)
-        with patch("src.governed_financial_advisor.server._submit_kfp_run", return_value=_fake_kfp) as mock_kfp:
-            resp2 = client.post("/v1/webhooks/langfuse", json=self._SCORE_BELOW_THRESHOLD)
+        with patch(
+            "src.governed_financial_advisor.server._submit_kfp_run",
+            return_value=_fake_kfp,
+        ) as mock_kfp:
+            resp2 = client.post(
+                "/v1/webhooks/langfuse", json=self._SCORE_BELOW_THRESHOLD
+            )
             mock_kfp.assert_not_called()
 
         assert resp2.status_code == 200
@@ -386,23 +445,32 @@ class TestWebhookCooldown:
 
     def test_trigger_allowed_after_cooldown_expires(self, client):
         """R-LOOP-6: A trigger must be accepted once the cooldown window has passed."""
-        import src.governed_financial_advisor.server as srv
         import time
+
+        import src.governed_financial_advisor.server as srv
 
         _fake_kfp = {"run_id": None, "status": "dry_run", "kfp_endpoint": ""}
 
         # Simulate first trigger having fired well in the past (cooldown expired)
-        srv._last_refinement_triggered_at = time.monotonic() - (srv._REFINEMENT_COOLDOWN_SECONDS + 1)
+        srv._last_refinement_triggered_at = time.monotonic() - (
+            srv._REFINEMENT_COOLDOWN_SECONDS + 1
+        )
 
-        with patch("src.governed_financial_advisor.server._submit_kfp_run", return_value=_fake_kfp):
-            resp = client.post("/v1/webhooks/langfuse", json=self._SCORE_BELOW_THRESHOLD)
+        with patch(
+            "src.governed_financial_advisor.server._submit_kfp_run",
+            return_value=_fake_kfp,
+        ):
+            resp = client.post(
+                "/v1/webhooks/langfuse", json=self._SCORE_BELOW_THRESHOLD
+            )
 
         assert resp.json()["status"] == "triggered"
 
     def test_cooldown_response_includes_seconds_remaining(self, client):
         """R-LOOP-6: Cooldown response must include a non-negative seconds_remaining field."""
-        import src.governed_financial_advisor.server as srv
         import time
+
+        import src.governed_financial_advisor.server as srv
 
         # Arm cooldown 60 seconds ago — should have ~240 s remaining with 300 s window
         srv._last_refinement_triggered_at = time.monotonic() - 60
@@ -415,15 +483,14 @@ class TestWebhookCooldown:
 
     def test_kfp_not_called_during_cooldown(self, client):
         """R-LOOP-6: _submit_kfp_run must NOT be invoked during the cooldown window."""
-        import src.governed_financial_advisor.server as srv
         import time
+
+        import src.governed_financial_advisor.server as srv
 
         # Arm cooldown at present time (0 seconds elapsed)
         srv._last_refinement_triggered_at = time.monotonic()
 
-        with patch(
-            "src.governed_financial_advisor.server._submit_kfp_run"
-        ) as mock_kfp:
+        with patch("src.governed_financial_advisor.server._submit_kfp_run") as mock_kfp:
             client.post("/v1/webhooks/langfuse", json=self._SCORE_BELOW_THRESHOLD)
             mock_kfp.assert_not_called()
 
@@ -432,12 +499,14 @@ class TestWebhookCooldown:
 # R-LOOP-7: Minimum-sample guard — statistically insignificant bursts
 # ---------------------------------------------------------------------------
 
+
 class TestWebhookMinSamples:
     """POST /v1/webhooks/langfuse must defer triggers with insufficient sample size."""
 
     @pytest.fixture(autouse=True)
     def reset_cooldown(self):
         import src.governed_financial_advisor.server as srv
+
         srv._last_refinement_triggered_at = 0.0
         yield
         srv._last_refinement_triggered_at = 0.0
@@ -445,12 +514,21 @@ class TestWebhookMinSamples:
     @pytest.fixture
     def client(self):
         with (
-            patch("src.gateway.governance.nemo.manager.load_rails", return_value=MagicMock()),
-            patch("src.governed_financial_advisor.graph.graph.create_graph", return_value=MagicMock()),
+            patch(
+                "src.gateway.governance.nemo.manager.load_rails",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.governed_financial_advisor.graph.graph.create_graph",
+                return_value=MagicMock(),
+            ),
             patch("src.governed_financial_advisor.utils.telemetry.configure_telemetry"),
-            patch("opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"),
+            patch(
+                "opentelemetry.instrumentation.langchain.LangchainInstrumentor.instrument"
+            ),
         ):
             import src.governed_financial_advisor.server as srv
+
             return TestClient(srv.app, raise_server_exceptions=True)
 
     def test_small_sample_deferred(self, client):
@@ -533,4 +611,3 @@ class TestWebhookMinSamples:
                 },
             )
         assert captured and "n=42" in captured[0]
-

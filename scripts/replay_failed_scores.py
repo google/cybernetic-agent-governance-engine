@@ -33,12 +33,12 @@ Environment variables required:
     LANGFUSE_HOST         Langfuse host URL (default: http://localhost:3000)
 """
 
+import datetime
+import json
+import logging
 import os
 import sys
-import json
 import time
-import datetime
-import logging
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,6 +60,7 @@ REPLAYED_SCORES_PATH = "failed_scores_replayed.jsonl"
 # ---------------------------------------------------------------------------
 # Resilient score-posting helper (same contract as in evaluate_langfuse_traces)
 # ---------------------------------------------------------------------------
+
 
 def _post_score_with_retry(
     langfuse_client,
@@ -85,7 +86,9 @@ def _post_score_with_retry(
             langfuse_client.create_score(**kwargs)
             if attempt > 1:
                 logger.info(
-                    "[langfuse] score '%s' posted successfully on attempt %d.", name, attempt
+                    "[langfuse] score '%s' posted successfully on attempt %d.",
+                    name,
+                    attempt,
                 )
             return True
         except (
@@ -96,14 +99,22 @@ def _post_score_with_retry(
             logger.warning(
                 "[langfuse] HTTP %s posting score '%s' (attempt %d/%d). "
                 "Retrying in %ds…",
-                status, name, attempt, len(_RETRY_DELAYS), delay,
+                status,
+                name,
+                attempt,
+                len(_RETRY_DELAYS),
+                delay,
             )
             last_exc = exc
         except Exception as exc:
             logger.warning(
                 "[langfuse] Unexpected error posting score '%s' (attempt %d/%d): %s. "
                 "Retrying in %ds…",
-                name, attempt, len(_RETRY_DELAYS), exc, delay,
+                name,
+                attempt,
+                len(_RETRY_DELAYS),
+                exc,
+                delay,
             )
             last_exc = exc
 
@@ -112,7 +123,10 @@ def _post_score_with_retry(
     logger.warning(
         "[langfuse] FAILED to post score '%s' for trace %s after %d attempts. "
         "Last error: %s.",
-        name, trace_id, len(_RETRY_DELAYS), last_exc,
+        name,
+        trace_id,
+        len(_RETRY_DELAYS),
+        last_exc,
     )
     return False
 
@@ -120,6 +134,7 @@ def _post_score_with_retry(
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def replay_failed_scores() -> None:
     """Read ``failed_scores.jsonl``, attempt to replay each entry, report summary."""
@@ -143,7 +158,7 @@ def replay_failed_scores() -> None:
         print(f"No {FAILED_SCORES_PATH} found — nothing to replay.")
         return
 
-    with open(FAILED_SCORES_PATH, "r", encoding="utf-8") as fh:
+    with open(FAILED_SCORES_PATH, encoding="utf-8") as fh:
         raw_lines = fh.readlines()
 
     if not raw_lines:
@@ -164,7 +179,9 @@ def replay_failed_scores() -> None:
         try:
             entry = json.loads(raw_line)
         except json.JSONDecodeError as exc:
-            logger.warning("Line %d: invalid JSON — keeping as-is. Error: %s", line_no, exc)
+            logger.warning(
+                "Line %d: invalid JSON — keeping as-is. Error: %s", line_no, exc
+            )
             still_failing_lines.append(raw_line)
             failed_count += 1
             continue
@@ -229,7 +246,8 @@ def replay_failed_scores() -> None:
         logger.info("[langfuse] flush() completed successfully.")
     except Exception as flush_exc:
         logger.warning(
-            "[langfuse] flush() raised an exception (scores may be incomplete): %s", flush_exc
+            "[langfuse] flush() raised an exception (scores may be incomplete): %s",
+            flush_exc,
         )
 
     # ── Summary ───────────────────────────────────────────────────────────────

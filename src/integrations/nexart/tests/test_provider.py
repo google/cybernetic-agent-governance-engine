@@ -33,16 +33,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.integrations.nexart.provider import (
-    NexArtAttestationProvider,
     CERReceipt,
-    CERVerification,
     JWKCache,
+    NexArtAttestationProvider,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test 1: CER creation
 # ---------------------------------------------------------------------------
+
 
 class TestCERCreation:
     """Tests for certifyDecision CER creation."""
@@ -98,6 +97,7 @@ class TestCERCreation:
 # ---------------------------------------------------------------------------
 # Test 2: JWK caching
 # ---------------------------------------------------------------------------
+
 
 class TestJWKCache:
     """Tests for JWK cache behavior."""
@@ -159,6 +159,7 @@ class TestJWKCache:
 # ---------------------------------------------------------------------------
 # Test 3: CER verification
 # ---------------------------------------------------------------------------
+
 
 class TestCERVerification:
     """Tests for CER verification."""
@@ -224,6 +225,7 @@ class TestCERVerification:
 # Test 4: Provider factory
 # ---------------------------------------------------------------------------
 
+
 class TestProviderFactory:
     """Tests for normative_provider factory registration."""
 
@@ -246,6 +248,7 @@ class TestProviderFactory:
 # Test 5: CERReceipt data contract
 # ---------------------------------------------------------------------------
 
+
 class TestCERReceipt:
     """Tests for CERReceipt data contract."""
 
@@ -265,6 +268,7 @@ class TestCERReceipt:
 # ---------------------------------------------------------------------------
 # Test 6: Provider lifecycle
 # ---------------------------------------------------------------------------
+
 
 class TestProviderLifecycle:
     """Tests for provider start/stop lifecycle."""

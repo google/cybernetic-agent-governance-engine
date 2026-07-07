@@ -21,14 +21,13 @@ the package boundary into ``governed_financial_advisor``.
 """
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger("Gateway.Infrastructure.Telemetry")
 
 try:
     from opentelemetry import trace as _otel_trace
 
-    def get_tracer(name: str = "src.gateway") -> Optional[object]:
+    def get_tracer(name: str = "src.gateway") -> object | None:
         """Return an OTel Tracer for the given instrumentation scope name."""
         return _otel_trace.get_tracer(name)
 

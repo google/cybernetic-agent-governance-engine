@@ -54,13 +54,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import cast
 
-from .types import CONTROL_META, FRAMEWORK_CONTROLS, OscalFinding, OscalResult
 from .aarm_mapper import AARM_THREAT_VECTORS
-
+from .types import CONTROL_META, FRAMEWORK_CONTROLS, OscalFinding, OscalResult
 
 # ---------------------------------------------------------------------------
 # State mapping helpers
 # ---------------------------------------------------------------------------
+
 
 def _finding_to_state(finding: OscalFinding) -> str:
     """Convert OscalFinding.result to the OSCAL finding state vocabulary.
@@ -87,6 +87,7 @@ def _finding_to_state(finding: OscalFinding) -> str:
 # ---------------------------------------------------------------------------
 # Core exporter
 # ---------------------------------------------------------------------------
+
 
 def build_oscal_assessment_results(
     findings: list[OscalFinding],
@@ -120,8 +121,8 @@ def build_oscal_assessment_results(
     """
     now_utc = datetime.now(tz=timezone.utc).isoformat()
     result_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cage-result-{audit_id}"))
-    doc_uuid    = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cage-ar-{audit_id}"))
-    party_uuid  = str(uuid.uuid5(uuid.NAMESPACE_URL, "cage-compliance-bridge"))
+    doc_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cage-ar-{audit_id}"))
+    party_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, "cage-compliance-bridge"))
 
     # Build frameworks cross-reference map for props annotation (includes AARM)
     control_frameworks: dict[str, list[str]] = {}
@@ -139,34 +140,38 @@ def build_oscal_assessment_results(
     oscal_findings = []
     for f in findings:
         props = [
-            {"name": "source",       "value": assessor},
-            {"name": "audit_id",     "value": audit_id},
+            {"name": "source", "value": assessor},
+            {"name": "audit_id", "value": audit_id},
             {"name": "window_hours", "value": str(window_hours)},
         ]
         if f.safety_rate is not None:
             props.append({"name": "safety_rate", "value": str(round(f.safety_rate, 6))})
         if f.evidence_age_s is not None:
-            props.append({"name": "evidence_age_seconds", "value": str(int(f.evidence_age_s))})
+            props.append(
+                {"name": "evidence_age_seconds", "value": str(int(f.evidence_age_s))}
+            )
         for fw in control_frameworks.get(f.control_id, []):
             props.append({"name": "framework", "value": fw})
         # AARM vector cross-references (CAGE v0.1.0)
         for vid in aarm_vector_by_control.get(f.control_id, []):
             vector_meta = AARM_THREAT_VECTORS.get(vid)
-            props.append({
-                "name":  "aarm-vector",
-                "value": f"{vid} ({vector_meta.name})" if vector_meta else vid,
-            })
+            props.append(
+                {
+                    "name": "aarm-vector",
+                    "value": f"{vid} ({vector_meta.name})" if vector_meta else vid,
+                }
+            )
 
         entry: dict = {
-            "uuid":  f.finding_id,
+            "uuid": f.finding_id,
             "title": (
                 CONTROL_META.get(f.control_id, {}).get("name", f.control_id)
                 + f" — {f.result}"
             ),
             "target": {
-                "type":      "objective-id",
+                "type": "objective-id",
                 "target-id": f.control_id,
-                "status":    {"state": _finding_to_state(f)},
+                "status": {"state": _finding_to_state(f)},
             },
             "props": props,
         }
@@ -184,7 +189,9 @@ def build_oscal_assessment_results(
                 }
             ]
             # Extract certificate hash from URI (last path segment)
-            cer_hash = cer_uri.rstrip("/").rsplit("/", 1)[-1] if "/" in cer_uri else cer_uri
+            cer_hash = (
+                cer_uri.rstrip("/").rsplit("/", 1)[-1] if "/" in cer_uri else cer_uri
+            )
             props.append({"name": "cer-hash", "value": cer_hash})
 
         oscal_findings.append(entry)
@@ -194,27 +201,27 @@ def build_oscal_assessment_results(
 
     return {
         "assessment-results": {
-            "uuid":     doc_uuid,
+            "uuid": doc_uuid,
             "metadata": {
-                "title":          f"CAGE Compliance Assessment Results — {system_name}",
-                "last-modified":  now_utc,
-                "version":        "1.0.0",
-                "oscal-version":  "1.1.2",
+                "title": f"CAGE Compliance Assessment Results — {system_name}",
+                "last-modified": now_utc,
+                "version": "1.0.0",
+                "oscal-version": "1.1.2",
                 "parties": [
                     {
-                        "uuid":       party_uuid,
-                        "type":       "tool",
-                        "name":       assessor,
-                        "remarks":    "Automated assessor — CAGE Compliance Bridge",
+                        "uuid": party_uuid,
+                        "type": "tool",
+                        "name": assessor,
+                        "remarks": "Automated assessor — CAGE Compliance Bridge",
                     }
                 ],
             },
             "results": [
                 {
-                    "uuid":  result_uuid,
+                    "uuid": result_uuid,
                     "title": f"Assessment Run {audit_id}",
                     "start": now_utc,
-                    "end":   now_utc,
+                    "end": now_utc,
                     "reviewed-controls": {
                         "control-selections": [
                             {
@@ -244,13 +251,23 @@ def build_oscal_assessment_results(
                     ],
                     # CAGE v0.1.0 AARM Context Accumulator chain provenance
                     "props": [
-                        p for p in [
-                            {"name": "context-accumulator-chain-root", "value": chain_root}
-                            if chain_root else None,
-                            {"name": "context-accumulator-sealed-utc", "value": chain_sealed_utc}
-                            if chain_sealed_utc else None,
+                        p
+                        for p in [
+                            {
+                                "name": "context-accumulator-chain-root",
+                                "value": chain_root,
+                            }
+                            if chain_root
+                            else None,
+                            {
+                                "name": "context-accumulator-sealed-utc",
+                                "value": chain_sealed_utc,
+                            }
+                            if chain_sealed_utc
+                            else None,
                             {"name": "aarm-spec-version", "value": "CSA-AARM-v1.0"},
-                        ] if p is not None
+                        ]
+                        if p is not None
                     ],
                     "findings": oscal_findings,
                 }
@@ -284,14 +301,18 @@ def findings_from_metrics_dict(
         if "error" in data:
             # Scanner/collector failure — emit an ERROR finding so auditors
             # can see the gap.  Do NOT skip or map to NOT_APPLICABLE.
-            findings.append(OscalFinding(
-                control_id=cid,
-                result="ERROR",
-                finding_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{audit_id}-{cid}-error")),
-                safety_rate=None,
-                evidence_age_s=None,
-                remarks=f"Evidence collection error: {data['error']}",
-            ))
+            findings.append(
+                OscalFinding(
+                    control_id=cid,
+                    result="ERROR",
+                    finding_id=str(
+                        uuid.uuid5(uuid.NAMESPACE_URL, f"{audit_id}-{cid}-error")
+                    ),
+                    safety_rate=None,
+                    evidence_age_s=None,
+                    remarks=f"Evidence collection error: {data['error']}",
+                )
+            )
             continue
         sr = data.get("safety_rate")
         # M-10: safety_rate is None when no traces exist — treat as NOT_APPLICABLE
@@ -300,12 +321,14 @@ def findings_from_metrics_dict(
             result: OscalResult = cast(OscalResult, "NOT_APPLICABLE")
         else:
             result = cast(OscalResult, "PASS" if sr >= 1.0 else "FAIL")
-        findings.append(OscalFinding(
-            control_id=cid,
-            result=result,
-            finding_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{audit_id}-{cid}")),
-            safety_rate=sr,
-            evidence_age_s=data.get("evidence_age_seconds"),
-            remarks=None,
-        ))
+        findings.append(
+            OscalFinding(
+                control_id=cid,
+                result=result,
+                finding_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{audit_id}-{cid}")),
+                safety_rate=sr,
+                evidence_age_s=data.get("evidence_age_seconds"),
+                remarks=None,
+            )
+        )
     return findings

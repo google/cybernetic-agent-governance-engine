@@ -18,11 +18,9 @@ POAM: AI600-001
 Phase: 1 (quick wins)
 """
 
-import pytest
-
 from src.gateway.governance.confabulation_scorer import (
-    ConfabulationEvent,
     CONFIDENCE_THRESHOLD,
+    ConfabulationEvent,
     is_confabulation_blocked,
     score_confabulation,
 )

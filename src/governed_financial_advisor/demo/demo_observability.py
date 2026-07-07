@@ -14,21 +14,22 @@
 
 import asyncio
 import logging
-import uuid
-import sys
 import os
+import sys
+import uuid
 
 # Ensure src is in pythonpath
 sys.path.append(os.getcwd())
 
 from src.governed_financial_advisor.graph.graph import create_graph
+from src.governed_financial_advisor.infrastructure.redis_client import redis_client
 from src.governed_financial_advisor.utils.context import user_context
 from src.governed_financial_advisor.utils.telemetry import configure_telemetry
-from src.governed_financial_advisor.infrastructure.redis_client import redis_client
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ObservabilityDemo")
+
 
 async def run_demo():
     print("🚀 Starting Observability Feature Demo...")
@@ -58,7 +59,7 @@ async def run_demo():
         prompt = "I am a junior trader. Please buy 1000 USD of AAPL immediately."
         response = await graph.ainvoke(
             {"messages": [("user", prompt)]},
-            config={"configurable": {"thread_id": thread_id}}
+            config={"configurable": {"thread_id": thread_id}},
         )
         print(f"✅ Agent Response: {response['messages'][-1].content}")
     except Exception as e:
@@ -77,7 +78,7 @@ async def run_demo():
         prompt = "I am a junior trader. Buy 20000 USD of TSLA."
         response = await graph.ainvoke(
             {"messages": [("user", prompt)]},
-            config={"configurable": {"thread_id": thread_id}}
+            config={"configurable": {"thread_id": thread_id}},
         )
         print(f"✅ Agent Response: {response['messages'][-1].content}")
     except Exception as e:
@@ -100,7 +101,7 @@ async def run_demo():
         # Next trade triggers bankruptcy.
 
         for i in range(25):
-            print(f"\n💸 Trade #{i+1}: Buying $4,500 GOOGL...")
+            print(f"\n💸 Trade #{i + 1}: Buying $4,500 GOOGL...")
             prompt = f"I am a junior trader. Buy 4500 USD of GOOGL. Batch {i}."
 
             # Note: We use a unique thread per request or same thread?
@@ -109,12 +110,14 @@ async def run_demo():
 
             response = await graph.ainvoke(
                 {"messages": [("user", prompt)]},
-                config={"configurable": {"thread_id": thread_id}}
+                config={"configurable": {"thread_id": thread_id}},
             )
             print(f"Result: {response['messages'][-1].content}")
 
             # Check if we hit the wall
-            if "UNSAFE" in str(response['messages'][-1].content) or "Bankruptcy" in str(response['messages'][-1].content):
+            if "UNSAFE" in str(response["messages"][-1].content) or "Bankruptcy" in str(
+                response["messages"][-1].content
+            ):
                 print("🚨 Bankruptcy Event Triggered!")
                 break
 
@@ -124,6 +127,7 @@ async def run_demo():
         user_context.reset(token)
 
     print("\n✅ Demo Complete! Check Langfuse Dashboard.")
+
 
 if __name__ == "__main__":
     asyncio.run(run_demo())

@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import re
 from pathlib import Path
-env_path = Path('.env')
+
+env_path = Path(".env")
 if not env_path.exists():
-    print(f"Warning: .env file not found at {env_path.absolute()} — skipping", file=__import__('sys').stderr)
+    print(
+        f"Warning: .env file not found at {env_path.absolute()} — skipping",
+        file=__import__("sys").stderr,
+    )
 else:
     with open(env_path) as f:
         text = f.read()
-    for line in text.split('\n'):
-        if 'GOOGLE_' in line or 'OIDC' in line or 'Workload Identity' in line:
+    for line in text.split("\n"):
+        if "GOOGLE_" in line or "OIDC" in line or "Workload Identity" in line:
             print(line)

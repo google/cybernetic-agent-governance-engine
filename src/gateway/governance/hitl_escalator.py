@@ -44,7 +44,6 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
 
 logger = logging.getLogger("Gateway.Governance.HITLEscalator")
 
@@ -52,6 +51,7 @@ logger = logging.getLogger("Gateway.Governance.HITLEscalator")
 # ---------------------------------------------------------------------------
 # EscalationReason — why the request was escalated to human review
 # ---------------------------------------------------------------------------
+
 
 class EscalationReason(Enum):
     """Enumeration of reasons for HITL escalation.
@@ -79,6 +79,7 @@ class EscalationReason(Enum):
 # EscalationRequest — structured escalation request
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class EscalationRequest:
     """Structured request for HITL escalation.
@@ -94,14 +95,15 @@ class EscalationRequest:
 
     trace_id: str
     reason: EscalationReason
-    amount_usd: Optional[float] = None
-    confidence: Optional[float] = None
+    amount_usd: float | None = None
+    confidence: float | None = None
     reviewer_queue: str = "compliance-review"
 
 
 # ---------------------------------------------------------------------------
 # EscalationRecord — the persisted escalation record
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class EscalationRecord:
@@ -121,18 +123,21 @@ class EscalationRecord:
     event: str
     trace_id: str
     reason: str
-    amount_usd: Optional[float]
-    confidence: Optional[float]
+    amount_usd: float | None
+    confidence: float | None
     reviewer_queue: str
     status: str
     timestamp: str = field(
-        default_factory=lambda: datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+        default_factory=lambda: (
+            datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+        )
     )
 
 
 # ---------------------------------------------------------------------------
 # escalate_to_human — main escalation function
 # ---------------------------------------------------------------------------
+
 
 def escalate_to_human(request: EscalationRequest) -> dict:
     """Create and return an escalation record for the HITL queue.
@@ -184,7 +189,9 @@ def escalate_to_human(request: EscalationRequest) -> dict:
     return record
 
 
-def should_escalate_for_consensus(amount_usd: float, threshold_usd: float = 10000.0) -> bool:
+def should_escalate_for_consensus(
+    amount_usd: float, threshold_usd: float = 10000.0
+) -> bool:
     """Return True if the amount exceeds the consensus threshold.
 
     Args:
@@ -197,9 +204,7 @@ def should_escalate_for_consensus(amount_usd: float, threshold_usd: float = 1000
     return amount_usd > threshold_usd
 
 
-def should_escalate_for_confidence(
-    confidence: float, threshold: float = 0.95
-) -> bool:
+def should_escalate_for_confidence(confidence: float, threshold: float = 0.95) -> bool:
     """Return True if the confidence score is below the escalation threshold.
 
     Args:

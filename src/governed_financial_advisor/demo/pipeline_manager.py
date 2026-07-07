@@ -17,7 +17,6 @@ Pipeline Manager — submits KFP governance pipelines for the demo.
 """
 
 import logging
-import os
 import tempfile
 import uuid
 from typing import Any
@@ -41,7 +40,7 @@ async def submit_governance_pipeline(strategy_name: str, **kwargs: Any) -> None:
         **kwargs:       Additional parameters forwarded to the pipeline function.
     """
     # Import here so tests can patch at module level
-    import src.governed_financial_advisor.demo.pipeline_manager as _self  # noqa: PLC0415
+    import src.governed_financial_advisor.demo.pipeline_manager as _self
 
     _compiler = _self.compiler
 
@@ -49,7 +48,9 @@ async def submit_governance_pipeline(strategy_name: str, **kwargs: Any) -> None:
         raise ImportError("kfp is required to compile governance pipelines.")
 
     # Dynamic import of the pipeline function (avoids circular imports).
-    from src.governed_financial_advisor.pipelines.green_stack_pipeline import governance_pipeline  # noqa: PLC0415
+    from src.governed_financial_advisor.pipelines.green_stack_pipeline import (
+        governance_pipeline,
+    )
 
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
         pipeline_path = tmp.name

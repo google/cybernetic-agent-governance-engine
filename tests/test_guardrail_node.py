@@ -28,8 +28,9 @@ _extract_user_input() in guardrail_node.py.
 """
 
 import os
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 pytestmark = pytest.mark.unit
 
@@ -37,8 +38,10 @@ pytestmark = pytest.mark.unit
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class _FakeHumanMessage:
     """Minimal stand-in for langchain_core.messages.HumanMessage."""
+
     def __init__(self, content: str):
         self.content = content
 
@@ -56,10 +59,13 @@ def _build_state(user_text: str) -> dict:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_guardrail_blocks_unsafe_input():
     """validate_with_nemo returning (False, reason) → state.guardrail_blocked == True."""
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_guardrail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_guardrail_node,
+    )
 
     with patch.dict(os.environ, {"CAGE_SEAL_ENFORCEMENT": "enforce"}):
         with patch(
@@ -71,7 +77,9 @@ async def test_guardrail_blocks_unsafe_input():
                 new_callable=AsyncMock,
                 return_value=(False, "STPA Violation UCA-7: bypass attempt detected"),
             ):
-                result = await nemo_guardrail_node(_build_state("BYPASS-ALL-LIMITS now"))
+                result = await nemo_guardrail_node(
+                    _build_state("BYPASS-ALL-LIMITS now")
+                )
 
     assert result["guardrail_blocked"] is True
     assert (
@@ -83,7 +91,9 @@ async def test_guardrail_blocks_unsafe_input():
 @pytest.mark.asyncio
 async def test_guardrail_passes_safe_input():
     """validate_with_nemo returning (True, '') → state.guardrail_blocked == False."""
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_guardrail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_guardrail_node,
+    )
 
     with patch(
         "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
@@ -94,7 +104,9 @@ async def test_guardrail_passes_safe_input():
             new_callable=AsyncMock,
             return_value=(True, ""),
         ):
-            result = await nemo_guardrail_node(_build_state("What is the current price of AAPL?"))
+            result = await nemo_guardrail_node(
+                _build_state("What is the current price of AAPL?")
+            )
 
     assert result["guardrail_blocked"] is False
     assert result["guardrail_reason"] == ""
@@ -103,7 +115,9 @@ async def test_guardrail_passes_safe_input():
 @pytest.mark.asyncio
 async def test_guardrail_fail_closed_on_exception():
     """If validate_with_nemo raises, the node must block (fail-closed)."""
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_guardrail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_guardrail_node,
+    )
 
     with patch.dict(os.environ, {"CAGE_SEAL_ENFORCEMENT": "enforce"}):
         with patch(
@@ -124,19 +138,26 @@ async def test_guardrail_fail_closed_on_exception():
 @pytest.mark.asyncio
 async def test_guardrail_blocks_empty_input():
     """Empty user message content → block by default (fail-closed on empty input)."""
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_guardrail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_guardrail_node,
+    )
 
     # State with an empty message — no NeMo call should be made
     result = await nemo_guardrail_node(_build_state(""))
 
     assert result["guardrail_blocked"] is True
-    assert "STPA" in result["guardrail_reason"] or "empty" in result["guardrail_reason"].lower()
+    assert (
+        "STPA" in result["guardrail_reason"]
+        or "empty" in result["guardrail_reason"].lower()
+    )
 
 
 @pytest.mark.asyncio
 async def test_guardrail_blocks_whitespace_only_input():
     """Whitespace-only input is treated the same as empty (fail-closed)."""
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_guardrail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_guardrail_node,
+    )
 
     result = await nemo_guardrail_node(_build_state("   "))
 
@@ -146,7 +167,9 @@ async def test_guardrail_blocks_whitespace_only_input():
 @pytest.mark.asyncio
 async def test_guardrail_propagates_existing_state_fields():
     """Existing state fields must be preserved unchanged after guardrail pass."""
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_guardrail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_guardrail_node,
+    )
 
     base_state = {
         "messages": [_FakeHumanMessage("What ETFs are diversified?")],
@@ -175,14 +198,18 @@ async def test_guardrail_propagates_existing_state_fields():
 @pytest.mark.asyncio
 async def test_guardrail_fail_closed_when_rails_init_fails():
     """If get_nemo_rails() raises RuntimeError, the node must block (fail-closed)."""
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_guardrail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_guardrail_node,
+    )
 
     with patch.dict(os.environ, {"CAGE_SEAL_ENFORCEMENT": "enforce"}):
         with patch(
             "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
             side_effect=RuntimeError("NeMo manager not available"),
         ):
-            result = await nemo_guardrail_node(_build_state("What is my portfolio balance?"))
+            result = await nemo_guardrail_node(
+                _build_state("What is my portfolio balance?")
+            )
 
     assert result["guardrail_blocked"] is True
     assert "GUARDRAIL_ERROR" in result["guardrail_reason"]

@@ -75,8 +75,8 @@ _DEV_ENVS = {"development", "dev", "test", "ci"}
 # Only the regulatory citation label is jurisdictional.
 # ---------------------------------------------------------------------------
 _ENCRYPTION_CITATION: dict[str, str] = {
-    "US_FED":   "NIST SC-28 / FedRAMP HIGH (POAM-014)",
-    "EU_ECB":   "GDPR Art. 32 (encryption of personal data at rest)",
+    "US_FED": "NIST SC-28 / FedRAMP HIGH (POAM-014)",
+    "EU_ECB": "GDPR Art. 32 (encryption of personal data at rest)",
     "APAC_MAS": "MAS TRM §9.1 (encryption of data at rest)",
 }
 _ENCRYPTION_CITATION_DEFAULT = "ISO 42001 A.8.4 (AI system operation controls)"
@@ -123,17 +123,17 @@ def validate_cmek_configuration(region: str | None = None) -> dict:
     if _is_disabled():
         logger.info("[cmek_guard] CMEK_CHECK_DISABLED=1 — skipping CMEK validation.")
         return {
-            "cmek_enabled":       False,
-            "key_name":           None,
-            "bucket_verified":    False,
-            "warnings":           ["CMEK validation disabled via CMEK_CHECK_DISABLED=1"],
+            "cmek_enabled": False,
+            "key_name": None,
+            "bucket_verified": False,
+            "warnings": ["CMEK validation disabled via CMEK_CHECK_DISABLED=1"],
             "regulatory_citation": _ENCRYPTION_CITATION_DEFAULT,
         }
 
     active_region = region if region is not None else _get_region()
     citation = _ENCRYPTION_CITATION.get(active_region, _ENCRYPTION_CITATION_DEFAULT)
 
-    env      = _current_env()
+    env = _current_env()
     key_name = os.environ.get("CMEK_KEY_RESOURCE_NAME", "").strip()
     warnings: list[str] = []
 
@@ -150,10 +150,10 @@ def validate_cmek_configuration(region: str | None = None) -> dict:
         if env in _DEV_ENVS:
             logger.warning("[cmek_guard] %s (dev env — continuing)", msg)
             return {
-                "cmek_enabled":       False,
-                "key_name":           None,
-                "bucket_verified":    False,
-                "warnings":           [msg],
+                "cmek_enabled": False,
+                "key_name": None,
+                "bucket_verified": False,
+                "warnings": [msg],
                 "regulatory_citation": citation,
             }
         raise RuntimeError(msg)
@@ -172,17 +172,22 @@ def validate_cmek_configuration(region: str | None = None) -> dict:
 
     logger.info(
         "[cmek_guard] ✅ CMEK key name validated: %s (citation: %s)",
-        key_name, citation,
+        key_name,
+        citation,
     )
 
     # ------------------------------------------------------------------
     # Check 2: Verify GCS bucket encryption metadata (best-effort)
     # ------------------------------------------------------------------
-    bucket_name = os.environ.get("OSCAL_BUCKET_NAME", os.environ.get("OSCAL_S3_BUCKET", ""))
+    bucket_name = os.environ.get(
+        "OSCAL_BUCKET_NAME", os.environ.get("OSCAL_S3_BUCKET", "")
+    )
     bucket_verified = False
 
     if bucket_name:
-        bucket_verified, bucket_warnings = _verify_gcs_bucket_cmek(bucket_name, key_name)
+        bucket_verified, bucket_warnings = _verify_gcs_bucket_cmek(
+            bucket_name, key_name
+        )
         warnings.extend(bucket_warnings)
     else:
         warnings.append(
@@ -190,15 +195,17 @@ def validate_cmek_configuration(region: str | None = None) -> dict:
         )
 
     return {
-        "cmek_enabled":       True,
-        "key_name":           key_name,
-        "bucket_verified":    bucket_verified,
-        "warnings":           warnings,
+        "cmek_enabled": True,
+        "key_name": key_name,
+        "bucket_verified": bucket_verified,
+        "warnings": warnings,
         "regulatory_citation": citation,
     }
 
 
-def _verify_gcs_bucket_cmek(bucket_name: str, expected_key: str) -> tuple[bool, list[str]]:
+def _verify_gcs_bucket_cmek(
+    bucket_name: str, expected_key: str
+) -> tuple[bool, list[str]]:
     """
     Best-effort: verify the GCS bucket has CMEK set to expected_key.
 
@@ -207,7 +214,8 @@ def _verify_gcs_bucket_cmek(bucket_name: str, expected_key: str) -> tuple[bool, 
     """
     warnings: list[str] = []
     try:
-        from google.cloud import storage  # noqa: PLC0415
+        from google.cloud import storage
+
         client = storage.Client()
         bucket = client.get_bucket(bucket_name)
         actual_key = bucket.default_kms_key_name or ""
@@ -220,13 +228,14 @@ def _verify_gcs_bucket_cmek(bucket_name: str, expected_key: str) -> tuple[bool, 
             return False, warnings
 
         # Normalise: strip /cryptoKeyVersions/... suffix for comparison
-        normalised_actual   = actual_key.split("/cryptoKeyVersions/")[0]
+        normalised_actual = actual_key.split("/cryptoKeyVersions/")[0]
         normalised_expected = expected_key.split("/cryptoKeyVersions/")[0]
 
         if normalised_actual == normalised_expected:
             logger.info(
                 "[cmek_guard] ✅ GCS bucket '%s' CMEK verified: %s",
-                bucket_name, normalised_actual,
+                bucket_name,
+                normalised_actual,
             )
             return True, warnings
         else:

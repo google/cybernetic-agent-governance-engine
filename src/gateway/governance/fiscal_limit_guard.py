@@ -76,12 +76,11 @@ import random
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_MAX_RETRIES = 5      # WATCH/MULTI/EXEC retry limit on concurrent write conflict
-_RETRY_BASE_MS = 5    # Base backoff in ms (exponential with jitter)
+_MAX_RETRIES = 5  # WATCH/MULTI/EXEC retry limit on concurrent write conflict
+_RETRY_BASE_MS = 5  # Base backoff in ms (exponential with jitter)
 
 
 @dataclass
@@ -152,9 +151,9 @@ class FiscalLimitGuard:
     @classmethod
     def from_env(
         cls,
-        daily_cap_usd: Optional[float] = None,
+        daily_cap_usd: float | None = None,
         reservation_ttl: int = 300,
-    ) -> "FiscalLimitGuard":
+    ) -> FiscalLimitGuard:
         """Construct from REDIS_URL environment variable."""
         try:
             import redis.asyncio as aioredis  # type: ignore[import]
@@ -165,9 +164,7 @@ class FiscalLimitGuard:
             ) from exc
 
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-        cap = daily_cap_usd or float(
-            os.environ.get("FISCAL_DAILY_CAP_USD", "500000")
-        )
+        cap = daily_cap_usd or float(os.environ.get("FISCAL_DAILY_CAP_USD", "500000"))
         client = aioredis.from_url(redis_url, decode_responses=True)
         return cls(client, daily_cap_usd=cap, reservation_ttl=reservation_ttl)
 
@@ -189,7 +186,9 @@ class FiscalLimitGuard:
         client_module = type(self._redis).__module__
         return "asyncio" in client_module or "aioredis" in client_module
 
-    def _sync_atomic_increment(self, key: str, amount_cents: int, cap_cents: int) -> int:
+    def _sync_atomic_increment(
+        self, key: str, amount_cents: int, cap_cents: int
+    ) -> int:
         """Sync WATCH/MULTI/EXEC increment — used when client is redis.Redis (sync)."""
         for attempt in range(_MAX_RETRIES):
             try:
@@ -207,13 +206,18 @@ class FiscalLimitGuard:
             except Exception as exc:
                 err_name = type(exc).__name__
                 if "WatchError" in err_name and attempt < _MAX_RETRIES - 1:
-                    backoff = (_RETRY_BASE_MS * (2 ** attempt) + random.randint(0, 5)) / 1000.0
+                    backoff = (
+                        _RETRY_BASE_MS * (2**attempt) + random.randint(0, 5)
+                    ) / 1000.0
                     import time as _time
+
                     _time.sleep(backoff)
                     continue
                 logger.error(
                     "_atomic_increment: error on attempt %d key=%s err=%s",
-                    attempt, key, exc,
+                    attempt,
+                    key,
+                    exc,
                 )
                 return -2
         return -2
@@ -234,13 +238,18 @@ class FiscalLimitGuard:
             except Exception as exc:
                 err_name = type(exc).__name__
                 if "WatchError" in err_name and attempt < _MAX_RETRIES - 1:
-                    backoff = (_RETRY_BASE_MS * (2 ** attempt) + random.randint(0, 5)) / 1000.0
+                    backoff = (
+                        _RETRY_BASE_MS * (2**attempt) + random.randint(0, 5)
+                    ) / 1000.0
                     import time as _time
+
                     _time.sleep(backoff)
                     continue
                 logger.error(
                     "_atomic_decrement: error on attempt %d key=%s err=%s",
-                    attempt, key, exc,
+                    attempt,
+                    key,
+                    exc,
                 )
                 return -1
         return -1
@@ -284,19 +293,21 @@ class FiscalLimitGuard:
                 # WatchError or connection error — retry with backoff
                 err_name = type(exc).__name__
                 if "WatchError" in err_name and attempt < _MAX_RETRIES - 1:
-                    backoff = (_RETRY_BASE_MS * (2 ** attempt) + random.randint(0, 5)) / 1000.0
+                    backoff = (
+                        _RETRY_BASE_MS * (2**attempt) + random.randint(0, 5)
+                    ) / 1000.0
                     await asyncio.sleep(backoff)
                     continue
                 logger.error(
                     "_atomic_increment: error on attempt %d key=%s err=%s",
-                    attempt, key, exc,
+                    attempt,
+                    key,
+                    exc,
                 )
                 return -2  # fail-closed signal
         return -2
 
-    async def _atomic_decrement(
-        self, key: str, amount_cents: int
-    ) -> int:
+    async def _atomic_decrement(self, key: str, amount_cents: int) -> int:
         """Atomically decrement the spend counter, flooring at 0.
 
         Supports both sync (redis.Redis) and async (redis.asyncio.Redis) clients.
@@ -323,12 +334,16 @@ class FiscalLimitGuard:
             except Exception as exc:
                 err_name = type(exc).__name__
                 if "WatchError" in err_name and attempt < _MAX_RETRIES - 1:
-                    backoff = (_RETRY_BASE_MS * (2 ** attempt) + random.randint(0, 5)) / 1000.0
+                    backoff = (
+                        _RETRY_BASE_MS * (2**attempt) + random.randint(0, 5)
+                    ) / 1000.0
                     await asyncio.sleep(backoff)
                     continue
                 logger.error(
                     "_atomic_decrement: error on attempt %d key=%s err=%s",
-                    attempt, key, exc,
+                    attempt,
+                    key,
+                    exc,
                 )
                 return -1
         return -1
@@ -376,10 +391,10 @@ class FiscalLimitGuard:
         except Exception as exc:
             logger.error(
                 "FiscalLimitGuard.reserve: unexpected error agent=%s err=%s — failing closed.",
-                agent_id, exc,
+                agent_id,
+                exc,
             )
             result = -2
-
 
         # -1 = cap exceeded, -2 = Redis error (fail-closed)
         rejected = result < 0
@@ -400,14 +415,20 @@ class FiscalLimitGuard:
         if rejected:
             logger.warning(
                 "FiscalLimitGuard: REJECTED agent=%s amount=%.2f cap=%.2f result=%d",
-                agent_id, amount_usd, self._daily_cap_usd, result,
+                agent_id,
+                amount_usd,
+                self._daily_cap_usd,
+                result,
             )
         else:
             logger.info(
                 "FiscalLimitGuard: RESERVED agent=%s amount=%.2f "
                 "running_total=%.2f/%.2f id=%s",
-                agent_id, amount_usd, running_total_usd,
-                self._daily_cap_usd, reservation_id,
+                agent_id,
+                amount_usd,
+                running_total_usd,
+                self._daily_cap_usd,
+                reservation_id,
             )
         return token
 
@@ -424,9 +445,11 @@ class FiscalLimitGuard:
         result = await self._atomic_decrement(token.window_key, token.amount_cents)
         new_total_usd = max(0.0, result / 100.0) if result >= 0 else 0.0
         logger.info(
-            "FiscalLimitGuard: RELEASED agent=%s amount=%.2f "
-            "new_total=%.2f id=%s",
-            token.agent_id, token.amount_usd, new_total_usd, token.reservation_id,
+            "FiscalLimitGuard: RELEASED agent=%s amount=%.2f new_total=%.2f id=%s",
+            token.agent_id,
+            token.amount_usd,
+            new_total_usd,
+            token.reservation_id,
         )
         return new_total_usd
 
@@ -439,7 +462,9 @@ class FiscalLimitGuard:
             return
         logger.info(
             "FiscalLimitGuard: CONFIRMED spend agent=%s amount=%.2f id=%s",
-            token.agent_id, token.amount_usd, token.reservation_id,
+            token.agent_id,
+            token.amount_usd,
+            token.reservation_id,
         )
 
     async def current_spend_usd(self) -> float:

@@ -51,7 +51,7 @@ a separate short-form alias map — see TradingKnowledgeGraph.ISO_CONTROL_MAP.
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -60,10 +60,11 @@ from pydantic import BaseModel, ConfigDict, Field
 # This is the exact object that Lula's OPA Rego provider receives as `input`.
 # ---------------------------------------------------------------------------
 
+
 class ComplianceMetrics(BaseModel):
     control_id: str
     # M-10: None when no traces exist in the window (avoids false-positive 1.0 score)
-    safety_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    safety_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     total_traces: int = Field(ge=0)
     blocked_traces: int = Field(ge=0)
     passed_traces: int = Field(ge=0)
@@ -76,7 +77,7 @@ class ComplianceMetrics(BaseModel):
     # None until the first confabulation_risk Langfuse score is observed.
     # confabulation_rate = confabulation_blocked_traces / total_traces
     # when total_traces > 0; None otherwise.
-    confabulation_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    confabulation_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     confabulation_blocked_traces: int = Field(default=0, ge=0)
 
 
@@ -118,12 +119,12 @@ class OscalFinding(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    control_id:  str
-    result:      OscalResult
+    control_id: str
+    result: OscalResult
     safety_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     evidence_age_s: float | None = Field(default=None, ge=0)
-    finding_id:  str
-    remarks:     str | None = None
+    finding_id: str
+    remarks: str | None = None
     # Optional position in the Context Accumulator chain (CAGE v0.1.0)
     # Populated by audit_workflow after the ContextAccumulator appends the finding.
     chain_index: int | None = None
@@ -153,63 +154,63 @@ class OscalFinding(BaseModel):
 
 _UNIVERSAL_CONTROLS: dict[str, dict] = {
     "A.5.2": {
-        "name":      "Social Impact Assessment",
+        "name": "Social Impact Assessment",
         "scoreName": "iso42001.A.5.2.passed",
         "iso_clause": "ISO/IEC 42001:2023 Annex A.5.2",
         "frameworks": {
             "iso42001": "Annex A.5.2",
-            "aarm":     "AARM-V2 (Goal Hijacking), AARM-V5 (Prompt Injection)",
+            "aarm": "AARM-V2 (Goal Hijacking), AARM-V5 (Prompt Injection)",
         },
     },
     "A.5.3": {
-        "name":      "Logging and Monitoring",
+        "name": "Logging and Monitoring",
         "scoreName": "iso42001.A.5.3.passed",
         "iso_clause": "ISO/IEC 42001:2023 Annex A.5.3",
         "frameworks": {
             "iso42001": "Annex A.5.3",
-            "aarm":     "AARM-V1 (Memory Poisoning), AARM-V8 (Temporal Deception)",
+            "aarm": "AARM-V1 (Memory Poisoning), AARM-V8 (Temporal Deception)",
         },
     },
     "A.6.2": {
-        "name":      "AI System Lifecycle Controls",
+        "name": "AI System Lifecycle Controls",
         "scoreName": "iso42001.A.6.2.passed",
         "iso_clause": "ISO/IEC 42001:2023 Annex A.6.2",
         "frameworks": {
             "iso42001": "Annex A.6.2",
-            "aarm":     "AARM-V6 (Reward Hacking)",
+            "aarm": "AARM-V6 (Reward Hacking)",
         },
     },
     "A.8.4": {
-        "name":      "AI System Operation Controls",
+        "name": "AI System Operation Controls",
         "scoreName": "iso42001.A.8.4.passed",
         "iso_clause": "ISO/IEC 42001:2023 Annex A.8.4",
         "frameworks": {
             "iso42001": "Annex A.8.4",
-            "aarm":     "AARM-V1 (Memory Poisoning), AARM-V3 (Confused Deputy), "
-                        "AARM-V7 (Context Window Overflow / DEFER), "
-                        "AARM-V9 (Privilege Escalation)",
+            "aarm": "AARM-V1 (Memory Poisoning), AARM-V3 (Confused Deputy), "
+            "AARM-V7 (Context Window Overflow / DEFER), "
+            "AARM-V9 (Privilege Escalation)",
         },
     },
     "A.9.2": {
-        "name":      "Data Transfer to Suppliers",
+        "name": "Data Transfer to Suppliers",
         "scoreName": "iso42001.A.9.2.passed",
         "iso_clause": "ISO/IEC 42001:2023 Annex A.9.2",
         "frameworks": {
             "iso42001": "Annex A.9.2",
-            "aarm":     "AARM-V5 (Prompt Injection), AARM-V10 (Data Exfiltration)",
+            "aarm": "AARM-V5 (Prompt Injection), AARM-V10 (Data Exfiltration)",
         },
     },
     # SC-4 is a CAGE-internal system constraint (not a NIST control).
     # It is universal because fiscal limits and RBAC apply in all regions.
     "SC-4": {
-        "name":      "Fiscal Limits and RBAC",
+        "name": "Fiscal Limits and RBAC",
         "scoreName": "iso42001.SC-4.passed",
         "iso_clause": "System Constraint SC-4",
         "frameworks": {
             "aarm": "AARM-V2 (Goal Hijacking), AARM-V3 (Confused Deputy), "
-                    "AARM-V4 (Cross-Agent Propagation), "
-                    "AARM-V9 (Privilege Escalation), "
-                    "AARM-V10 (Data Exfiltration), AARM-V11 (Model Substitution)",
+            "AARM-V4 (Cross-Agent Propagation), "
+            "AARM-V9 (Privilege Escalation), "
+            "AARM-V10 (Data Exfiltration), AARM-V11 (Model Substitution)",
         },
     },
 }
@@ -221,34 +222,34 @@ _JURISDICTIONAL_CONTROLS: dict[str, dict[str, dict]] = {
     # ------------------------------------------------------------------
     "US_FED": {
         "SA-11": {
-            "name":      "STPA Compiler — Developer Safety Testing",
+            "name": "STPA Compiler — Developer Safety Testing",
             "scoreName": "nist.SA-11.passed",
             "iso_clause": "NIST SP 800-53 Rev 5 SA-11",
             "frameworks": {
-                "fedramp":     "SA-11 (Developer Testing and Evaluation)",
+                "fedramp": "SA-11 (Developer Testing and Evaluation)",
                 "nist_ai_rmf": "MEASURE 1.1",
             },
         },
         "SC-7": {
-            "name":      "Boundary Protection — Cilium L7 Egress Lockdown",
+            "name": "Boundary Protection — Cilium L7 Egress Lockdown",
             "scoreName": "nist.SC-7.passed",
             "iso_clause": "NIST SP 800-53 Rev 5 SC-7",
             "frameworks": {
                 "fedramp": "SC-7 (Boundary Protection)",
-                "aarm":    "AARM-V10 (Data Exfiltration)",
+                "aarm": "AARM-V10 (Data Exfiltration)",
             },
         },
         "SC-8": {
-            "name":      "Transmission Confidentiality — Linkerd mTLS",
+            "name": "Transmission Confidentiality — Linkerd mTLS",
             "scoreName": "nist.SC-8.passed",
             "iso_clause": "NIST SP 800-53 Rev 5 SC-8",
             "frameworks": {
                 "fedramp": "SC-8 (Transmission Confidentiality and Integrity)",
-                "aarm":    "AARM-V4 (Cross-Agent Propagation), AARM-V11 (Model Substitution)",
+                "aarm": "AARM-V4 (Cross-Agent Propagation), AARM-V11 (Model Substitution)",
             },
         },
         "AC-2": {
-            "name":      "Account Management",
+            "name": "Account Management",
             "scoreName": "fedramp.AC-2.passed",
             "iso_clause": "NIST SP 800-53 Rev 5 AC-2",
             "frameworks": {
@@ -256,7 +257,7 @@ _JURISDICTIONAL_CONTROLS: dict[str, dict[str, dict]] = {
             },
         },
         "IR-1": {
-            "name":      "Incident Response Policy and Procedures",
+            "name": "Incident Response Policy and Procedures",
             "scoreName": "fedramp.IR-1.passed",
             "iso_clause": "NIST SP 800-53 Rev 5 IR-1",
             "frameworks": {
@@ -270,7 +271,7 @@ _JURISDICTIONAL_CONTROLS: dict[str, dict[str, dict]] = {
     # ------------------------------------------------------------------
     "EU_ECB": {
         "Article 12": {
-            "name":      "Record-Keeping",
+            "name": "Record-Keeping",
             "scoreName": "eu_ai_act.Article_12.passed",
             "iso_clause": "EU AI Act Art. 12",
             "frameworks": {
@@ -278,7 +279,7 @@ _JURISDICTIONAL_CONTROLS: dict[str, dict[str, dict]] = {
             },
         },
         "Article 13": {
-            "name":      "Transparency & Human Oversight",
+            "name": "Transparency & Human Oversight",
             "scoreName": "eu_ai_act.Article_13.passed",
             "iso_clause": "EU AI Act Art. 13",
             "frameworks": {
@@ -292,7 +293,7 @@ _JURISDICTIONAL_CONTROLS: dict[str, dict[str, dict]] = {
     # ------------------------------------------------------------------
     "APAC_MAS": {
         "MAS-FEAT-1": {
-            "name":      "Fairness Assessment",
+            "name": "Fairness Assessment",
             "scoreName": "mas_feat.MAS_FEAT_1.passed",
             "iso_clause": "MAS FEAT Principle 1 (Fairness)",
             "frameworks": {
@@ -386,17 +387,17 @@ SUPPORTED_FRAMEWORKS: list[str] = sorted(FRAMEWORK_CONTROLS.keys())
 # ---------------------------------------------------------------------------
 
 _UNIVERSAL_SLA: dict[str, int] = {
-    "A.9.2": 3_600,    # PII masking — max 1 h stale  (ISO 42001 A.9.2)
-    "SC-4":  7_200,    # Fiscal controls — max 2 h stale  (CAGE-internal SC-4)
-    "A.8.4": 3_600,    # STPA operation — max 1 h stale  (ISO 42001 A.8.4)
-    "A.5.3": 14_400,   # Logging — max 4 h stale  (ISO 42001 A.5.3)
+    "A.9.2": 3_600,  # PII masking — max 1 h stale  (ISO 42001 A.9.2)
+    "SC-4": 7_200,  # Fiscal controls — max 2 h stale  (CAGE-internal SC-4)
+    "A.8.4": 3_600,  # STPA operation — max 1 h stale  (ISO 42001 A.8.4)
+    "A.5.3": 14_400,  # Logging — max 4 h stale  (ISO 42001 A.5.3)
 }
 
 _JURISDICTIONAL_SLA: dict[str, dict[str, int]] = {
     # US_FED: NIST SP 800-53 infrastructure controls — daily cadence is acceptable
     "US_FED": {
-        "SC-8":  86_400,   # mTLS — daily is fine (infrastructure-level, NIST SC-8)
-        "SC-7":  86_400,   # Cilium L7 — daily is fine (NIST SC-7)
+        "SC-8": 86_400,  # mTLS — daily is fine (infrastructure-level, NIST SC-8)
+        "SC-7": 86_400,  # Cilium L7 — daily is fine (NIST SC-7)
     },
     # EU_ECB: DORA Art. 10 mandates tighter audit logging cadence
     "EU_ECB": {
@@ -457,24 +458,24 @@ EVIDENCE_SLA_SECONDS: dict[str, int] = _UNIVERSAL_SLA
 # ---------------------------------------------------------------------------
 
 _UNIVERSAL_CONTROL_MAP: dict[str, str] = {
-    "nemo_input_scan":    "A.9.2",   # Data Privacy / PII Masking
-    "nemo_output_rail":   "A.5.2",   # Social Impact / Content Safety
-    "opa_policy_check":   "SC-4",    # Fiscal Controls / RBAC
-    "otel_trace":         "A.5.3",   # Logging & Monitoring / Audit Trail
-    "stpa_validation":    "A.8.4",   # AI System Operation — STPA UCA checks
-    "causal_gatekeeper":  "A.6.2",   # AI Lifecycle — DoWhy causal refutation
-    "saga_rollback":      "A.8.4",   # AI System Operation — Saga compensating node execution
+    "nemo_input_scan": "A.9.2",  # Data Privacy / PII Masking
+    "nemo_output_rail": "A.5.2",  # Social Impact / Content Safety
+    "opa_policy_check": "SC-4",  # Fiscal Controls / RBAC
+    "otel_trace": "A.5.3",  # Logging & Monitoring / Audit Trail
+    "stpa_validation": "A.8.4",  # AI System Operation — STPA UCA checks
+    "causal_gatekeeper": "A.6.2",  # AI Lifecycle — DoWhy causal refutation
+    "saga_rollback": "A.8.4",  # AI System Operation — Saga compensating node execution
     # CAGE v0.1.0 — AARM primitives
-    "context_accumulate": "A.5.3",   # Context Accumulator chain node — Logging & Monitoring
-    "defer_parking":      "A.8.4",   # DEFER state machine — AI System Operation Controls
+    "context_accumulate": "A.5.3",  # Context Accumulator chain node — Logging & Monitoring
+    "defer_parking": "A.8.4",  # DEFER state machine — AI System Operation Controls
 }
 
 _JURISDICTIONAL_CONTROL_MAP: dict[str, dict[str, str]] = {
     # US_FED — NIST SP 800-53 / FedRAMP HIGH governance event mappings.
     # SR 26-2: these control IDs have no legal force outside US_FED.
     "US_FED": {
-        "stpa_compile":    "SA-11",  # Developer Safety Testing — compiler run
-        "linkerd_mtls":    "SC-8",   # Transmission Confidentiality — Linkerd mTLS
+        "stpa_compile": "SA-11",  # Developer Safety Testing — compiler run
+        "linkerd_mtls": "SC-8",  # Transmission Confidentiality — Linkerd mTLS
         "cilium_l7_egress": "SC-7",  # Boundary Protection — Cilium FQDN filtering
     },
 }
@@ -503,4 +504,3 @@ def get_iso_control_map(region: str) -> dict[str, str]:
 # Backward-compat alias — universal (ISO 42001 / CAGE-internal) controls only.
 # New code must call get_iso_control_map(region) with the active CAGE_DEPLOYMENT_REGION.
 ISO_CONTROL_MAP: dict[str, str] = _UNIVERSAL_CONTROL_MAP
-

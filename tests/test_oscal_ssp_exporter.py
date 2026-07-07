@@ -33,9 +33,9 @@ import yaml
 
 from src.compliance_bridge.types import (
     CONTROL_META,
+    CRITICAL_CONTROLS,
     ISO_CONTROL_MAP,
     SUPPORTED_CONTROLS,
-    CRITICAL_CONTROLS,
 )
 from src.gateway.governance.oscal_ssp_exporter import (
     _STPA_COMPONENT_UUID,
@@ -48,16 +48,17 @@ from src.gateway.governance.oscal_ssp_exporter import (
     generate_ssp_patch,
     main,
 )
-from src.gateway.governance.stpa_compiler import ControlStructureModel, load_control_structure
+from src.gateway.governance.stpa_compiler import (
+    ControlStructureModel,
+    load_control_structure,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
 
 _FULL_YAML_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "config"
-    / "stpa_control_structure.yaml"
+    Path(__file__).resolve().parents[1] / "config" / "stpa_control_structure.yaml"
 )
 
 _MINIMAL_YAML = """\
@@ -186,7 +187,9 @@ class TestGenerateSspPatch:
         block = generate_ssp_patch(minimal_cs)
         assert block["uuid"] == _STPA_IMPL_MARKER
 
-    def test_description_contains_system_name(self, minimal_cs: ControlStructureModel) -> None:
+    def test_description_contains_system_name(
+        self, minimal_cs: ControlStructureModel
+    ) -> None:
         block = generate_ssp_patch(minimal_cs)
         assert "Exporter Test" in block["description"]
 
@@ -228,7 +231,9 @@ class TestGenerateComponentEntry:
         assert "description" in entry
         assert "control-implementations" in entry
 
-    def test_title_contains_compiler_name(self, minimal_cs: ControlStructureModel) -> None:
+    def test_title_contains_compiler_name(
+        self, minimal_cs: ControlStructureModel
+    ) -> None:
         entry = generate_component_entry(minimal_cs)
         assert "STPA" in entry["title"]
 
@@ -258,7 +263,9 @@ class TestApplySspPatch:
         assert result is True
         with open(ssp_file) as fh:
             patched = yaml.safe_load(fh)
-        reqs = patched["system-security-plan"]["control-implementation"]["implemented-requirements"]
+        reqs = patched["system-security-plan"]["control-implementation"][
+            "implemented-requirements"
+        ]
         uuids = {r["uuid"] for r in reqs}
         assert _STPA_IMPL_MARKER in uuids
         assert "existing-req-0001" in uuids  # existing requirement preserved
@@ -273,7 +280,9 @@ class TestApplySspPatch:
         _apply_ssp_patch(ssp_file, block, dry_run=False)  # second run
         with open(ssp_file) as fh:
             patched = yaml.safe_load(fh)
-        reqs = patched["system-security-plan"]["control-implementation"]["implemented-requirements"]
+        reqs = patched["system-security-plan"]["control-implementation"][
+            "implemented-requirements"
+        ]
         stpa_reqs = [r for r in reqs if r["uuid"] == _STPA_IMPL_MARKER]
         assert len(stpa_reqs) == 1  # exactly one, not two
 
@@ -349,7 +358,8 @@ class TestApplyComponentPatch:
         with open(comp_file) as fh:
             patched = yaml.safe_load(fh)
         stpa_comps = [
-            c for c in patched["component-definition"]["components"]
+            c
+            for c in patched["component-definition"]["components"]
             if c["uuid"] == _STPA_COMPONENT_UUID
         ]
         assert len(stpa_comps) == 1
@@ -361,14 +371,18 @@ class TestApplyComponentPatch:
 
 
 class TestWriteStandalonePatch:
-    def test_creates_file(self, tmp_path: Path, minimal_cs: ControlStructureModel) -> None:
+    def test_creates_file(
+        self, tmp_path: Path, minimal_cs: ControlStructureModel
+    ) -> None:
         out = tmp_path / "patch.yaml"
         block = generate_ssp_patch(minimal_cs)
         entry = generate_component_entry(minimal_cs)
         _write_standalone_patch(out, block, entry, minimal_cs, dry_run=False)
         assert out.exists()
 
-    def test_valid_yaml(self, tmp_path: Path, minimal_cs: ControlStructureModel) -> None:
+    def test_valid_yaml(
+        self, tmp_path: Path, minimal_cs: ControlStructureModel
+    ) -> None:
         out = tmp_path / "patch.yaml"
         block = generate_ssp_patch(minimal_cs)
         entry = generate_component_entry(minimal_cs)
@@ -386,7 +400,10 @@ class TestWriteStandalonePatch:
 
 class TestCLI:
     def test_export_dry_run(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture, minimal_cs: ControlStructureModel
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture,
+        minimal_cs: ControlStructureModel,
     ) -> None:
         cs_file = tmp_path / "cs.yaml"
         cs_file.write_text(_MINIMAL_YAML)
@@ -396,14 +413,20 @@ class TestCLI:
         comp_file.write_text(_MINIMAL_COMP_DEF)
         patch_out = tmp_path / "patch.yaml"
 
-        ret = main([
-            "export",
-            "--input", str(cs_file),
-            "--ssp", str(ssp_file),
-            "--component-def", str(comp_file),
-            "--patch-out", str(patch_out),
-            "--dry-run",
-        ])
+        ret = main(
+            [
+                "export",
+                "--input",
+                str(cs_file),
+                "--ssp",
+                str(ssp_file),
+                "--component-def",
+                str(comp_file),
+                "--patch-out",
+                str(patch_out),
+                "--dry-run",
+            ]
+        )
         assert ret == 0
         # Dry-run: SSP must be unchanged
         assert yaml.safe_load(ssp_file.read_text()) == yaml.safe_load(_MINIMAL_SSP)
@@ -419,13 +442,19 @@ class TestCLI:
         comp_file.write_text(_MINIMAL_COMP_DEF)
         patch_out = tmp_path / "patch.yaml"
 
-        ret = main([
-            "export",
-            "--input", str(cs_file),
-            "--ssp", str(ssp_file),
-            "--component-def", str(comp_file),
-            "--patch-out", str(patch_out),
-        ])
+        ret = main(
+            [
+                "export",
+                "--input",
+                str(cs_file),
+                "--ssp",
+                str(ssp_file),
+                "--component-def",
+                str(comp_file),
+                "--patch-out",
+                str(patch_out),
+            ]
+        )
         assert ret == 0
         assert ssp_file.exists()
         assert comp_file.exists()
@@ -441,14 +470,20 @@ class TestCLI:
         comp_file.write_text(_MINIMAL_COMP_DEF)
         patch_out = tmp_path / "patch.yaml"
 
-        ret = main([
-            "export",
-            "--input", str(_FULL_YAML_PATH),
-            "--ssp", str(ssp_file),
-            "--component-def", str(comp_file),
-            "--patch-out", str(patch_out),
-            "--dry-run",
-        ])
+        ret = main(
+            [
+                "export",
+                "--input",
+                str(_FULL_YAML_PATH),
+                "--ssp",
+                str(ssp_file),
+                "--component-def",
+                str(comp_file),
+                "--patch-out",
+                str(patch_out),
+                "--dry-run",
+            ]
+        )
         assert ret == 0
 
 
@@ -459,18 +494,25 @@ class TestCLI:
 
 class TestControlMeta:
     def test_stpa_controls_registered(self) -> None:
-        assert "A.8.4" in CONTROL_META, "A.8.4 (AI System Operation) must be in CONTROL_META"
+        assert "A.8.4" in CONTROL_META, (
+            "A.8.4 (AI System Operation) must be in CONTROL_META"
+        )
         assert "A.6.2" in CONTROL_META, "A.6.2 (AI Lifecycle) must be in CONTROL_META"
         # SA-11 is a US_FED-only (NIST SP 800-53) control — not in the universal
         # CONTROL_META alias.  Use get_control_meta("US_FED") to verify it exists.
         from src.compliance_bridge.types import get_control_meta
+
         us_fed_meta = get_control_meta("US_FED")
-        assert "SA-11" in us_fed_meta, "SA-11 (STPA Compiler) must be in US_FED control meta"
+        assert "SA-11" in us_fed_meta, (
+            "SA-11 (STPA Compiler) must be in US_FED control meta"
+        )
 
     def test_all_controls_have_score_name(self) -> None:
         for ctrl, meta in CONTROL_META.items():
             assert "scoreName" in meta, f"{ctrl} missing scoreName"
-            assert meta["scoreName"].endswith(".passed"), f"{ctrl} scoreName should end with .passed"
+            assert meta["scoreName"].endswith(".passed"), (
+                f"{ctrl} scoreName should end with .passed"
+            )
 
     def test_stpa_validation_in_iso_map(self) -> None:
         assert "stpa_validation" in ISO_CONTROL_MAP
@@ -481,6 +523,7 @@ class TestControlMeta:
         # It is no longer in the universal ISO_CONTROL_MAP; use
         # get_iso_control_map("US_FED") to obtain the region-merged view.
         from src.compliance_bridge.types import get_iso_control_map
+
         us_fed_map = get_iso_control_map("US_FED")
         assert "stpa_compile" in us_fed_map
         assert us_fed_map["stpa_compile"] == "SA-11"
@@ -514,7 +557,9 @@ class TestUcaMappings:
         cs = load_control_structure(_FULL_YAML_PATH)
         nist_mappings = FrameworkRouter.get("NIST").uca_mappings
         for uca in cs.unsafe_control_actions:
-            assert uca.id in nist_mappings, f"{uca.id} missing NIST mapping in nist_mappings"
+            assert uca.id in nist_mappings, (
+                f"{uca.id} missing NIST mapping in nist_mappings"
+            )
 
     def test_all_production_ucas_have_iso_mapping(self) -> None:
         if not _FULL_YAML_PATH.exists():
@@ -522,7 +567,9 @@ class TestUcaMappings:
         cs = load_control_structure(_FULL_YAML_PATH)
         iso_mappings = FrameworkRouter.get("ISO42001").uca_mappings
         for uca in cs.unsafe_control_actions:
-            assert uca.id in iso_mappings, f"{uca.id} missing ISO mapping in iso_mappings"
+            assert uca.id in iso_mappings, (
+                f"{uca.id} missing ISO mapping in iso_mappings"
+            )
 
     def test_nist_controls_in_descriptions(self) -> None:
         nist_mappings = FrameworkRouter.get("NIST").uca_mappings

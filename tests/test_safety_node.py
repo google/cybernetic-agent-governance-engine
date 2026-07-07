@@ -26,8 +26,8 @@ instead of ``get_mcp_client``.
 
 import asyncio
 import os
-from typing import Any, Dict
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -35,19 +35,19 @@ import requests
 
 pytestmark = pytest.mark.unit
 
+from src.gateway.governance.symbolic_governor import GovernanceError
 from src.governed_financial_advisor.graph.nodes.safety_node import (
     route_safety,
     safety_check_node,
 )
-from src.gateway.governance.symbolic_governor import GovernanceError
-
 
 # ---------------------------------------------------------------------------
 # Shared fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
-def minimal_trade_state() -> Dict[str, Any]:
+def minimal_trade_state() -> dict[str, Any]:
     """Minimal AgentState with a structured execution plan for OPA validation."""
     return {
         "messages": [],
@@ -80,7 +80,7 @@ def minimal_trade_state() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def no_plan_state(minimal_trade_state) -> Dict[str, Any]:
+def no_plan_state(minimal_trade_state) -> dict[str, Any]:
     """AgentState with no execution plan — triggers SKIPPED path."""
     return {**minimal_trade_state, "execution_plan_output": None}
 
@@ -88,6 +88,7 @@ def no_plan_state(minimal_trade_state) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Unit tests — all network I/O is mocked
 # ---------------------------------------------------------------------------
+
 
 class TestSafetyNodeUnit:
     """Unit tests for safety_check_node with all external calls mocked.
@@ -131,7 +132,9 @@ class TestSafetyNodeUnit:
         """GovernanceError with 'Manual Review' must produce safety_status=ESCALATED."""
         mock_governor = AsyncMock()
         mock_governor.govern = AsyncMock(
-            side_effect=GovernanceError("ISO 42001 Policy Check: Manual Review Required.")
+            side_effect=GovernanceError(
+                "ISO 42001 Policy Check: Manual Review Required."
+            )
         )
 
         with patch(
@@ -163,7 +166,9 @@ class TestSafetyNodeUnit:
         """GovernanceError without 'Manual Review' must yield safety_status=BLOCKED."""
         mock_governor = AsyncMock()
         mock_governor.govern = AsyncMock(
-            side_effect=GovernanceError("ISO 42001 Policy Violation: OPA Denied Action.")
+            side_effect=GovernanceError(
+                "ISO 42001 Policy Violation: OPA Denied Action."
+            )
         )
 
         with patch(
@@ -176,7 +181,9 @@ class TestSafetyNodeUnit:
         assert "error" in update
 
     @pytest.mark.asyncio
-    async def test_opa_connection_error_returns_blocked_fail_closed(self, minimal_trade_state):
+    async def test_opa_connection_error_returns_blocked_fail_closed(
+        self, minimal_trade_state
+    ):
         """httpx.ConnectError during govern() must fail-closed with safety_status=BLOCKED."""
         mock_governor = AsyncMock()
         mock_governor.govern = AsyncMock(
@@ -208,7 +215,9 @@ class TestSafetyNodeUnit:
         assert update["safety_status"] == "BLOCKED"
 
     @pytest.mark.asyncio
-    async def test_missing_governance_signature_returns_blocked(self, minimal_trade_state):
+    async def test_missing_governance_signature_returns_blocked(
+        self, minimal_trade_state
+    ):
         """Unexpected exception from govern() must default to BLOCKED (fail-closed)."""
         mock_governor = AsyncMock()
         mock_governor.govern = AsyncMock(
@@ -263,6 +272,7 @@ class TestSafetyNodeUnit:
 # Integration tests — require live OPA (skipped in CI without OPA_URL)
 # ---------------------------------------------------------------------------
 
+
 def _opa_reachable() -> bool:
     """Return True only when the OPA health endpoint is reachable."""
     opa_url = os.getenv("OPA_URL")
@@ -270,6 +280,7 @@ def _opa_reachable() -> bool:
         return False
     try:
         import urllib.parse
+
         parsed = urllib.parse.urlparse(opa_url)
         requests.get(f"{parsed.scheme}://{parsed.netloc}/health", timeout=2)
         return True
@@ -296,7 +307,10 @@ class TestSafetyNodeIntegration:
                 "trader_role": "junior",
             },
         }
-        with patch("src.gateway.governance.causal_gatekeeper.causal_safety_check", return_value=True):
+        with patch(
+            "src.gateway.governance.causal_gatekeeper.causal_safety_check",
+            return_value=True,
+        ):
             update = await safety_check_node(state)
         # $90k by junior trader must be BLOCKED or ESCALATED — never APPROVED
         assert update["safety_status"] in ("BLOCKED", "ESCALATED")
@@ -330,7 +344,10 @@ class TestSafetyNodeIntegration:
                 "drawdown": 0.0,
             },
         }
-        with patch("src.gateway.governance.causal_gatekeeper.causal_safety_check", return_value=True):
+        with patch(
+            "src.gateway.governance.causal_gatekeeper.causal_safety_check",
+            return_value=True,
+        ):
             update = await safety_check_node(state)
         # APPROVED: SLM available, OPA + consensus passed.
         # ESCALATED: SLM unavailable → elevated consensus → split vote → human review.

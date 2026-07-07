@@ -23,7 +23,7 @@ Tests verify that create_opa_safety_node() produces a node with correct:
 """
 
 import asyncio
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -42,7 +42,8 @@ pytestmark = pytest.mark.unit
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _trade_extractor(state: Dict[str, Any]) -> Dict[str, Any]:
+
+def _trade_extractor(state: dict[str, Any]) -> dict[str, Any]:
     """Test payload extractor — mirrors the financial advisor's pattern."""
     plan = state.get("plan") or {}
     return {
@@ -64,7 +65,7 @@ def _make_config(**overrides) -> OpaNodeConfig:
     return OpaNodeConfig(**defaults)
 
 
-def _state_with_plan(**plan_fields) -> Dict[str, Any]:
+def _state_with_plan(**plan_fields) -> dict[str, Any]:
     return {
         "plan": {
             "action": "execute_trade",
@@ -79,6 +80,7 @@ def _state_with_plan(**plan_fields) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Tests — create_opa_safety_node
 # ---------------------------------------------------------------------------
+
 
 class TestOpaNodeFactory:
     """Unit tests for create_opa_safety_node()."""
@@ -128,7 +130,9 @@ class TestOpaNodeFactory:
 
         mock_gov = AsyncMock()
         mock_gov.govern = AsyncMock(
-            side_effect=GovernanceError("ISO 42001 Policy Violation: OPA Denied Action.")
+            side_effect=GovernanceError(
+                "ISO 42001 Policy Violation: OPA Denied Action."
+            )
         )
 
         with patch(
@@ -148,7 +152,9 @@ class TestOpaNodeFactory:
 
         mock_gov = AsyncMock()
         mock_gov.govern = AsyncMock(
-            side_effect=GovernanceError("ISO 42001 Policy Check: Manual Review Required.")
+            side_effect=GovernanceError(
+                "ISO 42001 Policy Check: Manual Review Required."
+            )
         )
 
         with patch(
@@ -205,9 +211,7 @@ class TestOpaNodeFactory:
         node = create_opa_safety_node(config)
 
         mock_gov = AsyncMock()
-        mock_gov.govern = AsyncMock(
-            side_effect=GovernanceError("denied")
-        )
+        mock_gov.govern = AsyncMock(side_effect=GovernanceError("denied"))
 
         state = {"my_plan": {"action": "foo"}, "thread_id": "t"}
         with patch(
@@ -269,6 +273,7 @@ class TestOpaNodeFactory:
 # ---------------------------------------------------------------------------
 # Tests — create_opa_safety_router
 # ---------------------------------------------------------------------------
+
 
 class TestOpaRouterFactory:
     """Tests for the deterministic routing function factory."""

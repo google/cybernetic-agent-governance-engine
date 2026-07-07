@@ -24,8 +24,8 @@ This module wraps ``os.getenv()`` with structured logging. For new code, prefer:
   - ``Config`` (``config.settings``) for LLM/gateway connection configuration
 """
 
-import os
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger("Infrastructure.ConfigManager")

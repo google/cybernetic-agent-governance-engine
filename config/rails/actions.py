@@ -30,10 +30,8 @@ Alternative implementations (for reference/fallback only):
 See: docs/technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md §6
 """
 
-import json
 import logging
 import os
-from typing import Optional
 
 import httpx
 from opentelemetry import trace as _otel_trace
@@ -41,6 +39,7 @@ from opentelemetry.trace import Status, StatusCode
 
 try:
     from nemoguardrails.actions import action as _nemo_action
+
     def action(name: str):  # type: ignore[misc]
         """Thin wrapper that delegates to nemoguardrails.actions.action."""
         return _nemo_action(name=name)
@@ -50,9 +49,12 @@ except ImportError:
     # all action functions remain callable.
     def action(name: str):  # type: ignore[misc]
         """No-op decorator used when nemoguardrails is not installed."""
+
         def decorator(fn):
             return fn
+
         return decorator
+
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +65,7 @@ _tracer = _otel_trace.get_tracer("config.rails.actions")
 # RetrieveKnowledgeAction (pre-existing)
 # ---------------------------------------------------------------------------
 
+
 @action(name="RetrieveKnowledgeAction")
 def retrieve_knowledge(events=None, context=None):
     """
@@ -72,7 +75,9 @@ def retrieve_knowledge(events=None, context=None):
     """
     with _tracer.start_as_current_span("nemo.action.retrieve_knowledge") as span:
         span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute("langfuse.trace.metadata.guardrail.action", "RetrieveKnowledgeAction")
+        span.set_attribute(
+            "langfuse.trace.metadata.guardrail.action", "RetrieveKnowledgeAction"
+        )
         span.set_attribute("iso42001.control_id", "A.6.1.2")
 
         kb_url = os.environ.get("KNOWLEDGE_BASE_URL", "")
@@ -101,7 +106,11 @@ def retrieve_knowledge(events=None, context=None):
             span.record_exception(exc)
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.set_attribute("nemo.action.outcome", "ERROR")
-            logger.error("RetrieveKnowledgeAction: knowledge retrieval failed: %s", exc, exc_info=True)
+            logger.error(
+                "RetrieveKnowledgeAction: knowledge retrieval failed: %s",
+                exc,
+                exc_info=True,
+            )
             return []
 
 
@@ -114,8 +123,11 @@ def retrieve_knowledge(events=None, context=None):
 # (graceful degradation; NeMo's built-in SDD rail is still active via config.yml).
 # ---------------------------------------------------------------------------
 
+
 @action(name="MaskPIIAction")
-async def mask_pii_action(context: Optional[dict] = None, llm: Optional[object] = None, **kwargs):
+async def mask_pii_action(
+    context: dict | None = None, llm: object | None = None, **kwargs
+):
     """Mask PII in the text using Presidio.
 
     Called for both input and output rails:
@@ -134,23 +146,29 @@ async def mask_pii_action(context: Optional[dict] = None, llm: Optional[object] 
         logger.debug("MaskPIIAction called with kwargs keys: %s", list(kwargs.keys()))
         ctx = context or {}
         text = (
-            kwargs.get("text")               # Explicit argument — highest priority (input AND output callers)
+            kwargs.get(
+                "text"
+            )  # Explicit argument — highest priority (input AND output callers)
             or ctx.get("last_user_message")  # NeMo context fallback for input rail
-            or ctx.get("bot_message")        # NeMo context fallback for output rail
-            or ctx.get("last_bot_message")   # Legacy NeMo context key
+            or ctx.get("bot_message")  # NeMo context fallback for output rail
+            or ctx.get("last_bot_message")  # Legacy NeMo context key
             or ""
         )
         span.set_attribute("nemo.action.text_length_in", len(text))
 
         if not text:
-            logger.warning("MaskPIIAction: no text in context. Context keys: %s, kwargs: %s", list(ctx.keys()), list(kwargs.keys()))
+            logger.warning(
+                "MaskPIIAction: no text in context. Context keys: %s, kwargs: %s",
+                list(ctx.keys()),
+                list(kwargs.keys()),
+            )
             span.set_attribute("nemo.action.outcome", "SKIPPED_NO_TEXT")
             return ""
 
         try:
             from presidio_analyzer import AnalyzerEngine
-            from presidio_anonymizer import AnonymizerEngine
             from presidio_analyzer.nlp_engine import NlpEngineProvider
+            from presidio_anonymizer import AnonymizerEngine
         except ImportError:
             logger.warning(
                 "MaskPIIAction: presidio_analyzer / presidio_anonymizer not installed. "
@@ -174,7 +192,9 @@ async def mask_pii_action(context: Optional[dict] = None, llm: Optional[object] 
             if results:
                 anonymized = anonymizer.anonymize(text=text, analyzer_results=results)
                 entity_count = len(results)
-                logger.debug("MaskPIIAction: masked %d PII entity/entities.", entity_count)
+                logger.debug(
+                    "MaskPIIAction: masked %d PII entity/entities.", entity_count
+                )
                 span.set_attribute("nemo.action.entity_count", entity_count)
                 span.set_attribute("nemo.action.text_length_out", len(anonymized.text))
                 span.set_attribute("nemo.action.outcome", "MASKED")
@@ -187,7 +207,9 @@ async def mask_pii_action(context: Optional[dict] = None, llm: Optional[object] 
             span.record_exception(exc)
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.set_attribute("nemo.action.outcome", "ERROR")
-            logger.error("MaskPIIAction: Presidio masking failed: %s", exc, exc_info=True)
+            logger.error(
+                "MaskPIIAction: Presidio masking failed: %s", exc, exc_info=True
+            )
             return text
 
 
@@ -195,8 +217,11 @@ async def mask_pii_action(context: Optional[dict] = None, llm: Optional[object] 
 # Custom Financial Domain Self-Check Actions
 # ---------------------------------------------------------------------------
 
+
 @action(name="CustomSelfCheckInputAction")
-async def custom_self_check_input(context: Optional[dict] = None, llm: Optional[object] = None, **kwargs):
+async def custom_self_check_input(
+    context: dict | None = None, llm: object | None = None, **kwargs
+):
     """Hybrid self-check for financial domain inputs - PHASE 2 UPGRADE.
 
     Three-stage approach:
@@ -208,15 +233,13 @@ async def custom_self_check_input(context: Optional[dict] = None, llm: Optional[
     """
     with _tracer.start_as_current_span("nemo.action.self_check_input") as span:
         span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute("langfuse.trace.metadata.guardrail.action", "CustomSelfCheckInputAction")
+        span.set_attribute(
+            "langfuse.trace.metadata.guardrail.action", "CustomSelfCheckInputAction"
+        )
         span.set_attribute("iso42001.control_id", "A.6.1.2")
 
         ctx = context or {}
-        text = (
-            ctx.get("last_user_message")
-            or kwargs.get("content")
-            or ""
-        ).lower()
+        text = (ctx.get("last_user_message") or kwargs.get("content") or "").lower()
 
         if not text:
             span.set_attribute("nemo.action.stage", "EMPTY")
@@ -225,11 +248,34 @@ async def custom_self_check_input(context: Optional[dict] = None, llm: Optional[
 
         # STAGE 1: WHITELIST - Fast-path for known-safe financial queries (0ms)
         financial_keywords = [
-            "portfolio", "diversification", "risk", "return", "stock", "bond",
-            "etf", "fund", "asset", "allocation", "rebalance", "sharpe",
-            "volatility", "analyze", "investment", "trading", "strategy",
-            "market", "price", "performance", "ratio", "dividend", "explain",
-            "what is", "how does", "define", "compliance", "regulatory"
+            "portfolio",
+            "diversification",
+            "risk",
+            "return",
+            "stock",
+            "bond",
+            "etf",
+            "fund",
+            "asset",
+            "allocation",
+            "rebalance",
+            "sharpe",
+            "volatility",
+            "analyze",
+            "investment",
+            "trading",
+            "strategy",
+            "market",
+            "price",
+            "performance",
+            "ratio",
+            "dividend",
+            "explain",
+            "what is",
+            "how does",
+            "define",
+            "compliance",
+            "regulatory",
         ]
 
         if any(keyword in text for keyword in financial_keywords):
@@ -240,11 +286,20 @@ async def custom_self_check_input(context: Optional[dict] = None, llm: Optional[
 
         # STAGE 2: BLACKLIST - Fast-path for obvious jailbreak attempts (0ms)
         jailbreak_patterns = [
-            "ignore previous instructions", "ignore all previous",
-            "dan mode", "developer mode", "repeat your prompt",
-            "show me your system prompt", "bypass your restrictions",
-            "you are now unrestricted", "jailbreak", "forget everything",
-            "pretend you", "roleplay as", "act as if", "system:"
+            "ignore previous instructions",
+            "ignore all previous",
+            "dan mode",
+            "developer mode",
+            "repeat your prompt",
+            "show me your system prompt",
+            "bypass your restrictions",
+            "you are now unrestricted",
+            "jailbreak",
+            "forget everything",
+            "pretend you",
+            "roleplay as",
+            "act as if",
+            "system:",
         ]
 
         if any(pattern in text for pattern in jailbreak_patterns):
@@ -254,12 +309,16 @@ async def custom_self_check_input(context: Optional[dict] = None, llm: Optional[
             return False
 
         # STAGE 3: LLM JUDGE - Semantic analysis for ambiguous cases (2-5s)
-        logger.info("HybridSelfCheckInput: STAGE 3 - Invoking LLM judge for ambiguous input")
+        logger.info(
+            "HybridSelfCheckInput: STAGE 3 - Invoking LLM judge for ambiguous input"
+        )
         span.set_attribute("nemo.action.stage", "LLM_JUDGE")
 
         # Use NeMo's built-in self-check with financial-domain-aware prompt
         try:
-            from nemoguardrails.library.self_check.input_check import self_check_input as nemo_self_check
+            from nemoguardrails.library.self_check.input_check import (
+                self_check_input as nemo_self_check,
+            )
 
             # Invoke with LLM (NeMo will use the configured vLLM model)
             is_safe = await nemo_self_check(context=context, llm=llm)
@@ -277,7 +336,9 @@ async def custom_self_check_input(context: Optional[dict] = None, llm: Optional[
 
 
 @action(name="CustomSelfCheckOutputAction")
-async def custom_self_check_output(context: Optional[dict] = None, llm: Optional[object] = None, **kwargs):
+async def custom_self_check_output(
+    context: dict | None = None, llm: object | None = None, **kwargs
+):
     """Hybrid self-check for financial domain outputs - PHASE 2 UPGRADE.
 
     Three-stage approach:
@@ -287,7 +348,9 @@ async def custom_self_check_output(context: Optional[dict] = None, llm: Optional
     """
     with _tracer.start_as_current_span("nemo.action.self_check_output") as span:
         span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute("langfuse.trace.metadata.guardrail.action", "CustomSelfCheckOutputAction")
+        span.set_attribute(
+            "langfuse.trace.metadata.guardrail.action", "CustomSelfCheckOutputAction"
+        )
         span.set_attribute("iso42001.control_id", "A.6.1.2")
 
         ctx = context or {}
@@ -305,22 +368,39 @@ async def custom_self_check_output(context: Optional[dict] = None, llm: Optional
 
         # STAGE 1: Safe financial content (allow without LLM check)
         safe_indicators = [
-            "risk", "portfolio", "consider", "consult", "disclaimer",
-            "not financial advice", "diversification", "volatility",
-            "may", "could", "potential", "assessment"
+            "risk",
+            "portfolio",
+            "consider",
+            "consult",
+            "disclaimer",
+            "not financial advice",
+            "diversification",
+            "volatility",
+            "may",
+            "could",
+            "potential",
+            "assessment",
         ]
 
         if any(indicator in text for indicator in safe_indicators):
-            logger.debug("HybridSelfCheckOutput: STAGE 1 ALLOW (safe financial content)")
+            logger.debug(
+                "HybridSelfCheckOutput: STAGE 1 ALLOW (safe financial content)"
+            )
             span.set_attribute("nemo.action.stage", "SAFE_INDICATOR")
             span.set_attribute("nemo.action.outcome", "ALLOW")
             return True
 
         # STAGE 2: BLACKLIST - Harmful patterns (block immediately)
         harmful_patterns = [
-            "guaranteed returns", "risk-free investment", "can't lose",
-            "insider information", "sure thing", "100% profit",
-            "no risk", "guaranteed profit", "get rich quick"
+            "guaranteed returns",
+            "risk-free investment",
+            "can't lose",
+            "insider information",
+            "sure thing",
+            "100% profit",
+            "no risk",
+            "guaranteed profit",
+            "get rich quick",
         ]
 
         if any(pattern in text for pattern in harmful_patterns):
@@ -330,11 +410,15 @@ async def custom_self_check_output(context: Optional[dict] = None, llm: Optional
             return False
 
         # STAGE 3: LLM JUDGE - For ambiguous outputs
-        logger.info("HybridSelfCheckOutput: STAGE 3 - Invoking LLM judge for ambiguous output")
+        logger.info(
+            "HybridSelfCheckOutput: STAGE 3 - Invoking LLM judge for ambiguous output"
+        )
         span.set_attribute("nemo.action.stage", "LLM_JUDGE")
 
         try:
-            from nemoguardrails.library.self_check.output_check import self_check_output as nemo_self_check
+            from nemoguardrails.library.self_check.output_check import (
+                self_check_output as nemo_self_check,
+            )
 
             is_safe = await nemo_self_check(context=context, llm=llm)
             logger.info("HybridSelfCheckOutput: LLM judge result = %s", is_safe)
@@ -342,7 +426,9 @@ async def custom_self_check_output(context: Optional[dict] = None, llm: Optional
             return is_safe
         except Exception as e:
             # On LLM failure, fail CLOSED (block output to be safe)
-            logger.error("HybridSelfCheckOutput: LLM judge failed: %s - failing CLOSED", e)
+            logger.error(
+                "HybridSelfCheckOutput: LLM judge failed: %s - failing CLOSED", e
+            )
             span.record_exception(e)
             span.set_attribute("nemo.action.stage", "LLM_JUDGE_FAILED")
             span.set_attribute("nemo.action.outcome", "BLOCK_ON_ERROR")
@@ -366,8 +452,9 @@ async def custom_self_check_output(context: Optional[dict] = None, llm: Optional
 # these stubs are never called instead of real policy enforcement.
 # ---------------------------------------------------------------------------
 
+
 @action(name="CheckApprovalTokenAction")
-async def check_approval_token_action(context: Optional[dict] = None, **kwargs) -> bool:
+async def check_approval_token_action(context: dict | None = None, **kwargs) -> bool:
     """Pass-through stub — approval-token enforcement owned by OPA safety_check_node.
 
     Financial policy (SC-1) is enforced by the safety_check_node → OPA path
@@ -377,16 +464,20 @@ async def check_approval_token_action(context: Optional[dict] = None, **kwargs) 
     """
     with _tracer.start_as_current_span("nemo.action.check_approval_token") as span:
         span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute("langfuse.trace.metadata.guardrail.action", "CheckApprovalTokenAction")
+        span.set_attribute(
+            "langfuse.trace.metadata.guardrail.action", "CheckApprovalTokenAction"
+        )
         span.set_attribute("iso42001.control_id", "A.6.1.2")
         span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
         span.set_attribute("nemo.action.stpa_ref", "SC-1")
-        logger.debug("CheckApprovalTokenAction: pass-through (OPA/safety_check_node is authoritative)")
+        logger.debug(
+            "CheckApprovalTokenAction: pass-through (OPA/safety_check_node is authoritative)"
+        )
         return True
 
 
 @action(name="CheckDataLatencyAction")
-async def check_data_latency_action(context: Optional[dict] = None, **kwargs) -> bool:
+async def check_data_latency_action(context: dict | None = None, **kwargs) -> bool:
     """Pass-through stub — market data latency enforcement owned by OPA safety_check_node.
 
     Financial policy (FIN-2) is enforced by the safety_check_node → OPA path.
@@ -394,16 +485,20 @@ async def check_data_latency_action(context: Optional[dict] = None, **kwargs) ->
     """
     with _tracer.start_as_current_span("nemo.action.check_data_latency") as span:
         span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute("langfuse.trace.metadata.guardrail.action", "CheckDataLatencyAction")
+        span.set_attribute(
+            "langfuse.trace.metadata.guardrail.action", "CheckDataLatencyAction"
+        )
         span.set_attribute("iso42001.control_id", "A.6.1.2")
         span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
         span.set_attribute("nemo.action.stpa_ref", "FIN-2")
-        logger.debug("CheckDataLatencyAction: pass-through (OPA/safety_check_node is authoritative)")
+        logger.debug(
+            "CheckDataLatencyAction: pass-through (OPA/safety_check_node is authoritative)"
+        )
         return True
 
 
 @action(name="CheckDrawdownLimitAction")
-async def check_drawdown_limit_action(context: Optional[dict] = None, **kwargs) -> bool:
+async def check_drawdown_limit_action(context: dict | None = None, **kwargs) -> bool:
     """Pass-through stub — drawdown limit enforcement owned by OPA safety_check_node.
 
     Financial policy (UCA-5) is enforced by the safety_check_node → OPA path.
@@ -411,16 +506,20 @@ async def check_drawdown_limit_action(context: Optional[dict] = None, **kwargs) 
     """
     with _tracer.start_as_current_span("nemo.action.check_drawdown_limit") as span:
         span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute("langfuse.trace.metadata.guardrail.action", "CheckDrawdownLimitAction")
+        span.set_attribute(
+            "langfuse.trace.metadata.guardrail.action", "CheckDrawdownLimitAction"
+        )
         span.set_attribute("iso42001.control_id", "A.6.1.2")
         span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
         span.set_attribute("nemo.action.stpa_ref", "UCA-5")
-        logger.debug("CheckDrawdownLimitAction: pass-through (OPA/safety_check_node is authoritative)")
+        logger.debug(
+            "CheckDrawdownLimitAction: pass-through (OPA/safety_check_node is authoritative)"
+        )
         return True
 
 
 @action(name="CheckSlippageRiskAction")
-async def check_slippage_risk_action(context: Optional[dict] = None, **kwargs) -> bool:
+async def check_slippage_risk_action(context: dict | None = None, **kwargs) -> bool:
     """Pass-through stub — slippage risk enforcement owned by OPA safety_check_node.
 
     Financial policy (UCA-6) is enforced by the safety_check_node → OPA path.
@@ -428,16 +527,20 @@ async def check_slippage_risk_action(context: Optional[dict] = None, **kwargs) -
     """
     with _tracer.start_as_current_span("nemo.action.check_slippage_risk") as span:
         span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute("langfuse.trace.metadata.guardrail.action", "CheckSlippageRiskAction")
+        span.set_attribute(
+            "langfuse.trace.metadata.guardrail.action", "CheckSlippageRiskAction"
+        )
         span.set_attribute("iso42001.control_id", "A.6.1.2")
         span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
         span.set_attribute("nemo.action.stpa_ref", "UCA-6")
-        logger.debug("CheckSlippageRiskAction: pass-through (OPA/safety_check_node is authoritative)")
+        logger.debug(
+            "CheckSlippageRiskAction: pass-through (OPA/safety_check_node is authoritative)"
+        )
         return True
 
 
 @action(name="CheckAtomicExecutionAction")
-async def check_atomic_execution_action(context: Optional[dict] = None, **kwargs) -> bool:
+async def check_atomic_execution_action(context: dict | None = None, **kwargs) -> bool:
     """Pass-through stub — atomic execution enforcement owned by OPA safety_check_node.
 
     Multi-leg trade atomicity (UCA-4) is enforced by the LangGraph Saga WAL path.
@@ -445,16 +548,20 @@ async def check_atomic_execution_action(context: Optional[dict] = None, **kwargs
     """
     with _tracer.start_as_current_span("nemo.action.check_atomic_execution") as span:
         span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute("langfuse.trace.metadata.guardrail.action", "CheckAtomicExecutionAction")
+        span.set_attribute(
+            "langfuse.trace.metadata.guardrail.action", "CheckAtomicExecutionAction"
+        )
         span.set_attribute("iso42001.control_id", "A.6.1.2")
         span.set_attribute("nemo.action.outcome", "PASS_THROUGH_OPA_AUTHORITATIVE")
         span.set_attribute("nemo.action.stpa_ref", "UCA-4")
-        logger.debug("CheckAtomicExecutionAction: pass-through (Saga WAL is authoritative)")
+        logger.debug(
+            "CheckAtomicExecutionAction: pass-through (Saga WAL is authoritative)"
+        )
         return True
 
 
 @action(name="LogSafetyAuditAction")
-async def log_safety_audit_action(context: Optional[dict] = None, **kwargs) -> bool:
+async def log_safety_audit_action(context: dict | None = None, **kwargs) -> bool:
     """Explicit no-op audit log stub (declared in definitions.co).
 
     Declared in config/rails/definitions.co as ``action LogSafetyAuditAction``.
@@ -462,11 +569,17 @@ async def log_safety_audit_action(context: Optional[dict] = None, **kwargs) -> b
     """
     with _tracer.start_as_current_span("nemo.action.log_safety_audit") as span:
         span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute("langfuse.trace.metadata.guardrail.action", "LogSafetyAuditAction")
+        span.set_attribute(
+            "langfuse.trace.metadata.guardrail.action", "LogSafetyAuditAction"
+        )
         span.set_attribute("iso42001.control_id", "A.6.2.8")
         span.set_attribute("nemo.action.outcome", "LOGGED")
-        event_type = (context or {}).get("event_type", "unknown") if context else "unknown"
-        logger.info("LogSafetyAuditAction: safety event logged (event_type=%s)", event_type)
+        event_type = (
+            (context or {}).get("event_type", "unknown") if context else "unknown"
+        )
+        logger.info(
+            "LogSafetyAuditAction: safety event logged (event_type=%s)", event_type
+        )
         return True
 
 

@@ -51,6 +51,7 @@ _OTLP_EXPORT_TIMEOUT_MS = _OTLP_EXPORT_TIMEOUT_S * 1_000
 # dependency-free).
 # ---------------------------------------------------------------------------
 
+
 def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
     """Resolve the OTLP endpoint and auth headers in priority order.
 
@@ -96,6 +97,7 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
         "telemetry is collected natively by Langfuse when LANGFUSE_HOST is set)"
     )
     return "", {}
+
 
 # Phrases emitted by the Langfuse S3 worker / OTel OTLP exporter when the
 # collector's S3 backend is unavailable.
@@ -168,9 +170,12 @@ def setup_tracing() -> None:
 
     try:
         from opentelemetry import trace
-        from opentelemetry.sdk.resources import Resource, SERVICE_NAME
+        from opentelemetry.sdk.resources import SERVICE_NAME, Resource
         from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+        from opentelemetry.sdk.trace.export import (
+            BatchSpanProcessor,
+            ConsoleSpanExporter,
+        )
 
         # If a real provider is already installed, do not replace it.
         existing = trace.get_tracer_provider()
@@ -196,11 +201,13 @@ def setup_tracing() -> None:
                     from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
                         OTLPSpanExporter,
                     )
+
                     # Append /v1/traces only when using a generic collector endpoint
                     # (Langfuse's endpoint already includes the full path).
                     otlp_url = (
                         _otlp_endpoint
-                        if _otlp_endpoint.endswith("/otel") or "/api/public/" in _otlp_endpoint
+                        if _otlp_endpoint.endswith("/otel")
+                        or "/api/public/" in _otlp_endpoint
                         else f"{_otlp_endpoint}/v1/traces"
                     )
                     exporter = OTLPSpanExporter(
@@ -216,7 +223,8 @@ def setup_tracing() -> None:
                     )
                     logger.info(
                         "✅ OTel OTLP exporter configured → %s (timeout=%ds)",
-                        otlp_url, _OTLP_EXPORT_TIMEOUT_S,
+                        otlp_url,
+                        _OTLP_EXPORT_TIMEOUT_S,
                     )
                     otlp_configured = True
                 except ImportError:
@@ -259,7 +267,10 @@ def setup_tracing() -> None:
                 app_name=_SERVICE_NAME,
                 disable_batch=False,
             )
-            logger.info("✅ OpenLLMetry (Traceloop) initialised for service '%s'.", _SERVICE_NAME)
+            logger.info(
+                "✅ OpenLLMetry (Traceloop) initialised for service '%s'.",
+                _SERVICE_NAME,
+            )
         except ImportError:
             logger.warning(
                 "⚠️ traceloop-sdk not installed — LLM auto-instrumentation disabled.  "

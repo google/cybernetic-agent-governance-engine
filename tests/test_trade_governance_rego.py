@@ -24,11 +24,11 @@ Policy under test:
 
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
+import httpx
 import pytest
 import respx
-import httpx
 
 pytestmark = pytest.mark.unit
 
@@ -36,7 +36,7 @@ pytestmark = pytest.mark.unit
 # Determine whether a live OPA is available with the trade.governance policy
 # ---------------------------------------------------------------------------
 
-_OPA_URL: Optional[str] = os.getenv("OPA_URL")
+_OPA_URL: str | None = os.getenv("OPA_URL")
 
 
 def _opa_trade_policy_available() -> bool:
@@ -45,6 +45,7 @@ def _opa_trade_policy_available() -> bool:
         return False
     try:
         import httpx
+
         base = _opa_base()
         # Check health
         resp = httpx.get(f"{base}/health", timeout=2)
@@ -62,6 +63,8 @@ def _opa_trade_policy_available() -> bool:
         return "allow" in result
     except Exception:
         return False
+
+
 _POLICY_PATH = (
     Path(__file__).parent.parent
     / "src"
@@ -80,9 +83,11 @@ _OPA_POLICY_ENDPOINT = "/v1/data/trade/governance"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _opa_base() -> str:
     """Extract just the scheme+host+port from OPA_URL."""
     import urllib.parse
+
     raw = (_OPA_URL or "http://localhost:8181").rstrip("/")
     parsed = urllib.parse.urlparse(raw)
     return f"{parsed.scheme}://{parsed.netloc}"
@@ -93,7 +98,7 @@ def _opa_endpoint() -> str:
     return f"{_opa_base()}{_OPA_POLICY_ENDPOINT}"
 
 
-async def _query_opa(input_data: Dict[str, Any]) -> Dict[str, Any]:
+async def _query_opa(input_data: dict[str, Any]) -> dict[str, Any]:
     """POST input to OPA and return the parsed JSON result body."""
     async with httpx.AsyncClient(timeout=5.0) as client:
         resp = await client.post(_opa_endpoint(), json={"input": input_data})
@@ -104,6 +109,7 @@ async def _query_opa(input_data: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Live-OPA integration tests — skipped without OPA_URL
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("require_opa_trade_policy")
@@ -118,7 +124,12 @@ class TestTradeGovernanceRego:
     async def test_junior_trade_under_5k_allowed(self):
         """Junior trade ≤ $5 000 (non-BTC) must be ALLOW."""
         result = await _query_opa(
-            {"action": "execute_trade", "trader_role": "junior", "amount": 4999, "currency": "USD"}
+            {
+                "action": "execute_trade",
+                "trader_role": "junior",
+                "amount": 4999,
+                "currency": "USD",
+            }
         )
         assert result.get("allow") == "ALLOW"
 
@@ -126,7 +137,12 @@ class TestTradeGovernanceRego:
     async def test_junior_trade_exactly_5k_allowed(self):
         """Junior trade of exactly $5 000 must be ALLOW (boundary inclusive)."""
         result = await _query_opa(
-            {"action": "execute_trade", "trader_role": "junior", "amount": 5000, "currency": "USD"}
+            {
+                "action": "execute_trade",
+                "trader_role": "junior",
+                "amount": 5000,
+                "currency": "USD",
+            }
         )
         assert result.get("allow") == "ALLOW"
 
@@ -134,7 +150,12 @@ class TestTradeGovernanceRego:
     async def test_junior_trade_5k_to_10k_manual_review(self):
         """Junior trade $5 001 – $10 000 must require MANUAL_REVIEW."""
         result = await _query_opa(
-            {"action": "execute_trade", "trader_role": "junior", "amount": 7500, "currency": "USD"}
+            {
+                "action": "execute_trade",
+                "trader_role": "junior",
+                "amount": 7500,
+                "currency": "USD",
+            }
         )
         assert result.get("allow") == "MANUAL_REVIEW"
 
@@ -142,7 +163,12 @@ class TestTradeGovernanceRego:
     async def test_junior_trade_above_10k_denied(self):
         """Junior trade > $10 000 must be DENY — resolves the $90k conflict (R-12)."""
         result = await _query_opa(
-            {"action": "execute_trade", "trader_role": "junior", "amount": 90000, "currency": "USD"}
+            {
+                "action": "execute_trade",
+                "trader_role": "junior",
+                "amount": 90000,
+                "currency": "USD",
+            }
         )
         assert result.get("allow") == "DENY"
 
@@ -154,7 +180,12 @@ class TestTradeGovernanceRego:
     async def test_senior_trade_under_500k_allowed(self):
         """Senior trade ≤ $500 000 (non-BTC) must be ALLOW."""
         result = await _query_opa(
-            {"action": "execute_trade", "trader_role": "senior", "amount": 200000, "currency": "USD"}
+            {
+                "action": "execute_trade",
+                "trader_role": "senior",
+                "amount": 200000,
+                "currency": "USD",
+            }
         )
         assert result.get("allow") == "ALLOW"
 
@@ -162,7 +193,12 @@ class TestTradeGovernanceRego:
     async def test_senior_trade_500k_to_1m_manual_review(self):
         """Senior trade $500 001 – $1 000 000 must require MANUAL_REVIEW."""
         result = await _query_opa(
-            {"action": "execute_trade", "trader_role": "senior", "amount": 750000, "currency": "USD"}
+            {
+                "action": "execute_trade",
+                "trader_role": "senior",
+                "amount": 750000,
+                "currency": "USD",
+            }
         )
         assert result.get("allow") == "MANUAL_REVIEW"
 
@@ -170,7 +206,12 @@ class TestTradeGovernanceRego:
     async def test_senior_trade_above_1m_denied(self):
         """Senior trade > $1 000 000 must be DENY (default fail-closed)."""
         result = await _query_opa(
-            {"action": "execute_trade", "trader_role": "senior", "amount": 1500000, "currency": "USD"}
+            {
+                "action": "execute_trade",
+                "trader_role": "senior",
+                "amount": 1500000,
+                "currency": "USD",
+            }
         )
         assert result.get("allow") == "DENY"
 
@@ -178,7 +219,12 @@ class TestTradeGovernanceRego:
     async def test_unknown_role_denied(self):
         """Unknown trader role must be DENY regardless of amount."""
         result = await _query_opa(
-            {"action": "execute_trade", "trader_role": "god_mode", "amount": 100, "currency": "USD"}
+            {
+                "action": "execute_trade",
+                "trader_role": "god_mode",
+                "amount": 100,
+                "currency": "USD",
+            }
         )
         assert result.get("allow") == "DENY"
 
@@ -222,6 +268,7 @@ class TestTradeGovernanceRego:
 # Mocked tests — verify OPA is queried with correct payloads (no live OPA)
 # ---------------------------------------------------------------------------
 
+
 class TestTradeGovernanceRegoMocked:
     """Mocked tests that verify correct OPA endpoint usage without a live OPA."""
 
@@ -233,7 +280,12 @@ class TestTradeGovernanceRegoMocked:
                 return_value=httpx.Response(200, json={"result": {"allow": "ALLOW"}})
             )
             result = await _query_opa(
-                {"action": "execute_trade", "trader_role": "junior", "amount": 1000, "currency": "USD"}
+                {
+                    "action": "execute_trade",
+                    "trader_role": "junior",
+                    "amount": 1000,
+                    "currency": "USD",
+                }
             )
         assert result.get("allow") == "ALLOW"
 
@@ -263,10 +315,17 @@ class TestTradeGovernanceRegoMocked:
         """Mocked OPA response MANUAL_REVIEW must be surfaced correctly."""
         with respx.mock(base_url=None) as mock:
             mock.post(_opa_endpoint()).mock(
-                return_value=httpx.Response(200, json={"result": {"allow": "MANUAL_REVIEW"}})
+                return_value=httpx.Response(
+                    200, json={"result": {"allow": "MANUAL_REVIEW"}}
+                )
             )
             result = await _query_opa(
-                {"action": "execute_trade", "trader_role": "senior", "amount": 750000, "currency": "USD"}
+                {
+                    "action": "execute_trade",
+                    "trader_role": "senior",
+                    "amount": 750000,
+                    "currency": "USD",
+                }
             )
         assert result.get("allow") == "MANUAL_REVIEW"
 

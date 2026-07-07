@@ -21,9 +21,10 @@ dependency here.
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 import yaml
+
 from src.governed_financial_advisor.infrastructure.storage import get_storage_backend
 
 logger = logging.getLogger("governance.policy_loader")
@@ -91,7 +92,8 @@ def _validate_policy_schema(data: Any, blob_name: str) -> None:
 
     logger.debug(
         "policy_loader: schema validation passed for %s (%d hazards)",
-        blob_name, len(hazards),
+        blob_name,
+        len(hazards),
     )
 
 
@@ -104,7 +106,7 @@ class PolicyLoader:
         # RuntimeError / ImportError if the required SDK is unavailable.
         self._backend = get_storage_backend(bucket_name=bucket_name)
 
-    def load_stamp_hazards(self, blob_name: str) -> List[Any]:
+    def load_stamp_hazards(self, blob_name: str) -> list[Any]:
         """Download and parse a STAMP hazard YAML from storage.
 
         Validates the parsed YAML against the STAMP hazard schema before
@@ -126,7 +128,7 @@ class PolicyLoader:
         # H-12: Validate schema before trusting any content from remote storage.
         _validate_policy_schema(data, blob_name)
 
-        hazards: List[Any] = data.get("hazards", [])
+        hazards: list[Any] = data.get("hazards", [])
         logger.info(
             "Loaded %d STAMP hazards from %s/%s",
             len(hazards),
@@ -162,7 +164,7 @@ import os as _os
 _REDIS_QUOTA_FAIL_CLOSED: bool = (
     _os.getenv("REDIS_QUOTA_FAIL_CLOSED", "false").lower() == "true"
 )
-_REDIS_QUOTA_DB: int = 2           # db=2 reserved for TokenQuotaProxy counters
+_REDIS_QUOTA_DB: int = 2  # db=2 reserved for TokenQuotaProxy counters
 _REDIS_QUOTA_KEY_PREFIX: str = "cage:quota"
 _DEFAULT_TOKEN_BUDGET: int = 100_000  # tokens per agent per window
 
@@ -251,15 +253,21 @@ def get_redis_quota_snapshot(
         }
         logger.debug(
             "[ISO-001] Token quota snapshot for agent=%s: used=%d budget=%d remaining=%d",
-            agent_id, tokens_used, token_budget, remaining,
+            agent_id,
+            tokens_used,
+            token_budget,
+            remaining,
         )
         return {"token_quota": quota_snapshot}
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning(
             "[ISO-001] Redis token quota unavailable for agent=%s (%s: %s). "
             "REDIS_QUOTA_FAIL_CLOSED=%s",
-            agent_id, type(exc).__name__, exc, _REDIS_QUOTA_FAIL_CLOSED,
+            agent_id,
+            type(exc).__name__,
+            exc,
+            _REDIS_QUOTA_FAIL_CLOSED,
         )
         if _REDIS_QUOTA_FAIL_CLOSED:
             raise RuntimeError(
@@ -277,17 +285,17 @@ def get_redis_quota_snapshot(
                 "remaining_tokens": token_budget,
                 "quota_exhausted": False,
                 "below_min_reserve": False,
-                "quota_available": False,   # signals degraded mode to OPA
+                "quota_available": False,  # signals degraded mode to OPA
                 "quota_source": "degraded",
             }
         }
 
 
 def with_redis_quota(
-    opa_input: Dict[str, Any],
+    opa_input: dict[str, Any],
     agent_id: str,
     **quota_kwargs: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Merge a live Redis token quota snapshot into an existing OPA input dict.
 
     Convenience wrapper around ``get_redis_quota_snapshot()`` for single-call
@@ -305,4 +313,3 @@ def with_redis_quota(
     """
     snapshot = get_redis_quota_snapshot(agent_id, **quota_kwargs)
     return {**opa_input, **snapshot}
-

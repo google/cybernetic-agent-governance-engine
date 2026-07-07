@@ -13,24 +13,31 @@
 # limitations under the License.
 
 import pytest
+
 pytestmark = pytest.mark.unit
 import asyncio
 import uuid
-import os
-from unittest.mock import AsyncMock, patch, MagicMock
-from src.gateway.core.tools import execute_trade, TradeOrder
-from src.governed_financial_advisor.infrastructure.redis_client import redis_client
+from unittest.mock import MagicMock, patch
+
+from src.gateway.core.tools import TradeOrder, execute_trade
+
 
 @pytest.fixture
 def mock_redis():
     # Mock Redis to avoid needing a real instance
     with patch("src.gateway.core.tools.redis_client") as mock:
         store = {}
-        def get(key): return store.get(key)
-        def set(key, val): store[key] = val
+
+        def get(key):
+            return store.get(key)
+
+        def set(key, val):
+            store[key] = val
+
         mock.get.side_effect = get
         mock.set.side_effect = set
         yield mock
+
 
 @pytest.fixture
 def slow_executor_setup():
@@ -42,12 +49,14 @@ def slow_executor_setup():
             return MagicMock(json=lambda: {"id": "123"}, raise_for_status=lambda: None)
 
         import time
+
         def slow_post(*args, **kwargs):
-            time.sleep(1.0) # Blocking sleep in thread, longer than 0.5
+            time.sleep(1.0)  # Blocking sleep in thread, longer than 0.5
             return MagicMock(json=lambda: {"id": "123"}, raise_for_status=lambda: None)
 
         mock_post.side_effect = slow_post
         yield mock_post
+
 
 @pytest.fixture
 def mock_env(monkeypatch):
@@ -55,8 +64,11 @@ def mock_env(monkeypatch):
     monkeypatch.setenv("BROKER_API_KEY", "test")
     monkeypatch.setenv("BROKER_API_SECRET", "test")
 
+
 @pytest.mark.asyncio
-async def test_optimistic_execution_interruption(mock_redis, slow_executor_setup, mock_env):
+async def test_optimistic_execution_interruption(
+    mock_redis, slow_executor_setup, mock_env
+):
     """
     Test that a slow trade execution is INTERRUPTED if the safety flag is set
     while it is running.
@@ -70,7 +82,7 @@ async def test_optimistic_execution_interruption(mock_redis, slow_executor_setup
         side="buy",
         type="market",
         confidence=0.99,
-        transaction_id=tx_id
+        transaction_id=tx_id,
     )
 
     # Simulate:
@@ -89,13 +101,14 @@ async def test_optimistic_execution_interruption(mock_redis, slow_executor_setup
     assert "INTERRUPTED" in str(excinfo.value)
     assert "Simulated Hazard" in str(excinfo.value)
 
+
 @pytest.mark.asyncio
 async def test_optimistic_execution_success(mock_redis, slow_executor_setup, mock_env):
     """
     Test that execution succeeds if no interruption occurs.
     """
-    mock_redis.get.side_effect = None # Reset side effect
-    mock_redis.get.return_value = None # No violation
+    mock_redis.get.side_effect = None  # Reset side effect
+    mock_redis.get.return_value = None  # No violation
 
     tx_id = str(uuid.uuid4())
     order = TradeOrder(
@@ -105,7 +118,7 @@ async def test_optimistic_execution_success(mock_redis, slow_executor_setup, moc
         side="buy",
         type="market",
         confidence=0.99,
-        transaction_id=tx_id
+        transaction_id=tx_id,
     )
 
     result = await execute_trade(order)

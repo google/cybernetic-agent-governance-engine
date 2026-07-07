@@ -22,6 +22,7 @@ It does not have a validate() method. Key methods:
   - add_uca(uca) / add_constraint(constraint)
   - ISO_CONTROL_MAP — class-level dict of control mappings
 """
+
 import pytest
 
 pytestmark = pytest.mark.unit
@@ -112,7 +113,7 @@ def test_iso_control_map_has_required_keys():
 
 def test_add_uca_registers_new_uca():
     """add_uca() should register a new UCA in the graph."""
-    from src.gateway.governance.ontology import TradingKnowledgeGraph, STAMP_UCA
+    from src.gateway.governance.ontology import STAMP_UCA, TradingKnowledgeGraph
 
     graph = TradingKnowledgeGraph()
     new_uca = STAMP_UCA(
@@ -129,7 +130,7 @@ def test_add_uca_registers_new_uca():
 
 def test_add_constraint_registers_new_constraint():
     """add_constraint() should register a new Constraint in the graph."""
-    from src.gateway.governance.ontology import TradingKnowledgeGraph, Constraint
+    from src.gateway.governance.ontology import Constraint, TradingKnowledgeGraph
 
     graph = TradingKnowledgeGraph()
     new_constraint = Constraint(
@@ -151,7 +152,10 @@ def test_uca_1_governs_write_operations():
     graph = TradingKnowledgeGraph()
     uca1 = graph.ucas["UCA-1"]
     assert uca1.category == "Unsafe Action"
-    assert "write" in uca1.detection_pattern.lower() or "approval_token" in uca1.detection_pattern.lower()
+    assert (
+        "write" in uca1.detection_pattern.lower()
+        or "approval_token" in uca1.detection_pattern.lower()
+    )
 
 
 def test_uca_2_governs_latency():
