@@ -88,8 +88,8 @@ data:
     Custom Financial Domain Self-Check Actions\n# ---------------------------------------------------------------------------\n\n@action(name=\"CustomSelfCheckInputAction\")\nasync
     def custom_self_check_input(context: Optional[dict] = None, llm: Optional[object]
     = None, **kwargs):\n    \"\"\"Hybrid self-check for financial domain inputs -
-    PHASE 2 UPGRADE.\n    \n    Three-stage approach:\n    1. Whitelist financial
-    keywords → ALLOW (0ms) [~70% of queries]\n    2. Blacklist jailbreak patterns
+    PHASE 2 UPGRADE.\n    \n    Three-stage approach:\n    1. Allowlist financial
+    keywords → ALLOW (0ms) [~70% of queries]\n    2. Blocklist jailbreak patterns
     → BLOCK (0ms) [~5% of queries]\n    3. LLM-based semantic check → EVALUATE (2-5s)
     [~25% of queries]\n    \n    This preserves security while maintaining performance.\n
     \   \"\"\"\n    ctx = context or {}\n    text = (\n        ctx.get(\"last_user_message\")\n
