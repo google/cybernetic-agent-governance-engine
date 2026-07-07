@@ -16,6 +16,7 @@
 Legacy LLM Client Adapter.
 Maintained for backward compatibility.
 """
+
 from src.gateway.core.llm import GatewayClient
 
 # Alias for legacy imports

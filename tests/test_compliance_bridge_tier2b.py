@@ -27,12 +27,12 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import respx
 import httpx
+import pytest
+import respx
 
 pytestmark = pytest.mark.unit
 
@@ -41,9 +41,15 @@ pytestmark = pytest.mark.unit
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_finding(control_id: str, result: str = "PASS", safety_rate: float = 1.0,
-                  evidence_age: float = 0.0) -> "OscalFinding":
+
+def _make_finding(
+    control_id: str,
+    result: str = "PASS",
+    safety_rate: float = 1.0,
+    evidence_age: float = 0.0,
+) -> OscalFinding:
     from src.compliance_bridge.types import OscalFinding
+
     return OscalFinding(
         control_id=control_id,
         result=result,  # type: ignore[arg-type]
@@ -54,9 +60,14 @@ def _make_finding(control_id: str, result: str = "PASS", safety_rate: float = 1.
     )
 
 
-def _make_metrics(control_id: str, safety_rate: float = 1.0, grace: bool = False,
-                  evidence_age: float = 0.0):
+def _make_metrics(
+    control_id: str,
+    safety_rate: float = 1.0,
+    grace: bool = False,
+    evidence_age: float = 0.0,
+):
     from src.compliance_bridge.types import ComplianceMetrics
+
     return ComplianceMetrics(
         control_id=control_id,
         safety_rate=safety_rate,
@@ -76,9 +87,11 @@ def client():
     """TestClient with Langfuse patched and C-07 auth dependency overridden."""
     with patch("src.compliance_bridge.main.Langfuse") as MockLF:
         MockLF.return_value = MagicMock()
-        from src.compliance_bridge.main import app
-        from src.compliance_bridge.auth import require_internal_token
         from fastapi.testclient import TestClient
+
+        from src.compliance_bridge.auth import require_internal_token
+        from src.compliance_bridge.main import app
+
         app.dependency_overrides[require_internal_token] = lambda: "test-token"
         try:
             with TestClient(app, raise_server_exceptions=True) as c:
@@ -91,17 +104,23 @@ def client():
 # 2.3 — OSCAL Assessment Results exporter (unit tests for oscal_exporter.py)
 # ---------------------------------------------------------------------------
 
+
 class TestOscalExporterUnit:
     def test_build_returns_assessment_results_root(self):
         from src.compliance_bridge.oscal_exporter import build_oscal_assessment_results
+
         doc = build_oscal_assessment_results(
-            findings=[_make_finding("A.5.2", "PASS"), _make_finding("A.9.2", "FAIL", 0.85)],
+            findings=[
+                _make_finding("A.5.2", "PASS"),
+                _make_finding("A.9.2", "FAIL", 0.85),
+            ],
             audit_id="unit-test-001",
         )
         assert "assessment-results" in doc
 
     def test_metadata_present(self):
         from src.compliance_bridge.oscal_exporter import build_oscal_assessment_results
+
         ar = build_oscal_assessment_results(
             findings=[_make_finding("A.5.2")],
             audit_id="meta-test",
@@ -113,6 +132,7 @@ class TestOscalExporterUnit:
 
     def test_finding_state_satisfied(self):
         from src.compliance_bridge.oscal_exporter import build_oscal_assessment_results
+
         findings = build_oscal_assessment_results(
             findings=[_make_finding("A.5.2", "PASS")],
             audit_id="state-test",
@@ -121,6 +141,7 @@ class TestOscalExporterUnit:
 
     def test_finding_state_not_satisfied(self):
         from src.compliance_bridge.oscal_exporter import build_oscal_assessment_results
+
         findings = build_oscal_assessment_results(
             findings=[_make_finding("A.9.2", "FAIL", 0.8)],
             audit_id="state-test-fail",
@@ -129,6 +150,7 @@ class TestOscalExporterUnit:
 
     def test_finding_state_not_applicable(self):
         from src.compliance_bridge.oscal_exporter import build_oscal_assessment_results
+
         findings = build_oscal_assessment_results(
             findings=[_make_finding("SC-7", "NOT_APPLICABLE")],
             audit_id="na-test",
@@ -137,6 +159,7 @@ class TestOscalExporterUnit:
 
     def test_safety_rate_prop_present(self):
         from src.compliance_bridge.oscal_exporter import build_oscal_assessment_results
+
         findings = build_oscal_assessment_results(
             findings=[_make_finding("A.5.2", safety_rate=0.997)],
             audit_id="prop-test",
@@ -147,6 +170,7 @@ class TestOscalExporterUnit:
 
     def test_evidence_age_prop_present(self):
         from src.compliance_bridge.oscal_exporter import build_oscal_assessment_results
+
         findings = build_oscal_assessment_results(
             findings=[_make_finding("A.5.2", evidence_age=3600.0)],
             audit_id="age-test",
@@ -157,6 +181,7 @@ class TestOscalExporterUnit:
 
     def test_framework_props_embedded(self):
         from src.compliance_bridge.oscal_exporter import build_oscal_assessment_results
+
         # A.5.2 is a universal ISO 42001 control — maps to iso42001 and aarm.
         # eu_ai_act is an EU_ECB-only framework and does not apply to A.5.2.
         findings = build_oscal_assessment_results(
@@ -170,15 +195,21 @@ class TestOscalExporterUnit:
 
     def test_reviewed_controls_contains_all_finding_controls(self):
         from src.compliance_bridge.oscal_exporter import build_oscal_assessment_results
+
         fs = [_make_finding("A.5.2"), _make_finding("SC-4")]
         doc = build_oscal_assessment_results(findings=fs, audit_id="ctrl-test")
-        selections = doc["assessment-results"]["results"][0]["reviewed-controls"]["control-selections"]
-        included = {c["control-id"] for cs in selections for c in cs["include-controls"]}
+        selections = doc["assessment-results"]["results"][0]["reviewed-controls"][
+            "control-selections"
+        ]
+        included = {
+            c["control-id"] for cs in selections for c in cs["include-controls"]
+        }
         assert "A.5.2" in included
         assert "SC-4" in included
 
     def test_uuid_is_deterministic_for_same_audit_id(self):
         from src.compliance_bridge.oscal_exporter import build_oscal_assessment_results
+
         doc1 = build_oscal_assessment_results(
             findings=[_make_finding("A.5.2")], audit_id="det-test"
         )
@@ -199,10 +230,11 @@ class TestOscalExporterUnit:
           and can be investigated by a human reviewer.
         """
         from src.compliance_bridge.oscal_exporter import findings_from_metrics_dict
+
         data = {
             "A.5.2": {"safety_rate": 1.0, "evidence_age_seconds": 60.0},
             "A.9.2": {"safety_rate": 0.85, "evidence_age_seconds": 3600.0},
-            "SC-4":  {"error": "fetch failed"},   # must emit ERROR, not be skipped
+            "SC-4": {"error": "fetch failed"},  # must emit ERROR, not be skipped
         }
         findings = findings_from_metrics_dict(data, "dict-test")
         # All three controls must produce a finding entry
@@ -231,33 +263,44 @@ class TestOscalExporterUnit:
 # 2.3 — GET /v1/oscal/assessment-results endpoint
 # ---------------------------------------------------------------------------
 
+
 class TestOscalExporterEndpoint:
     def _mock_metrics_side_effect(self, control_id, window_hours=24):
         return _make_metrics(control_id, safety_rate=1.0)
 
     def test_endpoint_returns_200(self, client):
-        with patch("src.compliance_bridge.main.get_compliance_metrics",
-                   new=AsyncMock(side_effect=self._mock_metrics_side_effect)):
+        with patch(
+            "src.compliance_bridge.main.get_compliance_metrics",
+            new=AsyncMock(side_effect=self._mock_metrics_side_effect),
+        ):
             resp = client.get("/v1/oscal/assessment-results")
         assert resp.status_code == 200
 
     def test_response_has_document_and_audit_id(self, client):
-        with patch("src.compliance_bridge.main.get_compliance_metrics",
-                   new=AsyncMock(side_effect=self._mock_metrics_side_effect)):
+        with patch(
+            "src.compliance_bridge.main.get_compliance_metrics",
+            new=AsyncMock(side_effect=self._mock_metrics_side_effect),
+        ):
             data = client.get("/v1/oscal/assessment-results").json()
         assert "document" in data
         assert "audit_id" in data
 
     def test_document_is_oscal_shaped(self, client):
-        with patch("src.compliance_bridge.main.get_compliance_metrics",
-                   new=AsyncMock(side_effect=self._mock_metrics_side_effect)):
+        with patch(
+            "src.compliance_bridge.main.get_compliance_metrics",
+            new=AsyncMock(side_effect=self._mock_metrics_side_effect),
+        ):
             data = client.get("/v1/oscal/assessment-results").json()
         assert "assessment-results" in data["document"]
 
     def test_custom_audit_id_echoed(self, client):
-        with patch("src.compliance_bridge.main.get_compliance_metrics",
-                   new=AsyncMock(side_effect=self._mock_metrics_side_effect)):
-            data = client.get("/v1/oscal/assessment-results?audit_id=my-audit-123").json()
+        with patch(
+            "src.compliance_bridge.main.get_compliance_metrics",
+            new=AsyncMock(side_effect=self._mock_metrics_side_effect),
+        ):
+            data = client.get(
+                "/v1/oscal/assessment-results?audit_id=my-audit-123"
+            ).json()
         assert data["audit_id"] == "my-audit-123"
 
     def test_invalid_format_returns_422(self, client):
@@ -269,6 +312,7 @@ class TestOscalExporterEndpoint:
 # 2.4 — PagerDutyNotifier
 # ---------------------------------------------------------------------------
 
+
 class TestPagerDutyNotifier:
     @pytest.mark.asyncio
     @respx.mock
@@ -276,7 +320,9 @@ class TestPagerDutyNotifier:
         from src.compliance_bridge.notifier import PagerDutyNotifier
 
         pd_route = respx.post("https://events.pagerduty.com/v2/enqueue").mock(
-            return_value=httpx.Response(202, json={"status": "success", "dedup_key": "k"})
+            return_value=httpx.Response(
+                202, json={"status": "success", "dedup_key": "k"}
+            )
         )
         notifier = PagerDutyNotifier("test-routing-key")
         findings = [
@@ -303,6 +349,7 @@ class TestPagerDutyNotifier:
         await notifier.send_critical_alert([_make_finding("A.9.2", "FAIL")], "sev-test")
 
         import json
+
         body = json.loads(calls[0])
         assert body["payload"]["severity"] == "critical"
         assert body["event_action"] == "trigger"
@@ -325,6 +372,7 @@ class TestPagerDutyNotifier:
         )
 
         import json
+
         body = json.loads(calls[0])
         assert body["payload"]["severity"] == "info"
 
@@ -341,9 +389,12 @@ class TestPagerDutyNotifier:
 
         respx.post("https://events.pagerduty.com/v2/enqueue").mock(side_effect=_capture)
         notifier = PagerDutyNotifier("test-key")
-        await notifier.send_critical_alert([_make_finding("A.9.2", "FAIL")], "audit-xyz")
+        await notifier.send_critical_alert(
+            [_make_finding("A.9.2", "FAIL")], "audit-xyz"
+        )
 
         import json
+
         body = json.loads(calls[0])
         assert body["dedup_key"] == "cage-audit-xyz-A.9.2"
 
@@ -364,6 +415,7 @@ class TestPagerDutyNotifier:
         await notifier.send_remediation_followup("A.9.2", "a", "m", long_text, [])
 
         import json
+
         body = json.loads(calls[0])
         assert len(body["payload"]["custom_details"]["remediation_text"]) == 512
 
@@ -371,6 +423,7 @@ class TestPagerDutyNotifier:
 # ---------------------------------------------------------------------------
 # 2.4 — WebhookNotifier
 # ---------------------------------------------------------------------------
+
 
 class TestWebhookNotifier:
     @pytest.mark.asyncio
@@ -382,6 +435,7 @@ class TestWebhookNotifier:
 
         def _capture(request: httpx.Request, **kwargs):
             import json
+
             calls.append(json.loads(request.content))
             return httpx.Response(200)
 
@@ -404,6 +458,7 @@ class TestWebhookNotifier:
 
         def _capture(request: httpx.Request, **kwargs):
             import json
+
             calls.append(json.loads(request.content))
             return httpx.Response(200)
 
@@ -422,9 +477,11 @@ class TestWebhookNotifier:
 # 2.4 — create_notifier factory routing
 # ---------------------------------------------------------------------------
 
+
 class TestNotifierFactory:
     def test_default_is_console(self):
-        from src.compliance_bridge.notifier import create_notifier, ConsoleNotifier
+        from src.compliance_bridge.notifier import ConsoleNotifier, create_notifier
+
         with patch.dict(os.environ, {}, clear=False):
             if "ALERT_CHANNEL" in os.environ:
                 del os.environ["ALERT_CHANNEL"]
@@ -432,13 +489,18 @@ class TestNotifierFactory:
         assert isinstance(n, ConsoleNotifier)
 
     def test_pagerduty_with_key_returns_pagerduty(self):
-        from src.compliance_bridge.notifier import create_notifier, PagerDutyNotifier
-        with patch.dict(os.environ, {"ALERT_CHANNEL": "pagerduty", "PAGERDUTY_ROUTING_KEY": "abc123"}):
+        from src.compliance_bridge.notifier import PagerDutyNotifier, create_notifier
+
+        with patch.dict(
+            os.environ,
+            {"ALERT_CHANNEL": "pagerduty", "PAGERDUTY_ROUTING_KEY": "abc123"},
+        ):
             n = create_notifier()
         assert isinstance(n, PagerDutyNotifier)
 
     def test_pagerduty_without_key_falls_back_to_console(self):
-        from src.compliance_bridge.notifier import create_notifier, ConsoleNotifier
+        from src.compliance_bridge.notifier import ConsoleNotifier, create_notifier
+
         env = {"ALERT_CHANNEL": "pagerduty"}
         # Ensure routing key is absent
         with patch.dict(os.environ, env):
@@ -447,32 +509,43 @@ class TestNotifierFactory:
         assert isinstance(n, ConsoleNotifier)
 
     def test_webhook_with_url_returns_webhook(self):
-        from src.compliance_bridge.notifier import create_notifier, WebhookNotifier
-        with patch.dict(os.environ, {
-            "ALERT_CHANNEL": "webhook",
-            "COMPLIANCE_ALERT_WEBHOOK_URL": "https://example.com/hook",
-        }):
+        from src.compliance_bridge.notifier import WebhookNotifier, create_notifier
+
+        with patch.dict(
+            os.environ,
+            {
+                "ALERT_CHANNEL": "webhook",
+                "COMPLIANCE_ALERT_WEBHOOK_URL": "https://example.com/hook",
+            },
+        ):
             n = create_notifier()
         assert isinstance(n, WebhookNotifier)
 
     def test_slack_with_url_returns_slack(self):
-        from src.compliance_bridge.notifier import create_notifier, SlackNotifier
-        with patch.dict(os.environ, {
-            "ALERT_CHANNEL": "slack",
-            "COMPLIANCE_ALERT_WEBHOOK_URL": "https://hooks.slack.com/xxx",
-        }):
+        from src.compliance_bridge.notifier import SlackNotifier, create_notifier
+
+        with patch.dict(
+            os.environ,
+            {
+                "ALERT_CHANNEL": "slack",
+                "COMPLIANCE_ALERT_WEBHOOK_URL": "https://hooks.slack.com/xxx",
+            },
+        ):
             n = create_notifier()
         assert isinstance(n, SlackNotifier)
 
     def test_mock_requires_testing_env(self):
         from src.compliance_bridge.notifier import create_notifier
+
         with patch.dict(os.environ, {"ALERT_CHANNEL": "mock", "TESTING": "1"}):
             from src.compliance_bridge.notifier import MockNotifier
+
             n = create_notifier()
         assert isinstance(n, MockNotifier)
 
     def test_mock_without_testing_raises(self):
         from src.compliance_bridge.notifier import create_notifier
+
         env = {"ALERT_CHANNEL": "mock"}
         with patch.dict(os.environ, env):
             os.environ.pop("TESTING", None)
@@ -480,8 +553,10 @@ class TestNotifierFactory:
                 create_notifier()
 
     def test_mock_notifier_alert_count(self):
-        from src.compliance_bridge.notifier import MockNotifier
         import asyncio
+
+        from src.compliance_bridge.notifier import MockNotifier
+
         n = MockNotifier()
         asyncio.get_event_loop().run_until_complete(
             n.send_critical_alert([_make_finding("A.9.2", "FAIL")], "count-test")
@@ -489,7 +564,8 @@ class TestNotifierFactory:
         assert n.alert_count == 1
 
     def test_unknown_channel_falls_back_to_console(self):
-        from src.compliance_bridge.notifier import create_notifier, ConsoleNotifier
+        from src.compliance_bridge.notifier import ConsoleNotifier, create_notifier
+
         with patch.dict(os.environ, {"ALERT_CHANNEL": "telegram"}):
             n = create_notifier()
         assert isinstance(n, ConsoleNotifier)

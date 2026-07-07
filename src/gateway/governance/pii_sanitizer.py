@@ -47,7 +47,6 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
-from typing import Optional
 
 # ---------------------------------------------------------------------------
 # FINDING-08 (MEDIUM) — Jurisdictional retention authority citation map
@@ -56,11 +55,6 @@ from typing import Optional
 # authority with no CAGE_DEPLOYMENT_REGION guard.  Added a ``region`` parameter
 # so the correct citation is emitted based on the active deployment region.
 # ---------------------------------------------------------------------------
-
-from src.gateway.governance.constants import (
-    PII_RETENTION_AUTHORITY as _RETENTION_AUTHORITY,
-    PII_RETENTION_AUTHORITY_DEFAULT as _RETENTION_AUTHORITY_DEFAULT,
-)
 
 logger = logging.getLogger("Gateway.Governance.PIISanitizer")
 
@@ -100,9 +94,7 @@ _PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # SSN: 9 digits in NNN-NN-NNNN or NNNNNNNNN format.
     # Excludes invalid ranges: 000, 666, 9xx area codes.
     (
-        re.compile(
-            r"\b(?!000|666|9\d{2})\d{3}[-\s]?(?!00)\d{2}[-\s]?(?!0000)\d{4}\b"
-        ),
+        re.compile(r"\b(?!000|666|9\d{2})\d{3}[-\s]?(?!00)\d{2}[-\s]?(?!0000)\d{4}\b"),
         "[REDACTED_SSN]",
     ),
     # Credit card: Visa, MC, Amex, Discover, JCB, Diners.
@@ -130,40 +122,30 @@ _PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # M-14: IBAN — International Bank Account Number (up to 34 alphanumeric chars).
     # Format: 2-letter country code + 2 check digits + up to 30 BBAN chars.
     (
-        re.compile(
-            r"\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b"
-        ),
+        re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b"),
         "[REDACTED_IBAN]",
     ),
     # M-14: SWIFT/BIC code — 8 or 11 alphanumeric characters.
     # Format: 4-char bank code + 2-char country + 2-char location + optional 3-char branch.
     (
-        re.compile(
-            r"\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b"
-        ),
+        re.compile(r"\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b"),
         "[REDACTED_SWIFT]",
     ),
     # Email address: RFC 5321 simplified.
     (
-        re.compile(
-            r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"
-        ),
+        re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"),
         "[REDACTED_EMAIL]",
     ),
     # Phone: US/international formats with optional country code (+1 or 1).
     # Uses (?<!\w) instead of \b so that '+' before the digit is included in the match.
     (
-        re.compile(
-            r"(?<!\w)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"
-        ),
+        re.compile(r"(?<!\w)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"),
         "[REDACTED_PHONE]",
     ),
     # API keys and Bearer tokens: Langfuse (pk-lf-*, sk-lf-*), HuggingFace
     # (hf_*), and generic Bearer tokens.
     (
-        re.compile(
-            r"\b(?:pk-lf-|sk-lf-|hf_|Bearer\s+)[A-Za-z0-9_\-]{8,}\b"
-        ),
+        re.compile(r"\b(?:pk-lf-|sk-lf-|hf_|Bearer\s+)[A-Za-z0-9_\-]{8,}\b"),
         "[REDACTED_API_KEY]",
     ),
 ]
@@ -201,7 +183,9 @@ class PIISanitizer:
             logger.debug(
                 "PIISanitizer: redacted PII from %d-char string "
                 "(original_len=%d, sanitized_len=%d)",
-                len(text), len(text), len(result),
+                len(text),
+                len(text),
+                len(result),
             )
 
         return result
@@ -226,7 +210,8 @@ class PIISanitizer:
                 result[key] = self.sanitize_dict(value)
             elif isinstance(value, list):
                 result[key] = [
-                    self.sanitize(item) if isinstance(item, str)
+                    self.sanitize(item)
+                    if isinstance(item, str)
                     else (self.sanitize_dict(item) if isinstance(item, dict) else item)
                     for item in value
                 ]
@@ -238,6 +223,7 @@ class PIISanitizer:
 # ---------------------------------------------------------------------------
 # pii_audit_log — AI 600-1 §2.2 structured audit record
 # ---------------------------------------------------------------------------
+
 
 def pii_audit_log(
     trace_id: str,
@@ -301,7 +287,7 @@ def pii_audit_log(
 # Module-level singleton (lazy init)
 # ---------------------------------------------------------------------------
 
-_pii_sanitizer: Optional[PIISanitizer] = None
+_pii_sanitizer: PIISanitizer | None = None
 
 
 def _get_pii_sanitizer() -> PIISanitizer:

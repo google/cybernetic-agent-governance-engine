@@ -41,15 +41,15 @@ All tests are pure unit tests — no live Redis, no MCP, no network required.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_plan_json(
     symbol: str = "AAPL",
@@ -59,21 +59,23 @@ def _make_plan_json(
     confidence: float = 0.99,
 ) -> str:
     """Return a minimal execution_plan JSON string."""
-    return json.dumps({
-        "strategy_name": "Test Buy",
-        "steps": [
-            {
-                "action": "execute_trade",
-                "symbol": symbol,
-                "amount": amount,
-                "price": price,
-                "quantity": quantity,
-                "confidence": confidence,
-                "currency": "USD",
-                "trader_role": "junior",
-            }
-        ],
-    })
+    return json.dumps(
+        {
+            "strategy_name": "Test Buy",
+            "steps": [
+                {
+                    "action": "execute_trade",
+                    "symbol": symbol,
+                    "amount": amount,
+                    "price": price,
+                    "quantity": quantity,
+                    "confidence": confidence,
+                    "currency": "USD",
+                    "trader_role": "junior",
+                }
+            ],
+        }
+    )
 
 
 def _base_state(
@@ -89,7 +91,8 @@ def _base_state(
         "execution_plan": plan or _make_plan_json(),
         "evaluation_result": '{"verdict": "APPROVED", "risk_score": 0.3}',
         "approval_required": True,
-        "approval_decision": approval_decision or {
+        "approval_decision": approval_decision
+        or {
             "approved": True,
             "reviewer": "test@example.com",
             "rationale": "Test approval.",
@@ -104,6 +107,7 @@ def _base_state(
 # ---------------------------------------------------------------------------
 # 1. post_hitl_rehydrate_node — fetches fresh price
 # ---------------------------------------------------------------------------
+
 
 class TestPostHitlRehydrateNode:
     """Unit tests for the state re-hydration node."""
@@ -142,7 +146,9 @@ class TestPostHitlRehydrateNode:
         mock_ticker = MagicMock()
         mock_ticker.fast_info = {"last_price": 200.0}
 
-        state = _base_state(ticker=None, plan=_make_plan_json(symbol="MSFT", price=195.0))
+        state = _base_state(
+            ticker=None, plan=_make_plan_json(symbol="MSFT", price=195.0)
+        )
 
         with patch("yfinance.Ticker", return_value=mock_ticker) as mock_yf:
             result = await post_hitl_rehydrate_node(state)
@@ -191,6 +197,7 @@ class TestPostHitlRehydrateNode:
 # ---------------------------------------------------------------------------
 # 2. post_hitl_revalidate_node — slippage gate + governance re-check
 # ---------------------------------------------------------------------------
+
 
 class TestPostHitlRevalidateNode:
     """Unit tests for the pre-actuation re-validation node."""
@@ -258,10 +265,10 @@ class TestPostHitlRevalidateNode:
     @pytest.mark.asyncio
     async def test_governance_error_blocks_trade(self):
         """GovernanceError from SymbolicGovernor → BLOCKED."""
+        from src.gateway.governance.symbolic_governor import GovernanceError
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
             post_hitl_revalidate_node,
         )
-        from src.gateway.governance.symbolic_governor import GovernanceError
 
         state = _base_state(
             rehydration_result={
@@ -328,6 +335,7 @@ class TestPostHitlRevalidateNode:
 # 3. drift_blocked_node — fail-closed terminal
 # ---------------------------------------------------------------------------
 
+
 class TestDriftBlockedNode:
     """Unit tests for the fail-closed terminal node."""
 
@@ -357,7 +365,9 @@ class TestDriftBlockedNode:
         result = drift_blocked_node(state)
 
         messages = result["messages"]
-        content = messages[0][1] if isinstance(messages[0], tuple) else messages[0].content
+        content = (
+            messages[0][1] if isinstance(messages[0], tuple) else messages[0].content
+        )
         assert "AAPL" in content
         assert "4.00%" in content
         assert "carol@example.com" in content or "carol" in content
@@ -392,6 +402,7 @@ class TestDriftBlockedNode:
 # 4. Graph topology — new nodes present
 # ---------------------------------------------------------------------------
 
+
 class TestGraphTopology:
     """Structural tests: verify the compiled graph contains the new nodes."""
 
@@ -399,18 +410,21 @@ class TestGraphTopology:
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
             governed_trader_graph,
         )
+
         assert "post_hitl_rehydrate" in governed_trader_graph.nodes
 
     def test_graph_contains_revalidate_node(self):
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
             governed_trader_graph,
         )
+
         assert "post_hitl_revalidate" in governed_trader_graph.nodes
 
     def test_graph_contains_drift_blocked_node(self):
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
             governed_trader_graph,
         )
+
         assert "drift_blocked" in governed_trader_graph.nodes
 
     def test_graph_still_contains_executor_and_approval_nodes(self):
@@ -418,20 +432,24 @@ class TestGraphTopology:
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
             governed_trader_graph,
         )
+
         for node in ("approval", "rejection", "executor", "tools"):
-            assert node in governed_trader_graph.nodes, f"Node '{node}' missing from graph"
+            assert node in governed_trader_graph.nodes, (
+                f"Node '{node}' missing from graph"
+            )
 
 
 # ---------------------------------------------------------------------------
 # 5. route_post_revalidation — routing edge
 # ---------------------------------------------------------------------------
 
-class TestRoutePostRevalidation:
 
+class TestRoutePostRevalidation:
     def test_blocked_routes_to_drift_blocked(self):
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
             route_post_revalidation,
         )
+
         state = _base_state(post_hitl_safety_status="BLOCKED")
         assert route_post_revalidation(state) == "drift_blocked"
 
@@ -439,6 +457,7 @@ class TestRoutePostRevalidation:
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
             route_post_revalidation,
         )
+
         state = _base_state(post_hitl_safety_status="APPROVED")
         assert route_post_revalidation(state) == "executor"
 
@@ -448,6 +467,7 @@ class TestRoutePostRevalidation:
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
             route_post_revalidation,
         )
+
         state = _base_state(post_hitl_safety_status=None)
         assert route_post_revalidation(state) == "executor"
 
@@ -456,11 +476,15 @@ class TestRoutePostRevalidation:
 # 6. approval_node — max_slippage_pct + expires_at
 # ---------------------------------------------------------------------------
 
+
 class TestApprovalNodeSlippageAndTTL:
     """Verify the approval_node changes (slippage + TTL stamp) are correct."""
 
-    def _call_node_with_decision(self, decision: dict) -> "Command":
-        from src.governed_financial_advisor.graph.nodes.approval_node import approval_node
+    def _call_node_with_decision(self, decision: dict) -> Command:
+        from src.governed_financial_advisor.graph.nodes.approval_node import (
+            approval_node,
+        )
+
         with patch(
             "src.governed_financial_advisor.graph.nodes.approval_node.interrupt",
             return_value=decision,
@@ -472,30 +496,36 @@ class TestApprovalNodeSlippageAndTTL:
             return approval_node(state)
 
     def test_max_slippage_pct_propagates_into_approval_decision(self):
-        cmd = self._call_node_with_decision({
-            "approved": True,
-            "reviewer": "alice@x.com",
-            "rationale": "All good.",
-            "max_slippage_pct": 1.5,
-        })
+        cmd = self._call_node_with_decision(
+            {
+                "approved": True,
+                "reviewer": "alice@x.com",
+                "rationale": "All good.",
+                "max_slippage_pct": 1.5,
+            }
+        )
         assert cmd.update["approval_decision"]["max_slippage_pct"] == pytest.approx(1.5)
 
     def test_default_slippage_when_not_provided(self):
-        cmd = self._call_node_with_decision({
-            "approved": True,
-            "reviewer": "bob@x.com",
-            "rationale": "Fine.",
-            # max_slippage_pct absent — should default to 2.0
-        })
+        cmd = self._call_node_with_decision(
+            {
+                "approved": True,
+                "reviewer": "bob@x.com",
+                "rationale": "Fine.",
+                # max_slippage_pct absent — should default to 2.0
+            }
+        )
         assert cmd.update["approval_decision"]["max_slippage_pct"] == pytest.approx(2.0)
 
     def test_approved_routes_to_post_hitl_rehydrate(self):
         """CRITICAL: approved path must now route to post_hitl_rehydrate, not executor."""
-        cmd = self._call_node_with_decision({
-            "approved": True,
-            "reviewer": "carol@x.com",
-            "rationale": "Within mandate.",
-        })
+        cmd = self._call_node_with_decision(
+            {
+                "approved": True,
+                "reviewer": "carol@x.com",
+                "rationale": "Within mandate.",
+            }
+        )
         assert cmd.goto == "post_hitl_rehydrate", (
             f"Expected goto='post_hitl_rehydrate', got goto='{cmd.goto}'. "
             "The TOCTOU routing fix may not have been applied."
@@ -503,16 +533,20 @@ class TestApprovalNodeSlippageAndTTL:
 
     def test_rejected_still_routes_to_rejection(self):
         """Regression: rejection path must be unchanged."""
-        cmd = self._call_node_with_decision({
-            "approved": False,
-            "reviewer": "dave@x.com",
-            "rationale": "Exceeds drawdown limit.",
-        })
+        cmd = self._call_node_with_decision(
+            {
+                "approved": False,
+                "reviewer": "dave@x.com",
+                "rationale": "Exceeds drawdown limit.",
+            }
+        )
         assert cmd.goto == "rejection"
 
     def test_interrupt_payload_contains_expires_at(self):
         """expires_at must be stamped on the interrupt payload for TTL enforcement."""
-        from src.governed_financial_advisor.graph.nodes.approval_node import approval_node
+        from src.governed_financial_advisor.graph.nodes.approval_node import (
+            approval_node,
+        )
 
         captured_payload = {}
 
@@ -541,10 +575,11 @@ class TestApprovalNodeSlippageAndTTL:
 # 7. ApprovalResumeRequest — max_slippage_pct schema
 # ---------------------------------------------------------------------------
 
-class TestApprovalResumeRequestSchema:
 
+class TestApprovalResumeRequestSchema:
     def _load(self):
         from src.governed_financial_advisor.server import ApprovalResumeRequest
+
         return ApprovalResumeRequest
 
     def test_default_slippage_is_2_percent(self):
@@ -554,7 +589,9 @@ class TestApprovalResumeRequestSchema:
 
     def test_custom_slippage_accepted(self):
         Model = self._load()
-        req = Model(approved=True, reviewer="t@x.com", rationale="ok", max_slippage_pct=0.5)
+        req = Model(
+            approved=True, reviewer="t@x.com", rationale="ok", max_slippage_pct=0.5
+        )
         assert req.max_slippage_pct == pytest.approx(0.5)
 
     def test_existing_fields_unchanged(self):

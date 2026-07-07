@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import requests
-import pytest
 import os
 import sys
+
+import pytest
 
 # Ensure src is in path
 sys.path.append(os.getcwd())
@@ -24,11 +24,14 @@ sys.path.append(os.getcwd())
 # excluded from standard CI integration runs and only executed in dedicated
 # security CI pipelines via: pytest -m red_team
 pytestmark = pytest.mark.red_team
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
-from src.governed_financial_advisor.agents.evaluator.red_agent import RedAgent # Updated import
-from src.gateway.governance.symbolic_governor import SymbolicGovernor, GovernanceError
+
 from src.gateway.governance.stpa_validator import STPAValidator
+from src.gateway.governance.symbolic_governor import GovernanceError, SymbolicGovernor
+from src.governed_financial_advisor.agents.evaluator.red_agent import (
+    RedAgent,  # Updated import
+)
+
 
 # Mock dependencies
 @pytest.fixture
@@ -37,11 +40,13 @@ def mock_opa_client():
     client.evaluate_policy.return_value = "ALLOW"
     return client
 
+
 @pytest.fixture
 def mock_safety_filter():
     filter = MagicMock()
     filter.verify_action.return_value = "SAFE"
     return filter
+
 
 @pytest.fixture
 def mock_consensus_engine():
@@ -49,15 +54,17 @@ def mock_consensus_engine():
     engine.check_consensus.return_value = {"status": "APPROVE", "reason": "OK"}
     return engine
 
+
 @pytest.fixture
 def symbolic_governor(mock_opa_client, mock_safety_filter, mock_consensus_engine):
-    stpa_validator = STPAValidator() # Use real validator with default ontology
+    stpa_validator = STPAValidator()  # Use real validator with default ontology
     return SymbolicGovernor(
         opa_client=mock_opa_client,
         safety_filter=mock_safety_filter,
         consensus_engine=mock_consensus_engine,
-        stpa_validator=stpa_validator
+        stpa_validator=stpa_validator,
     )
+
 
 @pytest.mark.asyncio
 async def test_red_agent_latency_attack(symbolic_governor):
@@ -76,7 +83,7 @@ async def test_red_agent_latency_attack(symbolic_governor):
         "symbol": "AAPL",
         "amount": 100,
         "confidence": 0.99,
-        "latency_ms": 500 # Attack success: > 200ms
+        "latency_ms": 500,  # Attack success: > 200ms
     }
 
     # Expect Governor to BLOCK
@@ -85,6 +92,7 @@ async def test_red_agent_latency_attack(symbolic_governor):
 
     assert "STPA Violation" in str(excinfo.value)
     assert "latency" in str(excinfo.value)
+
 
 @pytest.mark.asyncio
 async def test_red_agent_authorization_attack(symbolic_governor):
@@ -108,6 +116,7 @@ async def test_red_agent_authorization_attack(symbolic_governor):
     assert "STPA Violation" in str(excinfo.value)
     assert "approval token" in str(excinfo.value)
 
+
 @pytest.mark.asyncio
 async def test_red_agent_random_attack_resilience(symbolic_governor):
     """
@@ -120,13 +129,13 @@ async def test_red_agent_random_attack_resilience(symbolic_governor):
 
         # We map attacks to potential unsafe params for the Governor
         if attack["uca_target"] == "UCA-2":
-             params = {"latency_ms": 1000, "confidence": 0.99}
-             tool = "execute_trade"
+            params = {"latency_ms": 1000, "confidence": 0.99}
+            tool = "execute_trade"
         elif attack["uca_target"] == "UCA-1":
-             params = {"query": "bad sql"}
-             tool = "write_db"
+            params = {"query": "bad sql"}
+            tool = "write_db"
         else:
-             continue # Skip others for this unit test scope
+            continue  # Skip others for this unit test scope
 
         with pytest.raises(GovernanceError):
             await symbolic_governor.govern(tool, params)

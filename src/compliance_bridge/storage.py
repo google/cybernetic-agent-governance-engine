@@ -59,6 +59,7 @@ logger = logging.getLogger(__name__)
 # Backend selection — M-21: deferred to first use, not at import time
 # ---------------------------------------------------------------------------
 
+
 def _get_storage_backend() -> str:
     """Return the storage backend name, resolved at call time (not import time).
 
@@ -69,6 +70,7 @@ def _get_storage_backend() -> str:
     #                  "gcs" (Google Cloud Storage native client)
     #                  "local" (local filesystem, for development/testing)
     return os.environ.get("STORAGE_BACKEND", "s3").lower()
+
 
 # ---------------------------------------------------------------------------
 # Lazy client singletons
@@ -85,7 +87,7 @@ def _get_gcs_client() -> Any:
         return _gcs_client
 
     try:
-        from google.cloud import storage as gcs  # noqa: PLC0415
+        from google.cloud import storage as gcs
     except ImportError as exc:
         raise RuntimeError(
             "[storage] google-cloud-storage is required for GCS artifact storage. "
@@ -94,7 +96,10 @@ def _get_gcs_client() -> Any:
 
     project = os.environ.get("GCS_PROJECT_ID") or None
     _gcs_client = gcs.Client(project=project)
-    logger.info("[storage] GCS client initialised (ADC/Workload Identity, project=%s)", project or "inferred")
+    logger.info(
+        "[storage] GCS client initialised (ADC/Workload Identity, project=%s)",
+        project or "inferred",
+    )
     return _gcs_client
 
 
@@ -105,16 +110,18 @@ def _get_s3_client() -> Any:
         return _s3_client
 
     try:
-        import boto3 as _boto3  # noqa: PLC0415
-        from botocore.exceptions import ClientError as _ClientError  # noqa: PLC0415, F401
+        import boto3 as _boto3
+        from botocore.exceptions import (
+            ClientError as _ClientError,  # noqa: F401
+        )
     except ImportError as exc:
         raise RuntimeError(
             "[storage] boto3 is required for S3-compat artifact storage. "
             "Install it with: pip install boto3"
         ) from exc
 
-    endpoint   = os.environ.get("OSCAL_S3_ENDPOINT")
-    region     = os.environ.get("OSCAL_S3_REGION", "auto")
+    endpoint = os.environ.get("OSCAL_S3_ENDPOINT")
+    region = os.environ.get("OSCAL_S3_REGION", "auto")
     access_key = os.environ.get("OSCAL_S3_ACCESS_KEY")
     secret_key = os.environ.get("OSCAL_S3_SECRET_KEY")
 
@@ -154,6 +161,7 @@ def _get_bucket() -> str:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _build_object_key(audit_id: str, timestamp: datetime) -> str:
     """Deterministic path from audit timestamp + ID."""
     date = timestamp.strftime("%Y-%m-%d")
@@ -168,6 +176,7 @@ def _sha256(content: str) -> str:
 # GCS backend — native google-cloud-storage
 # ---------------------------------------------------------------------------
 
+
 def _gcs_blob_exists(bucket_name: str, key: str) -> bool:
     """Synchronous GCS blob existence check via native SDK."""
     client = _get_gcs_client()
@@ -176,7 +185,9 @@ def _gcs_blob_exists(bucket_name: str, key: str) -> bool:
     return blob.exists()
 
 
-def _gcs_upload(bucket_name: str, key: str, content: str, audit_id: str, timestamp: datetime) -> str:
+def _gcs_upload(
+    bucket_name: str, key: str, content: str, audit_id: str, timestamp: datetime
+) -> str:
     """Synchronous GCS upload via native SDK. Returns gs:// URI."""
     client = _get_gcs_client()
     bucket = client.bucket(bucket_name)
@@ -184,10 +195,10 @@ def _gcs_upload(bucket_name: str, key: str, content: str, audit_id: str, timesta
     digest = _sha256(content)
 
     blob.metadata = {
-        "x-audit-id":       audit_id,
+        "x-audit-id": audit_id,
         "x-content-sha256": digest,
-        "x-standard":       "ISO/IEC 42001:2023",
-        "x-audit-ts":       timestamp.isoformat(),
+        "x-standard": "ISO/IEC 42001:2023",
+        "x-audit-ts": timestamp.isoformat(),
     }
     blob.upload_from_string(
         content.encode("utf-8"),
@@ -198,7 +209,8 @@ def _gcs_upload(bucket_name: str, key: str, content: str, audit_id: str, timesta
     gcs_uri = f"gs://{bucket_name}/{key}"
     logger.info(
         "[storage] OSCAL artifact persisted (GCS): %s (sha256=%s…)",
-        gcs_uri, digest[:12],
+        gcs_uri,
+        digest[:12],
     )
     return gcs_uri
 
@@ -207,9 +219,11 @@ def _gcs_upload(bucket_name: str, key: str, content: str, audit_id: str, timesta
 # S3-compat backend — boto3
 # ---------------------------------------------------------------------------
 
+
 def _s3_blob_exists(bucket_name: str, key: str) -> bool:
     """Synchronous S3 HEAD check."""
-    from botocore.exceptions import ClientError  # noqa: PLC0415
+    from botocore.exceptions import ClientError
+
     s3 = _get_s3_client()
     try:
         s3.head_object(Bucket=bucket_name, Key=key)
@@ -222,7 +236,9 @@ def _s3_blob_exists(bucket_name: str, key: str) -> bool:
         return False
 
 
-def _s3_upload(bucket_name: str, key: str, content: str, audit_id: str, timestamp: datetime) -> str:
+def _s3_upload(
+    bucket_name: str, key: str, content: str, audit_id: str, timestamp: datetime
+) -> str:
     """Synchronous S3 PutObject. Returns s3:// URI."""
     s3 = _get_s3_client()
     digest = _sha256(content)
@@ -233,17 +249,18 @@ def _s3_upload(bucket_name: str, key: str, content: str, audit_id: str, timestam
         Body=content.encode("utf-8"),
         ContentType="application/yaml",
         Metadata={
-            "x-audit-id":       audit_id,
+            "x-audit-id": audit_id,
             "x-content-sha256": digest,
-            "x-standard":       "ISO/IEC 42001:2023",
-            "x-audit-ts":       timestamp.isoformat(),
+            "x-standard": "ISO/IEC 42001:2023",
+            "x-audit-ts": timestamp.isoformat(),
         },
     )
 
     uri = f"s3://{bucket_name}/{key}"
     logger.info(
         "[storage] OSCAL artifact persisted (S3): %s (sha256=%s…)",
-        uri, digest[:12],
+        uri,
+        digest[:12],
     )
     return uri
 
@@ -251,6 +268,7 @@ def _s3_upload(bucket_name: str, key: str, content: str, audit_id: str, timestam
 # ---------------------------------------------------------------------------
 # Unified async API
 # ---------------------------------------------------------------------------
+
 
 async def artifact_exists(bucket: str, key: str) -> bool:
     """Async existence check — dispatches to GCS or S3 backend."""
@@ -267,12 +285,16 @@ async def upload_artifact(bucket: str, key: str, content: str) -> str:
     Returns:
         URI: gs://<bucket>/<key>  or  s3://<bucket>/<key>
     """
-    audit_id  = key.split("/")[-1].replace(".yaml", "")
+    audit_id = key.split("/")[-1].replace(".yaml", "")
     timestamp = datetime.now(tz=timezone.utc)
     # M-21: Resolve backend at call time, not at import time
     if _get_storage_backend() == "s3":
-        return await asyncio.to_thread(_s3_upload, bucket, key, content, audit_id, timestamp)
-    return await asyncio.to_thread(_gcs_upload, bucket, key, content, audit_id, timestamp)
+        return await asyncio.to_thread(
+            _s3_upload, bucket, key, content, audit_id, timestamp
+        )
+    return await asyncio.to_thread(
+        _gcs_upload, bucket, key, content, audit_id, timestamp
+    )
 
 
 async def put_oscal_artifact(
@@ -298,13 +320,14 @@ async def put_oscal_artifact(
         timestamp = datetime.now(tz=timezone.utc)
 
     bucket = _get_bucket()
-    key    = _build_object_key(audit_id, timestamp)
+    key = _build_object_key(audit_id, timestamp)
 
     exists = await artifact_exists(bucket, key)
     if exists:
         logger.info(
             "[storage] Artifact already exists, skipping upload: %s/%s",
-            bucket, key,
+            bucket,
+            key,
         )
         return key
 

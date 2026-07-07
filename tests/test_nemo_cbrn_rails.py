@@ -41,9 +41,7 @@ import pytest
 # Rail file path
 # ---------------------------------------------------------------------------
 
-RAIL_FILE = pathlib.Path(
-    "src/gateway/governance/nemo/colang/cbrn_rails.co"
-)
+RAIL_FILE = pathlib.Path("src/gateway/governance/nemo/colang/cbrn_rails.co")
 
 # ---------------------------------------------------------------------------
 # Expected content constants
@@ -80,6 +78,7 @@ EXPECTED_CAT_M_ANNOTATION = "Cat-M"
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def rail_content() -> str:
     """Load the CBRN Colang rail file content."""
@@ -94,14 +93,13 @@ def rail_content() -> str:
 # File existence
 # ---------------------------------------------------------------------------
 
+
 class TestCBRNRailFileExists:
     """Verify the CBRN rail file exists at the expected path."""
 
     def test_rail_file_exists(self):
         """cbrn_rails.co must exist at src/gateway/governance/nemo/colang/."""
-        assert RAIL_FILE.exists(), (
-            f"CBRN rail file missing: {RAIL_FILE}"
-        )
+        assert RAIL_FILE.exists(), f"CBRN rail file missing: {RAIL_FILE}"
 
     def test_rail_file_is_not_empty(self, rail_content: str):
         """cbrn_rails.co must not be empty."""
@@ -117,6 +115,7 @@ class TestCBRNRailFileExists:
 # ---------------------------------------------------------------------------
 # Structural blocks
 # ---------------------------------------------------------------------------
+
 
 class TestCBRNRailStructure:
     """Verify the structural Colang blocks are present."""
@@ -169,15 +168,14 @@ class TestCBRNRailStructure:
 # CBRN phrase coverage
 # ---------------------------------------------------------------------------
 
+
 class TestCBRNPhraseCoverage:
     """Verify all 15 CBRN phrases are declared in the user intent block."""
 
     @pytest.mark.parametrize("phrase", EXPECTED_CBRN_PHRASES)
     def test_phrase_present_in_rail(self, phrase: str, rail_content: str):
         """Each CBRN phrase must appear in the rail file."""
-        assert phrase in rail_content, (
-            f"CBRN phrase missing from rail file: {phrase!r}"
-        )
+        assert phrase in rail_content, f"CBRN phrase missing from rail file: {phrase!r}"
 
     def test_phrase_count(self, rail_content: str):
         """Rail file must contain all 15 expected CBRN phrases."""
@@ -191,6 +189,7 @@ class TestCBRNPhraseCoverage:
 # ---------------------------------------------------------------------------
 # Compliance annotations
 # ---------------------------------------------------------------------------
+
 
 class TestCBRNRailComplianceAnnotations:
     """Verify compliance metadata comments are present in the rail file."""

@@ -85,14 +85,14 @@ def _c(code: str, text: str) -> str:
     return f"\033[{code}m{text}\033[0m" if _TTY else text
 
 
-RED    = lambda t: _c("31;1", t)
-GREEN  = lambda t: _c("32;1", t)
+RED = lambda t: _c("31;1", t)
+GREEN = lambda t: _c("32;1", t)
 YELLOW = lambda t: _c("33;1", t)
-CYAN   = lambda t: _c("36;1", t)
-BOLD   = lambda t: _c("1", t)
-DIM    = lambda t: _c("2", t)
+CYAN = lambda t: _c("36;1", t)
+BOLD = lambda t: _c("1", t)
+DIM = lambda t: _c("2", t)
 MAGENTA = lambda t: _c("35;1", t)
-WHITE   = lambda t: _c("97", t)
+WHITE = lambda t: _c("97", t)
 
 
 # ---------------------------------------------------------------------------
@@ -103,26 +103,29 @@ import json
 # Telemetry (imported after sys.path is set)
 _tel_module = None
 
+
 def _get_telemetry():
     global _tel_module
     if _tel_module is None:
         try:
             from examples.telemetry import PlaygroundTelemetry
+
             _tel_module = PlaygroundTelemetry()
         except Exception as exc:
             logger.warning("Telemetry init failed (non-fatal): %s", exc)
     return _tel_module
 
+
 _THRESH_PATH = _REPO_ROOT / "config" / "governance_thresholds.json"
 with open(_THRESH_PATH) as _fh:
     _RAW = json.load(_fh)
 
-_MAX_LATENCY_MS: float       = _RAW["stpa"]["max_latency_ms"]          # 200.0
-_DRAWDOWN_LIMIT: float       = _RAW["stpa"]["uca5_drawdown_threshold_pct"]  # 4.5
-_MIN_CONFIDENCE: float       = _RAW["confidence"]["min_trade_confidence"]   # 0.95
-_CONSENSUS_USD: float        = _RAW["consensus"]["threshold_usd"]           # 10000.0
-_TIER1_KEYWORDS: list[str]   = _RAW.get("tier1_keywords", [])
-_MIN_CASH: float             = _RAW["cbf"]["min_cash_balance"]              # 1000.0
+_MAX_LATENCY_MS: float = _RAW["stpa"]["max_latency_ms"]  # 200.0
+_DRAWDOWN_LIMIT: float = _RAW["stpa"]["uca5_drawdown_threshold_pct"]  # 4.5
+_MIN_CONFIDENCE: float = _RAW["confidence"]["min_trade_confidence"]  # 0.95
+_CONSENSUS_USD: float = _RAW["consensus"]["threshold_usd"]  # 10000.0
+_TIER1_KEYWORDS: list[str] = _RAW.get("tier1_keywords", [])
+_MIN_CASH: float = _RAW["cbf"]["min_cash_balance"]  # 1000.0
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +133,7 @@ _MIN_CASH: float             = _RAW["cbf"]["min_cash_balance"]              # 10
 # ---------------------------------------------------------------------------
 try:
     from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator
+
     _VALIDATOR = GeneratedSTPAValidator()
     _VALIDATOR_AVAILABLE = True
 except Exception as _exc:
@@ -147,6 +151,7 @@ try:
         saga_router_node,
     )
     from src.governed_financial_advisor.utils.langfuse_utils import SagaCallbackHandler
+
     _SAGA_AVAILABLE = True
 except Exception as _exc:
     _SAGA_AVAILABLE = False
@@ -157,6 +162,7 @@ except Exception as _exc:
 # Inline OPA Rego emulator
 # Mirrors: config/opa/generated_stpa_policy.rego + trade_governance.rego
 # ---------------------------------------------------------------------------
+
 
 def _opa_emulate(action: str, params: dict[str, Any]) -> tuple[str, list[str]]:
     """
@@ -197,11 +203,15 @@ def _opa_emulate(action: str, params: dict[str, Any]) -> tuple[str, list[str]]:
 
     # --- UCA-8: trade before risk assessment ---
     if action == "execute_trade" and params.get("risk_assessed") is False:
-        violations.append("UCA-8 [OPA]: Trade attempted before risk assessment completed.")
+        violations.append(
+            "UCA-8 [OPA]: Trade attempted before risk assessment completed."
+        )
 
     # --- UCA-9: compliance check bypassed ---
     if action == "execute_trade" and params.get("compliance_checked") is False:
-        violations.append("UCA-9 [OPA]: Trade attempted with compliance check bypassed.")
+        violations.append(
+            "UCA-9 [OPA]: Trade attempted with compliance check bypassed."
+        )
 
     # --- RBAC: role check ---
     role = params.get("role", "analyst")
@@ -216,6 +226,7 @@ def _opa_emulate(action: str, params: dict[str, Any]) -> tuple[str, list[str]]:
 # ---------------------------------------------------------------------------
 # Tier-1 keyword scanner (mirrors gateway/server/governance_middleware.py)
 # ---------------------------------------------------------------------------
+
 
 def _scan_prompt_injection(prompt: str) -> list[str]:
     hits = []
@@ -249,7 +260,9 @@ _SOVEREIGN_AGENT_ALLOWED_INTERNAL = {
 }
 
 
-def _cilium_check(source_label: str, destination: str, port: int = 443) -> tuple[bool, str]:
+def _cilium_check(
+    source_label: str, destination: str, port: int = 443
+) -> tuple[bool, str]:
     """Returns (allowed, reason)."""
     if source_label == "role=sovereign-agent":
         if destination in _SOVEREIGN_AGENT_ALLOWED_INTERNAL:
@@ -259,7 +272,9 @@ def _cilium_check(source_label: str, destination: str, port: int = 443) -> tuple
             f"endpoint '{destination}:{port}'. Policy: agent-egress-internal-only."
         )
     # Gateway pod
-    if destination in _APPROVED_FQDNS or any(destination.endswith(d) for d in [".googleapis.com"]):
+    if destination in _APPROVED_FQDNS or any(
+        destination.endswith(d) for d in [".googleapis.com"]
+    ):
         return True, f"CiliumPolicy ALLOW — approved FQDN {destination}"
     return False, (
         f"CiliumPolicy DENY — '{destination}' not in gateway FQDN allowlist. "
@@ -270,6 +285,7 @@ def _cilium_check(source_label: str, destination: str, port: int = 443) -> tuple
 # ---------------------------------------------------------------------------
 # Attack scenario definitions
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class AttackScenario:
@@ -304,9 +320,9 @@ _SCENARIOS: list[AttackScenario] = [
             "symbol": "NVDA",
             "amount": 50_000.0,
             "side": "BUY",
-            "latency_ms": 340.0,      # UCA-2 trigger: > 200ms
-            "drawdown": 6.2,          # UCA-5 trigger: > 4.5%
-            "confidence": 0.87,       # SR 26-2 §IV.B trigger: < 0.95
+            "latency_ms": 340.0,  # UCA-2 trigger: > 200ms
+            "drawdown": 6.2,  # UCA-5 trigger: > 4.5%
+            "confidence": 0.87,  # SR 26-2 §IV.B trigger: < 0.95
             "risk_assessed": True,
             "compliance_checked": True,
             "role": "trader",
@@ -331,8 +347,12 @@ _SCENARIOS: list[AttackScenario] = [
         action="write_db",
         params={
             "table": "clients",
-            "payload": {"name": "Jane Doe", "ssn": "123-45-6789", "account": "ACC-9912"},
-            "approval_token": None,   # UCA-1 trigger
+            "payload": {
+                "name": "Jane Doe",
+                "ssn": "123-45-6789",
+                "account": "ACC-9912",
+            },
+            "approval_token": None,  # UCA-1 trigger
             "role": "analyst",
         },
         network_dest="malicious-exfil.attacker.io",
@@ -362,7 +382,7 @@ _SCENARIOS: list[AttackScenario] = [
             "latency_ms": 45.0,
             "drawdown": 1.2,
             "confidence": 0.98,
-            "risk_assessed": False,    # UCA-8 trigger
+            "risk_assessed": False,  # UCA-8 trigger
             "compliance_checked": False,  # UCA-9 trigger
             "role": "trader",
         },
@@ -375,6 +395,7 @@ _SCENARIOS: list[AttackScenario] = [
 # ---------------------------------------------------------------------------
 # Saga chaos scenarios (D & E) — exercise generated_saga_nodes.py directly
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class SagaScenario:
@@ -460,15 +481,23 @@ def _bar() -> None:
 
 def _header(text: str, colour=CYAN) -> None:
     pad = (_WIDTH - len(text) - 4) // 2
-    print(colour(f"{'─'*pad}  {text}  {'─'*(pad)}"))
+    print(colour(f"{'─' * pad}  {text}  {'─' * (pad)}"))
 
 
 def _tier_header(tier: int, name: str, status: str) -> None:
-    icon = "🔴" if "BLOCK" in status or "DENY" in status else (
-           "🟡" if "WARN" in status else "🔵")
-    status_col = RED(status) if "BLOCK" in status or "DENY" in status else (
-                 YELLOW(status) if "WARN" in status else CYAN(status))
-    print(f"\n  {icon}  {BOLD(f'Tier {tier}')}  {DIM('·')}  {WHITE(name)}  {status_col}")
+    icon = (
+        "🔴"
+        if "BLOCK" in status or "DENY" in status
+        else ("🟡" if "WARN" in status else "🔵")
+    )
+    status_col = (
+        RED(status)
+        if "BLOCK" in status or "DENY" in status
+        else (YELLOW(status) if "WARN" in status else CYAN(status))
+    )
+    print(
+        f"\n  {icon}  {BOLD(f'Tier {tier}')}  {DIM('·')}  {WHITE(name)}  {status_col}"
+    )
 
 
 def _finding(label: str, msg: str, is_block: bool = False) -> None:
@@ -500,6 +529,7 @@ def _typewriter(text: str, delay: float = 0.018, no_pause: bool = False) -> None
 # Core: run one scenario through all governance tiers
 # ---------------------------------------------------------------------------
 
+
 def _run_scenario(
     s: AttackScenario,
     no_pause: bool = False,
@@ -517,7 +547,9 @@ def _run_scenario(
     _typewriter(f"  {YELLOW(repr(s.attacker_prompt))}", no_pause=no_pause)
     print()
     print(f"  {BOLD('Proposed action:')}")
-    _log(f"action={CYAN(s.action)}  params={DIM(str({k:v for k,v in s.params.items() if k != 'payload'}))}")
+    _log(
+        f"action={CYAN(s.action)}  params={DIM(str({k: v for k, v in s.params.items() if k != 'payload'}))}"
+    )
     _bar()
 
     blocking_tier: int | None = None
@@ -536,7 +568,9 @@ def _run_scenario(
     if _VALIDATOR_AVAILABLE:
         stpa_viols = _VALIDATOR.validate_generated(s.action, s.params)
     else:
-        stpa_viols = [f"Validator unavailable ({_VALIDATOR_LOAD_ERR}) — failing closed."]
+        stpa_viols = [
+            f"Validator unavailable ({_VALIDATOR_LOAD_ERR}) — failing closed."
+        ]
 
     if stpa_viols:
         _tier_header(0, tier_name, "BLOCKED")
@@ -557,7 +591,9 @@ def _run_scenario(
             sr_viols.append(
                 f"SR 26-2 §IV.B: agentic model confidence {conf} < {_MIN_CONFIDENCE} minimum."
             )
-    tier_name = "Agentic Confidence Threshold  [SR 26-2 §IV.B / governance_thresholds.json]"
+    tier_name = (
+        "Agentic Confidence Threshold  [SR 26-2 §IV.B / governance_thresholds.json]"
+    )
     if sr_viols:
         _tier_header(1, tier_name, "BLOCKED")
         for v in sr_viols:
@@ -591,7 +627,9 @@ def _run_scenario(
     tier_name = "Tier-1 Keyword Scanner  [governance_thresholds.json · tier1_keywords]"
     if inj_hits:
         _tier_header(3, tier_name, "BLOCKED")
-        _finding("InjectionScan", f"Matched keywords: {RED(str(inj_hits))}", is_block=True)
+        _finding(
+            "InjectionScan", f"Matched keywords: {RED(str(inj_hits))}", is_block=True
+        )
         all_violations.append(f"Prompt injection: {inj_hits}")
         if blocking_tier is None:
             blocking_tier = 3
@@ -603,7 +641,9 @@ def _run_scenario(
     # ── Tier 4: Cilium L7 Egress Simulation ──────────────────────────────────
     tier_name = "Cilium L7 Egress  [cilium-egress-lockdown.yaml · CiliumNetworkPolicy]"
     if s.network_dest:
-        allowed, cilium_reason = _cilium_check(s.source_label, s.network_dest, s.network_port)
+        allowed, cilium_reason = _cilium_check(
+            s.source_label, s.network_dest, s.network_port
+        )
         if not allowed:
             _tier_header(4, tier_name, "DENY — PACKET DROPPED")
             _finding("CiliumL7", cilium_reason, is_block=True)
@@ -635,24 +675,31 @@ def _run_scenario(
     _bar()
     print()
     if all_violations:
-        print(f"  {RED('██  ACTION BLOCKED')}  "
-              f"{DIM(f'· {len(all_violations)} violation(s) · first block at Tier {blocking_tier}')}")
-        print(f"  {DIM('Median validation latency:')}"
-              f"  {YELLOW(f'{elapsed_ms:.1f} ms')}")
+        print(
+            f"  {RED('██  ACTION BLOCKED')}  "
+            f"{DIM(f'· {len(all_violations)} violation(s) · first block at Tier {blocking_tier}')}"
+        )
+        print(
+            f"  {DIM('Median validation latency:')}  {YELLOW(f'{elapsed_ms:.1f} ms')}"
+        )
         print()
         print(f"  {BOLD('All violations:')}")
         for v in all_violations:
             print(f"  {RED('✗')}  {v}")
         print()
         print(f"  {DIM('OTel span attributes emitted:')}")
-        _log(f"cage.governance.decision=BLOCKED  cage.governance.blocking_tier={blocking_tier}")
+        _log(
+            f"cage.governance.decision=BLOCKED  cage.governance.blocking_tier={blocking_tier}"
+        )
         _log(f"nist.control_id=SC-4,A.8.4  iso42001.control_id=A.8.4")
         _log(f"cage.governance.violation_count={len(all_violations)}")
         if record_hash:
             _log(f"cage.evidence.chain_hash={CYAN(record_hash[:32])}...")
     else:
-        print(f"  {GREEN('██  ACTION APPROVED')}  "
-              f"{DIM(f'· all {len(tier_results)} tiers passed · {elapsed_ms:.1f} ms')}")
+        print(
+            f"  {GREEN('██  ACTION APPROVED')}  "
+            f"{DIM(f'· all {len(tier_results)} tiers passed · {elapsed_ms:.1f} ms')}"
+        )
         if record_hash:
             _log(f"cage.evidence.chain_hash={GREEN(record_hash[:32])}...")
 
@@ -673,6 +720,7 @@ def _run_scenario(
 # ---------------------------------------------------------------------------
 # Saga scenario runner
 # ---------------------------------------------------------------------------
+
 
 def _run_saga_scenario(s: SagaScenario, no_pause: bool = False) -> dict:
     """Run a Saga chaos scenario through the compiled generated_saga_nodes."""
@@ -700,9 +748,15 @@ def _run_saga_scenario(s: SagaScenario, no_pause: bool = False) -> dict:
 
     print(f"  {BOLD('Initial ledger:')}")
     for entry in s.initial_ledger:
-        status_col = YELLOW(entry['status']) if entry['status'] == 'PENDING' else GREEN(entry['status'])
-        _log(f"seq={entry['sequence_id']}  uca_ref={entry['uca_ref']}  "
-             f"status={status_col}  tx_id={entry['context_data'].get('transaction_id', '(none)')}")
+        status_col = (
+            YELLOW(entry["status"])
+            if entry["status"] == "PENDING"
+            else GREEN(entry["status"])
+        )
+        _log(
+            f"seq={entry['sequence_id']}  uca_ref={entry['uca_ref']}  "
+            f"status={status_col}  tx_id={entry['context_data'].get('transaction_id', '(none)')}"
+        )
     print()
 
     t0 = time.perf_counter()
@@ -727,7 +781,9 @@ def _run_saga_scenario(s: SagaScenario, no_pause: bool = False) -> dict:
             result,
             name="saga_router_node",
         )
-        _log(f"{GREEN('✓')}  SagaCallbackHandler.on_chain_end fired — OTel span emitted")
+        _log(
+            f"{GREEN('✓')}  SagaCallbackHandler.on_chain_end fired — OTel span emitted"
+        )
     except Exception as exc:
         _log(f"{YELLOW('⚠')}  SagaCallbackHandler error (non-fatal): {exc}")
 
@@ -739,24 +795,36 @@ def _run_saga_scenario(s: SagaScenario, no_pause: bool = False) -> dict:
     _bar()
     print()
     print(f"  {BOLD('Router output:')}")
-    _log(f"safety_status = {GREEN(actual_status) if passed else RED(actual_status)}  "
-         f"(expected: {s.expected_safety_status})")
+    _log(
+        f"safety_status = {GREEN(actual_status) if passed else RED(actual_status)}  "
+        f"(expected: {s.expected_safety_status})"
+    )
     if actual_next:
         _log(f"next_step     = {CYAN(actual_next)}")
 
     updated_ledger = result.get("completed_transactions", [])
     if updated_ledger:
         for entry in updated_ledger:
-            status_col = GREEN(entry['status']) if entry['status'] == 'ROLLED_BACK' else YELLOW(entry['status'])
-            _log(f"ledger update: seq={entry.get('sequence_id')}  status={status_col}  "
-                 f"idempotency_key={DIM(entry.get('idempotency_key', '')[:16])}...")
+            status_col = (
+                GREEN(entry["status"])
+                if entry["status"] == "ROLLED_BACK"
+                else YELLOW(entry["status"])
+            )
+            _log(
+                f"ledger update: seq={entry.get('sequence_id')}  status={status_col}  "
+                f"idempotency_key={DIM(entry.get('idempotency_key', '')[:16])}..."
+            )
 
     print()
     if passed:
-        print(f"  {GREEN('██  SAGA BEHAVIOUR CORRECT')}  {DIM(f'· {elapsed_ms:.1f} ms')}")
+        print(
+            f"  {GREEN('██  SAGA BEHAVIOUR CORRECT')}  {DIM(f'· {elapsed_ms:.1f} ms')}"
+        )
     else:
-        print(f"  {RED('██  SAGA BEHAVIOUR UNEXPECTED')}  "
-              f"{DIM(f'got {actual_status}, want {s.expected_safety_status}')}")
+        print(
+            f"  {RED('██  SAGA BEHAVIOUR UNEXPECTED')}  "
+            f"{DIM(f'got {actual_status}, want {s.expected_safety_status}')}"
+        )
     print()
     _bar()
 
@@ -774,16 +842,23 @@ def _run_saga_scenario(s: SagaScenario, no_pause: bool = False) -> dict:
 # Summary table
 # ---------------------------------------------------------------------------
 
+
 def _print_summary(results: list[dict], tel: Optional[object] = None) -> None:
     print()
     _header("GOVERNANCE SUMMARY", GREEN)
     print()
-    print(f"  {'ID':<4} {'Action':<25} {'Blocked':<10} {'Tiers':<8} {'Violations':<12} {'Latency':<12} {'Evidence Hash'}")
+    print(
+        f"  {'ID':<4} {'Action':<25} {'Blocked':<10} {'Tiers':<8} {'Violations':<12} {'Latency':<12} {'Evidence Hash'}"
+    )
     _bar()
     for r in results:
         blocked_str = RED("BLOCKED") if r["blocked"] else GREEN("ALLOWED")
-        tier_str = f"0–{r['blocking_tier']}" if r["blocking_tier"] is not None else "0–4"
-        hash_str = DIM(r["record_hash"][:16] + "...") if r.get("record_hash") else DIM("N/A")
+        tier_str = (
+            f"0–{r['blocking_tier']}" if r["blocking_tier"] is not None else "0–4"
+        )
+        hash_str = (
+            DIM(r["record_hash"][:16] + "...") if r.get("record_hash") else DIM("N/A")
+        )
         print(
             f"  {r['scenario']:<4} {r['action']:<25} {blocked_str:<18} "
             f"{tier_str:<8} {r['violation_count']:<12} {r['elapsed_ms']:.1f} ms       {hash_str}"
@@ -828,17 +903,20 @@ def _print_summary(results: list[dict], tel: Optional[object] = None) -> None:
 # Entrypoint
 # ---------------------------------------------------------------------------
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="chaos_agent_playground",
         description="CAGE Interactive Chaos Agent Playground",
     )
     parser.add_argument(
-        "--scenario", choices=["A", "B", "C", "D", "E"],
+        "--scenario",
+        choices=["A", "B", "C", "D", "E"],
         help="Run a single scenario (default: all)",
     )
     parser.add_argument(
-        "--no-pause", action="store_true",
+        "--no-pause",
+        action="store_true",
         help="Non-interactive batch mode — no delays or prompts.",
     )
     args = parser.parse_args()
@@ -846,19 +924,33 @@ def main() -> int:
     # ── Banner ────────────────────────────────────────────────────────────────
     print()
     print(MAGENTA("╔" + "═" * (_WIDTH - 2) + "╗"))
-    print(MAGENTA("║") + BOLD(
-        "   CAGE · CHAOS AGENT PLAYGROUND".center(_WIDTH - 2)
-    ) + MAGENTA("║"))
-    print(MAGENTA("║") + DIM(
-        "   Adversarial Governance Demo · STPA + OPA + Cilium L7".center(_WIDTH - 2)
-    ) + MAGENTA("║"))
+    print(
+        MAGENTA("║")
+        + BOLD("   CAGE · CHAOS AGENT PLAYGROUND".center(_WIDTH - 2))
+        + MAGENTA("║")
+    )
+    print(
+        MAGENTA("║")
+        + DIM(
+            "   Adversarial Governance Demo · STPA + OPA + Cilium L7".center(_WIDTH - 2)
+        )
+        + MAGENTA("║")
+    )
     print(MAGENTA("╚" + "═" * (_WIDTH - 2) + "╝"))
     print()
     print(DIM(f"  Repo root    : {_REPO_ROOT}"))
     print(DIM(f"  Thresholds   : {_THRESH_PATH.relative_to(_REPO_ROOT)}"))
-    print(DIM(f"  Validator    : {'real GeneratedSTPAValidator ✓' if _VALIDATOR_AVAILABLE else 'unavailable — inline fallback'}"))
+    print(
+        DIM(
+            f"  Validator    : {'real GeneratedSTPAValidator ✓' if _VALIDATOR_AVAILABLE else 'unavailable — inline fallback'}"
+        )
+    )
     print(DIM(f"  OPA mode     : inline emulator (mirrors generated_stpa_policy.rego)"))
-    print(DIM(f"  Network mode : Cilium L7 emulator (mirrors cilium-egress-lockdown.yaml)"))
+    print(
+        DIM(
+            f"  Network mode : Cilium L7 emulator (mirrors cilium-egress-lockdown.yaml)"
+        )
+    )
     print()
     _bar()
 
@@ -870,10 +962,16 @@ def main() -> int:
         _log(DIM("Telemetry unavailable — running without OTel/evidence chain."))
     print()
 
-    scenarios = _SCENARIOS if not args.scenario else [s for s in _SCENARIOS if s.id == args.scenario]
-    saga_scenarios = _SAGA_SCENARIOS if not args.scenario else [
-        s for s in _SAGA_SCENARIOS if s.id == args.scenario
-    ]
+    scenarios = (
+        _SCENARIOS
+        if not args.scenario
+        else [s for s in _SCENARIOS if s.id == args.scenario]
+    )
+    saga_scenarios = (
+        _SAGA_SCENARIOS
+        if not args.scenario
+        else [s for s in _SAGA_SCENARIOS if s.id == args.scenario]
+    )
     results: list[dict] = []
     saga_results: list[dict] = []
 

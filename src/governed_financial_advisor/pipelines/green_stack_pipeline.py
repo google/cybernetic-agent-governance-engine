@@ -24,6 +24,7 @@ governance evaluation loop:
 
 try:
     from kfp import dsl as dsl  # type: ignore[import]
+
     _KFP_AVAILABLE = True
 except ImportError:
     dsl = None  # type: ignore[assignment]
@@ -32,17 +33,21 @@ except ImportError:
 
 def _noop_decorator(*args, **kwargs):
     """Stand-in decorator when kfp is not installed."""
+
     def wrapper(fn):
         return fn
+
     if len(args) == 1 and callable(args[0]):
         return args[0]
     return wrapper
 
 
 if not _KFP_AVAILABLE:
+
     class _FakeDsl:  # type: ignore[no-redef]
         component = staticmethod(_noop_decorator)
         pipeline = staticmethod(_noop_decorator)
+
     dsl = _FakeDsl()  # type: ignore[assignment]
 
 
@@ -56,7 +61,7 @@ def fetch_compliance_metrics(
     import urllib.request
 
     url = f"{compliance_bridge_url}/v1/metrics/{control_id}"
-    with urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310
+    with urllib.request.urlopen(url, timeout=30) as resp:
         return json.loads(resp.read())
 
 
@@ -113,11 +118,13 @@ def trigger_nemo_refinement(
     import json
     import urllib.request
 
-    payload = json.dumps({
-        "control_id": control_id,
-        "verdict": verdict,
-        "source": "kfp-governance-loop",
-    }).encode()
+    payload = json.dumps(
+        {
+            "control_id": control_id,
+            "verdict": verdict,
+            "source": "kfp-governance-loop",
+        }
+    ).encode()
     req = urllib.request.Request(
         f"{backend_url.rstrip('/')}/v1/nemo/propose-refinement",
         data=payload,
@@ -125,7 +132,7 @@ def trigger_nemo_refinement(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=30) as resp:
             body = resp.read().decode()
             return f"PROPOSAL_STAGED: HTTP {resp.status} — {body[:200]}"
     except Exception as exc:

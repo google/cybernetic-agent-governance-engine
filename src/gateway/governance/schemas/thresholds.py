@@ -30,10 +30,8 @@ import logging
 import os
 import sys
 from functools import lru_cache
-from typing import List
 
 from pydantic import BaseModel, Field, field_validator
-from src.gateway.governance.constants import PII_AUDIT_RETENTION_AUTHORITY_FIELD_DEFAULT as _PII_RETENTION_DEFAULT
 
 logger = logging.getLogger("Gateway.Governance.Schemas")
 
@@ -49,7 +47,9 @@ _ENV_CONFIG_PATH = os.environ.get("GOVERNANCE_THRESHOLDS_PATH", _DEFAULT_CONFIG_
 
 
 class CbfThresholds(BaseModel):
-    min_cash_balance: float = Field(..., gt=0, description="Minimum cash balance floor (USD).")
+    min_cash_balance: float = Field(
+        ..., gt=0, description="Minimum cash balance floor (USD)."
+    )
     gamma: float = Field(..., gt=0, lt=1, description="CBF decay factor γ ∈ (0,1).")
 
 
@@ -88,13 +88,17 @@ class StpaThresholds(BaseModel):
     max_sell_portfolio_fraction: float = Field(
         ..., gt=0, lt=1, description="FIN-1: max fraction of portfolio sold per order."
     )
-    max_latency_ms: float = Field(..., gt=0, description="FIN-2: max trade round-trip ms.")
+    max_latency_ms: float = Field(
+        ..., gt=0, description="FIN-2: max trade round-trip ms."
+    )
 
 
 class ConfidenceThresholds(BaseModel):
     # DEPRECATED: confidence threshold is now enforced exclusively by OPA (system_authz.rego)
     min_trade_confidence: float = Field(
-        ..., ge=0.0, le=1.0,
+        ...,
+        ge=0.0,
+        le=1.0,
         description=(
             "[CTRL_AGT_001] Minimum agentic model confidence score for trade execution. "
             "See config/control_mappings.json for the active regulatory framework mapping."
@@ -121,10 +125,10 @@ class GovernanceThresholds(BaseModel):
     stpa: StpaThresholds
     confidence: ConfidenceThresholds
     consensus: ConsensusThresholds
-    tier1_keywords: List[str] = Field(default_factory=list)
+    tier1_keywords: list[str] = Field(default_factory=list)
 
     # AI 600-1 §2.6 CBRN keyword list (US_FED only)
-    tier1_keywords_cbrn: List[str] = Field(default_factory=list)
+    tier1_keywords_cbrn: list[str] = Field(default_factory=list)
     tier1_keywords_cbrn_enabled: bool = False
 
     # AI 600-1 §2.2 PII audit log settings (FISMA AU-11)
@@ -133,14 +137,14 @@ class GovernanceThresholds(BaseModel):
 
     @field_validator("tier1_keywords")
     @classmethod
-    def keywords_nonempty(cls, v: List[str]) -> List[str]:
+    def keywords_nonempty(cls, v: list[str]) -> list[str]:
         if not v:
             raise ValueError("tier1_keywords must contain at least one entry.")
         return [kw.upper() for kw in v if kw.strip()]
 
     @field_validator("tier1_keywords_cbrn")
     @classmethod
-    def cbrn_keywords_uppercase(cls, v: List[str]) -> List[str]:
+    def cbrn_keywords_uppercase(cls, v: list[str]) -> list[str]:
         """Normalise CBRN keywords to uppercase for case-insensitive matching."""
         return [kw.upper() for kw in v if kw.strip()]
 
@@ -166,7 +170,8 @@ def load_and_validate_thresholds(path: str = _ENV_CONFIG_PATH) -> GovernanceThre
 
     if not os.path.exists(resolved):
         logger.critical(
-            "❌ governance_thresholds.json not found at %s — aborting startup.", resolved
+            "❌ governance_thresholds.json not found at %s — aborting startup.",
+            resolved,
         )
         sys.exit(1)
 
@@ -181,7 +186,8 @@ def load_and_validate_thresholds(path: str = _ENV_CONFIG_PATH) -> GovernanceThre
         thresholds = GovernanceThresholds(**raw)
     except Exception as exc:  # pydantic.ValidationError
         logger.critical(
-            "❌ governance_thresholds.json failed schema validation: %s — aborting startup.", exc
+            "❌ governance_thresholds.json failed schema validation: %s — aborting startup.",
+            exc,
         )
         sys.exit(1)
 

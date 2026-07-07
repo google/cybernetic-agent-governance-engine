@@ -19,14 +19,15 @@
 
 import os
 import re
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 
 pytest.importorskip("fakeredis", reason="fakeredis required")
 import fakeredis.aioredis
 
-from src.gateway.governance.token_quota_proxy import QuotaCheckResult
 from src.gateway.governance.pii_sanitizer import PIISanitizer
+from src.gateway.governance.token_quota_proxy import QuotaCheckResult
 
 
 def _mock_quota_result(step_count=13, block_reason="step_count"):
@@ -50,6 +51,7 @@ async def redis_client():
 @pytest.fixture
 async def uca_logger(redis_client):
     from src.gateway.governance.uca_logger import UCALogger
+
     return UCALogger(
         signer=None,
         redis_client=redis_client,
@@ -110,6 +112,7 @@ async def test_hmac_stub_signing_in_test_mode(uca_logger):
 def test_region_bucket_us_fed():
     """_get_worm_bucket() returns OSCAL_S3_BUCKET_US_FED for US_FED."""
     from src.gateway.governance.uca_logger import UCALogger
+
     logger = UCALogger(
         signer=None,
         redis_client=MagicMock(),
@@ -117,10 +120,13 @@ def test_region_bucket_us_fed():
         pii_sanitizer=PIISanitizer(),
         test_mode=True,
     )
-    with patch.dict(os.environ, {
-        "CAGE_DEPLOYMENT_REGION": "US_FED",
-        "OSCAL_S3_BUCKET_US_FED": "us-fed-bucket",
-    }):
+    with patch.dict(
+        os.environ,
+        {
+            "CAGE_DEPLOYMENT_REGION": "US_FED",
+            "OSCAL_S3_BUCKET_US_FED": "us-fed-bucket",
+        },
+    ):
         assert logger._get_worm_bucket() == "us-fed-bucket"
 
 
@@ -128,6 +134,7 @@ def test_region_bucket_us_fed():
 def test_region_bucket_eu_ecb():
     """_get_worm_bucket() returns OSCAL_S3_BUCKET_EU_ECB for EU_ECB."""
     from src.gateway.governance.uca_logger import UCALogger
+
     logger = UCALogger(
         signer=None,
         redis_client=MagicMock(),
@@ -135,10 +142,13 @@ def test_region_bucket_eu_ecb():
         pii_sanitizer=PIISanitizer(),
         test_mode=True,
     )
-    with patch.dict(os.environ, {
-        "CAGE_DEPLOYMENT_REGION": "EU_ECB",
-        "OSCAL_S3_BUCKET_EU_ECB": "eu-ecb-bucket",
-    }):
+    with patch.dict(
+        os.environ,
+        {
+            "CAGE_DEPLOYMENT_REGION": "EU_ECB",
+            "OSCAL_S3_BUCKET_EU_ECB": "eu-ecb-bucket",
+        },
+    ):
         assert logger._get_worm_bucket() == "eu-ecb-bucket"
 
 
@@ -146,6 +156,7 @@ def test_region_bucket_eu_ecb():
 def test_region_bucket_apac_mas():
     """_get_worm_bucket() returns OSCAL_S3_BUCKET_APAC_MAS for APAC_MAS."""
     from src.gateway.governance.uca_logger import UCALogger
+
     logger = UCALogger(
         signer=None,
         redis_client=MagicMock(),
@@ -153,10 +164,13 @@ def test_region_bucket_apac_mas():
         pii_sanitizer=PIISanitizer(),
         test_mode=True,
     )
-    with patch.dict(os.environ, {
-        "CAGE_DEPLOYMENT_REGION": "APAC_MAS",
-        "OSCAL_S3_BUCKET_APAC_MAS": "apac-mas-bucket",
-    }):
+    with patch.dict(
+        os.environ,
+        {
+            "CAGE_DEPLOYMENT_REGION": "APAC_MAS",
+            "OSCAL_S3_BUCKET_APAC_MAS": "apac-mas-bucket",
+        },
+    ):
         assert logger._get_worm_bucket() == "apac-mas-bucket"
 
 

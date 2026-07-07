@@ -30,8 +30,8 @@ from __future__ import annotations
 
 import importlib
 import inspect
-import pytest
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -76,6 +76,7 @@ REGISTRY_ACTION_NAMES = [
 # 1. config.rails.actions exports
 # ---------------------------------------------------------------------------
 
+
 class TestConfigRailsActionsExports:
     """All actions must be importable from config.rails.actions (P1 path)."""
 
@@ -110,6 +111,7 @@ class TestConfigRailsActionsExports:
 # 2. Financial pass-through stubs return True
 # ---------------------------------------------------------------------------
 
+
 class TestFinancialStubReturnValues:
     """Financial pass-through stubs must return True (fail-open; OPA is authoritative)."""
 
@@ -128,6 +130,7 @@ class TestFinancialStubReturnValues:
     async def test_stub_handles_none_context(self):
         """Stubs must not crash when called with context=None."""
         from config.rails.actions import check_approval_token_action
+
         result = await check_approval_token_action(context=None)
         assert result is True
 
@@ -135,6 +138,7 @@ class TestFinancialStubReturnValues:
     async def test_stub_handles_extra_kwargs(self):
         """Stubs must accept arbitrary kwargs (NeMo may pass extra arguments)."""
         from config.rails.actions import check_drawdown_limit_action
+
         result = await check_drawdown_limit_action(
             context={"amount": 5000.0}, event={"type": "execute_trade"}
         )
@@ -145,11 +149,15 @@ class TestFinancialStubReturnValues:
 # 3. nemo_action_registry.get_all_actions() completeness (Priority-1 path)
 # ---------------------------------------------------------------------------
 
+
 class TestNemoActionRegistryCompleteness:
     """get_all_actions() must return all required names without falling back."""
 
     def test_all_required_names_present(self):
-        from src.governed_financial_advisor.governance.nemo_action_registry import get_all_actions
+        from src.governed_financial_advisor.governance.nemo_action_registry import (
+            get_all_actions,
+        )
+
         actions = get_all_actions()
         registered_names = {name for name, _ in actions}
 
@@ -161,7 +169,10 @@ class TestNemoActionRegistryCompleteness:
             )
 
     def test_no_duplicate_names(self):
-        from src.governed_financial_advisor.governance.nemo_action_registry import get_all_actions
+        from src.governed_financial_advisor.governance.nemo_action_registry import (
+            get_all_actions,
+        )
+
         actions = get_all_actions()
         names = [name for name, _ in actions]
         assert len(names) == len(set(names)), (
@@ -170,7 +181,10 @@ class TestNemoActionRegistryCompleteness:
         )
 
     def test_all_callables_are_callable(self):
-        from src.governed_financial_advisor.governance.nemo_action_registry import get_all_actions
+        from src.governed_financial_advisor.governance.nemo_action_registry import (
+            get_all_actions,
+        )
+
         actions = get_all_actions()
         for name, fn in actions:
             assert callable(fn), f"Action '{name}' is not callable."
@@ -179,6 +193,7 @@ class TestNemoActionRegistryCompleteness:
 # ---------------------------------------------------------------------------
 # 4. Colang definitions.co declares all registered actions
 # ---------------------------------------------------------------------------
+
 
 class TestColangDefinitionsSync:
     """definitions.co must declare every action that is Python-registered."""
@@ -193,11 +208,15 @@ class TestColangDefinitionsSync:
 
     def test_log_safety_audit_has_python_impl(self):
         """LogSafetyAuditAction is declared in definitions.co and must have a Python impl."""
-        from config.rails.actions import log_safety_audit_action  # noqa: F401
+        from config.rails.actions import log_safety_audit_action
+
         assert callable(log_safety_audit_action)
 
     def test_invoke_vllm_fallback_accessible(self):
         """InvokeVllmFallbackAction must be accessible via nemo_action_registry."""
-        from src.governed_financial_advisor.governance.nemo_action_registry import get_all_actions
+        from src.governed_financial_advisor.governance.nemo_action_registry import (
+            get_all_actions,
+        )
+
         names = {n for n, _ in get_all_actions()}
         assert "InvokeVllmFallbackAction" in names

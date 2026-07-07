@@ -29,8 +29,9 @@ No live NeMo instance is required — get_nemo_rails() and
 verify_and_mask_output() are mocked via unittest.mock.patch.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 pytestmark = pytest.mark.unit
 
@@ -45,6 +46,7 @@ _GUARDRAIL_MODULE = "src.gateway.governance.langgraph_harness.nemo_node_factory"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 class _FakeAIMessage:
     """Minimal stand-in for langchain_core.messages.AIMessage."""
@@ -87,6 +89,7 @@ def _get_output_text(result: dict) -> str:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_output_rail_masks_unsafe_output():
     """
@@ -99,20 +102,25 @@ async def test_output_rail_masks_unsafe_output():
     (transparent fallback mode), which would otherwise block the output
     before the assertion is reached.
     """
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_output_rail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_output_rail_node,
+    )
 
     raw_output = "Here is John Doe's SSN: 123-45-6789 and portfolio details."
     masked_output = "Here is [PERSON]'s SSN: [US_SSN] and portfolio details."
 
     with patch(f"{_GUARDRAIL_MODULE}.get_nemo_rails", return_value=MagicMock()):
-        with patch(
-            f"{_GUARDRAIL_MODULE}.verify_and_mask_output",
-            new_callable=AsyncMock,
-            return_value=masked_output,
-        ), patch(
-            f"{_GUARDRAIL_MODULE}.validate_output_semantics",
-            new_callable=AsyncMock,
-            return_value=(True, ""),
+        with (
+            patch(
+                f"{_GUARDRAIL_MODULE}.verify_and_mask_output",
+                new_callable=AsyncMock,
+                return_value=masked_output,
+            ),
+            patch(
+                f"{_GUARDRAIL_MODULE}.validate_output_semantics",
+                new_callable=AsyncMock,
+                return_value=(True, ""),
+            ),
         ):
             result = await nemo_output_rail_node(_build_state(raw_output))
 
@@ -136,19 +144,24 @@ async def test_output_rail_passes_safe_output():
     assertion.  The NeMo circuit breaker may be OPEN in test environments
     (transparent fallback mode), which would otherwise block the output.
     """
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_output_rail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_output_rail_node,
+    )
 
     safe_output = "AAPL is trading at $187.42 with moderate momentum indicators."
 
     with patch(f"{_GUARDRAIL_MODULE}.get_nemo_rails", return_value=MagicMock()):
-        with patch(
-            f"{_GUARDRAIL_MODULE}.verify_and_mask_output",
-            new_callable=AsyncMock,
-            return_value=safe_output,
-        ), patch(
-            f"{_GUARDRAIL_MODULE}.validate_output_semantics",
-            new_callable=AsyncMock,
-            return_value=(True, ""),
+        with (
+            patch(
+                f"{_GUARDRAIL_MODULE}.verify_and_mask_output",
+                new_callable=AsyncMock,
+                return_value=safe_output,
+            ),
+            patch(
+                f"{_GUARDRAIL_MODULE}.validate_output_semantics",
+                new_callable=AsyncMock,
+                return_value=(True, ""),
+            ),
         ):
             result = await nemo_output_rail_node(_build_state(safe_output))
 
@@ -162,7 +175,9 @@ async def test_output_rail_fail_closed_on_verify_exception():
     If verify_and_mask_output raises ANY exception, the raw output MUST be
     replaced with the safe sentinel — it must NEVER pass through unscreened.
     """
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_output_rail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_output_rail_node,
+    )
 
     raw_output = "Sensitive agent output that must not leak."
 
@@ -190,7 +205,9 @@ async def test_output_rail_fail_closed_when_rails_init_raises():
     etc.) the output must be replaced with the safe sentinel — not the raw
     agent text.
     """
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_output_rail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_output_rail_node,
+    )
 
     raw_output = "Raw agent output that must not leak when NeMo init fails."
 
@@ -213,7 +230,9 @@ async def test_output_rail_sets_output_rail_applied_flag():
     After nemo_output_rail_node runs — regardless of the output content —
     state["output_rail_applied"] must be True.
     """
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_output_rail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_output_rail_node,
+    )
 
     with patch(f"{_GUARDRAIL_MODULE}.get_nemo_rails", return_value=MagicMock()):
         with patch(
@@ -232,7 +251,9 @@ async def test_output_rail_applied_flag_set_even_on_exception():
     output_rail_applied must be True even when verify_and_mask_output raises
     (the node ran; it just fail-closed the output).
     """
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_output_rail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_output_rail_node,
+    )
 
     with patch(f"{_GUARDRAIL_MODULE}.get_nemo_rails", return_value=MagicMock()):
         with patch(
@@ -251,7 +272,9 @@ async def test_output_rail_handles_empty_messages_gracefully():
     State with no messages should not raise — the node must return
     output_rail_applied=True and an empty messages list.
     """
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_output_rail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_output_rail_node,
+    )
 
     result = await nemo_output_rail_node({"messages": [], "output_rail_applied": False})
 
@@ -266,7 +289,9 @@ async def test_output_rail_handles_tuple_message_format():
     Some node fixtures use tuple messages: ("ai", "text").
     The rail must handle this without crashing and apply screening.
     """
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_output_rail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_output_rail_node,
+    )
 
     tuple_state = {
         "messages": [("ai", "Some agent response in tuple format.")],
@@ -292,7 +317,9 @@ async def test_output_rail_never_duplicates_raw_output_on_exception():
     anywhere in the exception handler.  The ONLY valid output on exception
     is the sentinel string.
     """
-    from src.governed_financial_advisor.graph.nodes.guardrail_node import nemo_output_rail_node
+    from src.governed_financial_advisor.graph.nodes.guardrail_node import (
+        nemo_output_rail_node,
+    )
 
     confidential_text = "CONFIDENTIAL: client SSN 987-65-4321, account #9876543."
 

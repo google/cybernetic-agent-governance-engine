@@ -13,27 +13,22 @@
 # limitations under the License.
 
 import logging
-import json
 import time
 from typing import Any
-from config.settings import MODEL_REASONING
 
 from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
 
 from src.governed_financial_advisor.agents.evaluator.agent import (
-    check_safety_constraints
+    check_safety_constraints,
 )
-from src.governed_financial_advisor.graph.nodes.agent_nodes import (
-    data_analyst_node
-)
-from src.governed_financial_advisor.graph.state import AgentState
 from src.governed_financial_advisor.graph.annotations import side_effect_node
+from src.governed_financial_advisor.graph.state import AgentState
 
 logger = logging.getLogger("EvaluatorNode")
 tracer = trace.get_tracer("src.governed_financial_advisor.graph.nodes.evaluator_node")
 
 from src.gateway.governance.kms_signer import get_governance_signer
+
 
 @side_effect_node(kind="api_call", external_system="cloud_kms")
 def generate_governance_signature(plan: dict) -> str:
@@ -53,6 +48,7 @@ def generate_governance_signature(plan: dict) -> str:
     """
     signer = get_governance_signer()
     return signer.sign(plan)
+
 
 @side_effect_node(kind="api_call", external_system="opa_engine")
 async def evaluator_node(state: AgentState) -> dict[str, Any]:
@@ -76,15 +72,18 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
                     "verdict": "APPROVED",
                     "reasoning": "Plan involves no actions.",
                     "policy_check": "SKIPPED",
-                    "semantic_check": "SKIPPED"
+                    "semantic_check": "SKIPPED",
                 },
                 "governance_signature": generate_governance_signature(plan),
-                "risk_status": "APPROVED"
+                "risk_status": "APPROVED",
             }
 
         if "steps" in plan:
             for step in plan["steps"]:
-                if any(k in step.get("action", "").lower() for k in ["trade", "execute", "buy", "sell"]):
+                if any(
+                    k in step.get("action", "").lower()
+                    for k in ["trade", "execute", "buy", "sell"]
+                ):
                     target_params = step.get("parameters", {})
                     target_tool = step.get("action", "execute_trade")
                     break
@@ -93,8 +92,10 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
         start_time = time.time()
         raw_risk = state.get("risk_attitude")
         risk_profile = raw_risk.capitalize() if raw_risk else "Moderate"
-        safety_resp = await check_safety_constraints(target_tool, target_params, risk_profile)
-        
+        safety_resp = await check_safety_constraints(
+            target_tool, target_params, risk_profile
+        )
+
         is_safe = safety_resp.get("status") == "APPROVED"
         safety_msg = safety_resp.get("message", "Unknown safety status")
         opa_results = safety_resp.get("opa_results")
@@ -110,10 +111,12 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
 
     verdict = "APPROVED" if is_safe else "REJECTED"
     risk_status = "REJECTED_REVISE" if not is_safe else "APPROVED"
-    
+
     feedback_msg = safety_msg
     if not is_safe:
-        feedback_msg += "\n\n**Action Required:** Governance policy violation. Please revise."
+        feedback_msg += (
+            "\n\n**Action Required:** Governance policy violation. Please revise."
+        )
 
     # NOTE: Output screening/masking is handled by the dedicated nemo_output_rail_node
     # (the final LangGraph node before END on every non-blocked path).
@@ -127,7 +130,7 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
             "policy_check": "PASSED" if is_safe else "FAILED",
         },
         "governance_signature": sig,
-        "opa_results": opa_results, # Pass OPA metadata to Auditor!
+        "opa_results": opa_results,  # Pass OPA metadata to Auditor!
         "risk_status": risk_status,
         "risk_feedback": feedback_msg,
     }

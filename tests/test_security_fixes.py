@@ -29,14 +29,15 @@ C-02 — CBF fail-closed on Redis unavailability (symbolic_governor.py):
 
 from __future__ import annotations
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pytest
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 pytestmark = pytest.mark.unit
 
@@ -44,6 +45,7 @@ pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 # C-01 — Trade side inversion
 # ---------------------------------------------------------------------------
+
 
 class TestC01TradeSide:
     """C-01: execute_trade() must forward the requested side, not hardcode 'buy'."""
@@ -74,13 +76,18 @@ class TestC01TradeSide:
             mock_resp.raise_for_status.return_value = None
             return mock_resp
 
-        with patch("src.gateway.core.tools.redis_client") as mock_redis, \
-             patch("requests.post", side_effect=_fake_post), \
-             patch.dict(os.environ, {
-                 "BROKER_API_KEY": "test-key",
-                 "BROKER_API_SECRET": "test-secret",
-                 "USE_MOCK_BROKER": "false",
-             }):
+        with (
+            patch("src.gateway.core.tools.redis_client") as mock_redis,
+            patch("requests.post", side_effect=_fake_post),
+            patch.dict(
+                os.environ,
+                {
+                    "BROKER_API_KEY": "test-key",
+                    "BROKER_API_SECRET": "test-secret",
+                    "USE_MOCK_BROKER": "false",
+                },
+            ),
+        ):
             mock_redis.get.return_value = None  # no safety violation
 
             result = await execute_trade(order)
@@ -116,13 +123,18 @@ class TestC01TradeSide:
             mock_resp.raise_for_status.return_value = None
             return mock_resp
 
-        with patch("src.gateway.core.tools.redis_client") as mock_redis, \
-             patch("requests.post", side_effect=_fake_post), \
-             patch.dict(os.environ, {
-                 "BROKER_API_KEY": "test-key",
-                 "BROKER_API_SECRET": "test-secret",
-                 "USE_MOCK_BROKER": "false",
-             }):
+        with (
+            patch("src.gateway.core.tools.redis_client") as mock_redis,
+            patch("requests.post", side_effect=_fake_post),
+            patch.dict(
+                os.environ,
+                {
+                    "BROKER_API_KEY": "test-key",
+                    "BROKER_API_SECRET": "test-secret",
+                    "USE_MOCK_BROKER": "false",
+                },
+            ),
+        ):
             mock_redis.get.return_value = None
 
             result = await execute_trade(order)
@@ -143,19 +155,24 @@ class TestC01TradeSide:
             symbol="TSLA",
             amount=5,
             currency="USD",
-            side="short",          # invalid — not in {"buy", "sell"}
+            side="short",  # invalid — not in {"buy", "sell"}
             type="market",
             confidence=0.80,
             transaction_id=tx_id,
         )
 
-        with patch("src.gateway.core.tools.redis_client") as mock_redis, \
-             patch("requests.post") as mock_post, \
-             patch.dict(os.environ, {
-                 "BROKER_API_KEY": "test-key",
-                 "BROKER_API_SECRET": "test-secret",
-                 "USE_MOCK_BROKER": "false",
-             }):
+        with (
+            patch("src.gateway.core.tools.redis_client") as mock_redis,
+            patch("requests.post") as mock_post,
+            patch.dict(
+                os.environ,
+                {
+                    "BROKER_API_KEY": "test-key",
+                    "BROKER_API_SECRET": "test-secret",
+                    "USE_MOCK_BROKER": "false",
+                },
+            ),
+        ):
             mock_redis.get.return_value = None
 
             with pytest.raises(AssertionError, match="Invalid trade side"):
@@ -172,8 +189,8 @@ class TestC01TradeSide:
         patch.dict(os.environ) cannot change it after the module is loaded.
         We patch the constant directly on the module instead.
         """
-        from src.gateway.core.structs import TradeOrder
         import src.gateway.core.tools as tools_module
+        from src.gateway.core.structs import TradeOrder
         from src.gateway.core.tools import execute_trade
 
         tx_id = str(uuid.uuid4())
@@ -187,8 +204,10 @@ class TestC01TradeSide:
             transaction_id=tx_id,
         )
 
-        with patch("src.gateway.core.tools.redis_client") as mock_redis, \
-             patch.object(tools_module, "_USE_MOCK_BROKER", True):
+        with (
+            patch("src.gateway.core.tools.redis_client") as mock_redis,
+            patch.object(tools_module, "_USE_MOCK_BROKER", True),
+        ):
             mock_redis.get.return_value = None
 
             result = await execute_trade(order)
@@ -202,6 +221,7 @@ class TestC01TradeSide:
 # ---------------------------------------------------------------------------
 # C-02 — CBF fail-closed on Redis unavailability
 # ---------------------------------------------------------------------------
+
 
 class TestC02CbfFailClosed:
     """C-02: pre_check() must return cbf_allowed=False when CBF/Redis raises."""
@@ -242,6 +262,7 @@ class TestC02CbfFailClosed:
     async def test_cbf_timeout_returns_denied(self):
         """A timeout from the CBF Redis call must also result in cbf_allowed=False."""
         import asyncio
+
         gov, mock_cbf = self._make_governor()
         mock_cbf.verify_action.side_effect = asyncio.TimeoutError("CBF timed out")
 

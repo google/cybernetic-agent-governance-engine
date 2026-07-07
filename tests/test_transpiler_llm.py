@@ -18,7 +18,10 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-from src.governed_financial_advisor.governance.structs import ConstraintLogic, ProposedUCA
+from src.governed_financial_advisor.governance.structs import (
+    ConstraintLogic,
+    ProposedUCA,
+)
 from src.governed_financial_advisor.governance.transpiler import PolicyTranspiler
 
 
@@ -32,18 +35,24 @@ def mock_uca():
             variable="order_size",
             operator=">",
             threshold="0.01 * daily_volume",
-            condition="order_type == MARKET"
-        )
+            condition="order_type == MARKET",
+        ),
     )
 
+
 def test_transpiler_initialization_llm_flag():
-    with patch("src.governed_financial_advisor.governance.transpiler.ChatOpenAI") as MockLLM:
+    with patch(
+        "src.governed_financial_advisor.governance.transpiler.ChatOpenAI"
+    ) as MockLLM:
         transpiler = PolicyTranspiler()
         assert transpiler.use_llm is True
         MockLLM.assert_called_once()
 
+
 def test_generate_nemo_action_calls_llm(mock_uca):
-    with patch("src.governed_financial_advisor.governance.transpiler.ChatOpenAI") as MockLLM:
+    with patch(
+        "src.governed_financial_advisor.governance.transpiler.ChatOpenAI"
+    ) as MockLLM:
         mock_instance = MockLLM.return_value
         mock_instance.invoke.return_value.content = "def check_test(): return True"
 
@@ -59,13 +68,16 @@ def test_generate_nemo_action_calls_llm(mock_uca):
         assert "order_size" in prompt
         assert "order_type == MARKET" in prompt
 
+
 def test_generate_rego_policy_calls_llm(mock_uca):
-    with patch("src.governed_financial_advisor.governance.transpiler.ChatOpenAI") as MockLLM:
+    with patch(
+        "src.governed_financial_advisor.governance.transpiler.ChatOpenAI"
+    ) as MockLLM:
         mock_instance = MockLLM.return_value
-        mock_instance.invoke.return_value.content = "decision = \"DENY\""
+        mock_instance.invoke.return_value.content = 'decision = "DENY"'
 
         transpiler = PolicyTranspiler()
         result = transpiler.generate_rego_policy(mock_uca)
 
-        assert "decision = \"DENY\"" in result
+        assert 'decision = "DENY"' in result
         mock_instance.invoke.assert_called_once()

@@ -23,7 +23,8 @@ that the consuming agent provides.
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Callable, TypeAlias
+from collections.abc import Callable
+from typing import Any, TypeAlias
 
 # ---------------------------------------------------------------------------
 # Generic type aliases
@@ -46,6 +47,7 @@ ThreadIdExtractor: TypeAlias = Callable[[StateDict], str]
 # ---------------------------------------------------------------------------
 # OPA safety node configuration
 # ---------------------------------------------------------------------------
+
 
 @dataclasses.dataclass(frozen=True)
 class OpaNodeConfig:
@@ -86,6 +88,7 @@ class OpaNodeConfig:
 # ---------------------------------------------------------------------------
 # NeMo guardrail node configuration
 # ---------------------------------------------------------------------------
+
 
 @dataclasses.dataclass(frozen=True)
 class NemoNodeConfig:

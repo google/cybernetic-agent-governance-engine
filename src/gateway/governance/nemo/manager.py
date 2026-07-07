@@ -25,13 +25,15 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any
 
 import nest_asyncio
+
 try:
     from nemoguardrails import LLMRails, RailsConfig
     from nemoguardrails.context import streaming_handler_var
     from nemoguardrails.llm.providers import register_llm_provider
+
     _NEMOGUARDRAILS_AVAILABLE = True
 except ImportError:
     LLMRails = None  # type: ignore[assignment,misc]
@@ -42,8 +44,8 @@ except ImportError:
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-from src.gateway.governance.nemo.vllm_client import VLLMLLM
 from src.gateway.governance.iso_control import stamp_iso_control
+from src.gateway.governance.nemo.vllm_client import VLLMLLM
 from src.gateway.governance.text_filter import ac_keyword_scan
 
 logger = logging.getLogger("NeMoManager")
@@ -66,6 +68,7 @@ CAGE_SEAL_ENFORCEMENT: str = os.getenv("CAGE_SEAL_ENFORCEMENT", "enforce").lower
 # is used when en_core_web_lg is unavailable.
 # ---------------------------------------------------------------------------
 
+
 def _get_analyzer_patch():
     """
     Replacement for nemoguardrails.library.sensitive_data_detection.actions._get_analyzer.
@@ -74,9 +77,9 @@ def _get_analyzer_patch():
     configures Presidio's AnalyzerEngine with an expanded entity set.
     """
     try:
+        import spacy
         from presidio_analyzer import AnalyzerEngine
         from presidio_analyzer.nlp_engine import NlpEngineProvider
-        import spacy
 
         if spacy.util.is_package("en_core_web_lg"):
             model_name = "en_core_web_lg"
@@ -101,8 +104,11 @@ def _apply_sdd_monkeypatch() -> None:
     """Patch nemoguardrails SDD's _get_analyzer with our en_core_web_sm-safe version."""
     try:
         import nemoguardrails.library.sensitive_data_detection.actions as _sdd_actions
+
         _sdd_actions._get_analyzer = _get_analyzer_patch
-        logger.info("✅ Monkeypatched nemoguardrails SDD _get_analyzer → _get_analyzer_patch")
+        logger.info(
+            "✅ Monkeypatched nemoguardrails SDD _get_analyzer → _get_analyzer_patch"
+        )
     except Exception as exc:
         logger.warning("⚠️ Could not monkeypatch SDD _get_analyzer: %s", exc)
 
@@ -110,6 +116,7 @@ def _apply_sdd_monkeypatch() -> None:
 # ---------------------------------------------------------------------------
 # Presidio-backed SDD action factory (complementary to the monkeypatch above)
 # ---------------------------------------------------------------------------
+
 
 def _build_presidio_action():
     """
@@ -119,18 +126,29 @@ def _build_presidio_action():
     Returns None if Presidio or spaCy are not installed (graceful degradation).
     """
     try:
+        import spacy
         from presidio_analyzer import AnalyzerEngine
         from presidio_analyzer.nlp_engine import NlpEngineProvider
-        import spacy
 
         class _SafeAnalyzer(AnalyzerEngine):
             """AnalyzerEngine that guards None input and expands the default entity set."""
 
             _ENTITIES = [
-                "PHONE_NUMBER", "CREDIT_CARD", "EMAIL_ADDRESS", "LOCATION",
-                "PERSON", "DATE_TIME", "NRP", "CRYPTO", "US_SSN",
-                "US_ITIN", "US_PASSPORT", "US_BANK_NUMBER", "US_DRIVER_LICENSE",
-                "IBAN_CODE", "IP_ADDRESS",
+                "PHONE_NUMBER",
+                "CREDIT_CARD",
+                "EMAIL_ADDRESS",
+                "LOCATION",
+                "PERSON",
+                "DATE_TIME",
+                "NRP",
+                "CRYPTO",
+                "US_SSN",
+                "US_ITIN",
+                "US_PASSPORT",
+                "US_BANK_NUMBER",
+                "US_DRIVER_LICENSE",
+                "IBAN_CODE",
+                "IP_ADDRESS",
             ]
 
             def analyze(self, text, entities=None, **kwargs):
@@ -181,7 +199,9 @@ def _build_presidio_action():
         return detect_sensitive_data
 
     except ImportError as exc:
-        logger.warning("⚠️ Presidio/spaCy not available; SDD action not registered: %s", exc)
+        logger.warning(
+            "⚠️ Presidio/spaCy not available; SDD action not registered: %s", exc
+        )
         return None
     except Exception as exc:
         logger.warning("⚠️ Failed to build Presidio SDD action: %s", exc)
@@ -213,7 +233,7 @@ tracer = trace.get_tracer(__name__)
 #   - src/gateway/governance/nemo/README.md
 #   - plans/nemo_guardrails_architectural_analysis.md
 # ---------------------------------------------------------------------------
-def create_nemo_manager(config_path: str = "config/rails") -> "LLMRails | None":
+def create_nemo_manager(config_path: str = "config/rails") -> LLMRails | None:
     """Create and initialise a NeMo Guardrails manager with vLLM support."""
     if not _NEMOGUARDRAILS_AVAILABLE:
         logger.warning(
@@ -276,7 +296,7 @@ def create_nemo_manager(config_path: str = "config/rails") -> "LLMRails | None":
             "  - type: main\n"
             "    engine: vllm_llama\n"
             f"    model: {resolved_fallback}\n"
-            "colang_version: \"2.x\"\n"
+            'colang_version: "2.x"\n'
             "rails:\n"
             "  input:\n"
             "    flows: []\n"
@@ -322,30 +342,35 @@ def create_nemo_manager(config_path: str = "config/rails") -> "LLMRails | None":
     # string ends up as the model name, causing NotFoundError in litellm.
     # Resolve all model entries here before LLMRails is constructed.
     try:
-        from src.governed_financial_advisor.infrastructure.config_manager import config_manager
+        from src.governed_financial_advisor.infrastructure.config_manager import (
+            config_manager,
+        )
+
         resolved_model = (
             config_manager.get("GUARDRAILS_MODEL_NAME")
             or config_manager.get("MODEL_FAST")
             or "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
         )
     except ImportError:
-        resolved_model = os.environ.get("GUARDRAILS_MODEL_NAME", "deepseek-ai/DeepSeek-R1-Distill-Llama-8B")
-        
+        resolved_model = os.environ.get(
+            "GUARDRAILS_MODEL_NAME", "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+        )
+
     if hasattr(config, "models") and config.models:
         for model_entry in config.models:
             raw = getattr(model_entry, "model", "")
             if raw.startswith("${") or not raw or raw == "":
                 model_entry.model = resolved_model
-                logger.info(
-                    "✅ Resolved NeMo model '%s' → '%s'", raw, resolved_model
-                )
+                logger.info("✅ Resolved NeMo model '%s' → '%s'", raw, resolved_model)
 
     # --- Langfuse Prompt Injection ---
     try:
         from src.gateway.governance.nemo.prompt_fetcher import fetch_managed_prompts
+
         dynamic_prompts_yaml = fetch_managed_prompts()
         if dynamic_prompts_yaml:
             import yaml
+
             parsed_yaml = yaml.safe_load(dynamic_prompts_yaml)
             if "prompts" in parsed_yaml:
                 config.prompts = parsed_yaml["prompts"]
@@ -399,11 +424,17 @@ def create_nemo_manager(config_path: str = "config/rails") -> "LLMRails | None":
         )
 
     try:
-        from src.governed_financial_advisor.governance.nemo_action_registry import get_all_actions
+        from src.governed_financial_advisor.governance.nemo_action_registry import (
+            get_all_actions,
+        )
+
         actions = get_all_actions()
         for action_name, action_fn in actions:
             rails.register_action(action_fn, action_name)
-        logger.info("✅ NeMo actions registered from canonical registry (%d actions)", len(actions))
+        logger.info(
+            "✅ NeMo actions registered from canonical registry (%d actions)",
+            len(actions),
+        )
     except ImportError as exc:
         logger.warning("Could not import NeMo action registry: %s", exc)
     except Exception as exc:
@@ -424,6 +455,7 @@ def initialize_rails() -> LLMRails:
 # Bypass detection — delegates to the canonical Aho-Corasick authority
 # ---------------------------------------------------------------------------
 
+
 def _detect_bypass(text: str) -> bool:
     """Return True if *text* contains any known bypass attempt.
 
@@ -438,10 +470,11 @@ def _detect_bypass(text: str) -> bool:
 # validate_with_nemo — Phase 4.2: substring heuristics REMOVED
 # ---------------------------------------------------------------------------
 
+
 async def validate_with_nemo(
     user_input: str,
     rails: LLMRails,
-    pre_check_results: Optional[Dict[str, Any]] = None,
+    pre_check_results: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     """Validates user input using NeMo Guardrails.
 
@@ -461,12 +494,16 @@ async def validate_with_nemo(
             governor's sub-components (breaking the re-entrant loop).
     """
     from src.governed_financial_advisor.utils.privacy import scrub_pii
+
     try:
-        from src.governed_financial_advisor.infrastructure.telemetry.nemo_exporter import NeMoOTelCallback
+        from src.governed_financial_advisor.infrastructure.telemetry.nemo_exporter import (
+            NeMoOTelCallback,
+        )
+
         handler = NeMoOTelCallback()
     except ImportError:
         handler = None
-        
+
     token = streaming_handler_var.set(handler) if handler else None
 
     with tracer.start_as_current_span("guardrails.validate_input") as span:
@@ -477,13 +514,20 @@ async def validate_with_nemo(
         # NeMo's semantic layer was offline (ISO 42001 A.5.2 / STPA UCA-1).
         if getattr(rails, "is_transparent_fallback", False):
             span.set_attribute("langfuse.observation.type", "span")
-            span.set_attribute("langfuse.observation.name", "nemo_guardrails_validation")
+            span.set_attribute(
+                "langfuse.observation.name", "nemo_guardrails_validation"
+            )
             span.set_attribute("input", scrub_pii(user_input))
             # Langfuse-indexed metadata fields (langfuse.observation.metadata.* prefix
             # elevates these to top-level searchable columns in the Langfuse UI).
-            span.set_attribute("langfuse.observation.metadata.stpa_hazard", "UCA-1_SEMANTIC_BYPASS")
+            span.set_attribute(
+                "langfuse.observation.metadata.stpa_hazard", "UCA-1_SEMANTIC_BYPASS"
+            )
             span.set_attribute("langfuse.observation.metadata.iso_control", "A.5.2")
-            span.set_attribute("langfuse.observation.metadata.fallback_reason", "NeMo_config_parse_failed")
+            span.set_attribute(
+                "langfuse.observation.metadata.fallback_reason",
+                "NeMo_config_parse_failed",
+            )
             stamp_iso_control(span, tier=1, control="A.5.2", outcome="DEGRADED")
 
             if CAGE_SEAL_ENFORCEMENT != "log":
@@ -495,16 +539,27 @@ async def validate_with_nemo(
                     "(CAGE_SEAL_ENFORCEMENT=%s). Set to 'log' for fail-open dev posture.",
                     CAGE_SEAL_ENFORCEMENT,
                 )
-                span.set_attribute("langfuse.observation.metadata.governance_state", "CIRCUIT_OPEN_REJECTED")
+                span.set_attribute(
+                    "langfuse.observation.metadata.governance_state",
+                    "CIRCUIT_OPEN_REJECTED",
+                )
                 span.set_attribute("output", "REJECTED_CIRCUIT_OPEN")
                 span.set_status(Status(StatusCode.ERROR))
                 if token is not None:
                     streaming_handler_var.reset(token)
-                return False, "NeMo guardrails unavailable in enforce mode — request rejected"
+                return (
+                    False,
+                    "NeMo guardrails unavailable in enforce mode — request rejected",
+                )
             else:
                 # Log-only / dev posture: preserve existing fail-open behaviour.
-                logger.warning("⚠️ Semantic Layer Bypassed (Fail-Open, log mode). Relying on OPA/STPA.")
-                span.set_attribute("langfuse.observation.metadata.governance_state", "DEGRADED_FAIL_OPEN")
+                logger.warning(
+                    "⚠️ Semantic Layer Bypassed (Fail-Open, log mode). Relying on OPA/STPA."
+                )
+                span.set_attribute(
+                    "langfuse.observation.metadata.governance_state",
+                    "DEGRADED_FAIL_OPEN",
+                )
                 span.set_attribute("output", "PASS_THROUGH_ACTIVE")
                 span.set_status(Status(StatusCode.OK))
                 if token is not None:
@@ -512,26 +567,35 @@ async def validate_with_nemo(
                 return True, ""
 
         if _detect_bypass(user_input):
-            logger.warning("🛑 Blocking systemic bypass attempt: %s...", user_input[:50])
+            logger.warning(
+                "🛑 Blocking systemic bypass attempt: %s...", user_input[:50]
+            )
             span.set_attribute("langfuse.trace.metadata.guardrails.outcome", "BLOCKED")
             span.set_attribute("langfuse.trace.metadata.risk.verdict", "REJECTED")
             span.set_attribute("langfuse.trace.metadata.guardrails.intervened", True)
             stamp_iso_control(span, tier=1, control="A.5.2", outcome="BLOCK")
             if token is not None:
                 streaming_handler_var.reset(token)
-            return False, "STPA Violation UCA-7: Request contains systemic bypass attempt."
+            return (
+                False,
+                "STPA Violation UCA-7: Request contains systemic bypass attempt.",
+            )
 
         try:
             span.set_attribute("langfuse.observation.type", "span")
-            span.set_attribute("langfuse.observation.name", "nemo_guardrails_validation")
+            span.set_attribute(
+                "langfuse.observation.name", "nemo_guardrails_validation"
+            )
             span.set_attribute("input", scrub_pii(user_input))
             span.set_attribute("langfuse.trace.metadata.guardrails.framework", "nemo")
-            span.set_attribute("langfuse.trace.metadata.guardrails.input_length", len(user_input))
+            span.set_attribute(
+                "langfuse.trace.metadata.guardrails.input_length", len(user_input)
+            )
 
             # Build NeMo context — inject pre-computed governance results so that
             # NeMo actions read from this dict instead of calling back into the
             # governor's sub-components (breaks the re-entrant dependency loop).
-            nemo_context: Dict[str, Any] = {}
+            nemo_context: dict[str, Any] = {}
             if pre_check_results is not None:
                 nemo_context["pre_check_results"] = pre_check_results
                 logger.debug(
@@ -561,9 +625,13 @@ async def validate_with_nemo(
                 response_content = ""
 
             verdict = "APPROVED" if is_safe else "REJECTED"
-            span.set_attribute("guardrails.outcome", "ALLOWED" if is_safe else "BLOCKED")
+            span.set_attribute(
+                "guardrails.outcome", "ALLOWED" if is_safe else "BLOCKED"
+            )
             span.set_attribute("langfuse.trace.metadata.risk.verdict", verdict)
-            span.set_attribute("langfuse.trace.metadata.guardrails.intervened", not is_safe)
+            span.set_attribute(
+                "langfuse.trace.metadata.guardrails.intervened", not is_safe
+            )
             span.set_attribute("output", response_content)
             stamp_iso_control(
                 span,
@@ -581,12 +649,18 @@ async def validate_with_nemo(
                 # safety failure.  Downstream OPA + STPA checks still protect the
                 # request — treat as pass-through (safe) and log a warning.
                 logger.warning(
-                    "NeMo has no main flow — passing through (OPA/STPA still active): %s", exc_str
+                    "NeMo has no main flow — passing through (OPA/STPA still active): %s",
+                    exc_str,
                 )
                 span.set_attribute("guardrails.outcome", "BYPASSED_NO_MAIN_FLOW")
                 # Stamp Langfuse so auditors can filter by this degraded state
-                span.set_attribute("langfuse.observation.metadata.governance_state", "DEGRADED_NO_MAIN_FLOW")
-                span.set_attribute("langfuse.observation.metadata.stpa_hazard", "UCA-1_SEMANTIC_BYPASS")
+                span.set_attribute(
+                    "langfuse.observation.metadata.governance_state",
+                    "DEGRADED_NO_MAIN_FLOW",
+                )
+                span.set_attribute(
+                    "langfuse.observation.metadata.stpa_hazard", "UCA-1_SEMANTIC_BYPASS"
+                )
                 span.set_attribute("langfuse.observation.metadata.iso_control", "A.5.2")
                 return True, ""
             logger.error("NeMo Validation Error: %s", exc)
@@ -601,6 +675,7 @@ async def validate_with_nemo(
 # ---------------------------------------------------------------------------
 # SafetyResult + verify_input
 # ---------------------------------------------------------------------------
+
 
 class SafetyResult:
     def __init__(self, is_safe: bool, reason: str = ""):
@@ -670,8 +745,9 @@ def _deduplicate_response(text: str) -> str:
 
 
 try:
-    from src.governed_financial_advisor.utils.privacy import scrub_pii  # noqa: E402
+    from src.governed_financial_advisor.utils.privacy import scrub_pii
 except ImportError:
+
     def scrub_pii(text: str) -> str:
         return text
 
@@ -679,7 +755,7 @@ except ImportError:
 async def verify_input(
     rails: LLMRails,
     text: str,
-    pre_check_results: Optional[Dict[str, Any]] = None,
+    pre_check_results: dict[str, Any] | None = None,
 ) -> SafetyResult:
     """Verify an input string as a pure filter (Interceptor pattern).
 
@@ -711,9 +787,14 @@ async def verify_input(
 
         # --- Transparent Fallback Circuit Breaker ---
         if getattr(rails, "is_transparent_fallback", False):
-            span.set_attribute("langfuse.observation.metadata.stpa_hazard", "UCA-1_SEMANTIC_BYPASS")
+            span.set_attribute(
+                "langfuse.observation.metadata.stpa_hazard", "UCA-1_SEMANTIC_BYPASS"
+            )
             span.set_attribute("langfuse.observation.metadata.iso_control", "A.5.2")
-            span.set_attribute("langfuse.observation.metadata.fallback_reason", "NeMo_config_parse_failed")
+            span.set_attribute(
+                "langfuse.observation.metadata.fallback_reason",
+                "NeMo_config_parse_failed",
+            )
             stamp_iso_control(span, tier=1, control="A.5.2", outcome="DEGRADED")
 
             if CAGE_SEAL_ENFORCEMENT != "log":
@@ -725,7 +806,10 @@ async def verify_input(
                     "(CAGE_SEAL_ENFORCEMENT=%s). Set to 'log' for fail-open dev posture.",
                     CAGE_SEAL_ENFORCEMENT,
                 )
-                span.set_attribute("langfuse.observation.metadata.governance_state", "CIRCUIT_OPEN_REJECTED")
+                span.set_attribute(
+                    "langfuse.observation.metadata.governance_state",
+                    "CIRCUIT_OPEN_REJECTED",
+                )
                 span.set_attribute("output", "REJECTED_CIRCUIT_OPEN")
                 span.set_status(Status(StatusCode.ERROR))
                 return SafetyResult(
@@ -734,8 +818,13 @@ async def verify_input(
                 )
             else:
                 # Log-only / dev posture: preserve existing fail-open behaviour.
-                logger.warning("⚠️ verify_input: Semantic Layer Bypassed (Fail-Open, log mode). Relying on OPA/STPA.")
-                span.set_attribute("langfuse.observation.metadata.governance_state", "DEGRADED_FAIL_OPEN")
+                logger.warning(
+                    "⚠️ verify_input: Semantic Layer Bypassed (Fail-Open, log mode). Relying on OPA/STPA."
+                )
+                span.set_attribute(
+                    "langfuse.observation.metadata.governance_state",
+                    "DEGRADED_FAIL_OPEN",
+                )
                 span.set_attribute("output", "PASS_THROUGH_ACTIVE")
                 span.set_status(Status(StatusCode.OK))
                 return SafetyResult(is_safe=True)
@@ -743,7 +832,7 @@ async def verify_input(
         # Build NeMo context — inject pre-computed governance results so that
         # NeMo actions read from this dict instead of calling back into the
         # governor's sub-components (breaks the re-entrant dependency loop).
-        nemo_context: Dict[str, Any] = {}
+        nemo_context: dict[str, Any] = {}
         if pre_check_results is not None:
             nemo_context["pre_check_results"] = pre_check_results
             logger.debug(
@@ -774,17 +863,26 @@ async def verify_input(
             exc_str = str(exc)
             if "No main flow found" in exc_str:
                 logger.warning(
-                    "NeMo has no main flow — passing through verify_input (OPA/STPA still active): %s", exc_str
+                    "NeMo has no main flow — passing through verify_input (OPA/STPA still active): %s",
+                    exc_str,
                 )
                 # Stamp Langfuse so auditors can filter by this degraded state
-                span.set_attribute("langfuse.observation.metadata.governance_state", "DEGRADED_NO_MAIN_FLOW")
-                span.set_attribute("langfuse.observation.metadata.stpa_hazard", "UCA-1_SEMANTIC_BYPASS")
+                span.set_attribute(
+                    "langfuse.observation.metadata.governance_state",
+                    "DEGRADED_NO_MAIN_FLOW",
+                )
+                span.set_attribute(
+                    "langfuse.observation.metadata.stpa_hazard", "UCA-1_SEMANTIC_BYPASS"
+                )
                 span.set_attribute("langfuse.observation.metadata.iso_control", "A.5.2")
                 return SafetyResult(is_safe=True)
             logger.error("NeMo Input Verification Error: %s", exc)
             span.record_exception(exc)
             span.set_status(Status(StatusCode.ERROR))
-            return SafetyResult(is_safe=False, reason="Validation failed due to internal governance error.")
+            return SafetyResult(
+                is_safe=False,
+                reason="Validation failed due to internal governance error.",
+            )
 
 
 async def verify_and_mask_output(rails: LLMRails, text: str) -> str:
@@ -879,18 +977,22 @@ async def validate_output_semantics(
 
     with tracer.start_as_current_span("guardrails.validate_output_semantics") as span:
         span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute("langfuse.observation.name", "nemo_output_semantic_validation")
+        span.set_attribute(
+            "langfuse.observation.name", "nemo_output_semantic_validation"
+        )
         span.set_attribute("input", scrub_pii(output_text))
         span.set_attribute("nemo.cage_enforcement", cage_enforcement)
 
         # --- Transparent Fallback Circuit Breaker ---
         if getattr(rails, "is_transparent_fallback", False):
             span.set_attribute(
-                "langfuse.observation.metadata.stpa_hazard", "UCA-3_SEMANTIC_OUTPUT_BYPASS"
+                "langfuse.observation.metadata.stpa_hazard",
+                "UCA-3_SEMANTIC_OUTPUT_BYPASS",
             )
             span.set_attribute("langfuse.observation.metadata.iso_control", "A.5.2")
             span.set_attribute(
-                "langfuse.observation.metadata.fallback_reason", "NeMo_config_parse_failed"
+                "langfuse.observation.metadata.fallback_reason",
+                "NeMo_config_parse_failed",
             )
             stamp_iso_control(span, tier=1, control="A.5.2", outcome="DEGRADED")
 
@@ -901,7 +1003,8 @@ async def validate_output_semantics(
                     cage_enforcement,
                 )
                 span.set_attribute(
-                    "langfuse.observation.metadata.governance_state", "CIRCUIT_OPEN_REJECTED"
+                    "langfuse.observation.metadata.governance_state",
+                    "CIRCUIT_OPEN_REJECTED",
                 )
                 span.set_status(Status(StatusCode.ERROR))
                 return False, "NeMo output validation unavailable in enforce mode"
@@ -911,7 +1014,8 @@ async def validate_output_semantics(
                     "passing output through without semantic validation."
                 )
                 span.set_attribute(
-                    "langfuse.observation.metadata.governance_state", "DEGRADED_FAIL_OPEN"
+                    "langfuse.observation.metadata.governance_state",
+                    "DEGRADED_FAIL_OPEN",
                 )
                 span.set_status(Status(StatusCode.OK))
                 return True, ""
@@ -939,7 +1043,11 @@ async def validate_output_semantics(
 
             if verdict_upper.startswith("UNSAFE"):
                 # Extract the reason after "UNSAFE:" if present.
-                reason = verdict_raw[len("UNSAFE:"):].strip() if ":" in verdict_raw else verdict_raw
+                reason = (
+                    verdict_raw[len("UNSAFE:") :].strip()
+                    if ":" in verdict_raw
+                    else verdict_raw
+                )
                 logger.warning(
                     "validate_output_semantics: output flagged as UNSAFE — reason: %s",
                     reason,
@@ -966,7 +1074,8 @@ async def validate_output_semantics(
                     exc_str,
                 )
                 span.set_attribute(
-                    "langfuse.observation.metadata.governance_state", "DEGRADED_NO_MAIN_FLOW"
+                    "langfuse.observation.metadata.governance_state",
+                    "DEGRADED_NO_MAIN_FLOW",
                 )
                 span.set_attribute("output.semantic_safe", True)
                 return True, ""

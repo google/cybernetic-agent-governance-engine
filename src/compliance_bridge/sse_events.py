@@ -50,7 +50,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import AsyncGenerator, Literal
+from collections.abc import AsyncGenerator
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +65,9 @@ GovernanceEventType = Literal[
     "GOVERNANCE_VIOLATION",
     "REMEDIATION_GENERATED",
     # CAGE v0.1.0 — AARM primitives
-    "CONTEXT_CHAIN_SEALED",   # emitted when the SHA-256 hash chain is sealed after each audit
-    "DEFER_PARKING",          # emitted when an execution context is parked in the DEFER queue
-    "DEFER_RESOLVED",         # emitted when a deferred token is resolved (ESCALATED/INJECTED/EXPIRED)
+    "CONTEXT_CHAIN_SEALED",  # emitted when the SHA-256 hash chain is sealed after each audit
+    "DEFER_PARKING",  # emitted when an execution context is parked in the DEFER queue
+    "DEFER_RESOLVED",  # emitted when a deferred token is resolved (ESCALATED/INJECTED/EXPIRED)
 ]
 OscalResult = Literal["PASS", "FAIL", "NOT_APPLICABLE"]
 
@@ -89,6 +90,7 @@ OscalResult = Literal["PASS", "FAIL", "NOT_APPLICABLE"]
 # ---------------------------------------------------------------------------
 # GovernanceEventBus — singleton pub/sub registry
 # ---------------------------------------------------------------------------
+
 
 class GovernanceEventBus:
     """Async pub/sub registry that fans governance events out to SSE subscribers.
@@ -208,12 +210,12 @@ class GovernanceEventBus:
             try:
                 await self._evidence_sink.ingest(event)
             except Exception as exc:
-                logger.warning(
-                    "[event_bus] Evidence stream ingest failed: %s", exc
-                )
+                logger.warning("[event_bus] Evidence stream ingest failed: %s", exc)
 
         if not self._queues:
-            logger.debug("[event_bus] publish() called with no subscribers — skipping fan-out.")
+            logger.debug(
+                "[event_bus] publish() called with no subscribers — skipping fan-out."
+            )
             return
 
         dead: list[asyncio.Queue[dict]] = []
@@ -224,8 +226,10 @@ class GovernanceEventBus:
                 logger.warning(
                     "[event_bus] Subscriber queue full — dropping event for slow client."
                 )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("[event_bus] Failed to deliver event to subscriber: %s", exc)
+            except Exception as exc:
+                logger.warning(
+                    "[event_bus] Failed to deliver event to subscriber: %s", exc
+                )
                 dead.append(q)
 
         for q in dead:

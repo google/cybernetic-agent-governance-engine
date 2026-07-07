@@ -60,9 +60,10 @@ import json
 import logging
 import os
 import time
-from typing import Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
-from src.gateway.governance.constants import GovernanceControl  # noqa: E402
+from src.gateway.governance.constants import GovernanceControl
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,8 @@ _TTL_S = int(os.getenv("GOVERNANCE_SEAL_TTL_S", "30"))
 # is not set, rather than silently using an insecure hardcoded default.
 _DEFAULT_SALT = "default-governance-salt-change-in-production"
 
-from src.gateway.governance.constants import _require_env  # noqa: E402
+from src.gateway.governance.constants import _require_env
+
 _GOVERNANCE_SALT = _require_env("GOVERNANCE_SALT", _DEFAULT_SALT, sensitive=True)
 _HMAC_KEY = _GOVERNANCE_SALT.encode()
 
@@ -161,9 +163,13 @@ def _canonical_payload(action: str, params: dict) -> bytes:
     Fields are sorted so that dict ordering differences don't break verification.
     Non-serialisable values are coerced to strings.
     """
-    safe = {k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v))
-            for k, v in params.items()}
-    canon = json.dumps({"action": action, **safe}, sort_keys=True, separators=(",", ":"))
+    safe = {
+        k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v))
+        for k, v in params.items()
+    }
+    canon = json.dumps(
+        {"action": action, **safe}, sort_keys=True, separators=(",", ":")
+    )
     return canon.encode()
 
 
@@ -246,7 +252,9 @@ def verify_seal(seal: str, action: str, params: dict) -> bool:
         # Check action slug
         expected_slug = action.replace("_", "-").lower()[:32]
         if action_slug != expected_slug:
-            reason = f"action mismatch (got '{action_slug}', expected '{expected_slug}')"
+            reason = (
+                f"action mismatch (got '{action_slug}', expected '{expected_slug}')"
+            )
             logger.warning("🔒 Routing seal rejected: %s", reason)
             raise SymbolicGovernorViolation(reason, action)
 
@@ -265,7 +273,7 @@ def verify_seal(seal: str, action: str, params: dict) -> bool:
 
     except SymbolicGovernorViolation:
         return False
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         reason = f"unexpected verification error: {exc}"
         logger.warning("🔒 Routing seal verification error: %s", exc)
         return False
@@ -308,21 +316,27 @@ def require_cleared_seal(
 
         result = await _actuate()
     """
+
     def decorator(func: F) -> F:
         if inspect.iscoroutinefunction(func):
+
             @functools.wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 if not verify_seal(seal, action, params):
                     raise SymbolicGovernorViolation("seal verification failed", action)
                 return await func(*args, **kwargs)
+
             return async_wrapper  # type: ignore[return-value]
         else:
+
             @functools.wraps(func)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 if not verify_seal(seal, action, params):
                     raise SymbolicGovernorViolation("seal verification failed", action)
                 return func(*args, **kwargs)
+
             return sync_wrapper  # type: ignore[return-value]
+
     return decorator
 
 
@@ -331,5 +345,8 @@ def require_cleared_seal(
 # This ensures the check runs before any seal is generated or verified.
 # ---------------------------------------------------------------------------
 import os as _os
-if _os.environ.get("CAGE_ENV", "prod").lower() == "prod":  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
+
+if (
+    _os.environ.get("CAGE_ENV", "prod").lower() == "prod"
+):  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
     assert_custom_salt_in_production()

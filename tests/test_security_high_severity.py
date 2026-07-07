@@ -25,17 +25,15 @@ Run:
 from __future__ import annotations
 
 import hashlib
-import math
-import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # =============================================================================
 # H-08: SHA-256 integrity verification for normative policy files
 # =============================================================================
+
 
 class TestH08PolicyIntegrity:
     """_verify_policy_integrity() rejects tampered files and accepts valid ones."""
@@ -51,6 +49,7 @@ class TestH08PolicyIntegrity:
 
     def test_valid_digest_passes(self, tmp_path):
         from src.gateway.governance.normative_provider import _verify_policy_integrity
+
         content = b'{"controls": []}'
         policy = self._make_policy_file(tmp_path, content)
         self._write_digest(policy, content)
@@ -59,9 +58,10 @@ class TestH08PolicyIntegrity:
 
     def test_tampered_content_raises(self, tmp_path):
         from src.gateway.governance.normative_provider import (
-            _verify_policy_integrity,
             PolicyIntegrityError,
+            _verify_policy_integrity,
         )
+
         original = b'{"controls": []}'
         tampered = b'{"controls": [], "allow_all": true}'
         policy = self._make_policy_file(tmp_path, tampered)
@@ -70,18 +70,24 @@ class TestH08PolicyIntegrity:
             _verify_policy_integrity(policy, tampered)
 
     def test_missing_digest_file_warns_but_passes(self, tmp_path, caplog):
-        from src.gateway.governance.normative_provider import _verify_policy_integrity
         import logging
+
+        from src.gateway.governance.normative_provider import _verify_policy_integrity
+
         content = b'{"controls": []}'
         policy = self._make_policy_file(tmp_path, content)
         # No .sha256 companion file
         with caplog.at_level(logging.WARNING, logger="cage.normative_provider"):
             _verify_policy_integrity(policy, content)
-        assert "no integrity digest" in caplog.text.lower() or "skipping" in caplog.text.lower()
+        assert (
+            "no integrity digest" in caplog.text.lower()
+            or "skipping" in caplog.text.lower()
+        )
 
     def test_digest_with_sha256sum_format(self, tmp_path):
         """sha256sum output includes filename after the hash — must still parse."""
         from src.gateway.governance.normative_provider import _verify_policy_integrity
+
         content = b'{"version": 2}'
         policy = self._make_policy_file(tmp_path, content)
         digest = hashlib.sha256(content).hexdigest()
@@ -96,35 +102,42 @@ class TestH08PolicyIntegrity:
 # H-09: Regex pattern validation in text filter
 # =============================================================================
 
+
 class TestH09TextFilterValidation:
     """_validate_keyword() rejects empty/invalid entries; _build_automaton() skips them."""
 
     def test_valid_keyword_accepted(self):
         from src.gateway.governance.text_filter import _validate_keyword
+
         assert _validate_keyword("INSIDER_TRADING") is True
         assert _validate_keyword("pump and dump") is True
 
     def test_empty_keyword_rejected(self):
         from src.gateway.governance.text_filter import _validate_keyword
+
         assert _validate_keyword("") is False
 
     def test_none_keyword_rejected(self):
         from src.gateway.governance.text_filter import _validate_keyword
+
         assert _validate_keyword(None) is False  # type: ignore[arg-type]
 
     def test_non_string_keyword_rejected(self):
         from src.gateway.governance.text_filter import _validate_keyword
+
         assert _validate_keyword(42) is False  # type: ignore[arg-type]
 
     def test_build_automaton_skips_invalid_keywords(self):
         """_build_automaton() must not crash when some keywords are invalid."""
         from src.gateway.governance.text_filter import _build_automaton
+
         # Patch THRESHOLDS to include a mix of valid and invalid keywords
         mock_thresholds = MagicMock()
         mock_thresholds.tier1_keywords = ["VALID_KEYWORD", "", "ANOTHER_VALID"]
         with patch("src.gateway.governance.text_filter.THRESHOLDS", mock_thresholds):
             # Reset the built flag so _build_automaton runs fresh
             import src.gateway.governance.text_filter as tf
+
             tf._AC_BUILT = False
             tf._AC_AUTOMATON = None
             # Should not raise even with empty keyword in list
@@ -141,12 +154,14 @@ class TestH09TextFilterValidation:
 # H-10: Atomic Lua quota enforcement (regression — verify existing behaviour)
 # =============================================================================
 
+
 class TestH10AtomicQuotaEnforcement:
     """Verify that check_and_increment uses EVALSHA (atomic Lua) not GET+SET."""
 
     def test_lua_scripts_defined(self):
         """All three Lua scripts must be non-empty module-level constants."""
         from src.gateway.governance import token_quota_proxy as tqp
+
         assert len(tqp._LUA_CHECK_AND_INCREMENT.strip()) > 0
         assert len(tqp._LUA_ROLLBACK.strip()) > 0
         assert len(tqp._LUA_RECONCILE.strip()) > 0
@@ -154,6 +169,7 @@ class TestH10AtomicQuotaEnforcement:
     def test_lua_check_script_contains_atomic_ops(self):
         """The check-and-increment Lua script must use INCR before checking limits."""
         from src.gateway.governance.token_quota_proxy import _LUA_CHECK_AND_INCREMENT
+
         # The script must increment BEFORE checking — this is the atomic pattern
         script = _LUA_CHECK_AND_INCREMENT
         assert "INCR" in script
@@ -166,6 +182,7 @@ class TestH10AtomicQuotaEnforcement:
         """check_and_increment must call evalsha, not individual GET/SET commands."""
         pytest.importorskip("fakeredis", reason="fakeredis required")
         import fakeredis.aioredis
+
         from src.gateway.governance.token_quota_proxy import TokenQuotaProxy
 
         redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
@@ -195,7 +212,9 @@ class TestH10AtomicQuotaEnforcement:
         """Simulate concurrent requests — total steps must not exceed step_quota_max."""
         pytest.importorskip("fakeredis", reason="fakeredis required")
         import asyncio
+
         import fakeredis.aioredis
+
         from src.gateway.governance.token_quota_proxy import TokenQuotaProxy
 
         redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
@@ -225,6 +244,7 @@ class TestH10AtomicQuotaEnforcement:
 # H-11: Fiscal limit guard rejects non-positive trade values
 # =============================================================================
 
+
 class TestH11FiscalLimitPositiveValues:
     """reserve() must reject zero, negative, NaN, and infinite trade values."""
 
@@ -232,7 +252,9 @@ class TestH11FiscalLimitPositiveValues:
     def guard(self):
         pytest.importorskip("fakeredis", reason="fakeredis required")
         import fakeredis.aioredis
+
         from src.gateway.governance.fiscal_limit_guard import FiscalLimitGuard
+
         redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
         return FiscalLimitGuard(
             redis_client=redis,
@@ -267,6 +289,7 @@ class TestH11FiscalLimitPositiveValues:
     async def test_positive_amount_accepted(self, guard):
         """A valid positive amount must proceed to the fiscal limit check."""
         from src.gateway.governance.fiscal_limit_guard import ReservationToken
+
         token = await guard.reserve("agent-ok", 1000.0)
         assert isinstance(token, ReservationToken)
         assert not token.rejected
@@ -277,6 +300,7 @@ class TestH11FiscalLimitPositiveValues:
 # H-12: YAML policy schema validation
 # =============================================================================
 
+
 class TestH12PolicySchemaValidation:
     """_validate_policy_schema() rejects malformed YAML policy structures."""
 
@@ -284,6 +308,7 @@ class TestH12PolicySchemaValidation:
         from src.governed_financial_advisor.governance.policy_loader import (
             _validate_policy_schema,
         )
+
         data = {
             "hazards": [
                 {"id": "H-001", "description": "Unsafe trade execution"},
@@ -294,51 +319,57 @@ class TestH12PolicySchemaValidation:
 
     def test_non_dict_top_level_rejected(self):
         from src.governed_financial_advisor.governance.policy_loader import (
-            _validate_policy_schema,
             PolicySchemaError,
+            _validate_policy_schema,
         )
+
         with pytest.raises(PolicySchemaError, match="mapping"):
             _validate_policy_schema(["hazard1", "hazard2"], "test.yaml")
 
     def test_missing_hazards_key_rejected(self):
         from src.governed_financial_advisor.governance.policy_loader import (
-            _validate_policy_schema,
             PolicySchemaError,
+            _validate_policy_schema,
         )
+
         with pytest.raises(PolicySchemaError, match="missing required top-level keys"):
             _validate_policy_schema({"version": 1}, "test.yaml")
 
     def test_hazards_not_list_rejected(self):
         from src.governed_financial_advisor.governance.policy_loader import (
-            _validate_policy_schema,
             PolicySchemaError,
+            _validate_policy_schema,
         )
+
         with pytest.raises(PolicySchemaError, match="must be a list"):
             _validate_policy_schema({"hazards": {"id": "H-001"}}, "test.yaml")
 
     def test_hazard_missing_id_rejected(self):
         from src.governed_financial_advisor.governance.policy_loader import (
-            _validate_policy_schema,
             PolicySchemaError,
+            _validate_policy_schema,
         )
+
         data = {"hazards": [{"description": "No ID here"}]}
         with pytest.raises(PolicySchemaError, match="missing required keys"):
             _validate_policy_schema(data, "test.yaml")
 
     def test_hazard_missing_description_rejected(self):
         from src.governed_financial_advisor.governance.policy_loader import (
-            _validate_policy_schema,
             PolicySchemaError,
+            _validate_policy_schema,
         )
+
         data = {"hazards": [{"id": "H-001"}]}
         with pytest.raises(PolicySchemaError, match="missing required keys"):
             _validate_policy_schema(data, "test.yaml")
 
     def test_hazard_not_dict_rejected(self):
         from src.governed_financial_advisor.governance.policy_loader import (
-            _validate_policy_schema,
             PolicySchemaError,
+            _validate_policy_schema,
         )
+
         data = {"hazards": ["not-a-dict"]}
         with pytest.raises(PolicySchemaError, match="must be a mapping"):
             _validate_policy_schema(data, "test.yaml")
@@ -348,16 +379,19 @@ class TestH12PolicySchemaValidation:
         from src.governed_financial_advisor.governance.policy_loader import (
             _validate_policy_schema,
         )
+
         _validate_policy_schema({"hazards": []}, "test.yaml")  # must not raise
 
     def test_load_stamp_hazards_rejects_malformed_yaml(self, tmp_path):
         """PolicyLoader.load_stamp_hazards() raises PolicySchemaError on bad YAML."""
+        # Use local storage backend
+        import os
+
         from src.governed_financial_advisor.governance.policy_loader import (
             PolicyLoader,
             PolicySchemaError,
         )
-        # Use local storage backend
-        import os
+
         os.environ.setdefault("STORAGE_BACKEND", "local")
 
         bad_yaml = "- just a list\n- not a mapping\n"

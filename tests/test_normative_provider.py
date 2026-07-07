@@ -32,10 +32,11 @@ import json
 import os
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from src.gateway.governance.defer_queue import DeferReason
 from src.gateway.governance.normative_provider import (
     EvidenceSeal,
     ExecutionStatus,
@@ -48,8 +49,6 @@ from src.gateway.governance.normative_provider import (
     get_normative_provider,
 )
 from src.integrations.trustlayers import TrustLayersProvider
-from src.gateway.governance.defer_queue import DeferReason
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -66,9 +65,7 @@ def stub_provider() -> StubNormativeProvider:
 def mock_provider() -> AsyncMock:
     """Create a mock NormativeProvider for testing enforce_fria_boundary."""
     provider = AsyncMock()
-    provider.validate_fria = AsyncMock(
-        return_value=ValidationResult(admitted=True)
-    )
+    provider.validate_fria = AsyncMock(return_value=ValidationResult(admitted=True))
     provider.submit_evidence = AsyncMock(
         return_value=EvidenceSeal(thread_id="test-thread")
     )
@@ -131,23 +128,31 @@ class TestStubNormativeProvider:
     """Tests for StubNormativeProvider (dev/CI mode)."""
 
     @pytest.mark.asyncio
-    async def test_stub_returns_local_baseline(self, stub_provider: StubNormativeProvider) -> None:
+    async def test_stub_returns_local_baseline(
+        self, stub_provider: StubNormativeProvider
+    ) -> None:
         """StubNormativeProvider reads from config/compliance/ and returns valid baseline."""
         baseline = await stub_provider.fetch_baseline("US_FED")
         # US_FED_BASELINE.json should exist in the repo
-        assert baseline.is_valid, f"Baseline should be valid but got error: {baseline.error}"
+        assert baseline.is_valid, (
+            f"Baseline should be valid but got error: {baseline.error}"
+        )
         assert baseline.region == "US_FED"
         assert "CTRL_AGT_001" in baseline.profile
 
     @pytest.mark.asyncio
-    async def test_stub_validate_fria_always_admits(self, stub_provider: StubNormativeProvider) -> None:
+    async def test_stub_validate_fria_always_admits(
+        self, stub_provider: StubNormativeProvider
+    ) -> None:
         """Stub always returns admitted=True."""
         result = await stub_provider.validate_fria({"action": "test"})
         assert result.admitted is True
         assert result.error is None
 
     @pytest.mark.asyncio
-    async def test_stub_evidence_seal_no_op(self, stub_provider: StubNormativeProvider) -> None:
+    async def test_stub_evidence_seal_no_op(
+        self, stub_provider: StubNormativeProvider
+    ) -> None:
         """Stub returns seal with empty hash."""
         seal = await stub_provider.submit_evidence("thread-1", "abc123")
         assert seal.thread_id == "thread-1"
@@ -155,7 +160,9 @@ class TestStubNormativeProvider:
         assert seal.error is None
 
     @pytest.mark.asyncio
-    async def test_stub_missing_region_returns_error(self, stub_provider: StubNormativeProvider) -> None:
+    async def test_stub_missing_region_returns_error(
+        self, stub_provider: StubNormativeProvider
+    ) -> None:
         """Non-existent region returns NormativeBaseline with error."""
         baseline = await stub_provider.fetch_baseline("NONEXISTENT_REGION")
         assert not baseline.is_valid
@@ -359,11 +366,14 @@ class TestNormativeProviderDaemon:
             boot_timeout=5.0,
         )
 
-        with patch(
-            "src.gateway.governance.normative_provider._COMPLIANCE_DIR", tmp_path
-        ), patch(
-            "src.gateway.governance.normative_provider.NormativeProviderDaemon._reconfigure_registry"
-        ) as mock_reconfig:
+        with (
+            patch(
+                "src.gateway.governance.normative_provider._COMPLIANCE_DIR", tmp_path
+            ),
+            patch(
+                "src.gateway.governance.normative_provider.NormativeProviderDaemon._reconfigure_registry"
+            ) as mock_reconfig,
+        ):
             await daemon.boot_fetch()
 
             # Profile should be written to disk
@@ -447,11 +457,14 @@ class TestNormativeProviderDaemon:
         )
         daemon._last_hash = "initial-hash"
 
-        with patch(
-            "src.gateway.governance.normative_provider._COMPLIANCE_DIR", tmp_path
-        ), patch(
-            "src.gateway.governance.normative_provider.NormativeProviderDaemon._reconfigure_registry"
-        ) as mock_reconfig:
+        with (
+            patch(
+                "src.gateway.governance.normative_provider._COMPLIANCE_DIR", tmp_path
+            ),
+            patch(
+                "src.gateway.governance.normative_provider.NormativeProviderDaemon._reconfigure_registry"
+            ) as mock_reconfig,
+        ):
             # Run polling for a brief moment
             task = asyncio.create_task(daemon.start_polling())
             await asyncio.sleep(0.35)  # Should get ~2 poll cycles
@@ -500,17 +513,13 @@ class TestTrustLayersProvider:
 
     def test_constructs_correct_baseline_url(self) -> None:
         """TrustLayersProvider builds correct endpoint URL for baseline fetch."""
-        provider = TrustLayersProvider(
-            endpoint="https://api.trustlayers.example.com"
-        )
+        provider = TrustLayersProvider(endpoint="https://api.trustlayers.example.com")
         # Verify endpoint is stored correctly (URL construction tested via fetch)
         assert provider._endpoint == "https://api.trustlayers.example.com"
 
     def test_strips_trailing_slash(self) -> None:
         """Endpoint trailing slash is stripped."""
-        provider = TrustLayersProvider(
-            endpoint="https://api.trustlayers.example.com/"
-        )
+        provider = TrustLayersProvider(endpoint="https://api.trustlayers.example.com/")
         assert provider._endpoint == "https://api.trustlayers.example.com"
 
 

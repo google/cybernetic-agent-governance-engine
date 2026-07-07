@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 def __getattr__(name: str):
     """Lazy sub-module resolver for the compliance_bridge package.
 
@@ -39,6 +40,4 @@ def __getattr__(name: str):
         globals()[name] = module
         return module
     except ModuleNotFoundError as exc:
-        raise AttributeError(
-            f"module {__name__!r} has no attribute {name!r}"
-        ) from exc
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc

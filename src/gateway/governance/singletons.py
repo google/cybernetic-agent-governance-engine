@@ -14,12 +14,15 @@
 
 import logging
 import os
+
 from src.gateway.core.policy import OPAClient
-from src.gateway.governance.consensus import consensus_engine
 from src.gateway.governance.cbf import safety_filter
-from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator as STPAValidator
-from src.gateway.governance.symbolic_governor import SymbolicGovernor
+from src.gateway.governance.consensus import consensus_engine
 from src.gateway.governance.fiscal_limit_guard import FiscalLimitGuard
+from src.gateway.governance.generated_stpa_validator import (
+    GeneratedSTPAValidator as STPAValidator,
+)
+from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
 logger = logging.getLogger("Gateway.Governance.Singletons")
 
@@ -58,9 +61,7 @@ try:
         redis_client=_sync_redis_client,
         daily_cap_usd=_daily_cap_usd,
     )
-    logger.info(
-        "✅ FiscalLimitGuard initialised (daily_cap=%.0f USD).", _daily_cap_usd
-    )
+    logger.info("✅ FiscalLimitGuard initialised (daily_cap=%.0f USD).", _daily_cap_usd)
 except ImportError:
     logger.warning(
         "⚠️ redis-py (sync) not installed — FiscalLimitGuard disabled. "

@@ -63,6 +63,7 @@ logger = logging.getLogger(__name__)
 # We validate the *output* tightly via OscalFinding.
 # ---------------------------------------------------------------------------
 
+
 class RawProp(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -83,7 +84,7 @@ class RawTarget(BaseModel):
     status: RawStatus
 
     @classmethod
-    def from_raw(cls, data: dict[str, Any]) -> "RawTarget":
+    def from_raw(cls, data: dict[str, Any]) -> RawTarget:
         """Normalise hyphenated OSCAL key 'target-id' to 'target_id'."""
         normalised = dict(data)
         if "target-id" in normalised:
@@ -113,6 +114,7 @@ class RawResult(BaseModel):
 # mapState — converts OSCAL status.state to our PASS/FAIL enum.
 # Lula uses "satisfied" / "not-satisfied"; fall back to direct PASS/FAIL.
 # ---------------------------------------------------------------------------
+
 
 def _map_state(state: str) -> OscalResult:
     """Map an OSCAL status.state string to our canonical OscalResult enum.
@@ -147,6 +149,7 @@ def _map_state(state: str) -> OscalResult:
 # ---------------------------------------------------------------------------
 # _get_prop — safely extract a named prop value from a finding's props list.
 # ---------------------------------------------------------------------------
+
 
 def _get_prop(
     props: list[dict[str, Any]] | None,
@@ -198,7 +201,9 @@ def parse_oscal_yaml(oscal_yaml: str) -> list[OscalFinding]:
 
     results_raw = assessment.get("results") or []
     if not results_raw:
-        raise ValueError("[oscal_parser] OSCAL Assessment Result contains no result entries.")
+        raise ValueError(
+            "[oscal_parser] OSCAL Assessment Result contains no result entries."
+        )
 
     # 3. Flatten all findings across all result entries
     findings: list[OscalFinding] = []
@@ -224,27 +229,29 @@ def parse_oscal_yaml(oscal_yaml: str) -> list[OscalFinding]:
             # Normalise target-id hyphenation
             target_data = raw_finding.target
             control_id = (
-                target_data.get("target-id")
-                or target_data.get("target_id")
-                or ""
+                target_data.get("target-id") or target_data.get("target_id") or ""
             )
             status_data = target_data.get("status", {})
-            state = status_data.get("state", "") if isinstance(status_data, dict) else ""
+            state = (
+                status_data.get("state", "") if isinstance(status_data, dict) else ""
+            )
 
-            safety_rate_str   = _get_prop(raw_finding.props, "safety_rate")
-            evidence_age_str  = _get_prop(raw_finding.props, "evidence_age_seconds")
+            safety_rate_str = _get_prop(raw_finding.props, "safety_rate")
+            evidence_age_str = _get_prop(raw_finding.props, "evidence_age_seconds")
 
             candidate: dict[str, Any] = {
                 "control_id": control_id,
-                "result":     _map_state(state),
+                "result": _map_state(state),
                 "finding_id": raw_finding.uuid,
-                "remarks":    (
-                    raw_finding.remarks
-                    or raw_finding.description
-                    or raw_finding.title
+                "remarks": (
+                    raw_finding.remarks or raw_finding.description or raw_finding.title
                 ),
-                "safety_rate":    float(safety_rate_str)  if safety_rate_str  is not None else None,
-                "evidence_age_s": float(evidence_age_str) if evidence_age_str is not None else None,
+                "safety_rate": float(safety_rate_str)
+                if safety_rate_str is not None
+                else None,
+                "evidence_age_s": float(evidence_age_str)
+                if evidence_age_str is not None
+                else None,
             }
 
             # Strict validation before inclusion
@@ -253,7 +260,9 @@ def parse_oscal_yaml(oscal_yaml: str) -> list[OscalFinding]:
             except ValidationError as exc:
                 logger.warning(
                     "[oscal_parser] Skipping finding %s (%s) — validation error: %s",
-                    raw_finding.uuid, control_id, exc,
+                    raw_finding.uuid,
+                    control_id,
+                    exc,
                 )
                 continue
 
@@ -264,5 +273,7 @@ def parse_oscal_yaml(oscal_yaml: str) -> list[OscalFinding]:
             "[oscal_parser] Parsed OSCAL document but extracted zero valid findings."
         )
 
-    logger.info("[oscal_parser] Extracted %d findings deterministically.", len(findings))
+    logger.info(
+        "[oscal_parser] Extracted %d findings deterministically.", len(findings)
+    )
     return findings

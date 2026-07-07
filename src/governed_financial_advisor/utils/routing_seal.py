@@ -83,6 +83,7 @@ class SymbolicGovernorViolation(Exception):
             f"'{action}': {reason}"
         )
 
+
 _GOVERNANCE_SALT = os.getenv("GOVERNANCE_SALT", "REDACTED_SALT")
 _HMAC_KEY = _GOVERNANCE_SALT.encode()
 
@@ -130,9 +131,13 @@ def _canonical_payload(action: str, params: dict) -> bytes:
     Must be byte-for-byte identical to the gateway's implementation so that
     HMAC verification succeeds across the service boundary.
     """
-    safe = {k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v))
-            for k, v in params.items()}
-    canon = json.dumps({"action": action, **safe}, sort_keys=True, separators=(",", ":"))
+    safe = {
+        k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v))
+        for k, v in params.items()
+    }
+    canon = json.dumps(
+        {"action": action, **safe}, sort_keys=True, separators=(",", ":")
+    )
     return canon.encode()
 
 
@@ -186,7 +191,9 @@ def verify_seal(seal: str, action: str, params: dict) -> bool:
         # Check action slug
         expected_slug = action.replace("_", "-").lower()[:32]
         if action_slug != expected_slug:
-            reason = f"action mismatch (got '{action_slug}', expected '{expected_slug}')"
+            reason = (
+                f"action mismatch (got '{action_slug}', expected '{expected_slug}')"
+            )
             logger.warning("🔒 Routing seal rejected: %s", reason)
             raise SymbolicGovernorViolation(reason, action)
 
@@ -205,7 +212,7 @@ def verify_seal(seal: str, action: str, params: dict) -> bool:
 
     except SymbolicGovernorViolation:
         return False
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         reason = f"unexpected verification error: {exc}"
         logger.warning("🔒 Routing seal verification error: %s", exc)
         return False

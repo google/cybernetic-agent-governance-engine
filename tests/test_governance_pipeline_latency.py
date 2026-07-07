@@ -34,7 +34,7 @@ from __future__ import annotations
 import os
 import statistics
 import time
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -53,17 +53,18 @@ pytestmark = pytest.mark.unit
 # Latency budgets (milliseconds) — tune here without touching test logic
 # ---------------------------------------------------------------------------
 
-TIER1_NEMO_INPUT_BUDGET_MS: float = 50.0    # NeMo input guardrail
-TIER2_OPA_BUDGET_MS: float = 30.0           # OPA policy check
-TIER3_SAFETY_BUDGET_MS: float = 20.0        # Safety/STPA validation (pure Python)
-TIER4_AGENT_BUDGET_MS: float = 2000.0       # LLM call (network-bound, generous budget)
-TIER5_NEMO_OUTPUT_BUDGET_MS: float = 50.0   # NeMo output rail
-PIPELINE_TOTAL_BUDGET_MS: float = 2200.0    # End-to-end budget (ex. Tier 4 LLM)
+TIER1_NEMO_INPUT_BUDGET_MS: float = 50.0  # NeMo input guardrail
+TIER2_OPA_BUDGET_MS: float = 30.0  # OPA policy check
+TIER3_SAFETY_BUDGET_MS: float = 20.0  # Safety/STPA validation (pure Python)
+TIER4_AGENT_BUDGET_MS: float = 2000.0  # LLM call (network-bound, generous budget)
+TIER5_NEMO_OUTPUT_BUDGET_MS: float = 50.0  # NeMo output rail
+PIPELINE_TOTAL_BUDGET_MS: float = 2200.0  # End-to-end budget (ex. Tier 4 LLM)
 
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
 
 class _FakeMessage:
     """Minimal stand-in for langchain BaseMessage."""
@@ -73,7 +74,7 @@ class _FakeMessage:
         self.id = id
 
 
-def _input_state(text: str = "What is the current AAPL price?") -> Dict[str, Any]:
+def _input_state(text: str = "What is the current AAPL price?") -> dict[str, Any]:
     """Minimal valid state dict for input-rail tests."""
     return {
         "messages": [_FakeMessage(text)],
@@ -82,14 +83,14 @@ def _input_state(text: str = "What is the current AAPL price?") -> Dict[str, Any
     }
 
 
-def _output_state(text: str = "AAPL is trading at $195.") -> Dict[str, Any]:
+def _output_state(text: str = "AAPL is trading at $195.") -> dict[str, Any]:
     """Minimal valid state dict for output-rail tests."""
     return {
         "messages": [_FakeMessage(text, id="msg-out-1")],
     }
 
 
-def _opa_state() -> Dict[str, Any]:
+def _opa_state() -> dict[str, Any]:
     """Minimal valid state dict for OPA / safety-node tests."""
     return {
         "execution_plan_output": {
@@ -105,7 +106,7 @@ def _opa_state() -> Dict[str, Any]:
     }
 
 
-def _trade_extractor(state: Dict[str, Any]) -> Dict[str, Any]:
+def _trade_extractor(state: dict[str, Any]) -> dict[str, Any]:
     """Minimal OPA payload extractor for latency tests."""
     plan = state.get("execution_plan_output") or {}
     return {
@@ -123,7 +124,7 @@ def _trade_extractor(state: Dict[str, Any]) -> Dict[str, Any]:
 
 def _make_opa_config(**overrides) -> OpaNodeConfig:
     """Build a minimal OpaNodeConfig for latency tests."""
-    defaults: Dict[str, Any] = dict(
+    defaults: dict[str, Any] = dict(
         policy_action_name="execute_trade",
         payload_extractor=_trade_extractor,
         plan_state_key="execution_plan_output",
@@ -168,6 +169,7 @@ def _format_report(
 # ---------------------------------------------------------------------------
 # Context managers for patching all external I/O
 # ---------------------------------------------------------------------------
+
 
 def _nemo_input_patches(safe: bool = True):
     """Return a list of patch context managers for the NeMo input rail."""
@@ -228,6 +230,7 @@ def _opa_patches():
 # Tier 1 — NeMo input guardrail latency
 # ---------------------------------------------------------------------------
 
+
 class TestTier1NemoInputGuardrailLatency:
     """Latency tests for Tier 1: NeMo input guardrail node."""
 
@@ -266,6 +269,7 @@ class TestTier1NemoInputGuardrailLatency:
 # Tier 2 — OPA policy check latency
 # ---------------------------------------------------------------------------
 
+
 class TestTier2OpaPolicyCheckLatency:
     """Latency tests for Tier 2: OPA policy check node."""
 
@@ -296,14 +300,14 @@ class TestTier2OpaPolicyCheckLatency:
             f"Expected APPROVED, got: {result}"
         )
         assert elapsed_ms < TIER2_OPA_BUDGET_MS, (
-            f"Tier 2 latency {elapsed_ms:.2f}ms exceeded budget "
-            f"{TIER2_OPA_BUDGET_MS}ms"
+            f"Tier 2 latency {elapsed_ms:.2f}ms exceeded budget {TIER2_OPA_BUDGET_MS}ms"
         )
 
 
 # ---------------------------------------------------------------------------
 # Tier 3 — Safety/STPA node latency
 # ---------------------------------------------------------------------------
+
 
 class TestTier3SafetyNodeLatency:
     """Latency tests for Tier 3: Safety/STPA validation node."""
@@ -352,6 +356,7 @@ class TestTier3SafetyNodeLatency:
 # Tier 5 — NeMo output rail latency
 # ---------------------------------------------------------------------------
 
+
 class TestTier5NemoOutputRailLatency:
     """Latency tests for Tier 5: NeMo output rail node."""
 
@@ -385,6 +390,7 @@ class TestTier5NemoOutputRailLatency:
 # ---------------------------------------------------------------------------
 # Pipeline cumulative latency (Tiers 1, 2, 3, 5 — Tier 4 excluded)
 # ---------------------------------------------------------------------------
+
 
 class TestPipelineCumulativeLatency:
     """End-to-end cumulative latency test for the 4 non-LLM tiers."""
@@ -481,6 +487,7 @@ class TestPipelineCumulativeLatency:
 # Latency report printed to stdout (capsys verification)
 # ---------------------------------------------------------------------------
 
+
 class TestLatencyReportPrinted:
     """Verify that the pipeline test emits a human-readable latency report."""
 
@@ -547,6 +554,7 @@ class TestLatencyReportPrinted:
 # ---------------------------------------------------------------------------
 # Parametrized p95 latency test for Tier 1
 # ---------------------------------------------------------------------------
+
 
 class TestTier1LatencyP95:
     """P95 latency test for Tier 1 NeMo input guardrail over N runs."""

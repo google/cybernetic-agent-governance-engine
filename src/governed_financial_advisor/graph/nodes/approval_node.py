@@ -37,7 +37,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from langgraph.types import interrupt, Command
+from langgraph.types import Command, interrupt
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +81,9 @@ def approval_node(state: dict[str, Any]) -> Command:
 
     approved: bool = bool(decision.get("approved", False))
     reviewer: str = decision.get("reviewer", "unknown")
-    rationale: str = decision.get("rationale", "")   # mandatory human justification
-    comment: str = decision.get("comment", "")         # optional supplementary note
-    timestamp: str = decision.get(
-        "timestamp", datetime.now(timezone.utc).isoformat()
-    )
+    rationale: str = decision.get("rationale", "")  # mandatory human justification
+    comment: str = decision.get("comment", "")  # optional supplementary note
+    timestamp: str = decision.get("timestamp", datetime.now(timezone.utc).isoformat())
 
     approval_decision: dict[str, Any] = {
         "approved": approved,
