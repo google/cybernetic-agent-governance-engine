@@ -66,7 +66,9 @@ PATH_STYLE = os.environ.get("S3_PATH_STYLE", "").lower() in ("1", "true", "yes")
 
 # AI600-007: Model weight integrity verification mode.
 # STRICT=true → abort on hash mismatch; STRICT=false (default) → warn and continue.
-_VERIFICATION_STRICT = os.environ.get("MODEL_WEIGHT_VERIFICATION_STRICT", "").lower() == "true"
+_VERIFICATION_STRICT = (
+    os.environ.get("MODEL_WEIGHT_VERIFICATION_STRICT", "").lower() == "true"
+)
 
 # Canonical path to the signed model hash manifest (relative to repo root).
 _MANIFEST_PATH = Path(__file__).parent.parent.parent / "config" / "model_hashes.json"
@@ -76,7 +78,9 @@ _MANIFEST_PATH = Path(__file__).parent.parent.parent / "config" / "model_hashes.
 # HuggingFace model snapshot and are small enough to hash locally.  Weight shard
 # files (*.safetensors, *.bin) are too large for a static manifest; a future Phase 3
 # improvement will add cosign/sigstore attestation for those files.
-_INTEGRITY_ANCHORS = frozenset(["config.json", "tokenizer.json", "tokenizer_config.json"])
+_INTEGRITY_ANCHORS = frozenset(
+    ["config.json", "tokenizer.json", "tokenizer_config.json"]
+)
 
 
 def get_base_model_name(model_id: str) -> str:
@@ -94,17 +98,22 @@ def get_base_model_name(model_id: str) -> str:
 MODEL_FAST = os.getenv("MODEL_FAST")
 MODEL_REASONING = os.getenv("MODEL_REASONING")
 
-MODELS_TO_MIRROR = list(set(filter(None, [
-    get_base_model_name(MODEL_FAST),
-    get_base_model_name(MODEL_REASONING),
-])))
+MODELS_TO_MIRROR = list(
+    set(
+        filter(
+            None,
+            [
+                get_base_model_name(MODEL_FAST),
+                get_base_model_name(MODEL_REASONING),
+            ],
+        )
+    )
+)
 
 
 def _get_s3_client() -> boto3.client:
     """Return a configured boto3 S3 client."""
-    config = BotocoreConfig(
-        s3={"addressing_style": "path"} if PATH_STYLE else {}
-    )
+    config = BotocoreConfig(s3={"addressing_style": "path"} if PATH_STYLE else {})
     return boto3.client(
         "s3",
         endpoint_url=ENDPOINT_URL,
@@ -186,7 +195,8 @@ def verify_model_integrity(local_model_dir: Path, model_id: str) -> bool:
         if not expected_hash:
             logger.debug(
                 "[AI600-007] No manifest entry for %s/%s — skipping.",
-                model_id, anchor_filename,
+                model_id,
+                anchor_filename,
             )
             continue
 
@@ -194,7 +204,9 @@ def verify_model_integrity(local_model_dir: Path, model_id: str) -> bool:
         if actual_hash == expected_hash:
             logger.info(
                 "[AI600-007] ✅ %s/%s SHA-256 verified: %s",
-                model_id, anchor_filename, actual_hash[:16] + "…",
+                model_id,
+                anchor_filename,
+                actual_hash[:16] + "…",
             )
             verified_count += 1
         else:
@@ -203,7 +215,10 @@ def verify_model_integrity(local_model_dir: Path, model_id: str) -> bool:
                 "  Expected: %s\n"
                 "  Actual:   %s\n"
                 "  This may indicate a supply chain attack or corrupted download.",
-                model_id, anchor_filename, expected_hash, actual_hash,
+                model_id,
+                anchor_filename,
+                expected_hash,
+                actual_hash,
             )
             all_passed = False
             failed_files.append(anchor_filename)
@@ -211,15 +226,21 @@ def verify_model_integrity(local_model_dir: Path, model_id: str) -> bool:
     if all_passed:
         logger.info(
             "[AI600-007] ✅ Model integrity verified: model=%s files_checked=%d",
-            model_id, verified_count,
+            model_id,
+            verified_count,
         )
-        _emit_integrity_span(model_id, verified=True, reason=f"anchors_verified:{verified_count}")
+        _emit_integrity_span(
+            model_id, verified=True, reason=f"anchors_verified:{verified_count}"
+        )
     else:
         logger.error(
             "[AI600-007] ❌ Model integrity FAILED: model=%s failed_files=%s",
-            model_id, ", ".join(failed_files),
+            model_id,
+            ", ".join(failed_files),
         )
-        _emit_integrity_span(model_id, verified=False, reason=f"hash_mismatch:{','.join(failed_files)}")
+        _emit_integrity_span(
+            model_id, verified=False, reason=f"hash_mismatch:{','.join(failed_files)}"
+        )
 
     return all_passed
 
@@ -231,7 +252,7 @@ def _emit_integrity_span(model_id: str, verified: bool, reason: str) -> None:
     AI600-007: SA-12 / SR-3 / SI-7 supply chain integrity evidence.
     """
     try:
-        from opentelemetry import trace  # noqa: PLC0415
+        from opentelemetry import trace
 
         tracer = trace.get_tracer("deployment.mirror_models")
         with tracer.start_as_current_span("supply_chain.model_integrity_check") as span:
@@ -246,7 +267,9 @@ def _emit_integrity_span(model_id: str, verified: bool, reason: str) -> None:
 def upload_to_s3(local_path: Path, s3_prefix: str, s3_client: boto3.client) -> None:
     """Upload all files under *local_path* to *s3_prefix* in the configured bucket."""
     endpoint_display = ENDPOINT_URL or "AWS S3"
-    print(f"🚀 Uploading {local_path} → s3://{BUCKET_NAME}/{s3_prefix} ({endpoint_display})...")
+    print(
+        f"🚀 Uploading {local_path} → s3://{BUCKET_NAME}/{s3_prefix} ({endpoint_display})..."
+    )
 
     file_count = 0
     for local_file in local_path.rglob("*"):

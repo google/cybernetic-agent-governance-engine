@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import os
 import re
 import subprocess
 import sys
@@ -161,7 +160,9 @@ def check_freshness(verbose: bool = False) -> list[str]:
         if verbose:
             print(f"\nArtifact: {artifact.relative_to(_REPO_ROOT)}")
             print(f"  file mtime:    {artifact_mtime_dt.isoformat()}")
-            print(f"  embedded ts:   {embedded_ts.isoformat() if embedded_ts else 'not found'}")
+            print(
+                f"  embedded ts:   {embedded_ts.isoformat() if embedded_ts else 'not found'}"
+            )
 
         # Check 1: file mtime — artifact must be newer than source.
         # Skip this check in CI-like environments where git commit time is
@@ -176,7 +177,7 @@ def check_freshness(verbose: bool = False) -> list[str]:
             )
             errors.append(msg)
             if verbose:
-                print(f"  [STALE] file mtime is older than source")
+                print("  [STALE] file mtime is older than source")
             continue
 
         # Check 2: embedded timestamp — must be >= source mtime (to the minute)
@@ -193,11 +194,11 @@ def check_freshness(verbose: bool = False) -> list[str]:
                 )
                 errors.append(msg)
                 if verbose:
-                    print(f"  [STALE] embedded timestamp pre-dates source mtime")
+                    print("  [STALE] embedded timestamp pre-dates source mtime")
                 continue
 
         if verbose:
-            print(f"  [OK]")
+            print("  [OK]")
 
     return errors
 
@@ -207,7 +208,8 @@ def main() -> int:
         description="Check that generated STPA artifacts are current."
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Print per-artifact details.",
     )

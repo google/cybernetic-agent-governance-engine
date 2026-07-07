@@ -54,9 +54,11 @@ pytestmark = pytest.mark.unit
 # 1. is_default_salt() — gateway version
 # ---------------------------------------------------------------------------
 
+
 def test_gateway_is_default_salt_true_when_using_default():
     """is_default_salt() returns True when _USING_DEFAULT_SALT is True (no custom GOVERNANCE_SALT)."""
     import src.gateway.governance.routing_seal as gw_seal
+
     with patch.object(gw_seal, "_USING_DEFAULT_SALT", True):
         assert gw_seal.is_default_salt() is True
 
@@ -64,6 +66,7 @@ def test_gateway_is_default_salt_true_when_using_default():
 def test_gateway_is_default_salt_false_when_custom_salt_set():
     """is_default_salt() returns False when _USING_DEFAULT_SALT is False (custom GOVERNANCE_SALT in use)."""
     import src.gateway.governance.routing_seal as gw_seal
+
     with patch.object(gw_seal, "_USING_DEFAULT_SALT", False):
         assert gw_seal.is_default_salt() is False
 
@@ -72,11 +75,15 @@ def test_gateway_is_default_salt_false_when_custom_salt_set():
 # 2. assert_custom_salt_in_production() — gateway version
 # ---------------------------------------------------------------------------
 
+
 def test_gateway_assert_custom_salt_does_not_raise_in_development():
     """assert_custom_salt_in_production() does NOT raise when CAGE_ENV=development, even with default salt."""
     import src.gateway.governance.routing_seal as gw_seal
-    with patch.object(gw_seal, "_USING_DEFAULT_SALT", True), \
-         patch.dict(os.environ, {"CAGE_ENV": "development"}, clear=False):
+
+    with (
+        patch.object(gw_seal, "_USING_DEFAULT_SALT", True),
+        patch.dict(os.environ, {"CAGE_ENV": "development"}, clear=False),
+    ):
         # Should not raise
         gw_seal.assert_custom_salt_in_production()
 
@@ -84,16 +91,22 @@ def test_gateway_assert_custom_salt_does_not_raise_in_development():
 def test_gateway_assert_custom_salt_does_not_raise_in_test_env():
     """assert_custom_salt_in_production() does NOT raise when CAGE_ENV=test, even with default salt."""
     import src.gateway.governance.routing_seal as gw_seal
-    with patch.object(gw_seal, "_USING_DEFAULT_SALT", True), \
-         patch.dict(os.environ, {"CAGE_ENV": "test"}, clear=False):
+
+    with (
+        patch.object(gw_seal, "_USING_DEFAULT_SALT", True),
+        patch.dict(os.environ, {"CAGE_ENV": "test"}, clear=False),
+    ):
         gw_seal.assert_custom_salt_in_production()
 
 
 def test_gateway_assert_custom_salt_does_not_raise_in_ci_env():
     """assert_custom_salt_in_production() does NOT raise when CAGE_ENV=ci, even with default salt."""
     import src.gateway.governance.routing_seal as gw_seal
-    with patch.object(gw_seal, "_USING_DEFAULT_SALT", True), \
-         patch.dict(os.environ, {"CAGE_ENV": "ci"}, clear=False):
+
+    with (
+        patch.object(gw_seal, "_USING_DEFAULT_SALT", True),
+        patch.dict(os.environ, {"CAGE_ENV": "ci"}, clear=False),
+    ):
         gw_seal.assert_custom_salt_in_production()
 
 
@@ -104,8 +117,10 @@ def test_gateway_assert_custom_salt_raises_in_production_with_default_salt():
     env = {k: v for k, v in os.environ.items() if k not in ("CAGE_ENV", "ENVIRONMENT")}
     env["CAGE_ENV"] = "production"
 
-    with patch.object(gw_seal, "_USING_DEFAULT_SALT", True), \
-         patch.dict(os.environ, env, clear=True):
+    with (
+        patch.object(gw_seal, "_USING_DEFAULT_SALT", True),
+        patch.dict(os.environ, env, clear=True),
+    ):
         with pytest.raises(RuntimeError, match="REDACTED_SALT"):
             gw_seal.assert_custom_salt_in_production()
 
@@ -117,8 +132,10 @@ def test_gateway_assert_custom_salt_does_not_raise_in_production_with_custom_sal
     env = {k: v for k, v in os.environ.items() if k not in ("CAGE_ENV", "ENVIRONMENT")}
     env["CAGE_ENV"] = "production"
 
-    with patch.object(gw_seal, "_USING_DEFAULT_SALT", False), \
-         patch.dict(os.environ, env, clear=True):
+    with (
+        patch.object(gw_seal, "_USING_DEFAULT_SALT", False),
+        patch.dict(os.environ, env, clear=True),
+    ):
         # Should not raise
         gw_seal.assert_custom_salt_in_production()
 
@@ -130,8 +147,10 @@ def test_gateway_assert_custom_salt_raises_uses_environment_fallback():
     env = {k: v for k, v in os.environ.items() if k not in ("CAGE_ENV", "ENVIRONMENT")}
     env["ENVIRONMENT"] = "production"
 
-    with patch.object(gw_seal, "_USING_DEFAULT_SALT", True), \
-         patch.dict(os.environ, env, clear=True):
+    with (
+        patch.object(gw_seal, "_USING_DEFAULT_SALT", True),
+        patch.dict(os.environ, env, clear=True),
+    ):
         with pytest.raises(RuntimeError):
             gw_seal.assert_custom_salt_in_production()
 
@@ -140,9 +159,11 @@ def test_gateway_assert_custom_salt_raises_uses_environment_fallback():
 # 3. is_default_salt() — GFA utils version
 # ---------------------------------------------------------------------------
 
+
 def test_gfa_is_default_salt_true_when_using_default():
     """GFA is_default_salt() returns True when _USING_DEFAULT_SALT is True."""
     import src.governed_financial_advisor.utils.routing_seal as gfa_seal
+
     with patch.object(gfa_seal, "_USING_DEFAULT_SALT", True):
         assert gfa_seal.is_default_salt() is True
 
@@ -150,6 +171,7 @@ def test_gfa_is_default_salt_true_when_using_default():
 def test_gfa_is_default_salt_false_when_custom_salt_set():
     """GFA is_default_salt() returns False when _USING_DEFAULT_SALT is False."""
     import src.governed_financial_advisor.utils.routing_seal as gfa_seal
+
     with patch.object(gfa_seal, "_USING_DEFAULT_SALT", False):
         assert gfa_seal.is_default_salt() is False
 
@@ -158,27 +180,37 @@ def test_gfa_is_default_salt_false_when_custom_salt_set():
 # 4. assert_custom_salt_in_production() — GFA utils version
 # ---------------------------------------------------------------------------
 
+
 def test_gfa_assert_custom_salt_does_not_raise_in_development():
     """GFA assert_custom_salt_in_production() does NOT raise when CAGE_ENV=development, even with default salt."""
     import src.governed_financial_advisor.utils.routing_seal as gfa_seal
-    with patch.object(gfa_seal, "_USING_DEFAULT_SALT", True), \
-         patch.dict(os.environ, {"CAGE_ENV": "development"}, clear=False):
+
+    with (
+        patch.object(gfa_seal, "_USING_DEFAULT_SALT", True),
+        patch.dict(os.environ, {"CAGE_ENV": "development"}, clear=False),
+    ):
         gfa_seal.assert_custom_salt_in_production()
 
 
 def test_gfa_assert_custom_salt_does_not_raise_in_test_env():
     """GFA assert_custom_salt_in_production() does NOT raise when CAGE_ENV=test, even with default salt."""
     import src.governed_financial_advisor.utils.routing_seal as gfa_seal
-    with patch.object(gfa_seal, "_USING_DEFAULT_SALT", True), \
-         patch.dict(os.environ, {"CAGE_ENV": "test"}, clear=False):
+
+    with (
+        patch.object(gfa_seal, "_USING_DEFAULT_SALT", True),
+        patch.dict(os.environ, {"CAGE_ENV": "test"}, clear=False),
+    ):
         gfa_seal.assert_custom_salt_in_production()
 
 
 def test_gfa_assert_custom_salt_does_not_raise_in_ci_env():
     """GFA assert_custom_salt_in_production() does NOT raise when CAGE_ENV=ci, even with default salt."""
     import src.governed_financial_advisor.utils.routing_seal as gfa_seal
-    with patch.object(gfa_seal, "_USING_DEFAULT_SALT", True), \
-         patch.dict(os.environ, {"CAGE_ENV": "ci"}, clear=False):
+
+    with (
+        patch.object(gfa_seal, "_USING_DEFAULT_SALT", True),
+        patch.dict(os.environ, {"CAGE_ENV": "ci"}, clear=False),
+    ):
         gfa_seal.assert_custom_salt_in_production()
 
 
@@ -189,8 +221,10 @@ def test_gfa_assert_custom_salt_raises_in_production_with_default_salt():
     env = {k: v for k, v in os.environ.items() if k not in ("CAGE_ENV", "ENVIRONMENT")}
     env["CAGE_ENV"] = "production"
 
-    with patch.object(gfa_seal, "_USING_DEFAULT_SALT", True), \
-         patch.dict(os.environ, env, clear=True):
+    with (
+        patch.object(gfa_seal, "_USING_DEFAULT_SALT", True),
+        patch.dict(os.environ, env, clear=True),
+    ):
         with pytest.raises(RuntimeError, match="REDACTED_SALT"):
             gfa_seal.assert_custom_salt_in_production()
 
@@ -202,8 +236,10 @@ def test_gfa_assert_custom_salt_does_not_raise_in_production_with_custom_salt():
     env = {k: v for k, v in os.environ.items() if k not in ("CAGE_ENV", "ENVIRONMENT")}
     env["CAGE_ENV"] = "production"
 
-    with patch.object(gfa_seal, "_USING_DEFAULT_SALT", False), \
-         patch.dict(os.environ, env, clear=True):
+    with (
+        patch.object(gfa_seal, "_USING_DEFAULT_SALT", False),
+        patch.dict(os.environ, env, clear=True),
+    ):
         gfa_seal.assert_custom_salt_in_production()
 
 
@@ -214,8 +250,10 @@ def test_gfa_assert_custom_salt_raises_uses_environment_fallback():
     env = {k: v for k, v in os.environ.items() if k not in ("CAGE_ENV", "ENVIRONMENT")}
     env["ENVIRONMENT"] = "production"
 
-    with patch.object(gfa_seal, "_USING_DEFAULT_SALT", True), \
-         patch.dict(os.environ, env, clear=True):
+    with (
+        patch.object(gfa_seal, "_USING_DEFAULT_SALT", True),
+        patch.dict(os.environ, env, clear=True),
+    ):
         with pytest.raises(RuntimeError):
             gfa_seal.assert_custom_salt_in_production()
 
@@ -227,10 +265,13 @@ def test_gfa_assert_custom_salt_raises_uses_environment_fallback():
 # conftest.py: "CYBERNETIC_GOVERNANCE_TEST_SALT_32C!"). The HMAC key is
 # consistent within the test session, so round-trips work correctly.
 
+
 def test_gateway_generate_and_gfa_verify_round_trip():
     """generate_seal() + GFA verify_seal() round-trip succeeds with the test salt."""
     from src.gateway.governance.routing_seal import generate_seal
-    from src.governed_financial_advisor.utils.routing_seal import verify_seal as gfa_verify
+    from src.governed_financial_advisor.utils.routing_seal import (
+        verify_seal as gfa_verify,
+    )
 
     params = {"symbol": "AAPL", "amount": 5000.0, "currency": "USD"}
     seal = generate_seal("execute_trade", params)
@@ -260,6 +301,7 @@ def test_round_trip_with_nested_params_coerced_to_string():
 # 6. verify_seal() rejects expired seal
 # ---------------------------------------------------------------------------
 
+
 def test_gateway_verify_seal_rejects_expired_seal():
     """verify_seal() returns False for a seal generated with ttl_s=0 (immediately expired)."""
     from src.gateway.governance.routing_seal import generate_seal, verify_seal
@@ -274,7 +316,9 @@ def test_gateway_verify_seal_rejects_expired_seal():
 def test_gfa_verify_seal_rejects_expired_seal():
     """GFA verify_seal() returns False for an expired seal."""
     from src.gateway.governance.routing_seal import generate_seal
-    from src.governed_financial_advisor.utils.routing_seal import verify_seal as gfa_verify
+    from src.governed_financial_advisor.utils.routing_seal import (
+        verify_seal as gfa_verify,
+    )
 
     params = {"symbol": "AAPL", "amount": 1000.0}
     seal = generate_seal("execute_trade", params, ttl_s=0)
@@ -285,6 +329,7 @@ def test_gfa_verify_seal_rejects_expired_seal():
 # ---------------------------------------------------------------------------
 # 7. verify_seal() rejects wrong action
 # ---------------------------------------------------------------------------
+
 
 def test_gateway_verify_seal_rejects_wrong_action():
     """verify_seal() returns False when the action does not match the seal's action slug."""
@@ -298,7 +343,9 @@ def test_gateway_verify_seal_rejects_wrong_action():
 def test_gfa_verify_seal_rejects_wrong_action():
     """GFA verify_seal() returns False when the action does not match the seal's action slug."""
     from src.gateway.governance.routing_seal import generate_seal
-    from src.governed_financial_advisor.utils.routing_seal import verify_seal as gfa_verify
+    from src.governed_financial_advisor.utils.routing_seal import (
+        verify_seal as gfa_verify,
+    )
 
     params = {"symbol": "AAPL", "amount": 1000.0}
     seal = generate_seal("execute_trade", params)
@@ -322,15 +369,22 @@ def test_gateway_verify_seal_rejects_malformed_seal():
     """verify_seal() returns False (not raises) for a malformed seal string."""
     from src.gateway.governance.routing_seal import verify_seal
 
-    assert verify_seal("not.a.valid.seal.with.too.many.parts", "execute_trade", {}) is False
+    assert (
+        verify_seal("not.a.valid.seal.with.too.many.parts", "execute_trade", {})
+        is False
+    )
     assert verify_seal("only-two-parts", "execute_trade", {}) is False
     assert verify_seal("", "execute_trade", {}) is False
 
 
 def test_gfa_verify_seal_rejects_malformed_seal():
     """GFA verify_seal() returns False (not raises) for a malformed seal string."""
-    from src.governed_financial_advisor.utils.routing_seal import verify_seal as gfa_verify
+    from src.governed_financial_advisor.utils.routing_seal import (
+        verify_seal as gfa_verify,
+    )
 
-    assert gfa_verify("not.a.valid.seal.with.too.many.parts", "execute_trade", {}) is False
+    assert (
+        gfa_verify("not.a.valid.seal.with.too.many.parts", "execute_trade", {}) is False
+    )
     assert gfa_verify("only-two-parts", "execute_trade", {}) is False
     assert gfa_verify("", "execute_trade", {}) is False

@@ -22,11 +22,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from scripts.lib.config import load_config
 from scripts.lib.utils import load_dotenv
 
+
 def main():
     load_dotenv()
     config = load_config()
     config["project"] = {"id": os.environ.get("GOOGLE_CLOUD_PROJECT", "")}
-    
+
     # Check if we need to load from env for reasoning
     model_reasoning = os.environ.get("MODEL_REASONING")
     if not model_reasoning:
@@ -43,15 +44,19 @@ def main():
         "enable_prefix_caching": True,
         "served_name": os.environ.get("MODEL_REASONING"),
     }
-    
+
     accelerator_kind = os.environ.get("ACCELERATOR_KIND", "gpu")
 
     # NOTE: generate_vllm_manifest (deployment.lib.renderer) was never implemented.
     # This script now prints the resolved config for manual manifest authoring.
     import json
+
     print(f"Resolved reasoning config (accelerator={accelerator_kind}):")
     print(json.dumps(reasoning_config, indent=2, default=str))
-    print("\nUse deployment/k8s/templates/vllm-reasoning.yaml.tpl as the manifest template.")
+    print(
+        "\nUse deployment/k8s/templates/vllm-reasoning.yaml.tpl as the manifest template."
+    )
+
 
 if __name__ == "__main__":
     main()

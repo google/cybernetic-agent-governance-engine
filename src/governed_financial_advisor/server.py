@@ -19,9 +19,9 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-import uvicorn
-
 from contextlib import asynccontextmanager
+
+import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
 from langgraph.types import Command
 from opentelemetry import trace
@@ -29,6 +29,7 @@ from pydantic import BaseModel
 
 try:
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
     _FASTAPI_INSTRUMENTOR_AVAILABLE = True
 except ImportError:
     FastAPIInstrumentor = None  # type: ignore[assignment,misc]
@@ -36,20 +37,22 @@ except ImportError:
 
 try:
     from opentelemetry.instrumentation.langchain import LangchainInstrumentor
+
     _LANGCHAIN_INSTRUMENTOR_AVAILABLE = True
 except ImportError:
     LangchainInstrumentor = None  # type: ignore[assignment,misc]
     _LANGCHAIN_INSTRUMENTOR_AVAILABLE = False
 
 from config.settings import Config
-from src.governed_financial_advisor.tools.api import tools_router
+from src.gateway.governance.nemo.manager import (
+    load_rails,
+)
 from src.governed_financial_advisor.graph.graph import create_graph
-from src.governed_financial_advisor.utils.context import user_context
-from src.gateway.governance.nemo.manager import load_rails, validate_with_nemo, verify_and_mask_output
-from src.governed_financial_advisor.utils.telemetry import configure_telemetry
-from src.governed_financial_advisor.utils.telemetry import configure_telemetry
 from src.governed_financial_advisor.infrastructure.auth import require_api_key
 from src.governed_financial_advisor.infrastructure.mcp_client import get_mcp_client
+from src.governed_financial_advisor.tools.api import tools_router
+from src.governed_financial_advisor.utils.context import user_context
+from src.governed_financial_advisor.utils.telemetry import configure_telemetry
 
 # Observability
 ENABLE_TRACING = os.environ.get("ENABLE_TRACING", "true").lower() == "true"
@@ -58,6 +61,7 @@ if ENABLE_TRACING:
     configure_telemetry()
     if _LANGCHAIN_INSTRUMENTOR_AVAILABLE and LangchainInstrumentor is not None:
         LangchainInstrumentor().instrument()  # Traces Graph nodes (including Agent calls)
+
 
 # --- LIFESPAN (Startup/Shutdown) ---
 @asynccontextmanager
@@ -70,7 +74,10 @@ async def lifespan(app: FastAPI):
     # The singleton is created at module import time (redis_client.py) but
     # connect() must be called explicitly to establish the connection pool.
     # Failure is non-fatal: the server starts but sessions won't persist.
-    from src.governed_financial_advisor.infrastructure.redis_client import redis_client as _redis_client
+    from src.governed_financial_advisor.infrastructure.redis_client import (
+        redis_client as _redis_client,
+    )
+
     try:
         await _redis_client.connect()
         logger.info("✅ GFA AsyncRedisClient connected")
@@ -102,19 +109,28 @@ async def lifespan(app: FastAPI):
         pass
 
 
-app = FastAPI(title="Governed Financial Advisor (Graph Orchestrated)", lifespan=lifespan)
+app = FastAPI(
+    title="Governed Financial Advisor (Graph Orchestrated)", lifespan=lifespan
+)
+
+
 def server_request_hook(span, scope):
     if not span or not span.is_recording():
         return
-    
+
     method = scope.get("method", "GET").upper()
     path = scope.get("path", "/")
-    
+
     # 1. Rich Observation (Mapping Input and Span Name)
     span.set_attribute("input", f"{method} {path}")
     span.update_name(f"{method} {path}")
 
-if ENABLE_TRACING and _FASTAPI_INSTRUMENTOR_AVAILABLE and FastAPIInstrumentor is not None:
+
+if (
+    ENABLE_TRACING
+    and _FASTAPI_INSTRUMENTOR_AVAILABLE
+    and FastAPIInstrumentor is not None
+):
     FastAPIInstrumentor.instrument_app(
         app,
         server_request_hook=server_request_hook,
@@ -122,14 +138,18 @@ if ENABLE_TRACING and _FASTAPI_INSTRUMENTOR_AVAILABLE and FastAPIInstrumentor is
     )  # Only trace meaningful agent routes; health/docs/scanners are excluded
 app.include_router(tools_router)
 
-if os.environ.get("CAGE_ENV", "prod").lower() == "dev":  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
+if (
+    os.environ.get("CAGE_ENV", "prod").lower() == "dev"
+):  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
     from src.governed_financial_advisor.demo.router import demo_router
+
     app.include_router(demo_router)
     logger.warning("Demo endpoints enabled — do not use in production")
 
 # --- GLOBAL SINGLETONS ---
 rails = load_rails()
 # Graph is now in app.state.graph
+
 
 class QueryRequest(BaseModel):
     prompt: str
@@ -156,7 +176,7 @@ class ApprovalResumeRequest(BaseModel):
     rationale: str  # mandatory — cannot be empty string
     comment: str = ""  # kept for backwards compatibility
     max_slippage_pct: float = 2.0  # reviewer's execution price tolerance (%)
-                                    # Default: 2.0% (institutional large-cap standard).
+    # Default: 2.0% (institutional large-cap standard).
 
     @staticmethod
     def _validate_rationale(value: str) -> str:
@@ -174,7 +194,6 @@ class ApprovalResumeRequest(BaseModel):
     def _check_rationale_not_empty(self) -> "ApprovalResumeRequest":
         self._validate_rationale(self.rationale)
         return self
-
 
 
 class RefinementTriggerRequest(BaseModel):
@@ -224,24 +243,27 @@ class LangfuseWebhookEvent(BaseModel):
     See: https://langfuse.com/docs/scores/webhooks
     """
 
-    type: str               # e.g. "score-created", "trace-created"
+    type: str  # e.g. "score-created", "trace-created"
     # Score-specific fields — present only when type == "score-created"
     name: str = ""
     value: float = 0.0
     traceId: str = ""
-    data: dict = {}         # full event payload for forwarding as a trace_id
+    data: dict = {}  # full event payload for forwarding as a trace_id
+
 
 @app.get("/")
 def read_root():
     return {"status": "ok", "message": "Governed Financial Advisor API"}
+
 
 @app.get("/health")
 def health_check():
     return {
         "status": "ok",
         "service": "financial-advisor-graph-agent",
-        "project_id": Config.GOOGLE_CLOUD_PROJECT
+        "project_id": Config.GOOGLE_CLOUD_PROJECT,
     }
+
 
 @app.post("/agent/query")
 async def query_agent(
@@ -286,36 +308,50 @@ async def query_agent(
         # Query Cache Layer (2026-03-14) — Intelligent caching for educational queries
         # Only caches deterministic responses (definitions, regulations, concepts).
         # Market data and personalized advice are NEVER cached.
-        from src.governed_financial_advisor.infrastructure.query_cache import get_query_cache
         from config.settings import Config as _Config
+        from src.governed_financial_advisor.infrastructure.query_cache import (
+            get_query_cache,
+        )
 
-        query_cache = await get_query_cache(redis_client=None)  # Will use Redis if available
+        query_cache = await get_query_cache(
+            redis_client=None
+        )  # Will use Redis if available
 
         # Build governance context for cache key (M-01: prevent stale governance decisions)
         _governance_context = {
             "risk_threshold": getattr(_Config, "RISK_THRESHOLD", None),
             "safety_threshold": os.environ.get("NEMO_SAFETY_THRESHOLD", "0.95"),
-            "cage_env": os.environ.get("CAGE_ENV", "prod"),  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
+            "cage_env": os.environ.get(
+                "CAGE_ENV", "prod"
+            ),  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
         }
 
         # Check cache first (only for cacheable query types)
         # Governance context included in cache key to prevent stale decisions
-        cached_response = await query_cache.get(req.prompt, governance_context=_governance_context)
+        cached_response = await query_cache.get(
+            req.prompt, governance_context=_governance_context
+        )
         if cached_response:
-            logger.info("Cache HIT - returning cached response (skipping graph execution)")
+            logger.info(
+                "Cache HIT - returning cached response (skipping graph execution)"
+            )
             final_response_text = cached_response
             # Still record telemetry for cache hits
             if current_span and current_span.is_recording():
                 current_span.set_attribute("gen_ai.system", "langchain")
                 current_span.set_attribute("gen_ai.request.model", "cached")
-                current_span.set_attribute("langfuse.observation.output", cached_response)
+                current_span.set_attribute(
+                    "langfuse.observation.output", cached_response
+                )
                 current_span.set_attribute("cache.hit", True)
-            
-            return JSONResponse(content={"response": final_response_text, "trace_id": trace_id})
-        
+
+            return JSONResponse(
+                content={"response": final_response_text, "trace_id": trace_id}
+            )
+
         # Cache miss or non-cacheable query - execute full graph
         logger.debug("Cache MISS or non-cacheable - executing full governance pipeline")
-        
+
         # Graph Execution — guardrails are enforced inside the graph nodes.
         # Wrap graph.ainvoke() in asyncio.wait_for() with a hard wall-clock
         # deadline.  Default is 240 s (overridable via GRAPH_TIMEOUT_SECONDS)
@@ -324,22 +360,25 @@ async def query_agent(
         # The primary cap (litellm timeout in vllm_client.py) limits individual
         # LLM calls; this is the secondary safety net for the full graph.
         import asyncio as _asyncio
-        _GRAPH_TIMEOUT_SECONDS = float(
-            os.environ.get("GRAPH_TIMEOUT_SECONDS", "240")
-        )
+
+        _GRAPH_TIMEOUT_SECONDS = float(os.environ.get("GRAPH_TIMEOUT_SECONDS", "240"))
         logger.debug("Invoking Graph with prompt '%s'", req.prompt)
         try:
             res = await _asyncio.wait_for(
                 request.app.state.graph.ainvoke(
                     {"messages": [("user", req.prompt)], "user_id": req.user_id},
-                    {"recursion_limit": 100, "configurable": {"thread_id": req.thread_id}},
+                    {
+                        "recursion_limit": 100,
+                        "configurable": {"thread_id": req.thread_id},
+                    },
                 ),
                 timeout=_GRAPH_TIMEOUT_SECONDS,
             )
         except _asyncio.TimeoutError:
             logger.error(
                 "graph.ainvoke exceeded %.0fs deadline for prompt %r — returning timeout error",
-                _GRAPH_TIMEOUT_SECONDS, req.prompt[:80],
+                _GRAPH_TIMEOUT_SECONDS,
+                req.prompt[:80],
             )
             raise HTTPException(
                 status_code=504,
@@ -380,7 +419,9 @@ async def query_agent(
         else:
             # Cache successful responses (only if query was cacheable)
             # Blocked responses are not cached (different blocks may have different reasons)
-            await query_cache.set(req.prompt, final_response_text, governance_context=_governance_context)
+            await query_cache.set(
+                req.prompt, final_response_text, governance_context=_governance_context
+            )
 
         if current_span and current_span.is_recording():
             current_span.set_attribute("gen_ai.system", "langchain")
@@ -392,7 +433,9 @@ async def query_agent(
                 "gen_ai.output.messages",
                 _json.dumps([{"role": "assistant", "content": final_response_text}]),
             )
-            current_span.set_attribute("langfuse.observation.output", final_response_text)
+            current_span.set_attribute(
+                "langfuse.observation.output", final_response_text
+            )
 
         return {"response": final_response_text, "trace_id": trace_id}
 
@@ -406,9 +449,11 @@ async def query_agent(
     finally:
         user_context.reset(token)
 
+
 # ---------------------------------------------------------------------------
 # Approval endpoints (Phase 1b — LangGraph interrupt / Command)
 # ---------------------------------------------------------------------------
+
 
 @app.post("/v1/approvals/{thread_id}/resume")
 async def resume_approval(
@@ -448,8 +493,7 @@ async def resume_approval(
     is_interrupted = bool(
         state_snapshot.next
         and any(
-            getattr(task, "interrupts", None)
-            for task in (state_snapshot.tasks or [])
+            getattr(task, "interrupts", None) for task in (state_snapshot.tasks or [])
         )
     )
     if not is_interrupted:
@@ -464,8 +508,8 @@ async def resume_approval(
     # ISO-8601 timestamp (HITL_APPROVAL_TTL_SECONDS from env, default 300s).
     # An expired approval returns HTTP 410 Gone — the reviewer must re-submit.
     # ------------------------------------------------------------------
-    for task in (state_snapshot.tasks or []):
-        for interrupt_obj in (getattr(task, "interrupts", None) or []):
+    for task in state_snapshot.tasks or []:
+        for interrupt_obj in getattr(task, "interrupts", None) or []:
             payload = getattr(interrupt_obj, "value", None)
             if isinstance(payload, dict):
                 expires_at_str = payload.get("expires_at")
@@ -476,7 +520,8 @@ async def resume_approval(
                             logger.warning(
                                 "[Approvals] TTL expired for thread_id=%s (expires_at=%s) — "
                                 "returning 410 Gone.",
-                                thread_id, expires_at_str,
+                                thread_id,
+                                expires_at_str,
                             )
                             raise HTTPException(
                                 status_code=410,
@@ -517,6 +562,7 @@ async def resume_approval(
     # ------------------------------------------------------------------
     try:
         from examples.telemetry import PlaygroundTelemetry
+
         _tel = PlaygroundTelemetry()
         _tel.record_approval(
             thread_id=thread_id,
@@ -531,7 +577,8 @@ async def resume_approval(
         logger.error(
             "[Approvals] Evidence chain write failed for thread_id=%s — "
             "approval will proceed but audit record may be missing: %s",
-            thread_id, _tel_exc,
+            thread_id,
+            _tel_exc,
         )
 
     try:
@@ -646,6 +693,7 @@ async def list_pending_approvals(request: Request):
 # Refinement pipeline trigger endpoint (R-17 + Action-3 FIXED)
 # ---------------------------------------------------------------------------
 
+
 def _submit_kfp_run(pipeline_id: str, trigger_reason: str, trace_ids: list) -> dict:
     """Submit a Kubeflow Pipelines run for the governance refinement pipeline.
 
@@ -667,7 +715,10 @@ def _submit_kfp_run(pipeline_id: str, trigger_reason: str, trace_ids: list) -> d
 
     try:
         import kfp  # type: ignore[import-untyped]
-        from src.governed_financial_advisor.pipelines.green_stack_pipeline import governance_pipeline
+
+        from src.governed_financial_advisor.pipelines.green_stack_pipeline import (
+            governance_pipeline,
+        )
 
         client = kfp.Client(host=kfp_endpoint)
         run = client.create_run_from_pipeline_func(
@@ -692,10 +743,16 @@ def _submit_kfp_run(pipeline_id: str, trigger_reason: str, trace_ids: list) -> d
             "[Refinement] kfp package not installed — skipping live pipeline submission. "
             "Install with: pip install kfp"
         )
-        return {"run_id": None, "status": "kfp_not_installed", "kfp_endpoint": kfp_endpoint}
+        return {
+            "run_id": None,
+            "status": "kfp_not_installed",
+            "kfp_endpoint": kfp_endpoint,
+        }
     except Exception as exc:
         logger.error("[Refinement] KFP run submission failed: %s", exc)
-        raise HTTPException(status_code=502, detail=f"KFP pipeline submission failed: {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"KFP pipeline submission failed: {exc}"
+        ) from exc
 
 
 @app.post("/v1/refinement/trigger")
@@ -733,8 +790,12 @@ async def trigger_refinement(req: RefinementTriggerRequest):
     kfp_result = _submit_kfp_run(req.pipeline_id, req.trigger_reason, req.trace_ids)
 
     if current_span and current_span.is_recording():
-        current_span.set_attribute("ai.refinement.kfp_run_id", kfp_result.get("run_id") or "")
-        current_span.set_attribute("ai.refinement.kfp_status", kfp_result.get("status", ""))
+        current_span.set_attribute(
+            "ai.refinement.kfp_run_id", kfp_result.get("run_id") or ""
+        )
+        current_span.set_attribute(
+            "ai.refinement.kfp_status", kfp_result.get("status", "")
+        )
 
     return {
         "status": "accepted",
@@ -761,9 +822,9 @@ async def trigger_refinement(req: RefinementTriggerRequest):
 #      (dev/test only — MUST be false in production).
 # ---------------------------------------------------------------------------
 
-_NEMO_AUTO_APPLY: bool = os.environ.get(
-    "NEMO_AUTO_APPLY_ENABLED", "false"
-).lower() == "true"
+_NEMO_AUTO_APPLY: bool = (
+    os.environ.get("NEMO_AUTO_APPLY_ENABLED", "false").lower() == "true"
+)
 
 # In-memory proposal store (production: replace with Redis or DB)
 _refinement_proposals: dict[str, dict] = {}
@@ -805,7 +866,9 @@ async def propose_nemo_refinement(req: NeMoApplyRefinementRequest):
 
     logger.info(
         "[NeMo/Refinement] Proposal STAGED: id=%s control_id=%s source=%s",
-        proposal_id, req.control_id, req.source,
+        proposal_id,
+        req.control_id,
+        req.source,
     )
 
     current_span = trace.get_current_span()
@@ -828,6 +891,7 @@ async def propose_nemo_refinement(req: NeMoApplyRefinementRequest):
 
 class NeMoApproveRequest(BaseModel):
     """Request body for POST /v1/nemo/approve-refinement/{proposal_id}."""
+
     approved: bool
     reviewer: str
     rationale: str
@@ -856,13 +920,13 @@ async def approve_nemo_refinement(
         404 if the proposal_id is not found or already processed.
         400 if rationale is empty.
     """
-    global rails  # noqa: PLW0603
+    global rails
 
     if not req.rationale or not req.rationale.strip():
         raise HTTPException(
             status_code=400,
             detail="rationale is required — provide the business justification "
-                   "for this governance configuration change.",
+            "for this governance configuration change.",
         )
 
     proposal = _refinement_proposals.get(proposal_id)
@@ -880,13 +944,15 @@ async def approve_nemo_refinement(
         proposal["status"] = "rejected"
         logger.info(
             "[NeMo/Refinement] Proposal REJECTED: id=%s reviewer=%s",
-            proposal_id, req.reviewer,
+            proposal_id,
+            req.reviewer,
         )
         return {"status": "rejected", "proposal_id": proposal_id}
 
     # Record the approval in the evidence chain BEFORE applying
     try:
         from examples.telemetry import PlaygroundTelemetry
+
         _tel = PlaygroundTelemetry()
         _tel.record_approval(
             thread_id=f"nemo-refinement-{proposal_id}",
@@ -896,9 +962,7 @@ async def approve_nemo_refinement(
             comment=f"NeMo refinement for {proposal['control_id']}",
         )
     except Exception as _tel_exc:
-        logger.error(
-            "[NeMo/Refinement] Evidence chain write failed: %s", _tel_exc
-        )
+        logger.error("[NeMo/Refinement] Evidence chain write failed: %s", _tel_exc)
 
     # Apply the refinement
     try:
@@ -907,13 +971,13 @@ async def approve_nemo_refinement(
         proposal["status"] = "applied"
         logger.info(
             "[NeMo/Refinement] Proposal APPLIED: id=%s reviewer=%s control_id=%s",
-            proposal_id, req.reviewer, proposal["control_id"],
+            proposal_id,
+            req.reviewer,
+            proposal["control_id"],
         )
     except Exception as exc:
         proposal["status"] = "apply_failed"
-        logger.error(
-            "[NeMo/Refinement] Rails reload failed after approval: %s", exc
-        )
+        logger.error("[NeMo/Refinement] Rails reload failed after approval: %s", exc)
         raise HTTPException(
             status_code=500,
             detail=f"NeMo rails reload failed: {exc}",
@@ -930,10 +994,7 @@ async def approve_nemo_refinement(
 @app.get("/v1/nemo/proposals/pending")
 async def list_pending_nemo_proposals():
     """List all staged NeMo refinement proposals awaiting human review."""
-    pending = [
-        p for p in _refinement_proposals.values()
-        if p["status"] == "staged"
-    ]
+    pending = [p for p in _refinement_proposals.values() if p["status"] == "staged"]
     return {"pending": pending, "count": len(pending)}
 
 
@@ -951,17 +1012,19 @@ async def apply_nemo_refinement(req: NeMoApplyRefinementRequest):
     This gating eliminates the recursive self-authentication loop where
     the system's telemetry autonomously modified its own governance rules.
     """
-    global rails  # noqa: PLW0603
+    global rails
 
     if not _NEMO_AUTO_APPLY:
         # Production: route through proposal flow
         logger.info(
             "[NeMo/Refinement] Auto-apply DISABLED — routing to proposal flow. "
             "control_id=%s source=%s",
-            req.control_id, req.source,
+            req.control_id,
+            req.source,
         )
         # Delegate to the propose endpoint
         import uuid as _uuid
+
         proposal_id = str(_uuid.uuid4())
         proposal = {
             "proposal_id": proposal_id,
@@ -1022,9 +1085,7 @@ async def apply_nemo_refinement(req: NeMoApplyRefinementRequest):
 # Langfuse webhook receiver — maps score events to KFP pipeline triggers
 # ---------------------------------------------------------------------------
 
-_NEMO_SAFETY_THRESHOLD: float = float(
-    os.environ.get("NEMO_SAFETY_THRESHOLD", "0.95")
-)
+_NEMO_SAFETY_THRESHOLD: float = float(os.environ.get("NEMO_SAFETY_THRESHOLD", "0.95"))
 _LANGFUSE_SCORE_NAME: str = os.environ.get(
     "LANGFUSE_WATCH_SCORE_NAME", "iso_42001_safety_rate"
 )
@@ -1049,9 +1110,7 @@ _LANGFUSE_SCORE_NAME: str = os.environ.get(
 _REFINEMENT_COOLDOWN_SECONDS: float = float(
     os.environ.get("REFINEMENT_COOLDOWN_SECONDS", "300")
 )
-_REFINEMENT_MIN_SAMPLES: int = int(
-    os.environ.get("REFINEMENT_MIN_SAMPLES", "10")
-)
+_REFINEMENT_MIN_SAMPLES: int = int(os.environ.get("REFINEMENT_MIN_SAMPLES", "10"))
 
 # Module-level monotonic timestamp of the last accepted KFP trigger.
 # Initialised to 0.0 so the very first qualifying event always fires.
@@ -1090,13 +1149,16 @@ async def langfuse_webhook(req: LangfuseWebhookEvent):
     Returns:
         ``{"status": "triggered" | "cooldown" | "deferred" | "ignored" | "threshold_ok"}``
     """
-    global _last_refinement_triggered_at  # noqa: PLW0603
+    global _last_refinement_triggered_at
 
-    import time  # noqa: PLC0415
+    import time
 
     logger.info(
         "[Webhook/Langfuse] event received: type=%s name=%s value=%s traceId=%s",
-        req.type, req.name, req.value, req.traceId,
+        req.type,
+        req.name,
+        req.value,
+        req.traceId,
     )
 
     # Acknowledge all non-score events immediately to prevent Langfuse retries.
@@ -1111,7 +1173,8 @@ async def langfuse_webhook(req: LangfuseWebhookEvent):
     if req.value >= _NEMO_SAFETY_THRESHOLD:
         logger.debug(
             "[Webhook/Langfuse] safety_rate=%.4f >= threshold=%.2f — no action.",
-            req.value, _NEMO_SAFETY_THRESHOLD,
+            req.value,
+            _NEMO_SAFETY_THRESHOLD,
         )
         return {
             "status": "threshold_ok",
@@ -1122,11 +1185,14 @@ async def langfuse_webhook(req: LangfuseWebhookEvent):
     # ── Minimum-sample guard ─────────────────────────────────────────────────
     # Langfuse may include a numeric sample_size in the event's data dict.
     # If it does and it's below the minimum, defer the trigger.
-    sample_size: int | None = req.data.get("sample_size") if isinstance(req.data, dict) else None
+    sample_size: int | None = (
+        req.data.get("sample_size") if isinstance(req.data, dict) else None
+    )
     if sample_size is not None and sample_size < _REFINEMENT_MIN_SAMPLES:
         logger.info(
             "[Webhook/Langfuse] sample_size=%d < min_samples=%d — deferring trigger.",
-            sample_size, _REFINEMENT_MIN_SAMPLES,
+            sample_size,
+            _REFINEMENT_MIN_SAMPLES,
         )
         return {
             "status": "deferred",
@@ -1145,7 +1211,8 @@ async def langfuse_webhook(req: LangfuseWebhookEvent):
         logger.info(
             "[Webhook/Langfuse] cooldown active — %.0fs remaining (cooldown=%.0fs). "
             "Acknowledging without re-triggering KFP.",
-            seconds_remaining, _REFINEMENT_COOLDOWN_SECONDS,
+            seconds_remaining,
+            _REFINEMENT_COOLDOWN_SECONDS,
         )
         current_span = trace.get_current_span()
         if current_span and current_span.is_recording():
@@ -1177,7 +1244,9 @@ async def langfuse_webhook(req: LangfuseWebhookEvent):
     logger.warning(
         "[Webhook/Langfuse] 🚨 Safety rate %.4f < %.2f — triggering KFP refinement pipeline "
         "(cooldown window now active for %.0fs).",
-        req.value, _NEMO_SAFETY_THRESHOLD, _REFINEMENT_COOLDOWN_SECONDS,
+        req.value,
+        _NEMO_SAFETY_THRESHOLD,
+        _REFINEMENT_COOLDOWN_SECONDS,
     )
 
     current_span = trace.get_current_span()

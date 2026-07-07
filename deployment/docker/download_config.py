@@ -13,14 +13,13 @@
 # limitations under the License.
 
 import os
+
 from huggingface_hub import snapshot_download
 
+
 def download_configs():
-    models = [
-        "Qwen/Qwen2.5-3B-Instruct",
-        "Qwen/Qwen2.5-7B-Instruct"
-    ]
-    
+    models = ["Qwen/Qwen2.5-3B-Instruct", "Qwen/Qwen2.5-7B-Instruct"]
+
     # Files to download (exclude large weights)
     allow_patterns = [
         "*.json",
@@ -29,21 +28,17 @@ def download_configs():
         "*.model",
         "tokenizer*",
         "config.json",
-        "generation_config.json"
+        "generation_config.json",
     ]
-    
-    ignore_patterns = [
-        "*.safetensors",
-        "*.bin",
-        "*.pth",
-        "*.msgpack",
-        "*.h5"
-    ]
+
+    ignore_patterns = ["*.safetensors", "*.bin", "*.pth", "*.msgpack", "*.h5"]
 
     token = os.environ.get("HUGGING_FACE_HUB_TOKEN")
     if token == "CAGE" or not token:
         token = None
-        print("⚠️ Warning: HUGGING_FACE_HUB_TOKEN not set or is dummy 'CAGE'. Public models might work, but gated ones will fail.")
+        print(
+            "⚠️ Warning: HUGGING_FACE_HUB_TOKEN not set or is dummy 'CAGE'. Public models might work, but gated ones will fail."
+        )
 
     for model_id in models:
         print(f"📥 Downloading config for {model_id}...")
@@ -52,12 +47,15 @@ def download_configs():
                 repo_id=model_id,
                 allow_patterns=allow_patterns,
                 ignore_patterns=ignore_patterns,
-                token=token
+                token=token,
             )
             print(f"✅ Downloaded {model_id} to {path}")
         except Exception as e:
             print(f"❌ Failed to download {model_id}: {e}")
-            print("⚠️ Skipping pre-caching for this model. It will be loaded from GCS or HF at runtime.")
+            print(
+                "⚠️ Skipping pre-caching for this model. It will be loaded from GCS or HF at runtime."
+            )
+
 
 if __name__ == "__main__":
     download_configs()

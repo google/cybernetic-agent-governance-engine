@@ -34,7 +34,7 @@ def create_data_analyst_agent() -> Any:
     ``langgraph.graph.CompiledStateGraph`` that accepts a
     ``DataAnalystState`` dict and returns the same type.
     """
-    from src.governed_financial_advisor.graph.subgraphs.data_analyst_graph import (  # noqa: PLC0415
+    from src.governed_financial_advisor.graph.subgraphs.data_analyst_graph import (
         data_analyst_graph,
     )
 

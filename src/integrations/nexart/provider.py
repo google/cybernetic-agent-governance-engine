@@ -51,13 +51,11 @@ Architecture precedent: follows the ``TrustLayersProvider`` pattern in
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger("cage.nexart_provider")
 
@@ -68,15 +66,14 @@ logger = logging.getLogger("cage.nexart_provider")
 _ENDPOINT: str = os.environ.get("NEXART_API_ENDPOINT", "")
 _API_KEY: str = os.environ.get("NEXART_API_KEY_SECRET", "")
 _JWK_ENDPOINT: str = os.environ.get("NEXART_JWK_ENDPOINT", "")
-_JWK_CACHE_TTL_HOURS: float = float(
-    os.environ.get("NEXART_JWK_CACHE_TTL_HOURS", "24")
-)
+_JWK_CACHE_TTL_HOURS: float = float(os.environ.get("NEXART_JWK_CACHE_TTL_HOURS", "24"))
 _TIMEOUT: float = float(os.environ.get("NEXART_TIMEOUT_SECONDS", "5.0"))
 
 
 # ---------------------------------------------------------------------------
 # Data contracts
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class CERReceipt:
@@ -85,11 +82,12 @@ class CERReceipt:
     Returned by ``certifyDecision``.  The ``certificate_hash`` is the
     primary identifier for verification against the public JWK set.
     """
+
     certificate_hash: str = ""
     receipt_url: str = ""
     signer_key_id: str = ""
     signed_at: str = ""
-    error: Optional[str] = None
+    error: str | None = None
 
     @property
     def is_valid(self) -> bool:
@@ -99,11 +97,12 @@ class CERReceipt:
 @dataclass
 class CERVerification:
     """Result of verifying a CER against NexArt's public JWKs."""
+
     valid: bool = False
     signer: str = ""
     timestamp: str = ""
     key_id: str = ""
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -113,6 +112,7 @@ class JWKCache:
     Synced out-of-band every ``_JWK_CACHE_TTL_HOURS`` hours.
     The cache holds the raw JWK set dict and the last sync timestamp.
     """
+
     jwk_set: dict[str, Any] = field(default_factory=dict)
     last_synced: float = 0.0
     etag: str = ""
@@ -166,7 +166,7 @@ class NexArtAttestationProvider:
         self._jwk_endpoint = jwk_endpoint or _JWK_ENDPOINT
         self._timeout = timeout
         self._jwk_cache = JWKCache()
-        self._sync_task: Optional[asyncio.Task] = None
+        self._sync_task: asyncio.Task | None = None
         self._running = False
 
         if not self._endpoint:
@@ -222,9 +222,7 @@ class NexArtAttestationProvider:
     # CER creation
     # ------------------------------------------------------------------
 
-    async def certify_decision(
-        self, evidence_record: dict[str, Any]
-    ) -> CERReceipt:
+    async def certify_decision(self, evidence_record: dict[str, Any]) -> CERReceipt:
         """Submit a governance decision for NexArt CER certification.
 
         Args:
@@ -250,9 +248,7 @@ class NexArtAttestationProvider:
                     signed_at=data.get("signedAt", ""),
                 )
         except Exception as exc:
-            logger.error(
-                "[NexArtProvider] certifyDecision failed: %s %s", url, exc
-            )
+            logger.error("[NexArtProvider] certifyDecision failed: %s %s", url, exc)
             return CERReceipt(error=str(exc))
 
     # ------------------------------------------------------------------
@@ -330,18 +326,14 @@ class NexArtAttestationProvider:
                     key_id=data.get("keyId", ""),
                 )
         except Exception as exc:
-            logger.error(
-                "[NexArtProvider] Remote verification failed: %s %s", url, exc
-            )
+            logger.error("[NexArtProvider] Remote verification failed: %s %s", url, exc)
             return CERVerification(valid=False, error=str(exc))
 
     # ------------------------------------------------------------------
     # Project Bundle registration
     # ------------------------------------------------------------------
 
-    async def register_project_bundle(
-        self, bundle: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def register_project_bundle(self, bundle: dict[str, Any]) -> dict[str, Any]:
         """Register a completed Project Bundle with NexArt.
 
         Args:
@@ -355,9 +347,7 @@ class NexArtAttestationProvider:
         url = f"{self._endpoint}/registerProjectBundle"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(
-                    url, json=bundle, headers=self._headers()
-                )
+                resp = await client.post(url, json=bundle, headers=self._headers())
                 resp.raise_for_status()
                 return resp.json()
         except Exception as exc:
@@ -448,7 +438,7 @@ class NexArtAttestationProvider:
 # Module-level singleton
 # ---------------------------------------------------------------------------
 
-_provider: Optional[NexArtAttestationProvider] = None
+_provider: NexArtAttestationProvider | None = None
 
 
 def get_nexart_provider() -> NexArtAttestationProvider:

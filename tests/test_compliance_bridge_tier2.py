@@ -31,9 +31,10 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import asyncio
-import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 pytestmark = pytest.mark.unit
 
@@ -42,14 +43,17 @@ pytestmark = pytest.mark.unit
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def client():
     """TestClient with Langfuse patched and C-07 auth dependency overridden."""
     with patch("src.compliance_bridge.main.Langfuse") as MockLF:
         MockLF.return_value = MagicMock()
-        from src.compliance_bridge.main import app
-        from src.compliance_bridge.auth import require_internal_token
         from fastapi.testclient import TestClient
+
+        from src.compliance_bridge.auth import require_internal_token
+        from src.compliance_bridge.main import app
+
         app.dependency_overrides[require_internal_token] = lambda: "test-token"
         try:
             with TestClient(app, raise_server_exceptions=True) as c:
@@ -58,9 +62,14 @@ def client():
             app.dependency_overrides.pop(require_internal_token, None)
 
 
-def _make_metrics(control_id: str, safety_rate: float = 1.0, grace: bool = False,
-                  evidence_age: float = 0.0):
+def _make_metrics(
+    control_id: str,
+    safety_rate: float = 1.0,
+    grace: bool = False,
+    evidence_age: float = 0.0,
+):
     from src.compliance_bridge.types import ComplianceMetrics
+
     return ComplianceMetrics(
         control_id=control_id,
         safety_rate=safety_rate,
@@ -79,14 +88,17 @@ def _make_metrics(control_id: str, safety_rate: float = 1.0, grace: bool = False
 # 2.1 — Multi-framework control registry
 # ---------------------------------------------------------------------------
 
+
 class TestMultiFrameworkRegistry:
     def test_framework_controls_is_populated(self):
         from src.compliance_bridge.types import FRAMEWORK_CONTROLS
+
         assert isinstance(FRAMEWORK_CONTROLS, dict)
         assert len(FRAMEWORK_CONTROLS) > 0
 
     def test_eu_ai_act_controls_present(self):
         from src.compliance_bridge.types import FRAMEWORK_CONTROLS
+
         assert "eu_ai_act" in FRAMEWORK_CONTROLS
         # EU_ECB jurisdictional controls: Article 12, Article 13 (2 entries after
         # jurisdictional separation refactor — previously mixed with universal controls)
@@ -94,15 +106,18 @@ class TestMultiFrameworkRegistry:
 
     def test_fedramp_controls_present(self):
         from src.compliance_bridge.types import FRAMEWORK_CONTROLS
+
         assert "fedramp" in FRAMEWORK_CONTROLS
         assert len(FRAMEWORK_CONTROLS["fedramp"]) >= 4
 
     def test_nist_ai_rmf_controls_present(self):
         from src.compliance_bridge.types import FRAMEWORK_CONTROLS
+
         assert "nist_ai_rmf" in FRAMEWORK_CONTROLS
 
     def test_framework_controls_only_reference_supported_controls(self):
         from src.compliance_bridge.types import FRAMEWORK_CONTROLS, SUPPORTED_CONTROLS
+
         for fw, cids in FRAMEWORK_CONTROLS.items():
             for cid in cids:
                 assert cid in SUPPORTED_CONTROLS, (
@@ -112,19 +127,25 @@ class TestMultiFrameworkRegistry:
 
     def test_supported_frameworks_sorted(self):
         from src.compliance_bridge.types import SUPPORTED_FRAMEWORKS
+
         assert SUPPORTED_FRAMEWORKS == sorted(SUPPORTED_FRAMEWORKS)
 
     def test_control_meta_has_frameworks_field(self):
         from src.compliance_bridge.types import CONTROL_META
+
         for cid, meta in CONTROL_META.items():
-            assert "frameworks" in meta, f"{cid} missing 'frameworks' key in CONTROL_META"
+            assert "frameworks" in meta, (
+                f"{cid} missing 'frameworks' key in CONTROL_META"
+            )
             assert isinstance(meta["frameworks"], dict)
 
     def test_evidence_sla_seconds_defined(self):
-        from src.compliance_bridge.types import EVIDENCE_SLA_SECONDS, SUPPORTED_CONTROLS
+        from src.compliance_bridge.types import EVIDENCE_SLA_SECONDS
+
         assert isinstance(EVIDENCE_SLA_SECONDS, dict)
         # Critical controls must have an SLA
         from src.compliance_bridge.types import CRITICAL_CONTROLS
+
         for cid in CRITICAL_CONTROLS:
             assert cid in EVIDENCE_SLA_SECONDS, (
                 f"Critical control {cid!r} must have an EVIDENCE_SLA_SECONDS entry"
@@ -147,7 +168,7 @@ class TestMultiFrameworkRegistry:
         # with CAGE_DEPLOYMENT_REGION=EU_ECB to expose those controls.
         with patch.dict(os.environ, {"CAGE_DEPLOYMENT_REGION": "EU_ECB"}):
             all_data = client.get("/v1/controls").json()
-            eu_data  = client.get("/v1/controls?framework=eu_ai_act").json()
+            eu_data = client.get("/v1/controls?framework=eu_ai_act").json()
         assert eu_data["total"] < all_data["total"]
         assert eu_data["framework_filter"] == "eu_ai_act"
         # Every returned control must have eu_ai_act in its frameworks
@@ -175,16 +196,21 @@ class TestMultiFrameworkRegistry:
 # 2.2 — SSE REMEDIATION_GENERATED event type
 # ---------------------------------------------------------------------------
 
+
 class TestRemediationGeneratedEventType:
     def test_remediation_generated_in_governance_event_type(self):
-        from src.compliance_bridge.sse_events import GovernanceEventType
         import typing
+
+        from src.compliance_bridge.sse_events import GovernanceEventType
+
         args = typing.get_args(GovernanceEventType)
         assert "REMEDIATION_GENERATED" in args
 
     def test_all_three_event_types_present(self):
-        from src.compliance_bridge.sse_events import GovernanceEventType
         import typing
+
+        from src.compliance_bridge.sse_events import GovernanceEventType
+
         args = set(typing.get_args(GovernanceEventType))
         # Original contract — these three MUST always be present.
         # CAGE v0.1.0 added AARM primitives (CONTEXT_CHAIN_SEALED, etc.)
@@ -199,6 +225,7 @@ class TestRemediationGeneratedEventType:
     async def test_remediation_generated_published_to_event_bus(self):
         """When Step 5 succeeds, REMEDIATION_GENERATED must reach the event bus."""
         from src.compliance_bridge.sse_events import GovernanceEventBus
+
         bus = GovernanceEventBus()
         published: list[dict] = []
 
@@ -210,18 +237,20 @@ class TestRemediationGeneratedEventType:
         task = asyncio.create_task(_collect())
         await asyncio.sleep(0)  # allow subscriber to register
 
-        await bus.publish({
-            "type":      "REMEDIATION_GENERATED",
-            "traceId":   None,
-            "controlId": "A.9.2",
-            "result":    None,
-            "safetyRate": None,
-            "auditId":   "test-audit-001",
-            "modelName": "qwen-test",
-            "textLength": 256,
-            "traceCount": 3,
-            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
-        })
+        await bus.publish(
+            {
+                "type": "REMEDIATION_GENERATED",
+                "traceId": None,
+                "controlId": "A.9.2",
+                "result": None,
+                "safetyRate": None,
+                "auditId": "test-audit-001",
+                "modelName": "qwen-test",
+                "textLength": 256,
+                "traceCount": 3,
+                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            }
+        )
 
         await asyncio.sleep(0.05)
         task.cancel()
@@ -240,18 +269,20 @@ class TestRemediationGeneratedEventType:
 # 2.5 — Evidence SLA monitor
 # ---------------------------------------------------------------------------
 
+
 class TestSlaMonitor:
     @pytest.mark.asyncio
     async def test_no_breach_when_within_sla(self):
         from src.compliance_bridge.sla_monitor import _check_sla_once
-        from src.compliance_bridge.types import EVIDENCE_SLA_SECONDS
 
         # All controls return evidence_age well within SLA
         async def _mock_metrics(control_id, window_hours=24):
             return _make_metrics(control_id, safety_rate=1.0, evidence_age=60.0)
 
-        with patch("src.compliance_bridge.sla_monitor.get_compliance_metrics",
-                   new=AsyncMock(side_effect=_mock_metrics)):
+        with patch(
+            "src.compliance_bridge.sla_monitor.get_compliance_metrics",
+            new=AsyncMock(side_effect=_mock_metrics),
+        ):
             breached = await _check_sla_once()
 
         assert breached == []
@@ -259,7 +290,6 @@ class TestSlaMonitor:
     @pytest.mark.asyncio
     async def test_breach_detected_when_evidence_stale(self):
         from src.compliance_bridge.sla_monitor import _check_sla_once
-        from src.compliance_bridge.types import EVIDENCE_SLA_SECONDS
 
         # A.9.2 SLA is 3600s — simulate 7200s age (2x SLA)
         async def _mock_metrics(control_id, window_hours=24):
@@ -267,8 +297,10 @@ class TestSlaMonitor:
                 return _make_metrics(control_id, evidence_age=7_200.0)
             return _make_metrics(control_id, evidence_age=60.0)
 
-        with patch("src.compliance_bridge.sla_monitor.get_compliance_metrics",
-                   new=AsyncMock(side_effect=_mock_metrics)):
+        with patch(
+            "src.compliance_bridge.sla_monitor.get_compliance_metrics",
+            new=AsyncMock(side_effect=_mock_metrics),
+        ):
             breached = await _check_sla_once()
 
         assert "A.9.2" in breached
@@ -281,8 +313,10 @@ class TestSlaMonitor:
         async def _mock_metrics(control_id, window_hours=24):
             return _make_metrics(control_id, evidence_age=99_999.0, grace=True)
 
-        with patch("src.compliance_bridge.sla_monitor.get_compliance_metrics",
-                   new=AsyncMock(side_effect=_mock_metrics)):
+        with patch(
+            "src.compliance_bridge.sla_monitor.get_compliance_metrics",
+            new=AsyncMock(side_effect=_mock_metrics),
+        ):
             breached = await _check_sla_once()
 
         assert breached == []
@@ -300,8 +334,10 @@ class TestSlaMonitor:
             return _make_metrics(control_id)
 
         with patch.dict(os.environ, {"EVIDENCE_SLA_DISABLED": "1"}):
-            with patch("src.compliance_bridge.sla_monitor.get_compliance_metrics",
-                       new=AsyncMock(side_effect=_mock_fetch)):
+            with patch(
+                "src.compliance_bridge.sla_monitor.get_compliance_metrics",
+                new=AsyncMock(side_effect=_mock_fetch),
+            ):
                 await run_sla_monitor()
 
         assert not fetch_called, "Monitor should not fetch metrics when disabled"
@@ -317,10 +353,14 @@ class TestSlaMonitor:
         async def _mock_metrics(control_id, window_hours=24):
             return _make_metrics("A.9.2", evidence_age=7_200.0)
 
-        with patch("src.compliance_bridge.sla_monitor.get_compliance_metrics",
-                   new=AsyncMock(side_effect=_mock_metrics)):
-            with patch("src.compliance_bridge.sla_monitor.create_notifier",
-                       return_value=mock_notifier):
+        with patch(
+            "src.compliance_bridge.sla_monitor.get_compliance_metrics",
+            new=AsyncMock(side_effect=_mock_metrics),
+        ):
+            with patch(
+                "src.compliance_bridge.sla_monitor.create_notifier",
+                return_value=mock_notifier,
+            ):
                 await _fire_sla_alerts(["A.9.2"])
 
         mock_notifier.send_critical_alert.assert_called_once()
@@ -335,6 +375,7 @@ class TestSlaMonitor:
 # 2.6 — GET /v1/metrics/summary
 # ---------------------------------------------------------------------------
 
+
 class TestMetricsSummaryEndpoint:
     def _mock_metrics_factory(self, failing_controls: list[str] = None):
         """Return an AsyncMock side_effect that marks some controls as failing."""
@@ -347,24 +388,35 @@ class TestMetricsSummaryEndpoint:
         return _side_effect
 
     def test_summary_returns_200(self, client):
-        with patch("src.compliance_bridge.main.get_compliance_metrics",
-                   new=AsyncMock(side_effect=self._mock_metrics_factory())):
+        with patch(
+            "src.compliance_bridge.main.get_compliance_metrics",
+            new=AsyncMock(side_effect=self._mock_metrics_factory()),
+        ):
             resp = client.get("/v1/metrics/summary")
         assert resp.status_code == 200
 
     def test_summary_has_required_fields(self, client):
-        with patch("src.compliance_bridge.main.get_compliance_metrics",
-                   new=AsyncMock(side_effect=self._mock_metrics_factory())):
+        with patch(
+            "src.compliance_bridge.main.get_compliance_metrics",
+            new=AsyncMock(side_effect=self._mock_metrics_factory()),
+        ):
             data = client.get("/v1/metrics/summary").json()
         required = {
-            "overall_pass_rate", "total_controls", "passing_controls",
-            "failing_controls", "critical_fails", "window_hours", "controls",
+            "overall_pass_rate",
+            "total_controls",
+            "passing_controls",
+            "failing_controls",
+            "critical_fails",
+            "window_hours",
+            "controls",
         }
         assert required.issubset(data.keys())
 
     def test_summary_all_pass(self, client):
-        with patch("src.compliance_bridge.main.get_compliance_metrics",
-                   new=AsyncMock(side_effect=self._mock_metrics_factory())):
+        with patch(
+            "src.compliance_bridge.main.get_compliance_metrics",
+            new=AsyncMock(side_effect=self._mock_metrics_factory()),
+        ):
             data = client.get("/v1/metrics/summary").json()
         assert data["overall_pass_rate"] == 1.0
         assert data["failing_controls"] == []
@@ -372,9 +424,10 @@ class TestMetricsSummaryEndpoint:
         assert data["passing_controls"] == data["total_controls"]
 
     def test_summary_with_failing_controls(self, client):
-        from src.compliance_bridge.types import SUPPORTED_CONTROLS
-        with patch("src.compliance_bridge.main.get_compliance_metrics",
-                   new=AsyncMock(side_effect=self._mock_metrics_factory(["A.9.2"]))):
+        with patch(
+            "src.compliance_bridge.main.get_compliance_metrics",
+            new=AsyncMock(side_effect=self._mock_metrics_factory(["A.9.2"])),
+        ):
             data = client.get("/v1/metrics/summary").json()
         assert "A.9.2" in data["failing_controls"]
         assert "A.9.2" in data["critical_fails"]
@@ -387,9 +440,12 @@ class TestMetricsSummaryEndpoint:
         # controls are returned — jurisdictional controls (SA-11, SC-7, etc.) are
         # correctly excluded.  Use get_control_meta("") to match the endpoint's behaviour.
         from src.compliance_bridge.types import get_control_meta
+
         expected_controls = list(get_control_meta("").keys())
-        with patch("src.compliance_bridge.main.get_compliance_metrics",
-                   new=AsyncMock(side_effect=self._mock_metrics_factory())):
+        with patch(
+            "src.compliance_bridge.main.get_compliance_metrics",
+            new=AsyncMock(side_effect=self._mock_metrics_factory()),
+        ):
             data = client.get("/v1/metrics/summary").json()
         for cid in expected_controls:
             assert cid in data["controls"], f"{cid} missing from summary controls"
@@ -401,8 +457,10 @@ class TestMetricsSummaryEndpoint:
             call_args.append(window_hours)
             return _make_metrics(control_id)
 
-        with patch("src.compliance_bridge.main.get_compliance_metrics",
-                   new=AsyncMock(side_effect=_track)):
+        with patch(
+            "src.compliance_bridge.main.get_compliance_metrics",
+            new=AsyncMock(side_effect=_track),
+        ):
             client.get("/v1/metrics/summary?window_hours=48")
 
         assert all(wh == 48 for wh in call_args), (

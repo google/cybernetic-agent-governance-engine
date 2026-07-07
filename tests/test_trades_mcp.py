@@ -13,9 +13,10 @@
 # limitations under the License.
 
 import asyncio
+import logging
 import os
 import sys
-import logging
+
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -28,11 +29,13 @@ from src.governed_financial_advisor.tools.trades import execute_trade
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("TestTradesMCP")
 
+
 async def test_trade_execution():
     logger.info("--- Testing Trade Execution (MCP Integration) ---")
 
     # Skip if MCP endpoint is not configured.
     from config.settings import Config
+
     mcp_url = getattr(Config, "MCP_SERVER_SSE_URL", None)
     if not mcp_url:
         pytest.skip("MCP_SERVER_SSE_URL not configured — skipping MCP smoke test")
@@ -43,7 +46,7 @@ async def test_trade_execution():
         "amount": 10,
         "currency": "USD",
         "transaction_id": "test-txn-001",
-        "confidence": 0.95
+        "confidence": 0.95,
     }
 
     # Execute Trade — wrap in asyncio.wait_for so a slow/unavailable MCP endpoint
@@ -57,9 +60,12 @@ async def test_trade_execution():
         res = await asyncio.wait_for(execute_trade(order), timeout=20.0)
         logger.info(f"✅ Trade Result: {res}")
     except asyncio.TimeoutError:
-        logger.warning("⏱️ Trade execution timed out after 20 s — MCP endpoint slow or unavailable")
+        logger.warning(
+            "⏱️ Trade execution timed out after 20 s — MCP endpoint slow or unavailable"
+        )
     except Exception as e:
         logger.error(f"❌ Trade Failed: {e}")
+
 
 if __name__ == "__main__":
     asyncio.run(test_trade_execution())

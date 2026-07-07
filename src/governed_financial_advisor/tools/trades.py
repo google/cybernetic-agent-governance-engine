@@ -19,6 +19,7 @@ from src.governed_financial_advisor.graph.annotations import side_effect_node
 
 logger = logging.getLogger(__name__)
 
+
 def propose_trade(order: dict) -> str:
     """
     Proposes a trade strategy. This does NOT execute the trade.
@@ -40,6 +41,7 @@ def propose_trade(order: dict) -> str:
 
     # Simply log it locally. No governance needed for thinking.
     return f"PROPOSAL LOGGED: {order.symbol} {order.amount} {order.currency}. Transaction ID: {order.transaction_id}. Waiting for Verifier."
+
 
 @side_effect_node(kind="api_call", external_system="gateway_mcp")
 async def execute_trade(order: dict) -> str:
@@ -66,6 +68,7 @@ async def execute_trade(order: dict) -> str:
 
     # Call Gateway via MCP
     from src.governed_financial_advisor.infrastructure.mcp_client import get_mcp_client
+
     # The MCP tool is named 'execute_trade_action' in hybrid_server.py
     result = await get_mcp_client().call_tool("execute_trade_action", params)
 

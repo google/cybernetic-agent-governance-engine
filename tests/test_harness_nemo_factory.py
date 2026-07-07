@@ -23,7 +23,7 @@ produce nodes with correct:
 """
 
 import os
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -41,14 +41,16 @@ pytestmark = pytest.mark.unit
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class _FakeMessage:
     """Minimal stand-in for langchain BaseMessage."""
+
     def __init__(self, content: str, id: str = "msg-1"):
         self.content = content
         self.id = id
 
 
-def _state_with_message(text: str) -> Dict[str, Any]:
+def _state_with_message(text: str) -> dict[str, Any]:
     return {
         "messages": [_FakeMessage(text)],
         "guardrail_blocked": False,
@@ -60,6 +62,7 @@ def _state_with_message(text: str) -> Dict[str, Any]:
 # Tests — create_nemo_guardrail_node (input rail)
 # ---------------------------------------------------------------------------
 
+
 class TestNemoGuardrailNodeFactory:
     """Unit tests for the NeMo input rail factory."""
 
@@ -69,31 +72,40 @@ class TestNemoGuardrailNodeFactory:
         node = create_nemo_guardrail_node(NemoNodeConfig())
 
         with patch.dict(os.environ, {"CAGE_SEAL_ENFORCEMENT": "enforce"}):
-            with patch(
-                "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-                return_value=MagicMock(),
-            ), patch(
-                "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
-                new_callable=AsyncMock,
-                return_value=(False, "STPA Violation UCA-7: bypass attempt"),
+            with (
+                patch(
+                    "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+                    return_value=MagicMock(),
+                ),
+                patch(
+                    "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
+                    new_callable=AsyncMock,
+                    return_value=(False, "STPA Violation UCA-7: bypass attempt"),
+                ),
             ):
                 result = await node(_state_with_message("BYPASS-ALL-LIMITS"))
 
         assert result["guardrail_blocked"] is True
-        assert "STPA" in result["guardrail_reason"] or "bypass" in result["guardrail_reason"].lower()
+        assert (
+            "STPA" in result["guardrail_reason"]
+            or "bypass" in result["guardrail_reason"].lower()
+        )
 
     @pytest.mark.asyncio
     async def test_passes_safe_input(self):
         """validate_with_nemo returning (True, '') → not blocked."""
         node = create_nemo_guardrail_node(NemoNodeConfig())
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-            return_value=MagicMock(),
-        ), patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
-            new_callable=AsyncMock,
-            return_value=(True, ""),
+        with (
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
+                new_callable=AsyncMock,
+                return_value=(True, ""),
+            ),
         ):
             result = await node(_state_with_message("What is AAPL price?"))
 
@@ -106,13 +118,16 @@ class TestNemoGuardrailNodeFactory:
         node = create_nemo_guardrail_node(NemoNodeConfig())
 
         with patch.dict(os.environ, {"CAGE_SEAL_ENFORCEMENT": "enforce"}):
-            with patch(
-                "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-                return_value=MagicMock(),
-            ), patch(
-                "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
-                new_callable=AsyncMock,
-                side_effect=RuntimeError("vLLM down"),
+            with (
+                patch(
+                    "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+                    return_value=MagicMock(),
+                ),
+                patch(
+                    "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
+                    new_callable=AsyncMock,
+                    side_effect=RuntimeError("vLLM down"),
+                ),
             ):
                 result = await node(_state_with_message("safe input"))
 
@@ -145,13 +160,16 @@ class TestNemoGuardrailNodeFactory:
             "user_id": "user-42",
         }
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-            return_value=MagicMock(),
-        ), patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
-            new_callable=AsyncMock,
-            return_value=(True, ""),
+        with (
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
+                new_callable=AsyncMock,
+                return_value=(True, ""),
+            ),
         ):
             result = await node(state)
 
@@ -161,19 +179,24 @@ class TestNemoGuardrailNodeFactory:
     @pytest.mark.asyncio
     async def test_custom_state_keys(self):
         """Factory respects custom blocked/reason state keys."""
-        node = create_nemo_guardrail_node(NemoNodeConfig(
-            blocked_state_key="my_blocked",
-            reason_state_key="my_reason",
-        ))
+        node = create_nemo_guardrail_node(
+            NemoNodeConfig(
+                blocked_state_key="my_blocked",
+                reason_state_key="my_reason",
+            )
+        )
 
         with patch.dict(os.environ, {"CAGE_SEAL_ENFORCEMENT": "enforce"}):
-            with patch(
-                "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-                return_value=MagicMock(),
-            ), patch(
-                "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
-                new_callable=AsyncMock,
-                return_value=(False, "blocked!"),
+            with (
+                patch(
+                    "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+                    return_value=MagicMock(),
+                ),
+                patch(
+                    "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
+                    new_callable=AsyncMock,
+                    return_value=(False, "blocked!"),
+                ),
             ):
                 result = await node(_state_with_message("bad input"))
 
@@ -183,23 +206,29 @@ class TestNemoGuardrailNodeFactory:
     @pytest.mark.asyncio
     async def test_custom_message_extractor(self):
         """Factory uses the provided message_extractor."""
+
         def custom_extractor(state):
             return state.get("custom_input", "")
 
-        node = create_nemo_guardrail_node(NemoNodeConfig(
-            message_extractor=custom_extractor,
-        ))
+        node = create_nemo_guardrail_node(
+            NemoNodeConfig(
+                message_extractor=custom_extractor,
+            )
+        )
 
         state = {"custom_input": "Hello from custom field"}
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-            return_value=MagicMock(),
-        ), patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
-            new_callable=AsyncMock,
-            return_value=(True, ""),
-        ) as mock_validate:
+        with (
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
+                new_callable=AsyncMock,
+                return_value=(True, ""),
+            ) as mock_validate,
+        ):
             result = await node(state)
 
         # validate_with_nemo should have received the custom-extracted text
@@ -227,6 +256,7 @@ class TestNemoGuardrailNodeFactory:
 # Tests — create_nemo_output_rail_node
 # ---------------------------------------------------------------------------
 
+
 class TestNemoOutputRailNodeFactory:
     """Unit tests for the NeMo output rail factory."""
 
@@ -244,17 +274,21 @@ class TestNemoOutputRailNodeFactory:
 
         state = {"messages": [_FakeMessage("raw AI output", id="msg-99")]}
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-            return_value=MagicMock(),
-        ), patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.verify_and_mask_output",
-            new_callable=AsyncMock,
-            return_value="masked output",
-        ), patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_output_semantics",
-            new_callable=AsyncMock,
-            return_value=(True, ""),
+        with (
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.verify_and_mask_output",
+                new_callable=AsyncMock,
+                return_value="masked output",
+            ),
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_output_semantics",
+                new_callable=AsyncMock,
+                return_value=(True, ""),
+            ),
         ):
             result = await node(state)
 
@@ -266,19 +300,24 @@ class TestNemoOutputRailNodeFactory:
     async def test_fail_closed_sentinel_on_exception(self):
         """Exception in verify_and_mask_output → sentinel output."""
         sentinel = "[OUTPUT BLOCKED: guardrail error]"
-        node = create_nemo_output_rail_node(NemoNodeConfig(
-            output_blocked_sentinel=sentinel,
-        ))
+        node = create_nemo_output_rail_node(
+            NemoNodeConfig(
+                output_blocked_sentinel=sentinel,
+            )
+        )
 
         state = {"messages": [_FakeMessage("raw output")]}
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-            return_value=MagicMock(),
-        ), patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.verify_and_mask_output",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("masking failed"),
+        with (
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.verify_and_mask_output",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("masking failed"),
+            ),
         ):
             result = await node(state)
 
@@ -298,19 +337,24 @@ class TestNemoOutputRailNodeFactory:
     @pytest.mark.asyncio
     async def test_custom_output_rail_applied_key(self):
         """Factory respects custom output_rail_applied_key."""
-        node = create_nemo_output_rail_node(NemoNodeConfig(
-            output_rail_applied_key="my_rail_done",
-        ))
+        node = create_nemo_output_rail_node(
+            NemoNodeConfig(
+                output_rail_applied_key="my_rail_done",
+            )
+        )
 
         state = {"messages": [_FakeMessage("output")]}
 
-        with patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
-            return_value=MagicMock(),
-        ), patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.verify_and_mask_output",
-            new_callable=AsyncMock,
-            return_value="safe output",
+        with (
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.gateway.governance.langgraph_harness.nemo_node_factory.verify_and_mask_output",
+                new_callable=AsyncMock,
+                return_value="safe output",
+            ),
         ):
             result = await node(state)
 

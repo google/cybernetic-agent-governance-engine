@@ -42,7 +42,7 @@ import os
 import sys
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 
@@ -51,12 +51,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Module-level singleton
 # ---------------------------------------------------------------------------
-_uca_logger: Optional["UCALogger"] = None
+_uca_logger: UCALogger | None = None
 
 
 # ---------------------------------------------------------------------------
 # UCALogger
 # ---------------------------------------------------------------------------
+
 
 class UCALogger:
     """Build, sign, and persist ISO 42001 Clause 6.1 UCA records.
@@ -80,7 +81,7 @@ class UCALogger:
 
     def __init__(
         self,
-        signer: Optional[Any],
+        signer: Any | None,
         redis_client: Any,
         bucket: str,
         pii_sanitizer: Any,
@@ -97,7 +98,7 @@ class UCALogger:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_env(cls) -> "UCALogger":
+    def from_env(cls) -> UCALogger:
         """Construct from environment variables.
 
         Reads:
@@ -108,10 +109,11 @@ class UCALogger:
         """
         test_mode = os.environ.get("CAGE_ENV", "").lower() == "test"
 
-        signer: Optional[object] = None
+        signer: object | None = None
         if not test_mode:
             try:
                 from src.gateway.governance.kms_signer import KMSGovernanceSigner
+
                 signer = KMSGovernanceSigner.from_env()
             except Exception as exc:
                 logger.warning(
@@ -123,15 +125,19 @@ class UCALogger:
                 test_mode = True
 
         from src.gateway.governance.pii_sanitizer import _get_pii_sanitizer
+
         pii_sanitizer = _get_pii_sanitizer()
 
         # Redis client — optional; used for future deduplication
-        redis_client: Optional[object] = None
+        redis_client: object | None = None
         try:
             from src.gateway.infrastructure.redis_client import get_redis_client
+
             redis_client = get_redis_client()
         except Exception as exc:
-            logger.debug("UCALogger: Redis client unavailable (%s); continuing without it.", exc)
+            logger.debug(
+                "UCALogger: Redis client unavailable (%s); continuing without it.", exc
+            )
 
         instance = cls(
             signer=signer,
@@ -239,8 +245,8 @@ class UCALogger:
         self,
         uca_type: str,
         agent_id: str,
-        quota_result: Optional[Any] = None,
-        request_body: Optional[dict] = None,
+        quota_result: Any | None = None,
+        request_body: dict | None = None,
         **kwargs: Any,
     ) -> dict:
         """Build the ISO 42001 Clause 6.1 record dict.
@@ -261,8 +267,16 @@ class UCALogger:
         _sanitize = self._pii.sanitize
 
         # Sanitize kwargs fields that may carry prompt/content/message/description
-        for _field in ("injected_content", "original_args", "sanitized_args",
-                       "prompt", "content", "message", "description", "block_reason"):
+        for _field in (
+            "injected_content",
+            "original_args",
+            "sanitized_args",
+            "prompt",
+            "content",
+            "message",
+            "description",
+            "block_reason",
+        ):
             if _field in kwargs and isinstance(kwargs[_field], str):
                 kwargs[_field] = _sanitize(kwargs[_field])
 
@@ -297,7 +311,7 @@ class UCALogger:
                 current_value = quota_result.step_count
                 quota_max = quota_result.step_quota_max
 
-        record: Dict[str, Any] = {
+        record: dict[str, Any] = {
             "compliance_event_id": event_id,
             "timestamp": timestamp,
             "iso42001_clause": "6.1",
@@ -310,8 +324,8 @@ class UCALogger:
             "current_value": current_value,
             "quota_max": quota_max,
             "request_summary": request_summary,
-            "cryptographic_signature": "",   # populated by _persist_uca_record
-            "signing_key_id": "",            # populated by _persist_uca_record
+            "cryptographic_signature": "",  # populated by _persist_uca_record
+            "signing_key_id": "",  # populated by _persist_uca_record
             "deployment_region": region,
             "worm_path": worm_path,
         }
@@ -364,8 +378,11 @@ class UCALogger:
 
         try:
             from src.compliance_bridge.storage import WORMStorage
+
             region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
-            await WORMStorage.write(bucket=bucket, path=path, content=content, region=region)
+            await WORMStorage.write(
+                bucket=bucket, path=path, content=content, region=region
+            )
         except ImportError:
             # compliance_bridge not available in this deployment unit
             logger.warning(
@@ -396,8 +413,8 @@ class UCALogger:
         region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
         fallback = os.environ.get("OSCAL_S3_BUCKET", "")
         bucket_map = {
-            "US_FED":   os.environ.get("OSCAL_S3_BUCKET_US_FED", fallback),
-            "EU_ECB":   os.environ.get("OSCAL_S3_BUCKET_EU_ECB", fallback),
+            "US_FED": os.environ.get("OSCAL_S3_BUCKET_US_FED", fallback),
+            "EU_ECB": os.environ.get("OSCAL_S3_BUCKET_EU_ECB", fallback),
             "APAC_MAS": os.environ.get("OSCAL_S3_BUCKET_APAC_MAS", fallback),
         }
         return bucket_map.get(region, fallback)
@@ -410,8 +427,11 @@ class UCALogger:
         In production: delegates to ``KMSGovernanceSigner.sign()``.
         """
         # Exclude signature fields from the payload being signed
-        payload = {k: v for k, v in record.items()
-                   if k not in ("cryptographic_signature", "signing_key_id")}
+        payload = {
+            k: v
+            for k, v in record.items()
+            if k not in ("cryptographic_signature", "signing_key_id")
+        }
         payload_bytes = json.dumps(payload, sort_keys=True).encode()
 
         if self._test_mode or self._signer is None:
@@ -449,7 +469,8 @@ class UCALogger:
 # Module-level singleton accessor
 # ---------------------------------------------------------------------------
 
-def _get_uca_logger() -> "UCALogger":
+
+def _get_uca_logger() -> UCALogger:
     """Return the module-level UCALogger singleton (lazy init)."""
     global _uca_logger
     if _uca_logger is None:

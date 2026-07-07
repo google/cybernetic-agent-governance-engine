@@ -59,12 +59,12 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_INTERVAL    = 3600    # 1 hour
-_DEFAULT_TIMEOUT     = 120     # 2 minutes per lula run
-_DEFAULT_COMPONENT   = "compliance/oscal/component-definition.yaml"
+_DEFAULT_INTERVAL = 3600  # 1 hour
+_DEFAULT_TIMEOUT = 120  # 2 minutes per lula run
+_DEFAULT_COMPONENT = "compliance/oscal/component-definition.yaml"
 # M-11: _DEFAULT_RESULTS is now a prefix for tempfile.mkstemp() — not a fixed /tmp path
 _DEFAULT_RESULTS_PREFIX = "lula-assessment-results-"
-_INGEST_ENDPOINT     = "/v1/audit/ingest"
+_INGEST_ENDPOINT = "/v1/audit/ingest"
 
 # M-12: Module-level loopback auth token (generated once at startup)
 # Used to authenticate the internal POST /v1/audit/ingest call.
@@ -101,7 +101,10 @@ def _bridge_url() -> str:
 # Lula subprocess runner
 # ---------------------------------------------------------------------------
 
-async def _run_lula_validate(component_path: str, results_path: str, timeout: int) -> bool:
+
+async def _run_lula_validate(
+    component_path: str, results_path: str, timeout: int
+) -> bool:
     """
     Run `lula validate` as a subprocess.
 
@@ -109,10 +112,13 @@ async def _run_lula_validate(component_path: str, results_path: str, timeout: in
     Raises FileNotFoundError if lula binary is not found (caller handles this).
     """
     cmd = [
-        "lula", "validate",
-        "--component", component_path,
-        "--assessment-results", results_path,
-        "--confirm",   # non-interactive: don't prompt for user confirmation
+        "lula",
+        "validate",
+        "--component",
+        component_path,
+        "--assessment-results",
+        results_path,
+        "--confirm",  # non-interactive: don't prompt for user confirmation
     ]
     logger.info("[lula_scheduler] Running: %s", " ".join(cmd))
 
@@ -123,14 +129,10 @@ async def _run_lula_validate(component_path: str, results_path: str, timeout: in
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
             proc.kill()
-            logger.error(
-                "[lula_scheduler] lula validate timed out after %ds", timeout
-            )
+            logger.error("[lula_scheduler] lula validate timed out after %ds", timeout)
             return False
 
         if proc.returncode == 0:
@@ -160,6 +162,7 @@ async def _run_lula_validate(component_path: str, results_path: str, timeout: in
 # OSCAL results ingest — POST to the bridge's own audit/ingest endpoint
 # ---------------------------------------------------------------------------
 
+
 async def _post_results_to_bridge(results_path: str, audit_id: str) -> bool:
     """
     Read the lula-generated assessment results YAML and POST it to
@@ -170,7 +173,8 @@ async def _post_results_to_bridge(results_path: str, audit_id: str) -> bool:
     path = Path(results_path)
     if not path.exists():
         logger.warning(
-            "[lula_scheduler] Results file not found at %s — skipping ingest.", results_path
+            "[lula_scheduler] Results file not found at %s — skipping ingest.",
+            results_path,
         )
         return False
 
@@ -195,13 +199,15 @@ async def _post_results_to_bridge(results_path: str, audit_id: str) -> bool:
         if resp.is_success:
             logger.info(
                 "[lula_scheduler] 📨 Assessment results ingested (audit_id=%s, HTTP %d)",
-                audit_id, resp.status_code,
+                audit_id,
+                resp.status_code,
             )
             return True
         else:
             logger.warning(
                 "[lula_scheduler] Ingest returned HTTP %d: %s",
-                resp.status_code, resp.text[:300],
+                resp.status_code,
+                resp.text[:300],
             )
             return False
     except Exception as exc:
@@ -213,11 +219,12 @@ async def _post_results_to_bridge(results_path: str, audit_id: str) -> bool:
 # Scheduler loop
 # ---------------------------------------------------------------------------
 
+
 async def _run_lula_cycle() -> dict:
     """Execute one lula validate → ingest cycle. Returns a status dict."""
     component = _component_path()
-    timeout   = _timeout()
-    audit_id  = f"lula-scheduled-{uuid.uuid4().hex[:12]}"
+    timeout = _timeout()
+    audit_id = f"lula-scheduled-{uuid.uuid4().hex[:12]}"
 
     if not Path(component).exists():
         logger.warning(
@@ -225,7 +232,11 @@ async def _run_lula_cycle() -> dict:
             "Set LULA_COMPONENT_DEFINITION_PATH or create the file. Skipping cycle.",
             component,
         )
-        return {"status": "skipped", "reason": "component_not_found", "audit_id": audit_id}
+        return {
+            "status": "skipped",
+            "reason": "component_not_found",
+            "audit_id": audit_id,
+        }
 
     # M-11: Use tempfile.mkstemp() to avoid TOCTOU race on /tmp path.
     # If LULA_ASSESSMENT_RESULTS_PATH is set, use it; otherwise create a secure temp file.
@@ -242,7 +253,11 @@ async def _run_lula_cycle() -> dict:
     try:
         lula_ok = await _run_lula_validate(component, results, timeout)
         if not lula_ok:
-            return {"status": "failed", "reason": "lula_validate_failed", "audit_id": audit_id}
+            return {
+                "status": "failed",
+                "reason": "lula_validate_failed",
+                "audit_id": audit_id,
+            }
 
         ingested = await _post_results_to_bridge(results, audit_id)
         if not ingested:
@@ -275,14 +290,18 @@ async def run_lula_scheduler() -> None:
             await _lula_task
     """
     if _is_disabled():
-        logger.info("[lula_scheduler] LULA_SCHEDULER_DISABLED=1 — scheduler not started.")
+        logger.info(
+            "[lula_scheduler] LULA_SCHEDULER_DISABLED=1 — scheduler not started."
+        )
         return
 
     interval = _interval()
     logger.info(
         "[lula_scheduler] Starting Lula validation scheduler. "
         "Interval: %ds (%0.1fh). Component: %s",
-        interval, interval / 3600, _component_path(),
+        interval,
+        interval / 3600,
+        _component_path(),
     )
 
     try:
@@ -298,11 +317,13 @@ async def run_lula_scheduler() -> None:
                 else:
                     logger.warning(
                         "[lula_scheduler] ⚠️  Validation cycle: status=%s reason=%s",
-                        result.get("status"), result.get("reason"),
+                        result.get("status"),
+                        result.get("reason"),
                     )
             except Exception as exc:
                 logger.error(
-                    "[lula_scheduler] Unexpected error in validation cycle (continuing): %s", exc
+                    "[lula_scheduler] Unexpected error in validation cycle (continuing): %s",
+                    exc,
                 )
     except asyncio.CancelledError:
         logger.info("[lula_scheduler] Lula scheduler task cancelled — shutting down.")

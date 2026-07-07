@@ -60,8 +60,9 @@ import json
 import logging
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any
 
 logger = logging.getLogger("cage.kms_batch_signer")
 
@@ -69,20 +70,15 @@ logger = logging.getLogger("cage.kms_batch_signer")
 # Configuration
 # ---------------------------------------------------------------------------
 
-_FLUSH_INTERVAL_MS: int = int(
-    os.environ.get("KMS_BATCH_FLUSH_INTERVAL_MS", "500")
-)
-_MAX_BATCH_SIZE: int = int(
-    os.environ.get("KMS_BATCH_MAX_SIZE", "32")
-)
-_ENABLED: bool = (
-    os.environ.get("KMS_BATCH_ENABLED", "true").lower() == "true"
-)
+_FLUSH_INTERVAL_MS: int = int(os.environ.get("KMS_BATCH_FLUSH_INTERVAL_MS", "500"))
+_MAX_BATCH_SIZE: int = int(os.environ.get("KMS_BATCH_MAX_SIZE", "32"))
+_ENABLED: bool = os.environ.get("KMS_BATCH_ENABLED", "true").lower() == "true"
 
 
 # ---------------------------------------------------------------------------
 # Pending record — queued for signing
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class PendingSignatureRecord:
@@ -94,15 +90,17 @@ class PendingSignatureRecord:
         callback:     Called with (record_hash, signature_hex) when signing completes.
         enqueued_at:  Monotonic timestamp when the record was enqueued.
     """
+
     record_hash: str
     payload: dict[str, Any]
-    callback: Optional[Callable[[str, str], None]] = None
+    callback: Callable[[str, str], None] | None = None
     enqueued_at: float = field(default_factory=time.monotonic)
 
 
 # ---------------------------------------------------------------------------
 # AsyncBatchSigner — the ring-buffer worker
 # ---------------------------------------------------------------------------
+
 
 class AsyncBatchSigner:
     """Asynchronous ring-buffer batch signer for evidence chain records.
@@ -131,7 +129,7 @@ class AsyncBatchSigner:
         self._queue: collections.deque[PendingSignatureRecord] = collections.deque()
         self._flush_interval = flush_interval_ms / 1000.0  # convert to seconds
         self._max_batch_size = max_batch_size
-        self._worker_task: Optional[asyncio.Task] = None
+        self._worker_task: asyncio.Task | None = None
         self._running = False
         self._signed_count = 0
         self._failed_count = 0
@@ -160,23 +158,30 @@ class AsyncBatchSigner:
         if self._signer is None:
             try:
                 from src.gateway.governance.kms_signer import get_governance_signer
+
                 self._signer = get_governance_signer()
             except Exception as _exc:
-                logger.error("[KMSBatchSigner] Failed to load signer at startup: %s", _exc)
+                logger.error(
+                    "[KMSBatchSigner] Failed to load signer at startup: %s", _exc
+                )
 
-        if self._signer is not None and not getattr(self._signer, "is_kms_active", False):
+        if self._signer is not None and not getattr(
+            self._signer, "is_kms_active", False
+        ):
             logger.critical(
-                json.dumps({
-                    "event": "KMS_BATCH_SIGNER_HMAC_FALLBACK",
-                    "severity": "CRITICAL",
-                    "signing_path": "HMAC_SHA256_FALLBACK",
-                    "audit_note": (
-                        "AsyncBatchSigner is operating in HMAC fallback mode. "
-                        "All evidence stream records will be signed with HMAC-SHA256, "
-                        "not Cloud KMS. kms_signature fields in the evidence stream "
-                        "will contain HMAC digests with no non-repudiation value."
-                    ),
-                })
+                json.dumps(
+                    {
+                        "event": "KMS_BATCH_SIGNER_HMAC_FALLBACK",
+                        "severity": "CRITICAL",
+                        "signing_path": "HMAC_SHA256_FALLBACK",
+                        "audit_note": (
+                            "AsyncBatchSigner is operating in HMAC fallback mode. "
+                            "All evidence stream records will be signed with HMAC-SHA256, "
+                            "not Cloud KMS. kms_signature fields in the evidence stream "
+                            "will contain HMAC digests with no non-repudiation value."
+                        ),
+                    }
+                )
             )
 
     async def stop(self) -> None:
@@ -217,7 +222,7 @@ class AsyncBatchSigner:
         self,
         record_hash: str,
         payload: dict[str, Any],
-        callback: Optional[Callable[[str, str], None]] = None,
+        callback: Callable[[str, str], None] | None = None,
     ) -> None:
         """Enqueue a record for background KMS signing.
 
@@ -256,9 +261,7 @@ class AsyncBatchSigner:
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                logger.error(
-                    "[KMSBatchSigner] Worker loop error: %s", exc
-                )
+                logger.error("[KMSBatchSigner] Worker loop error: %s", exc)
                 # Don't crash — the worker must survive transient errors
                 await asyncio.sleep(1.0)
 
@@ -269,9 +272,7 @@ class AsyncBatchSigner:
             batch.append(self._queue.popleft())
         return batch
 
-    async def _sign_batch(
-        self, batch: list[PendingSignatureRecord]
-    ) -> int:
+    async def _sign_batch(self, batch: list[PendingSignatureRecord]) -> int:
         """Sign a batch of records via KMS.
 
         Returns:
@@ -283,6 +284,7 @@ class AsyncBatchSigner:
         # Lazy-load the signer
         if self._signer is None:
             from src.gateway.governance.kms_signer import get_governance_signer
+
             self._signer = get_governance_signer()
 
         signed = 0
@@ -347,7 +349,9 @@ class AsyncBatchSigner:
 
     def assert_kms_active_in_production(self) -> None:
         """Raise RuntimeError if HMAC fallback is active in a production environment."""
-        env = (os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")).lower()
+        env = (
+            os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
+        ).lower()
         if env in ("development", "test", "dev", "ci"):
             return
         if not self.is_kms_active:
@@ -362,7 +366,7 @@ class AsyncBatchSigner:
 # Module-level singleton (lazy init)
 # ---------------------------------------------------------------------------
 
-_batch_signer: Optional[AsyncBatchSigner] = None
+_batch_signer: AsyncBatchSigner | None = None
 
 
 def get_batch_signer() -> AsyncBatchSigner:

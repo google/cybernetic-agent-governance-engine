@@ -71,13 +71,12 @@ Environment variables
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
 import time
-from dataclasses import asdict, dataclass, field
-from typing import Optional, Protocol
+from dataclasses import dataclass, field
+from typing import Protocol
 
 logger = logging.getLogger("cage.reconciliation")
 
@@ -88,9 +87,7 @@ logger = logging.getLogger("cage.reconciliation")
 POLL_INTERVAL_SECONDS: int = int(
     os.environ.get("RECONCILIATION_POLL_INTERVAL_SECONDS", "60")
 )
-TTL_SECONDS: int = int(
-    os.environ.get("RECONCILIATION_TTL_SECONDS", "300")
-)
+TTL_SECONDS: int = int(os.environ.get("RECONCILIATION_TTL_SECONDS", "300"))
 PROVIDER: str = os.environ.get("RECONCILIATION_PROVIDER", "stub")
 
 # ---------------------------------------------------------------------------
@@ -139,8 +136,8 @@ class ReconciliationResult:
     verified_at: float = field(default_factory=time.time)
     signature: str = ""
     ttl_seconds: int = TTL_SECONDS
-    raw_response: Optional[dict] = None
-    error: Optional[str] = None
+    raw_response: dict | None = None
+    error: str | None = None
 
     @property
     def is_valid(self) -> bool:
@@ -166,7 +163,7 @@ class ReconciliationResult:
         )
 
     @classmethod
-    def from_redis_payload(cls, payload: str) -> "ReconciliationResult":
+    def from_redis_payload(cls, payload: str) -> ReconciliationResult:
         """Deserialize from Redis."""
         data = json.loads(payload)
         return cls(
@@ -489,7 +486,9 @@ class ExternalLedgerReconciler:
         except Exception as exc:
             logger.error(
                 "Reconciliation FAILED: provider=%s account=%s error=%s",
-                PROVIDER, self._account_id, exc,
+                PROVIDER,
+                self._account_id,
+                exc,
             )
             return ReconciliationResult(
                 source=PROVIDER,
@@ -498,9 +497,7 @@ class ExternalLedgerReconciler:
             )
 
         if not result.is_valid:
-            logger.error(
-                "Reconciliation returned invalid result: %s", result.error
-            )
+            logger.error("Reconciliation returned invalid result: %s", result.error)
             return result
 
         # ── Cloud KMS signing (Priority 1 integration) ────────────────────
@@ -590,21 +587,22 @@ class ExternalLedgerReconciler:
         logger.info(
             "Reconciliation daemon starting: account=%s provider=%s "
             "poll_interval=%ds ttl=%ds",
-            self._account_id, PROVIDER, self._poll_interval, self._ttl,
+            self._account_id,
+            PROVIDER,
+            self._poll_interval,
+            self._ttl,
         )
 
         while True:
             try:
                 self.reconcile()
             except Exception as exc:
-                logger.error(
-                    "Reconciliation loop error (non-fatal): %s", exc
-                )
+                logger.error("Reconciliation loop error (non-fatal): %s", exc)
 
             time.sleep(self._poll_interval)
 
     @classmethod
-    def from_env(cls) -> "ExternalLedgerReconciler":
+    def from_env(cls) -> ExternalLedgerReconciler:
         """Construct from environment variables.
 
         Required:
@@ -655,7 +653,7 @@ class ExternalLedgerReconciler:
 # ---------------------------------------------------------------------------
 
 
-def read_verified_balance(redis_client: object) -> Optional[ReconciliationResult]:
+def read_verified_balance(redis_client: object) -> ReconciliationResult | None:
     """Read the externally reconciled balance from Redis.
 
     Called by the CBF in ``safety.py`` to prefer externally verified balances
@@ -689,8 +687,7 @@ def read_verified_balance(redis_client: object) -> Optional[ReconciliationResult
 
     except Exception as exc:
         logger.error(
-            "Failed to read verified balance from Redis: %s — "
-            "CBF should fail-closed.",
+            "Failed to read verified balance from Redis: %s — CBF should fail-closed.",
             exc,
         )
         return None

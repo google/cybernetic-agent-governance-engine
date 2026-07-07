@@ -33,7 +33,7 @@ import hmac
 import logging
 import os
 import time
-from typing import Any, Dict
+from typing import Any
 
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 
@@ -43,15 +43,15 @@ logger = logging.getLogger("governed.nemo_actions")
 # Safety parameters — sourced from GovernanceThresholds (governance_thresholds.json)
 # ---------------------------------------------------------------------------
 
-DEFAULT_DRAWDOWN_LIMIT: float = 0.05   # 5 %
+DEFAULT_DRAWDOWN_LIMIT: float = 0.05  # 5 %
 DEFAULT_MAX_LATENCY_MS: float = 200.0  # 200 ms
 _CACHE_TTL_SECONDS: float = 60.0
 
-_safety_params_cache: Dict[str, Any] = {}
+_safety_params_cache: dict[str, Any] = {}
 _last_check_time: float = 0.0
 
 
-def _load_safety_params() -> Dict[str, Any]:
+def _load_safety_params() -> dict[str, Any]:
     """Return drawdown limit from GovernanceThresholds with a 60-second TTL cache.
 
     Falls back to an empty dict (triggering defaults) on any error.
@@ -66,7 +66,9 @@ def _load_safety_params() -> Dict[str, Any]:
         thresholds = load_and_validate_thresholds()
         _safety_params_cache = {"drawdown_limit": thresholds.drawdown.limit}
     except Exception as exc:
-        logger.warning("Failed to load governance thresholds (%s) — using defaults", exc)
+        logger.warning(
+            "Failed to load governance thresholds (%s) — using defaults", exc
+        )
         _safety_params_cache = {}
 
     _last_check_time = now
@@ -82,7 +84,11 @@ def _get_drawdown_limit() -> float:
     except (TypeError, ValueError):
         return DEFAULT_DRAWDOWN_LIMIT
     if not (0.0 < val <= 1.0):
-        logger.warning("drawdown_limit=%s out of range (0, 1] — using default %s", val, DEFAULT_DRAWDOWN_LIMIT)
+        logger.warning(
+            "drawdown_limit=%s out of range (0, 1] — using default %s",
+            val,
+            DEFAULT_DRAWDOWN_LIMIT,
+        )
         return DEFAULT_DRAWDOWN_LIMIT
     return val
 
@@ -91,7 +97,8 @@ def _get_drawdown_limit() -> float:
 # Action implementations (synchronous, fail-closed)
 # ---------------------------------------------------------------------------
 
-def check_drawdown_limit(context: Dict[str, Any]) -> bool:
+
+def check_drawdown_limit(context: dict[str, Any]) -> bool:
     """Return True if the portfolio drawdown is within acceptable limits.
 
     Args:
@@ -103,13 +110,17 @@ def check_drawdown_limit(context: Dict[str, Any]) -> bool:
     """
     drawdown_pct = context.get("drawdown_pct")
     if drawdown_pct is None:
-        logger.warning("check_drawdown_limit: drawdown_pct missing — DENY (fail-closed)")
+        logger.warning(
+            "check_drawdown_limit: drawdown_pct missing — DENY (fail-closed)"
+        )
         return False
 
     try:
         pct = float(drawdown_pct) / 100.0  # convert percentage to fraction
     except (TypeError, ValueError):
-        logger.warning("check_drawdown_limit: invalid drawdown_pct=%s — DENY", drawdown_pct)
+        logger.warning(
+            "check_drawdown_limit: invalid drawdown_pct=%s — DENY", drawdown_pct
+        )
         return False
 
     limit = _get_drawdown_limit()
@@ -123,7 +134,7 @@ def check_drawdown_limit(context: Dict[str, Any]) -> bool:
     return result
 
 
-def check_slippage_risk(context: Dict[str, Any]) -> bool:
+def check_slippage_risk(context: dict[str, Any]) -> bool:
     """Return True if the order's slippage risk is within acceptable bounds.
 
     Rule: if order_type == MARKET, order_size must be <= 1 % of daily_volume.
@@ -159,12 +170,16 @@ def check_slippage_risk(context: Dict[str, Any]) -> bool:
     result = slippage_ratio <= limit
     if not result:
         logger.warning(
-            "check_slippage_risk: size/volume=%.4f > limit %.4f — DENY", slippage_ratio, limit
+            "check_slippage_risk: size/volume=%.4f > limit %.4f — DENY",
+            slippage_ratio,
+            limit,
         )
     return result
 
 
-def generate_approval_token(thread_id: str, trade_id: str, ttl_seconds: int = 3600) -> str:
+def generate_approval_token(
+    thread_id: str, trade_id: str, ttl_seconds: int = 3600
+) -> str:
     """Generate a cryptographically signed approval token."""
     secret = os.environ.get("CAGE_ROUTING_SEAL_SECRET", "dev-secret")
     expiry = int(time.time()) + ttl_seconds
@@ -191,13 +206,15 @@ def validate_approval_token(token: str, thread_id: str, trade_id: str) -> bool:
         if int(time.time()) > int(expiry_str):
             return False
         secret = os.environ.get("CAGE_ROUTING_SEAL_SECRET", "dev-secret")
-        expected_sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        expected_sig = hmac.new(
+            secret.encode(), payload.encode(), hashlib.sha256
+        ).hexdigest()
         return hmac.compare_digest(signature, expected_sig)
     except Exception:
         return False
 
 
-def check_approval_token(context: Dict[str, Any]) -> bool:
+def check_approval_token(context: dict[str, Any]) -> bool:
     """Return True if a valid HMAC-signed approval token is present.
 
     Uses cryptographic HMAC-SHA256 validation. Falls back to legacy
@@ -229,16 +246,19 @@ def check_approval_token(context: Dict[str, Any]) -> bool:
         if not valid:
             logger.warning(
                 "check_approval_token: HMAC validation failed for thread=%s trade=%s — DENY",
-                thread_id, trade_id,
+                thread_id,
+                trade_id,
             )
         return valid
 
     # Legacy path: token is non-empty and not a known bad value
-    logger.debug("check_approval_token: no thread_id/trade_id — using legacy non-empty check")
+    logger.debug(
+        "check_approval_token: no thread_id/trade_id — using legacy non-empty check"
+    )
     return True
 
 
-def check_data_latency(context: Dict[str, Any]) -> bool:
+def check_data_latency(context: dict[str, Any]) -> bool:
     """Return True if market data latency is within acceptable bounds (<= 200 ms).
 
     Args:
@@ -272,7 +292,7 @@ def check_data_latency(context: Dict[str, Any]) -> bool:
     return False
 
 
-def check_atomic_execution(context: Dict[str, Any]) -> bool:
+def check_atomic_execution(context: dict[str, Any]) -> bool:
     """Return True if the multi-leg execution history is consistent.
 
     For a trade with current_leg_index N (N >= 2), all previous legs
@@ -297,15 +317,20 @@ def check_atomic_execution(context: Dict[str, Any]) -> bool:
         return True  # First leg, nothing to check
 
     if not audit_trail:
-        logger.warning("check_atomic_execution: leg %d but audit_trail is empty — DENY", leg)
+        logger.warning(
+            "check_atomic_execution: leg %d but audit_trail is empty — DENY", leg
+        )
         return False
 
     # Verify all previous legs appear in the trail
-    completed_legs = {entry.get("leg_index") for entry in audit_trail if isinstance(entry, dict)}
+    completed_legs = {
+        entry.get("leg_index") for entry in audit_trail if isinstance(entry, dict)
+    }
     for required_leg in range(1, leg):
         if required_leg not in completed_legs:
             logger.warning(
-                "check_atomic_execution: leg %d missing from audit_trail — DENY", required_leg
+                "check_atomic_execution: leg %d missing from audit_trail — DENY",
+                required_leg,
             )
             return False
 

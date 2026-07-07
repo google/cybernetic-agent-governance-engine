@@ -39,7 +39,6 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger("Gateway.Governance.PromptInjectionDetector")
 
@@ -103,6 +102,7 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 # InjectionResult — structured detection result
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class InjectionResult:
     """Result of a prompt injection detection check.
@@ -116,13 +116,14 @@ class InjectionResult:
     """
 
     detected: bool
-    pattern_matched: Optional[str]
+    pattern_matched: str | None
     confidence: float
 
 
 # ---------------------------------------------------------------------------
 # detect_prompt_injection — main detection function
 # ---------------------------------------------------------------------------
+
 
 def detect_prompt_injection(text: str) -> InjectionResult:
     """Detect structural prompt injection patterns in the given text.

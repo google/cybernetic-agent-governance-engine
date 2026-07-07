@@ -21,7 +21,6 @@ Phase: 2 (core hardening)
 import pytest
 
 from src.gateway.governance.provenance_chain import (
-    ProvenanceRecord,
     VALID_DECISIONS,
     build_provenance_record,
     compute_hash,
@@ -226,9 +225,16 @@ class TestVerifyChainIntegrity:
     def test_ten_record_chain_integrity(self):
         """verify_chain_integrity validates a 10-record chain (full pipeline run)."""
         node_names = [
-            "opa_node", "causal_gatekeeper", "consensus_engine",
-            "nemo_guardrails", "pii_sanitizer", "routing_seal",
-            "confabulation_scorer", "hitl_escalator", "provenance_chain", "audit_logger",
+            "opa_node",
+            "causal_gatekeeper",
+            "consensus_engine",
+            "nemo_guardrails",
+            "pii_sanitizer",
+            "routing_seal",
+            "confabulation_scorer",
+            "hitl_escalator",
+            "provenance_chain",
+            "audit_logger",
         ]
         records = []
         parent_hash = None

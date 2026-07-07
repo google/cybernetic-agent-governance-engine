@@ -14,12 +14,13 @@
 
 import asyncio
 import logging
+
 import pytest
 
 pytestmark = pytest.mark.integration
 
-import sys
 import os
+import sys
 
 # Adjust path
 sys.path.append(os.getcwd())
@@ -28,11 +29,11 @@ from src.governed_financial_advisor.agents.evaluator.agent import (
     check_market_status,
     check_safety_constraints,
     verify_policy_opa,
-    safety_intervention
 )
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("TestEvaluatorMCP")
+
 
 @pytest.mark.asyncio
 async def test_evaluator_tools():
@@ -49,7 +50,7 @@ async def test_evaluator_tools():
     res = await check_safety_constraints(
         target_tool="execute_trade",
         target_params={"symbol": "AAPL", "amount": 10},
-        risk_profile="Low"
+        risk_profile="Low",
     )
     assert res is not None, "check_safety_constraints returned None"
     logger.info(f"✅ Safety Constraint Result: {res}")
@@ -57,11 +58,11 @@ async def test_evaluator_tools():
     # 3. Verify Policy
     logger.info("3. Testing verify_policy_opa...")
     res = await verify_policy_opa(
-        action="execute_trade",
-        params={"symbol": "AAPL", "amount": 1000}
+        action="execute_trade", params={"symbol": "AAPL", "amount": 1000}
     )
     assert res is not None, "verify_policy_opa returned None"
     logger.info(f"✅ Policy Check Result: {res}")
+
 
 if __name__ == "__main__":
     asyncio.run(test_evaluator_tools())

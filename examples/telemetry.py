@@ -102,12 +102,12 @@ import hashlib
 import json
 import logging
 import os
-import time
 import uuid
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Generator, Optional
+from typing import Any
 
 logger = logging.getLogger("cage.playground.telemetry")
 
@@ -125,21 +125,21 @@ _VIEW_ACCESS_LOG_PATH = _EVIDENCE_DIR / f"view_access_log_{_TODAY}.ndjson"
 # Span attribute constants (must mirror symbolic_governor.py + stpa_validator.py)
 # ---------------------------------------------------------------------------
 _SPAN_ATTRS = {
-    "type":         "langfuse.observation.type",
-    "name":         "langfuse.observation.name",
-    "input":        "langfuse.observation.input",
-    "output":       "langfuse.observation.output",
-    "iso_ctrl":     "langfuse.trace.metadata.iso.control_id",
-    "nist_ctrl":    "langfuse.trace.metadata.nist.control_id",
-    "iso_req":      "langfuse.trace.metadata.iso.requirement",
-    "decision":     "cage.governance.decision",
-    "tier":         "cage.governance.blocking_tier",
-    "vuln_count":   "cage.governance.violation_count",
-    "scenario_id":  "cage.governance.scenario_id",
-    "action":       "cage.governance.action",
-    "chain_hash":   "cage.evidence.chain_hash",
-    "record_id":    "cage.evidence.record_id",
-    "elapsed_ms":   "cage.governance.elapsed_ms",
+    "type": "langfuse.observation.type",
+    "name": "langfuse.observation.name",
+    "input": "langfuse.observation.input",
+    "output": "langfuse.observation.output",
+    "iso_ctrl": "langfuse.trace.metadata.iso.control_id",
+    "nist_ctrl": "langfuse.trace.metadata.nist.control_id",
+    "iso_req": "langfuse.trace.metadata.iso.requirement",
+    "decision": "cage.governance.decision",
+    "tier": "cage.governance.blocking_tier",
+    "vuln_count": "cage.governance.violation_count",
+    "scenario_id": "cage.governance.scenario_id",
+    "action": "cage.governance.action",
+    "chain_hash": "cage.evidence.chain_hash",
+    "record_id": "cage.evidence.record_id",
+    "elapsed_ms": "cage.governance.elapsed_ms",
 }
 
 # Normalised intent schema — mirrors the shape Langfuse stores for every
@@ -166,6 +166,7 @@ PROVENANCE_NOTE = (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -199,7 +200,8 @@ def _append_record(path: Path, record: dict) -> None:
 # OTel bootstrap — graceful degradation when SDK not available
 # ---------------------------------------------------------------------------
 
-def _init_otel() -> Optional[object]:
+
+def _init_otel() -> object | None:
     """
     Initialise OTel using the same setup_tracing() logic as the gateway.
 
@@ -213,14 +215,17 @@ def _init_otel() -> Optional[object]:
 
     try:
         import sys
+
         _repo = Path(__file__).resolve().parents[1]
         if str(_repo) not in sys.path:
             sys.path.insert(0, str(_repo))
 
         from src.gateway.tracing_setup import setup_tracing
+
         setup_tracing()
 
         from opentelemetry import trace
+
         return trace.get_tracer("cage.playground")
     except Exception as exc:
         logger.warning("OTel init failed — spans will be logged locally only: %s", exc)
@@ -230,6 +235,7 @@ def _init_otel() -> Optional[object]:
 # ---------------------------------------------------------------------------
 # PlaygroundTelemetry
 # ---------------------------------------------------------------------------
+
 
 class PlaygroundTelemetry:
     """
@@ -265,31 +271,31 @@ class PlaygroundTelemetry:
         Yields the span (or a no-op stub if OTel is unavailable).
         Call ``record_result()`` inside the block with the final outcome.
         """
-        span_input = json.dumps({"scenario": scenario_id, "action": action, "params": params})
+        span_input = json.dumps(
+            {"scenario": scenario_id, "action": action, "params": params}
+        )
         record_id = str(uuid.uuid4())
 
         if self._tracer is not None:
-            with self._tracer.start_as_current_span(
-                "cage.playground.scenario"
-            ) as span:
-                span.set_attribute(_SPAN_ATTRS["type"],        "span")
-                span.set_attribute(_SPAN_ATTRS["name"],        "governance_evaluation")
-                span.set_attribute(_SPAN_ATTRS["input"],       span_input)
-                span.set_attribute(_SPAN_ATTRS["iso_ctrl"],    "A.8.4")
-                span.set_attribute(_SPAN_ATTRS["nist_ctrl"],   "SC-4")
-                span.set_attribute(_SPAN_ATTRS["iso_req"],     "Controllability")
+            with self._tracer.start_as_current_span("cage.playground.scenario") as span:
+                span.set_attribute(_SPAN_ATTRS["type"], "span")
+                span.set_attribute(_SPAN_ATTRS["name"], "governance_evaluation")
+                span.set_attribute(_SPAN_ATTRS["input"], span_input)
+                span.set_attribute(_SPAN_ATTRS["iso_ctrl"], "A.8.4")
+                span.set_attribute(_SPAN_ATTRS["nist_ctrl"], "SC-4")
+                span.set_attribute(_SPAN_ATTRS["iso_req"], "Controllability")
                 span.set_attribute(_SPAN_ATTRS["scenario_id"], scenario_id)
-                span.set_attribute(_SPAN_ATTRS["action"],      action)
-                span.set_attribute(_SPAN_ATTRS["record_id"],   record_id)
+                span.set_attribute(_SPAN_ATTRS["action"], action)
+                span.set_attribute(_SPAN_ATTRS["record_id"], record_id)
                 yield _SpanWrapper(span, record_id)
         else:
             yield _SpanWrapper(None, record_id)
 
     def record_result(
         self,
-        span_wrapper: "_SpanWrapper",
+        span_wrapper: _SpanWrapper,
         violations: list[str],
-        blocking_tier: Optional[int],
+        blocking_tier: int | None,
         elapsed_ms: float,
         action: str,
         params: dict[str, Any],
@@ -306,15 +312,16 @@ class PlaygroundTelemetry:
 
         # ── Finalise OTel span ────────────────────────────────────────────
         if span_wrapper.span is not None:
-            span_wrapper.span.set_attribute(_SPAN_ATTRS["output"],     decision)
-            span_wrapper.span.set_attribute(_SPAN_ATTRS["decision"],   decision)
-            span_wrapper.span.set_attribute(_SPAN_ATTRS["tier"],       tier_val)
+            span_wrapper.span.set_attribute(_SPAN_ATTRS["output"], decision)
+            span_wrapper.span.set_attribute(_SPAN_ATTRS["decision"], decision)
+            span_wrapper.span.set_attribute(_SPAN_ATTRS["tier"], tier_val)
             span_wrapper.span.set_attribute(_SPAN_ATTRS["vuln_count"], len(violations))
             span_wrapper.span.set_attribute(_SPAN_ATTRS["elapsed_ms"], elapsed_ms)
 
             if blocked:
                 try:
                     from opentelemetry.trace import Status, StatusCode
+
                     span_wrapper.span.set_status(Status(StatusCode.ERROR))
                 except Exception:
                     pass
@@ -323,27 +330,27 @@ class PlaygroundTelemetry:
         # This is the "normalised intent schema" — the machine-readable
         # justification record referenced in governance reporting.
         intent_record: dict[str, Any] = {
-            "schema":           _INTENT_SCHEMA_VERSION,
-            "record_id":        span_wrapper.record_id,
-            "timestamp":        _now_iso(),
-            "scenario_id":      scenario_id,
-            "action":           action,
-            "params_redacted":  _redact_params(params),
-            "decision":         decision,
-            "blocking_tier":    tier_val,
-            "violations":       violations,
-            "elapsed_ms":       round(elapsed_ms, 3),
-            "nist_controls":    ["SC-4", "SC-8", "SC-7"],
-            "iso_controls":     ["A.8.4", "A.6.2"],
-            "otel_service":     os.environ.get("OTEL_SERVICE_NAME", "cage-playground"),
+            "schema": _INTENT_SCHEMA_VERSION,
+            "record_id": span_wrapper.record_id,
+            "timestamp": _now_iso(),
+            "scenario_id": scenario_id,
+            "action": action,
+            "params_redacted": _redact_params(params),
+            "decision": decision,
+            "blocking_tier": tier_val,
+            "violations": violations,
+            "elapsed_ms": round(elapsed_ms, 3),
+            "nist_controls": ["SC-4", "SC-8", "SC-7"],
+            "iso_controls": ["A.8.4", "A.6.2"],
+            "otel_service": os.environ.get("OTEL_SERVICE_NAME", "cage-playground"),
             "provenance_disclaimer": PROVENANCE_NOTE,
         }
 
         # ── Hash chain ────────────────────────────────────────────────────
         payload_str = json.dumps(intent_record, sort_keys=True, separators=(",", ":"))
         record_hash = _sha256(self._prev_hash + payload_str)
-        intent_record["prev_hash"]    = self._prev_hash
-        intent_record["record_hash"]  = record_hash
+        intent_record["prev_hash"] = self._prev_hash
+        intent_record["record_hash"] = record_hash
 
         # Stamp hash onto span for in-trace traceability
         if span_wrapper.span is not None:
@@ -355,7 +362,8 @@ class PlaygroundTelemetry:
 
         logger.info(
             "📋 Evidence record written: id=%s hash=%s...",
-            span_wrapper.record_id, record_hash[:16],
+            span_wrapper.record_id,
+            record_hash[:16],
         )
         return record_hash
 
@@ -365,7 +373,7 @@ class PlaygroundTelemetry:
         self,
         accessor_id: str = "anonymous",
         reason: str = "unspecified",
-        filter_scenario: Optional[str] = None,
+        filter_scenario: str | None = None,
     ) -> list[dict]:
         """
         Read the evidence chain and register a view-access event.
@@ -397,22 +405,24 @@ class PlaygroundTelemetry:
                     pass
 
         # Compute a fingerprint of what was read
-        read_fingerprint = _sha256(json.dumps(
-            [r.get("record_hash", "") for r in records],
-            separators=(",", ":"),
-        ))
+        read_fingerprint = _sha256(
+            json.dumps(
+                [r.get("record_hash", "") for r in records],
+                separators=(",", ":"),
+            )
+        )
 
         view_event: dict[str, Any] = {
-            "schema":           "cage-view-access/1.0",
-            "event_id":         str(uuid.uuid4()),
-            "timestamp":        _now_iso(),
-            "accessor_id":      accessor_id,
-            "reason":           reason,
-            "filter_scenario":  filter_scenario,
+            "schema": "cage-view-access/1.0",
+            "event_id": str(uuid.uuid4()),
+            "timestamp": _now_iso(),
+            "accessor_id": accessor_id,
+            "reason": reason,
+            "filter_scenario": filter_scenario,
             "records_accessed": len(records),
             "read_fingerprint": read_fingerprint,
             # Chain to previous view event for tamper evidence
-            "prev_view_hash":   _load_last_view_hash(),
+            "prev_view_hash": _load_last_view_hash(),
         }
         view_event["event_hash"] = _sha256(
             view_event["prev_view_hash"]
@@ -422,7 +432,9 @@ class PlaygroundTelemetry:
         _append_record(_VIEW_ACCESS_LOG_PATH, view_event)
         logger.info(
             "👁  View-access registered: accessor=%s records=%d fingerprint=%s...",
-            accessor_id, len(records), read_fingerprint[:16],
+            accessor_id,
+            len(records),
+            read_fingerprint[:16],
         )
         return records
 
@@ -468,54 +480,55 @@ class PlaygroundTelemetry:
         # ── OTel span ─────────────────────────────────────────────────────────
         if self._tracer is not None:
             try:
-                with self._tracer.start_as_current_span(
-                    "cage.hitl.approval"
-                ) as span:
-                    span.set_attribute(_SPAN_ATTRS["type"],       "span")
-                    span.set_attribute(_SPAN_ATTRS["name"],       "hitl_approval")
-                    span.set_attribute(_SPAN_ATTRS["iso_ctrl"],   "A.8.4")
-                    span.set_attribute(_SPAN_ATTRS["nist_ctrl"],  "SC-4")
-                    span.set_attribute(_SPAN_ATTRS["decision"],   decision_str)
-                    span.set_attribute(_SPAN_ATTRS["record_id"],  record_id)
-                    span.set_attribute("cage.hitl.thread_id",     thread_id)
-                    span.set_attribute("cage.hitl.reviewer",      reviewer)
-                    span.set_attribute("cage.hitl.decision",      decision_str)
-                    span.set_attribute("cage.hitl.rationale",     rationale[:512])
-                    span.set_attribute("cage.hitl.nist_govern",   "GOVERN-5")
+                with self._tracer.start_as_current_span("cage.hitl.approval") as span:
+                    span.set_attribute(_SPAN_ATTRS["type"], "span")
+                    span.set_attribute(_SPAN_ATTRS["name"], "hitl_approval")
+                    span.set_attribute(_SPAN_ATTRS["iso_ctrl"], "A.8.4")
+                    span.set_attribute(_SPAN_ATTRS["nist_ctrl"], "SC-4")
+                    span.set_attribute(_SPAN_ATTRS["decision"], decision_str)
+                    span.set_attribute(_SPAN_ATTRS["record_id"], record_id)
+                    span.set_attribute("cage.hitl.thread_id", thread_id)
+                    span.set_attribute("cage.hitl.reviewer", reviewer)
+                    span.set_attribute("cage.hitl.decision", decision_str)
+                    span.set_attribute("cage.hitl.rationale", rationale[:512])
+                    span.set_attribute("cage.hitl.nist_govern", "GOVERN-5")
             except Exception as _span_exc:
                 logger.debug("HITL span emission failed: %s", _span_exc)
 
         # ── Build evidence record ──────────────────────────────────────────────
         approval_record: dict[str, Any] = {
-            "schema":           _INTENT_SCHEMA_VERSION,
-            "record_id":        record_id,
-            "timestamp":        _now_iso(),
-            "event_type":       "hitl_approval",
-            "thread_id":        thread_id,
-            "decision":         decision_str,
-            "reviewer":         reviewer,
+            "schema": _INTENT_SCHEMA_VERSION,
+            "record_id": record_id,
+            "timestamp": _now_iso(),
+            "event_type": "hitl_approval",
+            "thread_id": thread_id,
+            "decision": decision_str,
+            "reviewer": reviewer,
             # rationale is stored verbatim — it IS the audit artefact.
             # It must never be redacted; the reviewer is responsible for
             # not including PII in the justification text.
-            "rationale":        rationale,
-            "comment":          comment,
-            "nist_controls":    ["GOVERN-5", "SC-4"],
-            "iso_controls":     ["A.8.4", "A.7.2", "A.6.2"],
+            "rationale": rationale,
+            "comment": comment,
+            "nist_controls": ["GOVERN-5", "SC-4"],
+            "iso_controls": ["A.8.4", "A.7.2", "A.6.2"],
             "iso_42001_clause": "6.1",
-            "otel_service":     os.environ.get("OTEL_SERVICE_NAME", "cage-financial-advisor"),
+            "otel_service": os.environ.get(
+                "OTEL_SERVICE_NAME", "cage-financial-advisor"
+            ),
             "provenance_disclaimer": PROVENANCE_NOTE,
         }
 
         # ── Hash chain ────────────────────────────────────────────────────────
         payload_str = json.dumps(approval_record, sort_keys=True, separators=(",", ":"))
         record_hash = _sha256(self._prev_hash + payload_str)
-        approval_record["prev_hash"]   = self._prev_hash
+        approval_record["prev_hash"] = self._prev_hash
         approval_record["record_hash"] = record_hash
 
         # Stamp hash onto span
         if self._tracer is not None:
             try:
                 from opentelemetry import trace as _otel_trace
+
                 current = _otel_trace.get_current_span()
                 if current and current.is_recording():
                     current.set_attribute(_SPAN_ATTRS["chain_hash"], record_hash)
@@ -528,7 +541,10 @@ class PlaygroundTelemetry:
 
         logger.info(
             "📋 HITL approval evidence written: thread=%s decision=%s reviewer=%s hash=%s...",
-            thread_id, decision_str, reviewer, record_hash[:16],
+            thread_id,
+            decision_str,
+            reviewer,
+            record_hash[:16],
         )
         return record_hash
 
@@ -538,6 +554,7 @@ class PlaygroundTelemetry:
         """Flush OTel BatchSpanProcessor (best-effort)."""
         try:
             from opentelemetry import trace as _t
+
             provider = _t.get_tracer_provider()
             if hasattr(provider, "force_flush"):
                 provider.force_flush(timeout_millis=3000)
@@ -565,18 +582,20 @@ class PlaygroundTelemetry:
                 return False, i
 
             stored_hash = rec.pop("record_hash", "")
-            prev_hash   = rec.pop("prev_hash", "")
+            prev_hash = rec.pop("prev_hash", "")
             payload_str = json.dumps(rec, sort_keys=True, separators=(",", ":"))
-            expected    = _sha256(prev + payload_str)
+            expected = _sha256(prev + payload_str)
 
             if prev_hash != prev or stored_hash != expected:
-                logger.warning("Chain broken at record %d (id=%s)", i, rec.get("record_id"))
+                logger.warning(
+                    "Chain broken at record %d (id=%s)", i, rec.get("record_id")
+                )
                 return False, i + 1
 
             prev = stored_hash
             # Restore for integrity (not strictly needed — this is read-only)
             rec["record_hash"] = stored_hash
-            rec["prev_hash"]   = prev_hash
+            rec["prev_hash"] = prev_hash
 
         return True, len(lines)
 
@@ -593,12 +612,14 @@ class PlaygroundTelemetry:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 class _SpanWrapper:
     """Thin wrapper carrying the span + record_id through the context manager."""
-    __slots__ = ("span", "record_id")
+
+    __slots__ = ("record_id", "span")
 
     def __init__(self, span: Any, record_id: str) -> None:
-        self.span      = span
+        self.span = span
         self.record_id = record_id
 
 

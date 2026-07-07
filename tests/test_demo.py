@@ -18,7 +18,9 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-from src.governed_financial_advisor.demo.pipeline_manager import submit_governance_pipeline
+from src.governed_financial_advisor.demo.pipeline_manager import (
+    submit_governance_pipeline,
+)
 from src.governed_financial_advisor.demo.state import DemoState, demo_state
 
 
@@ -27,6 +29,7 @@ def clean_state():
     demo_state.reset()
     return demo_state
 
+
 @pytest.mark.asyncio
 async def test_demo_state_singleton():
     s1 = DemoState()
@@ -34,6 +37,7 @@ async def test_demo_state_singleton():
     assert s1 is s2
     s1.simulated_latency = 100.0
     assert s2.simulated_latency == 100.0
+
 
 @pytest.mark.asyncio
 @patch("src.governed_financial_advisor.demo.pipeline_manager.compiler")

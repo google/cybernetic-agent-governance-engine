@@ -19,19 +19,19 @@ Node functions for the main graph: Data Analyst, Execution Analyst, and Governed
 Uses Dependency Injection pattern to allow mocking during tests.
 """
 
-import asyncio
-import contextlib
 import json
 import logging
-from collections.abc import Callable
 from typing import Any
 
 from langchain_core.messages import HumanMessage
 
-from src.governed_financial_advisor.agents.execution_analyst.agent import create_execution_analyst_agent
+from src.governed_financial_advisor.agents.execution_analyst.agent import (
+    create_execution_analyst_agent,
+)
 from src.governed_financial_advisor.utils.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
+
 
 def get_valid_last_message(state: dict[str, Any]) -> str:
     messages = state.get("messages", [])
@@ -42,17 +42,21 @@ def get_valid_last_message(state: dict[str, Any]) -> str:
         return str(last_msg[1])
     return getattr(last_msg, "content", str(last_msg))
 
+
 def get_market_data_from_history(state: dict[str, Any]) -> str:
     # Basic implementation since we're inside the Execution Analyst
     # Typically this looks for ToolMessages or AI messages containing market data
     messages = state.get("messages", [])
     market_data = []
     for msg in reversed(messages):
-        content = getattr(msg, "content", "") if not isinstance(msg, tuple) else str(msg[1])
+        content = (
+            getattr(msg, "content", "") if not isinstance(msg, tuple) else str(msg[1])
+        )
         if "MARKET DATA" in content.upper() or "ANALYSIS" in content.upper():
-             market_data.append(content)
-             break
+            market_data.append(content)
+            break
     return "\n".join(market_data)
+
 
 async def data_analyst_node(state):
     """
@@ -61,19 +65,21 @@ async def data_analyst_node(state):
     It returns the inherited state dict, seamlessly appending the ToolMessage to the global history.
     """
     logger.info("--- [Graph] Invoking Data Analyst Subgraph ---")
-    
-    from src.governed_financial_advisor.graph.subgraphs.data_analyst_graph import data_analyst_graph
-    
-    # We invoke the subgraph natively with the global state. 
+
+    from src.governed_financial_advisor.graph.subgraphs.data_analyst_graph import (
+        data_analyst_graph,
+    )
+
+    # We invoke the subgraph natively with the global state.
     # LangGraph will run the internal state workflow and merge the outputs.
     # The return contains the new message history (including the tool output).
     result = await data_analyst_graph.ainvoke(state, {"recursion_limit": 10})
-    
+
     return {
         "messages": result["messages"],
         # Provide an explicit next_step signal back to the parent graph if needed,
         # or just rely on the parent's Supervisor logic via returning END/FINISH.
-        "data_analyst_ticker": result.get("reasoning_output", "UNKNOWN")
+        "data_analyst_ticker": result.get("reasoning_output", "UNKNOWN"),
     }
 
 
@@ -103,7 +109,12 @@ async def execution_analyst_node(state):
             # loop_count >= 3 to break the cycle. Resetting it to 0 causes the guard to
             # always see 0 and route back to execution_analyst indefinitely.
             return {
-                "messages": [("ai", "I cannot recommend a trade at this time due to persistent safety policy violations. Please adjust your risk profile or select a different asset.")],
+                "messages": [
+                    (
+                        "ai",
+                        "I cannot recommend a trade at this time due to persistent safety policy violations. Please adjust your risk profile or select a different asset.",
+                    )
+                ],
                 "risk_status": "UNKNOWN",
                 "loop_count": current_loop + 1,
                 "execution_plan_output": None,
@@ -140,15 +151,22 @@ async def execution_analyst_node(state):
 
         try:
             # Chain returns a raw AIMessage (json_object mode, no tool-calling)
-            from src.governed_financial_advisor.agents.execution_analyst.agent import parse_execution_plan
-            ai_msg = await agent_chain.ainvoke({"messages": [HumanMessage(content=injected_msg)]})
+            from src.governed_financial_advisor.agents.execution_analyst.agent import (
+                parse_execution_plan,
+            )
+
+            ai_msg = await agent_chain.ainvoke(
+                {"messages": [HumanMessage(content=injected_msg)]}
+            )
             raw_content = ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
             plan_obj = parse_execution_plan(raw_content)
 
             # Serialize for state dictionary
             plan_output = plan_obj.model_dump()
             span.set_attribute("langfuse.observation.output", json.dumps(plan_output))
-            logger.info(f"✅ Generated Execution Plan: {plan_output.get('plan_id', 'unknown')}")
+            logger.info(
+                f"✅ Generated Execution Plan: {plan_output.get('plan_id', 'unknown')}"
+            )
         except Exception as e:
             logger.warning(f"⚠️ Failed to generate Execution Plan: {e}")
             span.record_exception(e)
@@ -160,8 +178,15 @@ async def execution_analyst_node(state):
 
     # 5. Format Output Message
     if plan_output and isinstance(plan_output, dict) and "error" not in plan_output:
-        steps_text = "\n".join([f"{i+1}. {s.get('action')} ({s.get('description')})" for i, s in enumerate(plan_output.get("steps", []))])
-        risk_val = plan_output.get('user_risk_attitude') or state.get("risk_attitude", "Unknown")
+        steps_text = "\n".join(
+            [
+                f"{i + 1}. {s.get('action')} ({s.get('description')})"
+                for i, s in enumerate(plan_output.get("steps", []))
+            ]
+        )
+        risk_val = plan_output.get("user_risk_attitude") or state.get(
+            "risk_attitude", "Unknown"
+        )
         ticker_val = state.get("ticker", "the requested asset")
         final_response = (
             f"I have received your request to trade {ticker_val}. Based on your risk profile ({risk_val}), here is my recommendation:\n\n"
@@ -186,14 +211,14 @@ async def execution_analyst_node(state):
         "execution_plan_output": plan_output,
         "loop_count": current_loop + 1,
     }
-    
+
     # Extract Context back to global state
     if plan_output and "error" not in plan_output:
         if plan_output.get("user_risk_attitude"):
             updates["risk_attitude"] = plan_output.get("user_risk_attitude")
         if plan_output.get("user_investment_period"):
             updates["investment_period"] = plan_output.get("user_investment_period")
-            
+
     return updates
 
 
@@ -203,21 +228,27 @@ async def governed_trader_node(state):
     Executes requested trades based on plan and evaluation.
     """
     logger.info("--- [Graph] Calling Governed Trader ---")
-    
-    from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import governed_trader_graph
-    
+
+    from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+        governed_trader_graph,
+    )
+
     # We pass the execution plan and evaluation result down to the subgraph.
     # data_analyst_ticker is forwarded so post_hitl_rehydrate_node can fetch a
     # live quote directly without re-parsing execution_plan JSON (more reliable).
     subgraph_state = {
         "messages": state.get("messages", []),
         "execution_plan": str(state.get("execution_plan_output", "No plan.")),
-        "evaluation_result": str(state.get("evaluation_result", "DENIED")),  # M-06: fail-closed default
+        "evaluation_result": str(
+            state.get("evaluation_result", "DENIED")
+        ),  # M-06: fail-closed default
         "governance_signature": state.get("governance_signature"),
         "data_analyst_ticker": state.get("data_analyst_ticker"),  # TOCTOU: re-hydration
     }
-    
+
     # Invoke natively
-    result = await governed_trader_graph.ainvoke(subgraph_state, {"recursion_limit": 10})
-    
+    result = await governed_trader_graph.ainvoke(
+        subgraph_state, {"recursion_limit": 10}
+    )
+
     return {"messages": result["messages"]}

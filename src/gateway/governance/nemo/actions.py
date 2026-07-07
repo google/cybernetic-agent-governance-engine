@@ -61,7 +61,10 @@ def _get_pre_check(context: dict[str, Any]) -> dict[str, Any] | None:
 # Action implementations
 # ---------------------------------------------------------------------------
 
-async def CheckApprovalTokenAction(context: dict[str, Any] = {}, event: dict[str, Any] = {}) -> bool:
+
+async def CheckApprovalTokenAction(
+    context: dict[str, Any] = {}, event: dict[str, Any] = {}
+) -> bool:
     """
     Validates that an approval token is present (SC-1).
     Reads pre-computed STPA result from NeMo context.
@@ -79,24 +82,32 @@ async def CheckApprovalTokenAction(context: dict[str, Any] = {}, event: dict[str
     violations = stpa_result.get("violations", [])
 
     # Filter to SC-1 (approval token) violations only
-    sc1_violations = [v for v in violations if "SC-1" in v or "approval_token" in v.lower()]
+    sc1_violations = [
+        v for v in violations if "SC-1" in v or "approval_token" in v.lower()
+    ]
 
     if sc1_violations:
-        logger.warning("🛡️ NeMo Action BLOCKED: CheckApprovalTokenAction - %s", sc1_violations)
+        logger.warning(
+            "🛡️ NeMo Action BLOCKED: CheckApprovalTokenAction - %s", sc1_violations
+        )
         return False
 
     logger.debug("🛡️ NeMo Action PASSED: CheckApprovalTokenAction")
     return True
 
 
-async def CheckLatencyAction(context: dict[str, Any] = {}, event: dict[str, Any] = {}) -> bool:
+async def CheckLatencyAction(
+    context: dict[str, Any] = {}, event: dict[str, Any] = {}
+) -> bool:
     """
     Validates latency (SC-2/FIN-2). Alias for check_data_latency.
     """
     return await CheckDataLatencyAction(context, event)
 
 
-async def CheckDataLatencyAction(context: dict[str, Any] = {}, event: dict[str, Any] = {}) -> bool:
+async def CheckDataLatencyAction(
+    context: dict[str, Any] = {}, event: dict[str, Any] = {}
+) -> bool:
     """
     Validates market data latency (FIN-2).
     Reads pre-computed STPA result from NeMo context.
@@ -104,7 +115,9 @@ async def CheckDataLatencyAction(context: dict[str, Any] = {}, event: dict[str, 
     """
     latency = context.get("latency_ms")
     if latency is None:
-        logger.warning("🛡️ NeMo Action BLOCKED: CheckDataLatencyAction - Latency unknown (Fail Closed)")
+        logger.warning(
+            "🛡️ NeMo Action BLOCKED: CheckDataLatencyAction - Latency unknown (Fail Closed)"
+        )
         return False
 
     pre_check = _get_pre_check(context)
@@ -122,14 +135,18 @@ async def CheckDataLatencyAction(context: dict[str, Any] = {}, event: dict[str, 
     fin2_violations = [v for v in violations if "FIN-2" in v or "latency" in v.lower()]
 
     if fin2_violations:
-        logger.warning("🛡️ NeMo Action BLOCKED: CheckDataLatencyAction - %s", fin2_violations)
+        logger.warning(
+            "🛡️ NeMo Action BLOCKED: CheckDataLatencyAction - %s", fin2_violations
+        )
         return False
 
     logger.debug("🛡️ NeMo Action PASSED: CheckDataLatencyAction")
     return True
 
 
-async def CheckDrawdownLimitAction(context: dict[str, Any] = {}, event: dict[str, Any] = {}) -> bool:
+async def CheckDrawdownLimitAction(
+    context: dict[str, Any] = {}, event: dict[str, Any] = {}
+) -> bool:
     """
     Validates daily drawdown limit (UCA-5).
     Reads pre-computed CBF result from NeMo context.
@@ -155,7 +172,9 @@ async def CheckDrawdownLimitAction(context: dict[str, Any] = {}, event: dict[str
     return True
 
 
-async def CheckSlippageRiskAction(context: dict[str, Any] = {}, event: dict[str, Any] = {}) -> bool:
+async def CheckSlippageRiskAction(
+    context: dict[str, Any] = {}, event: dict[str, Any] = {}
+) -> bool:
     """
     Validates slippage risk (UCA-6).
     Reads pre-computed STPA result from NeMo context (UCA-6 covers slippage/volume).
@@ -173,17 +192,25 @@ async def CheckSlippageRiskAction(context: dict[str, Any] = {}, event: dict[str,
     violations = stpa_result.get("violations", [])
 
     # Filter to UCA-6 (slippage/volume) violations only
-    uca6_violations = [v for v in violations if "UCA-6" in v or "slippage" in v.lower() or "volume" in v.lower()]
+    uca6_violations = [
+        v
+        for v in violations
+        if "UCA-6" in v or "slippage" in v.lower() or "volume" in v.lower()
+    ]
 
     if uca6_violations:
-        logger.warning("🛡️ NeMo Action BLOCKED: CheckSlippageRiskAction - %s", uca6_violations)
+        logger.warning(
+            "🛡️ NeMo Action BLOCKED: CheckSlippageRiskAction - %s", uca6_violations
+        )
         return False
 
     logger.debug("🛡️ NeMo Action PASSED: CheckSlippageRiskAction")
     return True
 
 
-async def CheckAtomicExecutionAction(context: dict[str, Any] = {}, event: dict[str, Any] = {}) -> bool:
+async def CheckAtomicExecutionAction(
+    context: dict[str, Any] = {}, event: dict[str, Any] = {}
+) -> bool:
     """
     Validates atomic execution capabilities.
     Fail Closed: If required_legs > 1 and audit_trail is incomplete, returns False.
@@ -208,7 +235,9 @@ async def CheckAtomicExecutionAction(context: dict[str, Any] = {}, event: dict[s
         )
         return False
 
-    completed_legs = {entry.get("leg_index") for entry in audit_trail if isinstance(entry, dict)}
+    completed_legs = {
+        entry.get("leg_index") for entry in audit_trail if isinstance(entry, dict)
+    }
     for required_leg in range(1, required_legs):
         if required_leg not in completed_legs:
             logger.warning(
@@ -220,6 +249,7 @@ async def CheckAtomicExecutionAction(context: dict[str, Any] = {}, event: dict[s
 
     return True
 
+
 # ---------------------------------------------------------------------------
 # Snake_case aliases for test imports
 # ---------------------------------------------------------------------------
@@ -230,55 +260,79 @@ check_slippage_risk = CheckSlippageRiskAction
 check_atomic_execution = CheckAtomicExecutionAction
 
 
-async def InvokeVllmFallbackAction(context: dict = {}, events: list = [], content: str = None, **kwargs) -> str:
+async def InvokeVllmFallbackAction(
+    context: dict = {}, events: list = [], content: str = None, **kwargs
+) -> str:
     """
     Action to call vLLM directly for fallback responses.
     Accepts context/events to satisfy NeMo's potential automatic injection, plus explicit content.
     """
-    logger.debug("ACTION ARGS: context=%s, events=%s, content=%s, kwargs=%s", context, events, content, kwargs)
+    logger.debug(
+        "ACTION ARGS: context=%s, events=%s, content=%s, kwargs=%s",
+        context,
+        events,
+        content,
+        kwargs,
+    )
     # Handle case where content might be passed as positional or keyword, or missing
     # formatting content to be safe
-    final_content = content or kwargs.get('content', "")
-    
+    final_content = content or kwargs.get("content", "")
+
     logger.warning(f"🔔 InvokeVllmFallbackAction CALLED. content='{final_content}'")
-    
+
     from src.governed_financial_advisor.utils.telemetry import genai_span
-    
-    with genai_span("guardrails.vllm_fallback", prompt=final_content, model=os.environ.get("MODEL_FAST", "vllm-fast")) as span:
+
+    with genai_span(
+        "guardrails.vllm_fallback",
+        prompt=final_content,
+        model=os.environ.get("MODEL_FAST", "vllm-fast"),
+    ) as span:
         if span:
-             # ISO 42001 Compliance: Transparency & Explainability
-             span.set_attribute("langfuse.trace.metadata.iso.control_id", "A.10.1")
-             span.set_attribute("langfuse.trace.metadata.iso.requirement", "Transparency")
-             span.set_attribute("langfuse.trace.metadata.guardrails.intervention", "fallback")
-             span.set_attribute("langfuse.observation.type", "generation")
+            # ISO 42001 Compliance: Transparency & Explainability
+            span.set_attribute("langfuse.trace.metadata.iso.control_id", "A.10.1")
+            span.set_attribute(
+                "langfuse.trace.metadata.iso.requirement", "Transparency"
+            )
+            span.set_attribute(
+                "langfuse.trace.metadata.guardrails.intervention", "fallback"
+            )
+            span.set_attribute("langfuse.observation.type", "generation")
 
         try:
             if not final_content:
-                logger.warning("InvokeVllmFallbackAction returning default due to empty content")
+                logger.warning(
+                    "InvokeVllmFallbackAction returning default due to empty content"
+                )
                 return "I apologize, but I didn't catch that."
-                
-            logger.debug("Executing InvokeVllmFallbackAction with content='%s'", final_content)
-            
+
+            logger.debug(
+                "Executing InvokeVllmFallbackAction with content='%s'", final_content
+            )
+
             # Restore actual VLLM call for fallback
-            from src.gateway.governance.nemo.vllm_client import VLLMLLM
             from langchain_core.messages import HumanMessage
-    
+
+            from src.gateway.governance.nemo.vllm_client import VLLMLLM
+
             llm = VLLMLLM()
             # Create a simple message list
             messages = [HumanMessage(content=final_content)]
-            
+
             # Use _acall (or _agenerate) directly
             response = await llm._acall(messages)
-            
+
             if span:
-                 span.set_attribute("langfuse.observation.output", response)
-            
-            logger.debug("InvokeVllmFallbackAction returning response length=%d", len(response))
+                span.set_attribute("langfuse.observation.output", response)
+
+            logger.debug(
+                "InvokeVllmFallbackAction returning response length=%d", len(response)
+            )
             return response
 
         except Exception as e:
             logger.error(f"❌ InvokeVllmFallbackAction failed: {e}")
             logger.debug("InvokeVllmFallbackAction EXCEPTION: %s", e)
             import traceback
+
             traceback.print_exc()
             return "I apologize, but I encountered an error generating a response."

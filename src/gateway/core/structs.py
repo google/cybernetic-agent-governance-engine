@@ -18,8 +18,9 @@ Core Structures for the Gateway Service.
 
 import re
 import uuid
-from typing import Optional
+
 from pydantic import BaseModel, Field, field_validator
+
 
 class TradeOrder(BaseModel):
     """
@@ -27,48 +28,63 @@ class TradeOrder(BaseModel):
     This schema is used for both proposed trades (Agent) and executed trades (Gateway).
     It enforces strict validation rules for symbol, amount, and confidence.
     """
+
     # User-provided fields
     symbol: str = Field(..., description="Ticker symbol of the asset")
     amount: float = Field(..., description="Amount to trade")
     currency: str = Field(..., description="Currency code (e.g. USD, EUR)")
-    confidence: float = Field(..., description="Confidence score (0.0-1.0) of the agent proposing the trade. MUST be >= 0.95 for execution.")
+    confidence: float = Field(
+        ...,
+        description="Confidence score (0.0-1.0) of the agent proposing the trade. MUST be >= 0.95 for execution.",
+    )
 
     # Optional order type fields (used by optimistic execution path)
-    side: Optional[str] = Field(default=None, description="Order side: 'buy' or 'sell'")
-    type: Optional[str] = Field(default=None, description="Order type: 'market', 'limit', etc.")
+    side: str | None = Field(default=None, description="Order side: 'buy' or 'sell'")
+    type: str | None = Field(
+        default=None, description="Order type: 'market', 'limit', etc."
+    )
 
     # System-generated fields with defaults
-    transaction_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique UUID for the transaction")
+    transaction_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        description="Unique UUID for the transaction",
+    )
     # trader_id and trader_role are optional to allow unit test construction without
     # a full agent identity context; production execution requires these to be populated
     # before the order is submitted to the broker.
-    trader_id: Optional[str] = Field(default=None, description="Unique identifier for the trading agent")
-    trader_role: Optional[str] = Field(default=None, description="Role of the trading agent")
+    trader_id: str | None = Field(
+        default=None, description="Unique identifier for the trading agent"
+    )
+    trader_role: str | None = Field(
+        default=None, description="Role of the trading agent"
+    )
 
-    @field_validator('confidence')
+    @field_validator("confidence")
     @classmethod
     def validate_confidence(cls, v):
         if not (0.0 <= v <= 1.0):
             raise ValueError("Confidence must be between 0.0 and 1.0")
         return v
 
-    @field_validator('amount')
+    @field_validator("amount")
     @classmethod
     def validate_positive(cls, v):
         if v <= 0:
             raise ValueError("Amount must be positive")
         return v
 
-    @field_validator('transaction_id')
+    @field_validator("transaction_id")
     @classmethod
     def validate_uuid(cls, v):
         # Regex for UUID v4
-        uuid_regex = r"^[0-9a-f]{8}-[0-9a-f]{4}-[4][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        uuid_regex = (
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[4][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        )
         if not re.match(uuid_regex, v.lower()):
             raise ValueError("Invalid transaction_id format. Must be a valid UUID v4.")
         return v
 
-    @field_validator('symbol')
+    @field_validator("symbol")
     @classmethod
     def validate_symbol(cls, v):
         # Normalize to uppercase first
@@ -78,7 +94,7 @@ class TradeOrder(BaseModel):
             raise ValueError("Invalid symbol format. Must be 1-5 letters.")
         return v
 
-    @field_validator('trader_role')
+    @field_validator("trader_role")
     @classmethod
     def validate_role(cls, v):
         if v is None:

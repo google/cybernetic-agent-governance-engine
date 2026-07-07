@@ -34,9 +34,7 @@ import hashlib
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -54,6 +52,7 @@ os.environ["OPENLLMETRY_ENABLED"] = "false"
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def tmp_evidence_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """
@@ -63,11 +62,12 @@ def tmp_evidence_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     evidence_dir = tmp_path / "evidence"
     evidence_dir.mkdir()
 
-    chain_path  = evidence_dir / "evidence_chain_test.ndjson"
-    view_path   = evidence_dir / "view_access_log_test.ndjson"
+    chain_path = evidence_dir / "evidence_chain_test.ndjson"
+    view_path = evidence_dir / "view_access_log_test.ndjson"
 
     import examples.telemetry as tel_mod
-    monkeypatch.setattr(tel_mod, "_EVIDENCE_DIR",        evidence_dir)
+
+    monkeypatch.setattr(tel_mod, "_EVIDENCE_DIR", evidence_dir)
     monkeypatch.setattr(tel_mod, "_EVIDENCE_CHAIN_PATH", chain_path)
     monkeypatch.setattr(tel_mod, "_VIEW_ACCESS_LOG_PATH", view_path)
 
@@ -78,6 +78,7 @@ def tmp_evidence_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def tel(tmp_evidence_dir):
     """Return a PlaygroundTelemetry instance wired to the temp evidence dir."""
     from examples.telemetry import PlaygroundTelemetry
+
     # _init_otel will return None (OTEL_TRACES_EXPORTER=none suppresses setup)
     t = PlaygroundTelemetry()
     return t
@@ -101,6 +102,7 @@ _SAMPLE_VIOLATIONS = [
 # Helper
 # ---------------------------------------------------------------------------
 
+
 def _write_and_read(tel_instance, scenario_id="A", violations=None, blocking_tier=0):
     violations = _SAMPLE_VIOLATIONS if violations is None else violations
     with tel_instance.scenario_span(scenario_id, "execute_trade", _SAMPLE_PARAMS) as sw:
@@ -120,6 +122,7 @@ def _write_and_read(tel_instance, scenario_id="A", violations=None, blocking_tie
 # Evidence chain — structure tests
 # ---------------------------------------------------------------------------
 
+
 class TestEvidenceChainStructure:
     def test_record_written_to_ndjson(self, tel, tmp_evidence_dir):
         _write_and_read(tel)
@@ -137,9 +140,19 @@ class TestEvidenceChainStructure:
         _write_and_read(tel)
         record = json.loads(tmp_evidence_dir["chain"].read_text().strip())
         for field in [
-            "schema", "record_id", "timestamp", "scenario_id", "action",
-            "decision", "blocking_tier", "violations", "elapsed_ms",
-            "nist_controls", "iso_controls", "record_hash", "prev_hash",
+            "schema",
+            "record_id",
+            "timestamp",
+            "scenario_id",
+            "action",
+            "decision",
+            "blocking_tier",
+            "violations",
+            "elapsed_ms",
+            "nist_controls",
+            "iso_controls",
+            "record_hash",
+            "prev_hash",
         ]:
             assert field in record, f"Missing field: {field}"
 
@@ -167,6 +180,7 @@ class TestEvidenceChainStructure:
 # ---------------------------------------------------------------------------
 # Evidence chain — hash chain integrity
 # ---------------------------------------------------------------------------
+
 
 class TestHashChain:
     def test_first_record_chains_from_genesis(self, tel, tmp_evidence_dir):
@@ -219,22 +233,35 @@ class TestHashChain:
 # PII redaction
 # ---------------------------------------------------------------------------
 
+
 class TestPIIRedaction:
     def test_ssn_redacted(self, tel, tmp_evidence_dir):
         params = {**_SAMPLE_PARAMS, "ssn": "123-45-6789"}
         with tel.scenario_span("B", "write_db", params) as sw:
-            tel.record_result(sw, violations=["UCA-1"], blocking_tier=0,
-                              elapsed_ms=1.0, action="write_db",
-                              params=params, scenario_id="B")
+            tel.record_result(
+                sw,
+                violations=["UCA-1"],
+                blocking_tier=0,
+                elapsed_ms=1.0,
+                action="write_db",
+                params=params,
+                scenario_id="B",
+            )
         record = json.loads(tmp_evidence_dir["chain"].read_text().strip())
         assert record["params_redacted"]["ssn"] == "***REDACTED***"
 
     def test_approval_token_redacted(self, tel, tmp_evidence_dir):
         params = {**_SAMPLE_PARAMS, "approval_token": "tok_secret_xyz"}
         with tel.scenario_span("B", "write_db", params) as sw:
-            tel.record_result(sw, violations=[], blocking_tier=None,
-                              elapsed_ms=1.0, action="write_db",
-                              params=params, scenario_id="B")
+            tel.record_result(
+                sw,
+                violations=[],
+                blocking_tier=None,
+                elapsed_ms=1.0,
+                action="write_db",
+                params=params,
+                scenario_id="B",
+            )
         record = json.loads(tmp_evidence_dir["chain"].read_text().strip())
         assert record["params_redacted"]["approval_token"] == "***REDACTED***"
 
@@ -248,6 +275,7 @@ class TestPIIRedaction:
 # ---------------------------------------------------------------------------
 # View-access log
 # ---------------------------------------------------------------------------
+
 
 class TestViewAccessLog:
     def test_view_event_written_on_read(self, tel, tmp_evidence_dir):
@@ -287,7 +315,10 @@ class TestViewAccessLog:
         _write_and_read(tel)
         tel.read_evidence_log(accessor_id="a")
         tel.read_evidence_log(accessor_id="b")
-        events = [json.loads(l) for l in tmp_evidence_dir["view"].read_text().strip().splitlines()]
+        events = [
+            json.loads(l)
+            for l in tmp_evidence_dir["view"].read_text().strip().splitlines()
+        ]
         assert len(events) == 2
         # Second event's prev_view_hash must equal first event's event_hash
         assert events[1]["prev_view_hash"] == events[0]["event_hash"]
@@ -297,7 +328,10 @@ class TestViewAccessLog:
         r1 = tel.read_evidence_log(accessor_id="a")
         r2 = tel.read_evidence_log(accessor_id="b")
         # Both read the same records — fingerprints must match
-        events = [json.loads(l) for l in tmp_evidence_dir["view"].read_text().strip().splitlines()]
+        events = [
+            json.loads(l)
+            for l in tmp_evidence_dir["view"].read_text().strip().splitlines()
+        ]
         assert events[0]["read_fingerprint"] == events[1]["read_fingerprint"]
 
     def test_empty_chain_read_returns_empty_list(self, tel, tmp_evidence_dir):
@@ -319,6 +353,7 @@ class TestViewAccessLog:
 # ---------------------------------------------------------------------------
 # NIST / ISO control fields
 # ---------------------------------------------------------------------------
+
 
 class TestComplianceFields:
     def test_nist_controls_present(self, tel, tmp_evidence_dir):
