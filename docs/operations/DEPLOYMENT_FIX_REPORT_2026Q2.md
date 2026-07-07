@@ -1,6 +1,6 @@
 # GKE Rolling Deployment & Test Remediation Report
 **Date:** 2026-06-06  
-**Cluster:** `cage-dev` (zone: `us-central1-a`, project: `YOUR_GCP_PROJECT_ID`)  
+**Cluster:** `<your-cluster-name>` (zone: `us-central1-a`, project: `<your-project-id>`)  
 **Namespace:** `governance-stack`  
 **Final Test Result:** ✅ 852 passed, 24 skipped, 0 failed
 
@@ -33,7 +33,7 @@ Two broken deployments were found before the rolling update:
 ### Fix 1 — Rogue `ingress-agent` Container Causing Port Conflict
 
 **Affected resource:** `deployment/governed-financial-advisor` (live cluster, not in manifest)  
-**Root cause:** A second container named `ingress-agent` had been added out-of-band via `kubectl edit` to the live deployment. It used the same image (`gcr.io/YOUR_GCP_PROJECT_ID/governed-financial-advisor:latest`) and the same `PORT=8080`, causing a port conflict on startup. The main `advisor` container bound port 8080 first; `ingress-agent` crashed trying to bind the same port, triggering `CrashLoopBackOff` with 140 restarts.
+**Root cause:** A second container named `ingress-agent` had been added out-of-band via `kubectl edit` to the live deployment. It used the same image (`gcr.io/YOUR_PROJECT_ID/governed-financial-advisor:latest`) and the same `PORT=8080`, causing a port conflict on startup. The main `advisor` container bound port 8080 first; `ingress-agent` crashed trying to bind the same port, triggering `CrashLoopBackOff` with 140 restarts.
 
 **Why `kubectl apply` alone was insufficient:** The 3-way strategic merge patch cannot remove containers that were never present in `last-applied-configuration`. A JSON patch was required.
 

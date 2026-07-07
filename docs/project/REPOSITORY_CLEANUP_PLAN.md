@@ -100,7 +100,7 @@ These files are compliance evidence. They belong under `compliance/`, not at the
 
 `deployment/docker/cloudbuild_gateway.yaml` and `deployment/docker/cloudbuild.gateway.yaml` both build the gateway image from `src/gateway/Dockerfile` and push to `gcr.io/${_GCP_PROJECT_ID}/gateway:latest`. The only differences are:
 - `cloudbuild_gateway.yaml` uses `_GCP_PROJECT_ID: ""` (empty default)
-- `cloudbuild.gateway.yaml` uses `_GCP_PROJECT_ID: "YOUR_GCP_PROJECT_ID"` (hardcoded project ID — **a secret hygiene violation per Rule 9.1**)
+- `cloudbuild.gateway.yaml` uses `_GCP_PROJECT_ID: "<your-project-id>"` (hardcoded project ID — **a secret hygiene violation per Rule 9.1**)
 
 **Action:** Delete `cloudbuild_gateway.yaml` (the older, underscore-named variant). Keep `cloudbuild.gateway.yaml` but remove the hardcoded project ID, replacing it with `""` or a CI-injected substitution. The `.clinerules` §6.4 designates `cloudbuild_gateway.yaml` as the primary — this designation should be updated to match the surviving file.
 
@@ -946,7 +946,7 @@ Actions are ordered by impact and risk. High-priority items fix correctness or s
 
 | # | Action | Risk if deferred |
 |---|---|---|
-| 1.1 | Remove hardcoded `_GCP_PROJECT_ID: "YOUR_GCP_PROJECT_ID"` from `deployment/docker/cloudbuild.gateway.yaml` | Credential/project ID leak in public repo |
+| 1.1 | Remove hardcoded `_GCP_PROJECT_ID: "<your-project-id>"` from `deployment/docker/cloudbuild.gateway.yaml` | Credential/project ID leak in public repo |
 | 1.2 | Add `infra/targets/gcp-gke/tfplan` to `.gitignore` and delete the committed binary | Terraform state exposure |
 | 1.3 | Add `integration_test_results.log` to `.gitignore` and delete from repo | Log data in VCS |
 | 1.4 | Add `deployment/k8s/generated/` to `.gitignore` | Generated files drift from source |

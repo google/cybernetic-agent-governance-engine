@@ -3,7 +3,7 @@
 > **Classification:** Cat-S (Standard) — Pre-approved for dev cluster deployments  
 > **Jurisdiction:** US_FED (`CAGE_DEPLOYMENT_REGION=US_FED`)  
 > **Posture:** dev (`enable_nist_compliance=false`)  
-> **Cluster:** `cage-dev` · Project: `YOUR_GCP_PROJECT_ID` · Zone: `us-central1-a`  
+> **Cluster:** `<your-cluster-name>` · Project: `<your-project-id>` · Zone: `us-central1-a`  
 > **Document date:** 2026-07-04  
 > **Authority:** [`docs/operations/DEPLOYMENT_RULES.md`](DEPLOYMENT_RULES.md), [`docs/governance/CHANGE_MANAGEMENT_PROCESS.md`](../governance/CHANGE_MANAGEMENT_PROCESS.md)
 
@@ -36,8 +36,8 @@ This document is the step-by-step operator runbook for deploying CAGE to the **U
 
 | Parameter | Value |
 |---|---|
-| **Cluster name** | `cage-dev` |
-| **GCP project** | `YOUR_GCP_PROJECT_ID` |
+| **Cluster name** | `<your-cluster-name>` |
+| **GCP project** | `<your-project-id>` |
 | **Zone** | `us-central1-a` |
 | **Terraform target** | `infra/targets/gcp-gke/` |
 | **Var-file** | `infra/targets/gcp-gke/us-dev.tfvars` |
@@ -63,7 +63,7 @@ gcloud auth list
 gcloud config get-value project
 ```
 
-**Expected:** Active account listed; project returns `YOUR_GCP_PROJECT_ID`.
+**Expected:** Active account listed; project returns `<your-project-id>`.
 
 ### 2.2 — kubectl Context
 
@@ -71,12 +71,12 @@ gcloud config get-value project
 kubectl config current-context
 ```
 
-**Expected:** Context points to `cage-dev` (e.g., `gke_YOUR_GCP_PROJECT_ID_us-central1-a_cage-dev`). If not, run:
+**Expected:** Context points to `<your-cluster-name>` (e.g., `<your-kubectl-context>`). If not, run:
 
 ```bash
-gcloud container clusters get-credentials cage-dev \
+gcloud container clusters get-credentials <your-cluster-name> \
   --zone=us-central1-a \
-  --project=YOUR_GCP_PROJECT_ID
+  --project=<your-project-id>
 ```
 
 ### 2.3 — `.env` File Existence
@@ -106,7 +106,7 @@ docker info
 ### 2.6 — GCS Model Bucket Accessibility
 
 ```bash
-gsutil ls gs://YOUR_GCP_PROJECT_ID-models/
+gsutil ls gs://your-models-bucket/
 ```
 
 **Expected:** Bucket contents listed without permission errors. This bucket is required for vLLM model loading at runtime.
@@ -115,7 +115,7 @@ gsutil ls gs://YOUR_GCP_PROJECT_ID-models/
 
 ## 3. State Sync Procedure (GPU-Safe)
 
-> ⚠️ **WARNING:** This is the most critical section of the runbook. The `cage-dev` cluster has a GPU node pool (`gpu-pool`) using `g2-standard-8` Spot VMs with NVIDIA L4 GPUs. If Terraform state is empty or stale and the GPU pool already exists in GCP, `terraform apply` will attempt to **create** it again, resulting in a conflict error. Follow every step in order.
+> ⚠️ **WARNING:** This is the most critical section of the runbook. The `<your-cluster-name>` cluster has a GPU node pool (`gpu-pool`) using `g2-standard-8` Spot VMs with NVIDIA L4 GPUs. If Terraform state is empty or stale and the GPU pool already exists in GCP, `terraform apply` will attempt to **create** it again, resulting in a conflict error. Follow every step in order.
 
 ### Step 3.1 — Backup Existing State
 
@@ -162,21 +162,21 @@ Run these discovery commands before any import or apply. Record the output.
 
 ```bash
 # Check if the GKE cluster exists
-gcloud container clusters describe cage-dev \
+gcloud container clusters describe <your-cluster-name> \
   --zone=us-central1-a \
-  --project=YOUR_GCP_PROJECT_ID \
+  --project=<your-project-id> \
   --format="value(name,status)" 2>/dev/null \
   && echo "CLUSTER_EXISTS" || echo "CLUSTER_NOT_FOUND"
 
 # List node pools (if cluster exists)
 gcloud container node-pools list \
-  --cluster=cage-dev \
+  --cluster=<your-cluster-name> \
   --zone=us-central1-a \
-  --project=YOUR_GCP_PROJECT_ID \
+  --project=<your-project-id> \
   --format="table(name,status)" 2>/dev/null
 
 # Check if the Langfuse events GCS bucket exists
-gsutil ls -b gs://YOUR_GCP_PROJECT_ID-langfuse-events 2>/dev/null \
+gsutil ls -b gs://your-langfuse-events-bucket 2>/dev/null \
   && echo "BUCKET_EXISTS" || echo "BUCKET_NOT_FOUND"
 ```
 
@@ -199,7 +199,7 @@ Import resources in this exact order (cluster first, then node pools):
 terraform -chdir=infra/targets/gcp-gke import \
   -var-file=us-dev.tfvars \
   module.gke.google_container_cluster.primary \
-  "YOUR_GCP_PROJECT_ID/us-central1-a/cage-dev"
+  "<your-project-id>/us-central1-a/<your-cluster-name>"
 ```
 
 ```bash
@@ -207,7 +207,7 @@ terraform -chdir=infra/targets/gcp-gke import \
 terraform -chdir=infra/targets/gcp-gke import \
   -var-file=us-dev.tfvars \
   module.gke.google_container_node_pool.primary_pool \
-  "YOUR_GCP_PROJECT_ID/us-central1-a/cage-dev/primary-pool"
+  "<your-project-id>/us-central1-a/<your-cluster-name>/primary-pool"
 ```
 
 ```bash
@@ -215,7 +215,7 @@ terraform -chdir=infra/targets/gcp-gke import \
 terraform -chdir=infra/targets/gcp-gke import \
   -var-file=us-dev.tfvars \
   module.gke.google_container_node_pool.gpu_pool \
-  "YOUR_GCP_PROJECT_ID/us-central1-a/cage-dev/gpu-pool"
+  "<your-project-id>/us-central1-a/<your-cluster-name>/gpu-pool"
 ```
 
 > ⚠️ **WARNING — GPU Pool Import:** If the GPU pool import fails with `Resource already managed by Terraform`, skip it — the pool is already in state. If it fails with `Resource not found`, the pool does not yet exist in GCP and will be created on first apply. This is expected for a fresh cluster deployment. Do **not** attempt to manually create the GPU pool outside of Terraform.
@@ -239,7 +239,7 @@ terraform -chdir=infra/targets/gcp-gke import \
 terraform -chdir=infra/targets/gcp-gke import \
   -var-file=us-dev.tfvars \
   module.gke.google_storage_bucket.langfuse_events \
-  "YOUR_GCP_PROJECT_ID-langfuse-events"
+  "<your-project-id>-langfuse-events"
 ```
 
 If the bucket does not exist, skip this step — it will be created on first apply.

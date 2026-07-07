@@ -22,7 +22,7 @@
 # GKE nodes with limited ephemeral storage.
 #
 # Usage (via Terraform vllm_inference module):
-#   model_path = "gs://YOUR_GCP_PROJECT_ID-models/models--Qwen--Qwen2.5-7B-Instruct/..."
+#   model_path = "gs://your-bucket/models--Qwen--Qwen2.5-7B-Instruct/..."
 #   vllm_load_format = "gcs_filesystem"
 # ──────────────────────────────────────────────────────────────────────────────
 
