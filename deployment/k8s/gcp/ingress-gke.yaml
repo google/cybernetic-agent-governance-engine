@@ -12,8 +12,8 @@
 # TLS certificate provisioning:
 #   GCP ManagedCertificate CRD (networking.gke.io/v1) is used.
 #   The certificate is provisioned automatically by GCP once DNS resolves.
-#   DNS zone: laah-altostrat-zone (Cloud DNS, project laah-cybernetics)
-#   A record: gateway.laah.altostrat.com → 34.102.203.30
+#   DNS zone: <your-dns-zone> (Cloud DNS, project <your-project-id>)
+#   A record: <your-domain> → <your-static-ip>
 #
 #   ManagedCertificate resource: see the ManagedCertificate block below.
 #   Provisioning takes 10–60 minutes after DNS propagation.

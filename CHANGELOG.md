@@ -221,7 +221,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 - **`stpa_compiler.py`: `validate()` shim added to compiler template** (`d3408a8`, `src/gateway/governance/stpa_compiler.py`) — Added `validate()` public entry-point to the `GeneratedSTPAValidator` class template so it is emitted on every compiler run rather than manually maintained. Regenerated all STPA artifacts (timestamp: `2026-06-08T19:22:41Z`).
 - **`compliance_bridge/Dockerfile`: pin uv to 0.10.9 and add `--no-build`** (`030cf88`, `src/compliance_bridge/Dockerfile`) — Pinned `uv` from `:latest` to `:0.10.9` for reproducible Cloud Build runs. Added `--no-build` to `uv sync` to prevent silent C-compile fallback when a pre-built wheel is unavailable.
 - **Infra: Cloud Build SA missing `artifactregistry.writer`** (`51c5df2`, PR #11, `infra/targets/gcp-gke/main.tf`) — Added `google_project_iam_member` binding granting `roles/artifactregistry.writer` to the default Cloud Build SA (`[PROJECT_NUMBER]@cloudbuild.gserviceaccount.com`). Without this, the Cloud Build push step failed with `Permission 'artifactregistry.repositories.uploadArtifacts' denied`.
-- **Infra: compliance-bridge-sa missing `artifactregistry.writer`** (`8ce3cae`, `infra/targets/gcp-gke/main.tf`) — Added a second `google_project_iam_member` binding for the custom compliance-bridge Cloud Build SA (`compliance-bridge-sa@laah-cybernetics.iam.gserviceaccount.com`). The previous binding only covered the default Cloud Build SA; the compliance-bridge trigger uses a custom SA.
+- **Infra: compliance-bridge-sa missing `artifactregistry.writer`** (`8ce3cae`, `infra/targets/gcp-gke/main.tf`) — Added a second `google_project_iam_member` binding for the custom compliance-bridge Cloud Build SA (`compliance-bridge-sa@<your-project-id>.iam.gserviceaccount.com`). The previous binding only covered the default Cloud Build SA; the compliance-bridge trigger uses a custom SA.
 
 ---
 
@@ -235,6 +235,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ---
 
-[Unreleased]: https://github.com/lahlfors/cybernetic-governance-engine/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/lahlfors/cybernetic-governance-engine/releases/tag/v0.2.0
-[0.1.0]: https://github.com/lahlfors/cybernetic-governance-engine/releases/tag/v0.1.0
+[Unreleased]: https://github.com/google/cybernetic-governance-engine/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/google/cybernetic-governance-engine/releases/tag/v0.2.0
+[0.1.0]: https://github.com/google/cybernetic-governance-engine/releases/tag/v0.1.0

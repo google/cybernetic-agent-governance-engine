@@ -119,14 +119,15 @@ ${TOLERATIONS}
             driver: gcsfuse.csi.storage.gke.io
             readOnly: true
             volumeAttributes:
-              bucketName: laah-cybernetics-models
+              bucketName: your-models-bucket  # Set to your GCS bucket name containing model artifacts
               mountOptions: "implicit-dirs,uid=1000,gid=1000"
       containers:
         - name: vllm
           # vllm-streamer: standard vLLM image with runai_streamer installed for
           # direct GCS weight streaming via S3-compatible HMAC keys.
           # Build: Dockerfile.vllm in repo root.
-          image: gcr.io/laah-cybernetics/vllm-streamer:latest
+          # Set IMAGE_REGISTRY to your container registry prefix (e.g. gcr.io/your-project, ghcr.io/your-org)
+          image: gcr.io/YOUR_PROJECT_ID/vllm-streamer:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false

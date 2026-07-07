@@ -102,15 +102,15 @@ Configuration is managed via `deployment/config.yaml` (default settings) and `.e
 
 **Key Environment Variables:**
 
-- `MODEL_FAST`: Model path for the fast path (e.g., `gs://laah-cybernetics-models/models--Qwen--Qwen2.5-7B-Instruct/snapshots/...`).
-- `MODEL_REASONING`: Model path for the reasoning path (e.g., `gs://laah-cybernetics-models/casperhansen/deepseek-r1-distill-qwen-14b-awq`).
+- `MODEL_FAST`: Model path for the fast path (e.g., `gs://your-bucket/models--Qwen--Qwen2.5-7B-Instruct/snapshots/...`).
+- `MODEL_REASONING`: Model path for the reasoning path (e.g., `gs://your-bucket/casperhansen/deepseek-r1-distill-qwen-14b-awq`).
 - `HUGGING_FACE_HUB_TOKEN`: Optional - only needed if downloading from HuggingFace Hub. Models now stream from GCS by default.
 - `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`: Credentials for the in-cluster MinIO instance used as the vLLM model weight store. `deploy_sw.py` automatically bootstraps these via `_bootstrap_minio_credentials()` and `_ensure_minio_bucket()` pre-flight functions.
 - `OPENAI_API_KEY`: Required if using OpenAI models via NeMo.
 
 ## vLLM Model Weight Loading
 
-> **Model Store Note:** GCS (`gs://laah-cybernetics-models/`) is now the **primary** model artifact store. See `deployment/scripts/upload_to_gcs.py` for artifact upload. MinIO is used for Langfuse event storage only; the MinIO + Tensorizer cold-start path below is a secondary/fallback option.
+> **Model Store Note:** GCS (`gs://your-bucket/`) is now the **primary** model artifact store. See `deployment/scripts/upload_to_gcs.py` for artifact upload. MinIO is used for Langfuse event storage only; the MinIO + Tensorizer cold-start path below is a secondary/fallback option.
 
 vLLM deployments can also load model weights from **MinIO** (in-cluster S3-compatible object store) using vLLM's native `--load-format tensorizer`. This replaces the previous approach of mounting GCS buckets via the GKE-proprietary GCS Fuse CSI driver.
 

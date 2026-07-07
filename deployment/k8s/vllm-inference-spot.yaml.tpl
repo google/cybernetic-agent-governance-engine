@@ -112,7 +112,8 @@ spec:
         - name: vllm
           # Standard vLLM OpenAI-compatible image with runai_streamer support for
           # streaming model weights from S3-compatible storage (GCS HMAC or AWS S3)
-          image: gcr.io/laah-cybernetics/vllm-streamer:latest
+          # Set IMAGE_REGISTRY to your container registry prefix (e.g. gcr.io/your-project, ghcr.io/your-org)
+          image: gcr.io/YOUR_PROJECT_ID/vllm-streamer:latest
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

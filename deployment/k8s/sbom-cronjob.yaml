@@ -358,7 +358,7 @@ spec:
 
               env:
                 - name: GCP_PROJECT_ID
-                  value: "laah-cybernetics"
+                  value: ""  # Set to your GCP project ID
                 - name: SBOM_GCS_BUCKET
                   value: "cage-compliance-sboms"
 
