@@ -28,4 +28,4 @@ steps:
 images:
   - "gcr.io/${_GCP_PROJECT_ID}/governed-financial-advisor:latest"
 substitutions:
-  _GCP_PROJECT_ID: "YOUR_GCP_PROJECT_ID"
+  _GCP_PROJECT_ID: ""  # Set via --substitutions or GCP trigger substitution variable

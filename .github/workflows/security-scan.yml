@@ -149,7 +149,9 @@ jobs:
             || echo "Build failed, skipping image scan — filesystem scan will continue"
 
       - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@master
+        # Pinned to v0.31.0 — Node 20 deprecation fix (was @master, unpinned).
+        # Update via Dependabot PR or bump manually when a new release ships.
+        uses: aquasecurity/trivy-action@0.31.0
         with:
           scan-type: "fs"
           scan-ref: "."
@@ -167,7 +169,8 @@ jobs:
           category: "trivy-${{ matrix.dockerfile }}"
 
       - name: Generate SBOM with Trivy (CycloneDX — POAM-006)
-        uses: aquasecurity/trivy-action@master
+        # Pinned to v0.31.0 — Node 20 deprecation fix (was @master, unpinned).
+        uses: aquasecurity/trivy-action@0.31.0
         with:
           scan-type: "fs"
           scan-ref: "."

@@ -2,8 +2,8 @@
 
 > **Status: ✅ COMPLETE — v0.1.0 RELEASED (GO — 2026-06-08).** All phases executed. This runbook is preserved as a historical execution record for audit traceability.
 > **Prerequisites:** Phase 1 PR (`fix/v2-p0-blockers`) must be merged into `rc-v0.1.0` before starting Phase 2.
-> **Cluster:** `gke_YOUR_GCP_PROJECT_ID_us-central1-a_cage-dev`, namespace `governance-stack`
-> **Project:** `YOUR_GCP_PROJECT_ID`
+> **Cluster:** `<your-kubectl-context>`, namespace `governance-stack`
+> **Project:** `<your-project-id>`
 
 ---
 
@@ -189,7 +189,7 @@ git filter-repo --version  # Verify installation
 ### 3.2 — Backup Repository
 
 ```bash
-cd /Users/larsahlfors/Code
+cd <parent-dir>
 cp -r cybernetic-governance-engine cybernetic-governance-engine.backup-$(date +%Y%m%d-%H%M%S)
 echo "Backup created at: cybernetic-governance-engine.backup-$(date +%Y%m%d-%H%M%S)"
 ```
@@ -222,7 +222,7 @@ literal:REDACTED_PASSWORD==>REDACTED_PASSWORD
 
 ```bash
 cd /tmp
-git clone /Users/larsahlfors/Code/cybernetic-governance-engine cage-filter-test
+git clone <repo-root> cage-filter-test
 cd cage-filter-test
 git filter-repo --replace-text /tmp/filter-repo-expressions.txt --dry-run 2>&1 | head -100
 # Review output for unexpected replacements before proceeding
@@ -240,7 +240,7 @@ cd /tmp && rm -rf cage-filter-test
 ### 3.6 — Run History Rewrite
 
 ```bash
-cd /Users/larsahlfors/Code/cybernetic-governance-engine
+cd <repo-root>
 git filter-repo --replace-text /tmp/filter-repo-expressions.txt --force
 ```
 
@@ -257,9 +257,9 @@ done
 ### 3.8 — Force-Push Rewritten History
 
 ```bash
-git remote add origin https://github.com/YOUR_GCP_PROJECT_ID/cybernetic-governance-engine.git
+git remote add origin https://github.com/google/cybernetic-governance-engine.git
 # Or if remote already exists:
-# git remote set-url origin https://github.com/YOUR_GCP_PROJECT_ID/cybernetic-governance-engine.git
+# git remote set-url origin https://github.com/google/cybernetic-governance-engine.git
 
 git push --force-with-lease origin rc-v0.1.0
 git push --force-with-lease origin main
@@ -277,7 +277,7 @@ git push --force-with-lease origin main
 ```bash
 # Fresh clone from remote
 cd /tmp
-git clone https://github.com/YOUR_GCP_PROJECT_ID/cybernetic-governance-engine.git cage-verify
+git clone https://github.com/google/cybernetic-governance-engine.git cage-verify
 cd cage-verify
 
 # Re-run all checks
@@ -294,7 +294,7 @@ cd /tmp && rm -rf cage-verify
 ### 3.11 — Reset Local Clone
 
 ```bash
-cd /Users/larsahlfors/Code/cybernetic-governance-engine
+cd <repo-root>
 git fetch origin
 git reset --hard origin/rc-v0.1.0
 ```
@@ -312,12 +312,12 @@ git reset --hard origin/rc-v0.1.0
 ```bash
 # Verify GCP auth
 gcloud auth application-default login
-gcloud config set project YOUR_GCP_PROJECT_ID
-gcloud config get-value project  # Should print: YOUR_GCP_PROJECT_ID
+gcloud config set project <your-project-id>
+gcloud config get-value project  # Should print: <your-project-id>
 
 # Verify kubectl context
-kubectl config use-context gke_YOUR_GCP_PROJECT_ID_us-central1-a_cage-dev
-kubectl config current-context  # Should print: gke_YOUR_GCP_PROJECT_ID_us-central1-a_cage-dev
+kubectl config use-context <your-kubectl-context>
+kubectl config current-context  # Should print: <your-kubectl-context>
 
 # Verify Terraform
 cd infra/targets/gcp-gke
@@ -358,7 +358,7 @@ kubectl get secret advisor-secrets -n governance-stack -o json | \
 
 # Option B: Direct Cloud Build submit
 gcloud builds submit --config deployment/docker/cloudbuild.advisor.yaml \
-  --project YOUR_GCP_PROJECT_ID
+  --project <your-project-id>
 ```
 
 ### 4.5 — Validate D-02 Resolution
@@ -504,7 +504,7 @@ kill $PF_PID
 ### 5.5 — Run Remote Posture Scripts
 
 ```bash
-cd /Users/larsahlfors/Code/cybernetic-governance-engine
+cd <repo-root>
 python3 scripts/verify_remote.py
 python3 scripts/verify_langfuse_posture.py
 # Expected: all checks pass
@@ -517,7 +517,7 @@ python3 scripts/verify_langfuse_posture.py
 ### 6.1 — Final Secret Hygiene Check
 
 ```bash
-cd /Users/larsahlfors/Code/cybernetic-governance-engine
+cd <repo-root>
 
 # Check git history
 for PATTERN in "REDACTED_SALT" "REDACTED_PASSWORD" "pk-lf-" "sk-lf-" "hf_"; do
@@ -557,7 +557,7 @@ kubectl exec deploy/cage-gateway -n governance-stack -- \
 ### 6.4 — Run Lula Validation Suite
 
 ```bash
-cd /Users/larsahlfors/Code/cybernetic-governance-engine
+cd <repo-root>
 # Run all Lula assertions
 for LULA_FILE in compliance/lula/lula-validation-*.yaml; do
   echo "=== Running: $LULA_FILE ==="
@@ -575,7 +575,7 @@ done
 > **NIST SP 800-53 gates apply to US_FED deployments only.** EU_ECB and APAC_MAS stable releases use their respective regional compliance gates (EU AI Act / MAS FEAT). Skip this step for non-US_FED deployments.
 
 ```bash
-cd /Users/larsahlfors/Code/cybernetic-governance-engine
+cd <repo-root>
 python3 -c "
 from src.gateway.governance.oscal_ssp_exporter import OscalSspExporter
 exporter = OscalSspExporter()
@@ -590,7 +590,7 @@ print(f'NIST SP 800-53 coverage: {report[\"coverage_pct\"]}%')
 ### 6.6 — Run Full Test Suite
 
 ```bash
-cd /Users/larsahlfors/Code/cybernetic-governance-engine
+cd <repo-root>
 uv run pytest tests/ --run-integration -v --timeout=120
 # Expected: 0 failures
 # Note: 2 defer-queue tests correctly skip (known behavior)
@@ -610,7 +610,7 @@ Assemble the following documents and submit to the Authorizing Official (AO):
 ### 6.8 — Create Annotated Tag
 
 ```bash
-cd /Users/larsahlfors/Code/cybernetic-governance-engine
+cd <repo-root>
 git tag -a v0.1.0 -m "chore(release): stable v0.1.0
 
 - Resolved P0 blockers: D-01 (secrets), D-02 (pod availability), D-04 (HMAC seal), D-06 (security scan), D-07 (PSA labels)
@@ -724,7 +724,7 @@ All items must be ✅ before executing step 6.8 (tag creation). Apply the gates 
 >
 > **When to use this checklist:** Work through every item in order before cutting any `rc-v<X.Y.Z>` branch or applying a stable annotated tag. All items must be ✅ before executing the tag step. Items marked with a region flag apply only to that deployment region.
 >
-> **Cluster context assumed:** `gke_YOUR_GCP_PROJECT_ID_us-central1-a_cage-dev`, namespace `governance-stack`. Adjust for the target cluster before running any `kubectl` command.
+> **Cluster context assumed:** `<your-kubectl-context>`, namespace `governance-stack`. Adjust for the target cluster before running any `kubectl` command.
 
 ---
 
@@ -872,7 +872,7 @@ All items in this section are required for **every** stable release regardless o
 - [ ] Trivy scan passes — no unmitigated CRITICAL CVEs:
 
   ```bash
-  trivy image gcr.io/YOUR_GCP_PROJECT_ID/cage-gateway:latest \
+  trivy image gcr.io/YOUR_PROJECT_ID/cage-gateway:latest \
     --exit-code 1 --severity CRITICAL --ignore-unfixed
   # Expected: exit 0 (no unmitigated CRITICAL CVEs)
   # Any CRITICAL finding must have a POAM entry with risk-acceptance before this gate passes

@@ -46,7 +46,8 @@ spec:
                 - json
                 - "--output"
                 - /tmp/scan-results.json
-                - gcr.io/YOUR_GCP_PROJECT_ID/gateway:latest
+                # Set to your container image reference, e.g. gcr.io/your-project/gateway:latest
+                - gcr.io/YOUR_PROJECT_ID/gateway:latest
               securityContext:
                 runAsNonRoot: true
                 runAsUser: 65534

@@ -28,7 +28,7 @@ steps:
 images:
   - "gcr.io/${_GCP_PROJECT_ID}/nemo-guardrails:latest"
 substitutions:
-  _GCP_PROJECT_ID: "YOUR_GCP_PROJECT_ID"
+  _GCP_PROJECT_ID: ""  # Set via --substitutions or GCP trigger substitution variable
 timeout: "1200s"
 options:
   machineType: "E2_HIGHCPU_8"

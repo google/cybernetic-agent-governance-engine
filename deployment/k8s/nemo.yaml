@@ -35,11 +35,11 @@ spec:
           type: RuntimeDefault
       containers:
         - name: nemo
-          # To use a different registry (e.g., ECR, ACR, Docker Hub), override IMAGE_REGISTRY:
-          #   image: ${IMAGE_REGISTRY:-gcr.io}/YOUR_GCP_PROJECT_ID/nemo-guardrails:latest
-          # Or use kustomize: kustomize edit set image gcr.io/YOUR_GCP_PROJECT_ID/nemo-guardrails=<your-registry>/nemo-guardrails:latest
+          # Set IMAGE_REGISTRY to your container registry prefix (e.g. gcr.io/your-project, ghcr.io/your-org)
+          # Override with: kubectl set image deployment/nemo-service nemo=<your-registry>/nemo-guardrails:latest
+          # Or use kustomize: kustomize edit set image gcr.io/YOUR_PROJECT_ID/nemo-guardrails=<your-registry>/nemo-guardrails:latest
           # IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
-          image: gcr.io/YOUR_GCP_PROJECT_ID/nemo-guardrails:latest
+          image: gcr.io/YOUR_PROJECT_ID/nemo-guardrails:latest
           imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false
