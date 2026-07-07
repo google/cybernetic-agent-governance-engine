@@ -44,11 +44,10 @@ Relevant environment variables for S3Storage:
   AWS_SECRET_ACCESS_KEY   — optional; boto3 reads this automatically from env
 """
 
-import os
 import logging
+import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +84,7 @@ class StorageInterface(ABC):
 class GCSStorage(StorageInterface):
     """Google Cloud Storage backend using the native GCS SDK."""
 
-    def __init__(self, bucket_name: Optional[str] = None):
+    def __init__(self, bucket_name: str | None = None):
         self.bucket_name = bucket_name or os.environ.get("GCS_BUCKET_NAME", "")
         self._client = None
 
@@ -93,6 +92,7 @@ class GCSStorage(StorageInterface):
         if self._client is None:
             try:
                 from google.cloud import storage
+
                 self._client = storage.Client()
             except Exception as e:
                 raise RuntimeError(
@@ -115,7 +115,9 @@ class GCSStorage(StorageInterface):
         blob = self._get_bucket().blob(remote_path)
         Path(local_path).parent.mkdir(parents=True, exist_ok=True)
         blob.download_to_filename(local_path)
-        logger.info("Downloaded gs://%s/%s → %s", self.bucket_name, remote_path, local_path)
+        logger.info(
+            "Downloaded gs://%s/%s → %s", self.bucket_name, remote_path, local_path
+        )
         return local_path
 
     def read_text(self, remote_path: str) -> str:
@@ -135,8 +137,10 @@ class GCSStorage(StorageInterface):
 class LocalStorage(StorageInterface):
     """Local filesystem storage backend for development without GCP."""
 
-    def __init__(self, base_dir: Optional[str] = None):
-        self.base_dir = Path(base_dir or os.environ.get("LOCAL_STORAGE_DIR", "/tmp/cage-storage"))
+    def __init__(self, base_dir: str | None = None):
+        self.base_dir = Path(
+            base_dir or os.environ.get("LOCAL_STORAGE_DIR", "/tmp/cage-storage")
+        )
         self.base_dir.mkdir(parents=True, exist_ok=True)
         logger.info("LocalStorage initialised at %s", self.base_dir)
 
@@ -145,6 +149,7 @@ class LocalStorage(StorageInterface):
 
     def upload(self, local_path: str, remote_path: str) -> str:
         import shutil
+
         dest = self._resolve(remote_path)
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(local_path, dest)
@@ -154,6 +159,7 @@ class LocalStorage(StorageInterface):
 
     def download(self, remote_path: str, local_path: str) -> str:
         import shutil
+
         src = self._resolve(remote_path)
         Path(local_path).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, local_path)
@@ -180,13 +186,12 @@ class S3Storage(StorageInterface):
     See module docstring for full configuration details.
     """
 
-    def __init__(self, bucket_name: Optional[str] = None):
+    def __init__(self, bucket_name: str | None = None):
         try:
-            import boto3  # noqa: F401  (imported lazily; stored on instance)
+            import boto3
         except ImportError as exc:
             raise ImportError(
-                "boto3 is required for S3Storage. "
-                "Install it with: pip install boto3"
+                "boto3 is required for S3Storage. Install it with: pip install boto3"
             ) from exc
 
         self.bucket_name = bucket_name or os.environ.get("S3_BUCKET_NAME", "")
@@ -199,9 +204,7 @@ class S3Storage(StorageInterface):
         import boto3
         from botocore.config import Config as BotocoreConfig
 
-        config = BotocoreConfig(
-            s3={"addressing_style": "path"} if path_style else {}
-        )
+        config = BotocoreConfig(s3={"addressing_style": "path"} if path_style else {})
         self._client = boto3.client(
             "s3",
             endpoint_url=endpoint_url,
@@ -221,7 +224,9 @@ class S3Storage(StorageInterface):
     def download(self, remote_path: str, local_path: str) -> str:
         Path(local_path).parent.mkdir(parents=True, exist_ok=True)
         self._client.download_file(self.bucket_name, remote_path, local_path)
-        logger.info("Downloaded s3://%s/%s → %s", self.bucket_name, remote_path, local_path)
+        logger.info(
+            "Downloaded s3://%s/%s → %s", self.bucket_name, remote_path, local_path
+        )
         return local_path
 
     def read_text(self, remote_path: str) -> str:
@@ -238,6 +243,7 @@ class S3Storage(StorageInterface):
 
     def exists(self, remote_path: str) -> bool:
         from botocore.exceptions import ClientError
+
         try:
             self._client.head_object(Bucket=self.bucket_name, Key=remote_path)
             return True
@@ -247,7 +253,7 @@ class S3Storage(StorageInterface):
             raise
 
 
-def get_storage_backend(bucket_name: Optional[str] = None) -> StorageInterface:
+def get_storage_backend(bucket_name: str | None = None) -> StorageInterface:
     """
     Factory function — returns the appropriate storage backend.
 

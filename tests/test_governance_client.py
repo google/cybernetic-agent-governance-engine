@@ -27,8 +27,7 @@ All HTTP I/O is mocked via respx / unittest.mock; no live vLLM required.
 
 import asyncio
 import json
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -47,13 +46,14 @@ from src.governed_financial_advisor.infrastructure.governance_client import (
     close_async_client,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class _DummySchema(BaseModel):
     """Minimal Pydantic schema used as the structured-output target in tests."""
+
     verdict: str
     reason: str
 
@@ -61,11 +61,7 @@ class _DummySchema(BaseModel):
 def _make_vllm_response(verdict: str = "APPROVED", reason: str = "ok") -> dict:
     """Return a minimal vLLM chat-completions JSON body."""
     content = json.dumps({"verdict": verdict, "reason": reason})
-    return {
-        "choices": [
-            {"message": {"content": content}}
-        ]
-    }
+    return {"choices": [{"message": {"content": content}}]}
 
 
 @pytest.fixture(autouse=True)
@@ -90,6 +86,7 @@ def client() -> GovernanceClient:
 # ---------------------------------------------------------------------------
 # Singleton / pooling tests
 # ---------------------------------------------------------------------------
+
 
 class TestGovernanceClientPooling:
     """Tests for the R-19 connection-pool singleton behaviour."""
@@ -120,9 +117,14 @@ class TestGovernanceClientPooling:
             return httpx.Response(503, json={"error": "service unavailable"})
 
         with respx.mock(base_url=None) as mock:
-            mock.post("http://fake-vllm:8000/chat/completions").mock(side_effect=_503_handler)
+            mock.post("http://fake-vllm:8000/chat/completions").mock(
+                side_effect=_503_handler
+            )
 
-            with patch("src.governed_financial_advisor.infrastructure.governance_client.asyncio.sleep", new_callable=AsyncMock):
+            with patch(
+                "src.governed_financial_advisor.infrastructure.governance_client.asyncio.sleep",
+                new_callable=AsyncMock,
+            ):
                 with pytest.raises(Exception):
                     await client.generate_structured(
                         prompt="test",
@@ -147,7 +149,9 @@ class TestGovernanceClientPooling:
             sleep_calls.append(delay)
 
         with respx.mock(base_url=None) as mock:
-            mock.post("http://fake-vllm:8000/chat/completions").mock(side_effect=_429_handler)
+            mock.post("http://fake-vllm:8000/chat/completions").mock(
+                side_effect=_429_handler
+            )
 
             with patch(
                 "src.governed_financial_advisor.infrastructure.governance_client.asyncio.sleep",
@@ -178,7 +182,9 @@ class TestGovernanceClientPooling:
             return httpx.Response(400, json={"error": "bad request"})
 
         with respx.mock(base_url=None) as mock:
-            mock.post("http://fake-vllm:8000/chat/completions").mock(side_effect=_400_handler)
+            mock.post("http://fake-vllm:8000/chat/completions").mock(
+                side_effect=_400_handler
+            )
 
             with pytest.raises(httpx.HTTPStatusError):
                 await client.generate_structured(
@@ -206,7 +212,9 @@ class TestGovernanceClientPooling:
         """A valid 200 vLLM response must be parsed into the target Pydantic schema."""
         with respx.mock(base_url=None) as mock:
             mock.post("http://fake-vllm:8000/chat/completions").mock(
-                return_value=httpx.Response(200, json=_make_vllm_response("APPROVED", "within limits"))
+                return_value=httpx.Response(
+                    200, json=_make_vllm_response("APPROVED", "within limits")
+                )
             )
 
             result = await client.generate_structured(

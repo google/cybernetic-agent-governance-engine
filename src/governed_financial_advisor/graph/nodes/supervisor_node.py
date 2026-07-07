@@ -23,37 +23,48 @@ import logging
 import os
 
 logger = logging.getLogger(__name__)
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from pydantic import BaseModel, Field
 
 from src.governed_financial_advisor.graph.state import AgentState
 from src.governed_financial_advisor.utils.telemetry import genai_span
 
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.outputs import ChatResult, ChatGeneration
 
 class MockChatModel(BaseChatModel):
     model_name: str = "mock-llm"
-    
+
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         # Extract prompt or history content
         prompt = ""
         for m in messages:
             prompt += f"\n{m.content}"
-        
+
         # Simple ticker and risk extraction
         import re
-        ticker_match = re.search(r'\bticker:\s*([A-Z]{2,5})\b', prompt, re.IGNORECASE)
+
+        ticker_match = re.search(r"\bticker:\s*([A-Z]{2,5})\b", prompt, re.IGNORECASE)
         if not ticker_match:
-            ticker_match = re.search(r'\b[A-Z]{2,5}\b', prompt)
-        ticker = ticker_match.group(1) if ticker_match and len(ticker_match.groups()) > 0 else (ticker_match.group(0) if ticker_match else "AAPL")
-        
-        risk_match = re.search(r'\brisk profile:\s*(\w+)\b', prompt, re.IGNORECASE)
+            ticker_match = re.search(r"\b[A-Z]{2,5}\b", prompt)
+        ticker = (
+            ticker_match.group(1)
+            if ticker_match and len(ticker_match.groups()) > 0
+            else (ticker_match.group(0) if ticker_match else "AAPL")
+        )
+
+        risk_match = re.search(r"\brisk profile:\s*(\w+)\b", prompt, re.IGNORECASE)
         if not risk_match:
-            risk_match = re.search(r'\b(conservative|moderate|aggressive)\b', prompt, re.IGNORECASE)
-        risk = risk_match.group(1) if risk_match and len(risk_match.groups()) > 0 else (risk_match.group(0) if risk_match else "aggressive")
-        
+            risk_match = re.search(
+                r"\b(conservative|moderate|aggressive)\b", prompt, re.IGNORECASE
+            )
+        risk = (
+            risk_match.group(1)
+            if risk_match and len(risk_match.groups()) > 0
+            else (risk_match.group(0) if risk_match else "aggressive")
+        )
+
         content = (
             f"STRATEGY_ADVISOR\n\n"
             f"Acknowledging user request for ticker {ticker.upper()} under risk profile {risk.lower()}.\n"
@@ -64,15 +75,22 @@ class MockChatModel(BaseChatModel):
         message = AIMessage(content=content)
         generation = ChatGeneration(message=message)
         return ChatResult(generations=[generation])
-        
+
     @property
     def _llm_type(self) -> str:
         return "mock-chat-model"
 
+
 class RouteRequest(BaseModel):
     """Routes the request to the appropriate sub-agent based on the user's intent."""
-    intent: str = Field(description="The intent or target sub-agent to route to. E.g., MARKET_ANALYSIS, TRADING_STRATEGY, EXECUTION_PLAN, risk assessment, human review")
-    ticker: str = Field(default="", description="The stock ticker symbol associated with the request (if any).")
+
+    intent: str = Field(
+        description="The intent or target sub-agent to route to. E.g., MARKET_ANALYSIS, TRADING_STRATEGY, EXECUTION_PLAN, risk assessment, human review"
+    )
+    ticker: str = Field(
+        default="",
+        description="The stock ticker symbol associated with the request (if any).",
+    )
 
 
 def _build_reasoner_llm():
@@ -135,6 +153,7 @@ def _parse_routing_intent(reasoning: str) -> str:
     We parse this directly to avoid requiring vLLM --enable-auto-tool-choice.
     """
     from src.governed_financial_advisor.utils.text_utils import strip_thinking_tags
+
     cleaned = strip_thinking_tags(reasoning)
     for line in cleaned.splitlines():
         line = line.strip().upper()
@@ -142,7 +161,8 @@ def _parse_routing_intent(reasoning: str) -> str:
             continue
         # Strip numbering artifacts like "3. STRATEGY_ADVISOR"
         import re
-        line = re.sub(r'^\d+\.\s*', '', line)
+
+        line = re.sub(r"^\d+\.\s*", "", line)
         if "DATA_ANALYST" in line:
             return "data_analyst"
         if "EXECUTION" in line:
@@ -170,7 +190,9 @@ def _prune_message_history(messages: list, max_pairs: int = 4) -> list:
     Total input budget:      ~6 000 tokens
     Remaining for CoT output: ~10 384 tokens  (well above DeepSeek-R1 needs)
     """
-    exchange_messages = [m for m in messages if isinstance(m, (HumanMessage, AIMessage))]
+    exchange_messages = [
+        m for m in messages if isinstance(m, (HumanMessage, AIMessage))
+    ]
     max_keep = max_pairs * 2  # each pair = 1 Human + 1 AI reply
     if len(exchange_messages) > max_keep:
         logger.debug(
@@ -195,10 +217,10 @@ def _sanitize_user_message(text: str) -> str:
     Removes ASCII control characters (except newline/tab) and caps length.
     """
     import unicodedata
+
     # Remove ASCII control characters except \n (0x0A) and \t (0x09)
     sanitized = "".join(
-        ch for ch in text
-        if unicodedata.category(ch) != "Cc" or ch in ("\n", "\t")
+        ch for ch in text if unicodedata.category(ch) != "Cc" or ch in ("\n", "\t")
     )
     # Truncate to 4096 characters to prevent context-window stuffing
     return sanitized[:4096]
@@ -213,14 +235,19 @@ def thinker_node(state):
     # M-05: Sanitize raw user input before any LLM prompt inclusion
     last_msg_text = _sanitize_user_message(state["messages"][-1].content).lower()
 
-    if any(term in last_msg_text for term in ["conservative", "moderate", "aggressive"]):
+    if any(
+        term in last_msg_text for term in ["conservative", "moderate", "aggressive"]
+    ):
         if "conservative" in last_msg_text:
             updated_state["risk_attitude"] = "conservative"
         elif "moderate" in last_msg_text:
             updated_state["risk_attitude"] = "moderate"
         elif "aggressive" in last_msg_text:
             updated_state["risk_attitude"] = "aggressive"
-        logger.debug("--- [State] Updated risk_attitude: %s ---", updated_state.get('risk_attitude'))
+        logger.debug(
+            "--- [State] Updated risk_attitude: %s ---",
+            updated_state.get("risk_attitude"),
+        )
 
     if any(term in last_msg_text for term in ["short-term", "mid-term", "long-term"]):
         if "short-term" in last_msg_text:
@@ -229,7 +256,10 @@ def thinker_node(state):
             updated_state["investment_period"] = "mid-term"
         elif "long-term" in last_msg_text:
             updated_state["investment_period"] = "long-term"
-        logger.debug("--- [State] Updated investment_period: %s ---", updated_state.get('investment_period'))
+        logger.debug(
+            "--- [State] Updated investment_period: %s ---",
+            updated_state.get("investment_period"),
+        )
 
     # --- Context Augmentation: Prepend user profile to the message ---
     augmented_message = last_msg_text
@@ -241,27 +271,31 @@ def thinker_node(state):
         )
         augmented_message = f"{profile_context}User Request: {last_msg_text}"
 
-    system_prompt = SystemMessage(content=(
-        "You are a brilliant financial coordinator. Analyze the user's request and determine "
-        "which internal team to route the request to. YOU MUST CHOOSE EXACTLY ONE OF:\n"
-        "DATA_ANALYST (for market data, ticker analysis, stock performance, price checks)\n"
-        "EXECUTION_ANALYST (ONLY for explicitly executing trades, buying, selling, or building execution plans)\n"
-        "STRATEGY_ADVISOR (for trading strategies, risk assessment, portfolio evaluation, or conversational advice)\n"
-        "HUMAN_REVIEW (for ambiguous requests lacking a ticker, or highly dangerous requests)\n"
-        "Think deeply. Then definitively output ONLY your chosen routing category (e.g., 'STRATEGY_ADVISOR'). "
-        "DO NOT output numbers or descriptions like '3. STRATEGY_ADVISOR' or '(for trading strategies)'.\n\n"
-        "CRITICAL FORMATTING INSTRUCTION:\n"
-        "If you route to STRATEGY_ADVISOR or HUMAN_REVIEW, you must also append a conversational response tailored to the user.\n"
-        "Line 1 MUST be the exact routing category name (e.g., STRATEGY_ADVISOR)\n"
-        "Line 2 MUST be blank.\n"
-        "Line 3+ MUST be the conversational response.\n\n"
-        "In this conversational response, you MUST EXPLICITLY state and acknowledge the exact Ticker Symbol requested by the user and their specific Risk Profile in your first sentence to pass compliance checks. Do NOT hallucinate company names (e.g. do not say Micron if the ticker is NVDA).\n"
-        "If the user asks for a trading strategy, you MUST provide specific, actionable steps and concrete parameters. If simply answering a conversational query or evaluating risk, provide a helpful, tailored answer."
-    ))
+    system_prompt = SystemMessage(
+        content=(
+            "You are a brilliant financial coordinator. Analyze the user's request and determine "
+            "which internal team to route the request to. YOU MUST CHOOSE EXACTLY ONE OF:\n"
+            "DATA_ANALYST (for market data, ticker analysis, stock performance, price checks)\n"
+            "EXECUTION_ANALYST (ONLY for explicitly executing trades, buying, selling, or building execution plans)\n"
+            "STRATEGY_ADVISOR (for trading strategies, risk assessment, portfolio evaluation, or conversational advice)\n"
+            "HUMAN_REVIEW (for ambiguous requests lacking a ticker, or highly dangerous requests)\n"
+            "Think deeply. Then definitively output ONLY your chosen routing category (e.g., 'STRATEGY_ADVISOR'). "
+            "DO NOT output numbers or descriptions like '3. STRATEGY_ADVISOR' or '(for trading strategies)'.\n\n"
+            "CRITICAL FORMATTING INSTRUCTION:\n"
+            "If you route to STRATEGY_ADVISOR or HUMAN_REVIEW, you must also append a conversational response tailored to the user.\n"
+            "Line 1 MUST be the exact routing category name (e.g., STRATEGY_ADVISOR)\n"
+            "Line 2 MUST be blank.\n"
+            "Line 3+ MUST be the conversational response.\n\n"
+            "In this conversational response, you MUST EXPLICITLY state and acknowledge the exact Ticker Symbol requested by the user and their specific Risk Profile in your first sentence to pass compliance checks. Do NOT hallucinate company names (e.g. do not say Micron if the ticker is NVDA).\n"
+            "If the user asks for a trading strategy, you MUST provide specific, actionable steps and concrete parameters. If simply answering a conversational query or evaluating risk, provide a helpful, tailored answer."
+        )
+    )
     # Prune history to last 4 exchanges (8 messages) to stay within the
     # vLLM max-model-len of 16 384 tokens on the NVIDIA L4 24 GB node.
     pruned_history = _prune_message_history(state["messages"][:-1], max_pairs=4)
-    messages_to_pass = [system_prompt] + pruned_history + [HumanMessage(content=augmented_message)]
+    messages_to_pass = (
+        [system_prompt] + pruned_history + [HumanMessage(content=augmented_message)]
+    )
 
     with genai_span(name="reasoning", model=os.getenv("MODEL_REASONING")) as span:
         # 1. Run Thinker Agent (The "Brain")
@@ -270,7 +304,9 @@ def thinker_node(state):
         # Store DeepSeek's thought process into the state
         updated_state["reasoning_output"] = response.content
 
-        final_output = {k: v for k, v in updated_state.items() if k in AgentState.__annotations__}
+        final_output = {
+            k: v for k, v in updated_state.items() if k in AgentState.__annotations__
+        }
         return final_output
 
 
@@ -291,6 +327,7 @@ def doer_node(state):
     )
 
     from src.governed_financial_advisor.utils.text_utils import strip_thinking_tags
+
     stripped_reasoning = strip_thinking_tags(reasoning)
 
     # Derive the routing intent by parsing the thinker's structured first line.
@@ -307,33 +344,45 @@ def doer_node(state):
         # response combining the user's explicit request with DeepSeek's reasoning.
         import re
 
-        user_msg = state['messages'][-1].content
+        user_msg = state["messages"][-1].content
         risk_attitude = state.get("risk_attitude", "Unknown")
 
         # Simple heuristic to extract ticker if present
-        ticker_match = re.search(r'\b[A-Z]{2,5}\b', user_msg)
+        ticker_match = re.search(r"\b[A-Z]{2,5}\b", user_msg)
         ticker = ticker_match.group(0) if ticker_match else "Unknown"
 
-        final_gen_system_prompt = SystemMessage(content=(
-            "You are an expert Strategy Advisor and Human Review coordinator. The user's request has been routed to you. "
-            "You must provide a highly detailed, helpful, and direct answer to the user's query.\n\n"
-            "CRITICAL COMPLIANCE RULE: You MUST EXPLICITLY state and acknowledge the exact Ticker Symbol requested by the user and their specific Risk Profile in your VERY FIRST sentence. "
-            f"You must specifically mention ticker: {ticker}, and risk profile: {risk_attitude}.\n"
-            "Do NOT hallucinate company names (e.g. do not say Micron if the ticker is NVDA).\n"
-            "If the user asks for a trading strategy (e.g. 'Mean Reversion', 'Momentum'), you MUST provide specific, actionable steps and concrete parameters tailored to that exact strategy."
-        ))
+        final_gen_system_prompt = SystemMessage(
+            content=(
+                "You are an expert Strategy Advisor and Human Review coordinator. The user's request has been routed to you. "
+                "You must provide a highly detailed, helpful, and direct answer to the user's query.\n\n"
+                "CRITICAL COMPLIANCE RULE: You MUST EXPLICITLY state and acknowledge the exact Ticker Symbol requested by the user and their specific Risk Profile in your VERY FIRST sentence. "
+                f"You must specifically mention ticker: {ticker}, and risk profile: {risk_attitude}.\n"
+                "Do NOT hallucinate company names (e.g. do not say Micron if the ticker is NVDA).\n"
+                "If the user asks for a trading strategy (e.g. 'Mean Reversion', 'Momentum'), you MUST provide specific, actionable steps and concrete parameters tailored to that exact strategy."
+            )
+        )
 
-        final_gen_human_prompt = HumanMessage(content=(
-            f"User Request: {user_msg}\n"
-            f"Detected Ticker: {ticker}\n"
-            f"User Risk Profile: {risk_attitude}\n\n"
-            f"Financial Reasoning:\n{stripped_reasoning}\n\n"
-            "Provide the final response answering the user's request directly. Ensure you follow the compliance rules."
-        ))
+        final_gen_human_prompt = HumanMessage(
+            content=(
+                f"User Request: {user_msg}\n"
+                f"Detected Ticker: {ticker}\n"
+                f"User Risk Profile: {risk_attitude}\n\n"
+                f"Financial Reasoning:\n{stripped_reasoning}\n\n"
+                "Provide the final response answering the user's request directly. Ensure you follow the compliance rules."
+            )
+        )
 
-        with genai_span(name="final_response_generation", model=os.getenv("MODEL_FAST")) as final_span:
-            final_response = _get_fast_llm().invoke([final_gen_system_prompt, final_gen_human_prompt])
-            updated_state["messages"] = state["messages"] + [AIMessage(content=final_response.content)]
+        with genai_span(
+            name="final_response_generation", model=os.getenv("MODEL_FAST")
+        ) as final_span:
+            final_response = _get_fast_llm().invoke(
+                [final_gen_system_prompt, final_gen_human_prompt]
+            )
+            updated_state["messages"] = state["messages"] + [
+                AIMessage(content=final_response.content)
+            ]
 
-    final_output = {k: v for k, v in updated_state.items() if k in AgentState.__annotations__}
+    final_output = {
+        k: v for k, v in updated_state.items() if k in AgentState.__annotations__
+    }
     return final_output

@@ -66,6 +66,7 @@ _PAGERDUTY_EVENTS_URL = "https://events.pagerduty.com/v2/enqueue"
 # Shared Slack Block Kit payload builders
 # ---------------------------------------------------------------------------
 
+
 def _build_critical_alert_body(
     critical_fails: list[OscalFinding],
     audit_id: str,
@@ -75,7 +76,10 @@ def _build_critical_alert_body(
         "blocks": [
             {
                 "type": "header",
-                "text": {"type": "plain_text", "text": "🚨 ISO 42001 Critical Control FAIL"},
+                "text": {
+                    "type": "plain_text",
+                    "text": "🚨 ISO 42001 Critical Control FAIL",
+                },
             },
             *[
                 {
@@ -138,7 +142,10 @@ def _build_remediation_followup_body(
         "blocks": [
             {
                 "type": "header",
-                "text": {"type": "plain_text", "text": "🔍 ISO 42001 Remediation Advisory"},
+                "text": {
+                    "type": "plain_text",
+                    "text": "🔍 ISO 42001 Remediation Advisory",
+                },
             },
             {
                 "type": "section",
@@ -156,7 +163,10 @@ def _build_remediation_followup_body(
                 "fields": [
                     {"type": "mrkdwn", "text": f"*Evidence traces:* {trace_ref}"},
                     {"type": "mrkdwn", "text": f"*Model:* `{model_name}`"},
-                    {"type": "mrkdwn", "text": f"*Generated:* {datetime.now(tz=timezone.utc).isoformat()}"},
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Generated:* {datetime.now(tz=timezone.utc).isoformat()}",
+                    },
                 ],
             },
             {
@@ -179,6 +189,7 @@ def _build_remediation_followup_body(
 # PagerDuty Events API v2 payload builder
 # ---------------------------------------------------------------------------
 
+
 def _build_pagerduty_trigger(
     summary: str,
     severity: str,
@@ -189,14 +200,14 @@ def _build_pagerduty_trigger(
 ) -> dict:
     """Build a PagerDuty Events API v2 trigger payload."""
     return {
-        "routing_key":  routing_key,
+        "routing_key": routing_key,
         "event_action": "trigger",
-        "dedup_key":    dedup_key,
+        "dedup_key": dedup_key,
         "payload": {
-            "summary":        summary,
-            "severity":       severity,   # critical | error | warning | info
-            "source":         source,
-            "timestamp":      datetime.now(tz=timezone.utc).isoformat(),
+            "summary": summary,
+            "severity": severity,  # critical | error | warning | info
+            "source": source,
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
             "custom_details": details,
         },
     }
@@ -205,6 +216,7 @@ def _build_pagerduty_trigger(
 # ---------------------------------------------------------------------------
 # AlertNotifier protocol (interface)
 # ---------------------------------------------------------------------------
+
 
 class AlertNotifier(Protocol):
     async def send_critical_alert(
@@ -226,6 +238,7 @@ class AlertNotifier(Protocol):
 # ---------------------------------------------------------------------------
 # SlackNotifier — production channel
 # ---------------------------------------------------------------------------
+
 
 class SlackNotifier:
     def __init__(self, webhook_url: str) -> None:
@@ -250,7 +263,9 @@ class SlackNotifier:
                     ", ".join(f.control_id for f in critical_fails),
                 )
             else:
-                logger.error("[SlackNotifier] Alert webhook returned %d", resp.status_code)
+                logger.error(
+                    "[SlackNotifier] Alert webhook returned %d", resp.status_code
+                )
         except Exception as exc:
             logger.error("[SlackNotifier] Failed to send alert: %s", exc)
 
@@ -278,7 +293,9 @@ class SlackNotifier:
                     control_id,
                 )
             else:
-                logger.error("[SlackNotifier] Slack follow-up returned %d", resp.status_code)
+                logger.error(
+                    "[SlackNotifier] Slack follow-up returned %d", resp.status_code
+                )
         except Exception as exc:
             logger.error("[SlackNotifier] Failed to post Slack follow-up: %s", exc)
 
@@ -297,6 +314,7 @@ class SlackNotifier:
 # Dedup key: cage-<audit_id>-<control_id>
 # Multiple alerts for the same audit+control are automatically de-duplicated.
 # ---------------------------------------------------------------------------
+
 
 class PagerDutyNotifier:
     def __init__(self, routing_key: str) -> None:
@@ -320,13 +338,13 @@ class PagerDutyNotifier:
                 routing_key=self._routing_key,
                 dedup_key=dedup_key,
                 details={
-                    "control_id":  finding.control_id,
-                    "result":      finding.result,
-                    "finding_id":  finding.finding_id,
-                    "remarks":     finding.remarks or "",
+                    "control_id": finding.control_id,
+                    "result": finding.result,
+                    "finding_id": finding.finding_id,
+                    "remarks": finding.remarks or "",
                     "safety_rate": finding.safety_rate,
-                    "audit_id":    audit_id,
-                    "standard":    "ISO/IEC 42001:2023",
+                    "audit_id": audit_id,
+                    "standard": "ISO/IEC 42001:2023",
                 },
             )
             try:
@@ -339,17 +357,21 @@ class PagerDutyNotifier:
                 if resp.is_success:
                     logger.info(
                         "[PagerDutyNotifier] 🚨 Incident triggered: %s (dedup=%s)",
-                        finding.control_id, dedup_key,
+                        finding.control_id,
+                        dedup_key,
                     )
                 else:
                     logger.error(
                         "[PagerDutyNotifier] Events API returned %d for %s: %s",
-                        resp.status_code, finding.control_id, resp.text,
+                        resp.status_code,
+                        finding.control_id,
+                        resp.text,
                     )
             except Exception as exc:
                 logger.error(
                     "[PagerDutyNotifier] Failed to trigger incident for %s: %s",
-                    finding.control_id, exc,
+                    finding.control_id,
+                    exc,
                 )
 
     async def send_remediation_followup(
@@ -369,12 +391,12 @@ class PagerDutyNotifier:
             routing_key=self._routing_key,
             dedup_key=dedup_key,
             details={
-                "control_id":       control_id,
-                "audit_id":         audit_id,
-                "model_name":       model_name,
-                "remediation_text": remediation_text[:512],   # PD detail limit
-                "trace_ids":        trace_ids,
-                "note":             "LLM-generated — human verification required (ISO 42001 A.7.2)",
+                "control_id": control_id,
+                "audit_id": audit_id,
+                "model_name": model_name,
+                "remediation_text": remediation_text[:512],  # PD detail limit
+                "trace_ids": trace_ids,
+                "note": "LLM-generated — human verification required (ISO 42001 A.7.2)",
             },
         )
         try:
@@ -392,12 +414,15 @@ class PagerDutyNotifier:
             else:
                 logger.error(
                     "[PagerDutyNotifier] Events API returned %d for remediation %s: %s",
-                    resp.status_code, control_id, resp.text,
+                    resp.status_code,
+                    control_id,
+                    resp.text,
                 )
         except Exception as exc:
             logger.error(
                 "[PagerDutyNotifier] Failed to post remediation advisory for %s: %s",
-                control_id, exc,
+                control_id,
+                exc,
             )
 
 
@@ -414,6 +439,7 @@ class PagerDutyNotifier:
 #                       model_name, remediation_text, trace_ids, note }
 # ---------------------------------------------------------------------------
 
+
 class WebhookNotifier:
     def __init__(self, webhook_url: str) -> None:
         self._webhook_url = webhook_url
@@ -426,14 +452,18 @@ class WebhookNotifier:
                     json=payload,
                     headers={
                         "Content-Type": "application/json",
-                        "X-Source":     "cage-compliance-bridge",
+                        "X-Source": "cage-compliance-bridge",
                     },
                 )
             if resp.is_success:
-                logger.info("[WebhookNotifier] ✅ Payload posted (HTTP %d)", resp.status_code)
+                logger.info(
+                    "[WebhookNotifier] ✅ Payload posted (HTTP %d)", resp.status_code
+                )
             else:
                 logger.error(
-                    "[WebhookNotifier] Webhook returned %d: %s", resp.status_code, resp.text
+                    "[WebhookNotifier] Webhook returned %d: %s",
+                    resp.status_code,
+                    resp.text,
                 )
         except Exception as exc:
             logger.error("[WebhookNotifier] Failed to POST to webhook: %s", exc)
@@ -443,22 +473,24 @@ class WebhookNotifier:
         critical_fails: list[OscalFinding],
         audit_id: str,
     ) -> None:
-        await self._post({
-            "source":     "compliance-bridge",
-            "alert_type": "critical_failure",
-            "audit_id":   audit_id,
-            "timestamp":  datetime.now(tz=timezone.utc).isoformat(),
-            "findings": [
-                {
-                    "control_id":  f.control_id,
-                    "result":      f.result,
-                    "finding_id":  f.finding_id,
-                    "remarks":     f.remarks,
-                    "safety_rate": f.safety_rate,
-                }
-                for f in critical_fails
-            ],
-        })
+        await self._post(
+            {
+                "source": "compliance-bridge",
+                "alert_type": "critical_failure",
+                "audit_id": audit_id,
+                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                "findings": [
+                    {
+                        "control_id": f.control_id,
+                        "result": f.result,
+                        "finding_id": f.finding_id,
+                        "remarks": f.remarks,
+                        "safety_rate": f.safety_rate,
+                    }
+                    for f in critical_fails
+                ],
+            }
+        )
 
     async def send_remediation_followup(
         self,
@@ -468,22 +500,25 @@ class WebhookNotifier:
         remediation_text: str,
         trace_ids: list[str],
     ) -> None:
-        await self._post({
-            "source":           "compliance-bridge",
-            "alert_type":       "remediation",
-            "audit_id":         audit_id,
-            "control_id":       control_id,
-            "timestamp":        datetime.now(tz=timezone.utc).isoformat(),
-            "model_name":       model_name,
-            "remediation_text": remediation_text,
-            "trace_ids":        trace_ids,
-            "note":             "LLM-generated advisory — verify before applying (ISO 42001 A.7.2)",
-        })
+        await self._post(
+            {
+                "source": "compliance-bridge",
+                "alert_type": "remediation",
+                "audit_id": audit_id,
+                "control_id": control_id,
+                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                "model_name": model_name,
+                "remediation_text": remediation_text,
+                "trace_ids": trace_ids,
+                "note": "LLM-generated advisory — verify before applying (ISO 42001 A.7.2)",
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
 # ConsoleNotifier — dev / CI channel (default)
 # ---------------------------------------------------------------------------
+
 
 class ConsoleNotifier:
     async def send_critical_alert(
@@ -510,13 +545,15 @@ class ConsoleNotifier:
         )
         logger.warning(
             "[ConsoleNotifier] 🔍 REMEDIATION ADVISORY for %s (dev mode — no Slack webhook)\n%s",
-            control_id, json.dumps(body, indent=2),
+            control_id,
+            json.dumps(body, indent=2),
         )
 
 
 # ---------------------------------------------------------------------------
 # MockNotifier — test channel
 # ---------------------------------------------------------------------------
+
 
 class MockNotifier:
     """Captures all calls in-memory for assertion in unit tests. No I/O."""
@@ -534,11 +571,13 @@ class MockNotifier:
         critical_fails: list[OscalFinding],
         audit_id: str,
     ) -> None:
-        self.calls.append({
-            "type": "critical",
-            "critical_fails": critical_fails,
-            "audit_id": audit_id,
-        })
+        self.calls.append(
+            {
+                "type": "critical",
+                "critical_fails": critical_fails,
+                "audit_id": audit_id,
+            }
+        )
 
     async def send_remediation_followup(
         self,
@@ -548,19 +587,22 @@ class MockNotifier:
         remediation_text: str,
         trace_ids: list[str],
     ) -> None:
-        self.calls.append({
-            "type": "remediation",
-            "control_id": control_id,
-            "audit_id": audit_id,
-            "model_name": model_name,
-            "remediation_text": remediation_text,
-            "trace_ids": trace_ids,
-        })
+        self.calls.append(
+            {
+                "type": "remediation",
+                "control_id": control_id,
+                "audit_id": audit_id,
+                "model_name": model_name,
+                "remediation_text": remediation_text,
+                "trace_ids": trace_ids,
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
 # Factory — reads env vars at call time (not module load) so tests can swap
 # ---------------------------------------------------------------------------
+
 
 def create_notifier() -> (
     ConsoleNotifier | SlackNotifier | PagerDutyNotifier | WebhookNotifier | MockNotifier
@@ -591,9 +633,8 @@ def create_notifier() -> (
         return PagerDutyNotifier(routing_key)
 
     if channel == "webhook":
-        url = (
-            os.environ.get("COMPLIANCE_ALERT_WEBHOOK_URL")
-            or os.environ.get("SLACK_WEBHOOK_URL")
+        url = os.environ.get("COMPLIANCE_ALERT_WEBHOOK_URL") or os.environ.get(
+            "SLACK_WEBHOOK_URL"
         )
         if not url:
             logger.warning(
@@ -604,9 +645,8 @@ def create_notifier() -> (
         return WebhookNotifier(url)
 
     if channel == "slack":
-        url = (
-            os.environ.get("COMPLIANCE_ALERT_WEBHOOK_URL")
-            or os.environ.get("SLACK_WEBHOOK_URL")
+        url = os.environ.get("COMPLIANCE_ALERT_WEBHOOK_URL") or os.environ.get(
+            "SLACK_WEBHOOK_URL"
         )
         if not url:
             logger.warning(
@@ -637,6 +677,7 @@ def create_notifier() -> (
 # ---------------------------------------------------------------------------
 # Module-level convenience functions (called by audit_workflow)
 # ---------------------------------------------------------------------------
+
 
 async def notify_critical_failure(control_id: str, finding: OscalFinding) -> None:
     """Convenience wrapper: notifies a single critical control failure."""

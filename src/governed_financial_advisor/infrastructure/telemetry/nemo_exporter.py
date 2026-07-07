@@ -14,7 +14,7 @@
 
 import logging
 from contextvars import ContextVar
-from typing import Any, Optional
+from typing import Any
 
 from nemoguardrails.streaming import StreamingHandler
 from opentelemetry import trace
@@ -28,20 +28,20 @@ tracer = trace.get_tracer("src.governance.nemo")
 # Used to stamp iso42001.control_id on every guardrail intervention span.
 # ---------------------------------------------------------------------------
 _ACTION_TO_ISO_CONTROL: dict[str, str] = {
-    "self_check_input":           "A.6.1.2",
-    "self_check_output":          "A.6.1.2",
-    "check_approval_token":       "SC-1",
-    "CheckApprovalTokenAction":   "SC-1",
-    "check_data_latency":         "FIN-2",
-    "CheckDataLatencyAction":     "FIN-2",
-    "check_drawdown_limit":       "UCA-5",
-    "CheckDrawdownLimitAction":   "UCA-5",
-    "check_slippage_risk":        "UCA-6",
-    "CheckSlippageRiskAction":    "UCA-6",
-    "check_atomic_execution":     "SC-4",
+    "self_check_input": "A.6.1.2",
+    "self_check_output": "A.6.1.2",
+    "check_approval_token": "SC-1",
+    "CheckApprovalTokenAction": "SC-1",
+    "check_data_latency": "FIN-2",
+    "CheckDataLatencyAction": "FIN-2",
+    "check_drawdown_limit": "UCA-5",
+    "CheckDrawdownLimitAction": "UCA-5",
+    "check_slippage_risk": "UCA-6",
+    "CheckSlippageRiskAction": "UCA-6",
+    "check_atomic_execution": "SC-4",
     "CheckAtomicExecutionAction": "SC-4",
-    "detect_sensitive_data":      "A.6.2.8",
-    "InvokeVllmFallbackAction":   "A.6.1.2",
+    "detect_sensitive_data": "A.6.2.8",
+    "InvokeVllmFallbackAction": "A.6.1.2",
 }
 
 # Explicit whitelist of action names that must always be traced, even when they
@@ -57,7 +57,7 @@ _TRACED_ACTION_NAMES: frozenset[str] = frozenset(_ACTION_TO_ISO_CONTROL.keys())
 # multiple concurrent on_action_start / on_action_end calls shared
 # self.current_span on the same NeMoOTelCallback instance.
 # ---------------------------------------------------------------------------
-_current_nemo_span: ContextVar[Optional[Span]] = ContextVar(
+_current_nemo_span: ContextVar[Span | None] = ContextVar(
     "_current_nemo_span", default=None
 )
 
@@ -91,12 +91,19 @@ class NeMoOTelCallback(StreamingHandler):
         # We focus on "check" actions which usually imply a guardrail
         # e.g., 'self_check_input', 'detect_jailbreak', 'check_hallucination'
         # and on any explicitly whitelisted safety action names.
-        if "check" in action or "guard" in action or "detect" in action or action in _TRACED_ACTION_NAMES:
+        if (
+            "check" in action
+            or "guard" in action
+            or "detect" in action
+            or action in _TRACED_ACTION_NAMES
+        ):
             iso_control = _ACTION_TO_ISO_CONTROL.get(action, "A.6.2.8")
             span = tracer.start_span(f"guardrail.intervention.{action}")
             span.set_attribute("langfuse.trace.metadata.guardrail.id", action)
             span.set_attribute("langfuse.trace.metadata.iso.control_id", iso_control)
-            span.set_attribute("langfuse.trace.metadata.iso.requirement", "Transparency of AI Systems")
+            span.set_attribute(
+                "langfuse.trace.metadata.iso.requirement", "Transparency of AI Systems"
+            )
             span.set_attribute("iso42001.control_id", iso_control)
             _current_nemo_span.set(span)
             logger.info(f"🛡️ Guardrail Started: {action} (ISO {iso_control})")
@@ -127,17 +134,22 @@ class NeMoOTelCallback(StreamingHandler):
             elif isinstance(result, dict) and result.get("status") == "blocked":
                 outcome = "BLOCKED"
             elif isinstance(result, str) and any(
-                kw in result.upper() for kw in ("DENY", "UNSAFE", "BLOCKED", "VIOLATION")
+                kw in result.upper()
+                for kw in ("DENY", "UNSAFE", "BLOCKED", "VIOLATION")
             ):
                 outcome = "BLOCKED"
 
             iso_control = _ACTION_TO_ISO_CONTROL.get(action, "A.6.2.8")
             span.set_attribute("langfuse.trace.metadata.guardrail.outcome", outcome)
             span.set_attribute("iso42001.control_id", iso_control)
-            span.set_attribute("iso42001.outcome", "BLOCK" if outcome == "BLOCKED" else "PASS")
+            span.set_attribute(
+                "iso42001.outcome", "BLOCK" if outcome == "BLOCKED" else "PASS"
+            )
 
             if outcome == "BLOCKED":
-                span.set_attribute("langfuse.trace.metadata.guardrail.block_reason", str(result))
+                span.set_attribute(
+                    "langfuse.trace.metadata.guardrail.block_reason", str(result)
+                )
                 logger.warning(f"⛔ Guardrail BLOCKED: {action} | Result: {result}")
             else:
                 logger.info(f"✅ Guardrail PASSED: {action}")

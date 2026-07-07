@@ -22,14 +22,15 @@ All Langfuse interactions are now routed exclusively via:
 The compliance-bridge is the SOLE authorised Langfuse SDK consumer.
 """
 
-import os
 import json
 import logging
-from typing import Literal, Optional, Dict, Any
+import os
+from typing import Any, Literal
 
 import httpx
 import opentelemetry.trace
-from src.compliance_bridge.types import ISO_CONTROL_MAP  # noqa: F401
+
+from src.compliance_bridge.types import ISO_CONTROL_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ IsoOutcome = Literal["PASSED", "BLOCKED", "ESCALATED", "SKIPPED"]
 # ---------------------------------------------------------------------------
 # Prompt management — via compliance-bridge HTTP proxy
 # ---------------------------------------------------------------------------
+
 
 def get_managed_prompt(
     name: str,
@@ -59,7 +61,9 @@ def get_managed_prompt(
         fallback: Static text to return when the bridge is unreachable
         label:    Langfuse prompt label (default: 'production')
     """
-    bridge_url = os.environ.get("COMPLIANCE_BRIDGE_URL", "http://compliance-bridge:3001")
+    bridge_url = os.environ.get(
+        "COMPLIANCE_BRIDGE_URL", "http://compliance-bridge:3001"
+    )
     url = f"{bridge_url}/v1/prompts/{name}"
     try:
         response = httpx.get(url, params={"label": label}, timeout=5.0)
@@ -83,11 +87,12 @@ def get_managed_prompt(
 # ISO 42001 evidence tagging helpers — via OTel spans
 # ---------------------------------------------------------------------------
 
+
 def trace_with_iso_control(
     name: str,
     control_id: str,
     outcome: IsoOutcome,
-    metadata: Optional[Dict[str, Any]] = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """
     Records an ISO 42001 governance event as an OTel span.
@@ -176,10 +181,10 @@ _SAGA_NODE_PREFIXES = ("forward_", "compensate_", "saga_router")
 
 # Map ledger status → ISO 42001 outcome for span tagging
 _STATUS_TO_OUTCOME: dict[str, IsoOutcome] = {
-    "COMPLETED":       "PASSED",
-    "ROLLED_BACK":     "BLOCKED",    # Rollback succeeded — governance intervened
+    "COMPLETED": "PASSED",
+    "ROLLED_BACK": "BLOCKED",  # Rollback succeeded — governance intervened
     "PARTIAL_FAILURE": "ESCALATED",  # Rollback failed — human review needed
-    "PENDING":         "SKIPPED",    # WAL intent only — not yet executed
+    "PENDING": "SKIPPED",  # WAL intent only — not yet executed
 }
 
 
@@ -236,7 +241,10 @@ class SagaCallbackHandler:
         )
         logger.info(
             "SagaCallbackHandler: emitted span node=%s uca_ref=%s status=%s outcome=%s",
-            node_name, uca_ref, status, outcome,
+            node_name,
+            uca_ref,
+            status,
+            outcome,
         )
 
     def on_chain_error(
@@ -266,6 +274,6 @@ class SagaCallbackHandler:
         )
         logger.error(
             "SagaCallbackHandler: unhandled error in node=%s err=%s",
-            node_name, error,
+            node_name,
+            error,
         )
-

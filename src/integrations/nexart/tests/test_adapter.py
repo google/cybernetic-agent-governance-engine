@@ -29,26 +29,25 @@ Verification invariants:
 
 from __future__ import annotations
 
-import json
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.integrations.nexart.adapter import (
+    AttestationBundle,
     NexArtAttestationCallback,
     NexArtClient,
     ProjectBundleStepEntry,
-    AttestationBundle,
-    _serialize_state_snapshot,
-    _hash_state,
-    _extract_signals,
     _classify_terminal_path,
+    _extract_signals,
+    _hash_state,
+    _serialize_state_snapshot,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures — simulated AgentState dicts
 # ---------------------------------------------------------------------------
+
 
 def _base_state(**overrides) -> dict:
     """Build a minimal AgentState-like dict for testing."""
@@ -124,6 +123,7 @@ def _hitl_state() -> dict:
 # Test 1: State serialization
 # ---------------------------------------------------------------------------
 
+
 class TestStateSerialization:
     """Tests for state snapshot serialization and hashing."""
 
@@ -174,6 +174,7 @@ class TestStateSerialization:
 # Test 2: Signal extraction
 # ---------------------------------------------------------------------------
 
+
 class TestSignalExtraction:
     """Tests for governance signal extraction from AgentState."""
 
@@ -212,9 +213,16 @@ class TestSignalExtraction:
 
     def test_extracts_saga_ledger(self):
         """Completed transactions are serialized into signals."""
-        state = _base_state(completed_transactions=[
-            {"sequence_id": 1, "action": "execute_trade", "status": "COMPLETED", "uca_ref": "UCA-4"},
-        ])
+        state = _base_state(
+            completed_transactions=[
+                {
+                    "sequence_id": 1,
+                    "action": "execute_trade",
+                    "status": "COMPLETED",
+                    "uca_ref": "UCA-4",
+                },
+            ]
+        )
         signals = _extract_signals("governed_trader", state)
         assert len(signals["sagaLedger"]) == 1
         assert signals["sagaLedger"][0]["action"] == "execute_trade"
@@ -230,6 +238,7 @@ class TestSignalExtraction:
 # ---------------------------------------------------------------------------
 # Test 3: Callback handler — step recording
 # ---------------------------------------------------------------------------
+
 
 class TestCallbackHandler:
     """Tests for NexArtAttestationCallback step recording."""
@@ -260,7 +269,12 @@ class TestCallbackHandler:
         state = _base_state()
 
         # Simulate: nemo_guardrail → thinker → doer → execution_analyst → evaluator
-        for node in ["nemo_guardrail", "thinker_node", "doer_node", "execution_analyst"]:
+        for node in [
+            "nemo_guardrail",
+            "thinker_node",
+            "doer_node",
+            "execution_analyst",
+        ]:
             cb.on_chain_start(node, state)
             cb.on_chain_end(node, state)
 
@@ -278,8 +292,14 @@ class TestCallbackHandler:
         state = _base_state()
 
         # Simulate path up to safety_check
-        for node in ["nemo_guardrail", "thinker_node", "doer_node",
-                      "execution_analyst", "evaluator", "safety_check"]:
+        for node in [
+            "nemo_guardrail",
+            "thinker_node",
+            "doer_node",
+            "execution_analyst",
+            "evaluator",
+            "safety_check",
+        ]:
             cb.on_chain_start(node, state)
             cb.on_chain_end(node, state)
 
@@ -295,6 +315,7 @@ class TestCallbackHandler:
 # ---------------------------------------------------------------------------
 # Test 4: Loop unrolling
 # ---------------------------------------------------------------------------
+
 
 class TestLoopUnrolling:
     """Tests for bounded cycle serialization (execution_analyst → evaluator)."""
@@ -354,6 +375,7 @@ class TestLoopUnrolling:
 # Test 5: Terminal path classification
 # ---------------------------------------------------------------------------
 
+
 class TestTerminalPathClassification:
     """Tests for degenerate path classification."""
 
@@ -402,6 +424,7 @@ class TestTerminalPathClassification:
 # ---------------------------------------------------------------------------
 # Test 6: Bundle assembly
 # ---------------------------------------------------------------------------
+
 
 class TestBundleAssembly:
     """Tests for AttestationBundle creation."""
@@ -463,6 +486,7 @@ class TestBundleAssembly:
 # Test 7: NexArt HTTP Client
 # ---------------------------------------------------------------------------
 
+
 class TestNexArtClient:
     """Tests for NexArtClient HTTP request construction."""
 
@@ -485,8 +509,6 @@ class TestNexArtClient:
     @pytest.mark.asyncio
     async def test_certify_decision_builds_correct_url(self):
         """certify_decision posts to /certifyDecision."""
-        import httpx
-        from unittest.mock import AsyncMock
 
         mock_response = MagicMock()
         mock_response.json.return_value = {"certificateHash": "abc123"}

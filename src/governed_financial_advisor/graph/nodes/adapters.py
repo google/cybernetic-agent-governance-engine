@@ -24,7 +24,7 @@ Provides:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger("graph.nodes.adapters")
 
@@ -32,7 +32,7 @@ logger = logging.getLogger("graph.nodes.adapters")
 # Agent registry — allows tests to inject mock agents
 # ---------------------------------------------------------------------------
 
-_AGENT_REGISTRY: Dict[str, Any] = {}
+_AGENT_REGISTRY: dict[str, Any] = {}
 
 
 def inject_agent(name: str, agent: Any) -> None:
@@ -45,7 +45,7 @@ def inject_agent(name: str, agent: Any) -> None:
     logger.debug("inject_agent: registered agent '%s'", name)
 
 
-def _get_agent(name: str) -> Optional[Any]:
+def _get_agent(name: str) -> Any | None:
     return _AGENT_REGISTRY.get(name)
 
 
@@ -53,7 +53,8 @@ def _get_agent(name: str) -> Optional[Any]:
 # Stub callable that tests can patch
 # ---------------------------------------------------------------------------
 
-def run_adk_agent(agent: Any, state: Dict[str, Any]) -> Any:
+
+def run_adk_agent(agent: Any, state: dict[str, Any]) -> Any:
     """Run an ADK agent against the given state and return its response.
 
     In production this invokes the agent's execution loop.
@@ -79,7 +80,7 @@ _PROFILE_CLARIFICATION = (
 )
 
 
-def execution_analyst_node(state: Dict[str, Any]) -> Dict[str, Any]:
+def execution_analyst_node(state: dict[str, Any]) -> dict[str, Any]:
     """LangGraph node that invokes the Execution Analyst agent.
 
     Profile gating: if the user has not yet provided ``risk_attitude`` and
@@ -88,22 +89,24 @@ def execution_analyst_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     Returns a state update dict with at minimum a ``messages`` key.
     """
-    risk_attitude: Optional[str] = state.get("risk_attitude")
-    investment_period: Optional[str] = state.get("investment_period")
+    risk_attitude: str | None = state.get("risk_attitude")
+    investment_period: str | None = state.get("investment_period")
 
     # Gate: ask for profile if missing
     if not risk_attitude or not investment_period:
-        logger.info("execution_analyst_node: profile incomplete — requesting clarification")
+        logger.info(
+            "execution_analyst_node: profile incomplete — requesting clarification"
+        )
         return {
-            "messages": [
-                ("assistant", _PROFILE_CLARIFICATION)
-            ],
+            "messages": [("assistant", _PROFILE_CLARIFICATION)],
         }
 
     # Profile is present — run the agent
     agent = _get_agent("execution_analyst")
     if agent is None:
-        logger.warning("execution_analyst_node: no agent registered — returning empty plan")
+        logger.warning(
+            "execution_analyst_node: no agent registered — returning empty plan"
+        )
         return {
             "messages": [],
             "execution_plan_output": None,
@@ -114,7 +117,8 @@ def execution_analyst_node(state: Dict[str, Any]) -> Dict[str, Any]:
         # Attempt to extract a structured plan from the response
         plan = None
         if hasattr(response, "answer"):
-            import json  # noqa: PLC0415
+            import json
+
             try:
                 plan = json.loads(response.answer)
             except Exception:

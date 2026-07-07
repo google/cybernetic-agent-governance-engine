@@ -30,7 +30,8 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage
 from opentelemetry import trace
@@ -72,10 +73,11 @@ async def validate_output_semantics(rails, text):  # type: ignore[misc]
 try:
     from src.gateway.governance.nemo.manager import (
         create_nemo_manager,
+        validate_output_semantics,
         validate_with_nemo,
         verify_and_mask_output,
-        validate_output_semantics,
     )
+
     _NEMO_AVAILABLE = True
 except ImportError:
     logger.warning("NeMo manager not importable — guardrail nodes will fail-closed")
@@ -89,21 +91,32 @@ except ImportError:
 # None and the scan is skipped (graceful degradation).
 # ---------------------------------------------------------------------------
 
-_PII_ENTITIES: List[str] = [
-    "PHONE_NUMBER", "CREDIT_CARD", "EMAIL_ADDRESS", "LOCATION",
-    "PERSON", "DATE_TIME", "NRP", "CRYPTO", "US_SSN",
-    "US_ITIN", "US_PASSPORT", "US_BANK_NUMBER", "US_DRIVER_LICENSE",
-    "IBAN_CODE", "IP_ADDRESS",
+_PII_ENTITIES: list[str] = [
+    "PHONE_NUMBER",
+    "CREDIT_CARD",
+    "EMAIL_ADDRESS",
+    "LOCATION",
+    "PERSON",
+    "DATE_TIME",
+    "NRP",
+    "CRYPTO",
+    "US_SSN",
+    "US_ITIN",
+    "US_PASSPORT",
+    "US_BANK_NUMBER",
+    "US_DRIVER_LICENSE",
+    "IBAN_CODE",
+    "IP_ADDRESS",
 ]
 
 _presidio_analyzer = None
 _presidio_anonymizer = None
 
 try:
+    import spacy as _spacy
     from presidio_analyzer import AnalyzerEngine
     from presidio_analyzer.nlp_engine import NlpEngineProvider
     from presidio_anonymizer import AnonymizerEngine
-    import spacy as _spacy
 
     _spacy_model = (
         "en_core_web_lg"
@@ -151,11 +164,13 @@ def _get_symbolic_governor():
     if _symbolic_governor is None:
         try:
             from src.gateway.governance.singletons import symbolic_governor
+
             _symbolic_governor = symbolic_governor
         except Exception as exc:
             logger.warning(
                 "⚠️ Could not import symbolic_governor singleton (%s) — "
-                "NeMo actions will use fail-open defaults.", exc
+                "NeMo actions will use fail-open defaults.",
+                exc,
             )
     return _symbolic_governor
 
@@ -181,6 +196,7 @@ def get_nemo_rails():
 # ---------------------------------------------------------------------------
 # Default extractors — used when config.message_extractor is None
 # ---------------------------------------------------------------------------
+
 
 def _default_user_message_extractor(state: StateDict) -> str:
     """Extract the most recent user message text from ``state["messages"]``.
@@ -221,6 +237,7 @@ def _default_ai_message_extractor(state: StateDict) -> tuple[str, bool]:
 # ---------------------------------------------------------------------------
 # Input rail factory
 # ---------------------------------------------------------------------------
+
 
 def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable:
     """Return an async LangGraph node for mandatory NeMo input rail enforcement.
@@ -282,7 +299,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                 # from context["pre_check_results"] instead of calling back into the
                 # governor's sub-components — eliminating the double-execution of
                 # stpa_validator.validate() and safety_filter.verify_action().
-                pre_check_results: Optional[dict] = None
+                pre_check_results: dict | None = None
                 governor = _get_symbolic_governor()
                 if governor is not None:
                     # Extract governance params from state if available
@@ -292,9 +309,16 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                         governance_params = {
                             k: state[k]
                             for k in (
-                                "approval_token", "amount", "symbol", "latency_ms",
-                                "drawdown_pct", "order_size", "daily_vol",
-                                "confidence", "risk_assessed", "compliance_checked",
+                                "approval_token",
+                                "amount",
+                                "symbol",
+                                "latency_ms",
+                                "drawdown_pct",
+                                "order_size",
+                                "daily_vol",
+                                "confidence",
+                                "risk_assessed",
+                                "compliance_checked",
                             )
                             if k in state
                         }
@@ -303,13 +327,16 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                         logger.debug(
                             "🔍 nemo_guardrail_node: pre_check complete "
                             "(stpa_allowed=%s, cbf_allowed=%s)",
-                            pre_check_results.get("stpa_result", {}).get("allowed", "?"),
+                            pre_check_results.get("stpa_result", {}).get(
+                                "allowed", "?"
+                            ),
                             pre_check_results.get("cbf_result", {}).get("allowed", "?"),
                         )
                     except Exception as pre_exc:
                         logger.warning(
                             "⚠️ nemo_guardrail_node: pre_check failed (%s) — "
-                            "NeMo actions will use fail-open defaults.", pre_exc
+                            "NeMo actions will use fail-open defaults.",
+                            pre_exc,
                         )
 
                 # --- Input-side PII scan (Fix 3 / P1) ---
@@ -319,14 +346,17 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                 # The scan is wrapped in try/except so a Presidio failure never
                 # blocks the input rail (graceful degradation).
                 try:
-                    if _presidio_analyzer is not None and _presidio_anonymizer is not None:
+                    if (
+                        _presidio_analyzer is not None
+                        and _presidio_anonymizer is not None
+                    ):
                         pii_results = _presidio_analyzer.analyze(
                             text=user_input,
                             entities=_PII_ENTITIES,
                             language="en",
                         )
                         if pii_results:
-                            entity_types: List[str] = sorted(
+                            entity_types: list[str] = sorted(
                                 {r.entity_type for r in pii_results}
                             )
                             logger.warning(
@@ -336,11 +366,14 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                                 len(pii_results),
                             )
                             from presidio_anonymizer.entities import OperatorConfig
+
                             anonymized = _presidio_anonymizer.anonymize(
                                 text=user_input,
                                 analyzer_results=pii_results,
                                 operators={
-                                    et: OperatorConfig("replace", {"new_value": f"<{et}>"})
+                                    et: OperatorConfig(
+                                        "replace", {"new_value": f"<{et}>"}
+                                    )
                                     for et in entity_types
                                 },
                             )
@@ -376,9 +409,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                         exc,
                     )
                     span.record_exception(exc)
-                    span.set_status(
-                        trace.Status(trace.StatusCode.ERROR, str(exc))
-                    )
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, str(exc)))
                     base = {**state} if cfg.pass_through_state else {}
                     return {
                         **base,
@@ -417,9 +448,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                         reason,
                     )
 
-            logger.info(
-                "nemo_guardrail_node: input PASSED — proceeding"
-            )
+            logger.info("nemo_guardrail_node: input PASSED — proceeding")
             base = {**state} if cfg.pass_through_state else {}
             return {
                 **base,
@@ -434,6 +463,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
 # ---------------------------------------------------------------------------
 # Output rail factory
 # ---------------------------------------------------------------------------
+
 
 def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callable:
     """Return an async LangGraph node for mandatory NeMo output rail enforcement.
@@ -467,9 +497,7 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
                 span.set_attribute("nemo.output_rail.skipped", True)
                 return {cfg.output_rail_applied_key: True}
 
-            span.set_attribute(
-                "nemo.output_rail.input_length", len(output_text)
-            )
+            span.set_attribute("nemo.output_rail.input_length", len(output_text))
 
             cage_enforcement = os.environ.get(
                 "CAGE_SEAL_ENFORCEMENT", "enforce"
@@ -488,9 +516,7 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
                     exc,
                 )
                 span.record_exception(exc)
-                span.set_status(
-                    trace.Status(trace.StatusCode.ERROR, str(exc))
-                )
+                span.set_status(trace.Status(trace.StatusCode.ERROR, str(exc)))
                 masked_text = cfg.output_blocked_sentinel
 
             # --- Semantic safety validation (P2) ---
@@ -500,7 +526,9 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
             final_text = masked_text
             try:
                 rails = get_nemo_rails()
-                sem_safe, sem_reason = await validate_output_semantics(rails, masked_text)
+                sem_safe, sem_reason = await validate_output_semantics(
+                    rails, masked_text
+                )
                 span.set_attribute("output.semantic_validated", True)
                 span.set_attribute("output.semantic_safe", sem_safe)
                 if not sem_safe:

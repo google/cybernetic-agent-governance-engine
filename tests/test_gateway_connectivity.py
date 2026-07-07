@@ -16,9 +16,10 @@ import asyncio
 import logging
 import os
 import sys
-import requests
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
+import requests
 
 # Integration tests require live services; they are automatically collected but
 # skipped by conftest.py unless --run-integration is passed.  The regression
@@ -36,6 +37,7 @@ logger = logging.getLogger("TestGateway")
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:8080")
 MCP_SSE_URL = f"{GATEWAY_URL}/mcp/sse"
 
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_mcp_connection():
@@ -47,11 +49,12 @@ async def test_mcp_connection():
         logger.info(f"✅ MCP Connected. Found {len(tools)} tools.")
         for tool in tools:
             logger.info(f"   - {tool.name}")
-            
+
     except Exception as e:
         logger.error(f"❌ MCP Connection Failed: {e}")
     finally:
         await client.close()
+
 
 @pytest.mark.integration
 def test_chat_proxy():
@@ -60,18 +63,19 @@ def test_chat_proxy():
     payload = {
         "model": "default",
         "messages": [{"role": "user", "content": "Hello, are you online?"}],
-        "stream": False
+        "stream": False,
     }
-    
+
     try:
         res = requests.post(url, json=payload, timeout=10)
         if res.status_code == 200:
             logger.info(f"✅ Chat Proxy working. Response: {res.json()}")
         else:
             logger.error(f"❌ Chat Proxy Failed: {res.status_code} - {res.text}")
-            
+
     except Exception as e:
-         logger.error(f"❌ Chat Proxy Connection Error: {e}")
+        logger.error(f"❌ Chat Proxy Connection Error: {e}")
+
 
 @pytest.mark.regression
 def test_factual_regression():
@@ -86,7 +90,7 @@ def test_factual_regression():
     payload = {
         "model": os.environ.get("MODEL_REASONING"),
         "messages": [{"role": "user", "content": "What is the capital of France?"}],
-        "max_tokens": 10
+        "max_tokens": 10,
     }
 
     mock_response = MagicMock()
@@ -194,9 +198,9 @@ def test_tls_minimum_version():
     NIST SP 800-52 Rev. 2 requires TLS 1.2 minimum for federal information
     systems. TLS 1.0 and 1.1 must be disabled.
     """
-    import ssl  # noqa: PLC0415
-    import socket  # noqa: PLC0415
-    from urllib.parse import urlparse  # noqa: PLC0415
+    import socket
+    import ssl
+    from urllib.parse import urlparse
 
     parsed = urlparse(_GATEWAY_HTTPS_URL)
     host = parsed.hostname or "localhost"
@@ -206,13 +210,20 @@ def test_tls_minimum_version():
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.check_hostname = False  # staging certs may use internal CA
-    ctx.verify_mode = ssl.CERT_NONE  # integration test — full cert validation is infra responsibility
+    ctx.verify_mode = (
+        ssl.CERT_NONE
+    )  # integration test — full cert validation is infra responsibility
 
     try:
         with socket.create_connection((host, port), timeout=5) as sock:
             with ctx.wrap_socket(sock, server_hostname=host) as tls_sock:
                 proto = tls_sock.version()
-                logger.info("✅ [POAM-011] TLS handshake succeeded: protocol=%s host=%s:%d", proto, host, port)
+                logger.info(
+                    "✅ [POAM-011] TLS handshake succeeded: protocol=%s host=%s:%d",
+                    proto,
+                    host,
+                    port,
+                )
                 assert proto in ("TLSv1.2", "TLSv1.3"), (
                     f"[POAM-011] Gateway is using deprecated TLS version '{proto}'. "
                     "TLS 1.2+ is required (SC-8, NIST SP 800-52 Rev. 2)."
@@ -223,10 +234,11 @@ def test_tls_minimum_version():
             "Verify the gateway is configured with a valid TLS certificate."
         )
     except ConnectionRefusedError:
-        pytest.skip(f"[POAM-011] Gateway not reachable at {host}:{port} — skipping TLS version check.")
+        pytest.skip(
+            f"[POAM-011] Gateway not reachable at {host}:{port} — skipping TLS version check."
+        )
 
 
 if __name__ == "__main__":
     test_chat_proxy()
     asyncio.run(test_mcp_connection())
-

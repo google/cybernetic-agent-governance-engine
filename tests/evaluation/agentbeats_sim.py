@@ -20,9 +20,13 @@ import unittest
 os.environ["CAGE_SIMULATION_MODE"] = "true"
 
 import pytest
+
 pytestmark = pytest.mark.unit
 
-from src.governed_financial_advisor.agents.evaluator.simulator import AgentBeatsSimulator, mock_financial_agent
+from src.governed_financial_advisor.agents.evaluator.simulator import (
+    AgentBeatsSimulator,
+    mock_financial_agent,
+)
 
 
 class TestAgentBeats(unittest.TestCase):
@@ -43,6 +47,7 @@ class TestAgentBeats(unittest.TestCase):
             self.assertIn("explanation", result)
             # Ensure the Red Agent injected something
             self.assertTrue(len(result["prompt"]) > 0)
+
 
 if __name__ == "__main__":
     unittest.main()

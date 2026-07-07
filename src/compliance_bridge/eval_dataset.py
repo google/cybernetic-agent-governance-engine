@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from datetime import datetime, timezone
 
 from .types import CONTROL_META, OscalFinding
@@ -72,7 +71,9 @@ def _create_dataset_item_sync(
             metadata={
                 "control_id": control_id,
                 "iso_clause": CONTROL_META.get(control_id, {}).get("iso_clause", ""),
-                "frameworks": list(CONTROL_META.get(control_id, {}).get("frameworks", {}).keys()),
+                "frameworks": list(
+                    CONTROL_META.get(control_id, {}).get("frameworks", {}).keys()
+                ),
                 "created_by": "cage-compliance-bridge",
             },
         )
@@ -85,12 +86,12 @@ def _create_dataset_item_sync(
     langfuse.create_dataset_item(
         dataset_name=dataset_name,
         input={
-            "finding":   finding.model_dump(),
-            "audit_id":  audit_id,
+            "finding": finding.model_dump(),
+            "audit_id": audit_id,
             "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         },
         expected_output={
-            "result":               "PASS",
+            "result": "PASS",
             "remediation_required": False,
             "note": (
                 "Expected: control passes with full safety_rate=1.0. "
@@ -98,11 +99,11 @@ def _create_dataset_item_sync(
             ),
         },
         metadata={
-            "audit_id":    audit_id,
-            "control_id":  control_id,
-            "iso_clause":  CONTROL_META.get(control_id, {}).get("iso_clause", ""),
+            "audit_id": audit_id,
+            "control_id": control_id,
+            "iso_clause": CONTROL_META.get(control_id, {}).get("iso_clause", ""),
             "framework_refs": CONTROL_META.get(control_id, {}).get("frameworks", {}),
-            "finding_id":  finding.finding_id,
+            "finding_id": finding.finding_id,
             "safety_rate": finding.safety_rate,
             "generated_utc": datetime.now(tz=timezone.utc).isoformat(),
         },
@@ -110,7 +111,9 @@ def _create_dataset_item_sync(
     )
     logger.info(
         "[eval_dataset] 📚 Created dataset item in '%s' for audit %s (finding %s)",
-        dataset_name, audit_id, finding.finding_id,
+        dataset_name,
+        audit_id,
+        finding.finding_id,
     )
 
 
@@ -139,30 +142,38 @@ async def populate_eval_dataset(
         return 0
 
     created = 0
-    errors   = 0
+    errors = 0
 
     async def _populate_one(finding: OscalFinding) -> None:
         nonlocal created, errors
         try:
             await asyncio.to_thread(
                 _create_dataset_item_sync,
-                finding.control_id, finding, audit_id, langfuse,
+                finding.control_id,
+                finding,
+                audit_id,
+                langfuse,
             )
             created += 1
         except Exception as exc:
             errors += 1
             logger.warning(
                 "[eval_dataset] Failed to create dataset item for %s (non-fatal): %s",
-                finding.control_id, exc,
+                finding.control_id,
+                exc,
             )
 
     await asyncio.gather(*[_populate_one(f) for f in fail_findings])
 
     if errors:
-        logger.warning("[eval_dataset] %d/%d items failed to create.", errors, len(fail_findings))
+        logger.warning(
+            "[eval_dataset] %d/%d items failed to create.", errors, len(fail_findings)
+        )
     else:
         logger.info(
             "[eval_dataset] ✅ %d/%d eval dataset items created for audit %s.",
-            created, len(fail_findings), audit_id,
+            created,
+            len(fail_findings),
+            audit_id,
         )
     return created

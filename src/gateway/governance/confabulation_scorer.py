@@ -42,7 +42,6 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger("Gateway.Governance.ConfabulationScorer")
 
@@ -60,6 +59,7 @@ if _raw_threshold is None:
     # Fall back to the validated threshold singleton (never a hardcoded literal)
     try:
         from src.gateway.governance.schemas.thresholds import THRESHOLDS
+
         CONFIDENCE_THRESHOLD: float = THRESHOLDS.confidence.min_trade_confidence
     except Exception:
         # Last-resort: fail-safe value that matches the governance threshold
@@ -71,6 +71,7 @@ else:
 # ---------------------------------------------------------------------------
 # ConfabulationEvent — structured event for Langfuse scoring
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ConfabulationEvent:
@@ -87,13 +88,14 @@ class ConfabulationEvent:
     trace_id: str
     confidence: float
     model_id: str
-    grounding_source: Optional[str]
+    grounding_source: str | None
     blocked: bool
 
 
 # ---------------------------------------------------------------------------
 # score_confabulation — Langfuse score payload builder
 # ---------------------------------------------------------------------------
+
 
 def score_confabulation(event: ConfabulationEvent) -> dict:
     """Return a Langfuse score payload for confabulation risk.

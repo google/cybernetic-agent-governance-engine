@@ -60,19 +60,20 @@ concurrent trade execution in the stateless Cloud Run environment.
 import json
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
+
+from src.gateway.governance.constants import ControlRegistry, GovernanceControl
+
+# ---------------------------------------------------------------------------
+# Threshold singleton (Phase 2.3)
+# ---------------------------------------------------------------------------
+from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
 # ---------------------------------------------------------------------------
 # Canonical gateway-internal imports (Phase 1.1)
 # ---------------------------------------------------------------------------
 from src.gateway.infrastructure.redis_client import redis_client
 from src.gateway.infrastructure.telemetry import get_tracer
-from src.gateway.governance.constants import GovernanceControl, ControlRegistry
-
-# ---------------------------------------------------------------------------
-# Threshold singleton (Phase 2.3)
-# ---------------------------------------------------------------------------
-from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
 logger = logging.getLogger("SafetyLayer")
 
@@ -80,6 +81,7 @@ logger = logging.getLogger("SafetyLayer")
 # ---------------------------------------------------------------------------
 # ControlBarrierFunction
 # ---------------------------------------------------------------------------
+
 
 class ControlBarrierFunction:
     """Discrete-time Control Barrier Function (CBF).
@@ -134,7 +136,7 @@ return {1, "COMMITTED", tostring(next_cash)}
         self.gamma: float = THRESHOLDS.cbf.gamma
         self.redis_key: str = "safety:current_cash"
         self.tracer = get_tracer("src.gateway.governance.safety")
-        self._lua_sha: Optional[str] = None
+        self._lua_sha: str | None = None
 
     async def setup(self) -> None:
         """Bootstrap Redis state if the key is absent (first run)."""
@@ -193,9 +195,13 @@ return {1, "COMMITTED", tostring(next_cash)}
 
         if self.tracer:
             with self.tracer.start_as_current_span("safety.cbf_check") as span:
-                return await self._do_verify_action(action_name, payload, current_cash, span)
+                return await self._do_verify_action(
+                    action_name, payload, current_cash, span
+                )
         else:
-            return await self._do_verify_action(action_name, payload, current_cash, None)
+            return await self._do_verify_action(
+                action_name, payload, current_cash, None
+            )
 
     async def _do_verify_action(
         self,
@@ -209,11 +215,15 @@ return {1, "COMMITTED", tostring(next_cash)}
             # CTRL_MRM_004: CBF is a traditional, deterministic quantitative formula
             # (h(x) = cash_balance - min_cash_balance with static decay γ).
             # It falls under SR 26-2 Model Risk Management scope, not agentic ISO 42001.
-            _mrm_meta = ControlRegistry().get_mapping(GovernanceControl.TRADITIONAL_MRM_VALIDATION)
-            span.set_attribute("governance.control_id",     _mrm_meta["internal_id"])
-            span.set_attribute("governance.framework",      _mrm_meta["primary_framework"])
-            span.set_attribute("governance.legacy_citation", _mrm_meta["legacy_citation"])
-            span.set_attribute("governance.scope",          _mrm_meta["scope"])
+            _mrm_meta = ControlRegistry().get_mapping(
+                GovernanceControl.TRADITIONAL_MRM_VALIDATION
+            )
+            span.set_attribute("governance.control_id", _mrm_meta["internal_id"])
+            span.set_attribute("governance.framework", _mrm_meta["primary_framework"])
+            span.set_attribute(
+                "governance.legacy_citation", _mrm_meta["legacy_citation"]
+            )
+            span.set_attribute("governance.scope", _mrm_meta["scope"])
 
         cost = 0.0
         if action_name == "execute_trade":
@@ -228,7 +238,9 @@ return {1, "COMMITTED", tostring(next_cash)}
 
         result = "SAFE"
         if h_next < required_h_next or h_next < 0:
-            _mrm_meta = ControlRegistry().get_mapping(GovernanceControl.TRADITIONAL_MRM_VALIDATION)
+            _mrm_meta = ControlRegistry().get_mapping(
+                GovernanceControl.TRADITIONAL_MRM_VALIDATION
+            )
             result = (
                 f"[{GovernanceControl.TRADITIONAL_MRM_VALIDATION.value}] "
                 f"{_mrm_meta['primary_framework']} Violation: "
@@ -245,9 +257,7 @@ return {1, "COMMITTED", tostring(next_cash)}
             raw_drawdown = float(payload.get("drawdown_pct", 0.0))
             current_drawdown = raw_drawdown / 100.0
             if current_drawdown > limit:
-                msg = (
-                    f"UNSAFE: Drawdown Violation. {current_drawdown:.2%} > Limit {limit:.2%}"
-                )
+                msg = f"UNSAFE: Drawdown Violation. {current_drawdown:.2%} > Limit {limit:.2%}"
                 logger.warning("⛔ %s", msg)
                 result = msg if result == "SAFE" else f"{result}; {msg}"
 
@@ -262,7 +272,9 @@ return {1, "COMMITTED", tostring(next_cash)}
     # update_state — WATCH/MULTI/EXEC atomic transaction (Phase 4.1)
     # ------------------------------------------------------------------
 
-    async def update_state(self, cost: float, governance_signature: Optional[str] = None) -> None:
+    async def update_state(
+        self, cost: float, governance_signature: str | None = None
+    ) -> None:
         """Atomically deduct *cost* from the Redis cash balance.
 
         Uses WATCH / MULTI / EXEC optimistic locking.  Retries up to
@@ -289,17 +301,21 @@ return {1, "COMMITTED", tostring(next_cash)}
                     pipe.multi()
                     pipe.set(self.redis_key, str(new_balance))
                     if governance_signature:
-                        ledger_entry = json.dumps({
-                            "ts": time.time(),
-                            "cost": cost,
-                            "new_balance": new_balance,
-                            "governance_signature": governance_signature,
-                        })
+                        ledger_entry = json.dumps(
+                            {
+                                "ts": time.time(),
+                                "cost": cost,
+                                "new_balance": new_balance,
+                                "governance_signature": governance_signature,
+                            }
+                        )
                         pipe.rpush("audit:state_ledger", ledger_entry)
                     await pipe.execute()
                     logger.info(
                         "✅ CBF state updated atomically: %.2f → %.2f (attempt %d)",
-                        current, new_balance, attempt + 1,
+                        current,
+                        new_balance,
+                        attempt + 1,
                     )
                     return
             except Exception as exc:
@@ -307,7 +323,8 @@ return {1, "COMMITTED", tostring(next_cash)}
                 if "WatchError" in type(exc).__name__:
                     logger.warning(
                         "⚡ CBF WATCH conflict on attempt %d/%d — retrying.",
-                        attempt + 1, self._MAX_RETRIES,
+                        attempt + 1,
+                        self._MAX_RETRIES,
                     )
                     continue
                 raise
@@ -320,7 +337,9 @@ return {1, "COMMITTED", tostring(next_cash)}
     # rollback_state — WATCH/MULTI/EXEC atomic transaction (Phase 4.1)
     # ------------------------------------------------------------------
 
-    async def rollback_state(self, cost: float, governance_signature: Optional[str] = None) -> None:
+    async def rollback_state(
+        self, cost: float, governance_signature: str | None = None
+    ) -> None:
         """Atomically restore *cost* to the Redis cash balance.
 
         Mirrors ``update_state`` but adds rather than deducts.  Call this
@@ -348,25 +367,30 @@ return {1, "COMMITTED", tostring(next_cash)}
                     pipe.multi()
                     pipe.set(self.redis_key, str(restored))
                     if governance_signature:
-                        ledger_entry = json.dumps({
-                            "ts": time.time(),
-                            "cost": cost,
-                            "new_balance": restored,
-                            "governance_signature": governance_signature,
-                            "rollback": True,
-                        })
+                        ledger_entry = json.dumps(
+                            {
+                                "ts": time.time(),
+                                "cost": cost,
+                                "new_balance": restored,
+                                "governance_signature": governance_signature,
+                                "rollback": True,
+                            }
+                        )
                         pipe.rpush("audit:state_ledger", ledger_entry)
                     await pipe.execute()
                     logger.info(
                         "🔄 CBF state rolled back atomically: %.2f → %.2f (attempt %d)",
-                        current, restored, attempt + 1,
+                        current,
+                        restored,
+                        attempt + 1,
                     )
                     return
             except Exception as exc:
                 if "WatchError" in type(exc).__name__:
                     logger.warning(
                         "⚡ CBF WATCH conflict on rollback attempt %d/%d — retrying.",
-                        attempt + 1, self._MAX_RETRIES,
+                        attempt + 1,
+                        self._MAX_RETRIES,
                     )
                     continue
                 raise
@@ -437,13 +461,21 @@ return {1, "COMMITTED", tostring(next_cash)}
             return await _run_evalsha()
 
         if self.tracer:
-            with self.tracer.start_as_current_span("safety.cbf_atomic_check_commit") as span:
+            with self.tracer.start_as_current_span(
+                "safety.cbf_atomic_check_commit"
+            ) as span:
                 span.set_attribute("safety.cash.cost", cost)
-                _mrm_meta = ControlRegistry().get_mapping(GovernanceControl.TRADITIONAL_MRM_VALIDATION)
-                span.set_attribute("governance.control_id",      _mrm_meta["internal_id"])
-                span.set_attribute("governance.framework",       _mrm_meta["primary_framework"])
-                span.set_attribute("governance.legacy_citation", _mrm_meta["legacy_citation"])
-                span.set_attribute("governance.scope",           _mrm_meta["scope"])
+                _mrm_meta = ControlRegistry().get_mapping(
+                    GovernanceControl.TRADITIONAL_MRM_VALIDATION
+                )
+                span.set_attribute("governance.control_id", _mrm_meta["internal_id"])
+                span.set_attribute(
+                    "governance.framework", _mrm_meta["primary_framework"]
+                )
+                span.set_attribute(
+                    "governance.legacy_citation", _mrm_meta["legacy_citation"]
+                )
+                span.set_attribute("governance.scope", _mrm_meta["scope"])
                 result_list = await self._evalsha_with_noscript_retry(
                     client, keys, argv, _run_evalsha, _load_and_run
                 )
@@ -481,8 +513,16 @@ return {1, "COMMITTED", tostring(next_cash)}
     ) -> tuple[bool, str]:
         """Parse the Lua script return array into a Python (bool, str) tuple."""
         status_code = int(result_list[0])
-        message = result_list[1].decode() if isinstance(result_list[1], bytes) else str(result_list[1])
-        new_balance_str = result_list[2].decode() if isinstance(result_list[2], bytes) else str(result_list[2])
+        message = (
+            result_list[1].decode()
+            if isinstance(result_list[1], bytes)
+            else str(result_list[1])
+        )
+        new_balance_str = (
+            result_list[2].decode()
+            if isinstance(result_list[2], bytes)
+            else str(result_list[2])
+        )
 
         committed = status_code == 1
         if span:
@@ -490,7 +530,10 @@ return {1, "COMMITTED", tostring(next_cash)}
             span.set_attribute("safety.cash.next", float(new_balance_str))
 
         if committed:
-            logger.info("✅ CBF atomic check+commit: COMMITTED — new_balance=%s", new_balance_str)
+            logger.info(
+                "✅ CBF atomic check+commit: COMMITTED — new_balance=%s",
+                new_balance_str,
+            )
             return (True, "COMMITTED")
         else:
             logger.info("⛔ CBF atomic check+commit: UNSAFE — %s", message)

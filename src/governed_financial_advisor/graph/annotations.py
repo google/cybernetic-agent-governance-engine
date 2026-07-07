@@ -47,9 +47,8 @@ Allowed ``kind`` values
 
 from __future__ import annotations
 
-import functools
-import inspect
-from typing import Any, Callable, Literal, TypeVar
+from collections.abc import Callable
+from typing import Any, Literal, TypeVar
 
 # ---------------------------------------------------------------------------
 # Type aliases
@@ -91,6 +90,7 @@ reading this dict directly.
 # Decorator
 # ---------------------------------------------------------------------------
 
+
 def side_effect_node(
     kind: SideEffectKind,
     external_system: str,
@@ -129,8 +129,7 @@ def side_effect_node(
     )
     if kind not in _allowed_kinds:
         raise ValueError(
-            f"side_effect_node: invalid kind={kind!r}. "
-            f"Must be one of {_allowed_kinds}."
+            f"side_effect_node: invalid kind={kind!r}. Must be one of {_allowed_kinds}."
         )
 
     def decorator(fn: F) -> F:

@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 from fastapi.testclient import TestClient
 
 from src.gateway.governance.constants import ControlRegistry
-from src.gateway.governance.symbolic_governor import SymbolicGovernor, GovernanceError
+from src.gateway.governance.symbolic_governor import GovernanceError, SymbolicGovernor
 from src.gateway.server.governance_middleware import governance_app
 
 pytestmark = pytest.mark.unit
@@ -76,7 +77,9 @@ async def test_symbolic_governor_version_matching(registry, mock_dependencies):
 
 
 @pytest.mark.asyncio
-async def test_symbolic_governor_version_mismatch_raises_governance_error(registry, mock_dependencies):
+async def test_symbolic_governor_version_mismatch_raises_governance_error(
+    registry, mock_dependencies
+):
     """SymbolicGovernor validate_action should raise GovernanceError on mismatched policy_version_id."""
     opa_client, safety_filter, consensus_engine = mock_dependencies
     gov = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
@@ -105,7 +108,10 @@ def test_middleware_validate_action_version_matching(registry):
     }
 
     # Patch SymbolicGovernor validate_action
-    with patch("src.gateway.server.governance_middleware.symbolic_governor.validate_action", new_callable=AsyncMock) as mock_validate:
+    with patch(
+        "src.gateway.server.governance_middleware.symbolic_governor.validate_action",
+        new_callable=AsyncMock,
+    ) as mock_validate:
         mock_validate.return_value = mock_gov_result
 
         # Request with matching version
@@ -131,10 +137,18 @@ def test_middleware_validate_action_version_mismatch_returns_403(registry):
     client = TestClient(governance_app, raise_server_exceptions=False)
 
     # Patch SymbolicGovernor validate_action to raise GovernanceError
-    with patch("src.gateway.server.governance_middleware.symbolic_governor.validate_action", new_callable=AsyncMock) as mock_validate:
-        mock_validate.side_effect = GovernanceError("Substrate Policy Drift Detected. Session pinned to version...")
+    with patch(
+        "src.gateway.server.governance_middleware.symbolic_governor.validate_action",
+        new_callable=AsyncMock,
+    ) as mock_validate:
+        mock_validate.side_effect = GovernanceError(
+            "Substrate Policy Drift Detected. Session pinned to version..."
+        )
 
-        with patch("src.gateway.server.governance_middleware._emit_refusal_receipt", new_callable=AsyncMock) as mock_emit:
+        with patch(
+            "src.gateway.server.governance_middleware._emit_refusal_receipt",
+            new_callable=AsyncMock,
+        ) as mock_emit:
             resp = client.post(
                 "/validate-action",
                 json={
@@ -159,8 +173,9 @@ def test_serialization_float_coercion_consistency():
     coerced_b = ControlRegistry._coerce_floats(data_b)
 
     import json
-    hash_a = json.dumps(coerced_a, sort_keys=True, separators=(',', ':'))
-    hash_b = json.dumps(coerced_b, sort_keys=True, separators=(',', ':'))
+
+    hash_a = json.dumps(coerced_a, sort_keys=True, separators=(",", ":"))
+    hash_b = json.dumps(coerced_b, sort_keys=True, separators=(",", ":"))
 
     assert hash_a == hash_b
 
@@ -176,9 +191,12 @@ def test_policy_version_get_endpoint(registry):
 @pytest.mark.asyncio
 async def test_gateway_client_recovery_loop_on_policy_drift():
     """GatewayClient should fetch active version and retry once on 403 Substrate drift."""
-    from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
-    import respx
     import httpx
+    import respx
+
+    from src.governed_financial_advisor.infrastructure.gateway_client import (
+        GatewayClient,
+    )
 
     client = GatewayClient()
     client._base_url = "http://localhost:8080"
@@ -187,6 +205,7 @@ async def test_gateway_client_recovery_loop_on_policy_drift():
     with respx.mock(base_url="http://localhost:8080") as mock_api:
         # Mock the sequential post response: 403 on first call, 200 on second call
         call_count = 0
+
         def response_callback(request):
             nonlocal call_count
             call_count += 1
@@ -195,8 +214,10 @@ async def test_gateway_client_recovery_loop_on_policy_drift():
                     status_code=403,
                     json={
                         "verdict": "DENIED",
-                        "violations": ["Substrate Policy Drift Detected. Session pinned to version signature 'stale'"],
-                    }
+                        "violations": [
+                            "Substrate Policy Drift Detected. Session pinned to version signature 'stale'"
+                        ],
+                    },
                 )
             else:
                 return httpx.Response(
@@ -206,7 +227,7 @@ async def test_gateway_client_recovery_loop_on_policy_drift():
                         "violations": [],
                         "seal": "valid-retry-seal",
                         "latency_ms": 10.0,
-                    }
+                    },
                 )
 
         mock_api.post("/governance/validate-action").mock(side_effect=response_callback)
@@ -214,8 +235,7 @@ async def test_gateway_client_recovery_loop_on_policy_drift():
         # Discovery GET endpoint returns fresh hash
         mock_api.get("/governance/policy-version").mock(
             return_value=httpx.Response(
-                status_code=200,
-                json={"active_hash": "fresh-hash-12345"}
+                status_code=200, json={"active_hash": "fresh-hash-12345"}
             )
         )
 
@@ -223,11 +243,10 @@ async def test_gateway_client_recovery_loop_on_policy_drift():
         res = await client.validate_action(
             action="execute_trade",
             params={"amount": 100},
-            policy_version_id="stale-hash"
+            policy_version_id="stale-hash",
         )
 
         assert res["verdict"] == "APPROVED"
         assert res["seal"] == "valid-retry-seal"
         # Verify 3 calls total: 2 POSTs and 1 GET
         assert len(mock_api.calls) == 3
-

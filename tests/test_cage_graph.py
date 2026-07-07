@@ -12,23 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 pytestmark = pytest.mark.unit
 
 from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.graph.nodes.safety_node import (
     safety_check_node,
-    route_safety,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
 
 def mock_state():
     """Return a minimal base AgentState dict for use in legacy tests."""
@@ -85,6 +84,7 @@ def _route_after_safety(state: dict) -> str:
 # Original smoke tests (preserved — do NOT delete)
 # ---------------------------------------------------------------------------
 
+
 def test_graph_compilation():
     """Verifies that the graph compiles successfully with the new CAGE nodes."""
     try:
@@ -105,6 +105,7 @@ def test_cage_flow_structure(mock_run_agent):
 # ---------------------------------------------------------------------------
 # Safety node routing tests (unit — OPA call mocked)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_safety_node_approved_routes_to_governed_trader(minimal_trade_state):
@@ -180,12 +181,9 @@ async def test_safety_node_skipped_on_non_trade_request(minimal_trade_state):
 @pytest.mark.asyncio
 async def test_safety_node_opa_timeout_routes_to_explainer(minimal_trade_state):
     """OPA timeout must fail-closed: safety_status=BLOCKED, routed to explainer."""
-    import asyncio
 
     mock_governor = AsyncMock()
-    mock_governor.govern = AsyncMock(
-        side_effect=asyncio.TimeoutError("OPA timed out")
-    )
+    mock_governor.govern = AsyncMock(side_effect=asyncio.TimeoutError("OPA timed out"))
 
     with patch(
         "src.gateway.governance.langgraph_harness.opa_node_factory.symbolic_governor",
@@ -222,6 +220,7 @@ async def test_safety_node_opa_unreachable_routes_to_explainer(minimal_trade_sta
 # ---------------------------------------------------------------------------
 # Graph structure tests
 # ---------------------------------------------------------------------------
+
 
 def test_graph_has_safety_check_node():
     """Compiled graph must include the safety_check node (R-11 requirement)."""

@@ -37,7 +37,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger("AutomatedAuditor")
 
 # ---------------------------------------------------------------------------
@@ -77,6 +79,7 @@ _LANGFUSE_HOST = _langfuse_host
 # TraceSource abstract base class
 # ---------------------------------------------------------------------------
 
+
 class TraceSource(ABC):
     """Abstract base for trace backends consumed by the automated auditor."""
 
@@ -93,6 +96,7 @@ class TraceSource(ABC):
 # OTLP / Jaeger-compatible HTTP backend
 # ---------------------------------------------------------------------------
 
+
 class OTLPTraceSource(TraceSource):
     """Query a Jaeger / OTLP-compatible HTTP endpoint for recent traces.
 
@@ -105,17 +109,19 @@ class OTLPTraceSource(TraceSource):
 
     def fetch_traces(self, service_name: str, lookback_minutes: int) -> list[dict]:
         try:
-            import urllib.request
             import json as _json
+            import urllib.request
 
             url = f"{self.endpoint}/api/traces?service={service_name}&lookback={lookback_minutes}m"
             with urllib.request.urlopen(url, timeout=10) as resp:
                 payload = _json.loads(resp.read().decode())
             # Jaeger returns {"data": [...traces...]}
             raw_traces = payload.get("data", [])
-            logger.info("OTLPTraceSource: fetched %d traces from %s", len(raw_traces), url)
+            logger.info(
+                "OTLPTraceSource: fetched %d traces from %s", len(raw_traces), url
+            )
             return raw_traces
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "OTLPTraceSource: could not reach endpoint %s — %s. "
                 "Returning empty trace list. Check AUDITOR_OTLP_ENDPOINT.",
@@ -129,6 +135,7 @@ class OTLPTraceSource(TraceSource):
 # GCP Cloud Trace backend
 # ---------------------------------------------------------------------------
 
+
 class CloudTraceSource(TraceSource):
     """Query Google Cloud Trace API for recent traces.
 
@@ -138,6 +145,7 @@ class CloudTraceSource(TraceSource):
     def __init__(self, project_id: str = _AUDITOR_GCP_PROJECT_ID):
         try:
             from google.cloud import trace_v2  # type: ignore[import]
+
             self._trace_v2 = trace_v2
         except ImportError as exc:
             raise ImportError(
@@ -166,8 +174,12 @@ class CloudTraceSource(TraceSource):
             for t in traces:
                 spans = [
                     {
-                        "name": s.display_name.value if hasattr(s.display_name, "value") else str(s.display_name),
-                        "attributes": dict(s.attributes.attribute_map) if hasattr(s, "attributes") else {},
+                        "name": s.display_name.value
+                        if hasattr(s.display_name, "value")
+                        else str(s.display_name),
+                        "attributes": dict(s.attributes.attribute_map)
+                        if hasattr(s, "attributes")
+                        else {},
                         "start_time": s.start_time.timestamp() if s.start_time else 0,
                         "end_time": s.end_time.timestamp() if s.end_time else 0,
                     }
@@ -175,9 +187,10 @@ class CloudTraceSource(TraceSource):
                 ]
                 result.append({"trace_id": t.name, "spans": spans})
             return result
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
-                "CloudTraceSource: error fetching traces — %s. Returning empty list.", exc
+                "CloudTraceSource: error fetching traces — %s. Returning empty list.",
+                exc,
             )
             return []
 
@@ -185,6 +198,7 @@ class CloudTraceSource(TraceSource):
 # ---------------------------------------------------------------------------
 # Langfuse SDK backend (live, satisfies AU-12 — POAM-003)
 # ---------------------------------------------------------------------------
+
 
 class LangfuseTraceSource(TraceSource):
     """Query the live Langfuse project for recent traces via the Langfuse Python SDK.
@@ -202,7 +216,7 @@ class LangfuseTraceSource(TraceSource):
     def __init__(self) -> None:
         # Lazy import: langfuse is only required at runtime.
         try:
-            from langfuse import Langfuse  # noqa: PLC0415
+            from langfuse import Langfuse
         except ImportError as exc:
             raise ImportError(
                 "The 'langfuse' package is required for AUDITOR_TRACE_SOURCE=langfuse. "
@@ -216,14 +230,16 @@ class LangfuseTraceSource(TraceSource):
         )
 
     def fetch_traces(self, service_name: str, lookback_minutes: int) -> list[dict]:
-        window_start = datetime.now(tz=timezone.utc) - timedelta(minutes=lookback_minutes)
+        window_start = datetime.now(tz=timezone.utc) - timedelta(
+            minutes=lookback_minutes
+        )
 
         try:
             traces_response = self._langfuse.fetch_traces(
                 from_timestamp=window_start,
                 limit=500,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "LangfuseTraceSource: could not reach Langfuse at %s — %s. "
                 "Returning empty trace list. Check LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST.",
@@ -237,7 +253,7 @@ class LangfuseTraceSource(TraceSource):
             try:
                 full_trace = self._langfuse.fetch_trace(trace.id)
                 observations = getattr(full_trace.data, "observations", []) or []
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "LangfuseTraceSource: could not fetch observations for trace %s — %s",
                     trace.id,
@@ -247,9 +263,21 @@ class LangfuseTraceSource(TraceSource):
 
             spans: list[dict] = []
             for obs in observations:
-                start_ts = obs.start_time.timestamp() if getattr(obs, "start_time", None) else 0.0
-                end_ts = obs.end_time.timestamp() if getattr(obs, "end_time", None) else start_ts
-                attrs = obs.metadata if isinstance(getattr(obs, "metadata", None), dict) else {}
+                start_ts = (
+                    obs.start_time.timestamp()
+                    if getattr(obs, "start_time", None)
+                    else 0.0
+                )
+                end_ts = (
+                    obs.end_time.timestamp()
+                    if getattr(obs, "end_time", None)
+                    else start_ts
+                )
+                attrs = (
+                    obs.metadata
+                    if isinstance(getattr(obs, "metadata", None), dict)
+                    else {}
+                )
                 spans.append(
                     {
                         "name": getattr(obs, "name", "") or "",
@@ -274,6 +302,7 @@ class LangfuseTraceSource(TraceSource):
 # Mock backend (--dry-run / testing only)
 # ---------------------------------------------------------------------------
 
+
 class MockTraceSource(TraceSource):
     """Synthetic trace generator for unit/integration tests.
 
@@ -297,9 +326,19 @@ class MockTraceSource(TraceSource):
         trace_valid = {
             "trace_id": "t1",
             "spans": [
-                {"name": "governance.check", "attributes": {"governance.decision": "ALLOW"}, "start_time": 100, "end_time": 101},
-                {"name": "tool.execution.execute_trade", "attributes": {"action": "execute_trade"}, "start_time": 102, "end_time": 200}
-            ]
+                {
+                    "name": "governance.check",
+                    "attributes": {"governance.decision": "ALLOW"},
+                    "start_time": 100,
+                    "end_time": 101,
+                },
+                {
+                    "name": "tool.execution.execute_trade",
+                    "attributes": {"action": "execute_trade"},
+                    "start_time": 102,
+                    "end_time": 200,
+                },
+            ],
         }
 
         # Scenario 2: Violation (Bypassed Governance)
@@ -307,17 +346,32 @@ class MockTraceSource(TraceSource):
         trace_violation = {
             "trace_id": "t2",
             "spans": [
-                {"name": "tool.execution.execute_trade", "attributes": {"action": "execute_trade"}, "start_time": 300, "end_time": 400}
-            ]
+                {
+                    "name": "tool.execution.execute_trade",
+                    "attributes": {"action": "execute_trade"},
+                    "start_time": 300,
+                    "end_time": 400,
+                }
+            ],
         }
 
         # Scenario 3: Violation (Executed despite DENY)
         trace_violation_deny = {
             "trace_id": "t3",
             "spans": [
-                {"name": "governance.check", "attributes": {"governance.decision": "DENY"}, "start_time": 500, "end_time": 501},
-                {"name": "tool.execution.execute_trade", "attributes": {"action": "execute_trade"}, "start_time": 502, "end_time": 600}
-            ]
+                {
+                    "name": "governance.check",
+                    "attributes": {"governance.decision": "DENY"},
+                    "start_time": 500,
+                    "end_time": 501,
+                },
+                {
+                    "name": "tool.execution.execute_trade",
+                    "attributes": {"action": "execute_trade"},
+                    "start_time": 502,
+                    "end_time": 600,
+                },
+            ],
         }
 
         # Randomly return a batch
@@ -327,6 +381,7 @@ class MockTraceSource(TraceSource):
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
+
 
 def create_trace_source() -> TraceSource:
     """Read AUDITOR_TRACE_SOURCE and return the appropriate TraceSource instance.
@@ -356,6 +411,7 @@ def create_trace_source() -> TraceSource:
 # TraceAuditor
 # ---------------------------------------------------------------------------
 
+
 class TraceAuditor:
     """
     Automated Auditor (Phase 3).
@@ -379,7 +435,7 @@ class TraceAuditor:
         execution_spans = [s for s in spans if "tool.execution" in s["name"]]
 
         if not execution_spans:
-            return # No risky action, no audit needed
+            return  # No risky action, no audit needed
 
         # Find governance spans
         gov_spans = [s for s in spans if "governance.check" in s["name"]]
@@ -395,7 +451,9 @@ class TraceAuditor:
             valid_check_found = False
             for gov_span in gov_spans:
                 is_preceding = gov_span["end_time"] <= exec_span["start_time"]
-                is_allowed = gov_span["attributes"].get("governance.decision") == "ALLOW"
+                is_allowed = (
+                    gov_span["attributes"].get("governance.decision") == "ALLOW"
+                )
 
                 if is_preceding and is_allowed:
                     valid_check_found = True
@@ -403,10 +461,15 @@ class TraceAuditor:
 
             if not valid_check_found:
                 # Determine specific reason
-                if any(s["attributes"].get("governance.decision") == "DENY" for s in gov_spans):
+                if any(
+                    s["attributes"].get("governance.decision") == "DENY"
+                    for s in gov_spans
+                ):
                     self.report_violation(trace["trace_id"], "Execution despite DENY")
                 else:
-                    self.report_violation(trace["trace_id"], "Orphaned Execution (No linking Check)")
+                    self.report_violation(
+                        trace["trace_id"], "Orphaned Execution (No linking Check)"
+                    )
 
     def report_violation(self, trace_id: str, reason: str):
         msg = f"🚨 AUDIT FAILURE | Trace: {trace_id} | Reason: {reason}"
@@ -416,7 +479,9 @@ class TraceAuditor:
     def run(self):
         logger.info("Starting Automated Auditor Loop...")
         # One-shot for demo; pass sensible defaults for service and lookback
-        traces = self.trace_source.fetch_traces(service_name="governance-gateway", lookback_minutes=60)
+        traces = self.trace_source.fetch_traces(
+            service_name="governance-gateway", lookback_minutes=60
+        )
         for trace in traces:
             self.audit_trace(trace)
 
@@ -424,6 +489,7 @@ class TraceAuditor:
             logger.info(f"Audit Complete. Found {len(self.violations)} violations.")
         else:
             logger.info("Audit Complete. System is Clean.")
+
 
 if __name__ == "__main__":
     import argparse
@@ -454,7 +520,6 @@ if __name__ == "__main__":
         )
         os.environ["AUDITOR_TRACE_SOURCE"] = "mock"
         # Re-read the module-level constant so create_trace_source() picks it up.
-        import importlib, sys  # noqa: E401
         _AUDITOR_TRACE_SOURCE = "mock"
 
     auditor = TraceAuditor()

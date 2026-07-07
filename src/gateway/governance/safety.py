@@ -65,6 +65,7 @@ def __getattr__(name: str):
     )
 
     import importlib
+
     module = importlib.import_module(canonical)
     return getattr(module, name)
 

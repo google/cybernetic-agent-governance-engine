@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import json
+import logging
 import os
-from typing import Any, Literal
+from typing import Any
 
 import httpx
 from opentelemetry import trace
-from pydantic import BaseModel, Field
 
 from src.governed_financial_advisor.infrastructure.mcp_client import get_mcp_client
 
@@ -72,15 +71,19 @@ async def _call_opa_direct(input_data: dict) -> str:
 
 # --- TOOLS (Real Implementations via Gateway) ---
 
+
 async def check_market_status(symbol: str) -> str:
     """
     Checks real market status via Gateway (MCP).
     """
     try:
-        return await get_mcp_client().call_tool("check_market_status", {"symbol": symbol})
+        return await get_mcp_client().call_tool(
+            "check_market_status", {"symbol": symbol}
+        )
     except Exception as e:
         logger.error(f"Market Check Failed: {e}")
         return f"ERROR: Could not fetch market status: {e}"
+
 
 async def verify_policy_opa(action: str, params: str) -> str:
     """
@@ -99,7 +102,9 @@ async def verify_policy_opa(action: str, params: str) -> str:
                 cleaned_params = params.replace("'", '"')
                 params_dict = json.loads(cleaned_params)
             except json.JSONDecodeError as e:
-                logger.warning("Failed to parse tool arguments as JSON: %s. params=%r", e, params)
+                logger.warning(
+                    "Failed to parse tool arguments as JSON: %s. params=%r", e, params
+                )
                 params_dict = {"description": params}
         elif isinstance(params, dict):
             params_dict = params
@@ -121,6 +126,7 @@ async def verify_policy_opa(action: str, params: str) -> str:
         logger.error(f"OPA Check Failed: {e}")
         return f"DENIED: System Error: {e}"
 
+
 async def verify_semantic_nemo(text: str) -> str:
     """
     Checks Semantic Safety via in-process NeMo guardrails (no MCP dependency).
@@ -133,10 +139,10 @@ async def verify_semantic_nemo(text: str) -> str:
         span.set_attribute("langfuse.observation.type", "span")
         span.set_attribute("nemo.input_length", len(text))
         try:
+            from src.gateway.governance.nemo.manager import validate_with_nemo
             from src.governed_financial_advisor.graph.nodes.guardrail_node import (
                 get_nemo_rails,
             )
-            from src.gateway.governance.nemo.manager import validate_with_nemo
 
             rails = get_nemo_rails()
             is_safe, reason = await validate_with_nemo(text, rails)
@@ -150,7 +156,10 @@ async def verify_semantic_nemo(text: str) -> str:
             logger.error(f"Semantic Check Failed: {e}")
             return f"BLOCKED: System Error: {e}"
 
-async def simulate_governance_check(target_tool: str, target_params: dict[str, Any], risk_profile: str = "Medium") -> dict[str, Any]:
+
+async def simulate_governance_check(
+    target_tool: str, target_params: dict[str, Any], risk_profile: str = "Medium"
+) -> dict[str, Any]:
     """
     Calls the Gateway's SymbolicGovernor to perform a dry-run simulation check.
 
@@ -167,8 +176,8 @@ async def simulate_governance_check(target_tool: str, target_params: dict[str, A
             {
                 "target_tool": target_tool,
                 "target_params": target_params,
-                "risk_profile": risk_profile
-            }
+                "risk_profile": risk_profile,
+            },
         )
     except Exception as e:
         logger.error(f"Safety Simulation Failed: {e}")
@@ -177,6 +186,7 @@ async def simulate_governance_check(target_tool: str, target_params: dict[str, A
 
 # Backward-compatible alias — remove once all callers are updated
 check_safety_constraints = simulate_governance_check
+
 
 # --- NEW: SAFETY INTERVENTION TOOL (Module 5) ---
 async def safety_intervention(reason: str) -> str:
@@ -187,27 +197,31 @@ async def safety_intervention(reason: str) -> str:
     logger.warning(f"🛑 Evaluator Triggering Intervention: {reason}")
     try:
         # Call the intervention tool on Gateway (which sets Redis key)
-        return await get_mcp_client().call_tool("trigger_safety_intervention", {"reason": reason})
+        return await get_mcp_client().call_tool(
+            "trigger_safety_intervention", {"reason": reason}
+        )
     except Exception as e:
         logger.critical(f"FATAL: Could not trigger intervention: {e}")
         return f"ERROR: Intervention Failed: {e}"
 
+
 # --- AGENT DEFINITION ---
 
+from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
-from langchain_core.messages import SystemMessage
 
 _SYSTEM_PROMPT = """You are a policy evaluator agent for the Cybernetic Governance Engine.
 Your role is to evaluate whether AI agent actions comply with governance policies,
 risk thresholds, and regulatory requirements. Use the provided tools to assess compliance."""
 
+
 def build_evaluator_agent() -> Any:
     """Build and return the evaluator agent as a compiled LangGraph.
-    
+
     Returns:
         A compiled LangGraph (CompiledStateGraph) ready to be invoked with messages.
-        
+
     Note:
         In LangChain v1.x / LangGraph 1.1.0+, create_react_agent returns a compiled
         graph optimized for LangGraph state management, not an AgentExecutor.
@@ -239,11 +253,9 @@ def build_evaluator_agent() -> Any:
     # LangGraph 1.1.0+ prebuilt agent — returns a compiled graph
     # state_modifier replaces the old ChatPromptTemplate pattern
     agent_graph = create_react_agent(
-        model=llm,
-        tools=tools,
-        state_modifier=SystemMessage(content=_SYSTEM_PROMPT)
+        model=llm, tools=tools, state_modifier=SystemMessage(content=_SYSTEM_PROMPT)
     )
-    
+
     return agent_graph
 
 
@@ -255,7 +267,7 @@ _evaluator_agent: Any = None
 
 def get_evaluator_agent() -> Any:
     """Get or create the evaluator agent LangGraph.
-    
+
     Returns:
         A compiled LangGraph (CompiledStateGraph) that can be invoked with:
         await agent.ainvoke({"messages": [("user", "query")]})

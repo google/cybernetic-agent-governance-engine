@@ -71,7 +71,7 @@ import os
 import threading
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger("Gateway.Governance.Constants")
 
@@ -79,6 +79,7 @@ logger = logging.getLogger("Gateway.Governance.Constants")
 # ---------------------------------------------------------------------------
 # Secure environment variable helper
 # ---------------------------------------------------------------------------
+
 
 def _require_env(key: str, fallback: str, *, sensitive: bool = True) -> str:
     """Return the value of environment variable *key*, or *fallback* in dev.
@@ -104,7 +105,9 @@ def _require_env(key: str, fallback: str, *, sensitive: bool = True) -> str:
     value = os.environ.get(key)
     if value:
         return value
-    cage_env = os.environ.get("CAGE_ENV", "prod").lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
+    cage_env = os.environ.get(
+        "CAGE_ENV", "prod"
+    ).lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
     if cage_env == "prod" and sensitive:
         raise RuntimeError(
             f"Required environment variable {key!r} is not set in production. "
@@ -114,6 +117,7 @@ def _require_env(key: str, fallback: str, *, sensitive: bool = True) -> str:
         "Using fallback for %s — set this in production", key
     )
     return fallback
+
 
 # ---------------------------------------------------------------------------
 # Supported deployment regions
@@ -126,6 +130,7 @@ _DEFAULT_REGION = "US_FED"
 # ---------------------------------------------------------------------------
 # Internal Control ID Enum
 # ---------------------------------------------------------------------------
+
 
 class GovernanceControl(Enum):
     """Stable internal control identifiers.
@@ -168,6 +173,7 @@ class GovernanceControl(Enum):
 # Singleton ControlRegistry
 # ---------------------------------------------------------------------------
 
+
 class ControlRegistry:
     """Thread-safe singleton that resolves GovernanceControl IDs to regulatory metadata.
 
@@ -188,9 +194,9 @@ class ControlRegistry:
         KeyError: If a requested CTRL_* ID is absent from the active registry.
     """
 
-    _instance: "ControlRegistry | None" = None
+    _instance: ControlRegistry | None = None
     _lock: threading.RLock = threading.RLock()
-    _mappings: Dict[str, Any] = {}
+    _mappings: dict[str, Any] = {}
     _active_region: str = _DEFAULT_REGION
     _active_hash: str = ""
 
@@ -199,7 +205,7 @@ class ControlRegistry:
     _COMPLIANCE_DIR: Path = _REPO_ROOT / "config" / "compliance"
     _LEGACY_PATH: Path = _REPO_ROOT / "config" / "control_mappings.json"
 
-    def __new__(cls) -> "ControlRegistry":
+    def __new__(cls) -> ControlRegistry:
         if cls._instance is None:
             with cls._lock:
                 # Double-checked locking — prevents redundant loads under
@@ -247,7 +253,7 @@ class ControlRegistry:
     # Internal loading
     # ------------------------------------------------------------------
 
-    def _load_registry(self, region: Optional[str] = None) -> None:
+    def _load_registry(self, region: str | None = None) -> None:
         """Load the JSON profile for the given or environment-resolved region.
 
         Resolution order:
@@ -257,14 +263,18 @@ class ControlRegistry:
           4. Legacy ``config/control_mappings.json`` if regional file missing.
         """
         if region is None:
-            region = os.getenv("CAGE_DEPLOYMENT_REGION", _DEFAULT_REGION).strip().upper()
+            region = (
+                os.getenv("CAGE_DEPLOYMENT_REGION", _DEFAULT_REGION).strip().upper()
+            )
 
         # Validate region string
         if region not in SUPPORTED_REGIONS:
             logger.warning(
                 "ControlRegistry: unknown region '%s'. Supported: %s. "
                 "Falling back to default '%s'.",
-                region, sorted(SUPPORTED_REGIONS), _DEFAULT_REGION,
+                region,
+                sorted(SUPPORTED_REGIONS),
+                _DEFAULT_REGION,
             )
             region = _DEFAULT_REGION
 
@@ -280,16 +290,22 @@ class ControlRegistry:
             region = "LEGACY"
 
         try:
-            with open(config_path, "r") as fh:
+            with open(config_path) as fh:
                 raw = json.load(fh)
             # Strip meta-keys that start with "_"
-            self._mappings = {k: v for k, v in raw.items() if not k.startswith("_") and isinstance(v, dict)}
+            self._mappings = {
+                k: v
+                for k, v in raw.items()
+                if not k.startswith("_") and isinstance(v, dict)
+            }
             self.__class__._active_region = region
-            
+
             # Canonical stringification: sorted keys, compact separators
             normalized_raw = self._coerce_floats(raw)
-            canonical_json = json.dumps(normalized_raw, sort_keys=True, separators=(',', ':'))
-            computed_hash = hashlib.sha256(canonical_json.encode('utf-8')).hexdigest()
+            canonical_json = json.dumps(
+                normalized_raw, sort_keys=True, separators=(",", ":")
+            )
+            computed_hash = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
             with self.__class__._lock:
                 self.__class__._active_hash = computed_hash
@@ -317,7 +333,7 @@ class ControlRegistry:
     # Public API
     # ------------------------------------------------------------------
 
-    def get_mapping(self, control: GovernanceControl) -> Dict[str, Any]:
+    def get_mapping(self, control: GovernanceControl) -> dict[str, Any]:
         """Return the full regulatory metadata dict for a GovernanceControl.
 
         Args:
@@ -343,7 +359,7 @@ class ControlRegistry:
             )
         return self._mappings[control_id]
 
-    def get_mapping_safe(self, control: GovernanceControl) -> Optional[Dict[str, Any]]:
+    def get_mapping_safe(self, control: GovernanceControl) -> dict[str, Any] | None:
         """Return the mapping dict, or None if the control is absent in this region.
 
         Use this variant for region-specific controls (e.g. CTRL_FRIA_006) that
@@ -433,27 +449,29 @@ class ControlRegistry:
 
 # HITL SLA citations — jurisdiction-specific escalation authority
 HITL_CITATIONS: dict[str, str] = {
-    "US_FED":   "SR 26-2 §3.2 (Federal Reserve HITL SLA — 4 hours)",
-    "EU_ECB":   "DORA Art. 10 (ICT incident management — 2 hours for major incidents)",
+    "US_FED": "SR 26-2 §3.2 (Federal Reserve HITL SLA — 4 hours)",
+    "EU_ECB": "DORA Art. 10 (ICT incident management — 2 hours for major incidents)",
     "APAC_MAS": "MAS FEAT §3.2 (human oversight of AI decisions — 1 hour)",
 }
 HITL_CITATION_DEFAULT: str = "ISO 42001 A.8.4 (AI system operation controls)"
 
 # PII audit retention authority — jurisdiction-specific data retention law
 PII_RETENTION_AUTHORITY: dict[str, str] = {
-    "US_FED":   "FISMA AU-11",
-    "EU_ECB":   "GDPR Art. 5(1)(e)",
+    "US_FED": "FISMA AU-11",
+    "EU_ECB": "GDPR Art. 5(1)(e)",
     "APAC_MAS": "MAS Notice 655 §4.3",
 }
 PII_RETENTION_AUTHORITY_DEFAULT: str = "ISO 42001 A.9.2"
 
 # Prompt injection detection citation — jurisdiction-specific robustness authority
 INJECTION_CITATION: dict[str, str] = {
-    "US_FED":   "AI 600-1 §2.3 (prompt injection — US Federal posture)",
-    "EU_ECB":   "EU AI Act Art. 9 (risk management system — robustness)",
+    "US_FED": "AI 600-1 §2.3 (prompt injection — US Federal posture)",
+    "EU_ECB": "EU AI Act Art. 9 (risk management system — robustness)",
     "APAC_MAS": "MAS FEAT Principle 2 (Ethics — robustness against adversarial inputs)",
 }
-INJECTION_CITATION_DEFAULT: str = "ISO 42001 A.9.2 (data transfer to suppliers — input validation)"
+INJECTION_CITATION_DEFAULT: str = (
+    "ISO 42001 A.9.2 (data transfer to suppliers — input validation)"
+)
 
 # PII audit retention authority field default for Pydantic schema
 PII_AUDIT_RETENTION_AUTHORITY_FIELD_DEFAULT: str = "ISO 42001 A.9.2"

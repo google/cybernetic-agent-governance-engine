@@ -81,14 +81,14 @@ def _c(code: str, text: str) -> str:
     return f"\033[{code}m{text}\033[0m" if _TTY else text
 
 
-RED     = lambda t: _c("31;1", t)
-GREEN   = lambda t: _c("32;1", t)
-YELLOW  = lambda t: _c("33;1", t)
-CYAN    = lambda t: _c("36;1", t)
+RED = lambda t: _c("31;1", t)
+GREEN = lambda t: _c("32;1", t)
+YELLOW = lambda t: _c("33;1", t)
+CYAN = lambda t: _c("36;1", t)
 MAGENTA = lambda t: _c("35;1", t)
-BOLD    = lambda t: _c("1", t)
-DIM     = lambda t: _c("2", t)
-WHITE   = lambda t: _c("97", t)
+BOLD = lambda t: _c("1", t)
+DIM = lambda t: _c("2", t)
+WHITE = lambda t: _c("97", t)
 
 
 def _hr(char: str = "─", width: int = 76) -> None:
@@ -134,6 +134,7 @@ def _pause(interactive: bool) -> None:
 # ACT 1 — Multi-Agent Concurrency Race
 # ---------------------------------------------------------------------------
 
+
 def act1_concurrency_race(interactive: bool) -> bool:
     """
     Two agents fire simultaneously against a $200k daily cap with $180k trades.
@@ -157,15 +158,15 @@ def act1_concurrency_race(interactive: bool) -> bool:
 
     from src.gateway.governance.fiscal_limit_guard import FiscalLimitGuard
 
-    CAP_USD   = 200_000.0
+    CAP_USD = 200_000.0
     TRADE_USD = 180_000.0
 
     fake_redis = fakeredis.FakeRedis(decode_responses=True)
     guard = FiscalLimitGuard(fake_redis, daily_cap_usd=CAP_USD, reservation_ttl=300)
 
     agents = [
-        ("trading-agent",   TRADE_USD),
-        ("hedging-agent",   TRADE_USD),
+        ("trading-agent", TRADE_USD),
+        ("hedging-agent", TRADE_USD),
         ("liquidity-agent", TRADE_USD),
     ]
 
@@ -217,7 +218,9 @@ def act1_concurrency_race(interactive: bool) -> bool:
 
     # Show Saga rollback path
     winning_token = next(t for t in results.values() if not t.rejected)
-    print(f"\n  {BOLD('Saga rollback path')} — simulating trade failure on the winning agent:")
+    print(
+        f"\n  {BOLD('Saga rollback path')} — simulating trade failure on the winning agent:"
+    )
     remaining_before = guard.remaining_usd()
     guard.release(winning_token)
     remaining_after = guard.remaining_usd()
@@ -233,6 +236,7 @@ def act1_concurrency_race(interactive: bool) -> bool:
 # ---------------------------------------------------------------------------
 # ACT 2 — HITL Approval with Mandatory Rationale
 # ---------------------------------------------------------------------------
+
 
 def act2_hitl_rationale(interactive: bool, evidence_dir: Path) -> bool:
     """
@@ -250,22 +254,24 @@ def act2_hitl_rationale(interactive: bool, evidence_dir: Path) -> bool:
 
     import examples.telemetry as tel_module
 
-    date_str   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     chain_path = evidence_dir / f"evidence_chain_{date_str}.ndjson"
-    view_path  = evidence_dir / f"view_access_log_{date_str}.ndjson"
+    view_path = evidence_dir / f"view_access_log_{date_str}.ndjson"
 
-    thread_id  = f"demo-thread-{uuid.uuid4().hex[:8]}"
+    thread_id = f"demo-thread-{uuid.uuid4().hex[:8]}"
     trade_info = {
-        "ticker":     "TSLA",
-        "quantity":   150,
-        "price":      633.40,
-        "total_usd":  95_010.0,
+        "ticker": "TSLA",
+        "quantity": 150,
+        "price": 633.40,
+        "total_usd": 95_010.0,
         "risk_score": 0.82,
     }
 
     _step("Graph interrupted", f"thread_id={thread_id}")
-    _info(f"Trade: {trade_info['quantity']} × {trade_info['ticker']}  "
-          f"@ ${trade_info['price']:,.2f}  =  ${trade_info['total_usd']:,.0f}")
+    _info(
+        f"Trade: {trade_info['quantity']} × {trade_info['ticker']}  "
+        f"@ ${trade_info['price']:,.2f}  =  ${trade_info['total_usd']:,.0f}"
+    )
     _warn(f"risk_score={trade_info['risk_score']}  >  threshold=0.70  →  HITL required")
     print()
 
@@ -273,24 +279,34 @@ def act2_hitl_rationale(interactive: bool, evidence_dir: Path) -> bool:
     _step("Testing API validation — submitting empty rationale…")
     try:
         from src.governed_financial_advisor.server import ApprovalResumeRequest
+
         ApprovalResumeRequest(approved=True, reviewer="lars@example.com", rationale="")
         _fail("Expected ValidationError — empty rationale should have been rejected")
         return False
     except Exception as exc:
-        _ok(f"422 Unprocessable Entity — empty rationale rejected  ({type(exc).__name__})")
+        _ok(
+            f"422 Unprocessable Entity — empty rationale rejected  ({type(exc).__name__})"
+        )
 
     print()
 
     # --- Prompt for rationale (or use default in non-interactive mode) ---
     if interactive:
-        print(f"  {YELLOW('►')} Enter approval rationale (press ENTER for demo default):")
-        print(f"  {DIM('  e.g. Trade aligns with IPS; risk score within mandate tolerance.')}")
+        print(
+            f"  {YELLOW('►')} Enter approval rationale (press ENTER for demo default):"
+        )
+        print(
+            f"  {DIM('  e.g. Trade aligns with IPS; risk score within mandate tolerance.')}"
+        )
         raw = input(f"  {BOLD('Rationale:')} ").strip()
-        rationale = raw or "Trade confirmed within client IPS mandate; drawdown 0.3% < 4.5% CBF limit; approved per SR 11-7 §3.2."
-        approved  = True
+        rationale = (
+            raw
+            or "Trade confirmed within client IPS mandate; drawdown 0.3% < 4.5% CBF limit; approved per SR 11-7 §3.2."
+        )
+        approved = True
     else:
         rationale = "Trade confirmed within client IPS mandate; drawdown 0.3% < 4.5% CBF limit; approved per SR 11-7 §3.2."
-        approved  = True
+        approved = True
 
     reviewer = "lars.ahlfors@example.com"
 
@@ -313,7 +329,7 @@ def act2_hitl_rationale(interactive: bool, evidence_dir: Path) -> bool:
     _ok(f"Evidence record written  →  {decision_str}")
     _info(f"hash   : {record_hash[:32]}…")
     _info(f"thread : {thread_id}")
-    _info(f"ISO    : A.8.4 · A.7.2 · §6.1    NIST: GOVERN-5 · SC-4")
+    _info("ISO    : A.8.4 · A.7.2 · §6.1    NIST: GOVERN-5 · SC-4")
     print()
 
     # Show the raw record
@@ -321,8 +337,14 @@ def act2_hitl_rationale(interactive: bool, evidence_dir: Path) -> bool:
     _step("Raw evidence record (cage-intent/1.0):")
     print()
     display_keys = [
-        "event_type", "thread_id", "decision", "reviewer",
-        "rationale", "iso_controls", "nist_controls", "iso_42001_clause",
+        "event_type",
+        "thread_id",
+        "decision",
+        "reviewer",
+        "rationale",
+        "iso_controls",
+        "nist_controls",
+        "iso_42001_clause",
     ]
     for k in display_keys:
         v = rec.get(k, "")
@@ -336,7 +358,9 @@ def act2_hitl_rationale(interactive: bool, evidence_dir: Path) -> bool:
     # Simulate graph resume
     _step("Graph resuming…  Command(resume={approved, reviewer, rationale, timestamp})")
     time.sleep(0.3)
-    _ok(f"Thread {thread_id} resumed  →  routing to {'executor' if approved else 'rejection'}")
+    _ok(
+        f"Thread {thread_id} resumed  →  routing to {'executor' if approved else 'rejection'}"
+    )
 
     _pause(interactive)
     return True
@@ -345,6 +369,7 @@ def act2_hitl_rationale(interactive: bool, evidence_dir: Path) -> bool:
 # ---------------------------------------------------------------------------
 # ACT 3 — Tamper-Evident Hash Chain Verification
 # ---------------------------------------------------------------------------
+
 
 def act3_verify_chain(interactive: bool, evidence_dir: Path) -> bool:
     """
@@ -360,7 +385,7 @@ def act3_verify_chain(interactive: bool, evidence_dir: Path) -> bool:
 
     import examples.telemetry as tel_module
 
-    date_str   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     chain_path = evidence_dir / f"evidence_chain_{date_str}.ndjson"
 
     if not chain_path.exists() or not chain_path.read_text().strip():
@@ -374,7 +399,7 @@ def act3_verify_chain(interactive: bool, evidence_dir: Path) -> bool:
         patch.object(tel_module, "_EVIDENCE_CHAIN_PATH", chain_path),
         patch.object(tel_module, "_EVIDENCE_DIR", evidence_dir),
     ):
-        tel    = tel_module.PlaygroundTelemetry()
+        tel = tel_module.PlaygroundTelemetry()
         valid, count = tel.verify_chain()
 
     elapsed = (time.perf_counter() - t0) * 1000
@@ -391,17 +416,19 @@ def act3_verify_chain(interactive: bool, evidence_dir: Path) -> bool:
     for i, line in enumerate(lines):
         rec = json.loads(line)
         etype = rec.get("event_type", rec.get("scenario_id", "?"))
-        dec   = rec.get("decision", "")
-        h     = rec.get("record_hash", "")[:16]
-        print(f"    [{i:02d}] {CYAN(etype):<28} {GREEN(dec) if 'APPROVED' in dec else (RED(dec) if 'REJECTED' in dec else YELLOW(dec)):<12} hash={DIM(h)}…")
+        dec = rec.get("decision", "")
+        h = rec.get("record_hash", "")[:16]
+        print(
+            f"    [{i:02d}] {CYAN(etype):<28} {GREEN(dec) if 'APPROVED' in dec else (RED(dec) if 'REJECTED' in dec else YELLOW(dec)):<12} hash={DIM(h)}…"
+        )
 
     # ── Tamper demonstration ──────────────────────────────────────────────────
     print()
     _step("Tamper test — mutating rationale in record [00]…")
     lines = chain_path.read_text().splitlines()
-    rec0  = json.loads(lines[0])
+    rec0 = json.loads(lines[0])
     original_rationale = rec0.get("rationale", rec0.get("decision", ""))
-    rec0["rationale"]  = "TAMPERED — unauthorised post-hoc edit"
+    rec0["rationale"] = "TAMPERED — unauthorised post-hoc edit"
     lines[0] = json.dumps(rec0)
     chain_path.write_text("\n".join(lines) + "\n")
 
@@ -413,14 +440,16 @@ def act3_verify_chain(interactive: bool, evidence_dir: Path) -> bool:
         valid2, bad_at = tel2.verify_chain()
 
     if not valid2:
-        _ok(f"Tamper detected at record [{bad_at - 1:02d}]  →  chain integrity FAILED  ✓")
+        _ok(
+            f"Tamper detected at record [{bad_at - 1:02d}]  →  chain integrity FAILED  ✓"
+        )
     else:
         _fail("Tamper NOT detected — hash chain is broken")
         return False
 
     # Restore
     rec0["rationale"] = original_rationale
-    lines[0]          = json.dumps(rec0)
+    lines[0] = json.dumps(rec0)
     chain_path.write_text("\n".join(lines) + "\n")
     _info("Original record restored.")
 
@@ -432,16 +461,26 @@ def act3_verify_chain(interactive: bool, evidence_dir: Path) -> bool:
 # Summary table
 # ---------------------------------------------------------------------------
 
+
 def _summary(results: dict[str, bool]) -> None:
     _banner("DEMO COMPLETE · Governance Summary", WHITE)
 
     rows = [
-        ("ACT 1", "FiscalLimitGuard atomic pre-reservation",
-         "Redis WATCH/MULTI/EXEC  ·  TOCTOU eliminated"),
-        ("ACT 2", "HITL mandatory rationale  →  evidence chain",
-         "ISO 42001 A.8.4 · A.7.2 · §6.1  ·  NIST GOVERN-5"),
-        ("ACT 3", "SHA-256 hash chain verification + tamper proof",
-         "cage-intent/1.0  ·  tamper detection <1 ms/record"),
+        (
+            "ACT 1",
+            "FiscalLimitGuard atomic pre-reservation",
+            "Redis WATCH/MULTI/EXEC  ·  TOCTOU eliminated",
+        ),
+        (
+            "ACT 2",
+            "HITL mandatory rationale  →  evidence chain",
+            "ISO 42001 A.8.4 · A.7.2 · §6.1  ·  NIST GOVERN-5",
+        ),
+        (
+            "ACT 3",
+            "SHA-256 hash chain verification + tamper proof",
+            "cage-intent/1.0  ·  tamper detection <1 ms/record",
+        ),
     ]
 
     for (act, title, detail), ok in zip(rows, results.values()):
@@ -468,17 +507,22 @@ def _summary(results: dict[str, bool]) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="CAGE Governance-as-Code · Three-Act Demo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--no-pause", action="store_true",
+        "--no-pause",
+        action="store_true",
         help="Skip inter-act pause prompts (non-interactive / CI mode)",
     )
     parser.add_argument(
-        "--act", type=int, choices=[1, 2, 3], default=None,
+        "--act",
+        type=int,
+        choices=[1, 2, 3],
+        default=None,
         help="Run a single act (default: all three)",
     )
     args = parser.parse_args()
@@ -499,11 +543,13 @@ def main() -> int:
             if args.act in (None, 3):
                 # If running standalone, seed a record so verification has data
                 if args.act == 3:
-                    import examples.telemetry as tel_module
                     from unittest.mock import patch as _patch
-                    date_str   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+                    import examples.telemetry as tel_module
+
+                    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     chain_path = evidence_dir / f"evidence_chain_{date_str}.ndjson"
-                    view_path  = evidence_dir / f"view_access_log_{date_str}.ndjson"
+                    view_path = evidence_dir / f"view_access_log_{date_str}.ndjson"
                     with (
                         _patch.object(tel_module, "_EVIDENCE_CHAIN_PATH", chain_path),
                         _patch.object(tel_module, "_VIEW_ACCESS_LOG_PATH", view_path),

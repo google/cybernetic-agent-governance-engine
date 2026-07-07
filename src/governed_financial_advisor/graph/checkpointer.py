@@ -101,6 +101,7 @@ def get_checkpointer(redis_url: str | None = None) -> BaseCheckpointSaver:
     # Parse hostname for Sentinel check
     try:
         from urllib.parse import urlparse
+
         parsed = urlparse(redis_url)
         host = parsed.hostname or redis_host or ""
     except Exception:
@@ -110,8 +111,9 @@ def get_checkpointer(redis_url: str | None = None) -> BaseCheckpointSaver:
     if host and host.lower() not in ["", "none", "false"]:
         try:
             import socket
-            from redis.asyncio.sentinel import Sentinel
+
             from langgraph.checkpoint.redis import AsyncRedisSaver
+            from redis.asyncio.sentinel import Sentinel
 
             # Probe Sentinel port 26379
             s_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -120,11 +122,15 @@ def get_checkpointer(redis_url: str | None = None) -> BaseCheckpointSaver:
             s_sock.close()
 
             if result == 0:
-                logger.info("Sentinel detected at %s:26379. Resolving master 'mymaster' for checkpointer...", host)
+                logger.info(
+                    "Sentinel detected at %s:26379. Resolving master 'mymaster' for checkpointer...",
+                    host,
+                )
                 password = os.environ.get("REDIS_PASSWORD")
                 if not password and redis_url:
                     try:
                         from urllib.parse import urlparse
+
                         parsed_url = urlparse(redis_url)
                         if parsed_url.password:
                             password = parsed_url.password
@@ -132,21 +138,24 @@ def get_checkpointer(redis_url: str | None = None) -> BaseCheckpointSaver:
                         pass
                 sentinel = Sentinel(
                     [(host, 26379)],
-                    sentinel_kwargs={'password': password} if password else None,
+                    sentinel_kwargs={"password": password} if password else None,
                     socket_connect_timeout=2.0,
-                    socket_timeout=5.0
+                    socket_timeout=5.0,
                 )
                 redis_client = sentinel.master_for(
-                    'mymaster',
+                    "mymaster",
                     password=password if password else None,
-                    decode_responses=True
+                    decode_responses=True,
                 )
                 logger.info("Using Sentinel master client for AsyncRedisSaver.")
                 os.environ["CHECKPOINTER_TYPE"] = "redis"
                 _CHECKPOINTER_TYPE = "redis"
                 return AsyncRedisSaver(redis_client=redis_client)
         except Exception as sentinel_exc:
-            logger.warning("Sentinel check/resolution failed, falling back to standard Redis checkpointer: %s", sentinel_exc)
+            logger.warning(
+                "Sentinel check/resolution failed, falling back to standard Redis checkpointer: %s",
+                sentinel_exc,
+            )
 
     # 4. Try to load standard Redis Saver
     try:
@@ -160,19 +169,28 @@ def get_checkpointer(redis_url: str | None = None) -> BaseCheckpointSaver:
         # any request is served, rather than on the first live request.
         try:
             import redis as _redis_sync
-            _probe_client = _redis_sync.from_url(redis_url, socket_connect_timeout=2, socket_timeout=2)
+
+            _probe_client = _redis_sync.from_url(
+                redis_url, socket_connect_timeout=2, socket_timeout=2
+            )
             _probe_client.execute_command("JSON.SET", "__cage_probe__", "$", '{"ok":1}')
             _probe_client.delete("__cage_probe__")
             _probe_client.close()
             logger.info("RedisJSON capability probe passed — JSON.SET is supported.")
         except _redis_sync.exceptions.ResponseError as probe_exc:
-            if "unknown command" in str(probe_exc).lower() or "json" in str(probe_exc).lower():
+            if (
+                "unknown command" in str(probe_exc).lower()
+                or "json" in str(probe_exc).lower()
+            ):
                 return _set_memory_fallback_alerts(
                     f"Redis instance does not support RedisJSON (JSON.SET rejected): {probe_exc}. "
                     "Deploy Redis Stack (redis/redis-stack) to enable persistent checkpointing."
                 )
             # Other ResponseError (e.g. WRONGTYPE) — not a capability gap, proceed
-            logger.warning("RedisJSON probe returned unexpected ResponseError (proceeding): %s", probe_exc)
+            logger.warning(
+                "RedisJSON probe returned unexpected ResponseError (proceeding): %s",
+                probe_exc,
+            )
         except Exception as probe_exc:
             # Connection failure during probe — fall back
             return _set_memory_fallback_alerts(
@@ -189,7 +207,6 @@ def get_checkpointer(redis_url: str | None = None) -> BaseCheckpointSaver:
         )
     except Exception as exc:
         import traceback
+
         traceback.print_exc()
-        return _set_memory_fallback_alerts(
-            f"Redis connection failed: {exc}"
-        )
+        return _set_memory_fallback_alerts(f"Redis connection failed: {exc}")

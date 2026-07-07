@@ -89,11 +89,7 @@ def test_graph_entry_point():
     raw_graph = graph.get_graph()
 
     # __start__ must connect directly to nemo_guardrail (mandatory first node)
-    start_edges = [
-        (src, dst)
-        for src, dst, *_ in raw_graph.edges
-        if src == "__start__"
-    ]
+    start_edges = [(src, dst) for src, dst, *_ in raw_graph.edges if src == "__start__"]
     assert len(start_edges) >= 1, "Graph must have at least one edge from __start__"
     assert any(dst == "nemo_guardrail" for _, dst in start_edges), (
         "nemo_guardrail must be the mandatory first node from __start__ "
@@ -115,6 +111,7 @@ def test_graph_compilation_with_patched_redis():
         "src.governed_financial_advisor.graph.checkpointer.get_checkpointer"
     ) as mock_cp:
         from langgraph.checkpoint.memory import MemorySaver
+
         mock_cp.return_value = MemorySaver()
         graph = create_graph(redis_url="redis://localhost:6379")
         assert isinstance(graph, CompiledStateGraph)

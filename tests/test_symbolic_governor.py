@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, Mock
-from src.gateway.governance import SymbolicGovernor, GovernanceError
+
+from src.gateway.governance import GovernanceError, SymbolicGovernor
 
 pytestmark = pytest.mark.unit
+
 
 @pytest.mark.asyncio
 async def test_symbolic_governor_confidence_pass():
@@ -37,6 +40,7 @@ async def test_symbolic_governor_confidence_pass():
 
     # Should not raise exception
 
+
 @pytest.mark.asyncio
 async def test_symbolic_governor_confidence_fail():
     opa_client = AsyncMock()
@@ -55,6 +59,7 @@ async def test_symbolic_governor_confidence_fail():
     assert "Confidence" in str(excinfo.value)
     assert "CTRL_AGT_001" in str(excinfo.value)
     assert "Violation" in str(excinfo.value)
+
 
 @pytest.mark.asyncio
 async def test_symbolic_governor_opa_fail():
@@ -109,6 +114,7 @@ async def test_violation_payload_contains_legacy_citation():
     assert "legacy_citation" in err.payload
     assert "SR 26-2" in err.payload["legacy_citation"]
 
+
 @pytest.mark.asyncio
 async def test_symbolic_governor_cbf_fail():
     opa_client = AsyncMock()
@@ -129,6 +135,7 @@ async def test_symbolic_governor_cbf_fail():
 
     assert "Safety Violation (RBC/CBF)" in str(excinfo.value)
 
+
 @pytest.mark.asyncio
 async def test_symbolic_governor_consensus_fail():
     opa_client = AsyncMock()
@@ -138,7 +145,10 @@ async def test_symbolic_governor_consensus_fail():
     safety_filter.verify_action.return_value = "SAFE"
 
     consensus_engine = AsyncMock()
-    consensus_engine.check_consensus.return_value = {"status": "REJECT", "reason": "Too risky"}
+    consensus_engine.check_consensus.return_value = {
+        "status": "REJECT",
+        "reason": "Too risky",
+    }
 
     governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
 

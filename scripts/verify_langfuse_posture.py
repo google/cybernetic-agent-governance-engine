@@ -29,13 +29,14 @@ Exit codes:
     0 — all checks pass
     1 — any check fails
 """
+
+import argparse
+import base64
+import json
 import os
 import sys
-import argparse
-import json
-import base64
-from urllib.request import Request, urlopen
 from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 # Known project IDs — must match live Langfuse instance
 CAGE_PROJECT_ID = os.getenv("LANGFUSE_PROJECT_ID", "cmpugv47f000dwq07fqu86ral")
@@ -61,7 +62,9 @@ def check_env_vars(posture: str) -> bool:
         required.extend(PROD_EXTRA_VARS)
     missing = [v for v in required if not os.getenv(v)]
     if missing:
-        print(f"❌ Missing required environment variables for [{posture.upper()}]: {', '.join(missing)}")
+        print(
+            f"❌ Missing required environment variables for [{posture.upper()}]: {', '.join(missing)}"
+        )
         return False
     print(f"✅ All required environment variables for [{posture.upper()}] are present.")
     return True
@@ -103,7 +106,9 @@ def verify_live_isolation() -> bool:
     )
 
     if core_projects is None or comp_projects is None:
-        print("❌ Could not complete live validation — connection or authentication failure.")
+        print(
+            "❌ Could not complete live validation — connection or authentication failure."
+        )
         return False
 
     success = True
@@ -111,23 +116,37 @@ def verify_live_isolation() -> bool:
     # Core credentials must include cage-project and must NOT include cage-compliance
     if CAGE_PROJECT_ID in core_projects and CAGE_COMPLIANCE_ID not in core_projects:
         print(f"✅ Core credentials correctly map only to '{CAGE_PROJECT_ID}'")
-    elif CAGE_PROJECT_ID in core_projects and not os.getenv("LANGFUSE_COMPLIANCE_PROJECT_ID"):
+    elif CAGE_PROJECT_ID in core_projects and not os.getenv(
+        "LANGFUSE_COMPLIANCE_PROJECT_ID"
+    ):
         # Compliance project not yet provisioned — core check passes, compliance isolation pending
         print(f"✅ Core credentials map to '{CAGE_PROJECT_ID}'")
-        print(f"⚠️  Compliance project ID not set (LANGFUSE_COMPLIANCE_PROJECT_ID unset) — "
-              f"isolation check skipped; provision cage-compliance project to complete U-10")
+        print(
+            "⚠️  Compliance project ID not set (LANGFUSE_COMPLIANCE_PROJECT_ID unset) — "
+            "isolation check skipped; provision cage-compliance project to complete U-10"
+        )
     else:
-        print(f"❌ Core credentials isolation breach! Accessible projects: {core_projects}")
+        print(
+            f"❌ Core credentials isolation breach! Accessible projects: {core_projects}"
+        )
         success = False
 
     # Compliance credentials check — only if compliance project ID is configured
     compliance_project_id = os.getenv("LANGFUSE_COMPLIANCE_PROJECT_ID")
     if not compliance_project_id:
-        print(f"⚠️  Skipping compliance isolation check — LANGFUSE_COMPLIANCE_PROJECT_ID not set")
-    elif compliance_project_id in comp_projects and CAGE_PROJECT_ID not in comp_projects:
-        print(f"✅ Compliance credentials correctly map only to '{compliance_project_id}'")
+        print(
+            "⚠️  Skipping compliance isolation check — LANGFUSE_COMPLIANCE_PROJECT_ID not set"
+        )
+    elif (
+        compliance_project_id in comp_projects and CAGE_PROJECT_ID not in comp_projects
+    ):
+        print(
+            f"✅ Compliance credentials correctly map only to '{compliance_project_id}'"
+        )
     else:
-        print(f"❌ Compliance credentials isolation breach! Accessible projects: {comp_projects}")
+        print(
+            f"❌ Compliance credentials isolation breach! Accessible projects: {comp_projects}"
+        )
         success = False
 
     return success
@@ -150,7 +169,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    print(f"📋 Langfuse posture validation — [{args.posture.upper()}] (dry-run: {args.dry_run})")
+    print(
+        f"📋 Langfuse posture validation — [{args.posture.upper()}] (dry-run: {args.dry_run})"
+    )
     print("-" * 60)
 
     if not check_env_vars(args.posture):
@@ -159,7 +180,9 @@ def main() -> None:
     if not args.dry_run:
         if not verify_live_isolation():
             print("-" * 60)
-            print("❌ Validation FAILED: Posture isolation boundaries breached or unreachable.")
+            print(
+                "❌ Validation FAILED: Posture isolation boundaries breached or unreachable."
+            )
             sys.exit(1)
 
     print("-" * 60)
