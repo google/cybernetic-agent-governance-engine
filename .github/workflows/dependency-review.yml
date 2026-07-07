@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # GitHub's dependency review action checks for:
       # 1. New dependencies with known CVEs (blocks CRITICAL/HIGH by default)
@@ -30,7 +30,7 @@ jobs:
       # POAM-013: This blocks PRs that introduce >= specifiers without lock file entries
       # via the license/vulnerability enforcement below.
       - name: Dependency Review
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5
         with:
           # Fail on CRITICAL and HIGH vulnerabilities in new/changed dependencies
           fail-on-severity: high
