@@ -99,11 +99,11 @@ spec:
         - name: vllm
           # Standard vLLM OpenAI-compatible image with runai_streamer support for
           # streaming model weights from S3-compatible storage (GCS HMAC or AWS S3)
-          # To use a different registry (e.g., ECR, ACR, Docker Hub), override IMAGE_REGISTRY:
-          #   image: ${IMAGE_REGISTRY:-gcr.io}/laah-cybernetics/vllm-streamer:latest
-          # Or use kustomize: kustomize edit set image gcr.io/laah-cybernetics/vllm-streamer=<your-registry>/vllm-streamer:latest
+          # Set IMAGE_REGISTRY to your container registry prefix (e.g. gcr.io/your-project, ghcr.io/your-org)
+          # Override with: kubectl set image deployment/vllm-inference vllm=<your-registry>/vllm-streamer:latest
+          # Or use kustomize: kustomize edit set image gcr.io/YOUR_PROJECT_ID/vllm-streamer=<your-registry>/vllm-streamer:latest
           # IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
-          image: gcr.io/laah-cybernetics/vllm-streamer:latest
+          image: gcr.io/YOUR_PROJECT_ID/vllm-streamer:latest
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

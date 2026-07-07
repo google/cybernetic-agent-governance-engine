@@ -176,14 +176,14 @@ Source: `deployment/docker/`
 
 | Pipeline                    | Config                                                                                    | Builds                                                                    |
 | --------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Gateway                     | `deployment/docker/cloudbuild.gateway.yaml`                                               | `gcr.io/laah-cybernetics/gateway:latest` — Hybrid Gateway image           |
-| Governed Financial Advisor  | `deployment/docker/cloudbuild.advisor.yaml`                                               | `gcr.io/laah-cybernetics/governed-financial-advisor:latest` — Advisor image |
+| Gateway                     | `deployment/docker/cloudbuild.gateway.yaml`                                               | `gcr.io/YOUR_PROJECT_ID/gateway:latest` — Hybrid Gateway image           |
+| Governed Financial Advisor  | `deployment/docker/cloudbuild.advisor.yaml`                                               | `gcr.io/YOUR_PROJECT_ID/governed-financial-advisor:latest` — Advisor image |
 | Compliance Bridge           | `deployment/docker/cloudbuild.compliance.yaml`                                            | `gcr.io/$PROJECT_ID/compliance-bridge:latest` — Compliance Bridge image   |
 | AgentSight UI               | `deployment/docker/cloudbuild.ui.yaml`                                                    | `gcr.io/$PROJECT_ID/agentsight-ui:latest` — React dashboard image         |
 | vLLM                        | `deployment/docker/cloudbuild.vllm.yaml`                                                  | `gcr.io/$PROJECT_ID/vllm-streamer:latest` — vLLM inference image          |
 | Lula                        | `deployment/docker/cloudbuild.lula.yaml`                                                  | Lula compliance validator image                                           |
 
-**Build flow**: Cloud Build trigger → Docker build → push to GCR (`gcr.io/laah-cybernetics/`) → update Kubernetes Deployment via `kubectl rollout`.
+**Build flow**: Cloud Build trigger → Docker build → push to GCR (`gcr.io/YOUR_PROJECT_ID/`) → update Kubernetes Deployment via `kubectl rollout`.
 
 ### `$_SHORT_SHA` Substitution Fix (commit `e647ea3`)
 
@@ -211,12 +211,12 @@ steps:
       - '--tag=gcr.io/$PROJECT_ID/<image>:$_SHORT_SHA'
 ```
 
-**2026-06-03 deployment:** Both application images were built via Cloud Build and deployed to GKE cluster `gke_laah-cybernetics_us-central1-a_cage-dev`, namespace `governance-stack`. No Terraform/infrastructure files were modified. All pods verified running and healthy.
+**2026-06-03 deployment:** Both application images were built via Cloud Build and deployed to GKE cluster `<your-kubectl-context>`, namespace `governance-stack`. No Terraform/infrastructure files were modified. All pods verified running and healthy.
 
 | Image                                                    | Digest (sha256)                                                    |
 | -------------------------------------------------------- | ------------------------------------------------------------------ |
-| `gcr.io/laah-cybernetics/gateway:latest`                 | `sha256:f0e8f4170e90b37cb5809eff7de93d63a0c75a57c6a03f1ce6815421c4b8dc65` |
-| `gcr.io/laah-cybernetics/governed-financial-advisor:latest` | `sha256:f0e8f4170e90b37cb5809eff7de93d63a0c75a57c6a03f1ce6815421c4b8dc65` |
+| `gcr.io/YOUR_PROJECT_ID/gateway:latest`                 | `sha256:f0e8f4170e90b37cb5809eff7de93d63a0c75a57c6a03f1ce6815421c4b8dc65` |
+| `gcr.io/YOUR_PROJECT_ID/governed-financial-advisor:latest` | `sha256:f0e8f4170e90b37cb5809eff7de93d63a0c75a57c6a03f1ce6815421c4b8dc65` |
 
 ---
 
@@ -496,7 +496,7 @@ Pod startup and model weight loading represent a critical secondary latency fact
 | **GCS Fuse Image Streaming**  | ~2–5 minutes | No (GKE-only) | Lazy-pulling via GCS CSI driver; high runtime overhead and GKE proprietary lock-in. |
 | **MinIO + vLLM Tensorizer**   | **60–90 seconds** | **Yes** | Streams serialized shards from in-cluster S3-compatible MinIO; no POSIX mounting overhead. |
 
-> **Model Store Note:** GCS (`gs://laah-cybernetics-models/`) is the **primary** model artifact store. See `deployment/scripts/upload_to_gcs.py` for artifact upload. MinIO is used for Langfuse event storage only; vLLM Tensorizer cold-start streaming from MinIO is a secondary/fallback path.
+> **Model Store Note:** GCS (`gs://your-models-bucket/`) is the **primary** model artifact store. See `deployment/scripts/upload_to_gcs.py` for artifact upload. MinIO is used for Langfuse event storage only; vLLM Tensorizer cold-start streaming from MinIO is a secondary/fallback path.
 
 Model weights are pre-serialized to TensorSerializer format via a one-time GKE Job ([`deployment/k8s/tensorize-job.yaml`](../../deployment/k8s/tensorize-job.yaml)) and stored in the local `vllm-models` MinIO bucket. At pod startup, vLLM streams individual tensor shards on demand using `--load-format tensorizer`—completely eliminating posix file system locks and GKE CSI driver dependencies.
 

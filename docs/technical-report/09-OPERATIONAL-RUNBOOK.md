@@ -733,7 +733,7 @@ _This document is part of the CAGE Technical Report Series. See [README.md](READ
 
 ### 9.1 Session Summary
 
-On 2026-06-03, both application images were built via Cloud Build and deployed to GKE cluster `gke_laah-cybernetics_us-central1-a_cage-dev`, namespace `governance-stack`. No Terraform or Kubernetes infrastructure files were modified. All pods were verified running and healthy after deployment. Four test/fix/redeploy cycles were required to reach 0 failures.
+On 2026-06-03, both application images were built via Cloud Build and deployed to GKE cluster `<your-kubectl-context>`, namespace `governance-stack`. No Terraform or Kubernetes infrastructure files were modified. All pods were verified running and healthy after deployment. Four test/fix/redeploy cycles were required to reach 0 failures.
 
 **Final result:** 844 passed, 0 failed, 24 skipped (2026-06-03 GKE cycle).
 

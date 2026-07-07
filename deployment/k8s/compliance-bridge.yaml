@@ -39,11 +39,11 @@ spec:
       serviceAccountName: financial-advisor-sa
       containers:
         - name: compliance-bridge
-          # To use a different registry (e.g., ECR, ACR, Docker Hub), override IMAGE_REGISTRY:
-          #   image: ${IMAGE_REGISTRY:-gcr.io}/laah-cybernetics/compliance-bridge:latest
-          # Or use kustomize: kustomize edit set image gcr.io/laah-cybernetics/compliance-bridge=<your-registry>/compliance-bridge:latest
+          # Set IMAGE_REGISTRY to your container registry prefix (e.g. gcr.io/your-project, ghcr.io/your-org)
+          # Override with: kubectl set image deployment/compliance-bridge compliance-bridge=<your-registry>/compliance-bridge:latest
+          # Or use kustomize: kustomize edit set image gcr.io/YOUR_PROJECT_ID/compliance-bridge=<your-registry>/compliance-bridge:latest
           # IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
-          image: gcr.io/laah-cybernetics/compliance-bridge:latest
+          image: gcr.io/YOUR_PROJECT_ID/compliance-bridge:latest
           imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false
@@ -142,7 +142,7 @@ spec:
 
             # vLLM remediation model settings (preserved from live deployment)
             - name: REMEDIATION_MODEL
-              value: "gs://laah-cybernetics-models/models--Qwen--Qwen2.5-7B-Instruct/snapshots/a09a35458c702b33eeacc393d103063234e8bc28"
+              value: ""  # Set to your model artifact path, e.g. gs://your-bucket/models--Qwen--Qwen2.5-7B-Instruct/snapshots/<sha>
             - name: REMEDIATION_MAX_TOKENS
               value: "2048"
             - name: REMEDIATION_TIMEOUT_MS

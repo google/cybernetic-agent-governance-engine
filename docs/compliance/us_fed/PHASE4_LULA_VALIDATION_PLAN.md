@@ -5,9 +5,9 @@
 **Phase:** 4 of 4 — Post-Rename Lula Validation (Prerequisite 4)  
 **Status:** PENDING — Requires live GKE cluster access  
 **Date:** 2026-06-05  
-**Cluster:** `gke_laah-cybernetics_us-central1-a_cage-dev`
+**Cluster:** `<your-kubectl-context>`
 **Namespace:** `governance-stack`  
-**Project:** `laah-cybernetics`
+**Project:** `<your-project-id>`
 
 ---
 
@@ -49,16 +49,16 @@ All of the following must be satisfied before executing Phase 4.
 ### 3.1 — Authenticate to GKE Cluster
 
 ```bash
-gcloud container clusters get-credentials cage-dev \
+gcloud container clusters get-credentials <your-cluster-name> \
     --region=us-central1 \
-    --project=laah-cybernetics
+    --project=<your-project-id>
 ```
 
 **Verify:**
 
 ```bash
 kubectl config current-context
-# Expected: gke_laah-cybernetics_us-central1_cage-dev
+# Expected: <your-kubectl-context>
 
 kubectl get nodes
 # Expected: ≥1 node in Ready state
@@ -225,7 +225,7 @@ kubectl describe pod -n governance-stack -l job-name=lula-post-rename-validation
 ```
 
 Common causes:
-- **ImagePullBackOff:** The Lula image `us-central1-docker.pkg.dev/laah-cybernetics/governance-stack/lula:0.9.5` is not accessible. Verify Artifact Registry permissions for the `lula-auditor` ServiceAccount.
+- **ImagePullBackOff:** The Lula image `<your-artifact-registry>/governance-stack/lula:0.9.5` is not accessible. Verify Artifact Registry permissions for the `lula-auditor` ServiceAccount.
 - **Insufficient resources:** Node resource pressure. Check `kubectl describe nodes`.
 
 ---
