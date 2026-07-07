@@ -197,7 +197,7 @@ resource "google_storage_hmac_key" "langfuse_key" {
 #      — used by gcloud builds submit and any trigger without a custom SA.
 #
 #   2. The compliance-bridge trigger custom SA
-#      (compliance-bridge-sa@laah-cybernetics.iam.gserviceaccount.com)
+#      (compliance-bridge-sa@<your-project-id>.iam.gserviceaccount.com)
 #      — the compliance-bridge-main GitHub trigger is configured to run as
 #        this SA, so it is the identity that actually performs the docker push.
 #

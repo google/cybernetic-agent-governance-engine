@@ -18,7 +18,7 @@ spec:
       serviceAccountName: financial-advisor-sa
       containers:
         - name: gateway
-          image: gcr.io/laah-cybernetics/gateway:latest
+          image: gcr.io/YOUR_PROJECT_ID/gateway:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -35,7 +35,7 @@ spec:
             - name: GATEWAY_GRPC_PORT
               value: "50051"
             - name: GOOGLE_CLOUD_PROJECT
-              value: "laah-cybernetics"
+              value: ""  # Set to your GCP project ID
             # DEP-04: GOOGLE_CLOUD_LOCATION is substituted at deploy time from
             # CAGE_DEPLOYMENT_REGION via deploy_all.sh / envsubst.
             # US_FED → us-central1, EU_ECB → europe-west1, APAC_MAS → asia-southeast1
@@ -91,7 +91,7 @@ spec:
             - name: VLLM_FAST_API_BASE
               value: "http://vllm-service.governance-stack.svc.cluster.local:8000/v1"
             - name: GUARDRAILS_MODEL_NAME
-              value: "gs://laah-cybernetics-models/models--Qwen--Qwen2.5-7B-Instruct/snapshots/a09a35458c702b33eeacc393d103063234e8bc28"
+              value: ""  # Set to your model artifact path, e.g. gs://your-bucket/models--Qwen--Qwen2.5-7B-Instruct/snapshots/<sha>
             - name: SERVICE_NAME
               value: "hybrid-gateway"
             # SC-12 / AC-3 / POAM-012: HMAC routing seal enforcement.

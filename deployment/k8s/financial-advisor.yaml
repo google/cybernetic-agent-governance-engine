@@ -41,11 +41,11 @@ spec:
       serviceAccountName: financial-advisor-sa
       containers:
         - name: advisor
-          # To use a different registry (e.g., ECR, ACR, Docker Hub), override IMAGE_REGISTRY:
-          #   image: ${IMAGE_REGISTRY:-gcr.io}/laah-cybernetics/governed-financial-advisor:latest
-          # Or use kustomize: kustomize edit set image gcr.io/laah-cybernetics/governed-financial-advisor=<your-registry>/governed-financial-advisor:latest
+          # Set IMAGE_REGISTRY to your container registry prefix (e.g. gcr.io/your-project, ghcr.io/your-org)
+          # Override with: kubectl set image deployment/governed-financial-advisor advisor=<your-registry>/governed-financial-advisor:latest
+          # Or use kustomize: kustomize edit set image gcr.io/YOUR_PROJECT_ID/governed-financial-advisor=<your-registry>/governed-financial-advisor:latest
           # IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
-          image: gcr.io/laah-cybernetics/governed-financial-advisor:latest
+          image: gcr.io/YOUR_PROJECT_ID/governed-financial-advisor:latest
           imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false
@@ -92,15 +92,16 @@ spec:
             - name: OPENAI_API_KEY
               value: "EMPTY"
             # Model paths (GCS-backed via RunAI streamer)
+            # Set MODEL_FAST to your model artifact path, e.g. gs://your-bucket/models--Qwen--Qwen2.5-7B-Instruct/snapshots/<sha>
             - name: MODEL_FAST
-              value: "gs://laah-cybernetics-models/models--Qwen--Qwen2.5-7B-Instruct/snapshots/a09a35458c702b33eeacc393d103063234e8bc28"
+              value: ""  # Set to your model artifact path, e.g. gs://your-bucket/models--Qwen--Qwen2.5-7B-Instruct/snapshots/<sha>
             - name: MODEL_REASONING
-              value: "gs://laah-cybernetics-models/deepseek-ai/DeepSeek-R1-Distill-Llama-8B/"
+              value: ""  # Set to your model artifact path, e.g. gs://your-bucket/deepseek-ai/DeepSeek-R1-Distill-Llama-8B/
             - name: MODEL_CONSENSUS
-              value: "gs://laah-cybernetics-models/deepseek-ai/DeepSeek-R1-Distill-Llama-8B/"
+              value: ""  # Set to your model artifact path, e.g. gs://your-bucket/deepseek-ai/DeepSeek-R1-Distill-Llama-8B/
             # GCP project/location for ADC and telemetry
             - name: GOOGLE_CLOUD_PROJECT
-              value: "laah-cybernetics"
+              value: ""  # Set to your GCP project ID
             # DEP-05: GOOGLE_CLOUD_LOCATION must not be hardcoded to us-central1.
             # Sourced from advisor-secrets so deploy_all.sh / Terraform can inject
             # the correct region per CAGE_DEPLOYMENT_REGION:

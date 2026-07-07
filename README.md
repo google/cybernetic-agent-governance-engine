@@ -18,7 +18,7 @@
 | Integration tests (GKE) | ✅ 120 passed / 0 failed | 2026-07-05 |
 | Total | ✅ 1,281 passed / 32 skipped / 0 failed | 2026-07-05 |
 
-Tests run against live GKE cluster `gke_laah-cybernetics_us-central1-a_cage-dev` (namespace: `governance-stack`).
+Tests run against a live GKE cluster. See [infra/DEPLOYMENT_GUIDE.md](infra/DEPLOYMENT_GUIDE.md) for cluster setup instructions.
 Skipped tests: EU_ECB region-specific tests and CI-only latency budget tests.
 
 ---
@@ -45,8 +45,6 @@ The following GCP services are **optional drivers** — the system functions ful
 | Cloud Storage (GCS) | OSCAL evidence storage | AWS S3, MinIO, local filesystem |
 | GKE Workload Identity | Pod-level IAM | AWS IRSA, Azure Workload Identity, static credentials |
 | Cloud Build | CI/CD | GitHub Actions, GitLab CI, any OCI-compatible CI |
-
-> **For PA Lead reviewers:** CAGE's classification as a NonProduct is consistent with the Kubernetes extension guidance: a Kubernetes extension is nonProduct if it works with any Kubernetes cluster (not just GKE), even if it is intended primarily for GCP customers. See [`infra/targets/agnostic/`](infra/targets/agnostic/) for the cloud-agnostic Terraform deployment target.
 
 ---
 
@@ -299,7 +297,7 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 | **MAS Notice 655** | **APAC_MAS only** | `APAC_MAS` | ✅ Implemented |
 | **MAS TRM §4.2/§6.3** | **APAC_MAS only** | `APAC_MAS` | ✅ Implemented |
 
-> **Footnote:** SR 26-2 has no legal force outside the US Federal Reserve system. The `EU_ECB_BASELINE.json` and `APAC_MAS_BASELINE.json` profiles encode a `"no legal force"` sentinel that suppresses SR 26-2 telemetry in non-US deployments (see `.clinerules` §12.4).
+> **Footnote:** SR 26-2 has no legal force outside the US Federal Reserve system. The `EU_ECB_BASELINE.json` and `APAC_MAS_BASELINE.json` profiles encode a `"no legal force"` sentinel that suppresses SR 26-2 telemetry in non-US deployments (see [`EU_ECB_BASELINE.json`](config/compliance/EU_ECB_BASELINE.json)).
 
 ### Operational Security Status
 
@@ -361,7 +359,7 @@ Copy `.env.example` to `.env` and configure at minimum:
 
 ```bash
 # Clone
-git clone https://github.com/lahlfors/cybernetic-governance-engine.git
+git clone https://github.com/google/cybernetic-governance-engine.git
 cd cybernetic-governance-engine
 
 # Install dependencies
@@ -573,10 +571,28 @@ See [`docs/POAM_INDEX.md`](docs/POAM_INDEX.md) for the full cross-region traceab
 
 ---
 
+## Contributing
+
+We welcome contributions! Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) for:
+
+- Dev environment setup (Python, uv, Docker Compose)
+- Branch naming and commit message conventions
+- Pull request process and review requirements
+- Code style (ruff, mypy, ESLint)
+- Contributor License Agreement (CLA) requirements
+
+To report a security vulnerability, see [`SECURITY.md`](SECURITY.md).
+
+To report a bug or request a feature, use [GitHub Issues](https://github.com/google/cybernetic-governance-engine/issues).
+
+---
+
 ## License
 
 Apache 2.0 — see [`LICENSE`](LICENSE)
 
 This is not an officially supported Google product. This project is not eligible for the Google Open Source Software Vulnerability Rewards Program.
+
+By participating in this project, you agree to abide by the [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 _CAGE v0.1.0 — 2026-06-08 — Stable Release: Token Quota Proxy, PII Sanitizer, UCA Logger, CTRL_TQP_007, gateway CVE remediation, seal enforcement verification_

@@ -212,7 +212,7 @@ def main() -> None:
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
     instance_name = os.environ.get(
         "LANGFUSE_SQL_INSTANCE",
-        f"langfuse-instance-{project_id}" if project_id else "langfuse-instance-laah-cybernetics",
+        f"langfuse-instance-{project_id}" if project_id else f"langfuse-instance-{os.environ.get('GCP_PROJECT_ID', '<your-project-id>')}",
     )
     conn_string = os.environ.get("DATABASE_URL", "")
 
