@@ -90,7 +90,7 @@ class NeMoOTelCallback(StreamingHandler):
         """
         # We focus on "check" actions which usually imply a guardrail
         # e.g., 'self_check_input', 'detect_jailbreak', 'check_hallucination'
-        # and on any explicitly whitelisted safety action names.
+        # and on any explicitly allowlisted safety action names.
         if (
             "check" in action
             or "guard" in action

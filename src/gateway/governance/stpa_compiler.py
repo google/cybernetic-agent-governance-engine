@@ -51,11 +51,12 @@ from __future__ import annotations
 import argparse
 import datetime
 import logging
+import os
 import sys
 import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -413,17 +414,17 @@ def generate_opa(cs: ControlStructureModel) -> str:
                 allow_below = tl.get("allow_below")
                 review_below = tl.get("manual_review_below")
                 deny_above = tl.get("deny_above")
-                blacklist = []
+                denylist = []
                 if role.restrictions:
                     for r in role.restrictions:
-                        blacklist.extend(r.get("currency_blacklist", []))
+                        denylist.extend(r.get("currency_denylist", []))
 
-                blacklist_str = (
+                denylist_str = (
                     " ".join(
                         f'"{c}"' not in [""] and f'input.currency != "{c}"'
-                        for c in blacklist
+                        for c in denylist
                     )
-                    if blacklist
+                    if denylist
                     else ""
                 )
 
@@ -432,7 +433,7 @@ def generate_opa(cs: ControlStructureModel) -> str:
                     lines.append('    input.action == "execute_trade"')
                     lines.append(f'    lower(input.trader_role) == "{role.name}"')
                     lines.append(f"    input.amount <= {allow_below}")
-                    for c in blacklist:
+                    for c in denylist:
                         lines.append(f'    input.currency != "{c}"')
                     lines.append("}")
                     lines.append("")
@@ -443,7 +444,7 @@ def generate_opa(cs: ControlStructureModel) -> str:
                     lines.append(f'    lower(input.trader_role) == "{role.name}"')
                     lines.append(f"    input.amount > {allow_below}")
                     lines.append(f"    input.amount <= {review_below}")
-                    for c in blacklist:
+                    for c in denylist:
                         lines.append(f'    input.currency != "{c}"')
                     lines.append("}")
                     lines.append("")
@@ -690,7 +691,7 @@ class GeneratedSTPAValidator:
 # ---------------------------------------------------------------------------
 
 
-def generate_langgraph(cs: ControlStructureModel) -> str:
+def generate_langgraph(cs: ControlStructureModel) -> str:  # noqa: C901
     """Generate LangGraph Saga compensating sub-graphs from UCA definitions.
 
     For each UCA with enforcement=[langgraph] this emits:

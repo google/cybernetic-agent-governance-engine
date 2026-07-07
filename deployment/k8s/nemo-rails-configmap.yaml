@@ -94,7 +94,7 @@ data:
     [~25% of queries]\n    \n    This preserves security while maintaining performance.\n
     \   \"\"\"\n    ctx = context or {}\n    text = (\n        ctx.get(\"last_user_message\")\n
     \       or kwargs.get(\"content\")\n        or \"\"\n    ).lower()\n    \n    if
-    not text:\n        return True\n    \n    # STAGE 1: WHITELIST - Fast-path for
+    not text:\n        return True\n    \n    # STAGE 1: ALLOWLIST - Fast-path for
     known-safe financial queries (0ms)\n    financial_keywords = [\n        \"portfolio\",
     \"diversification\", \"risk\", \"return\", \"stock\", \"bond\",\n        \"etf\",
     \"fund\", \"asset\", \"allocation\", \"rebalance\", \"sharpe\",\n        \"volatility\",
@@ -103,7 +103,7 @@ data:
     does\", \"define\", \"compliance\", \"regulatory\"\n    ]\n    \n    if any(keyword
     in text for keyword in financial_keywords):\n        logger.debug(\"HybridSelfCheckInput:
     STAGE 1 ALLOW (financial keyword)\")\n        return True\n    \n    # STAGE 2:
-    BLACKLIST - Fast-path for obvious jailbreak attempts (0ms)\n    jailbreak_patterns
+    BLOCKLIST - Fast-path for obvious jailbreak attempts (0ms)\n    jailbreak_patterns
     = [\n        \"ignore previous instructions\", \"ignore all previous\",\n        \"dan
     mode\", \"developer mode\", \"repeat your prompt\",\n        \"show me your system
     prompt\", \"bypass your restrictions\",\n        \"you are now unrestricted\",
@@ -124,7 +124,7 @@ data:
     def custom_self_check_output(context: Optional[dict] = None, llm: Optional[object]
     = None, **kwargs):\n    \"\"\"Hybrid self-check for financial domain outputs -
     PHASE 2 UPGRADE.\n    \n    Three-stage approach:\n    1. Safe financial content
-    → ALLOW (0ms) [~80% of outputs]\n    2. Harmful pattern blacklist → BLOCK (0ms)
+    → ALLOW (0ms) [~80% of outputs]\n    2. Harmful pattern blocklist → BLOCK (0ms)
     [~2% of outputs]\n    3. LLM-based semantic check → EVALUATE (2-5s) [~18% of outputs]\n
     \   \"\"\"\n    ctx = context or {}\n    text = (\n        ctx.get(\"bot_message\")\n
     \       or ctx.get(\"last_bot_message\")\n        or kwargs.get(\"content\")\n
@@ -135,7 +135,7 @@ data:
     \"could\", \"potential\", \"assessment\"\n    ]\n    \n    if any(indicator in
     text for indicator in safe_indicators):\n        logger.debug(\"HybridSelfCheckOutput:
     STAGE 1 ALLOW (safe financial content)\")\n        return True\n    \n    # STAGE
-    2: BLACKLIST - Harmful patterns (block immediately)\n    harmful_patterns = [\n
+    2: BLOCKLIST - Harmful patterns (block immediately)\n    harmful_patterns = [\n
     \       \"guaranteed returns\", \"risk-free investment\", \"can't lose\",\n        \"insider
     information\", \"sure thing\", \"100% profit\",\n        \"no risk\", \"guaranteed
     profit\", \"get rich quick\"\n    ]\n    \n    if any(pattern in text for pattern
@@ -242,7 +242,7 @@ data:
     prevention (custom self check for financial domain).\n# Financial policy enforcement
     is owned by the safety_check_node → OPA path.\n#\n# CHANGE LOG (2026-03-14):\n#
     \  - Replaced generic self check input/output with CustomSelfCheckInputAction/OutputAction\n#
-    \  - Custom checks use financial domain whitelist + jailbreak blacklist\n#   -
+    \  - Custom checks use financial domain allowlist + jailbreak blocklist\n#   -
     Allows legitimate financial queries while blocking attacks\n#   - LLM-based self-check
     was too restrictive (100% block rate)\n\nflow user ask analysis\n  user said \"Analyze
     AAPL\"\n  or user said \"analyze microsoft\"\n  or user said \"evaluate the risk

@@ -38,7 +38,7 @@ kubectl apply -f deployment/k8s/langfuse-worker.yaml
 Langfuse v3 **requires** S3-compatible storage. We use a self-hosted MinIO instance for this purpose to keep costs low and avoid external dependencies for development environments.
 
 - **Bucket**: `langfuse-events` (Automatically created by `mc-setup` job or manual setup).
-- **Access**: Internal only via `http://minio.governance-stack.svc.cluster.local:9000`.
+- **Access**: Cluster-internal only via `http://minio.governance-stack.svc.cluster.local:9000`.
 
 ## Accessing Langfuse
 
