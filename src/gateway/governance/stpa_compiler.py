@@ -51,12 +51,11 @@ from __future__ import annotations
 import argparse
 import datetime
 import logging
-import os
 import sys
 import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -691,7 +690,7 @@ class GeneratedSTPAValidator:
 # ---------------------------------------------------------------------------
 
 
-def generate_langgraph(cs: ControlStructureModel) -> str:  # noqa: C901
+def generate_langgraph(cs: ControlStructureModel) -> str:
     """Generate LangGraph Saga compensating sub-graphs from UCA definitions.
 
     For each UCA with enforcement=[langgraph] this emits:
