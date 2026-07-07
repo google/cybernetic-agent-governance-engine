@@ -42,25 +42,25 @@ These must be fixed first. Absolute personal paths in committed documentation ar
 
 #### A-1: [`docs/security/HITL_TOCTOU_REMEDIATION.md`](../docs/security/HITL_TOCTOU_REMEDIATION.md:148)
 
-**Problem:** The "Files Changed" table at lines 148–152 uses `file:///Users/larsahlfors/Code/...` absolute URIs as Markdown link targets. These are machine-specific paths that will not resolve for any other reader.
+**Problem:** The "Files Changed" table at lines 148–152 uses `file://<parent-dir>/...` absolute URIs as Markdown link targets. These are machine-specific paths that will not resolve for any other reader.
 
-**Fix:** Replace each `file:///Users/larsahlfors/Code/cybernetic-governance-engine/` prefix with a relative path from the document's location (`docs/security/`), which means `../../`.
+**Fix:** Replace each `file://<repo-root>/` prefix with a relative path from the document's location (`docs/security/`), which means `../../`.
 
 | Current link target | Replacement |
 |---|---|
-| `file:///Users/larsahlfors/Code/cybernetic-governance-engine/src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py` | `../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py` |
-| `file:///Users/larsahlfors/Code/cybernetic-governance-engine/src/governed_financial_advisor/graph/nodes/approval_node.py` | `../../src/governed_financial_advisor/graph/nodes/approval_node.py` |
-| `file:///Users/larsahlfors/Code/cybernetic-governance-engine/src/governed_financial_advisor/graph/nodes/agent_nodes.py` | `../../src/governed_financial_advisor/graph/nodes/agent_nodes.py` |
-| `file:///Users/larsahlfors/Code/cybernetic-governance-engine/src/governed_financial_advisor/server.py` | `../../src/governed_financial_advisor/server.py` |
-| `file:///Users/larsahlfors/Code/cybernetic-governance-engine/tests/test_hitl_toctou_revalidation.py` | `../../tests/test_hitl_toctou_revalidation.py` |
+| `file://<repo-root>/src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py` | `../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py` |
+| `file://<repo-root>/src/governed_financial_advisor/graph/nodes/approval_node.py` | `../../src/governed_financial_advisor/graph/nodes/approval_node.py` |
+| `file://<repo-root>/src/governed_financial_advisor/graph/nodes/agent_nodes.py` | `../../src/governed_financial_advisor/graph/nodes/agent_nodes.py` |
+| `file://<repo-root>/src/governed_financial_advisor/server.py` | `../../src/governed_financial_advisor/server.py` |
+| `file://<repo-root>/tests/test_hitl_toctou_revalidation.py` | `../../tests/test_hitl_toctou_revalidation.py` |
 
 **Exact diff target (lines 148–152):**
 ```
-| [`governed_trader_graph.py`](file:///Users/larsahlfors/Code/cybernetic-governance-engine/src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) |
-| [`approval_node.py`](file:///Users/larsahlfors/Code/cybernetic-governance-engine/src/governed_financial_advisor/graph/nodes/approval_node.py) |
-| [`agent_nodes.py`](file:///Users/larsahlfors/Code/cybernetic-governance-engine/src/governed_financial_advisor/graph/nodes/agent_nodes.py) |
-| [`server.py`](file:///Users/larsahlfors/Code/cybernetic-governance-engine/src/governed_financial_advisor/server.py) |
-| [`test_hitl_toctou_revalidation.py`](file:///Users/larsahlfors/Code/cybernetic-governance-engine/tests/test_hitl_toctou_revalidation.py) |
+| [`governed_trader_graph.py`](file://<repo-root>/src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) |
+| [`approval_node.py`](file://<repo-root>/src/governed_financial_advisor/graph/nodes/approval_node.py) |
+| [`agent_nodes.py`](file://<repo-root>/src/governed_financial_advisor/graph/nodes/agent_nodes.py) |
+| [`server.py`](file://<repo-root>/src/governed_financial_advisor/server.py) |
+| [`test_hitl_toctou_revalidation.py`](file://<repo-root>/tests/test_hitl_toctou_revalidation.py) |
 ```
 
 ---
@@ -180,7 +180,7 @@ All architecture and governance documents should carry `v0.1.0` as the version s
 
 #### F-1: [`docs/project/REPOSITORY_CLEANUP_PLAN.md`](../docs/project/REPOSITORY_CLEANUP_PLAN.md:4)
 
-**Problem:** Line 4: `**Scope:** Full repository audit of `/Users/larsahlfors/Code/cybernetic-governance-engine``  
+**Problem:** Line 4: `**Scope:** Full repository audit of `<repo-root>``  
 **Fix:** Change to: `**Scope:** Full repository audit of the CAGE project root`
 
 Also update line 5: `**Status:** Recommendation only — no files have been moved or deleted`  

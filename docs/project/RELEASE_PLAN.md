@@ -29,7 +29,7 @@
 
 > **✅ v0.1.0 RELEASED — GO (2026-06-08).** All P0/P1 blockers resolved. The stable tag `v0.1.0` has been pushed to origin and the GitHub Release is published as Latest. The sections below are preserved as a historical planning record for audit traceability.
 
-The repository was at `v0.1.0-rc.2` when this plan was prepared. The RC-2 release delivered exhaustive state-space formal verification of the `NoDirectBind` safety invariant, enforced cryptographic attestation on all execution paths, and production fail-closed gates for `CBF_FAIL_OPEN` and the DoWhy causal gatekeeper. The full test suite passes: **844 passed, 28 skipped, 0 failed** against the live GKE cluster (`cage-dev`, namespace `governance-stack`).
+The repository was at `v0.1.0-rc.2` when this plan was prepared. The RC-2 release delivered exhaustive state-space formal verification of the `NoDirectBind` safety invariant, enforced cryptographic attestation on all execution paths, and production fail-closed gates for `CBF_FAIL_OPEN` and the DoWhy causal gatekeeper. The full test suite passes: **844 passed, 28 skipped, 0 failed** against the live GKE cluster (`<your-cluster-name>`, namespace `governance-stack`).
 
 ### What Blocked Stable Release (All Resolved)
 
@@ -319,7 +319,7 @@ spec:
               - --severity=HIGH,CRITICAL
               - --format=json
               - --output=/tmp/trivy-report.json
-              - gcr.io/YOUR_GCP_PROJECT_ID/cage-gateway:latest
+              - gcr.io/YOUR_PROJECT_ID/cage-gateway:latest
             resources:
               requests:
                 cpu: "100m"
@@ -676,7 +676,7 @@ EOF
 ```bash
 # Clone a fresh copy for the dry run — do not run filter-repo on the working clone
 cd /tmp
-git clone /Users/larsahlfors/Code/cybernetic-governance-engine cage-filter-dryrun
+git clone <repo-root> cage-filter-dryrun
 cd cage-filter-dryrun
 
 # Run filter-repo in dry-run mode
@@ -707,7 +707,7 @@ git log --all --oneline | grep -E "200da00|72f8f3d|6b14314|18c5bac|bf4e84c"
 
 ```bash
 # Work on the actual repository clone
-cd /Users/larsahlfors/Code/cybernetic-governance-engine
+cd <repo-root>
 
 # Ensure you are on rc-v0.1.0 and up to date
 git checkout rc-v0.1.0
@@ -784,7 +784,7 @@ python -m pytest tests/ -x -q --timeout=30 2>&1 | tail -5
 All local clones (including the working copy) must be reset after the force-push:
 
 ```bash
-cd /Users/larsahlfors/Code/cybernetic-governance-engine
+cd <repo-root>
 git fetch origin
 git reset --hard origin/rc-v0.1.0
 ```
@@ -794,7 +794,7 @@ git reset --hard origin/rc-v0.1.0
 ## 6. Phase 4: Terraform Apply + GKE Deployment
 
 **Prerequisites:** Phase 3 complete (history rewritten, branch protection restored).
-**Requires:** GCP credentials (`gcloud auth application-default login`), `kubectl` context `gke_YOUR_GCP_PROJECT_ID_us-central1-a_cage-dev`, Terraform ≥1.5.0.
+**Requires:** GCP credentials (`gcloud auth application-default login`), `kubectl` context `<your-kubectl-context>`, Terraform ≥1.5.0.
 **Cloud Build rule:** Per [`docs/DEPLOYMENT_RULES.md`](../operations/DEPLOYMENT_RULES.md), all GKE image deployments must use Cloud Build. Manual `kubectl apply` is permitted only for non-image resources (Secrets, CronJobs, namespace labels).
 
 ### 6.1 Pre-Apply Checks
@@ -803,15 +803,15 @@ git reset --hard origin/rc-v0.1.0
 # Verify GCP credentials
 gcloud auth list
 gcloud config get-value project
-# Expected: YOUR_GCP_PROJECT_ID
+# Expected: <your-project-id>
 
 # Verify kubectl context
 kubectl config current-context
-# Expected: gke_YOUR_GCP_PROJECT_ID_us-central1-a_cage-dev
+# Expected: <your-kubectl-context>
 
 # Verify Terraform backend is initialised
 cd infra/targets/gcp-gke
-terraform init -backend-config="bucket=YOUR_GCP_PROJECT_ID-tfstate"
+terraform init -backend-config="bucket=your-terraform-state-bucket"
 terraform validate
 # Expected: Success! The configuration is valid.
 ```
@@ -857,12 +857,12 @@ The working tree [`deployment/k8s/financial-advisor.yaml`](deployment/k8s/financ
 # Option 2: Direct Cloud Build submission for the advisor service
 gcloud builds submit \
   --config deployment/docker/cloudbuild.advisor.yaml \
-  --project YOUR_GCP_PROJECT_ID
+  --project <your-project-id>
 
 # Monitor the build
-gcloud builds list --limit=5 --project YOUR_GCP_PROJECT_ID
+gcloud builds list --limit=5 --project <your-project-id>
 gcloud builds log \
-  $(gcloud builds list --limit=1 --format='value(id)' --project YOUR_GCP_PROJECT_ID)
+  $(gcloud builds list --limit=1 --format='value(id)' --project <your-project-id>)
 ```
 
 **Validate D-02 resolution:**
@@ -1082,7 +1082,7 @@ python3 scripts/verify_langfuse_posture.py
 
 ```bash
 # Final check — search all history for any remaining credential strings
-cd /Users/larsahlfors/Code/cybernetic-governance-engine
+cd <repo-root>
 
 git log --all -S "CYBERNETIC_GOVERNANCE_2025" --oneline
 git log --all -S "pk-lf-b055e6fe" --oneline

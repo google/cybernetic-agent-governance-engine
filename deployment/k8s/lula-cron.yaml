@@ -188,11 +188,11 @@ spec:
             # Deployment's secret refs (LANGFUSE_* keys) via envFrom.
             # ----------------------------------------------------------------
             - name: lula
-              # To use a different registry (e.g., ECR, ACR, Docker Hub), override IMAGE_REGISTRY:
-              #   image: ${IMAGE_REGISTRY:-gcr.io}/YOUR_GCP_PROJECT_ID/compliance-bridge:latest
-              # Or use kustomize: kustomize edit set image gcr.io/YOUR_GCP_PROJECT_ID/compliance-bridge=<your-registry>/compliance-bridge:latest
+              # Set IMAGE_REGISTRY to your container registry prefix (e.g. gcr.io/your-project, ghcr.io/your-org)
+              # Override with: kubectl set image cronjob/lula-cron lula=<your-registry>/compliance-bridge:latest
+              # Or use kustomize: kustomize edit set image gcr.io/YOUR_PROJECT_ID/compliance-bridge=<your-registry>/compliance-bridge:latest
               # IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
-              image: gcr.io/YOUR_GCP_PROJECT_ID/compliance-bridge:latest
+              image: gcr.io/YOUR_PROJECT_ID/compliance-bridge:latest
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities:
@@ -316,7 +316,9 @@ spec:
       serviceAccountName: lula-auditor
       containers:
         - name: lula-watch
-          image: us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/governance-stack/lula:0.9.5
+          # Set ARTIFACT_REGISTRY_HOST and GCP_PROJECT_ID before applying this manifest.
+          # Override with: kubectl set image deployment/lula-watch lula-watch=<your-registry>/<your-project>/governance-stack/lula:0.9.5
+          image: us-central1-docker.pkg.dev/YOUR_PROJECT_ID/governance-stack/lula:0.9.5
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

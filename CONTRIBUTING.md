@@ -250,3 +250,160 @@ They are **not in conflict** — they serve different scopes:
 1. Create `src/<service>/Dockerfile` with the repo root as build context.
 2. Add a `build_image "<service>" "src/<service>/Dockerfile" "."` call in [`scripts/build_images.sh`](scripts/build_images.sh).
 3. If the service needs an independent GCP Console trigger, create `cloudbuild.<service>.yaml` following the pattern in [`cloudbuild.compliance.yaml`](cloudbuild.compliance.yaml) and register the trigger in GCP Console.
+
+---
+
+## Development Environment Setup
+
+### Prerequisites
+
+- **Python** ≥ 3.10, < 3.13
+- **[uv](https://docs.astral.sh/uv/)** (recommended package manager) or `pip`
+- **Docker** and **Docker Compose** (for local infrastructure)
+- **Node.js** ≥ 18 and **npm** (for `src/agentsight-ui/` frontend)
+
+### Python Setup
+
+```bash
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone the repository
+git clone https://github.com/google/cybernetic-governance-engine.git
+cd cybernetic-governance-engine
+
+# Install all dependencies including dev extras
+uv sync --group dev
+
+# Configure environment
+cp .env.example .env
+# Edit .env and fill in required values (see README.md for variable descriptions)
+```
+
+### Running Tests
+
+```bash
+# Set up the test environment (installs fakeredis, sets CAGE_ENV=test, etc.)
+bash scripts/setup_test_env.sh
+
+# Run the full unit test suite
+python -m pytest tests/ -v
+
+# Run with integration tests (requires a live cluster)
+python -m pytest tests/ --run-integration -v --timeout=120
+
+# Run a specific test file
+python -m pytest tests/test_defer_queue.py -v
+```
+
+### Local Infrastructure (Docker Compose)
+
+```bash
+# Start all services locally (OPA, Redis, NeMo, Langfuse, MinIO)
+docker compose up
+
+# Start with hot-reload dev overlay (do NOT use in staging/production)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+# Verify gateway health
+curl http://localhost:8080/health
+```
+
+### Frontend Setup (AgentSight UI)
+
+```bash
+cd src/agentsight-ui
+npm install
+npm run dev
+```
+
+---
+
+## Code Style
+
+### Python
+
+This project uses **[ruff](https://docs.astral.sh/ruff/)** for linting and formatting, and **[mypy](https://mypy-lang.org/)** for type checking.
+
+```bash
+# Lint and auto-fix
+uv run ruff check src/ tests/ --fix
+
+# Format
+uv run ruff format src/ tests/
+
+# Type check
+uv run mypy src/ --ignore-missing-imports
+```
+
+All Python source files under `src/` **must** include the Apache 2.0 license header (see [License Headers](#license-headers) below). The CI `license-check` job enforces this.
+
+### TypeScript / JavaScript
+
+The `src/agentsight-ui/` frontend uses **ESLint** with the config in [`src/agentsight-ui/eslint.config.js`](src/agentsight-ui/eslint.config.js).
+
+```bash
+cd src/agentsight-ui
+npm run lint
+```
+
+### License Headers
+
+All new `.py`, `.ts`, `.tsx`, and `.js` files under `src/` must begin with the Apache 2.0 header:
+
+```python
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+```
+
+Use `scripts/patch_license.py` to add missing headers automatically:
+
+```bash
+python scripts/patch_license.py
+```
+
+---
+
+## Reporting Issues and Security Vulnerabilities
+
+### Bug Reports and Feature Requests
+
+Please use [GitHub Issues](https://github.com/google/cybernetic-governance-engine/issues) to report bugs or request features. When filing a bug report, include:
+
+- A clear description of the problem
+- Steps to reproduce
+- Expected vs. actual behaviour
+- Your environment (OS, Python version, deployment target)
+- Relevant log output or error messages
+
+### Security Vulnerabilities
+
+**Do not report security vulnerabilities through public GitHub issues.**
+
+Please follow the process described in [`SECURITY.md`](SECURITY.md). Security reports are handled with coordinated disclosure and a 5-business-day response SLA.
+
+---
+
+## Contributor License Agreement (CLA)
+
+Contributions to this project must be accompanied by a Contributor License Agreement (CLA). You (or your employer) retain the copyright to your contribution; the CLA gives Google permission to use and redistribute your contributions as part of the project.
+
+If you or your current employer have already signed the Google CLA, no further action is needed. If not, please sign the individual or corporate CLA:
+
+- **Individual CLA:** https://cla.developers.google.com/about/google-individual
+- **Corporate CLA:** https://cla.developers.google.com/about/google-corporate
+
+The CLA is checked automatically on pull requests via the CLA bot. PRs from contributors who have not signed the CLA will be blocked until the CLA is signed.
+
+> **Note:** This is not an officially supported Google product. The CLA requirement applies to contributions to this repository regardless of its support status.
