@@ -951,4 +951,4 @@ The 7-tier Symbolic Governor ([`src/gateway/governance/symbolic_governor.py`](sr
 ---
 
 *Report generated: 2026-06-12. Next review scheduled: 2026-09-12.*
-*This report should be treated as CONFIDENTIAL and shared only with authorized personnel.*
+*This report contains sensitive security information. Distribute only to authorized personnel.*

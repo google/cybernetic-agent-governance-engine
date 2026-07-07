@@ -394,7 +394,7 @@ resource "kubernetes_service" "nemo_guardrails" {
   }
 }
 
-# Presidio Analyzer service — internal only (NeMo reaches it via localhost in-pod)
+# Presidio Analyzer service — cluster-internal (NeMo reaches it via localhost in-pod)
 # Exposed as a ClusterIP service for out-of-pod debugging / direct calls.
 resource "kubernetes_service" "presidio_analyzer" {
   metadata {
