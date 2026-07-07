@@ -202,9 +202,10 @@ jobs:
       - name: Assert lula manifest count matches README
         run: |
           DISK_COUNT=$(ls compliance/lula/lula-validation-*.yaml 2>/dev/null | wc -l | tr -d ' ')
-          README_COUNT=$(grep -c 'lula-validation-.*\.yaml' compliance/lula/README.md | tr -d ' ')
+          # Count unique filenames referenced in README (grep -c counts lines, not unique names).
+          README_COUNT=$(grep -o 'lula-validation-[a-z0-9_-]*\.yaml' compliance/lula/README.md | sort -u | wc -l | tr -d ' ')
           echo "Manifests on disk (compliance/lula/): $DISK_COUNT"
-          echo "Manifests referenced in README: $README_COUNT"
+          echo "Unique manifests referenced in README: $README_COUNT"
           if [ "$DISK_COUNT" != "$README_COUNT" ]; then
             echo "ERROR: Manifest count mismatch. Add new manifests to compliance/lula/README.md or move drafts to compliance/lula/drafts/."
             exit 1
