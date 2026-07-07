@@ -578,6 +578,10 @@ def causal_safety_check(params: dict, current_telemetry: Optional[pd.DataFrame] 
                 graph=causal_graph
             )
             identified_estimand = model.identify_effect(proceed_when_unidentifiable=True)
+            # NOTE: "backdoor.linear_regression" is a DoWhy library API method name
+            # (Pearl's backdoor criterion for causal effect estimation). This is not
+            # a security backdoor — it is standard causal inference terminology.
+            # See: https://www.pywhy.org/dowhy/
             estimate = model.estimate_effect(
                 identified_estimand,
                 method_name="backdoor.linear_regression"

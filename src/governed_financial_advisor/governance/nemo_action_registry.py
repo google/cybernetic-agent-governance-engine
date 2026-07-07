@@ -98,7 +98,7 @@ def get_all_actions() -> List[Tuple[str, Callable[..., Any]]]:
     The list is ordered so that:
       1. Gateway-delegating async actions (config.rails.actions) come first
          — these are the canonical production implementations.
-      2. Symbolic-governor async actions come next — gateway-internal only,
+      2. Symbolic-governor async actions come next — gateway-scoped only,
          loaded lazily to prevent circular imports.
       3. Pure in-process sync checks are NOT registered here by default because
          NeMo expects async actions; they are available for import by callers
@@ -111,7 +111,7 @@ def get_all_actions() -> List[Tuple[str, Callable[..., Any]]]:
     # ACTION PRIORITY:
     # 1. config.rails.actions — HTTP-delegating, canonical production implementation
     # 2. src.governed_financial_advisor.governance.nemo_actions — synchronous fallbacks (testing/offline)
-    # Gateway actions (src.gateway.governance.nemo.actions) are gateway-internal only, not registered here.
+    # Gateway actions (src.gateway.governance.nemo.actions) are gateway-scoped only, not registered here.
 
     # --- Priority 1: Gateway-delegating actions (config/rails/actions.py) ---
     try:
