@@ -47,7 +47,6 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger("Gateway.Governance.ProvenanceChain")
 
@@ -61,6 +60,7 @@ VALID_DECISIONS = frozenset({"ALLOW", "BLOCK", "ESCALATE"})
 # ---------------------------------------------------------------------------
 # ProvenanceRecord — a single node in the provenance chain
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ProvenanceRecord:
@@ -81,7 +81,7 @@ class ProvenanceRecord:
     input_hash: str
     output_hash: str
     decision: str
-    parent_hash: Optional[str]
+    parent_hash: str | None
 
     def to_dict(self) -> dict:
         """Return a JSON-serialisable dict representation of this record."""
@@ -107,6 +107,7 @@ class ProvenanceRecord:
 # compute_hash — deterministic SHA-256 hash of a dict
 # ---------------------------------------------------------------------------
 
+
 def compute_hash(data: dict) -> str:
     """Return the SHA-256 hex digest of the JSON-serialised dict.
 
@@ -131,13 +132,14 @@ def compute_hash(data: dict) -> str:
 # build_provenance_record — main factory function
 # ---------------------------------------------------------------------------
 
+
 def build_provenance_record(
     trace_id: str,
     node_id: str,
     input_data: dict,
     output_data: dict,
     decision: str,
-    parent_hash: Optional[str] = None,
+    parent_hash: str | None = None,
 ) -> ProvenanceRecord:
     """Build a ProvenanceRecord for a LangGraph governance node execution.
 

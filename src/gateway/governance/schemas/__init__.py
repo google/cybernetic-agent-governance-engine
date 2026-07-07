@@ -12,6 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .thresholds import GovernanceThresholds, THRESHOLDS, load_and_validate_thresholds
+from .thresholds import THRESHOLDS, GovernanceThresholds, load_and_validate_thresholds
 
-__all__ = ["GovernanceThresholds", "THRESHOLDS", "load_and_validate_thresholds"]
+__all__ = ["THRESHOLDS", "GovernanceThresholds", "load_and_validate_thresholds"]

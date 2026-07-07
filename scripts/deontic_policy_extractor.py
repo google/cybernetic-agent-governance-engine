@@ -38,13 +38,18 @@ deny[msg] {
 }
 """
 
+
 def extract_policies(text):
     policies = []
 
     # Simple heuristic extraction logic
     # 1. Identity Verification
     # Text: "The system **MUST** verify the identity of the user for any transaction amount greater than 1000 USD."
-    if re.search(r"MUST\*\*? verify the identity.*greater than 1000", text, re.IGNORECASE | re.DOTALL):
+    if re.search(
+        r"MUST\*\*? verify the identity.*greater than 1000",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    ):
         policies.append("""# Requirement: MUST verify identity for transactions > 1000
 allow {
     input.action == "transfer_funds"
@@ -60,7 +65,9 @@ allow {
 
     # 2. Frozen Account
     # Text: "The agent **SHALL** deny any transaction if the account status is 'frozen'."
-    if re.search(r"SHALL\*\*? deny.*account status.*frozen", text, re.IGNORECASE | re.DOTALL):
+    if re.search(
+        r"SHALL\*\*? deny.*account status.*frozen", text, re.IGNORECASE | re.DOTALL
+    ):
         policies.append("""# Requirement: SHALL deny if account is frozen
 deny[msg] {
     input.account_status == "frozen"
@@ -79,7 +86,9 @@ deny[msg] {
 
     # 4. Auth Token
     # Text: "Access to account details **MUST** require a valid session token signed by the auth provider."
-    if re.search(r"MUST\*\*? require a valid session token", text, re.IGNORECASE | re.DOTALL):
+    if re.search(
+        r"MUST\*\*? require a valid session token", text, re.IGNORECASE | re.DOTALL
+    ):
         policies.append("""# Requirement: MUST require valid session token
 allow {
     input.action == "view_account"
@@ -88,8 +97,10 @@ allow {
 
     # 5. Latency/Stability
     # Text: "The system **SHALL NOT** commit a transaction if the reported latency exceeds 200ms."
-    if re.search(r"SHALL NOT\*\*? commit.*latency exceeds 200ms", text, re.IGNORECASE | re.DOTALL):
-         policies.append("""# Requirement: SHALL NOT commit if latency > 200ms
+    if re.search(
+        r"SHALL NOT\*\*? commit.*latency exceeds 200ms", text, re.IGNORECASE | re.DOTALL
+    ):
+        policies.append("""# Requirement: SHALL NOT commit if latency > 200ms
 deny[msg] {
     input.action == "commit"
     input.latency_ms > 200
@@ -97,6 +108,7 @@ deny[msg] {
 }""")
 
     return policies
+
 
 def main():
     if not os.path.exists(INPUT_FILE):
@@ -116,6 +128,7 @@ def main():
 
     print(f"✅ Generated OPA policies at {OUTPUT_FILE}")
     print(f"Extracted {len(policies)} policies.")
+
 
 if __name__ == "__main__":
     main()

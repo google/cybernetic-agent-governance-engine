@@ -105,20 +105,17 @@ See ``src/gateway/governance/nemo/README.md`` for an architecture diagram.
 import asyncio
 import logging
 import os
-import json
-from concurrent import futures
-from typing import Any
-
-import grpc
-from nemoguardrails import LLMRails, RailsConfig
 
 # Adjust path so we can import from src if running as script
 import sys
+from concurrent import futures
+
+import grpc
+
 sys.path.append(".")
 
-from src.gateway.protos import nemo_pb2
-from src.gateway.protos import nemo_pb2_grpc
 from src.gateway.governance.nemo.manager import create_nemo_manager
+from src.gateway.protos import nemo_pb2, nemo_pb2_grpc
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -126,7 +123,10 @@ logger = logging.getLogger("NeMoSidecar")
 
 # Load Rails Config
 # Config is located in config/rails relative to project root (from src/gateway/governance/nemo)
-RAILS_CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../config/rails"))
+RAILS_CONFIG_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "../../../../config/rails")
+)
+
 
 class NeMoService(nemo_pb2_grpc.NeMoGuardrailsServicer):
     def __init__(self):
@@ -160,16 +160,14 @@ class NeMoService(nemo_pb2_grpc.NeMoGuardrailsServicer):
 
             content = response.response[0]["content"] if response.response else ""
 
-            return nemo_pb2.VerifyResponse(
-                response=content,
-                status="SUCCESS"
-            )
+            return nemo_pb2.VerifyResponse(response=content, status="SUCCESS")
 
         except Exception as e:
             logger.error(f"Guardrail execution failed: {e}")
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
             return nemo_pb2.VerifyResponse(status="ERROR")
+
 
 async def serve():
     port = os.getenv("PORT", "8000")
@@ -181,11 +179,12 @@ async def serve():
     server = grpc.aio.server(futures.ThreadPoolExecutor(max_workers=10))
     nemo_pb2_grpc.add_NeMoGuardrailsServicer_to_server(NeMoService(), server)
 
-    server.add_insecure_port(f'[::]:{port}')
+    server.add_insecure_port(f"[::]:{port}")
     logger.info(f"🚀 NeMo Guardrails gRPC Server starting on port {port}...")
 
     await server.start()
     await server.wait_for_termination()
+
 
 if __name__ == "__main__":
     asyncio.run(serve())

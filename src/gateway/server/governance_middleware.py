@@ -34,7 +34,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -42,19 +42,18 @@ from opentelemetry import context as otel_context
 from opentelemetry.propagate import extract as otel_extract
 from pydantic import BaseModel
 
-from src.gateway.governance.singletons import symbolic_governor, opa_client
-from src.gateway.governance.symbolic_governor import GovernanceError
-from src.gateway.governance.text_filter import ac_keyword_scan
 from src.gateway.governance.iso_control import stamp_iso_control
-from src.gateway.governance.schemas.thresholds import THRESHOLDS
-from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.kms_signer import get_governance_signer
 from src.gateway.governance.prompt_injection_detector import detect_indirect_injection
+from src.gateway.governance.routing_seal import SymbolicGovernorViolation
+from src.gateway.governance.singletons import symbolic_governor
+from src.gateway.governance.symbolic_governor import GovernanceError
+from src.gateway.governance.text_filter import ac_keyword_scan
 
 logger = logging.getLogger("Gateway.GovernanceMiddleware")
 
 
-_CAGE_SEAL_SECRET: Optional[str] = os.environ.get("CAGE_ROUTING_SEAL_SECRET")
+_CAGE_SEAL_SECRET: str | None = os.environ.get("CAGE_ROUTING_SEAL_SECRET")
 _SEAL_HEADER = "X-CAGE-Routing-Seal"
 _SEAL_ENFORCEMENT = os.environ.get("CAGE_SEAL_ENFORCEMENT", "enforce").lower()
 # Set CAGE_SEAL_ENFORCEMENT=log to log-only without blocking (useful in development).
@@ -99,7 +98,8 @@ def _is_dev_environment() -> bool:
         if namespace and not any(kw in namespace for kw in ("dev", "test", "local")):
             logger.warning(
                 "⚠️  M-15: CAGE_ENV=%s but K8s namespace=%r — treating as production.",
-                _ENVIRONMENT, namespace,
+                _ENVIRONMENT,
+                namespace,
             )
             return False
     except FileNotFoundError:
@@ -107,6 +107,7 @@ def _is_dev_environment() -> bool:
     except Exception as exc:
         logger.warning("M-15: Could not read K8s namespace file: %s", exc)
     return True
+
 
 # ---------------------------------------------------------------------------
 # POAM-012 — Module-level startup validation of CAGE_ROUTING_SEAL_SECRET
@@ -163,7 +164,9 @@ def _verify_routing_seal(request: Request, body_bytes: bytes) -> bool:
 
     provided_seal = request.headers.get(_SEAL_HEADER, "")
     if not provided_seal:
-        logger.warning("Missing %s header on request to %s", _SEAL_HEADER, request.url.path)
+        logger.warning(
+            "Missing %s header on request to %s", _SEAL_HEADER, request.url.path
+        )
         return False
 
     expected = hmac.new(
@@ -210,7 +213,8 @@ def enforce_routing_seal(request: Request, body_bytes: bytes) -> None:
 # Governance enforcement helpers
 # ---------------------------------------------------------------------------
 
-async def enforce_governance(tool_name: str, params: Dict[str, Any]) -> str:
+
+async def enforce_governance(tool_name: str, params: dict[str, Any]) -> str:
     """Run the full Symbolic Governor pipeline for the given tool call.
 
     Gap 2 fix (No-Direct-Bind): ``govern()`` now returns a routing seal on
@@ -241,7 +245,7 @@ async def enforce_governance(tool_name: str, params: Dict[str, Any]) -> str:
         raise PermissionError(f"Governance Blocked: {exc}")
 
 
-async def tier1_keyword_check(text: str, span: Any = None) -> Optional[str]:
+async def tier1_keyword_check(text: str, span: Any = None) -> str | None:
     """Run Tier-1 Aho-Corasick keyword scan.
 
     Returns a violation message if blocked, else None.
@@ -258,7 +262,7 @@ async def sanitize_mcp_tool_response(
     tool_name: str,
     response_text: str,
     span: Any = None,
-) -> Optional[str]:
+) -> str | None:
     """Sanitize an MCP tool response for indirect injection (AI 600-1 §2.3, AI600-003).
 
     Checks the tool response against the indirect injection pattern set in
@@ -279,7 +283,7 @@ async def sanitize_mcp_tool_response(
     if result.detected:
         stamp_iso_control(span, tier=2, control="A.9.2", outcome="BLOCK")
         logger.warning(
-            "🔴 [AI600-003] MCP tool response rejected: tool=%s pattern=%s \"\n"
+            '🔴 [AI600-003] MCP tool response rejected: tool=%s pattern=%s "\n'
             "(ISO 42001 A.9.2 — indirect injection blocked)",
             tool_name,
             result.pattern_matched,
@@ -287,7 +291,6 @@ async def sanitize_mcp_tool_response(
         return f"indirect_injection:{result.pattern_matched}"
     stamp_iso_control(span, tier=2, control="A.9.2", outcome="PASS")
     return None
-
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +323,7 @@ async def governance_check(request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail="Invalid JSON body.")
 
     tool_name: str = body.get("tool_name", "")
-    params: Dict[str, Any] = body.get("params", {})
+    params: dict[str, Any] = body.get("params", {})
 
     if not tool_name:
         raise HTTPException(status_code=400, detail="'tool_name' is required.")
@@ -340,16 +343,19 @@ async def governance_check(request: Request) -> JSONResponse:
 # /validate-action — Unified Governance Routing (Option 2)
 # ---------------------------------------------------------------------------
 
+
 class ValidateActionRequest(BaseModel):
     """Payload for POST /governance/validate-action."""
+
     action: str
-    params: Dict[str, Any]
-    policy_version_id: Optional[str] = None
+    params: dict[str, Any]
+    policy_version_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
 # P4 — KMS-verified governance signature check
 # ---------------------------------------------------------------------------
+
 
 def _verify_governance_signature(governance_signature: str, payload_plan: dict) -> None:
     """Verify a KMS-backed governance signature against a plan payload.
@@ -414,11 +420,12 @@ def _verify_governance_signature(governance_signature: str, payload_plan: dict) 
 # P6 — Signed OSCAL compliance receipt on GovernanceError (hard refusal)
 # ---------------------------------------------------------------------------
 
+
 async def _emit_refusal_receipt(
     action_id: str,
     refusal_reason: str,
     oscal_control_ref: str,
-    params: Dict[str, Any],
+    params: dict[str, Any],
 ) -> None:
     """Emit a signed OSCAL compliance receipt for a hard governance refusal.
 
@@ -447,7 +454,7 @@ async def _emit_refusal_receipt(
     receipt_id = str(uuid.uuid4())
     timestamp_utc = datetime.now(tz=timezone.utc).isoformat()
 
-    receipt: Dict[str, Any] = {
+    receipt: dict[str, Any] = {
         "type": "GOVERNANCE_REFUSAL_RECEIPT",
         "receipt_id": receipt_id,
         "action_id": action_id,
@@ -474,7 +481,10 @@ async def _emit_refusal_receipt(
 
     # Publish to evidence stream
     try:
-        from src.compliance_bridge.evidence_stream import get_evidence_sink  # noqa: PLC0415
+        from src.compliance_bridge.evidence_stream import (
+            get_evidence_sink,
+        )
+
         sink = get_evidence_sink()
         await sink.ingest(receipt)
         logger.error(
@@ -499,6 +509,7 @@ async def _emit_refusal_receipt(
 async def get_policy_version_endpoint() -> JSONResponse:
     """Retrieve the active policy hash for session pinning verification."""
     from src.gateway.governance.constants import ControlRegistry
+
     return JSONResponse(content={"active_hash": ControlRegistry().active_hash})
 
 
@@ -576,7 +587,7 @@ async def validate_action_endpoint(
                 "latency_ms": 0,
             },
         )
-    except Exception as exc:
+    except Exception:
         logger.error("❌ validate_action internal error", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal governance error")
     finally:

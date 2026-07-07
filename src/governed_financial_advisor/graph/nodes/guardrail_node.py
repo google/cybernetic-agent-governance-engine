@@ -70,6 +70,7 @@ logger = logging.getLogger(__name__)
 # Domain-specific message extractors — financial advisor AgentState
 # ---------------------------------------------------------------------------
 
+
 def _extract_user_input(state: dict[str, Any]) -> str:
     """Extract the most recent user message text from AgentState.
 
@@ -106,13 +107,10 @@ def _extract_user_input(state: dict[str, Any]) -> str:
 # Re-export get_nemo_rails from the harness so existing test mock targets work
 # ---------------------------------------------------------------------------
 
-from src.gateway.governance.langgraph_harness.nemo_node_factory import (  # noqa: E402
-    get_nemo_rails,
-)
 
 # Re-export validate_with_nemo for test mock targets
 try:
-    from src.gateway.governance.nemo.manager import (  # noqa: E402
+    from src.gateway.governance.nemo.manager import (
         validate_with_nemo,
         verify_and_mask_output,
     )
@@ -124,17 +122,21 @@ except ImportError:
 # Nodes — produced by the governance harness factories
 # ---------------------------------------------------------------------------
 
-nemo_guardrail_node = create_nemo_guardrail_node(NemoNodeConfig(
-    message_extractor=_extract_user_input,
-    blocked_state_key="guardrail_blocked",
-    reason_state_key="guardrail_reason",
-    pass_through_state=True,
-))
+nemo_guardrail_node = create_nemo_guardrail_node(
+    NemoNodeConfig(
+        message_extractor=_extract_user_input,
+        blocked_state_key="guardrail_blocked",
+        reason_state_key="guardrail_reason",
+        pass_through_state=True,
+    )
+)
 """Async LangGraph node — mandatory NeMo input rail (ADR 2026-03-09)."""
 
-nemo_output_rail_node = create_nemo_output_rail_node(NemoNodeConfig(
-    output_rail_applied_key="output_rail_applied",
-    output_blocked_sentinel="[OUTPUT BLOCKED: guardrail error]",
-    pass_through_state=False,
-))
+nemo_output_rail_node = create_nemo_output_rail_node(
+    NemoNodeConfig(
+        output_rail_applied_key="output_rail_applied",
+        output_blocked_sentinel="[OUTPUT BLOCKED: guardrail error]",
+        pass_through_state=False,
+    )
+)
 """Async LangGraph node — mandatory NeMo output rail (ADR 2026-03-09b)."""

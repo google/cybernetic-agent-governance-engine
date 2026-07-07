@@ -65,12 +65,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import importlib
 import json
 import os
-import sys
-import unittest.mock as mock
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -96,24 +93,32 @@ pytestmark = pytest.mark.unit
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_seal(secret: str, body_bytes: bytes) -> str:
     """Compute the HMAC-SHA256 routing seal the same way the middleware does."""
     return hmac.new(secret.encode(), body_bytes, hashlib.sha256).hexdigest()
 
 
-def _json_body(tool_name: str = "execute_trade", params: Dict[str, Any] | None = None) -> bytes:
-    return json.dumps({"tool_name": tool_name, "params": params or {"amount": 100}}).encode()
+def _json_body(
+    tool_name: str = "execute_trade", params: dict[str, Any] | None = None
+) -> bytes:
+    return json.dumps(
+        {"tool_name": tool_name, "params": params or {"amount": 100}}
+    ).encode()
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def mock_symbolic_governor():
     """Patch the symbolic_governor singleton used by governance_middleware."""
     gov = MagicMock()
-    gov.verify = AsyncMock(return_value={"violations": [], "opa_results": {"allow": True}})
+    gov.verify = AsyncMock(
+        return_value={"violations": [], "opa_results": {"allow": True}}
+    )
     gov.validate_action = AsyncMock(
         return_value={
             "verdict": "APPROVED",
@@ -122,9 +127,7 @@ def mock_symbolic_governor():
             "latency_ms": 1.0,
         }
     )
-    with patch(
-        "src.gateway.server.governance_middleware.symbolic_governor", gov
-    ):
+    with patch("src.gateway.server.governance_middleware.symbolic_governor", gov):
         yield gov
 
 
@@ -166,6 +169,7 @@ def enforce_client(mock_symbolic_governor, mock_kms_signer):
     mw._SEAL_ENFORCEMENT = "enforce"
 
     from src.gateway.server.governance_middleware import governance_app
+
     client = TestClient(governance_app, raise_server_exceptions=False)
 
     yield client
@@ -186,6 +190,7 @@ def log_client(mock_symbolic_governor, mock_kms_signer):
     mw._SEAL_ENFORCEMENT = "log"
 
     from src.gateway.server.governance_middleware import governance_app
+
     client = TestClient(governance_app, raise_server_exceptions=False)
 
     yield client
@@ -206,6 +211,7 @@ def no_secret_client(mock_symbolic_governor, mock_kms_signer):
     mw._ENVIRONMENT = "test"  # allow bypass
 
     from src.gateway.server.governance_middleware import governance_app
+
     client = TestClient(governance_app, raise_server_exceptions=False)
 
     yield client
@@ -217,6 +223,7 @@ def no_secret_client(mock_symbolic_governor, mock_kms_signer):
 # ===========================================================================
 # A. /check endpoint tests
 # ===========================================================================
+
 
 class TestGovernanceCheckEndpoint:
     """Tests for POST /check on governance_app."""
@@ -236,7 +243,9 @@ class TestGovernanceCheckEndpoint:
         data = resp.json()
         assert data["status"] == "APPROVED"
         assert data["violations"] == []
-        mock_symbolic_governor.verify.assert_awaited_once_with("execute_trade", {"amount": 100})
+        mock_symbolic_governor.verify.assert_awaited_once_with(
+            "execute_trade", {"amount": 100}
+        )
 
     def test_check_returns_rejected_when_violations_present(
         self, enforce_client, mock_symbolic_governor
@@ -358,6 +367,7 @@ class TestGovernanceCheckEndpoint:
 # B. /validate-action endpoint tests
 # ===========================================================================
 
+
 class TestValidateActionEndpoint:
     """Tests for POST /validate-action on governance_app."""
 
@@ -365,13 +375,17 @@ class TestValidateActionEndpoint:
     def client(self, mock_symbolic_governor, mock_kms_signer):
         """Plain TestClient — /validate-action does not require a routing seal."""
         from src.gateway.server.governance_middleware import governance_app
+
         return TestClient(governance_app, raise_server_exceptions=False)
 
     def test_validate_action_happy_path_approved(self, client, mock_symbolic_governor):
         """Valid action returns 200 with APPROVED verdict."""
         resp = client.post(
             "/validate-action",
-            json={"action": "execute_trade", "params": {"amount": 100, "symbol": "AAPL"}},
+            json={
+                "action": "execute_trade",
+                "params": {"amount": 100, "symbol": "AAPL"},
+            },
         )
 
         assert resp.status_code == 200
@@ -500,12 +514,15 @@ class TestValidateActionEndpoint:
 # C. _verify_governance_signature() unit tests
 # ===========================================================================
 
+
 class TestVerifyGovernanceSignature:
     """Unit tests for the _verify_governance_signature() helper (P4 KMS check)."""
 
     def test_valid_signature_passes(self):
         """When signer.verify() returns True, no exception is raised."""
-        from src.gateway.server.governance_middleware import _verify_governance_signature
+        from src.gateway.server.governance_middleware import (
+            _verify_governance_signature,
+        )
 
         mock_signer = MagicMock()
         mock_signer.verify = MagicMock(return_value=True)
@@ -524,8 +541,10 @@ class TestVerifyGovernanceSignature:
 
     def test_empty_signature_raises_violation(self):
         """An empty governance_signature raises SymbolicGovernorViolation immediately."""
-        from src.gateway.server.governance_middleware import _verify_governance_signature
         from src.gateway.governance.routing_seal import SymbolicGovernorViolation
+        from src.gateway.server.governance_middleware import (
+            _verify_governance_signature,
+        )
 
         with pytest.raises(SymbolicGovernorViolation) as exc_info:
             _verify_governance_signature("", {"action": "execute_trade"})
@@ -534,16 +553,20 @@ class TestVerifyGovernanceSignature:
 
     def test_none_signature_raises_violation(self):
         """A None governance_signature raises SymbolicGovernorViolation."""
-        from src.gateway.server.governance_middleware import _verify_governance_signature
         from src.gateway.governance.routing_seal import SymbolicGovernorViolation
+        from src.gateway.server.governance_middleware import (
+            _verify_governance_signature,
+        )
 
         with pytest.raises(SymbolicGovernorViolation):
             _verify_governance_signature(None, {"action": "execute_trade"})  # type: ignore[arg-type]
 
     def test_signer_verify_returns_false_raises_violation(self):
         """When signer.verify() returns False, SymbolicGovernorViolation is raised."""
-        from src.gateway.server.governance_middleware import _verify_governance_signature
         from src.gateway.governance.routing_seal import SymbolicGovernorViolation
+        from src.gateway.server.governance_middleware import (
+            _verify_governance_signature,
+        )
 
         mock_signer = MagicMock()
         mock_signer.verify = MagicMock(return_value=False)
@@ -553,14 +576,21 @@ class TestVerifyGovernanceSignature:
             return_value=mock_signer,
         ):
             with pytest.raises(SymbolicGovernorViolation) as exc_info:
-                _verify_governance_signature("deadbeef" * 8, {"action": "execute_trade"})
+                _verify_governance_signature(
+                    "deadbeef" * 8, {"action": "execute_trade"}
+                )
 
-        assert "tampered" in str(exc_info.value).lower() or "failed" in str(exc_info.value).lower()
+        assert (
+            "tampered" in str(exc_info.value).lower()
+            or "failed" in str(exc_info.value).lower()
+        )
 
     def test_signer_raises_unexpected_exception_wraps_as_violation(self):
         """If get_governance_signer().verify() raises, it is wrapped in SymbolicGovernorViolation."""
-        from src.gateway.server.governance_middleware import _verify_governance_signature
         from src.gateway.governance.routing_seal import SymbolicGovernorViolation
+        from src.gateway.server.governance_middleware import (
+            _verify_governance_signature,
+        )
 
         mock_signer = MagicMock()
         mock_signer.verify = MagicMock(side_effect=ConnectionError("KMS unreachable"))
@@ -570,21 +600,27 @@ class TestVerifyGovernanceSignature:
             return_value=mock_signer,
         ):
             with pytest.raises(SymbolicGovernorViolation) as exc_info:
-                _verify_governance_signature("deadbeef" * 8, {"action": "execute_trade"})
+                _verify_governance_signature(
+                    "deadbeef" * 8, {"action": "execute_trade"}
+                )
 
         assert "KMS verifier raised an unexpected error" in str(exc_info.value)
 
     def test_get_governance_signer_itself_raises_wraps_as_violation(self):
         """If get_governance_signer() itself raises, it is wrapped in SymbolicGovernorViolation."""
-        from src.gateway.server.governance_middleware import _verify_governance_signature
         from src.gateway.governance.routing_seal import SymbolicGovernorViolation
+        from src.gateway.server.governance_middleware import (
+            _verify_governance_signature,
+        )
 
         with patch(
             "src.gateway.server.governance_middleware.get_governance_signer",
             side_effect=RuntimeError("KMS_GOVERNANCE_KEY not set"),
         ):
             with pytest.raises(SymbolicGovernorViolation) as exc_info:
-                _verify_governance_signature("deadbeef" * 8, {"action": "execute_trade"})
+                _verify_governance_signature(
+                    "deadbeef" * 8, {"action": "execute_trade"}
+                )
 
         assert "KMS verifier raised an unexpected error" in str(exc_info.value)
 
@@ -593,21 +629,22 @@ class TestVerifyGovernanceSignature:
 # D. enforce_routing_seal() / _verify_routing_seal() unit tests
 # ===========================================================================
 
+
 class TestRoutingSealEnforcement:
     """Unit tests for enforce_routing_seal() and _verify_routing_seal()."""
 
     def _make_request(self, path: str = "/check", headers: dict | None = None):
         """Build a minimal mock Request object."""
-        from starlette.testclient import TestClient
         from starlette.requests import Request
-        from starlette.datastructures import Headers
 
         scope = {
             "type": "http",
             "method": "POST",
             "path": path,
             "query_string": b"",
-            "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
+            "headers": [
+                (k.lower().encode(), v.encode()) for k, v in (headers or {}).items()
+            ],
         }
         return Request(scope)
 
@@ -673,8 +710,9 @@ class TestRoutingSealEnforcement:
 
     def test_enforce_routing_seal_enforce_mode_raises_403_on_bad_seal(self):
         """enforce_routing_seal() raises HTTPException(403) in enforce mode for bad seal."""
-        import src.gateway.server.governance_middleware as mw
         from fastapi import HTTPException
+
+        import src.gateway.server.governance_middleware as mw
 
         original_secret = mw._CAGE_SEAL_SECRET
         original_enforcement = mw._SEAL_ENFORCEMENT
@@ -693,8 +731,9 @@ class TestRoutingSealEnforcement:
 
     def test_enforce_routing_seal_log_mode_does_not_raise_on_bad_seal(self, caplog):
         """enforce_routing_seal() in log mode logs but does NOT raise for bad seal."""
-        import src.gateway.server.governance_middleware as mw
         import logging
+
+        import src.gateway.server.governance_middleware as mw
 
         original_secret = mw._CAGE_SEAL_SECRET
         original_enforcement = mw._SEAL_ENFORCEMENT
@@ -703,7 +742,9 @@ class TestRoutingSealEnforcement:
         try:
             body = b'{"tool_name":"execute_trade","params":{}}'
             req = self._make_request(headers={"X-CAGE-Routing-Seal": "bad-seal"})
-            with caplog.at_level(logging.WARNING, logger="Gateway.GovernanceMiddleware"):
+            with caplog.at_level(
+                logging.WARNING, logger="Gateway.GovernanceMiddleware"
+            ):
                 # Must NOT raise
                 mw.enforce_routing_seal(req, body)
             assert any("enforcement=log" in r.message for r in caplog.records)
@@ -733,6 +774,7 @@ class TestRoutingSealEnforcement:
 # ===========================================================================
 # E. _emit_refusal_receipt() unit tests
 # ===========================================================================
+
 
 class TestEmitRefusalReceipt:
     """Unit tests for the _emit_refusal_receipt() async helper (P6)."""
@@ -768,6 +810,7 @@ class TestEmitRefusalReceipt:
     async def test_emit_receipt_kms_sign_failure_does_not_suppress(self, caplog):
         """If KMS signing fails, the receipt is still emitted (unsigned) and error is logged."""
         import logging
+
         from src.gateway.server.governance_middleware import _emit_refusal_receipt
 
         failing_signer = MagicMock()
@@ -776,12 +819,15 @@ class TestEmitRefusalReceipt:
         sink = MagicMock()
         sink.ingest = AsyncMock(return_value=None)
 
-        with patch(
-            "src.gateway.server.governance_middleware.get_governance_signer",
-            return_value=failing_signer,
-        ), patch(
-            "src.compliance_bridge.evidence_stream.get_evidence_sink",
-            return_value=sink,
+        with (
+            patch(
+                "src.gateway.server.governance_middleware.get_governance_signer",
+                return_value=failing_signer,
+            ),
+            patch(
+                "src.compliance_bridge.evidence_stream.get_evidence_sink",
+                return_value=sink,
+            ),
         ):
             with caplog.at_level(logging.ERROR, logger="Gateway.GovernanceMiddleware"):
                 await _emit_refusal_receipt(
@@ -796,13 +842,18 @@ class TestEmitRefusalReceipt:
         # Error must be logged
         assert any("Failed to KMS-sign" in r.message for r in caplog.records)
 
-    async def test_emit_receipt_sink_failure_is_logged_not_raised(self, mock_kms_signer, caplog):
+    async def test_emit_receipt_sink_failure_is_logged_not_raised(
+        self, mock_kms_signer, caplog
+    ):
         """If the evidence sink fails, the error is logged but NOT re-raised."""
         import logging
+
         from src.gateway.server.governance_middleware import _emit_refusal_receipt
 
         failing_sink = MagicMock()
-        failing_sink.ingest = AsyncMock(side_effect=ConnectionError("Pub/Sub unavailable"))
+        failing_sink.ingest = AsyncMock(
+            side_effect=ConnectionError("Pub/Sub unavailable")
+        )
 
         with patch(
             "src.compliance_bridge.evidence_stream.get_evidence_sink",
@@ -817,12 +868,15 @@ class TestEmitRefusalReceipt:
                     params={},
                 )
 
-        assert any("Failed to emit OSCAL refusal receipt" in r.message for r in caplog.records)
+        assert any(
+            "Failed to emit OSCAL refusal receipt" in r.message for r in caplog.records
+        )
 
 
 # ===========================================================================
 # F. Startup validation tests
 # ===========================================================================
+
 
 class TestStartupValidation:
     """Tests for module-level CAGE_ROUTING_SEAL_SECRET startup guard (POAM-012)."""
@@ -866,28 +920,36 @@ class TestStartupValidation:
         # This is validated by the fact that the module imports successfully
         # in the test suite (CAGE_ENV=test is set at the top of this file).
         import src.gateway.server.governance_middleware as mw
+
         assert mw is not None  # module imported without RuntimeError
 
     def test_module_exports_governance_app(self):
         """governance_app FastAPI instance is exported from the module."""
-        from src.gateway.server.governance_middleware import governance_app
         from fastapi import FastAPI
+
+        from src.gateway.server.governance_middleware import governance_app
+
         assert isinstance(governance_app, FastAPI)
 
     def test_module_exports_enforce_routing_seal(self):
         """enforce_routing_seal() is exported from the module."""
         from src.gateway.server.governance_middleware import enforce_routing_seal
+
         assert callable(enforce_routing_seal)
 
     def test_module_exports_verify_governance_signature(self):
         """_verify_governance_signature() is accessible from the module."""
-        from src.gateway.server.governance_middleware import _verify_governance_signature
+        from src.gateway.server.governance_middleware import (
+            _verify_governance_signature,
+        )
+
         assert callable(_verify_governance_signature)
 
 
 # ===========================================================================
 # G. enforce_governance() helper tests
 # ===========================================================================
+
 
 class TestEnforceGovernanceHelper:
     """Tests for the enforce_governance() async helper."""
@@ -923,8 +985,8 @@ class TestEnforceGovernanceHelper:
 
     async def test_governance_error_raises_permission_error(self):
         """GovernanceError from the governor is converted to PermissionError."""
-        from src.gateway.server.governance_middleware import enforce_governance
         from src.gateway.governance.symbolic_governor import GovernanceError
+        from src.gateway.server.governance_middleware import enforce_governance
 
         mock_gov = MagicMock()
         mock_gov.govern = AsyncMock(side_effect=GovernanceError("policy_denied"))
@@ -932,14 +994,18 @@ class TestEnforceGovernanceHelper:
         mock_signer = MagicMock()
         mock_signer.sign = MagicMock(return_value="sig")
 
-        with patch(
-            "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
-        ), patch(
-            "src.gateway.server.governance_middleware.get_governance_signer",
-            return_value=mock_signer,
-        ), patch(
-            "src.gateway.server.governance_middleware._emit_refusal_receipt",
-            new=AsyncMock(return_value=None),
+        with (
+            patch(
+                "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
+            ),
+            patch(
+                "src.gateway.server.governance_middleware.get_governance_signer",
+                return_value=mock_signer,
+            ),
+            patch(
+                "src.gateway.server.governance_middleware._emit_refusal_receipt",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             with pytest.raises(PermissionError, match="Governance Blocked"):
                 await enforce_governance("execute_trade", {"amount": 100})
@@ -949,12 +1015,14 @@ class TestEnforceGovernanceHelper:
 # H. Integration smoke: governance_app routes are registered
 # ===========================================================================
 
+
 class TestGovernanceAppRoutes:
     """Smoke tests verifying that the expected routes exist on governance_app."""
 
     @pytest.fixture()
     def client(self):
         from src.gateway.server.governance_middleware import governance_app
+
         return TestClient(governance_app, raise_server_exceptions=False)
 
     def test_check_route_exists(self, client):
@@ -962,11 +1030,14 @@ class TestGovernanceAppRoutes:
         # Send a request without a seal — in test env with no secret it bypasses,
         # but we just want to confirm the route exists (not 404).
         import src.gateway.server.governance_middleware as mw
+
         original_secret = mw._CAGE_SEAL_SECRET
         mw._CAGE_SEAL_SECRET = None
         mw._ENVIRONMENT = "test"
         try:
-            resp = client.post("/check", json={"tool_name": "check_market_status", "params": {}})
+            resp = client.post(
+                "/check", json={"tool_name": "check_market_status", "params": {}}
+            )
             assert resp.status_code != 404
         finally:
             mw._CAGE_SEAL_SECRET = original_secret
@@ -980,4 +1051,3 @@ class TestGovernanceAppRoutes:
         """An unknown route returns 404."""
         resp = client.get("/nonexistent-endpoint")
         assert resp.status_code == 404
-

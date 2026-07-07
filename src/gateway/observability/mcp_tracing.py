@@ -59,13 +59,11 @@ def patch_mcp_tools(mcp_server) -> None:
         otel_ctx = propagator.extract(carrier)
 
         # 2. Create a child span linked to the caller's trace
-        with tracer.start_as_current_span(
-            f"mcp.tool:{name}", context=otel_ctx
-        ) as span:
+        with tracer.start_as_current_span(f"mcp.tool:{name}", context=otel_ctx) as span:
             span.set_attribute("mcp.tool.name", name)
             span.set_attribute(
                 "langfuse.observation.input",
-                json.dumps({"tool": name, "args": _filter_args(arguments)})
+                json.dumps({"tool": name, "args": _filter_args(arguments)}),
             )
 
             # 3. Delegate to original (validates args, calls fn)
@@ -76,9 +74,7 @@ def patch_mcp_tools(mcp_server) -> None:
             # 4. Record output
             result_str = str(result)
             span.set_attribute("mcp.tool.result_length", len(result_str))
-            span.set_attribute(
-                "langfuse.observation.output", result_str[:4096]
-            )
+            span.set_attribute("langfuse.observation.output", result_str[:4096])
             return result
 
     # Replace the method on the instance

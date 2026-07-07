@@ -22,8 +22,8 @@ Note: ConsensusEngine() uses THRESHOLDS singleton and GatewayClient; both are
 mocked here. The primary method is check_consensus(action, amount, symbol)
 which returns a dict with keys: status, reason, votes.
 """
+
 import pytest
-import asyncio
 
 pytestmark = pytest.mark.unit
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -59,7 +59,9 @@ def mock_genai_span():
 
 @pytest.mark.local
 @pytest.mark.asyncio
-async def test_consensus_engine_below_threshold_skips_consensus(mock_thresholds, mock_gateway_client):
+async def test_consensus_engine_below_threshold_skips_consensus(
+    mock_thresholds, mock_gateway_client
+):
     """Trades below threshold_usd should not require consensus (fast path, SKIPPED)."""
     from src.gateway.governance.consensus import ConsensusEngine
 
@@ -71,7 +73,9 @@ async def test_consensus_engine_below_threshold_skips_consensus(mock_thresholds,
 
 
 @pytest.mark.asyncio
-async def test_consensus_engine_below_threshold_exact_boundary(mock_thresholds, mock_gateway_client):
+async def test_consensus_engine_below_threshold_exact_boundary(
+    mock_thresholds, mock_gateway_client
+):
     """Trade exactly at threshold should also skip (strictly less than)."""
     from src.gateway.governance.consensus import ConsensusEngine
 
@@ -91,7 +95,9 @@ async def test_consensus_engine_above_threshold_unanimous_approve(
 
     engine = ConsensusEngine()
 
-    with patch.object(engine, "_get_critic_vote", new_callable=AsyncMock, return_value="APPROVE"):
+    with patch.object(
+        engine, "_get_critic_vote", new_callable=AsyncMock, return_value="APPROVE"
+    ):
         result = await engine.check_consensus("buy", 15000.0, "MSFT")
     assert result["status"] == "APPROVE"
     assert "approval" in result["reason"].lower()
@@ -181,7 +187,9 @@ async def test_consensus_engine_critic_error_returns_escalate(
 
     engine = ConsensusEngine()
 
-    with patch.object(engine, "_get_critic_vote", new_callable=AsyncMock, return_value="ERROR"):
+    with patch.object(
+        engine, "_get_critic_vote", new_callable=AsyncMock, return_value="ERROR"
+    ):
         result = await engine.check_consensus("buy", 50000.0, "BTC")
     # All-ERROR → fail-open APPROVE (LLM critics unavailable; OPA is the primary gate)
     assert result["status"] in ("APPROVE", "ESCALATE", "REJECT")
@@ -196,7 +204,9 @@ async def test_consensus_engine_returns_votes_list(
 
     engine = ConsensusEngine()
 
-    with patch.object(engine, "_get_critic_vote", new_callable=AsyncMock, return_value="APPROVE"):
+    with patch.object(
+        engine, "_get_critic_vote", new_callable=AsyncMock, return_value="APPROVE"
+    ):
         result = await engine.check_consensus("buy", 25000.0, "NVDA")
     assert isinstance(result["votes"], list)
     assert len(result["votes"]) == 2

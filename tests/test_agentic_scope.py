@@ -19,40 +19,56 @@ Phase: 0 (foundation)
 """
 
 import os
+
 import pytest
 
 # Skip the entire module gracefully when dowhy is not installed (e.g. in CI
 # environments that install only the base dependency group without the
 # [compliance] extra).  The TestCausalGatekeeperAuthorizedActionSpace class
 # imports causal_gatekeeper which transitively requires dowhy.
-pytest.importorskip("dowhy", reason="dowhy not installed — skipping agentic scope causal tests")
+pytest.importorskip(
+    "dowhy", reason="dowhy not installed — skipping agentic scope causal tests"
+)
 
 
 # ---------------------------------------------------------------------------
 # §4.1 Task 3a — RoutingSeal rejects requests without valid HMAC seal
 # ---------------------------------------------------------------------------
 
+
 class TestRoutingSealRejectsInvalidSeal:
     """RoutingSeal must reject requests without a valid HMAC seal."""
 
     def test_verify_seal_rejects_missing_seal(self):
         """verify_seal returns False for an empty seal string."""
-        os.environ.setdefault("GOVERNANCE_SALT", "test-salt-for-unit-tests-minimum-64-chars-padding-here-ok")
+        os.environ.setdefault(
+            "GOVERNANCE_SALT",
+            "test-salt-for-unit-tests-minimum-64-chars-padding-here-ok",
+        )
         from src.gateway.governance.routing_seal import verify_seal
+
         result = verify_seal("", "execute_trade", {"amount": 5000})
         assert result is False
 
     def test_verify_seal_rejects_malformed_seal(self):
         """verify_seal returns False for a malformed seal (wrong number of parts)."""
-        os.environ.setdefault("GOVERNANCE_SALT", "test-salt-for-unit-tests-minimum-64-chars-padding-here-ok")
+        os.environ.setdefault(
+            "GOVERNANCE_SALT",
+            "test-salt-for-unit-tests-minimum-64-chars-padding-here-ok",
+        )
         from src.gateway.governance.routing_seal import verify_seal
+
         result = verify_seal("not-a-valid-seal", "execute_trade", {"amount": 5000})
         assert result is False
 
     def test_verify_seal_rejects_tampered_hmac(self):
         """verify_seal returns False when the HMAC is tampered."""
-        os.environ.setdefault("GOVERNANCE_SALT", "test-salt-for-unit-tests-minimum-64-chars-padding-here-ok")
+        os.environ.setdefault(
+            "GOVERNANCE_SALT",
+            "test-salt-for-unit-tests-minimum-64-chars-padding-here-ok",
+        )
         from src.gateway.governance.routing_seal import generate_seal, verify_seal
+
         seal = generate_seal("execute_trade", {"amount": 5000})
         # Tamper with the HMAC portion
         parts = seal.split(".")
@@ -63,8 +79,12 @@ class TestRoutingSealRejectsInvalidSeal:
 
     def test_verify_seal_accepts_valid_seal(self):
         """verify_seal returns True for a freshly generated valid seal."""
-        os.environ.setdefault("GOVERNANCE_SALT", "test-salt-for-unit-tests-minimum-64-chars-padding-here-ok")
+        os.environ.setdefault(
+            "GOVERNANCE_SALT",
+            "test-salt-for-unit-tests-minimum-64-chars-padding-here-ok",
+        )
         from src.gateway.governance.routing_seal import generate_seal, verify_seal
+
         seal = generate_seal("execute_trade", {"amount": 5000})
         result = verify_seal(seal, "execute_trade", {"amount": 5000})
         assert result is True
@@ -74,27 +94,32 @@ class TestRoutingSealRejectsInvalidSeal:
 # §4.1 Task 3b — ConsensusEngine escalates when amount_usd > 10000
 # ---------------------------------------------------------------------------
 
+
 class TestConsensusEngineThreshold:
     """ConsensusEngine must escalate when amount_usd > USD 10,000."""
 
     def test_threshold_loaded_from_singleton(self):
         """ConsensusEngine threshold matches governance_thresholds.json."""
         from src.gateway.governance.schemas.thresholds import THRESHOLDS
+
         assert THRESHOLDS.consensus.threshold_usd == 10000.0
 
     def test_hitl_escalator_fires_above_threshold(self):
         """should_escalate_for_consensus returns True when amount > threshold."""
         from src.gateway.governance.hitl_escalator import should_escalate_for_consensus
+
         assert should_escalate_for_consensus(15000.0, threshold_usd=10000.0) is True
 
     def test_hitl_escalator_does_not_fire_at_threshold(self):
         """should_escalate_for_consensus returns False when amount == threshold."""
         from src.gateway.governance.hitl_escalator import should_escalate_for_consensus
+
         assert should_escalate_for_consensus(10000.0, threshold_usd=10000.0) is False
 
     def test_hitl_escalator_does_not_fire_below_threshold(self):
         """should_escalate_for_consensus returns False when amount < threshold."""
         from src.gateway.governance.hitl_escalator import should_escalate_for_consensus
+
         assert should_escalate_for_consensus(9999.99, threshold_usd=10000.0) is False
 
 
@@ -102,12 +127,14 @@ class TestConsensusEngineThreshold:
 # §4.1 Task 3c — CausalGatekeeper blocks tool calls outside authorized space
 # ---------------------------------------------------------------------------
 
+
 class TestCausalGatekeeperAuthorizedActionSpace:
     """CausalGatekeeper must block tool calls outside the authorized action space."""
 
     def test_causal_safety_check_blocks_zero_amount(self):
         """causal_safety_check returns True (no-op) for zero-amount actions."""
         from src.gateway.governance.causal_gatekeeper import causal_safety_check
+
         # Zero amount is not a meaningful trade — should pass through
         result = causal_safety_check({"amount": 0, "action_type": "get_portfolio"})
         assert result is True
@@ -115,6 +142,7 @@ class TestCausalGatekeeperAuthorizedActionSpace:
     def test_agentic_scope_statement_file_exists(self):
         """docs/AGENTIC_SCOPE_STATEMENT.md must exist (AI 600-1 §2.5.1 prerequisite)."""
         import pathlib
+
         scope_doc = pathlib.Path("docs/AGENTIC_SCOPE_STATEMENT.md")
         assert scope_doc.exists(), (
             "docs/AGENTIC_SCOPE_STATEMENT.md is missing — required for AI 600-1 §2.5.1 "
@@ -132,6 +160,7 @@ class TestCausalGatekeeperAuthorizedActionSpace:
         """
         import json
         import pathlib
+
         baseline = json.loads(
             pathlib.Path("config/compliance/US_FED_BASELINE.json").read_text()
         )

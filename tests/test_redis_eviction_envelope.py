@@ -41,15 +41,15 @@ import os
 import pytest
 import redis
 
-
 # ---------------------------------------------------------------------------
 # Test 1: noeviction policy invariant
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.integration
 def test_redis_noeviction_invariant():
     """Redis db=1 MUST be configured with allkeys-lru maxmemory-policy.
-    
+
     (Updated to reflect the 256MB LRU policy requested by user).
     """
     client = _get_redis_client(db=1)
@@ -67,12 +67,15 @@ def test_redis_noeviction_invariant():
 # Test 2: maxmemory ceiling is set
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.integration
 def test_redis_maxmemory_configured():
     """Redis MUST have a maxmemory ceiling to prevent unbounded growth."""
     client = _get_redis_client(db=1)
     env = os.environ.get("ENVIRONMENT", "dev").lower()
-    expected_mb = 1024 * 1024 * 1024 if env in ("prod", "production") else 256 * 1024 * 1024
+    expected_mb = (
+        1024 * 1024 * 1024 if env in ("prod", "production") else 256 * 1024 * 1024
+    )
 
     maxmemory = int(client.config_get("maxmemory")["maxmemory"])
     assert maxmemory > 0, (
@@ -89,6 +92,7 @@ def test_redis_maxmemory_configured():
 # ---------------------------------------------------------------------------
 # Test 3: db=1 write/read round-trip
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.integration
 def test_redis_db1_deferral_payload_roundtrip():
@@ -126,6 +130,7 @@ def test_redis_db1_deferral_payload_roundtrip():
 # Test 4: dangerous commands are disabled
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.integration
 def test_redis_dangerous_commands_disabled():
     """FLUSHDB and FLUSHALL MUST be disabled to prevent accidental data loss.
@@ -143,6 +148,7 @@ def test_redis_dangerous_commands_disabled():
 # ---------------------------------------------------------------------------
 # Test 5: AOF persistence enabled
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.integration
 def test_redis_aof_persistence_enabled():
@@ -162,6 +168,7 @@ def test_redis_aof_persistence_enabled():
 # ---------------------------------------------------------------------------
 # Test 6: db=0 and db=1 namespace isolation
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.integration
 def test_redis_db_namespace_isolation():
@@ -191,6 +198,7 @@ def test_redis_db_namespace_isolation():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _get_redis_client(db: int = 1) -> redis.Redis:
     """Build a Redis client for the specified DB.

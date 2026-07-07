@@ -88,12 +88,12 @@ _POAM_FILE = _REPO_ROOT / "docs" / "POAM.md"
 # declarations, import statements, and the stub allow-all default).
 _REGO_NOISE_RE = re.compile(
     r"^\s*("
-    r"#.*"                          # comment
-    r"|package\s+\w+"               # package declaration
-    r"|import\s+.*"                 # import statement
+    r"#.*"  # comment
+    r"|package\s+\w+"  # package declaration
+    r"|import\s+.*"  # import statement
     r"|default\s+allow\s*=\s*true"  # the stub itself
     r"|default\s+validate\s*=\s*false"  # common default
-    r"|)\s*$"                       # blank line
+    r"|)\s*$"  # blank line
 )
 
 # Metadata-level stub markers (case-insensitive search in the raw YAML text)
@@ -115,11 +115,7 @@ class ManifestResult(NamedTuple):
 
 def _rego_meaningful_line_count(rego_text: str) -> int:
     """Count non-noise lines in a Rego policy body."""
-    return sum(
-        1
-        for line in rego_text.splitlines()
-        if not _REGO_NOISE_RE.match(line)
-    )
+    return sum(1 for line in rego_text.splitlines() if not _REGO_NOISE_RE.match(line))
 
 
 def _extract_rego_bodies(doc: dict) -> list[str]:
@@ -268,8 +264,8 @@ def classify_manifest(path: Path) -> ManifestResult:
         name=path.name,
         is_stub=bool(unique_reasons),
         stub_reasons=unique_reasons,
-        has_poam=False,   # filled in by check_poam_coverage()
-        poam_ids=[],      # filled in by check_poam_coverage()
+        has_poam=False,  # filled in by check_poam_coverage()
+        poam_ids=[],  # filled in by check_poam_coverage()
     )
 
 
@@ -375,7 +371,9 @@ def _print_table(results: list[ManifestResult]) -> None:
     for r in sorted(results, key=lambda x: x.name):
         stub_label = "YES" if r.is_stub else "no"
         poam_label = ", ".join(r.poam_ids) if r.poam_ids else ("—" if r.is_stub else "")
-        print(f"{r.name:<{_COL_NAME}} {stub_label:<{_COL_STUB}} {poam_label:<{_COL_POAM}}")
+        print(
+            f"{r.name:<{_COL_NAME}} {stub_label:<{_COL_STUB}} {poam_label:<{_COL_POAM}}"
+        )
     print(sep)
 
 
@@ -439,7 +437,7 @@ def main() -> int:
     # ------------------------------------------------------------------
     # 3. Print summary table
     # ------------------------------------------------------------------
-    print(f"\n=== Lula Stub Count Gate ===")
+    print("\n=== Lula Stub Count Gate ===")
     print(f"Scanned {len(results)} manifest(s) in {_LULA_DIR.relative_to(_REPO_ROOT)}")
     print(f"Stubs found: {stub_count}\n")
     _print_table(results)

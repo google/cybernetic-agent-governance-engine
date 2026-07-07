@@ -53,7 +53,9 @@ def _is_disabled() -> bool:
 
 
 def _poll_interval() -> int:
-    return int(os.environ.get("EVIDENCE_SLA_POLL_INTERVAL_SECONDS", _DEFAULT_POLL_INTERVAL))
+    return int(
+        os.environ.get("EVIDENCE_SLA_POLL_INTERVAL_SECONDS", _DEFAULT_POLL_INTERVAL)
+    )
 
 
 async def _check_sla_once() -> list[str]:
@@ -68,7 +70,8 @@ async def _check_sla_once() -> list[str]:
             if metrics.startup_grace_active:
                 logger.debug(
                     "[sla_monitor] %s — startup grace active (%.1f h remaining), skipping SLA check.",
-                    control_id, metrics.startup_grace_remaining_hours,
+                    control_id,
+                    metrics.startup_grace_remaining_hours,
                 )
                 continue
 
@@ -78,13 +81,16 @@ async def _check_sla_once() -> list[str]:
                 sla_h = sla_seconds / 3600
                 logger.warning(
                     "[sla_monitor] ⚠️  SLA breach: control=%s age=%.2fh SLA=%.2fh",
-                    control_id, age_h, sla_h,
+                    control_id,
+                    age_h,
+                    sla_h,
                 )
 
         except Exception as exc:
             logger.warning(
                 "[sla_monitor] Failed to fetch metrics for %s (non-fatal): %s",
-                control_id, exc,
+                control_id,
+                exc,
             )
 
     return breached
@@ -101,20 +107,22 @@ async def _fire_sla_alerts(breached: list[str]) -> None:
 
     for control_id in breached:
         metrics = await get_compliance_metrics(control_id, window_hours=24)
-        sla_h  = EVIDENCE_SLA_SECONDS[control_id] / 3600
-        age_h  = metrics.evidence_age_seconds / 3600
-        findings.append(OscalFinding(
-            control_id=control_id,
-            result="FAIL",
-            finding_id=f"sla-breach-{control_id}-{int(datetime.now(tz=timezone.utc).timestamp())}",
-            remarks=(
-                f"Evidence SLA breach: last event {age_h:.2f}h ago "
-                f"(SLA={sla_h:.2f}h). "
-                f"Last event UTC: {metrics.last_event_utc}. "
-                "No new traces in the monitoring window."
-            ),
-            safety_rate=metrics.safety_rate,
-        ))
+        sla_h = EVIDENCE_SLA_SECONDS[control_id] / 3600
+        age_h = metrics.evidence_age_seconds / 3600
+        findings.append(
+            OscalFinding(
+                control_id=control_id,
+                result="FAIL",
+                finding_id=f"sla-breach-{control_id}-{int(datetime.now(tz=timezone.utc).timestamp())}",
+                remarks=(
+                    f"Evidence SLA breach: last event {age_h:.2f}h ago "
+                    f"(SLA={sla_h:.2f}h). "
+                    f"Last event UTC: {metrics.last_event_utc}. "
+                    "No new traces in the monitoring window."
+                ),
+                safety_rate=metrics.safety_rate,
+            )
+        )
 
     audit_id = f"sla-monitor-{int(datetime.now(tz=timezone.utc).timestamp())}"
     try:
@@ -146,8 +154,7 @@ async def run_sla_monitor() -> None:
 
     poll_interval = _poll_interval()
     logger.info(
-        "[sla_monitor] Starting evidence SLA monitor. "
-        "Poll interval: %ds. Controls: %s",
+        "[sla_monitor] Starting evidence SLA monitor. Poll interval: %ds. Controls: %s",
         poll_interval,
         ", ".join(EVIDENCE_SLA_SECONDS.keys()),
     )
@@ -163,6 +170,8 @@ async def run_sla_monitor() -> None:
                     logger.debug("[sla_monitor] All SLA checks passed.")
             except Exception as exc:
                 # Never crash the monitor — log and continue to next cycle
-                logger.error("[sla_monitor] Unexpected error in poll cycle (continuing): %s", exc)
+                logger.error(
+                    "[sla_monitor] Unexpected error in poll cycle (continuing): %s", exc
+                )
     except asyncio.CancelledError:
         logger.info("[sla_monitor] SLA monitor task cancelled — shutting down.")

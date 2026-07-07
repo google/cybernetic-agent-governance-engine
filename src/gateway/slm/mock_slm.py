@@ -16,6 +16,7 @@
 Real SLM similarity sidecar using sentence-transformers.
 Model is configured via the SLM_MODEL_NAME env var (default: all-MiniLM-L6-v2).
 """
+
 import logging
 import os
 
@@ -64,11 +65,13 @@ def similarity():
         logger.error("SLM similarity computation failed: %s", exc, exc_info=True)
         return jsonify({"error": "similarity computation failed"}), 500
 
-    return jsonify({
-        "similarity": score,
-        "model": _SLM_MODEL_NAME,
-        "text_length": len(text),
-    })
+    return jsonify(
+        {
+            "similarity": score,
+            "model": _SLM_MODEL_NAME,
+            "text_length": len(text),
+        }
+    )
 
 
 @app.route("/health", methods=["GET"])

@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
 import os
+import sys
 
 if os.environ.get("AGENT_RUNTIME") == "1":
     raise ImportError(
@@ -28,23 +28,27 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv(".env")
 
 from langfuse import Langfuse
+
 client = Langfuse()
+
 
 def list_and_clean_prompts():
     # Unfortunately Langfuse Python SDK doesn't have a direct `list_prompts` method easily exposed in the standard client.
     # We will use the REST API directly or the Fern client.
     from langfuse.api.client import FernLangfuse
+
     api = FernLangfuse(
         username=os.environ["LANGFUSE_PUBLIC_KEY"],
         password=os.environ["LANGFUSE_SECRET_KEY"],
-        base_url=os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
+        base_url=os.environ.get("LANGFUSE_HOST", "http://localhost:3000"),
     )
-    
+
     # Wait, the Fern client doesn't have a `prompt` resource directly, we may need to use HTTP requests.
     import requests
+
     auth = (os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"])
     host = os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
-    
+
     url = f"{host}/api/public/prompts"
     resp = requests.get(url, auth=auth)
     if resp.status_code == 200:
@@ -54,5 +58,6 @@ def list_and_clean_prompts():
             print(f"- {p['name']} (v{p['version']}) labels: {p.get('labels')}")
     else:
         print(f"Failed to list prompts: {resp.text}")
+
 
 list_and_clean_prompts()

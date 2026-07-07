@@ -111,6 +111,7 @@ class ConsensusModelRegistry:
 
     def __init__(self, persona_configs: dict[str, dict[str, str]]) -> None:
         from openai import AsyncOpenAI
+
         from config.settings import Config
 
         self._clients: dict[str, AsyncOpenAI] = {}
@@ -130,7 +131,9 @@ class ConsensusModelRegistry:
                 self._has_dedicated[role] = True
                 logger.info(
                     "[ConsensusRegistry] %s → %s (model=%s)",
-                    role, base_url, model or "default",
+                    role,
+                    base_url,
+                    model or "default",
                 )
             else:
                 # No dedicated URL — fall back to default GatewayClient
@@ -157,7 +160,7 @@ class ConsensusModelRegistry:
         return self._has_dedicated.get(role, False)
 
     @classmethod
-    def from_env(cls) -> "ConsensusModelRegistry":
+    def from_env(cls) -> ConsensusModelRegistry:
         """Construct from environment variables.
 
         Reads CONSENSUS_{ROLE}_URL and CONSENSUS_{ROLE}_MODEL for each
@@ -170,28 +173,30 @@ class ConsensusModelRegistry:
         This provides model family diversity by default without requiring
         additional infrastructure configuration.
         """
-        return cls({
-            "Risk Manager": {
-                "base_url": os.environ.get(
-                    "CONSENSUS_RISK_MANAGER_URL",
-                    os.environ.get("VLLM_REASONING_API_BASE", ""),
-                ),
-                "model": os.environ.get(
-                    "CONSENSUS_RISK_MANAGER_MODEL",
-                    os.environ.get("MODEL_REASONING", ""),
-                ),
-            },
-            "Compliance Officer": {
-                "base_url": os.environ.get(
-                    "CONSENSUS_COMPLIANCE_OFFICER_URL",
-                    os.environ.get("VLLM_FAST_API_BASE", ""),
-                ),
-                "model": os.environ.get(
-                    "CONSENSUS_COMPLIANCE_OFFICER_MODEL",
-                    os.environ.get("MODEL_FAST", ""),
-                ),
-            },
-        })
+        return cls(
+            {
+                "Risk Manager": {
+                    "base_url": os.environ.get(
+                        "CONSENSUS_RISK_MANAGER_URL",
+                        os.environ.get("VLLM_REASONING_API_BASE", ""),
+                    ),
+                    "model": os.environ.get(
+                        "CONSENSUS_RISK_MANAGER_MODEL",
+                        os.environ.get("MODEL_REASONING", ""),
+                    ),
+                },
+                "Compliance Officer": {
+                    "base_url": os.environ.get(
+                        "CONSENSUS_COMPLIANCE_OFFICER_URL",
+                        os.environ.get("VLLM_FAST_API_BASE", ""),
+                    ),
+                    "model": os.environ.get(
+                        "CONSENSUS_COMPLIANCE_OFFICER_MODEL",
+                        os.environ.get("MODEL_FAST", ""),
+                    ),
+                },
+            }
+        )
 
 
 class ConsensusEngine:
@@ -312,7 +317,9 @@ class ConsensusEngine:
         if amount < self.threshold:
             return {"status": "SKIPPED", "reason": "Below threshold", "votes": []}
 
-        logger.info("⚖️ Consensus Engine Triggered for %s %.2f %s", action, amount, symbol)
+        logger.info(
+            "⚖️ Consensus Engine Triggered for %s %.2f %s", action, amount, symbol
+        )
 
         with genai_span(
             "consensus.check", prompt=f"Review trade: {action} {amount} {symbol}"
@@ -346,7 +353,9 @@ class ConsensusEngine:
                     "🔴 All consensus critics returned ERROR — escalating for human review "
                     "(action=%s amount=%.2f symbol=%s). "
                     "Fail-open APPROVE would allow a DoS bypass of the consensus gate.",
-                    action, amount, symbol,
+                    action,
+                    amount,
+                    symbol,
                 )
                 decision = "ESCALATE"
                 reason = "consensus_unanimous_error"
@@ -354,7 +363,9 @@ class ConsensusEngine:
                 # Unanimous rejection from all available critics
                 decision = "REJECT"
                 reason = f"Unanimous rejection by all critics. Votes: {votes}"
-            elif any(v == "REJECT" for v in non_error_votes) and any(v == "APPROVE" for v in non_error_votes):
+            elif any(v == "REJECT" for v in non_error_votes) and any(
+                v == "APPROVE" for v in non_error_votes
+            ):
                 # Split vote: at least one APPROVE and one REJECT → escalate for human review
                 decision = "ESCALATE"
                 reason = f"Split consensus vote — escalating for human review. Votes: {votes}"
@@ -379,7 +390,8 @@ class ConsensusEngine:
                     "langfuse.trace.metadata.iso.control_id_secondary", "A.4.2"
                 )
                 span.set_attribute(
-                    "langfuse.trace.metadata.iso.requirement_secondary", "Risk Management"
+                    "langfuse.trace.metadata.iso.requirement_secondary",
+                    "Risk Management",
                 )
 
             result = {"status": decision, "reason": reason, "votes": votes}
@@ -396,7 +408,9 @@ class ConsensusEngine:
             try:
                 _AUDIT_QUEUE.put_nowait(audit_record)
             except asyncio.QueueFull:
-                logger.warning("Consensus audit queue full — dropping audit record for %s.", action)
+                logger.warning(
+                    "Consensus audit queue full — dropping audit record for %s.", action
+                )
 
             return result
 

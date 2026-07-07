@@ -68,13 +68,14 @@ logger = logging.getLogger(__name__)
 # Redis key prefixes — isolated in db=1 (noeviction)
 # ---------------------------------------------------------------------------
 
-_KEY_PREFIX   = "DEFER:"
-_EXPIRY_ZSET  = "DEFER:expiry_index"
-_DEFAULT_TTL  = int(3600 * 4)   # 4-hour park window before stale escalation
+_KEY_PREFIX = "DEFER:"
+_EXPIRY_ZSET = "DEFER:expiry_index"
+_DEFAULT_TTL = 3600 * 4  # 4-hour park window before stale escalation
 
 # ---------------------------------------------------------------------------
 # DeferReason — why the execution graph was halted
 # ---------------------------------------------------------------------------
+
 
 class DeferReason(str, Enum):
     """Enumeration of root causes for a DEFER decision.
@@ -82,25 +83,26 @@ class DeferReason(str, Enum):
     Maps to AARM threat vector annotations on OTel spans.
     """
 
-    INSUFFICIENT_CONTEXT        = "INSUFFICIENT_CONTEXT"
+    INSUFFICIENT_CONTEXT = "INSUFFICIENT_CONTEXT"
     """OPA input snapshot is missing required fields for a deterministic decision."""
 
-    AMBIGUOUS_SEMANTIC_DISTANCE  = "AMBIGUOUS_SEMANTIC_DISTANCE"
+    AMBIGUOUS_SEMANTIC_DISTANCE = "AMBIGUOUS_SEMANTIC_DISTANCE"
     """vLLM sidecar semantic similarity score is within the ambiguity band (0.40–0.60)."""
 
-    DATA_STARVATION              = "DATA_STARVATION"
+    DATA_STARVATION = "DATA_STARVATION"
     """Langfuse telemetry evidence window is empty or below minimum sample threshold."""
 
-    CONFIDENCE_BELOW_THRESHOLD   = "CONFIDENCE_BELOW_THRESHOLD"
+    CONFIDENCE_BELOW_THRESHOLD = "CONFIDENCE_BELOW_THRESHOLD"
     """model confidence_score < DEFER_CONFIDENCE_THRESHOLD (default 0.70)."""
 
-    EXTERNAL_VALIDATION          = "EXTERNAL_VALIDATION"
+    EXTERNAL_VALIDATION = "EXTERNAL_VALIDATION"
     """Consensus score in ambiguous zone (0.70–0.95); awaiting external FRIA gate."""
 
 
 # ---------------------------------------------------------------------------
 # DeferToken — the parked execution context
 # ---------------------------------------------------------------------------
+
 
 class DeferToken(BaseModel):
     """Immutable snapshot of an execution context parked in the DEFER queue.
@@ -122,24 +124,25 @@ class DeferToken(BaseModel):
         aarm_vector         — AARM threat vector tag for OTel span annotation.
     """
 
-    defer_id:           str = Field(default_factory=lambda: str(uuid.uuid4()))
-    thread_id:          str
-    defer_reason:       DeferReason
+    defer_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    thread_id: str
+    defer_reason: DeferReason
     opa_input_snapshot: dict[str, Any] = Field(default_factory=dict)
-    semantic_distance:  float | None   = Field(default=None, ge=0.0, le=1.0)
-    confidence_score:   float | None   = Field(default=None, ge=0.0, le=1.0)
-    deferred_at_utc:    str            = Field(
+    semantic_distance: float | None = Field(default=None, ge=0.0, le=1.0)
+    confidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    deferred_at_utc: str = Field(
         default_factory=lambda: datetime.now(tz=timezone.utc).isoformat()
     )
-    ttl_seconds:        int            = Field(default=_DEFAULT_TTL)
-    resolved_at_utc:    str | None     = None
-    resolution:         str | None     = None
-    aarm_vector:        str            = "AARM-V7"  # Context Window Overflow
+    ttl_seconds: int = Field(default=_DEFAULT_TTL)
+    resolved_at_utc: str | None = None
+    resolution: str | None = None
+    aarm_vector: str = "AARM-V7"  # Context Window Overflow
 
 
 # ---------------------------------------------------------------------------
 # DeferQueue — Redis-backed token registry
 # ---------------------------------------------------------------------------
+
 
 class DeferQueue:
     """Redis-backed DEFER token queue with TTL-scored expiry.
@@ -175,8 +178,8 @@ class DeferQueue:
                 aborted because a concurrent writer modified a watched key.  The
                 caller should treat this as a retriable condition.
         """
-        key        = f"{_KEY_PREFIX}{token.defer_id}"
-        expiry_ts  = time.time() + token.ttl_seconds
+        key = f"{_KEY_PREFIX}{token.defer_id}"
+        expiry_ts = time.time() + token.ttl_seconds
         token_json = token.model_dump_json()
 
         try:
@@ -189,14 +192,16 @@ class DeferQueue:
             logger.warning(
                 "[defer_queue] park() transaction aborted for defer_id=%s thread_id=%s — "
                 "returning DeferResult.ABORTED",
-                token.defer_id, token.thread_id,
+                token.defer_id,
+                token.thread_id,
             )
             raise
 
         logger.info(
             "[defer_queue] Parked token defer_id=%s thread_id=%s reason=%s "
             "confidence=%.3f ttl=%ds",
-            token.defer_id, token.thread_id,
+            token.defer_id,
+            token.thread_id,
             token.defer_reason.value,
             token.confidence_score or -1.0,
             token.ttl_seconds,
@@ -226,33 +231,45 @@ class DeferQueue:
         key = f"{_KEY_PREFIX}{defer_id}"
         raw = await self._redis.hget(key, "token")
         if raw is None:
-            logger.warning("[defer_queue] resolve() called for unknown defer_id=%s", defer_id)
+            logger.warning(
+                "[defer_queue] resolve() called for unknown defer_id=%s", defer_id
+            )
             return None
 
         token = DeferToken.model_validate_json(raw)
         token.resolved_at_utc = datetime.now(tz=timezone.utc).isoformat()
-        token.resolution       = resolution
+        token.resolution = resolution
 
         try:
             async with self._redis.pipeline(transaction=True) as pipe:
-                pipe.hset(key, mapping={
-                    "token":  token.model_dump_json(),
-                    "status": "RESOLVED",
-                    **({"injection_data": json.dumps(injection_data)} if injection_data else {}),
-                })
+                pipe.hset(
+                    key,
+                    mapping={
+                        "token": token.model_dump_json(),
+                        "status": "RESOLVED",
+                        **(
+                            {"injection_data": json.dumps(injection_data)}
+                            if injection_data
+                            else {}
+                        ),
+                    },
+                )
                 pipe.zrem(_EXPIRY_ZSET, defer_id)
                 await pipe.execute()
         except TransactionAbortedError:
             logger.warning(
                 "[defer_queue] resolve() transaction aborted for defer_id=%s resolution=%s — "
                 "returning DeferResult.ABORTED",
-                defer_id, resolution,
+                defer_id,
+                resolution,
             )
             raise
 
         logger.info(
             "[defer_queue] Resolved defer_id=%s resolution=%s thread_id=%s",
-            defer_id, resolution, token.thread_id,
+            defer_id,
+            resolution,
+            token.thread_id,
         )
         return token
 
@@ -289,8 +306,8 @@ class DeferQueue:
         Returns:
             List of DeferToken objects, soonest-expiring first.
         """
-        now     = time.time()
-        max_ts  = "+inf" if include_expired else now
+        now = time.time()
+        max_ts = "+inf" if include_expired else now
         members = await self._redis.zrangebyscore(
             _EXPIRY_ZSET, "-inf", max_ts, start=0, num=limit
         )
@@ -316,7 +333,7 @@ class DeferQueue:
         Returns:
             Count of tokens that were expired and escalated.
         """
-        now     = time.time()
+        now = time.time()
         members = await self._redis.zrangebyscore(_EXPIRY_ZSET, "-inf", now)
 
         count = 0
@@ -326,7 +343,8 @@ class DeferQueue:
                 count += 1
                 logger.warning(
                     "[defer_queue] Token expired and auto-escalated: defer_id=%s thread_id=%s",
-                    defer_id, resolved.thread_id,
+                    defer_id,
+                    resolved.thread_id,
                 )
 
         if count:
@@ -349,6 +367,7 @@ DEFER_CONFIDENCE_THRESHOLD: float = 0.70
 # replay_evaluate — Phase 3 of the confidence-score replay flow
 # ---------------------------------------------------------------------------
 
+
 class ReplayResult(str, Enum):
     """Outcome of a replay_evaluate() call.
 
@@ -360,13 +379,13 @@ class ReplayResult(str, Enum):
     NOT_FOUND: No token with the given defer_id exists in the queue.
     """
 
-    ADMITTED  = "ADMITTED"
-    PARKED    = "PARKED"
+    ADMITTED = "ADMITTED"
+    PARKED = "PARKED"
     NOT_FOUND = "NOT_FOUND"
 
 
 async def replay_evaluate(
-    queue: "DeferQueue",
+    queue: DeferQueue,
     defer_id: str,
     enriched_context: dict[str, Any],
 ) -> ReplayResult:
@@ -424,13 +443,17 @@ async def replay_evaluate(
         logger.info(
             "[replay_evaluate] Token ADMITTED: defer_id=%s effective_confidence=%.3f "
             "threshold=%.2f",
-            defer_id, effective_confidence, DEFER_CONFIDENCE_THRESHOLD,
+            defer_id,
+            effective_confidence,
+            DEFER_CONFIDENCE_THRESHOLD,
         )
         return ReplayResult.ADMITTED
 
     logger.info(
         "[replay_evaluate] Token remains PARKED: defer_id=%s effective_confidence=%.3f "
         "threshold=%.2f",
-        defer_id, effective_confidence, DEFER_CONFIDENCE_THRESHOLD,
+        defer_id,
+        effective_confidence,
+        DEFER_CONFIDENCE_THRESHOLD,
     )
     return ReplayResult.PARKED

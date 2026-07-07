@@ -77,7 +77,6 @@ _PROHIBITED_PATTERNS = [
 _EXCLUDED_FILES = {"constants.py", "iso_control.py", "oscal_ssp_exporter.py"}
 
 
-
 def _executable_lines(path: Path):
     """Yield (line_number, stripped_execution_code) for executable non-documentation lines.
 
@@ -91,18 +90,21 @@ def _executable_lines(path: Path):
     (f-strings, string literals passed to functions, attribute values, etc.)
     create the coupling risk this test guards against.
     """
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         content = fh.read()
 
     # Strip all triple-quoted docstring blocks before line-by-line analysis.
     # This removes both single-line and multi-line docstrings.
     import ast
+
     try:
         tree = ast.parse(content)
         docstring_lines: set[int] = set()
         for node in ast.walk(tree):
             # Module, class, and function docstrings are the first Expr(Constant) child
-            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            if isinstance(
+                node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+            ):
                 if (
                     node.body
                     and isinstance(node.body[0], ast.Expr)
@@ -110,7 +112,9 @@ def _executable_lines(path: Path):
                     and isinstance(node.body[0].value.value, str)
                 ):
                     doc_node = node.body[0]
-                    for lineno in range(doc_node.lineno, (doc_node.end_lineno or doc_node.lineno) + 1):
+                    for lineno in range(
+                        doc_node.lineno, (doc_node.end_lineno or doc_node.lineno) + 1
+                    ):
                         docstring_lines.add(lineno)
     except SyntaxError:
         docstring_lines = set()
@@ -124,10 +128,10 @@ def _executable_lines(path: Path):
             yield line_num, code_part
 
 
-
 # ---------------------------------------------------------------------------
 # Test 1 — No hardcoded regulatory strings in src/gateway/governance/*.py
 # ---------------------------------------------------------------------------
+
 
 def test_enforce_no_hardcoded_regulatory_strings_in_governance_src():
     """Architecture Guardrail: regulatory citation strings must not appear in
@@ -167,6 +171,7 @@ def test_enforce_no_hardcoded_regulatory_strings_in_governance_src():
 # Test 2 — control_mappings.json is valid and contains all required keys
 # ---------------------------------------------------------------------------
 
+
 def test_control_mappings_json_is_valid():
     """control_mappings.json must exist, be valid JSON, and have required fields."""
     assert _CONTROL_MAPPINGS.exists(), (
@@ -177,8 +182,12 @@ def test_control_mappings_json_is_valid():
         raw = json.load(fh)
 
     required_fields = {
-        "internal_id", "primary_framework", "co_frameworks",
-        "legacy_citation", "scope", "description",
+        "internal_id",
+        "primary_framework",
+        "co_frameworks",
+        "legacy_citation",
+        "scope",
+        "description",
     }
 
     for ctrl_id, mapping in raw.items():
@@ -198,6 +207,7 @@ def test_control_mappings_json_is_valid():
 # ---------------------------------------------------------------------------
 # Test 3 — GovernanceControl enum covers all CTRL_* keys in the registry
 # ---------------------------------------------------------------------------
+
 
 def test_governance_control_enum_covers_all_registry_keys():
     """Every CTRL_* key across all regional compliance profiles must have a
@@ -253,6 +263,7 @@ def test_governance_control_enum_covers_all_registry_keys():
 # Test 4 — ControlRegistry resolves all controls and exposes legacy citations
 # ---------------------------------------------------------------------------
 
+
 def test_control_registry_resolves_all_controls_with_legacy_citation():
     """ControlRegistry must resolve every GovernanceControl and provide a
     non-empty legacy_citation for SIEM backward-compatibility.
@@ -262,7 +273,8 @@ def test_control_registry_resolves_all_controls_with_legacy_citation():
     (via get_mapping_safe) in all other regions.
     """
     from src.gateway.governance.constants import (
-        GovernanceControl, ControlRegistry, SUPPORTED_REGIONS,
+        ControlRegistry,
+        GovernanceControl,
     )
 
     # Test all controls against the default US_FED region first
@@ -310,6 +322,7 @@ def test_control_registry_resolves_all_controls_with_legacy_citation():
 # Test 5 — No orphaned GovernanceControl enum members (no dead CTRL_* IDs)
 # ---------------------------------------------------------------------------
 
+
 def test_ensure_all_enum_controls_are_referenced_in_source():
     """Guarantees no orphaned controls exist in the internal control registry.
 
@@ -332,12 +345,14 @@ def test_ensure_all_enum_controls_are_referenced_in_source():
     for python_file in sorted(_SRC_GOVERNANCE.glob("**/*.py")):
         if python_file.name == "constants.py":
             continue
-        with open(python_file, "r", encoding="utf-8") as fh:
+        with open(python_file, encoding="utf-8") as fh:
             combined_source += fh.read()
 
     orphaned = []
     for control in GovernanceControl:
-        name_present  = control.name  in combined_source  # e.g. TRADITIONAL_MRM_VALIDATION
+        name_present = (
+            control.name in combined_source
+        )  # e.g. TRADITIONAL_MRM_VALIDATION
         value_present = control.value in combined_source  # e.g. CTRL_MRM_004
         if not (name_present or value_present):
             orphaned.append(
@@ -351,4 +366,3 @@ def test_ensure_all_enum_controls_are_referenced_in_source():
         + "\n".join(orphaned)
         + "\n\nWire each control into an active check before merging."
     )
-

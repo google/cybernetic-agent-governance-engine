@@ -19,12 +19,13 @@ Verifies basic connectivity and asynchronous trace ingestion via Redis and Click
 Translates bash curl scripts into pytest integration tests.
 """
 
+import logging
 import os
 import time
 import uuid
-import logging
-import requests
+
 import pytest
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -39,19 +40,29 @@ pytestmark = pytest.mark.skipif(
     reason="Langfuse credentials (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY) are missing. Skipping smoke tests.",
 )
 
+
 # Skip tests if credentials are not provided or host is unreachable
 @pytest.fixture(autouse=True)
 def skip_if_credentials_missing():
     _host = os.environ.get("LANGFUSE_HOST", LANGFUSE_HOST)
-    _pk = os.environ.get("LANGFUSE_PUBLIC_KEY", os.environ.get("PK", LANGFUSE_PUBLIC_KEY))
-    _sk = os.environ.get("LANGFUSE_SECRET_KEY", os.environ.get("SK", LANGFUSE_SECRET_KEY))
+    _pk = os.environ.get(
+        "LANGFUSE_PUBLIC_KEY", os.environ.get("PK", LANGFUSE_PUBLIC_KEY)
+    )
+    _sk = os.environ.get(
+        "LANGFUSE_SECRET_KEY", os.environ.get("SK", LANGFUSE_SECRET_KEY)
+    )
     if not _pk or not _sk:
-        pytest.skip("Langfuse credentials (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY) are missing. Skipping smoke tests.")
+        pytest.skip(
+            "Langfuse credentials (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY) are missing. Skipping smoke tests."
+        )
     # Also skip if the host is not reachable or times out (e.g. port-forward not running)
     try:
         requests.get(_host, timeout=3)
-    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout,
-            requests.exceptions.ReadTimeout):
+    except (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+        requests.exceptions.ReadTimeout,
+    ):
         pytest.skip(
             f"Langfuse host {_host} is not reachable — "
             "ensure port-forward is running (./scripts/port_forward_dev.sh)."
@@ -59,22 +70,35 @@ def skip_if_credentials_missing():
     except requests.exceptions.RequestException:
         pass  # Host is reachable but returned non-200 — let individual tests handle it
 
+
 def test_langfuse_basic_auth():
     """Verifies that the langfuse-web service is reachable and keys are functional."""
     _host = os.environ.get("LANGFUSE_HOST", LANGFUSE_HOST)
-    _pk = os.environ.get("LANGFUSE_PUBLIC_KEY", os.environ.get("PK", LANGFUSE_PUBLIC_KEY))
-    _sk = os.environ.get("LANGFUSE_SECRET_KEY", os.environ.get("SK", LANGFUSE_SECRET_KEY))
+    _pk = os.environ.get(
+        "LANGFUSE_PUBLIC_KEY", os.environ.get("PK", LANGFUSE_PUBLIC_KEY)
+    )
+    _sk = os.environ.get(
+        "LANGFUSE_SECRET_KEY", os.environ.get("SK", LANGFUSE_SECRET_KEY)
+    )
     url = f"{_host.rstrip('/')}/api/public/projects"
 
     logger.info(f"Checking auth at {url}")
     try:
         resp = requests.get(url, auth=(_pk, _sk), timeout=10)
-    except (requests.exceptions.Timeout, requests.exceptions.ReadTimeout,
-            requests.exceptions.ConnectionError):
-        pytest.skip(f"Langfuse host {_host} timed out or is unreachable — port-forward not active.")
+    except (
+        requests.exceptions.Timeout,
+        requests.exceptions.ReadTimeout,
+        requests.exceptions.ConnectionError,
+    ):
+        pytest.skip(
+            f"Langfuse host {_host} timed out or is unreachable — port-forward not active."
+        )
 
-    assert resp.status_code == 200, f"Auth failed with status code {resp.status_code}: {resp.text}"
+    assert resp.status_code == 200, (
+        f"Auth failed with status code {resp.status_code}: {resp.text}"
+    )
     logger.info("✅ Langfuse auth check passed.")
+
 
 @pytest.mark.integration
 def test_langfuse_trace_ingestion():
@@ -86,8 +110,12 @@ def test_langfuse_trace_ingestion():
     queue delays; retry window extended to 18 attempts × 10s = 180s.
     """
     _host = os.environ.get("LANGFUSE_HOST", LANGFUSE_HOST)
-    _pk = os.environ.get("LANGFUSE_PUBLIC_KEY", os.environ.get("PK", LANGFUSE_PUBLIC_KEY))
-    _sk = os.environ.get("LANGFUSE_SECRET_KEY", os.environ.get("SK", LANGFUSE_SECRET_KEY))
+    _pk = os.environ.get(
+        "LANGFUSE_PUBLIC_KEY", os.environ.get("PK", LANGFUSE_PUBLIC_KEY)
+    )
+    _sk = os.environ.get(
+        "LANGFUSE_SECRET_KEY", os.environ.get("SK", LANGFUSE_SECRET_KEY)
+    )
     ingestion_url = f"{_host.rstrip('/')}/api/public/ingestion"
     unique_trace_id = f"smoke-test-{uuid.uuid4().hex[:8]}"
     trace_name = "gke-deployment-smoke-test"
@@ -96,20 +124,22 @@ def test_langfuse_trace_ingestion():
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     payload = {
-        "metadata": { "sdk_name": "smoke-test", "sdk_version": "1.0.0" },
-        "batch": [{
-            "id": unique_trace_id,
-            "type": "trace-create",
-            "timestamp": timestamp,
-            "projectId": "cybernetic-governance",
-            "project_id": "cybernetic-governance",
-            "body": {
+        "metadata": {"sdk_name": "smoke-test", "sdk_version": "1.0.0"},
+        "batch": [
+            {
                 "id": unique_trace_id,
-                "name": trace_name,
-                "input": "Testing single-node ClickHouse",
-                "output": "Success"
+                "type": "trace-create",
+                "timestamp": timestamp,
+                "projectId": "cybernetic-governance",
+                "project_id": "cybernetic-governance",
+                "body": {
+                    "id": unique_trace_id,
+                    "name": trace_name,
+                    "input": "Testing single-node ClickHouse",
+                    "output": "Success",
+                },
             }
-        }]
+        ],
     }
 
     logger.info(f"Ingesting trace {unique_trace_id} to {ingestion_url}")
@@ -117,15 +147,24 @@ def test_langfuse_trace_ingestion():
     # A 0.5s inter-request delay prevents Langfuse worker queue saturation
     # (which causes HTTP 500 on back-to-back test runs).
     for i in range(1, 11):
-         logger.info(f"Ingesting trace {i}/10: {unique_trace_id}")
-         try:
-             resp = requests.post(ingestion_url, auth=(_pk, _sk), json=payload, timeout=10)
-         except (requests.exceptions.Timeout, requests.exceptions.ReadTimeout,
-                 requests.exceptions.ConnectionError):
-             pytest.skip(f"Langfuse host {_host} timed out or is unreachable — port-forward not active.")
-         logger.info(f"Ingestion response text: {resp.text}")
-         assert resp.status_code == 207, f"Ingestion failed with status code {resp.status_code}: {resp.text}"
-         time.sleep(0.5)  # throttle: give Langfuse worker time to drain between POSTs
+        logger.info(f"Ingesting trace {i}/10: {unique_trace_id}")
+        try:
+            resp = requests.post(
+                ingestion_url, auth=(_pk, _sk), json=payload, timeout=10
+            )
+        except (
+            requests.exceptions.Timeout,
+            requests.exceptions.ReadTimeout,
+            requests.exceptions.ConnectionError,
+        ):
+            pytest.skip(
+                f"Langfuse host {_host} timed out or is unreachable — port-forward not active."
+            )
+        logger.info(f"Ingestion response text: {resp.text}")
+        assert resp.status_code == 207, (
+            f"Ingestion failed with status code {resp.status_code}: {resp.text}"
+        )
+        time.sleep(0.5)  # throttle: give Langfuse worker time to drain between POSTs
     logger.info("✅ Ingestion endpoint returned HTTP 207 (Accepted into queue).")
 
     # Wait for ClickHouse persistence (asynchronous queue).
@@ -134,40 +173,39 @@ def test_langfuse_trace_ingestion():
     time.sleep(3)
     # Increase time slightly to give queue processing breathing room
     time.sleep(10)
-    
+
     # Verify persistence via public API
     # Use the local _host/_pk/_sk variables (not the module-level constants) so
     # that runtime env overrides (e.g. LANGFUSE_HOST=http://localhost:13000 via
     # port-forward) are respected in both the ingestion and verification legs.
     verify_url = f"{_host.rstrip('/')}/api/public/traces"
     params = {"name": trace_name, "limit": 10, "projectId": "cybernetic-governance"}
-    
+
     # Try looking for the trace for up to 180 seconds (18 attempts × 10s).
     # Single-node ClickHouse with Redis queue delays can take >90s to flush.
     found = False
     for attempt in range(1, 19):
-         logger.info(f"Verifying trace persistence attempt {attempt}/9...")
-         verify_resp = requests.get(
-             verify_url,
-             auth=(_pk, _sk),
-             params=params,
-             timeout=30
-         )
-         
-         if verify_resp.status_code == 200:
-              data = verify_resp.json()
-              # Look for our unique ID in the list of traces
-              traces = data.get("data", [])
-              for trace_item in traces:
-                   if trace_item.get("id") == unique_trace_id:
-                        logger.info("✅ Trace found in ClickHouse persistence listing!")
-                        found = True
-                        break
-         
-         if found:
-              break
-         
-         logger.warning(f"Trace not found yet, retrying in 10s...")
-         time.sleep(10)
-    
-    assert found, "Trace was ingested but did not appear in ClickHouse after wait period."
+        logger.info(f"Verifying trace persistence attempt {attempt}/9...")
+        verify_resp = requests.get(
+            verify_url, auth=(_pk, _sk), params=params, timeout=30
+        )
+
+        if verify_resp.status_code == 200:
+            data = verify_resp.json()
+            # Look for our unique ID in the list of traces
+            traces = data.get("data", [])
+            for trace_item in traces:
+                if trace_item.get("id") == unique_trace_id:
+                    logger.info("✅ Trace found in ClickHouse persistence listing!")
+                    found = True
+                    break
+
+        if found:
+            break
+
+        logger.warning("Trace not found yet, retrying in 10s...")
+        time.sleep(10)
+
+    assert found, (
+        "Trace was ingested but did not appear in ClickHouse after wait period."
+    )

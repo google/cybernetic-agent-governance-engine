@@ -12,20 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 from typing import Any
 
-from config.settings import Config, MODEL_FAST, MODEL_REASONING
-from src.governed_financial_advisor.graph.state import AgentState
-from src.governed_financial_advisor.utils.text_utils import strip_thinking_tags
-from src.governed_financial_advisor.agents.explainer.agent import create_explainer_agent, get_explainer_instruction
-from src.governed_financial_advisor.utils.telemetry import get_tracer
 from langchain_core.messages import SystemMessage
-from src.governed_financial_advisor.graph.nodes.evaluator_node import generate_governance_signature
+
+from config.settings import MODEL_FAST, MODEL_REASONING
 from src.gateway.governance.kms_signer import get_governance_signer
+from src.governed_financial_advisor.agents.explainer.agent import (
+    create_explainer_agent,
+    get_explainer_instruction,
+)
+from src.governed_financial_advisor.graph.state import AgentState
+from src.governed_financial_advisor.utils.telemetry import get_tracer
+from src.governed_financial_advisor.utils.text_utils import strip_thinking_tags
 
 logger = logging.getLogger("GovernanceAuditor")
+
 
 def verify_hmac_signature(state: AgentState) -> str:
     """Verify the governance signature in the state.
@@ -53,12 +56,13 @@ def verify_hmac_signature(state: AgentState) -> str:
     else:
         return "[SIGNATURE: FAILED]"
 
+
 def map_opa_rules(opa_results: dict) -> list[str]:
     """Parses OPA explanation trace for triggered rules."""
     rules = []
     if not opa_results or "explanation" not in opa_results:
         return ["No OPA trace available."]
-    
+
     explanation = opa_results.get("explanation", [])
     for event in explanation:
         # Looking for 'exit' events of rules in the finance package
@@ -70,8 +74,9 @@ def map_opa_rules(opa_results: dict) -> list[str]:
                 line = loc.get("line", "unknown")
                 rule_name = node.split("/")[-1]
                 rules.append(f"Rule: {file} -> {rule_name} (Line {line})")
-    
-    return list(set(rules)) # Unique rules
+
+    return list(set(rules))  # Unique rules
+
 
 async def explainer_node(state: AgentState) -> dict[str, Any]:
     """
@@ -80,7 +85,7 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
     """
     logger.info("🛡️ Explainer Node: Acting as Formal Governance Auditor.")
     tracer = get_tracer()
-    
+
     with tracer.start_as_current_span("Auditor: GovernanceVerification") as span:
         # 1. Audit Trail Extraction
         sig_status = verify_hmac_signature(state)
@@ -88,7 +93,7 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
         rules = map_opa_rules(opa_results)
         execution_plan = state.get("execution_plan_output", "No plan.")
         verdict = state.get("evaluation_result", {}).get("verdict", "UNKNOWN")
-        
+
         # 2. Semantic Justification (using Claude 4.5 reasoning)
         justification = "Manual justification required: No reasoning model available."
         try:
@@ -114,24 +119,26 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
         )
         for rule in rules:
             summary += f"- {rule}\n"
-        
+
         summary += f"\n#### ⚖️ Verdict Justification\n{justification}\n"
-        
+
         # 4. Final Response Generation (Faithfulness)
         final_llm = create_explainer_agent(MODEL_FAST)
-        user_msg = state['messages'][-1].content if state.get('messages') else 'No context'
+        user_msg = (
+            state["messages"][-1].content if state.get("messages") else "No context"
+        )
         explainer_sys = (
             f"{get_explainer_instruction()}\n\n"
             f"GOVERNANCE AUDIT:\n{summary}\n\n"
             f"USER MESSAGE: {user_msg}\n"
             f"ACTION PLAN: {execution_plan}\n"
         )
-        
+
         final_resp = await final_llm.ainvoke([SystemMessage(content=explainer_sys)])
         content = strip_thinking_tags(final_resp.content)
-        
+
         return {
             "messages": [("ai", content)],
             "governance_summary": summary,
-            "next_step": "FINISH"
+            "next_step": "FINISH",
         }

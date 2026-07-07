@@ -19,7 +19,6 @@ Phase: 2 (core hardening)
 """
 
 import re
-import pytest
 
 from src.gateway.governance.hitl_escalator import (
     EscalationReason,
@@ -143,8 +142,14 @@ class TestEscalateToHuman:
         )
         record = escalate_to_human(request)
         required_fields = {
-            "event", "trace_id", "reason", "amount_usd",
-            "confidence", "reviewer_queue", "status", "timestamp",
+            "event",
+            "trace_id",
+            "reason",
+            "amount_usd",
+            "confidence",
+            "reviewer_queue",
+            "status",
+            "timestamp",
         }
         assert required_fields.issubset(record.keys())
 
@@ -200,7 +205,9 @@ class TestEscalationReasonEnum:
 
     def test_consensus_threshold_reason(self):
         """CONSENSUS_THRESHOLD reason has correct value."""
-        assert EscalationReason.CONSENSUS_THRESHOLD.value == "consensus_threshold_exceeded"
+        assert (
+            EscalationReason.CONSENSUS_THRESHOLD.value == "consensus_threshold_exceeded"
+        )
 
     def test_confidence_low_reason(self):
         """CONFIDENCE_LOW reason has correct value."""
@@ -216,4 +223,7 @@ class TestEscalationReasonEnum:
 
     def test_governance_confidence_low_reason(self):
         """GOVERNANCE_CONFIDENCE_LOW reason has correct value (recursive governance risk)."""
-        assert EscalationReason.GOVERNANCE_CONFIDENCE_LOW.value == "governance_layer_confidence_below_threshold"
+        assert (
+            EscalationReason.GOVERNANCE_CONFIDENCE_LOW.value
+            == "governance_layer_confidence_below_threshold"
+        )

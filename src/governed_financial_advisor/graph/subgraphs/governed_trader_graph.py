@@ -33,20 +33,17 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Annotated, Any, Optional, TypedDict
-
-from src.governed_financial_advisor.graph.annotations import side_effect_node
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import (
-    AIMessage,
     BaseMessage,
-    HumanMessage,
     SystemMessage,
     ToolMessage,
 )
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
+from src.governed_financial_advisor.graph.annotations import side_effect_node
 from src.governed_financial_advisor.graph.nodes.approval_node import (
     approval_node,
     rejection_node,
@@ -60,20 +57,21 @@ logger = logging.getLogger(__name__)
 # Subgraph State
 # ---------------------------------------------------------------------------
 
+
 class GovernedTraderState(TypedDict):
     messages: Annotated[list[BaseMessage], "messages"]
     execution_plan: str
     evaluation_result: str
     # Approval fields (populated by the parent graph or by approval_node)
     approval_required: bool
-    approval_decision: Optional[dict[str, Any]]
-    hitl_expires_at: Optional[str]          # TTL expiration timestamp for pending state
+    approval_decision: dict[str, Any] | None
+    hitl_expires_at: str | None  # TTL expiration timestamp for pending state
     # TOCTOU Remediation — Phase 2 (Slippage Bounds + TTL)
     # These fields close the ghost-state vulnerability: continuous market variables
     # are re-sampled and re-validated at the moment of actuation, not at check-time.
-    data_analyst_ticker: Optional[str]      # passed from parent graph for re-hydration
-    rehydration_result: Optional[dict]      # fresh market snapshot + drift metrics
-    post_hitl_safety_status: Optional[str]  # "APPROVED" | "BLOCKED" after re-validation
+    data_analyst_ticker: str | None  # passed from parent graph for re-hydration
+    rehydration_result: dict | None  # fresh market snapshot + drift metrics
+    post_hitl_safety_status: str | None  # "APPROVED" | "BLOCKED" after re-validation
 
 
 # ---------------------------------------------------------------------------
@@ -108,12 +106,14 @@ Your role is to **EXECUTE** the plan provided to you. You are a "Dumb Executor" 
 
 def get_executor_instruction() -> str:
     from src.governed_financial_advisor.utils.langfuse_utils import get_managed_prompt
+
     return get_managed_prompt("agent/governed_trader", EXECUTOR_FALLBACK_PROMPT)
 
 
 # ---------------------------------------------------------------------------
 # Approval threshold helper
 # ---------------------------------------------------------------------------
+
 
 def should_require_approval(state: GovernedTraderState) -> bool:
     """
@@ -141,7 +141,8 @@ def should_require_approval(state: GovernedTraderState) -> bool:
         risk_score: float = float(eval_result.get("risk_score", 0.0))
         if risk_score > 0.7:
             logger.info(
-                "[GovernedTrader] risk_score=%.2f > 0.7 → approval required.", risk_score
+                "[GovernedTrader] risk_score=%.2f > 0.7 → approval required.",
+                risk_score,
             )
             return True
     except (json.JSONDecodeError, ValueError, TypeError):
@@ -171,6 +172,7 @@ def should_require_approval(state: GovernedTraderState) -> bool:
 # Approval routing edge
 # ---------------------------------------------------------------------------
 
+
 def route_approval(state: GovernedTraderState) -> str:
     """Conditional edge: route to approval_node if required, else executor."""
     if should_require_approval(state):
@@ -183,6 +185,7 @@ def route_approval(state: GovernedTraderState) -> str:
 # ---------------------------------------------------------------------------
 # Executor nodes (unchanged from original)
 # ---------------------------------------------------------------------------
+
 
 @side_effect_node(kind="api_call", external_system="gateway_mcp")
 async def tool_executor_node(state: GovernedTraderState):
@@ -301,6 +304,7 @@ async def executor_node(state: GovernedTraderState):
 # Conditional edge: executor → tools | END
 # ---------------------------------------------------------------------------
 
+
 def should_continue(state: GovernedTraderState) -> str:
     """Determine if a tool call was requested by the Executor."""
     messages = state["messages"]
@@ -349,7 +353,7 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
         span.set_attribute("langfuse.observation.type", "span")
 
         # 1. Resolve ticker — prefer explicit state field, fall back to plan JSON.
-        ticker: Optional[str] = state.get("data_analyst_ticker")
+        ticker: str | None = state.get("data_analyst_ticker")
         if not ticker:
             plan_raw = state.get("execution_plan", "")
             try:
@@ -365,7 +369,7 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
             except (json.JSONDecodeError, TypeError, AttributeError):
                 pass
 
-        _skipped_result = lambda reason: {  # noqa: E731
+        _skipped_result = lambda reason: {
             "rehydration_result": {
                 "status": "SKIPPED",
                 "reason": reason,
@@ -387,7 +391,7 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
             return _skipped_result("no_ticker")
 
         # 2. Extract stale price from execution plan for drift calculation.
-        stale_price: Optional[float] = None
+        stale_price: float | None = None
         try:
             plan_raw = state.get("execution_plan", "")
             plan = json.loads(plan_raw) if isinstance(plan_raw, str) else plan_raw
@@ -396,7 +400,11 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
                     stale_price = float(step["price"])
                     break
                 # Derive implied price from amount / quantity
-                if step.get("amount") and step.get("quantity") and float(step["quantity"]) > 0:
+                if (
+                    step.get("amount")
+                    and step.get("quantity")
+                    and float(step["quantity"]) > 0
+                ):
                     stale_price = float(step["amount"]) / float(step["quantity"])
                     break
         except (json.JSONDecodeError, TypeError, ValueError, ZeroDivisionError):
@@ -407,7 +415,7 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
             import yfinance as yf
 
             ticker_obj = yf.Ticker(ticker)
-            fresh_price: Optional[float] = None
+            fresh_price: float | None = None
 
             # Try fast_info first (single HTTP call, ~200ms).
             try:
@@ -424,7 +432,7 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
                 if not hist.empty:
                     fresh_price = float(hist.iloc[-1]["Close"])
 
-            drift_pct: Optional[float] = None
+            drift_pct: float | None = None
             if stale_price and stale_price > 0 and fresh_price and fresh_price > 0:
                 drift_pct = abs(fresh_price - stale_price) / stale_price * 100.0
 
@@ -459,10 +467,11 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
             logger.warning(
                 "[RehydrateNode] ⚠️ yfinance fetch failed for %s (%s) — "
                 "rehydration SKIPPED, re-validation will use plan params.",
-                ticker, exc,
+                ticker,
+                exc,
             )
             span.set_attribute("toctou.rehydration.status", "SKIPPED")
-            span.set_attribute("toctou.rehydration.reason", f"yfinance_error")
+            span.set_attribute("toctou.rehydration.reason", "yfinance_error")
             return _skipped_result(f"yfinance_error: {exc}")
 
 
@@ -506,7 +515,7 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
         approval_decision: dict[str, Any] = state.get("approval_decision") or {}
 
         max_slippage_pct: float = float(approval_decision.get("max_slippage_pct", 2.0))
-        drift_pct: Optional[float] = rehydration.get("drift_pct")
+        drift_pct: float | None = rehydration.get("drift_pct")
 
         span.set_attribute("toctou.revalidation.max_slippage_pct", max_slippage_pct)
         if drift_pct is not None:
@@ -524,10 +533,13 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
             )
             logger.warning(
                 "[RevalidateNode] ⛔ Slippage exceeded: drift=%.2f%% > tolerance=%.2f%%",
-                drift_pct, max_slippage_pct,
+                drift_pct,
+                max_slippage_pct,
             )
             span.set_attribute("toctou.revalidation.result", "BLOCKED")
-            span.set_attribute("toctou.revalidation.block_reason", "price_slippage_exceeded")
+            span.set_attribute(
+                "toctou.revalidation.block_reason", "price_slippage_exceeded"
+            )
             return {
                 "post_hitl_safety_status": "BLOCKED",
                 "rehydration_result": {**rehydration, "block_reason": block_reason},
@@ -539,10 +551,18 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
             plan_raw = state.get("execution_plan", "")
             plan = json.loads(plan_raw) if isinstance(plan_raw, str) else plan_raw
             for step in plan.get("steps", []):
-                if step.get("action") in ("execute_trade", "buy", "sell", "BUY", "SELL"):
+                if step.get("action") in (
+                    "execute_trade",
+                    "buy",
+                    "sell",
+                    "BUY",
+                    "SELL",
+                ):
                     fresh_params = {
                         "action": "execute_trade",
-                        "symbol": step.get("symbol", rehydration.get("ticker", "UNKNOWN")),
+                        "symbol": step.get(
+                            "symbol", rehydration.get("ticker", "UNKNOWN")
+                        ),
                         "amount": float(step.get("amount", 0)),
                         "currency": step.get("currency", "USD"),
                         "confidence": float(step.get("confidence", 0.99)),
@@ -593,7 +613,9 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
                 "[RevalidateNode] ⛔ Post-HITL governance violation: %s", exc
             )
             span.set_attribute("toctou.revalidation.result", "BLOCKED")
-            span.set_attribute("toctou.revalidation.block_reason", "governance_violation")
+            span.set_attribute(
+                "toctou.revalidation.block_reason", "governance_violation"
+            )
             span.set_attribute("toctou.revalidation.violation", str(exc))
             return {
                 "post_hitl_safety_status": "BLOCKED",
@@ -618,7 +640,7 @@ def drift_blocked_node(state: GovernedTraderState) -> dict[str, Any]:
         "block_reason", "Market conditions changed during the review period."
     )
     ticker: str = rehydration.get("ticker") or "the asset"
-    drift_pct: Optional[float] = rehydration.get("drift_pct")
+    drift_pct: float | None = rehydration.get("drift_pct")
     reviewer: str = approval_decision.get("reviewer", "the reviewer")
     max_slippage_pct: float = float(approval_decision.get("max_slippage_pct", 2.0))
 
@@ -644,7 +666,8 @@ def drift_blocked_node(state: GovernedTraderState) -> dict[str, Any]:
 
     logger.info(
         "[DriftBlockedNode] Trade blocked post-HITL. ticker=%s drift_pct=%s",
-        ticker, drift_pct,
+        ticker,
+        drift_pct,
     )
 
     return {
@@ -656,9 +679,13 @@ def drift_blocked_node(state: GovernedTraderState) -> dict[str, Any]:
 def route_post_revalidation(state: GovernedTraderState) -> str:
     """Route after HITL re-validation: executor if APPROVED, drift_blocked if BLOCKED."""
     if state.get("post_hitl_safety_status") == "BLOCKED":
-        logger.info("[GovernedTrader] Post-HITL re-validation BLOCKED — routing to drift_blocked.")
+        logger.info(
+            "[GovernedTrader] Post-HITL re-validation BLOCKED — routing to drift_blocked."
+        )
         return "drift_blocked"
-    logger.info("[GovernedTrader] Post-HITL re-validation APPROVED — routing to executor.")
+    logger.info(
+        "[GovernedTrader] Post-HITL re-validation APPROVED — routing to executor."
+    )
     return "executor"
 
 
@@ -671,9 +698,13 @@ builder = StateGraph(GovernedTraderState)
 # Nodes
 builder.add_node("approval", approval_node)
 builder.add_node("rejection", rejection_node)
-builder.add_node("post_hitl_rehydrate", post_hitl_rehydrate_node)    # TOCTOU: state re-hydration
-builder.add_node("post_hitl_revalidate", post_hitl_revalidate_node)  # TOCTOU: pre-actuation re-eval
-builder.add_node("drift_blocked", drift_blocked_node)                 # TOCTOU: fail-closed terminal
+builder.add_node(
+    "post_hitl_rehydrate", post_hitl_rehydrate_node
+)  # TOCTOU: state re-hydration
+builder.add_node(
+    "post_hitl_revalidate", post_hitl_revalidate_node
+)  # TOCTOU: pre-actuation re-eval
+builder.add_node("drift_blocked", drift_blocked_node)  # TOCTOU: fail-closed terminal
 builder.add_node("executor", executor_node)
 builder.add_node("tools", tool_executor_node)
 
@@ -698,9 +729,7 @@ builder.add_conditional_edges(
 builder.add_edge("drift_blocked", END)
 
 # Executor tool-call loop
-builder.add_conditional_edges(
-    "executor", should_continue, {"tools": "tools", END: END}
-)
+builder.add_conditional_edges("executor", should_continue, {"tools": "tools", END: END})
 builder.add_edge("tools", "executor")
 
 # Rejection terminates the subgraph

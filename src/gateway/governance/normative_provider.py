@@ -71,7 +71,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 logger = logging.getLogger("cage.normative_provider")
 
@@ -146,7 +146,8 @@ def _verify_policy_integrity(policy_path: Path, raw_bytes: bytes) -> None:
         )
     logger.debug(
         "normative_provider: integrity OK for %s (sha256=%s…)",
-        policy_path.name, actual_hex[:16],
+        policy_path.name,
+        actual_hex[:16],
     )
 
 
@@ -181,7 +182,7 @@ class NormativeBaseline:
     fetched_at: float = field(default_factory=time.time)
     signature: str = ""
     etag: str = ""
-    error: Optional[str] = None
+    error: str | None = None
 
     @property
     def is_valid(self) -> bool:
@@ -209,7 +210,7 @@ class ValidationResult:
     admitted: bool
     findings: list[dict[str, Any]] = field(default_factory=list)
     sealed_at: float = field(default_factory=time.time)
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -226,7 +227,7 @@ class EvidenceSeal:
     thread_id: str
     seal_hash: str = ""
     sealed_at: float = field(default_factory=time.time)
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -243,7 +244,7 @@ class FRIAEnforcementResult:
     status: ExecutionStatus
     path: str
     consensus_score: float
-    validation: Optional[ValidationResult] = None
+    validation: ValidationResult | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -273,9 +274,7 @@ class NormativeProvider(Protocol):
         """
         ...  # pragma: no cover
 
-    async def submit_evidence(
-        self, thread_id: str, evidence_hash: str
-    ) -> EvidenceSeal:
+    async def submit_evidence(self, thread_id: str, evidence_hash: str) -> EvidenceSeal:
         """GET /evidence-chain/{thread_id} — Attestation Logging.
 
         Submit the local governance evidence hash and retrieve an externally
@@ -299,6 +298,7 @@ class StubNormativeProvider:
 
     def __init__(self) -> None:
         import os as _os
+
         _cage_env = _os.getenv("CAGE_ENV", "production").lower()
         _is_production = _cage_env not in ("development", "test", "dev", "ci")
 
@@ -347,20 +347,15 @@ class StubNormativeProvider:
             logger.error("normative_provider: policy integrity check failed: %s", exc)
             return NormativeBaseline(region=region, profile={}, error=str(exc))
         except Exception as exc:
-            return NormativeBaseline(
-                region=region, profile={}, error=str(exc)
-            )
+            return NormativeBaseline(region=region, profile={}, error=str(exc))
 
     async def validate_fria(self, payload: dict[str, Any]) -> ValidationResult:
         """Stub always admits — no external validation."""
         return ValidationResult(admitted=True)
 
-    async def submit_evidence(
-        self, thread_id: str, evidence_hash: str
-    ) -> EvidenceSeal:
+    async def submit_evidence(self, thread_id: str, evidence_hash: str) -> EvidenceSeal:
         """Stub returns an empty seal — no external attestation."""
         return EvidenceSeal(thread_id=thread_id)
-
 
 
 # ---------------------------------------------------------------------------
@@ -392,9 +387,7 @@ async def _async_attestation(
                 result.findings,
             )
         else:
-            logger.debug(
-                "[FRIA Async Attestation] Confirmed for thread=%s", thread_id
-            )
+            logger.debug("[FRIA Async Attestation] Confirmed for thread=%s", thread_id)
 
         # Also submit evidence seal (non-blocking)
         seal = await provider.submit_evidence(
@@ -455,21 +448,19 @@ async def enforce_fria_boundary(
         FRIAEnforcementResult with the execution status, enforcement path,
         and optional validation result.
     """
-    from src.gateway.governance.schemas.thresholds import THRESHOLDS
     from src.gateway.governance.defer_queue import (
         DEFER_CONFIDENCE_THRESHOLD,
         DeferReason,
         DeferToken,
     )
+    from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
     allow_threshold = THRESHOLDS.confidence.min_trade_confidence  # 0.95
-    defer_threshold = DEFER_CONFIDENCE_THRESHOLD                   # 0.70
+    defer_threshold = DEFER_CONFIDENCE_THRESHOLD  # 0.70
 
     # --- HIGH CONFIDENCE: Non-blocking attestation path ---
     if consensus_score >= allow_threshold:
-        asyncio.create_task(
-            _async_attestation(provider, action_context, thread_id)
-        )
+        asyncio.create_task(_async_attestation(provider, action_context, thread_id))
         logger.info(
             "[FRIA] Score=%.3f ≥ %.2f → ALLOW (async attestation) thread=%s",
             consensus_score,
@@ -679,7 +670,7 @@ class NormativeProviderDaemon:
                     local_path,
                 )
                 # Load hash for change detection
-                with open(local_path, "r") as fh:
+                with open(local_path) as fh:
                     cached = json.load(fh)
                 self._last_hash = hashlib.sha256(
                     json.dumps(cached, sort_keys=True, separators=(",", ":")).encode()
@@ -752,9 +743,7 @@ class NormativeProviderDaemon:
         try:
             with open(output_path, "w") as fh:
                 json.dump(baseline.profile, fh, indent=2, sort_keys=True)
-            logger.info(
-                "[NormativeDaemon] Profile written to %s", output_path
-            )
+            logger.info("[NormativeDaemon] Profile written to %s", output_path)
         except Exception as exc:
             logger.error(
                 "[NormativeDaemon] Failed to write profile to %s: %s",
@@ -778,7 +767,7 @@ class NormativeProviderDaemon:
             )
 
     @classmethod
-    def from_env(cls) -> "NormativeProviderDaemon":
+    def from_env(cls) -> NormativeProviderDaemon:
         """Construct from environment variables.
 
         Reads:
@@ -835,14 +824,15 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
     # Vendor providers — lazy-loaded from src/integrations/{vendor}/
     if provider_name == "trustlayers":
         from src.integrations.trustlayers import TrustLayersProvider
+
         return TrustLayersProvider()
 
     if provider_name == "nexart":
         from src.integrations.nexart import NexArtAttestationProvider
+
         return NexArtAttestationProvider()
 
     valid = list(_PROVIDERS.keys()) + ["trustlayers", "nexart"]
     raise ValueError(
-        f"Unknown normative provider: {provider_name!r}. "
-        f"Available providers: {valid}."
+        f"Unknown normative provider: {provider_name!r}. Available providers: {valid}."
     )

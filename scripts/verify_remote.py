@@ -55,6 +55,7 @@ _SEAL_HEADER = "X-CAGE-Routing-Seal"
 # Health checks (existing — unchanged)
 # ---------------------------------------------------------------------------
 
+
 def verify_deployment() -> bool:
     """GET /, /health, /v1/models and confirm the service is reachable.
 
@@ -88,6 +89,7 @@ def verify_deployment() -> bool:
 # ---------------------------------------------------------------------------
 # Seal enforcement checks (Track C — U-15 / U-16)
 # ---------------------------------------------------------------------------
+
 
 def _compute_seal(secret: str, body_bytes: bytes) -> str:
     """Return the HMAC-SHA256 hex digest of *body_bytes* keyed with *secret*."""
@@ -124,7 +126,9 @@ def check_seal_enforcement(gateway_url: str, secret: str) -> bool:
         resp = requests.post(url, data=body, headers=headers_base, timeout=10)
         status = resp.status_code
         if status == 403:
-            print(f"  [PASS] U-15: unsigned request returned {status} (403 as expected)")
+            print(
+                f"  [PASS] U-15: unsigned request returned {status} (403 as expected)"
+            )
         else:
             print(
                 f"  [FAIL] U-15: unsigned request returned {status} "
@@ -149,8 +153,8 @@ def check_seal_enforcement(gateway_url: str, secret: str) -> bool:
             )
         else:
             print(
-                f"  [FAIL] U-16: signed request returned 403 "
-                f"(seal was rejected — check CAGE_ROUTING_SEAL_SECRET matches the gateway)"
+                "  [FAIL] U-16: signed request returned 403 "
+                "(seal was rejected — check CAGE_ROUTING_SEAL_SECRET matches the gateway)"
             )
             all_pass = False
     except Exception as exc:
@@ -167,6 +171,7 @@ def check_seal_enforcement(gateway_url: str, secret: str) -> bool:
 # ---------------------------------------------------------------------------
 # Langfuse posture check
 # ---------------------------------------------------------------------------
+
 
 def check_langfuse_posture() -> bool:
     """Run scripts/verify_langfuse_posture.py and report pass/fail.
@@ -210,6 +215,7 @@ def check_langfuse_posture() -> bool:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> int:
     """Run all verification checks and return an exit code (0=pass, 1=fail)."""

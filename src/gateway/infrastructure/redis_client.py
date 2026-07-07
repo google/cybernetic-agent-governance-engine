@@ -34,7 +34,7 @@ import json
 import logging
 import os
 import ssl
-from typing import Any, List, Optional
+from typing import Any
 
 logger = logging.getLogger("Gateway.Infrastructure.Redis")
 
@@ -52,13 +52,14 @@ class TransactionAbortedError(Exception):
 
 
 try:
+    from urllib.parse import urlparse as _urlparse
+
     import redis
     import redis.asyncio as aioredis
-    from urllib.parse import urlparse as _urlparse
 
     _REDIS_URL = os.environ.get("REDIS_URL", "")
     _REDIS_DB = int(os.environ.get("REDIS_DB", "0"))
-    _REDIS_PASSWORD: Optional[str] = os.environ.get("REDIS_PASSWORD") or None
+    _REDIS_PASSWORD: str | None = os.environ.get("REDIS_PASSWORD") or None
 
     # Parse defaults from REDIS_URL if present, then allow REDIS_HOST/REDIS_PORT overrides
     if _REDIS_URL:
@@ -80,10 +81,11 @@ try:
         _REDIS_PORT = _url_port
 
     # HIGH-04: TLS detection — enabled when REDIS_TLS=true OR REDIS_URL uses rediss://
-    _REDIS_TLS: bool = (
-        os.environ.get("REDIS_TLS", "").lower() in ("true", "1", "yes")
-        or _REDIS_URL.startswith("rediss://")
-    )
+    _REDIS_TLS: bool = os.environ.get("REDIS_TLS", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    ) or _REDIS_URL.startswith("rediss://")
     if _REDIS_TLS:
         logger.info("🔒 Gateway Redis TLS enabled (rediss://)")
 
@@ -91,7 +93,7 @@ try:
         """Thin async Redis wrapper matching the interface expected by safety.py."""
 
         def __init__(self):
-            self._client: Optional[aioredis.Redis] = None
+            self._client: aioredis.Redis | None = None
 
         def _get(self) -> aioredis.Redis:
             if self._client is None:
@@ -108,7 +110,7 @@ try:
                 )
             return self._client
 
-        async def get(self, key: str) -> Optional[str]:
+        async def get(self, key: str) -> str | None:
             return await self._get().get(key)
 
         async def set(self, key: str, value: str) -> None:
@@ -137,8 +139,8 @@ try:
 
         async def watched_transaction(
             self,
-            watch_keys: List[str],
-            staging_keys: List[str],
+            watch_keys: list[str],
+            staging_keys: list[str],
             build_pipeline_fn: Any,
         ) -> Any:
             """Execute a WATCH/MULTI/EXEC transaction with guaranteed cleanup on abort.
@@ -192,17 +194,19 @@ try:
                     if staging_keys:
                         try:
                             await client.delete(*staging_keys)
-                        except Exception as del_exc:  # noqa: BLE001
+                        except Exception as del_exc:
                             logger.warning(
                                 "watched_transaction: staging key cleanup failed: %s",
                                 del_exc,
                             )
                     logger.warning(
-                        json.dumps({
-                            "event": "redis_watch_abort",
-                            "keys_cleaned": staging_keys,
-                            "reason": "WatchError",
-                        })
+                        json.dumps(
+                            {
+                                "event": "redis_watch_abort",
+                                "keys_cleaned": staging_keys,
+                                "reason": "WatchError",
+                            }
+                        )
                     )
                     raise TransactionAbortedError(
                         f"WATCH aborted: concurrent modification of {watch_keys}"
@@ -215,7 +219,10 @@ try:
 
     redis_client = _AsyncRedisClient()
     logger.info(
-        "✅ Gateway Redis client initialised (%s:%s db=%s)", _REDIS_HOST, _REDIS_PORT, _REDIS_DB
+        "✅ Gateway Redis client initialised (%s:%s db=%s)",
+        _REDIS_HOST,
+        _REDIS_PORT,
+        _REDIS_DB,
     )
 
     class _SyncRedisClient:
@@ -228,7 +235,7 @@ try:
         """
 
         def __init__(self) -> None:
-            self._client: Optional[redis.Redis] = None  # type: ignore[type-arg]
+            self._client: redis.Redis | None = None  # type: ignore[type-arg]
 
         def _get(self) -> redis.Redis:  # type: ignore[type-arg]
             if self._client is None:
@@ -245,7 +252,7 @@ try:
                 )
             return self._client
 
-        def get(self, key: str) -> Optional[str]:
+        def get(self, key: str) -> str | None:
             return self._get().get(key)  # type: ignore[return-value]
 
         def setex(self, key: str, ttl_seconds: int, value: str) -> None:
@@ -259,7 +266,10 @@ try:
 
     sync_redis_client = _SyncRedisClient()
     logger.info(
-        "✅ Gateway sync Redis client initialised (%s:%s db=%s)", _REDIS_HOST, _REDIS_PORT, _REDIS_DB
+        "✅ Gateway sync Redis client initialised (%s:%s db=%s)",
+        _REDIS_HOST,
+        _REDIS_PORT,
+        _REDIS_DB,
     )
 
 except ImportError:

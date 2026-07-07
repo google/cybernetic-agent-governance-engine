@@ -19,15 +19,15 @@ Provides a singleton pooled httpx.AsyncClient for reuse across requests.
 Use _get_async_client() to get the shared client.
 Call close_async_client() on application shutdown.
 """
+
 import asyncio
 import logging
-from typing import Optional
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-_async_client: Optional[httpx.AsyncClient] = None
+_async_client: httpx.AsyncClient | None = None
 _async_client_lock: asyncio.Lock = asyncio.Lock()
 
 # Connection pool configuration
@@ -106,7 +106,11 @@ async def _post_with_retry(
                 request=response.request,
                 response=response,
             )
-        except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as exc:
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.RemoteProtocolError,
+        ) as exc:
             delay = _BASE_DELAY_SECONDS * (2 ** (attempt - 1))
             logger.warning(
                 "http_pool: network error on attempt %d/%d (%s), retrying in %.1fs",

@@ -62,7 +62,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger("cage.nexart_adapter")
 
@@ -70,35 +70,35 @@ logger = logging.getLogger("cage.nexart_adapter")
 # Configuration
 # ---------------------------------------------------------------------------
 
-_ENABLED: bool = (
-    os.environ.get("NEXART_ATTESTATION_ENABLED", "false").lower() == "true"
-)
+_ENABLED: bool = os.environ.get("NEXART_ATTESTATION_ENABLED", "false").lower() == "true"
 _API_ENDPOINT: str = os.environ.get("NEXART_API_ENDPOINT", "")
 _API_KEY: str = os.environ.get("NEXART_API_KEY", "")
 _TIMEOUT: float = float(os.environ.get("NEXART_ATTESTATION_TIMEOUT", "5.0"))
 
 # Governance-significant nodes that trigger CER emission
-_ATTESTATION_NODES = frozenset({
-    "nemo_guardrail",
-    "evaluator",
-    "safety_check",
-    "governed_trader",
-    "explainer",
-    "nemo_output_rail",
-})
+_ATTESTATION_NODES = frozenset(
+    {
+        "nemo_guardrail",
+        "evaluator",
+        "safety_check",
+        "governed_trader",
+        "explainer",
+        "nemo_output_rail",
+    }
+)
 
 # Graph topology — maps each node to its possible parent nodes
 # Derived from graph.py conditional edges
 _GRAPH_PARENTS: dict[str, list[str]] = {
-    "nemo_guardrail":  [],  # entry point
-    "thinker_node":    ["nemo_guardrail"],
-    "doer_node":       ["thinker_node"],
-    "data_analyst":    ["doer_node"],
+    "nemo_guardrail": [],  # entry point
+    "thinker_node": ["nemo_guardrail"],
+    "doer_node": ["thinker_node"],
+    "data_analyst": ["doer_node"],
     "execution_analyst": ["doer_node", "evaluator"],  # loop source
-    "evaluator":       ["execution_analyst"],
-    "safety_check":    ["evaluator"],
+    "evaluator": ["execution_analyst"],
+    "safety_check": ["evaluator"],
     "governed_trader": ["safety_check"],
-    "explainer":       ["governed_trader", "evaluator", "safety_check"],
+    "explainer": ["governed_trader", "evaluator", "safety_check"],
     "nemo_output_rail": ["data_analyst", "explainer"],
 }
 
@@ -106,6 +106,7 @@ _GRAPH_PARENTS: dict[str, list[str]] = {
 # ---------------------------------------------------------------------------
 # Data contracts
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ProjectBundleStepEntry:
@@ -151,7 +152,9 @@ class AttestationBundle:
     steps: list[ProjectBundleStepEntry] = field(default_factory=list)
     started_at: str = ""
     completed_at: str = ""
-    terminal_path: str = ""  # "happy_path" | "nemo_block" | "cbf_block" | "loop_breaker"
+    terminal_path: str = (
+        ""  # "happy_path" | "nemo_block" | "cbf_block" | "loop_breaker"
+    )
 
     def to_dict(self) -> dict:
         """Serialize to NexArt API-compatible dict."""
@@ -189,10 +192,12 @@ def _serialize_state_snapshot(state: dict[str, Any]) -> dict[str, Any]:
         serialized_messages = []
         for msg in messages:
             if hasattr(msg, "content"):
-                serialized_messages.append({
-                    "type": getattr(msg, "type", "unknown"),
-                    "content": str(msg.content)[:500],  # Truncate to prevent bloat
-                })
+                serialized_messages.append(
+                    {
+                        "type": getattr(msg, "type", "unknown"),
+                        "content": str(msg.content)[:500],  # Truncate to prevent bloat
+                    }
+                )
             else:
                 serialized_messages.append(str(msg)[:500])
         snapshot["messages"] = serialized_messages
@@ -286,11 +291,18 @@ def _classify_terminal_path(steps: list[ProjectBundleStepEntry]) -> str:
 
     # Check for safety_check BLOCKED signal
     for step in steps:
-        if step.node_name == "safety_check" and step.signals.get("safetyStatus") == "BLOCKED":
+        if (
+            step.node_name == "safety_check"
+            and step.signals.get("safetyStatus") == "BLOCKED"
+        ):
             return "cbf_block"
 
     # Check for loop breaker (evaluator → explainer without safety_check)
-    if "evaluator" in node_names and "explainer" in node_names and "safety_check" not in node_names:
+    if (
+        "evaluator" in node_names
+        and "explainer" in node_names
+        and "safety_check" not in node_names
+    ):
         return "loop_breaker"
 
     # Check loop count
@@ -343,6 +355,7 @@ class NexArtAttestationCallback:
         self._node_start_times[node_name] = time.monotonic()
         if not self._started_at_utc:
             from datetime import datetime, timezone
+
             self._started_at_utc = datetime.now(tz=timezone.utc).isoformat()
 
     def on_chain_end(
@@ -517,9 +530,7 @@ class NexArtClient:
             headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
 
-    async def certify_decision(
-        self, evidence_record: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def certify_decision(self, evidence_record: dict[str, Any]) -> dict[str, Any]:
         """Submit a governance decision for NexArt CER certification.
 
         Args:
@@ -536,15 +547,11 @@ class NexArtClient:
 
         url = f"{self._endpoint}/certifyDecision"
         async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.post(
-                url, json=evidence_record, headers=self._headers()
-            )
+            resp = await client.post(url, json=evidence_record, headers=self._headers())
             resp.raise_for_status()
             return resp.json()
 
-    async def register_project_bundle(
-        self, bundle: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def register_project_bundle(self, bundle: dict[str, Any]) -> dict[str, Any]:
         """Register a completed Project Bundle with NexArt.
 
         Args:
@@ -557,9 +564,7 @@ class NexArtClient:
 
         url = f"{self._endpoint}/registerProjectBundle"
         async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.post(
-                url, json=bundle, headers=self._headers()
-            )
+            resp = await client.post(url, json=bundle, headers=self._headers())
             resp.raise_for_status()
             return resp.json()
 

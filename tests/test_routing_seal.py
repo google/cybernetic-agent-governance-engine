@@ -28,8 +28,6 @@ Covers:
 import os
 import time
 
-import pytest
-
 # Set GOVERNANCE_SALT before importing modules under test
 os.environ.setdefault("GOVERNANCE_SALT", "TEST_SALT_UNIT_32_CHARACTERS_OK!")
 
@@ -37,7 +35,6 @@ from src.gateway.governance.routing_seal import generate_seal
 from src.governed_financial_advisor.utils.routing_seal import (
     verify_seal as gfa_verify_seal,
 )
-
 
 PARAMS = {
     "symbol": "AAPL",
@@ -106,13 +103,16 @@ class TestRoutingSeal:
         assert gfa_verify_seal(seal, "execute_trade", params_a) is True
 
 
-
 class TestRoutingSealGatewayMirrorParity:
     """Ensure both modules produce identical HMAC under the same GOVERNANCE_SALT."""
 
     def test_gfa_verify_accepts_gateway_seal(self):
         """The GFA's verify_seal must accept seals issued by the gateway module."""
-        for action in ("execute_trade", "evaluate_policy", "trigger_safety_intervention"):
+        for action in (
+            "execute_trade",
+            "evaluate_policy",
+            "trigger_safety_intervention",
+        ):
             seal = generate_seal(action, PARAMS)
             assert gfa_verify_seal(seal, action, PARAMS) is True, (
                 f"GFA verify_seal rejected a valid gateway seal for action='{action}'"

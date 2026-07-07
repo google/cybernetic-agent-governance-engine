@@ -28,18 +28,15 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from src.compliance_bridge.oscal_exporter import (
     build_oscal_assessment_results,
-    findings_from_metrics_dict,
 )
 from src.compliance_bridge.types import OscalFinding
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _finding(control_id: str, result: str = "PASS") -> OscalFinding:
     return OscalFinding(
@@ -54,6 +51,7 @@ def _finding(control_id: str, result: str = "PASS") -> OscalFinding:
 # ---------------------------------------------------------------------------
 # Test 1: CER links present when URIs provided
 # ---------------------------------------------------------------------------
+
 
 def test_cer_links_present_when_uris_provided():
     """Findings get links[] array when cer_uris mapping includes their control_id."""
@@ -84,6 +82,7 @@ def test_cer_links_present_when_uris_provided():
 # ---------------------------------------------------------------------------
 # Test 2: No links when CER URIs not provided (backward compat)
 # ---------------------------------------------------------------------------
+
 
 def test_no_cer_links_without_uris():
     """Without cer_uris parameter, findings have no links[] array."""
@@ -116,6 +115,7 @@ def test_no_cer_links_with_empty_uris():
 # Test 3: CER hash extracted as prop
 # ---------------------------------------------------------------------------
 
+
 def test_cer_hash_prop_extracted():
     """CER hash is extracted from URI and added as a 'cer-hash' prop."""
     findings = [_finding("SC-4")]
@@ -138,6 +138,7 @@ def test_cer_hash_prop_extracted():
 # ---------------------------------------------------------------------------
 # Test 4: Only matching findings get CER links
 # ---------------------------------------------------------------------------
+
 
 def test_only_matching_findings_get_cer_links():
     """When cer_uris has entries for some controls, only those get links."""
@@ -162,7 +163,7 @@ def test_only_matching_findings_get_cer_links():
     for f in oscal_findings:
         control_id = f["target"]["target-id"]
         if control_id == "A.5.3":
-            assert "links" in f, f"A.5.3 should have CER links"
+            assert "links" in f, "A.5.3 should have CER links"
         else:
             assert "links" not in f, f"{control_id} should NOT have CER links"
 
@@ -170,6 +171,7 @@ def test_only_matching_findings_get_cer_links():
 # ---------------------------------------------------------------------------
 # Test 5: OSCAL rel='evidence' semantics
 # ---------------------------------------------------------------------------
+
 
 def test_evidence_rel_semantics():
     """CER links use rel='evidence' per OSCAL linking model."""
@@ -191,6 +193,7 @@ def test_evidence_rel_semantics():
 # Test 6: Document is valid JSON (round-trip)
 # ---------------------------------------------------------------------------
 
+
 def test_document_round_trips_with_cer_links():
     """OSCAL document with CER links round-trips through JSON serialization."""
     findings = [_finding("A.5.3"), _finding("SC-4")]
@@ -209,4 +212,9 @@ def test_document_round_trips_with_cer_links():
     serialized = json.dumps(doc, default=str)
     deserialized = json.loads(serialized)
 
-    assert deserialized["assessment-results"]["results"][0]["findings"][0]["links"][0]["rel"] == "evidence"
+    assert (
+        deserialized["assessment-results"]["results"][0]["findings"][0]["links"][0][
+            "rel"
+        ]
+        == "evidence"
+    )

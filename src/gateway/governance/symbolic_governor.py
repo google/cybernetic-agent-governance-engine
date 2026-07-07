@@ -29,17 +29,19 @@ import json
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-import httpx
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from src.gateway.core.policy import OPAClient
-from src.gateway.governance.constants import GovernanceControl, ControlRegistry
-from src.gateway.governance.contracts import SafetyFilter, ConsensusProvider
+from src.gateway.governance.constants import ControlRegistry, GovernanceControl
+from src.gateway.governance.contracts import ConsensusProvider, SafetyFilter
+
 # Import directly from generated_stpa_validator, bypassing the deprecated stpa_validator shim.
-from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator as STPAValidator
+from src.gateway.governance.generated_stpa_validator import (
+    GeneratedSTPAValidator as STPAValidator,
+)
 
 logger = logging.getLogger("SymbolicGovernor")
 tracer = trace.get_tracer(__name__)
@@ -101,11 +103,9 @@ class GovernanceError(Exception):
                  ``legacy_citation``, etc. sourced from control_mappings.json.
     """
 
-    def __init__(self, message: str, payload: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, message: str, payload: dict[str, Any] | None = None) -> None:
         super().__init__(message)
-        self.payload: Dict[str, Any] = payload or {}
-
-
+        self.payload: dict[str, Any] = payload or {}
 
 
 # ---------------------------------------------------------------------------
@@ -153,14 +153,14 @@ class SymbolicGovernor:
         opa_client: OPAClient,
         safety_filter: SafetyFilter,
         consensus_engine: ConsensusProvider,
-        stpa_validator: Optional[STPAValidator] = None,
-        telemetry_provider: Optional[Any] = None,
-        fiscal_limit_guard: Optional[Any] = None,
+        stpa_validator: STPAValidator | None = None,
+        telemetry_provider: Any | None = None,
+        fiscal_limit_guard: Any | None = None,
     ):
         self.opa_client = opa_client
         self.safety_filter = safety_filter
         self.consensus_engine = consensus_engine
-        self.stpa_validator: Optional[STPAValidator] = stpa_validator
+        self.stpa_validator: STPAValidator | None = stpa_validator
         self.telemetry_provider = telemetry_provider
         # FiscalLimitGuard — optional for backward compatibility with existing tests.
         # When present, atomically pre-reserves the daily fiscal limit in Redis
@@ -171,9 +171,9 @@ class SymbolicGovernor:
     async def _run_checks(
         self,
         tool_name: str,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         sim_mode: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Core governance check pipeline shared by ``govern()`` and ``verify()``.
 
         Returns a dict: {"violations": list[str], "opa_results": dict | None}
@@ -185,7 +185,7 @@ class SymbolicGovernor:
         - Each stage is wrapped in a discrete OTel span so Langfuse shows the
           full 10-layer pipeline breakdown.
         """
-        violations: List[str] = []
+        violations: list[str] = []
         policy_resp = None
 
         # 0. STAMP/STPA: Unsafe Control Actions
@@ -202,8 +202,10 @@ class SymbolicGovernor:
                 stpa_violations = self.stpa_validator.validate(tool_name, check_params)
                 violations.extend(stpa_violations)
             stpa_span.set_attribute("governance.stpa.violations", len(violations))
-            stpa_span.set_attribute("governance.stage.latency_ms",
-                                    round((time.perf_counter() - _t0) * 1000, 2))
+            stpa_span.set_attribute(
+                "governance.stage.latency_ms",
+                round((time.perf_counter() - _t0) * 1000, 2),
+            )
 
         # 1. Confidence threshold — local pre-check (fast-fail before network I/O).
         # The OPA Rego policy (system_authz.rego) also enforces confidence so that
@@ -212,9 +214,13 @@ class SymbolicGovernor:
         # the confidence score is obviously below threshold.
         if tool_name == "execute_trade":
             _confidence = float(params.get("confidence", 0.0))
-            _confidence_threshold = float(os.getenv("AGENT_CONFIDENCE_THRESHOLD", "0.95"))
+            _confidence_threshold = float(
+                os.getenv("AGENT_CONFIDENCE_THRESHOLD", "0.95")
+            )
             if _confidence < _confidence_threshold:
-                _conf_meta = ControlRegistry().get_mapping(GovernanceControl.AGENT_CONFIDENCE_THRESHOLD)
+                _conf_meta = ControlRegistry().get_mapping(
+                    GovernanceControl.AGENT_CONFIDENCE_THRESHOLD
+                )
                 _conf_msg = (
                     f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
                     f"{_conf_meta['primary_framework']} Confidence Violation: "
@@ -238,14 +244,18 @@ class SymbolicGovernor:
             _cbf_fail_open = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
 
             # --- CBF coroutine (wrapped to capture span) ---
-            async def _cbf_check_with_span() -> Optional[str]:
+            async def _cbf_check_with_span() -> str | None:
                 """Run the CBF Redis check inside a dedicated Langfuse span."""
                 with tracer.start_as_current_span("cage.cbf_check") as cbf_span:
-                    cbf_span.set_attribute("langfuse.observation.name", "cbf_barrier_check")
+                    cbf_span.set_attribute(
+                        "langfuse.observation.name", "cbf_barrier_check"
+                    )
                     cbf_span.set_attribute("governance.stage", "cbf")
                     _t = time.perf_counter()
                     try:
-                        result = await self.safety_filter.verify_action(tool_name, params)
+                        result = await self.safety_filter.verify_action(
+                            tool_name, params
+                        )
                         cbf_span.set_attribute("governance.cbf.result", result[:80])
                         cbf_span.set_attribute(
                             "governance.stage.latency_ms",
@@ -264,7 +274,9 @@ class SymbolicGovernor:
             async def _opa_check_with_span() -> Any:
                 """Run OPA policy evaluation inside a dedicated Langfuse span."""
                 with tracer.start_as_current_span("cage.opa_pre_check") as opa_span:
-                    opa_span.set_attribute("langfuse.observation.name", "opa_policy_pre_check")
+                    opa_span.set_attribute(
+                        "langfuse.observation.name", "opa_policy_pre_check"
+                    )
                     opa_span.set_attribute("governance.stage", "opa")
                     _t = time.perf_counter()
                     try:
@@ -288,7 +300,8 @@ class SymbolicGovernor:
             _parallel_ms = round((time.perf_counter() - _t_parallel_start) * 1000, 2)
             logger.debug(
                 "⚡ CBF+OPA parallel gate completed in %.1fms (tool=%s)",
-                _parallel_ms, tool_name,
+                _parallel_ms,
+                tool_name,
             )
 
             # --- Evaluate CBF result ---
@@ -302,16 +315,18 @@ class SymbolicGovernor:
                         cbf_result,
                     )
                     logger.critical(
-                        json.dumps({
-                            "event": "CBF_FAIL_OPEN_ACTIVATED",
-                            "severity": "CRITICAL",
-                            "tool": tool_name,
-                            "cbf_error": str(cbf_result),
-                            "audit_note": (
-                                "CBF gate bypassed via CBF_FAIL_OPEN=true. "
-                                "Cash balance cannot be independently verified for this trade."
-                            ),
-                        })
+                        json.dumps(
+                            {
+                                "event": "CBF_FAIL_OPEN_ACTIVATED",
+                                "severity": "CRITICAL",
+                                "tool": tool_name,
+                                "cbf_error": str(cbf_result),
+                                "audit_note": (
+                                    "CBF gate bypassed via CBF_FAIL_OPEN=true. "
+                                    "Cash balance cannot be independently verified for this trade."
+                                ),
+                            }
+                        )
                     )
                 else:
                     logger.error(
@@ -337,19 +352,25 @@ class SymbolicGovernor:
                 if isinstance(policy_resp, dict):
                     # OPA trade.governance policy returns {"allow": "ALLOW"/"DENY"/"MANUAL_REVIEW"}.
                     # Fall back to "decision" key for backward compat with other policy packages.
-                    policy_decision = policy_resp.get("allow", policy_resp.get("decision", "DENY"))
+                    policy_decision = policy_resp.get(
+                        "allow", policy_resp.get("decision", "DENY")
+                    )
                 elif isinstance(policy_resp, str):
                     policy_decision = policy_resp
                 else:
                     policy_decision = "DENY"
                 if policy_decision == "DENY":
-                    _opa_meta = ControlRegistry().get_mapping(GovernanceControl.OPA_POLICY_ENFORCEMENT)
+                    _opa_meta = ControlRegistry().get_mapping(
+                        GovernanceControl.OPA_POLICY_ENFORCEMENT
+                    )
                     violations.append(
                         f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
                         f"{_opa_meta['primary_framework']} Violation: OPA Denied Action."
                     )
                 elif policy_decision == "MANUAL_REVIEW":
-                    _opa_meta = ControlRegistry().get_mapping(GovernanceControl.OPA_POLICY_ENFORCEMENT)
+                    _opa_meta = ControlRegistry().get_mapping(
+                        GovernanceControl.OPA_POLICY_ENFORCEMENT
+                    )
                     violations.append(
                         f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
                         f"{_opa_meta['primary_framework']} Check: Manual Review Required."
@@ -361,23 +382,31 @@ class SymbolicGovernor:
             opa_payload["action"] = tool_name
             try:
                 with tracer.start_as_current_span("cage.opa_pre_check") as opa_span:
-                    opa_span.set_attribute("langfuse.observation.name", "opa_policy_pre_check")
+                    opa_span.set_attribute(
+                        "langfuse.observation.name", "opa_policy_pre_check"
+                    )
                     opa_span.set_attribute("governance.stage", "opa")
                     policy_resp = await self.opa_client.evaluate_policy(opa_payload)
                 if isinstance(policy_resp, dict):
-                    policy_decision = policy_resp.get("allow", policy_resp.get("decision", "DENY"))
+                    policy_decision = policy_resp.get(
+                        "allow", policy_resp.get("decision", "DENY")
+                    )
                 elif isinstance(policy_resp, str):
                     policy_decision = policy_resp
                 else:
                     policy_decision = "DENY"
                 if policy_decision == "DENY":
-                    _opa_meta = ControlRegistry().get_mapping(GovernanceControl.OPA_POLICY_ENFORCEMENT)
+                    _opa_meta = ControlRegistry().get_mapping(
+                        GovernanceControl.OPA_POLICY_ENFORCEMENT
+                    )
                     violations.append(
                         f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
                         f"{_opa_meta['primary_framework']} Violation: OPA Denied Action."
                     )
                 elif policy_decision == "MANUAL_REVIEW":
-                    _opa_meta = ControlRegistry().get_mapping(GovernanceControl.OPA_POLICY_ENFORCEMENT)
+                    _opa_meta = ControlRegistry().get_mapping(
+                        GovernanceControl.OPA_POLICY_ENFORCEMENT
+                    )
                     violations.append(
                         f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
                         f"{_opa_meta['primary_framework']} Check: Manual Review Required."
@@ -395,19 +424,29 @@ class SymbolicGovernor:
         # (consensus, causal, FRIA) raises a violation.
         # If fiscal_limit_guard is None (e.g. in tests), this step is skipped.
         _fiscal_token = None
-        if tool_name == "execute_trade" and self.fiscal_limit_guard is not None and not violations:
-            with tracer.start_as_current_span("cage.fiscal_limit_reserve") as fiscal_span:
-                fiscal_span.set_attribute("langfuse.observation.name", "fiscal_limit_reserve")
+        if (
+            tool_name == "execute_trade"
+            and self.fiscal_limit_guard is not None
+            and not violations
+        ):
+            with tracer.start_as_current_span(
+                "cage.fiscal_limit_reserve"
+            ) as fiscal_span:
+                fiscal_span.set_attribute(
+                    "langfuse.observation.name", "fiscal_limit_reserve"
+                )
                 fiscal_span.set_attribute("governance.stage", "fiscal_limit")
                 _t_fiscal = time.perf_counter()
                 try:
                     _amount = float(params.get("amount", 0.0))
-                    _agent_id = str(params.get("agent_id", params.get("user_id", "unknown-agent")))
+                    _agent_id = str(
+                        params.get("agent_id", params.get("user_id", "unknown-agent"))
+                    )
                     if _amount > 0:
                         _fiscal_token = await self.fiscal_limit_guard.reserve(
-                                agent_id=_agent_id,
-                                amount_usd=_amount,
-                            )
+                            agent_id=_agent_id,
+                            amount_usd=_amount,
+                        )
                         fiscal_span.set_attribute(
                             "governance.fiscal.reservation_id",
                             _fiscal_token.reservation_id,
@@ -423,7 +462,9 @@ class SymbolicGovernor:
                             "governance.fiscal.cap_usd", _fiscal_token.cap_usd
                         )
                         if _fiscal_token.rejected:
-                            fiscal_span.set_attribute("governance.fiscal.result", "REJECTED")
+                            fiscal_span.set_attribute(
+                                "governance.fiscal.result", "REJECTED"
+                            )
                             violations.append(
                                 f"Fiscal Limit Pre-Reservation REJECTED: "
                                 f"amount=${_amount:,.2f} would exceed daily cap "
@@ -431,11 +472,17 @@ class SymbolicGovernor:
                                 f"(running_total=${_fiscal_token.running_total_usd:,.2f}). "
                                 f"reservation_id={_fiscal_token.reservation_id}"
                             )
-                            _fiscal_token = None  # Nothing to release — reservation was denied
+                            _fiscal_token = (
+                                None  # Nothing to release — reservation was denied
+                            )
                         else:
-                            fiscal_span.set_attribute("governance.fiscal.result", "RESERVED")
+                            fiscal_span.set_attribute(
+                                "governance.fiscal.result", "RESERVED"
+                            )
                     else:
-                        fiscal_span.set_attribute("governance.fiscal.result", "SKIPPED_ZERO_AMOUNT")
+                        fiscal_span.set_attribute(
+                            "governance.fiscal.result", "SKIPPED_ZERO_AMOUNT"
+                        )
                 except Exception as _fiscal_exc:
                     fiscal_span.record_exception(_fiscal_exc)
                     fiscal_span.set_attribute("governance.fiscal.result", "ERROR")
@@ -467,7 +514,9 @@ class SymbolicGovernor:
         # 5. ISO 42001: Multi-agent Consensus (trade-specific, high-stakes)
         if tool_name == "execute_trade":
             with tracer.start_as_current_span("cage.consensus_gate") as cons_gate_span:
-                cons_gate_span.set_attribute("langfuse.observation.name", "consensus_gate")
+                cons_gate_span.set_attribute(
+                    "langfuse.observation.name", "consensus_gate"
+                )
                 cons_gate_span.set_attribute("governance.stage", "consensus")
                 try:
                     amount = params.get("amount", 0.0)
@@ -478,9 +527,12 @@ class SymbolicGovernor:
                     if consensus["status"] == "REJECT":
                         violations.append(f"Consensus Rejection: {consensus['reason']}")
                     elif consensus["status"] == "ESCALATE":
-                        violations.append(f"Consensus Escalation: {consensus['reason']}")
+                        violations.append(
+                            f"Consensus Escalation: {consensus['reason']}"
+                        )
                     cons_gate_span.set_attribute(
-                        "governance.consensus.status", consensus.get("status", "UNKNOWN")
+                        "governance.consensus.status",
+                        consensus.get("status", "UNKNOWN"),
                     )
                 except Exception as exc:
                     violations.append(f"Consensus Check Failed: {exc}")
@@ -492,7 +544,9 @@ class SymbolicGovernor:
         # we are in a dev/test environment — log at DEBUG and skip.
         if tool_name == "execute_trade":
             try:
-                from src.gateway.governance.causal_gatekeeper import causal_safety_check  # noqa: PLC0415
+                from src.gateway.governance.causal_gatekeeper import (
+                    causal_safety_check,
+                )
 
                 telemetry_data = None
                 if self.telemetry_provider is not None:
@@ -512,7 +566,9 @@ class SymbolicGovernor:
                     "Production startup will fail if dowhy is absent."
                 )
             except Exception as exc:
-                logger.warning("⚠️ Causal gatekeeper check failed (%s) — failing closed.", exc)
+                logger.warning(
+                    "⚠️ Causal gatekeeper check failed (%s) — failing closed.", exc
+                )
                 violations.append(
                     f"Causal Safety Violation: gatekeeper raised an unexpected error — "
                     f"failing closed. Detail: {exc}"
@@ -528,12 +584,16 @@ class SymbolicGovernor:
         # DENY'd, the external provider is never contacted.
         # Override via env: FRIA_ZONE_ALLOW, FRIA_ZONE_DEFER (module-level constants).
         _normative_provider_name = os.getenv("CAGE_NORMATIVE_PROVIDER", "static")
-        if tool_name == "execute_trade" and _normative_provider_name != "static" and not violations:
+        if (
+            tool_name == "execute_trade"
+            and _normative_provider_name != "static"
+            and not violations
+        ):
             try:
                 from src.gateway.governance.normative_provider import (
+                    ExecutionStatus,
                     enforce_fria_boundary,
                     get_normative_provider,
-                    ExecutionStatus,
                 )
 
                 provider = get_normative_provider(_normative_provider_name)
@@ -579,18 +639,23 @@ class SymbolicGovernor:
         # DORA Art. 10 monitoring logs satisfy the Art. 12 logging obligation.
         # Stamped here (at the end of the FRIA tier) as a cross-cutting
         # observability concern — not a separate governance tier.
-        fria_meta = ControlRegistry().get_mapping_safe(GovernanceControl.FRIA_ASSESSMENT)
+        fria_meta = ControlRegistry().get_mapping_safe(
+            GovernanceControl.FRIA_ASSESSMENT
+        )
         if fria_meta is not None:
             # Attach to the current OTel span so DORA Art. 10 audit logs include it
             current_span = trace.get_current_span()
             current_span.set_attribute(
-                "governance.fria.control_id",    fria_meta["internal_id"],
+                "governance.fria.control_id",
+                fria_meta["internal_id"],
             )
             current_span.set_attribute(
-                "governance.fria.framework",     fria_meta["primary_framework"],
+                "governance.fria.framework",
+                fria_meta["primary_framework"],
             )
             current_span.set_attribute(
-                "governance.fria.scope",         fria_meta["scope"],
+                "governance.fria.scope",
+                fria_meta["scope"],
             )
             logger.debug(
                 "[%s] FRIA attestation active — %s",
@@ -601,7 +666,11 @@ class SymbolicGovernor:
         # Release fiscal reservation if any post-reservation tier (consensus,
         # causal, FRIA) produced violations.  The reservation was held optimistically
         # through those tiers; if they fail we must return the capacity to the pool.
-        if violations and _fiscal_token is not None and self.fiscal_limit_guard is not None:
+        if (
+            violations
+            and _fiscal_token is not None
+            and self.fiscal_limit_guard is not None
+        ):
             try:
                 await self.fiscal_limit_guard.release(_fiscal_token)
                 logger.info(
@@ -613,7 +682,7 @@ class SymbolicGovernor:
 
         return {"violations": violations, "opa_results": policy_resp}
 
-    async def govern(self, tool_name: str, params: Dict[str, Any]) -> str:
+    async def govern(self, tool_name: str, params: dict[str, Any]) -> str:
         """Orchestrate governance checks for live execution.
 
         Gap 2 fix (No-Direct-Bind): ``govern()`` now issues a routing seal on
@@ -633,7 +702,7 @@ class SymbolicGovernor:
         Raises:
             GovernanceError: If any check fails.
         """
-        from src.gateway.governance.routing_seal import generate_seal  # noqa: PLC0415
+        from src.gateway.governance.routing_seal import generate_seal
 
         with tracer.start_as_current_span("symbolic_governor.govern") as span:
             span.set_attribute("langfuse.observation.type", "span")
@@ -661,7 +730,9 @@ class SymbolicGovernor:
                     seal_span.set_attribute("cage.seal_issued", True)
                     seal_span.set_attribute("cage.seal_path", "govern")
 
-                logger.info("✅ Symbolic Governor Approved: %s (seal issued)", tool_name)
+                logger.info(
+                    "✅ Symbolic Governor Approved: %s (seal issued)", tool_name
+                )
                 span.set_attribute("langfuse.observation.output", "APPROVED")
                 span.set_attribute("cage.seal_issued", True)
                 return seal
@@ -671,7 +742,7 @@ class SymbolicGovernor:
                 span.set_attribute("langfuse.observation.output", str(exc))
                 raise
 
-    async def pre_check(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def pre_check(self, params: dict[str, Any]) -> dict[str, Any]:
         """Run lightweight pre-checks for NeMo Layer-0 context injection.
 
         Executes STPA validation and CBF barrier check once, returning
@@ -700,7 +771,10 @@ class SymbolicGovernor:
             try:
                 stpa_violations = self.stpa_validator.validate(tool_name, params)
             except Exception as exc:
-                logger.warning("⚠️ pre_check: STPA validation failed (%s) — treating as no violations.", exc)
+                logger.warning(
+                    "⚠️ pre_check: STPA validation failed (%s) — treating as no violations.",
+                    exc,
+                )
 
         stpa_result = {
             "allowed": len(stpa_violations) == 0,
@@ -712,7 +786,9 @@ class SymbolicGovernor:
         cbf_reason = "SAFE"
         try:
             cbf_raw = await self.safety_filter.verify_action(tool_name, params)
-            cbf_allowed = not cbf_raw.startswith("UNSAFE") and not cbf_raw.startswith("[")
+            cbf_allowed = not cbf_raw.startswith("UNSAFE") and not cbf_raw.startswith(
+                "["
+            )
             cbf_reason = cbf_raw
         except Exception as exc:
             # C-02: fail-closed on Redis/CBF unavailability — DENY is the safe default.
@@ -730,14 +806,15 @@ class SymbolicGovernor:
 
         logger.debug(
             "🔍 pre_check complete: stpa_allowed=%s cbf_allowed=%s",
-            stpa_result["allowed"], cbf_result["allowed"],
+            stpa_result["allowed"],
+            cbf_result["allowed"],
         )
         return {
             "stpa_result": stpa_result,
             "cbf_result": cbf_result,
         }
 
-    async def verify(self, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def verify(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
         """Dry-run governance checks.  Does NOT raise exceptions.
 
         Used by the Evaluator Agent (System 3) for simulation.
@@ -760,9 +837,9 @@ class SymbolicGovernor:
     async def validate_action(
         self,
         action: str,
-        params: Dict[str, Any],
-        policy_version_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        params: dict[str, Any],
+        policy_version_id: str | None = None,
+    ) -> dict[str, Any]:
         """Validate a structured tool execution payload — Unified Gateway path.
 
         This is the **Single Choke Point** for all tool execution.  Runs the
@@ -798,7 +875,13 @@ class SymbolicGovernor:
             span.set_attribute("langfuse.observation.name", "cage.validate_action")
             span.set_attribute(
                 "langfuse.observation.input",
-                json.dumps({"action": action, "params": params, "policy_version_id": policy_version_id})[:2000],
+                json.dumps(
+                    {
+                        "action": action,
+                        "params": params,
+                        "policy_version_id": policy_version_id,
+                    }
+                )[:2000],
             )
 
             t0 = time.time()
@@ -827,11 +910,14 @@ class SymbolicGovernor:
 
                 if violations:
                     span.set_attribute("cage.verdict", "DENIED")
-                    span.set_attribute("langfuse.observation.output", json.dumps(violations))
+                    span.set_attribute(
+                        "langfuse.observation.output", json.dumps(violations)
+                    )
                     span.set_status(Status(StatusCode.ERROR))
                     logger.warning(
                         "🚫 validate_action DENIED: action=%s violations=%s",
-                        action, violations,
+                        action,
+                        violations,
                     )
                     raise GovernanceError(violations[0])
 
@@ -847,7 +933,9 @@ class SymbolicGovernor:
                 span.set_attribute("langfuse.observation.output", "APPROVED")
                 span.set_status(Status(StatusCode.OK))
                 logger.info(
-                    "✅ validate_action APPROVED: action=%s (%.1fms)", action, latency_ms
+                    "✅ validate_action APPROVED: action=%s (%.1fms)",
+                    action,
+                    latency_ms,
                 )
 
                 return {
@@ -886,12 +974,15 @@ def assert_safe_operational_state() -> None:
     # CBF is bypassed — check if KMS is also in fallback mode
     try:
         from src.gateway.governance.kms_signer import get_governance_signer
+
         signer = get_governance_signer()
         kms_active = signer.is_kms_active
     except Exception:
         kms_active = False  # Cannot determine — assume worst case
 
-    env = (os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")).lower()
+    env = (
+        os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
+    ).lower()
 
     if not kms_active:
         msg = (
@@ -906,12 +997,14 @@ def assert_safe_operational_state() -> None:
             raise RuntimeError(msg)
         else:
             logger.critical(
-                json.dumps({
-                    "event": "COMBINED_HIGH_RISK_STATE",
-                    "severity": "CRITICAL",
-                    "cbf_fail_open": True,
-                    "kms_active": False,
-                    "environment": env,
-                    "audit_note": msg,
-                })
+                json.dumps(
+                    {
+                        "event": "COMBINED_HIGH_RISK_STATE",
+                        "severity": "CRITICAL",
+                        "cbf_fail_open": True,
+                        "kms_active": False,
+                        "environment": env,
+                        "audit_note": msg,
+                    }
+                )
             )

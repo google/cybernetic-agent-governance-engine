@@ -13,10 +13,11 @@
 # limitations under the License.
 
 import os
-import subprocess
 import shutil
+import subprocess
 import sys
 from pathlib import Path
+
 
 def load_dotenv():
     """Load environment variables from .env file."""
@@ -36,6 +37,7 @@ def load_dotenv():
                     os.environ[key.strip()] = value.strip()
     else:
         print(f"⚠️ No .env file found at {env_path}")
+
 
 def run_command(command, check=True, capture_output=False, env=None):
     """
@@ -57,7 +59,7 @@ def run_command(command, check=True, capture_output=False, env=None):
             check=check,
             capture_output=capture_output,
             text=True,
-            env=env or os.environ.copy()
+            env=env or os.environ.copy(),
         )
         if capture_output and result.stdout:
             print(result.stdout.strip())
@@ -69,6 +71,7 @@ def run_command(command, check=True, capture_output=False, env=None):
         if check:
             sys.exit(1)
         return e
+
 
 def check_tool_availability(tool_name):
     """Checks if a CLI tool is available in the PATH."""

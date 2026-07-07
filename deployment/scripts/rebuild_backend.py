@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import subprocess
 from pathlib import Path
 
@@ -33,9 +32,22 @@ print(f"🏗️ Rebuilding Backend for {project_id} (Logging Fix)...")
 
 image_uri = f"gcr.io/{project_id}/financial-advisor:latest"
 # Use same build command as before
-subprocess.run(["gcloud", "builds", "submit", "--tag", image_uri, "--project", project_id, "."], check=True)
+subprocess.run(
+    ["gcloud", "builds", "submit", "--tag", image_uri, "--project", project_id, "."],
+    check=True,
+)
 print("✅ Backend Rebuilt.")
 
 print("🔄 Restarting Deployment...")
-subprocess.run(["kubectl", "rollout", "restart", "deployment/governed-financial-advisor", "-n", "governance-stack"], check=True)
+subprocess.run(
+    [
+        "kubectl",
+        "rollout",
+        "restart",
+        "deployment/governed-financial-advisor",
+        "-n",
+        "governance-stack",
+    ],
+    check=True,
+)
 print("✅ Deployment Restarted.")

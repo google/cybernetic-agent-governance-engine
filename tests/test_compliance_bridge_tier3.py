@@ -29,11 +29,9 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from datetime import datetime, timezone
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, call
 
 pytestmark = pytest.mark.unit
 
@@ -42,11 +40,13 @@ pytestmark = pytest.mark.unit
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_finding(control_id: str, result: str = "PASS", safety_rate: float = 1.0):
     from src.compliance_bridge.types import OscalFinding
+
     return OscalFinding(
         control_id=control_id,
-        result=result,          # type: ignore[arg-type]
+        result=result,  # type: ignore[arg-type]
         finding_id=f"finding-{control_id}",
         safety_rate=safety_rate,
         evidence_age_s=0.0,
@@ -58,6 +58,7 @@ def _make_finding(control_id: str, result: str = "PASS", safety_rate: float = 1.
 # 3.1 — Parallel multi-control remediation advisor
 # ---------------------------------------------------------------------------
 
+
 class TestParallelRemediationAdvisor:
     """
     _step5_remediation_advisor should fan out to ALL alert_targets in parallel,
@@ -67,6 +68,7 @@ class TestParallelRemediationAdvisor:
     @pytest.mark.asyncio
     async def test_no_alert_returns_not_sent(self):
         from src.compliance_bridge.audit_workflow import _step5_remediation_advisor
+
         result = await _step5_remediation_advisor(
             alerted=False, alert_targets=[], findings=[], audit_id="t3-001"
         )
@@ -76,6 +78,7 @@ class TestParallelRemediationAdvisor:
     @pytest.mark.asyncio
     async def test_no_vllm_returns_not_sent(self):
         from src.compliance_bridge.audit_workflow import _step5_remediation_advisor
+
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("VLLM_BASE_URL", None)
             result = await _step5_remediation_advisor(
@@ -97,23 +100,32 @@ class TestParallelRemediationAdvisor:
 
         call_log: list[str] = []
 
-        async def _fake_one_control(control_id, findings, audit_id,
-                                    vllm_base, model_name, max_tokens, timeout_sec):
+        async def _fake_one_control(
+            control_id,
+            findings,
+            audit_id,
+            vllm_base,
+            model_name,
+            max_tokens,
+            timeout_sec,
+        ):
             call_log.append(control_id)
             return {
-                "control_id":        control_id,
-                "remediation_sent":  True,
-                "remediation_text":  f"Fix for {control_id}",
-                "advisor_error":     None,
+                "control_id": control_id,
+                "remediation_sent": True,
+                "remediation_text": f"Fix for {control_id}",
+                "advisor_error": None,
                 "trace_ids_sampled": [],
             }
 
         findings = [
             _make_finding("A.9.2", "FAIL"),
-            _make_finding("SC-4",  "FAIL"),
+            _make_finding("SC-4", "FAIL"),
             _make_finding("A.8.4", "FAIL"),
         ]
-        with patch.dict(os.environ, {"VLLM_BASE_URL": "http://fake-vllm", "VLLM_API_KEY": "k"}):
+        with patch.dict(
+            os.environ, {"VLLM_BASE_URL": "http://fake-vllm", "VLLM_API_KEY": "k"}
+        ):
             with patch(
                 "src.compliance_bridge.audit_workflow._step5_one_control",
                 new=AsyncMock(side_effect=_fake_one_control),
@@ -140,16 +152,20 @@ class TestParallelRemediationAdvisor:
         async def _fake_one(control_id, **kwargs):
             call_log.append(control_id)
             return {
-                "control_id":       control_id,
+                "control_id": control_id,
                 "remediation_sent": True,
                 "remediation_text": "fix",
-                "advisor_error":    None,
+                "advisor_error": None,
                 "trace_ids_sampled": [],
             }
 
-        with patch.dict(os.environ, {"VLLM_BASE_URL": "http://fake-vllm", "VLLM_API_KEY": "k"}):
-            with patch("src.compliance_bridge.audit_workflow._step5_one_control",
-                       new=AsyncMock(side_effect=_fake_one)):
+        with patch.dict(
+            os.environ, {"VLLM_BASE_URL": "http://fake-vllm", "VLLM_API_KEY": "k"}
+        ):
+            with patch(
+                "src.compliance_bridge.audit_workflow._step5_one_control",
+                new=AsyncMock(side_effect=_fake_one),
+            ):
                 result = await _step5_remediation_advisor(
                     alerted=True,
                     alert_targets=["A.9.2", "A.9.2", "A.9.2"],  # triplicated
@@ -157,7 +173,9 @@ class TestParallelRemediationAdvisor:
                     audit_id="t3-dedup",
                 )
 
-        assert call_log.count("A.9.2") == 1, "Duplicate alert_targets must be de-duplicated"
+        assert call_log.count("A.9.2") == 1, (
+            "Duplicate alert_targets must be de-duplicated"
+        )
         assert len(result["per_control"]) == 1
 
     @pytest.mark.asyncio
@@ -167,23 +185,39 @@ class TestParallelRemediationAdvisor:
 
         async def _fake_one(control_id, **kwargs):
             if control_id == "SC-4":
-                return {"control_id": "SC-4", "remediation_sent": False,
-                        "advisor_error": "LLM error: timeout", "trace_ids_sampled": []}
-            return {"control_id": control_id, "remediation_sent": True,
-                    "remediation_text": "fix", "advisor_error": None, "trace_ids_sampled": []}
+                return {
+                    "control_id": "SC-4",
+                    "remediation_sent": False,
+                    "advisor_error": "LLM error: timeout",
+                    "trace_ids_sampled": [],
+                }
+            return {
+                "control_id": control_id,
+                "remediation_sent": True,
+                "remediation_text": "fix",
+                "advisor_error": None,
+                "trace_ids_sampled": [],
+            }
 
-        with patch.dict(os.environ, {"VLLM_BASE_URL": "http://fake-vllm", "VLLM_API_KEY": "k"}):
-            with patch("src.compliance_bridge.audit_workflow._step5_one_control",
-                       new=AsyncMock(side_effect=_fake_one)):
+        with patch.dict(
+            os.environ, {"VLLM_BASE_URL": "http://fake-vllm", "VLLM_API_KEY": "k"}
+        ):
+            with patch(
+                "src.compliance_bridge.audit_workflow._step5_one_control",
+                new=AsyncMock(side_effect=_fake_one),
+            ):
                 result = await _step5_remediation_advisor(
                     alerted=True,
                     alert_targets=["A.9.2", "SC-4"],
-                    findings=[_make_finding("A.9.2", "FAIL"), _make_finding("SC-4", "FAIL")],
+                    findings=[
+                        _make_finding("A.9.2", "FAIL"),
+                        _make_finding("SC-4", "FAIL"),
+                    ],
                     audit_id="t3-partial",
                 )
 
         assert result["remediation_sent"] is True
-        assert result["advisor_error"] is None   # suppressed because ≥1 succeeded
+        assert result["advisor_error"] is None  # suppressed because ≥1 succeeded
         assert len(result["per_control"]) == 2
 
     @pytest.mark.asyncio
@@ -191,12 +225,20 @@ class TestParallelRemediationAdvisor:
         from src.compliance_bridge.audit_workflow import _step5_remediation_advisor
 
         async def _fake_one(control_id, **kwargs):
-            return {"control_id": control_id, "remediation_sent": False,
-                    "advisor_error": f"LLM error for {control_id}", "trace_ids_sampled": []}
+            return {
+                "control_id": control_id,
+                "remediation_sent": False,
+                "advisor_error": f"LLM error for {control_id}",
+                "trace_ids_sampled": [],
+            }
 
-        with patch.dict(os.environ, {"VLLM_BASE_URL": "http://fake-vllm", "VLLM_API_KEY": "k"}):
-            with patch("src.compliance_bridge.audit_workflow._step5_one_control",
-                       new=AsyncMock(side_effect=_fake_one)):
+        with patch.dict(
+            os.environ, {"VLLM_BASE_URL": "http://fake-vllm", "VLLM_API_KEY": "k"}
+        ):
+            with patch(
+                "src.compliance_bridge.audit_workflow._step5_one_control",
+                new=AsyncMock(side_effect=_fake_one),
+            ):
                 result = await _step5_remediation_advisor(
                     alerted=True,
                     alert_targets=["A.9.2"],
@@ -212,10 +254,12 @@ class TestParallelRemediationAdvisor:
 # 3.2 — Langfuse eval dataset auto-population
 # ---------------------------------------------------------------------------
 
+
 class TestEvalDataset:
     @pytest.mark.asyncio
     async def test_no_fail_findings_returns_zero(self):
         from src.compliance_bridge.eval_dataset import populate_eval_dataset
+
         mock_lf = MagicMock()
         findings = [_make_finding("A.5.2", "PASS"), _make_finding("SC-8", "PASS")]
         count = await populate_eval_dataset(findings, "eval-test-001", mock_lf)
@@ -225,10 +269,11 @@ class TestEvalDataset:
     @pytest.mark.asyncio
     async def test_fail_findings_create_items(self):
         from src.compliance_bridge.eval_dataset import populate_eval_dataset
+
         mock_lf = MagicMock()
         findings = [
             _make_finding("A.9.2", "FAIL", 0.7),
-            _make_finding("SC-4",  "FAIL", 0.8),
+            _make_finding("SC-4", "FAIL", 0.8),
             _make_finding("A.5.2", "PASS", 1.0),  # must be skipped
         ]
         count = await populate_eval_dataset(findings, "eval-test-002", mock_lf)
@@ -237,18 +282,24 @@ class TestEvalDataset:
 
     @pytest.mark.asyncio
     async def test_dataset_name_per_control(self):
-        from src.compliance_bridge.eval_dataset import populate_eval_dataset, _dataset_name
+        from src.compliance_bridge.eval_dataset import (
+            _dataset_name,
+        )
+
         assert _dataset_name("A.9.2") == "cage-compliance-A.9.2"
         assert _dataset_name("SC-4") == "cage-compliance-SC-4"
 
     @pytest.mark.asyncio
     async def test_item_has_correct_input_shape(self):
         from src.compliance_bridge.eval_dataset import populate_eval_dataset
+
         created_items: list[dict] = []
 
         mock_lf = MagicMock()
+
         def _capture_item(**kwargs):
             created_items.append(kwargs)
+
         mock_lf.create_dataset_item.side_effect = _capture_item
 
         findings = [_make_finding("A.9.2", "FAIL", 0.75)]
@@ -269,6 +320,7 @@ class TestEvalDataset:
 
         call_count = 0
         mock_lf = MagicMock()
+
         def _flaky(**kwargs):
             nonlocal call_count
             call_count += 1
@@ -279,7 +331,7 @@ class TestEvalDataset:
 
         findings = [
             _make_finding("A.9.2", "FAIL"),
-            _make_finding("SC-4",  "FAIL"),
+            _make_finding("SC-4", "FAIL"),
         ]
         count = await populate_eval_dataset(findings, "flaky-test", mock_lf)
         # Only the second should succeed
@@ -291,9 +343,11 @@ class TestEvalDataset:
 # 3.3 — CMEK guard (cmek_guard.py)
 # ---------------------------------------------------------------------------
 
+
 class TestCmekGuard:
     def test_disabled_by_env_returns_cmek_disabled(self):
         from src.compliance_bridge.cmek_guard import validate_cmek_configuration
+
         with patch.dict(os.environ, {"CMEK_CHECK_DISABLED": "1"}):
             result = validate_cmek_configuration()
         assert result["cmek_enabled"] is False
@@ -301,6 +355,7 @@ class TestCmekGuard:
 
     def test_dev_env_missing_key_returns_warning_not_exception(self):
         from src.compliance_bridge.cmek_guard import validate_cmek_configuration
+
         env = {"ENVIRONMENT": "development", "CMEK_CHECK_DISABLED": "0"}
         with patch.dict(os.environ, env):
             os.environ.pop("CMEK_KEY_RESOURCE_NAME", None)
@@ -310,6 +365,7 @@ class TestCmekGuard:
 
     def test_production_missing_key_raises(self):
         from src.compliance_bridge.cmek_guard import validate_cmek_configuration
+
         env = {"ENVIRONMENT": "production", "CMEK_CHECK_DISABLED": "0"}
         with patch.dict(os.environ, env):
             os.environ.pop("CMEK_KEY_RESOURCE_NAME", None)
@@ -318,7 +374,10 @@ class TestCmekGuard:
 
     def test_valid_key_format_passes(self):
         from src.compliance_bridge.cmek_guard import validate_cmek_configuration
-        valid_key = "projects/my-proj/locations/global/keyRings/cage/cryptoKeys/oscal-key"
+
+        valid_key = (
+            "projects/my-proj/locations/global/keyRings/cage/cryptoKeys/oscal-key"
+        )
         env = {
             "ENVIRONMENT": "production",
             "CMEK_KEY_RESOURCE_NAME": valid_key,
@@ -332,6 +391,7 @@ class TestCmekGuard:
 
     def test_invalid_key_format_raises_in_production(self):
         from src.compliance_bridge.cmek_guard import validate_cmek_configuration
+
         env = {
             "ENVIRONMENT": "production",
             "CMEK_KEY_RESOURCE_NAME": "not-a-valid-kms-key",
@@ -343,6 +403,7 @@ class TestCmekGuard:
 
     def test_invalid_key_format_is_warning_in_dev(self):
         from src.compliance_bridge.cmek_guard import validate_cmek_configuration
+
         env = {
             "ENVIRONMENT": "development",
             "CMEK_KEY_RESOURCE_NAME": "bad-key",
@@ -356,6 +417,7 @@ class TestCmekGuard:
 
     def test_gcs_check_skipped_when_no_bucket_name(self):
         from src.compliance_bridge.cmek_guard import validate_cmek_configuration
+
         valid_key = "projects/p/locations/global/keyRings/r/cryptoKeys/k"
         env = {
             "ENVIRONMENT": "production",
@@ -370,17 +432,20 @@ class TestCmekGuard:
         assert any("OSCAL_BUCKET_NAME not set" in w for w in result["warnings"])
 
     def test_gcs_import_error_is_non_fatal(self):
-        from src.compliance_bridge.cmek_guard import _verify_gcs_bucket_cmek
 
         def _raise_import(*a, **kw):
             raise ImportError("No module named 'google.cloud.storage'")
 
-        with patch("src.compliance_bridge.cmek_guard._verify_gcs_bucket_cmek") as mock_verify:
+        with patch(
+            "src.compliance_bridge.cmek_guard._verify_gcs_bucket_cmek"
+        ) as mock_verify:
             # Directly simulate what _verify_gcs_bucket_cmek returns on ImportError
             mock_verify.return_value = (
                 False,
-                ["[cmek_guard] google-cloud-storage not installed — skipping GCS CMEK check. "
-                 "Install it in production to enable bucket verification."],
+                [
+                    "[cmek_guard] google-cloud-storage not installed — skipping GCS CMEK check. "
+                    "Install it in production to enable bucket verification."
+                ],
             )
             verified, warnings = mock_verify(
                 "cage-oscal-bucket",
@@ -394,10 +459,12 @@ class TestCmekGuard:
 # 3.4 — Lula scheduler (lula_scheduler.py)
 # ---------------------------------------------------------------------------
 
+
 class TestLulaScheduler:
     @pytest.mark.asyncio
     async def test_disabled_by_env_exits_immediately(self):
         from src.compliance_bridge.lula_scheduler import run_lula_scheduler
+
         called = False
 
         async def _fake_cycle():
@@ -405,8 +472,10 @@ class TestLulaScheduler:
             called = True
 
         with patch.dict(os.environ, {"LULA_SCHEDULER_DISABLED": "1"}):
-            with patch("src.compliance_bridge.lula_scheduler._run_lula_cycle",
-                       new=AsyncMock(side_effect=_fake_cycle)):
+            with patch(
+                "src.compliance_bridge.lula_scheduler._run_lula_cycle",
+                new=AsyncMock(side_effect=_fake_cycle),
+            ):
                 await run_lula_scheduler()
 
         assert not called, "Scheduler should exit immediately when disabled"
@@ -414,6 +483,7 @@ class TestLulaScheduler:
     @pytest.mark.asyncio
     async def test_skips_cycle_when_component_not_found(self, tmp_path):
         from src.compliance_bridge.lula_scheduler import _run_lula_cycle
+
         non_existent = str(tmp_path / "does-not-exist.yaml")
         with patch.dict(os.environ, {"LULA_COMPONENT_DEFINITION_PATH": non_existent}):
             result = await _run_lula_cycle()
@@ -423,6 +493,7 @@ class TestLulaScheduler:
     @pytest.mark.asyncio
     async def test_lula_not_found_returns_failed(self, tmp_path):
         from src.compliance_bridge.lula_scheduler import _run_lula_validate
+
         # Ensure the binary doesn't exist by using a non-existent PATH
         with patch.dict(os.environ, {"PATH": "/nonexistent"}):
             result = await _run_lula_validate(
@@ -435,6 +506,7 @@ class TestLulaScheduler:
     @pytest.mark.asyncio
     async def test_post_results_fails_on_missing_file(self, tmp_path):
         from src.compliance_bridge.lula_scheduler import _post_results_to_bridge
+
         result = await _post_results_to_bridge(
             str(tmp_path / "nonexistent.yaml"), "test-audit"
         )
@@ -443,6 +515,7 @@ class TestLulaScheduler:
     @pytest.mark.asyncio
     async def test_dataset_name_helper(self):
         from src.compliance_bridge.eval_dataset import _dataset_name
+
         # Covers the helper used by lula scheduler indirectly
         assert "cage-compliance" in _dataset_name("A.9.2")
 
@@ -452,22 +525,27 @@ class TestLulaScheduler:
 
         component_file = tmp_path / "component.yaml"
         component_file.write_text("# fake component definition", encoding="utf-8")
-        results_file   = tmp_path / "results.yaml"
+        results_file = tmp_path / "results.yaml"
 
-        import respx
         import httpx
+        import respx
 
-        with patch.dict(os.environ, {
-            "LULA_COMPONENT_DEFINITION_PATH": str(component_file),
-            "LULA_ASSESSMENT_RESULTS_PATH":   str(results_file),
-            "COMPLIANCE_BRIDGE_URL":          "http://localhost:3001",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "LULA_COMPONENT_DEFINITION_PATH": str(component_file),
+                "LULA_ASSESSMENT_RESULTS_PATH": str(results_file),
+                "COMPLIANCE_BRIDGE_URL": "http://localhost:3001",
+            },
+        ):
             with patch(
                 "src.compliance_bridge.lula_scheduler._run_lula_validate",
                 new=AsyncMock(return_value=True),
             ):
                 # Simulate lula writing results file
-                results_file.write_text("assessment-results:\n  uuid: test\n", encoding="utf-8")
+                results_file.write_text(
+                    "assessment-results:\n  uuid: test\n", encoding="utf-8"
+                )
                 with respx.mock:
                     respx.post("http://localhost:3001/v1/audit/ingest").mock(
                         return_value=httpx.Response(200, json={"status": "ok"})

@@ -19,6 +19,7 @@ Phase: 1 (quick wins)
 """
 
 import re
+
 import pytest
 
 from src.gateway.governance.pii_sanitizer import pii_audit_log
@@ -85,9 +86,7 @@ class TestPiiAuditLog:
         assert timestamp.endswith("Z"), f"Timestamp must end with Z: {timestamp!r}"
         # Must be parseable as ISO 8601
         # Format: YYYY-MM-DDTHH:MM:SS.ffffffZ
-        iso8601_pattern = re.compile(
-            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$"
-        )
+        iso8601_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
         assert iso8601_pattern.match(timestamp), (
             f"Timestamp does not match ISO 8601 UTC format: {timestamp!r}"
         )
