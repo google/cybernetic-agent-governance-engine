@@ -225,8 +225,8 @@ async def custom_self_check_input(
     """Hybrid self-check for financial domain inputs - PHASE 2 UPGRADE.
 
     Three-stage approach:
-    1. Whitelist financial keywords → ALLOW (0ms) [~70% of queries]
-    2. Blacklist jailbreak patterns → BLOCK (0ms) [~5% of queries]
+    1. Allowlist financial keywords → ALLOW (0ms) [~70% of queries]
+    2. Blocklist jailbreak patterns → BLOCK (0ms) [~5% of queries]
     3. LLM-based semantic check → EVALUATE (2-5s) [~25% of queries]
 
     This preserves security while maintaining performance.

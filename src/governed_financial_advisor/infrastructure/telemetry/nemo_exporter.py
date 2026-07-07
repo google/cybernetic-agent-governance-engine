@@ -44,7 +44,7 @@ _ACTION_TO_ISO_CONTROL: dict[str, str] = {
     "InvokeVllmFallbackAction": "A.6.1.2",
 }
 
-# Explicit whitelist of action names that must always be traced, even when they
+# Explicit allowlist of action names that must always be traced, even when they
 # do not match the "check" / "guard" / "detect" keyword heuristic.
 _TRACED_ACTION_NAMES: frozenset[str] = frozenset(_ACTION_TO_ISO_CONTROL.keys())
 
