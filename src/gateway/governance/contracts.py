@@ -18,14 +18,16 @@ This module defines the interfaces that the Gateway expects for governance compo
 decoupling the Gateway from the specific application implementations.
 """
 
-from typing import Any, Dict, Protocol
+from typing import Any, Protocol
+
 
 class SafetyFilter(Protocol):
     """
     Protocol for a Control Barrier Function or similar safety filter.
     Enforces hard constraints on actions (e.g. bankruptcy prevention).
     """
-    def verify_action(self, action_name: str, payload: Dict[str, Any]) -> str:
+
+    def verify_action(self, action_name: str, payload: dict[str, Any]) -> str:
         """
         Verifies if the action is safe.
         Returns "SAFE" or an error message starting with "UNSAFE".
@@ -44,12 +46,16 @@ class SafetyFilter(Protocol):
         """
         ...
 
+
 class ConsensusProvider(Protocol):
     """
     Protocol for a Multi-Agent Consensus Engine.
     Enforces ISO 42001 Human Oversight and Adaptive Compute requirements.
     """
-    async def check_consensus(self, action: str, amount: float, symbol: str) -> Dict[str, Any]:
+
+    async def check_consensus(
+        self, action: str, amount: float, symbol: str
+    ) -> dict[str, Any]:
         """
         Checks if the action requires consensus and performs it.
         Returns a dict with "status" (APPROVE, REJECT, ESCALATE) and "reason".
@@ -97,6 +103,7 @@ class PolicyClient(Protocol):
         """
         ...
 
+
 # Structural compatibility note:
 # OPAClient (src/gateway/core/policy.py) exposes ``evaluate_policy(input_data, ...)``
 # which covers the semantics of both ``evaluate`` and ``check_allowed`` above.
@@ -135,6 +142,7 @@ class CausalGatekeeper(Protocol):
             Always fails closed on error.
         """
         ...
+
 
 # Structural compatibility note:
 # The module-level ``causal_safety_check`` function in causal_gatekeeper.py
@@ -188,6 +196,7 @@ class FiscalGuard(Protocol):
         """
         ...
 
+
 # Structural compatibility note:
 # FiscalLimitGuard (src/gateway/governance/fiscal_limit_guard.py) implements
 # both ``reserve(agent_id, amount_usd) -> ReservationToken`` and
@@ -200,6 +209,8 @@ class FiscalGuard(Protocol):
 # at module load time while still making the type available for runtime
 # isinstance checks and static analysis.
 try:
-    from src.gateway.governance.fiscal_limit_guard import ReservationToken  # noqa: F401, E402
+    from src.gateway.governance.fiscal_limit_guard import (
+        ReservationToken,
+    )
 except ImportError:
     pass  # ReservationToken unavailable in minimal test environments

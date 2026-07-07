@@ -39,6 +39,7 @@ pytestmark = pytest.mark.unit
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_governor(fiscal_limit_guard=None):
     """Construct a SymbolicGovernor with all dependencies mocked."""
     from src.gateway.governance.symbolic_governor import SymbolicGovernor
@@ -66,18 +67,29 @@ def _make_governor(fiscal_limit_guard=None):
 # 1. assert_safe_operational_state()
 # ---------------------------------------------------------------------------
 
+
 def test_assert_safe_operational_state_does_not_raise_when_cbf_not_fail_open():
     """assert_safe_operational_state() does NOT raise when CBF_FAIL_OPEN=false, regardless of KMS state."""
     mock_signer = MagicMock()
-    mock_signer.is_kms_active = False  # KMS inactive — but CBF is active, so combined risk is absent
+    mock_signer.is_kms_active = (
+        False  # KMS inactive — but CBF is active, so combined risk is absent
+    )
 
     env = {k: v for k, v in os.environ.items() if k not in ("CBF_FAIL_OPEN",)}
     env["CBF_FAIL_OPEN"] = "false"
 
-    with patch.dict(os.environ, env, clear=True), \
-         patch("src.gateway.governance.symbolic_governor.get_governance_signer",
-               return_value=mock_signer, create=True):
-        from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch(
+            "src.gateway.governance.symbolic_governor.get_governance_signer",
+            return_value=mock_signer,
+            create=True,
+        ),
+    ):
+        from src.gateway.governance.symbolic_governor import (
+            assert_safe_operational_state,
+        )
+
         # Should not raise — CBF is active, so combined risk state is not present
         assert_safe_operational_state()
 
@@ -90,10 +102,18 @@ def test_assert_safe_operational_state_does_not_raise_when_cbf_not_fail_open_kms
     env = {k: v for k, v in os.environ.items() if k not in ("CBF_FAIL_OPEN",)}
     env["CBF_FAIL_OPEN"] = "false"
 
-    with patch.dict(os.environ, env, clear=True), \
-         patch("src.gateway.governance.symbolic_governor.get_governance_signer",
-               return_value=mock_signer, create=True):
-        from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch(
+            "src.gateway.governance.symbolic_governor.get_governance_signer",
+            return_value=mock_signer,
+            create=True,
+        ),
+    ):
+        from src.gateway.governance.symbolic_governor import (
+            assert_safe_operational_state,
+        )
+
         assert_safe_operational_state()
 
 
@@ -102,14 +122,26 @@ def test_assert_safe_operational_state_does_not_raise_in_development_combined_ri
     mock_signer = MagicMock()
     mock_signer.is_kms_active = False
 
-    env = {k: v for k, v in os.environ.items() if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
+    }
     env["CBF_FAIL_OPEN"] = "true"
     env["CAGE_ENV"] = "development"
 
-    with patch.dict(os.environ, env, clear=True), \
-         patch("src.gateway.governance.symbolic_governor.get_governance_signer",
-               return_value=mock_signer, create=True):
-        from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch(
+            "src.gateway.governance.symbolic_governor.get_governance_signer",
+            return_value=mock_signer,
+            create=True,
+        ),
+    ):
+        from src.gateway.governance.symbolic_governor import (
+            assert_safe_operational_state,
+        )
+
         # Should not raise — development environment is exempt
         assert_safe_operational_state()
 
@@ -119,14 +151,26 @@ def test_assert_safe_operational_state_does_not_raise_in_test_combined_risk():
     mock_signer = MagicMock()
     mock_signer.is_kms_active = False
 
-    env = {k: v for k, v in os.environ.items() if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
+    }
     env["CBF_FAIL_OPEN"] = "true"
     env["CAGE_ENV"] = "test"
 
-    with patch.dict(os.environ, env, clear=True), \
-         patch("src.gateway.governance.symbolic_governor.get_governance_signer",
-               return_value=mock_signer, create=True):
-        from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch(
+            "src.gateway.governance.symbolic_governor.get_governance_signer",
+            return_value=mock_signer,
+            create=True,
+        ),
+    ):
+        from src.gateway.governance.symbolic_governor import (
+            assert_safe_operational_state,
+        )
+
         assert_safe_operational_state()
 
 
@@ -135,14 +179,26 @@ def test_assert_safe_operational_state_does_not_raise_in_ci_combined_risk():
     mock_signer = MagicMock()
     mock_signer.is_kms_active = False
 
-    env = {k: v for k, v in os.environ.items() if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
+    }
     env["CBF_FAIL_OPEN"] = "true"
     env["CAGE_ENV"] = "ci"
 
-    with patch.dict(os.environ, env, clear=True), \
-         patch("src.gateway.governance.symbolic_governor.get_governance_signer",
-               return_value=mock_signer, create=True):
-        from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch(
+            "src.gateway.governance.symbolic_governor.get_governance_signer",
+            return_value=mock_signer,
+            create=True,
+        ),
+    ):
+        from src.gateway.governance.symbolic_governor import (
+            assert_safe_operational_state,
+        )
+
         assert_safe_operational_state()
 
 
@@ -151,14 +207,26 @@ def test_assert_safe_operational_state_raises_in_production_combined_risk():
     mock_signer = MagicMock()
     mock_signer.is_kms_active = False
 
-    env = {k: v for k, v in os.environ.items() if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
+    }
     env["CBF_FAIL_OPEN"] = "true"
     env["CAGE_ENV"] = "production"
 
-    with patch.dict(os.environ, env, clear=True), \
-         patch("src.gateway.governance.symbolic_governor.get_governance_signer",
-               return_value=mock_signer, create=True):
-        from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch(
+            "src.gateway.governance.symbolic_governor.get_governance_signer",
+            return_value=mock_signer,
+            create=True,
+        ),
+    ):
+        from src.gateway.governance.symbolic_governor import (
+            assert_safe_operational_state,
+        )
+
         with pytest.raises(RuntimeError, match="Combined high-risk operational state"):
             assert_safe_operational_state()
 
@@ -168,14 +236,26 @@ def test_assert_safe_operational_state_raises_message_mentions_cbf_fail_open():
     mock_signer = MagicMock()
     mock_signer.is_kms_active = False
 
-    env = {k: v for k, v in os.environ.items() if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
+    }
     env["CBF_FAIL_OPEN"] = "true"
     env["CAGE_ENV"] = "production"
 
-    with patch.dict(os.environ, env, clear=True), \
-         patch("src.gateway.governance.symbolic_governor.get_governance_signer",
-               return_value=mock_signer, create=True):
-        from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch(
+            "src.gateway.governance.symbolic_governor.get_governance_signer",
+            return_value=mock_signer,
+            create=True,
+        ),
+    ):
+        from src.gateway.governance.symbolic_governor import (
+            assert_safe_operational_state,
+        )
+
         with pytest.raises(RuntimeError) as exc_info:
             assert_safe_operational_state()
         assert "CBF_FAIL_OPEN" in str(exc_info.value)
@@ -184,16 +264,29 @@ def test_assert_safe_operational_state_raises_message_mentions_cbf_fail_open():
 def test_assert_safe_operational_state_does_not_raise_in_production_when_kms_active():
     """assert_safe_operational_state() does NOT raise in production when CBF_FAIL_OPEN=true but KMS IS active."""
     mock_signer = MagicMock()
-    mock_signer.is_kms_active = True  # KMS is active — combined risk state is not present
+    mock_signer.is_kms_active = (
+        True  # KMS is active — combined risk state is not present
+    )
 
-    env = {k: v for k, v in os.environ.items() if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
+    }
     env["CBF_FAIL_OPEN"] = "true"
     env["CAGE_ENV"] = "production"
 
-    with patch.dict(os.environ, env, clear=True), \
-         patch("src.gateway.governance.kms_signer.get_governance_signer",
-               return_value=mock_signer):
-        from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch(
+            "src.gateway.governance.kms_signer.get_governance_signer",
+            return_value=mock_signer,
+        ),
+    ):
+        from src.gateway.governance.symbolic_governor import (
+            assert_safe_operational_state,
+        )
+
         # Should not raise — KMS is active, so non-repudiation gap is closed
         assert_safe_operational_state()
 
@@ -203,28 +296,52 @@ def test_assert_safe_operational_state_uses_environment_fallback():
     mock_signer = MagicMock()
     mock_signer.is_kms_active = False
 
-    env = {k: v for k, v in os.environ.items() if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
+    }
     env["CBF_FAIL_OPEN"] = "true"
     env["ENVIRONMENT"] = "production"
 
-    with patch.dict(os.environ, env, clear=True), \
-         patch("src.gateway.governance.symbolic_governor.get_governance_signer",
-               return_value=mock_signer, create=True):
-        from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch(
+            "src.gateway.governance.symbolic_governor.get_governance_signer",
+            return_value=mock_signer,
+            create=True,
+        ),
+    ):
+        from src.gateway.governance.symbolic_governor import (
+            assert_safe_operational_state,
+        )
+
         with pytest.raises(RuntimeError):
             assert_safe_operational_state()
 
 
 def test_assert_safe_operational_state_handles_signer_exception_as_kms_inactive():
     """assert_safe_operational_state() treats a signer load exception as KMS inactive (worst case)."""
-    env = {k: v for k, v in os.environ.items() if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
+    }
     env["CBF_FAIL_OPEN"] = "true"
     env["CAGE_ENV"] = "production"
 
-    with patch.dict(os.environ, env, clear=True), \
-         patch("src.gateway.governance.symbolic_governor.get_governance_signer",
-               side_effect=RuntimeError("KMS unavailable"), create=True):
-        from src.gateway.governance.symbolic_governor import assert_safe_operational_state
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch(
+            "src.gateway.governance.symbolic_governor.get_governance_signer",
+            side_effect=RuntimeError("KMS unavailable"),
+            create=True,
+        ),
+    ):
+        from src.gateway.governance.symbolic_governor import (
+            assert_safe_operational_state,
+        )
+
         # Exception from get_governance_signer → kms_active=False → combined risk → RuntimeError
         with pytest.raises(RuntimeError):
             assert_safe_operational_state()
@@ -234,11 +351,13 @@ def test_assert_safe_operational_state_handles_signer_exception_as_kms_inactive(
 # 2. fiscal_limit_guard.reserve() is awaited
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_fiscal_limit_guard_reserve_is_awaited():
     """SymbolicGovernor awaits fiscal_limit_guard.reserve() — AsyncMock is actually awaited, not called synchronously."""
-    from src.gateway.governance.fiscal_limit_guard import ReservationToken
     import time
+
+    from src.gateway.governance.fiscal_limit_guard import ReservationToken
 
     # Create a mock FiscalLimitGuard with AsyncMock for reserve()
     mock_guard = MagicMock()
@@ -275,8 +394,9 @@ async def test_fiscal_limit_guard_reserve_is_awaited():
 @pytest.mark.asyncio
 async def test_fiscal_limit_guard_reserve_called_with_correct_args():
     """SymbolicGovernor calls reserve() with agent_id and amount_usd from params."""
-    from src.gateway.governance.fiscal_limit_guard import ReservationToken
     import time
+
+    from src.gateway.governance.fiscal_limit_guard import ReservationToken
 
     mock_guard = MagicMock()
     mock_token = ReservationToken(
@@ -303,18 +423,24 @@ async def test_fiscal_limit_guard_reserve_called_with_correct_args():
         "agent_id": "trading-agent",
     }
 
-    with patch("src.gateway.governance.causal_gatekeeper.causal_safety_check", return_value=True):
+    with patch(
+        "src.gateway.governance.causal_gatekeeper.causal_safety_check",
+        return_value=True,
+    ):
         await governor.govern("execute_trade", params)
 
-    mock_guard.reserve.assert_awaited_once_with(agent_id="trading-agent", amount_usd=10000.0)
+    mock_guard.reserve.assert_awaited_once_with(
+        agent_id="trading-agent", amount_usd=10000.0
+    )
 
 
 @pytest.mark.asyncio
 async def test_fiscal_limit_guard_release_is_awaited_on_rejection():
     """SymbolicGovernor awaits fiscal_limit_guard.release() when the fiscal reservation is rejected."""
+    import time
+
     from src.gateway.governance.fiscal_limit_guard import ReservationToken
     from src.gateway.governance.symbolic_governor import GovernanceError
-    import time
 
     mock_guard = MagicMock()
     # Rejected token — reserve() returns a rejected token
@@ -354,9 +480,13 @@ async def test_fiscal_limit_guard_release_is_awaited_on_rejection():
 @pytest.mark.asyncio
 async def test_fiscal_limit_guard_release_awaited_on_post_reservation_violation():
     """SymbolicGovernor awaits fiscal_limit_guard.release() when a post-reservation tier (consensus) fails."""
-    from src.gateway.governance.fiscal_limit_guard import ReservationToken
-    from src.gateway.governance.symbolic_governor import GovernanceError, SymbolicGovernor
     import time
+
+    from src.gateway.governance.fiscal_limit_guard import ReservationToken
+    from src.gateway.governance.symbolic_governor import (
+        GovernanceError,
+        SymbolicGovernor,
+    )
 
     mock_guard = MagicMock()
     good_token = ReservationToken(
@@ -380,7 +510,10 @@ async def test_fiscal_limit_guard_release_awaited_on_post_reservation_violation(
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
     consensus_engine = AsyncMock()
-    consensus_engine.check_consensus.return_value = {"status": "REJECT", "reason": "Too risky"}
+    consensus_engine.check_consensus.return_value = {
+        "status": "REJECT",
+        "reason": "Too risky",
+    }
 
     governor = SymbolicGovernor(
         opa_client=opa_client,

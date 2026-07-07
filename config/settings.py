@@ -23,9 +23,11 @@ Pydantic BaseSettings class combining Config + ConfigManager.
 """
 
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
+
 
 class Config:
     # --- MODEL IDENTIFIERS ---
@@ -37,10 +39,16 @@ class Config:
 
     # Optional model overrides for specific subsystems.
     # If unset, each subsystem falls back to MODEL_FAST or MODEL_REASONING.
-    TRANSPILER_MODEL = os.getenv("TRANSPILER_MODEL")   # Policy Transpiler; falls back to MODEL_FAST
-    VLLM_FAST_MODEL = os.getenv("VLLM_FAST_MODEL")    # StructuredLLMClient; falls back to MODEL_FAST
-    REMEDIATION_MODEL = os.getenv("REMEDIATION_MODEL") # Compliance remediation; falls back to MODEL_REASONING
-    
+    TRANSPILER_MODEL = os.getenv(
+        "TRANSPILER_MODEL"
+    )  # Policy Transpiler; falls back to MODEL_FAST
+    VLLM_FAST_MODEL = os.getenv(
+        "VLLM_FAST_MODEL"
+    )  # StructuredLLMClient; falls back to MODEL_FAST
+    REMEDIATION_MODEL = os.getenv(
+        "REMEDIATION_MODEL"
+    )  # Compliance remediation; falls back to MODEL_REASONING
+
     # Node A: The Brain (Reasoning/Planner)
     VLLM_REASONING_API_BASE = os.getenv("VLLM_REASONING_API_BASE")
 
@@ -48,15 +56,17 @@ class Config:
     # vLLM / Model Serving
     VLLM_BASE_URL = os.getenv("VLLM_BASE_URL")
     VLLM_API_KEY = os.getenv("VLLM_API_KEY")
-    
+
     # Gateway Configuration
     GATEWAY_URL = os.getenv("GATEWAY_URL")
     GATEWAY_API_BASE = f"{GATEWAY_URL}/v1" if GATEWAY_URL else None
-    MCP_SERVER_SSE_URL = os.getenv("MCP_SERVER_SSE_URL", f"{GATEWAY_URL}/mcp/sse" if GATEWAY_URL else None)
+    MCP_SERVER_SSE_URL = os.getenv(
+        "MCP_SERVER_SSE_URL", f"{GATEWAY_URL}/mcp/sse" if GATEWAY_URL else None
+    )
     VLLM_FAST_API_BASE = os.getenv("VLLM_FAST_API_BASE")
 
     MAX_TOKENS = int(os.getenv("MAX_TOKENS", 8192))
-    
+
     # --- INFRASTRUCTURE ---
     GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT")
     # GOOGLE_CLOUD_LOCATION: Required only when using GCP KMS or GCS.
@@ -65,7 +75,9 @@ class Config:
     GOOGLE_CLOUD_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "")
     PORT = int(os.getenv("PORT", 8080))
     REDIS_URL = os.getenv("REDIS_URL", "")
-    GOVERNANCE_SALT = os.getenv("GOVERNANCE_SALT")  # Legacy fallback — see kms_signer.py
+    GOVERNANCE_SALT = os.getenv(
+        "GOVERNANCE_SALT"
+    )  # Legacy fallback — see kms_signer.py
 
     # --- CLOUD KMS GOVERNANCE SIGNING (Priority 1) ---
     # Replaces GOVERNANCE_SALT with HSM-backed asymmetric signing.
@@ -90,6 +102,7 @@ class Config:
     LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "true")
     LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "financial-advisor")
 
+
 import logging as _logging
 
 _settings_logger = _logging.getLogger(__name__)
@@ -102,15 +115,24 @@ REQUIRED_ENV_VARS = [
     "GATEWAY_URL",
 ]
 
+
 def validate_required_settings():
     """Call at application startup to fail fast if required env vars are missing."""
-    missing = [var for var in REQUIRED_ENV_VARS if not globals().get(var.replace("-", "_")) and not __import__('os').environ.get(var)]
+    missing = [
+        var
+        for var in REQUIRED_ENV_VARS
+        if not globals().get(var.replace("-", "_"))
+        and not __import__("os").environ.get(var)
+    ]
     if missing:
         raise RuntimeError(
             f"Missing required environment variables: {', '.join(missing)}. "
             "No localhost fallbacks are permitted in production."
         )
-    _settings_logger.info("Settings validated: all required environment variables are set.")
+    _settings_logger.info(
+        "Settings validated: all required environment variables are set."
+    )
+
 
 # Backward compatibility & Module-level access
 MODEL_NAME = Config.DEFAULT_REASONING_MODEL

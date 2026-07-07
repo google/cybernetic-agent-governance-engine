@@ -54,9 +54,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 from .types import OscalFinding
 
@@ -66,13 +66,14 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-_SCHEMA    = "cage-context-accumulator/1.0"
-_GENESIS   = "GENESIS"  # sentinel used as prev_hash for the first node
+_SCHEMA = "cage-context-accumulator/1.0"
+_GENESIS = "GENESIS"  # sentinel used as prev_hash for the first node
 
 
 # ---------------------------------------------------------------------------
 # SHA-256 helpers
 # ---------------------------------------------------------------------------
+
 
 def _sha256(data: str) -> str:
     """Return the SHA-256 hex digest of *data*."""
@@ -87,6 +88,7 @@ def _content_hash(payload: dict) -> str:
 # ---------------------------------------------------------------------------
 # ContextAccumulatorEntry — one node in the chain
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ContextAccumulatorEntry:
@@ -109,31 +111,31 @@ class ContextAccumulatorEntry:
                         Populated asynchronously by the AsyncBatchSigner when enabled.
     """
 
-    schema:        str
-    node_index:    int
-    audit_id:      str
-    control_id:    str
-    event_type:    str
-    payload:       dict
-    content_hash:  str
-    prev_hash:     str
-    record_hash:   str
+    schema: str
+    node_index: int
+    audit_id: str
+    control_id: str
+    event_type: str
+    payload: dict
+    content_hash: str
+    prev_hash: str
+    record_hash: str
     timestamp_utc: str
     kms_signature: str = ""
 
     def to_dict(self) -> dict:
         """Serialise to a JSON-safe dict for NDJSON output."""
         d = {
-            "schema":        self.schema,
-            "node_index":    self.node_index,
-            "audit_id":      self.audit_id,
-            "control_id":    self.control_id,
-            "event_type":    self.event_type,
-            "content_hash":  self.content_hash,
-            "prev_hash":     self.prev_hash,
-            "record_hash":   self.record_hash,
+            "schema": self.schema,
+            "node_index": self.node_index,
+            "audit_id": self.audit_id,
+            "control_id": self.control_id,
+            "event_type": self.event_type,
+            "content_hash": self.content_hash,
+            "prev_hash": self.prev_hash,
+            "record_hash": self.record_hash,
             "timestamp_utc": self.timestamp_utc,
-            "payload":       self.payload,
+            "payload": self.payload,
         }
         if self.kms_signature:
             d["kms_signature"] = self.kms_signature
@@ -143,6 +145,7 @@ class ContextAccumulatorEntry:
 # ---------------------------------------------------------------------------
 # ContextAccumulator — stateful chain builder
 # ---------------------------------------------------------------------------
+
 
 class ContextAccumulator:
     """Append-only, hash-chained accumulator for OSCAL audit session state.
@@ -178,7 +181,9 @@ class ContextAccumulator:
         self._prev_hash: str = _sha256(audit_id)
         logger.debug(
             "[context_accumulator] Initialised chain for audit_id=%s genesis=%s… kms_sign=%s",
-            audit_id, self._prev_hash[:16], kms_sign,
+            audit_id,
+            self._prev_hash[:16],
+            kms_sign,
         )
 
     # ------------------------------------------------------------------
@@ -212,11 +217,11 @@ class ContextAccumulator:
         hash, providing a single-record summary for quick integrity checks.
         """
         payload: dict[str, Any] = {
-            "chain_length":      len(self._entries),
-            "chain_root":        self.chain_root(),
-            "audit_id":          self._audit_id,
-            "sealed_utc":        datetime.now(tz=timezone.utc).isoformat(),
-            "aarm_compliance":   "CONTEXT_ACCUMULATOR/AARM-V1",
+            "chain_length": len(self._entries),
+            "chain_root": self.chain_root(),
+            "audit_id": self._audit_id,
+            "sealed_utc": datetime.now(tz=timezone.utc).isoformat(),
+            "aarm_compliance": "CONTEXT_ACCUMULATOR/AARM-V1",
             "iso_42001_control": "A.5.3",
         }
         entry = self._append_node(
@@ -226,7 +231,9 @@ class ContextAccumulator:
         )
         logger.info(
             "[context_accumulator] Chain sealed: audit_id=%s nodes=%d root=%s…",
-            self._audit_id, len(self._entries), self.chain_root()[:16],
+            self._audit_id,
+            len(self._entries),
+            self.chain_root()[:16],
         )
         return entry
 
@@ -262,9 +269,12 @@ class ContextAccumulator:
                     "[context_accumulator] Chain integrity FAILED at node %d "
                     "(audit_id=%s). Expected prev=%s… got %s…; "
                     "expected record=%s… got %s…",
-                    i, self._audit_id,
-                    expected_prev[:16], entry.prev_hash[:16],
-                    expected_hash[:16], entry.record_hash[:16],
+                    i,
+                    self._audit_id,
+                    expected_prev[:16],
+                    entry.prev_hash[:16],
+                    expected_hash[:16],
+                    entry.record_hash[:16],
                 )
                 return False, i
 
@@ -272,7 +282,8 @@ class ContextAccumulator:
 
         logger.debug(
             "[context_accumulator] Chain integrity OK: %d node(s) verified (audit_id=%s)",
-            len(self._entries), self._audit_id,
+            len(self._entries),
+            self._audit_id,
         )
         return True, len(self._entries)
 
@@ -320,22 +331,22 @@ class ContextAccumulator:
         ring buffer for non-blocking background signing.  The ``kms_signature``
         field will be populated asynchronously.
         """
-        now_utc      = datetime.now(tz=timezone.utc).isoformat()
+        now_utc = datetime.now(tz=timezone.utc).isoformat()
         content_json = json.dumps(payload, sort_keys=True, default=str)
-        chash        = _sha256(content_json)
-        record_hash  = _sha256(self._prev_hash + content_json)
+        chash = _sha256(content_json)
+        record_hash = _sha256(self._prev_hash + content_json)
 
         entry = ContextAccumulatorEntry(
-            schema        = _SCHEMA,
-            node_index    = len(self._entries),
-            audit_id      = self._audit_id,
-            control_id    = control_id,
-            event_type    = event_type,
-            payload       = payload,
-            content_hash  = chash,
-            prev_hash     = self._prev_hash,
-            record_hash   = record_hash,
-            timestamp_utc = now_utc,
+            schema=_SCHEMA,
+            node_index=len(self._entries),
+            audit_id=self._audit_id,
+            control_id=control_id,
+            event_type=event_type,
+            payload=payload,
+            content_hash=chash,
+            prev_hash=self._prev_hash,
+            record_hash=record_hash,
+            timestamp_utc=now_utc,
         )
         self._entries.append(entry)
         self._prev_hash = record_hash

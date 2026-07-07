@@ -42,9 +42,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from src.gateway.server.mcp_tool_server import app as mcp_app
-from src.gateway.server.inference_proxy import inference_app
 from src.gateway.server.governance_middleware import governance_app
+from src.gateway.server.inference_proxy import inference_app
+from src.gateway.server.mcp_tool_server import app as mcp_app
 from src.gateway.tracing_setup import setup_tracing
 
 logger = logging.getLogger("Gateway.HybridServer")
@@ -54,6 +54,7 @@ logger = logging.getLogger("Gateway.HybridServer")
 # Lifespan — initialise OTel tracing before the first request is served,
 # regardless of whether the server is started via __main__ or uvicorn CLI.
 # ---------------------------------------------------------------------------
+
 
 @asynccontextmanager
 async def _gateway_lifespan(app: FastAPI):
@@ -71,6 +72,7 @@ async def _gateway_lifespan(app: FastAPI):
 
     # ── Pre-warm and share NeMo Rails ──────────────────────────────────────
     from src.gateway.governance.nemo.manager import initialize_rails
+
     logger.info("🔥 Pre-warming NeMo rails at gateway boot...")
     nemo_rails = initialize_rails()
 
@@ -82,6 +84,7 @@ async def _gateway_lifespan(app: FastAPI):
 
     # ── Pre-warm OPA Policy Engine ──────────────────────────────────────────
     from src.gateway.governance.singletons import opa_client
+
     logger.info("🔥 Pre-warming OPA policy evaluation...")
     synthetic_params = {
         "action": "execute_trade",
@@ -107,16 +110,14 @@ async def _gateway_lifespan(app: FastAPI):
     try:
         trade_policy_active = await opa_client.check_policy_exists("trade/governance")
         if trade_policy_active:
-            logger.info(
-                "✅ OPA trade governance policy confirmed active"
-            )
+            logger.info("✅ OPA trade governance policy confirmed active")
         else:
             logger.warning(
                 "⚠️ trade_governance.rego policy not confirmed active — "
                 "OPA_POLICY_PATH may not include trade governance rules. "
                 "Trade size RBAC will not be enforced."
             )
-    except Exception as e:
+    except Exception:
         logger.warning(
             "⚠️ trade_governance.rego policy not confirmed active — "
             "OPA_POLICY_PATH may not include trade governance rules. "
@@ -127,13 +128,12 @@ async def _gateway_lifespan(app: FastAPI):
     try:
         from src.gateway.governance.token_quota_proxy import TokenQuotaProxy
         from src.gateway.governance.uca_logger import UCALogger
+
         app.state.token_quota_proxy = TokenQuotaProxy.from_env()
         app.state.uca_logger = UCALogger.from_env()
         logger.info("✅ Token Quota Proxy and UCA Logger pre-warmed")
     except Exception as e:
-        logger.warning(
-            "⚠️ Token Quota Proxy pre-warm failed (non-blocking): %s", e
-        )
+        logger.warning("⚠️ Token Quota Proxy pre-warm failed (non-blocking): %s", e)
 
     # ── Production guard: enforce KMS signer activation (H-05) ────────────────
     # assert_kms_active_in_production() raises RuntimeError if KMS is not
@@ -146,7 +146,10 @@ async def _gateway_lifespan(app: FastAPI):
 
     if _is_production:
         try:
-            from src.gateway.governance.kms_signer import assert_kms_active_in_production
+            from src.gateway.governance.kms_signer import (
+                assert_kms_active_in_production,
+            )
+
             assert_kms_active_in_production()
             logger.info("✅ KMS signer activation confirmed at startup")
         except RuntimeError as kms_err:
@@ -159,7 +162,10 @@ async def _gateway_lifespan(app: FastAPI):
         # called automatically, allowing the well-known default GOVERNANCE_SALT
         # to be used in production — enabling routing seal forgery.
         try:
-            from src.gateway.governance.routing_seal import assert_custom_salt_in_production
+            from src.gateway.governance.routing_seal import (
+                assert_custom_salt_in_production,
+            )
+
             assert_custom_salt_in_production()
             logger.info("✅ GOVERNANCE_SALT custom value confirmed at startup")
         except RuntimeError as salt_err:
@@ -207,6 +213,7 @@ async def _gateway_lifespan(app: FastAPI):
 
     # ── Start consensus background audit worker (HIGH-06) ──────────────────
     from src.gateway.governance.consensus import _background_audit_worker
+
     asyncio.create_task(_background_audit_worker())
     logger.info("✅ Consensus background audit worker started")
 
@@ -227,6 +234,7 @@ async def _gateway_lifespan(app: FastAPI):
 # Gate all /debug/* paths behind CAGE_ENV=dev. In production, return HTTP 404
 # so internal governance state is never exposed to external callers.
 # ---------------------------------------------------------------------------
+
 
 class _DebugEndpointGuard(BaseHTTPMiddleware):
     """Return 404 for /debug/* paths unless CAGE_ENV is 'dev' or 'test'."""
@@ -270,11 +278,13 @@ async def healthz():
     Returns 503 if KMS is required but unavailable.
     """
     from fastapi.responses import JSONResponse as _JSONResponse
+
     cage_env = os.getenv("CAGE_ENV", os.getenv("ENVIRONMENT", "production")).lower()
     is_prod = cage_env not in ("development", "test", "dev", "ci")
 
     try:
         from src.gateway.governance.kms_signer import get_governance_signer
+
         signer = get_governance_signer()
         kms_active = signer.is_kms_active
         if is_prod and not kms_active:
@@ -295,7 +305,11 @@ async def healthz():
         if is_prod:
             return _JSONResponse(
                 status_code=503,
-                content={"status": "unhealthy", "kms_active": False, "reason": "KMS check failed"},
+                content={
+                    "status": "unhealthy",
+                    "kms_active": False,
+                    "reason": "KMS check failed",
+                },
             )
         return _JSONResponse(
             status_code=200,
@@ -325,6 +339,7 @@ logger.info(
 
 if __name__ == "__main__":
     import uvicorn
+
     from src.governed_financial_advisor.utils.telemetry import configure_telemetry
 
     configure_telemetry()

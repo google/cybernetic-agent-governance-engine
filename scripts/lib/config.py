@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import yaml
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
-def load_config(config_path: str = "deployment/config.yaml") -> Dict[str, Any]:
+import yaml
+
+
+def load_config(config_path: str = "deployment/config.yaml") -> dict[str, Any]:
     """
     Loads configuration from a YAML file.
     Returns a dictionary with defaults.
@@ -33,7 +35,8 @@ def load_config(config_path: str = "deployment/config.yaml") -> Dict[str, Any]:
     with open(path) as f:
         return yaml.safe_load(f) or {}
 
-def merge_args_into_config(config: Dict[str, Any], args: Any) -> Dict[str, Any]:
+
+def merge_args_into_config(config: dict[str, Any], args: Any) -> dict[str, Any]:
     """
     Merges CLI arguments into the configuration dictionary.
     CLI args take precedence over YAML defaults.
@@ -49,12 +52,14 @@ def merge_args_into_config(config: Dict[str, Any], args: Any) -> Dict[str, Any]:
 
     # Accelerator overrides
     if args.accelerator_type:
-        config.setdefault("cluster", {}).setdefault("accelerator", {})["type"] = f"nvidia-tesla-{args.accelerator_type}"
+        config.setdefault("cluster", {}).setdefault("accelerator", {})["type"] = (
+            f"nvidia-tesla-{args.accelerator_type}"
+        )
         # Adjust machine type if A100 is requested (override default)
         if args.accelerator_type == "a100":
-             config["cluster"]["machine_type"] = "a2-highgpu-1g"
-             config["cluster"]["disk_size_gb"] = 100
-             config["cluster"]["accelerator"]["type"] = "nvidia-tesla-a100"
+            config["cluster"]["machine_type"] = "a2-highgpu-1g"
+            config["cluster"]["disk_size_gb"] = 100
+            config["cluster"]["accelerator"]["type"] = "nvidia-tesla-a100"
 
     # Spot override
     if args.spot:

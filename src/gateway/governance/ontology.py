@@ -18,15 +18,20 @@ from typing import ClassVar
 
 logger = logging.getLogger("Gateway.Governance.Ontology")
 
+
 @dataclass
 class Constraint:
     """
     Represents a safety constraint derived from STPA analysis (Legacy/Symbolic Support).
     """
+
     id: str
     description: str
     logic: str  # Simplified representation of the logic (e.g., "cash_balance > 1000")
-    scope: list[str] = field(default_factory=list) # e.g., ["execute_trade", "withdraw"]
+    scope: list[str] = field(
+        default_factory=list
+    )  # e.g., ["execute_trade", "withdraw"]
+
 
 @dataclass
 class STAMP_UCA:
@@ -34,17 +39,20 @@ class STAMP_UCA:
     Represents a System-Theoretic Process Analysis (STPA) Unsafe Control Action (UCA).
     This is the SOURCE OF TRUTH for the Evaluator Agent's grading rubric.
     """
+
     id: str
     category: str  # "Not Provided", "Unsafe Action", "Wrong Timing", "Stopped Too Soon"
     description: str
-    hazard_link: str # e.g., "H-1: Unauthorized Access"
-    detection_pattern: str # Regex or semantic description for OTel trace matching
+    hazard_link: str  # e.g., "H-1: Unauthorized Access"
+    detection_pattern: str  # Regex or semantic description for OTel trace matching
+
 
 @dataclass
 class TradingKnowledgeGraph:
     """
     Ontology mapping STAMP UCAs to constraints.
     """
+
     ucas: dict[str, STAMP_UCA] = field(default_factory=dict)
     constraints: dict[str, Constraint] = field(default_factory=dict)
 
@@ -52,56 +60,68 @@ class TradingKnowledgeGraph:
         # 1. Map STAMP UCAs (From STPA Analysis)
 
         # UCA-1: Not Providing Authorization
-        self.add_uca(STAMP_UCA(
-            id="UCA-1",
-            category="Unsafe Action",
-            description="Agent executes write operation without approval token.",
-            hazard_link="H-1",
-            detection_pattern="action='write_db' AND approval_token IS NULL"
-        ))
+        self.add_uca(
+            STAMP_UCA(
+                id="UCA-1",
+                category="Unsafe Action",
+                description="Agent executes write operation without approval token.",
+                hazard_link="H-1",
+                detection_pattern="action='write_db' AND approval_token IS NULL",
+            )
+        )
 
         # UCA-2: Wrong Timing (Latency)
-        self.add_uca(STAMP_UCA(
-            id="UCA-2",
-            category="Wrong Timing",
-            description="Agent executes trade with stale market data (>200ms latency).",
-            hazard_link="H-2",
-            detection_pattern="action='execute_trade' AND latency_ms > 200"
-        ))
+        self.add_uca(
+            STAMP_UCA(
+                id="UCA-2",
+                category="Wrong Timing",
+                description="Agent executes trade with stale market data (>200ms latency).",
+                hazard_link="H-2",
+                detection_pattern="action='execute_trade' AND latency_ms > 200",
+            )
+        )
 
         # UCA-3: Unsafe Action (PII Leak)
-        self.add_uca(STAMP_UCA(
-            id="UCA-3",
-            category="Unsafe Action",
-            description="Agent outputs PII to user interface.",
-            hazard_link="H-3",
-            detection_pattern="output_contains_pii=True"
-        ))
+        self.add_uca(
+            STAMP_UCA(
+                id="UCA-3",
+                category="Unsafe Action",
+                description="Agent outputs PII to user interface.",
+                hazard_link="H-3",
+                detection_pattern="output_contains_pii=True",
+            )
+        )
 
         # UCA-4: Stopped Too Soon (Partial Transaction)
-        self.add_uca(STAMP_UCA(
-            id="UCA-4",
-            category="Stopped Too Soon",
-            description="Agent debits account but fails to credit asset (Atomic Failure).",
-            hazard_link="H-2",
-            detection_pattern="span='debit' AND NOT span='credit'"
-        ))
+        self.add_uca(
+            STAMP_UCA(
+                id="UCA-4",
+                category="Stopped Too Soon",
+                description="Agent debits account but fails to credit asset (Atomic Failure).",
+                hazard_link="H-2",
+                detection_pattern="span='debit' AND NOT span='credit'",
+            )
+        )
 
         # --- SPECIFIC FINANCIAL UCAS ---
-        self.add_uca(STAMP_UCA(
-            id="UCA-5",
-            category="Unsafe Action",
-            description="Agent executes buy_order when daily_drawdown > 4.5%.",
-            hazard_link="H-Drawdown: Insolvency",
-            detection_pattern="drawdown > 4.5"
-        ))
-        self.add_uca(STAMP_UCA(
-            id="UCA-6",
-            category="Wrong Order",
-            description="Agent submits market_order > 1% of daily volume (Slippage).",
-            hazard_link="H-Slippage: Liquidity Risk",
-            detection_pattern="order_size > 0.01 * daily_vol"
-        ))
+        self.add_uca(
+            STAMP_UCA(
+                id="UCA-5",
+                category="Unsafe Action",
+                description="Agent executes buy_order when daily_drawdown > 4.5%.",
+                hazard_link="H-Drawdown: Insolvency",
+                detection_pattern="drawdown > 4.5",
+            )
+        )
+        self.add_uca(
+            STAMP_UCA(
+                id="UCA-6",
+                category="Wrong Order",
+                description="Agent submits market_order > 1% of daily volume (Slippage).",
+                hazard_link="H-Slippage: Liquidity Risk",
+                detection_pattern="order_size > 0.01 * daily_vol",
+            )
+        )
 
         # UCA-7: DEFER — Confidence-Starvation Boundary (CAGE v0.1.0 architectural decision)
         #
@@ -118,43 +138,51 @@ class TradingKnowledgeGraph:
         # AARM mapping: CSA AARM-V7 "Context Window Overflow"
         # ISO 42001 mapping: A.8.4 (AI System Operation Controls)
         # Implementation: src/gateway/governance/defer_queue.py, DEFER_CONFIDENCE_THRESHOLD = 0.70
-        self.add_uca(STAMP_UCA(
-            id="UCA-7",
-            category="Wrong Timing",
-            description=(
-                "Agent proceeds with ambiguous context instead of parking for data injection. "
-                "Occurs when confidence_score < 0.70 AND OPA decision would be MANUAL_REVIEW. "
-                "The correct action is DEFER — route to DeferQueue for data-hydration, "
-                "NOT to force a human operator to triage fundamentally incomplete context."
-            ),
-            hazard_link="H-Context: Ambiguous Execution",
-            detection_pattern="confidence_score < 0.70 AND manual_review=true"
-        ))
+        self.add_uca(
+            STAMP_UCA(
+                id="UCA-7",
+                category="Wrong Timing",
+                description=(
+                    "Agent proceeds with ambiguous context instead of parking for data injection. "
+                    "Occurs when confidence_score < 0.70 AND OPA decision would be MANUAL_REVIEW. "
+                    "The correct action is DEFER — route to DeferQueue for data-hydration, "
+                    "NOT to force a human operator to triage fundamentally incomplete context."
+                ),
+                hazard_link="H-Context: Ambiguous Execution",
+                detection_pattern="confidence_score < 0.70 AND manual_review=true",
+            )
+        )
 
         # 2. Map Symbolic Constraints (For Logic Engine)
         # SC-1 governs DB write operations exclusively.
         # Trade execution is governed by FIN-2 (latency) and OPA policy.
         # Per UCA-1: detection_pattern="action='write_db' AND approval_token IS NULL"
-        self.add_constraint(Constraint(
-            id="SC-1",
-            description="The Agent must never execute a write operation to the Production Database without a signed approval token.",
-            logic="has_approval_token == True",
-            scope=["write_db", "delete_db"]
-        ))
-        self.add_constraint(Constraint(
-            id="FIN-1",
-            description="Cannot sell more than 10% of portfolio without explicit confirmation.",
-            logic="sell_percentage <= 0.10",
-            scope=["execute_sell"]
-        ))
+        self.add_constraint(
+            Constraint(
+                id="SC-1",
+                description="The Agent must never execute a write operation to the Production Database without a signed approval token.",
+                logic="has_approval_token == True",
+                scope=["write_db", "delete_db"],
+            )
+        )
+        self.add_constraint(
+            Constraint(
+                id="FIN-1",
+                description="Cannot sell more than 10% of portfolio without explicit confirmation.",
+                logic="sell_percentage <= 0.10",
+                scope=["execute_sell"],
+            )
+        )
 
         # New: Map executing trades to constraints (for the SymbolicGovernor)
-        self.add_constraint(Constraint(
-            id="FIN-2",
-            description="Agent must not execute trade if latency > 200ms",
-            logic="latency_ms <= 200",
-            scope=["execute_trade"]
-        ))
+        self.add_constraint(
+            Constraint(
+                id="FIN-2",
+                description="Agent must not execute trade if latency > 200ms",
+                logic="latency_ms <= 200",
+                scope=["execute_trade"],
+            )
+        )
 
     # QUAL-06: Authoritative ISO 42001 mapping from OSCAL component-definition.yaml
     #
@@ -171,33 +199,33 @@ class TradingKnowledgeGraph:
     # Universal ISO 42001 controls — applicable in all regions (R-1, R-5)
     # ClassVar prevents dataclass from treating these dicts as instance fields.
     _UNIVERSAL_CONTROL_MAP: ClassVar[dict[str, str]] = {
-        "SOCIAL_IMPACT":   "A.5.2",  # Prompt Injection & Toxicity
-        "LOGGING_AUDIT":   "A.5.3",  # Continuous Monitoring
-        "DATA_PRIVACY":    "A.9.2",  # PII / Data Anonymisation (ISO baseline)
-        "FISCAL_CONTROLS": "SC-4",   # OPA RBAC & Limits (CAGE-internal system constraint)
+        "SOCIAL_IMPACT": "A.5.2",  # Prompt Injection & Toxicity
+        "LOGGING_AUDIT": "A.5.3",  # Continuous Monitoring
+        "DATA_PRIVACY": "A.9.2",  # PII / Data Anonymisation (ISO baseline)
+        "FISCAL_CONTROLS": "SC-4",  # OPA RBAC & Limits (CAGE-internal system constraint)
     }
 
     # EU_ECB-specific controls — EU AI Act / GDPR (R-3)
     # Only operative when CAGE_DEPLOYMENT_REGION=EU_ECB.
     _EU_ECB_CONTROL_MAP: ClassVar[dict[str, str]] = {
-        "GDPR_ART22":      "GDPR Art. 22",       # Automated individual decision-making
-                                                  # (right not to be subject to solely automated
-                                                  # decisions with legal / similarly significant effects)
+        "GDPR_ART22": "GDPR Art. 22",  # Automated individual decision-making
+        # (right not to be subject to solely automated
+        # decisions with legal / similarly significant effects)
         "EU_AI_ACT_ART10": "EU AI Act Art. 10",  # Data governance and management practices
-                                                  # for High-Risk AI training data (bias examination,
-                                                  # data lineage, data quality criteria)
-        "FRIA_LOGGING":    "EU AI Act Art. 29a",  # Fundamental Rights Impact Assessment —
-                                                  # pre-market assessment required before
-                                                  # deploying High-Risk AI in the EU
+        # for High-Risk AI training data (bias examination,
+        # data lineage, data quality criteria)
+        "FRIA_LOGGING": "EU AI Act Art. 29a",  # Fundamental Rights Impact Assessment —
+        # pre-market assessment required before
+        # deploying High-Risk AI in the EU
     }
 
     # US_FED-specific controls — NIST SP 800-53 (R-2)
     # Only operative when CAGE_DEPLOYMENT_REGION=US_FED.
     # SR 26-2: NIST control IDs have no legal force outside US_FED.
     _US_FED_CONTROL_MAP: ClassVar[dict[str, str]] = {
-        "BOUNDARY_PROTECTION": "SC-7",   # Cilium L7 Egress Lockdown
-        "TRANSMISSION_CONF":   "SC-8",   # Linkerd mTLS
-        "ACCOUNT_MGMT":        "AC-2",   # Account Management
+        "BOUNDARY_PROTECTION": "SC-7",  # Cilium L7 Egress Lockdown
+        "TRANSMISSION_CONF": "SC-8",  # Linkerd mTLS
+        "ACCOUNT_MGMT": "AC-2",  # Account Management
     }
 
     # Backward-compat alias — universal controls only.

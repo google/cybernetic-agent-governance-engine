@@ -33,10 +33,7 @@ Verification invariants (approved in CAGE v0.1.0 architectural review):
 
 from __future__ import annotations
 
-import hashlib
 import json
-
-import pytest
 
 from src.compliance_bridge.context_accumulator import (
     ContextAccumulator,
@@ -44,10 +41,10 @@ from src.compliance_bridge.context_accumulator import (
 )
 from src.compliance_bridge.types import OscalFinding
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _finding(control_id: str = "A.5.3", result: str = "PASS") -> OscalFinding:
     return OscalFinding(
@@ -63,6 +60,7 @@ def _finding(control_id: str = "A.5.3", result: str = "PASS") -> OscalFinding:
 # Test 1: Empty chain
 # ---------------------------------------------------------------------------
 
+
 def test_empty_chain_verify_integrity_passes():
     """Empty accumulator reports chain valid with zero nodes."""
     acc = ContextAccumulator(audit_id="empty-audit-001")
@@ -74,7 +72,7 @@ def test_empty_chain_verify_integrity_passes():
 def test_empty_chain_root_is_audit_id_hash():
     """chain_root() on an empty accumulator equals sha256(audit_id)."""
     audit_id = "empty-audit-002"
-    acc      = ContextAccumulator(audit_id=audit_id)
+    acc = ContextAccumulator(audit_id=audit_id)
     expected = _sha256(audit_id)
     assert acc.chain_root() == expected
 
@@ -82,6 +80,7 @@ def test_empty_chain_root_is_audit_id_hash():
 # ---------------------------------------------------------------------------
 # Test 2: Single-node chain
 # ---------------------------------------------------------------------------
+
 
 def test_single_node_chain_round_trips():
     """Appending one finding creates a valid single-node chain."""
@@ -111,6 +110,7 @@ def test_single_node_record_hash_is_deterministic():
 # Test 3: Multi-node chain
 # ---------------------------------------------------------------------------
 
+
 def test_multi_node_chain_verify_integrity_passes():
     """Multi-finding chain (5 nodes) verifies as intact."""
     acc = ContextAccumulator(audit_id="multi-audit-001")
@@ -137,6 +137,7 @@ def test_multi_node_prev_hash_links_correctly():
 # ---------------------------------------------------------------------------
 # Test 4: CHAIN_SEALED sentinel
 # ---------------------------------------------------------------------------
+
 
 def test_seal_appends_sentinel_node():
     """seal() appends a CHAIN_SEALED node, increasing length by 1."""
@@ -176,6 +177,7 @@ def test_seal_payload_contains_chain_root():
 # Test 5 (CRITICAL): Tamper detection at node_index=0
 # ---------------------------------------------------------------------------
 
+
 def test_tamper_node0_detected_at_node0():
     """Mutating node 0's payload causes verify_integrity to fail at node 0.
 
@@ -184,7 +186,7 @@ def test_tamper_node0_detected_at_node0():
     """
     acc = ContextAccumulator(audit_id="tamper-audit-001")
     acc.append_finding(_finding("A.5.3", "PASS"))
-    acc.append_finding(_finding("SC-4",  "PASS"))
+    acc.append_finding(_finding("SC-4", "PASS"))
     acc.append_finding(_finding("A.8.4", "PASS"))
 
     # Mutate node 0 payload DIRECTLY (simulates a post-hoc edit)
@@ -240,6 +242,7 @@ def test_tamper_middle_node_detected_at_correct_index():
 # Test 6: NDJSON export
 # ---------------------------------------------------------------------------
 
+
 def test_export_ndjson_is_valid_json():
     """NDJSON export produces one parseable JSON object per line."""
     acc = ContextAccumulator(audit_id="ndjson-audit-001")
@@ -265,7 +268,7 @@ def test_export_ndjson_node_index_sequential():
     for i in range(5):
         acc.append_finding(_finding(f"ctrl-{i}"))
 
-    ndjson  = acc.export_ndjson()
+    ndjson = acc.export_ndjson()
     indices = [json.loads(l)["node_index"] for l in ndjson.strip().splitlines()]
     assert indices == list(range(5))
 
@@ -273,6 +276,7 @@ def test_export_ndjson_node_index_sequential():
 # ---------------------------------------------------------------------------
 # Test 7: Genesis determinism
 # ---------------------------------------------------------------------------
+
 
 def test_same_audit_id_produces_same_genesis():
     """Two accumulators with the same audit_id start with identical genesis."""

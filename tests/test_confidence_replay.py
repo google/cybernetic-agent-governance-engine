@@ -27,7 +27,8 @@ Run with: pytest -k confidence_replay -v
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -44,6 +45,7 @@ from src.gateway.governance.defer_queue import (
 # ---------------------------------------------------------------------------
 # In-memory fake Redis — mirrors the pattern from test_defer_queue.py
 # ---------------------------------------------------------------------------
+
 
 def _make_fake_redis() -> MagicMock:
     """Build a minimal async Redis mock backed by in-memory dicts.
@@ -101,19 +103,19 @@ def _make_fake_redis() -> MagicMock:
         def __init__(self) -> None:
             self._ops: list[tuple] = []
 
-        def hset(self, key: str, mapping: dict) -> "FakePipeline":
+        def hset(self, key: str, mapping: dict) -> FakePipeline:
             self._ops.append(("hset", key, mapping))
             return self
 
-        def expire(self, key: str, ttl: int) -> "FakePipeline":
+        def expire(self, key: str, ttl: int) -> FakePipeline:
             self._ops.append(("expire", key, ttl))
             return self
 
-        def zadd(self, zset_key: str, mapping: dict) -> "FakePipeline":
+        def zadd(self, zset_key: str, mapping: dict) -> FakePipeline:
             self._ops.append(("zadd", zset_key, mapping))
             return self
 
-        def zrem(self, zset_key: str, member: str) -> "FakePipeline":
+        def zrem(self, zset_key: str, member: str) -> FakePipeline:
             self._ops.append(("zrem", zset_key, member))
             return self
 
@@ -133,7 +135,7 @@ def _make_fake_redis() -> MagicMock:
                     results.append(1)
             return results
 
-        async def __aenter__(self) -> "FakePipeline":
+        async def __aenter__(self) -> FakePipeline:
             return self
 
         async def __aexit__(self, *args: Any) -> None:
@@ -159,6 +161,7 @@ def _make_fake_redis() -> MagicMock:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def redis_db1_client() -> MagicMock:
@@ -251,13 +254,14 @@ def mock_context_hydrator() -> Callable[[str], dict]:
           - market_data (dict):       synthetic market snapshot
           - hydration_timestamp (str): ISO-8601 UTC timestamp placeholder
     """
+
     def _hydrate(defer_id: str) -> dict:
         return {
             "confidence_score": 0.85,
             "enrichment_source": "mock_market_data_hydrator_v1",
             "market_data": {
                 "NVDA": {"price": 875.42, "volume_24h": 42_000_000, "volatility": 0.18},
-                "SPY":  {"price": 512.10, "volume_24h": 95_000_000, "volatility": 0.12},
+                "SPY": {"price": 512.10, "volume_24h": 95_000_000, "volatility": 0.12},
             },
             "hydration_timestamp": "2026-07-01T00:00:00+00:00",
             "defer_id_hydrated": defer_id,
@@ -269,6 +273,7 @@ def mock_context_hydrator() -> Callable[[str], dict]:
 # ---------------------------------------------------------------------------
 # Test 1 — Phase 1: low-confidence token is parked in Redis db=1
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_low_confidence_token_is_parked(
@@ -284,7 +289,7 @@ async def test_low_confidence_token_is_parked(
       - The token is retrievable via DeferQueue.get() and has the expected fields.
     """
     defer_id = deferred_token_below_threshold["defer_id"]
-    queue    = deferred_token_below_threshold["queue"]
+    queue = deferred_token_below_threshold["queue"]
 
     # Assert: key exists in Redis db=1 store.
     key = f"DEFER:{defer_id}"
@@ -294,9 +299,7 @@ async def test_low_confidence_token_is_parked(
 
     # Assert: status is PARKED (not admitted).
     status = redis_db1_client._store[key].get("status")
-    assert status == "PARKED", (
-        f"Expected status='PARKED', got status='{status}'."
-    )
+    assert status == "PARKED", f"Expected status='PARKED', got status='{status}'."
 
     # Assert: token is retrievable and has correct confidence.
     retrieved = await queue.get(defer_id)
@@ -316,6 +319,7 @@ async def test_low_confidence_token_is_parked(
 # Test 2 — Phase 2: hydration raises effective confidence above threshold
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_hydration_raises_confidence_above_threshold(
     deferred_token_below_threshold: dict,
@@ -329,7 +333,7 @@ async def test_hydration_raises_confidence_above_threshold(
           enrichment_source, market_data, hydration_timestamp, defer_id_hydrated
       - The hydrated confidence is strictly above the original 0.65.
     """
-    defer_id       = deferred_token_below_threshold["defer_id"]
+    defer_id = deferred_token_below_threshold["defer_id"]
     original_token = deferred_token_below_threshold["token"]
 
     enriched = mock_context_hydrator(defer_id)
@@ -346,9 +350,13 @@ async def test_hydration_raises_confidence_above_threshold(
     )
 
     # Assert: enrichment fields are present.
-    assert "enrichment_source" in enriched, "Missing 'enrichment_source' in hydrated context."
+    assert "enrichment_source" in enriched, (
+        "Missing 'enrichment_source' in hydrated context."
+    )
     assert "market_data" in enriched, "Missing 'market_data' in hydrated context."
-    assert "hydration_timestamp" in enriched, "Missing 'hydration_timestamp' in hydrated context."
+    assert "hydration_timestamp" in enriched, (
+        "Missing 'hydration_timestamp' in hydrated context."
+    )
     assert enriched.get("defer_id_hydrated") == defer_id, (
         "Hydrated context must echo back the defer_id it was called with."
     )
@@ -357,6 +365,7 @@ async def test_hydration_raises_confidence_above_threshold(
 # ---------------------------------------------------------------------------
 # Test 3 — Full end-to-end replay flow (canonical proof artifact)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_confidence_replay_full_flow(
@@ -384,7 +393,7 @@ async def test_confidence_replay_full_flow(
     Run with: pytest -k confidence_replay -v
     """
     defer_id = deferred_token_below_threshold["defer_id"]
-    queue    = deferred_token_below_threshold["queue"]
+    queue = deferred_token_below_threshold["queue"]
 
     # Phase 2 — HYDRATE: obtain enriched context from the mock hydrator.
     enriched_context = mock_context_hydrator(defer_id)
@@ -430,6 +439,7 @@ async def test_confidence_replay_full_flow(
 # Test 4 — Token remains parked when hydration is insufficient
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_token_remains_parked_if_hydration_insufficient(
     deferred_token_below_threshold: dict,
@@ -449,7 +459,7 @@ async def test_token_remains_parked_if_hydration_insufficient(
       - DeferQueue.get() still returns the token with resolution=None.
     """
     defer_id = deferred_token_below_threshold["defer_id"]
-    queue    = deferred_token_below_threshold["queue"]
+    queue = deferred_token_below_threshold["queue"]
 
     # Insufficient hydration: confidence raised to 0.68, still below 0.70.
     insufficient_context = {
@@ -495,7 +505,9 @@ async def test_token_remains_parked_if_hydration_insufficient(
 
     # Assert: token is retrievable and still has no resolution.
     still_parked = await queue.get(defer_id)
-    assert still_parked is not None, "DeferQueue.get() must return the token (still parked)."
+    assert still_parked is not None, (
+        "DeferQueue.get() must return the token (still parked)."
+    )
     assert still_parked.resolution is None, (
         "resolution must remain None when the token is not admitted."
     )

@@ -35,7 +35,7 @@ PII_PATTERNS = {
     "SSN": r"\b\d{3}[- ]?\d{2}[- ]?\d{4}\b",
     "EMAIL": r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
     "CREDIT_CARD": r"\b(?:\d[ -]*?){13,16}\b",
-    "PHONE": r"\b(?:\+?1[-. ]?)?\(?([0-9]{3})\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})\b"
+    "PHONE": r"\b(?:\+?1[-. ]?)?\(?([0-9]{3})\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})\b",
 }
 
 # ---------------------------------------------------------------------------
@@ -47,7 +47,7 @@ PII_PATTERNS = {
 # ---------------------------------------------------------------------------
 
 _ERASURE_CITATION: dict[str, str] = {
-    "EU_ECB":   "GDPR Art. 17 (right to erasure / right to be forgotten)",
+    "EU_ECB": "GDPR Art. 17 (right to erasure / right to be forgotten)",
     "APAC_MAS": "MAS Notice 655 §4.3 (data protection and audit logging)",
 }
 

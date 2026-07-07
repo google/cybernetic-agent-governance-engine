@@ -78,11 +78,9 @@ LANGFUSE_COMPLIANCE_SECRET_KEY=sk-lf-...
 
 from __future__ import annotations
 
-import json
 import os
 import time
 import uuid
-from typing import Generator
 
 import pytest
 import requests
@@ -112,11 +110,11 @@ _SKIP_US_FED = pytest.mark.skipif(
 # Configuration
 # ---------------------------------------------------------------------------
 
-BASE_URL  = os.environ.get("COMPLIANCE_BRIDGE_URL", "http://localhost:3001").rstrip("/")
+BASE_URL = os.environ.get("COMPLIANCE_BRIDGE_URL", "http://localhost:3001").rstrip("/")
 NAMESPACE = os.environ.get("NAMESPACE", "governance-stack")
-AUDIT_TIMEOUT  = int(os.environ.get("INTEGRATION_AUDIT_TIMEOUT_SEC", "30"))
-SSE_TIMEOUT    = int(os.environ.get("INTEGRATION_SSE_TIMEOUT_SEC", "10"))
-SKIP_LANGFUSE  = os.environ.get("SKIP_LANGFUSE_CHECKS", "").strip() == "1"
+AUDIT_TIMEOUT = int(os.environ.get("INTEGRATION_AUDIT_TIMEOUT_SEC", "30"))
+SSE_TIMEOUT = int(os.environ.get("INTEGRATION_SSE_TIMEOUT_SEC", "10"))
+SKIP_LANGFUSE = os.environ.get("SKIP_LANGFUSE_CHECKS", "").strip() == "1"
 
 # ---------------------------------------------------------------------------
 # Minimal valid OSCAL Assessment Results YAML.
@@ -183,6 +181,7 @@ def _uid() -> str:
 # Session-scope fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="session", autouse=True)
 def require_live_bridge():
     """Skip the entire module if the bridge is not reachable."""
@@ -220,7 +219,7 @@ def session() -> requests.Session:
         s.headers["Authorization"] = f"Bearer {token}"
     retry = Retry(
         total=3,
-        backoff_factor=1.0,          # 1s, 2s, 4s between retries
+        backoff_factor=1.0,  # 1s, 2s, 4s between retries
         status_forcelist=[502, 503, 504],
         allowed_methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"],
         raise_on_status=False,
@@ -234,6 +233,7 @@ def session() -> requests.Session:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _post_ingest(
     session: requests.Session, oscal_yaml: str, audit_id: str
@@ -251,14 +251,19 @@ def _post_ingest(
                 timeout=AUDIT_TIMEOUT,
             )
             return resp
-        except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout) as exc:
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.ReadTimeout,
+        ) as exc:
             last_exc = exc
             if attempt < 2:
-                time.sleep(2 ** attempt)  # 1s, 2s back-off
+                time.sleep(2**attempt)  # 1s, 2s back-off
     raise last_exc  # type: ignore[misc]
 
 
-def _poll_status(session: requests.Session, audit_id: str, timeout: int = AUDIT_TIMEOUT) -> dict:
+def _poll_status(
+    session: requests.Session, audit_id: str, timeout: int = AUDIT_TIMEOUT
+) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
         r = session.get(f"{BASE_URL}/v1/audit/status/{audit_id}", timeout=10)
@@ -273,6 +278,7 @@ def _poll_status(session: requests.Session, audit_id: str, timeout: int = AUDIT_
 # ---------------------------------------------------------------------------
 # Group 1: Liveness & self-description
 # ---------------------------------------------------------------------------
+
 
 class TestHealthAndDiscovery:
     def test_health_returns_200(self, session):
@@ -294,13 +300,29 @@ class TestHealthAndDiscovery:
         assert "controls" in data
         assert data["total"] >= 8
         ids = {c["control_id"] for c in data["controls"]}
-        for expected in ("A.5.2", "A.5.3", "A.6.2", "A.8.4", "A.9.2", "SC-4", "SC-7", "SC-8"):
+        for expected in (
+            "A.5.2",
+            "A.5.3",
+            "A.6.2",
+            "A.8.4",
+            "A.9.2",
+            "SC-4",
+            "SC-7",
+            "SC-8",
+        ):
             assert expected in ids, f"{expected} missing from /v1/controls"
 
     def test_controls_schema(self, session):
         controls = session.get(f"{BASE_URL}/v1/controls", timeout=10).json()["controls"]
         for c in controls:
-            assert {"control_id", "name", "iso_clause", "score_name", "critical", "frameworks"}.issubset(c.keys())
+            assert {
+                "control_id",
+                "name",
+                "iso_clause",
+                "score_name",
+                "critical",
+                "frameworks",
+            }.issubset(c.keys())
             assert isinstance(c["critical"], bool)
 
     def test_critical_controls_flagged(self, session):
@@ -318,21 +340,25 @@ class TestHealthAndDiscovery:
 # Group 2: Framework filter
 # ---------------------------------------------------------------------------
 
+
 @_SKIP_US_FED
 class TestFrameworkFilter:
-    @pytest.mark.parametrize("framework,expected_subset", [
-        # eu_ai_act is EU_ECB-only; with CAGE_DEPLOYMENT_REGION=US_FED no EU controls
-        # are active, so we verify the endpoint returns 200 with an empty or non-empty
-        # list rather than asserting specific EU controls are present.
-        # fedramp: SC-7 and SA-11 are US_FED jurisdictional FedRAMP controls.
-        # SC-4 is a CAGE-internal universal constraint mapped to aarm only — not fedramp.
-        ("fedramp",     ["SC-7", "SA-11"]),
-        # nist_ai_rmf: SA-11 is the US_FED control with nist_ai_rmf framework mapping.
-        # A.5.2 is ISO 42001 universal — it has no nist_ai_rmf mapping.
-        ("nist_ai_rmf", ["SA-11"]),
-        # iso42001: A.5.2 is a universal ISO 42001 control — always present.
-        ("iso42001",    ["A.5.2"]),
-    ])
+    @pytest.mark.parametrize(
+        "framework,expected_subset",
+        [
+            # eu_ai_act is EU_ECB-only; with CAGE_DEPLOYMENT_REGION=US_FED no EU controls
+            # are active, so we verify the endpoint returns 200 with an empty or non-empty
+            # list rather than asserting specific EU controls are present.
+            # fedramp: SC-7 and SA-11 are US_FED jurisdictional FedRAMP controls.
+            # SC-4 is a CAGE-internal universal constraint mapped to aarm only — not fedramp.
+            ("fedramp", ["SC-7", "SA-11"]),
+            # nist_ai_rmf: SA-11 is the US_FED control with nist_ai_rmf framework mapping.
+            # A.5.2 is ISO 42001 universal — it has no nist_ai_rmf mapping.
+            ("nist_ai_rmf", ["SA-11"]),
+            # iso42001: A.5.2 is a universal ISO 42001 control — always present.
+            ("iso42001", ["A.5.2"]),
+        ],
+    )
     def test_framework_filter_returns_subset(self, session, framework, expected_subset):
         r = session.get(f"{BASE_URL}/v1/controls?framework={framework}", timeout=10)
         assert r.status_code == 200
@@ -360,6 +386,7 @@ class TestFrameworkFilter:
 # Group 3: Audit ingest pipeline (POST /v1/audit/ingest)
 # ---------------------------------------------------------------------------
 
+
 class TestAuditIngestPipeline:
     def test_missing_body_returns_400(self, session):
         r = session.post(f"{BASE_URL}/v1/audit/ingest", json={}, timeout=10)
@@ -380,7 +407,9 @@ class TestAuditIngestPipeline:
         audit_id = f"inttest-pass-{uid}"
         oscal = _OSCAL_PASS_ONLY.format(uid=uid)
         r = _post_ingest(session, oscal, audit_id)
-        assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text[:400]}"
+        assert r.status_code == 200, (
+            f"Expected 200, got {r.status_code}: {r.text[:400]}"
+        )
 
     def test_pass_only_ingest_response_shape(self, session):
         uid = _uid()
@@ -388,8 +417,13 @@ class TestAuditIngestPipeline:
         oscal = _OSCAL_PASS_ONLY.format(uid=uid)
         data = _post_ingest(session, oscal, audit_id).json()
         required = {
-            "phase", "status", "audit_id", "findings_count",
-            "alerted", "remediation_sent", "advisor_error",
+            "phase",
+            "status",
+            "audit_id",
+            "findings_count",
+            "alerted",
+            "remediation_sent",
+            "advisor_error",
             "remediation_per_control",
         }
         assert required.issubset(data.keys()), f"Missing keys: {required - data.keys()}"
@@ -407,7 +441,11 @@ class TestAuditIngestPipeline:
     def test_auto_generated_audit_id_when_absent(self, session):
         uid = _uid()
         oscal = _OSCAL_PASS_ONLY.format(uid=uid)
-        r = session.post(f"{BASE_URL}/v1/audit/ingest", json={"oscal_yaml": oscal}, timeout=AUDIT_TIMEOUT)
+        r = session.post(
+            f"{BASE_URL}/v1/audit/ingest",
+            json={"oscal_yaml": oscal},
+            timeout=AUDIT_TIMEOUT,
+        )
         assert r.status_code == 200
         data = r.json()
         assert data["audit_id"].startswith("auto-")
@@ -432,9 +470,12 @@ class TestAuditIngestPipeline:
 # Group 4: Audit status poll (GET /v1/audit/status/{audit_id})
 # ---------------------------------------------------------------------------
 
+
 class TestAuditStatusPoll:
     def test_unknown_id_returns_404(self, session):
-        r = session.get(f"{BASE_URL}/v1/audit/status/definitely-not-real-{_uid()}", timeout=10)
+        r = session.get(
+            f"{BASE_URL}/v1/audit/status/definitely-not-real-{_uid()}", timeout=10
+        )
         assert r.status_code == 404
         assert r.json()["detail"]["error"] == "AUDIT_NOT_FOUND"
 
@@ -458,6 +499,7 @@ class TestAuditStatusPoll:
 # Group 5: Metrics summary (GET /v1/metrics/summary)
 # ---------------------------------------------------------------------------
 
+
 class TestMetricsSummary:
     def test_summary_returns_200(self, session):
         r = session.get(f"{BASE_URL}/v1/metrics/summary", timeout=30)
@@ -466,8 +508,13 @@ class TestMetricsSummary:
     def test_summary_shape(self, session):
         data = session.get(f"{BASE_URL}/v1/metrics/summary", timeout=30).json()
         required = {
-            "overall_pass_rate", "total_controls", "passing_controls",
-            "failing_controls", "critical_fails", "window_hours", "controls",
+            "overall_pass_rate",
+            "total_controls",
+            "passing_controls",
+            "failing_controls",
+            "critical_fails",
+            "window_hours",
+            "controls",
         }
         assert required.issubset(data.keys())
         assert 0.0 <= data["overall_pass_rate"] <= 1.0
@@ -475,13 +522,19 @@ class TestMetricsSummary:
 
     def test_summary_controls_dict_has_all_supported(self, session):
         data = session.get(f"{BASE_URL}/v1/metrics/summary", timeout=30).json()
-        supported = {c["control_id"] for c in
-                     session.get(f"{BASE_URL}/v1/controls", timeout=10).json()["controls"]}
+        supported = {
+            c["control_id"]
+            for c in session.get(f"{BASE_URL}/v1/controls", timeout=10).json()[
+                "controls"
+            ]
+        }
         returned = set(data["controls"].keys())
         assert supported == returned, f"Missing from summary: {supported - returned}"
 
     def test_summary_respects_window_hours(self, session):
-        data = session.get(f"{BASE_URL}/v1/metrics/summary?window_hours=48", timeout=30).json()
+        data = session.get(
+            f"{BASE_URL}/v1/metrics/summary?window_hours=48", timeout=30
+        ).json()
         assert data["window_hours"] == 48
 
     def test_summary_invalid_window_returns_422(self, session):
@@ -492,6 +545,7 @@ class TestMetricsSummary:
 # ---------------------------------------------------------------------------
 # Group 6: OSCAL Assessment Results export (GET /v1/oscal/assessment-results)
 # ---------------------------------------------------------------------------
+
 
 class TestOscalExport:
     @pytest.fixture(scope="class", autouse=True)
@@ -506,6 +560,7 @@ class TestOscalExport:
         the 5-minute TTL cache and return in <1 s.
         """
         import requests as _req
+
         try:
             _req.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=120)
         except Exception:
@@ -523,20 +578,28 @@ class TestOscalExport:
         assert data["audit_id"].startswith("cage-export-")
 
     def test_export_document_is_oscal_1_1_2(self, session):
-        doc = session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=60).json()["document"]
+        doc = session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=60).json()[
+            "document"
+        ]
         ar = doc["assessment-results"]
         assert ar["metadata"]["oscal-version"] == "1.1.2"
 
-    @pytest.mark.skipif(SKIP_LANGFUSE, reason="SKIP_LANGFUSE_CHECKS=1 — no live Langfuse data")
+    @pytest.mark.skipif(
+        SKIP_LANGFUSE, reason="SKIP_LANGFUSE_CHECKS=1 — no live Langfuse data"
+    )
     def test_export_findings_include_all_controls(self, session):
-        doc = session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=60).json()["document"]
+        doc = session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=60).json()[
+            "document"
+        ]
         findings = doc["assessment-results"]["results"][0]["findings"]
         control_ids = {f["target"]["target-id"] for f in findings}
         for cid in ("A.5.2", "A.5.3", "A.9.2", "SC-4"):
             assert cid in control_ids, f"{cid} missing from OSCAL export findings"
 
     def test_export_finding_state_vocabulary(self, session):
-        doc = session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=60).json()["document"]
+        doc = session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=60).json()[
+            "document"
+        ]
         findings = doc["assessment-results"]["results"][0]["findings"]
         # OSCAL 1.1.2 vocabulary + "error" for scanner/collector failures.
         # Per NIST SP 800-53A §3.2, evidence-collection errors must NOT be
@@ -547,9 +610,13 @@ class TestOscalExport:
             state = f["target"]["status"]["state"]
             assert state in valid_states, f"Invalid OSCAL state: {state!r}"
 
-    @pytest.mark.skipif(SKIP_LANGFUSE, reason="SKIP_LANGFUSE_CHECKS=1 — no live Langfuse data")
+    @pytest.mark.skipif(
+        SKIP_LANGFUSE, reason="SKIP_LANGFUSE_CHECKS=1 — no live Langfuse data"
+    )
     def test_export_findings_have_framework_props(self, session):
-        doc = session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=60).json()["document"]
+        doc = session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=60).json()[
+            "document"
+        ]
         findings = doc["assessment-results"]["results"][0]["findings"]
         # At least one finding must carry a framework prop (e.g. A.5.2 → iso42001)
         all_prop_names = {p["name"] for f in findings for p in f.get("props", [])}
@@ -563,11 +630,15 @@ class TestOscalExport:
         assert data["audit_id"] == cid
 
     def test_export_invalid_format_returns_422(self, session):
-        r = session.get(f"{BASE_URL}/v1/oscal/assessment-results?format=xml", timeout=10)
+        r = session.get(
+            f"{BASE_URL}/v1/oscal/assessment-results?format=xml", timeout=10
+        )
         assert r.status_code == 422
 
     def test_export_window_hours_param(self, session):
-        r = session.get(f"{BASE_URL}/v1/oscal/assessment-results?window_hours=12", timeout=60)
+        r = session.get(
+            f"{BASE_URL}/v1/oscal/assessment-results?window_hours=12", timeout=60
+        )
         assert r.status_code == 200
 
 
@@ -575,10 +646,13 @@ class TestOscalExport:
 # Group 7: SSE event stream (GET /v1/events/stream)
 # ---------------------------------------------------------------------------
 
+
 class TestSSEStream:
     def test_sse_connection_establishes(self, session):
         """The SSE endpoint must respond with text/event-stream Content-Type."""
-        with requests.get(f"{BASE_URL}/v1/events/stream", stream=True, timeout=SSE_TIMEOUT) as r:
+        with requests.get(
+            f"{BASE_URL}/v1/events/stream", stream=True, timeout=SSE_TIMEOUT
+        ) as r:
             assert r.status_code == 200
             ct = r.headers.get("Content-Type", "")
             assert "text/event-stream" in ct, f"Expected text/event-stream, got: {ct!r}"
@@ -636,6 +710,7 @@ class TestSSEStream:
 # ---------------------------------------------------------------------------
 # Group 8: Lula CronJob integration (via bridge loopback)
 # ---------------------------------------------------------------------------
+
 
 class TestLulaCronJobIntegration:
     """
@@ -716,10 +791,13 @@ assessment-results:
 # Group 9: Per-control metrics endpoint
 # ---------------------------------------------------------------------------
 
+
 class TestPerControlMetrics:
     @pytest.mark.timeout(60)
-    @pytest.mark.parametrize("control_id", ["A.5.2", "A.5.3", "A.6.2", "A.8.4", "A.9.2",
-                                             "SA-11", "SC-4", "SC-7", "SC-8"])
+    @pytest.mark.parametrize(
+        "control_id",
+        ["A.5.2", "A.5.3", "A.6.2", "A.8.4", "A.9.2", "SA-11", "SC-4", "SC-7", "SC-8"],
+    )
     def test_metric_endpoint_per_control(self, session, control_id):
         # A.5.2 and A.5.3 are the busiest controls (most Langfuse traces) and can
         # take up to ~20s on cold cache under full-suite concurrent load.  Use 45s
@@ -746,10 +824,16 @@ class TestPerControlMetrics:
             pytest.skip("Langfuse not reachable from GKE — skipping shape check")
         data = r.json()
         required = {
-            "control_id", "safety_rate", "total_traces",
-            "blocked_traces", "passed_traces", "window_hours",
-            "last_event_utc", "evidence_age_seconds",
-            "startup_grace_active", "startup_grace_remaining_hours",
+            "control_id",
+            "safety_rate",
+            "total_traces",
+            "blocked_traces",
+            "passed_traces",
+            "window_hours",
+            "last_event_utc",
+            "evidence_age_seconds",
+            "startup_grace_active",
+            "startup_grace_remaining_hours",
         }
         assert required.issubset(data.keys())
         # M-10: safety_rate is Optional[float] — None when no traces exist in window
@@ -766,20 +850,20 @@ class TestPerControlMetrics:
 
 # Expected (path, method, tag) triples derived from main.py route definitions
 _EXPECTED_ROUTES: list[tuple[str, str, str]] = [
-    ("/health",                          "get",  "health"),
-    ("/v1/controls",                     "get",  "compliance"),
-    ("/v1/metrics/summary",              "get",  "compliance"),
-    ("/v1/metrics/{control_id}",         "get",  "compliance"),
-    ("/v1/audit/ingest",                 "post", "compliance"),
-    ("/v1/audit/status/{audit_id}",      "get",  "compliance"),
-    ("/v1/oscal/assessment-results",     "get",  "compliance"),
-    ("/v1/prompts/{name}",               "get",  "prompts"),
-    ("/v1/events/stream",                "get",  "events"),
+    ("/health", "get", "health"),
+    ("/v1/controls", "get", "compliance"),
+    ("/v1/metrics/summary", "get", "compliance"),
+    ("/v1/metrics/{control_id}", "get", "compliance"),
+    ("/v1/audit/ingest", "post", "compliance"),
+    ("/v1/audit/status/{audit_id}", "get", "compliance"),
+    ("/v1/oscal/assessment-results", "get", "compliance"),
+    ("/v1/prompts/{name}", "get", "prompts"),
+    ("/v1/events/stream", "get", "events"),
     # CAGE v0.1.0 — AARM primitives
-    ("/v1/aarm/conformance-report",      "get",  "compliance"),
-    ("/v1/defer/pending",                "get",  "governance"),
-    ("/v1/defer/{defer_id}/inject",      "post", "governance"),
-    ("/v1/defer/{defer_id}/escalate",    "post", "governance"),
+    ("/v1/aarm/conformance-report", "get", "compliance"),
+    ("/v1/defer/pending", "get", "governance"),
+    ("/v1/defer/{defer_id}/inject", "post", "governance"),
+    ("/v1/defer/{defer_id}/escalate", "post", "governance"),
 ]
 
 
@@ -806,7 +890,9 @@ class TestOpenAPISpecCompleteness:
         paths = openapi.get("paths", {})
         assert path in paths, f"Path {path!r} not in /openapi.json paths"
         operation = paths[path].get(method)
-        assert operation is not None, f"Method {method.upper()} not defined for {path!r}"
+        assert operation is not None, (
+            f"Method {method.upper()} not defined for {path!r}"
+        )
         tags = operation.get("tags", [])
         assert tag in tags, (
             f"{method.upper()} {path} has tags {tags!r} — expected tag {tag!r}. "
@@ -829,6 +915,7 @@ class TestOpenAPISpecCompleteness:
 # so ?format=yaml works"
 # ---------------------------------------------------------------------------
 
+
 class TestOscalYamlFormat:
     """
     Gate: GET /v1/oscal/assessment-results?format=yaml must return a valid YAML
@@ -848,7 +935,9 @@ class TestOscalYamlFormat:
         data = session.get(
             f"{BASE_URL}/v1/oscal/assessment-results?format=yaml", timeout=60
         ).json()
-        assert "yaml" in data, "Response must have a 'yaml' key containing the YAML text"
+        assert "yaml" in data, (
+            "Response must have a 'yaml' key containing the YAML text"
+        )
         assert "assessment-results" in data["yaml"], (
             "YAML body must contain 'assessment-results' root key"
         )
@@ -856,6 +945,7 @@ class TestOscalYamlFormat:
     def test_yaml_body_is_valid_yaml(self, session):
         """The returned YAML string must be parseable by PyYAML."""
         import yaml  # If this ImportError triggers, pyyaml is missing in CI too
+
         data = session.get(
             f"{BASE_URL}/v1/oscal/assessment-results?format=yaml", timeout=60
         ).json()
@@ -864,6 +954,7 @@ class TestOscalYamlFormat:
 
     def test_yaml_oscal_version_correct(self, session):
         import yaml
+
         data = session.get(
             f"{BASE_URL}/v1/oscal/assessment-results?format=yaml", timeout=60
         ).json()
@@ -913,15 +1004,18 @@ class TestCmekStartupGuard:
             f"  kubectl logs -n {NAMESPACE} deployment/compliance-bridge --tail=50"
         )
 
-    @pytest.mark.skipif(not _EXPECT_CMEK, reason="EXPECT_CMEK_ENABLED not set — skipping CMEK active check")
+    @pytest.mark.skipif(
+        not _EXPECT_CMEK,
+        reason="EXPECT_CMEK_ENABLED not set — skipping CMEK active check",
+    )
     def test_cmek_key_name_appears_in_oscal_props(self, session):
         """
         When CMEK is active, the OSCAL export must include the KMS key name as
         a finding prop so auditors can verify the encryption chain.
         """
-        doc = session.get(
-            f"{BASE_URL}/v1/oscal/assessment-results", timeout=60
-        ).json()["document"]
+        doc = session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=60).json()[
+            "document"
+        ]
         findings = doc["assessment-results"]["results"][0]["findings"]
         all_props = [p for f in findings for p in f.get("props", [])]
         prop_names = {p["name"] for p in all_props}
@@ -940,21 +1034,31 @@ class TestCmekStartupGuard:
         Skip if kubectl is not available in the test environment.
         """
         import subprocess
+
         try:
             result = subprocess.run(
                 [
-                    "kubectl", "get", "pod",
-                    "-n", NAMESPACE,
-                    "-l", "app=compliance-bridge",
-                    "-o", "jsonpath={.items[0].status.containerStatuses[0].restartCount}",
+                    "kubectl",
+                    "get",
+                    "pod",
+                    "-n",
+                    NAMESPACE,
+                    "-l",
+                    "app=compliance-bridge",
+                    "-o",
+                    "jsonpath={.items[0].status.containerStatuses[0].restartCount}",
                 ],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pytest.skip("kubectl not available in this environment")
 
         if result.returncode != 0 or not result.stdout.strip():
-            pytest.skip("Could not read pod restart count — cluster may not be accessible")
+            pytest.skip(
+                "Could not read pod restart count — cluster may not be accessible"
+            )
 
         restart_count = int(result.stdout.strip())
         assert restart_count == 0, (
@@ -976,6 +1080,7 @@ class TestCmekStartupGuard:
 #   3. The GOVERNANCE_VIOLATION SSE event fires — confirming the notifier code
 #      path ran to completion.
 # ---------------------------------------------------------------------------
+
 
 class TestAlertChannelWiring:
     """
@@ -999,10 +1104,14 @@ class TestAlertChannelWiring:
     def test_alert_targets_populated_on_critical_fail(self, session):
         uid = _uid()
         audit_id = f"inttest-alert-targets-{uid}"
-        data = _post_ingest(session, _OSCAL_WITH_CRITICAL_FAIL.format(uid=uid), audit_id).json()
+        data = _post_ingest(
+            session, _OSCAL_WITH_CRITICAL_FAIL.format(uid=uid), audit_id
+        ).json()
         assert data["alerted"] is True
         targets = data.get("alert_targets", [])
-        assert len(targets) >= 1, "alert_targets must list the failing critical control IDs"
+        assert len(targets) >= 1, (
+            "alert_targets must list the failing critical control IDs"
+        )
         for target in targets:
             assert isinstance(target, str) and len(target) > 0
 
@@ -1067,6 +1176,7 @@ class TestAlertChannelWiring:
 #   "Langfuse eval run — execute first eval run against cage-compliance-A.9.2"
 # ---------------------------------------------------------------------------
 
+
 class TestSlaAndEvalDataset:
     """
     SLA gate: evidence_age_seconds from /v1/metrics/summary must be a finite
@@ -1088,7 +1198,9 @@ class TestSlaAndEvalDataset:
         data = session.get(f"{BASE_URL}/v1/metrics/summary", timeout=30).json()
         controls = data.get("controls", {})
         if not controls:
-            pytest.skip("No controls returned from /v1/metrics/summary — Langfuse may be empty")
+            pytest.skip(
+                "No controls returned from /v1/metrics/summary — Langfuse may be empty"
+            )
 
         for cid, metrics in controls.items():
             if "error" in metrics:
@@ -1136,9 +1248,9 @@ class TestSlaAndEvalDataset:
         Requires: LANGFUSE_COMPLIANCE_PUBLIC_KEY + LANGFUSE_COMPLIANCE_SECRET_KEY
         + LANGFUSE_HOST set in the test environment (same values as the bridge).
         """
-        lf_host   = os.environ.get("LANGFUSE_HOST", "")
-        lf_pk     = os.environ.get("LANGFUSE_COMPLIANCE_PUBLIC_KEY", "")
-        lf_sk     = os.environ.get("LANGFUSE_COMPLIANCE_SECRET_KEY", "")
+        lf_host = os.environ.get("LANGFUSE_HOST", "")
+        lf_pk = os.environ.get("LANGFUSE_COMPLIANCE_PUBLIC_KEY", "")
+        lf_sk = os.environ.get("LANGFUSE_COMPLIANCE_SECRET_KEY", "")
         print(f"\n🔍 [DEBUG TEST] lf_host={lf_host}, lf_pk={lf_pk}, lf_sk={lf_sk}")
         if not all([lf_host, lf_pk, lf_sk]):
             pytest.skip(
@@ -1153,7 +1265,10 @@ class TestSlaAndEvalDataset:
         _headers = {"Authorization": f"Bearer {_token}"} if _token else {}
         r = requests.post(
             f"{BASE_URL}/v1/audit/ingest",
-            json={"oscal_yaml": _OSCAL_WITH_CRITICAL_FAIL.format(uid=uid), "audit_id": audit_id},
+            json={
+                "oscal_yaml": _OSCAL_WITH_CRITICAL_FAIL.format(uid=uid),
+                "audit_id": audit_id,
+            },
             headers=_headers,
             timeout=AUDIT_TIMEOUT,
         )
@@ -1163,8 +1278,11 @@ class TestSlaAndEvalDataset:
         # GET /api/public/datasets/{datasetName}/items
         # Retry up to 3 times to handle transient port-forward connection drops.
         dataset_name = "cage-compliance-A.9.2"
-        api_url = f"{lf_host.rstrip('/')}/api/public/dataset-items?datasetName={dataset_name}"
+        api_url = (
+            f"{lf_host.rstrip('/')}/api/public/dataset-items?datasetName={dataset_name}"
+        )
         import time as _time
+
         lf_resp = None
         for _attempt in range(3):
             try:
@@ -1172,7 +1290,9 @@ class TestSlaAndEvalDataset:
                 break
             except requests.exceptions.ConnectionError as _ce:
                 if _attempt < 2:
-                    print(f"\n⚠️ Langfuse GET attempt {_attempt + 1} failed ({_ce}), retrying in 3s…")
+                    print(
+                        f"\n⚠️ Langfuse GET attempt {_attempt + 1} failed ({_ce}), retrying in 3s…"
+                    )
                     _time.sleep(3)
                 else:
                     raise
@@ -1204,6 +1324,7 @@ class TestSlaAndEvalDataset:
 # chain_integrity_valid must be True — a False indicates a tampered chain node.
 # ---------------------------------------------------------------------------
 
+
 class TestContextAccumulatorChain:
     """
     Gate: Context Accumulator chain metadata returned on every audit response.
@@ -1214,24 +1335,26 @@ class TestContextAccumulatorChain:
 
     @pytest.mark.timeout(120)
     def test_ingest_response_has_chain_root(self, session):
-        uid       = _uid()
-        audit_id  = f"inttest-chain-root-{uid}"
-        data      = _post_ingest(session, _OSCAL_PASS_ONLY.format(uid=uid), audit_id).json()
+        uid = _uid()
+        audit_id = f"inttest-chain-root-{uid}"
+        data = _post_ingest(session, _OSCAL_PASS_ONLY.format(uid=uid), audit_id).json()
         assert "chain_root" in data, (
             "audit ingest response missing 'chain_root' — "
             "ContextAccumulator not wired into audit_workflow.py Step 2b. "
             "Ensure the v0.1.0 image is deployed."
         )
         chain_root = data["chain_root"]
-        assert chain_root is not None, "chain_root must not be None for a completed audit"
+        assert chain_root is not None, (
+            "chain_root must not be None for a completed audit"
+        )
         assert len(chain_root) == 64, (
             f"chain_root must be a 64-char SHA-256 hex digest, got {len(chain_root)} chars: {chain_root!r}"
         )
 
     def test_ingest_response_has_chain_length(self, session):
-        uid       = _uid()
-        audit_id  = f"inttest-chain-len-{uid}"
-        data      = _post_ingest(session, _OSCAL_PASS_ONLY.format(uid=uid), audit_id).json()
+        uid = _uid()
+        audit_id = f"inttest-chain-len-{uid}"
+        data = _post_ingest(session, _OSCAL_PASS_ONLY.format(uid=uid), audit_id).json()
         assert "chain_length" in data, "audit ingest response missing 'chain_length'"
         assert isinstance(data["chain_length"], int), "chain_length must be an integer"
         assert data["chain_length"] >= 1, (
@@ -1239,9 +1362,9 @@ class TestContextAccumulatorChain:
         )
 
     def test_ingest_chain_integrity_valid(self, session):
-        uid       = _uid()
-        audit_id  = f"inttest-chain-integ-{uid}"
-        data      = _post_ingest(session, _OSCAL_PASS_ONLY.format(uid=uid), audit_id).json()
+        uid = _uid()
+        audit_id = f"inttest-chain-integ-{uid}"
+        data = _post_ingest(session, _OSCAL_PASS_ONLY.format(uid=uid), audit_id).json()
         assert "chain_integrity_valid" in data, (
             "audit ingest response missing 'chain_integrity_valid'"
         )
@@ -1253,27 +1376,34 @@ class TestContextAccumulatorChain:
 
     def test_chain_length_matches_findings_count(self, session):
         """chain_length must equal findings_count: one chain node per finding."""
-        uid       = _uid()
-        audit_id  = f"inttest-chain-match-{uid}"
-        data      = _post_ingest(session, _OSCAL_PASS_ONLY.format(uid=uid), audit_id).json()
+        uid = _uid()
+        audit_id = f"inttest-chain-match-{uid}"
+        data = _post_ingest(session, _OSCAL_PASS_ONLY.format(uid=uid), audit_id).json()
         chain_len = data.get("chain_length")
-        findings  = data.get("findings_count")
+        findings = data.get("findings_count")
         if chain_len is None or findings is None:
-            pytest.skip("chain_length or findings_count missing — v0.1.0 image may not be deployed")
+            pytest.skip(
+                "chain_length or findings_count missing — v0.1.0 image may not be deployed"
+            )
         assert chain_len == findings + 1, (
-            f"chain_length ({chain_len}) != findings_count+1 ({findings+1}). "
+            f"chain_length ({chain_len}) != findings_count+1 ({findings + 1}). "
             "Every OscalFinding must be appended, plus one CHAIN_SEALED node."
         )
 
     def test_oscal_export_has_chain_root_prop(self, session):
         """The OSCAL Assessment Results document must embed chain_root as an assessment prop."""
-        doc = session.get(
-            f"{BASE_URL}/v1/oscal/assessment-results", timeout=60
-        ).json().get("document", {})
+        doc = (
+            session.get(f"{BASE_URL}/v1/oscal/assessment-results", timeout=60)
+            .json()
+            .get("document", {})
+        )
         result = doc.get("assessment-results", {}).get("results", [{}])[0]
         all_props = result.get("props", [])
         prop_names = {p["name"] for p in all_props}
-        assert "context-accumulator-chain-root" in prop_names or "aarm-spec-version" in prop_names, (
+        assert (
+            "context-accumulator-chain-root" in prop_names
+            or "aarm-spec-version" in prop_names
+        ), (
             "OSCAL Assessment Results missing AARM chain provenance props. "
             "Expected 'context-accumulator-chain-root' or 'aarm-spec-version' in result.props. "
             "Check oscal_exporter.py build_oscal_assessment_results() chain_root parameter."
@@ -1287,6 +1417,7 @@ class TestContextAccumulatorChain:
 # Per-vector verdicts: NEUTRALIZED | PARTIAL | EXPOSED.
 # Auto-serialized to GCS/S3 on every audit run.
 # ---------------------------------------------------------------------------
+
 
 class TestAarmConformanceReport:
     """
@@ -1311,13 +1442,19 @@ class TestAarmConformanceReport:
         assert "report" in data, "Response must have 'report' key"
         assert "audit_id" in data, "Response must have 'audit_id' key"
         report = data["report"]
-        required_keys = {"audit_id", "generated_utc", "aarm_spec_version", "vectors", "overall_posture"}
+        required_keys = {
+            "audit_id",
+            "generated_utc",
+            "aarm_spec_version",
+            "vectors",
+            "overall_posture",
+        }
         missing = required_keys - report.keys()
         assert not missing, f"Report missing keys: {missing}"
 
     @pytest.mark.timeout(120)
     def test_conformance_report_has_11_vectors(self, session):
-        data   = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90).json()
+        data = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90).json()
         report = data["report"]
         vectors = report.get("vectors", [])
         assert len(vectors) == 11, (
@@ -1327,9 +1464,9 @@ class TestAarmConformanceReport:
 
     @pytest.mark.timeout(120)
     def test_conformance_report_vector_ids(self, session):
-        data    = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90).json()
+        data = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90).json()
         vectors = data["report"]["vectors"]
-        ids     = {v["vector_id"] for v in vectors}
+        ids = {v["vector_id"] for v in vectors}
         expected = {f"AARM-V{i}" for i in range(1, 12)}
         assert ids == expected, (
             f"Vector IDs mismatch. Expected {sorted(expected)}, got {sorted(ids)}"
@@ -1337,7 +1474,7 @@ class TestAarmConformanceReport:
 
     @pytest.mark.timeout(120)
     def test_conformance_report_verdicts_are_valid(self, session):
-        data    = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90).json()
+        data = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90).json()
         vectors = data["report"]["vectors"]
         valid_verdicts = {"NEUTRALIZED", "PARTIAL", "EXPOSED"}
         for v in vectors:
@@ -1349,7 +1486,7 @@ class TestAarmConformanceReport:
 
     @pytest.mark.timeout(120)
     def test_conformance_report_overall_posture_valid(self, session):
-        data    = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90).json()
+        data = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90).json()
         posture = data["report"]["overall_posture"]
         assert posture in {"SECURE", "DEGRADED", "CRITICAL"}, (
             f"overall_posture {posture!r} is not in (SECURE, DEGRADED, CRITICAL)"
@@ -1376,7 +1513,6 @@ class TestAarmConformanceReport:
     @pytest.mark.timeout(120)
     def test_conformance_report_yaml_format(self, session):
         """?format=yaml must return 200 with a parseable YAML body."""
-        import yaml
         r = session.get(
             f"{BASE_URL}/v1/aarm/conformance-report?format=yaml", timeout=90
         )
@@ -1384,7 +1520,9 @@ class TestAarmConformanceReport:
             f"?format=yaml returned {r.status_code}. pyyaml may be missing in the image."
         )
         data = r.json()
-        assert "yaml" in data or "report" in data, "YAML response must have 'yaml' or 'report' key"
+        assert "yaml" in data or "report" in data, (
+            "YAML response must have 'yaml' or 'report' key"
+        )
 
     @pytest.mark.timeout(120)
     def test_aarm_report_ingest_pipeline_sets_artifact_key(self, session):
@@ -1392,9 +1530,9 @@ class TestAarmConformanceReport:
         After a full audit ingest, aarm_report_artifact must be set in the response.
         This validates that audit_workflow.py Step 6 ran and serialized the report.
         """
-        uid      = _uid()
+        uid = _uid()
         audit_id = f"inttest-aarm-artifact-{uid}"
-        data     = _post_ingest(session, _OSCAL_PASS_ONLY.format(uid=uid), audit_id).json()
+        data = _post_ingest(session, _OSCAL_PASS_ONLY.format(uid=uid), audit_id).json()
         artifact = data.get("aarm_report_artifact")
         if artifact is None:
             pytest.skip(
@@ -1414,6 +1552,7 @@ class TestAarmConformanceReport:
 # Feature: GET /v1/defer/pending, POST /v1/defer/{id}/inject, /escalate
 # Redis db=1, noeviction — isolated DeferQueue for AARM-V7 neutralization.
 # ---------------------------------------------------------------------------
+
 
 class TestDeferQueueEndpoints:
     """
@@ -1442,9 +1581,9 @@ class TestDeferQueueEndpoints:
             pytest.skip("Redis db=1 unavailable — skipping shape check")
         data = r.json()
         assert "pending" in data, "Response must have 'pending' list"
-        assert "count"   in data, "Response must have 'count' integer"
+        assert "count" in data, "Response must have 'count' integer"
         assert isinstance(data["pending"], list)
-        assert isinstance(data["count"],   int)
+        assert isinstance(data["count"], int)
         assert data["count"] == len(data["pending"]), (
             "'count' must equal len('pending')"
         )
@@ -1528,4 +1667,3 @@ class TestDeferQueueEndpoints:
             f"got {version}. The pre-v0.1.0 image may still be deployed. "
             "Re-run: gcloud builds submit --config=cloudbuild.compliance.yaml ."
         )
-

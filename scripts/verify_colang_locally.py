@@ -20,6 +20,7 @@ sys.path.append(os.getcwd())
 
 from src.utils.nemo_manager import load_rails
 
+
 def test_colang_syntax():
     print("🔍 Verifying Colang syntax in config/rails/...")
     try:
@@ -31,6 +32,7 @@ def test_colang_syntax():
         print("\n❌ Colang syntax is INVALID.")
         print(f"Error details: {e}")
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(test_colang_syntax())

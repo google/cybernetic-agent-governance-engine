@@ -26,8 +26,8 @@ Covers:
 
 from __future__ import annotations
 
-import sys
 import os
+import sys
 
 # Ensure src/ is on the path so `compliance_bridge` is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -37,13 +37,13 @@ import pytest
 pytestmark = pytest.mark.unit
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from fastapi.testclient import TestClient
-from fastapi import Depends
 
+from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
 # ── types ──
 # ---------------------------------------------------------------------------
+
 
 class TestOscalFindingModel:
     """OscalFinding Pydantic model instantiation and validation."""
@@ -64,8 +64,9 @@ class TestOscalFindingModel:
         assert f.safety_rate == 0.995
 
     def test_oscal_finding_invalid_result(self):
-        from src.compliance_bridge.types import OscalFinding
         from pydantic import ValidationError
+
+        from src.compliance_bridge.types import OscalFinding
 
         with pytest.raises(ValidationError):
             OscalFinding(
@@ -75,8 +76,9 @@ class TestOscalFindingModel:
             )
 
     def test_oscal_finding_safety_rate_bounds(self):
-        from src.compliance_bridge.types import OscalFinding
         from pydantic import ValidationError
+
+        from src.compliance_bridge.types import OscalFinding
 
         with pytest.raises(ValidationError):
             OscalFinding(
@@ -122,8 +124,9 @@ class TestComplianceMetricsModel:
         assert m.total_traces == 150
 
     def test_compliance_metrics_safety_rate_bounds(self):
-        from src.compliance_bridge.types import ComplianceMetrics
         from pydantic import ValidationError
+
+        from src.compliance_bridge.types import ComplianceMetrics
 
         with pytest.raises(ValidationError):
             ComplianceMetrics(
@@ -219,7 +222,9 @@ class TestParseOscalYaml:
     def test_parse_invalid_yaml_raises(self):
         from src.compliance_bridge.oscal_parser import parse_oscal_yaml
 
-        with pytest.raises(ValueError, match="YAML syntax error|does not match|zero valid"):
+        with pytest.raises(
+            ValueError, match="YAML syntax error|does not match|zero valid"
+        ):
             parse_oscal_yaml(INVALID_OSCAL_YAML)
 
     def test_parse_missing_results_raises(self):
@@ -275,6 +280,7 @@ assessment-results:
 # ── FastAPI endpoints ──
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def client():
     """
@@ -290,8 +296,8 @@ def client():
         mock_lf = MagicMock()
         MockLangfuse.return_value = mock_lf
 
-        from src.compliance_bridge.main import app
         from src.compliance_bridge.auth import require_internal_token
+        from src.compliance_bridge.main import app
 
         # Override auth so business-logic tests are not blocked by C-07.
         app.dependency_overrides[require_internal_token] = lambda: "test-token"
@@ -325,8 +331,9 @@ class TestMetricsEndpoint:
             assert "UNSUPPORTED_CONTROL" in str(data)
 
     def test_supported_control_calls_get_compliance_metrics(self, client):
-        from src.compliance_bridge.types import ComplianceMetrics
         from datetime import datetime, timezone
+
+        from src.compliance_bridge.types import ComplianceMetrics
 
         mock_metrics = ComplianceMetrics(
             control_id="A.5.2",
@@ -364,16 +371,16 @@ class TestAuditIngestEndpoint:
 
     def test_valid_ingest_calls_workflow(self, client):
         mock_result = {
-            "status":           "ok",
-            "audit_id":         "test-audit-001",
-            "findings_count":   2,
-            "artifact_key":     None,
-            "ingested":         2,
-            "alerted":          False,
-            "alert_targets":    [],
+            "status": "ok",
+            "audit_id": "test-audit-001",
+            "findings_count": 2,
+            "artifact_key": None,
+            "ingested": 2,
+            "alerted": False,
+            "alert_targets": [],
             "remediation_sent": False,
             "remediation_text": None,
-            "advisor_error":    None,
+            "advisor_error": None,
         }
 
         with patch(
@@ -403,16 +410,16 @@ class TestAuditIngestEndpoint:
 
     def test_background_ingest_schedules_task_and_returns_running(self, client):
         mock_result = {
-            "status":           "ok",
-            "audit_id":         "test-audit-bg",
-            "findings_count":   2,
-            "artifact_key":     None,
-            "ingested":         2,
-            "alerted":          False,
-            "alert_targets":    [],
+            "status": "ok",
+            "audit_id": "test-audit-bg",
+            "findings_count": 2,
+            "artifact_key": None,
+            "ingested": 2,
+            "alerted": False,
+            "alert_targets": [],
             "remediation_sent": False,
             "remediation_text": None,
-            "advisor_error":    None,
+            "advisor_error": None,
         }
 
         with patch(
@@ -455,6 +462,7 @@ class TestAuditIngestAuth:
             MockLangfuse.return_value = MagicMock()
             with patch.dict(os.environ, self._AUTH_ENV, clear=False):
                 from src.compliance_bridge.main import app
+
                 with TestClient(app, raise_server_exceptions=True) as c:
                     response = c.post(
                         "/v1/audit/ingest",
@@ -468,6 +476,7 @@ class TestAuditIngestAuth:
             MockLangfuse.return_value = MagicMock()
             with patch.dict(os.environ, self._AUTH_ENV, clear=False):
                 from src.compliance_bridge.main import app
+
                 with TestClient(app, raise_server_exceptions=True) as c:
                     response = c.post(
                         "/v1/audit/ingest",
@@ -482,6 +491,7 @@ class TestAuditIngestAuth:
             MockLangfuse.return_value = MagicMock()
             with patch.dict(os.environ, self._AUTH_ENV, clear=False):
                 from src.compliance_bridge.main import app
+
                 with TestClient(app, raise_server_exceptions=True) as c:
                     # Empty oscal_yaml → 400 from business logic, NOT 401 from auth.
                     response = c.post(
@@ -518,7 +528,9 @@ class TestTelemetryHistoryEndpoint:
         mock_api = MagicMock()
         mock_api.trace.list.return_value = MockTraceListResponse()
 
-        with patch("src.compliance_bridge.main._get_compliance_api", return_value=mock_api):
+        with patch(
+            "src.compliance_bridge.main._get_compliance_api", return_value=mock_api
+        ):
             response = client.get("/v1/telemetry/history?page=1&limit=20")
 
         assert response.status_code == 200
@@ -537,6 +549,7 @@ class TestTelemetryHistoryEndpoint:
 # ── types constants ──
 # ---------------------------------------------------------------------------
 
+
 class TestTypesConstants:
     def test_supported_controls_contains_expected(self):
         from src.compliance_bridge.types import SUPPORTED_CONTROLS
@@ -544,7 +557,7 @@ class TestTypesConstants:
         assert "A.5.2" in SUPPORTED_CONTROLS
         assert "A.5.3" in SUPPORTED_CONTROLS
         assert "A.9.2" in SUPPORTED_CONTROLS
-        assert "SC-4"  in SUPPORTED_CONTROLS
+        assert "SC-4" in SUPPORTED_CONTROLS
 
     def test_critical_controls_subset_of_supported(self):
         from src.compliance_bridge.types import CRITICAL_CONTROLS, SUPPORTED_CONTROLS

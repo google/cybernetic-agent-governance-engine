@@ -20,11 +20,15 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-kfp = pytest.importorskip("kfp", reason="kfp not installed; skipping pipeline compilation tests")
+kfp = pytest.importorskip(
+    "kfp", reason="kfp not installed; skipping pipeline compilation tests"
+)
 compiler = kfp.compiler
 
 try:
-    from src.governed_financial_advisor.pipelines.green_stack_pipeline import governance_pipeline
+    from src.governed_financial_advisor.pipelines.green_stack_pipeline import (
+        governance_pipeline,
+    )
 except ImportError:
     governance_pipeline = None
 
@@ -35,8 +39,7 @@ class TestPipelineCompilation(unittest.TestCase):
         output_file = "test_pipeline.json"
         try:
             compiler.Compiler().compile(
-                pipeline_func=governance_pipeline,
-                package_path=output_file
+                pipeline_func=governance_pipeline, package_path=output_file
             )
             self.assertTrue(os.path.exists(output_file))
 
@@ -45,10 +48,13 @@ class TestPipelineCompilation(unittest.TestCase):
                 # Check for KFP v2 spec keys
                 self.assertIn("pipelineInfo", pipeline_spec)
                 self.assertIn("root", pipeline_spec)
-                self.assertEqual(pipeline_spec["pipelineInfo"]["name"], "green-stack-governance-loop")
+                self.assertEqual(
+                    pipeline_spec["pipelineInfo"]["name"], "green-stack-governance-loop"
+                )
         finally:
             if os.path.exists(output_file):
                 os.remove(output_file)
+
 
 if __name__ == "__main__":
     unittest.main()

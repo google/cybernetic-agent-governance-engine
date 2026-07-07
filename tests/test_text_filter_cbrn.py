@@ -27,8 +27,9 @@ Validates:
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 pytest.importorskip("src", reason="src package required")
 
@@ -37,12 +38,11 @@ pytest.importorskip("src", reason="src package required")
 # Module imports
 # ---------------------------------------------------------------------------
 
-from src.gateway.governance.text_filter import (
-    ac_cbrn_keyword_scan,
-    _load_cbrn_keywords,
-)
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
-
+from src.gateway.governance.text_filter import (
+    _load_cbrn_keywords,
+    ac_cbrn_keyword_scan,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -81,6 +81,7 @@ BENIGN_QUERIES = [
 # ---------------------------------------------------------------------------
 # §4.4 — CBRN keyword list schema validation
 # ---------------------------------------------------------------------------
+
 
 class TestCBRNThresholdSchema:
     """Validate the CBRN keyword list in the governance threshold singleton."""
@@ -125,6 +126,7 @@ class TestCBRNThresholdSchema:
 # §4.4 — _load_cbrn_keywords()
 # ---------------------------------------------------------------------------
 
+
 class TestLoadCBRNKeywords:
     """Unit tests for _load_cbrn_keywords()."""
 
@@ -138,9 +140,7 @@ class TestLoadCBRNKeywords:
         """_load_cbrn_keywords() returns [] when tier1_keywords_cbrn_enabled=False."""
         with patch.object(THRESHOLDS, "tier1_keywords_cbrn_enabled", False):
             keywords = _load_cbrn_keywords()
-        assert keywords == [], (
-            "Expected empty list when CBRN keywords are disabled"
-        )
+        assert keywords == [], "Expected empty list when CBRN keywords are disabled"
 
     def test_keywords_are_uppercase(self):
         """All returned keywords must be upper-cased."""
@@ -153,6 +153,7 @@ class TestLoadCBRNKeywords:
 # §4.4 — ac_cbrn_keyword_scan() — detection
 # ---------------------------------------------------------------------------
 
+
 class TestCBRNKeywordScanDetection:
     """Verify ac_cbrn_keyword_scan() detects all CBRN phrases."""
 
@@ -160,9 +161,7 @@ class TestCBRNKeywordScanDetection:
     def test_detects_cbrn_phrase(self, phrase: str):
         """ac_cbrn_keyword_scan() must return True for each CBRN phrase."""
         result = ac_cbrn_keyword_scan(phrase)
-        assert result is True, (
-            f"Expected CBRN detection for phrase: {phrase!r}"
-        )
+        assert result is True, f"Expected CBRN detection for phrase: {phrase!r}"
 
     @pytest.mark.parametrize("phrase", CBRN_PHRASES)
     def test_detects_cbrn_phrase_lowercase(self, phrase: str):
@@ -199,6 +198,7 @@ class TestCBRNKeywordScanDetection:
 # §4.4 — ac_cbrn_keyword_scan() — benign queries
 # ---------------------------------------------------------------------------
 
+
 class TestCBRNKeywordScanBenign:
     """Verify ac_cbrn_keyword_scan() does not flag benign financial queries."""
 
@@ -223,6 +223,7 @@ class TestCBRNKeywordScanBenign:
 # §4.4 — ac_cbrn_keyword_scan() — disabled state
 # ---------------------------------------------------------------------------
 
+
 class TestCBRNKeywordScanDisabled:
     """Verify ac_cbrn_keyword_scan() is a no-op when disabled."""
 
@@ -231,9 +232,7 @@ class TestCBRNKeywordScanDisabled:
         with patch.object(THRESHOLDS, "tier1_keywords_cbrn_enabled", False):
             # Even a known CBRN phrase must not be detected when disabled
             result = ac_cbrn_keyword_scan("synthesize nerve agent")
-        assert result is False, (
-            "Expected False when tier1_keywords_cbrn_enabled=False"
-        )
+        assert result is False, "Expected False when tier1_keywords_cbrn_enabled=False"
 
     def test_returns_false_for_all_phrases_when_disabled(self):
         """All CBRN phrases must return False when the filter is disabled."""
@@ -247,6 +246,7 @@ class TestCBRNKeywordScanDisabled:
 # ---------------------------------------------------------------------------
 # §4.4 — Coverage: all 15 expected CBRN terms present in threshold config
 # ---------------------------------------------------------------------------
+
 
 class TestCBRNKeywordCoverage:
     """Verify the 15 expected CBRN terms are present in the threshold config."""
@@ -273,6 +273,4 @@ class TestCBRNKeywordCoverage:
         """All 15 expected CBRN terms must be present in tier1_keywords_cbrn."""
         loaded = set(THRESHOLDS.tier1_keywords_cbrn)
         missing = [t for t in self.EXPECTED_TERMS if t not in loaded]
-        assert not missing, (
-            f"Missing CBRN terms from tier1_keywords_cbrn: {missing}"
-        )
+        assert not missing, f"Missing CBRN terms from tier1_keywords_cbrn: {missing}"

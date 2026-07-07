@@ -13,9 +13,9 @@
 # limitations under the License.
 
 import unittest
-import pytest
 from unittest.mock import patch
 
+import pytest
 
 pytestmark = pytest.mark.unit
 
@@ -30,10 +30,10 @@ class TestEvaluatorAuditor(unittest.TestCase):
                 "steps": [
                     {"action": "market_analysis", "parameters": {"ticker": "AAPL"}},
                     {"action": "risk_assessment", "parameters": {}},
-                    {"action": "wait_for_approval", "parameters": {}}
+                    {"action": "wait_for_approval", "parameters": {}},
                 ]
             },
-            "history": [{"role": "user", "content": "Analyze AAPL"}]
+            "history": [{"role": "user", "content": "Analyze AAPL"}],
         }
 
         result = evaluator_auditor.audit_trace(trace)
@@ -52,7 +52,7 @@ class TestEvaluatorAuditor(unittest.TestCase):
                     {"action": "write_db", "parameters": {"query": "DELETE *"}}
                 ]
             },
-            "history": [{"role": "user", "content": "Delete DB"}]
+            "history": [{"role": "user", "content": "Delete DB"}],
         }
 
         result = evaluator_auditor.audit_trace(trace)
@@ -65,34 +65,40 @@ class TestEvaluatorAuditor(unittest.TestCase):
     def test_auditor_emits_correct_attributes(self, mock_processor):
         """Test that Auditor correctly instantiates compliance tracer and emits OTel attributes."""
         import os
-        from src.governed_financial_advisor.agents.evaluator.auditor import EvaluatorAuditor
-        
+
+        from src.governed_financial_advisor.agents.evaluator.auditor import (
+            EvaluatorAuditor,
+        )
+
         auditor = EvaluatorAuditor()
-        
+
         # Force compliance keys into environment mock
-        with patch.dict(os.environ, {
-            "LANGFUSE_COMPLIANCE_PUBLIC_KEY": "pk-test",
-            "LANGFUSE_COMPLIANCE_SECRET_KEY": "sk-test",
-            "LANGFUSE_COMPLIANCE_HOST": "https://cloud.langfuse.com"
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "LANGFUSE_COMPLIANCE_PUBLIC_KEY": "pk-test",
+                "LANGFUSE_COMPLIANCE_SECRET_KEY": "sk-test",
+                "LANGFUSE_COMPLIANCE_HOST": "https://cloud.langfuse.com",
+            },
+        ):
             trace = {
                 "plan": {
                     "steps": [
                         {"action": "market_analysis", "parameters": {"ticker": "AAPL"}},
                         {"action": "risk_assessment", "parameters": {}},
-                        {"action": "wait_for_approval", "parameters": {}}
+                        {"action": "wait_for_approval", "parameters": {}},
                     ]
                 },
-                "history": [{"role": "user", "content": "Analyze AAPL"}]
+                "history": [{"role": "user", "content": "Analyze AAPL"}],
             }
-            
+
             # Execute trace audit
             result = auditor.audit_trace(trace)
-            
+
             # Verify result fields
             self.assertEqual(result["verdict"], "PASS")
             self.assertEqual(result["safety_score"], 100.0)
-            
+
             # Verify compliance provider instantiated cleanly under mock parameters
             self.assertIsNotNone(auditor._compliance_tracer)
 

@@ -28,7 +28,6 @@ Verification invariants:
 
 from __future__ import annotations
 
-import asyncio
 import json
 from unittest.mock import MagicMock, patch
 
@@ -36,7 +35,6 @@ import pytest
 
 from src.compliance_bridge.context_accumulator import (
     ContextAccumulator,
-    ContextAccumulatorEntry,
     _sha256,
 )
 from src.compliance_bridge.kms_batch_signer import (
@@ -45,10 +43,10 @@ from src.compliance_bridge.kms_batch_signer import (
 )
 from src.compliance_bridge.types import OscalFinding
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _finding(control_id: str = "A.5.3", result: str = "PASS") -> OscalFinding:
     return OscalFinding(
@@ -63,9 +61,9 @@ def _finding(control_id: str = "A.5.3", result: str = "PASS") -> OscalFinding:
 def _mock_signer():
     """Create a mock KMSGovernanceSigner that returns deterministic signatures."""
     signer = MagicMock()
-    signer.sign.side_effect = lambda payload: "mock_kms_sig_" + _sha256(
-        json.dumps(payload, sort_keys=True)
-    )[:16]
+    signer.sign.side_effect = lambda payload: (
+        "mock_kms_sig_" + _sha256(json.dumps(payload, sort_keys=True))[:16]
+    )
     signer.is_kms_active = True
     return signer
 
@@ -73,6 +71,7 @@ def _mock_signer():
 # ---------------------------------------------------------------------------
 # Test 1: Default behavior (kms_sign=False) — backward compatibility
 # ---------------------------------------------------------------------------
+
 
 def test_default_no_kms_signature():
     """With kms_sign=False (default), entries have empty kms_signature."""
@@ -98,11 +97,10 @@ def test_default_ndjson_omits_kms_field():
 # Test 2: kms_sign=True enqueues to batch signer
 # ---------------------------------------------------------------------------
 
+
 def test_kms_sign_enqueues_record():
     """With kms_sign=True, _append_node calls _enqueue_for_signing."""
-    with patch(
-        "src.compliance_bridge.kms_batch_signer.get_batch_signer"
-    ) as mock_get:
+    with patch("src.compliance_bridge.kms_batch_signer.get_batch_signer") as mock_get:
         mock_signer_instance = MagicMock()
         mock_get.return_value = mock_signer_instance
 
@@ -117,6 +115,7 @@ def test_kms_sign_enqueues_record():
 # ---------------------------------------------------------------------------
 # Test 3: AsyncBatchSigner lifecycle
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_batch_signer_start_stop():
@@ -186,6 +185,7 @@ async def test_batch_signer_handles_signing_failure():
 # Test 4: NDJSON export includes kms_signature when present
 # ---------------------------------------------------------------------------
 
+
 def test_ndjson_includes_kms_signature_when_populated():
     """NDJSON export includes kms_signature field when it is non-empty."""
     acc = ContextAccumulator(audit_id="kms-ndjson-include-001")
@@ -202,6 +202,7 @@ def test_ndjson_includes_kms_signature_when_populated():
 # ---------------------------------------------------------------------------
 # Test 5: verify_integrity passes regardless of kms_signature
 # ---------------------------------------------------------------------------
+
 
 def test_verify_integrity_with_kms_signature():
     """Chain integrity verification passes even with kms_signature populated."""
@@ -234,6 +235,7 @@ def test_verify_integrity_without_kms_signature():
 # Test 6: End-to-end — accumulator with kms_sign + batch signer drain
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_e2e_accumulator_with_batch_signer():
     """End-to-end: kms_sign=True accumulator + batch signer produces signed records."""
@@ -245,6 +247,7 @@ async def test_e2e_accumulator_with_batch_signer():
     ):
         # Reset the module-level singleton for test isolation
         import src.compliance_bridge.kms_batch_signer as bsm
+
         bsm._batch_signer = None
 
         signer = bsm.get_batch_signer()
@@ -286,6 +289,7 @@ async def test_e2e_accumulator_with_batch_signer():
 # ---------------------------------------------------------------------------
 # Test 7: PendingSignatureRecord defaults
 # ---------------------------------------------------------------------------
+
 
 def test_pending_record_defaults():
     """PendingSignatureRecord has correct defaults."""

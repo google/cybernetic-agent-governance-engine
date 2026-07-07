@@ -76,10 +76,12 @@ _REQUIRED_JSON_KEYS = {
 # Helper: fresh FrameworkRouter with cleared class-level cache
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def clear_framework_router_cache():
     """Wipe the class-level cache before every test to prevent cross-test pollution."""
     from src.gateway.governance.oscal_ssp_exporter import FrameworkRouter
+
     FrameworkRouter._cache.clear()
     yield
     FrameworkRouter._cache.clear()
@@ -89,10 +91,12 @@ def clear_framework_router_cache():
 # Test 1 — JSON schema integrity for all four routing files
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("framework_id", _SUPPORTED_FRAMEWORKS)
 def test_framework_json_has_required_keys(framework_id):
     """Every framework JSON file must exist and contain all required top-level keys."""
     from src.gateway.governance.oscal_ssp_exporter import _FRAMEWORK_FILE_MAP
+
     file_stem = _FRAMEWORK_FILE_MAP[framework_id]
     json_path = _OSCAL_MAPPINGS_DIR / f"{file_stem}.json"
 
@@ -105,9 +109,7 @@ def test_framework_json_has_required_keys(framework_id):
         data = json.load(fh)
 
     missing = _REQUIRED_JSON_KEYS - set(data.keys())
-    assert not missing, (
-        f"{json_path.name} is missing required keys: {missing}"
-    )
+    assert not missing, f"{json_path.name} is missing required keys: {missing}"
 
     assert data["_framework_id"] == framework_id, (
         f"{json_path.name}: _framework_id '{data['_framework_id']}' "
@@ -134,6 +136,7 @@ def test_framework_json_has_required_keys(framework_id):
 # Test 2 — Cache identity: same object returned on repeated get() calls
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("framework_id", _SUPPORTED_FRAMEWORKS)
 def test_framework_router_cache_returns_same_object(framework_id):
     """FrameworkRouter.get() must return the identical instance on repeated calls
@@ -153,6 +156,7 @@ def test_framework_router_cache_returns_same_object(framework_id):
 # Test 3 — Cache isolation: loading one framework does not pollute another
 # ---------------------------------------------------------------------------
 
+
 def test_framework_router_cache_isolation():
     """Verify loading NIST does not affect the EU_AI_ACT cache entry and vice versa."""
     from src.gateway.governance.oscal_ssp_exporter import FrameworkRouter
@@ -160,7 +164,9 @@ def test_framework_router_cache_isolation():
     nist = FrameworkRouter.get("NIST")
     eu = FrameworkRouter.get("EU_AI_ACT")
 
-    assert nist is not eu, "NIST and EU_AI_ACT must be distinct FrameworkRouter instances."
+    assert nist is not eu, (
+        "NIST and EU_AI_ACT must be distinct FrameworkRouter instances."
+    )
     assert nist.framework_id == "NIST"
     assert eu.framework_id == "EU_AI_ACT"
     assert nist.label != eu.label, "Framework labels must differ across routers."
@@ -173,6 +179,7 @@ def test_framework_router_cache_isolation():
 # ---------------------------------------------------------------------------
 # Test 4 — UCA coverage: every expected UCA maps to at least one control
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("framework_id", _SUPPORTED_FRAMEWORKS)
 def test_all_ucas_have_at_least_one_control_mapping(framework_id):
@@ -197,6 +204,7 @@ def test_all_ucas_have_at_least_one_control_mapping(framework_id):
 # Test 5 — Control descriptions: every referenced control has a description
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("framework_id", _SUPPORTED_FRAMEWORKS)
 def test_all_referenced_controls_have_descriptions(framework_id):
     """Every control ID appearing in uca_mappings must have an entry in
@@ -216,13 +224,14 @@ def test_all_referenced_controls_have_descriptions(framework_id):
         f"but absent from control_descriptions (will produce placeholder prose):\n"
         + "\n".join(f"  {m}" for m in missing_descriptions)
         + f"\nFix: add missing entries to control_descriptions in "
-          f"config/oscal/framework_mappings/{framework_id}*.json."
+        f"config/oscal/framework_mappings/{framework_id}*.json."
     )
 
 
 # ---------------------------------------------------------------------------
 # Test 6 — Narrative template rendering (no stray {placeholders})
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("framework_id", _SUPPORTED_FRAMEWORKS)
 def test_narrative_template_renders_without_placeholder_artifacts(framework_id):
@@ -255,6 +264,7 @@ def test_narrative_template_renders_without_placeholder_artifacts(framework_id):
         )
         # Detect stray {placeholder} tokens from incomplete format() calls
         import re
+
         stray = re.findall(r"\{[a-z_]+\}", prose)
         assert not stray, (
             f"format_narrative('{ctrl}') for '{framework_id}' contains unrendered "
@@ -266,6 +276,7 @@ def test_narrative_template_renders_without_placeholder_artifacts(framework_id):
 # ---------------------------------------------------------------------------
 # Test 7 — build_summary() covers all UCAs, returns multi-line output
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("framework_id", _SUPPORTED_FRAMEWORKS)
 def test_build_summary_covers_all_ucas(framework_id):
@@ -296,6 +307,7 @@ def test_build_summary_covers_all_ucas(framework_id):
 # ---------------------------------------------------------------------------
 # Test 8 — all_controls() returns deduplicated list
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("framework_id", _SUPPORTED_FRAMEWORKS)
 def test_all_controls_has_no_duplicates(framework_id):
@@ -328,6 +340,7 @@ def test_all_controls_has_no_duplicates(framework_id):
 # Test 9 — Unknown framework raises ValueError clearly
 # ---------------------------------------------------------------------------
 
+
 def test_unknown_framework_raises_value_error():
     """FrameworkRouter.get() must raise ValueError with a helpful message when
     an unregistered framework ID is requested."""
@@ -347,18 +360,23 @@ def test_unknown_framework_raises_value_error():
 _NO_LEGAL_FORCE_MARKER = "no legal force"
 
 
-@pytest.mark.parametrize("region,ctrl_id,expect_suppressed", [
-    # US_FED: legacy_citation has NO marker → keep legacy citation
-    ("US_FED",   "CTRL_MRM_004", False),
-    ("US_FED",   "CTRL_TEL_003", False),
-    # EU_ECB: legacy_citation explicitly says "no legal force in EU jurisdiction"
-    ("EU_ECB",   "CTRL_MRM_004", True),
-    ("EU_ECB",   "CTRL_TEL_003", False),   # EU TEL has no marker — ISO baseline only
-    # APAC_MAS: legacy_citation says "no legal force in Singapore"
-    ("APAC_MAS", "CTRL_MRM_004", True),
-    ("APAC_MAS", "CTRL_TEL_003", False),   # APAC TEL has ISO baseline only
-])
-def test_no_legal_force_sentinel_drives_citation_selection(region, ctrl_id, expect_suppressed):
+@pytest.mark.parametrize(
+    "region,ctrl_id,expect_suppressed",
+    [
+        # US_FED: legacy_citation has NO marker → keep legacy citation
+        ("US_FED", "CTRL_MRM_004", False),
+        ("US_FED", "CTRL_TEL_003", False),
+        # EU_ECB: legacy_citation explicitly says "no legal force in EU jurisdiction"
+        ("EU_ECB", "CTRL_MRM_004", True),
+        ("EU_ECB", "CTRL_TEL_003", False),  # EU TEL has no marker — ISO baseline only
+        # APAC_MAS: legacy_citation says "no legal force in Singapore"
+        ("APAC_MAS", "CTRL_MRM_004", True),
+        ("APAC_MAS", "CTRL_TEL_003", False),  # APAC TEL has ISO baseline only
+    ],
+)
+def test_no_legal_force_sentinel_drives_citation_selection(
+    region, ctrl_id, expect_suppressed
+):
     """Verify that the _NO_LEGAL_FORCE_MARKER sentinel correctly selects between
     legacy_citation and primary_framework for OTel span emission.
 

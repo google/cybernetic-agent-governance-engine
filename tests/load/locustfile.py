@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import random
 import json
-import time
-from locust import HttpUser, task, between, events
+import random
+
+from locust import HttpUser, between, events, task
 
 # --- 1. Custom Metrics Hooks ---
 # We use this to track "business logic" errors (e.g., Guardrail blocks)
@@ -220,7 +220,9 @@ class GovernanceUser(HttpUser):
                     pass
                 response.failure(f"HTTP 403 (non-governance): {response.text[:200]}")
             elif response.status_code == 422:
-                response.failure(f"Validation error (schema mismatch): {response.text[:200]}")
+                response.failure(
+                    f"Validation error (schema mismatch): {response.text[:200]}"
+                )
             else:
                 response.failure(f"HTTP Error: {response.status_code}")
 

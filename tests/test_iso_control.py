@@ -20,8 +20,10 @@ Verifies that stamp_iso_control() correctly sets all 6 required OTel span attrib
 Note: The actual signature is stamp_iso_control(span, tier, control, outcome)
 using 'control' (not 'control_id') as the parameter name.
 """
-import pytest
+
 from unittest.mock import MagicMock
+
+import pytest
 
 pytestmark = pytest.mark.unit
 
@@ -41,8 +43,7 @@ def test_stamp_iso_control_sets_all_required_attributes():
 
     # Verify all 6 required attributes are set
     set_attribute_calls = {
-        call.args[0]: call.args[1]
-        for call in mock_span.set_attribute.call_args_list
+        call.args[0]: call.args[1] for call in mock_span.set_attribute.call_args_list
     }
 
     assert "iso42001.control" in set_attribute_calls
@@ -64,8 +65,7 @@ def test_stamp_iso_control_failed_outcome():
     stamp_iso_control(span=mock_span, tier=4, control="SC-4", outcome="FAILED")
 
     set_attribute_calls = {
-        call.args[0]: call.args[1]
-        for call in mock_span.set_attribute.call_args_list
+        call.args[0]: call.args[1] for call in mock_span.set_attribute.call_args_list
     }
     assert set_attribute_calls.get("iso42001.outcome") == "FAILED"
     assert set_attribute_calls.get("iso42001.control") == "SC-4"
@@ -79,8 +79,7 @@ def test_stamp_iso_control_evidence_chain_format():
     stamp_iso_control(span=mock_span, tier=3, control="A.6.1.2", outcome="BLOCK")
 
     set_attribute_calls = {
-        call.args[0]: call.args[1]
-        for call in mock_span.set_attribute.call_args_list
+        call.args[0]: call.args[1] for call in mock_span.set_attribute.call_args_list
     }
     assert set_attribute_calls.get("iso42001.evidence_chain") == "A.6.1.2:3:BLOCK"
 
@@ -109,8 +108,7 @@ def test_stamp_iso_control_timestamp_is_integer():
     stamp_iso_control(span=mock_span, tier=1, control="A.5.3", outcome="PASS")
 
     set_attribute_calls = {
-        call.args[0]: call.args[1]
-        for call in mock_span.set_attribute.call_args_list
+        call.args[0]: call.args[1] for call in mock_span.set_attribute.call_args_list
     }
     ts = set_attribute_calls.get("iso42001.timestamp")
     assert isinstance(ts, int)

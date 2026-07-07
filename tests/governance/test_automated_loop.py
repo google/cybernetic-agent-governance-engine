@@ -12,17 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest
-import pytest
 import os
 import sys
+import unittest
+
+import pytest
 
 # Ensure src is in path
 sys.path.append(os.getcwd())
 
 pytestmark = pytest.mark.unit
 
-from src.governed_financial_advisor.agents.risk_analyst.agent import ConstraintLogic, ProposedUCA
+from src.governed_financial_advisor.agents.risk_analyst.agent import (
+    ConstraintLogic,
+    ProposedUCA,
+)
 from src.governed_financial_advisor.governance.nemo_actions import (
     check_drawdown_limit,
     check_slippage_risk,
@@ -37,14 +41,14 @@ class TestAutomatedLoop(unittest.TestCase):
             variable="order_size",
             operator=">",
             threshold="0.01 * daily_volume",
-            condition="order_type==MARKET"
+            condition="order_type==MARKET",
         )
 
         uca = ProposedUCA(
             category="Wrong Order",
             hazard="H-Slippage",
             description="High slippage risk.",
-            constraint_logic=logic
+            constraint_logic=logic,
         )
 
         code = transpiler.generate_nemo_action(uca)
@@ -70,6 +74,7 @@ class TestAutomatedLoop(unittest.TestCase):
         context = {"drawdown_pct": 5.0}
         allowed = check_drawdown_limit(context)
         self.assertFalse(allowed)
+
 
 if __name__ == "__main__":
     unittest.main()

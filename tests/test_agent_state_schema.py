@@ -30,14 +30,15 @@ Run with: pytest tests/test_agent_state_schema.py -v
 import json
 from pathlib import Path
 
-import pytest
-
-SCHEMA_PATH = Path(__file__).parents[1] / "compliance" / "schemas" / "agent_state_schema.json"
+SCHEMA_PATH = (
+    Path(__file__).parents[1] / "compliance" / "schemas" / "agent_state_schema.json"
+)
 
 
 def get_agent_state_annotations() -> set[str]:
     """Return the set of field names declared in AgentState.__annotations__."""
     from src.governed_financial_advisor.graph.state import AgentState
+
     # TypedDict stores annotations in __annotations__ (includes inherited)
     annotations: dict = {}
     for cls in reversed(AgentState.__mro__):
