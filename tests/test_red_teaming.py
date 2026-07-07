@@ -19,23 +19,34 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
+from src.gateway.governance.schemas.thresholds import (
+    CbfThresholds,
+    ConfidenceThresholds,
+    ConsensusThresholds,
+    DrawdownThresholds,
+    GovernanceThresholds,
+    StpaThresholds,
+)
 from src.governed_financial_advisor.governance import nemo_actions
 from src.governed_financial_advisor.governance.nemo_actions import check_drawdown_limit
-from src.gateway.governance.schemas.thresholds import GovernanceThresholds, DrawdownThresholds, CbfThresholds, StpaThresholds, ConfidenceThresholds, ConsensusThresholds
 
 # Configure logging to capture output
 logging.basicConfig(level=logging.INFO)
+
 
 @pytest.fixture
 def mock_thresholds():
     """
     Fixture to mock the threshold loading mechanism.
     """
-    with mock.patch("src.governed_financial_advisor.governance.nemo_actions.load_and_validate_thresholds") as mock_load:
+    with mock.patch(
+        "src.governed_financial_advisor.governance.nemo_actions.load_and_validate_thresholds"
+    ) as mock_load:
         # Also reset cache to ensure clean state for each test
         nemo_actions._safety_params_cache = {}
         nemo_actions._last_check_time = 0.0
         yield mock_load
+
 
 def _get_mock_thresholds(drawdown_limit: float) -> GovernanceThresholds:
     """Helper to create a GovernanceThresholds object with a specific drawdown limit."""
@@ -46,12 +57,13 @@ def _get_mock_thresholds(drawdown_limit: float) -> GovernanceThresholds:
             uca5_drawdown_threshold_pct=4.5,
             uca6_max_order_volume_fraction=0.1,
             max_sell_portfolio_fraction=0.05,
-            max_latency_ms=200.0
+            max_latency_ms=200.0,
         ),
         confidence=ConfidenceThresholds(min_trade_confidence=0.7),
         consensus=ConsensusThresholds(threshold_usd=10000.0),
-        tier1_keywords=["AAPL", "GOOGL"]
+        tier1_keywords=["AAPL", "GOOGL"],
     )
+
 
 def test_standard_cbf_logic_default(mock_thresholds):
     """
@@ -67,6 +79,7 @@ def test_standard_cbf_logic_default(mock_thresholds):
     # 6% Drawdown (0.06) > 0.05 -> Unsafe
     context_unsafe = {"drawdown_pct": 6.0}
     assert check_drawdown_limit(context_unsafe) is False
+
 
 def test_hot_reload_dynamic_limit_with_cache(mock_thresholds):
     """
@@ -91,6 +104,7 @@ def test_hot_reload_dynamic_limit_with_cache(mock_thresholds):
     # Now it should pass.
     assert check_drawdown_limit(context) is True
 
+
 def test_invalid_data_sanitization(mock_thresholds):
     """
     Test Case 3: Invalid Data (Sanitization).
@@ -112,6 +126,7 @@ def test_invalid_data_sanitization(mock_thresholds):
     # 4% Drawdown should pass
     context_safe = {"drawdown_pct": 4.0}
     assert check_drawdown_limit(context_safe) is True
+
 
 def test_corrupt_file_resilience(mock_thresholds):
     """

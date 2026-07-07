@@ -13,8 +13,8 @@
 # limitations under the License.
 
 try:
-    from .symbolic_governor import SymbolicGovernor, GovernanceError
     from . import langgraph_harness
+    from .symbolic_governor import GovernanceError, SymbolicGovernor
 except ImportError:
     pass
 
@@ -24,9 +24,9 @@ except ImportError:
     pass
 
 __all__ = [
-    "SymbolicGovernor",
     "GovernanceError",
-    "langgraph_harness",
+    "SymbolicGovernor",
     "causal_safety_check",
     "generate_mock_telemetry",
+    "langgraph_harness",
 ]

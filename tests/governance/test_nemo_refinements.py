@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
-import unittest
-import pytest
 import os
 import sys
+import time
+import unittest
+
+import pytest
 
 # Ensure src is in path
 sys.path.append(os.getcwd())
@@ -33,8 +34,12 @@ from src.governed_financial_advisor.governance.nemo_actions import (
 class TestNeMoRefinements(unittest.TestCase):
     def test_approval_token_signature(self):
         """Test AP2 Signature check."""
-        self.assertTrue(check_approval_token({"approval_token": "valid_signed_token_123"}))
-        self.assertTrue(check_approval_token({"approval_token": "valid_token"})) # Legacy compat
+        self.assertTrue(
+            check_approval_token({"approval_token": "valid_signed_token_123"})
+        )
+        self.assertTrue(
+            check_approval_token({"approval_token": "valid_token"})
+        )  # Legacy compat
         self.assertFalse(check_approval_token({"approval_token": "bad_sig"}))
 
     def test_data_latency_fresh(self):
@@ -53,7 +58,7 @@ class TestNeMoRefinements(unittest.TestCase):
         """Test Atomic check passes when history is present."""
         context = {
             "current_leg_index": 2,
-            "audit_trail": [{"leg_index": 1, "status": "filled"}]
+            "audit_trail": [{"leg_index": 1, "status": "filled"}],
         }
         self.assertTrue(check_atomic_execution(context))
 
@@ -61,9 +66,10 @@ class TestNeMoRefinements(unittest.TestCase):
         """Test Atomic check fails when history is missing."""
         context = {
             "current_leg_index": 2,
-            "audit_trail": [] # Leg 1 missing
+            "audit_trail": [],  # Leg 1 missing
         }
         self.assertFalse(check_atomic_execution(context))
+
 
 if __name__ == "__main__":
     unittest.main()

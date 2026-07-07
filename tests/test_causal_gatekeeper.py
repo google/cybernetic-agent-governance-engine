@@ -19,16 +19,19 @@ Tests the causal_safety_check function directly (unit tests) and its
 integration with the SymbolicGovernor (integration tests via mock).
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import numpy as np
 import pandas as pd
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
 
 # Skip the entire module gracefully when dowhy is not installed (e.g. in CI
 # environments that install only the base dependency group without the
 # [compliance] extra).  This prevents a hard collection error from propagating
 # to the AI 600-1 Unit Tests job.
-pytest.importorskip("dowhy", reason="dowhy not installed — skipping causal gatekeeper tests")
+pytest.importorskip(
+    "dowhy", reason="dowhy not installed — skipping causal gatekeeper tests"
+)
 
 pytestmark = pytest.mark.local
 
@@ -36,6 +39,7 @@ pytestmark = pytest.mark.local
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def stable_telemetry():
@@ -45,26 +49,34 @@ def stable_telemetry():
     treats this data as fresh (matching the contract of generate_mock_telemetry).
     """
     import time
+
     np.random.seed(42)
     n = 200
     market_volatility = np.random.uniform(0.1, 0.9, n)
     trade_amount = np.random.normal(5000, 1000, n) - (market_volatility * 2000)
     trade_amount = np.clip(trade_amount, 100, 10000)
-    risk_score = (market_volatility * 0.5) + (trade_amount / 10000 * 0.5) + np.random.normal(0, 0.05, n)
+    risk_score = (
+        (market_volatility * 0.5)
+        + (trade_amount / 10000 * 0.5)
+        + np.random.normal(0, 0.05, n)
+    )
     risk_score = np.clip(risk_score, 0.0, 1.0)
     now = time.time()
     timestamps = now - np.random.uniform(0, 3600, n)
-    return pd.DataFrame({
-        'market_volatility': market_volatility,
-        'trade_amount': trade_amount,
-        'risk_score': risk_score,
-        'timestamp': timestamps,
-    })
+    return pd.DataFrame(
+        {
+            "market_volatility": market_volatility,
+            "trade_amount": trade_amount,
+            "risk_score": risk_score,
+            "timestamp": timestamps,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Unit Tests — causal_safety_check directly
 # ---------------------------------------------------------------------------
+
 
 class TestCausalSafetyCheckUnit:
     """Unit tests for the causal_safety_check function."""
@@ -72,18 +84,21 @@ class TestCausalSafetyCheckUnit:
     def test_zero_amount_is_safe(self, stable_telemetry):
         """A trade with amount <= 0 should always be considered safe."""
         from src.gateway.governance.causal_gatekeeper import causal_safety_check
+
         result = causal_safety_check({"amount": 0}, stable_telemetry)
         assert result is True
 
     def test_negative_amount_is_safe(self, stable_telemetry):
         """A trade with negative amount should always be considered safe."""
         from src.gateway.governance.causal_gatekeeper import causal_safety_check
+
         result = causal_safety_check({"amount": -100}, stable_telemetry)
         assert result is True
 
     def test_small_trade_with_stable_data_passes(self, stable_telemetry):
         """A small trade against stable telemetry should pass the causal check."""
         from src.gateway.governance.causal_gatekeeper import causal_safety_check
+
         result = causal_safety_check({"amount": 1}, stable_telemetry)
         assert result is True
 
@@ -94,13 +109,20 @@ class TestCausalSafetyCheckUnit:
         the telemetry freshness check treats synthetic data as fresh.
         """
         from src.gateway.governance.causal_gatekeeper import generate_mock_telemetry
+
         df = generate_mock_telemetry(n_samples=100)
         assert len(df) == 100
-        assert set(df.columns) == {'market_volatility', 'trade_amount', 'risk_score', 'timestamp'}
+        assert set(df.columns) == {
+            "market_volatility",
+            "trade_amount",
+            "risk_score",
+            "timestamp",
+        }
 
     def test_generate_mock_telemetry_deterministic(self):
         """Mock telemetry should be deterministic (seeded)."""
         from src.gateway.governance.causal_gatekeeper import generate_mock_telemetry
+
         df1 = generate_mock_telemetry(50)
         df2 = generate_mock_telemetry(50)
         pd.testing.assert_frame_equal(df1, df2)
@@ -112,11 +134,13 @@ class TestCausalSafetyCheckUnit:
         result from a previous test with the same cache key cannot mask the
         fail-safe behaviour being tested here.
         """
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
+
         from src.gateway.governance.causal_gatekeeper import causal_safety_check
+
         # Provide a DataFrame missing required columns to trigger an error.
         # No timestamp column → freshness check fails closed → returns False.
-        bad_data = pd.DataFrame({'x': [1, 2, 3], 'y': [4, 5, 6]})
+        bad_data = pd.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
         with patch(
             "src.gateway.governance.causal_gatekeeper._causal_cache_get_sync",
             return_value=None,  # force cache miss so the check actually runs
@@ -129,14 +153,15 @@ class TestCausalSafetyCheckUnit:
 # Integration Tests — SymbolicGovernor with causal gatekeeper
 # ---------------------------------------------------------------------------
 
+
 class TestCausalGatekeeperIntegration:
     """Tests causal gatekeeper integration within the SymbolicGovernor."""
 
     def _create_mock_governor(self, telemetry_data=None):
         """Helper to create a SymbolicGovernor with all checks mocked except causal."""
-        from src.gateway.governance.symbolic_governor import SymbolicGovernor
-        from src.gateway.governance.contracts import SafetyFilter, ConsensusProvider
         from src.gateway.core.policy import OPAClient
+        from src.gateway.governance.contracts import ConsensusProvider, SafetyFilter
+        from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
         opa_client = MagicMock(spec=OPAClient)
         opa_client.evaluate_policy = AsyncMock(return_value={"decision": "ALLOW"})
@@ -145,9 +170,7 @@ class TestCausalGatekeeperIntegration:
         safety_filter.verify_action = AsyncMock(return_value="SAFE")
 
         consensus_engine = MagicMock(spec=ConsensusProvider)
-        consensus_engine.check_consensus = AsyncMock(
-            return_value={"status": "APPROVE"}
-        )
+        consensus_engine.check_consensus = AsyncMock(return_value={"status": "APPROVE"})
 
         telemetry_provider = None
         if telemetry_data is not None:
@@ -183,7 +206,9 @@ class TestCausalGatekeeperIntegration:
             mock_check.return_value = False
             result = await governor.verify("execute_trade", intent)
 
-        causal_violations = [v for v in result["violations"] if "DoWhy refutation failed" in v]
+        causal_violations = [
+            v for v in result["violations"] if "DoWhy refutation failed" in v
+        ]
         assert len(causal_violations) > 0
 
     @pytest.mark.asyncio

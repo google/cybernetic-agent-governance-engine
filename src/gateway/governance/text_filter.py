@@ -25,7 +25,7 @@ Keyword list is sourced entirely from the validated threshold singleton
 
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Threshold singleton (Phase 2.3)
@@ -40,6 +40,7 @@ logger = logging.getLogger("SafetyLayer")
 
 try:
     import ahocorasick as _ahocorasick
+
     _AC_AVAILABLE = True
 except ImportError:
     _ahocorasick = None  # type: ignore[assignment]
@@ -51,7 +52,7 @@ except ImportError:
 
 # Keyword list is sourced entirely from the validated threshold singleton.
 # No inline literals — all values live in config/governance_thresholds.json.
-_AC_AUTOMATON: Optional[Any] = None
+_AC_AUTOMATON: Any | None = None
 _AC_BUILT: bool = False
 
 
@@ -69,7 +70,9 @@ def _load_cbrn_keywords() -> list[str]:
     """
     if not THRESHOLDS.tier1_keywords_cbrn_enabled:
         return []
-    return list(THRESHOLDS.tier1_keywords_cbrn)  # already upper-cased by Pydantic validator
+    return list(
+        THRESHOLDS.tier1_keywords_cbrn
+    )  # already upper-cased by Pydantic validator
 
 
 def _validate_keyword(kw: str) -> bool:
@@ -95,7 +98,7 @@ def _validate_keyword(kw: str) -> bool:
         return False
 
 
-def _build_automaton() -> Optional[Any]:
+def _build_automaton() -> Any | None:
     """Build and return a pyahocorasick Automaton from the Tier-1 keyword list.
 
     Validates each keyword before adding it to the automaton (H-09).
@@ -121,7 +124,8 @@ def _build_automaton() -> Optional[Any]:
     A.make_automaton()
     logger.info(
         "✅ Aho-Corasick automaton built with %d/%d valid Tier-1 keywords.",
-        accepted, len(keywords),
+        accepted,
+        len(keywords),
     )
     return A
 

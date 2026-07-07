@@ -79,10 +79,7 @@ import hashlib
 import json
 import logging
 import os
-import time
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional
 
 logger = logging.getLogger("cage.evidence_stream")
 
@@ -96,17 +93,17 @@ def _get_signing_algorithm() -> str:
     """
     try:
         from src.gateway.governance.kms_signer import get_governance_signer
+
         return get_governance_signer().signing_algorithm
     except Exception:
         return "UNKNOWN"
+
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-_ENABLED: bool = (
-    os.environ.get("EVIDENCE_STREAM_ENABLED", "false").lower() == "true"
-)
+_ENABLED: bool = os.environ.get("EVIDENCE_STREAM_ENABLED", "false").lower() == "true"
 _REDIS_URL: str = os.environ.get(
     "EVIDENCE_STREAM_REDIS_URL",
     os.environ.get("REDIS_URL", ""),
@@ -116,9 +113,7 @@ _STREAM_KEY: str = os.environ.get("EVIDENCE_STREAM_KEY", "cage:evidence:stream")
 _MAX_LEN: int = int(os.environ.get("EVIDENCE_STREAM_MAX_LEN", "100000"))
 _GCS_FLUSH_SECONDS: int = int(os.environ.get("EVIDENCE_STREAM_GCS_FLUSH_SECONDS", "60"))
 _GCS_BUCKET: str = os.environ.get("EVIDENCE_STREAM_GCS_BUCKET", "")
-_KMS_SIGN: bool = (
-    os.environ.get("EVIDENCE_STREAM_KMS_SIGN", "false").lower() == "true"
-)
+_KMS_SIGN: bool = os.environ.get("EVIDENCE_STREAM_KMS_SIGN", "false").lower() == "true"
 
 _SCHEMA = "cage-evidence-stream/1.0"
 
@@ -126,6 +121,7 @@ _SCHEMA = "cage-evidence-stream/1.0"
 # ---------------------------------------------------------------------------
 # SHA-256 helpers (identical to context_accumulator.py)
 # ---------------------------------------------------------------------------
+
 
 def _sha256(data: str) -> str:
     """Return the SHA-256 hex digest of *data*."""
@@ -173,7 +169,7 @@ class EvidenceStreamSink:
         self._prev_hash: str = _sha256("EVIDENCE_STREAM_GENESIS")
         self._sequence: int = 0
         self._running = False
-        self._flush_task: Optional[asyncio.Task] = None
+        self._flush_task: asyncio.Task | None = None
         self._chain_lock = asyncio.Lock()
 
     async def start(self) -> None:
@@ -183,6 +179,7 @@ class EvidenceStreamSink:
 
         try:
             import redis.asyncio as aioredis
+
             self._redis = aioredis.from_url(
                 self._redis_url,
                 db=self._redis_db,
@@ -235,7 +232,7 @@ class EvidenceStreamSink:
             self._sequence,
         )
 
-    async def ingest(self, event: dict) -> Optional[str]:
+    async def ingest(self, event: dict) -> str | None:
         """Ingest a governance event into the evidence stream.
 
         The event is hash-chained, optionally KMS-signed, and persisted
@@ -313,9 +310,7 @@ class EvidenceStreamSink:
                 callback=_on_signed,
             )
         except Exception as exc:
-            logger.warning(
-                "[EvidenceStream] KMS enqueue failed: %s", exc
-            )
+            logger.warning("[EvidenceStream] KMS enqueue failed: %s", exc)
 
     async def _gcs_flush_loop(self) -> None:
         """Background daemon that flushes Redis Stream entries to GCS.
@@ -364,9 +359,7 @@ class EvidenceStreamSink:
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                logger.error(
-                    "[EvidenceStream] GCS flush error: %s", exc
-                )
+                logger.error("[EvidenceStream] GCS flush error: %s", exc)
                 await asyncio.sleep(5.0)
 
     async def _upload_to_gcs(self, content: str, batch_id: str) -> None:
@@ -425,7 +418,7 @@ class EvidenceStreamSink:
 # Module-level singleton
 # ---------------------------------------------------------------------------
 
-_evidence_sink: Optional[EvidenceStreamSink] = None
+_evidence_sink: EvidenceStreamSink | None = None
 
 
 def get_evidence_sink() -> EvidenceStreamSink:

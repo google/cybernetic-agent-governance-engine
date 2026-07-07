@@ -36,7 +36,8 @@ import collections
 import logging
 import os
 import time
-from importlib.metadata import version as _pkg_version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from typing import Any
 
 logger = logging.getLogger("Gateway.Governance.IsoControl")
@@ -54,6 +55,7 @@ _REDIS_STREAM_KEY = "iso_control:audit_trail"
 # Defaults to "US_FED" so that existing deployments without the env var set
 # continue to stamp spans exactly as before (backward-compatible).
 # ---------------------------------------------------------------------------
+
 
 def _get_deployment_region() -> str:
     return os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
@@ -79,7 +81,7 @@ NIST_MAP: dict[str, str] = {
     "A.6.2": "SA-15",
     "A.8.4": "SI-7",
     "A.9.2": "SA-9",
-    "SC-4":  "AC-6",
+    "SC-4": "AC-6",
 }
 
 # ISO 42001 Annex A control → EU AI Act article (EU_ECB only)
@@ -104,6 +106,7 @@ MAS_MAP: dict[str, str] = {
 # Gateway version — resolved once at import time
 # ---------------------------------------------------------------------------
 
+
 def _resolve_gateway_version() -> str:
     try:
         return _pkg_version("cybernetic-governance-engine")
@@ -122,6 +125,7 @@ _GATEWAY_VERSION: str = _resolve_gateway_version()
 # Redis persistence helper
 # ---------------------------------------------------------------------------
 
+
 def _persist_evaluation(result: dict) -> None:
     """Write an ISO control evaluation result to a Redis stream for durable audit trail.
 
@@ -130,7 +134,10 @@ def _persist_evaluation(result: dict) -> None:
     the control evaluation path.
     """
     try:
-        from src.gateway.infrastructure.redis_client import sync_redis_client  # noqa: PLC0415
+        from src.gateway.infrastructure.redis_client import (
+            sync_redis_client,
+        )
+
         if sync_redis_client is None:
             return
         # XADD requires a flat dict of str→str fields
@@ -147,6 +154,7 @@ def _persist_evaluation(result: dict) -> None:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def stamp_iso_control(
     span: Any,
@@ -190,13 +198,13 @@ def stamp_iso_control(
     evidence_chain: str = f"{control}:{tier}:{outcome}"
 
     # Universal: ISO 42001 evidence always produced (R-1 — no region guard).
-    span.set_attribute("iso42001.control",         control)
-    span.set_attribute("iso42001.tier",            tier)
-    span.set_attribute("iso42001.outcome",         outcome)
-    span.set_attribute("iso42001.timestamp",       timestamp_ms)
+    span.set_attribute("iso42001.control", control)
+    span.set_attribute("iso42001.tier", tier)
+    span.set_attribute("iso42001.outcome", outcome)
+    span.set_attribute("iso42001.timestamp", timestamp_ms)
     span.set_attribute("iso42001.gateway_version", _GATEWAY_VERSION)
-    span.set_attribute("iso42001.evidence_chain",  evidence_chain)
-    span.set_attribute("cage.iso_framework",       "ISO/IEC 42001:2023")
+    span.set_attribute("iso42001.evidence_chain", evidence_chain)
+    span.set_attribute("cage.iso_framework", "ISO/IEC 42001:2023")
 
     # Jurisdictional extension: add region-specific control mapping (R-2/R-3/R-4).
     if region == "US_FED":
@@ -218,7 +226,10 @@ def stamp_iso_control(
 
     logger.debug(
         "stamp_iso_control: control=%s tier=%d outcome=%s region=%s",
-        control, tier, outcome, region,
+        control,
+        tier,
+        outcome,
+        region,
     )
 
     # Build evaluation result dict and persist durably

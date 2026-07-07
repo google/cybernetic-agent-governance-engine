@@ -33,7 +33,6 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Optional
 
 import networkx as nx
 import numpy as np
@@ -44,16 +43,18 @@ from opentelemetry import trace
 # Patch the missing attribute so dowhy 0.12 can find it at runtime.
 if not hasattr(nx.algorithms, "d_separated"):
     from networkx.algorithms.d_separation import is_d_separator as _is_d_separator
+
     nx.algorithms.d_separated = _is_d_separator
 
 try:
     from dowhy import CausalModel as _CausalModel
+
     _DOWHY_AVAILABLE = True
 except ImportError:
     _CausalModel = None  # type: ignore[assignment,misc]
     _DOWHY_AVAILABLE = False
 
-from src.gateway.governance.constants import GovernanceControl, ControlRegistry
+from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("src.gateway.governance.causal_gatekeeper")
@@ -69,9 +70,7 @@ TELEMETRY_MAX_STALENESS_SECONDS: int = int(
 
 # TTL for the Redis-backed causal result cache keyed on (action_type, market_regime).
 # Default: 60 seconds.  Set to 0 to disable caching.
-CAUSAL_CACHE_TTL_SECONDS: int = int(
-    os.getenv("CAUSAL_CACHE_TTL_SECONDS", "60")
-)
+CAUSAL_CACHE_TTL_SECONDS: int = int(os.getenv("CAUSAL_CACHE_TTL_SECONDS", "60"))
 
 # ---------------------------------------------------------------------------
 # Causal lock thresholds — Phase 2 (CTRL_TEL_003) and Phase 1 risk boundary
@@ -108,9 +107,7 @@ CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE: float = float(
 #   multiplied by the trade amount.
 #   Rationale: 0.95 leaves a 5% safety margin below the maximum risk score
 #   of 1.0, consistent with the CBF γ=0.5 decay factor.
-CAUSAL_LOCK_RISK_BOUNDARY: float = float(
-    os.getenv("CAUSAL_LOCK_RISK_BOUNDARY", "0.95")
-)
+CAUSAL_LOCK_RISK_BOUNDARY: float = float(os.getenv("CAUSAL_LOCK_RISK_BOUNDARY", "0.95"))
 
 # NOTE: Timestamp-based ordering is a best-effort approximation. For production,
 # use span parentId relationships via OpenTelemetry context propagation.
@@ -162,24 +159,31 @@ def generate_mock_telemetry(n_samples: int = 1000) -> pd.DataFrame:
     # Outcome: Risk Score (influenced by both volatility and trade amount)
     # Higher volatility -> higher risk
     # Higher trade amount -> higher risk
-    risk_score = (market_volatility * 0.5) + (trade_amount / 10000 * 0.5) + np.random.normal(0, 0.05, n_samples)
+    risk_score = (
+        (market_volatility * 0.5)
+        + (trade_amount / 10000 * 0.5)
+        + np.random.normal(0, 0.05, n_samples)
+    )
     risk_score = np.clip(risk_score, 0.0, 1.0)
 
     # Timestamps: spread over the last 60 minutes so freshness check passes.
     now_epoch = datetime.now(tz=timezone.utc).timestamp()
     timestamps = now_epoch - np.random.uniform(0, 3600, n_samples)
 
-    return pd.DataFrame({
-        'market_volatility': market_volatility,
-        'trade_amount': trade_amount,
-        'risk_score': risk_score,
-        'timestamp': timestamps,
-    })
+    return pd.DataFrame(
+        {
+            "market_volatility": market_volatility,
+            "trade_amount": trade_amount,
+            "risk_score": risk_score,
+            "timestamp": timestamps,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers — telemetry freshness
 # ---------------------------------------------------------------------------
+
 
 def _check_telemetry_freshness(
     telemetry: pd.DataFrame,
@@ -235,7 +239,8 @@ def _check_telemetry_freshness(
             logger.warning(
                 "Telemetry freshness check: cannot parse timestamp column '%s': %s "
                 "— failing closed.",
-                ts_col, parse_exc,
+                ts_col,
+                parse_exc,
             )
             span.set_attribute("causal.telemetry_stale", True)
             span.set_attribute("causal.telemetry_age_seconds", -1)
@@ -249,7 +254,8 @@ def _check_telemetry_freshness(
                 "Telemetry freshness check: most-recent observation is %ds old "
                 "(threshold=%ds) — failing closed (stale telemetry cannot be "
                 "trusted for causal inference).",
-                age_seconds, TELEMETRY_MAX_STALENESS_SECONDS,
+                age_seconds,
+                TELEMETRY_MAX_STALENESS_SECONDS,
             )
             span.set_attribute("causal.telemetry_stale", True)
             span.set_attribute("causal.telemetry_age_seconds", age_seconds)
@@ -273,10 +279,14 @@ def _check_telemetry_freshness(
 # Internal helpers — Redis cache
 # ---------------------------------------------------------------------------
 
+
 async def _causal_cache_get(cache_key: str) -> dict | None:
     """Return a cached causal result dict, or None if absent/unavailable."""
     try:
-        from src.gateway.infrastructure.redis_client import redis_client  # noqa: PLC0415
+        from src.gateway.infrastructure.redis_client import (
+            redis_client,
+        )
+
         if redis_client is None:
             return None
         raw = await redis_client.get(cache_key)
@@ -284,7 +294,11 @@ async def _causal_cache_get(cache_key: str) -> dict | None:
             return None
         return json.loads(raw)
     except Exception as exc:
-        logger.warning("Causal cache GET failed (key=%s): %s — proceeding without cache.", cache_key, exc)
+        logger.warning(
+            "Causal cache GET failed (key=%s): %s — proceeding without cache.",
+            cache_key,
+            exc,
+        )
         return None
 
 
@@ -293,13 +307,20 @@ async def _causal_cache_set(cache_key: str, result: bool, reason: str) -> None:
     if CAUSAL_CACHE_TTL_SECONDS <= 0:
         return
     try:
-        from src.gateway.infrastructure.redis_client import redis_client  # noqa: PLC0415
+        from src.gateway.infrastructure.redis_client import (
+            redis_client,
+        )
+
         if redis_client is None:
             return
         payload = json.dumps({"result": result, "reason": reason})
         await redis_client.setex(cache_key, CAUSAL_CACHE_TTL_SECONDS, payload)
     except Exception as exc:
-        logger.warning("Causal cache SET failed (key=%s): %s — proceeding without cache.", cache_key, exc)
+        logger.warning(
+            "Causal cache SET failed (key=%s): %s — proceeding without cache.",
+            cache_key,
+            exc,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -311,13 +332,17 @@ async def _causal_cache_set(cache_key: str, result: bool, reason: str) -> None:
 # any callers that already run inside an async context.
 # ---------------------------------------------------------------------------
 
+
 def _causal_cache_get_sync(cache_key: str) -> dict | None:
     """Return a cached causal result dict, or None if absent/unavailable.
 
     Thread-safe: uses the synchronous ``sync_redis_client`` (blocking I/O).
     """
     try:
-        from src.gateway.infrastructure.redis_client import sync_redis_client  # noqa: PLC0415
+        from src.gateway.infrastructure.redis_client import (
+            sync_redis_client,
+        )
+
         if sync_redis_client is None:
             return None
         raw = sync_redis_client.get(cache_key)
@@ -327,7 +352,8 @@ def _causal_cache_get_sync(cache_key: str) -> dict | None:
     except Exception as exc:
         logger.warning(
             "Causal cache GET (sync) failed (key=%s): %s — proceeding without cache.",
-            cache_key, exc,
+            cache_key,
+            exc,
         )
         return None
 
@@ -340,7 +366,10 @@ def _causal_cache_set_sync(cache_key: str, result: bool, reason: str) -> None:
     if CAUSAL_CACHE_TTL_SECONDS <= 0:
         return
     try:
-        from src.gateway.infrastructure.redis_client import sync_redis_client  # noqa: PLC0415
+        from src.gateway.infrastructure.redis_client import (
+            sync_redis_client,
+        )
+
         if sync_redis_client is None:
             return
         payload = json.dumps({"result": result, "reason": reason})
@@ -348,7 +377,8 @@ def _causal_cache_set_sync(cache_key: str, result: bool, reason: str) -> None:
     except Exception as exc:
         logger.warning(
             "Causal cache SET (sync) failed (key=%s): %s — proceeding without cache.",
-            cache_key, exc,
+            cache_key,
+            exc,
         )
 
 
@@ -422,7 +452,9 @@ def validate_causal_ordering(
     return True
 
 
-def causal_safety_check(params: dict, current_telemetry: Optional[pd.DataFrame] = None) -> bool:
+def causal_safety_check(
+    params: dict, current_telemetry: pd.DataFrame | None = None
+) -> bool:
     """
     Acts as the 'Lock' on the Cage using DoWhy refutation for execute_trade.
 
@@ -464,6 +496,7 @@ def causal_safety_check(params: dict, current_telemetry: Optional[pd.DataFrame] 
         # the fixed np.random.seed(42) makes results predictable and gameable.
         # Reserve the mock fallback for dev/test environments only.
         import os as _os
+
         _cage_env = _os.getenv("CAGE_ENV", "production").lower()
         if _cage_env not in ("development", "test", "dev", "ci"):
             logger.error(
@@ -536,7 +569,9 @@ def causal_safety_check(params: dict, current_telemetry: Optional[pd.DataFrame] 
         # Attempt to retrieve a previously computed result for this
         # (action_type, market_regime) pair.  Cache hits skip both Phase 1
         # and Phase 2 entirely, reducing DoWhy overhead on repeated calls.
-        with tracer.start_as_current_span("causal_gatekeeper.cache_lookup") as cache_span:
+        with tracer.start_as_current_span(
+            "causal_gatekeeper.cache_lookup"
+        ) as cache_span:
             cache_span.set_attribute("causal.cache_key", cache_key)
             cached_payload = _causal_cache_get_sync(cache_key)
 
@@ -545,7 +580,9 @@ def causal_safety_check(params: dict, current_telemetry: Optional[pd.DataFrame] 
                 cached_reason = cached_payload.get("reason", "")
                 logger.debug(
                     "Causal cache HIT (key=%s) → result=%s reason=%s",
-                    cache_key, cached_result, cached_reason,
+                    cache_key,
+                    cached_result,
+                    cached_reason,
                 )
                 cache_span.set_attribute("causal.cache_hit", True)
                 return cached_result
@@ -563,24 +600,29 @@ def causal_safety_check(params: dict, current_telemetry: Optional[pd.DataFrame] 
         # MAS TRM Guidelines §6.3 for APAC_MAS).
         estimate = None
         identified_estimand = None
-        with tracer.start_as_current_span("causal_gatekeeper.statistical_kernel") as mrm_span:
-            mrm_span.set_attribute("governance.control_id",       mrm_meta["internal_id"])
-            mrm_span.set_attribute("governance.framework",        mrm_meta["primary_framework"])
-            mrm_span.set_attribute("governance.legacy_citation",  mrm_legacy)
-            mrm_span.set_attribute("governance.scope",            mrm_meta["scope"])
+        with tracer.start_as_current_span(
+            "causal_gatekeeper.statistical_kernel"
+        ) as mrm_span:
+            mrm_span.set_attribute("governance.control_id", mrm_meta["internal_id"])
+            mrm_span.set_attribute(
+                "governance.framework", mrm_meta["primary_framework"]
+            )
+            mrm_span.set_attribute("governance.legacy_citation", mrm_legacy)
+            mrm_span.set_attribute("governance.scope", mrm_meta["scope"])
             mrm_span.set_attribute("governance.deployment_region", active_region)
-            mrm_span.set_attribute("causal.graph",                causal_graph.strip())
+            mrm_span.set_attribute("causal.graph", causal_graph.strip())
 
             model = _CausalModel(
                 data=current_telemetry,
-                treatment='trade_amount',
-                outcome='risk_score',
-                graph=causal_graph
+                treatment="trade_amount",
+                outcome="risk_score",
+                graph=causal_graph,
             )
-            identified_estimand = model.identify_effect(proceed_when_unidentifiable=True)
+            identified_estimand = model.identify_effect(
+                proceed_when_unidentifiable=True
+            )
             estimate = model.estimate_effect(
-                identified_estimand,
-                method_name="backdoor.linear_regression"
+                identified_estimand, method_name="backdoor.linear_regression"
             )
             mrm_span.set_attribute("causal.estimated_effect", float(estimate.value))
 
@@ -591,13 +633,17 @@ def causal_safety_check(params: dict, current_telemetry: Optional[pd.DataFrame] 
         # trade call — non-deterministic and high-frequency.  This is the
         # agentic operational check; results are only as trustworthy as the
         # live telemetry sourced from Langfuse governance spans.
-        with tracer.start_as_current_span("causal_gatekeeper.placebo_refutation") as tel_span:
-            tel_span.set_attribute("governance.control_id",       tel_meta["internal_id"])
-            tel_span.set_attribute("governance.framework",        tel_meta["primary_framework"])
-            tel_span.set_attribute("governance.legacy_citation",  tel_legacy)
-            tel_span.set_attribute("governance.scope",            tel_meta["scope"])
+        with tracer.start_as_current_span(
+            "causal_gatekeeper.placebo_refutation"
+        ) as tel_span:
+            tel_span.set_attribute("governance.control_id", tel_meta["internal_id"])
+            tel_span.set_attribute(
+                "governance.framework", tel_meta["primary_framework"]
+            )
+            tel_span.set_attribute("governance.legacy_citation", tel_legacy)
+            tel_span.set_attribute("governance.scope", tel_meta["scope"])
             tel_span.set_attribute("governance.deployment_region", active_region)
-            tel_span.set_attribute("causal.num_simulations",      50)
+            tel_span.set_attribute("causal.num_simulations", 50)
 
             # ----------------------------------------------------------
             # Telemetry freshness check — before running 50 simulations
@@ -618,11 +664,11 @@ def causal_safety_check(params: dict, current_telemetry: Optional[pd.DataFrame] 
                 identified_estimand,
                 estimate,
                 method_name="placebo_treatment_refuter",
-                num_simulations=50  # Reduced for speed in a real-time gatekeeper
+                num_simulations=50,  # Reduced for speed in a real-time gatekeeper
             )
 
             # Check if the refuter finds a 'fake' effect
-            p_value = getattr(refuter, 'refutation_result', {}).get('p_value', 1.0)
+            p_value = getattr(refuter, "refutation_result", {}).get("p_value", 1.0)
             if isinstance(p_value, (list, tuple, np.ndarray)):
                 p_value = p_value[0]
 
@@ -630,28 +676,45 @@ def causal_safety_check(params: dict, current_telemetry: Optional[pd.DataFrame] 
             if isinstance(new_effect, (list, tuple, np.ndarray)):
                 new_effect = new_effect[0]
 
-            tel_span.set_attribute("causal.placebo_p_value",    float(p_value) if p_value is not None else -1.0)
-            tel_span.set_attribute("causal.placebo_new_effect", float(new_effect) if new_effect is not None else 0.0)
+            tel_span.set_attribute(
+                "causal.placebo_p_value",
+                float(p_value) if p_value is not None else -1.0,
+            )
+            tel_span.set_attribute(
+                "causal.placebo_new_effect",
+                float(new_effect) if new_effect is not None else 0.0,
+            )
 
-            if p_value is not None and not np.isnan(p_value) and float(p_value) < CAUSAL_LOCK_P_VALUE_THRESHOLD:
+            if (
+                p_value is not None
+                and not np.isnan(p_value)
+                and float(p_value) < CAUSAL_LOCK_P_VALUE_THRESHOLD
+            ):
                 logger.warning(
                     "[%s] CAUSAL LOCK: Placebo p-value %.4f < %.2f — world-model untrustworthy.",
-                    GovernanceControl.TELEMETRY_LIVE_VALIDATION.value, p_value,
+                    GovernanceControl.TELEMETRY_LIVE_VALIDATION.value,
+                    p_value,
                     CAUSAL_LOCK_P_VALUE_THRESHOLD,
                 )
                 tel_span.set_attribute("causal.lock_reason", "p_value_threshold")
-                tel_span.set_attribute("causal.lock_p_value_threshold", CAUSAL_LOCK_P_VALUE_THRESHOLD)
+                tel_span.set_attribute(
+                    "causal.lock_p_value_threshold", CAUSAL_LOCK_P_VALUE_THRESHOLD
+                )
                 _causal_cache_set_sync(cache_key, False, "p_value_threshold")
                 return False
 
             if abs(new_effect) > CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE:
                 logger.warning(
                     "[%s] CAUSAL LOCK: Placebo effect %.4f > %.2f — world-model untrustworthy.",
-                    GovernanceControl.TELEMETRY_LIVE_VALIDATION.value, new_effect,
+                    GovernanceControl.TELEMETRY_LIVE_VALIDATION.value,
+                    new_effect,
                     CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE,
                 )
                 tel_span.set_attribute("causal.lock_reason", "placebo_effect_magnitude")
-                tel_span.set_attribute("causal.lock_effect_magnitude_threshold", CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE)
+                tel_span.set_attribute(
+                    "causal.lock_effect_magnitude_threshold",
+                    CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE,
+                )
                 _causal_cache_set_sync(cache_key, False, "placebo_effect_magnitude")
                 return False
 

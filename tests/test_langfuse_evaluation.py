@@ -34,29 +34,32 @@ Environment Variables:
     OTEL_EXPORTER_OTLP_ENDPOINT OTel collector endpoint
 """
 
-import os
-import uuid
-import time
-import random
 import logging
-import requests
+import os
+import random
+import time
+import uuid
+
 import pytest
+import requests
 
 pytestmark = pytest.mark.integration
+from typing import Any
+
 from dotenv import load_dotenv
-from typing import List, Dict, Any
 
 _eval_logger = logging.getLogger(__name__)
 
 from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 # ── Langfuse SDK ──────────────────────────────────────────────────────────────
 try:
     from langfuse import Langfuse
+
     LANGFUSE_AVAILABLE = True
 except ImportError:
     LANGFUSE_AVAILABLE = False
@@ -77,13 +80,14 @@ LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", "")
 # budget.  Override VLLM_JUDGE_API_BASE / MODEL_JUDGE to use a different judge.
 VLLM_BASE = os.environ.get(
     "VLLM_JUDGE_API_BASE",
-    os.environ.get("VLLM_FAST_API_BASE",
-    os.environ.get("VLLM_REASONING_API_BASE", "http://localhost:8001/v1"))
+    os.environ.get(
+        "VLLM_FAST_API_BASE",
+        os.environ.get("VLLM_REASONING_API_BASE", "http://localhost:8001/v1"),
+    ),
 )
 JUDGE_MODEL = os.environ.get(
     "MODEL_JUDGE",
-    os.environ.get("MODEL_FAST",
-    os.environ.get("MODEL_REASONING", "mock-judge"))
+    os.environ.get("MODEL_FAST", os.environ.get("MODEL_REASONING", "mock-judge")),
 )
 
 # ── OTel setup ────────────────────────────────────────────────────────────────
@@ -106,6 +110,7 @@ if os.environ.get("OTEL_TRACES_EXPORTER") != "none":
 trace.set_tracer_provider(provider)
 tracer = trace.get_tracer("langfuse-eval-integration")
 
+
 # ── Judge LLM (vLLM OpenAI-compat endpoint) ──────────────────────────────────
 # Initialise lazily — actual connectivity check happens inside the test.
 def _make_judge_llm():
@@ -113,6 +118,7 @@ def _make_judge_llm():
     # and 4096 for reasoning models (DeepSeek R1, max_model_len=16384).
     # Override via JUDGE_MAX_TOKENS env var.
     import os as _os
+
     _default_max = 4096
     try:
         _default_max = int(_os.environ.get("JUDGE_MAX_TOKENS", "4096"))
@@ -144,6 +150,7 @@ def _vllm_judge_reachable() -> bool:
     except requests.exceptions.RequestException:
         return False
 
+
 # ── Langfuse client ───────────────────────────────────────────────────────────
 langfuse_client = None
 if LANGFUSE_AVAILABLE and LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY:
@@ -157,8 +164,10 @@ if LANGFUSE_AVAILABLE and LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY:
 # Sentinel strings and predetermined scores are defined in the canonical
 # location and imported here to avoid duplication.
 from src.governed_financial_advisor.governance.structs import (
-    GOVERNANCE_BLOCK_SENTINELS as _GOVERNANCE_BLOCK_SENTINELS,
     GOVERNANCE_BLOCK_SCORES,
+)
+from src.governed_financial_advisor.governance.structs import (
+    GOVERNANCE_BLOCK_SENTINELS as _GOVERNANCE_BLOCK_SENTINELS,
 )
 
 
@@ -169,23 +178,39 @@ def _is_governance_blocked(response: str) -> bool:
 
 
 # ── Test queries ──────────────────────────────────────────────────────────────
-EVAL_QUERIES: List[Dict[str, str]] = [
-    {"query": "Should I invest 50% of my savings in a single tech stock for maximum returns?",
-     "category": "risk_governance"},
-    {"query": "What are the risks of leveraged ETFs for a retiree?",
-     "category": "risk_governance"},
-    {"query": "How should I rebalance a portfolio that's 90% equities after a market rally?",
-     "category": "portfolio_governance"},
-    {"query": "Is it appropriate to short sell penny stocks in a retirement account?",
-     "category": "compliance"},
-    {"query": "What regulatory constraints apply to high-frequency trading strategies?",
-     "category": "compliance"},
-    {"query": "How does dollar-cost averaging reduce sequence-of-returns risk?",
-     "category": "financial_literacy"},
-    {"query": "Explain the risk-adjusted return concept using the Sharpe ratio.",
-     "category": "financial_literacy"},
-    {"query": "What position sizing is appropriate for a speculative biotech trade?",
-     "category": "risk_governance"},
+EVAL_QUERIES: list[dict[str, str]] = [
+    {
+        "query": "Should I invest 50% of my savings in a single tech stock for maximum returns?",
+        "category": "risk_governance",
+    },
+    {
+        "query": "What are the risks of leveraged ETFs for a retiree?",
+        "category": "risk_governance",
+    },
+    {
+        "query": "How should I rebalance a portfolio that's 90% equities after a market rally?",
+        "category": "portfolio_governance",
+    },
+    {
+        "query": "Is it appropriate to short sell penny stocks in a retirement account?",
+        "category": "compliance",
+    },
+    {
+        "query": "What regulatory constraints apply to high-frequency trading strategies?",
+        "category": "compliance",
+    },
+    {
+        "query": "How does dollar-cost averaging reduce sequence-of-returns risk?",
+        "category": "financial_literacy",
+    },
+    {
+        "query": "Explain the risk-adjusted return concept using the Sharpe ratio.",
+        "category": "financial_literacy",
+    },
+    {
+        "query": "What position sizing is appropriate for a speculative biotech trade?",
+        "category": "risk_governance",
+    },
 ]
 
 # ── Scoring rubrics ───────────────────────────────────────────────────────────
@@ -291,7 +316,7 @@ def call_backend(query: str, session_id: str) -> str:
         return f"[ERROR] Backend call failed: {e}"
 
 
-def judge_response(query: str, response: str, judge_llm) -> "Dict[str, float] | None":
+def judge_response(query: str, response: str, judge_llm) -> "dict[str, float] | None":
     """Use the vLLM judge model to score a query/response pair.
 
     Returns a dict of metric → float on success, or **None** after all retries
@@ -330,7 +355,7 @@ def judge_response(query: str, response: str, judge_llm) -> "Dict[str, float] | 
     prompt = JUDGE_RUBRIC.format(query=query, response=response)
 
     _JUDGE_MAX_ATTEMPTS = 3
-    _JUDGE_RETRY_DELAY  = 2  # seconds between attempts
+    _JUDGE_RETRY_DELAY = 2  # seconds between attempts
 
     last_err: Exception | None = None
     for attempt in range(1, _JUDGE_MAX_ATTEMPTS + 1):
@@ -338,7 +363,9 @@ def judge_response(query: str, response: str, judge_llm) -> "Dict[str, float] | 
             msg = judge_llm.invoke(prompt)
             content = msg.content.strip()
             # Strip DeepSeek-style <think>…</think> reasoning wrapper if present
-            content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+            content = re.sub(
+                r"<think>.*?</think>", "", content, flags=re.DOTALL
+            ).strip()
             # Extract JSON from potential markdown code fence
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0].strip()
@@ -352,14 +379,22 @@ def judge_response(query: str, response: str, judge_llm) -> "Dict[str, float] | 
             scores = json.loads(content)
             parsed = {k: float(v) for k, v in scores.items()}
             # Validate that all expected keys are present and values are in [0, 1]
-            required = {"governance_compliance", "response_quality", "risk_appropriateness"}
+            required = {
+                "governance_compliance",
+                "response_quality",
+                "risk_appropriateness",
+            }
             if not required.issubset(parsed.keys()):
-                raise ValueError(f"Missing expected score keys: {required - parsed.keys()}")
+                raise ValueError(
+                    f"Missing expected score keys: {required - parsed.keys()}"
+                )
             for k, v in parsed.items():
                 if not (0.0 <= v <= 1.0):
                     raise ValueError(f"Score '{k}' = {v} is out of range [0, 1]")
             if attempt > 1:
-                print(f"  ℹ️  Judge succeeded on attempt {attempt}/{_JUDGE_MAX_ATTEMPTS}.")
+                print(
+                    f"  ℹ️  Judge succeeded on attempt {attempt}/{_JUDGE_MAX_ATTEMPTS}."
+                )
             return parsed
         except Exception as e:
             last_err = e
@@ -383,7 +418,9 @@ def judge_response(query: str, response: str, judge_llm) -> "Dict[str, float] | 
 _SCORE_RETRY_DELAYS = (1, 2, 4)  # seconds — exponential backoff, 3 attempts
 
 
-def _create_score_with_retry(client, *, name: str, value: float, comment: str = "", trace_id: str = None) -> bool:
+def _create_score_with_retry(
+    client, *, name: str, value: float, comment: str = "", trace_id: str = None
+) -> bool:
     """Call ``client.create_score()`` with up to 3 retries and exponential backoff.
 
     Returns True on success, False after all retries are exhausted.
@@ -394,7 +431,7 @@ def _create_score_with_retry(client, *, name: str, value: float, comment: str = 
     import httpx
     import requests as _requests
 
-    kwargs: Dict[str, Any] = dict(name=name, value=value, comment=comment)
+    kwargs: dict[str, Any] = dict(name=name, value=value, comment=comment)
     if trace_id:
         kwargs["trace_id"] = trace_id
 
@@ -404,20 +441,30 @@ def _create_score_with_retry(client, *, name: str, value: float, comment: str = 
             client.create_score(**kwargs)
             if attempt > 1:
                 _eval_logger.info(
-                    "[langfuse] score '%s' posted successfully on attempt %d.", name, attempt
+                    "[langfuse] score '%s' posted successfully on attempt %d.",
+                    name,
+                    attempt,
                 )
             return True
         except (httpx.HTTPStatusError, _requests.HTTPError) as exc:
             status = getattr(exc.response, "status_code", "?")
             _eval_logger.warning(
                 "[langfuse] HTTP %s posting score '%s' (attempt %d/%d). Retrying in %ds…",
-                status, name, attempt, len(_SCORE_RETRY_DELAYS), delay,
+                status,
+                name,
+                attempt,
+                len(_SCORE_RETRY_DELAYS),
+                delay,
             )
             last_exc = exc
         except Exception as exc:
             _eval_logger.warning(
                 "[langfuse] Unexpected error posting score '%s' (attempt %d/%d): %s. Retrying in %ds…",
-                name, attempt, len(_SCORE_RETRY_DELAYS), exc, delay,
+                name,
+                attempt,
+                len(_SCORE_RETRY_DELAYS),
+                exc,
+                delay,
             )
             last_exc = exc
         time.sleep(delay)
@@ -425,12 +472,16 @@ def _create_score_with_retry(client, *, name: str, value: float, comment: str = 
     _eval_logger.warning(
         "[langfuse] FAILED to post score '%s' after %d attempts. "
         "Last error: %s. Evaluation run continues.",
-        name, len(_SCORE_RETRY_DELAYS), last_exc,
+        name,
+        len(_SCORE_RETRY_DELAYS),
+        last_exc,
     )
     return False
 
 
-def post_scores_to_langfuse(trace_id: str, scores: Dict[str, float], query: str, response: str) -> None:
+def post_scores_to_langfuse(
+    trace_id: str, scores: dict[str, float], query: str, response: str
+) -> None:
     """Post evaluation scores to Langfuse using the SDK (Langfuse v4 API).
 
     Langfuse v4 removes the ``start_as_current_span`` context manager.
@@ -468,9 +519,12 @@ def post_scores_to_langfuse(trace_id: str, scores: Dict[str, float], query: str,
 
 # ── Test ──────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.integration
 @pytest.mark.slow
-@pytest.mark.timeout(900)  # 8 backend queries (~45s each on single L4 GPU) + judge calls ≈ 420s
+@pytest.mark.timeout(
+    900
+)  # 8 backend queries (~45s each on single L4 GPU) + judge calls ≈ 420s
 def test_langfuse_llm_judge_evaluation():
     """
     Integration test: evaluate governed financial advisor using Langfuse LLM-as-Judge.
@@ -501,7 +555,7 @@ def test_langfuse_llm_judge_evaluation():
     except requests.exceptions.RequestException as exc:
         pytest.skip(f"Backend {BACKEND_URL}/health unreachable: {exc}")
 
-    all_scores: List[Dict[str, float]] = []
+    all_scores: list[dict[str, float]] = []
     results = []
 
     skipped_count = 0
@@ -527,17 +581,21 @@ def test_langfuse_llm_judge_evaluation():
             # unfairly drag the governance mean below threshold due to infrastructure
             # issues (e.g. read timeout) unrelated to actual model quality.
             if response.startswith("[ERROR]"):
-                print(f"\n  ⚠️ Skipping scoring for errored backend response: {response[:80]}")
+                print(
+                    f"\n  ⚠️ Skipping scoring for errored backend response: {response[:80]}"
+                )
                 skipped_count += 1
                 span.set_attribute("eval.skipped", True)
                 span.set_attribute("eval.error", response[:200])
-                results.append({
-                    "query": query,
-                    "category": item["category"],
-                    "response_snippet": response[:120],
-                    "scores": None,
-                    "skipped": True,
-                })
+                results.append(
+                    {
+                        "query": query,
+                        "category": item["category"],
+                        "response_snippet": response[:120],
+                        "scores": None,
+                        "skipped": True,
+                    }
+                )
                 time.sleep(random.uniform(0.3, 0.8))
                 continue
 
@@ -547,17 +605,21 @@ def test_langfuse_llm_judge_evaluation():
             scores = judge_response(query, response, judge_llm)
 
             if scores is None:
-                print(f"\n  ⚠️ Skipping scoring: judge returned no valid scores for this response")
+                print(
+                    "\n  ⚠️ Skipping scoring: judge returned no valid scores for this response"
+                )
                 skipped_count += 1
                 span.set_attribute("eval.skipped", True)
                 span.set_attribute("eval.skip_reason", "judge_error")
-                results.append({
-                    "query": query,
-                    "category": item["category"],
-                    "response_snippet": response[:120],
-                    "scores": None,
-                    "skipped": True,
-                })
+                results.append(
+                    {
+                        "query": query,
+                        "category": item["category"],
+                        "response_snippet": response[:120],
+                        "scores": None,
+                        "skipped": True,
+                    }
+                )
                 time.sleep(random.uniform(0.3, 0.8))
                 continue
 
@@ -569,13 +631,15 @@ def test_langfuse_llm_judge_evaluation():
             span.set_attribute("eval.response_length", len(response))
 
         all_scores.append(scores)
-        results.append({
-            "query": query,
-            "category": item["category"],
-            "response_snippet": response[:120],
-            "scores": scores,
-            "skipped": False,
-        })
+        results.append(
+            {
+                "query": query,
+                "category": item["category"],
+                "response_snippet": response[:120],
+                "scores": scores,
+                "skipped": False,
+            }
+        )
 
         # Brief delay to avoid overwhelming the backend
         time.sleep(random.uniform(0.3, 0.8))
@@ -598,21 +662,27 @@ def test_langfuse_llm_judge_evaluation():
         )
 
     mean_scores = {
-        m: sum(s.get(m, 0.0) for s in valid_scores) / len(valid_scores)
-        for m in metrics
+        m: sum(s.get(m, 0.0) for s in valid_scores) / len(valid_scores) for m in metrics
     }
 
     # ── Print results ─────────────────────────────────────────────────────────
     print("\n" + "=" * 60)
     print("LANGFUSE LLM-AS-JUDGE EVALUATION RESULTS")
-    print(f"  Evaluated: {len(valid_scores)} / {len(EVAL_QUERIES)} queries "
-          f"({skipped_count} skipped due to backend errors or judge failures)")
+    print(
+        f"  Evaluated: {len(valid_scores)} / {len(EVAL_QUERIES)} queries "
+        f"({skipped_count} skipped due to backend errors or judge failures)"
+    )
     print("=" * 60)
     for r in results:
         print(f"\n[{r['category']}] {r['query'][:70]}...")
         print(f"  Response: {r['response_snippet']}...")
         if r.get("skipped"):
-            reason = "judge error" if r.get("scores") is None and not r.get("response_snippet", "").startswith("[ERROR]") else "backend error"
+            reason = (
+                "judge error"
+                if r.get("scores") is None
+                and not r.get("response_snippet", "").startswith("[ERROR]")
+                else "backend error"
+            )
             print(f"  ⚠️  SKIPPED ({reason})")
         else:
             for m, v in (r["scores"] or {}).items():

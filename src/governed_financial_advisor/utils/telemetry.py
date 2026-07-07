@@ -16,13 +16,12 @@
 Telemetry configuration for GCP Cloud Logging and Cloud Trace.
 Centralized Observability via OTLP Collector.
 """
+
 import contextlib
+import json
 import logging
 import os
 import sys
-import json
-import re
-from typing import Any
 
 from src.governed_financial_advisor.utils.privacy import scrub_pii as global_scrub
 
@@ -31,12 +30,15 @@ os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "true"
 
 from pythonjsonlogger import json as jsonlogger
 
+
 # Configure Structured JSON Logging immediately
 class TraceIdFilter(logging.Filter):
     """Injects OpenTelemetry trace_id and span_id into log records."""
+
     def filter(self, record):
         try:
             from opentelemetry import trace
+
             span = trace.get_current_span()
             if span:
                 ctx = span.get_span_context()
@@ -48,14 +50,17 @@ class TraceIdFilter(logging.Filter):
             pass
         return True
 
+
 class ServiceContextFilter(logging.Filter):
     """Injects serviceContext for GCP Cloud Logging/Error Reporting."""
+
     def filter(self, record):
         record.serviceContext = {
             "service": os.getenv("SERVICE_NAME", "financial-advisor"),
-            "version": os.getenv("DEPLOY_TIMESTAMP", "unknown")
+            "version": os.getenv("DEPLOY_TIMESTAMP", "unknown"),
         }
         return True
+
 
 def setup_canonical_logging():
     """Configures the root logger to output structured JSON with trace correlation."""
@@ -67,8 +72,8 @@ def setup_canonical_logging():
 
     logHandler = logging.StreamHandler(sys.stdout)
     formatter = jsonlogger.JsonFormatter(
-        '%(asctime)s %(levelname)s %(name)s %(message)s %(trace_id)s %(span_id)s',
-        rename_fields={'levelname': 'severity', 'asctime': 'timestamp'}
+        "%(asctime)s %(levelname)s %(name)s %(message)s %(trace_id)s %(span_id)s",
+        rename_fields={"levelname": "severity", "asctime": "timestamp"},
     )
     logHandler.setFormatter(formatter)
     logHandler.addFilter(TraceIdFilter())
@@ -81,6 +86,7 @@ def setup_canonical_logging():
         log = logging.getLogger(log_name)
         log.handlers = []
         log.propagate = True
+
 
 # Initialize logging early
 HANDLER_ADDED = False
@@ -95,9 +101,11 @@ else:
         # Default to Console Logging if no other handler is added
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
         console_handler.setFormatter(formatter)
-        
+
         root_logger = logging.getLogger()
         root_logger.addHandler(console_handler)
         # Avoid duplicate handlers if called multiple times
@@ -110,6 +118,7 @@ _telemetry_configured = False
 # ---------------------------------------------------------------------------
 # Langfuse OTLP endpoint resolution
 # ---------------------------------------------------------------------------
+
 
 def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
     """Resolve the OTLP endpoint and auth headers in priority order.
@@ -146,7 +155,8 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
         endpoint = f"{host}/api/public/otel"
         token = base64.b64encode(f"{pk}:{sk}".encode()).decode()
         logger.info(
-            "✅ Telemetry: derived Langfuse OTLP endpoint from LANGFUSE_HOST → %s", endpoint
+            "✅ Telemetry: derived Langfuse OTLP endpoint from LANGFUSE_HOST → %s",
+            endpoint,
         )
         return endpoint, {"Authorization": f"Basic {token}"}
 
@@ -158,6 +168,7 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
         "telemetry is collected natively by Langfuse when LANGFUSE_HOST is set)"
     )
     return "", {}
+
 
 # ---------------------------------------------------------------------------
 # Resilience: downgrade noisy OTLP/S3 backend errors to WARNING level
@@ -229,7 +240,9 @@ def _install_otlp_error_filter() -> None:
     _filter = _OTLPErrorFilter()
     for ns in _OTLP_LOGGER_NAMESPACES:
         logging.getLogger(ns).addFilter(_filter)
-    logger.debug("🔇 OTLP error-downgrade filter installed on %s", _OTLP_LOGGER_NAMESPACES)
+    logger.debug(
+        "🔇 OTLP error-downgrade filter installed on %s", _OTLP_LOGGER_NAMESPACES
+    )
 
 
 # Install the filter eagerly at module-import time so that any
@@ -258,11 +271,13 @@ def configure_telemetry():
         return
 
     if os.getenv("ENABLE_LOGGING", "true").lower() != "true":
-         return
+        return
 
     try:
         if os.getenv("OTEL_TRACES_EXPORTER") == "none":
-            logger.info("🚫 OTEL Telemetry explicitly disabled via environment variable.")
+            logger.info(
+                "🚫 OTEL Telemetry explicitly disabled via environment variable."
+            )
             return
 
         # Install the S3 error-downgrade filter immediately so it intercepts
@@ -273,6 +288,7 @@ def configure_telemetry():
 
         class RedactingSpanProcessor(SpanProcessor):
             """Intercepts all spans and redacts PII from attributes before export."""
+
             def __init__(self, inner):
                 self.inner = inner
 
@@ -287,7 +303,7 @@ def configure_telemetry():
                         if isinstance(value, str):
                             scrubbed = global_scrub(value)
                             if scrubbed != value:
-                                 attrs[key] = scrubbed
+                                attrs[key] = scrubbed
                 self.inner.on_end(span)
 
             def shutdown(self):
@@ -299,43 +315,63 @@ def configure_telemetry():
 
         # Import optional dependencies
         from opentelemetry import trace
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter, Compression
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as GRPCSpanExporter
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+            OTLPSpanExporter as GRPCSpanExporter,
+        )
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            Compression,
+            OTLPSpanExporter,
+        )
         from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace.sampling import Sampler, SamplingResult, Decision
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import (
+            BatchSpanProcessor,
+            ConsoleSpanExporter,
+        )
+        from opentelemetry.sdk.trace.sampling import Decision, Sampler, SamplingResult
 
         class HealthProbeSampler(Sampler):
             def should_sample(
-                self, parent_context, trace_id, name, kind=None, attributes=None, links=None, trace_state=None
+                self,
+                parent_context,
+                trace_id,
+                name,
+                kind=None,
+                attributes=None,
+                links=None,
+                trace_state=None,
             ):
                 attributes = attributes or {}
                 # Handle both http.url and http.target
                 target_url = attributes.get("http.url", "")
                 target_url = target_url if isinstance(target_url, str) else ""
-                
+
                 target_target = attributes.get("http.target", "")
                 target_target = target_target if isinstance(target_target, str) else ""
 
                 target_method = attributes.get("http.method", "")
                 target_method = target_method if isinstance(target_method, str) else ""
-                
-                if any(path in target_url or path in target_target for path in ["/health", "/readiness", "resolve-cache"]):
+
+                if any(
+                    path in target_url or path in target_target
+                    for path in ["/health", "/readiness", "resolve-cache"]
+                ):
                     return SamplingResult(Decision.DROP)
                 if target_method == "HEAD":
                     return SamplingResult(Decision.DROP)
-                    
+
                 return SamplingResult(Decision.RECORD_AND_SAMPLE)
 
             def get_description(self):
                 return "HealthProbeSampler"
 
         # Configure Resource
-        resource = Resource.create({
-            "service.name": os.getenv("SERVICE_NAME", "financial-advisor"),
-            "service.version": os.getenv("DEPLOY_TIMESTAMP", "unknown"),
-        })
+        resource = Resource.create(
+            {
+                "service.name": os.getenv("SERVICE_NAME", "financial-advisor"),
+                "service.version": os.getenv("DEPLOY_TIMESTAMP", "unknown"),
+            }
+        )
 
         # Set up tracer provider
         provider = TracerProvider(resource=resource, sampler=HealthProbeSampler())
@@ -370,7 +406,9 @@ def configure_telemetry():
             )
         else:
             try:
-                if otel_endpoint.startswith("http://") or otel_endpoint.startswith("https://"):
+                if otel_endpoint.startswith("http://") or otel_endpoint.startswith(
+                    "https://"
+                ):
                     # Use HTTP Exporter — 5 s timeout so failures don't stall the BSP thread
                     otlp_exporter = OTLPSpanExporter(
                         endpoint=otel_endpoint,
@@ -388,7 +426,8 @@ def configure_telemetry():
                     logger.info(
                         "✅ OpenTelemetry: HTTP OTLP Exporter configured at %s "
                         "(timeout=%ds, with Final Redaction Tier)",
-                        otel_endpoint, _OTLP_EXPORT_TIMEOUT_S,
+                        otel_endpoint,
+                        _OTLP_EXPORT_TIMEOUT_S,
                     )
                     otlp_configured = True
                 else:
@@ -409,7 +448,8 @@ def configure_telemetry():
                     logger.info(
                         "✅ OpenTelemetry: gRPC OTLP Exporter configured at %s "
                         "(timeout=%ds, with Final Redaction Tier)",
-                        otel_endpoint, _OTLP_EXPORT_TIMEOUT_S,
+                        otel_endpoint,
+                        _OTLP_EXPORT_TIMEOUT_S,
                     )
                     otlp_configured = True
             except Exception as otlp_exc:
@@ -440,8 +480,10 @@ def configure_telemetry():
         # Instrument HTTP libraries
         try:
             from opentelemetry.instrumentation.requests import RequestsInstrumentor
+
             RequestsInstrumentor().instrument()
             from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
             HTTPXClientInstrumentor().instrument()
             logger.info("✅ OpenTelemetry: HTTP instrumentation enabled.")
         except ImportError:
@@ -461,9 +503,12 @@ def get_tracer():
     """Returns a tracer for creating custom spans."""
     try:
         from opentelemetry import trace
+
         return trace.get_tracer("src.genai")
     except ImportError:
         return None
+
+
 def clean_model_name(model_name: str) -> str:
     """
     Cleans up fragmented model names by stripping provider and storage prefixes.
@@ -471,16 +516,16 @@ def clean_model_name(model_name: str) -> str:
     """
     if not model_name:
         return model_name
-    
+
     # Strip common prefixes
     cleaned = model_name
     if cleaned.startswith("openai/"):
         cleaned = cleaned[7:]
-    
+
     if "/" in cleaned and not cleaned.startswith("openai/"):
         # Extract the final basename from the POSIX path
         cleaned = cleaned.split("/")[-1]
-    
+
     return cleaned
 
 
@@ -519,6 +564,7 @@ def genai_span(name: str, prompt: str = None, model: str = None):
         return
 
     from opentelemetry import trace as otel_trace
+
     with tracer.start_as_current_span(name) as span:
         span.set_attribute("gen_ai.operation.name", "chat")
         span.set_attribute("langfuse.observation.type", "generation")
@@ -559,6 +605,7 @@ def record_completion(span, completion: str):
         )
         span.set_attribute("langfuse.observation.output", truncated)
 
+
 def record_usage(span, usage):
     """
     Helper to add token usage stats to the current span.
@@ -585,4 +632,3 @@ def record_usage(span, usage):
         span.set_attribute("gen_ai.usage.output_tokens", int(completion_tokens))
     if total_tokens is not None:
         span.set_attribute("gen_ai.usage.total_tokens", int(total_tokens))
-

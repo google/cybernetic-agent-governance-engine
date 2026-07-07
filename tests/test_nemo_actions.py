@@ -12,9 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from src.governed_financial_advisor.governance.nemo_action_registry import get_all_actions
+from src.governed_financial_advisor.governance.nemo_action_registry import (
+    get_all_actions,
+)
 from src.governed_financial_advisor.governance.nemo_actions import (
     check_approval_token as _gfa_check_approval_token,
+)
+from src.governed_financial_advisor.governance.nemo_actions import (
     check_drawdown_limit as _gfa_check_drawdown_limit,
 )
 

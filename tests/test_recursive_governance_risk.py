@@ -39,15 +39,15 @@ import pytest
 
 pytest.importorskip("src", reason="src package required")
 
+from src.gateway.governance.confabulation_scorer import (
+    CONFIDENCE_THRESHOLD,
+    is_confabulation_blocked,
+)
 from src.gateway.governance.hitl_escalator import (
     EscalationReason,
     EscalationRequest,
     escalate_to_human,
     should_escalate_for_confidence,
-)
-from src.gateway.governance.confabulation_scorer import (
-    is_confabulation_blocked,
-    CONFIDENCE_THRESHOLD,
 )
 
 # ---------------------------------------------------------------------------
@@ -66,6 +66,7 @@ SCOPE_STATEMENT_PATH = pathlib.Path("docs/governance/AGENTIC_SCOPE_STATEMENT.md"
 # ---------------------------------------------------------------------------
 # §7.3 — Governance layer confidence check
 # ---------------------------------------------------------------------------
+
 
 class TestGovernanceLayerConfidenceCheck:
     """Verify governance LLM confidence triggers HITL when below threshold."""
@@ -140,12 +141,13 @@ class TestGovernanceLayerConfidenceCheck:
 # §7.3 — Governance confidence check is independent of advisor check
 # ---------------------------------------------------------------------------
 
+
 class TestGovernanceAdvisorIndependence:
     """Verify governance and advisor confidence checks are independent."""
 
     def test_high_advisor_low_governance_escalates(self):
         """High advisor confidence + low governance confidence must escalate."""
-        advisor_confidence = 0.99   # advisor is fine
+        advisor_confidence = 0.99  # advisor is fine
         governance_confidence = 0.70  # governance layer is uncertain
 
         advisor_escalates = should_escalate_for_confidence(
@@ -166,7 +168,7 @@ class TestGovernanceAdvisorIndependence:
 
     def test_low_advisor_high_governance_escalates_on_advisor(self):
         """Low advisor confidence + high governance confidence: advisor escalates."""
-        advisor_confidence = 0.60   # advisor is uncertain
+        advisor_confidence = 0.60  # advisor is uncertain
         governance_confidence = 0.98  # governance layer is confident
 
         advisor_escalates = should_escalate_for_confidence(
@@ -178,9 +180,7 @@ class TestGovernanceAdvisorIndependence:
             threshold=GOVERNANCE_CONFIDENCE_THRESHOLD,
         )
 
-        assert advisor_escalates is True, (
-            "Advisor with low confidence must escalate"
-        )
+        assert advisor_escalates is True, "Advisor with low confidence must escalate"
         assert governance_escalates is False, (
             "Governance layer with high confidence should not escalate"
         )
@@ -190,38 +190,54 @@ class TestGovernanceAdvisorIndependence:
         advisor_confidence = 0.50
         governance_confidence = 0.60
 
-        assert should_escalate_for_confidence(
-            advisor_confidence, threshold=ADVISOR_CONFIDENCE_THRESHOLD
-        ) is True
-        assert should_escalate_for_confidence(
-            governance_confidence, threshold=GOVERNANCE_CONFIDENCE_THRESHOLD
-        ) is True
+        assert (
+            should_escalate_for_confidence(
+                advisor_confidence, threshold=ADVISOR_CONFIDENCE_THRESHOLD
+            )
+            is True
+        )
+        assert (
+            should_escalate_for_confidence(
+                governance_confidence, threshold=GOVERNANCE_CONFIDENCE_THRESHOLD
+            )
+            is True
+        )
 
     def test_both_high_confidence_neither_escalates(self):
         """Both advisor and governance high confidence: neither escalates."""
         advisor_confidence = 0.97
         governance_confidence = 0.99
 
-        assert should_escalate_for_confidence(
-            advisor_confidence, threshold=ADVISOR_CONFIDENCE_THRESHOLD
-        ) is False
-        assert should_escalate_for_confidence(
-            governance_confidence, threshold=GOVERNANCE_CONFIDENCE_THRESHOLD
-        ) is False
+        assert (
+            should_escalate_for_confidence(
+                advisor_confidence, threshold=ADVISOR_CONFIDENCE_THRESHOLD
+            )
+            is False
+        )
+        assert (
+            should_escalate_for_confidence(
+                governance_confidence, threshold=GOVERNANCE_CONFIDENCE_THRESHOLD
+            )
+            is False
+        )
 
     def test_advisor_confabulation_block_independent_of_governance(self):
         """is_confabulation_blocked() for advisor is independent of governance check."""
         # Advisor blocked (confabulation risk)
         assert is_confabulation_blocked(0.50) is True
         # Governance layer at high confidence — independent check
-        assert should_escalate_for_confidence(
-            0.98, threshold=GOVERNANCE_CONFIDENCE_THRESHOLD
-        ) is False
+        assert (
+            should_escalate_for_confidence(
+                0.98, threshold=GOVERNANCE_CONFIDENCE_THRESHOLD
+            )
+            is False
+        )
 
 
 # ---------------------------------------------------------------------------
 # §7.3 — EscalationReason.GOVERNANCE_CONFIDENCE_LOW
 # ---------------------------------------------------------------------------
+
 
 class TestGovernanceEscalationReason:
     """Verify GOVERNANCE_CONFIDENCE_LOW is the correct escalation reason code."""
@@ -268,6 +284,7 @@ class TestGovernanceEscalationReason:
     def test_escalation_record_has_timestamp(self):
         """Escalation record must include an ISO 8601 timestamp."""
         import re
+
         request = EscalationRequest(
             trace_id="gov-risk-test-003",
             reason=EscalationReason.GOVERNANCE_CONFIDENCE_LOW,
@@ -283,6 +300,7 @@ class TestGovernanceEscalationReason:
 # ---------------------------------------------------------------------------
 # §7.3 — Agentic scope statement documents recursive governance risk
 # ---------------------------------------------------------------------------
+
 
 class TestRecursiveGovernanceRiskDocumented:
     """Verify docs/AGENTIC_SCOPE_STATEMENT.md documents recursive governance risk."""

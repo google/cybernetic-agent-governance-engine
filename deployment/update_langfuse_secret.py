@@ -43,8 +43,8 @@ import subprocess
 import sys
 import uuid
 
-
 # ── helpers ──────────────────────────────────────────────────────────────────
+
 
 def run(cmd: str, capture_output: bool = True) -> str:
     try:
@@ -78,6 +78,7 @@ def _get_or_prompt(env_key: str, prompt: str, default: str = "") -> str:
 
 
 # ── Part 1: patch advisor-secrets / DATABASE_URL ─────────────────────────────
+
 
 def patch_database_url(project_id: str, instance_name: str, conn_string: str) -> None:
     print("⏳ Fetching Cloud SQL instance private IP…")
@@ -137,6 +138,7 @@ def patch_database_url(project_id: str, instance_name: str, conn_string: str) ->
 
 # ── Part 2: create / update langfuse-secrets ─────────────────────────────────
 
+
 def ensure_langfuse_secrets(namespace: str = "governance-stack") -> None:
     """Idempotently create the `langfuse-secrets` K8s Secret.
 
@@ -168,7 +170,8 @@ def ensure_langfuse_secrets(namespace: str = "governance-stack") -> None:
     # Check whether the secret already exists so we can decide create vs patch.
     exists_rc = subprocess.run(
         f"kubectl get secret langfuse-secrets -n {namespace}",
-        shell=True, capture_output=True
+        shell=True,
+        capture_output=True,
     ).returncode
 
     if exists_rc == 0:
@@ -208,11 +211,14 @@ def ensure_langfuse_secrets(namespace: str = "governance-stack") -> None:
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
     instance_name = os.environ.get(
         "LANGFUSE_SQL_INSTANCE",
-        f"langfuse-instance-{project_id}" if project_id else f"langfuse-instance-{os.environ.get('GCP_PROJECT_ID', '<your-project-id>')}",
+        f"langfuse-instance-{project_id}"
+        if project_id
+        else f"langfuse-instance-{os.environ.get('GCP_PROJECT_ID', '<your-project-id>')}",
     )
     conn_string = os.environ.get("DATABASE_URL", "")
 
@@ -225,8 +231,10 @@ def main() -> None:
             print(f"⚠️  Could not patch DATABASE_URL: {exc}")
             print("    Continuing to langfuse-secrets step…")
     else:
-        print("ℹ️  GOOGLE_CLOUD_PROJECT or DATABASE_URL not set — "
-              "skipping advisor-secrets DATABASE_URL patch.")
+        print(
+            "ℹ️  GOOGLE_CLOUD_PROJECT or DATABASE_URL not set — "
+            "skipping advisor-secrets DATABASE_URL patch."
+        )
 
     # Part 2 always runs — this is the fix for CreateContainerConfigError.
     ensure_langfuse_secrets()

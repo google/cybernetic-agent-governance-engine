@@ -29,10 +29,10 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Demographic parity fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="session")
 def demographic_parity_responses() -> dict[str, list[str]]:
@@ -86,6 +86,7 @@ def biased_demographic_responses() -> dict[str, list[str]]:
 # Toxic generation fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="session")
 def clean_llm_responses() -> list[str]:
     """
@@ -117,6 +118,7 @@ def toxic_llm_responses() -> list[str]:
 # ---------------------------------------------------------------------------
 # Data minimisation fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="session")
 def minimal_advice_response() -> dict:
@@ -163,6 +165,7 @@ def excessive_data_response() -> dict:
 # ---------------------------------------------------------------------------
 # Prompt template fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="session")
 def standard_advice_prompt() -> str:

@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import glob
 import os
 import sys
-import glob
 
 # Make the src/ tree importable when this script is executed directly
 # (i.e. `python deployment/scripts/upload_to_gcs.py`).
@@ -22,11 +22,16 @@ _repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
-from src.governed_financial_advisor.infrastructure.storage import get_storage_backend  # noqa: E402
-from huggingface_hub import snapshot_download  # noqa: E402
+from huggingface_hub import snapshot_download
+
+from src.governed_financial_advisor.infrastructure.storage import (
+    get_storage_backend,
+)
 
 
-def upload_directory(local_path: str, remote_prefix: str, bucket_name: str | None = None) -> None:
+def upload_directory(
+    local_path: str, remote_prefix: str, bucket_name: str | None = None
+) -> None:
     """Upload every file under *local_path* to the configured storage backend.
 
     Args:
@@ -59,14 +64,20 @@ def main() -> None:
         sys.exit(1)
 
     if storage_backend == "gcs" and not bucket_name:
-        print("Error: GCS_BUCKET environment variable is required when STORAGE_BACKEND=gcs.")
+        print(
+            "Error: GCS_BUCKET environment variable is required when STORAGE_BACKEND=gcs."
+        )
         sys.exit(1)
 
     print(f"Downloading {model_id} from HuggingFace Hub...")
     local_dir = snapshot_download(repo_id=model_id)
     print(f"Downloaded to {local_dir}")
 
-    target = f"gs://{bucket_name}/{model_id}" if storage_backend == "gcs" else f"local → {model_id}"
+    target = (
+        f"gs://{bucket_name}/{model_id}"
+        if storage_backend == "gcs"
+        else f"local → {model_id}"
+    )
     print(f"Uploading to {target} (STORAGE_BACKEND={storage_backend}) ...")
     upload_directory(local_dir, model_id, bucket_name=bucket_name)
     print("Done!")

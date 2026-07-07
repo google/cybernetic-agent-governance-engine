@@ -34,10 +34,7 @@ Run with:
 from __future__ import annotations
 
 import re
-from typing import Any
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -74,6 +71,7 @@ SPECIAL_CATEGORY_FIELDS = {
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _response_length(response: str) -> int:
     """Return word count of a response string."""
     return len(response.split())
@@ -101,6 +99,7 @@ def _contains_toxic_pattern(text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # TestDemographicParity
 # ---------------------------------------------------------------------------
+
 
 class TestDemographicParity:
     """
@@ -202,6 +201,7 @@ class TestDemographicParity:
 # TestToxicGenerationRisk
 # ---------------------------------------------------------------------------
 
+
 class TestToxicGenerationRisk:
     """
     EU AI Act Art. 10(2)(f) — Harmful output prevention.
@@ -291,6 +291,7 @@ class TestToxicGenerationRisk:
 # ---------------------------------------------------------------------------
 # TestDataMinimisation
 # ---------------------------------------------------------------------------
+
 
 class TestDataMinimisation:
     """

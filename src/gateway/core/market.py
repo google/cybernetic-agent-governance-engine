@@ -14,9 +14,11 @@
 
 import logging
 import os
+
 import httpx
 
 logger = logging.getLogger(__name__)
+
 
 class MarketService:
     def __init__(self):
@@ -35,10 +37,10 @@ class MarketService:
                 "function": "NEWS_SENTIMENT",
                 "tickers": symbol,
                 "apikey": self.api_key,
-                "limit": 5
+                "limit": 5,
             }
             logger.info(f"Fetching AlphaVantage sentiment for {symbol}...")
-            
+
             async with httpx.AsyncClient() as client:
                 response = await client.get(self.base_url, params=params, timeout=10.0)
                 response.raise_for_status()
@@ -47,14 +49,14 @@ class MarketService:
             if "feed" not in data:
                 # Handle cases where API returns error (e.g. rate limit)
                 if "Information" in data:
-                     return f"API INFO: {data['Information']}"
+                    return f"API INFO: {data['Information']}"
                 if "Error Message" in data:
-                     return f"API ERROR: {data['Error Message']}"
+                    return f"API ERROR: {data['Error Message']}"
                 return "No news found."
 
             # Summarize the news
             summary = [f"Market Sentiment for {symbol}:"]
-            
+
             for item in data.get("feed", []):
                 title = item.get("title", "No Title")
                 score = item.get("overall_sentiment_score", 0)
@@ -74,9 +76,9 @@ class MarketService:
         """
         # Synchronous wrapper or implementation using httpx (sync) or requests if available.
         # Since this method is called synchronously by legacy gRPC tools, we might need requests or sync httpx.
-        # But we removed requests frompyproject.toml? No, httpx is there. 
+        # But we removed requests frompyproject.toml? No, httpx is there.
         # Using httpx.Client() for sync.
-        
+
         if not self.api_key:
             return "ERROR: ALPHAVANTAGE_API_KEY not set."
 
@@ -84,28 +86,29 @@ class MarketService:
             params = {
                 "function": "GLOBAL_QUOTE",
                 "symbol": symbol,
-                "apikey": self.api_key
+                "apikey": self.api_key,
             }
-            
+
             with httpx.Client() as client:
                 response = client.get(self.base_url, params=params, timeout=10.0)
                 data = response.json()
-            
+
             # Rate Limit Check
             if "Note" in data:
                 return f"LIMIT REACHED: {data['Note']}"
-            
+
             quote = data.get("Global Quote", {})
             if not quote:
-                 return f"CLOSED/UNKNOWN: Could not fetch price for {symbol}"
+                return f"CLOSED/UNKNOWN: Could not fetch price for {symbol}"
 
             price = quote.get("05. price")
             change = quote.get("10. change percent")
-            
+
             return f"OPEN: {symbol} trading at ${price} ({change})"
 
         except Exception as e:
             logger.error(f"Market Data Error: {e}")
             return f"ERROR: Market data unavailable: {e}"
+
 
 market_service = MarketService()

@@ -17,13 +17,13 @@ Gateway Core: Policy & Governance (OPA + CircuitBreaker)
 """
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import time
-import hashlib
 import urllib.parse
-import json
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 from opentelemetry import trace
@@ -84,12 +84,13 @@ def _opa_cache_key(input_data: dict) -> str:
     return f"{_OPA_CACHE_PREFIX}{digest}"
 
 
-async def _read_opa_cache(key: str) -> Optional[str]:
+async def _read_opa_cache(key: str) -> str | None:
     """Return cached OPA decision string, or None if absent/unavailable/disabled."""
     if not _opa_cache_enabled():
         return None
     try:
         from src.gateway.infrastructure.redis_client import redis_client
+
         if redis_client is None:
             return None
         val = await redis_client.get(key)
@@ -104,6 +105,7 @@ async def _write_opa_cache(key: str, decision: str) -> None:
         return
     try:
         from src.gateway.infrastructure.redis_client import redis_client
+
         if redis_client is None:
             return
         await redis_client.setex(key, _OPA_CACHE_TTL_SECONDS, decision)
@@ -114,6 +116,7 @@ async def _write_opa_cache(key: str, decision: str) -> None:
 # ---------------------------------------------------------------------------
 # OPA Explain-Mode Background Worker
 # ---------------------------------------------------------------------------
+
 
 async def _explain_worker() -> None:
     """Background coroutine that fetches OPA explain=full traces asynchronously.
@@ -130,7 +133,9 @@ async def _explain_worker() -> None:
     IMPORTANT: This worker must NOT be awaited on the hot path.  It is
     scheduled as a background task via ``start_explain_worker()``.
     """
-    logger.info("OPA explain-mode worker started (queue maxsize=%d).", _explain_queue.maxsize)
+    logger.info(
+        "OPA explain-mode worker started (queue maxsize=%d).", _explain_queue.maxsize
+    )
     while True:
         try:
             policy_path, input_data, decision = await _explain_queue.get()
@@ -177,14 +182,18 @@ async def _explain_worker() -> None:
             )
 
         except asyncio.CancelledError:
-            logger.info("OPA explain-mode worker cancelled during HTTP request — shutting down.")
+            logger.info(
+                "OPA explain-mode worker cancelled during HTTP request — shutting down."
+            )
             _explain_queue.task_done()
             return
         except Exception as exc:
             logger.warning(
                 "OPA explain-mode worker: failed to fetch explanation "
                 "(policy=%s decision=%s): %s",
-                policy_path, decision, exc,
+                policy_path,
+                decision,
+                exc,
             )
         finally:
             try:
@@ -208,7 +217,9 @@ def start_explain_worker(loop: asyncio.AbstractEventLoop) -> asyncio.Task:
         independently and does not need to be awaited.
     """
     task = loop.create_task(_explain_worker(), name="opa_explain_worker")
-    logger.info("OPA explain-mode background worker scheduled (task=%s).", task.get_name())
+    logger.info(
+        "OPA explain-mode background worker scheduled (task=%s).", task.get_name()
+    )
     return task
 
 
@@ -216,7 +227,13 @@ class CircuitBreaker:
     """
     Implements a Fail-Fast Circuit Breaker pattern.
     """
-    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 30, max_latency_budget: int = 3000):
+
+    def __init__(
+        self,
+        failure_threshold: int = 5,
+        recovery_timeout: int = 30,
+        max_latency_budget: int = 3000,
+    ):
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.max_latency_budget = max_latency_budget
@@ -249,15 +266,19 @@ class CircuitBreaker:
             return True
         return False
 
-    def check_soft_ceiling(self, cumulative_spend_ms: float, soft_ceiling_ms: float = 2000.0) -> bool:
+    def check_soft_ceiling(
+        self, cumulative_spend_ms: float, soft_ceiling_ms: float = 2000.0
+    ) -> bool:
         if cumulative_spend_ms > soft_ceiling_ms:
             return True
         return False
+
 
 class OPAClient:
     """
     Async OPA Client with Circuit Breaker.
     """
+
     def __init__(self):
         self.url = Config.OPA_URL
         self.auth_token = Config.OPA_AUTH_TOKEN
@@ -319,17 +340,23 @@ class OPAClient:
             logger.debug("check_policy_exists(%r) failed: %s", policy_path, exc)
             return False
 
-    async def evaluate_policy(self, input_data: dict[str, Any], current_latency_ms: float = 0.0) -> str:
+    async def evaluate_policy(
+        self, input_data: dict[str, Any], current_latency_ms: float = 0.0
+    ) -> str:
         if not self.cb.can_execute():
             logger.warning("⚠️ Circuit Breaker OPEN. Fast failing OPA check -> DENY.")
             return "DENY"
 
         if self.cb.is_bankrupt(current_latency_ms):
-             logger.critical(f"💀 Bankruptcy Protocol: {current_latency_ms}ms > {self.cb.max_latency_budget}ms.")
-             return "DENY"
+            logger.critical(
+                f"💀 Bankruptcy Protocol: {current_latency_ms}ms > {self.cb.max_latency_budget}ms."
+            )
+            return "DENY"
 
         if self.cb.check_soft_ceiling(current_latency_ms):
-            logger.warning(f"📉 Latency Inflation Warning: {current_latency_ms}ms > 2000ms.")
+            logger.warning(
+                f"📉 Latency Inflation Warning: {current_latency_ms}ms > 2000ms."
+            )
 
         # ── OPA Decision Cache ──────────────────────────────────────────────
         # Check Redis for a cached decision before making the HTTP call.
@@ -347,10 +374,19 @@ class OPAClient:
             span.set_attribute("langfuse.observation.input", json.dumps(input_data))
             start_time = time.time()
             span.set_attribute("langfuse.trace.metadata.iso.control_id", "A.10.1")
-            span.set_attribute("langfuse.trace.metadata.iso.requirement", "Transparency & Explainability")
+            span.set_attribute(
+                "langfuse.trace.metadata.iso.requirement",
+                "Transparency & Explainability",
+            )
             span.set_attribute("langfuse.trace.metadata.governance.opa_url", self.url)
-            span.set_attribute("langfuse.trace.metadata.governance.action", input_data.get("action", "unknown"))
-            span.set_attribute("langfuse.trace.metadata.governance.policy_input_size", len(json.dumps(input_data)))
+            span.set_attribute(
+                "langfuse.trace.metadata.governance.action",
+                input_data.get("action", "unknown"),
+            )
+            span.set_attribute(
+                "langfuse.trace.metadata.governance.policy_input_size",
+                len(json.dumps(input_data)),
+            )
             span.set_attribute("governance.opa.cache_hit", False)
 
             headers = {}
@@ -381,7 +417,9 @@ class OPAClient:
                     )
 
                 governance_tax_ms = (time.time() - start_time) * 1000
-                span.set_attribute("langfuse.trace.metadata.latency_currency_tax", governance_tax_ms)
+                span.set_attribute(
+                    "langfuse.trace.metadata.latency_currency_tax", governance_tax_ms
+                )
 
                 response.raise_for_status()
                 self.cb.record_success()
@@ -390,7 +428,9 @@ class OPAClient:
                 result = resp_json.get("result", "DENY")
                 explanation = resp_json.get("explanation", [])
 
-                span.set_attribute("langfuse.trace.metadata.governance.decision", str(result))
+                span.set_attribute(
+                    "langfuse.trace.metadata.governance.decision", str(result)
+                )
 
                 # Return the decision string (documented API).
                 # The explanation is logged for the Auditor via the OTel span above.
@@ -415,12 +455,16 @@ class OPAClient:
                 if CAGE_OPA_EXPLAIN_LOGGING:
                     policy_path = input_data.get("action", "unknown")
                     try:
-                        _explain_queue.put_nowait((policy_path, input_data, decision_str))
+                        _explain_queue.put_nowait(
+                            (policy_path, input_data, decision_str)
+                        )
                     except asyncio.QueueFull:
                         logger.warning(
                             "OPA explain queue full (maxsize=%d) — dropping explain "
                             "request for policy=%s decision=%s.",
-                            _explain_queue.maxsize, policy_path, decision_str,
+                            _explain_queue.maxsize,
+                            policy_path,
+                            decision_str,
                         )
 
                 return result
@@ -430,5 +474,7 @@ class OPAClient:
                 logger.critical(f"🔥 OPA FAILURE: {e}")
                 span.record_exception(e)
                 span.set_status(Status(StatusCode.ERROR))
-                span.set_attribute("langfuse.trace.metadata.governance.denial_reason", "SYSTEM_FAILURE")
+                span.set_attribute(
+                    "langfuse.trace.metadata.governance.denial_reason", "SYSTEM_FAILURE"
+                )
                 return "DENY"

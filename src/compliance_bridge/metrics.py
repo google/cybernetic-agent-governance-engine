@@ -33,6 +33,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from cachetools import TTLCache
+
 # Lazy import: langfuse is only required at runtime, not at import time.
 Langfuse = None  # populated by _get_langfuse_class() on first use
 
@@ -40,11 +41,13 @@ Langfuse = None  # populated by _get_langfuse_class() on first use
 def _get_langfuse_class():
     global Langfuse
     if Langfuse is None:
-        from langfuse import Langfuse as _LF  # noqa: PLC0415
+        from langfuse import Langfuse as _LF
+
         Langfuse = _LF
     return Langfuse
 
-from .types import CONTROL_META, ComplianceMetrics
+
+from .types import ComplianceMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +58,7 @@ logger = logging.getLogger(__name__)
 # so that missing config is surfaced immediately rather than silently
 # producing empty compliance metrics.
 # ---------------------------------------------------------------------------
+
 
 def _validate_langfuse_credentials() -> None:
     """Emit a WARNING if any Langfuse credential env vars are missing or empty.
@@ -98,8 +102,9 @@ _LANGFUSE_CONCURRENCY = asyncio.Semaphore(6)
 
 
 def _make_app_langfuse():
+    import httpx
     from langfuse.api import LangfuseAPI
-    import httpx  # noqa: PLC0415
+
     return LangfuseAPI(
         username=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
         password=os.environ.get("LANGFUSE_SECRET_KEY", ""),
@@ -114,15 +119,24 @@ def _make_app_langfuse():
 # Falls back to module-load time so local dev always starts with grace active.
 # ---------------------------------------------------------------------------
 
-_DEPLOYMENT_START_UTC: datetime = datetime(
-    *[int(x) for x in (
-        os.environ.get("DEPLOYMENT_START_UTC", datetime.now(tz=timezone.utc).isoformat())
-        .replace("Z", "+00:00")
-        .split("T")[0]
-        .split("-")
-    )],
-    tzinfo=timezone.utc,
-) if os.environ.get("DEPLOYMENT_START_UTC") else datetime.now(tz=timezone.utc)
+_DEPLOYMENT_START_UTC: datetime = (
+    datetime(
+        *[
+            int(x)
+            for x in (
+                os.environ.get(
+                    "DEPLOYMENT_START_UTC", datetime.now(tz=timezone.utc).isoformat()
+                )
+                .replace("Z", "+00:00")
+                .split("T")[0]
+                .split("-")
+            )
+        ],
+        tzinfo=timezone.utc,
+    )
+    if os.environ.get("DEPLOYMENT_START_UTC")
+    else datetime.now(tz=timezone.utc)
+)
 
 _STARTUP_GRACE_HOURS: int = int(os.environ.get("STARTUP_GRACE_HOURS", "6"))
 
@@ -148,7 +162,9 @@ _DEPLOYMENT_START: datetime = _parse_deployment_start()
 
 
 def _get_grace_status() -> dict[str, float | bool]:
-    age_hours = (datetime.now(tz=timezone.utc) - _DEPLOYMENT_START).total_seconds() / 3600
+    age_hours = (
+        datetime.now(tz=timezone.utc) - _DEPLOYMENT_START
+    ).total_seconds() / 3600
     remaining = max(0.0, _STARTUP_GRACE_HOURS - age_hours)
     return {"active": remaining > 0, "remaining_hours": remaining}
 
@@ -164,6 +180,7 @@ _metrics_cache: TTLCache[str, ComplianceMetrics] = TTLCache(maxsize=32, ttl=300)
 # ---------------------------------------------------------------------------
 # Core aggregation — queries Langfuse SDK for scored traces per control window
 # ---------------------------------------------------------------------------
+
 
 def _fetch_from_langfuse_sync(
     control_id: str,
@@ -200,22 +217,24 @@ def _fetch_from_langfuse_sync(
             if outcome == "PASSED":
                 passed_traces += 1
 
-    blocked_traces      = total_traces - passed_traces
+    blocked_traces = total_traces - passed_traces
     # M-10: Return None when no traces exist — 1.0 was a false-positive perfect score
-    safety_rate         = (passed_traces / total_traces) if total_traces > 0 else None
-    now                 = datetime.now(tz=timezone.utc)
-    last_event_utc      = last_event_date.isoformat() if total_traces > 0 else now.isoformat()
+    safety_rate = (passed_traces / total_traces) if total_traces > 0 else None
+    now = datetime.now(tz=timezone.utc)
+    last_event_utc = (
+        last_event_date.isoformat() if total_traces > 0 else now.isoformat()
+    )
     evidence_age_seconds = (
-        (now - last_event_date).total_seconds()
-        if total_traces > 0
-        else 0.0
+        (now - last_event_date).total_seconds() if total_traces > 0 else 0.0
     )
 
     grace = _get_grace_status()
 
     return ComplianceMetrics(
         control_id=control_id,
-        safety_rate=round(safety_rate * 10000) / 10000 if safety_rate is not None else None,
+        safety_rate=round(safety_rate * 10000) / 10000
+        if safety_rate is not None
+        else None,
         total_traces=total_traces,
         blocked_traces=blocked_traces,
         passed_traces=passed_traces,
@@ -223,13 +242,15 @@ def _fetch_from_langfuse_sync(
         last_event_utc=last_event_utc,
         evidence_age_seconds=max(0.0, evidence_age_seconds),
         startup_grace_active=bool(grace["active"]),
-        startup_grace_remaining_hours=round(float(grace["remaining_hours"]) * 100) / 100,
+        startup_grace_remaining_hours=round(float(grace["remaining_hours"]) * 100)
+        / 100,
     )
 
 
 # ---------------------------------------------------------------------------
 # Public API — cache-first aggregation
 # ---------------------------------------------------------------------------
+
 
 async def get_compliance_metrics(
     control_id: str,
@@ -263,6 +284,8 @@ async def get_compliance_metrics(
         return cached.model_copy(update={"evidence_age_seconds": now_age})
 
     async with _LANGFUSE_CONCURRENCY:
-        result = await asyncio.to_thread(_fetch_from_langfuse_sync, control_id, window_hours)
+        result = await asyncio.to_thread(
+            _fetch_from_langfuse_sync, control_id, window_hours
+        )
     _metrics_cache[cache_key] = result
     return result

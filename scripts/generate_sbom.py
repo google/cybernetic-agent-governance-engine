@@ -50,7 +50,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Logging configuration
@@ -110,10 +110,14 @@ def generate_python_sbom(output_dir: Path, dry_run: bool = False) -> dict[str, A
         logger.info("Attempting SBOM generation via cyclonedx-bom...")
         result = subprocess.run(
             [
-                sys.executable, "-m", "cyclonedx_py",
+                sys.executable,
+                "-m",
+                "cyclonedx_py",
                 "environment",
-                "--output-format", "JSON",
-                "--schema-version", SBOM_SCHEMA_VERSION,
+                "--output-format",
+                "JSON",
+                "--schema-version",
+                SBOM_SCHEMA_VERSION,
             ],
             capture_output=True,
             text=True,
@@ -132,7 +136,9 @@ def generate_python_sbom(output_dir: Path, dry_run: bool = False) -> dict[str, A
                 result.stderr[:200],
             )
     except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
-        logger.warning("cyclonedx-bom not available (%s) — using pip introspection fallback", exc)
+        logger.warning(
+            "cyclonedx-bom not available (%s) — using pip introspection fallback", exc
+        )
 
     # Fallback: build CycloneDX from `pip list --format=json`
     logger.info("Building CycloneDX SBOM from pip list (fallback)...")
@@ -176,7 +182,9 @@ def generate_python_sbom(output_dir: Path, dry_run: bool = False) -> dict[str, A
     return sbom
 
 
-def generate_docker_sbom(image: str, output_dir: Path, dry_run: bool = False) -> dict[str, Any]:
+def generate_docker_sbom(
+    image: str, output_dir: Path, dry_run: bool = False
+) -> dict[str, Any]:
     """
     Generate a CycloneDX JSON SBOM for a Docker image using Syft.
 
@@ -241,9 +249,15 @@ def generate_docker_sbom(image: str, output_dir: Path, dry_run: bool = False) ->
                     "description": f"Container image: {image}",
                     "purl": f"pkg:docker/{image}",
                     "properties": [
-                        {"name": "docker:Architecture", "value": image_meta.get("Architecture", "unknown")},
+                        {
+                            "name": "docker:Architecture",
+                            "value": image_meta.get("Architecture", "unknown"),
+                        },
                         {"name": "docker:Os", "value": image_meta.get("Os", "unknown")},
-                        {"name": "docker:Created", "value": image_meta.get("Created", "unknown")},
+                        {
+                            "name": "docker:Created",
+                            "value": image_meta.get("Created", "unknown"),
+                        },
                     ],
                 },
                 components=[],
@@ -258,7 +272,10 @@ def generate_docker_sbom(image: str, output_dir: Path, dry_run: bool = False) ->
         logger.error("docker inspect fallback failed: %s", exc)
 
     # Last resort: empty envelope
-    logger.error("All SBOM generation methods failed for image '%s'. Returning empty envelope.", image)
+    logger.error(
+        "All SBOM generation methods failed for image '%s'. Returning empty envelope.",
+        image,
+    )
     return _build_cyclonedx_envelope(
         metadata_component={"type": "container", "name": image, "version": "unknown"},
         components=[],
@@ -266,7 +283,9 @@ def generate_docker_sbom(image: str, output_dir: Path, dry_run: bool = False) ->
     )
 
 
-def generate_dir_sbom(path: str, output_dir: Path, dry_run: bool = False) -> dict[str, Any]:
+def generate_dir_sbom(
+    path: str, output_dir: Path, dry_run: bool = False
+) -> dict[str, Any]:
     """
     Generate a CycloneDX JSON SBOM for a filesystem directory using Syft.
 
@@ -296,7 +315,11 @@ def generate_dir_sbom(path: str, output_dir: Path, dry_run: bool = False) -> dic
             )
             return sbom
         else:
-            logger.warning("Syft dir scan failed (exit %d): %s", result.returncode, result.stderr[:300])
+            logger.warning(
+                "Syft dir scan failed (exit %d): %s",
+                result.returncode,
+                result.stderr[:300],
+            )
     except FileNotFoundError:
         logger.warning("syft not found — install from https://github.com/anchore/syft")
     except subprocess.TimeoutExpired:
@@ -399,18 +422,25 @@ def run_grype_scan(sbom_path: Path) -> tuple[list[dict[str, Any]], bool]:
             timeout=300,
         )
         if result.returncode not in (0, 1):  # 0=no vulns, 1=vulns found
-            logger.warning("Grype exited with code %d: %s", result.returncode, result.stderr[:200])
+            logger.warning(
+                "Grype exited with code %d: %s", result.returncode, result.stderr[:200]
+            )
             return [], False
 
         grype_output = json.loads(result.stdout)
         matches = grype_output.get("matches", [])
         has_critical = any(
-            float(m.get("vulnerability", {}).get("cvss", [{}])[0].get("metrics", {}).get("baseScore", 0))
+            float(
+                m.get("vulnerability", {})
+                .get("cvss", [{}])[0]
+                .get("metrics", {})
+                .get("baseScore", 0)
+            )
             >= CRITICAL_CVSS_THRESHOLD
             or m.get("vulnerability", {}).get("severity", "").upper() == "CRITICAL"
             for m in matches
-            if m.get("vulnerability", {}).get("cvss") or
-            m.get("vulnerability", {}).get("severity", "").upper() == "CRITICAL"
+            if m.get("vulnerability", {}).get("cvss")
+            or m.get("vulnerability", {}).get("severity", "").upper() == "CRITICAL"
         )
         logger.info(
             "Grype scan complete: %d vulnerabilities found, critical=%s",
@@ -441,7 +471,7 @@ def run_grype_scan(sbom_path: Path) -> tuple[list[dict[str, Any]], bool]:
 def upload_to_gcs(
     local_path: Path,
     gcs_bucket: str,
-    project_id: Optional[str] = None,
+    project_id: str | None = None,
     dry_run: bool = False,
 ) -> str:
     """
@@ -489,7 +519,11 @@ def upload_to_gcs(
             )
             logger.info("gsutil upload complete: %s", gcs_uri)
             return gcs_uri
-        except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        except (
+            FileNotFoundError,
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+        ) as exc:
             logger.error("gsutil upload failed: %s", exc)
             raise RuntimeError(f"GCS upload failed for {local_path}: {exc}") from exc
 
@@ -519,7 +553,13 @@ def generate_summary_report(
     subject = metadata.get("component", {}).get("name", "unknown")
 
     # Severity breakdown of vulnerabilities
-    severity_counts: dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "UNKNOWN": 0}
+    severity_counts: dict[str, int] = {
+        "CRITICAL": 0,
+        "HIGH": 0,
+        "MEDIUM": 0,
+        "LOW": 0,
+        "UNKNOWN": 0,
+    }
     for match in vulnerabilities:
         sev = match.get("vulnerability", {}).get("severity", "UNKNOWN").upper()
         severity_counts[sev] = severity_counts.get(sev, 0) + 1
@@ -532,15 +572,15 @@ def generate_summary_report(
         "",
         f"> **Generated:** {now}  ",
         f"> **SBOM File:** `{sbom_filename}`  ",
-        f"> **NIST Control:** CM-8 (System Component Inventory)  ",
-        f"> **POAM Reference:** POAM-006, POAM-010  ",
+        "> **NIST Control:** CM-8 (System Component Inventory)  ",
+        "> **POAM Reference:** POAM-006, POAM-010  ",
         "",
         "---",
         "",
         "## Scan Target",
         "",
-        f"| Field | Value |",
-        f"|-------|-------|",
+        "| Field | Value |",
+        "|-------|-------|",
         f"| **Subject** | `{subject}` |",
         f"| **Tool** | {metadata.get('tools', [{}])[0].get('name', 'unknown') if metadata.get('tools') else 'unknown'} |",
         f"| **Format** | CycloneDX {sbom.get('specVersion', '?')} |",
@@ -563,7 +603,9 @@ def generate_summary_report(
     ]
 
     if not vulnerabilities:
-        lines.append("✅ **No vulnerabilities detected** (or Grype not available — see POAM-010).")
+        lines.append(
+            "✅ **No vulnerabilities detected** (or Grype not available — see POAM-010)."
+        )
         lines.append("")
 
     if license_violations:
@@ -605,7 +647,9 @@ def generate_summary_report(
         )
 
     if len(components) > 20:
-        lines.append(f"| ... | *(+{len(components) - 20} more — see full SBOM JSON)* | | | |")
+        lines.append(
+            f"| ... | *(+{len(components) - 20} more — see full SBOM JSON)* | | | |"
+        )
 
     lines += [
         "",
@@ -616,10 +660,15 @@ def generate_summary_report(
         "| Control | Requirement | Status |",
         "|---------|-------------|--------|",
         "| CM-8 | System Component Inventory / SBOM | ✅ SBOM Generated |",
-        "| RA-5 | Vulnerability Scanning | " + (
-            "✅ Grype Enrichment Applied" if vulnerabilities is not None and len(vulnerabilities) >= 0 and any(True for _ in [1])
+        "| RA-5 | Vulnerability Scanning | "
+        + (
+            "✅ Grype Enrichment Applied"
+            if vulnerabilities is not None
+            and len(vulnerabilities) >= 0
+            and any(True for _ in [1])
             else "⚠️ Grype Not Available"
-        ) + " |",
+        )
+        + " |",
         "| POAM-006 | SBOM pipeline gap remediation | 🔄 IN PROGRESS |",
         "| POAM-010 | Container scanning gap remediation | 🔄 IN PROGRESS |",
         "",
@@ -826,8 +875,17 @@ def main() -> int:
     logger.info("   SBOM JSON:   %s", sbom_path if not args.dry_run else "[DRY-RUN]")
     logger.info("   Summary:     %s", summary_path if not args.dry_run else "[DRY-RUN]")
     logger.info("   Components:  %d", len(components))
-    logger.info("   CVE count:   %d (%s critical)", len(vulnerabilities), severity_counts_str(vulnerabilities))
-    logger.info("   License OK:  %s", "YES" if not license_violations else f"NO ({len(license_violations)} violations)")
+    logger.info(
+        "   CVE count:   %d (%s critical)",
+        len(vulnerabilities),
+        severity_counts_str(vulnerabilities),
+    )
+    logger.info(
+        "   License OK:  %s",
+        "YES"
+        if not license_violations
+        else f"NO ({len(license_violations)} violations)",
+    )
 
     if has_critical:
         logger.error(
@@ -843,7 +901,8 @@ def main() -> int:
 def severity_counts_str(vulnerabilities: list[dict[str, Any]]) -> str:
     """Return a short severity summary string."""
     crit = sum(
-        1 for v in vulnerabilities
+        1
+        for v in vulnerabilities
         if v.get("vulnerability", {}).get("severity", "").upper() == "CRITICAL"
     )
     return str(crit)

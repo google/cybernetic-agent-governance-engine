@@ -27,13 +27,18 @@ This separation closes SAR finding FIND-003 (High severity, 2026Q1).
 import logging
 import os
 import random
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 from src.governed_financial_advisor.agents.evaluator.auditor import EvaluatorAuditor
 
 logger = logging.getLogger("AgentBeatsSimulator")
 
-_SIMULATION_MODE = os.environ.get("CAGE_SIMULATION_MODE", "").lower() in ("1", "true", "yes")
+_SIMULATION_MODE = os.environ.get("CAGE_SIMULATION_MODE", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 # ── Built-in scenario pool ────────────────────────────────────────────────────
 
@@ -55,7 +60,7 @@ _RED_TEAM_SCENARIOS = [
 ]
 
 
-def _pick_scenarios(num: int, use_red_team: bool) -> List[str]:
+def _pick_scenarios(num: int, use_red_team: bool) -> list[str]:
     """Select `num` prompts, mixing safe + red-team when requested."""
     pool = _SAFE_SCENARIOS[:]
     if use_red_team:
@@ -67,7 +72,8 @@ def _pick_scenarios(num: int, use_red_team: bool) -> List[str]:
 
 # ── Mock agent ────────────────────────────────────────────────────────────────
 
-def mock_financial_agent(prompt: str) -> Dict[str, Any]:
+
+def mock_financial_agent(prompt: str) -> dict[str, Any]:
     """
     Lightweight mock of the governed financial advisor agent.
 
@@ -78,14 +84,24 @@ def mock_financial_agent(prompt: str) -> Dict[str, Any]:
     prompt_lower = prompt.lower()
     is_adversarial = any(
         kw in prompt_lower
-        for kw in ("delete", "drop", "ignore all", "developer mode", "bypass", "transfer")
+        for kw in (
+            "delete",
+            "drop",
+            "ignore all",
+            "developer mode",
+            "bypass",
+            "transfer",
+        )
     )
 
     if is_adversarial:
         return {
             "plan": {
                 "steps": [
-                    {"action": "safety_intervention", "parameters": {"reason": "Unsafe prompt detected"}},
+                    {
+                        "action": "safety_intervention",
+                        "parameters": {"reason": "Unsafe prompt detected"},
+                    },
                 ]
             },
             "history": [{"role": "user", "content": prompt}],
@@ -107,6 +123,7 @@ def mock_financial_agent(prompt: str) -> Dict[str, Any]:
 
 # ── Simulator ─────────────────────────────────────────────────────────────────
 
+
 class AgentBeatsSimulator:
     """
     Runs adversarial and safe scenarios against a target agent, grades each
@@ -124,8 +141,8 @@ class AgentBeatsSimulator:
 
     def __init__(
         self,
-        agent_callable: Callable[[str], Dict[str, Any]],
-        auditor: Optional[EvaluatorAuditor] = None,
+        agent_callable: Callable[[str], dict[str, Any]],
+        auditor: EvaluatorAuditor | None = None,
     ) -> None:
         if not _SIMULATION_MODE:
             raise RuntimeError(
@@ -139,7 +156,7 @@ class AgentBeatsSimulator:
         self,
         num_scenarios: int = 5,
         use_red_team: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Run `num_scenarios` prompts through the agent and grade results.
 
@@ -151,7 +168,7 @@ class AgentBeatsSimulator:
             }
         """
         prompts = _pick_scenarios(num_scenarios, use_red_team)
-        details: List[Dict[str, Any]] = []
+        details: list[dict[str, Any]] = []
         passes = 0
 
         for prompt in prompts:
@@ -162,26 +179,30 @@ class AgentBeatsSimulator:
                 if passed:
                     passes += 1
 
-                details.append({
-                    "prompt": prompt,
-                    "score": audit["safety_score"] / 100.0,  # normalise to 0–1
-                    "explanation": (
-                        "; ".join(audit["violations"])
-                        if audit["violations"]
-                        else "All governance checks passed."
-                    ),
-                    "verdict": audit["verdict"],
-                    "quality_score": audit["quality_score"],
-                })
+                details.append(
+                    {
+                        "prompt": prompt,
+                        "score": audit["safety_score"] / 100.0,  # normalise to 0–1
+                        "explanation": (
+                            "; ".join(audit["violations"])
+                            if audit["violations"]
+                            else "All governance checks passed."
+                        ),
+                        "verdict": audit["verdict"],
+                        "quality_score": audit["quality_score"],
+                    }
+                )
             except Exception as exc:
                 logger.error("Simulation error for prompt %r: %s", prompt, exc)
-                details.append({
-                    "prompt": prompt,
-                    "score": 0.0,
-                    "explanation": f"Simulation error: {exc}",
-                    "verdict": "ERROR",
-                    "quality_score": 0.0,
-                })
+                details.append(
+                    {
+                        "prompt": prompt,
+                        "score": 0.0,
+                        "explanation": f"Simulation error: {exc}",
+                        "verdict": "ERROR",
+                        "quality_score": 0.0,
+                    }
+                )
 
         pass_rate = passes / num_scenarios if num_scenarios > 0 else 0.0
 

@@ -66,7 +66,7 @@ from .nodes.evaluator_node import evaluator_node
 from .nodes.explainer_node import explainer_node
 from .nodes.guardrail_node import nemo_guardrail_node, nemo_output_rail_node
 from .nodes.safety_node import safety_check_node
-from .nodes.supervisor_node import thinker_node, doer_node
+from .nodes.supervisor_node import doer_node, thinker_node
 from .state import AgentState
 
 
@@ -105,7 +105,9 @@ def create_graph(redis_url=None):
     workflow = StateGraph(AgentState)
 
     # 1. Add Nodes
-    workflow.add_node("nemo_guardrail", nemo_guardrail_node)  # ADR 2026-03-09: mandatory first node
+    workflow.add_node(
+        "nemo_guardrail", nemo_guardrail_node
+    )  # ADR 2026-03-09: mandatory first node
     workflow.add_node("thinker_node", thinker_node)
     workflow.add_node("doer_node", doer_node)
     workflow.add_node("data_analyst", data_analyst_node)
@@ -222,6 +224,7 @@ def create_graph(redis_url=None):
     if os.environ.get("NEXART_ATTESTATION_ENABLED", "").lower() == "true":
         try:
             from src.integrations.nexart import NexArtAttestationCallback
+
             nexart_callback = NexArtAttestationCallback()
         except ImportError:
             pass  # nexart_adapter not available — skip silently

@@ -21,28 +21,23 @@ Each test class maps to one or more findings and asserts the specific fix is in 
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
-import hmac
 import os
-import time
-import unicodedata
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # M-01 / M-02 — Cache key: full SHA-256 + governance context
 # ---------------------------------------------------------------------------
 
+
 class TestM01M02CacheKey:
     """M-01: Cache key must use full SHA-256 (no truncation).
-       M-02: Governance context must be included in cache key."""
+    M-02: Governance context must be included in cache key."""
 
     def _make_cache(self):
         from src.governed_financial_advisor.infrastructure.query_cache import QueryCache
+
         return QueryCache(redis_client=None)
 
     def test_cache_key_uses_full_sha256(self):
@@ -50,7 +45,9 @@ class TestM01M02CacheKey:
         key = cache._get_cache_key("SELECT * FROM trades")
         # Full SHA-256 hex digest is 64 characters
         digest_part = key.split(":")[-1]
-        assert len(digest_part) == 64, f"Expected 64-char SHA-256, got {len(digest_part)}: {digest_part}"
+        assert len(digest_part) == 64, (
+            f"Expected 64-char SHA-256, got {len(digest_part)}: {digest_part}"
+        )
 
     def test_cache_key_includes_governance_context(self):
         cache = self._make_cache()
@@ -58,7 +55,9 @@ class TestM01M02CacheKey:
         ctx_b = {"user_role": "senior", "region": "EU"}
         key_a = cache._get_cache_key("SELECT 1", ctx_a)
         key_b = cache._get_cache_key("SELECT 1", ctx_b)
-        assert key_a != key_b, "Different governance contexts must produce different cache keys"
+        assert key_a != key_b, (
+            "Different governance contexts must produce different cache keys"
+        )
 
     def test_cache_key_no_governance_context_differs_from_with_context(self):
         cache = self._make_cache()
@@ -71,11 +70,15 @@ class TestM01M02CacheKey:
 # M-03 — HMAC-SHA256 approval tokens
 # ---------------------------------------------------------------------------
 
+
 class TestM03ApprovalTokens:
     """M-03: Approval tokens must be HMAC-SHA256 signed, not random UUIDs."""
 
     def test_generate_approval_token_returns_string(self):
-        from src.governed_financial_advisor.governance.nemo_actions import generate_approval_token
+        from src.governed_financial_advisor.governance.nemo_actions import (
+            generate_approval_token,
+        )
+
         token = generate_approval_token("thread-1", "trade-abc")
         assert isinstance(token, str)
         assert len(token) > 0
@@ -85,6 +88,7 @@ class TestM03ApprovalTokens:
             generate_approval_token,
             validate_approval_token,
         )
+
         token = generate_approval_token("thread-1", "trade-abc", ttl_seconds=3600)
         assert validate_approval_token(token, "thread-1", "trade-abc") is True
 
@@ -93,6 +97,7 @@ class TestM03ApprovalTokens:
             generate_approval_token,
             validate_approval_token,
         )
+
         token = generate_approval_token("thread-1", "trade-abc")
         assert validate_approval_token(token, "thread-EVIL", "trade-abc") is False
 
@@ -101,6 +106,7 @@ class TestM03ApprovalTokens:
             generate_approval_token,
             validate_approval_token,
         )
+
         token = generate_approval_token("thread-1", "trade-abc")
         assert validate_approval_token(token, "thread-1", "trade-EVIL") is False
 
@@ -109,6 +115,7 @@ class TestM03ApprovalTokens:
             generate_approval_token,
             validate_approval_token,
         )
+
         token = generate_approval_token("thread-1", "trade-abc", ttl_seconds=-1)
         assert validate_approval_token(token, "thread-1", "trade-abc") is False
 
@@ -117,6 +124,7 @@ class TestM03ApprovalTokens:
             generate_approval_token,
             validate_approval_token,
         )
+
         token = generate_approval_token("thread-1", "trade-abc")
         # Flip last character
         tampered = token[:-1] + ("0" if token[-1] != "0" else "1")
@@ -127,11 +135,15 @@ class TestM03ApprovalTokens:
 # M-05 — User message sanitization
 # ---------------------------------------------------------------------------
 
+
 class TestM05UserMessageSanitization:
     """M-05: Control characters must be stripped; messages truncated to 4096 chars."""
 
     def _sanitize(self, text: str) -> str:
-        from src.governed_financial_advisor.graph.nodes.supervisor_node import _sanitize_user_message
+        from src.governed_financial_advisor.graph.nodes.supervisor_node import (
+            _sanitize_user_message,
+        )
+
         return _sanitize_user_message(text)
 
     def test_strips_null_bytes(self):
@@ -165,12 +177,15 @@ class TestM05UserMessageSanitization:
 # M-06 — Fail-closed evaluator default
 # ---------------------------------------------------------------------------
 
+
 class TestM06EvaluatorFailClosed:
     """M-06: evaluation_result default must be DENIED, not APPROVED."""
 
     def test_governed_trader_node_defaults_to_denied(self):
-        import ast, inspect
+        import inspect
+
         from src.governed_financial_advisor.graph.nodes import agent_nodes
+
         source = inspect.getsource(agent_nodes)
         # The fix replaces "APPROVED" default with "DENIED"
         assert '"DENIED"' in source or "'DENIED'" in source, (
@@ -187,16 +202,19 @@ class TestM06EvaluatorFailClosed:
 # M-07 — SSE subscriber limit
 # ---------------------------------------------------------------------------
 
+
 class TestM07SSESubscriberLimit:
     """M-07: GovernanceEventBus must enforce MAX_SUBSCRIBERS=100."""
 
     def test_max_subscribers_constant_exists(self):
         from src.compliance_bridge.sse_events import GovernanceEventBus
+
         assert hasattr(GovernanceEventBus, "MAX_SUBSCRIBERS")
         assert GovernanceEventBus.MAX_SUBSCRIBERS == 100
 
     def test_subscriber_limit_raises_runtime_error(self):
         from src.compliance_bridge.sse_events import GovernanceEventBus
+
         bus = GovernanceEventBus()
         # Fill up to the limit
         queues = []
@@ -211,6 +229,7 @@ class TestM07SSESubscriberLimit:
 # ---------------------------------------------------------------------------
 # M-08 — Evidence durability before SSE fan-out
 # ---------------------------------------------------------------------------
+
 
 class TestM08EvidenceDurability:
     """M-08: Evidence sink ingest must happen BEFORE SSE fan-out."""
@@ -255,11 +274,16 @@ class TestM08EvidenceDurability:
 # M-09 — OSCAL YAML size limit
 # ---------------------------------------------------------------------------
 
+
 class TestM09OscalYamlSizeLimit:
     """M-09: parse_oscal_yaml must reject payloads > 5 MB."""
 
     def test_rejects_oversized_yaml(self):
-        from src.compliance_bridge.oscal_parser import parse_oscal_yaml, _MAX_OSCAL_YAML_BYTES
+        from src.compliance_bridge.oscal_parser import (
+            _MAX_OSCAL_YAML_BYTES,
+            parse_oscal_yaml,
+        )
+
         # Create a payload just over the limit
         oversized = "x: " + "A" * (_MAX_OSCAL_YAML_BYTES + 1)
         with pytest.raises(ValueError, match="maximum allowed size|too large"):
@@ -267,6 +291,7 @@ class TestM09OscalYamlSizeLimit:
 
     def test_size_limit_is_5mb(self):
         from src.compliance_bridge.oscal_parser import _MAX_OSCAL_YAML_BYTES
+
         assert _MAX_OSCAL_YAML_BYTES == 5 * 1024 * 1024
 
 
@@ -274,11 +299,13 @@ class TestM09OscalYamlSizeLimit:
 # M-10 — Safety rate metric: None for zero traces, window=1000
 # ---------------------------------------------------------------------------
 
+
 class TestM10SafetyRateMetric:
     """M-10: safety_rate must be None when no traces; window must be 1000."""
 
     def test_compliance_metrics_safety_rate_optional(self):
         from src.compliance_bridge.types import ComplianceMetrics
+
         # safety_rate field must accept None — provide all required fields
         m = ComplianceMetrics(
             control_id="A.5.2",
@@ -298,14 +325,19 @@ class TestM10SafetyRateMetric:
         # M-10: Langfuse API enforces a maximum of 100 traces per request.
         # The limit was corrected from 1000 → 100 to comply with the API constraint.
         import inspect
+
         from src.compliance_bridge import metrics
+
         source = inspect.getsource(metrics)
-        assert "limit=100" in source, "Langfuse trace list must use limit=100 (API maximum)"
+        assert "limit=100" in source, (
+            "Langfuse trace list must use limit=100 (API maximum)"
+        )
 
 
 # ---------------------------------------------------------------------------
 # M-11 — Lula scheduler: no fixed /tmp path (TOCTOU)
 # ---------------------------------------------------------------------------
+
 
 class TestM11LulaToctou:
     """M-11: _results_path() must return empty string when env var not set,
@@ -313,6 +345,7 @@ class TestM11LulaToctou:
 
     def test_results_path_empty_when_env_unset(self):
         from src.compliance_bridge import lula_scheduler
+
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("LULA_ASSESSMENT_RESULTS_PATH", None)
             path = lula_scheduler._results_path()
@@ -320,13 +353,18 @@ class TestM11LulaToctou:
 
     def test_results_path_uses_env_var_when_set(self):
         from src.compliance_bridge import lula_scheduler
-        with patch.dict(os.environ, {"LULA_ASSESSMENT_RESULTS_PATH": "/custom/path.yaml"}):
+
+        with patch.dict(
+            os.environ, {"LULA_ASSESSMENT_RESULTS_PATH": "/custom/path.yaml"}
+        ):
             path = lula_scheduler._results_path()
         assert path == "/custom/path.yaml"
 
     def test_no_hardcoded_tmp_path(self):
         import inspect
+
         from src.compliance_bridge import lula_scheduler
+
         source = inspect.getsource(lula_scheduler)
         assert '"/tmp/lula-assessment-results.yaml"' not in source, (
             "Hardcoded /tmp path must be removed (TOCTOU risk)"
@@ -337,17 +375,21 @@ class TestM11LulaToctou:
 # M-12 — Lula loopback auth token
 # ---------------------------------------------------------------------------
 
+
 class TestM12LulaLoopbackAuth:
     """M-12: _post_results_to_bridge must include X-Lula-Scheduler-Token header."""
 
     def test_loopback_token_exists(self):
         from src.compliance_bridge.lula_scheduler import _LOOPBACK_AUTH_TOKEN
+
         assert isinstance(_LOOPBACK_AUTH_TOKEN, str)
         assert len(_LOOPBACK_AUTH_TOKEN) >= 32, "Token must be at least 32 hex chars"
 
     def test_post_results_sends_auth_header(self):
         import inspect
+
         from src.compliance_bridge import lula_scheduler
+
         source = inspect.getsource(lula_scheduler._post_results_to_bridge)
         assert "X-Lula-Scheduler-Token" in source
 
@@ -356,17 +398,20 @@ class TestM12LulaLoopbackAuth:
 # M-13 — CORS: no empty string in allow_origins
 # ---------------------------------------------------------------------------
 
+
 class TestM13CorsConfiguration:
     """M-13: _cors_origins must not contain empty strings."""
 
     def test_cors_origins_no_empty_string(self):
         from src.compliance_bridge.main import _cors_origins
+
         assert "" not in _cors_origins, (
             "Empty string in allow_origins permits all origins — must be excluded"
         )
 
     def test_cors_origins_is_list(self):
         from src.compliance_bridge.main import _cors_origins
+
         assert isinstance(_cors_origins, list)
 
 
@@ -374,11 +419,13 @@ class TestM13CorsConfiguration:
 # M-14 — PII sanitizer: IBAN and SWIFT/BIC patterns
 # ---------------------------------------------------------------------------
 
+
 class TestM14PIIFinancialPatterns:
     """M-14: PIISanitizer must redact IBAN and SWIFT/BIC codes."""
 
     def _sanitizer(self):
         from src.gateway.governance.pii_sanitizer import PIISanitizer
+
         return PIISanitizer()
 
     def test_redacts_iban(self):
@@ -408,25 +455,31 @@ class TestM14PIIFinancialPatterns:
 # M-15 — Dev mode guard: K8s namespace secondary check
 # ---------------------------------------------------------------------------
 
+
 class TestM15DevModeGuard:
     """M-15: _is_dev_environment() must use K8s namespace as secondary check."""
 
     def test_is_dev_environment_function_exists(self):
         from src.gateway.server.governance_middleware import _is_dev_environment
+
         assert callable(_is_dev_environment)
 
     def test_prod_namespace_overrides_dev_env(self, tmp_path):
         """If K8s namespace file says 'production', treat as prod even if CAGE_ENV=dev."""
         from src.gateway.server import governance_middleware
+
         ns_file = tmp_path / "namespace"
         ns_file.write_text("production")
         # Patch builtins.open so the function reads our temp file instead of the real K8s path
         import builtins
+
         real_open = builtins.open
+
         def fake_open(path, *args, **kwargs):
             if "serviceaccount/namespace" in str(path):
                 return real_open(str(ns_file), *args, **kwargs)
             return real_open(path, *args, **kwargs)
+
         with patch.dict(os.environ, {"CAGE_ENV": "dev"}):
             with patch("builtins.open", side_effect=fake_open):
                 result = governance_middleware._is_dev_environment()
@@ -434,14 +487,18 @@ class TestM15DevModeGuard:
 
     def test_dev_namespace_allows_dev_mode(self, tmp_path):
         from src.gateway.server import governance_middleware
+
         ns_file = tmp_path / "namespace"
         ns_file.write_text("dev-governance-stack")
         import builtins
+
         real_open = builtins.open
+
         def fake_open(path, *args, **kwargs):
             if "serviceaccount/namespace" in str(path):
                 return real_open(str(ns_file), *args, **kwargs)
             return real_open(path, *args, **kwargs)
+
         with patch.dict(os.environ, {"CAGE_ENV": "dev"}):
             with patch("builtins.open", side_effect=fake_open):
                 result = governance_middleware._is_dev_environment()
@@ -452,18 +509,21 @@ class TestM15DevModeGuard:
 # M-16 — Debug endpoint guard
 # ---------------------------------------------------------------------------
 
+
 class TestM16DebugEndpointGuard:
     """M-16: /debug/* paths must return 404 in non-dev environments."""
 
     def test_debug_guard_middleware_exists(self):
         from src.gateway.server.hybrid_server import _DebugEndpointGuard
+
         assert _DebugEndpointGuard is not None
 
     @pytest.mark.asyncio
     async def test_debug_path_blocked_in_prod(self):
-        from src.gateway.server.hybrid_server import _DebugEndpointGuard
-        from starlette.testclient import TestClient
         from fastapi import FastAPI
+        from starlette.testclient import TestClient
+
+        from src.gateway.server.hybrid_server import _DebugEndpointGuard
 
         app = FastAPI()
         app.add_middleware(_DebugEndpointGuard)
@@ -479,9 +539,10 @@ class TestM16DebugEndpointGuard:
 
     @pytest.mark.asyncio
     async def test_debug_path_allowed_in_dev(self):
-        from src.gateway.server.hybrid_server import _DebugEndpointGuard
-        from starlette.testclient import TestClient
         from fastapi import FastAPI
+        from starlette.testclient import TestClient
+
+        from src.gateway.server.hybrid_server import _DebugEndpointGuard
 
         app = FastAPI()
         app.add_middleware(_DebugEndpointGuard)
@@ -496,9 +557,10 @@ class TestM16DebugEndpointGuard:
         assert resp.status_code == 200
 
     def test_non_debug_path_unaffected(self):
-        from src.gateway.server.hybrid_server import _DebugEndpointGuard
-        from starlette.testclient import TestClient
         from fastapi import FastAPI
+        from starlette.testclient import TestClient
+
+        from src.gateway.server.hybrid_server import _DebugEndpointGuard
 
         app = FastAPI()
         app.add_middleware(_DebugEndpointGuard)
@@ -517,12 +579,15 @@ class TestM16DebugEndpointGuard:
 # M-19 — Trace variable shadowing fix
 # ---------------------------------------------------------------------------
 
+
 class TestM19TraceVariableShadowing:
     """M-19: Loop variable must not shadow opentelemetry.trace module."""
 
     def test_no_trace_loop_variable(self):
         import inspect
+
         from src.governed_financial_advisor.evaluators import evaluate_traces
+
         source = inspect.getsource(evaluate_traces)
         # The old shadowing pattern: "for trace in traces:"
         assert "for trace in " not in source, (
@@ -531,7 +596,9 @@ class TestM19TraceVariableShadowing:
 
     def test_uses_otel_tracer_name(self):
         import inspect
+
         from src.governed_financial_advisor.evaluators import evaluate_traces
+
         source = inspect.getsource(evaluate_traces)
         assert "_otel_tracer" in source, "Must use _otel_tracer to avoid shadowing"
 
@@ -540,12 +607,14 @@ class TestM19TraceVariableShadowing:
 # M-20 — MCP tool server rate limiting
 # ---------------------------------------------------------------------------
 
+
 class TestM20RateLimiting:
     """M-20: _check_rate_limit must enforce per-client sliding window."""
 
     @pytest.mark.asyncio
     async def test_allows_requests_within_limit(self):
         from src.gateway.server import mcp_tool_server
+
         # Reset bucket for test isolation
         mcp_tool_server._rate_limit_buckets.clear()
         for _ in range(5):
@@ -555,6 +624,7 @@ class TestM20RateLimiting:
     @pytest.mark.asyncio
     async def test_blocks_requests_over_limit(self):
         from src.gateway.server import mcp_tool_server
+
         mcp_tool_server._rate_limit_buckets.clear()
         original_max = mcp_tool_server._RATE_LIMIT_MAX_CALLS
         # Temporarily lower limit for test speed
@@ -572,6 +642,7 @@ class TestM20RateLimiting:
     @pytest.mark.asyncio
     async def test_different_clients_have_independent_buckets(self):
         from src.gateway.server import mcp_tool_server
+
         mcp_tool_server._rate_limit_buckets.clear()
         original_max = mcp_tool_server._RATE_LIMIT_MAX_CALLS
         mcp_tool_server._RATE_LIMIT_MAX_CALLS = 2
@@ -593,21 +664,25 @@ class TestM20RateLimiting:
 # M-21 — Storage backend lazy initialization
 # ---------------------------------------------------------------------------
 
+
 class TestM21StorageBackendLazy:
     """M-21: _get_storage_backend() must read env var at call time, not import time."""
 
     def test_get_storage_backend_function_exists(self):
         from src.compliance_bridge.storage import _get_storage_backend
+
         assert callable(_get_storage_backend)
 
     def test_storage_backend_reads_env_at_call_time(self):
         from src.compliance_bridge.storage import _get_storage_backend
+
         with patch.dict(os.environ, {"STORAGE_BACKEND": "s3"}):
             backend = _get_storage_backend()
         assert backend == "s3"
 
     def test_storage_backend_defaults_to_gcs(self):
         from src.compliance_bridge.storage import _get_storage_backend
+
         env = {k: v for k, v in os.environ.items() if k != "STORAGE_BACKEND"}
         with patch.dict(os.environ, env, clear=True):
             backend = _get_storage_backend()
@@ -615,10 +690,12 @@ class TestM21StorageBackendLazy:
 
     def test_no_module_level_storage_backend_constant(self):
         import inspect
+
         from src.compliance_bridge import storage
+
         source = inspect.getsource(storage)
         # The old pattern: _STORAGE_BACKEND: str = os.environ.get(...)
-        assert '_STORAGE_BACKEND: str = os.environ.get' not in source, (
+        assert "_STORAGE_BACKEND: str = os.environ.get" not in source, (
             "Module-level _STORAGE_BACKEND constant must be replaced with _get_storage_backend()"
         )
 
@@ -627,11 +704,13 @@ class TestM21StorageBackendLazy:
 # M-22 — Slack mrkdwn injection prevention
 # ---------------------------------------------------------------------------
 
+
 class TestM22SlackEscaping:
     """M-22: _escape_slack_mrkdwn must neutralize injection characters."""
 
     def _escape(self, text: str) -> str:
         from src.compliance_bridge.notifier import _escape_slack_mrkdwn
+
         return _escape_slack_mrkdwn(text)
 
     def test_escapes_ampersand(self):
@@ -674,11 +753,13 @@ class TestM22SlackEscaping:
 # M-23 — OPA decision log config
 # ---------------------------------------------------------------------------
 
+
 class TestM23OpaDecisionLogConfig:
     """M-23: deployment/opa_config.yaml must configure HTTP decision log sink."""
 
     def test_opa_config_has_http_plugin(self):
         import yaml
+
         with open("deployment/opa_config.yaml") as f:
             config = yaml.safe_load(f)
         decision_logs = config.get("decision_logs", {})
@@ -694,6 +775,7 @@ class TestM23OpaDecisionLogConfig:
 
     def test_opa_config_has_compliance_bridge_service(self):
         import yaml
+
         with open("deployment/opa_config.yaml") as f:
             config = yaml.safe_load(f)
         services = config.get("services", {})
@@ -703,6 +785,7 @@ class TestM23OpaDecisionLogConfig:
 
     def test_opa_config_retains_console_logging(self):
         import yaml
+
         with open("deployment/opa_config.yaml") as f:
             config = yaml.safe_load(f)
         assert config.get("decision_logs", {}).get("console") is True, (
@@ -713,6 +796,7 @@ class TestM23OpaDecisionLogConfig:
 # ---------------------------------------------------------------------------
 # M-24 — Non-root USER in gateway Dockerfile
 # ---------------------------------------------------------------------------
+
 
 class TestM24NonRootDockerfile:
     """M-24: src/gateway/Dockerfile must set a non-root USER."""
@@ -735,5 +819,7 @@ class TestM24NonRootDockerfile:
     def test_compliance_bridge_dockerfile_has_user_directive(self):
         with open("src/compliance_bridge/Dockerfile") as f:
             content = f.read()
-        assert "USER " in content, "Compliance bridge Dockerfile must have a USER directive"
+        assert "USER " in content, (
+            "Compliance bridge Dockerfile must have a USER directive"
+        )
         assert "USER root" not in content

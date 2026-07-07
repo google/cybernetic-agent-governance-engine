@@ -111,6 +111,7 @@ class TrustLayersProvider:
     async def fetch_baseline(self, region: str):
         """Fetch the active legal baseline from TrustLayers."""
         import httpx
+
         from src.gateway.governance.normative_provider import NormativeBaseline
 
         url = f"{self._endpoint}/legal-baseline/{region}"
@@ -125,24 +126,19 @@ class TrustLayersProvider:
                     etag=resp.headers.get("ETag", ""),
                 )
         except Exception as exc:
-            logger.error(
-                "[TrustLayersProvider] fetch_baseline failed: %s %s", url, exc
-            )
-            return NormativeBaseline(
-                region=region, profile={}, error=str(exc)
-            )
+            logger.error("[TrustLayersProvider] fetch_baseline failed: %s %s", url, exc)
+            return NormativeBaseline(region=region, profile={}, error=str(exc))
 
     async def validate_fria(self, payload: dict[str, Any]):
         """Submit FRIA validation to TrustLayers (synchronous blocking gate)."""
         import httpx
+
         from src.gateway.governance.normative_provider import ValidationResult
 
         url = f"{self._endpoint}/validate/fria"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(
-                    url, json=payload, headers=self._headers()
-                )
+                resp = await client.post(url, json=payload, headers=self._headers())
                 resp.raise_for_status()
                 data = resp.json()
                 return ValidationResult(
@@ -150,19 +146,16 @@ class TrustLayersProvider:
                     findings=data.get("findings", []),
                 )
         except Exception as exc:
-            logger.error(
-                "[TrustLayersProvider] validate_fria failed: %s %s", url, exc
-            )
+            logger.error("[TrustLayersProvider] validate_fria failed: %s %s", url, exc)
             return ValidationResult(
                 admitted=False,
                 error=str(exc),
             )
 
-    async def submit_evidence(
-        self, thread_id: str, evidence_hash: str
-    ):
+    async def submit_evidence(self, thread_id: str, evidence_hash: str):
         """Submit governance evidence hash for external sealing."""
         import httpx
+
         from src.gateway.governance.normative_provider import EvidenceSeal
 
         url = f"{self._endpoint}/evidence-chain/{thread_id}"
@@ -183,6 +176,4 @@ class TrustLayersProvider:
             logger.error(
                 "[TrustLayersProvider] submit_evidence failed: %s %s", url, exc
             )
-            return EvidenceSeal(
-                thread_id=thread_id, error=str(exc)
-            )
+            return EvidenceSeal(thread_id=thread_id, error=str(exc))

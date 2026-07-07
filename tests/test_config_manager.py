@@ -13,18 +13,24 @@
 # limitations under the License.
 
 import os
-import pytest
 from unittest.mock import patch
-from src.governed_financial_advisor.infrastructure.config_manager import ConfigManager # Import Class
+
+import pytest
+
+from src.governed_financial_advisor.infrastructure.config_manager import (
+    ConfigManager,  # Import Class
+)
 
 pytestmark = pytest.mark.unit
+
 
 def test_get_from_env_var():
     # 1. Test Env Var Priority
     with patch.dict(os.environ, {"TEST_KEY": "env-value"}):
-        cm = ConfigManager() # Fresh instance
+        cm = ConfigManager()  # Fresh instance
         val = cm.get("TEST_KEY")
         assert val == "env-value"
+
 
 def test_get_default_when_env_missing():
     # 2. Test default fallback when env var is not set (GSM removed)
@@ -36,25 +42,30 @@ def test_get_default_when_env_missing():
             val = cm.get("MISSING_KEY", default="fallback")
             assert val == "fallback"
 
+
 def test_get_returns_none_when_no_default():
     # 3. Test that None is returned when key is missing and no default is provided
     cm = ConfigManager()
     val = cm.get("DEFINITELY_NOT_SET_XYZ_12345")
     assert val is None
 
+
 def test_get_int():
     with patch.dict(os.environ, {"INT_KEY": "42"}):
         cm = ConfigManager()
         assert cm.get_int("INT_KEY") == 42
+
 
 def test_get_bool_true():
     with patch.dict(os.environ, {"BOOL_KEY": "true"}):
         cm = ConfigManager()
         assert cm.get_bool("BOOL_KEY") is True
 
+
 def test_get_bool_false_default():
     cm = ConfigManager()
     assert cm.get_bool("UNSET_BOOL_KEY") is False
+
 
 def test_secret_id_param_is_noop():
     # secret_id param must be accepted without error (retained for call-site compat)

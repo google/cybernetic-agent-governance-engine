@@ -27,24 +27,24 @@ Verifies:
 
 import json
 import tempfile
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
 
-
 # ---------------------------------------------------------------------------
 # 1. ApprovalResumeRequest — mandatory rationale validation
 # ---------------------------------------------------------------------------
+
 
 class TestApprovalResumeRequest:
     """Unit tests for the Pydantic model validation."""
 
     def _load(self):
         from src.governed_financial_advisor.server import ApprovalResumeRequest
+
         return ApprovalResumeRequest
 
     def test_valid_request_accepted(self):
@@ -98,12 +98,15 @@ class TestApprovalResumeRequest:
 # 2. approval_node — rationale propagated into approval_decision
 # ---------------------------------------------------------------------------
 
+
 class TestApprovalNodeRationale:
     """Tests the approval_node processes and forwards the rationale field."""
 
     def _call_node_with_decision(self, decision: dict) -> "Command":
         """Simulate what happens when interrupt() returns `decision`."""
-        from src.governed_financial_advisor.graph.nodes.approval_node import approval_node
+        from src.governed_financial_advisor.graph.nodes.approval_node import (
+            approval_node,
+        )
 
         with patch(
             "src.governed_financial_advisor.graph.nodes.approval_node.interrupt",
@@ -116,14 +119,19 @@ class TestApprovalNodeRationale:
             return approval_node(state)
 
     def test_rationale_present_in_approval_decision_on_approve(self):
-        cmd = self._call_node_with_decision({
-            "approved": True,
-            "reviewer": "carol@example.com",
-            "rationale": "Confirmed against IPS; risk score 0.45 < threshold.",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        cmd = self._call_node_with_decision(
+            {
+                "approved": True,
+                "reviewer": "carol@example.com",
+                "rationale": "Confirmed against IPS; risk score 0.45 < threshold.",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
         decision = cmd.update["approval_decision"]
-        assert decision["rationale"] == "Confirmed against IPS; risk score 0.45 < threshold."
+        assert (
+            decision["rationale"]
+            == "Confirmed against IPS; risk score 0.45 < threshold."
+        )
         assert decision["reviewer"] == "carol@example.com"
         assert decision["approved"] is True
         # TOCTOU remediation: approved path now routes to post_hitl_rehydrate,
@@ -132,25 +140,32 @@ class TestApprovalNodeRationale:
         assert cmd.goto == "post_hitl_rehydrate"
 
     def test_rationale_present_in_approval_decision_on_reject(self):
-        cmd = self._call_node_with_decision({
-            "approved": False,
-            "reviewer": "dave@example.com",
-            "rationale": "Client has requested no equity exposure this quarter.",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        cmd = self._call_node_with_decision(
+            {
+                "approved": False,
+                "reviewer": "dave@example.com",
+                "rationale": "Client has requested no equity exposure this quarter.",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
         decision = cmd.update["approval_decision"]
-        assert decision["rationale"] == "Client has requested no equity exposure this quarter."
+        assert (
+            decision["rationale"]
+            == "Client has requested no equity exposure this quarter."
+        )
         assert decision["approved"] is False
         assert cmd.goto == "rejection"
 
     def test_empty_rationale_stored_but_does_not_crash(self):
         """Backward compat: node stores empty rationale without crashing.
         Validation is the API layer's responsibility; the node is not the gate."""
-        cmd = self._call_node_with_decision({
-            "approved": True,
-            "reviewer": "legacy@example.com",
-            # rationale absent — simulates old client
-        })
+        cmd = self._call_node_with_decision(
+            {
+                "approved": True,
+                "reviewer": "legacy@example.com",
+                # rationale absent — simulates old client
+            }
+        )
         decision = cmd.update["approval_decision"]
         assert decision.get("rationale", "") == ""
 
@@ -159,9 +174,12 @@ class TestApprovalNodeRationale:
 # 3. rejection_node — rationale shown in rejection message
 # ---------------------------------------------------------------------------
 
+
 class TestRejectionNodeRationale:
     def test_rationale_appears_in_rejection_message(self):
-        from src.governed_financial_advisor.graph.nodes.approval_node import rejection_node
+        from src.governed_financial_advisor.graph.nodes.approval_node import (
+            rejection_node,
+        )
 
         state = {
             "approval_decision": {
@@ -174,12 +192,16 @@ class TestRejectionNodeRationale:
         }
         result = rejection_node(state)
         messages = result["messages"]
-        content = messages[0][1] if isinstance(messages[0], tuple) else messages[0].content
+        content = (
+            messages[0][1] if isinstance(messages[0], tuple) else messages[0].content
+        )
         assert "Portfolio already at maximum allocation" in content
         assert "Rationale:" in content
 
     def test_comment_fallback_when_no_rationale(self):
-        from src.governed_financial_advisor.graph.nodes.approval_node import rejection_node
+        from src.governed_financial_advisor.graph.nodes.approval_node import (
+            rejection_node,
+        )
 
         state = {
             "approval_decision": {
@@ -192,13 +214,16 @@ class TestRejectionNodeRationale:
         }
         result = rejection_node(state)
         messages = result["messages"]
-        content = messages[0][1] if isinstance(messages[0], tuple) else messages[0].content
+        content = (
+            messages[0][1] if isinstance(messages[0], tuple) else messages[0].content
+        )
         assert "Old-style comment field." in content
 
 
 # ---------------------------------------------------------------------------
 # 4 & 5. PlaygroundTelemetry.record_approval() — evidence chain integrity
 # ---------------------------------------------------------------------------
+
 
 class TestRecordApproval:
     """Tests the new record_approval() method on PlaygroundTelemetry."""
@@ -210,7 +235,7 @@ class TestRecordApproval:
         # Redirect all file paths to the temp directory
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         chain_path = tmp_dir / f"evidence_chain_{date_str}.ndjson"
-        view_path  = tmp_dir / f"view_access_log_{date_str}.ndjson"
+        view_path = tmp_dir / f"view_access_log_{date_str}.ndjson"
 
         with (
             patch.object(tel_module, "_EVIDENCE_CHAIN_PATH", chain_path),
@@ -280,12 +305,16 @@ class TestRecordApproval:
                 patch.object(tel_module, "_EVIDENCE_DIR", tmp),
             ):
                 h1 = tel.record_approval(
-                    thread_id="t1", approved=True,
-                    reviewer="h@x.com", rationale="First approval."
+                    thread_id="t1",
+                    approved=True,
+                    reviewer="h@x.com",
+                    rationale="First approval.",
                 )
                 h2 = tel.record_approval(
-                    thread_id="t2", approved=False,
-                    reviewer="h@x.com", rationale="Second rejection."
+                    thread_id="t2",
+                    approved=False,
+                    reviewer="h@x.com",
+                    rationale="Second rejection.",
                 )
 
             lines = chain_path.read_text().strip().splitlines()

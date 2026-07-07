@@ -26,7 +26,6 @@ Covers:
 
 from __future__ import annotations
 
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -124,9 +123,7 @@ safety_constraints: []
 """
 
 _FULL_YAML_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "config"
-    / "stpa_control_structure.yaml"
+    Path(__file__).resolve().parents[1] / "config" / "stpa_control_structure.yaml"
 )
 
 
@@ -238,7 +235,8 @@ class TestOpaGeneration:
         rego = generate_opa(cs)
         # All OPA-enforced UCAs must appear in the output
         opa_ucas = [
-            u for u in cs.unsafe_control_actions
+            u
+            for u in cs.unsafe_control_actions
             if "opa" in u.enforcement or "all" in u.enforcement
         ]
         for uca in opa_ucas:
@@ -278,11 +276,15 @@ class TestNemoGeneration:
         colang = generate_nemo(nemo_cs)
         assert "await LogSafetyAuditAction" in colang
 
-    def test_composite_guardrail_generated(self, nemo_cs: ControlStructureModel) -> None:
+    def test_composite_guardrail_generated(
+        self, nemo_cs: ControlStructureModel
+    ) -> None:
         colang = generate_nemo(nemo_cs)
         assert "flow stpa_output_guardrail" in colang
 
-    def test_no_nemo_ucas_produces_comment(self, minimal_cs: ControlStructureModel) -> None:
+    def test_no_nemo_ucas_produces_comment(
+        self, minimal_cs: ControlStructureModel
+    ) -> None:
         colang = generate_nemo(minimal_cs)
         assert "No NeMo rails defined" in colang
 
@@ -292,7 +294,8 @@ class TestNemoGeneration:
         cs = load_control_structure(_FULL_YAML_PATH)
         colang = generate_nemo(cs)
         nemo_ucas = [
-            u for u in cs.unsafe_control_actions
+            u
+            for u in cs.unsafe_control_actions
             if "nemo" in u.enforcement or "all" in u.enforcement
         ]
         for uca in nemo_ucas:
@@ -332,7 +335,8 @@ class TestPythonGeneration:
         cs = load_control_structure(_FULL_YAML_PATH)
         py = generate_python(cs)
         py_ucas = [
-            u for u in cs.unsafe_control_actions
+            u
+            for u in cs.unsafe_control_actions
             if "python" in u.enforcement or "all" in u.enforcement
         ]
         for uca in py_ucas:
@@ -385,7 +389,9 @@ class TestCLI:
 
     def test_validate_command_invalid_yaml(self, tmp_path: Path) -> None:
         yaml_file = tmp_path / "bad.yaml"
-        yaml_file.write_text("system: {name: X}\nunsafe_control_actions: []\nhazards: []\ncontrol_actions: []\nsafety_constraints: []")
+        yaml_file.write_text(
+            "system: {name: X}\nunsafe_control_actions: []\nhazards: []\ncontrol_actions: []\nsafety_constraints: []"
+        )
         ret = main(["validate", "--input", str(yaml_file)])
         assert ret == 1
 
@@ -393,7 +399,9 @@ class TestCLI:
         ret = main(["validate", "--input", str(tmp_path / "nonexistent.yaml")])
         assert ret == 1
 
-    def test_compile_dry_run_all(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    def test_compile_dry_run_all(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
         yaml_file = tmp_path / "cs.yaml"
         yaml_file.write_text(_MINIMAL_YAML)
         ret = main(["compile", "--input", str(yaml_file), "--dry-run"])
@@ -408,21 +416,31 @@ class TestCLI:
         opa_out = tmp_path / "out.rego"
         nemo_out = tmp_path / "out.co"
         py_out = tmp_path / "out.py"
-        ret = main([
-            "compile",
-            "--input", str(yaml_file),
-            "--targets", "opa", "python",
-            "--opa-out", str(opa_out),
-            "--nemo-out", str(nemo_out),
-            "--python-out", str(py_out),
-        ])
+        ret = main(
+            [
+                "compile",
+                "--input",
+                str(yaml_file),
+                "--targets",
+                "opa",
+                "python",
+                "--opa-out",
+                str(opa_out),
+                "--nemo-out",
+                str(nemo_out),
+                "--python-out",
+                str(py_out),
+            ]
+        )
         assert ret == 0
         assert opa_out.exists()
         assert py_out.exists()
         assert "package stpa.generated" in opa_out.read_text()
         assert "GeneratedSTPAValidator" in py_out.read_text()
 
-    def test_compile_production_yaml_dry_run(self, capsys: pytest.CaptureFixture) -> None:
+    def test_compile_production_yaml_dry_run(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
         """Smoke test: compile the real YAML without writing files."""
         if not _FULL_YAML_PATH.exists():
             pytest.skip("Production YAML not found.")

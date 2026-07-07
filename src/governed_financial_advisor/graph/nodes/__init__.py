@@ -18,13 +18,13 @@ from .agent_nodes import (
     execution_analyst_node,
     governed_trader_node,
 )
-from .supervisor_node import thinker_node, doer_node
+from .supervisor_node import doer_node, thinker_node
 
 __all__ = [
     "agent_nodes",
     "data_analyst_node",
+    "doer_node",
     "execution_analyst_node",
     "governed_trader_node",
     "thinker_node",
-    "doer_node"
 ]

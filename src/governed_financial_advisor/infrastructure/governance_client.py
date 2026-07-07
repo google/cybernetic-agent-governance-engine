@@ -28,7 +28,7 @@ at 1 s.
 import asyncio
 import logging
 import os
-from typing import Optional, Type, TypeVar
+from typing import TypeVar
 
 import httpx
 from pydantic import BaseModel
@@ -41,7 +41,7 @@ T = TypeVar("T", bound=BaseModel)
 # Module-level singleton state
 # ---------------------------------------------------------------------------
 
-_async_client: Optional[httpx.AsyncClient] = None
+_async_client: httpx.AsyncClient | None = None
 _async_client_lock: asyncio.Lock = asyncio.Lock()
 
 # Connection pool configuration (R-19)
@@ -97,6 +97,7 @@ async def close_async_client() -> None:
 # Retry helper
 # ---------------------------------------------------------------------------
 
+
 async def _post_with_retry(
     client: httpx.AsyncClient,
     url: str,
@@ -131,7 +132,11 @@ async def _post_with_retry(
                 request=response.request,
                 response=response,
             )
-        except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as exc:
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.RemoteProtocolError,
+        ) as exc:
             delay = _BASE_DELAY_SECONDS * (2 ** (attempt - 1))
             logger.warning(
                 "GovernanceClient: network error on attempt %d/%d (%s), retrying in %.1fs",
@@ -149,6 +154,7 @@ async def _post_with_retry(
 # ---------------------------------------------------------------------------
 # GovernanceClient
 # ---------------------------------------------------------------------------
+
 
 class StructuredLLMClient:
     """
@@ -168,9 +174,9 @@ class StructuredLLMClient:
 
     def __init__(
         self,
-        base_url: Optional[str] = None,
+        base_url: str | None = None,
         api_key: str = None,
-        model_name: Optional[str] = None,
+        model_name: str | None = None,
         timeout_seconds: float = 30.0,
     ):
         """
@@ -183,14 +189,19 @@ class StructuredLLMClient:
             timeout_seconds: Request timeout (used for singleton client init).
         """
         from config.settings import Config
-        self.base_url = base_url or os.getenv("GATEWAY_API_BASE", Config.GATEWAY_API_BASE)
+
+        self.base_url = base_url or os.getenv(
+            "GATEWAY_API_BASE", Config.GATEWAY_API_BASE
+        )
         api_key = api_key or os.environ.get("VLLM_API_KEY", "EMPTY")
         self.api_key = api_key
         # Prioritize init arg, then env var, then class constant
         self.model_name = model_name or os.getenv("VLLM_MODEL", self.DEFAULT_MODEL_ID)
         self.timeout = timeout_seconds
 
-    def _prepare_request(self, prompt: str, schema: Type[T], system_instruction: str) -> dict:
+    def _prepare_request(
+        self, prompt: str, schema: type[T], system_instruction: str
+    ) -> dict:
         """Helper to prepare the request payload."""
         json_schema = schema.model_json_schema()
         return {
@@ -207,7 +218,7 @@ class StructuredLLMClient:
     async def generate_structured(
         self,
         prompt: str,
-        schema: Type[T],
+        schema: type[T],
         system_instruction: str = "You are a strict governance engine.",
     ) -> T:
         """
@@ -224,12 +235,16 @@ class StructuredLLMClient:
         url = f"{self.base_url}/chat/completions"
 
         logger.info(
-            "Sending Governed Request (Async) to %s with schema %s", url, schema.__name__
+            "Sending Governed Request (Async) to %s with schema %s",
+            url,
+            schema.__name__,
         )
 
         client = await _get_async_client(self.timeout)
         try:
-            response = await _post_with_retry(client, url, json=payload, headers=headers)
+            response = await _post_with_retry(
+                client, url, json=payload, headers=headers
+            )
             result_data = response.json()
             content = result_data["choices"][0]["message"]["content"]
             return schema.model_validate_json(content)
@@ -240,7 +255,7 @@ class StructuredLLMClient:
     def generate_structured_sync(
         self,
         prompt: str,
-        schema: Type[T],
+        schema: type[T],
         system_instruction: str = "You are a strict governance engine.",
     ) -> T:
         """
