@@ -64,7 +64,12 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Authenticate to GCP (Workload Identity)
+        # continue-on-error: GCP secrets are not available on fork PRs or when
+        # GCP_WIF_PROVIDER / GCP_SERVICE_ACCOUNT are not configured. Subsequent
+        # steps that require GCP (SBOM upload to GCS) are already gated on
+        # `if: env.SBOM_BUCKET != ''`, so the job still produces useful artefacts.
         uses: google-github-actions/auth@v3
+        continue-on-error: true
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
