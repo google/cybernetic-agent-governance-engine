@@ -130,6 +130,7 @@ jobs:
   regional-posture:
     name: "Regional Posture (${{ matrix.region }} / ${{ matrix.environment }})"
     needs: [universal-iso42001]
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 30
 

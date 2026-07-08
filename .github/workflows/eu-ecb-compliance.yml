@@ -113,7 +113,7 @@ jobs:
               sys.exit(1)
           print(f'cage_deployment_region=EU_ECB — OK')
           # Verify enable_eu_ecb_compliance is true
-          if 'enable_eu_ecb_compliance = true' not in content:
+          if not re.search(r'enable_eu_ecb_compliance\s*=\s*true', content):
               print('ERROR: enable_eu_ecb_compliance must be true in eu-prod.tfvars')
               sys.exit(1)
           print('enable_eu_ecb_compliance=true — OK')
