@@ -19,19 +19,19 @@ on:
   workflow_call:
     inputs:
       lula_version:
-        description: "Lula binary version to install (defenseunicorns/lula)"
+        description: "Lula binary version to install (defenseunicorns-labs/lula1)"
         type: string
         required: false
-        default: "v0.9.5"
+        default: "v0.16.0"
 
   # Allow manual triggering from the GitHub Actions UI
   workflow_dispatch:
     inputs:
       lula_version:
-        description: "Lula binary version to install (defenseunicorns/lula)"
+        description: "Lula binary version to install (defenseunicorns-labs/lula1)"
         type: string
         required: false
-        default: "v0.9.5"
+        default: "v0.16.0"
 
   # Run automatically on pushes to integration branches
   push:
@@ -46,9 +46,10 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.11"
-  # Lula (defenseunicorns/lula) is the Go CLI compliance validator.
-  # Binary releases: https://github.com/defenseunicorns/lula/releases
-  LULA_VERSION: ${{ inputs.lula_version || 'v0.9.5' }}
+  # Lula (defenseunicorns-labs/lula1) is the Go CLI OSCAL compliance validator.
+  # Binary releases: https://github.com/defenseunicorns-labs/lula1/releases
+  # NOTE: github.com/defenseunicorns/lula is a separate TypeScript npm package (lula2).
+  LULA_VERSION: ${{ inputs.lula_version || 'v0.16.0' }}
 
 # ---------------------------------------------------------------------------
 # Job 1: Universal ISO 42001 Gates
@@ -80,20 +81,14 @@ jobs:
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
       - name: Install Lula binary
-        # Official Lula Go CLI: https://github.com/defenseunicorns/lula
-        # Falls back to go install if the release asset is unavailable.
+        # Official Lula Go CLI (OSCAL validator): https://github.com/defenseunicorns-labs/lula1
+        # NOTE: github.com/defenseunicorns/lula is a TypeScript npm package (lula2), not this tool.
         run: |
           LULA_VERSION="${{ env.LULA_VERSION }}"
-          LULA_URL="https://github.com/defenseunicorns/lula/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64"
-          echo "Installing lula ${LULA_VERSION} from defenseunicorns/lula..."
-          if curl -fsSL "${LULA_URL}" -o /usr/local/bin/lula 2>/dev/null; then
-            chmod +x /usr/local/bin/lula
-            echo "lula installed via release binary"
-          else
-            echo "Release binary not found at ${LULA_URL} — falling back to go install"
-            go install github.com/defenseunicorns/lula/cmd/lula@${LULA_VERSION}
-            cp "$(go env GOPATH)/bin/lula" /usr/local/bin/lula
-          fi
+          LULA_URL="https://github.com/defenseunicorns-labs/lula1/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64"
+          echo "Installing lula ${LULA_VERSION} from defenseunicorns-labs/lula1..."
+          curl -fsSL "${LULA_URL}" -o /usr/local/bin/lula
+          chmod +x /usr/local/bin/lula
           lula version
 
       - name: Gate 0.1 — Core unit tests (if tests/core/ exists)
@@ -172,19 +167,14 @@ jobs:
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
       - name: Install Lula binary
-        # Official Lula Go CLI: https://github.com/defenseunicorns/lula
+        # Official Lula Go CLI (OSCAL validator): https://github.com/defenseunicorns-labs/lula1
+        # NOTE: github.com/defenseunicorns/lula is a TypeScript npm package (lula2), not this tool.
         run: |
           LULA_VERSION="${{ env.LULA_VERSION }}"
-          LULA_URL="https://github.com/defenseunicorns/lula/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64"
-          echo "Installing lula ${LULA_VERSION} from defenseunicorns/lula..."
-          if curl -fsSL "${LULA_URL}" -o /usr/local/bin/lula 2>/dev/null; then
-            chmod +x /usr/local/bin/lula
-            echo "lula installed via release binary"
-          else
-            echo "Release binary not found at ${LULA_URL} — falling back to go install"
-            go install github.com/defenseunicorns/lula/cmd/lula@${LULA_VERSION}
-            cp "$(go env GOPATH)/bin/lula" /usr/local/bin/lula
-          fi
+          LULA_URL="https://github.com/defenseunicorns-labs/lula1/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64"
+          echo "Installing lula ${LULA_VERSION} from defenseunicorns-labs/lula1..."
+          curl -fsSL "${LULA_URL}" -o /usr/local/bin/lula
+          chmod +x /usr/local/bin/lula
           lula version
 
       - name: Install OPA binary (US_FED only)

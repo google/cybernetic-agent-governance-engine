@@ -132,6 +132,7 @@ class TestStubNormativeProvider:
         self, stub_provider: StubNormativeProvider
     ) -> None:
         """StubNormativeProvider reads from config/compliance/ and returns valid baseline."""
+        # US_FED-specific: not parametrized — asserts CTRL_AGT_001 which is US_FED-only
         baseline = await stub_provider.fetch_baseline("US_FED")
         # US_FED_BASELINE.json should exist in the repo
         assert baseline.is_valid, (
@@ -350,19 +351,22 @@ class TestNormativeProviderDaemon:
     """Tests for NormativeProviderDaemon lifecycle."""
 
     @pytest.mark.asyncio
-    async def test_boot_fetch_writes_and_reconfigures(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("region", ["US_FED", "EU_ECB", "APAC_MAS"])
+    async def test_boot_fetch_writes_and_reconfigures(
+        self, tmp_path: Path, region: str
+    ) -> None:
         """Daemon.boot_fetch() writes profile to disk and calls ControlRegistry.reconfigure()."""
         provider = AsyncMock()
         provider.fetch_baseline = AsyncMock(
             return_value=NormativeBaseline(
-                region="US_FED",
+                region=region,
                 profile={"CTRL_AGT_001": {"internal_id": "THR-CONF-001"}},
             )
         )
 
         daemon = NormativeProviderDaemon(
             provider=provider,
-            region="US_FED",
+            region=region,
             boot_timeout=5.0,
         )
 
@@ -377,7 +381,7 @@ class TestNormativeProviderDaemon:
             await daemon.boot_fetch()
 
             # Profile should be written to disk
-            profile_path = tmp_path / "US_FED_BASELINE.json"
+            profile_path = tmp_path / f"{region}_BASELINE.json"
             assert profile_path.exists()
             with open(profile_path) as fh:
                 written = json.load(fh)
@@ -387,22 +391,25 @@ class TestNormativeProviderDaemon:
             mock_reconfig.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_boot_fetch_fallback_on_failure(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("region", ["US_FED", "EU_ECB", "APAC_MAS"])
+    async def test_boot_fetch_fallback_on_failure(
+        self, tmp_path: Path, region: str
+    ) -> None:
         """Provider unreachable → falls back to cached local copy."""
         # Create a cached profile
-        profile_path = tmp_path / "US_FED_BASELINE.json"
+        profile_path = tmp_path / f"{region}_BASELINE.json"
         profile_path.write_text(json.dumps({"CTRL_AGT_001": {"cached": True}}))
 
         provider = AsyncMock()
         provider.fetch_baseline = AsyncMock(
             return_value=NormativeBaseline(
-                region="US_FED", profile={}, error="Connection refused"
+                region=region, profile={}, error="Connection refused"
             )
         )
 
         daemon = NormativeProviderDaemon(
             provider=provider,
-            region="US_FED",
+            region=region,
             boot_timeout=5.0,
         )
 
@@ -413,18 +420,21 @@ class TestNormativeProviderDaemon:
             await daemon.boot_fetch()
 
     @pytest.mark.asyncio
-    async def test_boot_fetch_no_fallback_raises(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("region", ["US_FED", "EU_ECB", "APAC_MAS"])
+    async def test_boot_fetch_no_fallback_raises(
+        self, tmp_path: Path, region: str
+    ) -> None:
         """No profile anywhere → RuntimeError."""
         provider = AsyncMock()
         provider.fetch_baseline = AsyncMock(
             return_value=NormativeBaseline(
-                region="US_FED", profile={}, error="Connection refused"
+                region=region, profile={}, error="Connection refused"
             )
         )
 
         daemon = NormativeProviderDaemon(
             provider=provider,
-            region="US_FED",
+            region=region,
             boot_timeout=5.0,
         )
 
@@ -435,15 +445,18 @@ class TestNormativeProviderDaemon:
                 await daemon.boot_fetch()
 
     @pytest.mark.asyncio
-    async def test_polling_detects_etag_change(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("region", ["US_FED", "EU_ECB", "APAC_MAS"])
+    async def test_polling_detects_etag_change(
+        self, tmp_path: Path, region: str
+    ) -> None:
         """Changed baseline triggers reconfigure; unchanged is no-op."""
         call_count = 0
 
-        async def changing_baseline(region: str) -> NormativeBaseline:
+        async def changing_baseline(rgn: str) -> NormativeBaseline:
             nonlocal call_count
             call_count += 1
             return NormativeBaseline(
-                region=region,
+                region=rgn,
                 profile={"CTRL_AGT_001": {"version": call_count}},
             )
 
@@ -452,7 +465,7 @@ class TestNormativeProviderDaemon:
 
         daemon = NormativeProviderDaemon(
             provider=provider,
-            region="US_FED",
+            region=region,
             poll_interval=0.1,  # 100ms for test speed
         )
         daemon._last_hash = "initial-hash"
@@ -538,25 +551,29 @@ class TestDeferReasonExternalValidation:
 class TestDataContracts:
     """Tests for data contract validity and behavior."""
 
-    def test_normative_baseline_validity(self) -> None:
+    @pytest.mark.parametrize("region", ["US_FED", "EU_ECB", "APAC_MAS"])
+    def test_normative_baseline_validity(self, region: str) -> None:
         """Valid baseline has no error and non-empty profile."""
-        baseline = NormativeBaseline(region="US_FED", profile={"key": "val"})
+        baseline = NormativeBaseline(region=region, profile={"key": "val"})
         assert baseline.is_valid
 
-    def test_normative_baseline_invalid_on_error(self) -> None:
+    @pytest.mark.parametrize("region", ["US_FED", "EU_ECB", "APAC_MAS"])
+    def test_normative_baseline_invalid_on_error(self, region: str) -> None:
         """Baseline with error is not valid."""
-        baseline = NormativeBaseline(region="US_FED", profile={}, error="fail")
+        baseline = NormativeBaseline(region=region, profile={}, error="fail")
         assert not baseline.is_valid
 
-    def test_normative_baseline_invalid_on_empty_profile(self) -> None:
+    @pytest.mark.parametrize("region", ["US_FED", "EU_ECB", "APAC_MAS"])
+    def test_normative_baseline_invalid_on_empty_profile(self, region: str) -> None:
         """Baseline with empty profile is not valid."""
-        baseline = NormativeBaseline(region="US_FED", profile={})
+        baseline = NormativeBaseline(region=region, profile={})
         assert not baseline.is_valid
 
-    def test_normative_baseline_profile_hash_deterministic(self) -> None:
+    @pytest.mark.parametrize("region", ["US_FED", "EU_ECB", "APAC_MAS"])
+    def test_normative_baseline_profile_hash_deterministic(self, region: str) -> None:
         """Same profile produces same hash."""
-        b1 = NormativeBaseline(region="US_FED", profile={"a": 1, "b": 2})
-        b2 = NormativeBaseline(region="US_FED", profile={"b": 2, "a": 1})
+        b1 = NormativeBaseline(region=region, profile={"a": 1, "b": 2})
+        b2 = NormativeBaseline(region=region, profile={"b": 2, "a": 1})
         assert b1.profile_hash == b2.profile_hash
 
     def test_fria_enforcement_result_fields(self) -> None:
