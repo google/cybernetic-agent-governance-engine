@@ -144,7 +144,7 @@ class GatewayClient:
                             f"🧠 [Reasoning] (Unterminated): {content[:500]}..."
                         )
                 else:
-                    logger.info(f"ℹ️ [Response]: {content[:200]}...")
+                    logger.info(f"[Response]: {content[:200]}...")
 
                 return content
             except Exception as e:

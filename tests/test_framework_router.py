@@ -30,7 +30,7 @@ Test matrix covers:
   4. Control descriptions — every control ID referenced in uca_mappings has a
      corresponding entry in control_descriptions.
   5. Narrative template rendering — format_narrative() produces non-empty,
-     non-placeholder prose for every (framework × control) combination.
+     non-placeholder prose for every (framework x control) combination.
   6. build_summary() — returns a non-empty multi-line string covering all UCAs.
   7. all_controls() — returns a deduplicated list; verifies no duplicates.
   8. Sentinel-driven trace suppression — the _NO_LEGAL_FORCE_MARKER logic in

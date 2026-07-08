@@ -794,7 +794,7 @@ def cmd_export(args: argparse.Namespace) -> int:
     component_entry = generate_component_entry(cs)
 
     ok_ssp = _apply_ssp_patch(args.ssp, patch_block, dry_run=args.dry_run)
-    ok_comp = _apply_component_patch(
+    _apply_component_patch(
         args.component_def, component_entry, dry_run=args.dry_run
     )
     _write_standalone_patch(

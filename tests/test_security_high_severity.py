@@ -143,7 +143,7 @@ class TestH09TextFilterValidation:
             # Should not raise even with empty keyword in list
             # (pyahocorasick may not be installed in CI — that's fine)
             try:
-                result = _build_automaton()
+                _build_automaton()
                 # If pyahocorasick is available, automaton should be built
                 # with only the 2 valid keywords
             except Exception as exc:

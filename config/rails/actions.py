@@ -584,18 +584,16 @@ async def log_safety_audit_action(context: dict | None = None, **kwargs) -> bool
 
 
 __all__ = [
-    # Semantic guardrails (NeMo-owned)
-    "retrieve_knowledge",
-    "mask_pii_action",
-    "custom_self_check_input",
-    "custom_self_check_output",
-    # Financial policy pass-through stubs (R-22 fix — OPA is authoritative)
     "check_approval_token_action",
+    "check_atomic_execution_action",
     "check_data_latency_action",
     "check_drawdown_limit_action",
     "check_slippage_risk_action",
-    "check_atomic_execution_action",
+    "custom_self_check_input",
+    "custom_self_check_output",
     "log_safety_audit_action",
+    "mask_pii_action",
+    "retrieve_knowledge",
 ]
 
 # NOTE: InvokeVllmFallbackAction is registered via nemo_action_registry.py

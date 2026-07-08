@@ -522,7 +522,7 @@ class TestNexArtClient:
             MockClient.return_value = mock_instance
 
             client = NexArtClient(endpoint="https://api.nexart.io/v1")
-            result = await client.certify_decision({"test": True})
+            await client.certify_decision({"test": True})
 
             mock_instance.post.assert_called_once()
             call_args = mock_instance.post.call_args

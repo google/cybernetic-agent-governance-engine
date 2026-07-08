@@ -71,19 +71,16 @@ CheckSlippageRiskAction = None
 # ---------------------------------------------------------------------------
 
 __all__ = [
-    # In-process synchronous (module 3 — canonical implementations)
+    "CheckApprovalTokenAction",
+    "CheckDataLatencyAction",
+    "CheckDrawdownLimitAction",
+    "CheckSlippageRiskAction",
+    "RetrieveKnowledgeAction",
     "check_approval_token",
     "check_atomic_execution",
     "check_data_latency",
     "check_drawdown_limit",
     "check_slippage_risk",
-    # Gateway-delegating async (module 1)
-    "RetrieveKnowledgeAction",
-    "CheckApprovalTokenAction",
-    "CheckDataLatencyAction",
-    "CheckDrawdownLimitAction",
-    "CheckSlippageRiskAction",
-    # Symbolic-governor async (module 2) — available via get_all_actions()
     "get_all_actions",
 ]
 

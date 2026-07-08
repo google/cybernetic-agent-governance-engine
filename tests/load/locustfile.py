@@ -105,7 +105,7 @@ class GovernanceUser(HttpUser):
     """
 
     # Governance calls are fast (sub-second) but orchestrators batch them;
-    # wait 1–5 seconds between requests to model realistic concurrency.
+    # wait 1-5 seconds between requests to model realistic concurrency.
     wait_time = between(1, 5)
 
     # ------------------------------------------------------------------ #

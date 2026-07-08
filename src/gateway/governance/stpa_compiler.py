@@ -412,20 +412,10 @@ def generate_opa(cs: ControlStructureModel) -> str:
                 tl = role.trade_limits
                 allow_below = tl.get("allow_below")
                 review_below = tl.get("manual_review_below")
-                deny_above = tl.get("deny_above")
                 denylist = []
                 if role.restrictions:
                     for r in role.restrictions:
                         denylist.extend(r.get("currency_denylist", []))
-
-                denylist_str = (
-                    " ".join(
-                        f'"{c}"' not in [""] and f'input.currency != "{c}"'
-                        for c in denylist
-                    )
-                    if denylist
-                    else ""
-                )
 
                 if allow_below:
                     lines.append(f"rbac_allow_{role.name}_trade if {{")
@@ -746,62 +736,58 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
             "",
         ]
 
-    lines: list[str] = (
-        [
-            _banner(),
-            f"# System: {cs.system.name} v{cs.system.version}",
-            "#",
-            "# LangGraph Saga compensating sub-graphs generated from STPA UCAs.",
-            "# Each forward node implements Write-Ahead Logging (WAL) to prevent",
-            "# ghost state after mid-transaction crashes.  Each compensating node",
-            "# is strictly idempotent via a derived idempotency_key.",
-            "#",
-            "# [CTRL_WAL_002] Compliance Note:",
-            "#   Forward nodes with execution_type=mcp_tool emit a real async MCP tool",
-            "#   invocation (via GatewayMCPClient) instead of a stub placeholder.  This",
-            "#   satisfies the CTRL_WAL_002 requirement for atomic transaction guarantees",
-            "#   to be provable in production, not merely declared in policy documents.",
-            "#   See config/control_mappings.json for the active regulatory framework.",
-            "# DO NOT EDIT — regenerate with:",
-            "#   python -m src.gateway.governance.stpa_compiler compile --targets langgraph",
-            "",
-            "from __future__ import annotations",
-            "",
-            "import datetime",
-            "import hashlib",
-            "import logging",
-            "from typing import Any",
-            "",
-            "from src.governed_financial_advisor.graph.state import AgentState, LedgerEntry",
-            "",
-        ]
-        + mcp_import_lines
-        + [
-            'logger = logging.getLogger("Gateway.Governance.GeneratedSagaNodes")',
-            "",
-            "",
-            "# ---------------------------------------------------------------------------",
-            "# Helpers",
-            "# ---------------------------------------------------------------------------",
-            "",
-            "def _derive_idempotency_key(transaction_id: str, action: str) -> str:",
-            '    """Deterministically derive an idempotency key for a compensating action."""',
-            '    raw = f"{transaction_id}:{action}"',
-            "    return hashlib.sha256(raw.encode()).hexdigest()[:32]",
-            "",
-            "",
-            "def _utcnow() -> str:",
-            "    return datetime.datetime.now(datetime.timezone.utc).isoformat()",
-            "",
-            "",
-            "def _next_sequence_id(state: AgentState) -> int:",
-            '    """Return the next monotonically increasing sequence_id for the ledger."""',
-            '    txns = state.get("completed_transactions") or []',
-            '    return (max(t["sequence_id"] for t in txns) + 1) if txns else 0',
-            "",
-            "",
-        ]
-    )
+    lines: list[str] = [
+        _banner(),
+        f"# System: {cs.system.name} v{cs.system.version}",
+        "#",
+        "# LangGraph Saga compensating sub-graphs generated from STPA UCAs.",
+        "# Each forward node implements Write-Ahead Logging (WAL) to prevent",
+        "# ghost state after mid-transaction crashes.  Each compensating node",
+        "# is strictly idempotent via a derived idempotency_key.",
+        "#",
+        "# [CTRL_WAL_002] Compliance Note:",
+        "#   Forward nodes with execution_type=mcp_tool emit a real async MCP tool",
+        "#   invocation (via GatewayMCPClient) instead of a stub placeholder.  This",
+        "#   satisfies the CTRL_WAL_002 requirement for atomic transaction guarantees",
+        "#   to be provable in production, not merely declared in policy documents.",
+        "#   See config/control_mappings.json for the active regulatory framework.",
+        "# DO NOT EDIT -- regenerate with:",
+        "#   python -m src.gateway.governance.stpa_compiler compile --targets langgraph",
+        "",
+        "from __future__ import annotations",
+        "",
+        "import datetime",
+        "import hashlib",
+        "import logging",
+        "from typing import Any",
+        "",
+        "from src.governed_financial_advisor.graph.state import AgentState, LedgerEntry",
+        "",
+        *mcp_import_lines,
+        'logger = logging.getLogger("Gateway.Governance.GeneratedSagaNodes")',
+        "",
+        "",
+        "# ---------------------------------------------------------------------------",
+        "# Helpers",
+        "# ---------------------------------------------------------------------------",
+        "",
+        "def _derive_idempotency_key(transaction_id: str, action: str) -> str:",
+        '    """Deterministically derive an idempotency key for a compensating action."""',
+        '    raw = f"{transaction_id}:{action}"',
+        "    return hashlib.sha256(raw.encode()).hexdigest()[:32]",
+        "",
+        "",
+        "def _utcnow() -> str:",
+        "    return datetime.datetime.now(datetime.timezone.utc).isoformat()",
+        "",
+        "",
+        "def _next_sequence_id(state: AgentState) -> int:",
+        '    """Return the next monotonically increasing sequence_id for the ledger."""',
+        '    txns = state.get("completed_transactions") or []',
+        '    return (max(t["sequence_id"] for t in txns) + 1) if txns else 0',
+        "",
+        "",
+    ]
 
     # -----------------------------------------------------------------------
     # Forward nodes (WAL pattern) + Compensating nodes (idempotent)
@@ -858,62 +844,58 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
                 "    result: dict[str, Any] = {}  # STUB: replace before production",
             ]
 
-        lines += (
-            [
-                f"# --- {uca_id}: {uca.description} ---",
-                f"# [CTRL_WAL_002] execution_type: {saga.execution_type}"
-                + (
-                    f" | mcp_tool_name: {saga.mcp_tool_name}"
-                    if saga.mcp_tool_name
-                    else ""
-                ),
-                "",
-                f"def {fwd_fn}(state: AgentState) -> dict[str, Any]:",
-                f'    """WAL forward node for {uca_id} ({saga.forward_action}).',
-                "    ",
-                "    Step 1: Write PENDING intent to ledger (yielded to checkpointer).",
-                f"    Step 2: Execute via {saga.execution_type} — {saga.mcp_tool_name or 'local stub'}.",
-                "    Step 3: Confirm COMPLETED in the ledger.",
-                "    ",
-                "    This node MUST be wrapped in a try/except by the caller.",
-                "    On exception, the PENDING entry persists so saga_router_node",
-                "    can reconcile ghost state on the next execution.",
-                '    """',
-                "    seq_id = _next_sequence_id(state)",
-                "    intent: LedgerEntry = {",
-                '        "sequence_id": seq_id,',
-                '        "timestamp": _utcnow(),',
-                f'        "uca_ref": "{uca_id}",',
-                f'        "action": "{saga.forward_action}",',
-                '        "idempotency_key": "",  # populated after API call returns tx_id',
-                '        "status": "PENDING",',
-                '        "context_data": {},',
-                "    }",
-                "    # Step 1: Persist WAL intent BEFORE the API call",
-                f'    logger.info("{uca_id}: writing PENDING intent seq_id=%s", seq_id)',
-                '    yield {"completed_transactions": [intent]}',
-                "",
-            ]
-            + step2_lines
-            + [
-                '    tx_id: str = result.get("transaction_id", "")',
-                "",
-                "    # Step 3: Mark COMPLETED",
-                "    confirmed: LedgerEntry = {",
-                '        "sequence_id": seq_id,',
-                '        "timestamp": _utcnow(),',
-                f'        "uca_ref": "{uca_id}",',
-                f'        "action": "{saga.forward_action}",',
-                f'        "idempotency_key": _derive_idempotency_key(tx_id, "{saga.compensating_action}"),',
-                '        "status": "COMPLETED",',
-                '        "context_data": result,',
-                "    }",
-                f'    logger.info("{uca_id}: action COMPLETED tx_id=%s", tx_id)',
-                '    return {"completed_transactions": [confirmed]}',
-                "",
-                "",
-            ]
-        )
+        lines += [
+            f"# --- {uca_id}: {uca.description} ---",
+            f"# [CTRL_WAL_002] execution_type: {saga.execution_type}"
+            + (
+                f" | mcp_tool_name: {saga.mcp_tool_name}"
+                if saga.mcp_tool_name
+                else ""
+            ),
+            "",
+            f"def {fwd_fn}(state: AgentState) -> dict[str, Any]:",
+            f'    """WAL forward node for {uca_id} ({saga.forward_action}).',
+            "    ",
+            "    Step 1: Write PENDING intent to ledger (yielded to checkpointer).",
+            f"    Step 2: Execute via {saga.execution_type} - {saga.mcp_tool_name or 'local stub'}.",
+            "    Step 3: Confirm COMPLETED in the ledger.",
+            "    ",
+            "    This node MUST be wrapped in a try/except by the caller.",
+            "    On exception, the PENDING entry persists so saga_router_node",
+            "    can reconcile ghost state on the next execution.",
+            '    """',
+            "    seq_id = _next_sequence_id(state)",
+            "    intent: LedgerEntry = {",
+            '        "sequence_id": seq_id,',
+            '        "timestamp": _utcnow(),',
+            f'        "uca_ref": "{uca_id}",',
+            f'        "action": "{saga.forward_action}",',
+            '        "idempotency_key": "",  # populated after API call returns tx_id',
+            '        "status": "PENDING",',
+            '        "context_data": {},',
+            "    }",
+            "    # Step 1: Persist WAL intent BEFORE the API call",
+            f'    logger.info("{uca_id}: writing PENDING intent seq_id=%s", seq_id)',
+            '    yield {"completed_transactions": [intent]}',
+            "",
+            *step2_lines,
+            '    tx_id: str = result.get("transaction_id", "")',
+            "",
+            "    # Step 3: Mark COMPLETED",
+            "    confirmed: LedgerEntry = {",
+            '        "sequence_id": seq_id,',
+            '        "timestamp": _utcnow(),',
+            f'        "uca_ref": "{uca_id}",',
+            f'        "action": "{saga.forward_action}",',
+            f'        "idempotency_key": _derive_idempotency_key(tx_id, "{saga.compensating_action}"),',
+            '        "status": "COMPLETED",',
+            '        "context_data": result,',
+            "    }",
+            f'    logger.info("{uca_id}: action COMPLETED tx_id=%s", tx_id)',
+            '    return {"completed_transactions": [confirmed]}',
+            "",
+            "",
+        ]
 
         # ---- Compensating node (idempotent) -----------------------------------
         lines += [

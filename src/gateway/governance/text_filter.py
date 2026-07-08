@@ -16,7 +16,7 @@
 Stateless text safety filter.
 
 Provides an O(n) Tier-1 keyword scanner using a lazy-initialised
-Aho-Corasick automaton (pyahocorasick).  Falls back to an O(n×m)
+Aho-Corasick automaton (pyahocorasick).  Falls back to an O(n*m)
 ``any()`` loop when the optional dependency is not installed.
 
 Keyword list is sourced entirely from the validated threshold singleton
@@ -46,7 +46,7 @@ except ImportError:
     _ahocorasick = None  # type: ignore[assignment]
     _AC_AVAILABLE = False
     logger.warning(
-        "⚠️ pyahocorasick not installed — Tier-1 keyword scan falling back to O(n×m) any() loop. "
+        "[WARN] pyahocorasick not installed - Tier-1 keyword scan falling back to O(n*m) any() loop. "
         "Install with: pip install pyahocorasick"
     )
 
@@ -133,7 +133,7 @@ def _build_automaton() -> Any | None:
 def ac_keyword_scan(text: str) -> bool:
     """O(n) Tier-1 keyword scan using a lazy-initialised Aho-Corasick automaton.
 
-    Falls back to O(n×m) ``any()`` loop when *pyahocorasick* is not installed.
+    Falls back to O(n*m) ``any()`` loop when *pyahocorasick* is not installed.
 
     Args:
         text: The raw input string to scan.
@@ -159,13 +159,13 @@ def ac_keyword_scan(text: str) -> bool:
 
 
 def ac_cbrn_keyword_scan(text: str) -> bool:
-    """O(n×m) CBRN Tier-1 keyword scan — AI 600-1 §2.6 (US_FED only).
+    """O(n*m) CBRN Tier-1 keyword scan - AI 600-1 SS2.6 (US_FED only).
 
     Checks the input text against the CBRN keyword list from the governance
     threshold singleton.  Returns ``False`` immediately when
     ``tier1_keywords_cbrn_enabled`` is ``False`` (no-op when disabled).
 
-    Uses a simple substring match (O(n×m)) rather than Aho-Corasick because
+    Uses a simple substring match (O(n*m)) rather than Aho-Corasick because
     CBRN keywords are multi-word phrases that require case-insensitive substring
     matching rather than exact word boundary matching.
 

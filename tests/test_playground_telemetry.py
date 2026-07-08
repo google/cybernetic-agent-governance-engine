@@ -325,8 +325,8 @@ class TestViewAccessLog:
 
     def test_read_fingerprint_deterministic(self, tel, tmp_evidence_dir):
         _write_and_read(tel)
-        r1 = tel.read_evidence_log(accessor_id="a")
-        r2 = tel.read_evidence_log(accessor_id="b")
+        tel.read_evidence_log(accessor_id="a")
+        tel.read_evidence_log(accessor_id="b")
         # Both read the same records — fingerprints must match
         events = [
             json.loads(l)

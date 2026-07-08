@@ -229,7 +229,7 @@ class TestNemoGuardrailNodeFactory:
                 return_value=(True, ""),
             ) as mock_validate,
         ):
-            result = await node(state)
+            await node(state)
 
         # validate_with_nemo should have received the custom-extracted text
         mock_validate.assert_awaited_once()

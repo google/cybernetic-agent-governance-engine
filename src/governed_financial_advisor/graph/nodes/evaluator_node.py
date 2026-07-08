@@ -66,7 +66,7 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
 
     if isinstance(plan, dict):
         if not plan.get("steps") and plan.get("reasoning"):
-            logger.info("ℹ️ Evaluator: Plan has no steps. Treating as Analysis/Safe.")
+            logger.info("[INFO] Evaluator: Plan has no steps. Treating as Analysis/Safe.")
             return {
                 "evaluation_result": {
                     "verdict": "APPROVED",
@@ -89,7 +89,6 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
                     break
 
     with tracer.start_as_current_span("evaluator.safety_check") as span:
-        start_time = time.time()
         raw_risk = state.get("risk_attitude")
         risk_profile = raw_risk.capitalize() if raw_risk else "Moderate"
         safety_resp = await check_safety_constraints(
@@ -100,7 +99,6 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
         safety_msg = safety_resp.get("message", "Unknown safety status")
         opa_results = safety_resp.get("opa_results")
 
-        latency = (time.time() - start_time) * 1000
         span.set_attribute("safety_check.passed", is_safe)
 
     # SECURE SIGNATURE GENERATION

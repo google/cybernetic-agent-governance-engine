@@ -32,10 +32,10 @@
 #   h(S(t)) = cash_balance(t) - min_cash_balance   [h >= 0 iff state is safe]
 #
 # Discrete-time CBF condition (Ames et al., IEEE TAC 2017):
-#   h(S(t+1)) >= (1 - γ) · h(S(t))   for all t, where γ ∈ (0,1)
+#   h(S(t+1)) >= (1 - g) * h(S(t))   for all t, where g in (0,1)
 #
 # Enforcement layers:
-#   verify_action():            Evaluates h(S(t+1)) >= (1-γ)·h(S(t)) — read-only
+#   verify_action():            Evaluates h(S(t+1)) >= (1-g)*h(S(t)) -- read-only
 #   update_state():             Commits S(t) → S(t+1) — WATCH/MULTI/EXEC
 #   atomic_verify_and_commit(): Evaluates AND commits atomically via Lua,
 #                               eliminating the TOCTOU window between phases.
@@ -213,7 +213,7 @@ return {1, "COMMITTED", tostring(next_cash)}
         if span:
             span.set_attribute("safety.cash.current", current_cash)
             # CTRL_MRM_004: CBF is a traditional, deterministic quantitative formula
-            # (h(x) = cash_balance - min_cash_balance with static decay γ).
+            # (h(x) = cash_balance - min_cash_balance with static decay g).
             # It falls under SR 26-2 Model Risk Management scope, not agentic ISO 42001.
             _mrm_meta = ControlRegistry().get_mapping(
                 GovernanceControl.TRADITIONAL_MRM_VALIDATION
@@ -416,7 +416,7 @@ return {1, "COMMITTED", tostring(next_cash)}
         phase) by executing both as a single Lua script inside Redis.
 
         The Lua script replicates the exact CBF formula:
-            h(S(t+1)) >= (1 - γ) · h(S(t))   AND   h(S(t+1)) >= 0
+            h(S(t+1)) >= (1 - g) * h(S(t))   AND   h(S(t+1)) >= 0
 
         KMS signature verification (proof of compliance) must occur in Python
         before calling this method — Redis Lua has no cryptographic FFI.

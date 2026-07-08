@@ -123,7 +123,7 @@ def run_test(test_case: dict[str, Any]):
                         failed = True
                     else:
                         logger.info(
-                            f"ℹ️  Restricted keyword '{keyword}' found, but request was BLOCKED (Pass)."
+                            f"[INFO] Restricted keyword '{keyword}' found, but request was BLOCKED (Pass)."
                         )
 
             if not blocked and not failed:

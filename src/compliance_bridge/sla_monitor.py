@@ -103,8 +103,6 @@ async def _fire_sla_alerts(breached: list[str]) -> None:
 
     notifier = create_notifier()
     findings: list[OscalFinding] = []
-    now_utc = datetime.now(tz=timezone.utc).isoformat()
-
     for control_id in breached:
         metrics = await get_compliance_metrics(control_id, window_hours=24)
         sla_h = EVIDENCE_SLA_SECONDS[control_id] / 3600
