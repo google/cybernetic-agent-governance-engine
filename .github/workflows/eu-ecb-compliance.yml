@@ -45,7 +45,8 @@ jobs:
   eu-ai-act-posture:
     name: "EU AI Act Compliance Posture (EU_ECB only)"
     runs-on: ubuntu-latest
-    if: vars.CAGE_DEPLOYMENT_REGION == 'EU_ECB'
+    env:
+      CAGE_DEPLOYMENT_REGION: EU_ECB
 
     steps:
       - name: Checkout repository
@@ -159,8 +160,9 @@ jobs:
   eu-ecb-iso42001-lula:
     name: "ISO 42001 Universal Lula Validation (EU_ECB context)"
     runs-on: ubuntu-latest
-    if: vars.CAGE_DEPLOYMENT_REGION == 'EU_ECB'
     needs: [eu-ai-act-posture]
+    env:
+      CAGE_DEPLOYMENT_REGION: EU_ECB
 
     steps:
       - name: Checkout repository
