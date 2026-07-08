@@ -214,7 +214,7 @@ Full STPA hazard analysis (UCAs 1–9, Saga pattern, FiscalLimitGuard): [`docs/s
     *   **Tamper-Proof Audit Logging:** All decisions and system exceptions generate a cryptographically hash-chained SHA-256 ledger (`cage-intent/1.0`) to satisfy strict non-repudiation and lifecycle logging policies.
 *   **Companion Documentation:** 
     *   For detail on the STPA control structure compiling to OPA/NeMo/Saga, see [docs/STPA_ANALYSIS.md](docs/security/STPA_ANALYSIS.md).
-    *   For detailed symbolic governor and hybrid logic flow, see [README_GOVERNANCE.md](README_GOVERNANCE.md) and [docs/NEURO_SYMBOLIC_GOVERNANCE.md](docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md).
+    *   For detailed symbolic governor and hybrid logic flow, see README_GOVERNANCE.md and [docs/NEURO_SYMBOLIC_GOVERNANCE.md](docs/governance/NEURO_SYMBOLIC_GOVERNANCE.md).
 
 ### C. European Union AI Act, GDPR, and EBA Hard Law Baseline (EU_ECB Profile)
 *   **Status:** Technical Controls Mapped & Telemetry Attested.
@@ -338,8 +338,8 @@ The **FrameworkRouter test matrix** (`test_framework_router.py`, ~40 tests) lock
 To help you navigate the full regulatory documentation suite:
 
 *   **Executive Overview:** [docs/CAGE_ONE_PAGER.md](docs/project/CAGE_ONE_PAGER.md) — 1-page overview of the business case and architecture.
-*   **Detailed Governance Architecture:** [README_GOVERNANCE.md](README_GOVERNANCE.md) — Walkthrough of the 15-tier SymbolicGovernor and the decoupled abstraction layer.
-*   **System Architecture Spec:** [ARCHITECTURE.md](ARCHITECTURE.md) — System-wide component structure, database schemas, and request-response pathways.
+*   **Detailed Governance Architecture:** README_GOVERNANCE.md — Walkthrough of the 15-tier SymbolicGovernor and the decoupled abstraction layer.
+*   **System Architecture Spec:** [ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) — System-wide component structure, database schemas, and request-response pathways.
 *   **Security Posture & Milestones:** [docs/SECURITY_STATUS.md](docs/security/SECURITY_STATUS.md) and [docs/POAM.md](docs/compliance/cross-region/POAM.md) — Precise POAM checklists and NIST RMF coverage tracking.
 *   **STPA & Hazard Analysis:** [docs/STPA_ANALYSIS.md](docs/security/STPA_ANALYSIS.md) — Breakdown of UCAs 1-9 and the STPA-to-Policy compiler specification.
 *   **Causal & CBF Design:** [docs/CAUSAL_AND_CBF_GOVERNANCE.md](docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md) — DoWhy regression kernel placebo refuter and discrete-time CBF mathematics.

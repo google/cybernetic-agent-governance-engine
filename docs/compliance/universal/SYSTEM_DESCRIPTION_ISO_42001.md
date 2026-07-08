@@ -68,7 +68,7 @@ The **Explainer** ensures the output is grounded in reality, addressing the "Bla
 
 ### 4.4. 7-Tier Symbolic Governor Pipeline
 
-The [`SymbolicGovernor`](src/gateway/governance/symbolic_governor.py) implements a 7-tier pipeline that every agent action must traverse before execution. Each tier is a distinct safety layer with formal properties:
+The [`SymbolicGovernor`](../../../src/gateway/governance/symbolic_governor.py) implements a 7-tier pipeline that every agent action must traverse before execution. Each tier is a distinct safety layer with formal properties:
 
 | Tier | Name | Mechanism | Formal Property |
 | :--- | :--- | :-------- | :-------------- |
@@ -86,7 +86,7 @@ This section documents the formal mathematical invariants enforced by the CAGE g
 
 ### 5.1. Control Barrier Functions (CBF)
 
-**Source:** [`src/gateway/governance/cbf.py`](src/gateway/governance/cbf.py)
+**Source:** [`src/gateway/governance/cbf.py`](../../../src/gateway/governance/cbf.py)
 
 The CBF enforces fiscal safety as a forward-invariance condition on the system state space.
 
@@ -98,7 +98,7 @@ The CBF condition guarantees that the system cannot transition from a safe state
 
 ### 5.2. FRIA Zone Thresholds
 
-**Source:** [`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py)
+**Source:** [`src/gateway/governance/symbolic_governor.py`](../../../src/gateway/governance/symbolic_governor.py)
 
 The Fundamental Rights Impact Assessment (FRIA) zone thresholds determine the disposition of each governance decision at Tier 7:
 
@@ -112,7 +112,7 @@ Named constants: `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70`
 
 ### 5.3. Confabulation Risk Score
 
-**Source:** [`src/gateway/governance/confabulation_scorer.py`](src/gateway/governance/confabulation_scorer.py)
+**Source:** [`src/gateway/governance/confabulation_scorer.py`](../../../src/gateway/governance/confabulation_scorer.py)
 
 The confabulation (hallucination) risk score is computed as the complement of the model's self-reported confidence:
 
@@ -124,7 +124,7 @@ A `risk_score` approaching 1.0 indicates high hallucination risk. The score feed
 
 ### 5.4. Causal Marginal Risk Boundary
 
-**Source:** [`src/gateway/governance/causal_gatekeeper.py`](src/gateway/governance/causal_gatekeeper.py)
+**Source:** [`src/gateway/governance/causal_gatekeeper.py`](../../../src/gateway/governance/causal_gatekeeper.py)
 
 The causal gatekeeper applies a marginal risk boundary to prevent trades whose causal effect estimate pushes the system into an unsafe region:
 
@@ -141,7 +141,7 @@ The `PlaceboTreatmentRefuter` runs 50 simulations; a refutation is triggered whe
 
 ### 5.5. Routing Seal Integrity
 
-**Source:** [`src/gateway/governance/routing_seal.py`](src/gateway/governance/routing_seal.py)
+**Source:** [`src/gateway/governance/routing_seal.py`](../../../src/governed_financial_advisor/utils/routing_seal.py)
 
 Every request traversing the governance gateway must carry a valid HMAC-SHA256 routing seal. The seal format is:
 
@@ -155,7 +155,7 @@ Every request traversing the governance gateway must carry a valid HMAC-SHA256 r
 
 ### 5.6. Fiscal Limit Guard Parameters
 
-**Source:** [`src/gateway/governance/fiscal_limit_guard.py`](src/gateway/governance/fiscal_limit_guard.py)
+**Source:** [`src/gateway/governance/fiscal_limit_guard.py`](../../../src/gateway/governance/fiscal_limit_guard.py)
 
 The `FiscalLimitGuard` enforces a hard daily spending cap using Redis atomic operations:
 
@@ -169,7 +169,7 @@ State is managed via Redis `WATCH`/`MULTI`/`EXEC` atomic transactions. The guard
 
 ## 6. STPA Unsafe Control Actions
 
-**Source:** [`src/gateway/governance/ontology.py`](src/gateway/governance/ontology.py)
+**Source:** [`src/gateway/governance/ontology.py`](../../../src/gateway/governance/ontology.py)
 
 System-Theoretic Process Analysis (STPA) identifies the following Unsafe Control Actions (UCAs) that the governance kernel is designed to prevent. These are enforced by the `GeneratedSTPAValidator` and logged by the `UCALogger`.
 

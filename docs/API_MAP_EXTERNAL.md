@@ -9,29 +9,29 @@ Financial Advisor application API, compliance artifact exports, and the gRPC
 Gateway service. Internal inter-service and governance APIs are documented
 separately.
 
-> For internal inter-service and governance APIs, see [API_MAP_INTERNAL.md](API_MAP_INTERNAL.md).
+> For internal inter-service and governance APIs, see API_MAP_INTERNAL.md.
 
 ---
 
 ## 1. Gateway Server — port 8080
 
 The gateway is a FastAPI composition root defined in
-[`hybrid_server.py`](src/gateway/server/hybrid_server.py) that mounts three
+[`hybrid_server.py`](../src/gateway/server/hybrid_server.py) that mounts three
 sub-applications:
 
 | Mount path | Sub-app | Source file |
 |---|---|---|
-| `/inference` | `inference_app` | [`inference_proxy.py`](src/gateway/server/inference_proxy.py) |
-| `/governance` | `governance_app` | [`governance_middleware.py`](src/gateway/server/governance_middleware.py) |
-| `/` (catch-all) | `mcp_app` | [`mcp_tool_server.py`](src/gateway/server/mcp_tool_server.py) |
+| `/inference` | `inference_app` | [`inference_proxy.py`](../src/gateway/server/inference_proxy.py) |
+| `/governance` | `governance_app` | [`governance_middleware.py`](../src/gateway/server/governance_middleware.py) |
+| `/` (catch-all) | `mcp_app` | [`mcp_tool_server.py`](../src/gateway/server/mcp_tool_server.py) |
 
 **Global middleware:**
-[`_DebugEndpointGuard`](src/gateway/server/hybrid_server.py:231) — returns
+`_DebugEndpointGuard` — returns
 HTTP 404 for any `/debug/*` path unless `CAGE_ENV` is `dev` or `test`.
 
 ---
 
-### 1.1 Root App — [`hybrid_server.py`](src/gateway/server/hybrid_server.py)
+### 1.1 Root App — [`hybrid_server.py`](../src/gateway/server/hybrid_server.py)
 
 #### `GET /healthz`
 
@@ -50,7 +50,7 @@ KMS connectivity health check.
 
 ---
 
-### 1.2 Inference Sub-App — [`inference_proxy.py`](src/gateway/server/inference_proxy.py)
+### 1.2 Inference Sub-App — [`inference_proxy.py`](../src/gateway/server/inference_proxy.py)
 
 Mounted at `/inference`. Implements an OpenAI-compatible governed inference
 endpoint.
@@ -60,9 +60,9 @@ endpoint.
 OpenAI-compatible governed inference. Governance pipeline runs in order:
 
 1. **Tier-1 Aho-Corasick keyword scan** — blocks CBRN/prohibited terms (HTTP 403)
-2. **Token Quota check** ([`TokenQuotaProxy`](src/gateway/governance/token_quota_proxy.py:194)) — ISO 42001 Annex A.4; atomic Redis Lua counter (HTTP 429 on breach)
+2. **Token Quota check** (`TokenQuotaProxy`) — ISO 42001 Annex A.4; atomic Redis Lua counter (HTTP 429 on breach)
 3. **NeMo input rail** — in-process manager verifies input
-4. **vLLM proxy** — forwards to backend resolved by [`_resolve_backend_url()`](src/gateway/server/inference_proxy.py:174)
+4. **vLLM proxy** — forwards to backend resolved by `_resolve_backend_url()`
 5. **NeMo output masking** — strips PII / policy violations from response
 
 **Request body:** Standard OpenAI Chat Completion format.
@@ -107,7 +107,7 @@ OpenAI-compatible governed inference. Governance pipeline runs in order:
 
 ---
 
-### 1.3 MCP Tool Server — [`mcp_tool_server.py`](src/gateway/server/mcp_tool_server.py)
+### 1.3 MCP Tool Server — [`mcp_tool_server.py`](../src/gateway/server/mcp_tool_server.py)
 
 Mounted at `/` (catch-all).
 
@@ -126,7 +126,7 @@ Mounted at `/` (catch-all).
 
 ## 2. Compliance Bridge — port 3001
 
-Defined in [`main.py`](src/compliance_bridge/main.py). CORS origins:
+Defined in [`main.py`](../src/compliance_bridge/main.py). CORS origins:
 `localhost:5173`, `localhost:3000`, and `UI_ORIGIN` env var.
 
 #### `GET /health`
@@ -150,11 +150,11 @@ Defined in [`main.py`](src/compliance_bridge/main.py). CORS origins:
 
 SSE governance event stream. Clients receive real-time governance events.
 Heartbeat `ping` sent every 30 seconds. Max 100 concurrent subscribers
-(enforced by [`GovernanceEventBus`](src/compliance_bridge/sse_events.py:93)).
+(enforced by `GovernanceEventBus`).
 
 **Event type:** `governance-event`
 
-**Event data** (wire shape from [`GovernanceEventBus.publish()`](src/compliance_bridge/sse_events.py:197)):
+**Event data** (wire shape from `GovernanceEventBus.publish()`):
 ```json
 {
   "type": "AUDIT_FINDING | GOVERNANCE_VIOLATION | REMEDIATION_GENERATED | CONTEXT_CHAIN_SEALED | DEFER_PARKING | DEFER_RESOLVED",
@@ -233,7 +233,7 @@ Aggregate compliance posture snapshot across all supported controls.
 
 Per-control compliance metrics. 5-minute TTL cache. Queries Langfuse
 application project for traces tagged `control:<controlId>`. Semaphore(6)
-concurrency limit (see [`get_compliance_metrics()`](src/compliance_bridge/metrics.py:234)).
+concurrency limit (see `get_compliance_metrics()`).
 
 **Path params:** `control_id` — must be in `SUPPORTED_CONTROLS`
 
@@ -243,7 +243,7 @@ concurrency limit (see [`get_compliance_metrics()`](src/compliance_bridge/metric
 |---|---|---|
 | `window_hours` | `int` | `24` |
 
-**Response 200 OK** ([`ComplianceMetrics`](src/compliance_bridge/types.py:63)):
+**Response 200 OK** (`ComplianceMetrics`):
 ```json
 {
   "control_id": "A.9.2",
@@ -301,11 +301,11 @@ Generate an on-demand CSA AARM Conformance Report Card (11 threat vectors).
 
 ## 3. Governed Financial Advisor
 
-Defined in [`server.py`](src/governed_financial_advisor/server.py). Port from
+Defined in [`server.py`](../src/governed_financial_advisor/server.py). Port from
 `Config.PORT`. Lifespan initializes the LangGraph agent graph and Redis
 checkpointer.
 
-### 3.1 Core Endpoints — [`server.py`](src/governed_financial_advisor/server.py)
+### 3.1 Core Endpoints — [`server.py`](../src/governed_financial_advisor/server.py)
 
 #### `GET /`
 
@@ -336,7 +336,7 @@ checkpointer.
 
 Main LangGraph agent query. Requires `X-API-Key` header. 240-second timeout.
 
-**Request body** ([`QueryRequest`](src/governed_financial_advisor/server.py:134)):
+**Request body** (`QueryRequest`):
 ```json
 {
   "prompt": "Should I buy 100 shares of AAPL?",
@@ -368,7 +368,7 @@ header. Uses LangGraph `Command` pattern to inject the approval decision.
 
 **Path params:** `thread_id` — LangGraph thread UUID
 
-**Request body** ([`ApprovalResumeRequest`](src/governed_financial_advisor/server.py:140)):
+**Request body** (`ApprovalResumeRequest`):
 ```json
 {
   "approved": true,
@@ -415,9 +415,9 @@ List all LangGraph threads currently paused at HITL interrupts.
 #### `POST /v1/refinement/trigger`
 
 Submit a Kubeflow Pipelines run for the governance refinement pipeline via
-[`_submit_kfp_run()`](src/governed_financial_advisor/server.py:649).
+`_submit_kfp_run()`.
 
-**Request body** ([`RefinementTriggerRequest`](src/governed_financial_advisor/server.py:180)):
+**Request body** (`RefinementTriggerRequest`):
 ```json
 {
   "pipeline_id": "governance-refinement-v2",
@@ -445,7 +445,7 @@ Submit a Kubeflow Pipelines run for the governance refinement pipeline via
 
 Stage a NeMo Guardrails refinement proposal for human review.
 
-**Request body** ([`NeMoApplyRefinementRequest`](src/governed_financial_advisor/server.py:194)):
+**Request body** (`NeMoApplyRefinementRequest`):
 ```json
 {
   "control_id": "A.9.2",
@@ -472,7 +472,7 @@ Approve or reject a staged NeMo refinement proposal. Requires `X-API-Key`.
 
 **Path params:** `proposal_id` — UUID
 
-**Request body** ([`NeMoApproveRequest`](src/governed_financial_advisor/server.py:829)):
+**Request body** (`NeMoApproveRequest`):
 ```json
 {
   "approved": true,
@@ -523,7 +523,7 @@ In dev may apply directly.
 
 ---
 
-## 4. gRPC Gateway Service — [`gateway.proto`](src/gateway/protos/gateway.proto)
+## 4. gRPC Gateway Service — [`gateway.proto`](../src/agentsight-ui/gateway_protos/gateway.proto)
 
 **Package:** `gateway` · **Service:** `Gateway`
 
@@ -588,7 +588,7 @@ Unary RPC. Execute a named tool via gRPC.
 
 ## 5. Key Schemas and Types
 
-### 5.1 [`TradeOrder`](src/gateway/core/structs.py:24)
+### 5.1 `TradeOrder`
 
 Pydantic model for validated trade orders.
 
@@ -606,7 +606,7 @@ Pydantic model for validated trade orders.
 
 ---
 
-### 5.2 [`ComplianceMetrics`](src/compliance_bridge/types.py:63)
+### 5.2 `ComplianceMetrics`
 
 Pydantic model returned by `GET /v1/metrics/{control_id}`.
 
@@ -627,7 +627,7 @@ Pydantic model returned by `GET /v1/metrics/{control_id}`.
 
 ---
 
-### 5.3 [`OscalFinding`](src/compliance_bridge/types.py:101)
+### 5.3 `OscalFinding`
 
 Frozen Pydantic model representing a single OSCAL finding.
 
@@ -643,7 +643,7 @@ Frozen Pydantic model representing a single OSCAL finding.
 
 ---
 
-### 5.4 [`AgentState`](src/governed_financial_advisor/graph/state.py:56)
+### 5.4 `AgentState`
 
 LangGraph `TypedDict` representing the full agent execution state.
 
@@ -677,7 +677,7 @@ LangGraph `TypedDict` representing the full agent execution state.
 
 ---
 
-### 5.5 [`LedgerEntry`](src/governed_financial_advisor/graph/state.py:34)
+### 5.5 `LedgerEntry`
 
 Immutable transaction ledger entry appended to `AgentState.completed_transactions`.
 
@@ -693,7 +693,7 @@ Immutable transaction ledger entry appended to `AgentState.completed_transaction
 
 ---
 
-### 5.6 [`QueryRequest`](src/governed_financial_advisor/server.py:134)
+### 5.6 `QueryRequest`
 
 | Field | Type |
 |---|---|
@@ -703,7 +703,7 @@ Immutable transaction ledger entry appended to `AgentState.completed_transaction
 
 ---
 
-### 5.7 [`ApprovalResumeRequest`](src/governed_financial_advisor/server.py:140)
+### 5.7 `ApprovalResumeRequest`
 
 | Field | Type | Constraints |
 |---|---|---|
@@ -720,9 +720,9 @@ Immutable transaction ledger entry appended to `AgentState.completed_transaction
 ### `X-CAGE-Routing-Seal` (Gateway)
 
 HMAC-SHA256 computed over the raw request body bytes. Verified by
-[`_verify_routing_seal()`](src/gateway/server/governance_middleware.py:139)
+`_verify_routing_seal()`
 and enforced by
-[`enforce_routing_seal()`](src/gateway/server/governance_middleware.py:178).
+`enforce_routing_seal()`.
 
 Required on:
 - `POST /governance/check`
@@ -735,7 +735,7 @@ must be verified by callers before actuating any trade.
 
 ### `Authorization: Bearer <token>` (Compliance Bridge)
 
-Validated by [`require_internal_token`](src/compliance_bridge/auth.py:40) using
+Validated by `require_internal_token` using
 `hmac.compare_digest` (constant-time). Token sourced from
 `COMPLIANCE_BRIDGE_INTERNAL_TOKEN` env var.
 
@@ -749,7 +749,7 @@ Required on:
 
 ### `X-API-Key` (Governed Financial Advisor)
 
-Validated by [`infrastructure/auth.py`](src/governed_financial_advisor/infrastructure/auth.py).
+Validated by [`infrastructure/auth.py`](../src/governed_financial_advisor/infrastructure/auth.py).
 
 Required on:
 - `POST /agent/query`
@@ -793,7 +793,7 @@ Notice 655.
 Langfuse webhook receiver — triggers refinement pipeline when safety metrics
 breach thresholds.
 
-**Request body** ([`LangfuseWebhookEvent`](src/governed_financial_advisor/server.py:213)):
+**Request body** (`LangfuseWebhookEvent`):
 ```json
 {
   "type": "score",
@@ -813,14 +813,14 @@ breach thresholds.
 
 ---
 
-### 3.2 Tools Router — [`tools/api.py`](src/governed_financial_advisor/tools/api.py)
+### 3.2 Tools Router — [`tools/api.py`](../src/governed_financial_advisor/tools/api.py)
 
 Mounted at `/tools`. All endpoints require `X-API-Key` header.
 
 #### `POST /tools/execute`
 
 Execute a named tool with governance enforcement. For `execute_trade`, calls
-[`GatewayClient.validate_action()`](src/governed_financial_advisor/infrastructure/gateway_client.py:102)
+`GatewayClient.validate_action()`
 and verifies the routing seal before actuation.
 
 **Request body** (`ToolExecutionRequest`):
@@ -861,7 +861,7 @@ and verifies the routing seal before actuation.
 
 ---
 
-### 3.3 Demo Router — [`demo/router.py`](src/governed_financial_advisor/demo/router.py)
+### 3.3 Demo Router — [`demo/router.py`](../src/governed_financial_advisor/demo/router.py)
 
 Mounted at `/demo`. **Dev environment only** — returns 404 in production.
 

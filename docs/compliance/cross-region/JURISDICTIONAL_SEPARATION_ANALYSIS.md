@@ -106,7 +106,7 @@ The following principles are mandated by `.roo/rules` and must be enforced at ev
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`src/compliance_bridge/types.py:122`](src/compliance_bridge/types.py:122) |
+| **File** | `src/compliance_bridge/types.py:122` |
 | **Violation** | Type 1 — Jurisdictional Intermixing |
 | **Severity** | CRITICAL |
 | **Rule Violated** | R-2, R-3, R-5, R-6 |
@@ -159,7 +159,7 @@ def get_control_meta(region: str) -> dict:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`src/gateway/governance/iso_control.py:109`](src/gateway/governance/iso_control.py:109) |
+| **File** | `src/gateway/governance/iso_control.py:109` |
 | **Violation** | Type 2 — Missing Region Guard (inverted) |
 | **Severity** | CRITICAL |
 | **Rule Violated** | R-1 |
@@ -198,7 +198,7 @@ def stamp_iso_control(span, control_id: str, region: str) -> None:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`src/compliance_bridge/cmek_guard.py:73`](src/compliance_bridge/cmek_guard.py:73) |
+| **File** | `src/compliance_bridge/cmek_guard.py:73` |
 | **Violation** | Type 1 — Jurisdictional Intermixing |
 | **Severity** | HIGH |
 | **Rule Violated** | R-2, R-3, R-4 |
@@ -213,7 +213,7 @@ def stamp_iso_control(span, control_id: str, region: str) -> None:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`src/gateway/governance/ontology.py:162`](src/gateway/governance/ontology.py:162) |
+| **File** | `src/gateway/governance/ontology.py:162` |
 | **Violation** | Type 1 — Jurisdictional Intermixing |
 | **Severity** | HIGH |
 | **Rule Violated** | R-3, R-6 |
@@ -228,7 +228,7 @@ def stamp_iso_control(span, control_id: str, region: str) -> None:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`src/compliance_bridge/types.py:285`](src/compliance_bridge/types.py:285) |
+| **File** | `src/compliance_bridge/types.py:285` |
 | **Violation** | Type 1 — Jurisdictional Intermixing |
 | **Severity** | HIGH |
 | **Rule Violated** | R-2, R-6 |
@@ -243,7 +243,7 @@ def stamp_iso_control(span, control_id: str, region: str) -> None:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`src/compliance_bridge/main.py:332`](src/compliance_bridge/main.py:332) |
+| **File** | `src/compliance_bridge/main.py:332` |
 | **Violation** | Type 2 — Missing Region Guard |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-2, R-3, R-4 |
@@ -258,7 +258,7 @@ def stamp_iso_control(span, control_id: str, region: str) -> None:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`src/gateway/governance/schemas/thresholds.py:129`](src/gateway/governance/schemas/thresholds.py:129) |
+| **File** | `src/gateway/governance/schemas/thresholds.py:129` |
 | **Violation** | Type 3 — Insufficient Namespacing |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-2, R-6 |
@@ -273,7 +273,7 @@ def stamp_iso_control(span, control_id: str, region: str) -> None:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`src/gateway/governance/pii_sanitizer.py:201`](src/gateway/governance/pii_sanitizer.py:201) |
+| **File** | `src/gateway/governance/pii_sanitizer.py:201` |
 | **Violation** | Type 1 — Jurisdictional Intermixing |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-2, R-3, R-4 |
@@ -288,7 +288,7 @@ def stamp_iso_control(span, control_id: str, region: str) -> None:
 
 | Attribute | Value |
 |-----------|-------|
-| **Files** | [`src/gateway/governance/hitl_escalator.py:15`](src/gateway/governance/hitl_escalator.py:15), [`src/gateway/governance/prompt_injection_detector.py:15`](src/gateway/governance/prompt_injection_detector.py:15) |
+| **Files** | `src/gateway/governance/hitl_escalator.py:15`, `src/gateway/governance/prompt_injection_detector.py:15` |
 | **Violation** | Type 2 — Missing Region Guard |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-2 |
@@ -303,7 +303,7 @@ def stamp_iso_control(span, control_id: str, region: str) -> None:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`src/governed_financial_advisor/utils/privacy.py:25`](src/governed_financial_advisor/utils/privacy.py:25) |
+| **File** | `src/governed_financial_advisor/utils/privacy.py:25` |
 | **Violation** | Type 4 — Shared Utility Contamination (by omission) |
 | **Severity** | LOW |
 | **Rule Violated** | R-3, R-4 |
@@ -324,7 +324,7 @@ def stamp_iso_control(span, control_id: str, region: str) -> None:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`deploy_all.sh:238`](deploy_all.sh:238) |
+| **File** | `deploy_all.sh:238` |
 | **Violation** | Type A — Missing Region Flags |
 | **Severity** | HIGH |
 | **Rule Violated** | R-2, R-7 |
@@ -351,7 +351,7 @@ fi
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`deploy_all.sh:100`](deploy_all.sh:100) |
+| **File** | `deploy_all.sh:100` |
 | **Violation** | Type A — Missing Region Flags |
 | **Severity** | HIGH |
 | **Rule Violated** | R-7 |
@@ -370,7 +370,7 @@ _cage_region=$(_read_env_var CAGE_DEPLOYMENT_REGION)
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`scripts/automated_auditor.py:56`](scripts/automated_auditor.py:56) |
+| **File** | `scripts/automated_auditor.py:56` |
 | **Violation** | Type A — Missing Region Flags |
 | **Severity** | HIGH |
 | **Rule Violated** | R-3, R-7 |
@@ -396,7 +396,7 @@ if not _langfuse_host:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`deployment/k8s/gateway.yaml:38`](deployment/k8s/gateway.yaml:38) |
+| **File** | `deployment/k8s/gateway.yaml:38` |
 | **Violation** | Type B — K8s Manifests Without Jurisdictional Namespacing |
 | **Severity** | HIGH |
 | **Rule Violated** | R-7 |
@@ -411,7 +411,7 @@ if not _langfuse_host:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`deployment/k8s/financial-advisor.yaml:98`](deployment/k8s/financial-advisor.yaml:98) |
+| **File** | `deployment/k8s/financial-advisor.yaml:98` |
 | **Violation** | Type B — K8s Manifests Without Jurisdictional Namespacing |
 | **Severity** | HIGH |
 | **Rule Violated** | R-7 |
@@ -426,7 +426,7 @@ if not _langfuse_host:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`deployment/k8s/agentsight-daemon.yaml:15`](deployment/k8s/agentsight-daemon.yaml:15) |
+| **File** | `deployment/k8s/agentsight-daemon.yaml:15` |
 | **Violation** | Type B — K8s Manifests Without Jurisdictional Namespacing |
 | **Severity** | HIGH |
 | **Rule Violated** | R-3, R-7 |
@@ -441,7 +441,7 @@ if not _langfuse_host:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`deployment/k8s/compliance-bridge.yaml:88`](deployment/k8s/compliance-bridge.yaml:88) |
+| **File** | `deployment/k8s/compliance-bridge.yaml:88` |
 | **Violation** | Type B — K8s Manifests Without Jurisdictional Namespacing |
 | **Severity** | HIGH |
 | **Rule Violated** | R-3, R-4, R-7 |
@@ -456,7 +456,7 @@ if not _langfuse_host:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`infra/targets/gcp-gke/variables.tf:22`](infra/targets/gcp-gke/variables.tf:22) |
+| **File** | `infra/targets/gcp-gke/variables.tf:22` |
 | **Violation** | Type C — Terraform Missing Region Guards |
 | **Severity** | HIGH |
 | **Rule Violated** | R-3, R-4, R-7 |
@@ -471,7 +471,7 @@ if not _langfuse_host:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`infra/targets/gcp-gke/variables.tf:546`](infra/targets/gcp-gke/variables.tf:546) |
+| **File** | `infra/targets/gcp-gke/variables.tf:546` |
 | **Violation** | Type C — Terraform Missing Region Guards |
 | **Severity** | HIGH |
 | **Rule Violated** | R-7 |
@@ -486,7 +486,7 @@ if not _langfuse_host:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`infra/targets/gcp-gke/main.tf:129`](infra/targets/gcp-gke/main.tf:129) |
+| **File** | `infra/targets/gcp-gke/main.tf:129` |
 | **Violation** | Type C — Terraform Missing Region Guards |
 | **Severity** | HIGH |
 | **Rule Violated** | R-3, R-4 |
@@ -513,7 +513,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`infra/modules/app_secrets/main.tf:77`](infra/modules/app_secrets/main.tf:77) |
+| **File** | `infra/modules/app_secrets/main.tf:77` |
 | **Violation** | Type C — Terraform Missing Region Guards |
 | **Severity** | HIGH |
 | **Rule Violated** | R-3, R-4 |
@@ -528,7 +528,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`infra/targets/gcp-gke/prod.tfvars`](infra/targets/gcp-gke/prod.tfvars) |
+| **File** | [`infra/targets/gcp-gke/prod.tfvars`](../../../infra/targets/gcp-gke/prod.tfvars) |
 | **Violation** | Type C — Terraform Missing Region Guards |
 | **Severity** | HIGH |
 | **Rule Violated** | R-7 |
@@ -543,7 +543,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`.github/workflows/security-scan.yml:17`](.github/workflows/security-scan.yml:17) |
+| **File** | `.github/workflows/security-scan.yml:17` |
 | **Violation** | Type D — CI/CD Pipeline Conflation |
 | **Severity** | HIGH |
 | **Rule Violated** | R-3, R-4 |
@@ -558,7 +558,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`deploy_all.sh:49`](deploy_all.sh:49) |
+| **File** | `deploy_all.sh:49` |
 | **Violation** | Type A — Missing Region Flags |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-8 |
@@ -573,7 +573,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`scripts/verify_remote.py:31`](scripts/verify_remote.py:31) |
+| **File** | `scripts/verify_remote.py:31` |
 | **Violation** | Type A — Missing Region Flags |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-7 |
@@ -588,7 +588,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`deployment/k8s/network-policy-hardening.yaml:27`](deployment/k8s/network-policy-hardening.yaml:27) |
+| **File** | `deployment/k8s/network-policy-hardening.yaml:27` |
 | **Violation** | Type B — K8s Manifests Without Jurisdictional Namespacing |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-2, R-8 |
@@ -603,7 +603,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`deployment/k8s/pod-security-admission.yaml:33`](deployment/k8s/pod-security-admission.yaml:33) |
+| **File** | `deployment/k8s/pod-security-admission.yaml:33` |
 | **Violation** | Type B — K8s Manifests Without Jurisdictional Namespacing |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-2, R-8 |
@@ -618,7 +618,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`deployment/k8s/lula-cron.yaml:214`](deployment/k8s/lula-cron.yaml:214) |
+| **File** | `deployment/k8s/lula-cron.yaml:214` |
 | **Violation** | Type B — K8s Manifests Without Jurisdictional Namespacing |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-7 |
@@ -633,7 +633,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`deployment/opa_config.yaml:64`](deployment/opa_config.yaml:64) |
+| **File** | `deployment/opa_config.yaml:64` |
 | **Violation** | Type B — K8s Manifests Without Jurisdictional Namespacing |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-7 |
@@ -648,7 +648,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`infra/targets/gcp-gke/main.tf:210`](infra/targets/gcp-gke/main.tf:210) |
+| **File** | `infra/targets/gcp-gke/main.tf:210` |
 | **Violation** | Type C — Terraform Missing Region Guards |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-3 |
@@ -663,7 +663,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`.github/workflows/ci.yml:119`](.github/workflows/ci.yml:119) |
+| **File** | `.github/workflows/ci.yml:119` |
 | **Violation** | Type D — CI/CD Pipeline Conflation |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-2 |
@@ -678,7 +678,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`.github/workflows/ci.yml:245`](.github/workflows/ci.yml:245) |
+| **File** | `.github/workflows/ci.yml:245` |
 | **Violation** | Type D — CI/CD Pipeline Conflation |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-2 |
@@ -693,7 +693,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`scripts/verify_all.py:43`](scripts/verify_all.py:43) |
+| **File** | `scripts/verify_all.py:43` |
 | **Violation** | Type A — Missing Region Flags |
 | **Severity** | LOW |
 | **Rule Violated** | R-7 |
@@ -706,7 +706,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`.github/workflows/ci.yml:99`](.github/workflows/ci.yml:99) |
+| **File** | `.github/workflows/ci.yml:99` |
 | **Violation** | Type D — CI/CD Pipeline Conflation |
 | **Severity** | LOW |
 | **Rule Violated** | R-7 |
@@ -719,7 +719,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`.github/workflows/security-scan.yml:47`](.github/workflows/security-scan.yml:47) |
+| **File** | `.github/workflows/security-scan.yml:47` |
 | **Violation** | Type D — CI/CD Pipeline Conflation |
 | **Severity** | LOW |
 | **Rule Violated** | R-8 |
@@ -763,7 +763,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`README.md:1`](README.md:1) |
+| **File** | `README.md:1` |
 | **Violation** | Type G — Incorrect Hierarchy Presentation |
 | **Severity** | HIGH |
 | **Rule Violated** | R-8 |
@@ -778,7 +778,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`README.md:133`](README.md:133) |
+| **File** | `README.md:133` |
 | **Violation** | Type H — Missing Explicit Labeling |
 | **Severity** | HIGH |
 | **Rule Violated** | R-8 |
@@ -793,7 +793,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`docs/IR_PLAN.md:27`](docs/IR_PLAN.md:27) |
+| **File** | `docs/IR_PLAN.md:27` |
 | **Violation** | Type G — Incorrect Hierarchy Presentation |
 | **Severity** | HIGH |
 | **Rule Violated** | R-8 |
@@ -808,7 +808,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`docs/IR_PLAN.md:313`](docs/IR_PLAN.md:313) |
+| **File** | `docs/IR_PLAN.md:313` |
 | **Violation** | Type F — Missing Jurisdictional Segmentation |
 | **Severity** | HIGH |
 | **Rule Violated** | R-8 |
@@ -823,7 +823,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`infra/modules/gcp_gke_cluster/NIST_CONTROLS.md:1`](infra/modules/gcp_gke_cluster/NIST_CONTROLS.md:1) |
+| **File** | `infra/modules/gcp_gke_cluster/NIST_CONTROLS.md:1` |
 | **Violation** | Type G — Incorrect Hierarchy Presentation |
 | **Severity** | HIGH |
 | **Rule Violated** | R-8 |
@@ -838,7 +838,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`infra/modules/gcp_gke_cluster/README.md:57`](infra/modules/gcp_gke_cluster/README.md:57) |
+| **File** | `infra/modules/gcp_gke_cluster/README.md:57` |
 | **Violation** | Type G — Incorrect Hierarchy Presentation |
 | **Severity** | HIGH |
 | **Rule Violated** | R-8 |
@@ -853,7 +853,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`docs/INFERENCE_GATEWAY_ARCHITECTURE.md:3`](docs/INFERENCE_GATEWAY_ARCHITECTURE.md:3) |
+| **File** | `docs/INFERENCE_GATEWAY_ARCHITECTURE.md:3` |
 | **Violation** | Type G — Incorrect Hierarchy Presentation |
 | **Severity** | HIGH |
 | **Rule Violated** | R-8 |
@@ -868,7 +868,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`docs/AUDIT_LOG_SCHEMA.md:180`](docs/AUDIT_LOG_SCHEMA.md:180) |
+| **File** | `docs/AUDIT_LOG_SCHEMA.md:180` |
 | **Violation** | Type E — Ambiguous Universal vs. Jurisdictional Scope |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-8 |
@@ -883,7 +883,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`docs/LATENCY_STRATEGY.md:1`](docs/LATENCY_STRATEGY.md:1) |
+| **File** | `docs/LATENCY_STRATEGY.md:1` |
 | **Violation** | Type G — Incorrect Hierarchy Presentation |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-8 |
@@ -898,7 +898,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`docs/SECURITY_AUDIT_REPORT.md:758`](docs/SECURITY_AUDIT_REPORT.md:758) |
+| **File** | `docs/SECURITY_AUDIT_REPORT.md:758` |
 | **Violation** | Type G — Incorrect Hierarchy Presentation |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-8 |
@@ -913,7 +913,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`docs/DEPLOYMENT_RULES.md:168`](docs/DEPLOYMENT_RULES.md:168) |
+| **File** | `docs/DEPLOYMENT_RULES.md:168` |
 | **Violation** | Type H — Missing Explicit Labeling |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-8 |
@@ -928,7 +928,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`COMPLIANCE.md:70`](COMPLIANCE.md:70) |
+| **File** | `COMPLIANCE.md:70` |
 | **Violation** | Type E — Ambiguous Universal vs. Jurisdictional Scope |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-8 |
@@ -943,7 +943,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`infra/modules/k8s_namespace/README.md:84`](infra/modules/k8s_namespace/README.md:84) |
+| **File** | `infra/modules/k8s_namespace/README.md:84` |
 | **Violation** | Type H — Missing Explicit Labeling |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-8 |
@@ -958,7 +958,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`docs/IR_PLAN.md:55`](docs/IR_PLAN.md:55) |
+| **File** | `docs/IR_PLAN.md:55` |
 | **Violation** | Type E — Ambiguous Universal vs. Jurisdictional Scope |
 | **Severity** | LOW |
 | **Rule Violated** | R-8 |
@@ -996,7 +996,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`compliance/lula/lula-validation-sc4.yaml`](compliance/lula/lula-validation-sc4.yaml) |
+| **File** | [`compliance/lula/lula-validation-sc4.yaml`](../../../compliance/lula/lula-validation-sc4.yaml) |
 | **Violation** | Type I — Lula Validation Scope Ambiguity |
 | **Severity** | HIGH |
 | **Rule Violated** | R-9 |
@@ -1011,7 +1011,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **Files** | [`compliance/lula/lula-validation-ai600-cbrn.yaml`](compliance/lula/lula-validation-ai600-cbrn.yaml), [`lula-validation-ai600-confabulation.yaml`](compliance/lula/lula-validation-ai600-confabulation.yaml), [`lula-validation-ai600-data-privacy.yaml`](compliance/lula/lula-validation-ai600-data-privacy.yaml), [`lula-validation-ai600-human-ai-config.yaml`](compliance/lula/lula-validation-ai600-human-ai-config.yaml), [`lula-validation-ai600-prompt-injection.yaml`](compliance/lula/lula-validation-ai600-prompt-injection.yaml) |
+| **Files** | [`compliance/lula/lula-validation-ai600-cbrn.yaml`](../../../compliance/lula/lula-validation-ai600-cbrn.yaml), [`lula-validation-ai600-confabulation.yaml`](../../../compliance/lula/lula-validation-ai600-confabulation.yaml), [`lula-validation-ai600-data-privacy.yaml`](../../../compliance/lula/lula-validation-ai600-data-privacy.yaml), [`lula-validation-ai600-human-ai-config.yaml`](../../../compliance/lula/lula-validation-ai600-human-ai-config.yaml), [`lula-validation-ai600-prompt-injection.yaml`](../../../compliance/lula/lula-validation-ai600-prompt-injection.yaml) |
 | **Violation** | Type I — Lula Validation Scope Ambiguity |
 | **Severity** | HIGH |
 | **Rule Violated** | R-9 |
@@ -1033,7 +1033,7 @@ metadata:
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`compliance/lula/README.md`](compliance/lula/README.md) |
+| **File** | [`compliance/lula/README.md`](../../../README.md) |
 | **Violation** | Type I — Lula Validation Scope Ambiguity |
 | **Severity** | HIGH |
 | **Rule Violated** | R-9 |
@@ -1060,7 +1060,7 @@ Each file must carry `cage.region: EU_ECB` or `cage.region: APAC_MAS` in `metada
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`compliance/lula/lula-validation-aarm-vectors.yaml`](compliance/lula/lula-validation-aarm-vectors.yaml) |
+| **File** | [`compliance/lula/lula-validation-aarm-vectors.yaml`](../../../compliance/lula/lula-validation-aarm-vectors.yaml) |
 | **Violation** | Type I — Lula Validation Scope Ambiguity |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-9 |
@@ -1075,7 +1075,7 @@ Each file must carry `cage.region: EU_ECB` or `cage.region: APAC_MAS` in `metada
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`compliance/lula/README.md`](compliance/lula/README.md) |
+| **File** | [`compliance/lula/README.md`](../../../README.md) |
 | **Violation** | Type I — Lula Validation Scope Ambiguity |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-9 |
@@ -1090,7 +1090,7 @@ Each file must carry `cage.region: EU_ECB` or `cage.region: APAC_MAS` in `metada
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`compliance/oscal/component-definition.yaml`](compliance/oscal/component-definition.yaml) |
+| **File** | [`compliance/oscal/component-definition.yaml`](../../../compliance/oscal/component-definition.yaml) |
 | **Violation** | Type J — OSCAL Schema Jurisdictional Mixing |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-6, R-9 |
@@ -1105,7 +1105,7 @@ Each file must carry `cage.region: EU_ECB` or `cage.region: APAC_MAS` in `metada
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | [`compliance/oscal/`](compliance/oscal/) |
+| **File** | `compliance/oscal/` |
 | **Violation** | Type J — OSCAL Schema Jurisdictional Mixing |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-9 |
@@ -1120,7 +1120,7 @@ Each file must carry `cage.region: EU_ECB` or `cage.region: APAC_MAS` in `metada
 
 | Attribute | Value |
 |-----------|-------|
-| **Files** | [`config/thresholds/US_FED_BASELINE.json`](config/thresholds/US_FED_BASELINE.json), [`EU_ECB_BASELINE.json`](config/thresholds/EU_ECB_BASELINE.json), [`APAC_MAS_BASELINE.json`](config/thresholds/APAC_MAS_BASELINE.json) |
+| **Files** | [`config/thresholds/US_FED_BASELINE.json`](../../../config/thresholds/US_FED_BASELINE.json), [`EU_ECB_BASELINE.json`](../../../config/thresholds/EU_ECB_BASELINE.json), [`APAC_MAS_BASELINE.json`](../../../config/thresholds/APAC_MAS_BASELINE.json) |
 | **Violation** | Type K — Threshold Configuration Inconsistency |
 | **Severity** | LOW |
 | **Rule Violated** | R-6 |
@@ -1161,10 +1161,10 @@ Each file must carry `cage.region: EU_ECB` or `cage.region: APAC_MAS` in `metada
 | `src/governed_financial_advisor/utils/privacy.py` | 1 | 🟢 LOW |
 
 **Correct reference implementations** (use as templates for all Phase 1 remediations):
-- [`src/gateway/governance/constants.py`](src/gateway/governance/constants.py) — `ControlRegistry` with region-specific JSON profile loading
-- [`src/gateway/governance/oscal_ssp_exporter.py`](src/gateway/governance/oscal_ssp_exporter.py) — `REGIONAL_PROFILES` + `FrameworkRouter`
-- [`src/gateway/governance/causal_gatekeeper.py`](src/gateway/governance/causal_gatekeeper.py) — `_NO_LEGAL_FORCE_MARKER` data-driven citation suppression
-- [`src/gateway/governance/uca_logger.py`](src/gateway/governance/uca_logger.py) — `_get_worm_bucket()` with explicit regional routing
+- [`src/gateway/governance/constants.py`](../../../src/gateway/governance/constants.py) — `ControlRegistry` with region-specific JSON profile loading
+- [`src/gateway/governance/oscal_ssp_exporter.py`](../../../src/gateway/governance/oscal_ssp_exporter.py) — `REGIONAL_PROFILES` + `FrameworkRouter`
+- [`src/gateway/governance/causal_gatekeeper.py`](../../../src/gateway/governance/causal_gatekeeper.py) — `_NO_LEGAL_FORCE_MARKER` data-driven citation suppression
+- [`src/gateway/governance/uca_logger.py`](../../../src/gateway/governance/uca_logger.py) — `_get_worm_bucket()` with explicit regional routing
 
 ---
 
@@ -1326,23 +1326,23 @@ The following existing implementations in the codebase correctly enforce jurisdi
 
 ### 9.1 Regional Profile Loading — `src/gateway/governance/constants.py`
 
-[`ControlRegistry`](src/gateway/governance/constants.py) demonstrates the correct pattern for loading region-specific control profiles from external JSON files. Use this pattern for `CONTROL_META` and `EVIDENCE_SLA_SECONDS` refactoring.
+[`ControlRegistry`](../../../src/gateway/governance/constants.py) demonstrates the correct pattern for loading region-specific control profiles from external JSON files. Use this pattern for `CONTROL_META` and `EVIDENCE_SLA_SECONDS` refactoring.
 
 ### 9.2 Framework Router — `src/gateway/governance/oscal_ssp_exporter.py`
 
-[`REGIONAL_PROFILES`](src/gateway/governance/oscal_ssp_exporter.py) and [`FrameworkRouter`](src/gateway/governance/oscal_ssp_exporter.py) demonstrate the correct pattern for routing compliance evidence to the correct framework based on `CAGE_DEPLOYMENT_REGION`. Use this pattern for all compliance bridge endpoint filtering.
+[`REGIONAL_PROFILES`](../../../src/gateway/governance/oscal_ssp_exporter.py) and [`FrameworkRouter`](../../../src/gateway/governance/oscal_ssp_exporter.py) demonstrate the correct pattern for routing compliance evidence to the correct framework based on `CAGE_DEPLOYMENT_REGION`. Use this pattern for all compliance bridge endpoint filtering.
 
 ### 9.3 Data-Driven Citation Suppression — `src/gateway/governance/causal_gatekeeper.py`
 
-[`_NO_LEGAL_FORCE_MARKER`](src/gateway/governance/causal_gatekeeper.py) demonstrates the correct pattern for suppressing jurisdiction-specific regulatory citations in non-applicable regions without hardcoded conditionals. Use this pattern for SR 26-2 references in EU_ECB and APAC_MAS deployments.
+[`_NO_LEGAL_FORCE_MARKER`](../../../src/gateway/governance/causal_gatekeeper.py) demonstrates the correct pattern for suppressing jurisdiction-specific regulatory citations in non-applicable regions without hardcoded conditionals. Use this pattern for SR 26-2 references in EU_ECB and APAC_MAS deployments.
 
 ### 9.4 Regional WORM Bucket Routing — `src/gateway/governance/uca_logger.py`
 
-[`_get_worm_bucket()`](src/gateway/governance/uca_logger.py) demonstrates the correct pattern for routing storage operations to the correct regional GCS bucket based on `CAGE_DEPLOYMENT_REGION`. Use this pattern for `OSCAL_S3_REGION` and `langfuse_events` bucket routing.
+[`_get_worm_bucket()`](../../../src/gateway/governance/uca_logger.py) demonstrates the correct pattern for routing storage operations to the correct regional GCS bucket based on `CAGE_DEPLOYMENT_REGION`. Use this pattern for `OSCAL_S3_REGION` and `langfuse_events` bucket routing.
 
 ### 9.5 Correctly Gated CI Job — `.github/workflows/security-scan.yml`
 
-The [`nist-compliance-gate`](.github/workflows/security-scan.yml) job demonstrates the correct pattern for a jurisdiction-specific CI gate:
+The `nist-compliance-gate` job demonstrates the correct pattern for a jurisdiction-specific CI gate:
 ```yaml
 nist-compliance-gate:
   if: vars.CAGE_DEPLOYMENT_REGION == 'US_FED'

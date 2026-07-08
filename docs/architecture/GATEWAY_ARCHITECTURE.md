@@ -149,7 +149,7 @@ cybernetic-governance-engine/
 
 ### `POST /governance/validate-action`
 
-Served by [`src/gateway/server/governance_middleware.py`](src/gateway/server/governance_middleware.py) and mounted under the `governance_app` FastAPI sub-application.
+Served by [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py) and mounted under the `governance_app` FastAPI sub-application.
 
 This is the **Single Choke Point** for all tool-level governance decisions — the Unified Gateway Governance path (Option 2). It is called by the GFA service and any future tool actuators instead of invoking OPA directly.
 
@@ -166,11 +166,11 @@ This is the **Single Choke Point** for all tool-level governance decisions — t
 }
 ```
 
-**Governance tiers executed** (via [`SymbolicGovernor.validate_action()`](src/gateway/governance/symbolic_governor.py)) — full 7-tier pipeline via `_run_checks()`:
+**Governance tiers executed** (via [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/symbolic_governor.py)) — full 7-tier pipeline via `_run_checks()`:
 
 - **Tier 0 — STPA/STAMP UCA validation:** Runs for all tool names when `stpa_validator` is injected. Checks unsafe control actions (UCA-1 through UCA-6) against `governance_thresholds.json`.
 - **Tier 1 — Agent confidence threshold pre-check:** `execute_trade` only. Fast-fails if `confidence < AGENT_CONFIDENCE_THRESHOLD` (default 0.95, env-overridable). Skips CBF/OPA round-trips when confidence is obviously below threshold.
-- **Tier 2 — Control Barrier Function (CBF):** `execute_trade` only. Mathematical safety bounds check via Redis-backed cash balance verification (γ=0.5, min=$1,000) implemented in [`cbf.py`](src/gateway/governance/cbf.py). External ledger reconciliation via `AnchorageGrpcLedgerProvider` is a planned future enhancement (POAM-023); the current implementation uses Redis `WATCH/MULTI/EXEC` optimistic locking. `verify_action()` is **read-only** — it does not modify Redis state.
+- **Tier 2 — Control Barrier Function (CBF):** `execute_trade` only. Mathematical safety bounds check via Redis-backed cash balance verification (γ=0.5, min=$1,000) implemented in [`cbf.py`](../../src/gateway/governance/cbf.py). External ledger reconciliation via `AnchorageGrpcLedgerProvider` is a planned future enhancement (POAM-023); the current implementation uses Redis `WATCH/MULTI/EXEC` optimistic locking. `verify_action()` is **read-only** — it does not modify Redis state.
 - **Tier 3 — OPA Rego policy evaluation:** All tool names. Declarative rule enforcement against the active regional compliance profile (`CAGE_DEPLOYMENT_REGION`). OPA circuit breaker: 5 failures → OPEN, 30s recovery, 3000ms hard latency budget. Redis decision cache: 10s TTL, SHA-256 keyed (`cage:opa:decision:{sha256_prefix}`), `OPA_CACHE_ENABLED` env var (default true). Cache is checked **before** the HTTP call; a hit short-circuits the entire round-trip. For `execute_trade`, CBF (Tier 2) and OPA (Tier 3) run **concurrently** via `asyncio.gather` to minimize latency.
 - **Tier 4 — Fiscal Limit Pre-Reservation (FiscalLimitGuard):** `execute_trade` only, when `fiscal_limit_guard` is injected and no prior violations exist. Atomically reserves the requested USD amount against the daily fiscal cap in Redis (`WATCH/MULTI/EXEC`) before the consensus gate. Closes the TOCTOU race between the CBF balance check and actual trade execution. Released immediately if any subsequent tier produces a violation.
 - **Tier 4b — Token Quota Proxy (TQP):** All tool names. Per-session step-count (≤12) and token (≤100k) quota enforcement via Redis atomic Lua counters (`token_quota_proxy.py`). Fail-closed: HTTP 429 on quota exceeded. Two-phase commit (reserve → reconcile); rollback on downstream failure. ISO 42001 Annex A.4. UCA type: `quota_exceeded` logged to WORM via UCA Logger.
@@ -212,12 +212,12 @@ The following modules were added as part of the NIST AI 600-1 implementation (`C
 
 | Module | AI 600-1 Control | Purpose | POAM |
 |--------|-----------------|---------|------|
-| [`confabulation_scorer.py`](../src/gateway/governance/confabulation_scorer.py) | §2.1 — Confabulation/Hallucination | Scores LLM outputs for confabulation risk. Computes `risk_score = 1.0 − confidence` and emits a structured Langfuse score payload (`confabulation_risk`) for every governed request. Blocks requests where `confidence < CONFIDENCE_MIN_SCORE` (default 0.95, sourced from `CONFIDENCE_MIN_SCORE` env var or `governance_thresholds.json`). Implements `CTRL_AGT_001`. | AI600-001 |
-| [`hitl_escalator.py`](../src/gateway/governance/hitl_escalator.py) | §2.5 — Human-AI Configuration | Human-in-the-Loop escalation for high-risk decisions. Produces structured `EscalationRecord` objects written to the DeferQueue (Redis db=1, noeviction). Escalation reasons: `CONSENSUS_THRESHOLD` (amount > $10k), `CONFIDENCE_LOW` (confidence < 0.95), `CAUSAL_BLOCK` (DoWhy refutation failed), `MANUAL_REVIEW` (OPA policy decision), `GOVERNANCE_CONFIDENCE_LOW` (recursive governance risk). SR 26-2 §3.2 SLA: 4-hour resolution window. | AI600-004 |
-| [`prompt_injection_detector.py`](../src/gateway/governance/prompt_injection_detector.py) | §2.3 — Prompt Injection | Detects structural prompt injection patterns in incoming requests. Complements the Aho-Corasick Tier-1 keyword scanner (`text_filter.py`) with 8 structural regex patterns targeting instruction overrides, persona hijacking, ChatML injection, jailbreak attempts, and role-play bypasses. Returns on first match (fail-fast); detection confidence 0.95. Violations logged to UCA Logger. | AI600-003 |
-| [`provenance_chain.py`](../src/gateway/governance/provenance_chain.py) | §2.7 — Information Integrity | Builds a cryptographic SHA-256 hash chain linking each LangGraph governance node's input and output, creating an immutable audit trail of governance decisions. Each `ProvenanceRecord` carries `input_hash`, `output_hash`, `decision` (ALLOW/BLOCK/ESCALATE), and `parent_hash` for chain linkage. In production, records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`. `verify_chain_integrity()` validates the full chain on demand. | AI600-005 |
-| [`text_filter.py`](../src/gateway/governance/text_filter.py) | §2.6 — CBRN / Hazardous Content | Stateless O(n) Tier-1 keyword scanner using a lazy-initialised Aho-Corasick automaton (`pyahocorasick`). Falls back to O(n×m) `any()` loop when the optional dependency is absent. Keyword list sourced exclusively from `config/governance_thresholds.json` (no inline literals). Includes a separate `ac_cbrn_keyword_scan()` function for CBRN-specific multi-word phrase detection, enabled via `tier1_keywords_cbrn_enabled` flag. **US_FED only** for CBRN enforcement; general keyword scan is active in all regions. | — |
-| [`pii_sanitizer.py`](../src/gateway/governance/pii_sanitizer.py) | §2.2 — Data Privacy | Pre-ledger PII sanitization pipeline (ISO 42001 Annex A.6). Applies 7 compiled regex patterns sequentially: SSN (IRS-valid ranges), credit card (Visa/MC/Amex/Discover/JCB/Diners), IBAN, SWIFT/BIC, email, phone (US/international), and API keys/Bearer tokens. Thread-safe singleton (`PIISanitizer`). `sanitize_dict()` recursively sanitizes nested dicts before WORM persistence. `pii_audit_log()` produces structured audit records (FISMA AU-11, 90-day retention). Active in **all regions**. | — |
+| [`confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) | §2.1 — Confabulation/Hallucination | Scores LLM outputs for confabulation risk. Computes `risk_score = 1.0 − confidence` and emits a structured Langfuse score payload (`confabulation_risk`) for every governed request. Blocks requests where `confidence < CONFIDENCE_MIN_SCORE` (default 0.95, sourced from `CONFIDENCE_MIN_SCORE` env var or `governance_thresholds.json`). Implements `CTRL_AGT_001`. | AI600-001 |
+| [`hitl_escalator.py`](../../src/gateway/governance/hitl_escalator.py) | §2.5 — Human-AI Configuration | Human-in-the-Loop escalation for high-risk decisions. Produces structured `EscalationRecord` objects written to the DeferQueue (Redis db=1, noeviction). Escalation reasons: `CONSENSUS_THRESHOLD` (amount > $10k), `CONFIDENCE_LOW` (confidence < 0.95), `CAUSAL_BLOCK` (DoWhy refutation failed), `MANUAL_REVIEW` (OPA policy decision), `GOVERNANCE_CONFIDENCE_LOW` (recursive governance risk). SR 26-2 §3.2 SLA: 4-hour resolution window. | AI600-004 |
+| [`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py) | §2.3 — Prompt Injection | Detects structural prompt injection patterns in incoming requests. Complements the Aho-Corasick Tier-1 keyword scanner (`text_filter.py`) with 8 structural regex patterns targeting instruction overrides, persona hijacking, ChatML injection, jailbreak attempts, and role-play bypasses. Returns on first match (fail-fast); detection confidence 0.95. Violations logged to UCA Logger. | AI600-003 |
+| [`provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | §2.7 — Information Integrity | Builds a cryptographic SHA-256 hash chain linking each LangGraph governance node's input and output, creating an immutable audit trail of governance decisions. Each `ProvenanceRecord` carries `input_hash`, `output_hash`, `decision` (ALLOW/BLOCK/ESCALATE), and `parent_hash` for chain linkage. In production, records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`. `verify_chain_integrity()` validates the full chain on demand. | AI600-005 |
+| [`text_filter.py`](../../src/gateway/governance/text_filter.py) | §2.6 — CBRN / Hazardous Content | Stateless O(n) Tier-1 keyword scanner using a lazy-initialised Aho-Corasick automaton (`pyahocorasick`). Falls back to O(n×m) `any()` loop when the optional dependency is absent. Keyword list sourced exclusively from `config/governance_thresholds.json` (no inline literals). Includes a separate `ac_cbrn_keyword_scan()` function for CBRN-specific multi-word phrase detection, enabled via `tier1_keywords_cbrn_enabled` flag. **US_FED only** for CBRN enforcement; general keyword scan is active in all regions. | — |
+| [`pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py) | §2.2 — Data Privacy | Pre-ledger PII sanitization pipeline (ISO 42001 Annex A.6). Applies 7 compiled regex patterns sequentially: SSN (IRS-valid ranges), credit card (Visa/MC/Amex/Discover/JCB/Diners), IBAN, SWIFT/BIC, email, phone (US/international), and API keys/Bearer tokens. Thread-safe singleton (`PIISanitizer`). `sanitize_dict()` recursively sanitizes nested dicts before WORM persistence. `pii_audit_log()` produces structured audit records (FISMA AU-11, 90-day retention). Active in **all regions**. | — |
 
 ### Module Integration in the Governance Pipeline
 
@@ -249,7 +249,7 @@ UCA Logger → GCS WORM bucket (region-gated path)
 
 ## Governance Pipeline
 
-The 7-tier symbolic governance pipeline is implemented in [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) and executed by `SymbolicGovernor._run_checks()` for every `execute_trade` action. Tiers execute in strict sequential order except where noted.
+The 7-tier symbolic governance pipeline is implemented in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) and executed by `SymbolicGovernor._run_checks()` for every `execute_trade` action. Tiers execute in strict sequential order except where noted.
 
 | Tier | Name | Key Invariant / Threshold |
 |------|------|--------------------------|
@@ -285,7 +285,7 @@ EU_ECB deployments additionally stamp a Fundamental Rights Impact Assessment (FR
 
 ## Control Barrier Function Layer
 
-The **Control Barrier Function (CBF)** layer provides a mathematically grounded cash-balance safety guarantee. Implementation: [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py).
+The **Control Barrier Function (CBF)** layer provides a mathematically grounded cash-balance safety guarantee. Implementation: [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py).
 
 ### Safe Set Definition
 
@@ -335,7 +335,7 @@ EXEC
 
 ## Request Authentication & Routing Seal
 
-Every governance-approved action is attested by a short-lived **routing seal** that the downstream actuator must verify before firing. Implementation: [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py).
+Every governance-approved action is attested by a short-lived **routing seal** that the downstream actuator must verify before firing. Implementation: [`src/gateway/governance/routing_seal.py`](../../src/governed_financial_advisor/utils/routing_seal.py).
 
 ### Seal Format
 
@@ -371,7 +371,7 @@ The following frameworks apply regardless of `CAGE_DEPLOYMENT_REGION`:
 | **ISO/IEC 42001:2023** | Primary AI governance framework — all controls, pipeline steps, and audit artifacts | Active |
 | **CSA AARM v1.0** | 11-vector AI agent threat model — all mitigations active in all regions | Active |
 | **OSCAL v1.0.4** | Machine-readable artifact persistence to GCS | Active |
-| **Lula** | 15 Lula validation manifests (4 Active, 11 Stub — see [`compliance/lula/README.md`](../compliance/lula/README.md)) | Active (4 of 15) |
+| **Lula** | 15 Lula validation manifests (4 Active, 11 Stub — see [`compliance/lula/README.md`](../../README.md)) | Active (4 of 15) |
 
 ### US_FED Jurisdiction Addendum (`CAGE_DEPLOYMENT_REGION=US_FED`)
 

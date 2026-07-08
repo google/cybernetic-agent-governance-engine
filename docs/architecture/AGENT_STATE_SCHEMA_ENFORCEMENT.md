@@ -480,7 +480,7 @@ async def nemo_guardrail_node(state: StateDict) -> dict[str, Any]:
 
 ### 6.1 Problem
 
-`AgentState` in [`src/governed_financial_advisor/graph/state.py`](src/governed_financial_advisor/graph/state.py) and the JSON Schema in `compliance/schemas/agent_state_schema.json` are maintained separately. A developer who adds a field to `AgentState` without updating the schema creates silent drift.
+`AgentState` in [`src/governed_financial_advisor/graph/state.py`](../../src/governed_financial_advisor/demo/state.py) and the JSON Schema in `compliance/schemas/agent_state_schema.json` are maintained separately. A developer who adds a field to `AgentState` without updating the schema creates silent drift.
 
 ### 6.2 CI Check — pytest Schema Consistency Test
 

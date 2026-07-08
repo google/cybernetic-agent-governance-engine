@@ -69,9 +69,9 @@ The active/stub split is **intentional and aligned with the posture architecture
 - **10 Stub (US_FED scope):** NIST SP 800-53 controls — US Federal only; require cluster-specific namespace/resource configuration before activation
 - **5 Stub (US_FED scope):** NIST AI 600-1 controls — added in Phase 0 of the AI 600-1 implementation plan (branch `feat/CAGE-AI600-ai600-1-implementation`, 2026-06-15); require Langfuse metric availability and cluster-specific configuration before activation
 
-The 10 US_FED NIST SP 800-53 stubs represent an **implementation gap** tracked as an open POAM item: activating all 10 would raise NIST SP 800-53 Lula coverage from 1/11 to 11/11 controls, directly supporting the US_FED release gate requirement (F-01 in [`docs/PRODUCTION_READINESS_REPORT.md`](../../docs/PRODUCTION_READINESS_REPORT.md)). The CSA AARM stub (1 manifest, ALL scope) is a separate gap affecting all regions.
+The 10 US_FED NIST SP 800-53 stubs represent an **implementation gap** tracked as an open POAM item: activating all 10 would raise NIST SP 800-53 Lula coverage from 1/11 to 11/11 controls, directly supporting the US_FED release gate requirement (F-01 in `docs/PRODUCTION_READINESS_REPORT.md`). The CSA AARM stub (1 manifest, ALL scope) is a separate gap affecting all regions.
 
-The 5 US_FED NIST AI 600-1 stubs are **scaffolding stubs** created as part of Phase 0 of [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](../../docs/AI_600_1_IMPLEMENTATION_PLAN.md). They will be hardened to full assertions in Phase 3 §7.5 (Weeks 16–52). The CBRN stub (`lula-validation-ai600-cbrn.yaml`) is a **Cat-M change** requiring AO pre-approval before cluster activation per [`docs/CHANGE_MANAGEMENT_PROCESS.md`](../../docs/CHANGE_MANAGEMENT_PROCESS.md) §8.4.
+The 5 US_FED NIST AI 600-1 stubs are **scaffolding stubs** created as part of Phase 0 of [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](../../docs/AI_600_1_IMPLEMENTATION_PLAN.md). They will be hardened to full assertions in Phase 3 §7.5 (Weeks 16–52). The CBRN stub (`lula-validation-ai600-cbrn.yaml`) is a **Cat-M change** requiring AO pre-approval before cluster activation per [`docs/CHANGE_MANAGEMENT_PROCESS.md`](../../docs/governance/CHANGE_MANAGEMENT_PROCESS.md) §8.4.
 
 ---
 
@@ -252,11 +252,11 @@ See [`compliance/continuous-monitoring/ISCM_STRATEGY.md`](../continuous-monitori
 
 - [`compliance/continuous-monitoring/ISCM_STRATEGY.md`](../continuous-monitoring/ISCM_STRATEGY.md) — Information System Continuous Monitoring Strategy
 - [`docs/POAM.md`](../../docs/POAM.md) — Plan of Action and Milestones (POAM items for stub activation)
-- [`docs/ROLES_AND_RESPONSIBILITIES.md`](../../docs/ROLES_AND_RESPONSIBILITIES.md) — ISSO/ISSM roles for validation review
+- [`docs/ROLES_AND_RESPONSIBILITIES.md`](../../docs/governance/ROLES_AND_RESPONSIBILITIES.md) — ISSO/ISSM roles for validation review
 - [`deployment/k8s/lula-cron.yaml`](../../deployment/k8s/lula-cron.yaml) — Kubernetes CronJob for automated validation
 - [`deployment/k8s/lula-rbac.yaml`](../../deployment/k8s/lula-rbac.yaml) — RBAC for Lula cluster access
 - [`deployment/docker/Dockerfile.lula`](../../deployment/docker/Dockerfile.lula) — Lula container image
 - [`compliance/oscal/system-security-plan.yaml`](../oscal/system-security-plan.yaml) — US_FED SSP (NIST SP 800-53 Rev 5 HIGH)
 - [`compliance/oscal/system-security-plan-eu-ecb.yaml`](../oscal/system-security-plan-eu-ecb.yaml) — EU_ECB SSP (EU AI Act / GDPR / DORA)
 - [`compliance/oscal/system-security-plan-apac-mas.yaml`](../oscal/system-security-plan-apac-mas.yaml) — APAC_MAS SSP (MAS FEAT / Notice 655 / TRM)
-- [`docs/JURISDICTIONAL_SEPARATION_ANALYSIS.md`](../../docs/JURISDICTIONAL_SEPARATION_ANALYSIS.md) — Phase 4 compliance artifact findings (CA-01 through CA-08)
+- [`docs/JURISDICTIONAL_SEPARATION_ANALYSIS.md`](../../docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md) — Phase 4 compliance artifact findings (CA-01 through CA-08)

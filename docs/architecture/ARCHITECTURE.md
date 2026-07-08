@@ -112,7 +112,7 @@ graph TB
 
 ## Green-Stack Pipeline
 
-[`src/governed_financial_advisor/pipelines/green_stack_pipeline.py`](src/governed_financial_advisor/pipelines/green_stack_pipeline.py) is a **Kubeflow Pipelines v2 (KFP v2)** pipeline that implements the cybernetic governance **feedback loop** (also referred to as the "Cybernetic Governance Loop"):
+[`src/governed_financial_advisor/pipelines/green_stack_pipeline.py`](../../src/governed_financial_advisor/pipelines/green_stack_pipeline.py) is a **Kubeflow Pipelines v2 (KFP v2)** pipeline that implements the cybernetic governance **feedback loop** (also referred to as the "Cybernetic Governance Loop"):
 
 ```
 Compliance Bridge → ISO 42001 Evaluation → NeMo In-Process Hot-Reload
@@ -142,9 +142,9 @@ Three purpose-distinct HTTP clients exist. They are **not aliases** — each tar
 
 | Client             | File                                                                                         | Target Endpoint                          | Protocol                          | Purpose                                                                                             |
 | ------------------ | -------------------------------------------------------------------------------------------- | ---------------------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `GatewayClient`    | [`gateway_client.py`](src/governed_financial_advisor/infrastructure/gateway_client.py)       | `GATEWAY_URL` (`/v1/chat/completions`)   | HTTP/JSON                         | Freeform chat inference through the governed gateway; lazy singleton httpx client                   |
-| `GovernanceClient` | [`governance_client.py`](src/governed_financial_advisor/infrastructure/governance_client.py) | `GATEWAY_API_BASE` (`/chat/completions`) | HTTP/JSON with vLLM `guided_json` | Schema-constrained structured generation via FSM logit processor; sync + async variants             |
-| `GatewayMCPClient` | [`mcp_client.py`](src/governed_financial_advisor/infrastructure/mcp_client.py)               | `MCP_SERVER_SSE_URL`                     | SSE/MCP protocol                  | Tool dispatch via Model Context Protocol; W3C traceparent injected via `ClientSession` monkey-patch |
+| `GatewayClient`    | [`gateway_client.py`](../../src/governed_financial_advisor/infrastructure/gateway_client.py)       | `GATEWAY_URL` (`/v1/chat/completions`)   | HTTP/JSON                         | Freeform chat inference through the governed gateway; lazy singleton httpx client                   |
+| `GovernanceClient` | [`governance_client.py`](../../src/governed_financial_advisor/infrastructure/governance_client.py) | `GATEWAY_API_BASE` (`/chat/completions`) | HTTP/JSON with vLLM `guided_json` | Schema-constrained structured generation via FSM logit processor; sync + async variants             |
+| `GatewayMCPClient` | [`mcp_client.py`](../../src/governed_financial_advisor/infrastructure/mcp_client.py)               | `MCP_SERVER_SSE_URL`                     | SSE/MCP protocol                  | Tool dispatch via Model Context Protocol; W3C traceparent injected via `ClientSession` monkey-patch |
 
 **When to use each:**
 
@@ -154,7 +154,7 @@ Three purpose-distinct HTTP clients exist. They are **not aliases** — each tar
 
 ### Configuration Hierarchy
 
-[`config_manager.py`](src/governed_financial_advisor/infrastructure/config_manager.py) implements a two-tier lookup:
+[`config_manager.py`](../../src/governed_financial_advisor/infrastructure/config_manager.py) implements a two-tier lookup:
 
 1. **Environment variables** — fastest; K8s Secrets injected as env vars follow this path
 2. **Default fallback** — returned when no env var is set
@@ -163,7 +163,7 @@ Three purpose-distinct HTTP clients exist. They are **not aliases** — each tar
 
 ### Redis Client (`redis_client.py`)
 
-[`AsyncRedisClient`](src/governed_financial_advisor/infrastructure/redis_client.py) is a full-featured production client:
+[`AsyncRedisClient`](../../src/governed_financial_advisor/infrastructure/redis_client.py) is a full-featured production client:
 
 - **OTel-traced** — every `get`/`set`/`delete` creates a span with `redis.key` attribute
 - **Fail-fast** — raises `ConnectionError` on connect failure (no silent memory fallback)
@@ -173,7 +173,7 @@ Three purpose-distinct HTTP clients exist. They are **not aliases** — each tar
 
 ### NeMo Telemetry Exporter (`telemetry/nemo_exporter.py`)
 
-[`NeMoOTelCallback`](src/governed_financial_advisor/infrastructure/telemetry/nemo_exporter.py) is a `StreamingHandler` subclass (NeMo internal event hook) that creates OTel spans for every guardrail action matching `"check"`, `"guard"`, or `"detect"`. Each span is tagged:
+[`NeMoOTelCallback`](../../src/governed_financial_advisor/infrastructure/telemetry/nemo_exporter.py) is a `StreamingHandler` subclass (NeMo internal event hook) that creates OTel spans for every guardrail action matching `"check"`, `"guard"`, or `"detect"`. Each span is tagged:
 
 - `langfuse.trace.metadata.iso.control_id = "A.6.2.8"` (ISO 42001 Event Logging)
 - `langfuse.trace.metadata.guardrail.outcome = "ALLOWED" | "BLOCKED"`
@@ -188,7 +188,7 @@ Spans flow: NeMo runtime → Langfuse OTLP/HTTP ingestion (direct). This is **sp
 
 A typical governed trade advisory request flows as follows:
 
-1. **User sends request** → `POST /agent/query` to [`server.py`](src/governed_financial_advisor/server.py)
+1. **User sends request** → `POST /agent/query` to [`server.py`](../../src/governed_financial_advisor/server.py)
 2. **NeMo input safety** → `validate_with_nemo(prompt, rails)` — Colang 2.x + 15-entity Presidio PII scan; unsafe input returns early
 3. **Graph invocation** → `graph.ainvoke({"messages": [...], "user_id": ...}, {"thread_id": ...})`
 4. **Thinker node** (DeepSeek-R1) → classifies intent (`DATA_ANALYST / EXECUTION_ANALYST / STRATEGY_ADVISOR / HUMAN_REVIEW`); extracts risk profile and investment period into `AgentState`
@@ -214,24 +214,24 @@ All governance enforcement layers are Python-only:
 
 | Tier | Component                   | File                                                                                | Mechanism                                                                                          | When Applied                             |
 | ---- | --------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| 1    | Aho-Corasick keyword scan   | [`safety.py:51`](src/gateway/governance/safety.py)                                  | O(n) forbidden keyword detection, 14+ patterns                                                     | Every `/agent/query` request             |
-| 2    | NeMo Guardrails input       | [`nemo/manager.py`](src/gateway/governance/nemo/manager.py)                         | Colang 2.x + bypass pattern check + Presidio                                                       | Every `/agent/query` request             |
-| 3    | STPA Validator              | [`stpa_validator.py`](src/gateway/governance/stpa_validator.py) / `generated_stpa_validator.py` | UCA-1/2/5/6/8/9 deterministic checks; compiled from `stpa_control_structure.yaml` | Every `execute_trade_action` MCP call    |
-| 4    | OPA Policy Engine           | [`core/policy.py`](src/gateway/core/policy.py)                                      | `trade_governance.rego` + `generated_stpa_policy.rego` RBAC; circuit breaker                      | Every tool call via Symbolic Governor    |
-| 5    | Control Barrier Function    | [`safety.py ControlBarrierFunction`](src/gateway/governance/safety.py)              | Discrete-time CBF; Redis-backed cumulative cash state                                              | Every `execute_trade` call               |
-| 6    | Consensus Engine            | [`consensus.py`](src/gateway/governance/consensus.py)                               | Multi-agent debate for high-stakes trades                                                          | Every `execute_trade_action` > threshold |
-| 7    | DoWhy Causal Gatekeeper     | [`causal_gatekeeper.py`](src/gateway/governance/causal_gatekeeper.py)               | Placebo refutation (DoWhy); validates world-model integrity pre-trade                              | `execute_trade` calls only          |
-| 8    | NeMo output masking         | [`nemo/manager.py`](src/gateway/governance/nemo/manager.py)                         | Presidio PII egress filter (15 entity types)                                                       | Every LLM response; PII-004 FIXED        |
-| 9    | HMAC signature gate         | [`evaluator_node.py`](src/governed_financial_advisor/graph/nodes/evaluator_node.py) | HMAC-SHA256 governance_signature; required before governed_trader                                  | Evaluator → governed_trader edge         |
-| 10   | LangGraph interrupt         | [`graph.py:100`](src/governed_financial_advisor/graph/graph.py)                     | `interrupt_before=["governed_trader"]`                                                             | Before every governed_trader execution   |
-| 11   | Human approval gate         | [`approval_node.py`](src/governed_financial_advisor/graph/nodes/approval_node.py)   | `interrupt()` / `Command(resume=...)` via `/v1/approvals/{thread_id}/resume`                       | Trades > $10k or risk_score > 0.7        |
-| 12   | Recursion guard             | [`graph.py:82`](src/governed_financial_advisor/graph/graph.py)                      | `loop_count >= 3 → explainer` escape hatch                                                         | evaluator→execution_analyst loop         |
-| 13   | Linkerd mTLS                | [`linkerd-mtls-policy.yaml`](deployment/k8s/linkerd-mtls-policy.yaml)               | SPIFFE/SVID identity; `Server`/`AuthorizationPolicy`/`MeshTLSAuthentication` v1beta2               | All intra-cluster service communication  |
-| 14   | Cilium L7 egress            | [`cilium-egress-lockdown.yaml`](deployment/k8s/cilium-egress-lockdown.yaml)          | FQDN allowlist (gateway); internal-only lockdown (sovereign-agent pods); default-deny              | All outbound network traffic             |
-| 15   | FiscalLimitGuard            | [`fiscal_limit_guard.py`](src/gateway/governance/fiscal_limit_guard.py)              | Redis `WATCH/MULTI/EXEC` atomic pre-reservation; prevents multi-agent TOCTOU on OPA fiscal limits  | Every `execute_trade` call, pre-OPA      |
-| 16   | Token Quota Proxy           | [`token_quota_proxy.py`](src/gateway/governance/token_quota_proxy.py)                | Redis atomic Lua counters; step-count ≤12 and token ≤100k per session; fail-CLOSED on Redis error; two-phase commit (reserve → reconcile); rollback on downstream failure. ISO 42001 Annex A.4. `CTRL_TQP_007`. | Every inference proxy request (Step 2 in `inference_proxy.py`) |
+| 1    | Aho-Corasick keyword scan   | [`safety.py:51`](../../src/gateway/governance/safety.py)                                  | O(n) forbidden keyword detection, 14+ patterns                                                     | Every `/agent/query` request             |
+| 2    | NeMo Guardrails input       | [`nemo/manager.py`](../../src/gateway/governance/nemo/manager.py)                         | Colang 2.x + bypass pattern check + Presidio                                                       | Every `/agent/query` request             |
+| 3    | STPA Validator              | [`stpa_validator.py`](../../src/gateway/governance/stpa_validator.py) / `generated_stpa_validator.py` | UCA-1/2/5/6/8/9 deterministic checks; compiled from `stpa_control_structure.yaml` | Every `execute_trade_action` MCP call    |
+| 4    | OPA Policy Engine           | [`core/policy.py`](../../src/gateway/core/policy.py)                                      | `trade_governance.rego` + `generated_stpa_policy.rego` RBAC; circuit breaker                      | Every tool call via Symbolic Governor    |
+| 5    | Control Barrier Function    | [`safety.py ControlBarrierFunction`](../../src/gateway/governance/safety.py)              | Discrete-time CBF; Redis-backed cumulative cash state                                              | Every `execute_trade` call               |
+| 6    | Consensus Engine            | [`consensus.py`](../../src/gateway/governance/consensus.py)                               | Multi-agent debate for high-stakes trades                                                          | Every `execute_trade_action` > threshold |
+| 7    | DoWhy Causal Gatekeeper     | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)               | Placebo refutation (DoWhy); validates world-model integrity pre-trade                              | `execute_trade` calls only          |
+| 8    | NeMo output masking         | [`nemo/manager.py`](../../src/gateway/governance/nemo/manager.py)                         | Presidio PII egress filter (15 entity types)                                                       | Every LLM response; PII-004 FIXED        |
+| 9    | HMAC signature gate         | [`evaluator_node.py`](../../src/governed_financial_advisor/graph/nodes/evaluator_node.py) | HMAC-SHA256 governance_signature; required before governed_trader                                  | Evaluator → governed_trader edge         |
+| 10   | LangGraph interrupt         | [`graph.py:100`](../../src/governed_financial_advisor/graph/graph.py)                     | `interrupt_before=["governed_trader"]`                                                             | Before every governed_trader execution   |
+| 11   | Human approval gate         | [`approval_node.py`](../../src/governed_financial_advisor/graph/nodes/approval_node.py)   | `interrupt()` / `Command(resume=...)` via `/v1/approvals/{thread_id}/resume`                       | Trades > $10k or risk_score > 0.7        |
+| 12   | Recursion guard             | [`graph.py:82`](../../src/governed_financial_advisor/graph/graph.py)                      | `loop_count >= 3 → explainer` escape hatch                                                         | evaluator→execution_analyst loop         |
+| 13   | Linkerd mTLS                | [`linkerd-mtls-policy.yaml`](../../deployment/k8s/linkerd-mtls-policy.yaml)               | SPIFFE/SVID identity; `Server`/`AuthorizationPolicy`/`MeshTLSAuthentication` v1beta2               | All intra-cluster service communication  |
+| 14   | Cilium L7 egress            | [`cilium-egress-lockdown.yaml`](../../deployment/k8s/cilium-egress-lockdown.yaml)          | FQDN allowlist (gateway); internal-only lockdown (sovereign-agent pods); default-deny              | All outbound network traffic             |
+| 15   | FiscalLimitGuard            | [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py)              | Redis `WATCH/MULTI/EXEC` atomic pre-reservation; prevents multi-agent TOCTOU on OPA fiscal limits  | Every `execute_trade` call, pre-OPA      |
+| 16   | Token Quota Proxy           | [`token_quota_proxy.py`](../../src/gateway/governance/token_quota_proxy.py)                | Redis atomic Lua counters; step-count ≤12 and token ≤100k per session; fail-CLOSED on Redis error; two-phase commit (reserve → reconcile); rollback on downstream failure. ISO 42001 Annex A.4. `CTRL_TQP_007`. | Every inference proxy request (Step 2 in `inference_proxy.py`) |
 
-> **CTRL_TQP_007 — Token Quota Proxy:** Implements ISO 42001 Annex A.4 (Resource Management). Every blocked execution produces a KMS-signed UCA record persisted to the region-gated WORM ledger via [`uca_logger.py`](src/gateway/governance/uca_logger.py). Pre-ledger PII sanitization applied by [`pii_sanitizer.py`](src/gateway/governance/pii_sanitizer.py) (ISO 42001 Annex A.6). OPA `quota_within_limits` and `token_quota_within_limits` rules in `deployment/system_authz.rego` provide secondary declarative evidence; Python `TokenQuotaProxy` is the primary enforcer.
+> **CTRL_TQP_007 — Token Quota Proxy:** Implements ISO 42001 Annex A.4 (Resource Management). Every blocked execution produces a KMS-signed UCA record persisted to the region-gated WORM ledger via [`uca_logger.py`](../../src/gateway/governance/uca_logger.py). Pre-ledger PII sanitization applied by [`pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py) (ISO 42001 Annex A.6). OPA `quota_within_limits` and `token_quota_within_limits` rules in `deployment/system_authz.rego` provide secondary declarative evidence; Python `TokenQuotaProxy` is the primary enforcer.
 
 ### Multi-Jurisdiction Regional Compliance Profiles
 
@@ -258,19 +258,19 @@ CAGE supports multi-jurisdiction productization by separating the technical engi
 
 | Test File                                                                                              | What It Tests                                                                                   | Source Under Test                                               |
 | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| [`test_cage_graph.py`](tests/test_cage_graph.py)                                                       | Canonical CAGE graph compilation and node structure                                     | `src/governed_financial_advisor/graph/graph.py::create_graph()` |
-| [`test_stpa_compiler.py`](tests/test_stpa_compiler.py)                                                 | STPA compiler schema validation, code generation, fail-closed semantics (33 tests)      | `src/gateway/governance/stpa_compiler.py`                       |
-| [`test_causal_gatekeeper.py`](tests/test_causal_gatekeeper.py)                                         | DoWhy causal gatekeeper: refutation logic, fail-open on missing dep, integration with SymbolicGovernor | `src/gateway/governance/causal_gatekeeper.py`      |
-| [`test_fiscal_limit_guard.py`](tests/test_fiscal_limit_guard.py)                                       | Multi-agent race condition, Saga rollback release, Redis fail-closed, idempotency (16 tests) | `src/gateway/governance/fiscal_limit_guard.py`           |
-| [`test_playground_telemetry.py`](tests/test_playground_telemetry.py)                                   | Evidence chain hash integrity, tamper detection, PII redaction, view-access log (27 tests) | `examples/telemetry.py`                                       |
-| [`test_hitl_rationale.py`](tests/test_hitl_rationale.py)                                               | Mandatory rationale validation, Saga payload propagation, and cryptographic evidence chain | `src/governed_financial_advisor/server.py`                    |
-| [`test_optimistic_execution.py`](tests/test_optimistic_execution.py)                                   | Optimistic concurrency interruption                                                     | `src/gateway/core/tools::execute_trade()`                       |
-| [`test_compliance_bridge.py`](tests/test_compliance_bridge.py)                                         | OSCAL YAML parsing, Pydantic validation, FastAPI endpoints                              | `src/compliance_bridge/` package                                |
-| [`test_symbolic_governor.py`](tests/test_symbolic_governor.py)                                         | SymbolicGovernor OPA + CBF + STPA integration                                           | `src/gateway/governance/symbolic_governor.py`                   |
-| [`test_opa_client.py`](tests/test_opa_client.py)                                                       | OPA circuit breaker behavior                                                            | `src/gateway/core/policy.py`                                    |
-| [`test_pii_integration.py`](tests/test_pii_integration.py)                                             | Presidio PII detection (PII-004 regression guard)                                       | `src/gateway/governance/nemo/manager.py`                        |
-| [`test_governance_architecture.py`](tests/test_governance_architecture.py)                             | Permanent CI guardrail: no hardcoded regulatory strings, regional profile parity, enum/registry parity, SIEM legacy citation, orphaned-control detection (5 tests) | `src/gateway/governance/`, `config/compliance/`     |
-| [`test_framework_router.py`](tests/test_framework_router.py)                                           | FrameworkRouter matrix: JSON schema integrity, cache identity/isolation, UCA coverage, description completeness, narrative rendering, deduplication, sentinel suppression (41 tests) | `oscal_ssp_exporter.py`, `config/oscal/framework_mappings/` |
+| [`test_cage_graph.py`](../../tests/test_cage_graph.py)                                                       | Canonical CAGE graph compilation and node structure                                     | `src/governed_financial_advisor/graph/graph.py::create_graph()` |
+| [`test_stpa_compiler.py`](../../tests/test_stpa_compiler.py)                                                 | STPA compiler schema validation, code generation, fail-closed semantics (33 tests)      | `src/gateway/governance/stpa_compiler.py`                       |
+| [`test_causal_gatekeeper.py`](../../tests/test_causal_gatekeeper.py)                                         | DoWhy causal gatekeeper: refutation logic, fail-open on missing dep, integration with SymbolicGovernor | `src/gateway/governance/causal_gatekeeper.py`      |
+| [`test_fiscal_limit_guard.py`](../../tests/test_fiscal_limit_guard.py)                                       | Multi-agent race condition, Saga rollback release, Redis fail-closed, idempotency (16 tests) | `src/gateway/governance/fiscal_limit_guard.py`           |
+| [`test_playground_telemetry.py`](../../tests/test_playground_telemetry.py)                                   | Evidence chain hash integrity, tamper detection, PII redaction, view-access log (27 tests) | `examples/telemetry.py`                                       |
+| [`test_hitl_rationale.py`](../../tests/test_hitl_rationale.py)                                               | Mandatory rationale validation, Saga payload propagation, and cryptographic evidence chain | `src/governed_financial_advisor/server.py`                    |
+| [`test_optimistic_execution.py`](../../tests/test_optimistic_execution.py)                                   | Optimistic concurrency interruption                                                     | `src/gateway/core/tools::execute_trade()`                       |
+| [`test_compliance_bridge.py`](../../tests/test_compliance_bridge.py)                                         | OSCAL YAML parsing, Pydantic validation, FastAPI endpoints                              | `src/compliance_bridge/` package                                |
+| [`test_symbolic_governor.py`](../../tests/test_symbolic_governor.py)                                         | SymbolicGovernor OPA + CBF + STPA integration                                           | `src/gateway/governance/symbolic_governor.py`                   |
+| [`test_opa_client.py`](../../tests/test_opa_client.py)                                                       | OPA circuit breaker behavior                                                            | `src/gateway/core/policy.py`                                    |
+| [`test_pii_integration.py`](../../tests/test_pii_integration.py)                                             | Presidio PII detection (PII-004 regression guard)                                       | `src/gateway/governance/nemo/manager.py`                        |
+| [`test_governance_architecture.py`](../../tests/test_governance_architecture.py)                             | Permanent CI guardrail: no hardcoded regulatory strings, regional profile parity, enum/registry parity, SIEM legacy citation, orphaned-control detection (5 tests) | `src/gateway/governance/`, `config/compliance/`     |
+| [`test_framework_router.py`](../../tests/test_framework_router.py)                                           | FrameworkRouter matrix: JSON schema integrity, cache identity/isolation, UCA coverage, description completeness, narrative rendering, deduplication, sentinel suppression (41 tests) | `oscal_ssp_exporter.py`, `config/oscal/framework_mappings/` |
 
 ---
 
@@ -346,9 +346,9 @@ GKE Cluster (governance-stack namespace)
 
 **Pattern: Standalone pod in `governance-stack` namespace** (not a gateway sidecar).
 
-[`deployment/k8s/nemo.yaml`](deployment/k8s/nemo.yaml) — `kind: Deployment`, `name: nemo-service`, ClusterIP `Service` on port 8000.
+[`deployment/k8s/nemo.yaml`](../../deployment/k8s/nemo.yaml) — `kind: Deployment`, `name: nemo-service`, ClusterIP `Service` on port 8000.
 
-- **Engine:** CPU-only. Delegates LLM inference to vLLM endpoint via `vllm_llama` engine in [`config/rails/config.yml`](config/rails/config.yml).
+- **Engine:** CPU-only. Delegates LLM inference to vLLM endpoint via `vllm_llama` engine in [`config/rails/config.yml`](../../config/rails/config.yml).
 - **OTel:** Exports directly to Langfuse integrated OTLP endpoint (`langfuse-web.governance-stack:3000/api/public/otel/v1/traces`) as `nemo-guardrails` service name. (Standalone `otel-collector` deprecated 2026-05-31.)
 - **Resources:** 500m–1 CPU, 1–2 GiB RAM.
 
@@ -356,13 +356,13 @@ GKE Cluster (governance-stack namespace)
 
 | File                                                         | Purpose                                                                                                                                         |
 | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`config/rails/config.yml`](config/rails/config.yml)         | Colang 2.x, `vllm_llama` engine, 15 Presidio PII entities (input + output rails), GUARDRAILS_MODEL_NAME env override                            |
-| [`config/rails/main_logic.co`](config/rails/main_logic.co)   | 6 flows: main (activates self-check + 3 safety checks), financial_analysis, catch_all, check_authorization, check_latency, check_financial_risk |
-| [`config/rails/definitions.co`](config/rails/definitions.co) | 1 active action declaration (`invoke_vllm_fallback`); financial safety actions **commented out** — see R-22                                     |
-| [`config/rails/actions.py`](config/rails/actions.py)         | `RetrieveKnowledgeAction` only (knowledge base retrieval); NOT the financial safety actions                                                     |
-| [`config/rails/prompts.yml`](config/rails/prompts.yml)       | Fallback `self_check_input` / `self_check_output` prompts (Langfuse is primary)                                                                 |
+| [`config/rails/config.yml`](../../config/rails/config.yml)         | Colang 2.x, `vllm_llama` engine, 15 Presidio PII entities (input + output rails), GUARDRAILS_MODEL_NAME env override                            |
+| [`config/rails/main_logic.co`](../../config/rails/main_logic.co)   | 6 flows: main (activates self-check + 3 safety checks), financial_analysis, catch_all, check_authorization, check_latency, check_financial_risk |
+| [`config/rails/definitions.co`](../../config/rails/definitions.co) | 1 active action declaration (`invoke_vllm_fallback`); financial safety actions **commented out** — see R-22                                     |
+| [`config/rails/actions.py`](../../config/rails/actions.py)         | `RetrieveKnowledgeAction` only (knowledge base retrieval); NOT the financial safety actions                                                     |
+| [`config/rails/prompts.yml`](../../config/rails/prompts.yml)       | Fallback `self_check_input` / `self_check_output` prompts (Langfuse is primary)                                                                 |
 
-**✅ R-22 (Mitigated → Low):** `main_logic.co` previously invoked `CheckApprovalTokenAction`, `CheckDataLatencyAction`, `CheckDrawdownLimitAction`, `CheckSlippageRiskAction`. On 2026-03-10 these financial Colang flows were permanently removed; financial policy enforcement was transferred to the `safety_check_node → OPA` path. Pass-through stubs for all six financial actions (`check_approval_token_action`, `check_data_latency_action`, `check_drawdown_limit_action`, `check_slippage_risk_action`, `check_atomic_execution_action`, `log_safety_audit_action`) were added to [`config/rails/actions.py`](config/rails/actions.py) to eliminate the `ImportError` fallback path in `nemo_action_registry.get_all_actions()`. The standalone `nemo-service` pod now resolves its full action registry on Priority 1 (no silent sync fallback). Each stub emits an OTel span stamped `PASS_THROUGH_OPA_AUTHORITATIVE` for audit visibility. The standalone pod is not in the production inference critical path (graph nodes use the in-process singleton in `manager.py`).
+**✅ R-22 (Mitigated → Low):** `main_logic.co` previously invoked `CheckApprovalTokenAction`, `CheckDataLatencyAction`, `CheckDrawdownLimitAction`, `CheckSlippageRiskAction`. On 2026-03-10 these financial Colang flows were permanently removed; financial policy enforcement was transferred to the `safety_check_node → OPA` path. Pass-through stubs for all six financial actions (`check_approval_token_action`, `check_data_latency_action`, `check_drawdown_limit_action`, `check_slippage_risk_action`, `check_atomic_execution_action`, `log_safety_audit_action`) were added to [`config/rails/actions.py`](../../config/rails/actions.py) to eliminate the `ImportError` fallback path in `nemo_action_registry.get_all_actions()`. The standalone `nemo-service` pod now resolves its full action registry on Priority 1 (no silent sync fallback). Each stub emits an OTel span stamped `PASS_THROUGH_OPA_AUTHORITATIVE` for audit visibility. The standalone pod is not in the production inference critical path (graph nodes use the in-process singleton in `manager.py`).
 
 ---
 
@@ -370,7 +370,7 @@ GKE Cluster (governance-stack namespace)
 
 **Pattern: Standalone service in the `default` namespace** (not `governance-stack`; not a sidecar).
 
-[`deployment/k8s/opa.yaml`](deployment/k8s/opa.yaml) — `namespace: default`, ports 8181 (HTTP) + 8282 (diagnostics), ClusterIP Service.
+[`deployment/k8s/opa.yaml`](../../deployment/k8s/opa.yaml) — `namespace: default`, ports 8181 (HTTP) + 8282 (diagnostics), ClusterIP Service.
 
 - **Policy loading:** ConfigMap volume mount at `/policies` (static bundle — no remote bundle server)
 - **Config:** Separate ConfigMap `opa-runtime-config` mounted as `/config/opa_config.yaml`
@@ -386,20 +386,20 @@ For architectural decisions, see [`docs/DEPLOYMENT_DECISION_RECORD.md`](../opera
 
 ## Technical Report Series
 
-Full engineering and compliance documentation for CAGE is maintained in the [Technical Report Series](docs/technical-report/README.md). Each document addresses a distinct architectural or compliance domain.
+Full engineering and compliance documentation for CAGE is maintained in the [Technical Report Series](../../README.md). Each document addresses a distinct architectural or compliance domain.
 
 | #   | Document                                                                                       | Title                             |
 | --- | ---------------------------------------------------------------------------------------------- | --------------------------------- |
-| 01  | [`01-SYSTEM-OVERVIEW.md`](docs/technical-report/01-SYSTEM-OVERVIEW.md)                         | System Overview                   |
-| 02  | [`02-ARCHITECTURE.md`](docs/technical-report/02-ARCHITECTURE.md)                               | System Architecture (detailed)    |
-| 03  | [`03-TECHNOLOGY-STACK.md`](docs/technical-report/03-TECHNOLOGY-STACK.md)                       | Technology Stack                  |
-| 04  | [`04-AGENT-SYSTEM.md`](docs/technical-report/04-AGENT-SYSTEM.md)                               | Multi-Agent System Design         |
-| 05  | [`05-AI-GOVERNANCE-POLICY-ENGINE.md`](docs/technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md) | AI Governance & Policy Engine     |
-| 06  | [`06-COMPLIANCE-STANDARDS.md`](docs/technical-report/06-COMPLIANCE-STANDARDS.md)               | Compliance & Regulatory Standards |
-| 07  | [`07-SECURITY-INFRASTRUCTURE.md`](docs/technical-report/07-SECURITY-INFRASTRUCTURE.md)         | Security Infrastructure           |
-| 08  | [`08-DEPLOYMENT-INFRASTRUCTURE.md`](docs/technical-report/08-DEPLOYMENT-INFRASTRUCTURE.md)     | Deployment & Infrastructure       |
-| 09  | [`09-OPERATIONAL-RUNBOOK.md`](docs/technical-report/09-OPERATIONAL-RUNBOOK.md)                 | Operational Runbook               |
-| 10  | [`10-FORMAL-VERIFICATION.md`](docs/technical-report/10-FORMAL-VERIFICATION.md)                 | Formal Verification & Completeness Proof |
+| 01  | [`01-SYSTEM-OVERVIEW.md`](../technical-report/01-SYSTEM-OVERVIEW.md)                         | System Overview                   |
+| 02  | [`02-ARCHITECTURE.md`](../technical-report/02-ARCHITECTURE.md)                               | System Architecture (detailed)    |
+| 03  | [`03-TECHNOLOGY-STACK.md`](../technical-report/03-TECHNOLOGY-STACK.md)                       | Technology Stack                  |
+| 04  | [`04-AGENT-SYSTEM.md`](../technical-report/04-AGENT-SYSTEM.md)                               | Multi-Agent System Design         |
+| 05  | [`05-AI-GOVERNANCE-POLICY-ENGINE.md`](../technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md) | AI Governance & Policy Engine     |
+| 06  | [`06-COMPLIANCE-STANDARDS.md`](../technical-report/06-COMPLIANCE-STANDARDS.md)               | Compliance & Regulatory Standards |
+| 07  | [`07-SECURITY-INFRASTRUCTURE.md`](../technical-report/07-SECURITY-INFRASTRUCTURE.md)         | Security Infrastructure           |
+| 08  | [`08-DEPLOYMENT-INFRASTRUCTURE.md`](../technical-report/08-DEPLOYMENT-INFRASTRUCTURE.md)     | Deployment & Infrastructure       |
+| 09  | [`09-OPERATIONAL-RUNBOOK.md`](../technical-report/09-OPERATIONAL-RUNBOOK.md)                 | Operational Runbook               |
+| 10  | [`10-FORMAL-VERIFICATION.md`](../technical-report/10-FORMAL-VERIFICATION.md)                 | Formal Verification & Completeness Proof |
 
 ---
 

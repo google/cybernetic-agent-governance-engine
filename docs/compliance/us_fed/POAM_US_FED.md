@@ -24,7 +24,7 @@ see_also:
 **Date:** 2026-06-15
 **Status:** ACTIVE
 
-> **⚠️ Scope Notice:** This document tracks weaknesses against the **NIST SP 800-53 Rev. 5** control baseline, the **NIST RMF authorization process**, and **NIST AI 600-1** (Generative AI Profile). It applies exclusively to `US_FED` deployments. For universal ISO 42001 AIMS weaknesses (all regions), see [`docs/POAM_ISO42001.md`](POAM_ISO42001.md). For EU_ECB-specific weaknesses, see [`docs/POAM_EU_ECB.md`](POAM_EU_ECB.md). For APAC_MAS-specific weaknesses, see [`docs/POAM_APAC_MAS.md`](POAM_APAC_MAS.md). For the full AI 600-1 gap analysis, see [`docs/NIST_AI_600_1_US_FED_ANALYSIS.md`](NIST_AI_600_1_US_FED_ANALYSIS.md).
+> **⚠️ Scope Notice:** This document tracks weaknesses against the **NIST SP 800-53 Rev. 5** control baseline, the **NIST RMF authorization process**, and **NIST AI 600-1** (Generative AI Profile). It applies exclusively to `US_FED` deployments. For universal ISO 42001 AIMS weaknesses (all regions), see [`docs/POAM_ISO42001.md`](../universal/POAM_ISO42001.md). For EU_ECB-specific weaknesses, see [`docs/POAM_EU_ECB.md`](../eu_ecb/POAM_EU_ECB.md). For APAC_MAS-specific weaknesses, see [`docs/POAM_APAC_MAS.md`](../apac_mas/POAM_APAC_MAS.md). For the full AI 600-1 gap analysis, see [`docs/NIST_AI_600_1_US_FED_ANALYSIS.md`](NIST_AI_600_1_US_FED_ANALYSIS.md).
 
 ---
 
@@ -41,7 +41,7 @@ see_also:
 | **In Progress** | 3               | 5              | **8** |
 | **Closed**      | 6               | 0              | **6** |
 
-> **Note:** POAM-018 and POAM-019 are also tracked in [`docs/POAM_ISO42001.md`](POAM_ISO42001.md) as universal ISO 42001 §A.9.4 weaknesses (all regions). The entries below are retained here for NIST SP 800-53 AU-9 / SC-7 audit continuity.
+> **Note:** POAM-018 and POAM-019 are also tracked in [`docs/POAM_ISO42001.md`](../universal/POAM_ISO42001.md) as universal ISO 42001 §A.9.4 weaknesses (all regions). The entries below are retained here for NIST SP 800-53 AU-9 / SC-7 audit continuity.
 >
 > **v2.1 addition (2026-06-15):** Seven new POAM items (AI600-001 through AI600-007) have been added based on the NIST AI 600-1 gap analysis in [`docs/NIST_AI_600_1_US_FED_ANALYSIS.md`](NIST_AI_600_1_US_FED_ANALYSIS.md). These items address GenAI-specific risks required for US_FED ATO under EO 14110 and OMB M-24-10.
 >
@@ -170,4 +170,4 @@ Items are closed when:
 
 ---
 
-_This document is a living record and must be updated within 5 business days of any status change. Unauthorized modification of closed or in-progress items requires ISSO concurrence. This file supersedes `docs/POAM.md` (v1.7, 2026-06-08), POAM_US_FED v2.0 (2026-06-08), and POAM_US_FED v2.1 (2026-06-15). For the cross-region traceability matrix, see [`docs/POAM_INDEX.md`](POAM_INDEX.md). For the AI 600-1 gap analysis that generated AI600-xxx items, see [`docs/NIST_AI_600_1_US_FED_ANALYSIS.md`](NIST_AI_600_1_US_FED_ANALYSIS.md). For the full AI 600-1 implementation plan and phase roadmap, see [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](AI_600_1_IMPLEMENTATION_PLAN.md)._
+_This document is a living record and must be updated within 5 business days of any status change. Unauthorized modification of closed or in-progress items requires ISSO concurrence. This file supersedes `docs/POAM.md` (v1.7, 2026-06-08), POAM_US_FED v2.0 (2026-06-08), and POAM_US_FED v2.1 (2026-06-15). For the cross-region traceability matrix, see [`docs/POAM_INDEX.md`](../cross-region/POAM_INDEX.md). For the AI 600-1 gap analysis that generated AI600-xxx items, see [`docs/NIST_AI_600_1_US_FED_ANALYSIS.md`](NIST_AI_600_1_US_FED_ANALYSIS.md). For the full AI 600-1 implementation plan and phase roadmap, see [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](AI_600_1_IMPLEMENTATION_PLAN.md)._

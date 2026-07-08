@@ -102,7 +102,7 @@ _List other individuals who have security roles and responsibilities for this sy
 
 _Document who is designated as the Information System Security Officer (ISSO) or equivalent. Include a signed acknowledgement from the ISSO accepting security responsibility. Reference the full Roles and Responsibilities document for complete role definitions._
 
-**Cross-reference:** [`docs/ROLES_AND_RESPONSIBILITIES.md`](../../docs/ROLES_AND_RESPONSIBILITIES.md)
+**Cross-reference:** [`docs/ROLES_AND_RESPONSIBILITIES.md`](../../docs/governance/ROLES_AND_RESPONSIBILITIES.md)
 
 The following individual has been designated as the ISSO for the CAGE system and accepts responsibility for coordinating and overseeing all security activities:
 
@@ -329,7 +329,7 @@ _The following documents constitute the NIST RMF authorization package and relat
 | FIPS 199 Security Categorization      | [`compliance/categorization/FIPS199_CATEGORIZATION.md`](../categorization/FIPS199_CATEGORIZATION.md) | Draft — Pending AO Signature |
 | System Security Plan (this document)  | [`compliance/ssp/SYSTEM_SECURITY_PLAN_OUTLINE.md`](SYSTEM_SECURITY_PLAN_OUTLINE.md)                  | Stub — Pending Completion    |
 | Plan of Action and Milestones         | [`docs/POAM.md`](../../docs/POAM.md)                                                                                                                                 | Active (23 items)            |
-| Roles and Responsibilities            | [`docs/ROLES_AND_RESPONSIBILITIES.md`](../../docs/ROLES_AND_RESPONSIBILITIES.md)                     | Draft                        |
+| Roles and Responsibilities            | [`docs/ROLES_AND_RESPONSIBILITIES.md`](../../docs/governance/ROLES_AND_RESPONSIBILITIES.md)                     | Draft                        |
 | Information Type Registry             | [`compliance/oscal/information-type-registry.yaml`](../oscal/information-type-registry.yaml)         | Complete (v1.0)              |
 | Security Assessment Report (SAR)      | TBD — to be created post-assessment                                                                  | Not Started                  |
 | Authorization to Operate (ATO) Letter | TBD — issued by AO upon authorization                                                                | Not Started                  |
@@ -338,20 +338,20 @@ _The following documents constitute the NIST RMF authorization package and relat
 
 | Document               | Location                                                                                         | Description                                               |
 | ---------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
-| Current State Analysis | [`docs/NIST_RMF_CHUNK1_CURRENT_STATE.md`](../../docs/NIST_RMF_CHUNK1_CURRENT_STATE.md)           | Initial system security posture assessment                |
-| Prepare & Categorize   | [`docs/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](../../docs/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md) | RMF Prepare and Categorize step analysis                  |
-| Select & Implement     | [`docs/NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md`](../../docs/NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md)     | Control selection and implementation analysis             |
-| Assess & Authorize     | [`docs/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md`](../../docs/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)     | Assessment and authorization readiness analysis           |
-| Monitor & Roadmap      | [`docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](../../docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)       | Continuous monitoring strategy and implementation roadmap |
+| Current State Analysis | [`docs/NIST_RMF_CHUNK1_CURRENT_STATE.md`](../../docs/compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md)           | Initial system security posture assessment                |
+| Prepare & Categorize   | [`docs/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](../../docs/compliance/us_fed/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md) | RMF Prepare and Categorize step analysis                  |
+| Select & Implement     | [`docs/NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md`](../../docs/compliance/us_fed/NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md)     | Control selection and implementation analysis             |
+| Assess & Authorize     | [`docs/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md`](../../docs/compliance/us_fed/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)     | Assessment and authorization readiness analysis           |
+| Monitor & Roadmap      | [`docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](../../docs/compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)       | Continuous monitoring strategy and implementation roadmap |
 
 ### Architecture and Design Documents
 
 | Document             | Location                                                             | Description                                    |
 | -------------------- | -------------------------------------------------------------------- | ---------------------------------------------- |
-| System Architecture  | [`ARCHITECTURE.md`](../../ARCHITECTURE.md)                           | High-level system architecture                 |
-| Gateway Architecture | [`docs/GATEWAY_ARCHITECTURE.md`](../../docs/GATEWAY_ARCHITECTURE.md) | Inference gateway design                       |
-| Governance Crosswalk | [`docs/GOVERNANCE_CROSSWALK.md`](../../docs/GOVERNANCE_CROSSWALK.md) | Control crosswalk to governance implementation |
-| ISO 42001 Compliance | [`docs/ISO_42001_COMPLIANCE.md`](../../docs/ISO_42001_COMPLIANCE.md) | ISO 42001 AI management system compliance      |
+| System Architecture  | [`ARCHITECTURE.md`](../../docs/architecture/ARCHITECTURE.md)                           | High-level system architecture                 |
+| Gateway Architecture | [`docs/GATEWAY_ARCHITECTURE.md`](../../docs/architecture/GATEWAY_ARCHITECTURE.md) | Inference gateway design                       |
+| Governance Crosswalk | [`docs/GOVERNANCE_CROSSWALK.md`](../../docs/compliance/cross-region/GOVERNANCE_CROSSWALK.md) | Control crosswalk to governance implementation |
+| ISO 42001 Compliance | [`docs/ISO_42001_COMPLIANCE.md`](../../docs/compliance/universal/ISO_42001_COMPLIANCE.md) | ISO 42001 AI management system compliance      |
 
 ### OSCAL Artifacts (To Be Created)
 

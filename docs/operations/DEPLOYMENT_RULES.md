@@ -173,9 +173,9 @@ timeout: 3600s  # 1 hour
 
 ## Related Documentation
 
-- [Deployment Guide](../infra/DEPLOYMENT_GUIDE.md) - Complete deployment procedures
-- [MCP Integration Guide](MCP_INTEGRATION_GUIDE.md) - Using MCP servers for deployment
-- [Infrastructure README](../infra/README.md) - Infrastructure architecture
+- [Deployment Guide](../../infra/DEPLOYMENT_GUIDE.md) - Complete deployment procedures
+- MCP Integration Guide - Using MCP servers for deployment
+- [Infrastructure README](../../README.md) - Infrastructure architecture
 
 ## Compliance Note
 

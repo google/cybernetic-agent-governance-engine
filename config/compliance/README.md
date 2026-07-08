@@ -86,12 +86,12 @@ env:
 1. Create `config/compliance/{REGION_CODE}_BASELINE.json` using an existing profile as a template.
 2. Create `config/thresholds/{REGION_CODE}_BASELINE.json` with regional quantitative values.
 3. Add the region code to `SUPPORTED_REGIONS` in
-   [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py).
+   [`src/gateway/governance/constants.py`](../../src/gateway/governance/constants.py).
 4. Update `_EU_LEGACY_CITATION_OVERRIDE` in
-   [`src/gateway/governance/causal_gatekeeper.py`](../src/gateway/governance/causal_gatekeeper.py)
+   [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)
    if the new region requires SR 26-2 citation suppression.
 5. Add UCA cross-walk tables to
-   [`src/gateway/governance/oscal_ssp_exporter.py`](../src/gateway/governance/oscal_ssp_exporter.py)
+   [`src/gateway/governance/oscal_ssp_exporter.py`](../../src/gateway/governance/oscal_ssp_exporter.py)
    if the region requires framework-specific OSCAL output.
 
 ## Schema

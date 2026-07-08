@@ -48,7 +48,7 @@ CAGE v0.1.0 provides a **production-grade AI governance enforcement runtime**. T
 
 ### Compliance Automation (26 Lula Validation Manifests — 4 Active, 22 Stub)
 
-Automated continuous compliance assessment covers **26 Lula validation manifests** in `compliance/lula/`. Of these, **4 are Active** (production-ready, enabled in the Lula CronJob) and **22 are Stubs** (logic complete but requiring cluster-specific namespace/resource name configuration before activation). The 22 stubs span: 1 CSA AARM (ALL scope), 10 NIST SP 800-53 (US_FED), 5 NIST AI 600-1 (US_FED), 3 EU AI Act/GDPR/DORA (EU_ECB), and 3 MAS FEAT/Notice 655/TRM (APAC_MAS). See [`compliance/lula/README.md`](../compliance/lula/README.md) for the full status table and activation instructions.
+Automated continuous compliance assessment covers **26 Lula validation manifests** in `compliance/lula/`. Of these, **4 are Active** (production-ready, enabled in the Lula CronJob) and **22 are Stubs** (logic complete but requiring cluster-specific namespace/resource name configuration before activation). The 22 stubs span: 1 CSA AARM (ALL scope), 10 NIST SP 800-53 (US_FED), 5 NIST AI 600-1 (US_FED), 3 EU AI Act/GDPR/DORA (EU_ECB), and 3 MAS FEAT/Notice 655/TRM (APAC_MAS). See [`compliance/lula/README.md`](../../README.md) for the full status table and activation instructions.
 
 | Control   | Standard        | Region Scope | Description                                       | Threshold            | Lula Validation              | Status |
 | --------- | --------------- | ------------ | ------------------------------------------------- | -------------------- | ---------------------------- | ------ |

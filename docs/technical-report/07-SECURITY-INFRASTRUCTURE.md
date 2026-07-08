@@ -89,7 +89,7 @@ All four gaps have been remediated and machine-verified. The system is now hard-
 
 Both `govern()` and `validate_action()` now satisfy the `NoDirectBind` invariant. There is no longer any code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`.
 
-**Verification:** The formal proof in [`proof/model.py`](../../proof/model.py) confirms that the pre-fix `govern()` path (no seal) produces a direct-bind violation (`EXECUTED` with `resolvedAllow = False`), and that the fixed path does not.
+**Verification:** The formal proof in `proof/model.py` confirms that the pre-fix `govern()` path (no seal) produces a direct-bind violation (`EXECUTED` with `resolvedAllow = False`), and that the fixed path does not.
 
 ### Gap 3 — `CBF_FAIL_OPEN` Hard-Gated in Production
 
@@ -136,7 +136,7 @@ Additionally, runtime exceptions during DoWhy refutation (e.g., numerical instab
 
 | Gap | Description | Status | Enforcement Point |
 | --- | ----------- | ------ | ----------------- |
-| Gap 1 | No exhaustive state-space proof | ✅ **CLOSED** | [`proof/model.py`](../../proof/model.py) — BFS over 19 reachable states |
+| Gap 1 | No exhaustive state-space proof | ✅ **CLOSED** | `proof/model.py` — BFS over 19 reachable states |
 | Gap 2 | `govern()` path issued no seal | ✅ **CLOSED** | [`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) + [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) |
 | Gap 3 | `CBF_FAIL_OPEN=true` silently degraded gate | ✅ **CLOSED** | Module-level `RuntimeError` in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
 | Gap 4 | DoWhy absence silently removed Tier 6 | ✅ **CLOSED** | Module-level `RuntimeError` + fail-closed runtime handler in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
@@ -642,7 +642,7 @@ Every governance approval is sealed with an HMAC-SHA256 routing seal before exec
 | Secret | `CAGE_ROUTING_SEAL_SECRET` | Kubernetes `Secret` object; ≥ 64 characters enforced in production |
 | Enforcement | [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py) | Missing or invalid seal → HTTP 401 (fail-closed) |
 
-The routing seal satisfies the `NoDirectBind` formal invariant: there is no code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`. This was machine-verified over the full reachable state space in [`proof/model.py`](../../proof/model.py) (see §3a, Gap 2).
+The routing seal satisfies the `NoDirectBind` formal invariant: there is no code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`. This was machine-verified over the full reachable state space in `proof/model.py` (see §3a, Gap 2).
 
 **ISO 42001 mapping:** A.7.5 (Records Integrity). **[US_FED only]** NIST AU-10 (Non-repudiation).
 
@@ -759,7 +759,7 @@ Source: [`tests/red_team/`](../../tests/red_team/), [`src/governed_financial_adv
 | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
 | [`tests/red_team/adversarial_dataset.json`](../../tests/red_team/adversarial_dataset.json)                                           | 290+ adversarial payloads across attack categories       |
 | [`src/governed_financial_advisor/agents/evaluator/red_agent.py`](../../src/governed_financial_advisor/agents/evaluator/red_agent.py) | Adversarial harness running the full governance pipeline |
-| [`tests/red_teaming/test_adversarial.py`](../../tests/red_teaming/test_adversarial.py)                                               | Automated adversarial test suite (CI-integrated)         |
+| [`tests/red_teaming/test_adversarial.py`](../../tests/red_team/test_adversarial.py)                                               | Automated adversarial test suite (CI-integrated)         |
 | [`tests/red_team/run_red_team.py`](../../tests/red_team/run_red_team.py)                                                             | Full red team execution script                           |
 
 ### Attack Categories Covered

@@ -55,7 +55,7 @@ The gateway implements a **multi-tier, neuro-symbolic governance pipeline** that
 
 **HITL TOCTOU remediation**: v0.1.0 adds `post_hitl_rehydrate` and `post_hitl_revalidate` LangGraph nodes to prevent time-of-check/time-of-use race conditions in human-in-the-loop approval flows.
 
-**External Normative Provider** (`normative_provider.py`): Adaptive FRIA (Fundamental Rights Impact Assessment) gating for EU AI Act compliance. Tri-state enforcement: Score ≥ 0.95 → async attestation; [0.70, 0.95) → synchronous blocking via DEFER queue; < 0.70 → local hard deny.
+**External Normative Provider** (`normative_provider.py`): Adaptive FRIA (Fundamental Rights Impact Assessment) gating for EU AI Act compliance. Tri-state enforcement: Score ≥ 0.95 → async attestation; 0.70, 0.95) → synchronous blocking via DEFER queue; < 0.70 → local hard deny.
 
 **SHA-256 hash-chained context accumulator** (`context_accumulator.py`): AARM-V1 implementation. Maintains a tamper-evident chain of governance context across the LangGraph execution, providing cryptographic evidence of decision lineage.
 
@@ -65,26 +65,26 @@ The gateway implements a **multi-tier, neuro-symbolic governance pipeline** that
 
 | Artifact                            | Location                                                                                         | Role                                                                  |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| `ControlBarrierFunction`            | [`src/gateway/governance/safety.py`](src/gateway/governance/safety.py:115)                       | Redis-backed CBF with WATCH/MULTI/EXEC                                |
-| `ac_keyword_scan`                   | [`src/gateway/governance/safety.py`](src/gateway/governance/safety.py:83)                        | Aho-Corasick Tier-1 prompt-injection scan                             |
-| `SymbolicGovernor`                  | [`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py:85)  | Orchestrates all 5 governance tiers                                   |
-| `STPAValidator`                     | [`src/gateway/governance/stpa_validator.py`](src/gateway/governance/stpa_validator.py:36)        | Deterministic STPA UCA constraint checks                              |
-| `TradingKnowledgeGraph`             | [`src/gateway/governance/ontology.py`](src/gateway/governance/ontology.py:44)                    | UCA/constraint ontology (6 UCAs, 3 constraints)                       |
-| `stamp_iso_control`                 | [`src/gateway/governance/iso_control.py`](src/gateway/governance/iso_control.py:64)              | ISO 42001 OTel evidence stamping                                      |
-| `ConsensusEngine`                   | [`src/gateway/governance/consensus.py`](src/gateway/governance/consensus.py:71)                  | Multi-agent LLM critic consensus                                      |
-| `SafetyFilter`, `ConsensusProvider` | [`src/gateway/governance/contracts.py`](src/gateway/governance/contracts.py:24)                  | Protocol interfaces                                                   |
-| NeMo actions                        | [`src/gateway/governance/nemo/actions.py`](src/gateway/governance/nemo/actions.py)               | 5 Colang-callable safety action functions                             |
-| `create_nemo_manager`               | [`src/gateway/governance/nemo/manager.py`](src/gateway/governance/nemo/manager.py:99)            | NeMo Guardrails factory with vLLM + Presidio                          |
-| `validate_with_nemo`                | [`src/gateway/governance/nemo/manager.py`](src/gateway/governance/nemo/manager.py:204)           | Structural rail intervention detection                                |
-| `NeMoService`                       | [`src/gateway/governance/nemo/server.py`](src/gateway/governance/nemo/server.py:43)              | gRPC server for NeMo sidecar                                          |
-| `enforce_governance`                | [`src/gateway/server/governance_middleware.py`](src/gateway/server/governance_middleware.py:119) | Full symbolic governor pipeline invocation                            |
-| `enforce_routing_seal`              | [`src/gateway/server/governance_middleware.py`](src/gateway/server/governance_middleware.py:84)  | HMAC seal enforcement                                                 |
-| `OPAClient`                         | [`src/gateway/core/policy.py`](src/gateway/core/policy.py:77)                                    | Async OPA client with circuit breaker                                 |
-| `CircuitBreaker`                    | [`src/gateway/core/policy.py`](src/gateway/core/policy.py:35)                                    | Fail-fast pattern with latency budget                                 |
-| Colang flows                        | [`config/rails/main_logic.co`](config/rails/main_logic.co)                                       | Authorization, latency, risk flows                                    |
-| PII detection config                | [`config/rails/config.yml`](config/rails/config.yml)                                             | 15 entity types on input and output                                   |
-| `THRESHOLDS` singleton              | [`src/gateway/governance/schemas/thresholds.py`](src/gateway/governance/schemas/thresholds.py)   | Single source of truth for all limits                                 |
-| Thresholds JSON                     | [`config/governance_thresholds.json`](config/governance_thresholds.json)                         | CBF params, drawdown limit, confidence, consensus threshold, keywords |
+| `ControlBarrierFunction`            | [`src/gateway/governance/safety.py`                       | Redis-backed CBF with WATCH/MULTI/EXEC                                |
+| `ac_keyword_scan`                   | `src/gateway/governance/safety.py`                        | Aho-Corasick Tier-1 prompt-injection scan                             |
+| `SymbolicGovernor`                  | `src/gateway/governance/symbolic_governor.py`  | Orchestrates all 5 governance tiers                                   |
+| `STPAValidator`                     | `src/gateway/governance/stpa_validator.py`        | Deterministic STPA UCA constraint checks                              |
+| `TradingKnowledgeGraph`             | `src/gateway/governance/ontology.py`                    | UCA/constraint ontology (6 UCAs, 3 constraints)                       |
+| `stamp_iso_control`                 | `src/gateway/governance/iso_control.py`              | ISO 42001 OTel evidence stamping                                      |
+| `ConsensusEngine`                   | `src/gateway/governance/consensus.py`                  | Multi-agent LLM critic consensus                                      |
+| `SafetyFilter`, `ConsensusProvider` | `src/gateway/governance/contracts.py`                  | Protocol interfaces                                                   |
+| NeMo actions                        | [`src/gateway/governance/nemo/actions.py`](../../../config/rails/actions.py)               | 5 Colang-callable safety action functions                             |
+| `create_nemo_manager`               | `src/gateway/governance/nemo/manager.py`            | NeMo Guardrails factory with vLLM + Presidio                          |
+| `validate_with_nemo`                | `src/gateway/governance/nemo/manager.py`           | Structural rail intervention detection                                |
+| `NeMoService`                       | `src/gateway/governance/nemo/server.py`              | gRPC server for NeMo sidecar                                          |
+| `enforce_governance`                | `src/gateway/server/governance_middleware.py` | Full symbolic governor pipeline invocation                            |
+| `enforce_routing_seal`              | `src/gateway/server/governance_middleware.py`  | HMAC seal enforcement                                                 |
+| `OPAClient`                         | `src/gateway/core/policy.py`                                    | Async OPA client with circuit breaker                                 |
+| `CircuitBreaker`                    | `src/gateway/core/policy.py`                                    | Fail-fast pattern with latency budget                                 |
+| Colang flows                        | [`config/rails/main_logic.co`](../../../config/rails/main_logic.co)                                       | Authorization, latency, risk flows                                    |
+| PII detection config                | [`config/rails/config.yml`](../../../config/rails/config.yml)                                             | 15 entity types on input and output                                   |
+| `THRESHOLDS` singleton              | [`src/gateway/governance/schemas/thresholds.py`](../../../src/gateway/governance/schemas/thresholds.py)   | Single source of truth for all limits                                 |
+| Thresholds JSON                     | [`config/governance_thresholds.json`](../../../config/governance_thresholds.json)                         | CBF params, drawdown limit, confidence, consensus threshold, keywords |
 
 ### 1.3 Coverage Assessment: **Strong**
 
@@ -142,20 +142,20 @@ All Lula manifests include a cold-start grace period rule (< 6 hours post-deploy
 
 | Artifact                       | Location                                                                                   | Role                                   |
 | ------------------------------ | ------------------------------------------------------------------------------------------ | -------------------------------------- |
-| `run_audit_workflow`           | [`src/compliance_bridge/audit_workflow.py`](src/compliance_bridge/audit_workflow.py:500)   | 5-step compliance audit pipeline       |
-| `parse_oscal_yaml`             | [`src/compliance_bridge/oscal_parser.py`](src/compliance_bridge/oscal_parser.py:169)       | Deterministic OSCAL YAML parser        |
-| `get_compliance_metrics`       | [`src/compliance_bridge/metrics.py`](src/compliance_bridge/metrics.py:197)                 | TTL-cached Langfuse metrics aggregator |
-| `ComplianceMetrics`            | [`src/compliance_bridge/metrics.py`](src/compliance_bridge/metrics.py:63)                  | Pydantic model consumed by Lula Rego   |
-| `OscalFinding`                 | [`src/compliance_bridge/audit_workflow.py`](src/compliance_bridge/audit_workflow.py)       | Validated OSCAL finding model          |
-| FastAPI app                    | [`src/compliance_bridge/main.py`](src/compliance_bridge/main.py:139)                       | Compliance bridge service (port 3001)  |
-| OSCAL component definition     | [`compliance/oscal/component-definition.yaml`](compliance/oscal/component-definition.yaml) | OSCAL v1.0.4, 3 components, 4 controls |
-| Lula A.5.2                     | [`compliance/lula/lula-validation-a52.yaml`](compliance/lula/lula-validation-a52.yaml)     | API-domain Rego validation             |
-| Lula A.5.3                     | [`compliance/lula/lula-validation-a53.yaml`](compliance/lula/lula-validation-a53.yaml)     | API-domain Rego validation             |
-| Lula A.9.2                     | [`compliance/lula/lula-validation-a92.yaml`](compliance/lula/lula-validation-a92.yaml)     | Zero-tolerance PII control             |
-| Lula SC-4                      | [`compliance/lula/lula-validation-sc4.yaml`](compliance/lula/lula-validation-sc4.yaml)     | Kubernetes ConfigMap label assertion   |
-| OSCAL audit ingestion endpoint | [`src/compliance_bridge/main.py`](src/compliance_bridge/main.py:287)                       | `POST /v1/audit/ingest`                |
-| Compliance metrics endpoint    | [`src/compliance_bridge/main.py`](src/compliance_bridge/main.py:240)                       | `GET /v1/metrics/{control_id}`         |
-| SSE event stream               | [`src/compliance_bridge/main.py`](src/compliance_bridge/main.py:184)                       | Real-time governance event feed        |
+| `run_audit_workflow`           | `src/compliance_bridge/audit_workflow.py`   | 5-step compliance audit pipeline       |
+| `parse_oscal_yaml`             | `src/compliance_bridge/oscal_parser.py`       | Deterministic OSCAL YAML parser        |
+| `get_compliance_metrics`       | `src/compliance_bridge/metrics.py`                 | TTL-cached Langfuse metrics aggregator |
+| `ComplianceMetrics`            | `src/compliance_bridge/metrics.py`                  | Pydantic model consumed by Lula Rego   |
+| `OscalFinding`                 | [`src/compliance_bridge/audit_workflow.py`](../../../src/compliance_bridge/audit_workflow.py)       | Validated OSCAL finding model          |
+| FastAPI app                    | `src/compliance_bridge/main.py`                       | Compliance bridge service (port 3001)  |
+| OSCAL component definition     | [`compliance/oscal/component-definition.yaml`](../../../compliance/oscal/component-definition.yaml) | OSCAL v1.0.4, 3 components, 4 controls |
+| Lula A.5.2                     | [`compliance/lula/lula-validation-a52.yaml`](../../../compliance/lula/lula-validation-a52.yaml)     | API-domain Rego validation             |
+| Lula A.5.3                     | [`compliance/lula/lula-validation-a53.yaml`](../../../compliance/lula/lula-validation-a53.yaml)     | API-domain Rego validation             |
+| Lula A.9.2                     | [`compliance/lula/lula-validation-a92.yaml`](../../../compliance/lula/lula-validation-a92.yaml)     | Zero-tolerance PII control             |
+| Lula SC-4                      | [`compliance/lula/lula-validation-sc4.yaml`](../../../compliance/lula/lula-validation-sc4.yaml)     | Kubernetes ConfigMap label assertion   |
+| OSCAL audit ingestion endpoint | `src/compliance_bridge/main.py`                       | `POST /v1/audit/ingest`                |
+| Compliance metrics endpoint    | `src/compliance_bridge/main.py`                       | `GET /v1/metrics/{control_id}`         |
+| SSE event stream               | `src/compliance_bridge/main.py`                       | Real-time governance event feed        |
 
 ### 2.3 Coverage Assessment: **Strong**
 
@@ -213,15 +213,15 @@ Two deprecated stub packages exist for historical tracking: `finance` and `finan
 
 | Artifact                  | Location                                                                                                                                           | Role                                         |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| NetworkPolicy (9 objects) | [`deployment/k8s/network-policy.yaml`](deployment/k8s/network-policy.yaml)                                                                         | Default-deny namespace isolation             |
-| GCP Service Accounts      | [`deployment/terraform/iam.tf`](deployment/terraform/iam.tf)                                                                                       | Workload Identity for 2 SAs                  |
-| Cloud NAT                 | [`deployment/terraform/networking.tf`](deployment/terraform/networking.tf)                                                                         | Private egress for GKE nodes                 |
-| OPA config                | [`deployment/opa_config.yaml`](deployment/opa_config.yaml)                                                                                         | Decision logs, cache, ISO labels             |
-| `system.authz`            | [`deployment/system_authz.rego`](deployment/system_authz.rego)                                                                                     | Identity + confidence enforcement            |
-| `trade.governance`        | [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](src/governed_financial_advisor/governance/policy/trade_governance.rego) | RBAC, fiscal limits, risk profiles (canonical policy) |
+| NetworkPolicy (9 objects) | [`deployment/k8s/network-policy.yaml`](../../../deployment/k8s/network-policy.yaml)                                                                         | Default-deny namespace isolation             |
+| GCP Service Accounts      | [`deployment/terraform/iam.tf`](../../../infra/targets/gcp-gke/iam.tf)                                                                                       | Workload Identity for 2 SAs                  |
+| Cloud NAT                 | [`deployment/terraform/networking.tf`](../../../infra/modules/gcp_gke_cluster/networking.tf)                                                                         | Private egress for GKE nodes                 |
+| OPA config                | [`deployment/opa_config.yaml`](../../../deployment/opa_config.yaml)                                                                                         | Decision logs, cache, ISO labels             |
+| `system.authz`            | [`deployment/system_authz.rego`](../../../deployment/system_authz.rego)                                                                                     | Identity + confidence enforcement            |
+| `trade.governance`        | [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](../../../src/governed_financial_advisor/governance/policy/trade_governance.rego) | RBAC, fiscal limits, risk profiles (canonical policy) |
 | ~~`finance.generated`~~   | ~~`src/governed_financial_advisor/governance/policy/generated_rules.rego`~~ (purged)                                                               | Transpiler-generated rules — removed; consolidated into `trade_governance.rego` |
 | `THRESHOLDS` singleton    | `config/governance_thresholds.json` + `src/gateway/governance/schemas/thresholds.py`                                                               | Single source for all security thresholds    |
-| `CircuitBreaker`          | [`src/gateway/core/policy.py`](src/gateway/core/policy.py:35)                                                                                      | OPA fail-fast with 3000 ms hard limit        |
+| `CircuitBreaker`          | `src/gateway/core/policy.py`                                                                                      | OPA fail-fast with 3000 ms hard limit        |
 
 ### 3.3 Coverage Assessment: **Partial**
 
@@ -262,16 +262,16 @@ Two deprecated stub packages exist for historical tracking: `finance` and `finan
 
 | Artifact                                    | Location                                                                                                                                               | Role                                         |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
-| `get_tracer`                                | [`src/gateway/infrastructure/telemetry.py`](src/gateway/infrastructure/telemetry.py:31)                                                                | OTel tracer factory for gateway modules      |
-| `patch_mcp_tools`                           | [`src/gateway/observability/mcp_tracing.py`](src/gateway/observability/mcp_tracing.py:46)                                                              | W3C trace context propagation across MCP SSE |
-| `stamp_iso_control`                         | [`src/gateway/governance/iso_control.py`](src/gateway/governance/iso_control.py:64)                                                                    | 6-attribute ISO 42001 span stamping          |
-| `run_audit_workflow`                        | [`src/compliance_bridge/audit_workflow.py`](src/compliance_bridge/audit_workflow.py:500)                                                               | 5-step audit pipeline with SSE events        |
-| `get_compliance_metrics`                    | [`src/compliance_bridge/metrics.py`](src/compliance_bridge/metrics.py:197)                                                                             | TTL-cached Langfuse safety_rate aggregation  |
-| `EvaluatorAuditor`                          | [`src/governed_financial_advisor/agents/evaluator/auditor.py`](src/governed_financial_advisor/agents/evaluator/auditor.py)                              | Agent trace auditor (SC-1, quality scoring)  |
-| `TraceAuditor`                              | [`scripts/automated_auditor.py`](scripts/automated_auditor.py:22)                                                                                      | Invariant-based continuous span auditor      |
-| `_AUDIT_QUEUE` + `_background_audit_worker` | [`src/gateway/governance/consensus.py`](src/gateway/governance/consensus.py:43)                                                                        | Non-blocking consensus audit queue           |
-| `GovernanceEventBus`                        | [`src/compliance_bridge/sse_events.py`](src/compliance_bridge/sse_events.py)                                                                           | Real-time SSE event distribution             |
-| NeMoOTelCallback                            | [`src/governed_financial_advisor/infrastructure/telemetry/nemo_exporter.py`](src/governed_financial_advisor/infrastructure/telemetry/nemo_exporter.py) | NeMo-to-OTel span callback                   |
+| `get_tracer`                                | `src/gateway/infrastructure/telemetry.py`                                                                | OTel tracer factory for gateway modules      |
+| `patch_mcp_tools`                           | `src/gateway/observability/mcp_tracing.py`                                                              | W3C trace context propagation across MCP SSE |
+| `stamp_iso_control`                         | `src/gateway/governance/iso_control.py`                                                                    | 6-attribute ISO 42001 span stamping          |
+| `run_audit_workflow`                        | `src/compliance_bridge/audit_workflow.py`                                                               | 5-step audit pipeline with SSE events        |
+| `get_compliance_metrics`                    | `src/compliance_bridge/metrics.py`                                                                             | TTL-cached Langfuse safety_rate aggregation  |
+| `EvaluatorAuditor`                          | [`src/governed_financial_advisor/agents/evaluator/auditor.py`](../../../src/governed_financial_advisor/agents/evaluator/auditor.py)                              | Agent trace auditor (SC-1, quality scoring)  |
+| `TraceAuditor`                              | `scripts/automated_auditor.py`                                                                                      | Invariant-based continuous span auditor      |
+| `_AUDIT_QUEUE` + `_background_audit_worker` | `src/gateway/governance/consensus.py`                                                                        | Non-blocking consensus audit queue           |
+| `GovernanceEventBus`                        | [`src/compliance_bridge/sse_events.py`](../../../src/compliance_bridge/sse_events.py)                                                                           | Real-time SSE event distribution             |
+| NeMoOTelCallback                            | [`src/governed_financial_advisor/infrastructure/telemetry/nemo_exporter.py`](../../../src/governed_financial_advisor/infrastructure/telemetry/nemo_exporter.py) | NeMo-to-OTel span callback                   |
 
 ### 4.3 Coverage Assessment: **Strong**
 
@@ -324,16 +324,16 @@ The `tests/` directory contains **644 tests** across 28+ test files spanning uni
 
 | Artifact                        | Location                                                                             | Role                                  |
 | ------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------- |
-| `test_symbolic_governor.py`     | [`tests/test_symbolic_governor.py`](tests/test_symbolic_governor.py)                 | 5-tier governance pipeline unit tests |
-| `test_compliance_bridge.py`     | [`tests/test_compliance_bridge.py`](tests/test_compliance_bridge.py)                 | OSCAL parser + FastAPI endpoint tests |
-| `test_trade_governance_rego.py` | [`tests/test_trade_governance_rego.py`](tests/test_trade_governance_rego.py)         | Rego policy tests (live OPA + mocked) |
-| `test_nemo_actions.py`          | [`tests/test_nemo_actions.py`](tests/test_nemo_actions.py)                           | Colang action function tests          |
-| `test_red_teaming.py`           | [`tests/test_red_teaming.py`](tests/test_red_teaming.py)                             | CBF drawdown resilience tests         |
-| Adversarial dataset             | [`tests/red_team/adversarial_dataset.json`](tests/red_team/adversarial_dataset.json) | Structured adversarial test cases     |
-| OPA snapshots                   | [`tests/opa_snapshots/`](tests/opa_snapshots/)                                       | OPA decision regression fixtures      |
-| Load test                       | [`tests/load/locustfile.py`](tests/load/locustfile.py)                               | Locust performance test               |
-| vLLM benchmark                  | [`scripts/run_agent_benchmark.py`](scripts/run_agent_benchmark.py)                   | Latency/throughput/P95 measurement    |
-| Colang verifier                 | [`scripts/verify_colang_locally.py`](scripts/verify_colang_locally.py)               | Colang 2.x syntax validation          |
+| `test_symbolic_governor.py`     | [`tests/test_symbolic_governor.py`](../../../tests/test_symbolic_governor.py)                 | 5-tier governance pipeline unit tests |
+| `test_compliance_bridge.py`     | [`tests/test_compliance_bridge.py`](../../../tests/test_compliance_bridge.py)                 | OSCAL parser + FastAPI endpoint tests |
+| `test_trade_governance_rego.py` | [`tests/test_trade_governance_rego.py`](../../../tests/test_trade_governance_rego.py)         | Rego policy tests (live OPA + mocked) |
+| `test_nemo_actions.py`          | [`tests/test_nemo_actions.py`](../../../tests/test_nemo_actions.py)                           | Colang action function tests          |
+| `test_red_teaming.py`           | [`tests/test_red_teaming.py`](../../../tests/test_red_teaming.py)                             | CBF drawdown resilience tests         |
+| Adversarial dataset             | [`tests/red_team/adversarial_dataset.json`](../../../tests/red_team/adversarial_dataset.json) | Structured adversarial test cases     |
+| OPA snapshots                   | `tests/opa_snapshots/`                                       | OPA decision regression fixtures      |
+| Load test                       | [`tests/load/locustfile.py`](../../../tests/load/locustfile.py)                               | Locust performance test               |
+| vLLM benchmark                  | [`scripts/run_agent_benchmark.py`](../../../scripts/run_agent_benchmark.py)                   | Latency/throughput/P95 measurement    |
+| Colang verifier                 | [`scripts/verify_colang_locally.py`](../../../scripts/verify_colang_locally.py)               | Colang 2.x syntax validation          |
 
 ### 5.3 Coverage Assessment: **Strong**
 

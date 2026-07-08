@@ -139,4 +139,4 @@ git checkout <commit-hash> -- deployment/terraform/
 
 ## Questions?
 
-See the [Monorepo Executive Summary](../plans/monorepo-executive-summary.md) for the full rationale and benefits of this migration.
+See the Monorepo Executive Summary for the full rationale and benefits of this migration.

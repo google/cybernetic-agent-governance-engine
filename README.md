@@ -304,12 +304,12 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 | Domain                                       | Status                  | Detail                                                                                                                      |
 | -------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | **AI governance enforcement**                | ✅ Implemented & tested | NeMo rails, OPA circuit breaker, Cloud KMS HSM seal (production seal enforcement active — unsigned requests return 403), HITL, CBF (externally reconciled), heterogeneous consensus, PII, STPA — all fail-closed |
-| **Evidentiary independence (v2.0.0)**        | ✅ Implemented & tested | KMS asymmetric signing, human-gated refinement, multi-model consensus — recursive self-authentication eliminated. (Anchorage custody reconciliation via `AnchorageGrpcLedgerProvider` is FUTURE STATE — ISO-001 in [`docs/POAM_ISO42001.md`](docs/POAM_ISO42001.md), target 2026-09-08) |
+| **Evidentiary independence (v2.0.0)**        | ✅ Implemented & tested | KMS asymmetric signing, human-gated refinement, multi-model consensus — recursive self-authentication eliminated. (Anchorage custody reconciliation via `AnchorageGrpcLedgerProvider` is FUTURE STATE — ISO-001 in [`docs/POAM_ISO42001.md`](docs/compliance/universal/POAM_ISO42001.md), target 2026-09-08) |
 | **Multi-Framework automated compliance**     | 🟡 Partial              | 26 Lula validation manifests (4 Active, 22 Stub) across ISO 42001, NIST SP 800-53, NIST AI 600-1, EU AI Act/GDPR/DORA, MAS FEAT/Notice 655/TRM, and CSA AARM — see [`compliance/lula/README.md`](compliance/lula/README.md) |
 | **NIST RMF Steps 1–4 (Prepare → Implement)** | 🟡 Partial (US_FED only) | SC-8 elevated to implemented; SC-7 reinforced; FIPS 199 unsigned; ATO not yet issued                                       |
 | **NIST RMF Step 5 (Assess)**                 | ❌ Not started (US_FED only) | No Security Assessment Report; no independent assessor                                                                 |
 | **NIST RMF Step 6 (Authorize)**              | ❌ Not started (US_FED only) | No ATO letter issued                                                                                                    |
-| **Infrastructure security**                  | 🟡 Partial              | 12 of 23 SP 800-53 POA&M open (7 Closed: POAM-003 AU-12, POAM-007 IA-3, POAM-010 RA-5, POAM-012 SC-12, POAM-016 SI-2, POAM-020 CM-3, POAM-021 SI-4; POAM-023 SI-2 CVE-2025-13462 opened 2026-06-08) — see [`docs/SECURITY_STATUS.md`](docs/SECURITY_STATUS.md) |
+| **Infrastructure security**                  | 🟡 Partial              | 12 of 23 SP 800-53 POA&M open (7 Closed: POAM-003 AU-12, POAM-007 IA-3, POAM-010 RA-5, POAM-012 SC-12, POAM-016 SI-2, POAM-020 CM-3, POAM-021 SI-4; POAM-023 SI-2 CVE-2025-13462 opened 2026-06-08) — see [`docs/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md) |
 | **PodSecurity (restricted)**                 | ✅ Implemented          | `securityContext` (`runAsNonRoot`, `runAsUser: 65534`, `seccompProfile`, `allowPrivilegeEscalation: false`, `capabilities.drop: ALL`) applied to all 6 app deployment manifests (rc.3) |
 | **Intra-cluster mTLS**                       | ✅ Implemented          | Linkerd mTLS: SPIFFE/SVID identity for Gateway→OPA, Gateway→NeMo (POAM-007 closed)                                         |
 | **L7 egress boundary**                       | ✅ Implemented          | Cilium CiliumNetworkPolicy: FQDN allowlist for gateway, internal-only lockdown for agent pods                               |
@@ -482,7 +482,7 @@ cybernetic-governance-engine/
 | Document                                                                               | Description                                                        |
 | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | [`COMPLIANCE.md`](COMPLIANCE.md)                                                       | **Core Compliance Posture & Framework Mapping (SR 26-2, ISO 42001, DORA)** |
-| [`README_GOVERNANCE.md`](README_GOVERNANCE.md)                                         | **Detailed 7-Tier Symbolic Governor & Decoupled Architecture Spec** |
+| `README_GOVERNANCE.md`                                         | **Detailed 7-Tier Symbolic Governor & Decoupled Architecture Spec** |
 | [`docs/AUDIT_LOG_SCHEMA.md`](docs/architecture/AUDIT_LOG_SCHEMA.md)                                 | **`cage-intent/1.0` & `cage-view-access/1.0` schema reference** — hash-chain mechanics, all fields, regulatory mapping (MiFID II Art. 25 / GDPR Art. 30 / ISO 42001 A.8.4) |
 | [`docs/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md)                                   | Security posture, NIST RMF status, open POA&M items                |
 | [`docs/POAM_INDEX.md`](docs/compliance/cross-region/POAM_INDEX.md)                                             | POA&M Master Index — cross-region traceability matrix (38 items)   |
@@ -563,11 +563,11 @@ Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 | **Closed (SP 800-53)** | **7** | POAM-003 AU-12, POAM-007 IA-3, POAM-010 RA-5, POAM-012 SC-12, POAM-016 SI-2, POAM-020 CM-3, POAM-021 SI-4 |
 | Open (SP 800-53) | 12 | Includes POAM-023 SI-2 CVE-2025-13462 (opened 2026-06-08) |
 | In Progress (SP 800-53) | 4 | |
-| AI 600-1 Items | 7 | All Open — see [`docs/POAM_US_FED.md`](docs/POAM_US_FED.md) §NIST AI 600-1 |
-| ISO 42001 Universal | 8 | All Open — see [`docs/POAM_ISO42001.md`](docs/POAM_ISO42001.md) |
-| EU_ECB / APAC_MAS | 6 | All Open — see [`docs/POAM_EU_ECB.md`](docs/POAM_EU_ECB.md), [`docs/POAM_APAC_MAS.md`](docs/POAM_APAC_MAS.md) |
+| AI 600-1 Items | 7 | All Open — see [`docs/POAM_US_FED.md`](docs/compliance/us_fed/POAM_US_FED.md) §NIST AI 600-1 |
+| ISO 42001 Universal | 8 | All Open — see [`docs/POAM_ISO42001.md`](docs/compliance/universal/POAM_ISO42001.md) |
+| EU_ECB / APAC_MAS | 6 | All Open — see [`docs/POAM_EU_ECB.md`](docs/compliance/eu_ecb/POAM_EU_ECB.md), [`docs/POAM_APAC_MAS.md`](docs/compliance/apac_mas/POAM_APAC_MAS.md) |
 
-See [`docs/POAM_INDEX.md`](docs/POAM_INDEX.md) for the full cross-region traceability matrix.
+See [`docs/POAM_INDEX.md`](docs/compliance/cross-region/POAM_INDEX.md) for the full cross-region traceability matrix.
 
 ---
 

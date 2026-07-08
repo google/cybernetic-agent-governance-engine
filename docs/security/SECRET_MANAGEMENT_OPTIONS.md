@@ -275,12 +275,12 @@ controlled by the `STORAGE_BACKEND` environment variable:
 | `s3`                    | boto3, S3-compatible                                                         | AWS S3, GCS HMAC S3-compat API, or MinIO       |
 | `local`                 | Filesystem                                                                   | Local development and testing                  |
 
-**Source:** [`src/governed_financial_advisor/infrastructure/storage.py`](../src/governed_financial_advisor/infrastructure/storage.py)
+**Source:** [`src/governed_financial_advisor/infrastructure/storage.py`](../../src/governed_financial_advisor/infrastructure/storage.py)
 
 The `compliance-bridge` service uses a **separate** S3-compatible storage
 implementation:
 
-**Source:** [`src/compliance_bridge/storage.py`](../src/compliance_bridge/storage.py)
+**Source:** [`src/compliance_bridge/storage.py`](../../src/governed_financial_advisor/infrastructure/storage.py)
 
 This implementation uses boto3 with HMAC keys to archive OSCAL artifacts
 for ISO 42001 A.7.5 durable evidence retention. It is intentionally

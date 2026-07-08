@@ -388,6 +388,6 @@ Apache License 2.0 - See [LICENSE](../../LICENSE) file.
 
 ## Related Documentation
 
-- [MCP Integration Guide](../../docs/MCP_INTEGRATION_GUIDE.md) - How to share configs between your MCP environment and your AI assistant
+- MCP Integration Guide - How to share configs between your MCP environment and your AI assistant
 - [Infrastructure Deployment Guide](../../infra/DEPLOYMENT_GUIDE.md) - General deployment instructions
 - [Model Context Protocol](https://modelcontextprotocol.io/) - Official MCP specification

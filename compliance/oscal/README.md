@@ -153,7 +153,7 @@ The ISO 42001 definition (`component-definition.yaml`) has `props` linking to it
 | [`compliance/continuous-monitoring/ISCM_STRATEGY.md`](../continuous-monitoring/ISCM_STRATEGY.md)     | Information Security Continuous Monitoring (ISCM) strategy                   |
 | [`compliance/lula/`](../lula/)                                                                       | Lula validation manifests for automated control assertions                   |
 | [`docs/POAM.md`](../../docs/POAM.md)                                                                 | Plan of Action and Milestones — open findings and remediation timelines      |
-| [`docs/GOVERNANCE_CROSSWALK.md`](../../docs/GOVERNANCE_CROSSWALK.md)                                 | Cross-framework mapping: ISO 42001 ↔ NIST SP 800-53 ↔ NIST AI RMF            |
+| [`docs/GOVERNANCE_CROSSWALK.md`](../../docs/compliance/cross-region/GOVERNANCE_CROSSWALK.md)                                 | Cross-framework mapping: ISO 42001 ↔ NIST SP 800-53 ↔ NIST AI RMF            |
 
 ---
 

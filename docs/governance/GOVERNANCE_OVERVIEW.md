@@ -11,7 +11,7 @@
 
 > **v0.1.0 Release Note:** This document reflects the v0.1.0 stable release. Key changes since rc.3: Token Quota Proxy (`CTRL_TQP_007`) active; PII Sanitizer active; UCA Logger active; SLM sidecar permanently deprecated (`slm_available=false`); OPA confidence threshold 0.97 unconditional; vLLM reasoning model (`DeepSeek-R1-Distill-Llama-8B`) deployed; `outlines` library removed (CVE-2025-69872). See [`docs/V2_ROADMAP.md`](../project/V2_ROADMAP.md) for the full v0.1.0 delivery summary.
 
-This document describes the **Cybernetic Governance** framework that transforms the Financial Advisor agent from a probabilistic LLM application into a deterministic, engineering-controlled system. For the full architectural detail, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
+This document describes the **Cybernetic Governance** framework that transforms the Financial Advisor agent from a probabilistic LLM application into a deterministic, engineering-controlled system. For the full architectural detail, see [`ARCHITECTURE.md`](../architecture/ARCHITECTURE.md).
 
 ## 1. Theoretical Framework: Hybrid Reasoning Architecture & STPA
 
@@ -77,7 +77,7 @@ The following components are essential infrastructure but are **not** numbered g
 
 - **Canonical policy:** `src/governed_financial_advisor/governance/policy/trade_governance.rego` (package `trade.governance`).
 - **System authorization:** `deployment/system_authz.rego` — enforces SR 26-2 §IV.B `confidence_sufficient ≥ 0.95` for agentic trade execution (OPA is sole enforcer; Python check removed).
-- **Infrastructure:** OPA runs as a standalone service in the `default` namespace (see [`deployment/k8s/NAMESPACE-GUIDE.md`](deployment/k8s/NAMESPACE-GUIDE.md)); the gateway calls it via the `OPAClient` with a `CircuitBreaker` (5 failures → 30s open-circuit; DENY-on-open).
+- **Infrastructure:** OPA runs as a standalone service in the `default` namespace (see [`deployment/k8s/NAMESPACE-GUIDE.md`](../../deployment/k8s/NAMESPACE-GUIDE.md)); the gateway calls it via the `OPAClient` with a `CircuitBreaker` (5 failures → 30s open-circuit; DENY-on-open).
 
 ---
 
@@ -361,4 +361,4 @@ The architecture is designed for **Google Kubernetes Engine (GKE)** using the **
 - **Governance:** OPA in `default` namespace; NeMo Guardrails in `governance-stack` namespace; both accessed over intra-cluster DNS.
 - **Communication:** Intra-cluster HTTP/REST and gRPC.
 
-For detailed deployment instructions, see **[deployment/README.md](deployment/README.md)** and the [Technical Report — Deployment & Infrastructure](docs/technical-report/08-DEPLOYMENT-INFRASTRUCTURE.md).
+For detailed deployment instructions, see **[deployment/README.md](../../README.md)** and the [Technical Report — Deployment & Infrastructure](../technical-report/08-DEPLOYMENT-INFRASTRUCTURE.md).

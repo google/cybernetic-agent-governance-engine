@@ -714,7 +714,7 @@ STPA UCAs (Tier 0)
               → SEAL_ISSUED → EXECUTED
 ```
 
-All tiers are fail-closed. A violation at any tier raises `GovernanceError` and prevents execution. The routing seal (§16.4) is issued only after all tiers pass, satisfying the `NoDirectBind` formal invariant verified in [`proof/model.py`](../../proof/model.py).
+All tiers are fail-closed. A violation at any tier raises `GovernanceError` and prevents execution. The routing seal (§16.4) is issued only after all tiers pass, satisfying the `NoDirectBind` formal invariant verified in `proof/model.py`.
 
 ---
 

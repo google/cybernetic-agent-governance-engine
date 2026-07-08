@@ -195,8 +195,8 @@ This repo uses **two complementary build paths**. Understanding which to use pre
 
 | File | Service | GCP trigger |
 |---|---|---|
-| [`cloudbuild.compliance.yaml`](cloudbuild.compliance.yaml) | `compliance-bridge` | `compliance-bridge-main` — fires on every push to `main` |
-| [`cloudbuild.ui.yaml`](cloudbuild.ui.yaml) | `agentsight-ui` | Create a trigger pointing at this file if needed |
+| [`cloudbuild.compliance.yaml`](deployment/docker/cloudbuild.compliance.yaml) | `compliance-bridge` | `compliance-bridge-main` — fires on every push to `main` |
+| [`cloudbuild.ui.yaml`](deployment/docker/cloudbuild.ui.yaml) | `agentsight-ui` | Create a trigger pointing at this file if needed |
 
 These files are the **canonical build specification** for their service. They are designed to be attached to GCP Cloud Build triggers and run under a dedicated least-privilege service account (e.g. `compliance-bridge-sa@<project>.iam.gserviceaccount.com`).
 
@@ -249,7 +249,7 @@ They are **not in conflict** — they serve different scopes:
 
 1. Create `src/<service>/Dockerfile` with the repo root as build context.
 2. Add a `build_image "<service>" "src/<service>/Dockerfile" "."` call in [`scripts/build_images.sh`](scripts/build_images.sh).
-3. If the service needs an independent GCP Console trigger, create `cloudbuild.<service>.yaml` following the pattern in [`cloudbuild.compliance.yaml`](cloudbuild.compliance.yaml) and register the trigger in GCP Console.
+3. If the service needs an independent GCP Console trigger, create `cloudbuild.<service>.yaml` following the pattern in [`cloudbuild.compliance.yaml`](deployment/docker/cloudbuild.compliance.yaml) and register the trigger in GCP Console.
 
 ---
 

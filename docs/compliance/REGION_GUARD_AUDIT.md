@@ -106,7 +106,7 @@ These locations correctly read `CAGE_DEPLOYMENT_REGION` and route data to the ap
 
 ### GUARDED-01 — `uca_logger.py`: WORM Ledger Bucket Routing
 
-**File:** [`src/gateway/governance/uca_logger.py`](../../src/gateway/governance/uca_logger.py:385)
+**File:** `src/gateway/governance/uca_logger.py`
 **Lines:** 385–403 (`_get_worm_bucket()`), 256 (`_build_uca_record()`), 367 (`_write_to_worm()`)
 **Sink type:** GCS/S3 WORM bucket write
 **Verdict:** ✅ GUARDED
@@ -132,7 +132,7 @@ def _get_worm_bucket(self) -> str:
 
 ### GUARDED-02 — `pii_sanitizer.py`: PII Audit Log Retention Citation
 
-**File:** [`src/gateway/governance/pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py:291)
+**File:** `src/gateway/governance/pii_sanitizer.py`
 **Lines:** 291–294 (`pii_audit_log()`)
 **Sink type:** Structured log emission (retention authority citation)
 **Verdict:** ✅ GUARDED
@@ -150,7 +150,7 @@ citation = PII_RETENTION_AUTHORITY.get(region, PII_RETENTION_AUTHORITY["US_FED"]
 
 ### GUARDED-03 — `iso_control.py`: Jurisdictional Control Mapping
 
-**File:** [`src/gateway/governance/iso_control.py`](../../src/gateway/governance/iso_control.py:188)
+**File:** `src/gateway/governance/iso_control.py`
 **Lines:** 188, 202–217 (`stamp_iso_control()`)
 **Sink type:** Governance span attribute (OTel)
 **Verdict:** ✅ GUARDED (span attributes only; see GAP-02 for the Redis write in the same file)
@@ -169,7 +169,7 @@ The jurisdictional framework (NIST SP 800-53 / EU AI Act / MAS FEAT) is correctl
 
 ### GUARDED-04 — `normative_provider.py`: Regional Baseline Fetch
 
-**File:** [`src/gateway/governance/normative_provider.py`](../../src/gateway/governance/normative_provider.py:781)
+**File:** `src/gateway/governance/normative_provider.py`
 **Lines:** 781–797 (`NormativeProviderDaemon.from_env()`), 325–352 (`StubNormativeProvider.fetch_baseline()`)
 **Sink type:** External HTTP call to normative provider; local filesystem write
 **Verdict:** ✅ GUARDED
@@ -186,7 +186,7 @@ region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
 
 ### GUARDED-05 — `oscal_ssp_exporter.py`: Regional OSCAL Profile Selection
 
-**File:** [`src/gateway/governance/oscal_ssp_exporter.py`](../../src/gateway/governance/oscal_ssp_exporter.py:145)
+**File:** `src/gateway/governance/oscal_ssp_exporter.py`
 **Lines:** 145–180 (`get_regional_profile()`), 729 (`cmd_export()`)
 **Sink type:** Local filesystem write (OSCAL YAML)
 **Verdict:** ✅ GUARDED
@@ -205,7 +205,7 @@ def get_regional_profile(region: str | None = None) -> dict:
 
 ### GUARDED-06 — `hitl_escalator.py`: SLA Hours and Regulatory Citation
 
-**File:** [`src/gateway/governance/hitl_escalator.py`](../../src/gateway/governance/hitl_escalator.py:78)
+**File:** `src/gateway/governance/hitl_escalator.py`
 **Lines:** 78–93 (`get_hitl_sla_hours()`), 246–261 (`get_hitl_regulatory_citation()`)
 **Sink type:** Structured log / escalation record metadata
 **Verdict:** ✅ GUARDED
@@ -224,7 +224,7 @@ Both SLA hours and regulatory citation are region-dispatched. No direct storage 
 
 ### GUARDED-07 — `constants.py`: ControlRegistry Regional JSON Load
 
-**File:** [`src/gateway/governance/constants.py`](../../src/gateway/governance/constants.py:245)
+**File:** `src/gateway/governance/constants.py`
 **Lines:** 245–309 (`ControlRegistry._load_registry()`)
 **Sink type:** In-memory singleton (reads regional JSON from filesystem)
 **Verdict:** ✅ GUARDED
@@ -249,7 +249,7 @@ Findings are ordered by risk severity: **CRITICAL → HIGH → MEDIUM**.
 
 ### GAP-01 — `tracing_setup.py`: OTel/OTLP Exporter to Single Langfuse Endpoint ⚠️ CRITICAL
 
-**File:** [`src/gateway/tracing_setup.py`](../../src/gateway/tracing_setup.py:54)
+**File:** `src/gateway/tracing_setup.py`
 **Lines:** 54–98 (`_resolve_otlp_endpoint_and_headers()`), 258 (`Traceloop.init()`)
 **Sink type:** OTel OTLP trace export (all governance spans)
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)
@@ -267,7 +267,7 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
 
 **Impact:** Every governance span produced by the gateway — including `cage.stpa_check`, `cage.cbf_check`, `cage.opa_pre_check`, `cage.fiscal_limit_reserve`, `cage.consensus_gate`, `symbolic_governor.govern`, and `cage.validate_action` — is exported to a single `LANGFUSE_HOST` endpoint regardless of `CAGE_DEPLOYMENT_REGION`. These spans carry PII-adjacent metadata (agent IDs, tool names, parameter hashes, confidence scores, fiscal amounts). When deployed in EU_ECB or APAC_MAS, this constitutes an unrestricted cross-region data transfer in violation of GDPR Art. 44 and MAS TRM §4.2.
 
-The K8s manifest [`deployment/k8s/gateway.yaml.tpl`](../../deployment/k8s/gateway.yaml.tpl:48) hardcodes the OTLP endpoint to the cluster-local Langfuse instance (`langfuse-web.governance-stack.svc.cluster.local:3000`), which provides infrastructure-level isolation per cluster. However, `tracing_setup.py` overrides this with `LANGFUSE_HOST` from the environment without any region guard, meaning a misconfigured `LANGFUSE_HOST` pointing to a US endpoint would silently export EU/APAC spans cross-region.
+The K8s manifest `deployment/k8s/gateway.yaml.tpl` hardcodes the OTLP endpoint to the cluster-local Langfuse instance (`langfuse-web.governance-stack.svc.cluster.local:3000`), which provides infrastructure-level isolation per cluster. However, `tracing_setup.py` overrides this with `LANGFUSE_HOST` from the environment without any region guard, meaning a misconfigured `LANGFUSE_HOST` pointing to a US endpoint would silently export EU/APAC spans cross-region.
 
 **Required fix:** `_resolve_otlp_endpoint_and_headers()` must read `CAGE_DEPLOYMENT_REGION` and select from `LANGFUSE_HOST_US_FED`, `LANGFUSE_HOST_EU_ECB`, `LANGFUSE_HOST_APAC_MAS` env vars, or assert that `LANGFUSE_HOST` is consistent with the declared region.
 
@@ -275,7 +275,7 @@ The K8s manifest [`deployment/k8s/gateway.yaml.tpl`](../../deployment/k8s/gatewa
 
 ### GAP-02 — `iso_control.py`: Redis Stream Write Without Region Guard ⚠️ HIGH
 
-**File:** [`src/gateway/governance/iso_control.py`](../../src/gateway/governance/iso_control.py:125)
+**File:** `src/gateway/governance/iso_control.py`
 **Lines:** 125–144 (`_persist_evaluation()`)
 **Sink type:** Redis Stream write (`iso_control:audit_trail`)
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)
@@ -302,7 +302,7 @@ No `CAGE_DEPLOYMENT_REGION` check. The Redis stream key `iso_control:audit_trail
 
 ### GAP-03 — `redis_client.py` / `singletons.py`: Single Redis Instance for All Regions ⚠️ HIGH
 
-**Files:** [`src/gateway/infrastructure/redis_client.py`](../../src/gateway/infrastructure/redis_client.py:59), [`src/gateway/governance/singletons.py`](../../src/gateway/governance/singletons.py:38)
+**Files:** `src/gateway/infrastructure/redis_client.py`, `src/gateway/governance/singletons.py`
 **Lines:** `redis_client.py` 59–86; `singletons.py` 38–54
 **Sink type:** Redis connection (all Redis writes flow through this)
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)
@@ -333,7 +333,7 @@ Both `_AsyncRedisClient` and `_SyncRedisClient` connect to a single Redis endpoi
 
 ### GAP-04 — `token_quota_proxy.py`: Redis Quota Counters Without Region Guard ⚠️ HIGH
 
-**File:** [`src/gateway/governance/token_quota_proxy.py`](../../src/gateway/governance/token_quota_proxy.py:224)
+**File:** `src/gateway/governance/token_quota_proxy.py`
 **Lines:** 224–256 (`from_env()`), 296–390 (`check_and_increment()`), 392–431 (`reconcile_actual_tokens()`), 433–468 (`rollback_step()`)
 **Sink type:** Redis writes (Lua atomic counters)
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)
@@ -356,7 +356,7 @@ The baseline JSON files (`EU_ECB_BASELINE.json` line 104, `APAC_MAS_BASELINE.jso
 
 ### GAP-05 — `compliance_bridge/storage.py`: Single OSCAL Artifact Bucket ⚠️ HIGH
 
-**File:** [`src/compliance_bridge/storage.py`](../../src/compliance_bridge/storage.py:144)
+**File:** `src/compliance_bridge/storage.py`
 **Lines:** 144–148 (`_get_bucket()`)
 **Sink type:** GCS/S3 bucket write (OSCAL compliance artifacts)
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)
@@ -372,7 +372,7 @@ def _get_bucket() -> str:
 
 `upload_artifact()` and `put_oscal_artifact()` both call `_get_bucket()` which reads a single `OSCAL_S3_BUCKET` env var. This contrasts directly with `uca_logger.py`'s `_get_worm_bucket()` which correctly routes to `OSCAL_S3_BUCKET_US_FED`, `OSCAL_S3_BUCKET_EU_ECB`, or `OSCAL_S3_BUCKET_APAC_MAS`.
 
-The compliance-bridge K8s manifest ([`infra/modules/compliance_bridge/main.tf`](../../infra/modules/compliance_bridge/main.tf:149) line 149) injects `OSCAL_S3_BUCKET` from `var.oscal_s3_bucket` — a single value with no regional dispatch. OSCAL compliance artifacts (assessment results, SSP patches, AARM reports) written by the compliance-bridge are therefore not guaranteed to land in the correct regional bucket.
+The compliance-bridge K8s manifest (`infra/modules/compliance_bridge/main.tf` line 149) injects `OSCAL_S3_BUCKET` from `var.oscal_s3_bucket` — a single value with no regional dispatch. OSCAL compliance artifacts (assessment results, SSP patches, AARM reports) written by the compliance-bridge are therefore not guaranteed to land in the correct regional bucket.
 
 **Required fix:** Mirror `uca_logger.py`'s pattern — implement `_get_bucket()` to read `CAGE_DEPLOYMENT_REGION` and select from `OSCAL_S3_BUCKET_US_FED`, `OSCAL_S3_BUCKET_EU_ECB`, `OSCAL_S3_BUCKET_APAC_MAS`.
 
@@ -380,7 +380,7 @@ The compliance-bridge K8s manifest ([`infra/modules/compliance_bridge/main.tf`](
 
 ### GAP-06 — `compliance_bridge/audit_workflow.py`: Langfuse Compliance Writes Without Region Guard ⚠️ HIGH
 
-**File:** [`src/compliance_bridge/audit_workflow.py`](../../src/compliance_bridge/audit_workflow.py:165)
+**File:** `src/compliance_bridge/audit_workflow.py`
 **Lines:** 165–175 (`_make_compliance_langfuse()`), 205–212 (`_make_app_langfuse()`), 259–322 (`_ingest_sync()`), 752–765 (context chain GCS write), 892–898 (AARM report GCS write)
 **Sink type:** Langfuse compliance project writes; GCS artifact writes
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)
@@ -407,7 +407,7 @@ Additionally, `_ingest_sync()` at lines 259–322 writes compliance traces and s
 
 ### GAP-07 — `compliance_bridge/evidence_stream.py`: GCS Flush and Redis Stream Without Region Guard ⚠️ HIGH
 
-**File:** [`src/compliance_bridge/evidence_stream.py`](../../src/compliance_bridge/evidence_stream.py:118)
+**File:** `src/compliance_bridge/evidence_stream.py`
 **Lines:** 118 (`_GCS_BUCKET`), 110–113 (`_REDIS_URL`), 372–406 (`_upload_to_gcs()`)
 **Sink type:** GCS bucket write (evidence NDJSON); Redis Stream write
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)
@@ -459,7 +459,7 @@ These locations perform pure computation or local filesystem operations with no 
 
 ### 5.1 EU_ECB Baseline
 
-**File:** [`config/compliance/EU_ECB_BASELINE.json`](../../config/compliance/EU_ECB_BASELINE.json:6)
+**File:** `config/compliance/EU_ECB_BASELINE.json`
 
 **Sentinel locations found:**
 
@@ -475,7 +475,7 @@ The EU_ECB baseline correctly identifies SR 26-2 as having no legal force in EU 
 
 ### 5.2 APAC_MAS Baseline
 
-**File:** [`config/compliance/APAC_MAS_BASELINE.json`](../../config/compliance/APAC_MAS_BASELINE.json:6)
+**File:** `config/compliance/APAC_MAS_BASELINE.json`
 
 **Sentinel locations found:**
 
@@ -491,7 +491,7 @@ The APAC_MAS baseline correctly identifies SR 26-2 as having no legal force in S
 
 ### 5.3 US_FED Baseline
 
-**File:** [`config/compliance/US_FED_BASELINE.json`](../../config/compliance/US_FED_BASELINE.json:7)
+**File:** `config/compliance/US_FED_BASELINE.json`
 
 **SR 26-2 status:** SR 26-2 is the **active** primary framework for `CTRL_MRM_004` in US_FED (line 54: `"primary_framework": "SR 26-2 §IV — Model Risk Management"`). This is correct — SR 26-2 applies only to US_FED deployments.
 
@@ -673,7 +673,7 @@ This audit was conducted by static code analysis of the files listed in Section 
 
 ### GAP-08 — `compliance_bridge/reconciliation_worker.py`: Redis Balance Writes Without Region Guard ⚠️ MEDIUM
 
-**File:** [`src/compliance_bridge/reconciliation_worker.py`](../../src/compliance_bridge/reconciliation_worker.py:539)
+**File:** `src/compliance_bridge/reconciliation_worker.py`
 **Lines:** 539–561 (`reconcile()` Redis write), 607–650 (`from_env()`)
 **Sink type:** Redis writes (`reconciliation:verified_balance`)
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)
@@ -704,7 +704,7 @@ The `reconciliation:verified_balance` key stores the externally reconciled ledge
 
 ### GAP-09 — `compliance_bridge/metrics.py`: Langfuse API Reads Without Region Guard ⚠️ MEDIUM
 
-**File:** [`src/compliance_bridge/metrics.py`](../../src/compliance_bridge/metrics.py:100)
+**File:** `src/compliance_bridge/metrics.py`
 **Lines:** 100–108 (`_make_app_langfuse()`)
 **Sink type:** Langfuse API read (compliance metrics aggregation)
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)
@@ -726,7 +726,7 @@ def _make_app_langfuse():
 
 ### GAP-10 — `compliance_bridge/notifier.py`: External Alert Calls Without Region Guard ⚠️ MEDIUM
 
-**File:** [`src/compliance_bridge/notifier.py`](../../src/compliance_bridge/notifier.py:565)
+**File:** `src/compliance_bridge/notifier.py`
 **Lines:** 565–634 (`create_notifier()`), 230–283 (`SlackNotifier`), 301–401 (`PagerDutyNotifier`), 417–481 (`WebhookNotifier`)
 **Sink type:** External HTTP calls (Slack, PagerDuty, webhook)
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)
@@ -749,7 +749,7 @@ Critical compliance findings (OSCAL control failures) are sent to Slack/PagerDut
 
 ### GAP-11 — `telemetry_provider.py`: Langfuse Telemetry Reads Without Region Guard ⚠️ MEDIUM
 
-**File:** [`src/gateway/governance/telemetry_provider.py`](../../src/gateway/governance/telemetry_provider.py:163)
+**File:** `src/gateway/governance/telemetry_provider.py`
 **Lines:** 163–206 (`LangfuseTelemetryProvider.from_env()`)
 **Sink type:** Langfuse API read (causal gatekeeper telemetry)
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)
@@ -772,7 +772,7 @@ The causal gatekeeper reads live governance telemetry from Langfuse to perform D
 
 ### GAP-12 — `cbf.py`: Redis Cash-Balance State Without Region Guard ⚠️ MEDIUM
 
-**File:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py:72)
+**File:** `src/gateway/governance/cbf.py`
 **Lines:** 72 (`redis_key`), 75–81 (`setup()`), 201–240 (`update_state()`), 246–285 (`rollback_state()`)
 **Sink type:** Redis writes (`safety:current_cash`)
 **Regulatory exposure:** GDPR Art. 44 (EU_ECB), MAS TRM §4.2 (APAC_MAS)
@@ -793,7 +793,7 @@ The CBF cash balance key `safety:current_cash` is hardcoded and not region-names
 
 ### GAP-13 — `infra/modules/compliance_bridge/main.tf`: Single `OSCAL_S3_BUCKET` Injection ⚠️ MEDIUM
 
-**File:** [`infra/modules/compliance_bridge/main.tf`](../../infra/modules/compliance_bridge/main.tf:148)
+**File:** `infra/modules/compliance_bridge/main.tf`
 **Lines:** 148–156
 **Sink type:** Terraform env var injection (infrastructure gap)
 **Verdict:** ❌ GAP — MEDIUM
@@ -819,7 +819,7 @@ The Terraform module injects a single `OSCAL_S3_BUCKET` value. There is no injec
 
 ### GAP-14 — `infra/modules/gateway/main.tf`: `CAGE_DEPLOYMENT_REGION` Not Injected ⚠️ MEDIUM
 
-**File:** [`infra/modules/gateway/main.tf`](../../infra/modules/gateway/main.tf:24)
+**File:** `infra/modules/gateway/main.tf`
 **Lines:** 86–219 (full env block)
 **Sink type:** Terraform env var injection (infrastructure gap)
 **Verdict:** ❌ GAP — MEDIUM
@@ -838,7 +838,7 @@ The K8s template `gateway.yaml.tpl` also does not inject `CAGE_DEPLOYMENT_REGION
 
 ### GUARDED-08 — `cmek_guard.py`: Jurisdictional Encryption Citation
 
-**File:** [`src/compliance_bridge/cmek_guard.py`](../../src/compliance_bridge/cmek_guard.py:93)
+**File:** `src/compliance_bridge/cmek_guard.py`
 **Lines:** 93–94 (`_get_region()`), 133–134 (`validate_cmek_configuration()`)
 **Sink type:** Startup validation log
 **Verdict:** ✅ GUARDED
@@ -859,7 +859,7 @@ citation = _ENCRYPTION_CITATION.get(active_region, _ENCRYPTION_CITATION_DEFAULT)
 
 ### GUARDED-09 — `infra/targets/gcp-gke/*.tfvars`: Terraform Region Declarations
 
-**Files:** [`infra/targets/gcp-gke/prod.tfvars`](../../infra/targets/gcp-gke/prod.tfvars:45), [`infra/targets/gcp-gke/eu-prod.tfvars`](../../infra/targets/gcp-gke/eu-prod.tfvars:68), [`infra/targets/gcp-gke/apac-prod.tfvars`](../../infra/targets/gcp-gke/apac-prod.tfvars:67)
+**Files:** `infra/targets/gcp-gke/prod.tfvars`, `infra/targets/gcp-gke/eu-prod.tfvars`, `infra/targets/gcp-gke/apac-prod.tfvars`
 **Verdict:** ✅ GUARDED
 
 Each production tfvars file explicitly sets `cage_deployment_region` and `region` to the correct GCP region:
@@ -876,7 +876,7 @@ The Langfuse S3-compatible storage bucket is auto-generated in the declared GCP 
 
 ### GUARDED-10 — `deployment/k8s/gateway.yaml.tpl`: GOOGLE_CLOUD_LOCATION Substitution
 
-**File:** [`deployment/k8s/gateway.yaml.tpl`](../../deployment/k8s/gateway.yaml.tpl:43)
+**File:** `deployment/k8s/gateway.yaml.tpl`
 **Lines:** 39–43
 **Verdict:** ✅ GUARDED (infrastructure layer)
 

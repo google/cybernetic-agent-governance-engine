@@ -28,4 +28,4 @@ For the original NIST SP 800-53 / US_FED content (all 23 original entries), see 
 
 ---
 
-_Superseded by `docs/POAM_US_FED.md` v2.0 (2026-06-08). See [`plans/poam-framework-redesign.md`](../plans/poam-framework-redesign.md) for the redesign rationale._
+_Superseded by `docs/POAM_US_FED.md` v2.0 (2026-06-08). See `plans/poam-framework-redesign.md` for the redesign rationale._

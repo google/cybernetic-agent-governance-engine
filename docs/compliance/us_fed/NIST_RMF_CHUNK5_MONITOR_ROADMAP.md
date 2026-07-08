@@ -40,29 +40,29 @@
 The system implements a **two-tier monitoring approach** that partially addresses SP 800-137 ISCM requirements:
 
 **Tier 1 — Periodic Compliance Audit (6-hour cadence):**
-[`deployment/k8s/lula-cron.yaml`](deployment/k8s/lula-cron.yaml:153) deploys a `CronJob` on the schedule `"0 */6 * * *"` that runs `lula validate` against all four ISO 42001 controls (A.5.2, A.5.3, A.9.2, SC-4). On each run:
+`deployment/k8s/lula-cron.yaml` deploys a `CronJob` on the schedule `"0 */6 * * *"` that runs `lula validate` against all four ISO 42001 controls (A.5.2, A.5.3, A.9.2, SC-4). On each run:
 
 - OSCAL Assessment Result YAML is written to an ephemeral volume
-- Results are persisted to GCS via [`src/compliance_bridge/storage.py`](src/compliance_bridge/storage.py:215) (idempotent, SHA-256 keyed)
-- The CronJob POSTs to [`POST /v1/audit/ingest`](src/compliance_bridge/main.py:287) on the compliance bridge
+- Results are persisted to GCS via `src/compliance_bridge/storage.py` (idempotent, SHA-256 keyed)
+- The CronJob POSTs to `POST /v1/audit/ingest` on the compliance bridge
 
 **Tier 2 — Real-Time Kubernetes Watch (60-second cadence):**
-[`deployment/k8s/lula-cron.yaml`](deployment/k8s/lula-cron.yaml:263) also deploys `lula-sc4-watch`, a long-running `Deployment` that polls the SC-4 ConfigMap label (`opa-compliance-status`) every 60 seconds and immediately ingests any state change.
+`deployment/k8s/lula-cron.yaml` also deploys `lula-sc4-watch`, a long-running `Deployment` that polls the SC-4 ConfigMap label (`opa-compliance-status`) every 60 seconds and immediately ingests any state change.
 
 **Tier 3 — Application-Level OTel Tracing (continuous):**
-[`src/gateway/infrastructure/telemetry.py`](src/gateway/infrastructure/telemetry.py:31) provides an OTel tracer factory consumed by all gateway modules. [`src/gateway/observability/mcp_tracing.py`](src/gateway/observability/mcp_tracing.py:46) monkey-patches `ToolManager.call_tool` to inject W3C trace context into every MCP tool invocation, bridging SSE transport gaps and producing complete Langfuse waterfall traces.
+`src/gateway/infrastructure/telemetry.py` provides an OTel tracer factory consumed by all gateway modules. `src/gateway/observability/mcp_tracing.py` monkey-patches `ToolManager.call_tool` to inject W3C trace context into every MCP tool invocation, bridging SSE transport gaps and producing complete Langfuse waterfall traces.
 
 **OTel Export Pipeline (v0.1.0):**
 The standalone OTel Collector (`opentelemetry-collector-contrib`) has been **deprecated 2026-05-31**. Services now export OTLP traces directly to Langfuse's integrated OTLP ingestion endpoint at `http://langfuse-web:3000/api/public/otel/v1/traces`, eliminating the collector as an intermediary. W3C `traceparent` propagation is preserved end-to-end via `patch_mcp_tools()` in `src/gateway/observability/mcp_tracing.py`.
 
 **DEFER Queue Monitoring (v0.1.0 — AARM-V7):**
-[`src/gateway/governance/defer_queue.py`](src/gateway/governance/defer_queue.py) implements the DEFER state machine for confidence-starved contexts. Redis db=1 (noeviction policy) stores deferred governance decisions pending human review. The DEFER queue is monitored via SSE events (`DEFER_QUEUED`, `DEFER_RESOLVED`) published to the `GovernanceEventBus` and visible in the AgentSight KernelDashboard. Queue depth and resolution latency are tracked as OTel metrics.
+[`src/gateway/governance/defer_queue.py`](../../../src/gateway/governance/defer_queue.py) implements the DEFER state machine for confidence-starved contexts. Redis db=1 (noeviction policy) stores deferred governance decisions pending human review. The DEFER queue is monitored via SSE events (`DEFER_QUEUED`, `DEFER_RESOLVED`) published to the `GovernanceEventBus` and visible in the AgentSight KernelDashboard. Queue depth and resolution latency are tracked as OTel metrics.
 
 **AgentSight UI Phase 1 (v0.1.0):**
-[`src/agentsight-ui/`](src/agentsight-ui/) — React/Vite frontend with eBPF kernel observability. [`deployment/agentsight/agentsight-config.yaml`](deployment/agentsight/agentsight-config.yaml:19) deploys an eBPF daemon targeting `python3` processes, intercepting SSL/TLS via OpenSSL uprobes and monitoring syscalls (`execve`, `openat`, `connect`, `socket`, `bind`). **✅ POAM-021 RESOLVED:** Exporter is configured as `type: "remote"`, targeting `http://agentsight-dashboard:8080`. The prior gap (console mode) has been corrected. `KernelDashboard.tsx` displays real-time governance events, DEFER queue state, and eBPF syscall telemetry.
+`src/agentsight-ui/` — React/Vite frontend with eBPF kernel observability. `deployment/agentsight/agentsight-config.yaml` deploys an eBPF daemon targeting `python3` processes, intercepting SSL/TLS via OpenSSL uprobes and monitoring syscalls (`execve`, `openat`, `connect`, `socket`, `bind`). **✅ POAM-021 RESOLVED:** Exporter is configured as `type: "remote"`, targeting `http://agentsight-dashboard:8080`. The prior gap (console mode) has been corrected. `KernelDashboard.tsx` displays real-time governance events, DEFER queue state, and eBPF syscall telemetry.
 
 **SSE Real-Time Event Bus:**
-[`src/compliance_bridge/sse_events.py`](src/compliance_bridge/sse_events.py:81) implements a `GovernanceEventBus` that fans `AUDIT_FINDING` and `GOVERNANCE_VIOLATION` events to all connected SSE clients via [`GET /v1/events/stream`](src/compliance_bridge/main.py:184), consumed by `KernelDashboard.tsx`.
+`src/compliance_bridge/sse_events.py` implements a `GovernanceEventBus` that fans `AUDIT_FINDING` and `GOVERNANCE_VIOLATION` events to all connected SSE clients via `GET /v1/events/stream`, consumed by `KernelDashboard.tsx`.
 
 #### Gaps
 
@@ -90,16 +90,16 @@ The standalone OTel Collector (`opentelemetry-collector-contrib`) has been **dep
 #### Current State
 
 **Automated Assessment Pipeline:**
-The 5-step [`run_audit_workflow()`](src/compliance_bridge/audit_workflow.py:500) function executes fully automatically on each CronJob trigger:
+The 5-step `run_audit_workflow()` function executes fully automatically on each CronJob trigger:
 
 1. Persist OSCAL artifact to GCS (idempotent — SHA-256 keyed, HEAD-check before upload)
-2. Parse OSCAL YAML deterministically via [`parse_oscal_yaml()`](src/compliance_bridge/oscal_parser.py:169) — zero LLM involvement
+2. Parse OSCAL YAML deterministically via `parse_oscal_yaml()` — zero LLM involvement
 3. Ingest findings as Langfuse compliance scores with ISO 42001 metadata tags
 4. Filter FAIL findings for `CRITICAL_CONTROLS` → trigger `SlackNotifier` or `ConsoleNotifier`
 5. Conditional LLM remediation advisory (human review required per ISO 42001 A.7.2)
 
 **Control Coverage:**
-All 4 Lula validations ([`lula-validation-a52.yaml`](compliance/lula/lula-validation-a52.yaml), `a53.yaml`, `a92.yaml`, `sc4.yaml`) produce OSCAL Assessment Results on every run. The metrics endpoint [`GET /v1/metrics/{control_id}`](src/compliance_bridge/main.py:240) provides a 5-minute TTL cached compliance score per control, computed from Langfuse trace aggregation over a configurable `window_hours` (default 24h, max 720h).
+All 4 Lula validations ([`lula-validation-a52.yaml`](../../../compliance/lula/lula-validation-a52.yaml), `a53.yaml`, `a92.yaml`, `sc4.yaml`) produce OSCAL Assessment Results on every run. The metrics endpoint `GET /v1/metrics/{control_id}` provides a 5-minute TTL cached compliance score per control, computed from Langfuse trace aggregation over a configurable `window_hours` (default 24h, max 720h).
 
 **Drift Detection:**
 SC-4 (OPA ConfigMap label compliance) has continuous drift detection via the 60-second watch loop. API-domain controls (A.5.2, A.5.3, A.9.2) use the evidence staleness guard: `evidence_age_seconds < 172800` (48h) in the Rego rules.
@@ -133,23 +133,23 @@ SC-4 (OPA ConfigMap label compliance) has continuous drift detection via the 60-
 #### Current State
 
 **Automated Alert Pipeline:**
-[`src/compliance_bridge/notifier.py`](src/compliance_bridge/notifier.py:315) implements a factory (`create_notifier()`) selecting among `SlackNotifier`, `ConsoleNotifier`, or `MockNotifier` via `ALERT_CHANNEL` env var. `SlackNotifier` posts Block Kit payloads to `COMPLIANCE_ALERT_WEBHOOK_URL` on:
+`src/compliance_bridge/notifier.py` implements a factory (`create_notifier()`) selecting among `SlackNotifier`, `ConsoleNotifier`, or `MockNotifier` via `ALERT_CHANNEL` env var. `SlackNotifier` posts Block Kit payloads to `COMPLIANCE_ALERT_WEBHOOK_URL` on:
 
 - Critical control failures (`send_critical_alert()`)
 - LLM remediation advisories (`send_remediation_followup()`)
 
 **LLM-Assisted Remediation:**
-`_step5_remediation_advisor()` in [`audit_workflow.py`](src/compliance_bridge/audit_workflow.py:327) fetches the 10 most recent failing Langfuse traces for the failing control, constructs a structured remediation prompt referencing specific codebase paths, and calls vLLM via the OpenAI SDK. All output is:
+`_step5_remediation_advisor()` in `audit_workflow.py` fetches the 10 most recent failing Langfuse traces for the failing control, constructs a structured remediation prompt referencing specific codebase paths, and calls vLLM via the OpenAI SDK. All output is:
 
 - Logged to the Langfuse compliance project with `human_review_required: true` metadata
 - Sent to Slack with an explicit `⚠️ LLM-generated advisory — human verification required` disclaimer
 - Not applied automatically — requires human engineer action (ISO 42001 A.7.2)
 
 **Remediation Proposals:**
-[`docs/proposals/004_risk_remediation_plan.md`](docs/proposals/004_risk_remediation_plan.md) documents architectural proposals for dynamic policy injection (OPA bundle server), stateful risk memory (Redis), and GitOps policy workflow. These are proposals, not implemented.
+`docs/proposals/004_risk_remediation_plan.md` documents architectural proposals for dynamic policy injection (OPA bundle server), stateful risk memory (Redis), and GitOps policy workflow. These are proposals, not implemented.
 
 **Storage:**
-[`src/compliance_bridge/storage.py`](src/compliance_bridge/storage.py:215) provides idempotent OSCAL artifact persistence to GCS via S3-compatible API, with SHA-256 content fingerprinting and `x-standard: ISO/IEC 42001:2023` metadata.
+`src/compliance_bridge/storage.py` provides idempotent OSCAL artifact persistence to GCS via S3-compatible API, with SHA-256 content fingerprinting and `x-standard: ISO/IEC 42001:2023` metadata.
 
 #### Gaps
 
@@ -166,7 +166,7 @@ SC-4 (OPA ConfigMap label compliance) has continuous drift detection via the 60-
 
 1. **Create `docs/POAM.md`** (ISSO responsible): Structured POA&M with columns: `POA&M-ID`, `Control`, `Weakness`, `Responsible Party`, `Scheduled Completion`, `Milestone`, `Status`. Pre-populate with all gaps from Chunks 1–5.
 2. **Integrate Jira/GitHub Issues**: On `GOVERNANCE_VIOLATION` SSE event, auto-create a GitHub Issue via API with control ID, severity, and audit ID as labels. Set due-date based on severity (Critical: 15 days, High: 30 days, Medium: 90 days).
-3. **Implement tiered escalation**: Extend [`notifier.py`](src/compliance_bridge/notifier.py:315) with a `PagerDutyNotifier` class for `CRITICAL` severity, and add escalation logic: if Slack alert not acknowledged within 4h, page on-call via PagerDuty.
+3. **Implement tiered escalation**: Extend `notifier.py` with a `PagerDutyNotifier` class for `CRITICAL` severity, and add escalation logic: if Slack alert not acknowledged within 4h, page on-call via PagerDuty.
 4. **Implement OPA bundle server** as described in `004_risk_remediation_plan.md` to reduce policy update latency from minutes to seconds.
 
 ---
@@ -176,16 +176,16 @@ SC-4 (OPA ConfigMap label compliance) has continuous drift detection via the 60-
 #### Current State
 
 **Control-Level Metrics API:**
-[`src/compliance_bridge/metrics.py`](src/compliance_bridge/metrics.py:197) provides [`get_compliance_metrics()`](src/compliance_bridge/metrics.py:197) that queries Langfuse for traces tagged `control:<controlId>`, aggregates `iso_42001_outcome` metadata into a `ComplianceMetrics` struct (safety_rate, total_traces, blocked_traces, evidence_age_seconds, startup_grace_active). A 5-minute TTL `cachetools.TTLCache` prevents Langfuse hammering.
+`src/compliance_bridge/metrics.py` provides `get_compliance_metrics()` that queries Langfuse for traces tagged `control:<controlId>`, aggregates `iso_42001_outcome` metadata into a `ComplianceMetrics` struct (safety_rate, total_traces, blocked_traces, evidence_age_seconds, startup_grace_active). A 5-minute TTL `cachetools.TTLCache` prevents Langfuse hammering.
 
 **Real-Time SSE Dashboard:**
-[`src/compliance_bridge/sse_events.py`](src/compliance_bridge/sse_events.py:81) fans `AUDIT_FINDING` and `GOVERNANCE_VIOLATION` events to connected KernelDashboard clients. The [`GovernanceEventBus`](src/compliance_bridge/sse_events.py:81) uses non-blocking `asyncio.Queue.put_nowait()` with graceful drop on queue-full.
+`src/compliance_bridge/sse_events.py` fans `AUDIT_FINDING` and `GOVERNANCE_VIOLATION` events to connected KernelDashboard clients. The `GovernanceEventBus` uses non-blocking `asyncio.Queue.put_nowait()` with graceful drop on queue-full.
 
 **Langfuse Application Metrics:**
-[`fetch_langfuse_metrics.py`](fetch_langfuse_metrics.py:32) provides a CLI script querying Langfuse for GENERATION observations (TTFT metrics) and SPAN observations for governance overhead (`injection`, `identity-tag`, `financial-advisor-sa` spans). This is a developer tool, not a scheduled reporting mechanism.
+`fetch_langfuse_metrics.py` provides a CLI script querying Langfuse for GENERATION observations (TTFT metrics) and SPAN observations for governance overhead (`injection`, `identity-tag`, `financial-advisor-sa` spans). This is a developer tool, not a scheduled reporting mechanism.
 
 **Kubernetes Health Checks:**
-[`deployment/deploy_sw.py`](deployment/deploy_sw.py:1264) implements `verify_pod_health()` which checks for OOMKilled containers post-deployment. The compliance bridge [`GET /health`](src/compliance_bridge/main.py:227) returns `{"status": "ok", "version": "0.1.0"}`.
+`deployment/deploy_sw.py` implements `verify_pod_health()` which checks for OOMKilled containers post-deployment. The compliance bridge `GET /health` returns `{"status": "ok", "version": "0.1.0"}`.
 
 #### Gaps
 
@@ -202,8 +202,8 @@ SC-4 (OPA ConfigMap label compliance) has continuous drift detection via the 60-
 
 1. **Create a compliance status report template** (`docs/templates/COMPLIANCE_STATUS_REPORT.md`): Weekly auto-generated report combining: current Lula pass/fail per control, trend from prior week, open POA&M items, and next assessment scheduled date.
 2. **Schedule `fetch_langfuse_metrics.py`** as a Kubernetes CronJob (weekly) that writes output to GCS for retention (AU-6 evidence).
-3. **Build OSCAL Assessment Results index**: Extend [`storage.py`](src/compliance_bridge/storage.py) with a `list_artifacts()` function that writes an index JSON to GCS `oscal-artifacts/index.json` — enables AO to enumerate all assessment results without GCS console access.
-4. **Add compliance summary endpoint**: Create `GET /v1/compliance/summary` in [`main.py`](src/compliance_bridge/main.py) returning all control statuses, pass rates, and last-assessment timestamps in a single response.
+3. **Build OSCAL Assessment Results index**: Extend [`storage.py`](../../../src/governed_financial_advisor/infrastructure/storage.py) with a `list_artifacts()` function that writes an index JSON to GCS `oscal-artifacts/index.json` — enables AO to enumerate all assessment results without GCS console access.
+4. **Add compliance summary endpoint**: Create `GET /v1/compliance/summary` in [`main.py`](../../../src/compliance_bridge/main.py) returning all control statuses, pass rates, and last-assessment timestamps in a single response.
 
 ---
 
@@ -212,10 +212,10 @@ SC-4 (OPA ConfigMap label compliance) has continuous drift detection via the 60-
 #### Current State
 
 **Terraform-Driven Change Detection:**
-[`deployment/terraform/deploy.tf`](deployment/terraform/deploy.tf:15) implements a `null_resource.app_deployment` with content-hash triggers for: `deploy_sw.py`, `backend-deployment.yaml.tpl`, `compliance-bridge.yaml`, `lula-rbac.yaml`, `lula-cron.yaml`, `graph.py`, all vLLM manifests, and `google_container_cluster.primary.endpoint`. Any change to these files or the GKE cluster endpoint triggers `terraform apply` to re-deploy.
+`deployment/terraform/deploy.tf` implements a `null_resource.app_deployment` with content-hash triggers for: `deploy_sw.py`, `backend-deployment.yaml.tpl`, `compliance-bridge.yaml`, `lula-rbac.yaml`, `lula-cron.yaml`, `graph.py`, all vLLM manifests, and `google_container_cluster.primary.endpoint`. Any change to these files or the GKE cluster endpoint triggers `terraform apply` to re-deploy.
 
 **Deployment Orchestration:**
-[`deployment/deploy_sw.py`](deployment/deploy_sw.py:1040) is a 1500-line orchestrator that:
+`deployment/deploy_sw.py` is a 1500-line orchestrator that:
 
 - Checks sovereign license headers (Apache 2.0) as a deployment gate
 - Builds 5 container images in parallel (backend, vLLM streamer, gateway, UI, compliance bridge)
@@ -223,7 +223,7 @@ SC-4 (OPA ConfigMap label compliance) has continuous drift detection via the 60-
 - Deploys the ISO 42001 compliance stack as the final step
 
 **Change Log:**
-[`CHANGELOG.md`](CHANGELOG.md:1) documents infrastructure changes (GKE extensions removed, model streaming migrated from GCS Fuse to MinIO/tensorizer), bug fixes (`route_supervisor()`, `execution_analyst_node()`), and test results. Entries are date-tagged but not linked to formal change requests.
+`CHANGELOG.md` documents infrastructure changes (GKE extensions removed, model streaming migrated from GCS Fuse to MinIO/tensorizer), bug fixes (`route_supervisor()`, `execution_analyst_node()`), and test results. Entries are date-tagged but not linked to formal change requests.
 
 #### Gaps
 
@@ -251,7 +251,7 @@ SC-4 (OPA ConfigMap label compliance) has continuous drift detection via the 60-
 #### Current State
 
 **Teardown Script:**
-[`deployment/teardown.py`](deployment/teardown.py:31) provides a 109-line script that:
+`deployment/teardown.py` provides a 109-line script that:
 
 1. Deletes Cloud Run services (`financial-advisor-ui`, `governed-financial-advisor`)
 2. Deletes the GKE cluster (`governance-cluster`)
@@ -312,7 +312,7 @@ SC-4 (OPA ConfigMap label compliance) has continuous drift detection via the 60-
 | P1-2  | `docs/ISCM_STRATEGY.md`                        | Create SP 800-137 ISCM strategy document: monitoring scope, tools, frequencies table (real-time/6h/daily/weekly), roles                                                     | CA-7, SI-4        | 6h         |
 | P1-3  | `docs/DECOMMISSION_CHECKLIST.md`               | Create formal decommission checklist with sequential sign-off steps                                                                                                         | MP-6, IA-4, AC-2  | 3h         |
 | P1-4  | `deployment/teardown.py`                       | Add deletion of compliance secrets (`langfuse-compliance-secrets`, `oscal-artifact-secrets`, `compliance-alert-secrets`); add GCS archive export step; add `--confirm` flag | AC-2, IA-4, MP-6  | 4h         |
-| P1-5  | `scripts/automated_auditor.py`                 | Replace mock trace source with live Langfuse SDK call (`fetch_traces(tags=["control:<id>"])`) mirroring [`metrics.py`](src/compliance_bridge/metrics.py:134) pattern        | AU-12, SI-4       | 4h         |
+| P1-5  | `scripts/automated_auditor.py`                 | Replace mock trace source with live Langfuse SDK call (`fetch_traces(tags=["control:<id>"])`) mirroring `metrics.py` pattern        | AU-12, SI-4       | 4h         |
 | P1-6  | `deployment/agentsight/agentsight-config.yaml` | Change `exporter.type` from `"console"` to `"remote"`; confirm `endpoint` is reachable; add `health_check` probe                                                            | SI-4, AU-6        | 2h         |
 | ~~P1-7~~  | ~~OTel collector manifest (rendered via `deployment/k8s_rendered/`)~~       | ~~Set `replicas: 2`; add `podAntiAffinity` rule; increase batch `send_batch_size` to 2000~~ — **Closed** (standalone OTel Collector deprecated 2026-05-31; no collector manifest to tune) | AU-12, SI-4       | ~~2h~~         |
 | P1-8  | `src/compliance_bridge/main.py`                | Add `GET /v1/compliance/summary` endpoint returning all 4 control statuses, pass rates, last-assessment timestamps, and open alert count                                    | CA-7, PM-6        | 4h         |
@@ -361,8 +361,8 @@ SC-4 (OPA ConfigMap label compliance) has continuous drift detection via the 60-
 | P3-8  | **Incident Response Automation**                        | 1. Create `docs/IR_PLAN.md` (SP 800-61 Rev 2 format). 2. Implement automated containment: on GOVERNANCE_VIOLATION CRITICAL, suspend traffic to affected pod via NetworkPolicy patch. 3. Integrate with SIEM.                                                                              | IR-1, IR-4, IR-5, IR-6     | 5w                |
 | P3-9  | **Supply Chain Risk Management**                        | 1. Implement Sigstore/cosign container image signing in CI. 2. Add admission controller verifying image signatures. 3. Create approved software list. 4. Map to NIST SP 800-161r1.                                                                                                        | SA-12, SR-3, SR-4          | 4w                |
 | P3-10 | **ATO Package Submission**                              | 1. Compile all 21 ATO artifacts (use P0-3 index). 2. Schedule Security Assessment (SA) with independent assessor. 3. Submit to AO for Authorization Decision. 4. Establish ongoing authorization process for cATO.                                                                        | CA-6, CA-7, CA-2           | 4w                |
-| P3-11 | **Dual GCP Project Separation**                         | 1. Create `cage-compliance` GCP project with independent IAM policy. 2. Deploy compliance Langfuse instance in isolated project. 3. Establish VPC peering / Private Service Connect for compliance bridge → compliance Langfuse. 4. Remove Terraform fallback on `main.tf` L546-547 that silently collapses to app keys. 5. Update `prod.tfvars` with compliance project credentials. See [`DUAL_PROJECT_ARCHITECTURE.md` §6](../architecture/DUAL_PROJECT_ARCHITECTURE.md). | AU-9, AC-6, SC-7           | 3w                |
-| P3-12 | ~~**External Normative Provider Integration (TrustLayers)**~~ **✅ COMPLETED: Adaptive Gating Primitive** | ~~Async sidecar only.~~ **Superseded:** Implemented `normative_provider.py` with tri-state `enforce_fria_boundary()` adaptive gating primitive: Score ≥ 0.95 → async attestation; [0.70, 0.95) → synchronous blocking gate via DEFER queue + `DeferReason.EXTERNAL_VALIDATION`; < 0.70 → local hard deny. `StubNormativeProvider` (dev/CI) and `TrustLayersProvider` (production HTTP). `NormativeProviderDaemon` boot-time fetch + 6h background polling. Gateway lifespan integration in `hybrid_server.py`. 29 tests passing, 0 regressions. See [`normative_provider.py`](../src/gateway/governance/normative_provider.py) and [`EXTENSIBILITY_ARCHITECTURE.md` §2.5](../architecture/EXTENSIBILITY_ARCHITECTURE.md). Closed 2026-05-28. | CA-7, SA-9, SC-7           | ✅                |
+| P3-11 | **Dual GCP Project Separation**                         | 1. Create `cage-compliance` GCP project with independent IAM policy. 2. Deploy compliance Langfuse instance in isolated project. 3. Establish VPC peering / Private Service Connect for compliance bridge → compliance Langfuse. 4. Remove Terraform fallback on `main.tf` L546-547 that silently collapses to app keys. 5. Update `prod.tfvars` with compliance project credentials. See [`DUAL_PROJECT_ARCHITECTURE.md` §6](../../architecture/DUAL_PROJECT_ARCHITECTURE.md). | AU-9, AC-6, SC-7           | 3w                |
+| P3-12 | ~~**External Normative Provider Integration (TrustLayers)**~~ **✅ COMPLETED: Adaptive Gating Primitive** | ~~Async sidecar only.~~ **Superseded:** Implemented `normative_provider.py` with tri-state `enforce_fria_boundary()` adaptive gating primitive: Score ≥ 0.95 → async attestation; [0.70, 0.95) → synchronous blocking gate via DEFER queue + `DeferReason.EXTERNAL_VALIDATION`; < 0.70 → local hard deny. `StubNormativeProvider` (dev/CI) and `TrustLayersProvider` (production HTTP). `NormativeProviderDaemon` boot-time fetch + 6h background polling. Gateway lifespan integration in `hybrid_server.py`. 29 tests passing, 0 regressions. See [`normative_provider.py`](../../../src/gateway/governance/normative_provider.py) and [`EXTENSIBILITY_ARCHITECTURE.md` §2.5](../../architecture/EXTENSIBILITY_ARCHITECTURE.md). Closed 2026-05-28. | CA-7, SA-9, SC-7           | ✅                |
 
 ---
 
@@ -394,26 +394,26 @@ SC-4 (OPA ConfigMap label compliance) has continuous drift detection via the 60-
 
 | Control ID | Control Name                    | Implementation File(s)                                                                                                                                                                                         | Status  | Gap                                                                     |
 | ---------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ----------------------------------------------------------------------- |
-| AU-2       | Event Logging                   | [`src/gateway/infrastructure/telemetry.py`](src/gateway/infrastructure/telemetry.py:31), OTel collector (rendered via `deployment/k8s_rendered/`)                                                              | Partial | No formal auditable event list                                          |
-| AU-3       | Content of Audit Records        | [`src/gateway/governance/iso_control.py`](src/gateway/governance/iso_control.py), [`src/compliance_bridge/audit_workflow.py`](src/compliance_bridge/audit_workflow.py:162)                                     | Partial | Missing `user_id`, `session_id`, `outcome_reason` in some spans         |
-| AU-6       | Audit Record Review             | [`src/compliance_bridge/audit_workflow.py`](src/compliance_bridge/audit_workflow.py:215), [`src/compliance_bridge/notifier.py`](src/compliance_bridge/notifier.py:68)                                          | Partial | No scheduled review process; `fetch_langfuse_metrics.py` is manual only |
-| AU-9       | Protection of Audit Information | [`src/compliance_bridge/storage.py`](src/compliance_bridge/storage.py:127) SHA-256 integrity                                                                                                                   | Partial | GCS bucket IAM not audited; no immutability lock on OSCAL artifacts     |
-| AU-12      | Audit Record Generation         | [`src/gateway/observability/mcp_tracing.py`](src/gateway/observability/mcp_tracing.py:46), OTel collector (rendered via `deployment/k8s_rendered/`)                                                            | Partial | `automated_auditor.py` uses mock source; 1% sampling rate               |
-| AC-2       | Account Management              | [`deployment/terraform/iam.tf`](deployment/terraform/iam.tf)                                                                                                                                                   | Gap     | No IAM audit workflow; teardown leaves compliance SAs active            |
-| AC-3       | Access Enforcement              | [`deployment/system_authz.rego`](deployment/system_authz.rego), [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](src/governed_financial_advisor/governance/policy/trade_governance.rego) | Partial | `CAGE_ROUTING_SEAL_SECRET` bypass not hardened                          |
-| AC-6       | Least Privilege                 | [`deployment/terraform/iam.tf`](deployment/terraform/iam.tf)                                                                                                                                                   | Gap     | No least-privilege audit performed; IAM gap noted in Chunk 1            |
-| CA-2       | Control Assessments             | [`compliance/lula/`](compliance/lula/) (4 files), [`src/compliance_bridge/oscal_parser.py`](src/compliance_bridge/oscal_parser.py:169)                                                                         | Partial | Only ISO 42001 controls; no SP 800-53 assessment scope                  |
+| AU-2       | Event Logging                   | `src/gateway/infrastructure/telemetry.py`, OTel collector (rendered via `deployment/k8s_rendered/`)                                                              | Partial | No formal auditable event list                                          |
+| AU-3       | Content of Audit Records        | [`src/gateway/governance/iso_control.py`](../../../src/gateway/governance/iso_control.py), `src/compliance_bridge/audit_workflow.py`                                     | Partial | Missing `user_id`, `session_id`, `outcome_reason` in some spans         |
+| AU-6       | Audit Record Review             | `src/compliance_bridge/audit_workflow.py`, `src/compliance_bridge/notifier.py`                                          | Partial | No scheduled review process; `fetch_langfuse_metrics.py` is manual only |
+| AU-9       | Protection of Audit Information | `src/compliance_bridge/storage.py` SHA-256 integrity                                                                                                                   | Partial | GCS bucket IAM not audited; no immutability lock on OSCAL artifacts     |
+| AU-12      | Audit Record Generation         | `src/gateway/observability/mcp_tracing.py`, OTel collector (rendered via `deployment/k8s_rendered/`)                                                            | Partial | `automated_auditor.py` uses mock source; 1% sampling rate               |
+| AC-2       | Account Management              | [`deployment/terraform/iam.tf`](../../../infra/targets/gcp-gke/iam.tf)                                                                                                                                                   | Gap     | No IAM audit workflow; teardown leaves compliance SAs active            |
+| AC-3       | Access Enforcement              | [`deployment/system_authz.rego`](../../../deployment/system_authz.rego), [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](../../../src/governed_financial_advisor/governance/policy/trade_governance.rego) | Partial | `CAGE_ROUTING_SEAL_SECRET` bypass not hardened                          |
+| AC-6       | Least Privilege                 | [`deployment/terraform/iam.tf`](../../../infra/targets/gcp-gke/iam.tf)                                                                                                                                                   | Gap     | No least-privilege audit performed; IAM gap noted in Chunk 1            |
+| CA-2       | Control Assessments             | `compliance/lula/` (4 files), `src/compliance_bridge/oscal_parser.py`                                                                         | Partial | Only ISO 42001 controls; no SP 800-53 assessment scope                  |
 | CA-5       | Plan of Action and Milestones   | `docs/POAM.md`                                                                                                                                                                                                 | Gap     | File does not exist; no formal POA&M tracking                           |
 | CA-6       | Authorization                   | None                                                                                                                                                                                                           | Gap     | No SSP, no AO Authorization Decision document                           |
-| CA-7       | Continuous Monitoring           | [`deployment/k8s/lula-cron.yaml`](deployment/k8s/lula-cron.yaml:153), [`src/compliance_bridge/sse_events.py`](src/compliance_bridge/sse_events.py:81)                                                          | Partial | 4 controls only; no ISCM strategy document                              |
-| CM-3       | Configuration Change Control    | [`deployment/terraform/deploy.tf`](deployment/terraform/deploy.tf:15) SHA triggers                                                                                                                             | Partial | No formal CR process; no AO notification for significant changes        |
-| CM-8       | System Component Inventory      | [`deployment/deploy_sw.py`](deployment/deploy_sw.py:210) image builds                                                                                                                                          | Partial | `:latest` tags; no SBOM; no approved software list                      |
-| IA-3       | Device Identification and Auth  | [`deployment/k8s/linkerd-mtls-policy.yaml`](deployment/k8s/linkerd-mtls-policy.yaml), [`deployment/k8s/cilium-egress-lockdown.yaml`](deployment/k8s/cilium-egress-lockdown.yaml)                               | **✅ Implemented** | **POAM-007 RESOLVED 2026-05-17:** Linkerd mTLS + Cilium L7 enforce SPIFFE/SVID identity for intra-cluster service-to-service auth |
-| IA-5       | Authenticator Management        | [`deployment/terraform/secrets.tf`](deployment/terraform/secrets.tf)                                                                                                                                           | Partial | No rotation schedule; no expiry enforcement                             |
+| CA-7       | Continuous Monitoring           | `deployment/k8s/lula-cron.yaml`, `src/compliance_bridge/sse_events.py`                                                          | Partial | 4 controls only; no ISCM strategy document                              |
+| CM-3       | Configuration Change Control    | `deployment/terraform/deploy.tf` SHA triggers                                                                                                                             | Partial | No formal CR process; no AO notification for significant changes        |
+| CM-8       | System Component Inventory      | `deployment/deploy_sw.py` image builds                                                                                                                                          | Partial | `:latest` tags; no SBOM; no approved software list                      |
+| IA-3       | Device Identification and Auth  | [`deployment/k8s/linkerd-mtls-policy.yaml`](../../../deployment/k8s/linkerd-mtls-policy.yaml), [`deployment/k8s/cilium-egress-lockdown.yaml`](../../../deployment/k8s/cilium-egress-lockdown.yaml)                               | **✅ Implemented** | **POAM-007 RESOLVED 2026-05-17:** Linkerd mTLS + Cilium L7 enforce SPIFFE/SVID identity for intra-cluster service-to-service auth |
+| IA-5       | Authenticator Management        | `deployment/terraform/secrets.tf`                                                                                                                                           | Partial | No rotation schedule; no expiry enforcement                             |
 | RA-5       | Vulnerability Monitoring        | None                                                                                                                                                                                                           | Gap     | No container scanning; no dependency vulnerability scanning in CI       |
-| SC-8       | Transmission Confidentiality    | [`deployment/k8s/network-policy.yaml`](deployment/k8s/network-policy.yaml) (9 objects), [`deployment/k8s/linkerd-mtls-policy.yaml`](deployment/k8s/linkerd-mtls-policy.yaml)                                   | **✅ Implemented** | **POAM-007 RESOLVED 2026-05-17:** Intra-cluster traffic encrypted via Linkerd mTLS; Cilium L7 egress lockdown enforced |
+| SC-8       | Transmission Confidentiality    | [`deployment/k8s/network-policy.yaml`](../../../deployment/k8s/network-policy.yaml) (9 objects), [`deployment/k8s/linkerd-mtls-policy.yaml`](../../../deployment/k8s/linkerd-mtls-policy.yaml)                                   | **✅ Implemented** | **POAM-007 RESOLVED 2026-05-17:** Intra-cluster traffic encrypted via Linkerd mTLS; Cilium L7 egress lockdown enforced |
 | SI-2       | Flaw Remediation                | None                                                                                                                                                                                                           | Gap     | No vulnerability scanning pipeline; images pinned to `:latest`          |
-| SI-4       | System Monitoring               | [`deployment/agentsight/agentsight-config.yaml`](deployment/agentsight/agentsight-config.yaml:19), [`src/gateway/observability/mcp_tracing.py`](src/gateway/observability/mcp_tracing.py:46)                   | Partial | ~~AgentSight in console mode~~ **✅ RESOLVED (POAM-021):** remote mode active; mock auditor source remains open |
+| SI-4       | System Monitoring               | `deployment/agentsight/agentsight-config.yaml`, `src/gateway/observability/mcp_tracing.py`                   | Partial | ~~AgentSight in console mode~~ **✅ RESOLVED (POAM-021):** remote mode active; mock auditor source remains open |
 
 ---
 

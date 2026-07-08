@@ -187,7 +187,7 @@ For compliance audits, provide:
 
 ## See Also
 
-- [Security Postures Guide](../../../plans/monorepo-security-postures.md)
-- [NIST RMF Implementation](../../../docs/NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md) — US_FED only
+- Security Postures Guide
+- [NIST RMF Implementation](../../../docs/compliance/us_fed/NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md) — US_FED only
 - [GCP IAM Configuration](../../targets/gcp-gke/iam.tf) - Least privilege service accounts
-- [Jurisdictional Separation Analysis](../../../docs/JURISDICTIONAL_SEPARATION_ANALYSIS.md)
+- [Jurisdictional Separation Analysis](../../../docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md)

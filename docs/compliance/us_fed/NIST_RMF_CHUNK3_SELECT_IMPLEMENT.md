@@ -34,10 +34,10 @@
 
 **Current State:**
 
-- [`deployment/system_authz.rego`](../deployment/system_authz.rego:1) implements a token-based allow/deny with a single `data.auth_token` comparison. Deny-by-default posture is established (`default allow = false`). This is a flat shared-secret check with no role differentiation.
-- [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](../src/governed_financial_advisor/governance/policy/trade_governance.rego:1) implements RBAC at the trade action layer: `allowed_roles := {"junior", "senior"}` with fiscal thresholds ($5k/$10k for junior, $500k/$1M for senior). Fail-closed default (`default allow = "DENY"`). Prompt injection is blocked via `allow = "GOVERNANCE_VIOLATION"` on `prompt_injection_check`.
-- [`deployment/terraform/iam.tf`](../deployment/terraform/iam.tf:1) defines only two GCP service accounts (`financial-advisor-sa`, `agentsight-ui-sa`) bound with `roles/iam.workloadIdentityUser`. No additional IAM role bindings are provisioned; principle of least privilege is not demonstrably constrained in Terraform.
-- [`deployment/opa_config.yaml`](../deployment/opa_config.yaml:1) configures decision logs to stdout and sets a `default_decision` of `/finance/decision`. No remote bundle server or OPA management API token is configured.
+- `deployment/system_authz.rego` implements a token-based allow/deny with a single `data.auth_token` comparison. Deny-by-default posture is established (`default allow = false`). This is a flat shared-secret check with no role differentiation.
+- `src/governed_financial_advisor/governance/policy/trade_governance.rego` implements RBAC at the trade action layer: `allowed_roles := {"junior", "senior"}` with fiscal thresholds ($5k/$10k for junior, $500k/$1M for senior). Fail-closed default (`default allow = "DENY"`). Prompt injection is blocked via `allow = "GOVERNANCE_VIOLATION"` on `prompt_injection_check`.
+- `deployment/terraform/iam.tf` defines only two GCP service accounts (`financial-advisor-sa`, `agentsight-ui-sa`) bound with `roles/iam.workloadIdentityUser`. No additional IAM role bindings are provisioned; principle of least privilege is not demonstrably constrained in Terraform.
+- `deployment/opa_config.yaml` configures decision logs to stdout and sets a `default_decision` of `/finance/decision`. No remote bundle server or OPA management API token is configured.
 
 **Gaps:**
 
@@ -52,9 +52,9 @@
 **Implementation Recommendations:**
 
 1. **Add AC-2 account management policy:** Create `docs/AC2_Account_Management_Procedure.md` documenting authorized service identities, token rotation schedule (≤90 days), and revocation procedure. Map `GOVERNANCE_SALT` / `OPA_AUTH_TOKEN` rotation to this policy.
-2. **Implement AC-3 role-based enforcement at the API layer:** In [`src/gateway/server/governance_middleware.py`](../src/gateway/server/governance_middleware.py:119), add a `require_role(request, allowed_roles)` dependency that extracts a JWT claim or Kubernetes service account name and validates it against an allow-list before reaching `enforce_governance()`.
-3. **Implement AC-5 duty separation via OPA:** Add a Rego rule in [`deployment/system_authz.rego`](../deployment/system_authz.rego:1) that prevents the same principal that submits a trade from also approving it — require `input.submitter != input.approver` for `execute_trade` with `MANUAL_REVIEW` disposition.
-4. **Enforce AC-6 in Terraform:** In [`deployment/terraform/iam.tf`](../deployment/terraform/iam.tf:1), add scoped IAM bindings — e.g., `roles/storage.objectCreator` on the OSCAL bucket only, `roles/redis.viewer` for the financial-advisor SA — replacing implicit broad permissions.
+2. **Implement AC-3 role-based enforcement at the API layer:** In `src/gateway/server/governance_middleware.py`, add a `require_role(request, allowed_roles)` dependency that extracts a JWT claim or Kubernetes service account name and validates it against an allow-list before reaching `enforce_governance()`.
+3. **Implement AC-5 duty separation via OPA:** Add a Rego rule in `deployment/system_authz.rego` that prevents the same principal that submits a trade from also approving it — require `input.submitter != input.approver` for `execute_trade` with `MANUAL_REVIEW` disposition.
+4. **Enforce AC-6 in Terraform:** In `deployment/terraform/iam.tf`, add scoped IAM bindings — e.g., `roles/storage.objectCreator` on the OSCAL bucket only, `roles/redis.viewer` for the financial-advisor SA — replacing implicit broad permissions.
 5. **Add AC-7 brute-force protection:** In `system_authz.rego`, add a `failed_attempts` rule that tracks auth failures in OPA's external data store (or emit a metric to OTel) and feed a Redis counter that the middleware checks before forwarding to OPA.
 
 ---
@@ -65,16 +65,16 @@
 
 **Current State:**
 
-- [`src/gateway/infrastructure/telemetry.py`](../src/gateway/infrastructure/telemetry.py:1) provides an OTel tracer factory via `get_tracer()`. OpenTelemetry spans are emitted for all governance pipeline stages. Graceful fallback to `None` when OTel is not installed. **v0.1.0:** Standalone OTel Collector **deprecated 2026-05-31**; direct Langfuse OTLP ingestion at `http://langfuse-web:3000/api/public/otel/v1/traces`.
-- [`src/gateway/observability/mcp_tracing.py`](../src/gateway/observability/mcp_tracing.py:46) patches `ToolManager.call_tool` with W3C distributed trace context propagation. Every MCP tool invocation is wrapped in a child span with `mcp.tool.name`, input, and output attributes. Tool result is truncated to 4096 chars and recorded on the span.
-- [`src/compliance_bridge/audit_workflow.py`](../src/compliance_bridge/audit_workflow.py:500) implements a 5-step audit pipeline: (1) persist OSCAL to S3/GCS with **KMS batch signing** (`kms_batch_signer.py`), (2) parse OSCAL deterministically, (3) ingest findings to Langfuse compliance project via direct OTLP, (4) alert on critical failures via Slack/console, (5) generate LLM remediation advisory. Each step records model version and trace IDs. Human review is mandatory before applying LLM suggestions (ISO 42001 A.7.2 annotation).
-- [`src/compliance_bridge/metrics.py`](../src/compliance_bridge/metrics.py:197) provides TTL-cached compliance metric aggregation from Langfuse with 5-minute cache. Queries ISO 42001 control-tagged traces.
-- [`scripts/automated_auditor.py`](../scripts/automated_auditor.py:22) — `TraceAuditor.fetch_recent_traces()` uses **hardcoded mock traces** at line 32, not a live Cloud Trace / OTLP endpoint. The invariant checker logic is correct but exercises only synthetic data in production. (POAM-003 open)
+- `src/gateway/infrastructure/telemetry.py` provides an OTel tracer factory via `get_tracer()`. OpenTelemetry spans are emitted for all governance pipeline stages. Graceful fallback to `None` when OTel is not installed. **v0.1.0:** Standalone OTel Collector **deprecated 2026-05-31**; direct Langfuse OTLP ingestion at `http://langfuse-web:3000/api/public/otel/v1/traces`.
+- `src/gateway/observability/mcp_tracing.py` patches `ToolManager.call_tool` with W3C distributed trace context propagation. Every MCP tool invocation is wrapped in a child span with `mcp.tool.name`, input, and output attributes. Tool result is truncated to 4096 chars and recorded on the span.
+- `src/compliance_bridge/audit_workflow.py` implements a 5-step audit pipeline: (1) persist OSCAL to S3/GCS with **KMS batch signing** (`kms_batch_signer.py`), (2) parse OSCAL deterministically, (3) ingest findings to Langfuse compliance project via direct OTLP, (4) alert on critical failures via Slack/console, (5) generate LLM remediation advisory. Each step records model version and trace IDs. Human review is mandatory before applying LLM suggestions (ISO 42001 A.7.2 annotation).
+- `src/compliance_bridge/metrics.py` provides TTL-cached compliance metric aggregation from Langfuse with 5-minute cache. Queries ISO 42001 control-tagged traces.
+- `scripts/automated_auditor.py` — `TraceAuditor.fetch_recent_traces()` uses **hardcoded mock traces** at line 32, not a live Cloud Trace / OTLP endpoint. The invariant checker logic is correct but exercises only synthetic data in production. (POAM-003 open)
 
 **Gaps:**
 
 1. **AU-3 (Content of Audit Records):** OTel spans record `mcp.tool.name` and truncated I/O but do not systematically capture the **who** (authenticated principal identity) on every audit record. `input.identity` is present in OPA payloads but not propagated into OTel span attributes.
-2. **AU-4 (Audit Log Storage Capacity):** No audit log retention policy or capacity management documented. OSCAL artifacts are stored to S3/GCS but the bucket lifecycle policy (defined in [`deployment/terraform/variables.tf`](../deployment/terraform/variables.tf:94)) names `cage-oscal-artifacts` with 7-year intent but the actual S3 lifecycle rule is not in the Terraform files.
+2. **AU-4 (Audit Log Storage Capacity):** No audit log retention policy or capacity management documented. OSCAL artifacts are stored to S3/GCS but the bucket lifecycle policy (defined in `deployment/terraform/variables.tf`) names `cage-oscal-artifacts` with 7-year intent but the actual S3 lifecycle rule is not in the Terraform files.
 3. **AU-9 (Protection of Audit Information):** OTel spans to Langfuse are not tamper-protected at the transport layer (no client-cert mTLS to Langfuse endpoint verified in config). OSCAL artifacts are stored with SHA-256 content hash in object metadata (`storage.py:169`) — this provides integrity evidence but no access-control restriction on the S3 bucket policy is demonstrated.
 4. **AU-10 (Non-repudiation):** **v0.1.0 PARTIALLY ADDRESSED:** Cloud KMS HSM-backed asymmetric signing (`kms_signer.py`) is now the primary signing mechanism for governance verdicts, providing genuine non-repudiation. HMAC-SHA256 routing seal remains as dev/CI fallback only. KMS batch signing (`kms_batch_signer.py`) signs OSCAL artifacts before GCS persistence.
 5. **AU-11 (Audit Record Retention):** No explicit retention schedule enforced programmatically. `compliance/lula/lula-validation-a53.yaml` checks evidence freshness (≤48h) but does not enforce minimum retention.
@@ -82,8 +82,8 @@
 
 **Implementation Recommendations:**
 
-1. **Fix AU-12 live trace source:** Replace `fetch_recent_traces()` mock in [`scripts/automated_auditor.py`](../scripts/automated_auditor.py:32) with a real query to `google.cloud.trace_v1.TraceServiceClient` or OTLP-compatible Jaeger query API. Add environment variable `TRACE_SOURCE_URL` to `config/settings.py`.
-2. **Add AU-3 principal identity to spans:** In [`src/gateway/observability/mcp_tracing.py`](../src/gateway/observability/mcp_tracing.py:63), add `span.set_attribute("enduser.id", extracted_identity)` using the `X-CAGE-Routing-Seal` verified identity or a JWT sub claim.
+1. **Fix AU-12 live trace source:** Replace `fetch_recent_traces()` mock in `scripts/automated_auditor.py` with a real query to `google.cloud.trace_v1.TraceServiceClient` or OTLP-compatible Jaeger query API. Add environment variable `TRACE_SOURCE_URL` to `config/settings.py`.
+2. **Add AU-3 principal identity to spans:** In `src/gateway/observability/mcp_tracing.py`, add `span.set_attribute("enduser.id", extracted_identity)` using the `X-CAGE-Routing-Seal` verified identity or a JWT sub claim.
 3. **Implement AU-9 S3 bucket policy:** Add a Terraform resource `aws_s3_bucket_policy` (or GCS IAM condition) in a new `deployment/terraform/storage_policy.tf` file that restricts `cage-oscal-artifacts` to read-only for the compliance-bridge SA and denies `s3:DeleteObject` to all principals.
 4. **Add AU-11 lifecycle rule:** In `deployment/terraform/storage.tf`, add a GCS lifecycle rule (`age = 2555` days / 7 years) on the `cage-oscal-artifacts` bucket with `action = "Delete"` after 2555 days to comply with AU-11 minimum retention.
 5. **Implement AU-10 asymmetric signing:** Replace HMAC-SHA256 verdict sealing (`governance_middleware.py:75`) with ECDSA P-256 signature using a private key stored in GCP Secret Manager. The verifier uses only the public key, providing non-repudiation.
@@ -96,9 +96,9 @@
 
 **Current State:**
 
-- [`compliance/oscal/component-definition.yaml`](../compliance/oscal/component-definition.yaml:1) defines 3 software components (TypeScript Gateway, OPA, NeMo+Presidio) mapped to 4 ISO 42001 controls (A.5.2, A.5.3, SC-4, A.9.2). Uses OSCAL 1.0.4 schema. No SP 800-53 control source is referenced — all `source:` fields point to the ISO 42001 URL.
-- [`compliance/lula/`](../compliance/lula/) — **15 automated validation manifests** drive continuous compliance checks across ISO 42001, NIST SP 800-53, and CSA AARM controls. Cadence tiers enforced by `lula_scheduler.py`: Critical=6h, High=daily, Medium=weekly. CronJob defined in `deployment/k8s/lula-cron.yaml`.
-- [`src/compliance_bridge/oscal_parser.py`](../src/compliance_bridge/oscal_parser.py:169) provides deterministic OSCAL Assessment Result YAML parsing with strict Pydantic validation. Used by `audit_workflow.py` to ingest Lula output.
+- `compliance/oscal/component-definition.yaml` defines 3 software components (TypeScript Gateway, OPA, NeMo+Presidio) mapped to 4 ISO 42001 controls (A.5.2, A.5.3, SC-4, A.9.2). Uses OSCAL 1.0.4 schema. No SP 800-53 control source is referenced — all `source:` fields point to the ISO 42001 URL.
+- `compliance/lula/` — **15 automated validation manifests** drive continuous compliance checks across ISO 42001, NIST SP 800-53, and CSA AARM controls. Cadence tiers enforced by `lula_scheduler.py`: Critical=6h, High=daily, Medium=weekly. CronJob defined in `deployment/k8s/lula-cron.yaml`.
+- `src/compliance_bridge/oscal_parser.py` provides deterministic OSCAL Assessment Result YAML parsing with strict Pydantic validation. Used by `audit_workflow.py` to ingest Lula output.
 - The Langfuse compliance project (dual-project architecture) acts as a continuous evidence store, with 5-minute TTL caching in `metrics.py`.
 
 **Gaps:**
@@ -113,7 +113,7 @@
 **Implementation Recommendations:**
 
 1. **Create CA-5 POA&M:** Create `docs/POAM.md` with a table format: Weakness ID | Control | Description | Responsible Party | Scheduled Completion | Resources Required | Status. Populate with gaps from Chunks 2–3.
-2. **Add SP 800-53 Lula validations:** Create `compliance/lula/lula-validation-ac3.yaml` (kubernetes domain checking `system_authz.rego` is mounted), `lula-validation-au12.yaml` (api domain checking OTel collector is reachable), and `lula-validation-si2.yaml` (checking image scan results). Add these to [`compliance/oscal/component-definition.yaml`](../compliance/oscal/component-definition.yaml:43) with `source: "https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final"`.
+2. **Add SP 800-53 Lula validations:** Create `compliance/lula/lula-validation-ac3.yaml` (kubernetes domain checking `system_authz.rego` is mounted), `lula-validation-au12.yaml` (api domain checking OTel collector is reachable), and `lula-validation-si2.yaml` (checking image scan results). Add these to `compliance/oscal/component-definition.yaml` with `source: "https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final"`.
 3. **Create CA-7 Continuous Monitoring Plan:** Create `docs/Continuous_Monitoring_Plan.md` specifying Lula CronJob frequency (every 6h per `deployment/k8s/lula-cron.yaml`), alert thresholds, and escalation contacts.
 4. **Create CA-3 System Interconnection Register:** Create `docs/System_Interconnection_Agreements.md` listing all external system connections with data flow, protection measures, and authorization status.
 
@@ -125,10 +125,10 @@
 
 **Current State:**
 
-- [`config/governance_thresholds.json`](../config/governance_thresholds.json:1) is the single source of truth for all numeric governance thresholds (CBF, drawdown, STPA, confidence, consensus, Tier-1 keywords). `_schema_version: "1.0.0"` is declared. All modules must reference the loaded Pydantic singleton — no inline literals permitted by policy.
-- [`config/settings.py`](../config/settings.py:1) centralizes all environment variable resolution with `validate_required_settings()` called at startup that fails fast if required vars are absent. `REQUIRED_ENV_VARS` list is explicitly maintained.
-- [`config/rails/config.yml`](../config/rails/config.yml:1) configures NeMo Guardrails with 17 PII entity types in both input and output rails. Model name is overridden at runtime via `GUARDRAILS_MODEL_NAME` env var. Colang version is pinned to `"2.x"`.
-- [`deployment/terraform/variables.tf`](../deployment/terraform/variables.tf:1) provides variable definitions for 26 infrastructure parameters. Sensitive variables are marked `sensitive = true`. MinIO, PostgreSQL, GPU, OSCAL storage all parameterized.
+- `config/governance_thresholds.json` is the single source of truth for all numeric governance thresholds (CBF, drawdown, STPA, confidence, consensus, Tier-1 keywords). `_schema_version: "1.0.0"` is declared. All modules must reference the loaded Pydantic singleton — no inline literals permitted by policy.
+- `config/settings.py` centralizes all environment variable resolution with `validate_required_settings()` called at startup that fails fast if required vars are absent. `REQUIRED_ENV_VARS` list is explicitly maintained.
+- `config/rails/config.yml` configures NeMo Guardrails with 17 PII entity types in both input and output rails. Model name is overridden at runtime via `GUARDRAILS_MODEL_NAME` env var. Colang version is pinned to `"2.x"`.
+- `deployment/terraform/variables.tf` provides variable definitions for 26 infrastructure parameters. Sensitive variables are marked `sensitive = true`. MinIO, PostgreSQL, GPU, OSCAL storage all parameterized.
 
 **Gaps:**
 
@@ -146,7 +146,7 @@
 2. **Implement CM-3 change control:** Add a required PR review rule in `.github/` for changes to `config/governance_thresholds.json`, `deployment/system_authz.rego`, and `compliance/lula/` — require at least one Security Owner approval via `CODEOWNERS`.
 3. **Pin container images:** In `Dockerfile`, `Dockerfile.nemo`, `Dockerfile.vllm`, replace `FROM image:tag` with `FROM image:tag@sha256:<digest>` for all base images.
 4. **Create CM-2 baseline document:** Create `docs/Configuration_Baseline.md` listing Kubernetes version, Python version, key library versions (from `pyproject.toml`), and OPA version. Establish process to update on each deployment.
-5. **Add CM-7 port inventory:** Document all intra-cluster ports in `docs/Network_Architecture.md` derived from [`deployment/k8s/network-policy.yaml`](../deployment/k8s/network-policy.yaml:1) — ports 8080, 8181, 6379, 4317, 4318, 8000, 53.
+5. **Add CM-7 port inventory:** Document all intra-cluster ports in `docs/Network_Architecture.md` derived from `deployment/k8s/network-policy.yaml` — ports 8080, 8181, 6379, 4317, 4318, 8000, 53.
 
 ---
 
@@ -156,9 +156,9 @@
 
 **Current State:**
 
-- [`src/gateway/server/governance_middleware.py`](../src/gateway/server/governance_middleware.py:55) implements `_verify_routing_seal()` using `hmac.new(CAGE_ROUTING_SEAL_SECRET, body_bytes, sha256)`. This is a message authentication code on the request body — it authenticates the _message_ origin but not the _user or service identity_. It is a seal, not an identity assertion.
-- [`deployment/system_authz.rego`](../deployment/system_authz.rego:8) performs identity check via `input.identity == data.auth_token` — a single shared secret comparison. No MFA, no role encoding, no expiry.
-- [`deployment/terraform/iam.tf`](../deployment/terraform/iam.tf:20) — GKE Workload Identity is configured for both SAs (`roles/iam.workloadIdentityUser`). This provides pod-level identity to GCP services via the metadata server — a meaningful IA control for GCP service calls.
+- `src/gateway/server/governance_middleware.py` implements `_verify_routing_seal()` using `hmac.new(CAGE_ROUTING_SEAL_SECRET, body_bytes, sha256)`. This is a message authentication code on the request body — it authenticates the _message_ origin but not the _user or service identity_. It is a seal, not an identity assertion.
+- `deployment/system_authz.rego` performs identity check via `input.identity == data.auth_token` — a single shared secret comparison. No MFA, no role encoding, no expiry.
+- `deployment/terraform/iam.tf` — GKE Workload Identity is configured for both SAs (`roles/iam.workloadIdentityUser`). This provides pod-level identity to GCP services via the metadata server — a meaningful IA control for GCP service calls.
 - **v0.1.0:** Cloud KMS HSM-backed asymmetric signing (`kms_signer.py`) provides cryptographic service identity for governance verdict signing. Workload Identity used for GCS/KMS access. Linkerd mTLS (POAM-007 closed 2026-05-17) provides SPIFFE/SVID-based service identity for intra-cluster communication.
 - No JWT or OAuth 2.0 token validation is present at the API gateway layer.
 
@@ -187,10 +187,10 @@
 
 **Current State:**
 
-- [`src/compliance_bridge/notifier.py`](../src/compliance_bridge/notifier.py:183) implements `SlackNotifier`, `ConsoleNotifier`, and `MockNotifier` with Slack Block Kit payloads for critical compliance failures and LLM remediation advisories. Factory pattern with `ALERT_CHANNEL` env var. `MockNotifier` is gated behind `TESTING=1` check — production safety guard present.
-- [`src/compliance_bridge/sse_events.py`](../src/compliance_bridge/sse_events.py:81) implements `GovernanceEventBus` — an in-process pub/sub for real-time SSE streaming of `AUDIT_FINDING` and `GOVERNANCE_VIOLATION` events to the AgentSight UI dashboard (`KernelDashboard.tsx`).
-- [`src/compliance_bridge/audit_workflow.py`](../src/compliance_bridge/audit_workflow.py:215) step 4 calls `_step4_alert_on_critical_fail()` which filters for `CRITICAL_CONTROLS` and calls `notifier.send_critical_alert()`. Events are published to the SSE bus simultaneously.
-- [`src/compliance_bridge/storage.py`](../src/compliance_bridge/storage.py:215) provides idempotent OSCAL artifact persistence with SHA-256 content hashing — serves as the evidence preservation function for incident records.
+- `src/compliance_bridge/notifier.py` implements `SlackNotifier`, `ConsoleNotifier`, and `MockNotifier` with Slack Block Kit payloads for critical compliance failures and LLM remediation advisories. Factory pattern with `ALERT_CHANNEL` env var. `MockNotifier` is gated behind `TESTING=1` check — production safety guard present.
+- `src/compliance_bridge/sse_events.py` implements `GovernanceEventBus` — an in-process pub/sub for real-time SSE streaming of `AUDIT_FINDING` and `GOVERNANCE_VIOLATION` events to the AgentSight UI dashboard (`KernelDashboard.tsx`).
+- `src/compliance_bridge/audit_workflow.py` step 4 calls `_step4_alert_on_critical_fail()` which filters for `CRITICAL_CONTROLS` and calls `notifier.send_critical_alert()`. Events are published to the SSE bus simultaneously.
+- `src/compliance_bridge/storage.py` provides idempotent OSCAL artifact persistence with SHA-256 content hashing — serves as the evidence preservation function for incident records.
 
 **Gaps:**
 
@@ -205,7 +205,7 @@
 **Implementation Recommendations:**
 
 1. **Create IR-8 Incident Response Plan:** Create `docs/Incident_Response_Plan.md` with: incident classification (Critical/High/Medium/Low), escalation matrix (On-call → ISSO → AO), response timeframes (Critical: 1h), communication templates, and recovery procedures.
-2. **Add IR-4 alert retry with PagerDuty fallback:** In [`src/compliance_bridge/notifier.py`](../src/compliance_bridge/notifier.py:192), wrap the Slack `client.post()` in a retry loop (3 attempts, exponential backoff). Add a `PagerDutyNotifier` class as secondary fallback when `PAGERDUTY_ROUTING_KEY` env var is set.
+2. **Add IR-4 alert retry with PagerDuty fallback:** In `src/compliance_bridge/notifier.py`, wrap the Slack `client.post()` in a retry loop (3 attempts, exponential backoff). Add a `PagerDutyNotifier` class as secondary fallback when `PAGERDUTY_ROUTING_KEY` env var is set.
 3. **Add IR-5 persistent incident log:** In `audit_workflow.py`, after `_step4_alert_on_critical_fail()`, write incident records to a dedicated Postgres table (`incident_log`) with: `audit_id`, `control_id`, `severity`, `timestamp`, `resolution_status`. Add a migration in `deployment/terraform/`.
 4. **Add IR-3 automated drill:** Create `tests/governance/test_ir_drill.py` that injects a synthetic FAIL finding into `run_audit_workflow()` and asserts that `SlackNotifier.send_critical_alert()` was called within 30 seconds. Run in CI nightly.
 
@@ -217,9 +217,9 @@
 
 **Current State:**
 
-- [`docs/STPA_ANALYSIS.md`](../docs/STPA_ANALYSIS.md:1) documents the System-Theoretic Process Analysis for the Financial Advisor module: control structure (Controller: AI Agent, Actuators: Gateway Tools, Controlled Process: Markets), 5 Unsafe Control Actions (UCA-1 through UCA-5), and their code implementations.
-- [`src/gateway/governance/stpa_validator.py`](../src/gateway/governance/stpa_validator.py:35) implements deterministic UCA constraint checking for `execute_trade` actions: SC-1 (approval token), FIN-1 (max sell fraction), FIN-2 (latency), UCA-5 (drawdown), UCA-6 (slippage/sequence). All thresholds sourced from `config/governance_thresholds.json`.
-- [`src/gateway/governance/safety.py`](../src/gateway/governance/safety.py:115) implements the Control Barrier Function (CBF) — a formal safety constraint that maintains `h(x) = cash_balance - min_cash_balance ≥ 0` with Redis-backed atomic state via WATCH/MULTI/EXEC (Phase 4.1).
+- `docs/STPA_ANALYSIS.md` documents the System-Theoretic Process Analysis for the Financial Advisor module: control structure (Controller: AI Agent, Actuators: Gateway Tools, Controlled Process: Markets), 5 Unsafe Control Actions (UCA-1 through UCA-5), and their code implementations.
+- `src/gateway/governance/stpa_validator.py` implements deterministic UCA constraint checking for `execute_trade` actions: SC-1 (approval token), FIN-1 (max sell fraction), FIN-2 (latency), UCA-5 (drawdown), UCA-6 (slippage/sequence). All thresholds sourced from `config/governance_thresholds.json`.
+- `src/gateway/governance/safety.py` implements the Control Barrier Function (CBF) — a formal safety constraint that maintains `h(x) = cash_balance - min_cash_balance ≥ 0` with Redis-backed atomic state via WATCH/MULTI/EXEC (Phase 4.1).
 - No `docs/proposals/004_risk_remediation_plan.md` exists in the repository — that path was checked and not found.
 
 **Gaps:**
@@ -246,11 +246,11 @@
 
 **Current State:**
 
-- [`deployment/k8s/network-policy.yaml`](../deployment/k8s/network-policy.yaml:1) implements 9 Kubernetes NetworkPolicy objects with default-deny ingress and egress. Explicit allow rules for: gateway ingress (port 8080, from `cage.io/role=orchestrator` pods only), OPA (8181), Redis (6379), DNS (53/UDP), vLLM (8000), Langfuse OTLP (3000). **Note:** OTLP collector ports 4317/4318 removed — standalone OTel Collector deprecated 2026-05-31. This is a strong boundary protection implementation.
-- **v0.1.0 — Linkerd mTLS + Cilium L7 egress lockdown (POAM-007 closed 2026-05-17):** [`deployment/k8s/linkerd-mtls-policy.yaml`](../deployment/k8s/linkerd-mtls-policy.yaml) enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths via Server + AuthorizationPolicy + MeshTLSAuthentication resources. [`deployment/k8s/cilium-egress-lockdown.yaml`](../deployment/k8s/cilium-egress-lockdown.yaml) enforces FQDN allowlist for all egress traffic. This addresses SC-8(1) and IA-3 gaps identified in the prior version.
-- [`deployment/terraform/networking.tf`](../deployment/terraform/networking.tf:1) provisions a GCP Cloud NAT and Cloud Router for controlled egress. NAT logging is enabled (`filter = "ERRORS_ONLY"`). All subnets use Cloud NAT for outbound connectivity (no direct internet IPs on nodes).
-- [`src/gateway/server/governance_middleware.py`](../src/gateway/server/governance_middleware.py:55) enforces `X-CAGE-Routing-Seal` HMAC-SHA256 on the request body. Enforcement mode (enforce vs. log) is configurable via `CAGE_SEAL_ENFORCEMENT` env var. If `CAGE_ROUTING_SEAL_SECRET` is not set, the check is bypassed with a warning — this is a gap in production hardening.
-- [`src/gateway/governance/safety.py`](../src/gateway/governance/safety.py:115) implements the Control Barrier Function with SC-relevant safety attributes (`iso42001.control = "A.4.2"` stamped on OTel spans).
+- `deployment/k8s/network-policy.yaml` implements 9 Kubernetes NetworkPolicy objects with default-deny ingress and egress. Explicit allow rules for: gateway ingress (port 8080, from `cage.io/role=orchestrator` pods only), OPA (8181), Redis (6379), DNS (53/UDP), vLLM (8000), Langfuse OTLP (3000). **Note:** OTLP collector ports 4317/4318 removed — standalone OTel Collector deprecated 2026-05-31. This is a strong boundary protection implementation.
+- **v0.1.0 — Linkerd mTLS + Cilium L7 egress lockdown (POAM-007 closed 2026-05-17):** [`deployment/k8s/linkerd-mtls-policy.yaml`](../../../deployment/k8s/linkerd-mtls-policy.yaml) enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths via Server + AuthorizationPolicy + MeshTLSAuthentication resources. [`deployment/k8s/cilium-egress-lockdown.yaml`](../../../deployment/k8s/cilium-egress-lockdown.yaml) enforces FQDN allowlist for all egress traffic. This addresses SC-8(1) and IA-3 gaps identified in the prior version.
+- `deployment/terraform/networking.tf` provisions a GCP Cloud NAT and Cloud Router for controlled egress. NAT logging is enabled (`filter = "ERRORS_ONLY"`). All subnets use Cloud NAT for outbound connectivity (no direct internet IPs on nodes).
+- `src/gateway/server/governance_middleware.py` enforces `X-CAGE-Routing-Seal` HMAC-SHA256 on the request body. Enforcement mode (enforce vs. log) is configurable via `CAGE_SEAL_ENFORCEMENT` env var. If `CAGE_ROUTING_SEAL_SECRET` is not set, the check is bypassed with a warning — this is a gap in production hardening.
+- `src/gateway/governance/safety.py` implements the Control Barrier Function with SC-relevant safety attributes (`iso42001.control = "A.4.2"` stamped on OTel spans).
 
 **Gaps:**
 
@@ -274,7 +274,7 @@
      allowPrivilegeEscalation: false
    ```
 3. **Add SC-12 KMS-backed secrets:** In `deployment/terraform/iam.tf`, add a `google_kms_crypto_key` resource and configure Kubernetes Secret encryption with the CMEK. Reference the key in GKE cluster configuration (`boot_disk_kms_key`).
-4. **Enforce SC-12 seal secret presence:** In [`src/gateway/server/governance_middleware.py`](../src/gateway/server/governance_middleware.py:64), change the `if not _CAGE_SEAL_SECRET: return True` bypass to raise a `RuntimeError` at module load time in production (`ENVIRONMENT != "development"`).
+4. **Enforce SC-12 seal secret presence:** In `src/gateway/server/governance_middleware.py`, change the `if not _CAGE_SEAL_SECRET: return True` bypass to raise a `RuntimeError` at module load time in production (`ENVIRONMENT != "development"`).
 5. **Add SC-28 GCS encryption config:** In `deployment/terraform/storage.tf`, add `encryption.default_kms_key_name` to the `google_storage_bucket` resource for the OSCAL artifacts bucket.
 
 ---
@@ -285,10 +285,10 @@
 
 **Current State:**
 
-- [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py:1) orchestrates the full governance pipeline: STPA → CBF → OPA → Consensus (7-tier). **v0.1.0:** SLM sidecar permanently deprecated; `slm_available=False` sentinel is always injected; OPA always applies elevated confidence threshold (0.97). Fail-secure degraded mode is the permanent operating mode.
-- [`src/gateway/governance/stpa_validator.py`](../src/gateway/governance/stpa_validator.py:35) implements deterministic input validation against 5 STPA constraints (SC-1, FIN-1, FIN-2, UCA-5, UCA-6). All constraint failures return error messages and the action is blocked — SI-10 (Information Input Validation) is partially implemented for the trade domain.
-- [`src/gateway/governance/safety.py`](../src/gateway/governance/safety.py:83) — `ac_keyword_scan()` provides Aho-Corasick O(n) Tier-1 keyword scanning for 14 forbidden prompts. This is an information integrity control preventing prompt injection (SI-3 analog).
-- [`scripts/automated_auditor.py`](../scripts/automated_auditor.py:68) — `TraceAuditor.audit_trace()` implements span invariant checking: every `tool.execution` span must have a causally preceding `governance.check` span with `decision=ALLOW`. Detects "Missing Governance Check," "Execution despite DENY," and "Orphaned Execution" violations. **However, it uses mock traces (see AU-12 gap).**
+- `src/gateway/governance/symbolic_governor.py` orchestrates the full governance pipeline: STPA → CBF → OPA → Consensus (7-tier). **v0.1.0:** SLM sidecar permanently deprecated; `slm_available=False` sentinel is always injected; OPA always applies elevated confidence threshold (0.97). Fail-secure degraded mode is the permanent operating mode.
+- `src/gateway/governance/stpa_validator.py` implements deterministic input validation against 5 STPA constraints (SC-1, FIN-1, FIN-2, UCA-5, UCA-6). All constraint failures return error messages and the action is blocked — SI-10 (Information Input Validation) is partially implemented for the trade domain.
+- `src/gateway/governance/safety.py` — `ac_keyword_scan()` provides Aho-Corasick O(n) Tier-1 keyword scanning for 14 forbidden prompts. This is an information integrity control preventing prompt injection (SI-3 analog).
+- `scripts/automated_auditor.py` — `TraceAuditor.audit_trace()` implements span invariant checking: every `tool.execution` span must have a causally preceding `governance.check` span with `decision=ALLOW`. Detects "Missing Governance Check," "Execution despite DENY," and "Orphaned Execution" violations. **However, it uses mock traces (see AU-12 gap).**
 
 **Gaps:**
 

@@ -13,7 +13,7 @@ Start with the documentation in the [`docs/`](docs/) directory:
 
 ### GitHub Issues
 
-For bug reports and feature requests, please use [GitHub Issues](../../issues).
+For bug reports and feature requests, please use GitHub Issues.
 
 When filing a bug report, include:
 - Your deployment environment (GKE version, Python version, OS)
@@ -23,7 +23,7 @@ When filing a bug report, include:
 
 ### GitHub Discussions
 
-For questions, design discussions, and community support, use [GitHub Discussions](../../discussions).
+For questions, design discussions, and community support, use GitHub Discussions.
 
 ### Security Issues
 

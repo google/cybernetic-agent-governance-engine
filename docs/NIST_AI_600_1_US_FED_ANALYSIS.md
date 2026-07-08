@@ -58,7 +58,7 @@ CAGE sits at the intersection of all three layers: it is a federal information s
 - Vulnerability scanning and flaw remediation (RA-5, SI-2, Trivy/pip-audit)
 
 **AI 600-1 covers — SP 800-53 has no equivalent:**
-- **Confabulation (§2.2):** SP 800-53 SI-10 validates API input schemas; it has no concept of an LLM generating a confident but factually incorrect market price. The [`ConsensusEngine`](src/gateway/governance/consensus.py) critics are themselves LLMs that can confabulate risk assessments — SP 800-53 has no control for this.
+- **Confabulation (§2.2):** SP 800-53 SI-10 validates API input schemas; it has no concept of an LLM generating a confident but factually incorrect market price. The [`ConsensusEngine`](../src/gateway/governance/consensus.py) critics are themselves LLMs that can confabulate risk assessments — SP 800-53 has no control for this.
 - **Agentic autonomy scope (§2.5.1–2.5.4):** SP 800-53 AC-5 covers separation of duties between human roles. It has no concept of an AI agent autonomously selecting which MCP tools to call. AI 600-1 §2.5.4 requires a formal human oversight scope statement — no SP 800-53 control requires this.
 - **Indirect prompt injection (§2.4):** SP 800-53 SI-3 covers antivirus/malware. It has no concept of a market data API response containing embedded instructions that hijack LLM behavior. CAGE's `get_market_data` MCP tool response flows into the LLM context window with no sanitization — invisible to SP 800-53.
 - **Harmful bias / algorithmic fairness (§2.6):** SP 800-53 has no fairness control. AI 600-1 §2.6 requires assessing disparate impact in financial recommendations — a direct ECOA/Regulation B obligation.
@@ -240,7 +240,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 
 **Current Coverage:**
 - NeMo Guardrails Colang flows (`config/rails/main_logic.co`) enforce domain restriction to financial topics
-- Tier-1 Aho-Corasick keyword scan (`ac_keyword_scan` in [`src/gateway/governance/safety.py`](src/gateway/governance/safety.py)) blocks 14 forbidden prompt patterns
+- Tier-1 Aho-Corasick keyword scan (`ac_keyword_scan` in [`src/gateway/governance/safety.py`](../src/gateway/governance/safety.py)) blocks 14 forbidden prompt patterns
 - OPA `trade.governance` policy enforces domain-specific RBAC
 
 **Gaps:**
@@ -261,14 +261,14 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 **CAGE Applicability:** **Critical** — CAGE's financial advisor generates trade recommendations based on LLM outputs. A hallucinated market price, fabricated portfolio position, or invented regulatory constraint could cause irreversible financial harm.
 
 **Current Coverage:**
-- [`src/gateway/governance/stpa_validator.py`](src/gateway/governance/stpa_validator.py) validates trade parameters against deterministic constraints (drawdown ≤ 5%, order size ≤ 1% daily volume) — catches hallucinated extreme values
-- [`src/gateway/governance/consensus.py`](src/gateway/governance/consensus.py) — `ConsensusEngine` runs parallel LLM critic calls; disagreement between critics can surface confabulation
-- [`src/gateway/governance/causal_gatekeeper.py`](src/gateway/governance/causal_gatekeeper.py) — causal inference gate prevents spurious correlations from driving decisions
+- [`src/gateway/governance/stpa_validator.py`](../src/gateway/governance/stpa_validator.py) validates trade parameters against deterministic constraints (drawdown ≤ 5%, order size ≤ 1% daily volume) — catches hallucinated extreme values
+- [`src/gateway/governance/consensus.py`](../src/gateway/governance/consensus.py) — `ConsensusEngine` runs parallel LLM critic calls; disagreement between critics can surface confabulation
+- [`src/gateway/governance/causal_gatekeeper.py`](../src/gateway/governance/causal_gatekeeper.py) — causal inference gate prevents spurious correlations from driving decisions
 - `config/governance_thresholds.json` — `min_trade_confidence: 0.95` threshold rejects low-confidence outputs
 
 **Gaps:**
-1. **No confabulation rate metric.** There is no measurement of how often the financial advisor LLM produces factually incorrect market data, fabricated portfolio positions, or hallucinated regulatory constraints. The `safety_rate` metric in [`src/compliance_bridge/metrics.py`](src/compliance_bridge/metrics.py) measures governance pass/fail, not factual accuracy.
-2. **ConsensusEngine critics are also LLMs.** The "Risk Manager" and "Compliance Officer" personas in [`src/gateway/governance/consensus.py`](src/gateway/governance/consensus.py) are themselves LLM calls — they can confabulate their risk assessments. There is no ground-truth validation of consensus outputs.
+1. **No confabulation rate metric.** There is no measurement of how often the financial advisor LLM produces factually incorrect market data, fabricated portfolio positions, or hallucinated regulatory constraints. The `safety_rate` metric in [`src/compliance_bridge/metrics.py`](../src/compliance_bridge/metrics.py) measures governance pass/fail, not factual accuracy.
+2. **ConsensusEngine critics are also LLMs.** The "Risk Manager" and "Compliance Officer" personas in [`src/gateway/governance/consensus.py`](../src/gateway/governance/consensus.py) are themselves LLM calls — they can confabulate their risk assessments. There is no ground-truth validation of consensus outputs.
 3. **No hallucination detection on market data inputs.** The `get_market_data` MCP tool returns external data that the LLM may misinterpret or hallucinate about. No validation that the LLM's stated market price matches the actual API response.
 4. **No Lula validation for confabulation rate.** The 15 existing Lula manifests do not include any confabulation/hallucination rate assertion.
 5. **Explainer node output not validated.** The `explainer` agent generates human-readable explanations of governance decisions — these explanations could confabulate the reasoning behind a DENY verdict.
@@ -279,7 +279,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 
 1. **Chunk 3 (Select/Implement) — SI-10 gap update:** Add confabulation as a sub-category of SI-10 (Information Input Validation). The existing SI-10 gap analysis covers only schema validation of API inputs; it must be extended to cover LLM output factual accuracy validation.
 
-2. **Chunk 4 (Assess/Authorize) — Control Effectiveness Metrics:** Add `confabulation_rate` to `ComplianceMetrics` in [`src/compliance_bridge/types.py`](src/compliance_bridge/types.py). Implement via LLM-as-judge evaluation comparing financial advisor outputs against ground-truth market data from the `get_market_data` MCP tool response.
+2. **Chunk 4 (Assess/Authorize) — Control Effectiveness Metrics:** Add `confabulation_rate` to `ComplianceMetrics` in [`src/compliance_bridge/types.py`](../src/compliance_bridge/types.py). Implement via LLM-as-judge evaluation comparing financial advisor outputs against ground-truth market data from the `get_market_data` MCP tool response.
 
 3. **New Lula validation:** Create `compliance/lula/lula-validation-ai600-confabulation.yaml` asserting that `confabulation_rate < 0.02` (2% threshold) over a 24-hour window, queried from the compliance-bridge metrics API.
 
@@ -296,8 +296,8 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 **CAGE Applicability:** **High** — CAGE processes financial PII (SSN, account numbers, credit card data) in the context of financial advisory. The vLLM models may have memorized PII from training data. NeMo Guardrails + Presidio provide runtime PII detection.
 
 **Current Coverage:**
-- [`src/gateway/governance/nemo/manager.py`](src/gateway/governance/nemo/manager.py) — `SafeAnalyzer` with 15 PII entity types (EMAIL, SSN, CREDIT_CARD, US_BANK_NUMBER, IBAN_CODE, etc.) via Presidio
-- [`src/gateway/governance/pii_sanitizer.py`](src/gateway/governance/pii_sanitizer.py) — PII sanitization before LLM inference
+- [`src/gateway/governance/nemo/manager.py`](../src/gateway/governance/nemo/manager.py) — `SafeAnalyzer` with 15 PII entity types (EMAIL, SSN, CREDIT_CARD, US_BANK_NUMBER, IBAN_CODE, etc.) via Presidio
+- [`src/gateway/governance/pii_sanitizer.py`](../src/gateway/governance/pii_sanitizer.py) — PII sanitization before LLM inference
 - `compliance/lula/lula-validation-a92.yaml` — zero-tolerance PII control (safety_rate = 1.0)
 - `compliance/pia/PRIVACY_IMPACT_ASSESSMENT.md` — Privacy Impact Assessment exists
 - NeMo Colang flows apply PII detection on both input and output rails
@@ -332,7 +332,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 **Current Coverage:**
 - **Tier-1 Aho-Corasick scan** (`ac_keyword_scan`) — 14 bypass/injection keywords, O(n) scan
 - **NeMo Guardrails** — Colang `check_authorization` flow validates approval token; input/output rails
-- **OPA `trade.governance`** — `prompt_injection_check` rule in [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](src/governed_financial_advisor/governance/policy/trade_governance.rego) returns `GOVERNANCE_VIOLATION` on injection detection
+- **OPA `trade.governance`** — `prompt_injection_check` rule in [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](../src/governed_financial_advisor/governance/policy/trade_governance.rego) returns `GOVERNANCE_VIOLATION` on injection detection
 - **Red team dataset** — `tests/red_team/adversarial_dataset.json` contains PII injection and prompt injection payloads (PII-001 through PII-004)
 - **STPA UCA-1** — missing approval token blocks execution (prevents injection-driven authorization bypass)
 
@@ -391,7 +391,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 **Current Coverage:**
 - **HITL approval gate:** `wait_for_approval` LangGraph node requires human approval for trades above the consensus threshold (USD 10,000)
 - **HITL TOCTOU remediation:** `post_hitl_rehydrate` and `post_hitl_revalidate` nodes prevent time-of-check/time-of-use race conditions (v2.0.0)
-- **DEFER queue (AARM-V7):** [`src/gateway/governance/defer_queue.py`](src/gateway/governance/defer_queue.py) — confidence-starved contexts queued for human review rather than hard-denied
+- **DEFER queue (AARM-V7):** [`src/gateway/governance/defer_queue.py`](../src/gateway/governance/defer_queue.py) — confidence-starved contexts queued for human review rather than hard-denied
 - **ConsensusEngine threshold:** Trades above USD 10,000 require multi-agent consensus before human review
 - **LLM remediation advisory:** Step 5 of audit workflow requires `human_review_required: true` before applying LLM suggestions
 
@@ -427,9 +427,9 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 
 **Current Coverage:**
 - **STPA UCA constraints:** Deterministic validation of trade parameters prevents execution of trades based on obviously fabricated data (e.g., drawdown > 4.5% blocks execution regardless of LLM reasoning)
-- **CausalGatekeeper:** [`src/gateway/governance/causal_gatekeeper.py`](src/gateway/governance/causal_gatekeeper.py) prevents spurious correlations from driving decisions
+- **CausalGatekeeper:** [`src/gateway/governance/causal_gatekeeper.py`](../src/gateway/governance/causal_gatekeeper.py) prevents spurious correlations from driving decisions
 - **ConsensusEngine:** Multi-agent consensus provides a cross-check on individual LLM outputs
-- **KMS-signed governance verdicts:** [`src/gateway/governance/kms_signer.py`](src/gateway/governance/kms_signer.py) — HSM-backed asymmetric signing provides non-repudiation of governance decisions
+- **KMS-signed governance verdicts:** [`src/gateway/governance/kms_signer.py`](../src/gateway/governance/kms_signer.py) — HSM-backed asymmetric signing provides non-repudiation of governance decisions
 
 **Gaps:**
 1. **No output provenance tracking.** AI 600-1 §2.8 recommends "provenance tracking" for GenAI outputs — documenting which model version, which prompt, and which context produced a given output. While OTel spans capture model name, there is no structured provenance record linking a financial recommendation to its generating model version, temperature, and context window.
@@ -579,7 +579,7 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 
 ### 5.1 Chunk 1 (Current State) Updates
 
-**File:** [`docs/NIST_RMF_CHUNK1_CURRENT_STATE.md`](NIST_RMF_CHUNK1_CURRENT_STATE.md)
+**File:** [`docs/NIST_RMF_CHUNK1_CURRENT_STATE.md`](compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md)
 
 | Update ID | Section | Change Required | AI 600-1 Source |
 |-----------|---------|-----------------|-----------------|
@@ -598,7 +598,7 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 
 ### 5.2 Chunk 2 (Prepare/Categorize) Updates
 
-**File:** [`docs/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md)
+**File:** [`docs/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](compliance/us_fed/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md)
 
 | Update ID | Section | Change Required | AI 600-1 Source |
 |-----------|---------|-----------------|-----------------|
@@ -614,7 +614,7 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 
 ### 5.3 Chunk 3 (Select/Implement) Updates
 
-**File:** [`docs/NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md`](NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md)
+**File:** [`docs/NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md`](compliance/us_fed/NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md)
 
 | Update ID | Section | Change Required | AI 600-1 Source |
 |-----------|---------|-----------------|-----------------|
@@ -639,7 +639,7 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 
 ### 5.4 Chunk 4 (Assess/Authorize) Updates
 
-**File:** [`docs/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md`](NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)
+**File:** [`docs/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md`](compliance/us_fed/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)
 
 | Update ID | Section | Change Required | AI 600-1 Source |
 |-----------|---------|-----------------|-----------------|
@@ -656,7 +656,7 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 
 ### 5.5 Chunk 5 (Monitor/Roadmap) Updates
 
-**File:** [`docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)
+**File:** [`docs/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md)
 
 | Update ID | Section | Change Required | AI 600-1 Source |
 |-----------|---------|-----------------|-----------------|
@@ -848,7 +848,7 @@ imports:
 
 ## 8. New POAM Items
 
-The following POAM items are derived from the AI 600-1 gap analysis. They are numbered AI600-001 through AI600-007 to distinguish them from the existing POAM-001 through POAM-023 items in [`docs/POAM_US_FED.md`](POAM_US_FED.md).
+The following POAM items are derived from the AI 600-1 gap analysis. They are numbered AI600-001 through AI600-007 to distinguish them from the existing POAM-001 through POAM-023 items in [`docs/POAM_US_FED.md`](compliance/us_fed/POAM_US_FED.md).
 
 | POAM ID | Control ID | AI 600-1 Ref | Weakness Description | Risk Level | Scheduled Completion | Status |
 |---------|-----------|--------------|---------------------|------------|---------------------|--------|

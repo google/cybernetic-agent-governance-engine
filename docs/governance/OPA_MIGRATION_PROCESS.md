@@ -224,7 +224,7 @@ Within 5 business days of the revert merge:
 
 ## 6. CI Gate Reference
 
-The `opa-a92-gate` job is defined in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+The `opa-a92-gate` job is defined in `.github/workflows/ci.yml`
 and runs on every push and pull request to `main` (matching the same `on:`
 triggers as all other CI jobs).
 

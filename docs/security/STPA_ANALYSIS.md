@@ -197,7 +197,7 @@ OPA evaluates the **post-reservation** balance — it is responsible for policy 
 
 ## 7. UCA Mathematical Formalization
 
-The UCAs defined in §2 are grounded in formal predicates drawn from the Trading Knowledge Graph in [`src/gateway/governance/ontology.py`](src/gateway/governance/ontology.py). Each predicate defines the precise boundary between safe and unsafe control actions.
+The UCAs defined in §2 are grounded in formal predicates drawn from the Trading Knowledge Graph in [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py). Each predicate defines the precise boundary between safe and unsafe control actions.
 
 ### 7.1 Financial Position UCAs
 
@@ -237,7 +237,7 @@ All four predicates are also expressed as OPA Rego rules in `config/opa/generate
 
 ## 8. CBF Safety Guarantee
 
-The Control Barrier Function (CBF) in [`src/gateway/governance/cbf.py`](src/gateway/governance/cbf.py) provides a **formal mathematical safety guarantee** for the STPA control structure: it proves that the system state can never leave the safe set `S` as long as the CBF condition holds at every time step.
+The Control Barrier Function (CBF) in [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py) provides a **formal mathematical safety guarantee** for the STPA control structure: it proves that the system state can never leave the safe set `S` as long as the CBF condition holds at every time step.
 
 ### 8.1 Safe Set
 

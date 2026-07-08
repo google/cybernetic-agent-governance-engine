@@ -82,7 +82,7 @@ The CAGE ISCM program implements a tiered monitoring architecture aligned to NIS
 
 ## 4. Alert Thresholds and Escalation
 
-Alert thresholds are drawn from [`config/governance_thresholds.json`](../../config/governance_thresholds.json) and mapped to SP 800-53 controls. Escalation follows the procedure in [`docs/ROLES_AND_RESPONSIBILITIES.md`](../../docs/ROLES_AND_RESPONSIBILITIES.md).
+Alert thresholds are drawn from [`config/governance_thresholds.json`](../../config/governance_thresholds.json) and mapped to SP 800-53 controls. Escalation follows the procedure in [`docs/ROLES_AND_RESPONSIBILITIES.md`](../../docs/governance/ROLES_AND_RESPONSIBILITIES.md).
 
 | Threshold                             | Value               | SP 800-53 Control | Alert Trigger                                                 | Escalation Path                                          |
 | ------------------------------------- | ------------------- | ----------------- | ------------------------------------------------------------- | -------------------------------------------------------- |
@@ -123,7 +123,7 @@ Alert thresholds are drawn from [`config/governance_thresholds.json`](../../conf
 
 ## 6. ISCM Roles
 
-Roles are defined in detail in [`docs/ROLES_AND_RESPONSIBILITIES.md`](../../docs/ROLES_AND_RESPONSIBILITIES.md). The following summarizes ISCM-specific responsibilities:
+Roles are defined in detail in [`docs/ROLES_AND_RESPONSIBILITIES.md`](../../docs/governance/ROLES_AND_RESPONSIBILITIES.md). The following summarizes ISCM-specific responsibilities:
 
 | Role                                           | ISCM Responsibilities                                                                                            | SP 800-53 Mapping |
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------- |
@@ -174,7 +174,7 @@ This ISCM Strategy shall be reviewed and updated:
 - **Upon ATO renewal** to align with current NIST SP 800-137 guidance
 
 **Next Review Date:** 2027-03-06  
-**Document Owner:** ISSO (see [`docs/ROLES_AND_RESPONSIBILITIES.md`](../../docs/ROLES_AND_RESPONSIBILITIES.md))  
+**Document Owner:** ISSO (see [`docs/ROLES_AND_RESPONSIBILITIES.md`](../../docs/governance/ROLES_AND_RESPONSIBILITIES.md))  
 **Approval Authority:** Authorizing Official (AO)
 
 ---

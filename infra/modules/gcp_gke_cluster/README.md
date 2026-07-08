@@ -235,6 +235,6 @@ It does NOT create:
 
 ## See Also
 
-- [Networking Module](../gcp_networking/) - Cloud Router & NAT (not implemented yet)
+- Networking Module - Cloud Router & NAT (not implemented yet)
 - [GCP IAM Resources](../../targets/gcp-gke/iam.tf) - Created in target, not module
-- [Security Postures Guide](../../../plans/monorepo-security-postures.md)
+- Security Postures Guide

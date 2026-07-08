@@ -190,7 +190,7 @@ grep -E "oscal-(a52|a53|a92|sc4)" lula-poam-evidence.log
 # Expected: four result file paths written to /results/parts/
 ```
 
-> **Note:** Individual control `validate` failures (OPA returning `false`) do not cause the job to exit non-zero — the `|| true` in [`deployment/k8s/lula-cron.yaml`](../deployment/k8s/lula-cron.yaml) is intentional. The OSCAL result file captures pass/fail per control. The job exits non-zero only if the compliance-bridge ingest returns a non-200 HTTP status.
+> **Note:** Individual control `validate` failures (OPA returning `false`) do not cause the job to exit non-zero — the `|| true` in [`deployment/k8s/lula-cron.yaml`](../../../deployment/k8s/lula-cron.yaml) is intentional. The OSCAL result file captures pass/fail per control. The job exits non-zero only if the compliance-bridge ingest returns a non-200 HTTP status.
 
 ---
 
@@ -239,7 +239,7 @@ kubectl logs job/lula-post-rename-validation -n governance-stack | head -50
 ```
 
 Common causes:
-- `lula-validation-manifests` ConfigMap missing or malformed — re-apply [`deployment/k8s/lula-cron.yaml`](../deployment/k8s/lula-cron.yaml):
+- `lula-validation-manifests` ConfigMap missing or malformed — re-apply [`deployment/k8s/lula-cron.yaml`](../../../deployment/k8s/lula-cron.yaml):
   ```bash
   kubectl apply -f deployment/k8s/lula-cron.yaml
   ```
@@ -332,7 +332,7 @@ Ongoing monitoring:
 - **Tier 2 controls** (A.5.3, AU-12): validated daily
 - **Tier 3 controls** (CM-6, RA-5): validated weekly
 
-See [`compliance/lula/README.md`](../compliance/lula/README.md) for the full validation coverage table and [`compliance/continuous-monitoring/ISCM_STRATEGY.md`](../compliance/continuous-monitoring/ISCM_STRATEGY.md) for the complete ISCM cadence.
+See [`compliance/lula/README.md`](../../../README.md) for the full validation coverage table and [`compliance/continuous-monitoring/ISCM_STRATEGY.md`](../../../compliance/continuous-monitoring/ISCM_STRATEGY.md) for the complete ISCM cadence.
 
 ---
 
@@ -340,14 +340,14 @@ See [`compliance/lula/README.md`](../compliance/lula/README.md) for the full val
 
 | Document | Purpose |
 |---|---|
-| [`docs/RELEASE_RUNBOOK.md`](../../operations/RELEASE_RUNBOOK.md) | Full release runbook (Phases 1–6) |
-| [`docs/RELEASE_PLAN.md`](../../project/RELEASE_PLAN.md) | Release plan and dependency ordering |
+| `docs/RELEASE_RUNBOOK.md` | Full release runbook (Phases 1–6) |
+| `docs/RELEASE_PLAN.md` | Release plan and dependency ordering |
 | [`docs/POAM.md`](../cross-region/POAM.md) | Plan of Action and Milestones |
-| [`compliance/lula/README.md`](../compliance/lula/README.md) | Lula validation coverage and activation guide |
-| [`deployment/k8s/lula-cron.yaml`](../deployment/k8s/lula-cron.yaml) | CronJob manifest (lula-audit + lula-sc4-watch) |
-| [`deployment/k8s/lula-rbac.yaml`](../deployment/k8s/lula-rbac.yaml) | RBAC for lula-auditor ServiceAccount |
-| [`compliance/sar/SAR_2026Q1.md`](../compliance/sar/SAR_2026Q1.md) | Security Assessment Report (pre-ATO gap assessment) |
-| [`compliance/continuous-monitoring/ISCM_STRATEGY.md`](../compliance/continuous-monitoring/ISCM_STRATEGY.md) | ISCM cadence and escalation procedures |
+| [`compliance/lula/README.md`](../../../README.md) | Lula validation coverage and activation guide |
+| [`deployment/k8s/lula-cron.yaml`](../../../deployment/k8s/lula-cron.yaml) | CronJob manifest (lula-audit + lula-sc4-watch) |
+| [`deployment/k8s/lula-rbac.yaml`](../../../deployment/k8s/lula-rbac.yaml) | RBAC for lula-auditor ServiceAccount |
+| [`compliance/sar/SAR_2026Q1.md`](../../../compliance/sar/SAR_2026Q1.md) | Security Assessment Report (pre-ATO gap assessment) |
+| [`compliance/continuous-monitoring/ISCM_STRATEGY.md`](../../../compliance/continuous-monitoring/ISCM_STRATEGY.md) | ISCM cadence and escalation procedures |
 
 ---
 

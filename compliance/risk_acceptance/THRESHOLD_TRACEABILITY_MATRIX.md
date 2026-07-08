@@ -361,7 +361,7 @@ it carries formal risk acceptance authority:
 | File                                                                                           | Description                                | Schema Enforced By                                                              |
 | ---------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- |
 | [`config/governance_thresholds.json`](../../config/governance_thresholds.json)                 | Primary threshold registry                 | `src/gateway/governance/schemas/thresholds.py` (Pydantic, fail-fast on startup) |
-| [`src/gateway/governance/safety_params.json`](../../src/gateway/governance/safety_params.json) | Safety parameter supplement                | `src/gateway/governance/safety.py`                                              |
+| [`src/gateway/governance/safety_params.json`](../../config/safety_params.json) | Safety parameter supplement                | `src/gateway/governance/safety.py`                                              |
 | [`deployment/k8s/lula-cron.yaml`](../../deployment/k8s/lula-cron.yaml)                         | Lula validation thresholds (embedded Rego) | Lula validate runtime                                                           |
 | [`deployment/opa_config.yaml`](../../deployment/opa_config.yaml)                               | OPA bundle configuration                   | OPA runtime                                                                     |
 

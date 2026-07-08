@@ -1,7 +1,7 @@
 # CAGE Audit Log Schema Reference
 
 **Schemas:** `cage-intent/1.0` · `cage-view-access/1.0`  
-**Source of truth:** [`examples/telemetry.py`](../examples/telemetry.py)  
+**Source of truth:** [`examples/telemetry.py`](../../examples/telemetry.py)  
 **Output format:** [NDJSON](https://ndjson.org/) — one JSON object per line, append-only  
 **Output paths:**
 - Evidence chain: `examples/evidence/evidence_chain_<YYYY-MM-DD>.ndjson`

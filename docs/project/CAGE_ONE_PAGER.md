@@ -36,7 +36,7 @@ The CAGE governance kernel is grounded in formal mathematical theory, providing 
 h(S(t+1)) ≥ (1−γ)·h(S(t))     where h(x) = cash_balance − min_cash_balance
 ```
 
-This discrete-time CBF condition ([`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py)) guarantees that the system state never leaves the safe set `S = {x ∈ ℝⁿ : h(x) ≥ 0}`. Any proposed trade that would violate the condition is denied before execution. State reads are atomic (Redis `WATCH/MULTI/EXEC`, `_MAX_RETRIES=5`).
+This discrete-time CBF condition ([`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)) guarantees that the system state never leaves the safe set `S = {x ∈ ℝⁿ : h(x) ≥ 0}`. Any proposed trade that would violate the condition is denied before execution. State reads are atomic (Redis `WATCH/MULTI/EXEC`, `_MAX_RETRIES=5`).
 
 ### 7-Tier Symbolic Governor Pipeline
 
@@ -50,7 +50,7 @@ This discrete-time CBF condition ([`src/gateway/governance/cbf.py`](../src/gatew
 | 6 | Consensus | ≥$10k trades, 30s timeout, heterogeneous multi-model quorum |
 | 7 | FRIA zones | `FRIA_ZONE_ALLOW=0.95` / `FRIA_ZONE_DEFER=0.70` / score < 0.70 → BLOCK |
 
-Source: [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py)
+Source: [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
 
 ### FRIA Zone Thresholds (EU AI Act Art. 29a)
 
@@ -78,8 +78,8 @@ Source: [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governanc
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Document type         | Engineering one-pager                                                                                                                                                   |
 | Audience              | Engineering leads, compliance reviewers, AI governance evaluators                                                                                                       |
-| Companion documents   | [`README.md`](../README.md), [`COMPLIANCE.md`](../COMPLIANCE.md), [`docs/GOVERNANCE_CROSSWALK.md`](../compliance/cross-region/GOVERNANCE_CROSSWALK.md), [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](../governance/NEURO_SYMBOLIC_GOVERNANCE.md) |
+| Companion documents   | [`README.md`](../README.md), [`COMPLIANCE.md`](../../COMPLIANCE.md), [`docs/GOVERNANCE_CROSSWALK.md`](../compliance/cross-region/GOVERNANCE_CROSSWALK.md), [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](../governance/NEURO_SYMBOLIC_GOVERNANCE.md) |
 | Implementation status | v0.1.0 — 2026-06-08                                                                                                                                                    |
-| Production readiness  | **GO — STABLE RELEASE APPROVED (v0.1.0, 2026-06-08)**; see [`docs/PRODUCTION_READINESS_REPORT.md`](PRODUCTION_READINESS_REPORT.md)                                     |
+| Production readiness  | **GO — STABLE RELEASE APPROVED (v0.1.0, 2026-06-08)**; see `docs/PRODUCTION_READINESS_REPORT.md`                                     |
 | Open issues           | File a GitHub issue for any defects or feature requests                                                                                                                 |
 | Feedback              | File a GitHub issue or suggest edits via pull request                                                                                                                   |

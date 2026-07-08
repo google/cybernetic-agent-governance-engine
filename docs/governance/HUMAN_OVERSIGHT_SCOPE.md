@@ -93,7 +93,7 @@ The SLA is returned by `get_hitl_sla_hours(region)` in `hitl_escalator.py`.
 
 ## Automated Governance Thresholds
 
-**Source:** [`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py)
+**Source:** [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
 
 The `SymbolicGovernor` Tier 7 FRIA zone classification determines whether a governance decision is handled automatically or escalated to human review. The thresholds are named constants enforced at runtime:
 
@@ -113,7 +113,7 @@ Trades with `amount ≥ $10,000 USD` require multi-critic consensus (Tier 6) bef
 
 ### Causal Lock Escalation
 
-**Source:** [`src/gateway/governance/causal_gatekeeper.py`](src/gateway/governance/causal_gatekeeper.py)
+**Source:** [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)
 
 When the causal gatekeeper's marginal risk boundary condition is triggered:
 

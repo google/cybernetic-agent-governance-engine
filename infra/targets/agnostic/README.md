@@ -178,5 +178,5 @@ terraform init
 ## See Also
 
 - [GCP-GKE Target](../gcp-gke/) - GCP-optimized deployment
-- [Migration Guide](../../../plans/monorepo-migration-guide.md)
-- [Security Postures](../../../plans/monorepo-security-postures.md)
+- Migration Guide
+- Security Postures

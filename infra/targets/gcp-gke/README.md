@@ -208,7 +208,7 @@ gcloud auth list
 
 ## Migration from Old Structure
 
-If migrating from `deployment/terraform/`, see the [Migration Guide](../../../plans/monorepo-migration-guide.md).
+If migrating from `deployment/terraform/`, see the Migration Guide.
 
 The old code in `deployment/terraform/gcp/` can be safely archived after validating this target works.
 
@@ -216,5 +216,5 @@ The old code in `deployment/terraform/gcp/` can be safely archived after validat
 
 - [Agnostic Target](../agnostic/) - Deploy to any Kubernetes cluster
 - [GKE Cluster Module](../../modules/gcp_gke_cluster/) - Module documentation
-- [Security Postures](../../../plans/monorepo-security-postures.md) - Dev vs Prod configurations
+- Security Postures - Dev vs Prod configurations
 - [NIST Controls Mapping](../../modules/gcp_gke_cluster/NIST_CONTROLS.md)

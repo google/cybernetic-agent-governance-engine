@@ -215,7 +215,7 @@ To prevent Time-Of-Check to Time-Of-Use (TOCTOU) exploits and drift under volati
 
 ### `src/governed_financial_advisor/governance/policy/trade_governance.rego` — Package `trade.governance`
 
-Canonical policy file: [`src/governed_financial_advisor/graph/governance/trade_policy.rego`](../../src/governed_financial_advisor/graph/governance/trade_policy.rego)
+Canonical policy file: [`src/governed_financial_advisor/graph/governance/trade_policy.rego`](../../config/opa/trade_policy.rego)
 
 ```rego
 package trade.governance

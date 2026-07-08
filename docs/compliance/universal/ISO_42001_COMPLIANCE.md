@@ -6,7 +6,7 @@
 
 This document maps the **Neuro-Cybernetic Governance** implementation to the clauses of **ISO/IEC 42001**. The architecture implements a **Continuous Compliance** model: NeMo and OPA handle live enforcement, Langfuse captures evidence, and **Lula** periodically audits both to generate OSCAL Assessment Results that serve as machine-readable proof for auditors.
 
-> **Jurisdiction separation principle:** **ISO/IEC 42001:2023 is the sole universal governance baseline** for CAGE. Every clause mapping, Annex A control, and Lula validation in this document applies to **all deployment regions** (`US_FED`, `EU_ECB`, `APAC_MAS`). Jurisdiction-specific frameworks (SR 26-2, NIST AI 600-1, EU AI Act, GDPR, DORA, MAS FEAT, MAS Notice 655) are **additive layers** that extend — but never replace — the ISO 42001 baseline. They are activated exclusively by `CAGE_DEPLOYMENT_REGION` and impose no obligations on other regions. See [`docs/GOVERNANCE_CROSSWALK.md`](GOVERNANCE_CROSSWALK.md) for the full regional applicability matrix.
+> **Jurisdiction separation principle:** **ISO/IEC 42001:2023 is the sole universal governance baseline** for CAGE. Every clause mapping, Annex A control, and Lula validation in this document applies to **all deployment regions** (`US_FED`, `EU_ECB`, `APAC_MAS`). Jurisdiction-specific frameworks (SR 26-2, NIST AI 600-1, EU AI Act, GDPR, DORA, MAS FEAT, MAS Notice 655) are **additive layers** that extend — but never replace — the ISO 42001 baseline. They are activated exclusively by `CAGE_DEPLOYMENT_REGION` and impose no obligations on other regions. See [`docs/GOVERNANCE_CROSSWALK.md`](../cross-region/GOVERNANCE_CROSSWALK.md) for the full regional applicability matrix.
 
 ---
 
@@ -28,34 +28,34 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
 
 - **6.1 Actions to address risks and opportunities:**
   - **Implementation:** The **Planner Agent (System 4)** generates execution plans that are explicitly analyzed for risk before execution.
-  - **Code:** [`src/governed_financial_advisor/agents/execution_analyst/`](../src/governed_financial_advisor/agents/execution_analyst/)
+  - **Code:** `src/governed_financial_advisor/agents/execution_analyst/`
 
 ### Clause 8: Operation
 
 - **8.1 Operational planning and control:**
-  - **Implementation:** The **Governance Gateway** acts as the operational control point, enforcing policies on all AI actions via the **7-tier Symbolic Governor pipeline** ([`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py)): NoDirectBind invariant → PII sanitization → CBF + OPA concurrent → Causal gatekeeper → Confabulation scoring → Consensus → FRIA zones.
-  - **Code:** [`src/gateway/server/governance_middleware.py`](../src/gateway/server/governance_middleware.py)
+  - **Implementation:** The **Governance Gateway** acts as the operational control point, enforcing policies on all AI actions via the **7-tier Symbolic Governor pipeline** ([`src/gateway/governance/symbolic_governor.py`](../../../src/gateway/governance/symbolic_governor.py)): NoDirectBind invariant → PII sanitization → CBF + OPA concurrent → Causal gatekeeper → Confabulation scoring → Consensus → FRIA zones.
+  - **Code:** [`src/gateway/server/governance_middleware.py`](../../../src/gateway/server/governance_middleware.py)
 - **8.2 AI Risk Assessment:**
   - **Implementation:** The **7-tier Symbolic Governor** performs real-time risk assessment (STPA, CBF, causal SCM) on every tool call. OPA Rego policies enforce fiscal limits and RBAC. The Control Barrier Function provides a formal mathematical safety guarantee via `h(S(t+1)) ≥ (1−γ)·h(S(t))`.
-  - **Code:** [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](../src/governed_financial_advisor/governance/policy/trade_governance.rego), [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py)
+  - **Code:** [`src/governed_financial_advisor/governance/policy/trade_governance.rego`](../../../src/governed_financial_advisor/governance/policy/trade_governance.rego), [`src/gateway/governance/cbf.py`](../../../src/gateway/governance/cbf.py)
 
 ### Clause 9: Performance Evaluation
 
 - **9.1 Monitoring, measurement, analysis and evaluation:**
   - **Implementation (Runtime):** The **Evaluator Agent (System 3)** acts as the real-time monitor, racing against execution to detect anomalies.
-  - **Code:** [`src/governed_financial_advisor/agents/evaluator/agent.py`](../src/governed_financial_advisor/agents/evaluator/agent.py)
-  - **Implementation (Continuous Audit):** **Lula** validates each ISO 42001 control every 6 hours via the `compliance_bridge` API. Findings are expressed as **OSCAL Assessment Results** using a deterministic Python parser ([`oscal_parser.py`](../src/compliance_bridge/oscal_parser.py)) to ensure high-integrity evidence mapping.
-  - **Lula Manifests:** [`compliance/lula/`](../compliance/lula/)
-  - **Bridge Service:** [`src/compliance_bridge/`](../src/compliance_bridge/)
+  - **Code:** [`src/governed_financial_advisor/agents/evaluator/agent.py`](../../../src/governed_financial_advisor/agents/evaluator/agent.py)
+  - **Implementation (Continuous Audit):** **Lula** validates each ISO 42001 control every 6 hours via the `compliance_bridge` API. Findings are expressed as **OSCAL Assessment Results** using a deterministic Python parser ([`oscal_parser.py`](../../../src/compliance_bridge/oscal_parser.py)) to ensure high-integrity evidence mapping.
+  - **Lula Manifests:** `compliance/lula/`
+  - **Bridge Service:** `src/compliance_bridge/`
   - **Telemetry:** OpenTelemetry spans tagged with `iso42001.control_id` flow to Langfuse. The bridge aggregates them into a `safety_rate` per control over a 24-hour window with a 48-hour staleness guard and a configurable startup grace period.
-  - **Assessment State Integrity (CAGE v2.2.0):** Each OSCAL finding carries one of four states: `PASS`, `FAIL`, `NOT_APPLICABLE`, or `ERROR`. A scanner/collector failure ("fetch failed", timeout) maps to `ERROR` — **never** to `NOT_APPLICABLE`. This distinction is required by NIST SP 800-53A §3.2: evaluation errors must be flagged as Incomplete/Unknown so auditors can investigate the evidence gap. `ERROR` findings on critical controls (SC-4, A.9.2, A.8.4) trigger the same Slack/PagerDuty alert as explicit `FAIL` findings and score `0.0` in Langfuse. See [`docs/technical-report/06-COMPLIANCE-STANDARDS.md §5.5`](technical-report/06-COMPLIANCE-STANDARDS.md) for the full state table.
+  - **Assessment State Integrity (CAGE v2.2.0):** Each OSCAL finding carries one of four states: `PASS`, `FAIL`, `NOT_APPLICABLE`, or `ERROR`. A scanner/collector failure ("fetch failed", timeout) maps to `ERROR` — **never** to `NOT_APPLICABLE`. This distinction is required by NIST SP 800-53A §3.2: evaluation errors must be flagged as Incomplete/Unknown so auditors can investigate the evidence gap. `ERROR` findings on critical controls (SC-4, A.9.2, A.8.4) trigger the same Slack/PagerDuty alert as explicit `FAIL` findings and score `0.0` in Langfuse. See [`docs/technical-report/06-COMPLIANCE-STANDARDS.md §5.5`](../../technical-report/06-COMPLIANCE-STANDARDS.md) for the full state table.
 
 ### Clause 10: Improvement
 
 - **10.1 Nonconformity and corrective action:**
   - **Implementation (Immediate):** The **Interrupt Mechanism** (Redis-based) is an automated corrective action that stops nonconforming behavior immediately via the `trigger_safety_intervention` tool.
   - **Implementation (Audit-Driven):** The **complianceAuditWorkflow** (Mastra) ingests OSCAL findings back into Langfuse and fires Slack/PagerDuty alerts for critical control failures (A.9.2 Data Privacy, SC-4 Fiscal Limits).
-  - **Code:** [`src/compliance_bridge/audit_workflow.py`](../src/compliance_bridge/audit_workflow.py)
+  - **Code:** [`src/compliance_bridge/audit_workflow.py`](../../../src/compliance_bridge/audit_workflow.py)
 
 ---
 
@@ -64,20 +64,20 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
 | Control   | Description                | Enforcement Component                  | Lula Validation                                                           | Threshold                           | Critical Alert on ERROR? |
 | --------- | -------------------------- | -------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------- | ------------------------ |
 | **A.4**   | Resource Management        | Token Quota Proxy (`CTRL_TQP_007`) — per-session step-count (≤12) and token (≤100,000) quota enforcement via Redis atomic Lua counters; fail-closed HTTP 429 | N/A (no manifest)                                                         | step_count ≤ `STEP_QUOTA_MAX`; token_count ≤ `TOKEN_QUOTA_MAX` | No |
-| **A.5.2** | Social Impact Assessment   | NeMo output rail + Aho-Corasick Tier-1 | [`lula-validation-a52.yaml`](../compliance/lula/lula-validation-a52.yaml) | safety_rate ≥ 99%                   | No                       |
-| **A.5.3** | Logging and Monitoring     | OTel spans → Langfuse (all tiers)      | [`lula-validation-a53.yaml`](../compliance/lula/lula-validation-a53.yaml) | safety_rate ≥ 98%                   | No                       |
-| **A.9.2** | Data Transfer to Suppliers | Presidio PII masking (NeMo input rail) | [`lula-validation-a92.yaml`](../compliance/lula/lula-validation-a92.yaml) | safety_rate = 100% (zero tolerance) | **Yes** — CRITICAL_CONTROL |
-| **SC-4**  | Fiscal Limits and RBAC     | `trade_governance.rego` (OPA)          | [`lula-validation-sc4.yaml`](../compliance/lula/lula-validation-sc4.yaml) | k8s label present                   | **Yes** — CRITICAL_CONTROL |
+| **A.5.2** | Social Impact Assessment   | NeMo output rail + Aho-Corasick Tier-1 | [`lula-validation-a52.yaml`](../../../compliance/lula/lula-validation-a52.yaml) | safety_rate ≥ 99%                   | No                       |
+| **A.5.3** | Logging and Monitoring     | OTel spans → Langfuse (all tiers)      | [`lula-validation-a53.yaml`](../../../compliance/lula/lula-validation-a53.yaml) | safety_rate ≥ 98%                   | No                       |
+| **A.9.2** | Data Transfer to Suppliers | Presidio PII masking (NeMo input rail) | [`lula-validation-a92.yaml`](../../../compliance/lula/lula-validation-a92.yaml) | safety_rate = 100% (zero tolerance) | **Yes** — CRITICAL_CONTROL |
+| **SC-4**  | Fiscal Limits and RBAC     | `trade_governance.rego` (OPA)          | [`lula-validation-sc4.yaml`](../../../compliance/lula/lula-validation-sc4.yaml) | k8s label present                   | **Yes** — CRITICAL_CONTROL |
 | **A.8.4** | AI System Operation Controls | HITL + Saga WAL; DEFER state machine | N/A (no manifest)                                                         | STPA UCA checks pass                | **Yes** — CRITICAL_CONTROL |
 
-> **Note on `ERROR` state (CAGE v2.2.0):** A scanner/collector failure on any control produces an `ERROR` finding — not `NOT_APPLICABLE`. For the three `CRITICAL_CONTROL` entries above (A.9.2, SC-4, A.8.4), an `ERROR` finding triggers the same Slack/PagerDuty alert as an explicit `FAIL`. This ensures evidence gaps on the most sensitive controls are never silently hidden. See [`docs/technical-report/06-COMPLIANCE-STANDARDS.md §5.5`](technical-report/06-COMPLIANCE-STANDARDS.md) for the full four-state semantics table.
+> **Note on `ERROR` state (CAGE v2.2.0):** A scanner/collector failure on any control produces an `ERROR` finding — not `NOT_APPLICABLE`. For the three `CRITICAL_CONTROL` entries above (A.9.2, SC-4, A.8.4), an `ERROR` finding triggers the same Slack/PagerDuty alert as an explicit `FAIL`. This ensures evidence gaps on the most sensitive controls are never silently hidden. See [`docs/technical-report/06-COMPLIANCE-STANDARDS.md §5.5`](../../technical-report/06-COMPLIANCE-STANDARDS.md) for the full four-state semantics table.
 
 ---
 
 ## OSCAL Component Definition
 
 The machine-readable OSCAL Component Definition linking each control to its technical implementation and Lula validation is at:
-[`compliance/oscal/component-definition.yaml`](../compliance/oscal/component-definition.yaml)
+[`compliance/oscal/component-definition.yaml`](../../../compliance/oscal/component-definition.yaml)
 
 ---
 
@@ -87,7 +87,7 @@ This section documents the formal mathematical foundations of the CAGE governanc
 
 ### CBF Condition and Barrier Function (A.6.1 — Risk Assessment)
 
-The Control Barrier Function ([`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py)) provides a formal proof of safety for the financial state machine:
+The Control Barrier Function ([`src/gateway/governance/cbf.py`](../../../src/gateway/governance/cbf.py)) provides a formal proof of safety for the financial state machine:
 
 - **Safe set:** `S = {x ∈ ℝⁿ : h(x) ≥ 0}`
 - **Barrier function:** `h(x) = cash_balance − min_cash_balance`
@@ -97,7 +97,7 @@ If the CBF condition is satisfied at every time step, the system is mathematical
 
 ### 7-Tier Symbolic Governor Pipeline (A.8.4 — AI System Operation Controls)
 
-The 7-tier pipeline ([`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py)) is the primary runtime enforcement mechanism for ISO 42001 A.8.4:
+The 7-tier pipeline ([`src/gateway/governance/symbolic_governor.py`](../../../src/gateway/governance/symbolic_governor.py)) is the primary runtime enforcement mechanism for ISO 42001 A.8.4:
 
 | Tier | Control | ISO 42001 Mapping |
 |------|---------|-------------------|
@@ -121,7 +121,7 @@ The FRIA zone thresholds define three access-control tiers for AI-generated reco
 
 ### Confabulation Risk Formula (A.5.2)
 
-The confabulation scorer ([`src/gateway/governance/confabulation_scorer.py`](../src/gateway/governance/confabulation_scorer.py)) computes:
+The confabulation scorer ([`src/gateway/governance/confabulation_scorer.py`](../../../src/gateway/governance/confabulation_scorer.py)) computes:
 
 ```
 risk_score = 1.0 − confidence
@@ -131,7 +131,7 @@ A `risk_score` above the configured threshold triggers a `DEFER` (HITL escalatio
 
 ### Causal Marginal Risk Boundary (A.6.1)
 
-The causal gatekeeper ([`src/gateway/governance/causal_gatekeeper.py`](../src/gateway/governance/causal_gatekeeper.py)) applies a marginal risk boundary:
+The causal gatekeeper ([`src/gateway/governance/causal_gatekeeper.py`](../../../src/gateway/governance/causal_gatekeeper.py)) applies a marginal risk boundary:
 
 ```
 (0.5 + estimate.value × amount) > 0.95  →  DENY
@@ -143,7 +143,7 @@ The `PlaceboTreatmentRefuter` runs 50 simulations with significance threshold p 
 
 | Parameter | Value | Enforcement |
 |-----------|-------|-------------|
-| Daily cap | $500,000 USD (integer cents) | [`fiscal_limit_guard.py`](../src/gateway/governance/fiscal_limit_guard.py) |
+| Daily cap | $500,000 USD (integer cents) | [`fiscal_limit_guard.py`](../../../src/gateway/governance/fiscal_limit_guard.py) |
 | Window | 86,400 seconds | Redis key TTL |
 | Retry policy | Exponential backoff: `_RETRY_BASE_MS × 2^attempt` | Atomic WATCH/MULTI/EXEC |
 | Fail mode | Fail-closed | Redis error → rejected token |
@@ -152,6 +152,6 @@ The `PlaceboTreatmentRefuter` runs 50 simulations with significance threshold p 
 
 ## System Description (Annex A)
 
-- **A.1 AI System Lifecycle:** Managed via the LangGraph workflow ([`src/governed_financial_advisor/graph/graph.py`](../src/governed_financial_advisor/graph/graph.py)).
-- **A.2 Data Quality:** Enforced via `GeneratedSTPAValidator` checks on data inputs (e.g., latency thresholds, order volume fractions). The 7-tier Symbolic Governor pipeline ([`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py)) provides the primary runtime enforcement layer.
-- **A.5.2/A.5.3/A.9.2/SC-4:** Automatically validated every 6 hours by the Lula CronJob ([`deployment/k8s/lula-cron.yaml`](../deployment/k8s/lula-cron.yaml)).
+- **A.1 AI System Lifecycle:** Managed via the LangGraph workflow ([`src/governed_financial_advisor/graph/graph.py`](../../../src/governed_financial_advisor/graph/graph.py)).
+- **A.2 Data Quality:** Enforced via `GeneratedSTPAValidator` checks on data inputs (e.g., latency thresholds, order volume fractions). The 7-tier Symbolic Governor pipeline ([`src/gateway/governance/symbolic_governor.py`](../../../src/gateway/governance/symbolic_governor.py)) provides the primary runtime enforcement layer.
+- **A.5.2/A.5.3/A.9.2/SC-4:** Automatically validated every 6 hours by the Lula CronJob ([`deployment/k8s/lula-cron.yaml`](../../../deployment/k8s/lula-cron.yaml)).

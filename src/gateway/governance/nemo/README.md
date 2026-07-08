@@ -260,8 +260,8 @@ sidecar would introduce four problems:
 
 ## Related Documents
 
-- [`plans/nemo_guardrails_architectural_analysis.md`](../../../../plans/nemo_guardrails_architectural_analysis.md) — full architectural analysis and decision record
-- [`docs/GATEWAY_ARCHITECTURE.md`](../../../../docs/GATEWAY_ARCHITECTURE.md) — gateway architecture overview
-- [`docs/LATENCY_STRATEGY.md`](../../../../docs/LATENCY_STRATEGY.md) — latency strategy and budget
+- `plans/nemo_guardrails_architectural_analysis.md` — full architectural analysis and decision record
+- [`docs/GATEWAY_ARCHITECTURE.md`](../../../../docs/architecture/GATEWAY_ARCHITECTURE.md) — gateway architecture overview
+- [`docs/LATENCY_STRATEGY.md`](../../../../docs/architecture/LATENCY_STRATEGY.md) — latency strategy and budget
 - [`src/gateway/governance/nemo/server.py`](server.py) — module docstring with full sidecar rationale
 - [`src/gateway/governance/nemo/manager.py`](manager.py) — module docstring and comment block above `create_nemo_manager()`

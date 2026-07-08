@@ -174,7 +174,7 @@ The safe set is `S = {x ∈ ℝⁿ : h(x) ≥ 0}`. The CBF condition:
 h(S(t+1)) ≥ (1 − γ) · h(S(t))     γ ∈ (0, 1), γ = 0.5 (default)
 ```
 
-guarantees `h(S(t)) ≥ 0` for all `t` — i.e., the cash balance never falls below `min_cash_balance = $1,000 USD` — provided the invariant holds at `t = 0`. Implemented in [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py) using Redis `WATCH/MULTI/EXEC` optimistic locking with `_MAX_RETRIES = 5`.
+guarantees `h(S(t)) ≥ 0` for all `t` — i.e., the cash balance never falls below `min_cash_balance = $1,000 USD` — provided the invariant holds at `t = 0`. Implemented in [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py) using Redis `WATCH/MULTI/EXEC` optimistic locking with `_MAX_RETRIES = 5`.
 
 ### 8.2 NoDirectBind Invariant
 
@@ -190,7 +190,7 @@ Every governed action is classified into one of three Fundamental Rights Impact 
 | `DEFER` | 0.70 ≤ confidence < 0.95 | Synchronous blocking gate; context parked in Redis `db=1` (4-hour TTL) |
 | `DENY` | confidence < 0.70 | Hard denial; confidence-starvation boundary |
 
-The FRIA zone thresholds (`FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70`) are sourced from `governance_thresholds.json` and enforced in [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py).
+The FRIA zone thresholds (`FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70`) are sourced from `governance_thresholds.json` and enforced in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py).
 
 ### 8.4 Provenance Hash Chain Integrity
 
@@ -200,7 +200,7 @@ Every governance decision is recorded in a SHA-256 hash chain. Each `ProvenanceR
 record_hash_n = SHA-256(parent_hash_{n-1} || sorted_key_json(record_n))
 ```
 
-The chain uses **deterministic sorted-key JSON serialization** to ensure reproducibility across Python versions. Construction is O(n) in the number of governance nodes. `verify_chain_integrity()` validates the full chain on demand. Records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`. Implemented in [`src/gateway/governance/provenance_chain.py`](../src/gateway/governance/provenance_chain.py).
+The chain uses **deterministic sorted-key JSON serialization** to ensure reproducibility across Python versions. Construction is O(n) in the number of governance nodes. `verify_chain_integrity()` validates the full chain on demand. Records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`. Implemented in [`src/gateway/governance/provenance_chain.py`](../../src/gateway/governance/provenance_chain.py).
 
 ---
 
@@ -208,7 +208,7 @@ The chain uses **deterministic sorted-key JSON serialization** to ensure reprodu
 
 ### 9.1 7-Tier Symbolic Governor Pipeline
 
-The `SymbolicGovernor` in [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) enforces a 7-tier pipeline on every `execute_trade` action. The pipeline is **fail-closed**: any tier raising a validation error halts execution and returns `BLOCKED`.
+The `SymbolicGovernor` in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) enforces a 7-tier pipeline on every `execute_trade` action. The pipeline is **fail-closed**: any tier raising a validation error halts execution and returns `BLOCKED`.
 
 | Tier | Name | Mathematical Invariant |
 |------|------|----------------------|
@@ -238,7 +238,7 @@ On approval, the governor returns a short-lived HMAC-SHA256 routing seal:
 <expire_ts_hex>.<action_slug>.<hmac_hex>
 ```
 
-30-second TTL; constant-time `hmac.compare_digest()` verification. The downstream actuator must verify this seal before firing — ensuring execution cannot proceed by ignoring the HTTP response. See [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py).
+30-second TTL; constant-time `hmac.compare_digest()` verification. The downstream actuator must verify this seal before firing — ensuring execution cannot proceed by ignoring the HTTP response. See [`src/gateway/governance/routing_seal.py`](../../src/governed_financial_advisor/utils/routing_seal.py).
 
 ---
 

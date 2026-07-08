@@ -10,7 +10,7 @@
 ## What Was Adapted
 
 The BFS state-space enumerator from `no-direct-bind` was adapted into
-[`proof/model.py`](../../proof/model.py) in this repository.
+`proof/model.py` in this repository.
 
 **Modifications made:**
 - Extended for the CAGE 7-tier governance architecture
