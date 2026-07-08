@@ -53,8 +53,12 @@ jobs:
           echo "All source files have the required Apache 2.0 licensing headers."
 
   pytest-logic:
-    name: "Pytest Logic Tests"
+    name: "Pytest Logic Tests (${{ matrix.region }})"
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        region: [US_FED, EU_ECB, APAC_MAS]
     steps:
       - uses: actions/checkout@v7
       - name: Install uv
@@ -69,6 +73,7 @@ jobs:
         run: uv sync --all-groups --all-extras
       - name: Run Pytest (unit/local)
         env:
+          CAGE_DEPLOYMENT_REGION: ${{ matrix.region }}
           CAGE_ENV: "test"
           OPENAI_API_KEY: "sk-dummy"
           MODEL_REASONING: "casperhansen/deepseek-r1-distill-qwen-14b-awq"
