@@ -66,7 +66,9 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
 
     if isinstance(plan, dict):
         if not plan.get("steps") and plan.get("reasoning"):
-            logger.info("[INFO] Evaluator: Plan has no steps. Treating as Analysis/Safe.")
+            logger.info(
+                "[INFO] Evaluator: Plan has no steps. Treating as Analysis/Safe."
+            )
             return {
                 "evaluation_result": {
                     "verdict": "APPROVED",

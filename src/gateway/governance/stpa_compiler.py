@@ -847,11 +847,7 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
         lines += [
             f"# --- {uca_id}: {uca.description} ---",
             f"# [CTRL_WAL_002] execution_type: {saga.execution_type}"
-            + (
-                f" | mcp_tool_name: {saga.mcp_tool_name}"
-                if saga.mcp_tool_name
-                else ""
-            ),
+            + (f" | mcp_tool_name: {saga.mcp_tool_name}" if saga.mcp_tool_name else ""),
             "",
             f"def {fwd_fn}(state: AgentState) -> dict[str, Any]:",
             f'    """WAL forward node for {uca_id} ({saga.forward_action}).',
