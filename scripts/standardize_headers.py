@@ -51,7 +51,7 @@ def get_comment_syntax(extension):
 
 
 def format_header(extension):
-    prefix, suffix = get_comment_syntax(extension)
+    prefix, _suffix = get_comment_syntax(extension)
     if not prefix:
         return None
 

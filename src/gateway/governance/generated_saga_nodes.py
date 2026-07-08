@@ -169,9 +169,9 @@ def compensate_reverse_trade_node_uca_4(state: AgentState) -> dict[str, Any]:
     idempotency_key = target["idempotency_key"]
 
     # Extract parameters via parameter_mapping
-    target_tx_id = context_data.get("transaction_id")
-    refund_amount = context_data.get("amount")
-    account_id = context_data.get("account_id")
+    _target_tx_id = context_data.get("transaction_id")
+    _refund_amount = context_data.get("amount")
+    _account_id = context_data.get("account_id")
 
     try:
         # Replace with real reverse API call, e.g.:

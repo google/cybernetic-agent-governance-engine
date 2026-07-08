@@ -287,7 +287,7 @@ async def executor_node(state: GovernedTraderState):
             )
         )
 
-        messages = [system_msg] + state.get("messages", [])
+        messages = [system_msg, *state.get("messages", [])]
 
         span.set_attribute("langfuse.observation.input", str(messages))
 
@@ -369,17 +369,18 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
             except (json.JSONDecodeError, TypeError, AttributeError):
                 pass
 
-        _skipped_result = lambda reason: {
-            "rehydration_result": {
-                "status": "SKIPPED",
-                "reason": reason,
-                "ticker": ticker,
-                "fresh_price": None,
-                "stale_price": None,
-                "drift_pct": None,
-                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        def _skipped_result(reason: str) -> dict:
+            return {
+                "rehydration_result": {
+                    "status": "SKIPPED",
+                    "reason": reason,
+                    "ticker": ticker,
+                    "fresh_price": None,
+                    "stale_price": None,
+                    "drift_pct": None,
+                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                }
             }
-        }
 
         if not ticker:
             logger.warning(

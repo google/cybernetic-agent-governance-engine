@@ -126,7 +126,7 @@ async def test_three_agents_sequential_within_cap(guard: FiscalLimitGuard) -> No
 
 @pytest.mark.asyncio
 async def test_fourth_agent_rejected_after_three(guard: FiscalLimitGuard) -> None:
-    """After 3 × $150k, the fourth $150k must be rejected (would hit $600k)."""
+    """After 3 x $150k, the fourth $150k must be rejected (would hit $600k)."""
     for i in range(3):
         await guard.reserve(agent_id=f"agent-{i}", amount_usd=150_000.0)
     token = await guard.reserve(agent_id="agent-3", amount_usd=150_000.0)

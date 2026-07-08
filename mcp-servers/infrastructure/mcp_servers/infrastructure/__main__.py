@@ -384,7 +384,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 
     elif name == "run_deployment_script":
         args = arguments.get("args", [])
-        cmd = [str(DEPLOY_SCRIPT)] + args
+        cmd = [str(DEPLOY_SCRIPT), *args]
 
         returncode, stdout, stderr = await run_command(cmd, timeout=600)
 

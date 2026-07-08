@@ -24,7 +24,7 @@ Problem statement
 -----------------
 The Control Barrier Function (CBF) evaluates:
 
-    h(x) = cash_balance − min_cash_balance
+    h(x) = cash_balance - min_cash_balance
 
 But ``cash_balance`` is written to Redis by the same execution system that
 requests trades.  This creates a recursive self-authentication vulnerability:

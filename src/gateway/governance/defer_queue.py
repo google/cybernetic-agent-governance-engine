@@ -27,7 +27,7 @@ Architecture:
 
   Confidence-Starvation Boundary (approved architectural decision, CAGE v0.1.0):
     ≥ 0.95  →  ALLOW/DENY (Autonomous Clearance via system_authz.rego)
-    0.70–0.95 → MANUAL_REVIEW (human operator sign-off required)
+    0.70-0.95 -> MANUAL_REVIEW (human operator sign-off required)
     < 0.70  →  DEFER (context fundamentally corrupted or missing critical state;
                         forcing human review at this confidence creates operational
                         fatigue — route to automated data-hydration loop instead)
@@ -87,7 +87,7 @@ class DeferReason(str, Enum):
     """OPA input snapshot is missing required fields for a deterministic decision."""
 
     AMBIGUOUS_SEMANTIC_DISTANCE = "AMBIGUOUS_SEMANTIC_DISTANCE"
-    """vLLM sidecar semantic similarity score is within the ambiguity band (0.40–0.60)."""
+    """vLLM sidecar semantic similarity score is within the ambiguity band (0.40-0.60)."""
 
     DATA_STARVATION = "DATA_STARVATION"
     """Langfuse telemetry evidence window is empty or below minimum sample threshold."""
@@ -96,7 +96,7 @@ class DeferReason(str, Enum):
     """model confidence_score < DEFER_CONFIDENCE_THRESHOLD (default 0.70)."""
 
     EXTERNAL_VALIDATION = "EXTERNAL_VALIDATION"
-    """Consensus score in ambiguous zone (0.70–0.95); awaiting external FRIA gate."""
+    """Consensus score in ambiguous zone (0.70-0.95); awaiting external FRIA gate."""
 
 
 # ---------------------------------------------------------------------------

@@ -293,11 +293,13 @@ def thinker_node(state):
     # Prune history to last 4 exchanges (8 messages) to stay within the
     # vLLM max-model-len of 16 384 tokens on the NVIDIA L4 24 GB node.
     pruned_history = _prune_message_history(state["messages"][:-1], max_pairs=4)
-    messages_to_pass = (
-        [system_prompt] + pruned_history + [HumanMessage(content=augmented_message)]
-    )
+    messages_to_pass = [
+        system_prompt,
+        *pruned_history,
+        HumanMessage(content=augmented_message),
+    ]
 
-    with genai_span(name="reasoning", model=os.getenv("MODEL_REASONING")) as span:
+    with genai_span(name="reasoning", model=os.getenv("MODEL_REASONING")):
         # 1. Run Thinker Agent (The "Brain")
         response = _get_reasoner_llm().invoke(messages_to_pass)
 
@@ -374,7 +376,7 @@ def doer_node(state):
 
         with genai_span(
             name="final_response_generation", model=os.getenv("MODEL_FAST")
-        ) as final_span:
+        ):
             final_response = _get_fast_llm().invoke(
                 [final_gen_system_prompt, final_gen_human_prompt]
             )

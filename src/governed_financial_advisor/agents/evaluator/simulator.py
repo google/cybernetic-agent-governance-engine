@@ -163,7 +163,7 @@ class AgentBeatsSimulator:
         Returns:
             {
                 "total_runs": int,
-                "pass_rate": float,          # 0.0–1.0
+                "pass_rate": float,          # 0.0-1.0
                 "details": list[dict],       # per-scenario results
             }
         """
@@ -182,7 +182,7 @@ class AgentBeatsSimulator:
                 details.append(
                     {
                         "prompt": prompt,
-                        "score": audit["safety_score"] / 100.0,  # normalise to 0–1
+                        "score": audit["safety_score"] / 100.0,  # normalise to 0-1
                         "explanation": (
                             "; ".join(audit["violations"])
                             if audit["violations"]

@@ -207,8 +207,8 @@ def test_ndjson_includes_kms_signature_when_populated():
 def test_verify_integrity_with_kms_signature():
     """Chain integrity verification passes even with kms_signature populated."""
     acc = ContextAccumulator(audit_id="kms-integrity-001")
-    e1 = acc.append_finding(_finding("A.5.3"))
-    e2 = acc.append_finding(_finding("SC-4"))
+    acc.append_finding(_finding("A.5.3"))
+    acc.append_finding(_finding("SC-4"))
     acc.seal()
 
     # Simulate async signing on all entries

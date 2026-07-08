@@ -405,7 +405,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install Gitleaks
+        run: |
+          GITLEAKS_VERSION="8.27.2"
+          curl -sSfL \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
       - name: Run Gitleaks secret scan
-        uses: gitleaks/gitleaks-action@v3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # gitleaks/gitleaks-action@v3 requires a paid org license (gitleaks.io).
+        # Using the free OSS CLI directly instead — identical detection capability.
+        run: |
+          gitleaks detect \
+            --source . \
+            --log-opts "HEAD~1..HEAD" \
+            --redact \
+            --verbose \
+            --exit-code 1

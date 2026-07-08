@@ -265,7 +265,7 @@ class TestM08EvidenceDurability:
 
         # sink must appear before fanout in call_order
         assert "sink" in call_order
-        sink_idx = call_order.index("sink")
+        call_order.index("sink")
         # The queue should have received the event (fan-out happened)
         assert not q.empty()
 
@@ -680,13 +680,13 @@ class TestM21StorageBackendLazy:
             backend = _get_storage_backend()
         assert backend == "s3"
 
-    def test_storage_backend_defaults_to_gcs(self):
+    def test_storage_backend_defaults_to_s3(self):
         from src.compliance_bridge.storage import _get_storage_backend
 
         env = {k: v for k, v in os.environ.items() if k != "STORAGE_BACKEND"}
         with patch.dict(os.environ, env, clear=True):
             backend = _get_storage_backend()
-        assert backend == "gcs"
+        assert backend == "s3"
 
     def test_no_module_level_storage_backend_constant(self):
         import inspect

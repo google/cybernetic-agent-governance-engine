@@ -364,7 +364,7 @@ class TestSlaMonitor:
                 await _fire_sla_alerts(["A.9.2"])
 
         mock_notifier.send_critical_alert.assert_called_once()
-        findings, audit_id = mock_notifier.send_critical_alert.call_args[0]
+        findings, _audit_id = mock_notifier.send_critical_alert.call_args[0]
         assert len(findings) == 1
         assert findings[0].control_id == "A.9.2"
         assert findings[0].result == "FAIL"

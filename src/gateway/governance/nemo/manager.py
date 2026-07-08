@@ -693,7 +693,7 @@ def _extract_bot_response(res: Any) -> str:
 
     Deduplication: NeMo's Colang 2.x runtime can accumulate repeated bot
     utterances when a flow loops (e.g. catch_all re-triggering after a block).
-    We extract the *first unique sentence* to avoid the 51× repetition bug.
+    We extract the *first unique sentence* to avoid the 51x repetition bug.
     """
     if res is None:
         return ""

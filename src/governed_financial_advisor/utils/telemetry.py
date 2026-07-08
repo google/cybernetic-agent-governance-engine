@@ -400,7 +400,7 @@ def configure_telemetry():
             # No endpoint configured — otel-collector (port 4318) is deprecated.
             # Skip OTLP exporter entirely to avoid retry-loop timeouts in tests.
             logger.info(
-                "ℹ️  OpenTelemetry: OTLP export skipped — no OTEL_EXPORTER_OTLP_ENDPOINT or "
+                "[INFO] OpenTelemetry: OTLP export skipped - no OTEL_EXPORTER_OTLP_ENDPOINT or "
                 "LANGFUSE_HOST configured. Set LANGFUSE_HOST + keys to enable telemetry "
                 "via Langfuse's integrated OTel collector."
             )

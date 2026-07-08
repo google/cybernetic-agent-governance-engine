@@ -45,11 +45,11 @@ def main():
     print("🚀 Starting Final Verification Suite 🚀\n")
     if cage_region:
         print(
-            f"ℹ️  CAGE_DEPLOYMENT_REGION={cage_region} — jurisdiction-specific checks active"
+            f"[INFO] CAGE_DEPLOYMENT_REGION={cage_region} - jurisdiction-specific checks active"
         )
     else:
         print(
-            "ℹ️  CAGE_DEPLOYMENT_REGION not set — running universal ISO 42001 checks only"
+            "[INFO] CAGE_DEPLOYMENT_REGION not set - running universal ISO 42001 checks only"
         )
     print()
     success = True

@@ -832,7 +832,7 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
 
         return NexArtAttestationProvider()
 
-    valid = list(_PROVIDERS.keys()) + ["trustlayers", "nexart"]
+    valid = [*_PROVIDERS.keys(), "trustlayers", "nexart"]
     raise ValueError(
         f"Unknown normative provider: {provider_name!r}. Available providers: {valid}."
     )

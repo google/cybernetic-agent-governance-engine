@@ -33,7 +33,7 @@ GovernanceEvent wire shape (JSON-serialised in the SSE ``data`` field):
       "traceId":    "<langfuse-trace-id>" | null,
       "controlId":  "<ISO-control-id>",
       "result":     "PASS" | "FAIL" | "NOT_APPLICABLE" | null,
-      "safetyRate": <float 0–1> | null,
+      "safetyRate": <float 0-1> | null,
       "auditId":    "<audit-run-uuid>",
       "timestamp":  "<ISO-8601-UTC>"
     }

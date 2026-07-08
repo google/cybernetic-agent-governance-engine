@@ -162,12 +162,12 @@ class AsyncRedisClient:
 
         # 2. Fallback to Standard Connection
         try:
-            pool_kwargs: dict = dict(
-                max_connections=100,
-                socket_connect_timeout=2.0,
-                socket_timeout=5.0,
-                decode_responses=True,
-            )
+            pool_kwargs: dict = {
+                "max_connections": 100,
+                "socket_connect_timeout": 2.0,
+                "socket_timeout": 5.0,
+                "decode_responses": True,
+            }
             if self.use_tls:
                 pool_kwargs["ssl"] = True
                 cage_env = os.getenv(

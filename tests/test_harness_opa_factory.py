@@ -54,13 +54,13 @@ def _trade_extractor(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _make_config(**overrides) -> OpaNodeConfig:
-    defaults = dict(
-        policy_action_name="execute_trade",
-        payload_extractor=_trade_extractor,
-        plan_state_key="plan",
-        status_state_key="safety_status",
-        error_state_key="error",
-    )
+    defaults = {
+        "policy_action_name": "execute_trade",
+        "payload_extractor": _trade_extractor,
+        "plan_state_key": "plan",
+        "status_state_key": "safety_status",
+        "error_state_key": "error",
+    }
     defaults.update(overrides)
     return OpaNodeConfig(**defaults)
 

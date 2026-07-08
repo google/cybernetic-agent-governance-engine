@@ -50,7 +50,7 @@ class CbfThresholds(BaseModel):
     min_cash_balance: float = Field(
         ..., gt=0, description="Minimum cash balance floor (USD)."
     )
-    gamma: float = Field(..., gt=0, lt=1, description="CBF decay factor γ ∈ (0,1).")
+    gamma: float = Field(..., gt=0, lt=1, description="CBF decay factor g in (0,1).")
 
 
 class DrawdownThresholds(BaseModel):

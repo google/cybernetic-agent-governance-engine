@@ -148,7 +148,7 @@ class TestTradeGovernanceRego:
 
     @pytest.mark.asyncio
     async def test_junior_trade_5k_to_10k_manual_review(self):
-        """Junior trade $5 001 – $10 000 must require MANUAL_REVIEW."""
+        """Junior trade $5 001 - $10 000 must require MANUAL_REVIEW."""
         result = await _query_opa(
             {
                 "action": "execute_trade",
@@ -191,7 +191,7 @@ class TestTradeGovernanceRego:
 
     @pytest.mark.asyncio
     async def test_senior_trade_500k_to_1m_manual_review(self):
-        """Senior trade $500 001 – $1 000 000 must require MANUAL_REVIEW."""
+        """Senior trade $500 001 - $1 000 000 must require MANUAL_REVIEW."""
         result = await _query_opa(
             {
                 "action": "execute_trade",

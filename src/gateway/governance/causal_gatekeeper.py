@@ -106,7 +106,7 @@ CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE: float = float(
 #   the estimated_marginal_effect is the linear regression coefficient
 #   multiplied by the trade amount.
 #   Rationale: 0.95 leaves a 5% safety margin below the maximum risk score
-#   of 1.0, consistent with the CBF γ=0.5 decay factor.
+#   of 1.0, consistent with the CBF g=0.5 decay factor.
 CAUSAL_LOCK_RISK_BOUNDARY: float = float(os.getenv("CAUSAL_LOCK_RISK_BOUNDARY", "0.95"))
 
 # NOTE: Timestamp-based ordering is a best-effort approximation. For production,

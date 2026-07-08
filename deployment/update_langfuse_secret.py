@@ -17,8 +17,8 @@
 Idempotently creates / updates the two Kubernetes Secrets required by the
 Langfuse stack in the governance-stack namespace:
 
-  1. advisor-secrets   – patches DATABASE_URL with the Cloud SQL private IP.
-  2. langfuse-secrets  – creates (or updates) the Langfuse init keys:
+  1. advisor-secrets   - patches DATABASE_URL with the Cloud SQL private IP.
+  2. langfuse-secrets  - creates (or updates) the Langfuse init keys:
                             init-project-id, init-user-email, init-user-password
                          These are read from env vars or prompted interactively.
                          Missing langfuse-secrets is the root cause of the
@@ -146,9 +146,9 @@ def ensure_langfuse_secrets(namespace: str = "governance-stack") -> None:
     Its absence causes CreateContainerConfigError on every pod start.
 
     Keys managed:
-      init-project-id      – stable UUID for the Langfuse project
-      init-user-email      – initial admin user e-mail
-      init-user-password   – initial admin user password
+      init-project-id      - stable UUID for the Langfuse project
+      init-user-email      - initial admin user e-mail
+      init-user-password   - initial admin user password
     """
     print("\n── langfuse-secrets ──────────────────────────────────────────────")
 
@@ -175,7 +175,7 @@ def ensure_langfuse_secrets(namespace: str = "governance-stack") -> None:
     ).returncode
 
     if exists_rc == 0:
-        print("ℹ️  langfuse-secrets already exists — patching keys…")
+        print("[INFO] langfuse-secrets already exists - patching keys...")
         # Read, merge, re-apply.
         raw = run(f"kubectl get secret langfuse-secrets -n {namespace} -o json")
         obj = json.loads(raw)
@@ -189,7 +189,7 @@ def ensure_langfuse_secrets(namespace: str = "governance-stack") -> None:
         run(f"kubectl apply -f {tmp}")
         os.remove(tmp)
     else:
-        print("➕ Creating langfuse-secrets…")
+        print("[+] Creating langfuse-secrets...")
         run(
             f"kubectl create secret generic langfuse-secrets"
             f" --from-literal=init-project-id={project_id_val}"
@@ -232,7 +232,7 @@ def main() -> None:
             print("    Continuing to langfuse-secrets step…")
     else:
         print(
-            "ℹ️  GOOGLE_CLOUD_PROJECT or DATABASE_URL not set — "
+            "[INFO] GOOGLE_CLOUD_PROJECT or DATABASE_URL not set - "
             "skipping advisor-secrets DATABASE_URL patch."
         )
 

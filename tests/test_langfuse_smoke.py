@@ -107,7 +107,7 @@ def test_langfuse_trace_ingestion():
     Marked integration: requires live Langfuse + ClickHouse + langfuse-worker.
     Run with: uv run pytest tests/test_langfuse_smoke.py --run-integration
     ClickHouse buffer flush can take >90s on single-node deployments with Redis
-    queue delays; retry window extended to 18 attempts × 10s = 180s.
+    queue delays; retry window extended to 18 attempts x 10s = 180s.
     """
     _host = os.environ.get("LANGFUSE_HOST", LANGFUSE_HOST)
     _pk = os.environ.get(
@@ -181,7 +181,7 @@ def test_langfuse_trace_ingestion():
     verify_url = f"{_host.rstrip('/')}/api/public/traces"
     params = {"name": trace_name, "limit": 10, "projectId": "cybernetic-governance"}
 
-    # Try looking for the trace for up to 180 seconds (18 attempts × 10s).
+    # Try looking for the trace for up to 180 seconds (18 attempts x 10s).
     # Single-node ClickHouse with Redis queue delays can take >90s to flush.
     found = False
     for attempt in range(1, 19):

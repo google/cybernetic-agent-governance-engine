@@ -86,7 +86,7 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
     logger.info("🛡️ Explainer Node: Acting as Formal Governance Auditor.")
     tracer = get_tracer()
 
-    with tracer.start_as_current_span("Auditor: GovernanceVerification") as span:
+    with tracer.start_as_current_span("Auditor: GovernanceVerification"):
         # 1. Audit Trail Extraction
         sig_status = verify_hmac_signature(state)
         opa_results = state.get("opa_results")

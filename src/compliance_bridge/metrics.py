@@ -91,13 +91,13 @@ _validate_langfuse_credentials()
 # Short timeout for Langfuse API calls — prevents the metrics endpoint from
 # blocking indefinitely when Langfuse is slow or unreachable.
 # LANGFUSE_API_TIMEOUT_S env var allows tuning; default 5s.
-# Reduced from 8s: with 13 controls × asyncio.to_thread, thread pool contention
-# at 8s caused gather timeouts. 5s × 13 parallel = ~5s wall-clock (no starvation).
+# Reduced from 8s: with 13 controls x asyncio.to_thread, thread pool contention
+# at 8s caused gather timeouts. 5s x 13 parallel = ~5s wall-clock (no starvation).
 _LANGFUSE_API_TIMEOUT_S: float = float(os.environ.get("LANGFUSE_API_TIMEOUT_S", "5"))
 
 # Semaphore to cap concurrent Langfuse API calls — prevents thread pool exhaustion
 # when metrics/summary, oscal-export, and aarm-report are called concurrently.
-# 6 concurrent calls × 5s = 5s wall-clock for 13 controls (two batches).
+# 6 concurrent calls x 5s = 5s wall-clock for 13 controls (two batches).
 _LANGFUSE_CONCURRENCY = asyncio.Semaphore(6)
 
 

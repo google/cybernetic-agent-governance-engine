@@ -73,7 +73,7 @@ async def test_red_agent_latency_attack(symbolic_governor):
     Red Agent generates 'Context Overflow' attack which we simulate as high latency params.
     """
     red_agent = RedAgent()
-    attack = red_agent.generate_attack(target_uca_id="UCA-2")
+    red_agent.generate_attack(target_uca_id="UCA-2")
 
     # Simulate the effect of the attack: Latency spike
     # In a real integration test, we'd inject the prompt and measure latency.
@@ -101,7 +101,7 @@ async def test_red_agent_authorization_attack(symbolic_governor):
     Red Agent generates 'Prompt Injection' to ignore auth.
     """
     red_agent = RedAgent()
-    attack = red_agent.generate_attack(target_uca_id="UCA-1")
+    red_agent.generate_attack(target_uca_id="UCA-1")
 
     # Simulate attack: Params missing approval_token
     params = {
