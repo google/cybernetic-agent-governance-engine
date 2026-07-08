@@ -53,7 +53,9 @@ async def require_api_key(
 
     # In dev with no API key configured, allow through with warning.
     # This preserves local development ergonomics without compromising prod.
-    if cage_env == "dev" and not api_key:
+    # Accept both "dev" and "development" — Kubernetes deployments commonly use
+    # CAGE_ENV=development (the full word) while local scripts use CAGE_ENV=dev.
+    if cage_env in ("dev", "development") and not api_key:
         logger.warning("CAGE_API_KEY not set — authentication disabled in dev mode")
         return "dev-unauthenticated"
 
