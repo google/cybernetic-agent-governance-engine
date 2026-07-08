@@ -54,18 +54,14 @@ from src.gateway.governance.langgraph_harness.types import (
 )
 
 __all__ = [
-    # Config
-    "OpaNodeConfig",
-    "NemoNodeConfig",
-    # Type aliases
-    "StateDict",
-    "PayloadExtractor",
     "MessageExtractor",
+    "NemoNodeConfig",
+    "OpaNodeConfig",
+    "PayloadExtractor",
+    "StateDict",
     "ThreadIdExtractor",
-    # OPA factories
-    "create_opa_safety_node",
-    "create_opa_safety_router",
-    # NeMo factories
     "create_nemo_guardrail_node",
     "create_nemo_output_rail_node",
+    "create_opa_safety_node",
+    "create_opa_safety_router",
 ]

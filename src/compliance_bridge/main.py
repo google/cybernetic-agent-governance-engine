@@ -197,7 +197,7 @@ async def lifespan(app: FastAPI):
         if _env_for_kms == "prod":
             _batch_signer.assert_kms_active_in_production()
     else:
-        logger.info("ℹ️ KMS batch signer disabled (KMS_BATCH_ENABLED != true)")
+        logger.info("[INFO] KMS batch signer disabled (KMS_BATCH_ENABLED != true)")
 
     # Start background tasks
     _sla_task = asyncio.create_task(run_sla_monitor(), name="sla-monitor")

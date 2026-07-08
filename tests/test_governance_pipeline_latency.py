@@ -124,15 +124,15 @@ def _trade_extractor(state: dict[str, Any]) -> dict[str, Any]:
 
 def _make_opa_config(**overrides) -> OpaNodeConfig:
     """Build a minimal OpaNodeConfig for latency tests."""
-    defaults: dict[str, Any] = dict(
-        policy_action_name="execute_trade",
-        payload_extractor=_trade_extractor,
-        plan_state_key="execution_plan_output",
-        status_state_key="safety_status",
-        error_state_key="error",
-        iso_control="A.10.1",
-        iso_tier=2,
-    )
+    defaults: dict[str, Any] = {
+        "policy_action_name": "execute_trade",
+        "payload_extractor": _trade_extractor,
+        "plan_state_key": "execution_plan_output",
+        "status_state_key": "safety_status",
+        "error_state_key": "error",
+        "iso_control": "A.10.1",
+        "iso_tier": 2,
+    }
     defaults.update(overrides)
     return OpaNodeConfig(**defaults)
 
@@ -564,7 +564,7 @@ class TestTier1LatencyP95:
     async def test_tier1_latency_p95(self, n_runs: int):
         """Run Tier 1 node n_runs times and assert p95 < TIER1_NEMO_INPUT_BUDGET_MS * 2.
 
-        The 2× multiplier provides headroom for p95 tail latency under
+        The 2x multiplier provides headroom for p95 tail latency under
         test-environment jitter while still catching pathological regressions.
         """
         node = create_nemo_guardrail_node(NemoNodeConfig())
@@ -591,6 +591,6 @@ class TestTier1LatencyP95:
         )
 
         assert p95_ms < budget_p95, (
-            f"Tier 1 p95 latency {p95_ms:.2f}ms exceeded 2× budget "
+            f"Tier 1 p95 latency {p95_ms:.2f}ms exceeded 2x budget "
             f"{budget_p95:.0f}ms (mean={mean_ms:.2f}ms, max={max_ms:.2f}ms)"
         )

@@ -33,7 +33,7 @@ class TestDeploymentConfig(unittest.TestCase):
         # Check for 2 containers (Agent + Sidecar)
         self.assertEqual(len(containers), 2)
 
-        agent = next(c for c in containers if c["name"] == "ingress-agent")
+        next(c for c in containers if c["name"] == "ingress-agent")
         sidecar = next(c for c in containers if c["name"] == "governance-sidecar")
 
         # Check OPA Image Pinned

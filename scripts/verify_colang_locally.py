@@ -25,7 +25,7 @@ def test_colang_syntax():
     print("🔍 Verifying Colang syntax in config/rails/...")
     try:
         # Attempt to load rails
-        rails = load_rails()
+        load_rails()
         print("✅ Colang syntax is VALID.")
         return 0
     except Exception as e:

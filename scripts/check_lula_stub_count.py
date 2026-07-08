@@ -298,7 +298,7 @@ def _load_poam_references(poam_path: Path) -> dict[str, list[str]]:
     manifest_to_poam: dict[str, list[str]] = {}
 
     it = iter(splits[1:])  # skip preamble
-    for poam_id, body in zip(it, it):
+    for poam_id, body in zip(it, it, strict=False):
         # Find all manifest filenames mentioned in this entry's body
         for match in re.finditer(r"lula-validation-[\w-]+\.yaml", body):
             fname = match.group(0)

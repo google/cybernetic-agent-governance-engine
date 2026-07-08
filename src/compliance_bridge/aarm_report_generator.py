@@ -91,7 +91,7 @@ def _build_narrative_prompt(result: AARMVectorResult) -> str:
     return f"""You are a cybersecurity engineer writing the AARM Conformance Report Card
 for the Cybernetic Governance Engine (CAGE).
 
-Write a concise, professional 2–3 paragraph conformance narrative for this threat vector.
+Write a concise, professional 2-3 paragraph conformance narrative for this threat vector.
 The narrative should explain HOW the listed controls neutralize the attack, referencing
 the specific implementation mechanisms. Tone: technical but accessible to a security examiner.
 
@@ -112,7 +112,7 @@ IMPLEMENTATION NOTES
 {result.notes}
 
 REQUIRED FORMAT:
-- 2–3 tight paragraphs (max 300 words total)
+- 2-3 tight paragraphs (max 300 words total)
 - Reference specific file names and mechanism names
 - Close with one sentence on how Lula/OSCAL provides machine-readable proof
 - No bullet points in the narrative prose
@@ -228,5 +228,5 @@ async def enrich_report_with_narratives(
 
     return {
         result.vector_id: narrative
-        for result, narrative in zip(report.vectors, narratives_list)
+        for result, narrative in zip(report.vectors, narratives_list, strict=False)
     }

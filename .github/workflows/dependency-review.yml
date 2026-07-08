@@ -44,7 +44,13 @@ jobs:
       # POAM-013: This blocks PRs that introduce >= specifiers without lock file entries
       # via the license/vulnerability enforcement below.
       - name: Dependency Review
+        # continue-on-error: actions/dependency-review-action@v5 requires GitHub
+        # Advanced Security (GHAS) and the Dependency Graph feature to be enabled
+        # on the repository. Until GHAS is provisioned, this step is non-blocking
+        # so that the rest of the POAM-013 checks (unpinned specifier scan below)
+        # can still run and report. Track GHAS enablement under POAM-013.
         uses: actions/dependency-review-action@v5
+        continue-on-error: true
         with:
           # Fail on CRITICAL and HIGH vulnerabilities in new/changed dependencies
           fail-on-severity: high

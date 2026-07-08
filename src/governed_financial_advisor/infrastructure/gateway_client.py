@@ -135,7 +135,7 @@ class GatewayClient:
             timeout:           HTTP timeout in seconds (default 60s).  OPA cold-start
                                can take up to 20s on the first evaluation after a pod
                                rollout; 60s covers that with a safety margin.  Warm
-                               steady-state evaluations complete in 30–80ms.
+                               steady-state evaluations complete in 30-80ms.
 
         Returns:
             Dict with keys:

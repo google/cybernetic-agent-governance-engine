@@ -65,8 +65,8 @@ class EvaluatorAuditor:
 
     audit_trace() returns a dict with:
       - verdict: "PASS" | "FAIL"
-      - safety_score: float 0–100
-      - quality_score: float 0–1
+      - safety_score: float 0-100
+      - quality_score: float 0-1
       - violations: list of violation message strings
     """
 
@@ -186,8 +186,8 @@ class EvaluatorAuditor:
         Returns:
             {
                 "verdict": "PASS" | "FAIL",
-                "safety_score": float,   # 0–100
-                "quality_score": float,  # 0–1
+                "safety_score": float,   # 0-100
+                "quality_score": float,  # 0-1
                 "violations": list[str]
             }
         """

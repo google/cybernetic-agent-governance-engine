@@ -213,7 +213,6 @@ def test_tamper_node0_propagates_failure_to_node1():
 
     # Mutate node 0's record_hash to simulate a sophisticated tampering attempt
     # where the attacker also updates the hash but not the actual content.
-    original_hash = acc._entries[0].record_hash
     acc._entries[0].record_hash = _sha256("FAKE_HASH_INJECTED")
 
     valid, fail_at = acc.verify_integrity()

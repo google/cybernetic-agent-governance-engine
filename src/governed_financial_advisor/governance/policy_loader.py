@@ -209,7 +209,7 @@ def get_redis_quota_snapshot(
         - ``agent_id``           — echoed from caller
         - ``tokens_used``        — counter from Redis (int)
         - ``token_budget``       — configured budget (int)
-        - ``remaining_tokens``   — budget − tokens_used (int)
+        - ``remaining_tokens``   — budget - tokens_used (int)
         - ``quota_exhausted``    — True if remaining_tokens <= 0
         - ``below_min_reserve``  — True if remaining < min_reserve_fraction * budget
         - ``quota_available``    — True if quota data was read successfully

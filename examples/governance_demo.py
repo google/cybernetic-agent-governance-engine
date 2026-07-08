@@ -81,14 +81,36 @@ def _c(code: str, text: str) -> str:
     return f"\033[{code}m{text}\033[0m" if _TTY else text
 
 
-RED = lambda t: _c("31;1", t)
-GREEN = lambda t: _c("32;1", t)
-YELLOW = lambda t: _c("33;1", t)
-CYAN = lambda t: _c("36;1", t)
-MAGENTA = lambda t: _c("35;1", t)
-BOLD = lambda t: _c("1", t)
-DIM = lambda t: _c("2", t)
-WHITE = lambda t: _c("97", t)
+def RED(t: str) -> str:
+    return _c("31;1", t)
+
+
+def GREEN(t: str) -> str:
+    return _c("32;1", t)
+
+
+def YELLOW(t: str) -> str:
+    return _c("33;1", t)
+
+
+def CYAN(t: str) -> str:
+    return _c("36;1", t)
+
+
+def MAGENTA(t: str) -> str:
+    return _c("35;1", t)
+
+
+def BOLD(t: str) -> str:
+    return _c("1", t)
+
+
+def DIM(t: str) -> str:
+    return _c("2", t)
+
+
+def WHITE(t: str) -> str:
+    return _c("97", t)
 
 
 def _hr(char: str = "─", width: int = 76) -> None:
@@ -269,7 +291,7 @@ def act2_hitl_rationale(interactive: bool, evidence_dir: Path) -> bool:
 
     _step("Graph interrupted", f"thread_id={thread_id}")
     _info(
-        f"Trade: {trade_info['quantity']} × {trade_info['ticker']}  "
+        f"Trade: {trade_info['quantity']} x {trade_info['ticker']}  "
         f"@ ${trade_info['price']:,.2f}  =  ${trade_info['total_usd']:,.0f}"
     )
     _warn(f"risk_score={trade_info['risk_score']}  >  threshold=0.70  →  HITL required")
@@ -483,7 +505,7 @@ def _summary(results: dict[str, bool]) -> None:
         ),
     ]
 
-    for (act, title, detail), ok in zip(rows, results.values()):
+    for (act, title, detail), ok in zip(rows, results.values(), strict=False):
         status = GREEN("PASS") if ok else RED("FAIL")
         print(f"  {status}  {BOLD(act)}  {title}")
         _info(detail)

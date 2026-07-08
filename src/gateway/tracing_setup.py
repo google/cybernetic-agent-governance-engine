@@ -192,7 +192,7 @@ def setup_tracing() -> None:
             _otlp_endpoint, _otlp_headers = _resolve_otlp_endpoint_and_headers()
             if not _otlp_endpoint:
                 logger.info(
-                    "ℹ️  OTel OTLP export skipped — no OTEL_EXPORTER_OTLP_ENDPOINT or "
+                    "[INFO] OTel OTLP export skipped - no OTEL_EXPORTER_OTLP_ENDPOINT or "
                     "LANGFUSE_HOST configured. Set LANGFUSE_HOST + keys to enable "
                     "telemetry via Langfuse's integrated OTel collector."
                 )

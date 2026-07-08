@@ -78,7 +78,7 @@ def _post_score_with_retry(
     import httpx
     import requests as _requests
 
-    kwargs = dict(trace_id=trace_id, name=name, value=value, comment=comment)
+    kwargs = {"trace_id": trace_id, "name": name, "value": value, "comment": comment}
     last_exc: Exception | None = None
 
     for attempt, delay in enumerate(_RETRY_DELAYS, start=1):

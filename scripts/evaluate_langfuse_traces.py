@@ -36,7 +36,7 @@ from src.governed_financial_advisor.governance.structs import (
     GOVERNANCE_BLOCK_SENTINELS as _GOVERNANCE_BLOCK_SENTINELS,
 )
 
-# Predetermined 1-5 score for a governance-blocked response (normalised later to 0–1).
+# Predetermined 1-5 score for a governance-blocked response (normalised later to 0-1).
 # 5 = best: the system did the right thing by blocking the request.
 _GOVERNANCE_BLOCK_SCORE = 5
 _GOVERNANCE_BLOCK_REASONING = (
@@ -69,7 +69,7 @@ def _post_score_with_retry(
     import httpx
     import requests as _requests
 
-    kwargs = dict(trace_id=trace_id, name=name, value=value, comment=comment)
+    kwargs = {"trace_id": trace_id, "name": name, "value": value, "comment": comment}
     last_exc: Exception | None = None
 
     for attempt, delay in enumerate(_RETRY_DELAYS, start=1):
@@ -226,8 +226,8 @@ def evaluate_production_traces():
             # the LLM and post a predetermined score instead.
             if _is_governance_blocked(str(response_text)):
                 print(
-                    f"  ℹ️  Governance-blocked response detected for trace "
-                    f"{trace_id} — posting predetermined score "
+                    f"  [INFO] Governance-blocked response detected for trace "
+                    f"{trace_id} - posting predetermined score "
                     f"{_GOVERNANCE_BLOCK_SCORE}/5 (no LLM judge call)."
                 )
                 normalised = (_GOVERNANCE_BLOCK_SCORE - 1.0) / 4.0

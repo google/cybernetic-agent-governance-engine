@@ -37,7 +37,7 @@ def list_and_clean_prompts():
     # We will use the REST API directly or the Fern client.
     from langfuse.api.client import FernLangfuse
 
-    api = FernLangfuse(
+    FernLangfuse(
         username=os.environ["LANGFUSE_PUBLIC_KEY"],
         password=os.environ["LANGFUSE_SECRET_KEY"],
         base_url=os.environ.get("LANGFUSE_HOST", "http://localhost:3000"),

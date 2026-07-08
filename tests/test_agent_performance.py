@@ -33,7 +33,6 @@ class AgentBenchmark:
         print(f"🔧 Initialized Benchmark for Agent @ {self.endpoint}")
 
     def run_inference(self, prompt: str):
-        user_id = str(uuid.uuid4())
         session_id = str(
             uuid.uuid4()
         )  # Assuming a session_id is needed for the new query_agent signature

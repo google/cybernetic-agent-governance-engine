@@ -34,7 +34,7 @@ Steps:
 
 AUDIT INTEGRITY SAFEGUARDS:
   - Lula validation result is NOT influenced by LLM output.
-  - Steps 1–4 are fully deterministic.
+  - Steps 1-4 are fully deterministic.
   - Human review is required before applying any suggestion (ISO 42001 A.7.2).
   - LLM model version and trace IDs are logged to the Langfuse compliance
     project for reproducibility.
