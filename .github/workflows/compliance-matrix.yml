@@ -19,7 +19,7 @@ on:
   workflow_call:
     inputs:
       lula_version:
-        description: "Lula1 binary version to install (defenseunicorns-labs/lula1)"
+        description: "Lula binary version to install (defenseunicorns/lula)"
         type: string
         required: false
         default: "v0.9.5"
@@ -28,7 +28,7 @@ on:
   workflow_dispatch:
     inputs:
       lula_version:
-        description: "Lula1 binary version to install (defenseunicorns-labs/lula1)"
+        description: "Lula binary version to install (defenseunicorns/lula)"
         type: string
         required: false
         default: "v0.9.5"
@@ -46,10 +46,8 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.11"
-  # NOTE: lula1 (defenseunicorns-labs/lula1) is the Go CLI compliance validator.
-  # lula2 (defenseunicorns/lula) is a separate SvelteKit UI tool — do NOT use
-  # github.com/defenseunicorns/lula for binary downloads; that repo no longer
-  # ships the Go CLI. See: https://github.com/defenseunicorns-labs/lula1
+  # Lula (defenseunicorns/lula) is the Go CLI compliance validator.
+  # Binary releases: https://github.com/defenseunicorns/lula/releases
   LULA_VERSION: ${{ inputs.lula_version || 'v0.9.5' }}
 
 # ---------------------------------------------------------------------------
@@ -81,20 +79,19 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
-      - name: Install Lula1 binary
-        # lula1 moved to defenseunicorns-labs/lula1 when defenseunicorns/lula
-        # was repurposed for the lula2 SvelteKit UI. Always download from the
-        # correct repo. Falls back to go install if the release asset 404s.
+      - name: Install Lula binary
+        # Official Lula Go CLI: https://github.com/defenseunicorns/lula
+        # Falls back to go install if the release asset is unavailable.
         run: |
           LULA_VERSION="${{ env.LULA_VERSION }}"
-          LULA_URL="https://github.com/defenseunicorns-labs/lula1/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64"
-          echo "Installing lula1 ${LULA_VERSION} from defenseunicorns-labs/lula1..."
+          LULA_URL="https://github.com/defenseunicorns/lula/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64"
+          echo "Installing lula ${LULA_VERSION} from defenseunicorns/lula..."
           if curl -fsSL "${LULA_URL}" -o /usr/local/bin/lula 2>/dev/null; then
             chmod +x /usr/local/bin/lula
-            echo "lula1 installed via release binary"
+            echo "lula installed via release binary"
           else
             echo "Release binary not found at ${LULA_URL} — falling back to go install"
-            go install github.com/defenseunicorns-labs/lula1/cmd/lula@${LULA_VERSION}
+            go install github.com/defenseunicorns/lula/cmd/lula@${LULA_VERSION}
             cp "$(go env GOPATH)/bin/lula" /usr/local/bin/lula
           fi
           lula version
@@ -174,18 +171,18 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
-      - name: Install Lula1 binary
-        # lula1 moved to defenseunicorns-labs/lula1. See universal-iso42001 job comment.
+      - name: Install Lula binary
+        # Official Lula Go CLI: https://github.com/defenseunicorns/lula
         run: |
           LULA_VERSION="${{ env.LULA_VERSION }}"
-          LULA_URL="https://github.com/defenseunicorns-labs/lula1/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64"
-          echo "Installing lula1 ${LULA_VERSION} from defenseunicorns-labs/lula1..."
+          LULA_URL="https://github.com/defenseunicorns/lula/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64"
+          echo "Installing lula ${LULA_VERSION} from defenseunicorns/lula..."
           if curl -fsSL "${LULA_URL}" -o /usr/local/bin/lula 2>/dev/null; then
             chmod +x /usr/local/bin/lula
-            echo "lula1 installed via release binary"
+            echo "lula installed via release binary"
           else
             echo "Release binary not found at ${LULA_URL} — falling back to go install"
-            go install github.com/defenseunicorns-labs/lula1/cmd/lula@${LULA_VERSION}
+            go install github.com/defenseunicorns/lula/cmd/lula@${LULA_VERSION}
             cp "$(go env GOPATH)/bin/lula" /usr/local/bin/lula
           fi
           lula version
