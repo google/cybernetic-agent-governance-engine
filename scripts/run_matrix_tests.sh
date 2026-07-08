@@ -108,6 +108,18 @@ header "Phase 0 — Universal ISO 42001 Gates"
 
 PHASE0_FAILURES=0
 
+# ---------------------------------------------------------------------------
+# Phase: Pytest unit tests (region-scoped, -m local)
+# Runs before Lula/OPA checks so fast unit failures surface first.
+# ---------------------------------------------------------------------------
+echo "=== Phase: Pytest unit tests (CAGE_DEPLOYMENT_REGION=${CAGE_REGION}) ==="
+mkdir -p pytest-results
+CAGE_DEPLOYMENT_REGION="${CAGE_REGION}" \
+  uv run pytest tests/ -m local \
+    --tb=short -q \
+    --junitxml="pytest-results/pytest-${CAGE_REGION}-${CAGE_ENV}.xml" \
+  || { echo "Pytest failed for region ${CAGE_REGION}"; exit 1; }
+
 # Gate 0.1 — Core unit tests (skip gracefully if directory absent)
 echo ""
 info "Gate 0.1 — Core unit tests (tests/core/)"
