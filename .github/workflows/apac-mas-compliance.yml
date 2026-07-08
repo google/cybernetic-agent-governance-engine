@@ -45,7 +45,8 @@ jobs:
   mas-feat-posture:
     name: "MAS FEAT Compliance Posture (APAC_MAS only)"
     runs-on: ubuntu-latest
-    if: vars.CAGE_DEPLOYMENT_REGION == 'APAC_MAS'
+    env:
+      CAGE_DEPLOYMENT_REGION: APAC_MAS
 
     steps:
       - name: Checkout repository
@@ -159,8 +160,9 @@ jobs:
   apac-mas-iso42001-lula:
     name: "ISO 42001 Universal Lula Validation (APAC_MAS context)"
     runs-on: ubuntu-latest
-    if: vars.CAGE_DEPLOYMENT_REGION == 'APAC_MAS'
     needs: [mas-feat-posture]
+    env:
+      CAGE_DEPLOYMENT_REGION: APAC_MAS
 
     steps:
       - name: Checkout repository
