@@ -1,146 +1,171 @@
-# Quick Start Guide: Monorepo Infrastructure
+# Quick Start Guide: CAGE Infrastructure
+
+Deploy the Cybernetic Governance Engine infrastructure in 5–10 minutes.
 
 ## Prerequisites
 
 ### Required Tools
-- **Terraform** >= 1.5.0
-- **kubectl** >= 1.24
-- **uv** (Python package manager)
-- **Git**
 
-### For Agnostic Target
-- **Kubernetes cluster** (k3s, minikube, kind, EKS, AKS, or GKE)
-- **kubectl** configured with cluster access
+| Tool | Minimum Version |
+|------|----------------|
+| Terraform | >= 1.5.0 |
+| kubectl | >= 1.24 |
+| uv (Python package manager) | latest |
+| Git | any |
 
-### For GCP-GKE Target
-- **gcloud CLI** authenticated
-- **GCP project** with billing enabled
-- **Appropriate IAM permissions** (Kubernetes Engine Admin, Service Account Admin)
+### For the Agnostic Target
 
-## 5-Minute Test: Agnostic Target
+- A running Kubernetes cluster (k3s, minikube, kind, EKS, AKS, or GKE)
+- `kubectl` configured with cluster access
 
-### 1. Set up local k3s cluster
+### For the GCP-GKE Target
+
+- `gcloud` CLI authenticated (`gcloud auth application-default login`)
+- A GCP project with billing enabled
+- IAM permissions: Kubernetes Engine Admin, Service Account Admin, Storage Admin
+
+---
+
+## Option A: Agnostic Kubernetes (5 minutes)
+
+Deploy to any existing Kubernetes cluster.
+
+### 1. Set up a local cluster (if needed)
 
 ```bash
-# Install k3s (if not already installed)
+# Install k3s
 curl -sfL https://get.k3s.io | sh -
 
-# Verify installation
+# Verify
 kubectl get nodes
 
-# Create terraform-state namespace
+# Create the Terraform state namespace
 kubectl create namespace terraform-state
 ```
 
-### 2. Deploy minimal stack
+### 2. Deploy the minimal governance stack
 
 ```bash
-# From repository root
+# From the repository root
 ./deploy_all.sh --target agnostic --env dev \
-  --var minio_root_password=TestPassword123 \
+  --var minio_root_password=<YOUR_MINIO_PASSWORD> \
   --auto-approve
 ```
 
-**What this does**:
-1. Creates `governance-stack-dev` namespace
-2. Deploys MinIO object storage
-3. Stores Terraform state in the cluster
+**What this provisions:**
+1. `governance-stack-dev` Kubernetes namespace
+2. MinIO S3-compatible object storage
+3. Terraform state stored in-cluster
 
-### 3. Verify deployment
+### 3. Verify the deployment
 
 ```bash
 # Check namespace
 kubectl get ns governance-stack-dev
 
-# Check MinIO pod
+# Check pods
 kubectl get pods -n governance-stack-dev
 
-# Get MinIO credentials
+# Retrieve MinIO credentials
 kubectl get secret minio-credentials -n governance-stack-dev \
   -o jsonpath='{.data.access-key}' | base64 -d && echo
+
+# Access the MinIO console
+kubectl port-forward svc/minio 9001:9001 -n governance-stack-dev
+# Open: http://localhost:9001
+```
+
+### 4. Tear down
+
+```bash
+cd infra/targets/agnostic
+terraform destroy -var-file=dev.tfvars \
+  -var="minio_root_password=<YOUR_MINIO_PASSWORD>" \
+  -auto-approve
+```
+
+---
+
+## Option B: GCP GKE (10 minutes)
+
+Provision a complete GKE cluster with GPU support.
+
+### 1. Authenticate with GCP
+
+```bash
+gcloud auth application-default login
+
+# Set your project
+gcloud config set project <YOUR_GCP_PROJECT_ID>
+```
+
+### 2. Configure variables
+
+Edit `infra/targets/gcp-gke/dev.tfvars` and set your project ID:
+
+```hcl
+project_id = "<YOUR_GCP_PROJECT_ID>"
+```
+
+### 3. Enable required GCP APIs
+
+```bash
+gcloud services enable \
+  container.googleapis.com \
+  compute.googleapis.com \
+  storage.googleapis.com \
+  --project=<YOUR_GCP_PROJECT_ID>
+```
+
+### 4. Deploy to GCP
+
+```bash
+# From the repository root
+./deploy_all.sh --target gcp-gke --env dev \
+  --var minio_root_password=<YOUR_MINIO_PASSWORD> \
+  --auto-approve
+```
+
+**What this provisions:**
+1. GKE cluster with CPU and GPU node pools
+2. `governance-stack-dev` Kubernetes namespace
+3. MinIO storage on GCP persistent disks
+4. GCS bucket for Langfuse events
+5. Cloud Router & NAT (when private cluster mode is enabled)
+
+**Estimated time:** 8–12 minutes (GKE cluster provisioning)
+
+### 5. Verify the deployment
+
+```bash
+# Configure kubectl for your new cluster
+gcloud container clusters get-credentials <YOUR_GKE_CLUSTER_NAME> \
+  --zone=us-central1-a \
+  --project=<YOUR_GCP_PROJECT_ID>
+
+# Check nodes
+kubectl get nodes
+
+# Check namespace and pods
+kubectl get ns governance-stack-dev
+kubectl get pods -n governance-stack-dev
+kubectl get svc -n governance-stack-dev
 
 # Access MinIO console
 kubectl port-forward svc/minio 9001:9001 -n governance-stack-dev
 # Open: http://localhost:9001
 ```
 
-### 4. Clean up
-
-```bash
-cd infra/targets/agnostic
-terraform destroy -var-file=dev.tfvars \
-  -var="minio_root_password=TestPassword123" \
-  -auto-approve
-```
-
-## 10-Minute Test: GCP-GKE Target
-
-### 1. Authenticate with GCP
-
-```bash
-# Login
-gcloud auth application-default login
-
-# Set project
-export GOOG-REDACTED
-```
-
-### 2. Configure variables
-
-Edit `infra/targets/gcp-gke/dev.tfvars`:
-
-```hcl
-project_id = "your-actual-project-id"  # CHANGE THIS
-```
-
-### 3. Deploy to GCP
-
-```bash
-# From repository root
-./deploy_all.sh --target gcp-gke --env dev \
-  --var minio_root_password=SecurePassword123 \
-  --auto-approve
-```
-
-**What this does**:
-1. Provisions GKE cluster with CPU and GPU node pools
-2. Creates `governance-stack-dev` namespace
-3. Deploys MinIO on pd-standard storage
-4. Creates GCS bucket for Langfuse events
-5. Sets up Cloud Router & NAT (if private cluster enabled)
-
-**Estimated time**: 8-12 minutes (GKE cluster provisioning)
-
-### 4. Verify deployment
-
-```bash
-# Configure kubectl
-gcloud container clusters get-credentials <your-cluster-name> \
-  --zone=us-central1-a \
-  --project=YOUR_PROJECT
-
-# Check nodes
-kubectl get nodes
-
-# Check namespace
-kubectl get ns governance-stack-dev
-
-# Check MinIO
-kubectl get pods -n governance-stack-dev
-kubectl get svc -n governance-stack-dev
-
-# Access MinIO console
-kubectl port-forward svc/minio 9001:9001 -n governance-stack-dev
-```
-
-### 5. Clean up
+### 6. Tear down
 
 ```bash
 cd infra/targets/gcp-gke
 terraform destroy -var-file=dev.tfvars \
-  -var="minio_root_password=SecurePassword123" \
+  -var="minio_root_password=<YOUR_MINIO_PASSWORD>" \
   -auto-approve
 ```
+
+---
 
 ## Manual Terraform Operations
 
@@ -159,7 +184,6 @@ terraform init
 ### Plan
 
 ```bash
-# With var file
 terraform plan -var-file=dev.tfvars
 
 # Override specific variables
@@ -173,7 +197,7 @@ terraform plan -var-file=dev.tfvars \
 # Interactive (prompts for confirmation)
 terraform apply -var-file=dev.tfvars
 
-# Auto-approve (careful!)
+# Non-interactive
 terraform apply -var-file=dev.tfvars -auto-approve
 ```
 
@@ -183,63 +207,30 @@ terraform apply -var-file=dev.tfvars -auto-approve
 terraform destroy -var-file=dev.tfvars -auto-approve
 ```
 
-## Common Issues
+---
 
-### Issue: "terraform-state namespace not found" (Agnostic)
-
-```bash
-kubectl create namespace terraform-state
-```
-
-### Issue: "Storage class 'local-path' not found" (k3s)
-
-```bash
-# Verify storage class exists
-kubectl get storageclass
-
-# Update dev.tfvars with correct storage_class value
-```
-
-### Issue: "Failed to create GKE cluster: quota exceeded"
-
-```bash
-# Check your GCP quotas
-gcloud compute project-info describe --project=YOUR_PROJECT
-
-# Request quota increase in Cloud Console
-```
-
-### Issue: "GCP API not enabled"
-
-```bash
-# Enable required APIs
-gcloud services enable container.googleapis.com \
-  compute.googleapis.com \
-  storage.googleapis.com \
-  --project=YOUR_PROJECT
-```
-
-## Environment Variable Reference
+## Environment Variables
 
 ### Agnostic Target
 
 ```bash
 export KUBECONFIG=~/.kube/config
-export TF_VAR_minio_root_password=SecurePassword123
-export REGISTRY_URL=ghcr.io/your-org/cage
+export TF_VAR_minio_root_password=<YOUR_MINIO_PASSWORD>
+export REGISTRY_URL=ghcr.io/<YOUR_ORG>/cage
 ```
 
 ### GCP-GKE Target
 
 ```bash
-export GOOG-REDACTED
-export TF_VAR_minio_root_password=SecurePassword123
-export TF_VAR_project_id=your-project-id
+export TF_VAR_project_id=<YOUR_GCP_PROJECT_ID>
+export TF_VAR_minio_root_password=<YOUR_MINIO_PASSWORD>
 ```
+
+---
 
 ## Security Posture Testing
 
-### Test Binary Authorization (GCP only)
+### Binary Authorization (GCP only)
 
 ```bash
 cd infra/targets/gcp-gke
@@ -247,15 +238,15 @@ terraform apply -var-file=dev.tfvars \
   -var="enable_binary_authorization=true"
 ```
 
-### Test Private Cluster (GCP only)
+### Private Cluster with Authorized Networks (GCP only)
 
 ```bash
 terraform apply -var-file=dev.tfvars \
   -var="enable_nist_compliance=true" \
-  -var='authorized_networks=[{cidr="YOUR_IP/32",display_name="My IP"}]'
+  -var='authorized_networks=[{cidr="<YOUR_IP>/32",display_name="My IP"}]'
 ```
 
-### Test Pod Security Standards (Both targets)
+### Pod Security Standards (both targets)
 
 ```bash
 # Agnostic
@@ -268,28 +259,56 @@ terraform apply -var-file=dev.tfvars \
   -var="enable_pod_security_standards=true"
 ```
 
+---
+
+## Troubleshooting
+
+### "terraform-state namespace not found" (Agnostic)
+
+```bash
+kubectl create namespace terraform-state
+```
+
+### "Storage class not found" (k3s)
+
+```bash
+# List available storage classes
+kubectl get storageclass
+
+# Update dev.tfvars with the correct storage_class value
+```
+
+### "Failed to create GKE cluster: quota exceeded"
+
+```bash
+# Check your GCP quotas
+gcloud compute project-info describe --project=<YOUR_GCP_PROJECT_ID>
+
+# Request a quota increase in the Cloud Console if needed
+```
+
+### "GCP API not enabled"
+
+```bash
+gcloud services enable container.googleapis.com \
+  compute.googleapis.com \
+  storage.googleapis.com \
+  --project=<YOUR_GCP_PROJECT_ID>
+```
+
+---
+
 ## Next Steps
 
-After validating the minimal stack works:
+After validating the minimal stack:
 
-1. **Extract more modules** (postgres, redis, vllm, langfuse)
-2. **Add IAM resources** to gcp-gke target
-3. **Test full application deployment**
-4. **Migrate production** to new structure
+1. Review the [Deployment Guide](DEPLOYMENT_GUIDE.md) for production configuration
+2. Run Lula compliance validations: `compliance/lula/`
+3. Set `CAGE_DEPLOYMENT_REGION` correctly for your target region (`US_FED`, `EU_ECB`, or `APAC_MAS`)
+4. Monitor governance pipeline metrics in Langfuse
 
-## Getting Help
+## See Also
 
-- **Implementation Status**: [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)
-- **Architecture**: [plans/monorepo-refactoring-plan.md](../plans/monorepo-refactoring-plan.md)
-- **Security Postures**: [plans/monorepo-security-postures.md](../plans/monorepo-security-postures.md)
-- **Migration Guide**: [plans/monorepo-migration-guide.md](../plans/monorepo-migration-guide.md)
-
-## Success Criteria
-
-✅ Minimal deployment works (namespace + MinIO)  
-✅ Can access MinIO console  
-✅ Terraform state persists correctly  
-✅ Can destroy and recreate cleanly  
-✅ Both targets work independently  
-
-**Once these pass, you're ready to extract remaining modules.**
+- [Implementation Status](IMPLEMENTATION_STATUS.md) — component reference
+- [Deployment Guide](DEPLOYMENT_GUIDE.md) — full deployment reference
+- [Module Documentation](modules/) — individual module READMEs

@@ -1,12 +1,11 @@
 # CAGE Threshold Traceability Matrix
 
-> **Document ID:** CAGE-TTM-001  
-> **Version:** 1.1 (Draft — Pending AO Approval)  
-> **Created:** 2026-03-06 · **Last Updated:** 2026-05-22 (SR 26-2 remediation)  
-> **System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor  
-> **Classification:** INTERNAL — COMPLIANCE SENSITIVE  
-> **NIST Controls:** CM-6, CM-8, SA-8, RA-3  
-> **ISO 42001:** A.5.2 (Policies for AI risk), A.9.4 (Monitoring)  
+> **Document ID:** CAGE-TTM-001
+> **Version:** 1.1 (Draft — Pending AO Approval)
+> **Created:** 2026-03-06 · **Last Updated:** 2026-05-22 (SR 26-2 remediation)
+> **System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor
+> **NIST Controls:** CM-6, CM-8, SA-8, RA-3
+> **ISO 42001:** A.5.2 (Policies for AI risk), A.9.4 (Monitoring)
 > **Reference:** NIST SP 800-53 Rev. 5, EO 14028, NIST SP 800-218 (SSDF)
 
 ---

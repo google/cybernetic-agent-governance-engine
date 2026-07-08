@@ -1,22 +1,55 @@
-# 🎬 How to Demo: Agentic Observability
+# How to Demo: Agentic Observability
 
-This guide explains how to run the observability demo script and visualize the "Governor's Ledger" in Langfuse.
+This guide explains how to run the CAGE observability demo and visualize the governance pipeline in Langfuse.
 
-## 📋 Prerequisites
+## Prerequisites
 
-1.  **Environment**: Python 3.10+ with project dependencies installed.
-2.  **Infrastructure**: Redis must be running (used for safety state).
-    ```bash
-    # Local via Docker
-    docker run -d -p 6379:6379 redis:latest
-    ```
-3.  **Observability**: Application must be configured to send traces directly to Langfuse's integrated OTLP ingestion endpoint (standalone OTel Collector deprecated 2026-05-31).
-    - Ensure `.env` has `ENABLE_LOGGING=true`.
-    - **OSS Deployment**: If running in a project deployed with `--is-oss`, ensure `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` (GCP deployments only — required for Workload Identity authentication), and `BACKEND_URL` are set to enable OIDC authentication.
+### 1. Python Environment
 
-## 🚀 Running the Demo Script
+Python 3.10+ with project dependencies installed:
 
-The script `src/governed_financial_advisor/demo/demo_observability.py` orchestrates three specific scenarios designed to light up your analytics widgets.
+```bash
+uv sync
+```
+
+### 2. Redis
+
+Redis must be running (used for safety state and the defer queue):
+
+```bash
+# Local via Docker
+docker run -d -p 6379:6379 redis:latest
+
+# Or via Docker Compose (recommended)
+docker compose up redis -d
+```
+
+### 3. Observability Configuration
+
+The application sends traces directly to Langfuse's integrated OTLP ingestion endpoint.
+
+Ensure your `.env` file contains:
+
+```bash
+ENABLE_LOGGING=true
+LANGFUSE_PUBLIC_KEY=<YOUR_LANGFUSE_PUBLIC_KEY>
+LANGFUSE_SECRET_KEY=<YOUR_LANGFUSE_SECRET_KEY>
+LANGFUSE_HOST=<YOUR_LANGFUSE_HOST>   # e.g. https://cloud.langfuse.com
+```
+
+For Kubernetes deployments, also set:
+
+```bash
+BACKEND_URL=<YOUR_GATEWAY_URL>
+```
+
+> **Note:** The standalone OpenTelemetry Collector sidecar was deprecated on 2026-05-31. Traces now go directly to Langfuse's integrated OTLP endpoint.
+
+---
+
+## Running the Demo Script
+
+The script [`src/governed_financial_advisor/demo/demo_observability.py`](../../src/governed_financial_advisor/demo/demo_observability.py) orchestrates three scenarios designed to exercise the governance pipeline and populate the Langfuse dashboard.
 
 Run it from the project root:
 
@@ -24,76 +57,99 @@ Run it from the project root:
 python3 src/governed_financial_advisor/demo/demo_observability.py
 ```
 
-### What Happens?
+### Demo Scenarios
 
-The script simulates 3 different users executing trades:
+The script simulates three users executing trades, each triggering a different governance outcome:
 
-1.  **Scenario 1: The Happy Path ("Currency Ledger")**
-    - **User:** `demo_user_happy`
-    - **Action:** Buys $1,000 AAPL.
-    - **Outcome:** ✅ Allowed.
-    - **Metric:** Generates valid "Reasoning Spend" and minimal "Governance Tax".
+#### Scenario 1: The Happy Path
 
-2.  **Scenario 2: The Policy Violation ("Wall Impact")**
-    - **User:** `demo_user_risky`
-    - **Action:** Tries to buy $20,000 TSLA (Junior limit is $5,000).
-    - **Outcome:** 🛑 Blocked by OPA.
-    - **Metric:** Increments "Rejected" count for `langfuse.trace.metadata.governance.policy_id` (or `langfuse.trace.metadata.iso.control_id`).
+- **Action:** Buys $1,000 of a stock within policy limits
+- **Outcome:** ✅ Allowed — passes all governance checks
+- **What it demonstrates:** Normal inference flow with minimal governance overhead. Generates "Reasoning Spend" telemetry and a thin "Governance Tax" layer.
 
-3.  **Scenario 3: The Bankruptcy ("Safety Valve")**
-    - **User:** `demo_user_spender`
-    - **Action:** Repeatedly buys $4,500 batches of GOOGL.
-    - **Outcome:** 💸 Drains cash reserve -> Triggers Bankruptcy Protocol.
-    - **Metric:** Emits `langfuse.trace.metadata.event.bankruptcy=True` and `langfuse.trace.metadata.safety.bankruptcy_deficit`.
+#### Scenario 2: The Policy Violation
+
+- **Action:** Attempts to buy $20,000 of a stock (exceeds the junior user limit of $5,000)
+- **Outcome:** 🛑 Blocked by OPA policy engine
+- **What it demonstrates:** The OPA access enforcement layer (`AC-3`). Increments the rejected-request counter tagged with the policy ID that triggered the block.
+
+#### Scenario 3: The Bankruptcy Protocol
+
+- **Action:** Repeatedly buys large batches, draining the cash reserve
+- **Outcome:** 💸 Cash reserve depleted → Control Barrier Function (CBF) triggers bankruptcy protocol
+- **What it demonstrates:** The CBF safety layer (`src/gateway/governance/safety.py`). Emits `event.bankruptcy=True` and `safety.bankruptcy_deficit` telemetry.
 
 ---
 
-## 📊 Verifying in Langfuse
+## Verifying in Langfuse
 
-Navigate to your Langfuse Dashboard and check the **Agentic DevOps** board.
+Navigate to your Langfuse dashboard and open the **Agentic DevOps** board.
 
-### Widget 1: The Currency Ledger (Tax vs. Spend)
+### Widget 1: The Currency Ledger (Governance Tax vs. Reasoning Spend)
 
-- **Look for:** A stacked area chart showing request duration.
-- **What you see:**
-  - **Green Area (Reasoning):** Time spent in `reasoning.execution` (Agent thinking).
-  - **Red Area (Tax):** Time spent in `governance.opa_check` (Policy verification).
-- **Goal:** Ensure the "Tax" layer is thin compared to "Reasoning".
+- **Chart type:** Stacked area chart showing request duration breakdown
+- **Green area (Reasoning):** Time spent in `reasoning.execution` — the agent thinking
+- **Red area (Tax):** Time spent in `governance.opa_check` — policy verification overhead
+- **Goal:** The "Tax" layer should be thin relative to "Reasoning", demonstrating low governance latency
 
-### Widget 2: The Wall Impact (Friction)
+### Widget 2: The Wall Impact (Policy Friction)
 
-- **Look for:** A bar chart grouped by Policy ID.
-- **Data:** Filtered for `governance.verdict = REJECTED`.
-- **Insight:** You should see a bar for **"Finance-Limit-Junior"** (or similar OPA rule ID) from Scenario 2.
+- **Chart type:** Bar chart grouped by Policy ID
+- **Filter:** `governance.verdict = REJECTED`
+- **Expected:** A bar for the finance limit policy from Scenario 2, showing which OPA rule blocked the request
 
 ### Widget 3: The Bankruptcy Monitor
 
-- **Look for:** A big number widget (Stat).
-- **Filter:** `langfuse.trace.metadata.event.bankruptcy = True`.
-- **Value:** Should be **> 0** (Red Alert).
-- **Insight:** Indicates the Control Barrier Function (CBF) successfully intervened to prevent total ruin.
+- **Chart type:** Stat (big number)
+- **Filter:** `event.bankruptcy = True`
+- **Expected value:** > 0 (red alert state)
+- **Insight:** Confirms the Control Barrier Function successfully intervened before total cash depletion
 
 ---
 
-## 🔗 Verifying MCP Distributed Tracing
+## Verifying MCP Distributed Tracing
 
-After a tool call via MCP (e.g., `get_market_data`, `check_market_status`), verify the W3C trace context propagation:
+After a tool call via MCP (e.g., `get_market_data`, `check_market_status`), verify W3C trace context propagation across the SSE boundary:
 
-1.  **Open Langfuse Traces** and find a trace containing `mcp_tool:*` (client-side span).
-2.  **Expand the span** — you should see a child span `mcp.tool:*` (server-side), proving the `traceparent` crossed the SSE boundary.
-3.  **Check attributes:**
-    - `mcp.tool.name` — the tool that was called.
-    - `mcp.tool.result_length` — confirming the result was captured.
-    - `langfuse.observation.input` / `langfuse.observation.output` — full I/O.
+1. Open **Langfuse → Traces** and find a trace containing `mcp_tool:*` (client-side span)
+2. Expand the span — you should see a child span `mcp.tool:*` (server-side), confirming the `traceparent` header crossed the SSE boundary
+3. Check the span attributes:
+   - `mcp.tool.name` — the tool that was called
+   - `mcp.tool.result_length` — confirms the result was captured
+   - `langfuse.observation.input` / `langfuse.observation.output` — full I/O recorded
 
-> **Tip:** Run `python tests/test_gateway_connectivity.py` to generate a test trace.
+To generate a test trace:
+
+```bash
+python tests/test_gateway_connectivity.py
+```
+
+---
+
+## Governance Telemetry Reference
+
+All CAGE governance metrics follow the naming convention `cage.<subsystem>.<metric_name>`.
+
+Key attributes emitted on governance spans:
+
+| Attribute | Description |
+|-----------|-------------|
+| `governance.verdict` | `ALLOWED` \| `REJECTED` \| `ESCALATED` |
+| `governance.policy_id` | OPA rule ID that produced the verdict |
+| `governance.opa_check` | Duration of OPA policy evaluation (ms) |
+| `safety.bankruptcy_deficit` | Cash deficit amount when CBF triggers |
+| `event.bankruptcy` | `True` when bankruptcy protocol activates |
+| `model.confidence_score` | LLM confidence score for the inference |
+| `iso.control_id` | ISO 42001 control ID associated with the span |
 
 ---
 
 ## Troubleshooting
 
-- **No Traces?** Check that the gateway and langfuse-worker pods are running on your Kubernetes cluster, and `ENABLE_LOGGING=true`. (The standalone otel-collector has been deprecated — traces now go directly to Langfuse's integrated OTLP endpoint.)
-- **Scanner Noise?** The `server_request_hook` in `hybrid_server.py` filters out vulnerability scanner probes (non-GET/POST methods, `/.git`, `/.env`, etc.). Only legitimate `GET`/`POST` requests appear in Langfuse.
-- **Redis Error?** Ensure Redis is running on port 6379.
-- **Wrong Attributes?** Verify the spans in Langfuse "Traces" view have attributes starting with `langfuse.trace.metadata.governance.` and `langfuse.trace.metadata.safety.`.
-- **MCP Tool Spans Missing?** Ensure `patch_mcp_tools(mcp)` is called before `app.mount("/mcp", ...)` in `hybrid_server.py`.
+| Symptom | Resolution |
+|---------|------------|
+| No traces appear in Langfuse | Verify `ENABLE_LOGGING=true` and that `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` are set correctly |
+| Redis connection error | Ensure Redis is running on port 6379: `docker run -d -p 6379:6379 redis:latest` |
+| Wrong span attributes | Verify spans have attributes starting with `langfuse.trace.metadata.governance.` and `langfuse.trace.metadata.safety.` |
+| MCP tool spans missing | Ensure `patch_mcp_tools(mcp)` is called before `app.mount("/mcp", ...)` in `hybrid_server.py` |
+| Scanner noise in traces | The `server_request_hook` in `hybrid_server.py` filters out vulnerability scanner probes — only legitimate `GET`/`POST` requests appear in Langfuse |

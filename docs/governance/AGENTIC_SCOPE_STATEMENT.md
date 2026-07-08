@@ -1,10 +1,8 @@
 # CAGE Agentic Scope Statement
 
 **Authority**: NIST AI 600-1 §2.5.1, §2.5.4 | SR 26-2 §3.1 | EO 14110 §4.2
-**Region**: US_FED (`CAGE_DEPLOYMENT_REGION=US_FED`)
 **Version**: 1.0
 **Date**: 2026-06-15
-**POAM Reference**: AI600-004
 
 ---
 
@@ -121,14 +119,14 @@ logged to the UCA WORM ledger.
 ### 3.4 No Peer-to-Peer Agent Calls
 
 CAGE does not implement peer-to-peer agent communication. All inter-component
-calls are mediated by the gateway. This eliminates the AI 600-1 §2.5.3 risk of
-unverified inter-agent trust propagation.
+calls are mediated by the gateway. This eliminates the NIST AI 600-1 §2.5.3 risk
+of unverified inter-agent trust propagation.
 
 ---
 
-## 4. Scope Limitation Enforcement Mechanism
+## 4. Scope Limitation Enforcement Mechanisms
 
-| Mechanism | File | AI 600-1 Control |
+| Mechanism | File | NIST AI 600-1 Control |
 |---|---|---|
 | OPA policy evaluation | `src/gateway/governance/langgraph_harness/opa_node_factory.py` | §2.5.1 |
 | Routing seal verification | `src/gateway/governance/routing_seal.py` | §2.5.4 |
@@ -152,7 +150,7 @@ ledger via `src/gateway/governance/uca_logger.py`. The audit trail includes:
 - `agent_id`: authenticated agent identifier
 - `block_reason`: human-readable reason for the governance decision
 - `cryptographic_signature`: KMS-signed (production) or HMAC-SHA256 stub (test)
-- `deployment_region`: `US_FED` (enforces data residency in `us-central1`)
+- `deployment_region`: `US_FED` | `EU_ECB` | `APAC_MAS` (enforces data residency)
 - `worm_path`: GCS path for the signed record
 
 ---
@@ -160,7 +158,7 @@ ledger via `src/gateway/governance/uca_logger.py`. The audit trail includes:
 ## 6. Recursive Governance Risk
 
 The `ConsensusEngine` uses LLM inference to govern LLM outputs — creating a
-recursive governance risk where AI 600-1 confabulation risks in the governance
+recursive governance risk where NIST AI 600-1 confabulation risks in the governance
 layer propagate to the governed system.
 
 ### 6.1 Mitigation

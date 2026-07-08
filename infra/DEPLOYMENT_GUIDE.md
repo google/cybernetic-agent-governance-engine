@@ -1,72 +1,77 @@
-# Deployment Guide: Monorepo Infrastructure
+# Deployment Guide: CAGE Infrastructure
 
 ## Overview
 
-The Cybernetic Governance Engine now supports **target-based deployment**, allowing you to deploy to either a generic Kubernetes cluster or a GCP-optimized GKE cluster using the same application code.
+The Cybernetic Governance Engine supports **target-based deployment**, allowing you to deploy to either a generic Kubernetes cluster or a GCP-optimized GKE cluster using the same application code and Terraform modules.
 
 ## Architecture
 
 ```
 infra/
 ├── modules/              # Reusable Terraform components
-│   ├── k8s_namespace/   ✅ Complete
-│   ├── minio_storage/   ✅ Complete
-│   └── gcp_gke_cluster/ ✅ Complete
+│   ├── k8s_namespace/
+│   ├── minio_storage/
+│   ├── gcp_gke_cluster/
+│   ├── postgres_db/
+│   ├── redis_cache/
+│   ├── vllm_inference/
+│   ├── langfuse_stack/
+│   ├── compliance_bridge/
+│   └── opa_policy/
 │
 └── targets/              # Deployment endpoints
-    ├── agnostic/        ✅ Complete - Deploy to any K8s cluster
-    └── gcp-gke/         ✅ Complete - Provision GKE cluster
+    ├── agnostic/         # Deploy to any Kubernetes cluster
+    └── gcp-gke/          # Provision and deploy to GKE
 ```
 
 ## Deployment Modes
 
 ### 1. Local Development (Docker Compose)
 
-**Use case**: Laptop development, no Kubernetes required
+**Use case:** Laptop development — no Kubernetes required.
 
 ```bash
-# For local development (hot-reload volumes, dev overrides):
+# Development mode (hot-reload volumes, dev overrides)
 docker compose -f docker-compose.dev.yml up
 
-# Or via the unified script:
+# Or via the unified script
 ./deploy_all.sh
 ```
 
-**What runs**: Docker Compose stack with all services
-
-> **Compose file distinction:** `docker-compose.yml` is the production compose file. `docker-compose.dev.yml` is for local development — it includes hot-reload volume mounts and development overrides. Use `docker-compose.dev.yml` for local iteration; use `docker-compose.yml` only for production-equivalent local testing.
+> **Compose file distinction:** `docker-compose.yml` is the production-equivalent compose file. `docker-compose.dev.yml` includes hot-reload volume mounts and development overrides. Use `docker-compose.dev.yml` for local iteration.
 
 ### 2. Agnostic Kubernetes Target
 
-**Use case**: Deploy to existing K8s cluster (k3s, EKS, AKS, minikube, etc.)
+**Use case:** Deploy to an existing Kubernetes cluster (k3s, EKS, AKS, minikube, GKE, etc.)
 
 ```bash
 ./deploy_all.sh --target agnostic --env dev --auto-approve
 ```
 
-**What's provisioned**:
-- Kubernetes namespace
-- MinIO object storage
-- Terraform state stored in cluster (no cloud dependencies)
+**What is provisioned:**
+- Kubernetes namespace (`governance-stack-<env>`)
+- MinIO S3-compatible object storage
+- Terraform state stored in-cluster (no cloud dependencies)
 
 ### 3. GCP GKE Target
 
-**Use case**: Provision complete GKE cluster with GPU support
+**Use case:** Provision a complete GKE cluster with GPU support.
 
 ```bash
 ./deploy_all.sh --target gcp-gke --env dev \
-  --var project_id=YOUR_PROJECT \
-  --var minio_root_password=SecurePass123 \
+  --var project_id=<YOUR_GCP_PROJECT_ID> \
+  --var minio_root_password=<YOUR_MINIO_PASSWORD> \
   --auto-approve
 ```
 
-**What's provisioned**:
-- Complete GKE cluster with autoscaling
-- GPU node pool (NVIDIA L4 or T4)
+**What is provisioned:**
+- GKE cluster with autoscaling CPU and GPU node pools (NVIDIA L4 or T4)
 - Kubernetes namespace
 - MinIO storage on GCP persistent disks
 - GCS bucket for Langfuse events
-- Cloud Router & NAT (when private cluster enabled)
+- Cloud Router & NAT (when private cluster mode is enabled)
+
+---
 
 ## Command Reference
 
@@ -82,24 +87,24 @@ docker compose -f docker-compose.dev.yml up
 # Deploy to GCP target (dev)
 ./deploy_all.sh --target gcp-gke --env dev --auto-approve
 
-# Deploy to GCP target (prod with NIST compliance)
+# Deploy to GCP target (prod — NIST compliance enabled)
 ./deploy_all.sh --target gcp-gke --env prod
 ```
 
 ### Advanced Options
 
 ```bash
-# Use custom kubeconfig
+# Use a custom kubeconfig
 ./deploy_all.sh --target agnostic --env dev \
   --kubeconfig ~/.kube/my-cluster.yaml
 
-# Override specific variables
+# Override specific Terraform variables
 ./deploy_all.sh --target gcp-gke --env dev \
-  --var project_id=test-project \
+  --var project_id=<YOUR_GCP_PROJECT_ID> \
   --var gpu_type=nvidia-t4 \
-  --var cluster_name=test-cluster
+  --var cluster_name=<YOUR_GKE_CLUSTER_NAME>
 
-# Use additional var file
+# Use an additional var file
 ./deploy_all.sh --target gcp-gke --env dev \
   --var-file=custom-overrides.tfvars
 ```
@@ -107,13 +112,13 @@ docker compose -f docker-compose.dev.yml up
 ### Manual Terraform Operations
 
 ```bash
-# Navigate to target
+# Navigate to the target directory
 cd infra/targets/gcp-gke
 
 # Initialize
 terraform init
 
-# Plan
+# Plan (always run before apply)
 terraform plan -var-file=dev.tfvars
 
 # Apply
@@ -123,6 +128,8 @@ terraform apply -var-file=dev.tfvars
 terraform destroy -var-file=dev.tfvars
 ```
 
+---
+
 ## Configuration Files
 
 ### Agnostic Target
@@ -130,15 +137,15 @@ terraform destroy -var-file=dev.tfvars
 Edit `infra/targets/agnostic/dev.tfvars`:
 
 ```hcl
-# Update for your cluster
-storage_class      = "local-path"  # k3s
-# storage_class    = "gp3"         # EKS
+# Set the storage class for your cluster type
+storage_class      = "local-path"       # k3s
+# storage_class    = "gp3"              # EKS
 # storage_class    = "managed-premium"  # AKS
 
 minio_storage_size = "10Gi"
 
-# Update for your registry
-registry_url = "ghcr.io/your-org/cage"
+# Set your container registry
+registry_url = "ghcr.io/<YOUR_ORG>/cage"
 ```
 
 ### GCP-GKE Target
@@ -146,21 +153,23 @@ registry_url = "ghcr.io/your-org/cage"
 Edit `infra/targets/gcp-gke/dev.tfvars`:
 
 ```hcl
-# REQUIRED: Your GCP project
-project_id = "your-gcp-project-id"
+# Required: your GCP project ID
+project_id = "<YOUR_GCP_PROJECT_ID>"
 
-# Optional: Cost optimization
-gpu_node_pool_min_count = 0  # Scale to zero
+# Optional: cost optimization
+gpu_node_pool_min_count = 0  # Scale GPU nodes to zero when idle
 
-# Optional: Security testing
+# Optional: security controls
 enable_binary_authorization = true
 ```
 
-### Regional Deployment Configurations
+---
 
-CAGE v0.1.0 implements a **boot contract** requiring `CAGE_DEPLOYMENT_REGION` to be explicitly declared in every container manifest. The `ControlRegistry` singleton reads this variable at first instantiation and loads the corresponding `config/compliance/*_BASELINE.json` profile. **Omitting this variable causes a silent fallback to `US_FED`**, which is unacceptable for EU or APAC production deployments.
+## Regional Deployment Configuration
 
-**Supported Values:**
+CAGE implements a **boot contract** requiring `CAGE_DEPLOYMENT_REGION` to be explicitly declared in every container manifest. The `ControlRegistry` singleton reads this variable at first instantiation and loads the corresponding compliance baseline profile.
+
+**Supported values:**
 
 | Value | Profile File | Governing Frameworks |
 |-------|-------------|----------------------|
@@ -169,7 +178,7 @@ CAGE v0.1.0 implements a **boot contract** requiring `CAGE_DEPLOYMENT_REGION` to
 | `APAC_MAS` | `config/compliance/APAC_MAS_BASELINE.json` | MAS FEAT / MAS TRM Guidelines / ISO 42001 |
 
 **Already declared in all authoritative manifests:**
-- `deployment/k8s/generated/gateway-deployment.yaml` — `value: "${CAGE_DEPLOYMENT_REGION:-US_FED}"`
+- `deployment/k8s/generated/gateway-deployment.yaml`
 - `docker-compose.yml` — gateway and app services
 - `docker-compose.dev.yml` — gateway dev overlay
 
@@ -177,55 +186,68 @@ CAGE v0.1.0 implements a **boot contract** requiring `CAGE_DEPLOYMENT_REGION` to
 # Override at deploy time without editing YAML (recommended for multi-region clusters)
 kubectl set env deployment/gateway CAGE_DEPLOYMENT_REGION=EU_ECB -n governance-stack
 
-# Or export before docker compose:
+# Or export before docker compose
 export CAGE_DEPLOYMENT_REGION=EU_ECB
 docker compose up
-
-# Runtime swap (e.g., container init hook) — uses the thread-safe reconfigure() method:
-# python -c "from src.gateway.governance.constants import ControlRegistry; ControlRegistry.reconfigure('EU_ECB')"
 ```
 
 > [!CAUTION]
-> Do **not** rely on the `US_FED` default in a production EU or APAC deployment. If `CAGE_DEPLOYMENT_REGION` is absent, `ControlRegistry` will load US Federal Reserve control mappings, causing AU/DORA/GDPR telemetry compliance failures and incorrect span annotations in DORA Art. 10 audit logs.
+> Do **not** rely on the `US_FED` default in a production EU or APAC deployment. If `CAGE_DEPLOYMENT_REGION` is absent, `ControlRegistry` will load US Federal Reserve control mappings, causing incorrect span annotations in DORA Art. 10 audit logs and GDPR/MAS telemetry compliance failures.
 
+---
 
 ## Security Postures
 
-### Dev (Fast Iteration)
+### Development
 
 ```bash
-# Agnostic dev
 ./deploy_all.sh --target agnostic --env dev
 ```
 
-**Configuration**:
+**Configuration:**
 - No resource limits
 - No security contexts
 - No Pod Security Standards
-- Public cluster access (GCP)
+- Public cluster access (GCP target)
 
-### Prod (NIST Compliance)
+### Production (NIST SP 800-53 HIGH)
 
 ```bash
-# GCP prod with all security controls
 ./deploy_all.sh --target gcp-gke --env prod
 ```
 
-**Configuration**:
-- Resource limits enforced
-- Security contexts (runAsNonRoot, readOnlyRootFilesystem)
-- Pod Security Standards: restricted
-- Private cluster with VPN-only access
+**Configuration:**
+- Resource limits enforced on all containers
+- Security contexts: `runAsNonRoot`, `readOnlyRootFilesystem`
+- Pod Security Standards: `restricted`
+- Private GKE cluster with authorized network access only
 - Binary Authorization (signed images only)
 - Comprehensive audit logging
 - Customer-managed encryption keys (optional)
+
+---
+
+## Implemented Modules
+
+| Module | Description |
+|--------|-------------|
+| `k8s_namespace` | Namespace provisioning with Pod Security Standards (PSS/PSA) |
+| `minio_storage` | MinIO S3-compatible object storage |
+| `postgres_db` | PostgreSQL database with automated init scripts |
+| `redis_cache` | High-Availability Redis with Sentinel support |
+| `vllm_inference` | vLLM deployments with dedicated Spot GPU node pools (NVIDIA L4, multi-zone across `us-central1-a/b/c`) |
+| `langfuse_stack` | Self-hosted Langfuse stack (observability, UI, database) |
+| `compliance_bridge` | Langfuse-to-Lula compliance audit bridge with dynamic project key bootstrapping |
+| `opa_policy` | Open Policy Agent engine |
+
+---
 
 ## Validation
 
 After deployment, validate with:
 
 ```bash
-# Run validation script
+# Run the validation script
 ./infra/validate_deployment.sh governance-stack-dev
 
 # Manual checks
@@ -238,31 +260,21 @@ kubectl port-forward svc/minio 9001:9001 -n governance-stack-dev
 # Open: http://localhost:9001
 ```
 
-## Current Status
-
-The monorepo infrastructure refactoring is now **100% complete**, and all modules are fully integrated across both agnostic and GCP GKE deployment targets.
-
-### ✅ Fully Implemented Modules
-
-1. **`k8s_namespace`** - Namespace provisioning with Pod Security Standards (PSS/PSA)
-2. **`minio_storage`** - MinIO S3-compatible object storage
-3. **`postgres_db`** - PostgreSQL database with automated init scripts
-4. **`redis_cache`** - High-Availability Redis with Sentinel support
-5. **`vllm_inference`** - vLLM deployments with dedicated Spot GPU node pools (sourcing NVIDIA L4 regional/multi-zone across `us-central1-a/b/c`)
-6. **`langfuse_stack`** - Self-hosted Langfuse stack (observability, UI, database)
-7. **`compliance_bridge`** - Langfuse-to-Lula compliance audit bridge with dynamic project key bootstrapping
-8. **`opa_policy`** - Open Policy Agent engine
-
+---
 
 ## Troubleshooting
 
-### terraform init fails
+### `terraform init` fails (Agnostic)
 
 ```bash
-# Agnostic: Ensure terraform-state namespace exists
+# Ensure the terraform-state namespace exists
 kubectl create namespace terraform-state
+```
 
-# GCP: Ensure authenticated
+### `terraform init` fails (GCP)
+
+```bash
+# Ensure you are authenticated
 gcloud auth application-default login
 ```
 
@@ -272,18 +284,23 @@ gcloud auth application-default login
 # List available storage classes
 kubectl get storageclass
 
-# Update .tfvars with correct value
+# Update .tfvars with the correct value
 ```
 
 ### GKE provisioning fails
 
 ```bash
 # Check GCP quotas
-gcloud compute project-info describe --project=YOUR_PROJECT
+gcloud compute project-info describe --project=<YOUR_GCP_PROJECT_ID>
 
 # Enable required APIs
-gcloud services enable container.googleapis.com
+gcloud services enable container.googleapis.com \
+  compute.googleapis.com \
+  storage.googleapis.com \
+  --project=<YOUR_GCP_PROJECT_ID>
 ```
+
+---
 
 ## Rollback
 
@@ -292,27 +309,28 @@ If issues occur, see [ROLLBACK_PROCEDURES.md](ROLLBACK_PROCEDURES.md).
 Quick rollback:
 
 ```bash
-# Restore original scripts
-mv deploy_all.sh.backup deploy_all.sh
-mv deployment/deploy_sw.py.backup deployment/deploy_sw.py
-
-# Use active Terraform target
+# Navigate to the active Terraform target
 cd infra/targets/gcp-gke
+
+# Re-apply the last known-good configuration
 terraform apply -var-file=dev.tfvars
 ```
 
-## Next Steps
+---
 
-1. **Test minimal deployment** on both targets
-2. **Test full stack** deployment end-to-end
-3. **Run Lula validations** post-deployment (`compliance/lula/`)
-4. **Verify CAGE_DEPLOYMENT_REGION** is set correctly for each region
-5. **Monitor** governance pipeline metrics in Langfuse
+## Post-Deployment Checklist
+
+1. Verify all pods are running: `kubectl get pods -n governance-stack-dev`
+2. Run Lula compliance validations: `compliance/lula/`
+3. Confirm `CAGE_DEPLOYMENT_REGION` is set correctly for your target region
+4. Monitor governance pipeline metrics in Langfuse
+5. Review open POAM items in `docs/POAM.md`
+
+---
 
 ## See Also
 
-- [Quick Start Guide](QUICK_START.md) - 5-minute getting started
-- [Implementation Status](IMPLEMENTATION_STATUS.md) - What's complete vs. pending
-- [Rollback Procedures](ROLLBACK_PROCEDURES.md) - How to revert changes
-- [Module Documentation](modules/) - Individual module READMEs
-- [Planning Documents](../plans/) - Architecture and migration plans
+- [Quick Start Guide](QUICK_START.md) — 5-minute getting started
+- [Implementation Status](IMPLEMENTATION_STATUS.md) — component reference
+- [Rollback Procedures](ROLLBACK_PROCEDURES.md) — how to revert changes
+- [Module Documentation](modules/) — individual module READMEs
