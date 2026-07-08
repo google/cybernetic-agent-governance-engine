@@ -15,8 +15,19 @@
 name: SBOM Generation
 # POAM-006 / NIST SP 800-53 CM-8 / ISO 42001 §A.8.3
 # Generates CycloneDX SBOMs for all CAGE container images after each build.
-# Uploads SBOM artifacts to GCS and fails the build if CRITICAL CVEs are found
-# (except allowlisted items in .trivyignore).
+# Uploads SBOM artifacts to object storage and fails the build if CRITICAL
+# CVEs are found (except allowlisted items in .trivyignore).
+#
+# Storage backend — technology-agnostic via the S3-compatible API:
+#   AWS S3      → set SBOM_S3_BUCKET + SBOM_S3_ACCESS_KEY + SBOM_S3_SECRET_KEY
+#                 leave SBOM_S3_ENDPOINT unset (defaults to AWS)
+#   GCS         → set SBOM_S3_BUCKET + SBOM_S3_ACCESS_KEY + SBOM_S3_SECRET_KEY
+#                 (use a GCS HMAC key pair — Cloud Storage > Settings > Interoperability)
+#                 set SBOM_S3_ENDPOINT=https://storage.googleapis.com
+#   MinIO/R2    → set all four secrets with your endpoint URL
+#
+# If none of the SBOM_S3_* secrets are configured the upload step is skipped;
+# the SBOM is still generated and uploaded as a GitHub Actions artifact.
 
 on:
   push:
@@ -38,11 +49,11 @@ on:
 env:
   REGISTRY: gcr.io
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  SBOM_BUCKET: ${{ secrets.SBOM_GCS_BUCKET }}
 
 permissions:
   contents: read
-  id-token: write  # for Workload Identity Federation
+  # id-token: write is NOT required — no Workload Identity Federation used here.
+  # SBOM upload uses the S3-compatible API with HMAC/access-key credentials.
 
 jobs:
   sbom-scan:
@@ -59,26 +70,34 @@ jobs:
             image_suffix: compliance-bridge
       fail-fast: false
 
+    # Expose S3-compatible storage secrets as env vars so step-level `if:`
+    # conditions can test whether they are configured.
+    # secrets context is not available in `if:` expressions — env vars are.
+    #
+    # Backend selection:
+    #   SBOM_S3_ENDPOINT unset  → AWS S3 (aws cli default)
+    #   SBOM_S3_ENDPOINT set    → custom S3-compatible endpoint
+    #                             e.g. https://storage.googleapis.com  (GCS)
+    #                                  https://<account>.r2.cloudflarestorage.com
+    #                                  http://minio:9000
+    env:
+      SBOM_S3_BUCKET: ${{ secrets.SBOM_S3_BUCKET }}
+      SBOM_S3_ACCESS_KEY: ${{ secrets.SBOM_S3_ACCESS_KEY }}
+      SBOM_S3_SECRET_KEY: ${{ secrets.SBOM_S3_SECRET_KEY }}
+      SBOM_S3_ENDPOINT: ${{ secrets.SBOM_S3_ENDPOINT }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Authenticate to GCP (Workload Identity)
-        # continue-on-error: GCP secrets are not available on fork PRs or when
-        # GCP_WIF_PROVIDER / GCP_SERVICE_ACCOUNT are not configured. Subsequent
-        # steps that require GCP (SBOM upload to GCS) are already gated on
-        # `if: env.SBOM_BUCKET != ''`, so the job still produces useful artefacts.
-        uses: google-github-actions/auth@v3
-        continue-on-error: true
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
       - name: Install Trivy
         run: |
           sudo apt-get install -y wget apt-transport-https gnupg lsb-release
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-          echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+            | sudo apt-key add -
+          echo deb https://aquasecurity.github.io/trivy-repo/deb \
+            $(lsb_release -sc) main \
+            | sudo tee -a /etc/apt/sources.list.d/trivy.list
           sudo apt-get update && sudo apt-get install -y trivy
 
       - name: Set image tag
@@ -121,14 +140,45 @@ jobs:
           path: sbom-${{ matrix.service.name }}.cdx.json
           retention-days: 90
 
-      # Upload SBOM to GCS for long-term compliance evidence
-      - name: Upload SBOM to GCS
+      # Upload SBOM to object storage via the S3-compatible API.
+      # Works with AWS S3, GCS (HMAC), Cloudflare R2, MinIO, and any
+      # S3-compatible backend — no cloud-provider-specific auth action needed.
+      #
+      # GCS HMAC setup (one-time):
+      #   gcloud storage hmac create <service-account-email> \
+      #     --project=<project-id>
+      #   → copy Access ID → SBOM_S3_ACCESS_KEY secret
+      #   → copy Secret   → SBOM_S3_SECRET_KEY secret
+      #   Set SBOM_S3_ENDPOINT=https://storage.googleapis.com
+      #   Set SBOM_S3_BUCKET=<your-gcs-bucket-name>
+      - name: Upload SBOM to object storage (S3-compatible)
+        if: env.SBOM_S3_BUCKET != '' && env.SBOM_S3_ACCESS_KEY != ''
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SBOM_S3_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SBOM_S3_SECRET_KEY }}
+          # AWS_DEFAULT_REGION is required by the AWS CLI even for non-AWS
+          # endpoints; 'auto' is accepted by most S3-compatible backends.
+          AWS_DEFAULT_REGION: ${{ secrets.SBOM_S3_REGION || 'auto' }}
         run: |
-          gcloud storage cp \
+          DEST="s3://${{ env.SBOM_S3_BUCKET }}/sboms/${{ github.sha }}/sbom-${{ matrix.service.name }}.cdx.json"
+
+          # Build endpoint flag — omit for native AWS S3
+          if [ -n "${{ env.SBOM_S3_ENDPOINT }}" ]; then
+            ENDPOINT_FLAG="--endpoint-url ${{ env.SBOM_S3_ENDPOINT }}"
+          else
+            ENDPOINT_FLAG=""
+          fi
+
+          aws s3 cp \
             sbom-${{ matrix.service.name }}.cdx.json \
-            gs://${{ env.SBOM_BUCKET }}/sboms/${{ github.sha }}/sbom-${{ matrix.service.name }}.cdx.json
-          echo "✅ SBOM uploaded to gs://${{ env.SBOM_BUCKET }}/sboms/${{ github.sha }}/sbom-${{ matrix.service.name }}.cdx.json"
-        if: env.SBOM_BUCKET != ''
+            "$DEST" \
+            $ENDPOINT_FLAG \
+            --no-progress
+
+          echo "✅ SBOM uploaded to $DEST"
+          if [ -n "${{ env.SBOM_S3_ENDPOINT }}" ]; then
+            echo "   Endpoint: ${{ env.SBOM_S3_ENDPOINT }}"
+          fi
 
       - name: Summary
         run: |
@@ -139,3 +189,11 @@ jobs:
           echo "| SBOM Format | CycloneDX |" >> $GITHUB_STEP_SUMMARY
           echo "| POAM Reference | POAM-006 (CM-8 / ISO 42001 §A.8.3) |" >> $GITHUB_STEP_SUMMARY
           echo "| Artifact | \`sbom-${{ matrix.service.name }}.cdx.json\` |" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ env.SBOM_S3_BUCKET }}" ] && [ -n "${{ env.SBOM_S3_ACCESS_KEY }}" ]; then
+            ENDPOINT="${{ env.SBOM_S3_ENDPOINT }}"
+            BACKEND="${ENDPOINT:-AWS S3}"
+            echo "| Storage backend | \`${BACKEND}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Storage path | \`s3://${{ env.SBOM_S3_BUCKET }}/sboms/${{ github.sha }}/\` |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Storage backend | GitHub Artifact only (SBOM_S3_BUCKET not configured) |" >> $GITHUB_STEP_SUMMARY
+          fi
