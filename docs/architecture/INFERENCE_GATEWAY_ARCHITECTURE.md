@@ -6,7 +6,7 @@ This document analyzes the feasibility and impact of migrating the current "Sove
 
 > **Universal Baseline:** The primary architectural driver for CAGE governance is **ISO/IEC 42001:2023** — applicable to all `CAGE_DEPLOYMENT_REGION` values (US_FED, EU_ECB, APAC_MAS). The Inference Gateway's priority handling ensures governance checks are never starved of capacity, satisfying ISO 42001 §A.8.4 (AI system operation controls) universally.
 
-> **US_FED Only:** SR 26-2 (Federal Reserve supervisory guidance, April 17, 2026) applies exclusively to `CAGE_DEPLOYMENT_REGION=US_FED` deployments. SR 26-2 has no legal force outside the US Federal Reserve system (see `.clinerules` §12.4). References to SR 26-2 in this document are scoped to US_FED deployments only.
+> **US_FED Only:** SR 26-2 (Federal Reserve supervisory guidance, April 17, 2026) applies exclusively to `CAGE_DEPLOYMENT_REGION=US_FED` deployments. SR 26-2 has no legal force outside the US Federal Reserve system (see `.roo/rules` §12.4). References to SR 26-2 in this document are scoped to US_FED deployments only.
 
 Currently, the `GatewayService` routes traffic through the **Inference Gateway** (nginx GatewayClass) at the infrastructure layer, enabling advanced traffic management, autoscaling, and priority handling critical for regulatory compliance.
 

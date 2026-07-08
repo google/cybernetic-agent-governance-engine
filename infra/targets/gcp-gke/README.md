@@ -120,7 +120,7 @@ terraform apply -var-file=dev.tfvars \
 
 ```bash
 # After deployment
-gcloud container clusters get-credentials cage-dev \
+gcloud container clusters get-credentials <your-cluster-name> \
   --zone=us-central1-a \
   --project=YOUR_PROJECT
 

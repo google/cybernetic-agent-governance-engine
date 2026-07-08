@@ -4,7 +4,7 @@
 |---|---|
 | **Document Series** | CAGE Architecture Series |
 | **Version** | v0.1.0-Roadmap |
-| **Classification** | INTERNAL / FOUO |
+| **Classification** |  |
 | **Status** | RELEASED — v0.1.0 GO 2026-06-08 |
 
 ---

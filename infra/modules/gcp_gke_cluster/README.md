@@ -34,7 +34,7 @@ module "gke_dev" {
   project_id   = "my-project"
   region       = "us-central1"
   zone         = "us-central1-a"
-  cluster_name = "cage-dev"
+  cluster_name = "<your-cluster-name>"
   
   # Security: All disabled for fast iteration
   enable_nist_compliance      = false

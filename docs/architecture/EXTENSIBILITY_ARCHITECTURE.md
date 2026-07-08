@@ -103,7 +103,7 @@ Every tier's decision boundary is parameterized through [`governance_thresholds.
 
 ### 1.5 Fail-Closed Posture
 
-The CBF engine defaults to `BLOCKED` when its state source (Redis) is unreachable. This is the `CBF_FAIL_OPEN=false` enforcement verified in the v0.1.0 integration test suite (136/136 passing against live GKE `cage-dev` cluster).
+The CBF engine defaults to `BLOCKED` when its state source (Redis) is unreachable. This is the `CBF_FAIL_OPEN=false` enforcement verified in the v0.1.0 integration test suite (136/136 passing against live GKE `<your-cluster-name>` cluster).
 
 The system will not permit an action it cannot independently verify as safe. This property is invariant across all domains.
 

@@ -1,6 +1,6 @@
 # CAGE Infrastructure Management MCP Server
 
-A Model Context Protocol (MCP) server that provides infrastructure management capabilities for the Cybernetic Governance Engine (CAGE). This server enables both Google Antigravity agents and Roo Code to directly manage deployments, check cluster status, and interact with infrastructure from within your IDE.
+A Model Context Protocol (MCP) server that provides infrastructure management capabilities for the Cybernetic Governance Engine (CAGE). This server enables both your MCP environment agents and your AI assistant to directly manage deployments, check cluster status, and interact with infrastructure from within your IDE.
 
 ## Features
 
@@ -22,7 +22,7 @@ Check Kubernetes cluster health and status.
 {
   "healthy": true,
   "nodes": 3,
-  "context": "cage-dev",
+  "context": "<your-cluster-name>",
   "message": "Cluster has 3 nodes, 3 healthy"
 }
 ```
@@ -97,8 +97,8 @@ cd mcp-servers/infrastructure
 
 This script will:
 - ✅ Install the MCP server package
-- ✅ Configure Google Antigravity globally (`~/.gemini/antigravity/mcp_config.json`)
-- ✅ Configure Roo Code globally (via symlink)
+- ✅ Configure your MCP environment globally (`~/.gemini/mcp_config.json`)
+- ✅ Configure your AI assistant globally (via symlink)
 - ✅ Use absolute paths for universal availability
 - ✅ Make the server available across ALL your projects
 
@@ -133,9 +133,9 @@ The [`setup.sh`](./setup.sh) script automatically configures both agents globall
 
 If you ran the automated setup, skip this section. For manual configuration:
 
-#### For Google Antigravity
+#### For your MCP environment
 
-Add to `~/.gemini/antigravity/mcp_config.json` using **absolute paths**:
+Add to `~/.gemini/mcp_config.json` using **absolute paths**:
 
 ```json
 {
@@ -155,14 +155,14 @@ Add to `~/.gemini/antigravity/mcp_config.json` using **absolute paths**:
 - Use `which python3` to get the absolute path to Python
 - Replace `<path-to-project>` with the absolute path to your local clone of this repository (e.g. the output of `pwd` from the project root)
 
-### For Roo Code
+### For your AI assistant
 
 The automated setup script creates a **global symlink** at:
 ```
 ~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json
 ```
 
-This symlink points to the Antigravity config, ensuring both agents share the same configuration.
+This symlink points to the your MCP environment config, ensuring both agents share the same configuration.
 
 #### Manual Symlink Setup
 
@@ -170,7 +170,7 @@ If needed, create the symlink manually:
 
 ```bash
 mkdir -p ~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings
-ln -sf ~/.gemini/antigravity/mcp_config.json \
+ln -sf ~/.gemini/mcp_config.json \
   ~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json
 ```
 
@@ -182,7 +182,7 @@ ln -sf ~/.gemini/antigravity/mcp_config.json \
 
 ## Usage Examples
 
-Once configured, both Antigravity and Roo Code agents can use these tools:
+Once configured, both your MCP environment and your AI assistant agents can use these tools:
 
 ### Example 1: Check Cluster Status
 
@@ -241,11 +241,11 @@ pytest
 
 To debug the MCP server:
 
-1. **Check logs in Antigravity:**
+1. **Check logs in your MCP environment:**
    - Agent Panel > ... > View Logs
 
-2. **Check logs in Roo Code:**
-   - Output Panel > Roo Code
+2. **Check logs in your AI assistant:**
+   - Output Panel > your AI assistant
 
 3. **Test the server manually:**
    ```bash
@@ -280,7 +280,7 @@ This MCP server executes system commands and may have access to:
    
 3. ✅ **Use separate kubeconfig contexts** for dev/prod:
    ```bash
-   kubectl config use-context cage-dev
+   kubectl config use-context <your-cluster-name>
    ```
 
 4. ✅ **Limit permissions** via Kubernetes RBAC
@@ -307,10 +307,10 @@ All commands are executed within the `PROJECT_ROOT` directory with configurable 
 
 2. **Check MCP configuration syntax:**
    ```bash
-   # For Antigravity
-   cat ~/.gemini/antigravity/mcp_config.json | jq .
+   # For your MCP environment
+   cat ~/.gemini/mcp_config.json | jq .
    
-   # For Roo Code
+   # For your AI assistant
    cat .roo/mcp.json | jq .
    ```
 
@@ -388,6 +388,6 @@ Apache License 2.0 - See [LICENSE](../../LICENSE) file.
 
 ## Related Documentation
 
-- [MCP Integration Guide](../../docs/MCP_INTEGRATION_GUIDE.md) - How to share configs between Antigravity and Roo Code
+- [MCP Integration Guide](../../docs/MCP_INTEGRATION_GUIDE.md) - How to share configs between your MCP environment and your AI assistant
 - [Infrastructure Deployment Guide](../../infra/DEPLOYMENT_GUIDE.md) - General deployment instructions
 - [Model Context Protocol](https://modelcontextprotocol.io/) - Official MCP specification

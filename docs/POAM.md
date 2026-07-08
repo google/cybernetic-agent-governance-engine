@@ -1,6 +1,6 @@
 # Plan of Action and Milestones (POAM)
 
-<!-- Authority: .clinerules §11.3, docs/CHANGE_MANAGEMENT_PROCESS.md §9 -->
+<!-- Authority: .roo/rules §11.3, docs/CHANGE_MANAGEMENT_PROCESS.md §9 -->
 <!-- Format: Each closed entry must include commit SHA, Lula result, and closure date -->
 
 ## Overview
@@ -10,7 +10,7 @@ This document is the authoritative Plan of Action and Milestones (POAM) for the 
 **How to use this document:**
 
 - Every stub Lula manifest in `compliance/lula/` has a corresponding OPEN entry below.
-- When a finding is remediated, move its entry to [Closed Findings](#closed-findings) and populate the Commit SHA, Lula Result, and Closure Date fields per `.clinerules` §11.3.
+- When a finding is remediated, move its entry to [Closed Findings](#closed-findings) and populate the Commit SHA, Lula Result, and Closure Date fields per `.roo/rules` §11.3.
 - POAM IDs are permanent — do not renumber closed entries.
 - Reference POAM IDs in commit messages, PR descriptions, and Lula manifest comments.
 
@@ -183,7 +183,7 @@ This document is the authoritative Plan of Action and Milestones (POAM) for the 
 | **Deferred Since** | 2026-06-14 |
 | **Target Remediation** | 2026-09-30 |
 | **Owner** | Compliance Engineering |
-| **Risk** | Staging compliance posture verification was deferred at v0.1.0 release (CHANGELOG.md, `9373ef4`). Lula validations have only been executed against the `cage-dev` GKE cluster. A staging environment with equivalent compliance posture has not been verified. This blocks the dev → staging → production promotion chain required by `.clinerules` §8.2. |
+| **Risk** | Staging compliance posture verification was deferred at v0.1.0 release (CHANGELOG.md, `9373ef4`). Lula validations have only been executed against the `<your-cluster-name>` GKE cluster. A staging environment with equivalent compliance posture has not been verified. This blocks the dev → staging → production promotion chain required by `.roo/rules` §8.2. |
 | **Closure Criteria** | Staging GKE cluster provisioned; all universal Lula validations executed against staging; `lula validate` passes on all manifests in `compliance/lula/`; CHANGELOG.md updated with staging gate results. |
 | **Closed** | — |
 | **Commit SHA** | — |
@@ -399,7 +399,7 @@ This document is the authoritative Plan of Action and Milestones (POAM) for the 
 | Field | Value |
 |-------|-------|
 | **Status** | CLOSED |
-| **Control** | Structural compliance gap — `.clinerules` §11.3 mandates POAM tracking |
+| **Control** | Structural compliance gap — `.roo/rules` §11.3 mandates POAM tracking |
 | **Manifest** | N/A |
 | **Region Scope** | Universal |
 | **Deferred Since** | 2026-06-08 (v0.1.0 release — file referenced but absent) |
@@ -468,7 +468,7 @@ This document is the authoritative Plan of Action and Milestones (POAM) for the 
 
 ## Closure Procedure
 
-When remediating a finding, follow this procedure per `.clinerules` §11.3:
+When remediating a finding, follow this procedure per `.roo/rules` §11.3:
 
 1. Implement the remediation in a `fix(compliance):` or `feat(compliance):` PR targeting the appropriate branch.
 2. Run `lula validate` against the relevant manifest on the live cluster.
@@ -480,5 +480,5 @@ When remediating a finding, follow this procedure per `.clinerules` §11.3:
    - Populate `**Lula Result**` with `PASS` and the manifest name.
    - Move the entry from [Open Findings](#open-findings) to [Closed Findings](#closed-findings).
 5. Update `docs/POAM.md` in the same PR or a follow-on PR within 2 business days of merge.
-6. If the finding remediates a NIST SP 800-53 control, update the OSCAL component in `compliance/oscal/` within 2 business days per `.clinerules` §11.1.
+6. If the finding remediates a NIST SP 800-53 control, update the OSCAL component in `compliance/oscal/` within 2 business days per `.roo/rules` §11.1.
 

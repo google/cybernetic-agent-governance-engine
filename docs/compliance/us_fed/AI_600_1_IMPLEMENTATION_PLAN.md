@@ -59,7 +59,7 @@ Every work item in this plan is tagged with one of three posture labels:
 
 Items tagged `[PROD]` that involve new GCP services, new Kubernetes namespaces, new AI models,
 or HIGH-impact NIST SP 800-53 control changes are **Cat-M changes** and require AO pre-approval
-before promotion from staging to production (see `.clinerules` §8.4).
+before promotion from staging to production (see `.roo/rules` §8.4).
 
 ### 1.1 Regulatory Drivers
 
@@ -136,7 +136,7 @@ ATO under SR 26-2.
    component.
 
 5. Verify `CAGE_ROUTING_SEAL_SECRET` (≥64 chars) is present in `advisor-secrets` — this
-   is already a universal release gate (`.clinerules` §5.1).
+   is already a universal release gate (`.roo/rules` §5.1).
 
 **Commit message**:
 ```
@@ -370,7 +370,7 @@ no Langfuse scorer that records confabulation events for audit purposes.
 
 > ⚠️ **Secret hygiene**: `CONFIDENCE_MIN_SCORE` is not a secret but is stored in
 > `advisor-secrets` for operational consistency. Never hardcode `0.95` as a fallback
-> in source code (`.clinerules` §9.1).
+> in source code (`.roo/rules` §9.1).
 
 ---
 
@@ -684,7 +684,7 @@ domain rails. CBRN-specific Colang rail definitions are not present.
    ```
 
 2. Update `src/gateway/governance/nemo/manager.py` to load `cbrn_rails.co`
-   when `CAGE_DEPLOYMENT_REGION=US_FED` (region guard per `.clinerules` §12.2).
+   when `CAGE_DEPLOYMENT_REGION=US_FED` (region guard per `.roo/rules` §12.2).
 
 3. Write `tests/test_nemo_cbrn_rails.py`:
    - Assert each CBRN phrase triggers the `refuse cbrn` bot response
@@ -706,7 +706,7 @@ domain rails. CBRN-specific Colang rail definitions are not present.
 
 > ⚠️ **Cat-M flag**: Adding new NeMo Colang rail definitions that affect the
 > inference pipeline constitutes a change to the AI model behavior layer.
-> AO pre-approval required before production deployment (`.clinerules` §8.4).
+> AO pre-approval required before production deployment (`.roo/rules` §8.4).
 
 **Prod tasks**:
 
@@ -995,7 +995,7 @@ Add this script to `scripts/verify_all.py` as a new `verify_ai600` function.
 ### 9.3 License Header Enforcement
 
 All new `.py` files created in this plan must include the Apache 2.0 header
-(`.clinerules` §10.2). The CI `license-check` job enforces this. New files:
+(`.roo/rules` §10.2). The CI `license-check` job enforces this. New files:
 
 | File | Header Required |
 |---|---|
@@ -1039,7 +1039,7 @@ For CBRN keyword list changes: set `tier1_keywords_cbrn_enabled: false` in
 > ⚠️ **Compliance note**: Disabling any AI 600-1 control in production is a
 > Cat-E change (emergency) and requires ISSO + System Owner verbal authorization
 > within 2 hours, AO notification within 1 hour, and full documentation within
-> 4 hours (`.clinerules` §7.4).
+> 4 hours (`.roo/rules` §7.4).
 
 ### 10.3 Contingency for Cat-M Blockers
 
@@ -1060,7 +1060,7 @@ is delayed beyond the phase timeline:
 
 ### 10.4 CHANGELOG.md Update Reminder
 
-Per `.clinerules` §8.5, every Cat-N and Cat-M change in this plan requires a
+Per `.roo/rules` §8.5, every Cat-N and Cat-M change in this plan requires a
 `CHANGELOG.md` entry. Template:
 
 ```markdown
@@ -1205,7 +1205,7 @@ Kubernetes assertions. This is the final step before AI 600-1 release gate closu
 **Prod tasks**:
 
 4. Run `lula validate` against all 5 manifests against the live GKE cluster
-   as part of the release gate (`.clinerules` §5.1 universal gates).
+   as part of the release gate (`.roo/rules` §5.1 universal gates).
 
 5. Add AI 600-1 Lula results to the release checklist in `docs/RELEASE_RUNBOOK.md`.
 
@@ -1243,7 +1243,7 @@ Kubernetes assertions. This is the final step before AI 600-1 release gate closu
 
 > ⚠️ **Cat-M flag**: Adding a new Pub/Sub topic (`governance-hitl-escalations`)
 > is a new GCP service and requires AO pre-approval before production deployment
-> (`.clinerules` §8.4, §13.2).
+> (`.roo/rules` §8.4, §13.2).
 
 **Prod acceptance criteria**:
 - Pub/Sub topic receives escalation messages for test requests > USD 10,000

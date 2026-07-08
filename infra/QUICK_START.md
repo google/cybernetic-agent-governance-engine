@@ -115,7 +115,7 @@ project_id = "your-actual-project-id"  # CHANGE THIS
 
 ```bash
 # Configure kubectl
-gcloud container clusters get-credentials cage-dev \
+gcloud container clusters get-credentials <your-cluster-name> \
   --zone=us-central1-a \
   --project=YOUR_PROJECT
 

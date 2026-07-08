@@ -102,7 +102,7 @@ CAGE presents incident response challenges not covered by traditional IR framewo
 
 ### 1.7 HITL SLA by Jurisdiction
 
-> **US_FED Only:** The SR 26-2 §3.2 Human-in-the-Loop (HITL) SLA of **4 hours** applies exclusively to `CAGE_DEPLOYMENT_REGION=US_FED` deployments. This is a US Federal Reserve supervisory requirement with no legal force in EU or APAC jurisdictions (see `.clinerules` §12.4).
+> **US_FED Only:** The SR 26-2 §3.2 Human-in-the-Loop (HITL) SLA of **4 hours** applies exclusively to `CAGE_DEPLOYMENT_REGION=US_FED` deployments. This is a US Federal Reserve supervisory requirement with no legal force in EU or APAC jurisdictions (see `.roo/rules` §12.4).
 
 | Jurisdiction | HITL SLA Authority | Maximum HITL Response Time |
 | ------------ | ------------------ | -------------------------- |

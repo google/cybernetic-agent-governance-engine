@@ -127,7 +127,7 @@ Each control entry must contain:
 CAGE uses a strictly layered compliance architecture:
 
 ### Global Baseline (ISO 42001)
-The global baseline posture is **ISO 42001 only**. All deployments — regardless of region or jurisdiction — must satisfy the ISO 42001 universal release gates before the stable tag is applied. These gates are defined in `.clinerules` §5.1.
+The global baseline posture is **ISO 42001 only**. All deployments — regardless of region or jurisdiction — must satisfy the ISO 42001 universal release gates before the stable tag is applied. These gates are defined in `.roo/rules` §5.1.
 
 ### Regional Additive Layers
 Geographic- and jurisdiction-specific compliance postures are implemented as **strictly additive, independently configurable layers** on top of the ISO 42001 baseline. They are activated by the `CAGE_DEPLOYMENT_REGION` environment variable.
@@ -141,6 +141,6 @@ Geographic- and jurisdiction-specific compliance postures are implemented as **s
 ### Non-Negotiable Rules
 1. Regional postures **must never** be embedded in, required by, or merged into the global ISO 42001 posture.
 2. Regional gates **must not** be treated as prerequisites for the global stable tag.
-3. The global stable tag `v<X.Y.Z>` is applied when all universal gates (`.clinerules` §5.1) pass.
-4. Regional deployment gates (`.clinerules` §5.2–5.4) block region-specific deployment only.
+3. The global stable tag `v<X.Y.Z>` is applied when all universal gates (`.roo/rules` §5.1) pass.
+4. Regional deployment gates (`.roo/rules` §5.2–5.4) block region-specific deployment only.
 5. All regional baseline files carry `"_baseline_type": "additive_regional_layer"` to make this relationship machine-readable and self-documenting.

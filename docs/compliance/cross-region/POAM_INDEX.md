@@ -132,7 +132,7 @@ Which POAM entries have a corresponding Lula validation manifest:
 | Monorepo is single source of truth | ✅ All five POAM files live in `docs/`; no external tracking system |
 | Audit trail continuity | ✅ All original POAM-NNN IDs retained; moved entries carry `originally-in` annotations |
 | Lula validation alignment | ✅ Lula manifests use `cage.region` annotations (ALL / US_FED); POAM `Regions` column mirrors this pattern |
-| `.clinerules` §5 compliance | ✅ Universal gates remain ISO 42001-only; regional gates are additive layers — POAM structure matches this architecture |
+| `.roo/rules` §5 compliance | ✅ Universal gates remain ISO 42001-only; regional gates are additive layers — POAM structure matches this architecture |
 | SR 26-2 suppression | ✅ US Federal Reserve guidance suppressed in EU_ECB and APAC_MAS OTel spans via sentinel mechanism; not referenced as primary framework in EU/APAC POAM files |
 
 ---

@@ -2,7 +2,7 @@
 
 **Report Date:** 2026-06-15  
 **Scope:** Full codebase — source code, deployment scripts, documentation, compliance artifacts  
-**Authority:** `.clinerules` Sections 1–14, `docs/GIT_WORKFLOW_STANDARDS.md`, `docs/DEPLOYMENT_RULES.md`  
+**Authority:** `.roo/rules` Sections 1–14, `docs/GIT_WORKFLOW_STANDARDS.md`, `docs/DEPLOYMENT_RULES.md`  
 **Status:** FINDINGS ONLY — no code has been modified
 
 ---
@@ -57,7 +57,7 @@ Two **CRITICAL** findings require immediate remediation before any production de
 
 ## 2. Architectural Principles Under Review
 
-The following principles are mandated by `.clinerules` and must be enforced at every layer:
+The following principles are mandated by `.roo/rules` and must be enforced at every layer:
 
 ### 2.1 The Jurisdictional Hierarchy
 
@@ -858,7 +858,7 @@ lifecycle {
 | **Severity** | HIGH |
 | **Rule Violated** | R-8 |
 
-**Issue:** SR 26-2 (Federal Reserve supervisory guidance) is presented as a primary architectural driver without US_FED qualification. SR 26-2 has "no legal force" outside the US Federal Reserve system (per `.clinerules` Section 12.4). Presenting it as a universal architectural driver contradicts the "no legal force" sentinel requirement.
+**Issue:** SR 26-2 (Federal Reserve supervisory guidance) is presented as a primary architectural driver without US_FED qualification. SR 26-2 has "no legal force" outside the US Federal Reserve system (per `.roo/rules` Section 12.4). Presenting it as a universal architectural driver contradicts the "no legal force" sentinel requirement.
 
 **Remediation:** Add a `> **US_FED Only:** SR 26-2 applies exclusively to CAGE_DEPLOYMENT_REGION=US_FED deployments.` callout wherever SR 26-2 is referenced. Add an ISO 42001 section as the primary architectural driver.
 
@@ -1038,7 +1038,7 @@ metadata:
 | **Severity** | HIGH |
 | **Rule Violated** | R-9 |
 
-**Issue:** The entire Lula validation suite contains zero validation files for EU_ECB-specific controls (EU AI Act Art. 9, GDPR Art. 22, DORA Art. 10) and zero validation files for APAC_MAS-specific controls (MAS FEAT, MAS Notice 655, MAS TRM §6.3). The `.clinerules` Sections 5.3 and 5.4 list EU_ECB and APAC_MAS release gates, but there are no Lula files to satisfy them.
+**Issue:** The entire Lula validation suite contains zero validation files for EU_ECB-specific controls (EU AI Act Art. 9, GDPR Art. 22, DORA Art. 10) and zero validation files for APAC_MAS-specific controls (MAS FEAT, MAS Notice 655, MAS TRM §6.3). The `.roo/rules` Sections 5.3 and 5.4 list EU_ECB and APAC_MAS release gates, but there are no Lula files to satisfy them.
 
 **Remediation:** Create the following Lula validation files:
 
@@ -1080,7 +1080,7 @@ Each file must carry `cage.region: EU_ECB` or `cage.region: APAC_MAS` in `metada
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-9 |
 
-**Issue:** The README table lists `lula-validation-aarm-vectors.yaml` as `Status: 🔶 Stub` but the Posture Architecture Alignment section counts it as `1 Active (ALL scope)`. A stub that always returns `true` provides no real compliance assurance, yet it is listed as a universal release gate in `.clinerules` Section 5.1.
+**Issue:** The README table lists `lula-validation-aarm-vectors.yaml` as `Status: 🔶 Stub` but the Posture Architecture Alignment section counts it as `1 Active (ALL scope)`. A stub that always returns `true` provides no real compliance assurance, yet it is listed as a universal release gate in `.roo/rules` Section 5.1.
 
 **Remediation:** Reconcile the status. If the AARM validation is a stub, remove it from the "Active" count and from the release gate list until it has real assertions.
 

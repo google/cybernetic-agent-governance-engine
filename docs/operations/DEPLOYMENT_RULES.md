@@ -1,6 +1,6 @@
 # CAGE Deployment Rules & Best Practices
 
-> **Critical Policy:** This document defines mandatory deployment rules that all agents (Antigravity, Roo Code) and human operators must follow.
+> **Critical Policy:** This document defines mandatory deployment rules that all agents (your MCP environment, your AI assistant) and human operators must follow.
 
 ## 🚨 GKE Deployment Policy
 
@@ -27,7 +27,7 @@
 ./deploy_all.sh --target gcp-gke --env dev
 
 # Option 2: Using MCP server via agents
-# Ask Antigravity or Roo: "Deploy to GKE development environment"
+# Ask your MCP environment or Roo: "Deploy to GKE development environment"
 # The agent will use the cage-infrastructure MCP server
 
 # Option 3: Direct Cloud Build (advanced)
@@ -133,13 +133,13 @@ kubectl get deployments -n governance-stack
 
 ## Agent Instructions
 
-### For Antigravity
+### For your MCP environment
 
 This file serves as a knowledge artifact. When asked to deploy to GKE, reference this document and use the `cage-infrastructure` MCP server with `target: "gcp-gke"`.
 
-### For Roo Code
+### For your AI assistant
 
-The deployment rules are enforced via `.clinerules` at the project root. When deploying to GKE, always use the approved methods above.
+The deployment rules are enforced via `.roo/rules` at the project root. When deploying to GKE, always use the approved methods above.
 
 ### For Human Operators
 

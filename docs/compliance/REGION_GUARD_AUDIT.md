@@ -3,7 +3,7 @@
 **Document ID:** REGION-GUARD-AUDIT-2026-001  
 **Audit Date:** 2026-06-30  
 **Auditor:** Automated compliance audit (Roo / CAGE SDLC agent)  
-**Authority:** `.clinerules §12`, GDPR Art. 44, MAS TRM §4.2  
+**Authority:** `.roo/rules §12`, GDPR Art. 44, MAS TRM §4.2  
 **Scope:** All shared modules deployed simultaneously to US_FED, EU_ECB, and APAC_MAS  
 **Status:** DRAFT — Pending engineering review
 
@@ -455,7 +455,7 @@ These locations perform pure computation or local filesystem operations with no 
 
 ## 5. SR 26-2 "No Legal Force" Sentinel Verification
 
-**Requirement (`.clinerules §12.4`):** The "no legal force" SR 26-2 sentinel in EU and APAC baselines must never be removed. Its presence suppresses telemetry that lacks legal basis under GDPR / MAS Notice 655.
+**Requirement (`.roo/rules §12.4`):** The "no legal force" SR 26-2 sentinel in EU and APAC baselines must never be removed. Its presence suppresses telemetry that lacks legal basis under GDPR / MAS Notice 655.
 
 ### 5.1 EU_ECB Baseline
 

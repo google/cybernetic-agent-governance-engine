@@ -204,7 +204,7 @@ matched, which prevents adversarial enumeration of the block-list.
 | Unit test — text filter | [`tests/test_text_filter_cbrn.py`](../../../../tests/test_text_filter_cbrn.py) | Tests the `text_filter.py` CBRN keyword layer that runs **before** NeMo as a fast pre-screen |
 
 > **Note:** The Lula validation (`lula-validation-ai600-cbrn.yaml`) is a
-> **US\_FED release gate only** (see `.clinerules` §5.2). It must not be listed
+> **US\_FED release gate only** (see `.roo/rules` §5.2). It must not be listed
 > as a prerequisite for the global stable tag or for EU\_ECB / APAC\_MAS
 > deployments.
 

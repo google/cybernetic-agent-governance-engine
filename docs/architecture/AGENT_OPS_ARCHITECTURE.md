@@ -12,7 +12,7 @@ CAGE implements a **two-layer agent governance architecture** that combines poli
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    AI Agent (Antigravity / Roo Code)        │
+│                    AI Agent (your MCP environment / your AI assistant)        │
 └─────────────────────┬───────────────────────┬───────────────┘
                       │                       │
               ┌───────▼────────┐     ┌────────▼────────┐
@@ -21,7 +21,7 @@ CAGE implements a **two-layer agent governance architecture** that combines poli
               └───────┬────────┘     └────────┬────────┘
                       │                       │
               ┌───────▼────────┐     ┌────────▼────────┐
-              │  .clinerules   │     │  MCP Server     │
+              │  .roo/rules   │     │  MCP Server     │
               │  docs/*.md     │     │  Tools API      │
               └────────────────┘     └─────────────────┘
                       │                       │
@@ -39,7 +39,7 @@ Define **why** and **when** agents should take actions. Establish cognitive boun
 
 | Component | Purpose | Example |
 |-----------|---------|---------|
-| **`.clinerules`** | Roo Code workspace rules | GKE deployment policy |
+| **`.roo/rules`** | your AI assistant workspace rules | GKE deployment policy |
 | **`docs/DEPLOYMENT_RULES.md`** | Shared knowledge artifact | Comprehensive deployment matrix |
 | **`docs/*.md`** | Domain-specific policies | Security, compliance, architecture |
 
@@ -258,7 +258,7 @@ An agent needs to deploy CAGE to GKE. Without governance, it might:
 
 ### The Solution
 
-**Policy Layer (.clinerules):**
+**Policy Layer (.roo/rules):**
 ```markdown
 When deploying to GKE, ALWAYS use Cloud Build.
 - Rationale: Platform consistency, security scanning, audit trail
@@ -312,7 +312,7 @@ async def deploy_environment(target: str, environment: str):
 
 When adding new agent capabilities:
 
-- [ ] **Define policy** in `.clinerules` or `docs/*.md`
+- [ ] **Define policy** in `.roo/rules` or `docs/*.md`
   - [ ] What is allowed
   - [ ] What is prohibited
   - [ ] Why (rationale)
