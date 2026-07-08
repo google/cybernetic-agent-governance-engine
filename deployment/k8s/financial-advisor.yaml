@@ -64,6 +64,16 @@ spec:
                 name: advisor-secrets
                 optional: false
           env:
+            # CAGE_ENV identifies the deployment tier. "development" enables the
+            # auth bypass when CAGE_API_KEY / COMPLIANCE_BRIDGE_INTERNAL_TOKEN are
+            # absent (dev cluster only). Must be "production" in prod.
+            - name: CAGE_ENV
+              value: "development"
+            # CAGE_DEPLOYMENT_REGION activates the correct jurisdictional control
+            # set: US_FED → NIST SP 800-53 / FedRAMP; EU_ECB → EU AI Act;
+            # APAC_MAS → MAS FEAT. Without this only universal ISO 42001 controls load.
+            - name: CAGE_DEPLOYMENT_REGION
+              value: "US_FED"
             - name: PORT
               value: "8080"
             - name: GATEWAY_URL

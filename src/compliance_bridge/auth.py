@@ -54,7 +54,9 @@ async def require_internal_token(
 
     # In dev with no token configured, allow through with warning.
     # This preserves local development ergonomics without compromising prod.
-    if cage_env == "dev" and not token:
+    # Accept both "dev" and "development" — Kubernetes deployments commonly use
+    # CAGE_ENV=development (the full word) while local scripts use CAGE_ENV=dev.
+    if cage_env in ("dev", "development") and not token:
         logger.warning(
             "COMPLIANCE_BRIDGE_INTERNAL_TOKEN not set — auth disabled in dev"
         )

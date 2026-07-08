@@ -15,16 +15,15 @@
 # ── lula2-pr-compliance.yml ────────────────────────────────────────────────────
 # Lula2 PR Compliance Impact Crawler
 #
-# Uses lula2 (defenseunicorns/lula — the SvelteKit/Node.js GitOps UI tool) to
-# analyze pull requests for compliance-impacting file changes and post a summary
-# comment on the PR.
+# Uses the lula2 npm package to analyze pull requests for compliance-impacting
+# file changes and post a summary comment on the PR.
 #
-# IMPORTANT: lula2 is NOT the same as lula1 (defenseunicorns-labs/lula1).
-#   lula1 = Go CLI that runs `lula validate` against live Kubernetes clusters
-#   lula2 = Node.js tool for GitOps compliance tracking and PR impact analysis
+# NOTE: The lula2 npm package is a separate tool from the Lula Go CLI.
+#   Lula Go CLI (defenseunicorns/lula) = runs `lula validate` against Kubernetes
+#   lula2 npm package                  = PR impact analysis / GitOps tracking
 #
-# This workflow is ADDITIVE — it does not replace lula1 runtime validation.
-# lula1 live validation is performed by compliance-matrix.yml post-cluster-provisioning.
+# This workflow is ADDITIVE — it does not replace Lula runtime validation.
+# Lula live validation is performed by compliance-matrix.yml post-cluster-provisioning.
 #
 # Trigger: pull_request targeting main
 # Output:  PR comment summarising compliance-impacting file changes
