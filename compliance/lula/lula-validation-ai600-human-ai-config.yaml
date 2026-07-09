@@ -12,30 +12,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Validates: AI 600-1 §2.5 Human-AI Configuration controls
-# Controls: Consensus threshold enforced; override audit active; HITL escalator
+# lula-validation-ai600-human-ai-config.yaml
+# NIST AI 600-1 §2.5 — Human-AI Configuration controls
+#
+# Validates: Consensus threshold enforced; override audit active; HITL escalator.
 # POAM: AI600-004
-# Phase: 0 (stub) → Phase 2 (real assertions replace stub per §6.4)
+# Phase: 0 (stub — always passes) → Phase 2 (real assertions replace stub per §6.4)
 # Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
-domain:
-  type: kubernetes
-  kubernetes:
-    resources: []   # populated in Phase 2
-    # Phase 2 will assert:
-    #   - defer-queue Deployment is running in governance-stack namespace
-    #   - CONSENSUS_THRESHOLD_USD env var is set to 10000
-    #   - hitl_escalator is active
-provider:
-  type: opa
-  opa:
-    policy: |
-      # stub — always passes until Phase 2
-      # Phase 2 real assertion (see §6.4 of AI_600_1_IMPLEMENTATION_PLAN.md):
-      #   allow if {
-      #     some container in input["defer-queue-deployment"].spec.template.spec.containers
-      #     some env in container.env
-      #     env.name == "CONSENSUS_THRESHOLD_USD"
-      #     env.value == "10000"
-      #   }
-      package validate
-      default allow = true
+
+component-definition:
+  uuid: 6789abcd-ef01-2345-6789-abcdef012345
+  metadata:
+    title: CAGE Validation — AI600-Human-AI-Config
+    last-modified: '2026-07-09T00:00:00Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: 'Phase-0 stub for AI 600-1 §2.5 Human-AI Configuration controls.
+      Always passes until Phase 2 real assertions are implemented per §6.4.
+      Region: US_FED. POAM: AI600-004.'
+  components:
+  - uuid: 789abcde-f012-3456-789a-bcdef0123456
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: 89abcdef-0123-4567-89ab-cdef01234567
+      source: https://airc.nist.gov/Docs/1
+      description: 'Control implementation for AI600-Human-AI-Config. Region: US_FED. Phase: 0 stub.'
+      implemented-requirements:
+      - uuid: 9abcdef0-1234-5678-9abc-def012345678
+        control-id: ai600-human-ai-config
+        description: Phase-0 stub for AI 600-1 §2.5 human-AI configuration controls.
+        links:
+        - href: '#abcdef01-2345-6789-abcd-ef0123456789'
+          rel: lula
+  back-matter:
+    resources:
+    - uuid: abcdef01-2345-6789-abcd-ef0123456789
+      title: Lula Validation — AI600-Human-AI-Config
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: kubernetes\n  kubernetes:\n    resources: []\n\
+        \    # Phase 2 will assert:\n    #   - defer-queue Deployment is running in\
+        \ governance-stack namespace\n    #   - CONSENSUS_THRESHOLD_USD env var is\
+        \ set to 10000\n    #   - hitl_escalator is active\nprovider:\n  type: opa\n\
+        \  opa-spec:\n    rego: \"package lula\\n\\n# Phase-0 stub — always passes\
+        \ until Phase 2\\n# Phase 2 real assertion (see §6.4 of AI_600_1_IMPLEMENTATION_PLAN.md):\\\
+        n#   validate if {\\n#     some container in input[\\\"defer-queue-deployment\\\
+        \"].spec.template.spec.containers\\n#     some env in container.env\\n#  \
+        \   env.name == \\\"CONSENSUS_THRESHOLD_USD\\\"\\n#     env.value == \\\"\
+        10000\\\"\\n#   }\\nvalidate := true\\n\"\n"

@@ -74,6 +74,9 @@ cage_deployment_region = "APAC_MAS"
 # ─── Security Posture (APAC Dev: Audit logging required by MAS Notice 655) ────
 # MAS Notice 655 §10 mandates audit logging for all AI system operations.
 # MAS TRM Guidelines §6.4 requires continuous monitoring of AI model performance.
+enable_nist_compliance         = false
+enable_eu_ecb_compliance       = false
+enable_apac_mas_compliance     = true  # DEP-20: activates MAS TRM §9.1 encryption + MAS Notice 655 audit logging
 enable_binary_authorization    = false
 enable_audit_logging           = true  # MAS Notice 655 §10 — mandatory
 enable_cmek                    = false
