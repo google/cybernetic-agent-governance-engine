@@ -57,101 +57,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Validate MAS FEAT Lula manifest structure
-        # Validates YAML structure of MAS FEAT Lula stubs.
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: APAC_MAS compliance posture checks
+        # Validates MAS FEAT Lula manifest structure, MAS TRM §4.2 data residency,
+        # MAS Notice 655 audit logging, SR 26-2 sentinel, and ISO 42001 universal manifests.
         # Full live lula validate runs post-cluster-provisioning.
-        run: |
-          python3 - <<'PYEOF'
-          import yaml, sys, pathlib
-          manifests = sorted(pathlib.Path('compliance/lula').glob('lula-validation-mas-*.yaml'))
-          if not manifests:
-              print('WARNING: no MAS FEAT Lula manifests found — CA-03 remediation pending')
-              sys.exit(0)
-          errors = []
-          for m in manifests:
-              doc = yaml.safe_load(m.read_text())
-              if 'component-definition' not in doc:
-                  errors.append(f'{m.name}: missing component-definition key')
-              print(f'  OK {m.name}')
-          if errors:
-              print('FAILURES:')
-              for e in errors:
-                  print(f'  {e}')
-              sys.exit(1)
-          print(f'All {len(manifests)} MAS FEAT Lula manifests passed YAML structure check.')
-          PYEOF
-
-      - name: Validate MAS TRM §4.2 data residency configuration
-        # Ensures APAC_MAS deployment region is within asia-* (MAS TRM §4.2).
-        run: |
-          python3 - <<'PYEOF'
-          import pathlib, sys
-          tfvars_path = pathlib.Path('infra/targets/gcp-gke/apac-prod.tfvars')
-          if not tfvars_path.exists():
-              print('ERROR: infra/targets/gcp-gke/apac-prod.tfvars not found')
-              sys.exit(1)
-          content = tfvars_path.read_text()
-          # Verify region is within asia-*
-          import re
-          m = re.search(r'region\s*=\s*"([^"]+)"', content)
-          if not m:
-              print('ERROR: region not found in apac-prod.tfvars')
-              sys.exit(1)
-          region = m.group(1)
-          if not region.startswith('asia-'):
-              print(f'ERROR: MAS TRM §4.2 violation — APAC_MAS region must be asia-*, got: {region}')
-              sys.exit(1)
-          print(f'MAS TRM §4.2 data residency OK: region={region}')
-          # Verify cage_deployment_region is APAC_MAS
-          m2 = re.search(r'cage_deployment_region\s*=\s*"([^"]+)"', content)
-          if not m2 or m2.group(1) != 'APAC_MAS':
-              print('ERROR: cage_deployment_region must be APAC_MAS in apac-prod.tfvars')
-              sys.exit(1)
-          print(f'cage_deployment_region=APAC_MAS — OK')
-          # Verify enable_apac_mas_compliance is true
-          if not re.search(r'enable_apac_mas_compliance\s*=\s*true', content):
-              print('ERROR: enable_apac_mas_compliance must be true in apac-prod.tfvars')
-              sys.exit(1)
-          print('enable_apac_mas_compliance=true — OK')
-          PYEOF
-
-      - name: Validate MAS Notice 655 audit logging configuration
-        # Checks that MAS Notice 655 audit logging is enabled in apac-dev.tfvars.
-        run: |
-          python3 - <<'PYEOF'
-          import pathlib, sys
-          tfvars_path = pathlib.Path('infra/targets/gcp-gke/apac-dev.tfvars')
-          if not tfvars_path.exists():
-              print('WARNING: infra/targets/gcp-gke/apac-dev.tfvars not found — skipping MAS Notice 655 check')
-              sys.exit(0)
-          content = tfvars_path.read_text()
-          # Check for MAS Notice 655 audit logging marker
-          if 'enable_apac_mas_compliance' not in content:
-              print('WARNING: enable_apac_mas_compliance not found in apac-dev.tfvars')
-          else:
-              print('MAS Notice 655 audit logging configuration present — OK')
-          PYEOF
-
-      - name: Validate SR 26-2 telemetry suppression sentinel
-        # The "no legal force" sentinel must be present in APAC baselines.
-        # Its presence suppresses telemetry that lacks legal basis under MAS Notice 655.
-        run: |
-          python3 - <<'PYEOF'
-          import pathlib, sys
-          # Check for SR 26-2 sentinel in APAC baseline thresholds
-          threshold_files = list(pathlib.Path('config/thresholds').glob('*.yaml')) + \
-                            list(pathlib.Path('config/thresholds').glob('*.json'))
-          apac_files = [f for f in threshold_files if 'apac' in f.name.lower() or 'mas' in f.name.lower()]
-          if not apac_files:
-              print('WARNING: No APAC threshold files found — SR 26-2 sentinel check skipped')
-              sys.exit(0)
-          for f in apac_files:
-              content = f.read_text()
-              if 'no legal force' in content or 'SR 26-2' in content:
-                  print(f'SR 26-2 sentinel present in {f.name} — OK')
-              else:
-                  print(f'WARNING: SR 26-2 sentinel not found in {f.name}')
-          PYEOF
+        run: python3 scripts/check_apac_mas_posture.py
 
   apac-mas-iso42001-lula:
     name: "ISO 42001 Universal Lula Validation (APAC_MAS context)"
@@ -169,39 +82,12 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install PyYAML
+        run: pip install pyyaml
+
       - name: Validate ISO 42001 universal Lula manifests (APAC_MAS context)
         # ISO 42001 is a universal standard — applies to ALL regions including APAC_MAS.
         # Only ISO 42001 and AARM (CSA) manifests are validated here.
         # NIST SP 800-53 (ac*, au*, cm*, ia*, ir*, ra*, sc*, si*) and
         # NIST AI 600-1 (ai600-*) are US_FED-scoped and must NOT be validated here.
-        run: |
-          python3 - <<'PYEOF'
-          import yaml, sys, pathlib
-          # Explicit list of universal manifests (ISO 42001 + AARM).
-          # Do NOT use a glob — lula-validation-a*.yaml also matches NIST SP 800-53
-          # (ac2, ac3, au12) and NIST AI 600-1 (ai600-*) which are US_FED-only.
-          UNIVERSAL_MANIFESTS = [
-              'compliance/lula/lula-validation-a52.yaml',
-              'compliance/lula/lula-validation-a53.yaml',
-              'compliance/lula/lula-validation-a92.yaml',
-              'compliance/lula/lula-validation-aarm-vectors.yaml',
-          ]
-          errors = []
-          validated = []
-          for path in UNIVERSAL_MANIFESTS:
-              m = pathlib.Path(path)
-              if not m.exists():
-                  errors.append(f'{m.name}: file not found')
-                  continue
-              doc = yaml.safe_load(m.read_text())
-              if 'component-definition' not in doc:
-                  errors.append(f'{m.name}: missing component-definition key')
-              else:
-                  validated.append(m.name)
-                  print(f'  OK {m.name}')
-          if errors:
-              for e in errors:
-                  print(f'  ERROR: {e}')
-              sys.exit(1)
-          print(f'All {len(validated)} universal ISO 42001 / AARM Lula manifests valid (APAC_MAS context).')
-          PYEOF
+        run: python3 scripts/check_apac_mas_posture.py

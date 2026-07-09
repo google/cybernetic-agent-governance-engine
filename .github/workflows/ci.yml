@@ -177,33 +177,16 @@ jobs:
     needs: [pytest-logic]
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install PyYAML
+        run: pip install pyyaml
       - name: Validate AI 600-1 Lula manifest structure (stub syntax check)
-        # Stub manifests have no live cluster — validate YAML structure only.
+        # Stub manifests use OSCAL component-definition structure (not standalone domain/provider).
+        # The domain/provider are embedded inside back-matter.resources[].description.
         # Full live lula validate runs post-cluster-provisioning per Phase 3 §7.5.
-        run: |
-          python3 - <<'PYEOF'
-          import yaml, sys, pathlib
-          manifests = sorted(pathlib.Path('compliance/lula').glob('lula-validation-ai600-*.yaml'))
-          if not manifests:
-              print('ERROR: no AI 600-1 Lula manifests found')
-              sys.exit(1)
-          errors = []
-          for m in manifests:
-              doc = yaml.safe_load(m.read_text())
-              if 'domain' not in doc:
-                  errors.append(f'{m.name}: missing domain key')
-              if 'provider' not in doc:
-                  errors.append(f'{m.name}: missing provider key')
-              dtype = doc.get('domain', {}).get('type', '?')
-              ptype = doc.get('provider', {}).get('type', '?')
-              print(f'  OK {m.name}: domain={dtype}, provider={ptype}')
-          if errors:
-              print('FAILURES:')
-              for e in errors:
-                  print(f'  {e}')
-              sys.exit(1)
-          print(f'All {len(manifests)} AI 600-1 Lula manifests passed YAML structure check.')
-          PYEOF
+        run: python3 scripts/check_ai600_lula_manifests.py
       - name: Assert lula manifest count matches README
         run: |
           DISK_COUNT=$(ls compliance/lula/lula-validation-*.yaml 2>/dev/null | wc -l | tr -d ' ')
