@@ -70,13 +70,9 @@ jobs:
           errors = []
           for m in manifests:
               doc = yaml.safe_load(m.read_text())
-              if 'domain' not in doc:
-                  errors.append(f'{m.name}: missing domain key')
-              if 'provider' not in doc:
-                  errors.append(f'{m.name}: missing provider key')
-              dtype = doc.get('domain', {}).get('type', '?')
-              ptype = doc.get('provider', {}).get('type', '?')
-              print(f'  OK {m.name}: domain={dtype}, provider={ptype}')
+              if 'component-definition' not in doc:
+                  errors.append(f'{m.name}: missing component-definition key')
+              print(f'  OK {m.name}')
           if errors:
               print('FAILURES:')
               for e in errors:
@@ -185,10 +181,8 @@ jobs:
           errors = []
           for m in manifests:
               doc = yaml.safe_load(m.read_text())
-              if 'domain' not in doc:
-                  errors.append(f'{m.name}: missing domain key')
-              if 'provider' not in doc:
-                  errors.append(f'{m.name}: missing provider key')
+              if 'component-definition' not in doc:
+                  errors.append(f'{m.name}: missing component-definition key')
               print(f'  OK {m.name}')
           if errors:
               for e in errors:

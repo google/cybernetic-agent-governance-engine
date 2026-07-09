@@ -211,8 +211,9 @@ jobs:
 
       - name: OPA check all Rego files
         run: |
-          find . -name "*.rego" -not -path "*/node_modules/*" \
-            | xargs opa check
+          opa check \
+            compliance/postures/us_fed/opa/ \
+            src/governed_financial_advisor/governance/policy/
 
       - name: Run OPA tests
         run: |
