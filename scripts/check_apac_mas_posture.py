@@ -36,7 +36,9 @@ import yaml
 def check_mas_feat_manifests() -> list[str]:
     """Check MAS FEAT Lula manifest YAML structure."""
     errors = []
-    manifests = sorted(pathlib.Path("compliance/lula").glob("lula-validation-mas-*.yaml"))
+    manifests = sorted(
+        pathlib.Path("compliance/lula").glob("lula-validation-mas-*.yaml")
+    )
     if not manifests:
         print("WARNING: no MAS FEAT Lula manifests found — CA-03 remediation pending")
         return errors
@@ -47,7 +49,9 @@ def check_mas_feat_manifests() -> list[str]:
         else:
             print(f"  OK {m.name}")
     if not errors:
-        print(f"All {len(manifests)} MAS FEAT Lula manifests passed YAML structure check.")
+        print(
+            f"All {len(manifests)} MAS FEAT Lula manifests passed YAML structure check."
+        )
     return errors
 
 
@@ -104,7 +108,9 @@ def check_sr262_sentinel() -> None:
         pathlib.Path("config/thresholds").glob("*.json")
     )
     apac_files = [
-        f for f in threshold_files if "apac" in f.name.lower() or "mas" in f.name.lower()
+        f
+        for f in threshold_files
+        if "apac" in f.name.lower() or "mas" in f.name.lower()
     ]
     if not apac_files:
         print("WARNING: No APAC threshold files found — SR 26-2 sentinel check skipped")

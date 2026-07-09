@@ -35,7 +35,9 @@ import yaml
 def check_eu_ai_act_manifests() -> list[str]:
     """Check EU AI Act Lula manifest YAML structure."""
     errors = []
-    manifests = sorted(pathlib.Path("compliance/lula").glob("lula-validation-eu-*.yaml"))
+    manifests = sorted(
+        pathlib.Path("compliance/lula").glob("lula-validation-eu-*.yaml")
+    )
     if not manifests:
         print("WARNING: no EU AI Act Lula manifests found — CA-03 remediation pending")
         return errors
@@ -46,7 +48,9 @@ def check_eu_ai_act_manifests() -> list[str]:
         else:
             print(f"  OK {m.name}")
     if not errors:
-        print(f"All {len(manifests)} EU AI Act Lula manifests passed YAML structure check.")
+        print(
+            f"All {len(manifests)} EU AI Act Lula manifests passed YAML structure check."
+        )
     return errors
 
 
@@ -85,7 +89,9 @@ def check_dora_logging() -> None:
     """Check DORA Art. 10 audit logging in eu-dev.tfvars (warning only)."""
     tfvars_path = pathlib.Path("infra/targets/gcp-gke/eu-dev.tfvars")
     if not tfvars_path.exists():
-        print("WARNING: infra/targets/gcp-gke/eu-dev.tfvars not found — skipping DORA check")
+        print(
+            "WARNING: infra/targets/gcp-gke/eu-dev.tfvars not found — skipping DORA check"
+        )
         return
     content = tfvars_path.read_text()
     if "enable_eu_ecb_compliance" not in content:
