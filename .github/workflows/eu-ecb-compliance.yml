@@ -170,23 +170,38 @@ jobs:
           python-version: "3.11"
 
       - name: Validate ISO 42001 universal Lula manifests (EU_ECB context)
+        # ISO 42001 is a universal standard — applies to ALL regions including EU_ECB.
+        # Only ISO 42001 and AARM (CSA) manifests are validated here.
+        # NIST SP 800-53 (ac*, au*, cm*, ia*, ir*, ra*, sc*, si*) and
+        # NIST AI 600-1 (ai600-*) are US_FED-scoped and must NOT be validated here.
         run: |
           python3 - <<'PYEOF'
           import yaml, sys, pathlib
-          # ISO 42001 manifests are universal — validate structure in EU_ECB context
-          manifests = sorted(pathlib.Path('compliance/lula').glob('lula-validation-a*.yaml'))
-          if not manifests:
-              print('ERROR: no ISO 42001 Lula manifests found')
-              sys.exit(1)
+          # Explicit list of universal manifests (ISO 42001 + AARM).
+          # Do NOT use a glob — lula-validation-a*.yaml also matches NIST SP 800-53
+          # (ac2, ac3, au12) and NIST AI 600-1 (ai600-*) which are US_FED-only.
+          UNIVERSAL_MANIFESTS = [
+              'compliance/lula/lula-validation-a52.yaml',
+              'compliance/lula/lula-validation-a53.yaml',
+              'compliance/lula/lula-validation-a92.yaml',
+              'compliance/lula/lula-validation-aarm-vectors.yaml',
+          ]
           errors = []
-          for m in manifests:
+          validated = []
+          for path in UNIVERSAL_MANIFESTS:
+              m = pathlib.Path(path)
+              if not m.exists():
+                  errors.append(f'{m.name}: file not found')
+                  continue
               doc = yaml.safe_load(m.read_text())
               if 'component-definition' not in doc:
                   errors.append(f'{m.name}: missing component-definition key')
-              print(f'  OK {m.name}')
+              else:
+                  validated.append(m.name)
+                  print(f'  OK {m.name}')
           if errors:
               for e in errors:
                   print(f'  ERROR: {e}')
               sys.exit(1)
-          print(f'All {len(manifests)} ISO 42001 Lula manifests valid (EU_ECB context).')
+          print(f'All {len(validated)} universal ISO 42001 / AARM Lula manifests valid (EU_ECB context).')
           PYEOF

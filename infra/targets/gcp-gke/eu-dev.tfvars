@@ -74,6 +74,9 @@ cage_deployment_region = "EU_ECB"
 # ─── Security Posture (EU Dev: Stricter than US Dev) ──────────────────────────
 # EU AI Act Art. 9 mandates a documented risk management system for High-Risk AI.
 # DORA Art. 10 mandates continuous ICT monitoring. These cannot be disabled.
+enable_nist_compliance         = false
+enable_eu_ecb_compliance       = true  # DEP-20: activates DORA Art. 10 + GDPR Art. 32 controls
+enable_apac_mas_compliance     = false
 enable_binary_authorization    = false
 enable_audit_logging           = true  # DORA Art. 10 — mandatory for EU
 enable_cmek                    = false

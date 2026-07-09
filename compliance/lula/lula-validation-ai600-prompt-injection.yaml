@@ -12,30 +12,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Validates: AI 600-1 §2.3 Data Poisoning / Prompt Injection controls
-# Controls: CausalGatekeeper active; WAL integrity verified (CTRL_WAL_002)
+# lula-validation-ai600-prompt-injection.yaml
+# NIST AI 600-1 §2.3 — Data Poisoning / Prompt Injection controls
+#
+# Validates: CausalGatekeeper active; WAL integrity verified (CTRL_WAL_002).
 # POAM: AI600-003
-# Phase: 0 (stub) → Phase 2 (real assertions replace stub per §6.2)
+# Phase: 0 (stub — always passes) → Phase 2 (real assertions replace stub per §6.2)
 # Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
-domain:
-  type: kubernetes
-  kubernetes:
-    resources: []   # populated in Phase 2
-    # Phase 2 will assert:
-    #   - gateway Deployment has PROMPT_INJECTION_DETECTION_ENABLED=true
-    #   - CausalGatekeeper is active in governance-stack namespace
-provider:
-  type: opa
-  opa:
-    policy: |
-      # stub — always passes until Phase 2
-      # Phase 2 real assertion (see §6.2 of AI_600_1_IMPLEMENTATION_PLAN.md):
-      #   allow if {
-      #     some container in input["gateway-deployment"].spec.template.spec.containers
-      #     container.name == "gateway"
-      #     some env in container.env
-      #     env.name == "PROMPT_INJECTION_DETECTION_ENABLED"
-      #     env.value == "true"
-      #   }
-      package validate
-      default allow = true
+
+component-definition:
+  uuid: bcdef012-3456-789a-bcde-f01234567890
+  metadata:
+    title: CAGE Validation — AI600-Prompt-Injection
+    last-modified: '2026-07-09T00:00:00Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: 'Phase-0 stub for AI 600-1 §2.3 Data Poisoning / Prompt Injection controls.
+      Always passes until Phase 2 real assertions are implemented per §6.2.
+      Region: US_FED. POAM: AI600-003.'
+  components:
+  - uuid: cdef0123-4567-89ab-cdef-012345678901
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: def01234-5678-9abc-def0-123456789012
+      source: https://airc.nist.gov/Docs/1
+      description: 'Control implementation for AI600-Prompt-Injection. Region: US_FED. Phase: 0 stub.'
+      implemented-requirements:
+      - uuid: ef012345-6789-abcd-ef01-234567890123
+        control-id: ai600-prompt-injection
+        description: Phase-0 stub for AI 600-1 §2.3 prompt injection / data poisoning controls.
+        links:
+        - href: '#f0123456-789a-bcde-f012-345678901234'
+          rel: lula
+  back-matter:
+    resources:
+    - uuid: f0123456-789a-bcde-f012-345678901234
+      title: Lula Validation — AI600-Prompt-Injection
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: kubernetes\n  kubernetes:\n    resources: []\n\
+        \    # Phase 2 will assert:\n    #   - gateway Deployment has PROMPT_INJECTION_DETECTION_ENABLED=true\n\
+        \    #   - CausalGatekeeper is active in governance-stack namespace\nprovider:\n\
+        \  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\n# Phase-0 stub —\
+        \ always passes until Phase 2\\n# Phase 2 real assertion (see §6.2 of AI_600_1_IMPLEMENTATION_PLAN.md):\\\
+        n#   validate if {\\n#     some container in input[\\\"gateway-deployment\\\
+        \"].spec.template.spec.containers\\n#     container.name == \\\"gateway\\\"\
+        \\n#     some env in container.env\\n#     env.name == \\\"PROMPT_INJECTION_DETECTION_ENABLED\\\
+        \"\\n#     env.value == \\\"true\\\"\\n#   }\\nvalidate := true\\n\"\n"

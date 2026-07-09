@@ -12,23 +12,49 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Validates: AI 600-1 §2.1 Confabulation controls
-# Controls: CTRL_AGT_001 (confidence ≥ 0.95), confabulation_scorer.py
+# lula-validation-ai600-confabulation.yaml
+# NIST AI 600-1 §2.1 — Confabulation controls
+#
+# Validates: CTRL_AGT_001 (confidence ≥ 0.95), confabulation_scorer.py active.
 # POAM: AI600-001
-# Phase: 0 (stub) → Phase 2 (real assertions replace stub)
+# Phase: 0 (stub — always passes) → Phase 2 (real assertions replace stub)
 # Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
-domain:
-  type: kubernetes
-  kubernetes:
-    resources: []   # populated in Phase 2
-provider:
-  type: opa
-  opa:
-    policy: |
-      # stub — always passes until Phase 2
-      # Phase 2 will assert:
-      #   - gateway Deployment has CONFIDENCE_MIN_SCORE env var set
-      #   - confabulation_scorer is active (CONFABULATION_SCORER_ENABLED=true)
-      #   - AgentSight DaemonSet is running with PROVENANCE_SIGNING_ENABLED=true
-      package validate
-      default allow = true
+
+component-definition:
+  uuid: a1b2c3d4-e5f6-7890-abcd-ef0123456789
+  metadata:
+    title: CAGE Validation — AI600-Confabulation
+    last-modified: '2026-07-09T00:00:00Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: 'Phase-0 stub for AI 600-1 §2.1 Confabulation controls.
+      Always passes until Phase 2 real assertions are implemented.
+      Region: US_FED. POAM: AI600-001.'
+  components:
+  - uuid: b2c3d4e5-f6a7-8901-bcde-f01234567890
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: c3d4e5f6-a7b8-9012-cdef-012345678901
+      source: https://airc.nist.gov/Docs/1
+      description: 'Control implementation for AI600-Confabulation. Region: US_FED. Phase: 0 stub.'
+      implemented-requirements:
+      - uuid: d4e5f6a7-b8c9-0123-defa-123456789012
+        control-id: ai600-confabulation
+        description: Phase-0 stub for AI 600-1 §2.1 confabulation controls.
+        links:
+        - href: '#e5f6a7b8-c9d0-1234-efab-234567890123'
+          rel: lula
+  back-matter:
+    resources:
+    - uuid: e5f6a7b8-c9d0-1234-efab-234567890123
+      title: Lula Validation — AI600-Confabulation
+      rlinks:
+      - href: lula.dev
+      description: "domain:\n  type: kubernetes\n  kubernetes:\n    resources: []\n\
+        \    # Phase 2 will assert:\n    #   - gateway Deployment has CONFIDENCE_MIN_SCORE\
+        \ env var set\n    #   - confabulation_scorer is active (CONFABULATION_SCORER_ENABLED=true)\n\
+        \    #   - AgentSight DaemonSet is running with PROVENANCE_SIGNING_ENABLED=true\n\
+        provider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\n# Phase-0\
+        \ stub — always passes until Phase 2\\nvalidate := true\\n\"\n"
