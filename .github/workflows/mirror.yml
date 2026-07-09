@@ -1,0 +1,48 @@
+name: Mirror to Lahlfors
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - '**'
+  delete:
+    branches:
+      - '**'
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      - name: Mirror to Lahlfors
+        env:
+          MIRROR_PAT: ${{ secrets.MIRROR_PAT }}
+        run: |
+          # Add the target repository as a remote
+          git remote add mirror "https://x-access-token:${MIRROR_PAT}@github.com/lahlfors/cybernetic-governance-engine.git"
+          
+          # Fetch all tracking branches from the source (origin)
+          git fetch origin
+          
+          # Create local branches for all remote-tracking branches
+          for branch in $(git branch -r | grep -v '->'); do
+            local_branch=$(echo "$branch" | sed 's|^origin/||')
+            echo "Setting up local branch for tracking: $local_branch tracking $branch"
+            git branch -f "$local_branch" "$branch"
+          done
+          
+          # Push all branches to the mirror, deleting any pruned ones
+          git push --all --force --prune mirror
+          
+          # Push all tags to the mirror
+          git push --tags --force mirror
