@@ -13,7 +13,7 @@
 2. [Authentication and Security Model](#2-authentication-and-security-model)
 3. [Gateway Service — Governed Inference API](#3-gateway-service--governed-inference-api)
 4. [Compliance Artifact Service](#4-compliance-artifact-service)
-5. [Financial Advisory Service](#5-financial-advisory-service)
+5. [Governed Agentic Workflow Service (Financial Advisory Reference Implementation)](#5-financial-advisory-service)
 6. [Real-Time Event Streams](#6-real-time-event-streams)
 7. [gRPC Services](#7-grpc-services)
 8. [Schema Reference](#8-schema-reference)
@@ -24,9 +24,12 @@
 
 ## 1. Platform Overview
 
-CAGE (Cybernetic AI Governance Engine) is a governed AI platform that provides
-policy-enforced, auditable, and compliance-ready AI inference and financial
-advisory capabilities for regulated industries.
+CAGE (Cybernetic Agent Governance Engine) is a domain-agnostic governed AI platform
+that provides policy-enforced, auditable, and compliance-ready AI inference and
+high-reliability agentic workflow capabilities for any regulated or
+safety-critical industry. The first production vertical is a governed financial
+advisory workflow; the governance kernel applies equally to pharmaceutical,
+critical infrastructure, and other high-reliability agentic deployments.
 
 ### Functional Topology
 
@@ -37,7 +40,7 @@ endpoint, each with a distinct governance responsibility:
 |---|---|
 | **Gateway Service** | Core composition and platform ingestion root layer. Hosts the governed inference pipeline and the MCP tool server. |
 | **Compliance Artifact Service** | Compliance posture monitoring, OSCAL artifact export, CSA AARM conformance reporting, and real-time governance event streaming. |
-| **Financial Advisory Service** | Multi-agent orchestration layer for governed financial analysis, trade execution, and human-in-the-loop (HITL) approval workflows. |
+| **Governed Agentic Workflow Service** | Multi-agent orchestration layer for governed agentic workflows, consequential action execution, and human-in-the-loop (HITL) approval workflows. The reference implementation provides governed financial analysis and trade execution; the same orchestration pattern applies to any high-reliability agentic domain. |
 | **gRPC Gateway** | Server-streaming and unary gRPC interface for governed LLM responses and tool execution. |
 
 ### Governance Pipeline

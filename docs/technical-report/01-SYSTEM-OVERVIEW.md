@@ -29,7 +29,7 @@ CAGE's inference pipeline enforces the following hard constraints derived from a
 
 | Constraint                                                           | Regulatory Source                | Enforcement Point                                        |
 | -------------------------------------------------------------------- | -------------------------------- | -------------------------------------------------------- |
-| Maximum transaction latency: **200 ms**                              | ISO-20022 (Section 3)            | Gateway — transaction commit blocked if latency exceeded |
+| Maximum transaction latency: **200 ms**                              | Real-time interbank rail infrastructure requirement (FedNow / SEPA Instant) — required to support synchronous, inline AML and fraud-screening pipelines | Gateway — transaction commit blocked if latency exceeded |
 | Identity verification required for transactions **> $1,000 USD**     | ISO-20022 (Section 1)            | Gateway / OPA policy                                     |
 | OFAC sanctions screening for **all international transfers**         | ISO-20022 (Section 1)            | NeMo Guardrails + OPA                                    |
 | PII **must not** persist in session history beyond **24 hours**      | SEC Reg S-P / GLBA (Section 2)   | Redis session TTL + NeMo PII masking                     |

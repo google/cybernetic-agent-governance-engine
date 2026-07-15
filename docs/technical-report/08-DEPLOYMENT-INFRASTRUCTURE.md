@@ -10,7 +10,7 @@ classification: "INTERNAL"
 
 ## Infrastructure Overview
 
-CAGE runs on Google Kubernetes Engine (GKE) in the `governance-stack` namespace. All infrastructure is defined as code via Terraform, containerised with Docker, and deployed through Google Cloud Build pipelines. GPU compute uses NVIDIA L4 24 GB Spot instances with AWQ quantization to balance cost and the 200 ms ISO-20022 latency SLA.
+CAGE runs on Google Kubernetes Engine (GKE) in the `governance-stack` namespace. All infrastructure is defined as code via Terraform, containerised with Docker, and deployed through Google Cloud Build pipelines. GPU compute uses NVIDIA L4 24 GB Spot instances with AWQ quantization to balance cost and the 200 ms latency budget required by real-time interbank rails (FedNow / SEPA Instant) to support synchronous, inline AML and fraud-screening pipelines.
 
 **Platform Summary**
 
@@ -426,7 +426,7 @@ Every secure generation node in a multi-agent system incurs a "Governance Tax" (
 2. **Policy Evaluation (OPA):** ~10-50ms (Sidecar network hop + Rego eval).
 3. **Syntactic Enforcement (vLLM FSM):** ~50ms (with Prefix Caching).
 
-To maintain an end-to-end transaction latency **< 200ms** (mandated by the ISO-20022 banking SLA and enforced by STPA threshold `stpa.max_latency_ms = 200.0`; `150.0` applies under EU_ECB jurisdiction [EU_ECB only]), CAGE treats latency as a currency. We optimize our inference and networking layers to generate tokens fast enough to "pay for" these security checks.
+To maintain an end-to-end transaction latency **< 200ms** (an operational infrastructure requirement of real-time interbank rails such as FedNow and SEPA Instant, which demand synchronous, inline AML and fraud-screening pipelines; enforced by STPA threshold `stpa.max_latency_ms = 200.0`; `150.0` applies under EU_ECB jurisdiction [EU_ECB only]), CAGE treats latency as a currency. We optimize our inference and networking layers to generate tokens fast enough to "pay for" these security checks.
 
 ### 10.2 Layered Latency Mitigation Controls
 

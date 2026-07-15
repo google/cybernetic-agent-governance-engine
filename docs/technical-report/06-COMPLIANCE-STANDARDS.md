@@ -465,7 +465,7 @@ The table below consolidates the current compliance posture across all targeted 
 | EBA Guidelines (2023/02)    | Internal model governance mapped      | `EU_ECB`         | ECB SSM TRIM validation pending             |
 | MAS FEAT Principles         | FEAT controls mapped (5 CTRLs)        | `APAC_MAS`       | Fairness Impact Assessment quantitative metrics pending |
 | MAS TRM Guidelines          | TRM §6.3/6.4 AI controls mapped      | `APAC_MAS`       | MAS Notice 655 audit certification pending  |
-| ISO-20022                   | 200ms latency SLA architecture        | All Regions      | SLA validation testing not complete         |
+| ISO-20022                   | Transaction message format; 200 ms latency is an operational infrastructure requirement of real-time interbank rails (FedNow / SEPA Instant), not an ISO-20022 mandate | All Regions      | SLA validation testing not complete         |
 | CSA AARM v1.0               | 11 threat vectors assessed            | All Regions      | 4 vectors at PARTIAL status                 |
 
 ---
