@@ -131,9 +131,12 @@ _PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b"),
         "[REDACTED_SWIFT]",
     ),
-    # Email address: RFC 5321 simplified.
+    # Email address: RFC 5321 simplified.  Local part and domain are
+    # length-bounded (RFC 5321: local ≤64, domain ≤255) — the unbounded ``+``
+    # form let a crafted no-TLD string ("a@a.a.a.…!") drive O(n²) backtracking
+    # in re.sub, which stalls the sanitizer on attacker-supplied text.
     (
-        re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"),
+        re.compile(r"\b[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,255}\.[A-Za-z]{2,}\b"),
         "[REDACTED_EMAIL]",
     ),
     # Phone: US/international formats with optional country code (+1 or 1).
