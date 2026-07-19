@@ -1137,6 +1137,206 @@ in flight.
 
 ---
 
+## 11. Policy Ingestion API
+
+The Policy Ingestion API allows external operators to submit agent policy specifications
+in any supported format (ACS, AAIF, OSCAL, Lula, or native CAGE YAML) and receive
+compiled enforcement artifacts in return.
+
+**Implementation:** [`src/gateway/governance/ingress/policy_translator.py`](../src/gateway/governance/ingress/policy_translator.py)
+
+### 11.1 Ingest Policy
+
+```
+POST /governance/ingest-policy
+Content-Type: application/json
+
+{
+  "spec": { ... }   // ACS, AAIF, OSCAL, Lula, or native CAGE YAML document
+}
+```
+
+**Response:**
+
+```json
+{
+  "policy_version_id": "a1b2c3d4e5f6a7b8",
+  "format_detected": "acs | aaif | oscal | lula | cage_yaml",
+  "artifacts": {
+    "opa_content": "...",
+    "nemo_content": "...",
+    "python_content": "...",
+    "langgraph_content": "..."
+  },
+  "warnings": [],
+  "errors": []
+}
+```
+
+**Supported formats:**
+
+| Format key | Detection signal | Adapter |
+|---|---|---|
+| `acs` | `behaviorDeclarations` key present | [`acs_adapter.py`](../src/gateway/governance/ingress/acs_adapter.py) |
+| `aaif` | `governedRunLoop` key present | [`aaif_adapter.py`](../src/gateway/governance/ingress/aaif_adapter.py) |
+| `oscal` | `oscal-version` key present | [`oscal_adapter.py`](../src/gateway/governance/ingress/oscal_adapter.py) |
+| `lula` | `kind: LulaValidation` | [`lula_adapter.py`](../src/gateway/governance/ingress/lula_adapter.py) |
+| `cage_yaml` | (fallback) | Direct STPA compiler input |
+
+### 11.2 Get Policy Version
+
+```
+GET /governance/policy-version
+```
+
+**Response:**
+
+```json
+{
+  "policy_version_id": "a1b2c3d4e5f6a7b8",
+  "active_region": "US_FED",
+  "active_hash": "sha256-hex-of-active-registry"
+}
+```
+
+The `policy_version_id` is a 16-character hex prefix of the SHA-256 hash of the
+compiled OPA policy content. It can be used to pin a specific policy version in
+`validate_action()` calls.
+
+---
+
+## 12. Governance Webhook
+
+The Governance Webhook API allows Governance Layer endpoints to receive push
+notifications when substrate enforcement events occur, without maintaining a
+persistent SSE connection.
+
+**Implementation:** [`src/compliance_bridge/governance_webhook.py`](../src/compliance_bridge/governance_webhook.py)
+
+### 12.1 Register Webhook
+
+```
+POST /v1/webhooks/register
+Content-Type: application/json
+
+{
+  "endpoint_url": "https://governance-layer.example.com/cage-events",
+  "event_types": ["CBF_VIOLATION", "DEFER_PARKING", "HITL_INTERRUPT", "OPA_DENY"],
+  "secret": "<hmac-signing-secret>"
+}
+```
+
+**Response:**
+
+```json
+{
+  "webhook_id": "550e8400-e29b-41d4-a716-446655440000",
+  "registered_at": "2026-07-18T01:00:00Z"
+}
+```
+
+**Event types:**
+
+| Event type | Trigger |
+|---|---|
+| `CBF_VIOLATION` | Control Barrier Function invariant violated |
+| `DEFER_PARKING` | Execution context parked in DEFER queue |
+| `HITL_INTERRUPT` | Human-in-the-loop escalation triggered |
+| `OPA_DENY` | OPA policy evaluation returned DENY |
+
+### 12.2 Deregister Webhook
+
+```
+DELETE /v1/webhooks/{webhook_id}
+```
+
+**Response:** `204 No Content`
+
+### 12.3 List Webhooks
+
+```
+GET /v1/webhooks
+```
+
+**Response:**
+
+```json
+{
+  "webhooks": [
+    {
+      "webhook_id": "550e8400-e29b-41d4-a716-446655440000",
+      "endpoint_url": "https://governance-layer.example.com/cage-events",
+      "event_types": ["CBF_VIOLATION", "OPA_DENY"],
+      "registered_at": "2026-07-18T01:00:00Z",
+      "region": "US_FED"
+    }
+  ]
+}
+```
+
+Webhook secrets are never returned in list or get responses.
+
+### 12.4 Webhook Payload Schema
+
+Webhook payloads use the same shape as SSE `governance-event` data, plus `webhook_id`:
+
+```json
+{
+  "type": "CBF_VIOLATION | DEFER_PARKING | HITL_INTERRUPT | OPA_DENY",
+  "traceId": "string",
+  "controlId": "A.9.2",
+  "result": "FAIL",
+  "safetyRate": 0.87,
+  "auditId": "uuid",
+  "timestamp": "2026-07-18T01:00:00Z",
+  "webhook_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+### 12.5 `X-CAGE-Webhook-Signature` Header
+
+Every webhook POST includes an `X-CAGE-Webhook-Signature` header containing the
+HMAC-SHA256 signature of the JSON payload body, hex-encoded:
+
+```
+X-CAGE-Webhook-Signature: <hex-encoded-hmac-sha256>
+```
+
+**Verification (Python example):**
+
+```python
+import hashlib, hmac
+
+def verify_signature(payload_bytes: bytes, secret: str, signature: str) -> bool:
+    expected = hmac.new(secret.encode(), payload_bytes, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
+```
+
+Receiving endpoints **must** verify the signature before processing the payload.
+
+### 12.6 Retry Policy
+
+Failed deliveries are retried with exponential backoff:
+
+- Maximum retries: 3
+- Base delay: 1 second (doubles each retry: 1s, 2s, 4s)
+- Timeout per attempt: 30 seconds
+- After all retries exhausted: event is logged and dropped (fire-and-forget)
+
+### 12.7 Region Guard
+
+Cross-region webhook endpoints are rejected with HTTP 422:
+
+| Region | Allowed endpoint geography |
+|---|---|
+| `EU_ECB` | `europe-west1` only |
+| `APAC_MAS` | `asia-southeast1` only |
+| `US_FED` | No geographic restriction |
+
+Localhost and private IP ranges are always allowed (for testing).
+
+---
+
 ## Endpoint Summary
 
 | Service | Method | Path | Auth | Description |
