@@ -25,7 +25,9 @@ Architecture:
   forming a blockchain-style linked list. The genesis entry's ``prev_hash`` is seeded from
   the ``audit_id`` SHA-256, deterministically tying the chain to its audit run.
 
-  Hash function: SHA-256(prev_hash_hex || json.dumps(content, sort_keys=True))
+  Hash function: SHA-256(prev_hash_hex || canonical_header || json.dumps(content,
+  sort_keys=True)), where canonical_header binds the node's schema, index,
+  audit_id, control_id and event_type into the link.
 
   This matches the existing production pattern established in examples/telemetry.py
   (``PlaygroundTelemetry``) and validated by governance_demo.py ACT 3, now promoted to
@@ -40,7 +42,7 @@ Wire format (NDJSON, one JSON object per line):
     "event_type":    "OSCAL_FINDING" | "AUDIT_START" | "CHAIN_SEALED",
     "content_hash":  "<sha256 of content JSON>",
     "prev_hash":     "<sha256 of preceding entry>",
-    "record_hash":   "<sha256(prev_hash + content_json)>",
+    "record_hash":   "<sha256(prev_hash + header_json + content_json)>",
     "timestamp_utc": "<ISO-8601>",
     "payload":       { ... }   // OscalFinding fields
   }
@@ -80,6 +82,36 @@ def _sha256(data: str) -> str:
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
+def _link_hash(
+    prev_hash: str,
+    node_index: int,
+    audit_id: str,
+    control_id: str,
+    event_type: str,
+    content_json: str,
+) -> str:
+    """Compute a node's ``record_hash`` over its identifying header + payload.
+
+    The header carries the metadata that ``to_dict()`` persists alongside the
+    payload, so re-labelling a node's control or event type, moving it to a
+    different position, or re-attributing it to another audit changes the link
+    and breaks the chain.  ``timestamp_utc`` is deliberately excluded to keep
+    ``record_hash`` a deterministic function of the node's content.
+    """
+    header = json.dumps(
+        {
+            "schema": _SCHEMA,
+            "node_index": node_index,
+            "audit_id": audit_id,
+            "control_id": control_id,
+            "event_type": event_type,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return _sha256(prev_hash + header + content_json)
+
+
 def _content_hash(payload: dict) -> str:
     """Return the SHA-256 hash of a JSON-serialised payload (deterministic key ordering)."""
     return _sha256(json.dumps(payload, sort_keys=True, default=str))
@@ -104,7 +136,9 @@ class ContextAccumulatorEntry:
         content_hash  — SHA-256 of ``json.dumps(payload, sort_keys=True)``.
         prev_hash     — SHA-256 of the *preceding* entry's ``record_hash``
                         (genesis constant for the first node).
-        record_hash   — SHA-256(prev_hash + json.dumps(payload, sort_keys=True)).
+        record_hash   — SHA-256(prev_hash + canonical header + json.dumps(
+                        payload, sort_keys=True)), where the header covers
+                        schema, node_index, audit_id, control_id and event_type.
         timestamp_utc — ISO-8601 UTC wall-clock at append time.
         kms_signature — Cloud KMS asymmetric signature of this record (hex-encoded).
                         Empty string when per-record KMS signing is disabled.
@@ -250,10 +284,11 @@ class ContextAccumulator:
                                    first node whose computed hash does not match
                                    its stored ``record_hash``.
 
-        The verification recomputes expected = SHA-256(prev_hash + content_json)
-        for every node, comparing against the stored ``record_hash``.  Any
-        mutation to any field in any node will cause the check to fail at that
-        node *and* every subsequent node (because prev_hash forward-propagates).
+        The verification recomputes the link over ``prev_hash``, the node's
+        committed header fields and ``content_json`` for every node, comparing
+        against the stored ``record_hash`` and ``content_hash``.  Any mutation
+        to any field in any node will cause the check to fail at that node
+        *and* every subsequent node (because prev_hash forward-propagates).
         """
         if not self._entries:
             return True, 0
@@ -262,9 +297,20 @@ class ContextAccumulator:
 
         for i, entry in enumerate(self._entries):
             content_json = json.dumps(entry.payload, sort_keys=True, default=str)
-            expected_hash = _sha256(expected_prev + content_json)
+            expected_hash = _link_hash(
+                prev_hash=expected_prev,
+                node_index=entry.node_index,
+                audit_id=entry.audit_id,
+                control_id=entry.control_id,
+                event_type=entry.event_type,
+                content_json=content_json,
+            )
 
-            if entry.prev_hash != expected_prev or entry.record_hash != expected_hash:
+            if (
+                entry.prev_hash != expected_prev
+                or entry.record_hash != expected_hash
+                or entry.content_hash != _sha256(content_json)
+            ):
                 logger.warning(
                     "[context_accumulator] Chain integrity FAILED at node %d "
                     "(audit_id=%s). Expected prev=%s… got %s…; "
@@ -334,11 +380,19 @@ class ContextAccumulator:
         now_utc = datetime.now(tz=timezone.utc).isoformat()
         content_json = json.dumps(payload, sort_keys=True, default=str)
         chash = _sha256(content_json)
-        record_hash = _sha256(self._prev_hash + content_json)
+        node_index = len(self._entries)
+        record_hash = _link_hash(
+            prev_hash=self._prev_hash,
+            node_index=node_index,
+            audit_id=self._audit_id,
+            control_id=control_id,
+            event_type=event_type,
+            content_json=content_json,
+        )
 
         entry = ContextAccumulatorEntry(
             schema=_SCHEMA,
-            node_index=len(self._entries),
+            node_index=node_index,
             audit_id=self._audit_id,
             control_id=control_id,
             event_type=event_type,
