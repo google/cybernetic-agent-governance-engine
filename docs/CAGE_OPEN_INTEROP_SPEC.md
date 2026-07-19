@@ -800,6 +800,58 @@ Unary RPC. Execute a named tool via gRPC with governance enforcement.
 
 ---
 
+### 7.3 `rpc Check(CheckRequest) returns (CheckResponse)` — Agent Gateway Adapter (Envoy ext_authz gRPC)
+
+Cloud-agnostic Envoy `ext_authz` gRPC service. Enforces the full CAGE 7-tier
+governance pipeline at the network layer before requests reach the application
+container. Compatible with any Envoy-based proxy (Istio, Contour, Emissary)
+and also functions as a **GCP Agent Gateway Service Extension** with zero code
+changes.
+
+**Endpoint:** `grpc://<host>:50051`
+**Service:** `envoy.service.auth.v3.Authorization`
+**Method:** `rpc Check(CheckRequest) returns (CheckResponse)`
+**Auth:** mTLS (caller's certificate validated by service mesh or AGW)
+**Timeout:** 5 seconds (recommended; configurable by the calling proxy)
+
+**Implementation:** [`src/gateway/server/agent_gateway_adapter.py`](../src/gateway/server/agent_gateway_adapter.py)
+
+**`CheckRequest` — relevant fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `attributes.request.http.body` | `string` | JSON-RPC 2.0 request body (max 64KB) |
+| `attributes.source.principal` | `string` | SPIFFE ID or service account from mTLS peer certificate |
+
+**`CheckResponse` — decision outcomes:**
+
+| Verdict | Response type | HTTP status | Body |
+|---|---|---|---|
+| `APPROVED` | `OkHttpResponse` | 200 (proxy forwards) | — |
+| `DENIED` | `DeniedHttpResponse` | 403 | `{"verdict":"DENIED","violations":[...]}` |
+| `MANUAL_REVIEW` | `DeniedHttpResponse` | 202 | `{"verdict":"DEFERRED","thread_id":"..."}` |
+| Parse error | `DeniedHttpResponse` | 403 | `{"error":"parse_error","message":"..."}` |
+| Body > 64KB | `DeniedHttpResponse` | 403 | `{"error":"parse_error","message":"..."}` |
+
+**On `APPROVED`:** The `OkHttpResponse` includes the `x-cage-routing-seal`
+header so the downstream MCP tool server can verify it via
+`enforce_routing_seal()`.
+
+**On `MANUAL_REVIEW` (DEFERRED):** The adapter returns 202 immediately
+(ext_authz timeout is typically 5s). The MCP client must poll
+`GET /v1/approvals/pending?thread_id=<tid>` for the human approval outcome.
+
+**GCP Adaptation note:** When deployed as a GCP AGW Service Extension, this
+endpoint is called by the AGW control plane. No code changes are required —
+AGW uses the same Envoy ext_authz protocol. GCP-specific configuration
+(service extension resource, IAM binding, mTLS CA) is managed in `infra/`
+Terraform modules.
+
+**Compliance:** SC-8 (mTLS), SC-12 (cert lifecycle), AC-3 (access enforcement),
+AU-2 (audit logging), SI-10 (input validation). **Cat-M change — AO pre-approval required.**
+
+---
+
 ## 8. Schema Reference
 
 All schemas below are JSON Schema Invariant Payload Definitions — the
@@ -998,6 +1050,45 @@ rule is triggered.
 }
 ```
 
+**Sub-type: `X-CAGE-Routing-Seal-Missing` (Phase B)**
+
+Returned by the MCP Tool Server when a tool execution request arrives without
+a valid `X-CAGE-Routing-Seal` header (i.e., the request bypassed the
+governance pipeline).
+
+```json
+{
+  "error": "invalid_routing_seal",
+  "message": "Request missing or has an invalid X-CAGE-Routing-Seal header. Only trusted upstream orchestrators may invoke this endpoint."
+}
+```
+
+**Sub-type: OIDC validation failure (Phase B / Work Stream E)**
+
+Returned by the Governance Middleware when `CAGE_OIDC_JWKS_URI` is configured
+and the `Authorization: Bearer <jwt>` token is invalid or expired.
+
+```
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer error="invalid_token"
+Content-Type: application/json
+
+{"error": "invalid_token", "message": "<reason>"}
+```
+
+**Sub-type: Agent catalog denial (Phase B / Work Stream F)**
+
+Returned by the ext_authz adapter when the caller is not in the approved agent
+catalog or is not authorized to call the requested tool.
+
+```json
+{
+  "verdict": "DENIED",
+  "violations": ["caller 'spiffe://...' is not authorized to call tool 'execute_trade'"],
+  "tool_name": "execute_trade"
+}
+```
+
 ---
 
 ### 9.4 HTTP 404 Not Found
@@ -1134,6 +1225,26 @@ than 5 minutes.
 `POST /agent/query` enforces a per-request timeout of **240 seconds**. Clients
 should not submit a new query for the same `thread_id` while a prior query is
 in flight.
+
+---
+
+### 10.5 ext_authz Callout Rate Limit (Phase B / Work Stream D)
+
+The Agent Gateway Adapter (`grpc://<host>:50051`) enforces a per-client,
+per-region callout rate limit to prevent governance pipeline saturation.
+
+| Limit dimension | Default | Behaviour on breach |
+|---|---|---|
+| Per-client concurrent Check RPCs | 10 | gRPC `RESOURCE_EXHAUSTED` (status 8) |
+| Per-region Check RPCs/second | 1000 | gRPC `RESOURCE_EXHAUSTED` (status 8) |
+| Body size per CheckRequest | 64KB | `DeniedHttpResponse(403)` fail-closed |
+
+**Retry guidance:** On `RESOURCE_EXHAUSTED`, implement exponential back-off
+starting at 100ms, doubling up to a maximum of 5 seconds (respecting the
+ext_authz proxy timeout).
+
+**Region guard:** Rate limit counters are per-region and never shared across
+`CAGE_DEPLOYMENT_REGION` boundaries (EU_ECB, APAC_MAS, US_FED).
 
 ---
 
