@@ -307,6 +307,44 @@ class TestOscalExporterEndpoint:
         resp = client.get("/v1/oscal/assessment-results?format=xml")
         assert resp.status_code == 422
 
+    def test_audit_id_cannot_break_out_of_content_disposition(self, client):
+        payload = "a\"; filename*=UTF-8''evil.html"
+        with patch(
+            "src.compliance_bridge.main.get_compliance_metrics",
+            new=AsyncMock(side_effect=self._mock_metrics_side_effect),
+        ):
+            resp = client.get(
+                "/v1/oscal/assessment-results", params={"audit_id": payload}
+            )
+        disposition = resp.headers["content-disposition"]
+        assert disposition == (
+            'attachment; filename="assessment-results-'
+            'a___filename__UTF-8__evil.html.json"'
+        )
+        # The unsanitised ID is still echoed in the body for correlation.
+        assert resp.json()["audit_id"] == payload
+
+    def test_aarm_audit_id_cannot_break_out_of_content_disposition(self, client):
+        payload = "b\"; filename*=UTF-8''evil.html"
+        with patch(
+            "src.compliance_bridge.main.get_compliance_metrics",
+            new=AsyncMock(side_effect=self._mock_metrics_side_effect),
+        ):
+            resp = client.get(
+                "/v1/aarm/conformance-report", params={"audit_id": payload}
+            )
+        disposition = resp.headers["content-disposition"]
+        assert disposition == (
+            'attachment; filename="aarm-conformance-'
+            'b___filename__UTF-8__evil.html.json"'
+        )
+
+    def test_filename_token_preserves_generated_ids(self):
+        from src.compliance_bridge.main import _filename_token
+
+        assert _filename_token("cage-export-1750000000") == "cage-export-1750000000"
+        assert _filename_token("aarm-ondemand-1750000000") == "aarm-ondemand-1750000000"
+
 
 # ---------------------------------------------------------------------------
 # 2.4 — PagerDutyNotifier
