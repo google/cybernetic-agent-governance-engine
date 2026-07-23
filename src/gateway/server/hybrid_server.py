@@ -37,6 +37,7 @@ Or via Docker/Kubernetes:
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -211,6 +212,18 @@ async def _gateway_lifespan(app: FastAPI):
             provider_name,
         )
 
+    # GCP Adaptation: Agent Registry daemon (no-op if CAGE_AGENT_REGISTRY_PROJECT not set)
+    registry_daemon: Any = None
+    try:
+        from src.gateway.governance.ingress.agent_registry_adapter import AgentRegistryDaemon
+
+        registry_daemon = AgentRegistryDaemon()
+        await registry_daemon.start()
+    except ImportError:
+        logger.warning("⚠️ agent_registry_adapter not available — using static agent catalog.")
+    except Exception as reg_err:
+        logger.error("❌ AgentRegistryDaemon failed to start: %s", reg_err)
+
     # ── Start consensus background audit worker (HIGH-06) ──────────────────
     from src.gateway.governance.consensus import _background_audit_worker
 
@@ -218,6 +231,10 @@ async def _gateway_lifespan(app: FastAPI):
     logger.info("✅ Consensus background audit worker started")
 
     yield
+
+    # Shutdown: stop Agent Registry daemon if running
+    if registry_daemon is not None:
+        await registry_daemon.stop()
 
     # Shutdown: cancel polling task if running
     if polling_task is not None:

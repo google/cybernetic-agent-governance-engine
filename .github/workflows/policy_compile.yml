@@ -1,0 +1,105 @@
+name: Policy Compile
+
+on:
+  push:
+    paths:
+      - "config/stpa_control_structure.yaml"
+      - "src/gateway/governance/stpa_compiler.py"
+  pull_request:
+    paths:
+      - "config/stpa_control_structure.yaml"
+      - "src/gateway/governance/stpa_compiler.py"
+  workflow_dispatch: {}
+
+jobs:
+  compile-policies:
+    name: Compile STPA → Governance Artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Validate STPA control structure
+        run: |
+          uv run python -m src.gateway.governance.stpa_compiler validate \
+            --input config/stpa_control_structure.yaml
+
+      - name: Compile STPA → OPA + NeMo + Python + LangGraph
+        run: |
+          uv run python -m src.gateway.governance.stpa_compiler compile \
+            --targets opa nemo python langgraph \
+            --input config/stpa_control_structure.yaml
+        continue-on-error: false
+
+      - name: Compile STPA → AGP Semantic Policy
+        run: |
+          uv run python -m src.gateway.governance.stpa_compiler compile \
+            --targets agp \
+            --input config/stpa_control_structure.yaml \
+            --agp-out config/agp/generated_semantic_policy.txt
+        continue-on-error: false
+
+      - name: Compile STPA → FTRA Terminal Registry
+        run: |
+          uv run python -m src.gateway.governance.stpa_compiler compile \
+            --targets ftra \
+            --input config/stpa_control_structure.yaml \
+            --ftra-out config/ftra/terminal_registry.json
+        continue-on-error: false
+
+      - name: Compile STPA → Agent Registry manifest
+        # GCP Adaptation: generates config/registry/generated_tool_authorizations.json
+        # for the GEAP Agent Registry (Vertex AI Agent Engine).
+        # Cloud-agnostic deployments do not use this artifact but it is always
+        # generated as a CI artifact for auditability.
+        run: |
+          uv run python -m src.gateway.governance.stpa_compiler compile \
+            --targets registry \
+            --input config/stpa_control_structure.yaml \
+            --registry-out config/registry/generated_tool_authorizations.json
+        continue-on-error: false
+
+      - name: Validate registry manifest JSON
+        run: |
+          python -c "
+          import json, sys
+          with open('config/registry/generated_tool_authorizations.json') as f:
+              manifest = json.load(f)
+          assert 'tool_authorizations' in manifest, 'Missing tool_authorizations key'
+          assert '_schema_version' in manifest, 'Missing _schema_version key'
+          print(f'Registry manifest OK: {len(manifest[\"tool_authorizations\"])} tool entries')
+          "
+
+      - name: Check STPA freshness
+        run: |
+          python scripts/check_stpa_freshness.py
+        continue-on-error: true
+
+      - name: Upload generated artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stpa-compiled-artifacts
+          path: |
+            config/opa/generated_stpa_policy.rego
+            config/rails/generated_stpa_rails.co
+            src/gateway/governance/generated_stpa_validator.py
+            src/gateway/governance/generated_saga_nodes.py
+            config/agp/generated_semantic_policy.txt
+            config/ftra/terminal_registry.json
+            config/registry/generated_tool_authorizations.json
+          retention-days: 30
