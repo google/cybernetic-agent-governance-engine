@@ -1,0 +1,15 @@
+{
+    "version": "1.0",
+    "generated_at": "2026-07-23T03:29:00+00:00",
+    "system": "CAGE Financial Advisor",
+    "system_version": "1.1.0",
+    "fail_closed_note": "Any action absent from this registry is treated as IRREVERSIBLE_TERMINAL by IrreversibilityClassifier at runtime.",
+    "terminals": {
+        "write_db": "IRREVERSIBLE_TERMINAL",
+        "execute_trade": "IRREVERSIBLE_TERMINAL",
+        "prompt_injection_check": "READ_ONLY",
+        "market_analysis": "READ_ONLY",
+        "check_market_status": "READ_ONLY",
+        "check_balance": "READ_ONLY"
+    }
+}

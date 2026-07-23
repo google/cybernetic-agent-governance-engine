@@ -98,6 +98,12 @@ class DeferReason(str, Enum):
     EXTERNAL_VALIDATION = "EXTERNAL_VALIDATION"
     """Consensus score in ambiguous zone (0.70-0.95); awaiting external FRIA gate."""
 
+    FTRA_IRREVERSIBLE_TERMINAL = "FTRA_IRREVERSIBLE_TERMINAL"
+    """FTRA Tier 0.5 gate: an IRREVERSIBLE_TERMINAL node is reachable from step[0]
+    of the ExecutionPlan and the Evaluator confidence score is >= FRIA_ZONE_DEFER
+    (0.70).  The plan is parked pending synchronous human-in-the-loop clearance.
+    Control ID: CTRL_FTRA_001."""
+
 
 # ---------------------------------------------------------------------------
 # DeferToken — the parked execution context

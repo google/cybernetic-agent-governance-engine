@@ -76,14 +76,24 @@ _DEFAULT_PY_OUT = (
 _DEFAULT_LG_OUT = (
     _REPO_ROOT / "src" / "gateway" / "governance" / "generated_saga_nodes.py"
 )
+_DEFAULT_AGP_OUT = _REPO_ROOT / "config" / "agp" / "generated_semantic_policy.txt"
+_DEFAULT_FTRA_OUT = _REPO_ROOT / "config" / "ftra" / "terminal_registry.json"
+
+# AGP Semantic Governance Policy character budget (platform limit)
+_AGP_CHAR_BUDGET = 5_000
 
 # ---------------------------------------------------------------------------
 # Pydantic schema — mirrors stpa_control_structure.yaml
 # ---------------------------------------------------------------------------
 
 UcaType = Literal["not_provided", "unsafe_action", "wrong_timing", "stopped_too_soon"]
-EnforcementTarget = Literal["opa", "nemo", "python", "langgraph", "all"]
+EnforcementTarget = Literal["opa", "nemo", "python", "langgraph", "ftra", "all"]
 OpaDecision = Literal["DENY", "GOVERNANCE_VIOLATION", "MANUAL_REVIEW", "ALLOW"]
+
+# FTRA terminal classification — used by the Forward-Looking Trajectory Reachability Analyzer.
+# Fail-closed: any action not present in the compiled registry is treated as
+# IRREVERSIBLE_TERMINAL by IrreversibilityClassifier at runtime.
+TerminalClassification = Literal["IRREVERSIBLE_TERMINAL", "REVERSIBLE", "READ_ONLY"]
 
 
 class HazardModel(BaseModel):
@@ -195,6 +205,9 @@ class UCAModel(BaseModel):
     opa_rule: OpaRuleModel | None = None
     nemo_rail: NemoRailModel | None = None
     langgraph_saga: SagaModel | None = None
+    # FTRA: commencement-time worst-case reachability classification.
+    # Fail-closed: IrreversibilityClassifier treats absent entries as IRREVERSIBLE_TERMINAL.
+    terminal_classification: TerminalClassification | None = None
 
     @model_validator(mode="after")
     def _validate_enforcement_deps(self) -> UCAModel:
@@ -1028,6 +1041,217 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
 
 
 # ---------------------------------------------------------------------------
+# AGP Semantic Governance Policy generator (C1)
+# ---------------------------------------------------------------------------
+
+
+def generate_agp(cs: ControlStructureModel) -> str:
+    """Generate Google Agent Platform Semantic Governance Policy (SGP) text.
+
+    Emits natural language constraint text following the mapping in
+    ``CAGE_STPA_TO_AGP_SEMANTIC_POLICY_RESEARCH.md §4.1``.
+
+    The output is a plain-text string (not JSON) suitable for the AGP
+    ``Constraints`` field. Maximum 5,000 characters; generator warns and
+    appends a ``# TRUNCATED`` sentinel if the budget is exceeded.
+
+    CBF invariants are intentionally omitted — they are not mappable to
+    AGP natural language constraints.
+
+    Args:
+        cs: Validated ``ControlStructureModel`` instance.
+
+    Returns:
+        Natural language constraint text string.
+    """
+    lines: list[str] = [
+        f"# CAGE Semantic Governance Policy — {cs.system.name} v{cs.system.version}",
+        f"# Generated from STPA control structure. Do not edit manually.",
+        f"# Source: config/stpa_control_structure.yaml",
+        "",
+    ]
+
+    for uca in cs.unsafe_control_actions:
+        cond = uca.condition
+        action = uca.action
+        param = cond.param or ""
+
+        # Resolve threshold value
+        threshold: str | float | None = None
+        if cond.threshold is not None:
+            threshold = cond.threshold
+        elif cond.threshold_ref:
+            # Attempt runtime resolution via THRESHOLDS singleton
+            try:
+                from src.gateway.governance.schemas.thresholds import THRESHOLDS
+                attr_path = cond.threshold_ref.split(".")
+                obj: Any = THRESHOLDS
+                for attr in attr_path:
+                    obj = getattr(obj, attr, None)
+                    if obj is None:
+                        break
+                threshold = obj
+            except Exception:
+                threshold = f"<{cond.threshold_ref}>"
+
+        op = cond.operator
+
+        # Map operator → NL sentence
+        if op == "is_null" and param:
+            sentence = f'Do not execute "{action}" if "{param}" is null or missing.'
+        elif op == "is_false" and param:
+            sentence = f'Do not execute "{action}" if "{param}" is false or not set to true.'
+        elif op == "is_true" and param:
+            sentence = f'Do not execute "{action}" if "{param}" is true.'
+        elif op == "greater_than" and param and threshold is not None:
+            sentence = f'Do not execute "{action}" if "{param}" exceeds {threshold}.'
+        elif op == "less_than" and param and threshold is not None:
+            sentence = f'Do not execute "{action}" if "{param}" is below {threshold}.'
+        elif op == "equals" and param and threshold is not None:
+            sentence = f'Do not execute "{action}" if "{param}" equals {threshold}.'
+        elif cond.composite:
+            # Composite conditions: emit as a general constraint
+            sentence = f'Do not execute "{action}" when: {cond.composite}.'
+        else:
+            # Cannot map — skip with a comment
+            lines.append(f"# UCA {uca.id}: condition not mappable to AGP NL — omitted.")
+            continue
+
+        lines.append(f"# {uca.id}: {uca.description}")
+        lines.append(sentence)
+        lines.append("")
+
+    # NeMo rail messages → "Block any request that ..." sentences
+    for uca in cs.unsafe_control_actions:
+        if uca.nemo_rail:
+            msg = uca.nemo_rail.message
+            lines.append(f"# {uca.id} (NeMo rail): {uca.description}")
+            lines.append(f'Block any request that {msg}')
+            lines.append("")
+
+    # RBAC rules → human approval / deny sentences
+    if cs.rbac_rules:
+        for role in cs.rbac_rules.roles:
+            if role.trade_limits:
+                tl = role.trade_limits
+                review_below = tl.get("manual_review_below")
+                allow_below = tl.get("allow_below")
+                denylist: list[str] = []
+                if role.restrictions:
+                    for r in role.restrictions:
+                        denylist.extend(r.get("currency_denylist", []))
+
+                if review_below and allow_below:
+                    lines.append(
+                        f'Require human approval for "execute_trade" where '
+                        f'"amount" exceeds {allow_below} for "{role.name}" role users.'
+                    )
+                    lines.append("")
+
+                for currency in denylist:
+                    lines.append(
+                        f'Deny "execute_trade" where "currency" is "{currency}" '
+                        f'for "{role.name}" role users.'
+                    )
+                    lines.append("")
+
+    output = "\n".join(lines)
+
+    # Enforce 5,000-character budget
+    if len(output) > _AGP_CHAR_BUDGET:
+        logger.warning(
+            "generate_agp: output exceeds %d-character AGP budget (%d chars). "
+            "Truncating with sentinel.",
+            _AGP_CHAR_BUDGET,
+            len(output),
+        )
+        # Truncate to budget minus sentinel length
+        sentinel = "\n# TRUNCATED — output exceeded 5,000-character AGP budget."
+        truncated = output[: _AGP_CHAR_BUDGET - len(sentinel)]
+        output = truncated + sentinel
+
+    return output
+
+
+# ---------------------------------------------------------------------------
+# FTRA Terminal Registry generator
+# ---------------------------------------------------------------------------
+
+
+def generate_terminal_registry(cs: ControlStructureModel) -> str:
+    """Generate the FTRA terminal classification registry as JSON.
+
+    Emits a JSON object mapping each unique action name found in
+    ``unsafe_control_actions`` to its ``terminal_classification`` value.
+
+    Fail-closed contract (enforced at runtime by IrreversibilityClassifier):
+      Any action name absent from this registry is treated as
+      ``IRREVERSIBLE_TERMINAL`` by the classifier.  This means that adding a
+      new control action to the YAML without annotating
+      ``terminal_classification`` will cause the FTRA to block any plan that
+      reaches that action — the safe default.
+
+    Actions with multiple UCAs:
+      If the same action appears in multiple UCAs with *different*
+      ``terminal_classification`` values, the most restrictive classification
+      wins (IRREVERSIBLE_TERMINAL > REVERSIBLE > READ_ONLY).  A warning is
+      logged for each conflict.
+
+    Args:
+        cs: Validated ``ControlStructureModel`` instance.
+
+    Returns:
+        JSON string suitable for writing to ``config/ftra/terminal_registry.json``.
+    """
+    import datetime as _dt
+
+    _SEVERITY_ORDER = {
+        "IRREVERSIBLE_TERMINAL": 2,
+        "REVERSIBLE": 1,
+        "READ_ONLY": 0,
+    }
+
+    # Collect per-action classifications — most restrictive wins on conflict.
+    action_map: dict[str, str] = {}
+    conflicts: list[str] = []
+
+    for uca in cs.unsafe_control_actions:
+        action = uca.action
+        classification = uca.terminal_classification or "IRREVERSIBLE_TERMINAL"
+
+        if action in action_map:
+            existing = action_map[action]
+            if existing != classification:
+                conflicts.append(
+                    f"action '{action}': conflict between '{existing}' and "
+                    f"'{classification}' — using most restrictive"
+                )
+                # Keep the more restrictive classification
+                if _SEVERITY_ORDER[classification] > _SEVERITY_ORDER[existing]:
+                    action_map[action] = classification
+        else:
+            action_map[action] = classification
+
+    for conflict in conflicts:
+        logger.warning("generate_terminal_registry: %s", conflict)
+
+    registry = {
+        "version": "1.0",
+        "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "system": cs.system.name,
+        "system_version": cs.system.version,
+        "fail_closed_note": (
+            "Any action absent from this registry is treated as "
+            "IRREVERSIBLE_TERMINAL by IrreversibilityClassifier at runtime."
+        ),
+        "terminals": action_map,
+    }
+
+    import json as _json
+    return _json.dumps(registry, indent=2)
+
+
+# ---------------------------------------------------------------------------
 # Compiler orchestrator
 # ---------------------------------------------------------------------------
 
@@ -1038,6 +1262,8 @@ class CompileResult:
     nemo_content: str = ""
     python_content: str = ""
     langgraph_content: str = ""
+    agp_content: str = ""
+    ftra_content: str = ""
     errors: list[str] = field(default_factory=list)
 
 
@@ -1057,7 +1283,7 @@ def compile_control_structure(
     """Compile the control structure into governance artifacts."""
     result = CompileResult()
     effective_targets = (
-        targets if "all" not in targets else ["opa", "nemo", "python", "langgraph"]
+        targets if "all" not in targets else ["opa", "nemo", "python", "langgraph", "ftra"]
     )
 
     if "opa" in effective_targets:
@@ -1084,6 +1310,18 @@ def compile_control_structure(
         except Exception as exc:
             result.errors.append(f"Python generation failed: {exc}")
 
+    if "agp" in effective_targets:
+        try:
+            result.agp_content = generate_agp(cs)
+        except Exception as exc:
+            result.errors.append(f"AGP generation failed: {exc}")
+
+    if "ftra" in effective_targets:
+        try:
+            result.ftra_content = generate_terminal_registry(cs)
+        except Exception as exc:
+            result.errors.append(f"FTRA terminal registry generation failed: {exc}")
+
     return result
 
 
@@ -1093,6 +1331,8 @@ def write_artifacts(
     nemo_out: Path,
     python_out: Path,
     langgraph_out: Path,
+    agp_out: Path | None = None,
+    ftra_out: Path | None = None,
 ) -> None:
     """Write generated artifacts to disk, creating parent dirs as needed."""
     if result.opa_content:
@@ -1114,6 +1354,33 @@ def write_artifacts(
         langgraph_out.parent.mkdir(parents=True, exist_ok=True)
         langgraph_out.write_text(result.langgraph_content)
         logger.info("✅ LangGraph Saga nodes written → %s", langgraph_out)
+
+    if result.agp_content:
+        effective_agp_out = agp_out or _DEFAULT_AGP_OUT
+        effective_agp_out.parent.mkdir(parents=True, exist_ok=True)
+        effective_agp_out.write_text(result.agp_content)
+        logger.info("✅ AGP Semantic Policy written → %s", effective_agp_out)
+        char_count = len(result.agp_content)
+        if char_count > _AGP_CHAR_BUDGET:
+            logger.warning(
+                "⚠️  AGP output exceeds %d-char budget (%d chars). "
+                "Output contains TRUNCATED sentinel.",
+                _AGP_CHAR_BUDGET,
+                char_count,
+            )
+        else:
+            logger.info(
+                "   AGP character budget: %d/%d used (%.1f%%)",
+                char_count,
+                _AGP_CHAR_BUDGET,
+                100.0 * char_count / _AGP_CHAR_BUDGET,
+            )
+
+    if result.ftra_content:
+        effective_ftra_out = ftra_out or _DEFAULT_FTRA_OUT
+        effective_ftra_out.parent.mkdir(parents=True, exist_ok=True)
+        effective_ftra_out.write_text(result.ftra_content)
+        logger.info("✅ FTRA terminal registry written → %s", effective_ftra_out)
 
 
 # ---------------------------------------------------------------------------
@@ -1155,9 +1422,13 @@ def _build_parser() -> argparse.ArgumentParser:
     compile_p.add_argument(
         "--targets",
         nargs="+",
-        choices=["opa", "nemo", "python", "langgraph", "all"],
+        choices=["opa", "nemo", "python", "langgraph", "agp", "ftra", "all"],
         default=["all"],
-        help="Artifacts to generate (default: all)",
+        help=(
+            "Artifacts to generate (default: all). "
+            "Use 'agp' for AGP Semantic Policy. "
+            "Use 'ftra' for FTRA terminal registry (config/ftra/terminal_registry.json)."
+        ),
     )
     compile_p.add_argument(
         "--opa-out",
@@ -1186,6 +1457,20 @@ def _build_parser() -> argparse.ArgumentParser:
         default=_DEFAULT_LG_OUT,
         metavar="FILE",
         help=f"LangGraph Saga output path (default: {_DEFAULT_LG_OUT})",
+    )
+    compile_p.add_argument(
+        "--agp-out",
+        type=Path,
+        default=_DEFAULT_AGP_OUT,
+        metavar="FILE",
+        help=f"AGP Semantic Policy output path (default: {_DEFAULT_AGP_OUT})",
+    )
+    compile_p.add_argument(
+        "--ftra-out",
+        type=Path,
+        default=_DEFAULT_FTRA_OUT,
+        metavar="FILE",
+        help=f"FTRA terminal registry output path (default: {_DEFAULT_FTRA_OUT})",
     )
     compile_p.add_argument(
         "--dry-run",
@@ -1245,10 +1530,19 @@ def cmd_compile(args: argparse.Namespace) -> int:
             print(sep + "PYTHON VALIDATOR" + sep + result.python_content)
         if result.langgraph_content:
             print(sep + "LANGGRAPH SAGA NODES" + sep + result.langgraph_content)
+        if result.agp_content:
+            char_count = len(result.agp_content)
+            print(sep + f"AGP SEMANTIC POLICY ({char_count}/{_AGP_CHAR_BUDGET} chars)" + sep + result.agp_content)
+            if char_count > _AGP_CHAR_BUDGET:
+                print(f"⚠️  WARNING: AGP output exceeds {_AGP_CHAR_BUDGET}-char budget.", file=sys.stderr)
+        if result.ftra_content:
+            print(sep + "FTRA TERMINAL REGISTRY (JSON)" + sep + result.ftra_content)
         return 0
 
     write_artifacts(
-        result, args.opa_out, args.nemo_out, args.python_out, args.langgraph_out
+        result, args.opa_out, args.nemo_out, args.python_out, args.langgraph_out,
+        agp_out=args.agp_out,
+        ftra_out=args.ftra_out,
     )
     print("✅ STPA compiler finished. Artifacts written:")
     if result.opa_content:
@@ -1259,6 +1553,10 @@ def cmd_compile(args: argparse.Namespace) -> int:
         print(f"   Python validator → {args.python_out}")
     if result.langgraph_content:
         print(f"   LangGraph Saga → {args.langgraph_out}")
+    if result.agp_content:
+        print(f"   AGP Semantic Policy → {args.agp_out}")
+    if result.ftra_content:
+        print(f"   FTRA terminal registry → {args.ftra_out}")
     return 0
 
 

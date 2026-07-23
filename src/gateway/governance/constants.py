@@ -168,6 +168,26 @@ class GovernanceControl(Enum):
     Declares authorized action space, HITL boundaries, and inter-agent trust model.
     POAM: AI600-001 (secondary). Region: US_FED."""
 
+    FTRA_REACHABILITY_GATE = "CTRL_FTRA_001"
+    """Forward-Looking Trajectory Reachability Analyzer — Tier 0.5 governance gate.
+
+    Performs commencement-time worst-case reachability analysis on the
+    ExecutionPlan before the first LangGraph node fires.  Classifies each
+    reachable action against the compiled terminal registry
+    (config/ftra/terminal_registry.json) and issues one of three verdicts:
+
+        CLEAR          — no IRREVERSIBLE_TERMINAL node reachable; proceed to OPA
+        HITL_REQUIRED  — irreversible terminal reachable, confidence >= 0.70;
+                         park in DeferQueue db=1 pending human clearance
+        BLOCKED        — irreversible terminal reachable, confidence < 0.70;
+                         route to explainer; plan cannot proceed
+
+    OTel span: ``cage.ftra_analysis``
+    DeferReason: ``FTRA_IRREVERSIBLE_TERMINAL``
+    Registry: ``config/ftra/terminal_registry.json``
+    Compiler target: ``--targets ftra`` (stpa_compiler.py)
+    """
+
 
 # ---------------------------------------------------------------------------
 # Singleton ControlRegistry
