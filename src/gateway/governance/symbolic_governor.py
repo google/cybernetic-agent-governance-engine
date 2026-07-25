@@ -965,8 +965,44 @@ def assert_safe_operational_state() -> None:
     This combined state is the highest-risk operational posture and must
     never occur in production.
 
+    Also warns (CRITICAL log) or raises (production) when
+    RECONCILIATION_PROVIDER=stub, which means the CBF is evaluating against
+    self-reported balances — POAM-023 open gap.
+
     Call this during application startup.
     """
+    env = (
+        os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
+    ).lower()
+    _is_production = env not in ("development", "test", "dev", "ci")
+
+    # ── Gap 5 (POAM-023): CBF ground truth is self-reported ──────────────────
+    _recon_provider = os.environ.get("RECONCILIATION_PROVIDER", "stub").lower()
+    if _recon_provider == "stub":
+        _poam023_msg = (
+            "CAGE STARTUP WARNING (POAM-023): RECONCILIATION_PROVIDER=stub. "
+            "The CBF is evaluating cash barrier conditions against self-reported "
+            "balances written by the execution system itself — no external ground "
+            "truth is available. This is a known open compliance gap. "
+            "Resolve by setting RECONCILIATION_PROVIDER=plaid or =anchorage and "
+            "provisioning the corresponding credentials."
+        )
+        if _is_production:
+            raise RuntimeError(_poam023_msg)
+        else:
+            logger.critical(
+                json.dumps(
+                    {
+                        "event": "POAM_023_STUB_PROVIDER_IN_USE",
+                        "severity": "CRITICAL",
+                        "reconciliation_provider": _recon_provider,
+                        "environment": env,
+                        "poam_id": "POAM-023",
+                        "audit_note": _poam023_msg,
+                    }
+                )
+            )
+
     cbf_fail_open = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
     if not cbf_fail_open:
         return  # CBF is active — combined risk state is not present
@@ -980,10 +1016,6 @@ def assert_safe_operational_state() -> None:
     except Exception:
         kms_active = False  # Cannot determine — assume worst case
 
-    env = (
-        os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
-    ).lower()
-
     if not kms_active:
         msg = (
             "CAGE STARTUP FAILURE: Combined high-risk operational state detected. "
@@ -993,7 +1025,7 @@ def assert_safe_operational_state() -> None:
             "(2) governance attestations cannot be externally verified. "
             "Resolve by: setting KMS_GOVERNANCE_KEY and/or setting CBF_FAIL_OPEN=false."
         )
-        if env not in ("development", "test", "dev", "ci"):
+        if _is_production:
             raise RuntimeError(msg)
         else:
             logger.critical(
