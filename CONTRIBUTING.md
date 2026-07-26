@@ -304,8 +304,8 @@ They are **not in conflict** — they serve different scopes:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Clone the repository
-git clone https://github.com/google/cybernetic-governance-engine.git
-cd cybernetic-governance-engine
+git clone https://github.com/google/cybernetic-agent-governance-engine.git
+cd cybernetic-agent-governance-engine
 
 # Install all dependencies including dev extras
 uv sync --group dev
@@ -414,7 +414,7 @@ python scripts/patch_license.py
 
 ### Bug Reports and Feature Requests
 
-Please use [GitHub Issues](https://github.com/google/cybernetic-governance-engine/issues) to report bugs or request features. When filing a bug report, include:
+Please use [GitHub Issues](https://github.com/google/cybernetic-agent-governance-engine/issues) to report bugs or request features. When filing a bug report, include:
 
 - A clear description of the problem
 - Steps to reproduce

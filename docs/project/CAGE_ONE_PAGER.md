@@ -6,7 +6,7 @@
 
 ## Problem, Why It Matters, Solution & Consequence
 
-Regulated industries deploying agentic AI face a fundamental audit gap: LLM-based agents make consequential decisions (trade execution, risk classification, customer data handling) through opaque, stateless inference calls with no enforceable policy boundary, no tamper-evident audit trail, and no mechanism for human override once a workflow is in motion. The current state of the art—prompt engineering and post-hoc log analysis—is neither deterministic nor regulatorily defensible under **SR 26-2** (Federal Reserve's April 2026 guidance on generative and agentic AI risk management), ISO/IEC 42001 (AI management system), or SOC 2 Type II. SR 26-2 explicitly declares that agentic systems are *outside the prescriptive scope of SR 11-7*, directing institutions to apply their own rigorous internal frameworks — CAGE is that framework.
+Any operator deploying high-reliability agentic AI faces a fundamental audit gap: LLM-based agents make consequential decisions (trade execution, risk classification, customer data handling, actuator commands, drug-dosage recommendations) through opaque, stateless inference calls with no enforceable policy boundary, no tamper-evident audit trail, and no mechanism for human override once a workflow is in motion. The current state of the art—prompt engineering and post-hoc log analysis—is neither deterministic nor regulatorily defensible under **SR 26-2** (Federal Reserve's April 2026 guidance on generative and agentic AI risk management), ISO/IEC 42001 (AI management system), or SOC 2 Type II. SR 26-2 explicitly declares that agentic systems are *outside the prescriptive scope of SR 11-7*, directing institutions to apply their own rigorous internal frameworks — CAGE is that framework, and its structural properties generalise beyond financial services to any domain where an agent can trigger consequential writes to authoritative state stores.
 
 The cost of inaction is concrete: a single unchecked `execute_trade_action` call can bypass drawdown limits, leak PII in the response payload, and produce no evidence of the policy evaluation that should have blocked it. Automated red-team exercises against naive gateway implementations routinely achieve **100% adversarial success rates** on RBAC-002 (excessive permissions) and PII-004 (data leakage) attack classes.
 
@@ -30,13 +30,13 @@ Human oversight is enforced structurally, not by convention: the LangGraph graph
 
 The CAGE governance kernel is grounded in formal mathematical theory, providing provable safety guarantees rather than best-effort heuristics.
 
-### Control Barrier Function — Financial Safety
+### Control Barrier Function — Resource Invariant Safety
 
 ```
 h(S(t+1)) ≥ (1−γ)·h(S(t))     where h(x) = cash_balance − min_cash_balance
 ```
 
-This discrete-time CBF condition ([`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)) guarantees that the system state never leaves the safe set `S = {x ∈ ℝⁿ : h(x) ≥ 0}`. Any proposed trade that would violate the condition is denied before execution. State reads are atomic (Redis `WATCH/MULTI/EXEC`, `_MAX_RETRIES=5`).
+This discrete-time CBF condition ([`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)) guarantees that the system state never leaves the safe set `S = {x ∈ ℝⁿ : h(x) ≥ 0}`. Any proposed action that would violate the condition is denied before execution. State reads are atomic (Redis `WATCH/MULTI/EXEC`, `_MAX_RETRIES=5`). In the financial reference deployment `h(x) = cash_balance − min_cash_balance`; in other high-reliability deployments the same invariant structure applies to any continuous resource variable (API call budget, actuator torque envelope, drug-dosage ceiling, etc.).
 
 ### 7-Tier Symbolic Governor Pipeline
 
@@ -47,7 +47,7 @@ This discrete-time CBF condition ([`src/gateway/governance/cbf.py`](../../src/ga
 | 3 | CBF + OPA concurrent | `asyncio.gather` — barrier check + policy engine in parallel |
 | 4 | Causal gatekeeper | SCM + PlaceboTreatmentRefuter (50 sims, p < 0.05, \|eff\| > 0.2); marginal risk boundary: `(0.5 + estimate.value × amount) > 0.95` |
 | 5 | Confabulation scoring | `risk_score = 1.0 − confidence` |
-| 6 | Consensus | ≥$10k trades, 30s timeout, heterogeneous multi-model quorum |
+| 6 | Consensus | High-stakes actions (≥$10k trades in the financial deployment), 30s timeout, heterogeneous multi-model quorum |
 | 7 | FRIA zones | `FRIA_ZONE_ALLOW=0.95` / `FRIA_ZONE_DEFER=0.70` / score < 0.70 → BLOCK |
 
 Source: [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
@@ -67,7 +67,7 @@ Source: [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/govern
 | NoDirectBind | Structural — enforced at Python import level |
 | Confabulation risk | `risk_score = 1.0 − confidence` |
 | Causal lock | `(0.5 + estimate.value × amount) > 0.95` → DENY |
-| Fiscal cap | $500k/day (integer cents), 86,400s window, exponential backoff |
+| Operational budget cap | $500k/day (integer cents) in the financial reference deployment; 86,400s window, exponential backoff — threshold is domain-configurable |
 | Provenance chain | SHA-256 hash chain, O(n) construction, sorted-key JSON |
 
 ---
