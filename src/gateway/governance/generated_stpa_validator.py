@@ -59,17 +59,23 @@ class GeneratedSTPAValidator:
         """Run all generated UCA checks. Returns list of violation strings."""
         violations: list[str] = []
         _v = self._check_uca_1(action_name, params)
-        if _v: violations.append(_v)
+        if _v:
+            violations.append(_v)
         _v = self._check_uca_2(action_name, params)
-        if _v: violations.append(_v)
+        if _v:
+            violations.append(_v)
         _v = self._check_uca_5(action_name, params)
-        if _v: violations.append(_v)
+        if _v:
+            violations.append(_v)
         _v = self._check_uca_6(action_name, params)
-        if _v: violations.append(_v)
+        if _v:
+            violations.append(_v)
         _v = self._check_uca_8(action_name, params)
-        if _v: violations.append(_v)
+        if _v:
+            violations.append(_v)
         _v = self._check_uca_9(action_name, params)
-        if _v: violations.append(_v)
+        if _v:
+            violations.append(_v)
         return violations
 
     def _check_uca_1(self, action_name: str, params: dict) -> str | None:
@@ -78,9 +84,7 @@ class GeneratedSTPAValidator:
             if action_name != "write_db":
                 return None
             if params.get("approval_token") is None:
-                return (
-                    "STPA Violation UCA-1: Agent executes write operation without a signed approval token."
-                )
+                return "STPA Violation UCA-1: Agent executes write operation without a signed approval token."
             return None
         except Exception as exc:
             logger.error("Error evaluating UCA-1: %s", exc)
@@ -97,9 +101,7 @@ class GeneratedSTPAValidator:
                 logger.warning("UCA-2: missing param `latency_ms` — failing closed.")
                 return "STPA Violation UCA-2: Missing required param `latency_ms`."
             if float(val) > threshold:
-                return (
-                    f"STPA Violation UCA-2: Agent executes trade with stale market data (latency > threshold). ({float(val):.4f} > {threshold})"
-                )
+                return f"STPA Violation UCA-2: Agent executes trade with stale market data (latency > threshold). ({float(val):.4f} > {threshold})"
             return None
         except Exception as exc:
             logger.error("Error evaluating UCA-2: %s", exc)
@@ -116,9 +118,7 @@ class GeneratedSTPAValidator:
                 logger.warning("UCA-5: missing param `drawdown` — failing closed.")
                 return "STPA Violation UCA-5: Missing required param `drawdown`."
             if float(val) > threshold:
-                return (
-                    f"STPA Violation UCA-5: Agent executes buy order when daily drawdown exceeds limit. ({float(val):.4f} > {threshold})"
-                )
+                return f"STPA Violation UCA-5: Agent executes buy order when daily drawdown exceeds limit. ({float(val):.4f} > {threshold})"
             return None
         except Exception as exc:
             logger.error("Error evaluating UCA-5: %s", exc)
@@ -143,9 +143,7 @@ class GeneratedSTPAValidator:
             if action_name != "execute_trade":
                 return None
             if params.get("risk_assessed") is False:
-                return (
-                    "STPA Violation UCA-8: Agent executes trade before risk assessment is complete."
-                )
+                return "STPA Violation UCA-8: Agent executes trade before risk assessment is complete."
             return None
         except Exception as exc:
             logger.error("Error evaluating UCA-8: %s", exc)
@@ -157,11 +155,8 @@ class GeneratedSTPAValidator:
             if action_name != "execute_trade":
                 return None
             if params.get("compliance_checked") is False:
-                return (
-                    "STPA Violation UCA-9: Agent executes trade with compliance check bypassed."
-                )
+                return "STPA Violation UCA-9: Agent executes trade with compliance check bypassed."
             return None
         except Exception as exc:
             logger.error("Error evaluating UCA-9: %s", exc)
             return f"STPA Violation UCA-9: Evaluation error — failing closed ({exc})."
-
