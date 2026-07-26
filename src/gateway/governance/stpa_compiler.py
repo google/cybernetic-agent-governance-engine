@@ -1066,8 +1066,8 @@ def generate_agp(cs: ControlStructureModel) -> str:
     """
     lines: list[str] = [
         f"# CAGE Semantic Governance Policy — {cs.system.name} v{cs.system.version}",
-        f"# Generated from STPA control structure. Do not edit manually.",
-        f"# Source: config/stpa_control_structure.yaml",
+        "# Generated from STPA control structure. Do not edit manually.",
+        "# Source: config/stpa_control_structure.yaml",
         "",
     ]
 
@@ -1084,6 +1084,7 @@ def generate_agp(cs: ControlStructureModel) -> str:
             # Attempt runtime resolution via THRESHOLDS singleton
             try:
                 from src.gateway.governance.schemas.thresholds import THRESHOLDS
+
                 attr_path = cond.threshold_ref.split(".")
                 obj: Any = THRESHOLDS
                 for attr in attr_path:
@@ -1100,7 +1101,9 @@ def generate_agp(cs: ControlStructureModel) -> str:
         if op == "is_null" and param:
             sentence = f'Do not execute "{action}" if "{param}" is null or missing.'
         elif op == "is_false" and param:
-            sentence = f'Do not execute "{action}" if "{param}" is false or not set to true.'
+            sentence = (
+                f'Do not execute "{action}" if "{param}" is false or not set to true.'
+            )
         elif op == "is_true" and param:
             sentence = f'Do not execute "{action}" if "{param}" is true.'
         elif op == "greater_than" and param and threshold is not None:
@@ -1126,7 +1129,7 @@ def generate_agp(cs: ControlStructureModel) -> str:
         if uca.nemo_rail:
             msg = uca.nemo_rail.message
             lines.append(f"# {uca.id} (NeMo rail): {uca.description}")
-            lines.append(f'Block any request that {msg}')
+            lines.append(f"Block any request that {msg}")
             lines.append("")
 
     # RBAC rules → human approval / deny sentences
@@ -1248,6 +1251,7 @@ def generate_terminal_registry(cs: ControlStructureModel) -> str:
     }
 
     import json as _json
+
     return _json.dumps(registry, indent=2)
 
 
@@ -1283,7 +1287,9 @@ def compile_control_structure(
     """Compile the control structure into governance artifacts."""
     result = CompileResult()
     effective_targets = (
-        targets if "all" not in targets else ["opa", "nemo", "python", "langgraph", "ftra"]
+        targets
+        if "all" not in targets
+        else ["opa", "nemo", "python", "langgraph", "ftra"]
     )
 
     if "opa" in effective_targets:
@@ -1532,15 +1538,27 @@ def cmd_compile(args: argparse.Namespace) -> int:
             print(sep + "LANGGRAPH SAGA NODES" + sep + result.langgraph_content)
         if result.agp_content:
             char_count = len(result.agp_content)
-            print(sep + f"AGP SEMANTIC POLICY ({char_count}/{_AGP_CHAR_BUDGET} chars)" + sep + result.agp_content)
+            print(
+                sep
+                + f"AGP SEMANTIC POLICY ({char_count}/{_AGP_CHAR_BUDGET} chars)"
+                + sep
+                + result.agp_content
+            )
             if char_count > _AGP_CHAR_BUDGET:
-                print(f"⚠️  WARNING: AGP output exceeds {_AGP_CHAR_BUDGET}-char budget.", file=sys.stderr)
+                print(
+                    f"⚠️  WARNING: AGP output exceeds {_AGP_CHAR_BUDGET}-char budget.",
+                    file=sys.stderr,
+                )
         if result.ftra_content:
             print(sep + "FTRA TERMINAL REGISTRY (JSON)" + sep + result.ftra_content)
         return 0
 
     write_artifacts(
-        result, args.opa_out, args.nemo_out, args.python_out, args.langgraph_out,
+        result,
+        args.opa_out,
+        args.nemo_out,
+        args.python_out,
+        args.langgraph_out,
         agp_out=args.agp_out,
         ftra_out=args.ftra_out,
     )

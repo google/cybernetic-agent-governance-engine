@@ -93,7 +93,7 @@ class PlanGraphAnalyzer:
     # Public API
     # ------------------------------------------------------------------
 
-    def analyze(self, plan: "ExecutionPlan", confidence: float) -> ReachabilityResult:
+    def analyze(self, plan: ExecutionPlan, confidence: float) -> ReachabilityResult:
         """Run commencement-time reachability analysis on *plan*.
 
         Builds a directed graph from ``plan.steps``, runs DFS from ``step[0]``,
@@ -120,7 +120,9 @@ class PlanGraphAnalyzer:
                 exc,
             )
             verdict = (
-                FTRAVerdict.HITL_REQUIRED if confidence >= FRIA_ZONE_DEFER else FTRAVerdict.BLOCKED
+                FTRAVerdict.HITL_REQUIRED
+                if confidence >= FRIA_ZONE_DEFER
+                else FTRAVerdict.BLOCKED
             )
             return ReachabilityResult(
                 plan_id=getattr(plan, "plan_id", "<unknown>"),
@@ -137,11 +139,13 @@ class PlanGraphAnalyzer:
     # Internal implementation
     # ------------------------------------------------------------------
 
-    def _analyze_internal(self, plan: "ExecutionPlan", confidence: float) -> ReachabilityResult:
+    def _analyze_internal(
+        self, plan: ExecutionPlan, confidence: float
+    ) -> ReachabilityResult:
         """Core analysis — may raise; caller wraps in try/except."""
         import networkx as nx  # lazy import — networkx is an optional dep
 
-        steps: list["PlanStep"] = plan.steps
+        steps: list[PlanStep] = plan.steps
         plan_id: str = plan.plan_id
 
         if not steps:
@@ -167,7 +171,9 @@ class PlanGraphAnalyzer:
             G.add_node(step.id, action=step.action)
 
         # Determine edges: Phase 2 depends_on or Phase 1 linear chain
-        has_depends_on = any(hasattr(step, "depends_on") and step.depends_on for step in steps)
+        has_depends_on = any(
+            hasattr(step, "depends_on") and step.depends_on for step in steps
+        )
 
         if has_depends_on:
             # Phase 2: explicit dependency edges
@@ -222,7 +228,9 @@ class PlanGraphAnalyzer:
         if reachable_terminals:
             first_terminal = reachable_terminals[0]
             try:
-                critical_path = nx.shortest_path(G, source=source_id, target=first_terminal)
+                critical_path = nx.shortest_path(
+                    G, source=source_id, target=first_terminal
+                )
             except nx.NetworkXNoPath:
                 # Should not happen since first_terminal is in reachable_ids,
                 # but guard defensively.
@@ -273,7 +281,7 @@ class PlanGraphAnalyzer:
     # Diagnostic helpers
     # ------------------------------------------------------------------
 
-    def explain(self, plan: "ExecutionPlan", confidence: float) -> dict[str, Any]:
+    def explain(self, plan: ExecutionPlan, confidence: float) -> dict[str, Any]:
         """Return a human-readable explanation dict for debugging / audit logs.
 
         Calls :meth:`analyze` and augments the result with per-step

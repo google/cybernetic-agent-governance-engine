@@ -42,9 +42,9 @@ from src.gateway.governance.ftra.models import (
 from src.gateway.governance.ftra.node_factory import create_ftra_node
 
 __all__ = [
+    "FTRAVerdict",
     "IrreversibilityClassifier",
     "PlanGraphAnalyzer",
-    "FTRAVerdict",
     "ReachabilityResult",
     "TerminalClassification",
     "create_ftra_node",

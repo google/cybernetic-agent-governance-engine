@@ -113,7 +113,11 @@ def _get_registry(path: Path | None = None) -> dict[str, str]:
     force_reload = os.getenv("FTRA_REGISTRY_RELOAD", "false").lower() == "true"
 
     with _registry_lock:
-        if _registry_cache is None or force_reload or _registry_path_used != effective_path:
+        if (
+            _registry_cache is None
+            or force_reload
+            or _registry_path_used != effective_path
+        ):
             _registry_cache = _load_registry(effective_path)
             _registry_path_used = effective_path
 
@@ -125,7 +129,9 @@ def _bust_cache(signum: int, frame: Any) -> None:  # noqa: ARG001
     global _registry_cache
     with _registry_lock:
         _registry_cache = None
-    logger.info("FTRA registry cache cleared via SIGUSR1 — will reload on next classify().")
+    logger.info(
+        "FTRA registry cache cleared via SIGUSR1 — will reload on next classify()."
+    )
 
 
 # Register SIGUSR1 handler for hot-reload (no-op on Windows where SIGUSR1 is absent).
@@ -205,7 +211,9 @@ class IrreversibilityClassifier:
 
         Convenience wrapper around :meth:`classify`.
         """
-        return self.classify(action_name) == TerminalClassification.IRREVERSIBLE_TERMINAL
+        return (
+            self.classify(action_name) == TerminalClassification.IRREVERSIBLE_TERMINAL
+        )
 
     def known_actions(self) -> list[str]:
         """Return the list of action names present in the registry.
