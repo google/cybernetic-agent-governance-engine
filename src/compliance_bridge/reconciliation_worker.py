@@ -445,7 +445,7 @@ class PlaidLedgerProvider:
     """Production ledger provider backed by the Plaid API (Balance product).
 
     Plaid is the fastest path to a real external balance for POAM-023 closure:
-    - Production credentials provisioned in days (vs. 2–6 weeks for Anchorage).
+    - Production credentials provisioned in days (vs. 2-6 weeks for Anchorage).
     - ``/accounts/balance/get`` returns real-time available balance from the
       linked bank account, not synthetic Sandbox data.
     - OAuth 2.0 bearer token authentication — no mTLS certificate management.
@@ -506,10 +506,10 @@ class PlaidLedgerProvider:
     ---------------------------------
     - ``/accounts/balance/get`` P50 ≈ 300 ms, P99 ≈ 1200 ms (Plaid SLA).
     - Amortised over 60 s polling interval: per-request overhead ≈ 0 ms.
-    - KMS sign adds ≈ 5–15 ms (Cloud KMS asymmetricSign P50).
-    - Redis setex adds ≈ 1–2 ms (local cluster).
-    - Total write-path cost: T_reconcile ≈ 310–1220 ms per 60 s cycle.
-    - CBF read-path overhead: KMS verify ≈ 0.1–0.5 ms (local verify, no network).
+    - KMS sign adds ≈ 5-15 ms (Cloud KMS asymmetricSign P50).
+    - Redis setex adds ≈ 1-2 ms (local cluster).
+    - Total write-path cost: T_reconcile ≈ 310-1220 ms per 60 s cycle.
+    - CBF read-path overhead: KMS verify ≈ 0.1-0.5 ms (local verify, no network).
 
     Status
     ------
