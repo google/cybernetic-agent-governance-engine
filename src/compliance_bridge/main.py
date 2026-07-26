@@ -33,6 +33,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
@@ -88,6 +89,17 @@ _AUDIT_STATUS_MAXSIZE = 256
 _audit_status: OrderedDict[str, dict] = OrderedDict()
 
 AuditPhase = Literal["pending", "running", "done", "error"]
+
+# Characters permitted inside a quoted Content-Disposition filename. Anything
+# outside this set (notably `"`, `;` and `\`) can terminate the quoted-string
+# and start a new disposition parameter, so it is folded to `_` first.
+_UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]")
+_FILENAME_TOKEN_MAXLEN = 128
+
+
+def _filename_token(audit_id: str) -> str:
+    """Reduce an audit ID to a token that is safe to embed in a filename."""
+    return _UNSAFE_FILENAME_CHARS.sub("_", audit_id)[:_FILENAME_TOKEN_MAXLEN]
 
 
 def _set_audit_status(audit_id: str, payload: dict) -> None:
@@ -671,7 +683,7 @@ async def export_oscal_assessment_results(
             return JSONResponse(
                 content={"yaml": content, "audit_id": _audit_id},
                 headers={
-                    "Content-Disposition": f'attachment; filename="assessment-results-{_audit_id}.yaml"'
+                    "Content-Disposition": f'attachment; filename="assessment-results-{_filename_token(_audit_id)}.yaml"'
                 },
             )
         except ImportError:
@@ -680,7 +692,7 @@ async def export_oscal_assessment_results(
     return JSONResponse(
         content={"document": doc, "audit_id": _audit_id},
         headers={
-            "Content-Disposition": f'attachment; filename="assessment-results-{_audit_id}.json"'
+            "Content-Disposition": f'attachment; filename="assessment-results-{_filename_token(_audit_id)}.json"'
         },
     )
 
@@ -1020,7 +1032,7 @@ async def get_aarm_conformance_report(
             return JSONResponse(
                 content={"yaml": content, "audit_id": _audit_id},
                 headers={
-                    "Content-Disposition": f'attachment; filename="aarm-conformance-{_audit_id}.yaml"'
+                    "Content-Disposition": f'attachment; filename="aarm-conformance-{_filename_token(_audit_id)}.yaml"'
                 },
             )
         except ImportError:
@@ -1029,7 +1041,7 @@ async def get_aarm_conformance_report(
     return JSONResponse(
         content={"report": report_dict, "audit_id": _audit_id},
         headers={
-            "Content-Disposition": f'attachment; filename="aarm-conformance-{_audit_id}.json"'
+            "Content-Disposition": f'attachment; filename="aarm-conformance-{_filename_token(_audit_id)}.json"'
         },
     )
 
