@@ -1,0 +1,29 @@
+{
+    "agents": {
+        "spiffe://cage.example/governed-trader": {
+            "display_name": "Governed Trader Agent",
+            "description": "Executes governed trade actions under CAGE CBF and OPA policy control.",
+            "allowed_tools": [
+                "execute_trade",
+                "get_portfolio",
+                "get_market_data",
+                "get_account_balance"
+            ],
+            "allowed_roles": [
+                "trader",
+                "portfolio_manager"
+            ],
+            "approval_threshold": 1,
+            "uca_refs": [
+                "UCA-1",
+                "UCA-2",
+                "UCA-3"
+            ],
+            "hazard_refs": [
+                "H-1",
+                "H-2"
+            ],
+            "schema_version": "1.0"
+        }
+    }
+}
