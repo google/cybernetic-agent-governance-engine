@@ -86,7 +86,7 @@ start_pf vllm-reason2 vllm-reasoning           18082  8000  # Reasoning vLLM —
 # The port-forward is intentionally omitted.
 start_pf gateway      gateway                   8080  8080  # Gateway gRPC/HTTP
 start_pf backend      governed-financial-advisor 18080   80  # Governed FA backend — BACKEND_URL (:18080)
-start_pf redis        redis                     6379  6379  # Redis (redis svc)
+start_pf redis        redis-master              6379  6379  # Redis (redis-master svc)
 start_pf compliance   compliance-bridge          3002    80  # Compliance bridge — BASE_URL (:3002)
 
 echo "[port-forward] Waiting for readiness (3s)..."
