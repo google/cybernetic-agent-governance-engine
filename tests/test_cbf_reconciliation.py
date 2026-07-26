@@ -34,14 +34,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-pytest.importorskip("fakeredis", reason="fakeredis required for CBF reconciliation tests")
+pytest.importorskip(
+    "fakeredis", reason="fakeredis required for CBF reconciliation tests"
+)
 
 import fakeredis  # type: ignore[import]
 
 from src.compliance_bridge.reconciliation_worker import (
-    ReconciliationResult,
     _REDIS_KEY_VERIFIED_BALANCE,
     TTL_SECONDS,
+    ReconciliationResult,
     read_verified_balance,
 )
 
@@ -49,8 +51,8 @@ from src.compliance_bridge.reconciliation_worker import (
 # Constants
 # ---------------------------------------------------------------------------
 
-_SAFE_BALANCE = 95_000.0    # above min_cash_balance (default 10_000)
-_RECON_BALANCE = 92_000.0   # externally reconciled balance
+_SAFE_BALANCE = 95_000.0  # above min_cash_balance (default 10_000)
+_RECON_BALANCE = 92_000.0  # externally reconciled balance
 
 
 # ---------------------------------------------------------------------------
@@ -68,8 +70,12 @@ def test_reconciliation_result_is_valid() -> None:
         signature="deadbeef",
         ttl_seconds=TTL_SECONDS,
     )
-    assert result.is_valid is True, "Expected is_valid=True for fresh result with no error"
-    assert result.is_stale is False, "Expected is_stale=False for freshly created result"
+    assert result.is_valid is True, (
+        "Expected is_valid=True for fresh result with no error"
+    )
+    assert result.is_stale is False, (
+        "Expected is_stale=False for freshly created result"
+    )
 
 
 # ---------------------------------------------------------------------------

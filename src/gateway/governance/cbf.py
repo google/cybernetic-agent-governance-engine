@@ -59,6 +59,11 @@ concurrent trade execution in the stateless Cloud Run environment.
 
 import json
 import logging
+
+# ---------------------------------------------------------------------------
+# Canonical gateway-internal imports (Phase 1.1)
+# ---------------------------------------------------------------------------
+import os
 import time
 from typing import Any
 
@@ -68,12 +73,6 @@ from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 # Threshold singleton (Phase 2.3)
 # ---------------------------------------------------------------------------
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
-
-# ---------------------------------------------------------------------------
-# Canonical gateway-internal imports (Phase 1.1)
-# ---------------------------------------------------------------------------
-import os
-
 from src.gateway.infrastructure.redis_client import redis_client
 from src.gateway.infrastructure.telemetry import get_tracer
 
@@ -184,7 +183,9 @@ return {1, "COMMITTED", tostring(next_cash)}
 
         # ── Attempt 1: externally reconciled balance (POAM-023) ──────────────
         try:
-            from src.compliance_bridge.reconciliation_worker import read_verified_balance
+            from src.compliance_bridge.reconciliation_worker import (
+                read_verified_balance,
+            )
 
             client_sync = redis_client._get()
             # read_verified_balance is synchronous (redis-py sync client).

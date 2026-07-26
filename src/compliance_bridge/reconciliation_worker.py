@@ -545,7 +545,9 @@ class PlaidLedgerProvider:
                 "Set PLAID_ENV=production for POAM-023 closure."
             )
 
-        self._base_url = self._BASE_URLS.get(self._plaid_env, self._BASE_URLS["production"])
+        self._base_url = self._BASE_URLS.get(
+            self._plaid_env, self._BASE_URLS["production"]
+        )
         logger.info(
             "[PlaidProvider] Initialised: env=%s base_url=%s account_filter=%s",
             self._plaid_env,
@@ -622,7 +624,9 @@ class PlaidLedgerProvider:
 
         accounts = body.get("accounts", [])
         if not accounts:
-            raise RuntimeError("Plaid returned no accounts in /accounts/balance/get response.")
+            raise RuntimeError(
+                "Plaid returned no accounts in /accounts/balance/get response."
+            )
 
         # Select the target account
         selected = None
@@ -778,7 +782,7 @@ class ExternalLedgerReconciler:
                 except Exception:
                     pass
 
-        with (_span_ctx if _span_ctx is not None else _null_context()):
+        with _span_ctx if _span_ctx is not None else _null_context():
             _set_span_attr("reconciliation.provider", PROVIDER)
             _set_span_attr("reconciliation.account_id", self._account_id)
 
@@ -895,7 +899,9 @@ class ExternalLedgerReconciler:
                 _set_span_attr("reconciliation.redis_error", str(redis_exc))
             finally:
                 redis_write_ms = (time.monotonic() - t_redis_start) * 1000.0
-                _set_span_attr("reconciliation.redis_write_ms", round(redis_write_ms, 1))
+                _set_span_attr(
+                    "reconciliation.redis_write_ms", round(redis_write_ms, 1)
+                )
 
             return result
 

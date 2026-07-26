@@ -94,8 +94,10 @@ if _IS_PRODUCTION:
 # CAGE-SEC-007: RECONCILIATION_PROVIDER=stub guard (module-level, POAM-023)
 # Raises at import time so the misconfiguration is caught before any request
 # is served — not silently at the first CBF evaluation.
-if os.environ.get("RECONCILIATION_PROVIDER", "stub") == "stub" and \
-   os.environ.get("CAGE_ENV", "dev") == "production":
+if (
+    os.environ.get("RECONCILIATION_PROVIDER", "stub") == "stub"
+    and os.environ.get("CAGE_ENV", "dev") == "production"
+):
     raise RuntimeError(
         "CAGE-SEC-007: RECONCILIATION_PROVIDER=stub is not permitted in production. "
         "Set RECONCILIATION_PROVIDER=plaid or RECONCILIATION_PROVIDER=anchorage."
