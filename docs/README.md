@@ -1,6 +1,8 @@
 # CAGE Documentation Index
 
-**System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor
+**System:** Cybernetic Agent Governance Engine (CAGE) — High-Reliability Agentic AI Governance Platform
+
+> **Reference deployment:** The first production vertical is a governed financial advisory workflow (`src/governed_financial_advisor/`). All domain-specific identifiers in the codebase (e.g. `safety:current_cash`, `execute_trade`, `FiscalLimitGuard`) reflect that deployment. The governance kernel itself is domain-agnostic and applies to any high-reliability agentic system where an agent can trigger consequential writes to authoritative state stores.
 **Last updated:** 2026-07-01
 
 This directory is organised using a **hybrid layout**: function-based top-level sections, with compliance artefacts further sub-divided by jurisdiction. This mirrors the system's own architectural principle: ISO 42001 as the universal baseline, with jurisdiction-specific addenda for US_FED, EU_ECB, and APAC_MAS.
@@ -161,6 +163,9 @@ The following documents contain the primary mathematical formalism for the CAGE 
 | [INFERENCE_GATEWAY_ARCHITECTURE.md](architecture/INFERENCE_GATEWAY_ARCHITECTURE.md) | Inference gateway architecture (detail) |
 | [LATENCY_STRATEGY.md](architecture/LATENCY_STRATEGY.md) | Latency strategy |
 | [AUDIT_LOG_SCHEMA.md](architecture/AUDIT_LOG_SCHEMA.md) | Audit log schema |
+| [SUBSTRATE_MOAT_STRATEGY.md](architecture/SUBSTRATE_MOAT_STRATEGY.md) | Competitive positioning — CAGE vs MXC/ACS, AAIF, Google AGW |
+| [CAGE_AGW_SERVICE_EXTENSION_RESEARCH.md](architecture/CAGE_AGW_SERVICE_EXTENSION_RESEARCH.md) | Research: CAGE × Google Agent Gateway Service Extension integration (Gap 6) — **Cat-M, AO pre-approval required** |
+| [CAGE_STPA_TO_AGP_SEMANTIC_POLICY_RESEARCH.md](architecture/CAGE_STPA_TO_AGP_SEMANTIC_POLICY_RESEARCH.md) | Research: CAGE STPA/STAMP pipeline → Google Agent Platform Semantic Governance Policies — fifth compiler output target |
 
 ---
 
@@ -184,6 +189,7 @@ The following documents contain the primary mathematical formalism for the CAGE 
 |---|---|
 | RELEASE_PLAN.md | Release plan |
 | [V2_ROADMAP.md](project/V2_ROADMAP.md) | V2 roadmap |
+| [IMPLEMENTATION_PLAN_V2.md](project/IMPLEMENTATION_PLAN_V2.md) | **v2.0 combined implementation plan** — Gap 1–6 sequenced delivery, AGW Service Extension, ACS/AAIF ingress, SDK, spec update cross-reference |
 | PRODUCTION_READINESS_REPORT.md | Production readiness report |
 | REPOSITORY_CLEANUP_PLAN.md | Repository cleanup plan |
 | PROJECT_ANALYSIS.md | Project analysis |

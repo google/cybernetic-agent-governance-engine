@@ -128,6 +128,32 @@ def _sha256(data: str) -> str:
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
+def _link_hash(
+    prev_hash: str,
+    sequence: int,
+    event_type: str,
+    control_id: str,
+    payload_json: str,
+) -> str:
+    """Compute a stream entry's ``record_hash`` over its header + payload.
+
+    The header carries the identifying metadata stored beside the payload in
+    the Redis Stream entry, so re-ordering or re-labelling a record changes
+    the link and breaks the chain.
+    """
+    header = json.dumps(
+        {
+            "schema": _SCHEMA,
+            "sequence": sequence,
+            "event_type": event_type,
+            "control_id": control_id,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return _sha256(prev_hash + header + payload_json)
+
+
 # ---------------------------------------------------------------------------
 # EvidenceStreamSink — the core streaming sink
 # ---------------------------------------------------------------------------
@@ -250,14 +276,23 @@ class EvidenceStreamSink:
         # Hash-chain the event — lock guards all reads/writes of _prev_hash and _sequence
         payload_json = json.dumps(event, sort_keys=True, default=str)
 
+        event_type = event.get("type", "UNKNOWN")
+        control_id = event.get("controlId", "")
+
         async with self._chain_lock:
-            record_hash = _sha256(self._prev_hash + payload_json)
+            record_hash = _link_hash(
+                prev_hash=self._prev_hash,
+                sequence=self._sequence,
+                event_type=event_type,
+                control_id=control_id,
+                payload_json=payload_json,
+            )
 
             entry = {
                 "schema": _SCHEMA,
                 "sequence": str(self._sequence),
-                "event_type": event.get("type", "UNKNOWN"),
-                "control_id": event.get("controlId", ""),
+                "event_type": event_type,
+                "control_id": control_id,
                 "prev_hash": self._prev_hash,
                 "record_hash": record_hash,
                 "payload_json": payload_json,

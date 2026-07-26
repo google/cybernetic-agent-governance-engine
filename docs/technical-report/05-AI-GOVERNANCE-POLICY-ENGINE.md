@@ -137,7 +137,7 @@ Full analysis: [`docs/STPA_ANALYSIS.md`](../security/STPA_ANALYSIS.md).
 | ------ | --------------------------- | ---------------------------------------------------- | --------------------------------------------------------- |
 | SC-1   | Unauthorized Control Action | `approval_token` required for all controlled actions | Any trade without token → BLOCK                           |
 | FIN-1  | Portfolio Fraction Exceeded | `qty / portfolio ≤ 0.1`                              | `stpa.max_sell_portfolio_fraction = 0.10`                 |
-| FIN-2  | Latency SLA Breach          | `latency ≤ 200ms`                                    | `stpa.max_latency_ms = 200.0` (ISO-20022)                 |
+| FIN-2  | Latency SLA Breach          | `latency ≤ 200ms`                                    | `stpa.max_latency_ms = 200.0` (real-time interbank rail infrastructure requirement — FedNow / SEPA Instant) |
 | UCA-5  | Drawdown Limit Breach       | `drawdown > 4.5%` → block                            | `stpa.uca5_drawdown_threshold_pct = 4.5`                  |
 | UCA-6  | Order Volume Fraction       | `order_size > 1% daily_vol` → block                  | `stpa.uca6_max_order_volume_fraction = 0.01`              |
 | UCA-7  | Ontology Violation          | `TradingKnowledgeGraph` semantic constraint check    | [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py) |

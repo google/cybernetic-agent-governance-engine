@@ -13,7 +13,7 @@
 2. [Authentication and Security Model](#2-authentication-and-security-model)
 3. [Gateway Service — Governed Inference API](#3-gateway-service--governed-inference-api)
 4. [Compliance Artifact Service](#4-compliance-artifact-service)
-5. [Financial Advisory Service](#5-financial-advisory-service)
+5. [Governed Agentic Workflow Service (Financial Advisory Reference Implementation)](#5-financial-advisory-service)
 6. [Real-Time Event Streams](#6-real-time-event-streams)
 7. [gRPC Services](#7-grpc-services)
 8. [Schema Reference](#8-schema-reference)
@@ -24,9 +24,12 @@
 
 ## 1. Platform Overview
 
-CAGE (Cybernetic AI Governance Engine) is a governed AI platform that provides
-policy-enforced, auditable, and compliance-ready AI inference and financial
-advisory capabilities for regulated industries.
+CAGE (Cybernetic Agent Governance Engine) is a domain-agnostic governed AI platform
+that provides policy-enforced, auditable, and compliance-ready AI inference and
+high-reliability agentic workflow capabilities for any regulated or
+safety-critical industry. The first production vertical is a governed financial
+advisory workflow; the governance kernel applies equally to pharmaceutical,
+critical infrastructure, and other high-reliability agentic deployments.
 
 ### Functional Topology
 
@@ -37,7 +40,7 @@ endpoint, each with a distinct governance responsibility:
 |---|---|
 | **Gateway Service** | Core composition and platform ingestion root layer. Hosts the governed inference pipeline and the MCP tool server. |
 | **Compliance Artifact Service** | Compliance posture monitoring, OSCAL artifact export, CSA AARM conformance reporting, and real-time governance event streaming. |
-| **Financial Advisory Service** | Multi-agent orchestration layer for governed financial analysis, trade execution, and human-in-the-loop (HITL) approval workflows. |
+| **Governed Agentic Workflow Service** | Multi-agent orchestration layer for governed agentic workflows, consequential action execution, and human-in-the-loop (HITL) approval workflows. The reference implementation provides governed financial analysis and trade execution; the same orchestration pattern applies to any high-reliability agentic domain. |
 | **gRPC Gateway** | Server-streaming and unary gRPC interface for governed LLM responses and tool execution. |
 
 ### Governance Pipeline
@@ -797,6 +800,58 @@ Unary RPC. Execute a named tool via gRPC with governance enforcement.
 
 ---
 
+### 7.3 `rpc Check(CheckRequest) returns (CheckResponse)` — Agent Gateway Adapter (Envoy ext_authz gRPC)
+
+Cloud-agnostic Envoy `ext_authz` gRPC service. Enforces the full CAGE 7-tier
+governance pipeline at the network layer before requests reach the application
+container. Compatible with any Envoy-based proxy (Istio, Contour, Emissary)
+and also functions as a **GCP Agent Gateway Service Extension** with zero code
+changes.
+
+**Endpoint:** `grpc://<host>:50051`
+**Service:** `envoy.service.auth.v3.Authorization`
+**Method:** `rpc Check(CheckRequest) returns (CheckResponse)`
+**Auth:** mTLS (caller's certificate validated by service mesh or AGW)
+**Timeout:** 5 seconds (recommended; configurable by the calling proxy)
+
+**Implementation:** [`src/gateway/server/agent_gateway_adapter.py`](../src/gateway/server/agent_gateway_adapter.py)
+
+**`CheckRequest` — relevant fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `attributes.request.http.body` | `string` | JSON-RPC 2.0 request body (max 64KB) |
+| `attributes.source.principal` | `string` | SPIFFE ID or service account from mTLS peer certificate |
+
+**`CheckResponse` — decision outcomes:**
+
+| Verdict | Response type | HTTP status | Body |
+|---|---|---|---|
+| `APPROVED` | `OkHttpResponse` | 200 (proxy forwards) | — |
+| `DENIED` | `DeniedHttpResponse` | 403 | `{"verdict":"DENIED","violations":[...]}` |
+| `MANUAL_REVIEW` | `DeniedHttpResponse` | 202 | `{"verdict":"DEFERRED","thread_id":"..."}` |
+| Parse error | `DeniedHttpResponse` | 403 | `{"error":"parse_error","message":"..."}` |
+| Body > 64KB | `DeniedHttpResponse` | 403 | `{"error":"parse_error","message":"..."}` |
+
+**On `APPROVED`:** The `OkHttpResponse` includes the `x-cage-routing-seal`
+header so the downstream MCP tool server can verify it via
+`enforce_routing_seal()`.
+
+**On `MANUAL_REVIEW` (DEFERRED):** The adapter returns 202 immediately
+(ext_authz timeout is typically 5s). The MCP client must poll
+`GET /v1/approvals/pending?thread_id=<tid>` for the human approval outcome.
+
+**GCP Adaptation note:** When deployed as a GCP AGW Service Extension, this
+endpoint is called by the AGW control plane. No code changes are required —
+AGW uses the same Envoy ext_authz protocol. GCP-specific configuration
+(service extension resource, IAM binding, mTLS CA) is managed in `infra/`
+Terraform modules.
+
+**Compliance:** SC-8 (mTLS), SC-12 (cert lifecycle), AC-3 (access enforcement),
+AU-2 (audit logging), SI-10 (input validation). **Cat-M change — AO pre-approval required.**
+
+---
+
 ## 8. Schema Reference
 
 All schemas below are JSON Schema Invariant Payload Definitions — the
@@ -995,6 +1050,45 @@ rule is triggered.
 }
 ```
 
+**Sub-type: `X-CAGE-Routing-Seal-Missing` (Phase B)**
+
+Returned by the MCP Tool Server when a tool execution request arrives without
+a valid `X-CAGE-Routing-Seal` header (i.e., the request bypassed the
+governance pipeline).
+
+```json
+{
+  "error": "invalid_routing_seal",
+  "message": "Request missing or has an invalid X-CAGE-Routing-Seal header. Only trusted upstream orchestrators may invoke this endpoint."
+}
+```
+
+**Sub-type: OIDC validation failure (Phase B / Work Stream E)**
+
+Returned by the Governance Middleware when `CAGE_OIDC_JWKS_URI` is configured
+and the `Authorization: Bearer <jwt>` token is invalid or expired.
+
+```
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer error="invalid_token"
+Content-Type: application/json
+
+{"error": "invalid_token", "message": "<reason>"}
+```
+
+**Sub-type: Agent catalog denial (Phase B / Work Stream F)**
+
+Returned by the ext_authz adapter when the caller is not in the approved agent
+catalog or is not authorized to call the requested tool.
+
+```json
+{
+  "verdict": "DENIED",
+  "violations": ["caller 'spiffe://...' is not authorized to call tool 'execute_trade'"],
+  "tool_name": "execute_trade"
+}
+```
+
 ---
 
 ### 9.4 HTTP 404 Not Found
@@ -1131,6 +1225,226 @@ than 5 minutes.
 `POST /agent/query` enforces a per-request timeout of **240 seconds**. Clients
 should not submit a new query for the same `thread_id` while a prior query is
 in flight.
+
+---
+
+### 10.5 ext_authz Callout Rate Limit (Phase B / Work Stream D)
+
+The Agent Gateway Adapter (`grpc://<host>:50051`) enforces a per-client,
+per-region callout rate limit to prevent governance pipeline saturation.
+
+| Limit dimension | Default | Behaviour on breach |
+|---|---|---|
+| Per-client concurrent Check RPCs | 10 | gRPC `RESOURCE_EXHAUSTED` (status 8) |
+| Per-region Check RPCs/second | 1000 | gRPC `RESOURCE_EXHAUSTED` (status 8) |
+| Body size per CheckRequest | 64KB | `DeniedHttpResponse(403)` fail-closed |
+
+**Retry guidance:** On `RESOURCE_EXHAUSTED`, implement exponential back-off
+starting at 100ms, doubling up to a maximum of 5 seconds (respecting the
+ext_authz proxy timeout).
+
+**Region guard:** Rate limit counters are per-region and never shared across
+`CAGE_DEPLOYMENT_REGION` boundaries (EU_ECB, APAC_MAS, US_FED).
+
+---
+
+## 11. Policy Ingestion API
+
+The Policy Ingestion API allows external operators to submit agent policy specifications
+in any supported format (ACS, AAIF, OSCAL, Lula, or native CAGE YAML) and receive
+compiled enforcement artifacts in return.
+
+**Implementation:** [`src/gateway/governance/ingress/policy_translator.py`](../src/gateway/governance/ingress/policy_translator.py)
+
+### 11.1 Ingest Policy
+
+```
+POST /governance/ingest-policy
+Content-Type: application/json
+
+{
+  "spec": { ... }   // ACS, AAIF, OSCAL, Lula, or native CAGE YAML document
+}
+```
+
+**Response:**
+
+```json
+{
+  "policy_version_id": "a1b2c3d4e5f6a7b8",
+  "format_detected": "acs | aaif | oscal | lula | cage_yaml",
+  "artifacts": {
+    "opa_content": "...",
+    "nemo_content": "...",
+    "python_content": "...",
+    "langgraph_content": "..."
+  },
+  "warnings": [],
+  "errors": []
+}
+```
+
+**Supported formats:**
+
+| Format key | Detection signal | Adapter |
+|---|---|---|
+| `acs` | `behaviorDeclarations` key present | [`acs_adapter.py`](../src/gateway/governance/ingress/acs_adapter.py) |
+| `aaif` | `governedRunLoop` key present | [`aaif_adapter.py`](../src/gateway/governance/ingress/aaif_adapter.py) |
+| `oscal` | `oscal-version` key present | [`oscal_adapter.py`](../src/gateway/governance/ingress/oscal_adapter.py) |
+| `lula` | `kind: LulaValidation` | [`lula_adapter.py`](../src/gateway/governance/ingress/lula_adapter.py) |
+| `cage_yaml` | (fallback) | Direct STPA compiler input |
+
+### 11.2 Get Policy Version
+
+```
+GET /governance/policy-version
+```
+
+**Response:**
+
+```json
+{
+  "policy_version_id": "a1b2c3d4e5f6a7b8",
+  "active_region": "US_FED",
+  "active_hash": "sha256-hex-of-active-registry"
+}
+```
+
+The `policy_version_id` is a 16-character hex prefix of the SHA-256 hash of the
+compiled OPA policy content. It can be used to pin a specific policy version in
+`validate_action()` calls.
+
+---
+
+## 12. Governance Webhook
+
+The Governance Webhook API allows Governance Layer endpoints to receive push
+notifications when substrate enforcement events occur, without maintaining a
+persistent SSE connection.
+
+**Implementation:** [`src/compliance_bridge/governance_webhook.py`](../src/compliance_bridge/governance_webhook.py)
+
+### 12.1 Register Webhook
+
+```
+POST /v1/webhooks/register
+Content-Type: application/json
+
+{
+  "endpoint_url": "https://governance-layer.example.com/cage-events",
+  "event_types": ["CBF_VIOLATION", "DEFER_PARKING", "HITL_INTERRUPT", "OPA_DENY"],
+  "secret": "<hmac-signing-secret>"
+}
+```
+
+**Response:**
+
+```json
+{
+  "webhook_id": "550e8400-e29b-41d4-a716-446655440000",
+  "registered_at": "2026-07-18T01:00:00Z"
+}
+```
+
+**Event types:**
+
+| Event type | Trigger |
+|---|---|
+| `CBF_VIOLATION` | Control Barrier Function invariant violated |
+| `DEFER_PARKING` | Execution context parked in DEFER queue |
+| `HITL_INTERRUPT` | Human-in-the-loop escalation triggered |
+| `OPA_DENY` | OPA policy evaluation returned DENY |
+
+### 12.2 Deregister Webhook
+
+```
+DELETE /v1/webhooks/{webhook_id}
+```
+
+**Response:** `204 No Content`
+
+### 12.3 List Webhooks
+
+```
+GET /v1/webhooks
+```
+
+**Response:**
+
+```json
+{
+  "webhooks": [
+    {
+      "webhook_id": "550e8400-e29b-41d4-a716-446655440000",
+      "endpoint_url": "https://governance-layer.example.com/cage-events",
+      "event_types": ["CBF_VIOLATION", "OPA_DENY"],
+      "registered_at": "2026-07-18T01:00:00Z",
+      "region": "US_FED"
+    }
+  ]
+}
+```
+
+Webhook secrets are never returned in list or get responses.
+
+### 12.4 Webhook Payload Schema
+
+Webhook payloads use the same shape as SSE `governance-event` data, plus `webhook_id`:
+
+```json
+{
+  "type": "CBF_VIOLATION | DEFER_PARKING | HITL_INTERRUPT | OPA_DENY",
+  "traceId": "string",
+  "controlId": "A.9.2",
+  "result": "FAIL",
+  "safetyRate": 0.87,
+  "auditId": "uuid",
+  "timestamp": "2026-07-18T01:00:00Z",
+  "webhook_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+### 12.5 `X-CAGE-Webhook-Signature` Header
+
+Every webhook POST includes an `X-CAGE-Webhook-Signature` header containing the
+HMAC-SHA256 signature of the JSON payload body, hex-encoded:
+
+```
+X-CAGE-Webhook-Signature: <hex-encoded-hmac-sha256>
+```
+
+**Verification (Python example):**
+
+```python
+import hashlib, hmac
+
+def verify_signature(payload_bytes: bytes, secret: str, signature: str) -> bool:
+    expected = hmac.new(secret.encode(), payload_bytes, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
+```
+
+Receiving endpoints **must** verify the signature before processing the payload.
+
+### 12.6 Retry Policy
+
+Failed deliveries are retried with exponential backoff:
+
+- Maximum retries: 3
+- Base delay: 1 second (doubles each retry: 1s, 2s, 4s)
+- Timeout per attempt: 30 seconds
+- After all retries exhausted: event is logged and dropped (fire-and-forget)
+
+### 12.7 Region Guard
+
+Cross-region webhook endpoints are rejected with HTTP 422:
+
+| Region | Allowed endpoint geography |
+|---|---|
+| `EU_ECB` | `europe-west1` only |
+| `APAC_MAS` | `asia-southeast1` only |
+| `US_FED` | No geographic restriction |
+
+Localhost and private IP ranges are always allowed (for testing).
 
 ---
 

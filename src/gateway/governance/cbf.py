@@ -59,6 +59,11 @@ concurrent trade execution in the stateless Cloud Run environment.
 
 import json
 import logging
+
+# ---------------------------------------------------------------------------
+# Canonical gateway-internal imports (Phase 1.1)
+# ---------------------------------------------------------------------------
+import os
 import time
 from typing import Any
 
@@ -68,14 +73,18 @@ from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 # Threshold singleton (Phase 2.3)
 # ---------------------------------------------------------------------------
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
-
-# ---------------------------------------------------------------------------
-# Canonical gateway-internal imports (Phase 1.1)
-# ---------------------------------------------------------------------------
 from src.gateway.infrastructure.redis_client import redis_client
 from src.gateway.infrastructure.telemetry import get_tracer
 
 logger = logging.getLogger("SafetyLayer")
+
+# ---------------------------------------------------------------------------
+# Environment detection (module-level so tests can patch it)
+# ---------------------------------------------------------------------------
+_cage_env_cbf = (
+    os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
+).lower()
+_IS_PRODUCTION: bool = _cage_env_cbf not in ("development", "test", "dev", "ci")
 
 
 # ---------------------------------------------------------------------------
@@ -151,28 +160,157 @@ return {1, "COMMITTED", tostring(next_cash)}
             raise RuntimeError("Redis client unavailable.")
         return await redis_client.get_float(self.redis_key, 100000.0)
 
-    async def _read_cbf_state_atomic(self) -> dict[str, float]:
-        """Atomically read all CBF state keys in a single pipeline round-trip.
+    async def _read_cbf_state_atomic(self) -> dict[str, float | str]:
+        """Read the CBF cash balance, preferring externally reconciled ground truth.
 
-        Using a pipeline (implicit MULTI/EXEC) prevents the race condition where
-        individual GET calls observe inconsistent state snapshots between reads.
-        All keys are fetched in one atomic batch — no other writer can interleave.
+        Priority order (POAM-023):
+          1. ``reconciliation:verified_balance`` — written by the isolated
+             reconciliation-worker daemon, KMS-signed, TTL-gated.  When present
+             and signature-valid, this is the authoritative balance.
+          2. ``safety:current_cash`` — self-reported by the execution system.
+             Used only when the reconciled balance is absent or invalid.
+             A CRITICAL audit log is emitted so the fallback is always visible
+             in Langfuse and SIEM.
 
         Returns:
-            dict with key "current_cash" (float).
+            dict with keys:
+                ``current_cash`` (float)  — the balance to use in the CBF formula
+                ``source``       (str)    — ``"reconciled"`` | ``"reconciled_unsigned"``
+                                           | ``"self_reported"``
         """
         if redis_client is None:
             raise RuntimeError("Redis client unavailable.")
-        # pipeline() without transaction=True uses implicit pipelining (batched
-        # GETs sent in one round-trip). For read-only snapshots this is sufficient
-        # and avoids the WATCH overhead of a full MULTI/EXEC transaction.
+
+        # ── Attempt 1: externally reconciled balance (POAM-023) ──────────────
+        try:
+            from src.compliance_bridge.reconciliation_worker import (
+                read_verified_balance,
+            )
+
+            client_sync = redis_client._get()
+            # read_verified_balance is synchronous (redis-py sync client).
+            # Run in a thread to avoid blocking the event loop.
+            import asyncio as _asyncio
+
+            verified = await _asyncio.to_thread(read_verified_balance, client_sync)
+
+            if verified is not None and verified.is_valid:
+                if verified.signature:
+                    # Verify KMS signature before trusting the balance.
+                    try:
+                        from src.gateway.governance.kms_signer import (
+                            get_governance_signer,
+                        )
+
+                        signer = get_governance_signer()
+                        payload_dict = {
+                            "source": verified.source,
+                            "balance_usd": verified.balance_usd,
+                            "verified_at": verified.verified_at,
+                        }
+                        sig_valid = signer.verify(payload_dict, verified.signature)
+                        if sig_valid:
+                            logger.info(
+                                "CBF: using externally reconciled balance=%.2f "
+                                "source=%s verified_at=%.0f (KMS signature valid)",
+                                verified.balance_usd,
+                                verified.source,
+                                verified.verified_at,
+                            )
+                            return {
+                                "current_cash": verified.balance_usd,
+                                "source": "reconciled",
+                            }
+                        else:
+                            logger.critical(
+                                json.dumps(
+                                    {
+                                        "event": "CBF_RECONCILED_BALANCE_SIGNATURE_INVALID",
+                                        "severity": "CRITICAL",
+                                        "source": verified.source,
+                                        "balance_usd": verified.balance_usd,
+                                        "audit_note": (
+                                            "KMS signature on reconciled balance is INVALID. "
+                                            "Falling back to self-reported balance. "
+                                            "POAM-023: CBF ground truth unverified."
+                                        ),
+                                    }
+                                )
+                            )
+                    except Exception as sig_exc:
+                        logger.critical(
+                            json.dumps(
+                                {
+                                    "event": "CBF_KMS_VERIFY_FAILED",
+                                    "severity": "CRITICAL",
+                                    "error": str(sig_exc),
+                                    "audit_note": (
+                                        "KMS signature verification raised an exception. "
+                                        "Falling back to self-reported balance. "
+                                        "POAM-023: CBF ground truth unverified."
+                                    ),
+                                }
+                            )
+                        )
+                else:
+                    # Unsigned reconciled balance — accept only in dev/test.
+                    if _IS_PRODUCTION:
+                        logger.critical(
+                            json.dumps(
+                                {
+                                    "event": "CBF_RECONCILED_BALANCE_UNSIGNED_IN_PRODUCTION",
+                                    "severity": "CRITICAL",
+                                    "source": verified.source,
+                                    "balance_usd": verified.balance_usd,
+                                    "audit_note": (
+                                        "Reconciled balance has no KMS signature in production. "
+                                        "Falling back to self-reported balance. "
+                                        "POAM-023: CBF ground truth unverified."
+                                    ),
+                                }
+                            )
+                        )
+                    else:
+                        logger.debug(
+                            "CBF: using unsigned reconciled balance=%.2f source=%s "
+                            "(dev/test mode — KMS signing not required)",
+                            verified.balance_usd,
+                            verified.source,
+                        )
+                        return {
+                            "current_cash": verified.balance_usd,
+                            "source": "reconciled_unsigned",
+                        }
+        except Exception as recon_exc:
+            logger.warning(
+                "CBF: reconciled balance read failed (%s) — falling back to "
+                "self-reported balance.",
+                recon_exc,
+            )
+
+        # ── Fallback: self-reported balance (POAM-023 open) ──────────────────
+        logger.critical(
+            json.dumps(
+                {
+                    "event": "CBF_USING_SELF_REPORTED_BALANCE",
+                    "severity": "CRITICAL",
+                    "redis_key": self.redis_key,
+                    "audit_note": (
+                        "No verified external balance available. "
+                        "CBF is evaluating against self-reported safety:current_cash. "
+                        "POAM-023 open: CBF ground truth is unverified. "
+                        "Set RECONCILIATION_PROVIDER=plaid or =anchorage to close."
+                    ),
+                }
+            )
+        )
         client = redis_client._get()
         async with client.pipeline(transaction=False) as pipe:
             pipe.get(self.redis_key)
             results = await pipe.execute()
         raw_cash = results[0]
         current_cash = float(raw_cash) if raw_cash is not None else 100000.0
-        return {"current_cash": current_cash}
+        return {"current_cash": current_cash, "source": "self_reported"}
 
     def get_h(self, cash_balance: float) -> float:
         """Safety function h(x).  Safe when h(x) >= 0."""
@@ -191,16 +329,17 @@ return {1, "COMMITTED", tostring(next_cash)}
         against an inconsistent state snapshot (H-07).
         """
         state = await self._read_cbf_state_atomic()
-        current_cash = state["current_cash"]
+        current_cash = float(state["current_cash"])
+        balance_source: str = str(state.get("source", "unknown"))
 
         if self.tracer:
             with self.tracer.start_as_current_span("safety.cbf_check") as span:
                 return await self._do_verify_action(
-                    action_name, payload, current_cash, span
+                    action_name, payload, current_cash, balance_source, span
                 )
         else:
             return await self._do_verify_action(
-                action_name, payload, current_cash, None
+                action_name, payload, current_cash, balance_source, None
             )
 
     async def _do_verify_action(
@@ -208,10 +347,18 @@ return {1, "COMMITTED", tostring(next_cash)}
         action_name: str,
         payload: dict[str, Any],
         current_cash: float,
+        balance_source: str,
         span: Any,
     ) -> str:
         if span:
             span.set_attribute("safety.cash.current", current_cash)
+            # POAM-023: stamp the balance provenance so every CBF decision is
+            # auditable — "reconciled" means KMS-signed external ground truth;
+            # "self_reported" means the execution system wrote its own balance.
+            span.set_attribute("safety.balance.source", balance_source)
+            span.set_attribute(
+                "safety.balance.reconciled", balance_source == "reconciled"
+            )
             # CTRL_MRM_004: CBF is a traditional, deterministic quantitative formula
             # (h(x) = cash_balance - min_cash_balance with static decay g).
             # It falls under SR 26-2 Model Risk Management scope, not agentic ISO 42001.
