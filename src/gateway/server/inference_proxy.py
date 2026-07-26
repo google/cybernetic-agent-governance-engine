@@ -272,9 +272,7 @@ async def chat_completions(
         # This prevents system-only or assistant-only requests from bypassing
         # the keyword filter (GHSA-hfqj-24cj-693g).
         all_messages_text = " ".join(
-            m.get("content", "")
-            for m in messages
-            if isinstance(m.get("content"), str)
+            m.get("content", "") for m in messages if isinstance(m.get("content"), str)
         )
 
         # 1. Tier-1 keyword scan — applied to ALL messages, not just user role.
@@ -287,9 +285,7 @@ async def chat_completions(
         # ── Step 2: Token Quota Enforcement (ISO 42001 Annex A.4) ──
         # Runs for ALL requests regardless of message role composition.
         agent_id = (
-            body.get("agent_id")
-            or request.headers.get("X-Agent-ID", "")
-            or "anonymous"
+            body.get("agent_id") or request.headers.get("X-Agent-ID", "") or "anonymous"
         )
         token_delta = int(body.get("max_tokens", 0))
         quota_result = await _get_token_quota_proxy().check_and_increment(
@@ -354,9 +350,7 @@ async def chat_completions(
                     logger.debug(
                         "🔍 InferenceProxy: pre_check complete "
                         "(stpa_allowed=%s, cbf_allowed=%s)",
-                        pre_check_results.get("stpa_result", {}).get(
-                            "allowed", "?"
-                        ),
+                        pre_check_results.get("stpa_result", {}).get("allowed", "?"),
                         pre_check_results.get("cbf_result", {}).get("allowed", "?"),
                     )
                 except Exception as pre_exc:
@@ -415,7 +409,7 @@ async def chat_completions(
                 line = line.strip()
                 if not line.startswith("data:"):
                     continue
-                data_str = line[len("data:"):].strip()
+                data_str = line[len("data:") :].strip()
                 if data_str == "[DONE]":
                     break
                 try:
@@ -434,11 +428,10 @@ async def chat_completions(
             if filtered_content:
                 safe_content = await verify_and_mask_output(rails, filtered_content)
                 if safe_content != filtered_content:
-                    logger.info(
-                        "Streaming output filtered by NeMo: model=%s", model_id
-                    )
+                    logger.info("Streaming output filtered by NeMo: model=%s", model_id)
                     # Return filtered content as a non-streaming JSON response
                     import time as _time
+
                     ts = int(_time.time())
                     filtered_response = {
                         "id": f"chatcmpl-{ts}",
