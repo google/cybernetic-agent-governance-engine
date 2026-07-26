@@ -180,10 +180,45 @@ Examples: `v0.1.0`, `v0.1.0-rc.1`, `v2.1.0-dev.1`
 
 | Branch | Protection |
 |---|---|
-| `main` | No direct push; requires PR + CI green + 1 review |
+| `main` | No direct push; requires PR + CI green + 1 CODEOWNERS review |
 | `rc-v*` | No direct push; requires PR + CI green |
+| `release/**` | No direct push; requires PR + CI green + 1 CODEOWNERS review |
 
 The local pre-push hook enforces this for `main` and the current integration branch. GitHub branch protection rules enforce it server-side.
+
+### Repository Protection Setup (Maintainer)
+
+The full specification for GitHub repository-level protection settings is in
+[`.github/branch-protection-rules.md`](.github/branch-protection-rules.md).
+Apply these settings when initialising the repository or after any protection
+rule is accidentally removed.
+
+**Quick reference — minimum required GitHub UI settings:**
+
+1. **Settings → Branches → `main`:**
+   - Require pull request (1 approval)
+   - Require review from Code Owners (activates `.github/CODEOWNERS`)
+   - Required status checks: `CI Gate — Lint & Tests`, `Secret Scanning (Gitleaks)`, `License Guard / license-check`
+   - Require branches to be up to date
+   - Require conversation resolution
+   - Restrict who can push (maintainer only)
+   - Disable force pushes and deletions
+
+2. **Settings → Tags → Protected tags:**
+   - Pattern `v*-ref` → maintainer only
+   - Pattern `v*-cage-*` → maintainer only
+   - Pattern `v[0-9]*` → maintainer only
+
+3. **Settings → Security → Code security and analysis:**
+   - Enable Dependency graph, Dependabot alerts, GitHub Advanced Security
+   - Required to unblock the hard gate in `.github/workflows/dependency-review.yml`
+
+4. **Settings → Actions → General → Workflow permissions:**
+   - Read and write permissions (required for `ref_impl_signoff.yml` to create GitHub Releases)
+
+See [`.github/branch-protection-rules.md`](.github/branch-protection-rules.md)
+for the complete settings table, required status check names, and a
+code-enforcement → GitHub UI mapping.
 
 ---
 

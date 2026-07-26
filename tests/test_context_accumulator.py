@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from src.compliance_bridge.context_accumulator import (
     ContextAccumulator,
     _sha256,
@@ -235,6 +237,33 @@ def test_tamper_middle_node_detected_at_correct_index():
     valid, fail_at = acc.verify_integrity()
     assert valid is False
     assert fail_at == 2
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("control_id", "A.9.9"),
+        ("event_type", "CHAIN_SEALED"),
+        ("node_index", 99),
+        ("audit_id", "some-other-audit"),
+        ("content_hash", "0" * 64),
+    ],
+)
+def test_tamper_node_metadata_detected(field, value):
+    """Mutating a committed metadata field is detected, not just the payload.
+
+    Every field here is serialised by to_dict() into the persisted NDJSON, so
+    each one must be bound into record_hash for the chain to be tamper-evident.
+    """
+    acc = ContextAccumulator(audit_id="tamper-meta-001")
+    acc.append_finding(_finding("A.5.3", "PASS"))
+    acc.append_finding(_finding("SC-4", "PASS"))
+
+    setattr(acc._entries[0], field, value)
+
+    valid, fail_at = acc.verify_integrity()
+    assert valid is False, f"Mutating {field} must invalidate the chain"
+    assert fail_at == 0
 
 
 # ---------------------------------------------------------------------------
