@@ -748,6 +748,60 @@ class TestM22SlackEscaping:
         result = self._escape("Normal advisory text with numbers 123")
         assert "Normal advisory text with numbers 123" in result
 
+    def _critical_fields(self, finding_id: str, remarks: str) -> list[str]:
+        from src.compliance_bridge.notifier import _build_critical_alert_body
+        from src.compliance_bridge.types import OscalFinding
+
+        finding = OscalFinding(
+            control_id="A.9.2",
+            result="FAIL",
+            finding_id=finding_id,
+            remarks=remarks,
+            safety_rate=None,
+        )
+        body = _build_critical_alert_body([finding], audit_id="audit-1")
+        return [f["text"] for f in body["blocks"][1]["fields"]]
+
+    def test_critical_alert_escapes_remarks(self):
+        # A finding on a critical control carries attacker-controlled remarks from
+        # the ingested OSCAL YAML; the builder must run it through the escaper so a
+        # <!channel> mass-mention or <url|text> link cannot reach the Slack surface.
+        texts = self._critical_fields(
+            "F1", "<!channel> <https://evil.example/pwn|remediate> *bold*"
+        )
+        remarks = next(t for t in texts if t.startswith("*Remarks:*"))
+        assert "<!channel>" not in remarks
+        assert "<https://evil.example/pwn|" not in remarks
+        assert "&lt;!channel&gt;" in remarks
+        assert "\\*bold\\*" in remarks
+
+    def test_critical_alert_escapes_finding_id(self):
+        texts = self._critical_fields("F1<!here>", "none")
+        finding_id = next(t for t in texts if t.startswith("*Finding ID:*"))
+        assert "<!here>" not in finding_id
+        assert "&lt;!here&gt;" in finding_id
+
+    def test_critical_alert_preserves_plain_remarks(self):
+        texts = self._critical_fields("F1", "evidence age 42s exceeded window")
+        remarks = next(t for t in texts if t.startswith("*Remarks:*"))
+        assert remarks == "*Remarks:* evidence age 42s exceeded window"
+
+    def test_critical_alert_escapes_audit_id_context(self):
+        # audit_id reaches the builder verbatim from POST /v1/audit/ingest, so the
+        # context footer must escape it too.
+        from src.compliance_bridge.notifier import _build_critical_alert_body
+        from src.compliance_bridge.types import OscalFinding
+
+        finding = OscalFinding(
+            control_id="A.9.2", result="FAIL", finding_id="F1", remarks="none"
+        )
+        body = _build_critical_alert_body(
+            [finding], audit_id="<!channel> <https://evil.example|x>"
+        )
+        context_text = body["blocks"][2]["elements"][0]["text"]
+        assert "<!channel>" not in context_text
+        assert "&lt;!channel&gt;" in context_text
+
 
 # ---------------------------------------------------------------------------
 # M-23 — OPA decision log config
