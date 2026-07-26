@@ -609,9 +609,8 @@ async def validate_action_endpoint(
     # ── Rate limiting: prevent DoS via rapid unauthenticated requests ─────────
     # Client IP is extracted from X-Forwarded-For (set by the upstream proxy)
     # or falls back to the direct connection address.
-    client_ip = (
-        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-        or (request.client.host if request.client else "unknown")
+    client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or (
+        request.client.host if request.client else "unknown"
     )
     if not _check_validate_action_rate_limit(client_ip):
         raise HTTPException(
