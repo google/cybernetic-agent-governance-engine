@@ -32,7 +32,9 @@ import hmac
 import json
 import logging
 import os
+import time
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
@@ -300,6 +302,53 @@ async def sanitize_mcp_tool_response(
 
 governance_app = FastAPI(title="CAGE Governance Middleware")
 
+# ---------------------------------------------------------------------------
+# In-memory rate limiter for /validate-action (GHSA-v3h4-8458-5ww3)
+#
+# Prevents unauthenticated DoS and governance configuration oracle attacks
+# by capping requests per client IP within a sliding window.
+#
+# Limits: 60 requests per 60-second window per client IP.
+# Configurable via VALIDATE_ACTION_RATE_LIMIT and VALIDATE_ACTION_RATE_WINDOW.
+# ---------------------------------------------------------------------------
+
+_RATE_LIMIT_MAX: int = int(os.environ.get("VALIDATE_ACTION_RATE_LIMIT", "60"))
+_RATE_LIMIT_WINDOW: int = int(os.environ.get("VALIDATE_ACTION_RATE_WINDOW", "60"))
+
+# {client_ip: [timestamp, ...]} — timestamps of requests within the window
+_validate_action_rate_buckets: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_validate_action_rate_limit(client_ip: str) -> bool:
+    """Return True if the request is within the rate limit, False if exceeded.
+
+    Uses a sliding window algorithm: timestamps older than the window are
+    evicted on each check.  Thread-safe under Python's GIL for single-process
+    deployments; for multi-process deployments, use Redis-backed rate limiting.
+    """
+    now = time.monotonic()
+    window_start = now - _RATE_LIMIT_WINDOW
+    bucket = _validate_action_rate_buckets[client_ip]
+
+    # Evict expired timestamps (sliding window)
+    _validate_action_rate_buckets[client_ip] = [
+        ts for ts in bucket if ts > window_start
+    ]
+    bucket = _validate_action_rate_buckets[client_ip]
+
+    if len(bucket) >= _RATE_LIMIT_MAX:
+        logger.warning(
+            "🚦 validate-action rate limit exceeded for client=%s "
+            "(%d requests in %ds window)",
+            client_ip,
+            len(bucket),
+            _RATE_LIMIT_WINDOW,
+        )
+        return False
+
+    bucket.append(now)
+    return True
+
 
 class GovernanceCheckRequest(dict):
     pass  # plain dict accepted via Request
@@ -551,6 +600,31 @@ async def validate_action_endpoint(
         JSON with ``verdict`` (APPROVED|DENIED), ``violations`` list,
         ``seal`` (HMAC-SHA256 routing seal on approval), and ``latency_ms``.
     """
+    # ── GHSA-v3h4-8458-5ww3: Enforce routing seal FIRST, before any processing.
+    # Without this check, unauthenticated callers could trigger DoS or use the
+    # endpoint as a governance configuration oracle.
+    body_bytes = await request.body()
+    enforce_routing_seal(request, body_bytes)
+
+    # ── Rate limiting: prevent DoS via rapid unauthenticated requests ─────────
+    # Client IP is extracted from X-Forwarded-For (set by the upstream proxy)
+    # or falls back to the direct connection address.
+    client_ip = (
+        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
+    if not _check_validate_action_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "rate_limit_exceeded",
+                "message": (
+                    f"Too many requests to /validate-action from {client_ip}. "
+                    f"Limit: {_RATE_LIMIT_MAX} requests per {_RATE_LIMIT_WINDOW}s."
+                ),
+            },
+        )
+
     # ── Extract W3C trace context from inbound headers ────────────────────────
     # The GFA injected 'traceparent' via otel_inject(headers).  Extracting it
     # here and attaching it as the current context means all spans opened by
