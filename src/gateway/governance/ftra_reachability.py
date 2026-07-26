@@ -84,6 +84,8 @@ class FtraReachabilityGate:
 
         self._graph = nx.DiGraph()
         for node, successors in node_config.items():
+            # Ensure every declared node exists even if it has no outgoing edges
+            self._graph.add_node(node)
             for successor in successors:
                 self._graph.add_edge(node, successor)
 
@@ -102,11 +104,17 @@ class FtraReachabilityGate:
 
         import networkx as nx
 
-        if not nx.has_path(self._graph, entry_node, target_node):
+        try:
+            reachable = not nx.has_path(self._graph, entry_node, target_node)
+        except nx.NodeNotFound:
+            reachable = True  # node missing → treat as unreachable
+        if reachable:
             return FtraResult(
                 verdict=FtraVerdict.BLOCKED,
                 reason=f"No path from {entry_node} to {target_node}",
-                reachable_nodes=list(nx.descendants(self._graph, entry_node)),
+                reachable_nodes=list(nx.descendants(self._graph, entry_node))
+                if entry_node in self._graph
+                else [],
                 blocked_paths=[],
             )
 
