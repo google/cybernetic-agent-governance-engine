@@ -1,0 +1,74 @@
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// Vendored from envoy-api (Apache 2.0) — envoy.config.core.v3 base types
+// Source: https://github.com/envoyproxy/envoy/blob/main/api/envoy/config/core/v3/base.proto
+// Simplified subset: HeaderValue and HeaderValueOption only.
+
+syntax = "proto3";
+
+package envoy.config.core.v3;
+
+option java_package = "io.envoyproxy.envoy.config.core.v3";
+option java_outer_classname = "BaseProto";
+option java_multiple_files = true;
+
+// Header name/value pair.
+message HeaderValue {
+  // Header name.
+  string key = 1;
+
+  // Header value.
+  //
+  // The same :ref:`format specifier <config_access_log_format>` as used for
+  // :ref:`HTTP access logging <config_access_log>` applies here, however
+  // unknown header values are replaced with the empty string instead of ``-``.
+  string value = 2;
+}
+
+// Header name/value pair plus option to control append behavior.
+message HeaderValueOption {
+  // Header name/value pair that this option applies to.
+  HeaderValue header = 1;
+
+  // Should the value be appended? If true (default), the value is appended to
+  // existing values. Otherwise it replaces any existing values.
+  bool append = 2;
+
+  // Describes the action taken to append/overwrite the given value for an existing header
+  // or to only add this header if it's absent.
+  // Value defaults to :ref:`APPEND_IF_EXISTS_OR_ADD
+  // <envoy_v3_api_enum_value_config.core.v3.HeaderValueOption.HeaderAppendAction.APPEND_IF_EXISTS_OR_ADD>`.
+  HeaderAppendAction keep_empty_value = 3;
+
+  enum HeaderAppendAction {
+    // This action will append the specified value to the existing values if the header
+    // already exists. If the header doesn't exist then this will add the header with
+    // specified key and value.
+    APPEND_IF_EXISTS_OR_ADD = 0;
+
+    // This action will add the header if it doesn't already exist. If the header
+    // already exists then this will be a no-op.
+    ADD_IF_ABSENT = 1;
+
+    // This action will overwrite the specified value by discarding any existing values if
+    // the header already exists. If the header doesn't exist then this will add the header
+    // with specified key and value.
+    OVERWRITE_IF_EXISTS_OR_ADD = 2;
+
+    // This action will overwrite the specified value by discarding any existing values if
+    // the header already exists. If the header doesn't exist then this will be a no-op.
+    OVERWRITE_IF_EXISTS = 3;
+  }
+}

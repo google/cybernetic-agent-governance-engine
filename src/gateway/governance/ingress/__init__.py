@@ -27,6 +27,12 @@ Public API::
     fmt = detect_format(spec_dict)  # "acs" | "aaif" | "oscal" | "lula" | "cage_yaml"
 """
 
+from src.gateway.governance.ingress.agw_adapter import (
+    AgwAdapter,
+    AgwAdapterResult,
+    AgwRequest,
+    get_agw_adapter,
+)
 from src.gateway.governance.ingress.policy_translator import (
     ArtifactBundle,
     PolicyFormat,
@@ -35,8 +41,12 @@ from src.gateway.governance.ingress.policy_translator import (
 )
 
 __all__ = [
+    "AgwAdapter",
+    "AgwAdapterResult",
+    "AgwRequest",
     "ArtifactBundle",
     "PolicyFormat",
     "detect_format",
+    "get_agw_adapter",
     "translate_policy",
 ]

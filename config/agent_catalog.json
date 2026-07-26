@@ -1,49 +1,76 @@
 {
+    "_comment": [
+        "Agent Catalog Data Document — Work Stream F2 (Phase B)",
+        "Security: this file is version-controlled and reviewed in PRs.",
+        "Never modify directly in production — changes must go through PR + CI pipeline.",
+        "Schema validated in CI via .github/workflows/policy_compile.yml.",
+        "Loaded into OPA as data.agent_catalog_data at startup.",
+        "Caller identity (sub) is the OIDC sub claim or SPIFFE ID from mTLS peer certificate.",
+        "GCP Adaptation: when using GCP Workload Identity, sub is the service account email.",
+        "Compliance: AC-3 (Access Enforcement) — Cat-N change"
+    ],
     "agents": {
-        "spiffe://cage.internal/agent/financial-advisor": {
-            "display_name": "Financial Advisor Agent",
-            "allowed_tools": [
-                "get_portfolio",
-                "get_market_data",
-                "analyze_risk"
-            ],
-            "roles": [
-                "advisor"
-            ]
-        },
-        "spiffe://cage.internal/agent/trade-executor": {
-            "display_name": "Trade Executor Agent",
+        "spiffe://trust-domain/ns/default/sa/trader-agent": {
+            "display_name": "Governed Trader Agent",
+            "description": "Executes governed trade orders within RBAC-enforced limits",
             "allowed_tools": [
                 "execute_trade",
-                "get_portfolio",
-                "get_market_data"
+                "market_analysis",
+                "get_portfolio"
             ],
+            "trust_domain": "trust-domain",
+            "max_trade_usd": 500000,
             "roles": [
                 "trader"
             ]
         },
-        "spiffe://cage.internal/agent/compliance-monitor": {
-            "display_name": "Compliance Monitor Agent",
+        "spiffe://trust-domain/ns/default/sa/risk-agent": {
+            "display_name": "Risk Analyst Agent",
+            "description": "Performs risk assessment and portfolio analysis (read-only)",
             "allowed_tools": [
+                "market_analysis",
                 "get_portfolio",
-                "get_compliance_metrics",
-                "get_audit_trail"
+                "risk_assessment"
             ],
+            "trust_domain": "trust-domain",
+            "max_trade_usd": 0,
             "roles": [
-                "compliance"
+                "analyst"
             ]
         },
-        "spiffe://cage.internal/agent/risk-manager": {
-            "display_name": "Risk Manager Agent",
+        "spiffe://trust-domain/ns/default/sa/data-analyst-agent": {
+            "display_name": "Data Analyst Agent",
+            "description": "Performs data analysis and reporting (read-only, no trade execution)",
             "allowed_tools": [
+                "market_analysis",
                 "get_portfolio",
-                "get_market_data",
-                "analyze_risk",
-                "get_compliance_metrics"
+                "risk_assessment",
+                "check_market_status"
             ],
+            "trust_domain": "trust-domain",
+            "max_trade_usd": 0,
             "roles": [
-                "risk_manager"
+                "analyst"
+            ]
+        },
+        "spiffe://trust-domain/ns/default/sa/supervisor-agent": {
+            "display_name": "Supervisor Agent",
+            "description": "Orchestrates sub-agents; cannot execute trades directly",
+            "allowed_tools": [
+                "market_analysis",
+                "get_portfolio",
+                "risk_assessment",
+                "check_market_status",
+                "verify_content_safety"
+            ],
+            "trust_domain": "trust-domain",
+            "max_trade_usd": 0,
+            "roles": [
+                "supervisor"
             ]
         }
-    }
+    },
+    "_schema_version": "1.0.0",
+    "_last_reviewed": "2026-07-19",
+    "_reviewed_by": "CAGE Security Team"
 }
