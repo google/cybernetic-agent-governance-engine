@@ -69,7 +69,9 @@ _REGISTRY_PROJECT = os.environ.get("CAGE_AGENT_REGISTRY_PROJECT", "")
 
 if _REGISTRY_PROJECT:
     try:
-        from src.gateway.governance.ingress.agent_registry_adapter import AgentRegistryAdapter as _AgentRegistryAdapter
+        from src.gateway.governance.ingress.agent_registry_adapter import (
+            AgentRegistryAdapter as _AgentRegistryAdapter,
+        )
 
         _reg_adapter = _AgentRegistryAdapter()
         _REGISTRY_AUDIT_REF: str = _reg_adapter.get_registry_audit_reference()

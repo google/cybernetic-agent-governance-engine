@@ -215,12 +215,16 @@ async def _gateway_lifespan(app: FastAPI):
     # GCP Adaptation: Agent Registry daemon (no-op if CAGE_AGENT_REGISTRY_PROJECT not set)
     registry_daemon: Any = None
     try:
-        from src.gateway.governance.ingress.agent_registry_adapter import AgentRegistryDaemon
+        from src.gateway.governance.ingress.agent_registry_adapter import (
+            AgentRegistryDaemon,
+        )
 
         registry_daemon = AgentRegistryDaemon()
         await registry_daemon.start()
     except ImportError:
-        logger.warning("⚠️ agent_registry_adapter not available — using static agent catalog.")
+        logger.warning(
+            "⚠️ agent_registry_adapter not available — using static agent catalog."
+        )
     except Exception as reg_err:
         logger.error("❌ AgentRegistryDaemon failed to start: %s", reg_err)
 

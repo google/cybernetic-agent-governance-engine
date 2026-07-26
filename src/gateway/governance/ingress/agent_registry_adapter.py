@@ -148,9 +148,7 @@ class AgentRegistryAdapter:
             "CAGE_AGENT_REGISTRY_ID", "cage-agent-registry"
         )
         self._poll_interval_s = (
-            float(
-                os.environ.get("CAGE_AGENT_REGISTRY_POLL_INTERVAL_MINUTES", "15")
-            )
+            float(os.environ.get("CAGE_AGENT_REGISTRY_POLL_INTERVAL_MINUTES", "15"))
             * 60
         )
         self._boot_timeout_s = float(
@@ -313,7 +311,11 @@ class AgentRegistryAdapter:
         for agent in agent_list:
             # Extract SPIFFE ID from the resource name (last path segment)
             resource_name: str = agent.get("name", "")
-            spiffe_id = resource_name.rsplit("/", 1)[-1] if "/" in resource_name else resource_name
+            spiffe_id = (
+                resource_name.rsplit("/", 1)[-1]
+                if "/" in resource_name
+                else resource_name
+            )
 
             if not spiffe_id:
                 continue
@@ -473,17 +475,13 @@ async def _push_to_opa(data_document: dict[str, Any]) -> None:
                 headers={"Content-Type": "application/json"},
             )
             response.raise_for_status()
-        logger.debug(
-            "agent_registry_adapter: OPA catalog updated at %s", opa_endpoint
-        )
+        logger.debug("agent_registry_adapter: OPA catalog updated at %s", opa_endpoint)
     except ImportError:
         logger.warning(
             "agent_registry_adapter: httpx not available — cannot push to OPA."
         )
     except Exception as exc:
-        logger.warning(
-            "agent_registry_adapter: OPA push failed (non-fatal): %s", exc
-        )
+        logger.warning("agent_registry_adapter: OPA push failed (non-fatal): %s", exc)
 
 
 # ---------------------------------------------------------------------------

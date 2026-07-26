@@ -91,12 +91,15 @@ def _load_stpa_cs():
         load_control_structure,
     )
 
-    stpa_path = Path(__file__).resolve().parents[1] / "config" / "stpa_control_structure.yaml"
+    stpa_path = (
+        Path(__file__).resolve().parents[1] / "config" / "stpa_control_structure.yaml"
+    )
     if stpa_path.exists():
         return load_control_structure(stpa_path)
 
     # Minimal synthetic model for environments without the full YAML
     import yaml
+
     minimal_yaml = """
 system:
   name: "Test System"
@@ -248,7 +251,10 @@ class TestAgentRegistryAdapter:
 
         adapter = AgentRegistryAdapter()
         name = adapter.registry_resource_name
-        assert name == "projects/my-gcp-project/locations/us-central1/agentRegistries/cage-agent-registry"
+        assert (
+            name
+            == "projects/my-gcp-project/locations/us-central1/agentRegistries/cage-agent-registry"
+        )
 
     def test_get_registry_audit_reference_empty_when_not_configured(self):
         from src.gateway.governance.ingress.agent_registry_adapter import (
@@ -267,7 +273,10 @@ class TestAgentRegistryAdapter:
 
         adapter = AgentRegistryAdapter()
         ref = adapter.get_registry_audit_reference()
-        assert ref == "projects/my-gcp-project/locations/us-central1/agentRegistries/cage-agent-registry"
+        assert (
+            ref
+            == "projects/my-gcp-project/locations/us-central1/agentRegistries/cage-agent-registry"
+        )
 
     def test_load_static_fallback_returns_agents_dict(self):
         from src.gateway.governance.ingress.agent_registry_adapter import (
@@ -544,7 +553,11 @@ class TestAgentRegistryDaemon:
             await daemon.start()
 
             mock_push.assert_called_once_with(
-                {"agents": {"spiffe://cage/agent/foo": {"allowed_tools": ["execute_trade"]}}}
+                {
+                    "agents": {
+                        "spiffe://cage/agent/foo": {"allowed_tools": ["execute_trade"]}
+                    }
+                }
             )
 
         await daemon.stop()
@@ -627,7 +640,9 @@ class TestGenerateRegistryManifest:
 
         manifest = json.loads(generate_registry_manifest(self.cs))
         execute_trade = next(
-            t for t in manifest["tool_authorizations"] if t["tool_name"] == "execute_trade"
+            t
+            for t in manifest["tool_authorizations"]
+            if t["tool_name"] == "execute_trade"
         )
         assert isinstance(execute_trade["uca_refs"], list)
         assert len(execute_trade["uca_refs"]) > 0
@@ -637,7 +652,9 @@ class TestGenerateRegistryManifest:
 
         manifest = json.loads(generate_registry_manifest(self.cs))
         execute_trade = next(
-            t for t in manifest["tool_authorizations"] if t["tool_name"] == "execute_trade"
+            t
+            for t in manifest["tool_authorizations"]
+            if t["tool_name"] == "execute_trade"
         )
         assert isinstance(execute_trade["hazard_refs"], list)
         assert len(execute_trade["hazard_refs"]) > 0
@@ -670,7 +687,11 @@ class TestGenerateRegistryManifest:
 
         manifest = json.loads(generate_registry_manifest(self.cs))
         execute_trade = next(
-            (t for t in manifest["tool_authorizations"] if t["tool_name"] == "execute_trade"),
+            (
+                t
+                for t in manifest["tool_authorizations"]
+                if t["tool_name"] == "execute_trade"
+            ),
             None,
         )
         if execute_trade is None:
@@ -687,7 +708,11 @@ class TestGenerateRegistryManifest:
 
         manifest = json.loads(generate_registry_manifest(self.cs))
         execute_trade = next(
-            (t for t in manifest["tool_authorizations"] if t["tool_name"] == "execute_trade"),
+            (
+                t
+                for t in manifest["tool_authorizations"]
+                if t["tool_name"] == "execute_trade"
+            ),
             None,
         )
         if execute_trade is None:
@@ -701,7 +726,9 @@ class TestGenerateRegistryManifest:
             )
             if has_limits:
                 assert "requires_approval_above_usd" in execute_trade
-                assert isinstance(execute_trade["requires_approval_above_usd"], (int, float))
+                assert isinstance(
+                    execute_trade["requires_approval_above_usd"], (int, float)
+                )
 
     def test_manifest_all_actions_present(self):
         """Every unique action in unsafe_control_actions appears in the manifest."""
@@ -718,7 +745,9 @@ class TestGenerateRegistryManifest:
 
         out_file = tmp_path / "generated_tool_authorizations.json"
         stpa_path = (
-            Path(__file__).resolve().parents[1] / "config" / "stpa_control_structure.yaml"
+            Path(__file__).resolve().parents[1]
+            / "config"
+            / "stpa_control_structure.yaml"
         )
         if not stpa_path.exists():
             pytest.skip("stpa_control_structure.yaml not found")
@@ -726,9 +755,12 @@ class TestGenerateRegistryManifest:
         rc = main(
             [
                 "compile",
-                "--targets", "registry",
-                "--input", str(stpa_path),
-                "--registry-out", str(out_file),
+                "--targets",
+                "registry",
+                "--input",
+                str(stpa_path),
+                "--registry-out",
+                str(out_file),
             ]
         )
         assert rc == 0

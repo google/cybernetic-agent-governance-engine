@@ -58,6 +58,8 @@ import os
 
 from langgraph.graph import END, StateGraph
 
+from src.gateway.governance.ftra.node_factory import create_ftra_node, route_after_ftra
+
 from .annotations import SIDE_EFFECT_REGISTRY
 from .checkpointer import get_checkpointer
 from .nodes.agent_nodes import (
@@ -71,7 +73,6 @@ from .nodes.guardrail_node import nemo_guardrail_node, nemo_output_rail_node
 from .nodes.safety_node import safety_check_node
 from .nodes.supervisor_node import doer_node, thinker_node
 from .state import AgentState
-from src.gateway.governance.ftra.node_factory import create_ftra_node, route_after_ftra
 
 
 def get_side_effect_topology() -> dict[str, dict]:

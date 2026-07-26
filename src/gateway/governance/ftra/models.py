@@ -114,9 +114,7 @@ class ReachabilityResult(BaseModel):
         )
     )
 
-    total_steps: int = Field(
-        description="Total number of steps in the analyzed plan."
-    )
+    total_steps: int = Field(description="Total number of steps in the analyzed plan.")
 
     reachable_step_count: int = Field(
         description="Number of steps reachable from step[0] via DFS."

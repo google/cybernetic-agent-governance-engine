@@ -63,7 +63,8 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger("Gateway.Governance.FTRA.NodeFactory")
 
@@ -106,7 +107,7 @@ def route_after_ftra(state: dict[str, Any]) -> str:
 
 
 def create_ftra_node(
-    registry_path: "Any | None" = None,
+    registry_path: Any | None = None,
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
     """Return a LangGraph node function that performs FTRA analysis.
 
@@ -161,7 +162,7 @@ def create_ftra_node(
 # ---------------------------------------------------------------------------
 
 
-def _run_ftra(state: dict[str, Any], analyzer: "Any") -> dict[str, Any]:
+def _run_ftra(state: dict[str, Any], analyzer: Any) -> dict[str, Any]:
     """Core FTRA logic — may raise; caller wraps in try/except."""
     from opentelemetry import trace
 
@@ -174,7 +175,9 @@ def _run_ftra(state: dict[str, Any], analyzer: "Any") -> dict[str, Any]:
     # ----------------------------------------------------------------
     raw_plan = state.get("execution_plan_output")
     if raw_plan is None:
-        logger.warning("FTRA node: execution_plan_output is None — failing closed (BLOCKED).")
+        logger.warning(
+            "FTRA node: execution_plan_output is None — failing closed (BLOCKED)."
+        )
         return {
             "ftra_status": "BLOCKED",
             "ftra_result": {
@@ -187,7 +190,9 @@ def _run_ftra(state: dict[str, Any], analyzer: "Any") -> dict[str, Any]:
 
     plan = _parse_plan(raw_plan)
     if plan is None:
-        logger.warning("FTRA node: could not parse execution_plan_output — failing closed.")
+        logger.warning(
+            "FTRA node: could not parse execution_plan_output — failing closed."
+        )
         return {
             "ftra_status": "BLOCKED",
             "ftra_result": {
@@ -223,7 +228,9 @@ def _run_ftra(state: dict[str, Any], analyzer: "Any") -> dict[str, Any]:
             "cage.ftra.reachable_terminal_count", len(result.reachable_terminals)
         )
         span.set_attribute("cage.ftra.total_steps", result.total_steps)
-        span.set_attribute("cage.ftra.reachable_step_count", result.reachable_step_count)
+        span.set_attribute(
+            "cage.ftra.reachable_step_count", result.reachable_step_count
+        )
 
     # ----------------------------------------------------------------
     # 4. Build state patch
@@ -232,9 +239,7 @@ def _run_ftra(state: dict[str, Any], analyzer: "Any") -> dict[str, Any]:
     result_dict["ctrl_id"] = _CTRL_FTRA_001
 
     if result.verdict == FTRAVerdict.CLEAR:
-        logger.info(
-            "FTRA: plan '%s' CLEAR — proceeding to safety_check.", plan.plan_id
-        )
+        logger.info("FTRA: plan '%s' CLEAR — proceeding to safety_check.", plan.plan_id)
         return {
             "ftra_status": "CLEAR",
             "ftra_result": result_dict,
@@ -273,7 +278,7 @@ def _run_ftra(state: dict[str, Any], analyzer: "Any") -> dict[str, Any]:
     }
 
 
-def _parse_plan(raw: Any) -> "Any | None":
+def _parse_plan(raw: Any) -> Any | None:
     """Parse raw execution_plan_output into an ExecutionPlan.
 
     Accepts:
@@ -281,7 +286,9 @@ def _parse_plan(raw: Any) -> "Any | None":
         - A dict (from JSON-decoded state)
         - A JSON string
     """
-    from src.governed_financial_advisor.agents.execution_analyst.agent import ExecutionPlan
+    from src.governed_financial_advisor.agents.execution_analyst.agent import (
+        ExecutionPlan,
+    )
 
     if isinstance(raw, ExecutionPlan):
         return raw
@@ -344,7 +351,7 @@ def _park_in_defer_queue(
 
         # Run in a new event loop if we're not already in one
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             # We're inside an async context — schedule as a task
             import concurrent.futures
 
