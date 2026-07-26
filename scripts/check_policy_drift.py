@@ -70,14 +70,25 @@ _AGP_CHAR_BUDGET = 5_000
 
 
 def _sha256_file(path: Path) -> str:
-    """Compute SHA-256 hash of a file's contents."""
+    """Compute SHA-256 hash of a file's contents, excluding the timestamp line."""
     content = path.read_text(encoding="utf-8")
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return _sha256_text(content)
 
 
 def _sha256_text(text: str) -> str:
-    """Compute SHA-256 hash of a string."""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    """Compute SHA-256 hash of a string, excluding the auto-generated timestamp line.
+
+    The compiled OPA policy banner contains a ``# Generated: <timestamp>`` line
+    that changes on every compile run.  Stripping it before hashing makes the
+    drift gate deterministic across environments and CI runs.
+    """
+    stable_lines = [
+        line
+        for line in text.splitlines(keepends=True)
+        if not line.startswith("# Generated:")
+    ]
+    stable_text = "".join(stable_lines)
+    return hashlib.sha256(stable_text.encode("utf-8")).hexdigest()
 
 
 def check_compiled_artifact_drift(
