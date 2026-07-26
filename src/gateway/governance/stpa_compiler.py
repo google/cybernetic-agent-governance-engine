@@ -78,6 +78,9 @@ _DEFAULT_LG_OUT = (
 )
 _DEFAULT_AGP_OUT = _REPO_ROOT / "config" / "agp" / "generated_semantic_policy.txt"
 _DEFAULT_FTRA_OUT = _REPO_ROOT / "config" / "ftra" / "terminal_registry.json"
+_DEFAULT_REGISTRY_OUT = (
+    _REPO_ROOT / "config" / "registry" / "generated_tool_authorizations.json"
+)
 
 # AGP Semantic Governance Policy character budget (platform limit)
 _AGP_CHAR_BUDGET = 5_000
@@ -728,12 +731,17 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
         for u in saga_ucas
     )
 
-    mcp_import_lines: list[str] = []
+    # Build the third-party import block.  isort requires both third-party
+    # imports to be in the same block (no blank line between them).
+    thirdparty_import_lines: list[str] = [
+        "from src.governed_financial_advisor.graph.state import AgentState, LedgerEntry",
+    ]
+    mcp_singleton_lines: list[str] = []
     if needs_mcp_imports:
-        mcp_import_lines = [
-            "import asyncio",
-            "",
-            "from src.governed_financial_advisor.infrastructure.mcp_client import GatewayMCPClient",
+        thirdparty_import_lines.append(
+            "from src.governed_financial_advisor.infrastructure.mcp_client import GatewayMCPClient"
+        )
+        mcp_singleton_lines = [
             "",
             "# [CTRL_WAL_002] module-level MCP client singleton for WAL forward nodes.",
             "# The singleton is re-used across Saga invocations to avoid connection churn.",
@@ -748,6 +756,25 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
             "",
             "",
         ]
+
+    # asyncio is stdlib — include it in the stdlib block only when needed.
+    # isort requires all stdlib imports to be together before third-party imports.
+    stdlib_imports: list[str] = (
+        [
+            "import asyncio",
+            "import datetime",
+            "import hashlib",
+            "import logging",
+            "from typing import Any",
+        ]
+        if needs_mcp_imports
+        else [
+            "import datetime",
+            "import hashlib",
+            "import logging",
+            "from typing import Any",
+        ]
+    )
 
     lines: list[str] = [
         _banner(),
@@ -769,14 +796,10 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
         "",
         "from __future__ import annotations",
         "",
-        "import datetime",
-        "import hashlib",
-        "import logging",
-        "from typing import Any",
+        *stdlib_imports,
         "",
-        "from src.governed_financial_advisor.graph.state import AgentState, LedgerEntry",
-        "",
-        *mcp_import_lines,
+        *thirdparty_import_lines,
+        *mcp_singleton_lines,
         'logger = logging.getLogger("Gateway.Governance.GeneratedSagaNodes")',
         "",
         "",
@@ -815,13 +838,16 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
         fwd_fn = f"forward_{saga.forward_action}_node_{uca_slug}"
         comp_fn = f"compensate_{saga.compensating_action}_node_{uca_slug}"
 
-        # Build context extraction lines from parameter_mapping
+        # Build context extraction lines from parameter_mapping.
+        # Variables are prefixed with "_" so ruff F841 does not flag them as
+        # unused — they are intentionally extracted for the implementor's
+        # reference and used in the commented-out reverse API call below.
         mapping_lines = [
-            f'    {pm.compensating_key} = context_data.get("{pm.forward_key}")'
+            f'    _{pm.compensating_key} = context_data.get("{pm.forward_key}")'
             for pm in saga.parameter_mapping
         ] or ["    pass  # no parameter_mapping defined"]
         comp_kwarg_lines = [
-            f"        #     {pm.compensating_key}={pm.compensating_key},"
+            f"        #     {pm.compensating_key}=_{pm.compensating_key},"
             for pm in saga.parameter_mapping
         ]
         mapping_str = "\n".join(mapping_lines)
@@ -1256,6 +1282,127 @@ def generate_terminal_registry(cs: ControlStructureModel) -> str:
 
 
 # ---------------------------------------------------------------------------
+# GEAP Agent Registry manifest generator (Phase C)
+# ---------------------------------------------------------------------------
+
+
+def generate_registry_manifest(cs: ControlStructureModel) -> str:
+    """Generate a GEAP Agent Registry tool authorization manifest as JSON.
+
+    GCP Adaptation: the output is consumed by ``AgentRegistryAdapter.push_tool_authorizations()``
+    to update tool authorization policies in the GEAP Agent Registry.  Cloud-agnostic
+    deployments do not use this artifact.
+
+    Emits a JSON string (not natural language) representing the tool authorization
+    manifest derived from the STPA control structure.
+
+    Output format::
+
+        {
+          "_generated_by": "CAGE stpa_compiler",
+          "_source": "config/stpa_control_structure.yaml",
+          "_generated_at": "2026-07-23T00:00:00Z",
+          "_schema_version": "1.0.0",
+          "tool_authorizations": [
+            {
+              "tool_name": "execute_trade",
+              "allowed_roles": ["trader", "senior"],
+              "denied_roles": ["junior"],
+              "uca_refs": ["UCA-1", "UCA-2"],
+              "hazard_refs": ["H-1", "H-2"],
+              "requires_approval_above_usd": 10000
+            }
+          ]
+        }
+
+    Mapping rules:
+    - Each unique ``action`` in ``cs.unsafe_control_actions`` becomes a ``tool_name`` entry.
+    - ``uca_refs``: list of UCA IDs that reference this action.
+    - ``hazard_refs``: union of all ``hazard_refs`` across UCAs for this action.
+    - ``allowed_roles``: from ``cs.rbac_rules.roles`` where the action is in ``allowed_actions``.
+    - ``denied_roles``: roles where the action is NOT in ``allowed_actions``.
+    - ``requires_approval_above_usd``: from ``rbac_rules.roles[].trade_limits.manual_review_below``
+      if present (minimum across all roles that have this limit for the action).
+
+    Args:
+        cs: Validated ``ControlStructureModel`` instance.
+
+    Returns:
+        JSON string suitable for writing to
+        ``config/registry/generated_tool_authorizations.json``.
+    """
+    import datetime as _dt
+    import json as _json
+
+    now_utc = _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+    # ── Step 1: Collect per-action UCA refs and hazard refs ──────────────────
+    action_uca_refs: dict[str, list[str]] = {}
+    action_hazard_refs: dict[str, set[str]] = {}
+
+    for uca in cs.unsafe_control_actions:
+        action = uca.action
+        action_uca_refs.setdefault(action, []).append(uca.id)
+        action_hazard_refs.setdefault(action, set()).update(uca.hazard_refs)
+
+    # ── Step 2: Collect per-action RBAC role membership ──────────────────────
+    # allowed_roles: roles whose allowed_actions list includes this action
+    # denied_roles: roles whose allowed_actions list does NOT include this action
+    action_allowed_roles: dict[str, list[str]] = {}
+    action_denied_roles: dict[str, list[str]] = {}
+    action_approval_threshold: dict[str, float | None] = {}
+
+    if cs.rbac_rules:
+        for action in action_uca_refs:
+            allowed: list[str] = []
+            denied: list[str] = []
+            thresholds: list[float] = []
+
+            for role in cs.rbac_rules.roles:
+                if action in role.allowed_actions:
+                    allowed.append(role.name)
+                    # Collect manual_review_below threshold if present
+                    if role.trade_limits:
+                        review_below = role.trade_limits.get("manual_review_below")
+                        if review_below is not None:
+                            thresholds.append(float(review_below))
+                else:
+                    denied.append(role.name)
+
+            action_allowed_roles[action] = allowed
+            action_denied_roles[action] = denied
+            # Use the minimum threshold across all allowed roles (most restrictive)
+            action_approval_threshold[action] = min(thresholds) if thresholds else None
+
+    # ── Step 3: Build tool_authorizations list ────────────────────────────────
+    tool_authorizations: list[dict] = []
+
+    for action in sorted(action_uca_refs.keys()):
+        entry: dict = {
+            "tool_name": action,
+            "allowed_roles": action_allowed_roles.get(action, []),
+            "denied_roles": action_denied_roles.get(action, []),
+            "uca_refs": action_uca_refs[action],
+            "hazard_refs": sorted(action_hazard_refs.get(action, set())),
+        }
+        threshold = action_approval_threshold.get(action)
+        if threshold is not None:
+            entry["requires_approval_above_usd"] = threshold
+
+        tool_authorizations.append(entry)
+
+    manifest = {
+        "_generated_by": "CAGE stpa_compiler",
+        "_source": "config/stpa_control_structure.yaml",
+        "_generated_at": now_utc,
+        "_schema_version": "1.0.0",
+        "tool_authorizations": tool_authorizations,
+    }
+
+    return _json.dumps(manifest, indent=2)
+
+
+# ---------------------------------------------------------------------------
 # Compiler orchestrator
 # ---------------------------------------------------------------------------
 
@@ -1268,6 +1415,7 @@ class CompileResult:
     langgraph_content: str = ""
     agp_content: str = ""
     ftra_content: str = ""
+    registry_content: str = ""
     errors: list[str] = field(default_factory=list)
 
 
@@ -1328,6 +1476,12 @@ def compile_control_structure(
         except Exception as exc:
             result.errors.append(f"FTRA terminal registry generation failed: {exc}")
 
+    if "registry" in effective_targets:
+        try:
+            result.registry_content = generate_registry_manifest(cs)
+        except Exception as exc:
+            result.errors.append(f"Agent Registry manifest generation failed: {exc}")
+
     return result
 
 
@@ -1339,6 +1493,7 @@ def write_artifacts(
     langgraph_out: Path,
     agp_out: Path | None = None,
     ftra_out: Path | None = None,
+    registry_out: Path | None = None,
 ) -> None:
     """Write generated artifacts to disk, creating parent dirs as needed."""
     if result.opa_content:
@@ -1388,6 +1543,12 @@ def write_artifacts(
         effective_ftra_out.write_text(result.ftra_content)
         logger.info("✅ FTRA terminal registry written → %s", effective_ftra_out)
 
+    if result.registry_content:
+        effective_registry_out = registry_out or _DEFAULT_REGISTRY_OUT
+        effective_registry_out.parent.mkdir(parents=True, exist_ok=True)
+        effective_registry_out.write_text(result.registry_content)
+        logger.info("✅ Agent Registry manifest written → %s", effective_registry_out)
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -1428,12 +1589,23 @@ def _build_parser() -> argparse.ArgumentParser:
     compile_p.add_argument(
         "--targets",
         nargs="+",
-        choices=["opa", "nemo", "python", "langgraph", "agp", "ftra", "all"],
+        choices=[
+            "opa",
+            "nemo",
+            "python",
+            "langgraph",
+            "agp",
+            "ftra",
+            "registry",
+            "all",
+        ],
         default=["all"],
         help=(
             "Artifacts to generate (default: all). "
             "Use 'agp' for AGP Semantic Policy. "
-            "Use 'ftra' for FTRA terminal registry (config/ftra/terminal_registry.json)."
+            "Use 'ftra' for FTRA terminal registry (config/ftra/terminal_registry.json). "
+            "Use 'registry' for GEAP Agent Registry tool authorization manifest "
+            "(GCP Adaptation — config/registry/generated_tool_authorizations.json)."
         ),
     )
     compile_p.add_argument(
@@ -1477,6 +1649,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=_DEFAULT_FTRA_OUT,
         metavar="FILE",
         help=f"FTRA terminal registry output path (default: {_DEFAULT_FTRA_OUT})",
+    )
+    compile_p.add_argument(
+        "--registry-out",
+        type=Path,
+        default=_DEFAULT_REGISTRY_OUT,
+        metavar="FILE",
+        help=(
+            f"Agent Registry manifest output path (default: {_DEFAULT_REGISTRY_OUT}). "
+            "GCP Adaptation — only used when --targets registry is specified."
+        ),
     )
     compile_p.add_argument(
         "--dry-run",
@@ -1551,6 +1733,13 @@ def cmd_compile(args: argparse.Namespace) -> int:
                 )
         if result.ftra_content:
             print(sep + "FTRA TERMINAL REGISTRY (JSON)" + sep + result.ftra_content)
+        if result.registry_content:
+            print(
+                sep
+                + "AGENT REGISTRY MANIFEST (JSON) [GCP Adaptation]"
+                + sep
+                + result.registry_content
+            )
         return 0
 
     write_artifacts(
@@ -1561,6 +1750,7 @@ def cmd_compile(args: argparse.Namespace) -> int:
         args.langgraph_out,
         agp_out=args.agp_out,
         ftra_out=args.ftra_out,
+        registry_out=args.registry_out,
     )
     print("✅ STPA compiler finished. Artifacts written:")
     if result.opa_content:
@@ -1575,6 +1765,8 @@ def cmd_compile(args: argparse.Namespace) -> int:
         print(f"   AGP Semantic Policy → {args.agp_out}")
     if result.ftra_content:
         print(f"   FTRA terminal registry → {args.ftra_out}")
+    if result.registry_content:
+        print(f"   Agent Registry manifest [GCP] → {args.registry_out}")
     return 0
 
 
