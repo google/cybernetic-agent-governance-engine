@@ -131,7 +131,9 @@ def check_compiled_artifact_drift(
         registry_hash = registry.active_hash
         logger.info("ControlRegistry.active_hash: %s", registry_hash[:16])
     except Exception as exc:
-        logger.warning("Could not load ControlRegistry: %s — skipping registry hash check.", exc)
+        logger.warning(
+            "Could not load ControlRegistry: %s — skipping registry hash check.", exc
+        )
         registry_hash = None
 
     # Step 3: Compare against stored baseline hash
@@ -184,7 +186,9 @@ def check_compiled_artifact_drift(
             return 1
         logger.info("✅ On-disk OPA artifact matches fresh compile.")
     else:
-        logger.warning("On-disk OPA file not found at %s — skipping on-disk check.", opa_file)
+        logger.warning(
+            "On-disk OPA file not found at %s — skipping on-disk check.", opa_file
+        )
 
     logger.info("✅ No policy drift detected. Compiled hash: %s", fresh_opa_hash[:16])
     return 0
@@ -197,7 +201,9 @@ def check_agp_budget(agp_file: Path) -> int:
         0 if within budget, 1 if over budget or contains TRUNCATED sentinel.
     """
     if not agp_file.exists():
-        logger.info("AGP policy file not found at %s — skipping budget check.", agp_file)
+        logger.info(
+            "AGP policy file not found at %s — skipping budget check.", agp_file
+        )
         return 0
 
     content = agp_file.read_text(encoding="utf-8")
@@ -215,8 +221,7 @@ def check_agp_budget(agp_file: Path) -> int:
 
     if char_count > _AGP_CHAR_BUDGET:
         logger.error(
-            "❌ AGP policy file exceeds 5,000-character budget: %d chars\n"
-            "   File: %s",
+            "❌ AGP policy file exceeds 5,000-character budget: %d chars\n   File: %s",
             char_count,
             agp_file,
         )

@@ -155,7 +155,9 @@ class WebhookRegistry:
     def __init__(self) -> None:
         self._registrations: dict[str, WebhookRegistration] = {}
         self._lock = asyncio.Lock()
-        self._region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
+        self._region = (
+            os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
+        )
 
     # ------------------------------------------------------------------
     # Region guard
@@ -180,7 +182,11 @@ class WebhookRegistry:
         hostname = parsed.hostname or ""
 
         # Allow localhost and private IPs for testing
-        if hostname in ("localhost", "127.0.0.1", "::1") or hostname.startswith("10.") or hostname.startswith("192.168."):
+        if (
+            hostname in ("localhost", "127.0.0.1", "::1")
+            or hostname.startswith("10.")
+            or hostname.startswith("192.168.")
+        ):
             return
 
         # Check if hostname contains an allowed region suffix
@@ -400,7 +406,7 @@ class WebhookRegistry:
                 )
 
             if attempt < _MAX_RETRIES - 1:
-                delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                delay = _RETRY_BASE_DELAY * (2**attempt)
                 await asyncio.sleep(delay)
 
         logger.error(
@@ -425,7 +431,9 @@ class WebhookRegistry:
         """
         event_type = event.get("type", "")
         if not event_type:
-            logger.warning("WebhookRegistry: dispatch called with event missing 'type' field.")
+            logger.warning(
+                "WebhookRegistry: dispatch called with event missing 'type' field."
+            )
             return
 
         if event_type not in _ALL_EVENT_TYPES:
@@ -437,13 +445,13 @@ class WebhookRegistry:
 
         async with self._lock:
             matching = [
-                r for r in self._registrations.values()
-                if r.matches_event(event_type)
+                r for r in self._registrations.values() if r.matches_event(event_type)
             ]
 
         if not matching:
             logger.debug(
-                "WebhookRegistry: no webhooks registered for event type '%s'.", event_type
+                "WebhookRegistry: no webhooks registered for event type '%s'.",
+                event_type,
             )
             return
 

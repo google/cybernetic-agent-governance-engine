@@ -170,7 +170,7 @@ def translate_lula(doc: dict[str, Any]) -> dict[str, Any]:
         # Strip common prefixes
         for prefix in ("cage_validation_", "lula_validation_", "cage_"):
             if name.startswith(prefix):
-                name = name[len(prefix):]
+                name = name[len(prefix) :]
                 break
 
     policy_name = f"lula_{name.lower().replace('-', '_').replace(' ', '_')}"
@@ -186,19 +186,23 @@ def translate_lula(doc: dict[str, Any]) -> dict[str, Any]:
         # Primary inline Rego
         inline_rego = opa_spec.get("rego")
         if inline_rego:
-            opa_modules.append({
-                "name": policy_name,
-                "rego": inline_rego,
-            })
+            opa_modules.append(
+                {
+                    "name": policy_name,
+                    "rego": inline_rego,
+                }
+            )
 
         # Additional modules
         extra_modules = opa_spec.get("modules") or []
         for i, module in enumerate(extra_modules):
             if isinstance(module, str):
-                opa_modules.append({
-                    "name": f"{policy_name}_module_{i}",
-                    "rego": module,
-                })
+                opa_modules.append(
+                    {
+                        "name": f"{policy_name}_module_{i}",
+                        "rego": module,
+                    }
+                )
             elif isinstance(module, dict):
                 mod_name = module.get("name") or f"{policy_name}_module_{i}"
                 mod_rego = module.get("rego") or module.get("content") or ""
@@ -208,10 +212,12 @@ def translate_lula(doc: dict[str, Any]) -> dict[str, Any]:
         # OSCAL-wrapped: extract from back-matter
         inline_rego = _extract_rego_from_back_matter(doc)
         if inline_rego:
-            opa_modules.append({
-                "name": policy_name,
-                "rego": inline_rego,
-            })
+            opa_modules.append(
+                {
+                    "name": policy_name,
+                    "rego": inline_rego,
+                }
+            )
 
     if not opa_modules:
         logger.warning(

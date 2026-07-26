@@ -139,7 +139,11 @@ class TestTranslateAAIF:
                     {
                         "name": "rate_limiting",
                         "constraints": [
-                            {"type": "max", "parameter": "requests_per_second", "value": 100}
+                            {
+                                "type": "max",
+                                "parameter": "requests_per_second",
+                                "value": 100,
+                            }
                         ],
                     }
                 ]

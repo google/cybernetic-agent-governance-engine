@@ -27,7 +27,6 @@ import pytest
 
 from src.compliance_bridge.governance_webhook import WebhookRegistry
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -296,9 +295,7 @@ class TestWebhookDispatch:
     def test_dispatch_missing_type_field_logs_warning(self):
         registry = _make_registry()
         # Should not raise for events without type field
-        asyncio.get_event_loop().run_until_complete(
-            registry.dispatch({"traceId": "x"})
-        )
+        asyncio.get_event_loop().run_until_complete(registry.dispatch({"traceId": "x"}))
 
     def test_dispatch_to_multiple_webhooks(self):
         registry = _make_registry()

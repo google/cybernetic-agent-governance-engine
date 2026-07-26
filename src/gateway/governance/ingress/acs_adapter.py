@@ -97,7 +97,8 @@ def _map_constraint(constraint: dict[str, Any]) -> dict[str, Any]:
     cage_operator = _ACS_CONSTRAINT_TYPE_MAP.get(ctype)
     if cage_operator is None:
         logger.warning(
-            "ACSAdapter: unknown constraint type '%s' — using composite fallback.", ctype
+            "ACSAdapter: unknown constraint type '%s' — using composite fallback.",
+            ctype,
         )
         return {"composite": constraint.get("expression", str(constraint))}
 
@@ -105,7 +106,9 @@ def _map_constraint(constraint: dict[str, Any]) -> dict[str, Any]:
     if param:
         condition["param"] = param
     if value is not None:
-        condition["threshold"] = float(value) if isinstance(value, (int, float)) else value
+        condition["threshold"] = (
+            float(value) if isinstance(value, (int, float)) else value
+        )
     if threshold_ref:
         condition["threshold_ref"] = threshold_ref
 
@@ -126,8 +129,12 @@ def _map_behavior(behavior: dict[str, Any], index: int) -> dict[str, Any] | None
         return None
 
     description = behavior.get("description", f"ACS behavior {behavior_id}")
-    hazard_refs = behavior.get("hazardRefs") or behavior.get("hazard_refs") or ["H-ACS-1"]
-    uca_type_raw = behavior.get("ucaType") or behavior.get("uca_type") or "unsafe_action"
+    hazard_refs = (
+        behavior.get("hazardRefs") or behavior.get("hazard_refs") or ["H-ACS-1"]
+    )
+    uca_type_raw = (
+        behavior.get("ucaType") or behavior.get("uca_type") or "unsafe_action"
+    )
     uca_type = _ACS_UCA_TYPE_MAP.get(uca_type_raw, "unsafe_action")
     enforcement = behavior.get("enforcement") or _DEFAULT_ENFORCEMENT
 

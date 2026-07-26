@@ -128,7 +128,9 @@ def _map_implemented_requirement(
     props = req.get("props") or []
 
     # Derive uca_type from implementation-status prop
-    status = _extract_prop(props, "implementation-status") or _extract_prop(props, "status")
+    status = _extract_prop(props, "implementation-status") or _extract_prop(
+        props, "status"
+    )
     uca_type = _OSCAL_STATUS_TO_UCA_TYPE.get(status or "implemented", "unsafe_action")
 
     # Derive enforcement from enforcement-target prop
@@ -246,7 +248,9 @@ def translate_oscal(doc: dict[str, Any]) -> list[dict[str, Any]]:
     total_reqs = 0
 
     for component in components:
-        comp_title = component.get("title") or component.get("name") or "Unknown Component"
+        comp_title = (
+            component.get("title") or component.get("name") or "Unknown Component"
+        )
         control_impls = component.get("control-implementations") or []
 
         for impl in control_impls:
