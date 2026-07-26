@@ -1485,6 +1485,31 @@ def compile_control_structure(
     return result
 
 
+def _ruff_format(path: Path) -> None:
+    """Run ``ruff format`` on a generated Python file (best-effort, no-op if ruff absent).
+
+    Resolves the ruff binary relative to the current Python interpreter so that
+    venv-installed ruff is found even when it is not on the system PATH.
+    """
+    import subprocess
+    import sys
+
+    # Prefer ruff installed alongside the current interpreter (venv-aware).
+    ruff_bin = Path(sys.executable).parent / "ruff"
+    if not ruff_bin.exists():
+        ruff_bin = Path("ruff")  # fall back to PATH
+
+    try:
+        subprocess.run(
+            [str(ruff_bin), "format", str(path)],
+            check=True,
+            capture_output=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        # ruff not installed or formatting failed — leave file as-is.
+        pass
+
+
 def write_artifacts(
     result: CompileResult,
     opa_out: Path,
@@ -1509,11 +1534,13 @@ def write_artifacts(
     if result.python_content:
         python_out.parent.mkdir(parents=True, exist_ok=True)
         python_out.write_text(result.python_content)
+        _ruff_format(python_out)
         logger.info("✅ Python validator written → %s", python_out)
 
     if result.langgraph_content:
         langgraph_out.parent.mkdir(parents=True, exist_ok=True)
         langgraph_out.write_text(result.langgraph_content)
+        _ruff_format(langgraph_out)
         logger.info("✅ LangGraph Saga nodes written → %s", langgraph_out)
 
     if result.agp_content:
