@@ -359,8 +359,8 @@ Copy `.env.example` to `.env` and configure at minimum:
 
 ```bash
 # Clone
-git clone https://github.com/google/cybernetic-governance-engine.git
-cd cybernetic-governance-engine
+git clone https://github.com/google/cybernetic-agent-governance-engine.git
+cd cybernetic-agent-governance-engine
 
 # Install dependencies
 uv sync --group dev
@@ -399,7 +399,7 @@ bash setup_test_env.sh && python -m pytest tests/   # 796 tests passing, 0 faile
 ## Project Structure
 
 ```
-cybernetic-governance-engine/
+cybernetic-agent-governance-engine/
 ├── src/
 │   ├── gateway/
 │   │   ├── governance/               # SymbolicGovernor, STPAValidator, NeMo manager
@@ -583,7 +583,7 @@ We welcome contributions! Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) for:
 
 To report a security vulnerability, see [`SECURITY.md`](SECURITY.md).
 
-To report a bug or request a feature, use [GitHub Issues](https://github.com/google/cybernetic-governance-engine/issues).
+To report a bug or request a feature, use [GitHub Issues](https://github.com/google/cybernetic-agent-governance-engine/issues).
 
 ---
 

@@ -32,7 +32,9 @@ import hmac
 import json
 import logging
 import os
+import time
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
@@ -300,6 +302,53 @@ async def sanitize_mcp_tool_response(
 
 governance_app = FastAPI(title="CAGE Governance Middleware")
 
+# ---------------------------------------------------------------------------
+# In-memory rate limiter for /validate-action (GHSA-v3h4-8458-5ww3)
+#
+# Prevents unauthenticated DoS and governance configuration oracle attacks
+# by capping requests per client IP within a sliding window.
+#
+# Limits: 60 requests per 60-second window per client IP.
+# Configurable via VALIDATE_ACTION_RATE_LIMIT and VALIDATE_ACTION_RATE_WINDOW.
+# ---------------------------------------------------------------------------
+
+_RATE_LIMIT_MAX: int = int(os.environ.get("VALIDATE_ACTION_RATE_LIMIT", "60"))
+_RATE_LIMIT_WINDOW: int = int(os.environ.get("VALIDATE_ACTION_RATE_WINDOW", "60"))
+
+# {client_ip: [timestamp, ...]} — timestamps of requests within the window
+_validate_action_rate_buckets: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_validate_action_rate_limit(client_ip: str) -> bool:
+    """Return True if the request is within the rate limit, False if exceeded.
+
+    Uses a sliding window algorithm: timestamps older than the window are
+    evicted on each check.  Thread-safe under Python's GIL for single-process
+    deployments; for multi-process deployments, use Redis-backed rate limiting.
+    """
+    now = time.monotonic()
+    window_start = now - _RATE_LIMIT_WINDOW
+    bucket = _validate_action_rate_buckets[client_ip]
+
+    # Evict expired timestamps (sliding window)
+    _validate_action_rate_buckets[client_ip] = [
+        ts for ts in bucket if ts > window_start
+    ]
+    bucket = _validate_action_rate_buckets[client_ip]
+
+    if len(bucket) >= _RATE_LIMIT_MAX:
+        logger.warning(
+            "🚦 validate-action rate limit exceeded for client=%s "
+            "(%d requests in %ds window)",
+            client_ip,
+            len(bucket),
+            _RATE_LIMIT_WINDOW,
+        )
+        return False
+
+    bucket.append(now)
+    return True
+
 
 class GovernanceCheckRequest(dict):
     pass  # plain dict accepted via Request
@@ -551,6 +600,30 @@ async def validate_action_endpoint(
         JSON with ``verdict`` (APPROVED|DENIED), ``violations`` list,
         ``seal`` (HMAC-SHA256 routing seal on approval), and ``latency_ms``.
     """
+    # ── GHSA-v3h4-8458-5ww3: Enforce routing seal FIRST, before any processing.
+    # Without this check, unauthenticated callers could trigger DoS or use the
+    # endpoint as a governance configuration oracle.
+    body_bytes = await request.body()
+    enforce_routing_seal(request, body_bytes)
+
+    # ── Rate limiting: prevent DoS via rapid unauthenticated requests ─────────
+    # Client IP is extracted from X-Forwarded-For (set by the upstream proxy)
+    # or falls back to the direct connection address.
+    client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or (
+        request.client.host if request.client else "unknown"
+    )
+    if not _check_validate_action_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "rate_limit_exceeded",
+                "message": (
+                    f"Too many requests to /validate-action from {client_ip}. "
+                    f"Limit: {_RATE_LIMIT_MAX} requests per {_RATE_LIMIT_WINDOW}s."
+                ),
+            },
+        )
+
     # ── Extract W3C trace context from inbound headers ────────────────────────
     # The GFA injected 'traceparent' via otel_inject(headers).  Extracting it
     # here and attaching it as the current context means all spans opened by
@@ -592,3 +665,287 @@ async def validate_action_endpoint(
         raise HTTPException(status_code=500, detail="Internal governance error")
     finally:
         otel_context.detach(token)
+
+
+# ---------------------------------------------------------------------------
+# E1 — OIDC JWT Validation Middleware (Work Stream E, Phase B)
+# ---------------------------------------------------------------------------
+# Validates Bearer JWTs against a configurable JWKS endpoint and injects
+# caller_identity into the request state for OPA agent catalog evaluation.
+#
+# Design principles:
+#   - Backward-compatible: if CAGE_OIDC_JWKS_URI is not set, all requests
+#     pass through unchanged (existing deployments unaffected).
+#   - Additive: caller_identity is injected as request.state.caller_identity;
+#     existing OPA policies do not need to change — the field is optional.
+#   - Works with any OIDC provider: Keycloak, Dex, Auth0, Google, Azure AD, Okta.
+#
+# GCP Adaptation note:
+#   When deployed behind GCP IAP, set CAGE_OIDC_JWKS_URI to the IAP JWKS
+#   endpoint (https://www.gstatic.com/iap/verify/public_key-jwk) and
+#   CAGE_OIDC_ISSUER to https://cloud.google.com/iap. No code changes needed.
+#
+# Environment variables:
+#   CAGE_OIDC_JWKS_URI  — JWKS endpoint URL; if unset, OIDC validation disabled
+#   CAGE_OIDC_ISSUER    — expected iss claim; if unset, skip issuer check
+#   CAGE_OIDC_AUDIENCE  — expected aud claim; if unset, skip audience check
+# ---------------------------------------------------------------------------
+
+_OIDC_JWKS_URI: str | None = os.environ.get("CAGE_OIDC_JWKS_URI")
+_OIDC_ISSUER: str | None = os.environ.get("CAGE_OIDC_ISSUER")
+_OIDC_AUDIENCE: str | None = os.environ.get("CAGE_OIDC_AUDIENCE")
+
+# JWKS cache: {kid: public_key_pem, "_fetched_at": float}
+_jwks_cache: dict[str, Any] = {}
+_JWKS_CACHE_TTL_S: float = 3600.0  # 1 hour
+
+
+def _get_jwks_cache_key() -> str:
+    return _OIDC_JWKS_URI or ""
+
+
+async def _fetch_jwks() -> dict[str, Any]:
+    """Fetch and cache the JWKS from CAGE_OIDC_JWKS_URI.
+
+    Returns a dict mapping ``kid`` → public key PEM string.
+    Caches for ``_JWKS_CACHE_TTL_S`` seconds to avoid hammering the JWKS endpoint.
+
+    Raises:
+        RuntimeError: If the JWKS endpoint is unreachable or returns invalid JSON.
+    """
+    now = time.monotonic()
+    fetched_at = _jwks_cache.get("_fetched_at", 0.0)
+    if _jwks_cache and (now - fetched_at) < _JWKS_CACHE_TTL_S:
+        return _jwks_cache
+
+    if not _OIDC_JWKS_URI:
+        return {}
+
+    try:
+        import urllib.request
+
+        with urllib.request.urlopen(_OIDC_JWKS_URI, timeout=5) as resp:  # noqa: S310
+            jwks_doc = json.loads(resp.read())
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to fetch JWKS from {_OIDC_JWKS_URI}: {exc}"
+        ) from exc
+
+    keys: dict[str, Any] = {}
+    for key_data in jwks_doc.get("keys", []):
+        kid = key_data.get("kid", "default")
+        keys[kid] = key_data
+
+    keys["_fetched_at"] = now
+    _jwks_cache.clear()
+    _jwks_cache.update(keys)
+    return _jwks_cache
+
+
+def _decode_jwt_header(token: str) -> dict[str, Any]:
+    """Decode the JWT header (first segment) without verification.
+
+    Args:
+        token: Raw JWT string.
+
+    Returns:
+        Decoded header dict.
+
+    Raises:
+        ValueError: If the token is malformed.
+    """
+    import base64
+
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise ValueError("JWT must have exactly 3 segments")
+
+    # Add padding
+    header_b64 = parts[0] + "=" * (4 - len(parts[0]) % 4)
+    try:
+        header_bytes = base64.urlsafe_b64decode(header_b64)
+        return json.loads(header_bytes)
+    except Exception as exc:
+        raise ValueError(f"Could not decode JWT header: {exc}") from exc
+
+
+async def validate_oidc_token(token: str) -> dict[str, Any]:
+    """Validate an OIDC JWT and return the caller_identity dict.
+
+    Validates:
+      1. JWT signature against the JWKS endpoint
+      2. ``exp`` claim (token not expired)
+      3. ``iss`` claim (if CAGE_OIDC_ISSUER is set)
+      4. ``aud`` claim (if CAGE_OIDC_AUDIENCE is set)
+
+    Args:
+        token: Raw JWT string from ``Authorization: Bearer <token>`` header.
+
+    Returns:
+        ``caller_identity`` dict with ``sub``, ``iss``, and ``scope`` fields.
+
+    Raises:
+        HTTPException(401): If the token is invalid, expired, or fails
+            signature verification.
+    """
+    try:
+        import jwt as pyjwt  # PyJWT
+    except ImportError:
+        # PyJWT not installed — log warning and pass through
+        logger.warning(
+            "⚠️ PyJWT not installed — OIDC token validation skipped. "
+            "Install PyJWT to enable OIDC validation: pip install PyJWT[crypto]"
+        )
+        return {}
+
+    # Decode header to get kid for JWKS lookup
+    try:
+        header = _decode_jwt_header(token)
+    except ValueError as exc:
+        logger.warning("OIDC: malformed JWT header: %s", exc)
+        raise HTTPException(
+            status_code=401,
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+            detail={"error": "invalid_token", "message": "Malformed JWT"},
+        )
+
+    kid = header.get("kid", "default")
+    alg = header.get("alg", "RS256")
+
+    # Fetch JWKS and find the matching key
+    try:
+        jwks = await _fetch_jwks()
+    except RuntimeError as exc:
+        logger.error("OIDC: JWKS fetch failed: %s", exc)
+        raise HTTPException(
+            status_code=401,
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+            detail={"error": "invalid_token", "message": "JWKS endpoint unavailable"},
+        )
+
+    key_data = jwks.get(kid) or jwks.get("default")
+    if not key_data or not isinstance(key_data, dict):
+        logger.warning("OIDC: no matching key for kid=%s", kid)
+        raise HTTPException(
+            status_code=401,
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+            detail={"error": "invalid_token", "message": f"No JWKS key for kid={kid}"},
+        )
+
+    # Build PyJWT public key from JWK
+    try:
+        public_key = pyjwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key_data))
+    except Exception as exc:
+        logger.warning("OIDC: could not construct public key from JWK: %s", exc)
+        raise HTTPException(
+            status_code=401,
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+            detail={"error": "invalid_token", "message": "Invalid JWKS key format"},
+        )
+
+    # Verify and decode the JWT
+    decode_kwargs: dict[str, Any] = {
+        "algorithms": [alg],
+        "options": {"verify_exp": True},
+    }
+    if _OIDC_AUDIENCE:
+        decode_kwargs["audience"] = _OIDC_AUDIENCE
+    if _OIDC_ISSUER:
+        decode_kwargs["issuer"] = _OIDC_ISSUER
+
+    try:
+        claims = pyjwt.decode(token, public_key, **decode_kwargs)
+    except pyjwt.ExpiredSignatureError:
+        logger.warning("OIDC: JWT expired")
+        raise HTTPException(
+            status_code=401,
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+            detail={"error": "invalid_token", "message": "JWT has expired"},
+        )
+    except pyjwt.InvalidTokenError as exc:
+        logger.warning("OIDC: JWT validation failed: %s", exc)
+        raise HTTPException(
+            status_code=401,
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+            detail={"error": "invalid_token", "message": str(exc)},
+        )
+
+    caller_identity: dict[str, Any] = {
+        "sub": claims.get("sub", ""),
+        "iss": claims.get("iss", ""),
+        "scope": claims.get("scope", claims.get("scp", "")),
+    }
+    logger.debug(
+        "OIDC: validated caller sub=%s iss=%s",
+        caller_identity["sub"],
+        caller_identity["iss"],
+    )
+    return caller_identity
+
+
+class OIDCValidationMiddleware:
+    """ASGI middleware that validates OIDC Bearer JWTs and injects caller_identity.
+
+    Behaviour:
+      - If ``CAGE_OIDC_JWKS_URI`` is not set: pass through unchanged (backward compat).
+      - If ``Authorization: Bearer <jwt>`` header is absent: pass through unchanged.
+      - If JWT is present but invalid: return HTTP 401.
+      - If JWT is valid: inject ``request.state.caller_identity`` dict.
+
+    The ``caller_identity`` dict (``{sub, iss, scope}``) is available to all
+    downstream handlers via ``request.state.caller_identity``.  OPA policies
+    can use ``input.caller_identity.sub`` for RBAC decisions — no changes to
+    existing OPA policies required (the field is additive).
+
+    GCP Adaptation note:
+      When deployed behind GCP IAP, the IAP JWT is passed as
+      ``X-Goog-IAP-JWT-Assertion``.  To use IAP, set CAGE_OIDC_JWKS_URI to
+      the IAP JWKS endpoint and read the header name from the environment.
+      This is a GCP-specific deployment configuration — no code changes needed.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # If OIDC is not configured, pass through unchanged (backward compat)
+        if not _OIDC_JWKS_URI:
+            await self.app(scope, receive, send)
+            return
+
+        from starlette.requests import Request as StarletteRequest
+        from starlette.responses import JSONResponse as StarletteJSONResponse
+
+        request = StarletteRequest(scope, receive)
+        auth_header = request.headers.get("Authorization", "")
+
+        # No Authorization header — pass through unchanged (backward compat)
+        if not auth_header.startswith("Bearer "):
+            await self.app(scope, receive, send)
+            return
+
+        token = auth_header[len("Bearer ") :]
+
+        try:
+            caller_identity = await validate_oidc_token(token)
+            request.state.caller_identity = caller_identity
+        except HTTPException as exc:
+            response = StarletteJSONResponse(
+                status_code=exc.status_code,
+                content=exc.detail,
+                headers=exc.headers or {},
+            )
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+
+# Register the OIDC middleware on the governance_app sub-application.
+# It runs before all governance endpoints, injecting caller_identity into
+# request.state for OPA agent catalog evaluation.
+governance_app.add_middleware(OIDCValidationMiddleware)

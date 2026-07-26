@@ -2,9 +2,9 @@
 # Fast iteration, minimal costs, low security posture
 
 # ─── GCP Project ──────────────────────────────────────────────────────────────
-# REPLACE with your actual project ID
-project_id = "YOUR_GCP_PROJECT_ID"
-region     = "us-central1"
+# project_id is intentionally omitted here — it is injected via TF_VAR_project_id
+# which deploy_all.sh reads from GOOGLE_CLOUD_PROJECT in .env (DEP-22).
+# region is also injected via TF_VAR_region from GOOGLE_CLOUD_LOCATION in .env.
 zone       = "us-central1-a" # Current cluster location
 
 # ─── Cluster ──────────────────────────────────────────────────────────────────
@@ -23,6 +23,9 @@ enable_audit_logging           = false
 enable_cmek                    = false
 enable_private_master_endpoint = false
 enable_pod_security_standards  = false
+# Required: org policy constraints/compute.vmExternalIpAccess blocks nodes with external IPs.
+# Private nodes use NAT egress (Cloud NAT) instead of external IPs.
+enable_private_nodes           = true
 
 # Authorized networks for private cluster access
 authorized_networks = [

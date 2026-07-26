@@ -1,0 +1,264 @@
+# CAGE Substrate Contract
+
+**Version:** 1.0
+**Status:** Active — Phase A implementation
+**Last updated:** 2026-07-18
+**Cross-reference:** [`docs/CAGE_OPEN_INTEROP_SPEC.md §1`](CAGE_OPEN_INTEROP_SPEC.md) (Platform Overview)
+
+---
+
+## Overview
+
+The CAGE Substrate Contract is the versioned, documented API surface that external
+policy authors (writing in ACS, AAIF, OSCAL, Lula, or native CAGE YAML) can target
+when integrating with the CAGE governance substrate.
+
+The contract defines:
+
+1. **Policy ingestion surface** — how external specs enter the substrate
+2. **Governance check surface** — how enforcement decisions are made
+3. **Routing seal contract** — how request integrity is verified
+4. **Versioning guarantees** — what stability is promised across versions
+5. **Deprecation policy** — how breaking changes are communicated
+
+---
+
+## 1. Policy Ingestion Surface
+
+### 1.1 Endpoint
+
+```
+POST /governance/ingest-policy
+Content-Type: application/json
+```
+
+Accepts any supported policy specification format and returns compiled enforcement
+artifacts plus a `policy_version_id` for pinning.
+
+**Request body:**
+
+```json
+{
+  "spec": { ... }
+}
+```
+
+The `spec` field accepts any of the following formats (auto-detected):
+
+| Format | Detection signal | Spec reference |
+|---|---|---|
+| Microsoft ACS | `behaviorDeclarations` key | https://github.com/microsoft/agent-control-specification |
+| Linux Foundation AAIF | `governedRunLoop` key | AAIF working group |
+| OSCAL 1.1.x | `oscal-version` key | https://pages.nist.gov/OSCAL/ |
+| Lula validation manifest | `kind: LulaValidation` | https://lula.dev |
+| Native CAGE YAML | (fallback) | `config/stpa_control_structure.yaml` schema |
+
+**Response:**
+
+```json
+{
+  "policy_version_id": "a1b2c3d4e5f6a7b8",
+  "format_detected": "acs",
+  "artifacts": {
+    "opa_content": "...",
+    "nemo_content": "...",
+    "python_content": "...",
+    "langgraph_content": "..."
+  },
+  "warnings": [],
+  "errors": []
+}
+```
+
+### 1.2 Policy Version ID
+
+The `policy_version_id` is a 16-character hex prefix of the SHA-256 hash of the
+compiled OPA policy content. It is stable across identical inputs and can be used to:
+
+- Pin a specific policy version in `validate_action()` calls
+- Detect policy drift in CI/CD pipelines (see [`scripts/check_policy_drift.py`](../scripts/check_policy_drift.py))
+- Audit which policy version was active at a given point in time
+
+### 1.3 Get Active Policy Version
+
+```
+GET /governance/policy-version
+```
+
+Returns the currently active policy version and registry hash:
+
+```json
+{
+  "policy_version_id": "a1b2c3d4e5f6a7b8",
+  "active_region": "US_FED",
+  "active_hash": "sha256-hex-of-active-registry"
+}
+```
+
+The `active_hash` is the SHA-256 hash of the active `ControlRegistry` regional
+profile JSON (see [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py)).
+
+---
+
+## 2. Governance Check Surface
+
+### 2.1 Endpoint
+
+```
+POST /governance/validate-action
+Content-Type: application/json
+```
+
+The primary enforcement endpoint. Every agent action must pass through this endpoint
+before execution.
+
+**Request body:**
+
+```json
+{
+  "action": "execute_trade",
+  "params": {
+    "amount": 50000,
+    "symbol": "AAPL",
+    "trader_role": "junior"
+  },
+  "policy_version_id": "a1b2c3d4e5f6a7b8"
+}
+```
+
+The `policy_version_id` field is optional. If provided, the governance engine
+validates that the active policy version matches before evaluating. If the version
+has changed, the request is rejected with HTTP 409 Conflict.
+
+**Response:**
+
+```json
+{
+  "verdict": "APPROVED | DENIED | DEFERRED",
+  "violations": [],
+  "audit_id": "uuid",
+  "policy_version_id": "a1b2c3d4e5f6a7b8",
+  "routing_seal": "hmac-sha256-hex"
+}
+```
+
+### 2.2 Verdict Semantics
+
+| Verdict | Meaning | HTTP status |
+|---|---|---|
+| `APPROVED` | All governance tiers passed; action may proceed | 200 |
+| `DENIED` | One or more governance tiers rejected the action | 403 |
+| `DEFERRED` | Action requires human approval; parked in DEFER queue | 202 |
+
+### 2.3 Governance Pipeline Tiers
+
+Every `validate_action()` call passes through the 7-tier governance pipeline:
+
+| Tier | Name | Implementation |
+|---|---|---|
+| 0 | Aho-Corasick / Prompt Injection Detection | [`prompt_injection_detector.py`](../src/gateway/governance/prompt_injection_detector.py) |
+| 1 | NeMo Guardrails | [`nemo/manager.py`](../src/gateway/governance/nemo/manager.py) |
+| 2 | STPA Validator | [`stpa_validator.py`](../src/gateway/governance/stpa_validator.py) |
+| 3 | OPA RBAC | [`symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) |
+| 4 | CBF / Token Quota | [`cbf.py`](../src/gateway/governance/cbf.py) |
+| 5 | Consensus / Multi-Agent | [`consensus.py`](../src/gateway/governance/consensus.py) |
+| 6 | DoWhy Causal Gatekeeper | [`causal_gatekeeper.py`](../src/gateway/governance/causal_gatekeeper.py) |
+
+---
+
+## 3. Routing Seal Contract
+
+### 3.1 Header
+
+```
+X-CAGE-Routing-Seal: <hmac-sha256-hex>
+```
+
+The routing seal is an HMAC-SHA256 signature over the canonical request payload,
+computed using the deployment's routing seal key (loaded from Kubernetes Secret).
+
+**Purpose:** Proves that the request passed through the CAGE governance pipeline
+and was not injected directly into the backend, bypassing governance.
+
+### 3.2 Verification
+
+Backend services **must** verify the routing seal before processing any request.
+Requests without a valid seal must be rejected with HTTP 403.
+
+**Implementation:** [`routing_seal.py`](../src/gateway/governance/routing_seal.py)
+
+### 3.3 Seal Lifetime
+
+Routing seals are single-use and expire after 60 seconds. Replayed seals are
+rejected by the backend.
+
+---
+
+## 4. Versioning Guarantees
+
+### 4.1 Stable Surface (no breaking changes without major version bump)
+
+The following are guaranteed stable across minor versions:
+
+- `POST /governance/ingest-policy` request/response schema
+- `POST /governance/validate-action` request/response schema
+- `policy_version_id` format (16-char hex prefix of SHA-256)
+- `X-CAGE-Routing-Seal` header name and HMAC-SHA256 algorithm
+- `GovernanceControl` enum values (`CTRL_*` identifiers)
+- UCA YAML schema (`config/stpa_control_structure.yaml`)
+
+### 4.2 Experimental Surface (may change in minor versions)
+
+The following may change without a major version bump:
+
+- AGP Semantic Policy output format (`config/agp/generated_semantic_policy.txt`)
+- Webhook payload schema (additive changes only; no field removals without notice)
+- Internal tier ordering within the 7-tier pipeline
+
+### 4.3 Version Pinning
+
+Use `policy_version_id` in `validate_action()` calls to pin a specific compiled
+policy version. This ensures that policy changes do not silently affect in-flight
+agent workflows.
+
+---
+
+## 5. Deprecation Policy
+
+1. **Deprecated endpoints** are announced in `CHANGELOG.md` with a minimum 90-day
+   notice period before removal.
+2. **Deprecated fields** in request/response schemas are marked with
+   `"deprecated": true` in the JSON Schema and removed after 90 days.
+3. **Breaking changes** to the stable surface require a major version bump
+   (e.g., `v1.0` → `v2.0`) and a minimum 180-day migration window.
+4. **Emergency deprecations** (security-critical) may have shorter notice periods;
+   operators are notified via the security advisory channel.
+
+---
+
+## 6. Compliance Obligations for Policy Authors
+
+When submitting policies via `POST /governance/ingest-policy`:
+
+- **ACS/AAIF specs:** No OSCAL update required. Compiled artifacts are subject to
+  the same NIST SP 800-53 control obligations as native CAGE YAML.
+- **OSCAL specs:** The OSCAL component definition in `compliance/oscal/` must be
+  updated within 2 business days of PR merge (Cat-N obligation).
+- **Lula specs:** A Lula validation update in `compliance/lula/` must be included
+  in the same PR or flagged for a follow-on PR.
+- **All formats:** Compiled OPA artifacts are subject to the policy drift gate
+  (`scripts/check_policy_drift.py`) in CI.
+
+---
+
+## 7. References
+
+| Document | Role |
+|---|---|
+| [`docs/CAGE_OPEN_INTEROP_SPEC.md`](CAGE_OPEN_INTEROP_SPEC.md) | Full external API surface contract |
+| [`docs/project/IMPLEMENTATION_PLAN_V2.md`](project/IMPLEMENTATION_PLAN_V2.md) | Phase A implementation plan |
+| [`src/gateway/governance/ingress/policy_translator.py`](../src/gateway/governance/ingress/policy_translator.py) | Unified ingress pipeline |
+| [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py) | `ControlRegistry` and `GovernanceControl` enum |
+| [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) | `validate_action()` — the single choke point |
+| [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) | Routing seal implementation |
+| [`scripts/check_policy_drift.py`](../scripts/check_policy_drift.py) | Policy drift detection gate |

@@ -343,7 +343,7 @@ flowchart TD
 
 **Tier 6 (Causal Gatekeeper):** Microsoft DoWhy causal inference model validates world-model integrity. The gatekeeper checks if the estimated causal relations match empirical treatment effects via a Placebo Treatment Refuter. If a placebo treatment produces a statistically significant effect (p < 0.05 or placebo effect > 0.2), the model assumptions are deemed poisoned and the trade is blocked.
 
-**Latency Mitigations (per-tier):** Each governance tier incorporates specific latency controls to keep the pipeline within the 200ms ISO-20022 SLA:
+**Latency Mitigations (per-tier):** Each governance tier incorporates specific latency controls to keep the pipeline within the 200 ms operational latency requirement imposed by real-time interbank rails (FedNow / SEPA Instant) to support synchronous, inline AML and fraud-screening pipelines:
 - **Tier 0** (STPA): Pure Python dict checks (<1ms)
 - **Tier 1** (Confidence): Float comparison (<1ms)
 - **Tier 2** (CBF): Redis `WATCH`/`MULTI`/`EXEC` atomic single-roundtrip (~5ms)

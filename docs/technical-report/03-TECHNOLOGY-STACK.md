@@ -249,5 +249,5 @@ Third-party compliance provider adapters are architecturally isolated in `src/in
 | **Cloud KMS (RSA-4096-SHA256)**| **Primary** governance signing — HSM-backed asymmetric signatures; non-repudiation for all governance decisions |
 | **HMAC-SHA256**                | **Fallback** routing seal (`X-CAGE-Routing-Seal` header); governance signature on `AgentState` (dev/CI only when KMS unavailable) |
 | **OTLP (gRPC)**                | OpenTelemetry → Langfuse ingestion; all trace and span export                     |
-| **ISO-20022**                  | Banking payments standard; drives the 200 ms end-to-end latency SLA               |
+| **ISO-20022**                  | Banking payments standard; message format reference for transaction fields          |
 | **OSCAL v1.0.4**               | NIST-standard machine-readable compliance artifact format                         |

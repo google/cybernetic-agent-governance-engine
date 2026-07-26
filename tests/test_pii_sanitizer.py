@@ -82,3 +82,27 @@ def test_singleton_returns_same_instance():
     a = _get_pii_sanitizer()
     b = _get_pii_sanitizer()
     assert a is b
+
+
+@pytest.mark.local
+def test_email_pattern_no_quadratic_backtracking(sanitizer):
+    # A crafted "no valid TLD" string used to force O(n^2) backtracking in the
+    # unbounded email regex. With the length-bounded quantifiers it stays
+    # linear, so a large adversarial input completes near-instantly.
+    import time
+
+    payload = "a@" + "a." * 60_000 + "!"
+    start = time.perf_counter()
+    result = sanitizer.sanitize(payload)
+    elapsed = time.perf_counter() - start
+    assert elapsed < 1.0, f"sanitize took {elapsed:.2f}s — regex backtracking regressed"
+    assert result == payload  # no email present, so nothing is redacted
+
+
+@pytest.mark.local
+def test_long_domain_email_still_redacted(sanitizer):
+    # A legitimate multi-label address must still be redacted after bounding.
+    assert (
+        sanitizer.sanitize("first.last+tag@mail.sub.example.co.uk")
+        == "[REDACTED_EMAIL]"
+    )

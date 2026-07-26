@@ -33,7 +33,11 @@ logger = logging.getLogger("GoverningFinancialAdvisor.Utils.Privacy")
 # Deterministic patterns for Zero-Trust Redaction (Defense-in-Depth)
 PII_PATTERNS = {
     "SSN": r"\b\d{3}[- ]?\d{2}[- ]?\d{4}\b",
-    "EMAIL": r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
+    # Local part and domain are length-bounded (RFC 5321: local ≤64, domain
+    # ≤255). The unbounded ``+`` form let a crafted no-TLD string like
+    # "a@a.a.a.…!" force O(n²) backtracking in re.sub, stalling the event loop
+    # (scrub_pii runs inline on unauthenticated /v1/chat/completions input).
+    "EMAIL": r"\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Z|a-z]{2,}\b",
     "CREDIT_CARD": r"\b(?:\d[ -]*?){13,16}\b",
     "PHONE": r"\b(?:\+?1[-. ]?)?\(?([0-9]{3})\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})\b",
 }

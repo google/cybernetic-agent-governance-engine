@@ -464,7 +464,7 @@ Both critics are queried **concurrently** via `asyncio.gather()` with a 30-secon
 | Split vote or any `ESCALATE` | Routed to `hitl_escalator.py` for human review |
 | Unanimous `ERROR` | Escalated (fail-closed; prevents DoS bypass) |
 
-Trades below $10,000 receive an immediate `SKIPPED` result with zero LLM calls, preserving the 200ms ISO-20022 latency SLA.
+Trades below $10,000 receive an immediate `SKIPPED` result with zero LLM calls, preserving the 200 ms latency budget required by real-time interbank rails (FedNow / SEPA Instant) to support synchronous, inline AML and fraud-screening pipelines.
 
 ### 13.4 FRIA Zone Classification for Agent Outputs
 

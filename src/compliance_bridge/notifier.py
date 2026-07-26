@@ -87,8 +87,14 @@ def _build_critical_alert_body(
                     "fields": [
                         {"type": "mrkdwn", "text": f"*Control:* `{f.control_id}`"},
                         {"type": "mrkdwn", "text": f"*Result:* {f.result}"},
-                        {"type": "mrkdwn", "text": f"*Finding ID:* {f.finding_id}"},
-                        {"type": "mrkdwn", "text": f"*Remarks:* {f.remarks or 'none'}"},
+                        {
+                            "type": "mrkdwn",
+                            "text": f"*Finding ID:* {_escape_slack_mrkdwn(f.finding_id)}",
+                        },
+                        {
+                            "type": "mrkdwn",
+                            "text": f"*Remarks:* {_escape_slack_mrkdwn(f.remarks or 'none')}",
+                        },
                     ],
                 }
                 for f in critical_fails
@@ -99,7 +105,7 @@ def _build_critical_alert_body(
                     {
                         "type": "mrkdwn",
                         "text": (
-                            f"Audit ID: {audit_id} | "
+                            f"Audit ID: {_escape_slack_mrkdwn(audit_id)} | "
                             f"Timestamp: {datetime.now(tz=timezone.utc).isoformat()} | "
                             "System: governance-gateway-01"
                         ),

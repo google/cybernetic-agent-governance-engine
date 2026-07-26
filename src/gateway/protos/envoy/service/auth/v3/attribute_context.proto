@@ -1,0 +1,126 @@
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// Vendored from envoy-api (Apache 2.0) — envoy.service.auth.v3.AttributeContext
+// Source: https://github.com/envoyproxy/envoy/blob/main/api/envoy/service/auth/v3/attribute_context.proto
+// Simplified subset sufficient for CAGE AgentGatewayAdapter (ext_authz Check).
+
+syntax = "proto3";
+
+package envoy.service.auth.v3;
+
+option java_package = "io.envoyproxy.envoy.service.auth.v3";
+option java_outer_classname = "AttributeContextProto";
+option java_multiple_files = true;
+
+// The source of a network activity, such as starting a TCP connection.
+// In a multi hop network activity, the source represents the sender of the
+// last hop.
+message AttributeContext {
+  // Represents a network request, such as an HTTP request.
+  message HttpRequest {
+    // The unique ID for a request, which can be propagated to downstream
+    // systems. The ID should have low probability of collision within a single
+    // day for a specific service.
+    string id = 1;
+
+    // The HTTP request method, such as ``GET``, ``POST``.
+    string method = 2;
+
+    // The HTTP request headers. If multiple headers share the same key, they
+    // must be merged according to the HTTP spec. All header keys must be
+    // lower-cased, because HTTP header keys are case-insensitive.
+    map<string, string> headers = 3;
+
+    // The request target as it appears in the first line of the HTTP request.
+    // This includes the URL path and query-string. No decoding is performed.
+    string path = 4;
+
+    // The HTTP request ``Host`` or ``:authority`` header value.
+    string host = 5;
+
+    // The HTTP URL scheme, such as ``http`` and ``https``.
+    string scheme = 6;
+
+    // The HTTP request ``Size``. If unknown, it must be -1.
+    int64 size = 7;
+
+    // The network protocol used with the request, such as "HTTP/1.0",
+    // "HTTP/1.1", or "HTTP/2".
+    string protocol = 8;
+
+    // The HTTP request body.
+    string body = 9;
+
+    // The HTTP request raw body. This is used when the body is not a valid
+    // UTF-8 string.
+    bytes raw_body = 10;
+  }
+
+  // Represents a network request, such as an HTTP request.
+  message Request {
+    // The timestamp when the proxy receives the first byte of the request.
+    // For HTTP requests, the timestamp is the time when the proxy receives
+    // the request line.
+    int64 time = 1;
+
+    // Represents an HTTP request or an HTTP-like request.
+    HttpRequest http = 2;
+  }
+
+  // Represents a peer in a network activity.
+  message Peer {
+    // The address of the peer, this is typically the IP address.
+    // It can also be UDS path, or others.
+    string address = 1;
+
+    // The canonical service name of the peer.
+    // It should be set to :ref:`the HTTP x-forwarded-client-cert
+    // <config_http_conn_man_headers_x-forwarded-client-cert>` ``URI`` value
+    // if available, e.g. ``spiffe://trust-domain/ns/default/sa/trader-agent``.
+    string service = 2;
+
+    // The labels associated with the peer.
+    map<string, string> labels = 3;
+
+    // The authenticated identity of this peer.
+    // For example, the identity associated with the workload spiffe cert could
+    // be ``spiffe://trust-domain/ns/default/sa/trader-agent``.
+    // For unauthenticated requests, this should be empty.
+    string principal = 4;
+
+    // The X.509 certificate used to authenticate this peer, if present.
+    // It is in URL-encoded PEM format.
+    string certificate = 5;
+  }
+
+  // The source of a network activity, such as starting a TCP connection.
+  Peer source = 1;
+
+  // The destination of a network activity, such as accepting a TCP connection.
+  Peer destination = 2;
+
+  // Represents a network request, such as an HTTP request.
+  Request request = 4;
+
+  // This is analogous to http_request.headers, however these contents will not
+  // be sent to the upstream server. Context_extensions provide an opportunity
+  // to pass additional information to the auth server without modifying the
+  // proto definition. It maps to the internal opaque context in the filter
+  // chain.
+  map<string, string> context_extensions = 10;
+
+  // Dynamic metadata associated with the request.
+  map<string, string> metadata_context = 11;
+}
