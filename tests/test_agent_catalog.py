@@ -29,7 +29,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Python mirror of the agent_catalog.rego policy logic
 # ---------------------------------------------------------------------------
@@ -71,9 +70,7 @@ def _evaluate_catalog_policy(
 
     # Caller not in catalog
     if caller_sub not in catalog:
-        violations.append(
-            f"caller '{caller_sub}' is not in the approved agent catalog"
-        )
+        violations.append(f"caller '{caller_sub}' is not in the approved agent catalog")
         return False, violations
 
     agent = catalog[caller_sub]
@@ -232,7 +229,7 @@ class TestAgentCatalogPolicy:
 
     def test_trader_cannot_call_risk_assessment(self):
         """Trader agent cannot call risk_assessment (not in allowed_tools)."""
-        allow, violations = _evaluate_catalog_policy(
+        allow, _violations = _evaluate_catalog_policy(
             caller_sub="spiffe://trust-domain/ns/default/sa/trader-agent",
             tool_name="risk_assessment",
             catalog=self._CATALOG,
@@ -241,7 +238,7 @@ class TestAgentCatalogPolicy:
 
     def test_empty_caller_sub_denied(self):
         """Empty caller sub → denied (not in catalog)."""
-        allow, violations = _evaluate_catalog_policy(
+        allow, _violations = _evaluate_catalog_policy(
             caller_sub="",
             tool_name="execute_trade",
             catalog=self._CATALOG,
@@ -250,7 +247,7 @@ class TestAgentCatalogPolicy:
 
     def test_empty_tool_name_denied(self):
         """Empty tool name → denied (not in allowed_tools)."""
-        allow, violations = _evaluate_catalog_policy(
+        allow, _violations = _evaluate_catalog_policy(
             caller_sub="spiffe://trust-domain/ns/default/sa/trader-agent",
             tool_name="",
             catalog=self._CATALOG,

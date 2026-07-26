@@ -86,7 +86,9 @@ def _make_uca(
     if "opa" in eff_enforcement and opa_rule is None:
         opa_rule = OpaRuleModel(decision="DENY", message=f"OPA deny for {uca_id}")
     if "nemo" in eff_enforcement and nemo_rail is None:
-        nemo_rail = NemoRailModel(flow_name=f"flow_{uca_id.lower()}", message=f"nemo block {uca_id}")
+        nemo_rail = NemoRailModel(
+            flow_name=f"flow_{uca_id.lower()}", message=f"nemo block {uca_id}"
+        )
     return UCAModel(
         id=uca_id,
         action=action,
@@ -110,41 +112,70 @@ class TestGenerateAGPOperatorMapping:
         uca = _make_uca("UCA-001", "execute_trade", operator="is_null", param="amount")
         cs = _make_cs([uca])
         output = generate_agp(cs)
-        assert 'Do not execute "execute_trade" if "amount" is null or missing.' in output
+        assert (
+            'Do not execute "execute_trade" if "amount" is null or missing.' in output
+        )
 
     def test_is_false_operator_produces_correct_nl(self):
-        uca = _make_uca("UCA-002", "execute_trade", operator="is_false", param="approved")
+        uca = _make_uca(
+            "UCA-002", "execute_trade", operator="is_false", param="approved"
+        )
         cs = _make_cs([uca])
         output = generate_agp(cs)
-        assert 'Do not execute "execute_trade" if "approved" is false or not set to true.' in output
+        assert (
+            'Do not execute "execute_trade" if "approved" is false or not set to true.'
+            in output
+        )
 
     def test_greater_than_operator_with_threshold_produces_correct_nl(self):
-        uca = _make_uca("UCA-003", "execute_trade", operator="greater_than", param="amount", threshold=500000.0)
+        uca = _make_uca(
+            "UCA-003",
+            "execute_trade",
+            operator="greater_than",
+            param="amount",
+            threshold=500000.0,
+        )
         cs = _make_cs([uca])
         output = generate_agp(cs)
         assert 'Do not execute "execute_trade" if "amount" exceeds 500000.0.' in output
 
     def test_less_than_operator_with_threshold_produces_correct_nl(self):
-        uca = _make_uca("UCA-004", "execute_trade", operator="less_than", param="confidence", threshold=0.8)
+        uca = _make_uca(
+            "UCA-004",
+            "execute_trade",
+            operator="less_than",
+            param="confidence",
+            threshold=0.8,
+        )
         cs = _make_cs([uca])
         output = generate_agp(cs)
         assert 'Do not execute "execute_trade" if "confidence" is below 0.8.' in output
 
     def test_equals_operator_produces_correct_nl(self):
-        uca = _make_uca("UCA-005", "execute_trade", operator="equals", param="currency", threshold=0.0)
+        uca = _make_uca(
+            "UCA-005",
+            "execute_trade",
+            operator="equals",
+            param="currency",
+            threshold=0.0,
+        )
         cs = _make_cs([uca])
         output = generate_agp(cs)
         assert 'Do not execute "execute_trade" if "currency" equals' in output
 
     def test_composite_condition_produces_general_constraint(self):
-        uca = _make_uca("UCA-006", "execute_trade", composite="amount > 0 AND approved == True")
+        uca = _make_uca(
+            "UCA-006", "execute_trade", composite="amount > 0 AND approved == True"
+        )
         cs = _make_cs([uca])
         output = generate_agp(cs)
         assert 'Do not execute "execute_trade" when:' in output
         assert "amount > 0 AND approved == True" in output
 
     def test_nemo_rail_message_produces_block_sentence(self):
-        nemo_rail = NemoRailModel(flow_name="block_flow", message="contains CBRN content")
+        nemo_rail = NemoRailModel(
+            flow_name="block_flow", message="contains CBRN content"
+        )
         uca = _make_uca(
             "UCA-007",
             "generate_response",
@@ -157,10 +188,14 @@ class TestGenerateAGPOperatorMapping:
         assert "Block any request that contains CBRN content" in output
 
     def test_is_true_operator_produces_correct_nl(self):
-        uca = _make_uca("UCA-008", "execute_trade", operator="is_true", param="emergency_override")
+        uca = _make_uca(
+            "UCA-008", "execute_trade", operator="is_true", param="emergency_override"
+        )
         cs = _make_cs([uca])
         output = generate_agp(cs)
-        assert 'Do not execute "execute_trade" if "emergency_override" is true.' in output
+        assert (
+            'Do not execute "execute_trade" if "emergency_override" is true.' in output
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +235,8 @@ class TestGenerateAGPBudget:
             _make_uca(
                 f"UCA-{i:03d}",
                 f"action_{i}",
-                composite=f"very long composite condition that takes up space in the output " * 3,
+                composite="very long composite condition that takes up space in the output "
+                * 3,
             )
             for i in range(50)
         ]

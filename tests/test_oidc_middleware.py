@@ -28,7 +28,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -86,6 +85,7 @@ class TestValidateOidcToken:
     async def test_pyjwt_not_installed_returns_empty(self):
         """If PyJWT is not installed, validation is skipped and empty dict returned."""
         import builtins
+
         real_import = builtins.__import__
 
         def _mock_import(name, *args, **kwargs):
@@ -133,7 +133,9 @@ class TestValidateOidcToken:
         token = _make_jwt_parts({"alg": "RS256", "kid": "unknown-kid"}, {"sub": "user"})
 
         with patch.object(gm, "_OIDC_JWKS_URI", "https://example.com/jwks"):
-            with patch.object(gm, "_fetch_jwks", return_value={"_fetched_at": time.monotonic()}):
+            with patch.object(
+                gm, "_fetch_jwks", return_value={"_fetched_at": time.monotonic()}
+            ):
                 with pytest.raises(HTTPException) as exc_info:
                     await gm.validate_oidc_token(token)
         assert exc_info.value.status_code == 401
@@ -143,7 +145,9 @@ class TestValidateOidcToken:
         """Expired JWT → HTTP 401."""
         import src.gateway.server.governance_middleware as gm
 
-        token = _make_jwt_parts({"alg": "RS256", "kid": "k1"}, {"sub": "user", "exp": 1})
+        token = _make_jwt_parts(
+            {"alg": "RS256", "kid": "k1"}, {"sub": "user", "exp": 1}
+        )
         fake_key_data = {"kty": "RSA", "kid": "k1", "n": "fake", "e": "AQAB"}
 
         mock_jwt = MagicMock()
@@ -170,7 +174,11 @@ class TestValidateOidcToken:
 
         token = _make_jwt_parts({"alg": "RS256", "kid": "k1"}, {"sub": "user123"})
         fake_key_data = {"kty": "RSA", "kid": "k1", "n": "fake", "e": "AQAB"}
-        fake_claims = {"sub": "user123", "iss": "https://issuer.example.com", "scope": "read write"}
+        fake_claims = {
+            "sub": "user123",
+            "iss": "https://issuer.example.com",
+            "scope": "read write",
+        }
 
         mock_jwt = MagicMock()
         mock_jwt.ExpiredSignatureError = type("ExpiredSignatureError", (Exception,), {})
@@ -303,5 +311,7 @@ class TestOIDCValidationMiddleware:
         assert call_count == 0
         # A response should have been sent
         assert len(responses_sent) > 0
-        status_msg = next(m for m in responses_sent if m.get("type") == "http.response.start")
+        status_msg = next(
+            m for m in responses_sent if m.get("type") == "http.response.start"
+        )
         assert status_msg["status"] == 401

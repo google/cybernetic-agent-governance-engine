@@ -157,7 +157,9 @@ def _compute_version_id(content: str) -> str:
 
 def _translate_acs(spec: dict[str, Any], bundle: ArtifactBundle) -> None:
     """Route ACS spec through the ACS adapter and STPA compiler."""
-    from src.gateway.governance.ingress.acs_adapter import acs_to_control_structure_patch
+    from src.gateway.governance.ingress.acs_adapter import (
+        acs_to_control_structure_patch,
+    )
     from src.gateway.governance.stpa_compiler import (
         ControlStructureModel,
         compile_control_structure,
@@ -175,7 +177,9 @@ def _translate_acs(spec: dict[str, Any], bundle: ArtifactBundle) -> None:
 
 def _translate_aaif(spec: dict[str, Any], bundle: ArtifactBundle) -> None:
     """Route AAIF spec through the AAIF adapter and STPA compiler."""
-    from src.gateway.governance.ingress.aaif_adapter import aaif_to_control_structure_patch
+    from src.gateway.governance.ingress.aaif_adapter import (
+        aaif_to_control_structure_patch,
+    )
 
     try:
         patch = aaif_to_control_structure_patch(spec)
@@ -189,7 +193,9 @@ def _translate_aaif(spec: dict[str, Any], bundle: ArtifactBundle) -> None:
 
 def _translate_oscal(spec: dict[str, Any], bundle: ArtifactBundle) -> None:
     """Route OSCAL document through the OSCAL adapter and STPA compiler."""
-    from src.gateway.governance.ingress.oscal_adapter import oscal_to_control_structure_patch
+    from src.gateway.governance.ingress.oscal_adapter import (
+        oscal_to_control_structure_patch,
+    )
 
     try:
         patch = oscal_to_control_structure_patch(spec)
@@ -284,7 +290,9 @@ def _compile_patch(patch: dict[str, Any], bundle: ArtifactBundle) -> None:
                 targets.add(t)
 
     if not targets:
-        bundle.warnings.append("No enforcement targets found in UCAs — skipping compilation.")
+        bundle.warnings.append(
+            "No enforcement targets found in UCAs — skipping compilation."
+        )
         return
 
     try:

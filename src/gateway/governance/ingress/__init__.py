@@ -44,9 +44,9 @@ __all__ = [
     "AgwAdapter",
     "AgwAdapterResult",
     "AgwRequest",
-    "get_agw_adapter",
     "ArtifactBundle",
     "PolicyFormat",
     "detect_format",
+    "get_agw_adapter",
     "translate_policy",
 ]

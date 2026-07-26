@@ -46,7 +46,7 @@ _MINIMAL_LULA_MANIFEST = {
         "policy": {
             "opa": {
                 "rego": (
-                    'package lula\n\nimport future.keywords.if\n\n'
+                    "package lula\n\nimport future.keywords.if\n\n"
                     'validate if {\n  input["opa-deployment"].status.readyReplicas >= 1\n}\n'
                 )
             }
@@ -64,7 +64,10 @@ _LULA_WITH_MODULES = {
                 "rego": "package lula\nvalidate if { true }",
                 "modules": [
                     "package helper\nhelper_rule if { true }",
-                    {"name": "named_module", "rego": "package named\nnamed_rule if { true }"},
+                    {
+                        "name": "named_module",
+                        "rego": "package named\nnamed_rule if { true }",
+                    },
                 ],
             }
         },

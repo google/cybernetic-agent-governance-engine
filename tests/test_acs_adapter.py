@@ -173,7 +173,11 @@ class TestTranslateACS:
     def test_multiple_behaviors_all_translated(self):
         spec = {
             "behaviorDeclarations": [
-                {"id": f"ACS-{i:03d}", "action": f"action_{i}", "description": f"desc {i}"}
+                {
+                    "id": f"ACS-{i:03d}",
+                    "action": f"action_{i}",
+                    "description": f"desc {i}",
+                }
                 for i in range(5)
             ]
         }

@@ -195,7 +195,18 @@ class TestTranslatePolicy:
         for fmt, spec in [
             ("acs", {"behaviorDeclarations": []}),
             ("aaif", {"governedRunLoop": {"stages": []}}),
-            ("oscal", {"oscal-version": "1.1.2", "component-definition": {"metadata": {"title": "T", "oscal-version": "1.1.2"}, "components": []}}),
+            (
+                "oscal",
+                {
+                    "oscal-version": "1.1.2",
+                    "component-definition": {
+                        "metadata": {"title": "T", "oscal-version": "1.1.2"},
+                        "components": [],
+                    },
+                },
+            ),
         ]:
             bundle = translate_policy(spec)
-            assert bundle.format_detected == fmt, f"Expected {fmt}, got {bundle.format_detected}"
+            assert bundle.format_detected == fmt, (
+                f"Expected {fmt}, got {bundle.format_detected}"
+            )

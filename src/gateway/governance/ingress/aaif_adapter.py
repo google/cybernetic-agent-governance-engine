@@ -136,7 +136,9 @@ def _map_stage_constraint(constraint: dict[str, Any]) -> dict[str, Any]:
     if param:
         condition["param"] = param
     if value is not None:
-        condition["threshold"] = float(value) if isinstance(value, (int, float)) else value
+        condition["threshold"] = (
+            float(value) if isinstance(value, (int, float)) else value
+        )
 
     return condition
 
@@ -151,8 +153,12 @@ def _map_hook_to_uca(
     hook_id = hook.get("id") or f"AAIF-{stage_name.upper()}-{index:03d}"
     action = hook.get("action") or hook.get("controlAction") or stage_name
     description = hook.get("description", f"AAIF governance hook: {hook_id}")
-    hazard_refs = hook.get("hazardRefs") or hook.get("hazard_refs") or [f"H-AAIF-{stage_name}"]
-    enforcement = hook.get("enforcement") or stage_info.get("enforcement") or _DEFAULT_ENFORCEMENT
+    hazard_refs = (
+        hook.get("hazardRefs") or hook.get("hazard_refs") or [f"H-AAIF-{stage_name}"]
+    )
+    enforcement = (
+        hook.get("enforcement") or stage_info.get("enforcement") or _DEFAULT_ENFORCEMENT
+    )
 
     constraints = hook.get("constraints") or []
     if constraints:
@@ -223,11 +229,14 @@ def translate_aaif(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str,
 
     for stage in stages:
         stage_name = stage.get("name") or stage.get("id") or "unknown"
-        stage_info = _AAIF_STAGE_TO_CAGE_TIER.get(stage_name, {
-            "tier": -1,
-            "name": f"Unknown AAIF stage: {stage_name}",
-            "enforcement": _DEFAULT_ENFORCEMENT,
-        })
+        stage_info = _AAIF_STAGE_TO_CAGE_TIER.get(
+            stage_name,
+            {
+                "tier": -1,
+                "name": f"Unknown AAIF stage: {stage_name}",
+                "enforcement": _DEFAULT_ENFORCEMENT,
+            },
+        )
 
         stage_map[stage_name] = {
             **stage_info,

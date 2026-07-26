@@ -29,7 +29,6 @@ from src.gateway.server.agent_gateway_adapter import (
     parse_jsonrpc_body,
 )
 
-
 # ---------------------------------------------------------------------------
 # parse_jsonrpc_body tests
 # ---------------------------------------------------------------------------
@@ -64,43 +63,51 @@ class TestParseJsonRpcBody:
 
     def test_mcp_tools_call_shape(self):
         """MCP tools/call shape: params.name + params.arguments."""
-        body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "params": {
-                "name": "execute_trade",
-                "arguments": {"symbol": "AAPL", "amount": 100},
-            },
-        })
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "execute_trade",
+                    "arguments": {"symbol": "AAPL", "amount": 100},
+                },
+            }
+        )
         tool_name, params = parse_jsonrpc_body(body)
         assert tool_name == "execute_trade"
         assert params == {"symbol": "AAPL", "amount": 100}
 
     def test_simplified_shape(self):
         """Simplified shape: method is tool name, params is arguments."""
-        body = json.dumps({
-            "method": "market_analysis",
-            "params": {"ticker": "GOOG"},
-        })
+        body = json.dumps(
+            {
+                "method": "market_analysis",
+                "params": {"ticker": "GOOG"},
+            }
+        )
         tool_name, params = parse_jsonrpc_body(body)
         assert tool_name == "market_analysis"
         assert params == {"ticker": "GOOG"}
 
     def test_bytes_input_accepted(self):
-        body = json.dumps({
-            "method": "get_portfolio",
-            "params": {},
-        }).encode()
+        body = json.dumps(
+            {
+                "method": "get_portfolio",
+                "params": {},
+            }
+        ).encode()
         tool_name, params = parse_jsonrpc_body(body)
         assert tool_name == "get_portfolio"
         assert params == {}
 
     def test_body_too_large_raises(self):
         """Body exceeding 64KB limit must raise ParseError (fail-closed)."""
-        large_body = json.dumps({
-            "method": "execute_trade",
-            "params": {"data": "x" * 70000},
-        })
+        large_body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"data": "x" * 70000},
+            }
+        )
         with pytest.raises(ParseError, match="exceeds limit"):
             parse_jsonrpc_body(large_body)
 
@@ -195,10 +202,12 @@ class TestHandleCheckRequest:
     @pytest.mark.asyncio
     async def test_body_too_large_returns_denied_403(self):
         """Body > 64KB → DeniedHttpResponse(403) fail-closed."""
-        large_body = json.dumps({
-            "method": "execute_trade",
-            "params": {"data": "x" * 70000},
-        })
+        large_body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"data": "x" * 70000},
+            }
+        )
         resp = await handle_check_request(large_body)
         assert "denied_response" in resp
         assert resp["denied_response"]["status"]["code"] == 403
@@ -206,10 +215,12 @@ class TestHandleCheckRequest:
     @pytest.mark.asyncio
     async def test_governance_approve_returns_ok_with_seal(self):
         """APPROVED verdict → OkHttpResponse with x-cage-routing-seal header."""
-        body = json.dumps({
-            "method": "execute_trade",
-            "params": {"symbol": "AAPL", "amount": 100},
-        })
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "amount": 100},
+            }
+        )
         mock_result = {
             "verdict": "APPROVED",
             "violations": [],
@@ -222,8 +233,11 @@ class TestHandleCheckRequest:
         # inside handle_check_request(). Patch the singletons module attribute so the
         # lazy import picks up the mock object.
         import src.gateway.governance.singletons as _singletons
+
         with patch.object(_singletons, "symbolic_governor", mock_gov):
-            resp = await handle_check_request(body, caller_principal="spiffe://test/agent")
+            resp = await handle_check_request(
+                body, caller_principal="spiffe://test/agent"
+            )
 
         assert "ok_response" in resp
         headers = resp["ok_response"]["headers"]
@@ -235,10 +249,12 @@ class TestHandleCheckRequest:
     @pytest.mark.asyncio
     async def test_governance_deny_returns_denied_403(self):
         """DENIED verdict → DeniedHttpResponse(403) with violation detail."""
-        body = json.dumps({
-            "method": "execute_trade",
-            "params": {"symbol": "AAPL", "amount": 9999999},
-        })
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "amount": 9999999},
+            }
+        )
         mock_result = {
             "verdict": "DENIED",
             "violations": ["trade amount exceeds limit"],
@@ -248,6 +264,7 @@ class TestHandleCheckRequest:
         mock_gov = MagicMock()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
         import src.gateway.governance.singletons as _singletons
+
         with patch.object(_singletons, "symbolic_governor", mock_gov):
             resp = await handle_check_request(body)
 
@@ -260,10 +277,12 @@ class TestHandleCheckRequest:
     @pytest.mark.asyncio
     async def test_manual_review_returns_deferred_202(self):
         """MANUAL_REVIEW verdict → DeniedHttpResponse(202) with DEFERRED body."""
-        body = json.dumps({
-            "method": "execute_trade",
-            "params": {"symbol": "AAPL", "amount": 100},
-        })
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "amount": 100},
+            }
+        )
         mock_result = {
             "verdict": "MANUAL_REVIEW",
             "violations": [],
@@ -273,6 +292,7 @@ class TestHandleCheckRequest:
         mock_gov = MagicMock()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
         import src.gateway.governance.singletons as _singletons
+
         with patch.object(_singletons, "symbolic_governor", mock_gov):
             resp = await handle_check_request(body)
 
@@ -285,13 +305,16 @@ class TestHandleCheckRequest:
     @pytest.mark.asyncio
     async def test_validate_action_exception_returns_denied_403(self):
         """Unexpected exception in validate_action → DeniedHttpResponse(403) fail-closed."""
-        body = json.dumps({
-            "method": "execute_trade",
-            "params": {},
-        })
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {},
+            }
+        )
         mock_gov = MagicMock()
         mock_gov.validate_action = AsyncMock(side_effect=RuntimeError("unexpected"))
         import src.gateway.governance.singletons as _singletons
+
         with patch.object(_singletons, "symbolic_governor", mock_gov):
             resp = await handle_check_request(body)
 
@@ -303,19 +326,27 @@ class TestHandleCheckRequest:
     @pytest.mark.asyncio
     async def test_caller_principal_injected_into_params(self):
         """caller_principal is injected as _caller_principal in params."""
-        body = json.dumps({
-            "method": "execute_trade",
-            "params": {"symbol": "AAPL"},
-        })
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL"},
+            }
+        )
         captured_params: dict = {}
 
         async def _capture_validate(action, params, **kwargs):
             captured_params.update(params)
-            return {"verdict": "APPROVED", "violations": [], "seal": "s", "thread_id": ""}
+            return {
+                "verdict": "APPROVED",
+                "violations": [],
+                "seal": "s",
+                "thread_id": "",
+            }
 
         mock_gov = MagicMock()
         mock_gov.validate_action = _capture_validate
         import src.gateway.governance.singletons as _singletons
+
         with patch.object(_singletons, "symbolic_governor", mock_gov):
             await handle_check_request(body, caller_principal="spiffe://trust/agent")
 

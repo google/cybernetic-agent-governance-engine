@@ -655,7 +655,9 @@ async def _fetch_jwks() -> dict[str, Any]:
         with urllib.request.urlopen(_OIDC_JWKS_URI, timeout=5) as resp:  # noqa: S310
             jwks_doc = json.loads(resp.read())
     except Exception as exc:
-        raise RuntimeError(f"Failed to fetch JWKS from {_OIDC_JWKS_URI}: {exc}") from exc
+        raise RuntimeError(
+            f"Failed to fetch JWKS from {_OIDC_JWKS_URI}: {exc}"
+        ) from exc
 
     keys: dict[str, Any] = {}
     for key_data in jwks_doc.get("keys", []):
@@ -801,7 +803,11 @@ async def validate_oidc_token(token: str) -> dict[str, Any]:
         "iss": claims.get("iss", ""),
         "scope": claims.get("scope", claims.get("scp", "")),
     }
-    logger.debug("OIDC: validated caller sub=%s iss=%s", caller_identity["sub"], caller_identity["iss"])
+    logger.debug(
+        "OIDC: validated caller sub=%s iss=%s",
+        caller_identity["sub"],
+        caller_identity["iss"],
+    )
     return caller_identity
 
 
@@ -850,7 +856,7 @@ class OIDCValidationMiddleware:
             await self.app(scope, receive, send)
             return
 
-        token = auth_header[len("Bearer "):]
+        token = auth_header[len("Bearer ") :]
 
         try:
             caller_identity = await validate_oidc_token(token)

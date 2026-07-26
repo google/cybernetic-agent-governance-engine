@@ -50,8 +50,14 @@ _MINIMAL_OSCAL_DOC = {
                                 "control-id": "ac-3",
                                 "description": "Access enforcement via OPA RBAC",
                                 "props": [
-                                    {"name": "implementation-status", "value": "implemented"},
-                                    {"name": "enforcement-target", "value": "opa,python"},
+                                    {
+                                        "name": "implementation-status",
+                                        "value": "implemented",
+                                    },
+                                    {
+                                        "name": "enforcement-target",
+                                        "value": "opa,python",
+                                    },
                                 ],
                             }
                         ],
@@ -77,7 +83,10 @@ _PLANNED_STATUS_OSCAL_DOC = {
                                 "control-id": "si-10",
                                 "description": "Input validation planned",
                                 "props": [
-                                    {"name": "implementation-status", "value": "planned"},
+                                    {
+                                        "name": "implementation-status",
+                                        "value": "planned",
+                                    },
                                 ],
                             }
                         ]
@@ -241,7 +250,10 @@ class TestTranslateOSCAL:
                         "control-implementations": [
                             {
                                 "implemented-requirements": [
-                                    {"uuid": "req-no-ctrl", "description": "No control-id"}
+                                    {
+                                        "uuid": "req-no-ctrl",
+                                        "description": "No control-id",
+                                    }
                                 ]
                             }
                         ],

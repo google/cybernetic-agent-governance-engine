@@ -163,7 +163,9 @@ def upload_agp_policy(
             "AGPPolicyUploader: GCP project not specified. "
             "Set GOOGLE_CLOUD_PROJECT environment variable or pass project= argument."
         )
-    effective_location = location or os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
+    effective_location = location or os.environ.get(
+        "GOOGLE_CLOUD_LOCATION", "us-central1"
+    )
     effective_policy_id = policy_id or os.environ.get("CAGE_AGP_POLICY_ID")
 
     if dry_run:
@@ -200,18 +202,26 @@ def upload_agp_policy(
 
         if effective_policy_id:
             # Update existing policy
-            url = f"{api_base}/{parent}/semanticGovernancePolicies/{effective_policy_id}"
-            response = _requests.patch(url, json=policy_body, headers=headers, timeout=30)
+            url = (
+                f"{api_base}/{parent}/semanticGovernancePolicies/{effective_policy_id}"
+            )
+            response = _requests.patch(
+                url, json=policy_body, headers=headers, timeout=30
+            )
             operation = "updated"
         else:
             # Create new policy
             url = f"{api_base}/{parent}/semanticGovernancePolicies"
-            response = _requests.post(url, json=policy_body, headers=headers, timeout=30)
+            response = _requests.post(
+                url, json=policy_body, headers=headers, timeout=30
+            )
             operation = "created"
 
         response.raise_for_status()
         result = response.json()
-        resource_name = result.get("name", f"{parent}/semanticGovernancePolicies/unknown")
+        resource_name = result.get(
+            "name", f"{parent}/semanticGovernancePolicies/unknown"
+        )
 
         logger.info(
             "AGPPolicyUploader: policy %s successfully. resource=%s",
