@@ -1,0 +1,49 @@
+{
+    "agents": {
+        "spiffe://cage.internal/agent/financial-advisor": {
+            "display_name": "Financial Advisor Agent",
+            "allowed_tools": [
+                "get_portfolio",
+                "get_market_data",
+                "analyze_risk"
+            ],
+            "roles": [
+                "advisor"
+            ]
+        },
+        "spiffe://cage.internal/agent/trade-executor": {
+            "display_name": "Trade Executor Agent",
+            "allowed_tools": [
+                "execute_trade",
+                "get_portfolio",
+                "get_market_data"
+            ],
+            "roles": [
+                "trader"
+            ]
+        },
+        "spiffe://cage.internal/agent/compliance-monitor": {
+            "display_name": "Compliance Monitor Agent",
+            "allowed_tools": [
+                "get_portfolio",
+                "get_compliance_metrics",
+                "get_audit_trail"
+            ],
+            "roles": [
+                "compliance"
+            ]
+        },
+        "spiffe://cage.internal/agent/risk-manager": {
+            "display_name": "Risk Manager Agent",
+            "allowed_tools": [
+                "get_portfolio",
+                "get_market_data",
+                "analyze_risk",
+                "get_compliance_metrics"
+            ],
+            "roles": [
+                "risk_manager"
+            ]
+        }
+    }
+}

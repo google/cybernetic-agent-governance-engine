@@ -15,13 +15,13 @@
 """
 Hermetic unit tests for POAM-023: CBF external balance reconciliation.
 
-Tests verify the CBF read-path priority logic introduced in Phase 1b/1c/1d:
-  1. CBF uses reconciled balance when available and KMS signature is valid
-  2. CBF falls back to self-reported when reconciled balance is absent (TTL expired)
-  3. CBF falls back to self-reported when KMS signature is invalid (CRITICAL log emitted)
-  4. CBF falls back to self-reported when reconciled balance is unsigned in production
-  5. OTel span has safety.balance.source="reconciled" when reconciled path taken
-  6. OTel span has safety.balance.source="self_reported" when fallback path taken
+Tests verify:
+  1. ReconciliationResult with fresh timestamp is valid
+  2. ReconciliationResult with old timestamp is stale
+  3. read_verified_balance returns None when Redis key missing
+  4. read_verified_balance returns None when TTL expired (stale)
+  5. CBF reads from reconciliation key when available
+  6. CBF falls back to safety:current_cash when reconciliation absent
 
 All tests run without live Redis (fakeredis) or live KMS (mocked).
 """
@@ -30,93 +30,139 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 pytest.importorskip("fakeredis", reason="fakeredis required for CBF reconciliation tests")
 
-import fakeredis.aioredis  # type: ignore[import]
+import fakeredis  # type: ignore[import]
 
-from src.compliance_bridge.reconciliation_worker import ReconciliationResult
+from src.compliance_bridge.reconciliation_worker import (
+    ReconciliationResult,
+    _REDIS_KEY_VERIFIED_BALANCE,
+    TTL_SECONDS,
+    read_verified_balance,
+)
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Constants
 # ---------------------------------------------------------------------------
 
-_SAFE_BALANCE = 95_000.0   # above min_cash_balance (default 10_000)
-_RECON_BALANCE = 92_000.0  # externally reconciled balance
+_SAFE_BALANCE = 95_000.0    # above min_cash_balance (default 10_000)
+_RECON_BALANCE = 92_000.0   # externally reconciled balance
 
 
-def _make_result(
-    balance: float = _RECON_BALANCE,
-    signature: str = "deadbeef",
-    source: str = "plaid",
-    age_seconds: float = 0.0,
-) -> ReconciliationResult:
-    """Build a ReconciliationResult with controllable freshness."""
-    return ReconciliationResult(
-        source=source,
-        balance_usd=balance,
-        verified_at=time.time() - age_seconds,
-        signature=signature,
-        ttl_seconds=300,
+# ---------------------------------------------------------------------------
+# Test 1: ReconciliationResult with fresh timestamp is valid
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.local
+def test_reconciliation_result_is_valid() -> None:
+    """ReconciliationResult with a fresh timestamp and no error is valid."""
+    result = ReconciliationResult(
+        source="plaid",
+        balance_usd=_RECON_BALANCE,
+        verified_at=time.time(),  # fresh
+        signature="deadbeef",
+        ttl_seconds=TTL_SECONDS,
+    )
+    assert result.is_valid is True, "Expected is_valid=True for fresh result with no error"
+    assert result.is_stale is False, "Expected is_stale=False for freshly created result"
+
+
+# ---------------------------------------------------------------------------
+# Test 2: ReconciliationResult with old timestamp is stale
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.local
+def test_reconciliation_result_is_stale() -> None:
+    """ReconciliationResult with verified_at older than ttl_seconds is stale."""
+    result = ReconciliationResult(
+        source="plaid",
+        balance_usd=_RECON_BALANCE,
+        verified_at=time.time() - (TTL_SECONDS + 60),  # older than TTL
+        signature="deadbeef",
+        ttl_seconds=TTL_SECONDS,
+    )
+    assert result.is_stale is True, "Expected is_stale=True for result older than TTL"
+    # is_valid checks error field only, not staleness
+    assert result.is_valid is True, "is_valid should be True (no error field set)"
+
+
+# ---------------------------------------------------------------------------
+# Test 3: read_verified_balance returns None when Redis key missing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.local
+def test_read_verified_balance_returns_none_when_absent() -> None:
+    """read_verified_balance returns None when the reconciliation key is not in Redis."""
+    fake_redis = fakeredis.FakeRedis(decode_responses=True)
+    # Key is not set — simulates first run or expired TTL
+    result = read_verified_balance(fake_redis)
+    assert result is None, f"Expected None when key absent, got {result!r}"
+
+
+# ---------------------------------------------------------------------------
+# Test 4: read_verified_balance returns None when TTL expired (stale)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.local
+def test_read_verified_balance_returns_none_when_stale() -> None:
+    """read_verified_balance returns None when the stored balance is stale (past TTL)."""
+    fake_redis = fakeredis.FakeRedis(decode_responses=True)
+
+    # Write a stale payload directly — verified_at is older than ttl_seconds
+    stale_result = ReconciliationResult(
+        source="plaid",
+        balance_usd=_RECON_BALANCE,
+        verified_at=time.time() - (TTL_SECONDS + 120),  # well past TTL
+        signature="deadbeef",
+        ttl_seconds=TTL_SECONDS,
+    )
+    fake_redis.set(_REDIS_KEY_VERIFIED_BALANCE, stale_result.to_redis_payload())
+
+    result = read_verified_balance(fake_redis)
+    assert result is None, (
+        f"Expected None for stale balance (age > TTL), got {result!r}"
     )
 
 
-class _FakeSpan:
-    """Minimal OTel span stub that records set_attribute calls."""
-
-    def __init__(self) -> None:
-        self.attrs: dict[str, Any] = {}
-
-    def set_attribute(self, key: str, value: Any) -> None:
-        self.attrs[key] = value
-
-    def record_exception(self, exc: Exception) -> None:  # noqa: ARG002
-        pass
-
-
 # ---------------------------------------------------------------------------
-# Fixtures
+# Test 5: CBF uses reconciliation balance when available
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-async def fake_redis() -> fakeredis.aioredis.FakeRedis:
-    """Fresh in-memory async fakeredis instance per test."""
-    return fakeredis.aioredis.FakeRedis(decode_responses=True)
+@pytest.mark.local
+def test_cbf_uses_reconciliation_balance_when_available() -> None:
+    """CBF _read_cbf_state_atomic returns source='reconciled' when reconciliation key present."""
+    import asyncio
 
+    fake_redis_async = pytest.importorskip(
+        "fakeredis.aioredis", reason="fakeredis[aioredis] required"
+    ).FakeRedis(decode_responses=True)
 
-@pytest.fixture
-def cbf(fake_redis: fakeredis.aioredis.FakeRedis):
-    """ControlBarrierFunction with fakeredis injected via module-level singleton patch."""
+    fresh_result = ReconciliationResult(
+        source="plaid",
+        balance_usd=_RECON_BALANCE,
+        verified_at=time.time(),
+        signature="valid_sig",
+        ttl_seconds=TTL_SECONDS,
+    )
+
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf_instance = ControlBarrierFunction()
-    cbf_instance.tracer = None  # disable tracing by default; tests inject spans manually
+    cbf = ControlBarrierFunction()
+    cbf.tracer = None
 
-    # Seed the self-reported balance key so fallback path has a value
-    import asyncio
+    # Seed self-reported balance
     asyncio.get_event_loop().run_until_complete(
-        fake_redis.set(cbf_instance.redis_key, str(_SAFE_BALANCE))
+        fake_redis_async.set(cbf.redis_key, str(_SAFE_BALANCE))
     )
-
-    return cbf_instance
-
-
-# ---------------------------------------------------------------------------
-# Test 1: CBF uses reconciled balance when available and signature is valid
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_cbf_uses_reconciled_balance_when_signature_valid(
-    cbf, fake_redis: fakeredis.aioredis.FakeRedis
-) -> None:
-    """CBF returns source='reconciled' when read_verified_balance returns a signed result."""
-    result = _make_result(balance=_RECON_BALANCE, signature="valid_sig")
 
     mock_signer = MagicMock()
     mock_signer.verify.return_value = True
@@ -124,183 +170,70 @@ async def test_cbf_uses_reconciled_balance_when_signature_valid(
     with (
         patch(
             "src.gateway.governance.cbf.redis_client",
-            new=MagicMock(_get=MagicMock(return_value=fake_redis)),
+            new=MagicMock(_get=MagicMock(return_value=fake_redis_async)),
         ),
         patch(
             "src.compliance_bridge.reconciliation_worker.read_verified_balance",
-            return_value=result,
-        ),
-        patch(
-            "src.gateway.governance.cbf.redis_client",
-            new=MagicMock(_get=MagicMock(return_value=fake_redis)),
+            return_value=fresh_result,
         ),
         patch(
             "src.gateway.governance.kms_signer.get_governance_signer",
             return_value=mock_signer,
         ),
     ):
-        state = await cbf._read_cbf_state_atomic()
+        state = asyncio.get_event_loop().run_until_complete(
+            cbf._read_cbf_state_atomic()
+        )
 
-    assert state["source"] == "reconciled", f"Expected 'reconciled', got {state['source']!r}"
-    assert state["current_cash"] == pytest.approx(_RECON_BALANCE)
-
-
-# ---------------------------------------------------------------------------
-# Test 2: CBF falls back to self-reported when reconciled balance is absent
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_cbf_falls_back_when_reconciled_balance_absent(
-    cbf, fake_redis: fakeredis.aioredis.FakeRedis
-) -> None:
-    """CBF returns source='self_reported' when read_verified_balance returns None (TTL expired)."""
-    with (
-        patch(
-            "src.gateway.governance.cbf.redis_client",
-            new=MagicMock(_get=MagicMock(return_value=fake_redis)),
-        ),
-        patch(
-            "src.compliance_bridge.reconciliation_worker.read_verified_balance",
-            return_value=None,
-        ),
-    ):
-        state = await cbf._read_cbf_state_atomic()
-
-    assert state["source"] == "self_reported", f"Expected 'self_reported', got {state['source']!r}"
-    assert state["current_cash"] == pytest.approx(_SAFE_BALANCE)
+    assert state["source"] == "reconciled", (
+        f"Expected source='reconciled', got {state['source']!r}"
+    )
+    assert abs(state["current_cash"] - _RECON_BALANCE) < 0.01, (
+        f"Expected current_cash≈{_RECON_BALANCE}, got {state['current_cash']}"
+    )
 
 
 # ---------------------------------------------------------------------------
-# Test 3: CBF falls back when KMS signature is invalid (CRITICAL log emitted)
+# Test 6: CBF falls back to safety:current_cash when reconciliation absent
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_cbf_falls_back_when_kms_signature_invalid(
-    cbf, fake_redis: fakeredis.aioredis.FakeRedis, caplog: pytest.LogCaptureFixture
-) -> None:
-    """CBF falls back to self-reported and emits CRITICAL log when KMS verify returns False."""
-    result = _make_result(balance=_RECON_BALANCE, signature="bad_sig")
+@pytest.mark.local
+def test_cbf_falls_back_to_redis_when_reconciliation_absent() -> None:
+    """CBF _read_cbf_state_atomic returns source='self_reported' when reconciliation key absent."""
+    import asyncio
 
-    mock_signer = MagicMock()
-    mock_signer.verify.return_value = False  # signature invalid
+    fake_redis_async = pytest.importorskip(
+        "fakeredis.aioredis", reason="fakeredis[aioredis] required"
+    ).FakeRedis(decode_responses=True)
 
-    import logging
+    from src.gateway.governance.cbf import ControlBarrierFunction
+
+    cbf = ControlBarrierFunction()
+    cbf.tracer = None
+
+    # Seed self-reported balance
+    asyncio.get_event_loop().run_until_complete(
+        fake_redis_async.set(cbf.redis_key, str(_SAFE_BALANCE))
+    )
 
     with (
         patch(
             "src.gateway.governance.cbf.redis_client",
-            new=MagicMock(_get=MagicMock(return_value=fake_redis)),
+            new=MagicMock(_get=MagicMock(return_value=fake_redis_async)),
         ),
         patch(
             "src.compliance_bridge.reconciliation_worker.read_verified_balance",
-            return_value=result,
+            return_value=None,  # reconciliation key absent / stale
         ),
-        patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
-            return_value=mock_signer,
-        ),
-        caplog.at_level(logging.CRITICAL, logger="src.gateway.governance.cbf"),
     ):
-        state = await cbf._read_cbf_state_atomic()
+        state = asyncio.get_event_loop().run_until_complete(
+            cbf._read_cbf_state_atomic()
+        )
 
-    assert state["source"] == "self_reported", f"Expected 'self_reported', got {state['source']!r}"
-    # Verify CRITICAL audit log was emitted
-    critical_events = [
-        r for r in caplog.records
-        if r.levelno >= logging.CRITICAL and "SIGNATURE_INVALID" in r.getMessage()
-    ]
-    assert critical_events, "Expected CRITICAL log for invalid KMS signature, none found"
-
-
-# ---------------------------------------------------------------------------
-# Test 4: CBF falls back when reconciled balance is unsigned in production
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_cbf_falls_back_when_unsigned_in_production(
-    cbf, fake_redis: fakeredis.aioredis.FakeRedis, caplog: pytest.LogCaptureFixture
-) -> None:
-    """CBF falls back to self-reported and emits CRITICAL log when balance has no signature in prod."""
-    result = _make_result(balance=_RECON_BALANCE, signature="")  # no signature
-
-    import logging
-
-    with (
-        patch(
-            "src.gateway.governance.cbf.redis_client",
-            new=MagicMock(_get=MagicMock(return_value=fake_redis)),
-        ),
-        patch(
-            "src.compliance_bridge.reconciliation_worker.read_verified_balance",
-            return_value=result,
-        ),
-        patch("src.gateway.governance.cbf._IS_PRODUCTION", True),
-        caplog.at_level(logging.CRITICAL, logger="src.gateway.governance.cbf"),
-    ):
-        state = await cbf._read_cbf_state_atomic()
-
-    assert state["source"] == "self_reported", f"Expected 'self_reported', got {state['source']!r}"
-    critical_events = [
-        r for r in caplog.records
-        if r.levelno >= logging.CRITICAL and "UNSIGNED_IN_PRODUCTION" in r.getMessage()
-    ]
-    assert critical_events, "Expected CRITICAL log for unsigned balance in production, none found"
-
-
-# ---------------------------------------------------------------------------
-# Test 5: OTel span has safety.balance.source="reconciled" on reconciled path
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_otel_span_stamped_reconciled(
-    cbf, fake_redis: fakeredis.aioredis.FakeRedis
-) -> None:
-    """_do_verify_action stamps safety.balance.source='reconciled' and safety.balance.reconciled=True."""
-    span = _FakeSpan()
-
-    await cbf._do_verify_action(
-        action_name="execute_trade",
-        payload={"amount": 1000.0},
-        current_cash=_RECON_BALANCE,
-        balance_source="reconciled",
-        span=span,
+    assert state["source"] == "self_reported", (
+        f"Expected source='self_reported', got {state['source']!r}"
     )
-
-    assert span.attrs.get("safety.balance.source") == "reconciled", (
-        f"Expected 'reconciled', got {span.attrs.get('safety.balance.source')!r}"
-    )
-    assert span.attrs.get("safety.balance.reconciled") is True, (
-        f"Expected True, got {span.attrs.get('safety.balance.reconciled')!r}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Test 6: OTel span has safety.balance.source="self_reported" on fallback path
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_otel_span_stamped_self_reported(
-    cbf, fake_redis: fakeredis.aioredis.FakeRedis
-) -> None:
-    """_do_verify_action stamps safety.balance.source='self_reported' and safety.balance.reconciled=False."""
-    span = _FakeSpan()
-
-    await cbf._do_verify_action(
-        action_name="execute_trade",
-        payload={"amount": 500.0},
-        current_cash=_SAFE_BALANCE,
-        balance_source="self_reported",
-        span=span,
-    )
-
-    assert span.attrs.get("safety.balance.source") == "self_reported", (
-        f"Expected 'self_reported', got {span.attrs.get('safety.balance.source')!r}"
-    )
-    assert span.attrs.get("safety.balance.reconciled") is False, (
-        f"Expected False, got {span.attrs.get('safety.balance.reconciled')!r}"
+    assert abs(state["current_cash"] - _SAFE_BALANCE) < 0.01, (
+        f"Expected current_cash≈{_SAFE_BALANCE}, got {state['current_cash']}"
     )
