@@ -571,7 +571,7 @@ module "gateway" {
   opa_url                 = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181/v1/data/trade/governance"
   governance_salt         = var.governance_salt
 
-  depends_on = [module.opa, module.vllm, module.redis]
+  depends_on = [module.app_secrets, module.opa, module.vllm, module.redis]
 }
 
 # ─── Deploy Governed Financial Advisor ────────────────────────────────────────
