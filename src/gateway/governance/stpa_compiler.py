@@ -731,12 +731,17 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
         for u in saga_ucas
     )
 
-    mcp_import_lines: list[str] = []
+    # Build the third-party import block.  isort requires both third-party
+    # imports to be in the same block (no blank line between them).
+    thirdparty_import_lines: list[str] = [
+        "from src.governed_financial_advisor.graph.state import AgentState, LedgerEntry",
+    ]
+    mcp_singleton_lines: list[str] = []
     if needs_mcp_imports:
-        mcp_import_lines = [
-            "import asyncio",
-            "",
-            "from src.governed_financial_advisor.infrastructure.mcp_client import GatewayMCPClient",
+        thirdparty_import_lines.append(
+            "from src.governed_financial_advisor.infrastructure.mcp_client import GatewayMCPClient"
+        )
+        mcp_singleton_lines = [
             "",
             "# [CTRL_WAL_002] module-level MCP client singleton for WAL forward nodes.",
             "# The singleton is re-used across Saga invocations to avoid connection churn.",
@@ -751,6 +756,25 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
             "",
             "",
         ]
+
+    # asyncio is stdlib — include it in the stdlib block only when needed.
+    # isort requires all stdlib imports to be together before third-party imports.
+    stdlib_imports: list[str] = (
+        [
+            "import asyncio",
+            "import datetime",
+            "import hashlib",
+            "import logging",
+            "from typing import Any",
+        ]
+        if needs_mcp_imports
+        else [
+            "import datetime",
+            "import hashlib",
+            "import logging",
+            "from typing import Any",
+        ]
+    )
 
     lines: list[str] = [
         _banner(),
@@ -772,14 +796,10 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
         "",
         "from __future__ import annotations",
         "",
-        "import datetime",
-        "import hashlib",
-        "import logging",
-        "from typing import Any",
+        *stdlib_imports,
         "",
-        "from src.governed_financial_advisor.graph.state import AgentState, LedgerEntry",
-        "",
-        *mcp_import_lines,
+        *thirdparty_import_lines,
+        *mcp_singleton_lines,
         'logger = logging.getLogger("Gateway.Governance.GeneratedSagaNodes")',
         "",
         "",
@@ -818,13 +838,16 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
         fwd_fn = f"forward_{saga.forward_action}_node_{uca_slug}"
         comp_fn = f"compensate_{saga.compensating_action}_node_{uca_slug}"
 
-        # Build context extraction lines from parameter_mapping
+        # Build context extraction lines from parameter_mapping.
+        # Variables are prefixed with "_" so ruff F841 does not flag them as
+        # unused — they are intentionally extracted for the implementor's
+        # reference and used in the commented-out reverse API call below.
         mapping_lines = [
-            f'    {pm.compensating_key} = context_data.get("{pm.forward_key}")'
+            f'    _{pm.compensating_key} = context_data.get("{pm.forward_key}")'
             for pm in saga.parameter_mapping
         ] or ["    pass  # no parameter_mapping defined"]
         comp_kwarg_lines = [
-            f"        #     {pm.compensating_key}={pm.compensating_key},"
+            f"        #     {pm.compensating_key}=_{pm.compensating_key},"
             for pm in saga.parameter_mapping
         ]
         mapping_str = "\n".join(mapping_lines)
