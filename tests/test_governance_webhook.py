@@ -115,17 +115,13 @@ class TestWebhookRegistration:
                 secret="test-secret",
             )
         )
-        removed = asyncio.run(
-            registry.deregister(webhook_id)
-        )
+        removed = asyncio.run(registry.deregister(webhook_id))
         assert removed is True
         assert webhook_id not in registry._registrations
 
     def test_deregister_nonexistent_returns_false(self):
         registry = _make_registry()
-        removed = asyncio.run(
-            registry.deregister("nonexistent-id")
-        )
+        removed = asyncio.run(registry.deregister("nonexistent-id"))
         assert removed is False
 
     def test_list_registrations_returns_all(self):
@@ -144,9 +140,7 @@ class TestWebhookRegistration:
                 secret="other-secret",
             )
         )
-        registrations = asyncio.run(
-            registry.list_registrations()
-        )
+        registrations = asyncio.run(registry.list_registrations())
         assert len(registrations) == 2
 
     def test_list_registrations_does_not_include_secret(self):
@@ -158,9 +152,7 @@ class TestWebhookRegistration:
                 secret="super-secret-value",
             )
         )
-        registrations = asyncio.run(
-            registry.list_registrations()
-        )
+        registrations = asyncio.run(registry.list_registrations())
         for reg in registrations:
             assert "secret" not in reg
             assert "super-secret-value" not in str(reg)
@@ -225,9 +217,7 @@ class TestWebhookDispatch:
             return True
 
         with mock.patch.object(registry, "_deliver", side_effect=mock_deliver):
-            asyncio.run(
-                registry.dispatch(_make_event("CBF_VIOLATION"))
-            )
+            asyncio.run(registry.dispatch(_make_event("CBF_VIOLATION")))
 
         assert len(delivered_payloads) == 1
         assert delivered_payloads[0]["type"] == "CBF_VIOLATION"
@@ -249,9 +239,7 @@ class TestWebhookDispatch:
             return True
 
         with mock.patch.object(registry, "_deliver", side_effect=mock_deliver):
-            asyncio.run(
-                registry.dispatch(_make_event("CBF_VIOLATION"))
-            )
+            asyncio.run(registry.dispatch(_make_event("CBF_VIOLATION")))
 
         assert delivered_payloads[0]["webhook_id"] == webhook_id
 
@@ -281,16 +269,12 @@ class TestWebhookDispatch:
     def test_dispatch_no_registrations_does_not_raise(self):
         registry = _make_registry()
         # Should not raise even with no registrations
-        asyncio.run(
-            registry.dispatch(_make_event("CBF_VIOLATION"))
-        )
+        asyncio.run(registry.dispatch(_make_event("CBF_VIOLATION")))
 
     def test_dispatch_unknown_event_type_skipped(self):
         registry = _make_registry()
         # Should not raise for non-webhook event types
-        asyncio.run(
-            registry.dispatch({"type": "AUDIT_FINDING", "traceId": "x"})
-        )
+        asyncio.run(registry.dispatch({"type": "AUDIT_FINDING", "traceId": "x"}))
 
     def test_dispatch_missing_type_field_logs_warning(self):
         registry = _make_registry()
@@ -321,9 +305,7 @@ class TestWebhookDispatch:
             return True
 
         with mock.patch.object(registry, "_deliver", side_effect=mock_deliver):
-            asyncio.run(
-                registry.dispatch(_make_event("CBF_VIOLATION"))
-            )
+            asyncio.run(registry.dispatch(_make_event("CBF_VIOLATION")))
 
         assert len(delivered_payloads) == 2
 
