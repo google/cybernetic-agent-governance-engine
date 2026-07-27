@@ -101,6 +101,7 @@ def test_langfuse_basic_auth():
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(300)  # ClickHouse flush: 10×0.5s + 13s head-start + 18×10s polling = up to 223s
 def test_langfuse_trace_ingestion():
     """Verifies trace ingestion endpoint returns 207 Multi-Status and persists to ClickHouse.
 
