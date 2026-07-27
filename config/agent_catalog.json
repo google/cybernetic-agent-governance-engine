@@ -24,6 +24,49 @@
                 "H-2"
             ],
             "schema_version": "1.0"
+        },
+        "spiffe://trust-domain/ns/default/sa/trader-agent": {
+            "display_name": "Trader Agent (SPIFFE)",
+            "description": "SPIFFE-identified trader agent permitted to execute trades and perform market analysis.",
+            "allowed_tools": [
+                "execute_trade",
+                "market_analysis",
+                "get_portfolio",
+                "get_market_data",
+                "get_account_balance"
+            ],
+            "allowed_roles": [
+                "trader",
+                "portfolio_manager"
+            ],
+            "approval_threshold": 1,
+            "uca_refs": [
+                "UCA-1",
+                "UCA-2",
+                "UCA-3"
+            ],
+            "hazard_refs": [
+                "H-1",
+                "H-2"
+            ],
+            "schema_version": "1.0"
+        },
+        "spiffe://trust-domain/ns/default/sa/risk-agent": {
+            "display_name": "Risk Agent (SPIFFE)",
+            "description": "SPIFFE-identified risk assessment agent — read-only; may not execute trades.",
+            "allowed_tools": [
+                "risk_assessment",
+                "get_portfolio",
+                "get_market_data",
+                "get_account_balance"
+            ],
+            "allowed_roles": [
+                "risk_analyst"
+            ],
+            "approval_threshold": 0,
+            "uca_refs": [],
+            "hazard_refs": [],
+            "schema_version": "1.0"
         }
     }
 }
