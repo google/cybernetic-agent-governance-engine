@@ -1,5 +1,12 @@
 # CAGE — Ask Mode Rules
 
+> **⚠️ REFERENCE ARCHITECTURE ONLY — NOT FOR PRODUCTION USE**
+> CAGE is a reference architecture demonstrating governance patterns for
+> AI systems. It is **not** intended for, and will **not** be deployed to,
+> any production environment. All deployment, change-management, and
+> region-guard rules below exist to illustrate best-practice patterns
+> only — they carry no operational obligation.
+
 > These rules apply **only** in Ask mode (❓). They supplement the global
 > standards in `.roo/rules/00-global-standards.md`, which also apply.
 >
@@ -49,6 +56,9 @@ When explaining compliance posture or security controls:
   deployment only
 - Always note that `CAGE_DEPLOYMENT_REGION` guards are required for any
   new data path in shared modules
+- Always clarify that CAGE is a **reference architecture** — region gates,
+  CAB approvals, and deployment promotion rules are **illustrative patterns**,
+  not operational obligations for this repository.
 
 When asked about secrets or credentials:
 - Never provide example values that resemble real credentials
@@ -64,3 +74,6 @@ When asked whether a change requires CAB approval or AO sign-off:
 - For Cat-M: explicitly state AO pre-approval is required before implementation
 - For Cat-N: note the 5-business-day minimum CAB review window
 - For Cat-E: note expedited approval but unchanged format requirements
+- Always note that CAGE is a reference architecture; no formal CAB or AO
+  approval is required for changes to this repository — the categories are
+  illustrative only.

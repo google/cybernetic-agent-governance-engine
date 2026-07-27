@@ -1,5 +1,12 @@
 # CAGE Commit Convention and Branch Strategy Enforcer
 
+> **⚠️ REFERENCE ARCHITECTURE ONLY — NOT FOR PRODUCTION USE**
+> CAGE is a reference architecture demonstrating governance patterns for
+> AI systems. It is **not** intended for, and will **not** be deployed to,
+> any production environment. All deployment, change-management, and
+> region-guard rules below exist to illustrate best-practice patterns
+> only — they carry no operational obligation.
+
 This rule instructs the agent to detect, apply, and self-validate the official
 commit message **and branch naming** strategy of the Cybernetic Governance Engine
 (CAGE) project. The conventions are defined in `CONTRIBUTING.md` and `.gitmessage`,
