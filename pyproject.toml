@@ -46,6 +46,11 @@ dev = [
     "bcrypt>=5.0.0",
     # kfp: Kubeflow Pipelines SDK — required by test_pipeline_compilation.py
     "kfp>=2.0,<3.0",
+    # Security: pin transitive deps to versions that fix known CVEs
+    # pyasn1 0.6.3: CVE-2026-59884/59885/59886 (DoS in BER/OID/Real decode) — fixed in 0.6.4
+    "pyasn1>=0.6.4",
+    # setuptools 82.0.1: CVE-2026-59890 (MANIFEST.in NFC/NFD bypass on macOS APFS) — fixed in 83.0.0
+    "setuptools>=83.0.0",
 ]
 
 deployment = [
