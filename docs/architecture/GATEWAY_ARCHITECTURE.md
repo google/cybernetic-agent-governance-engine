@@ -1,4 +1,4 @@
-# Gateway Architecture: Sovereign Edition — v0.1.0
+# Gateway Architecture: Sovereign Edition — v2.1.0
 
 ## Overview
 
@@ -433,4 +433,71 @@ The following frameworks apply **only** when `CAGE_DEPLOYMENT_REGION=APAC_MAS`:
 | **MAS FEAT Principles** | Singapore-specific AI fairness, ethics, accountability, transparency controls | Active |
 | **MAS Notice 655 / MAS TRM §4.2** | Audit logging; data residency within `asia-southeast1` | Active |
 
-> **POA&M:** 23 open items (POAM-001 through POAM-023). See [`docs/POAM.md`](../compliance/cross-region/POAM.md) and [`docs/POAM_INDEX.md`](../compliance/cross-region/POAM_INDEX.md) for the full cross-region traceability matrix.
+> **POA&M:** 22 open items (POAM-001 through POAM-022; POAM-023 closed 2026-07-27 — CBF reconciliation worker implemented). See [`docs/POAM.md`](../../docs/POAM.md) and [`docs/POAM_INDEX.md`](../compliance/cross-region/POAM_INDEX.md) for the full cross-region traceability matrix.
+
+---
+
+## v2.1.0 Additions
+
+### Phase A — Ingress Adapters (`src/gateway/governance/ingress/`)
+
+The ingress adapter layer normalises external governance signals from heterogeneous sources into the CAGE internal policy representation before they reach the SymbolicGovernor pipeline.
+
+| Adapter | File | Purpose |
+|---------|------|---------|
+| **AAIF Adapter** | [`aaif_adapter.py`](../../src/gateway/governance/ingress/aaif_adapter.py) | Ingests AAIF (Agent Attestation Interchange Format) governance signals |
+| **ACS Adapter** | [`acs_adapter.py`](../../src/gateway/governance/ingress/acs_adapter.py) | Ingests ACS (Agent Capability Statement) declarations |
+| **OSCAL Adapter** | [`oscal_adapter.py`](../../src/gateway/governance/ingress/oscal_adapter.py) | Parses OSCAL component definitions and assessment results into internal policy objects |
+| **Lula Adapter** | [`lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py) | Ingests Lula validation results and maps them to CAGE control verdicts |
+| **AGP Policy Uploader** | [`agp_policy_uploader.py`](../../src/gateway/governance/ingress/agp_policy_uploader.py) | Uploads translated policies to the Agent Gateway Protocol policy store |
+| **Policy Translator** | [`policy_translator.py`](../../src/gateway/governance/ingress/policy_translator.py) | Translates between OSCAL/Lula/AAIF representations and OPA Rego |
+| **Agent Registry Adapter** | [`agent_registry_adapter.py`](../../src/gateway/governance/ingress/agent_registry_adapter.py) | CAGE-003: SPIFFE trust-domain agent catalog integration |
+
+### Phase B — Agent Gateway Protocol (AGW) Absorption
+
+The AGW absorption layer bridges the Agent Gateway Protocol into the CAGE governance stack, enabling OPA policy enforcement on AGP-routed agent traffic.
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| **AGW Adapter** | [`ingress/agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) | Receives AGP-routed requests; extracts agent identity and action context |
+| **Agent Gateway Adapter** | [`server/agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py) | FastAPI mount point; bridges AGP wire protocol to `SymbolicGovernor.validate_action()` with OPA policy enforcement |
+
+### FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`)
+
+The **Fault Tree Reachability Analysis (FTRA)** gate determines whether a financial transaction can commence given the current governance state. It runs as a pre-condition check before the 7-tier SymbolicGovernor pipeline for `execute_trade` actions.
+
+| File | Purpose |
+|------|---------|
+| [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | Data models: `FaultTreeNode`, `ReachabilityResult`, `CommencementDecision` |
+| [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | Classifies governance state into fault tree leaf conditions |
+| [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | Traverses the fault tree graph to compute reachability from current state to commencement |
+| [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | LangGraph node factory — wraps the FTRA gate as a composable governance node |
+| [`ftra_reachability.py`](../../src/gateway/governance/ftra_reachability.py) | Top-level entry point; integrates FTRA result into the governance pipeline |
+
+**Decision semantics:** If the fault tree analysis determines that the commencement state is unreachable from the current governance state (e.g., CBF violated, OPA DENY, DEFER queue saturated), the gate returns `CommencementDecision.BLOCKED` and the pipeline halts before any LLM inference is invoked.
+
+### LangGraph Governance Harness (`src/gateway/governance/langgraph_harness/`)
+
+The harness provides composable, non-bypassable governance nodes that any LangGraph pipeline can incorporate without reimplementing governance logic.
+
+| File | Purpose |
+|------|---------|
+| [`nemo_node_factory.py`](../../src/gateway/governance/langgraph_harness/nemo_node_factory.py) | `NemoNodeFactory` — creates NeMo Guardrails input/output rail nodes with fail-closed semantics and OTel instrumentation |
+| [`opa_node_factory.py`](../../src/gateway/governance/langgraph_harness/opa_node_factory.py) | `OpaNodeFactory` — creates OPA policy evaluation nodes with circuit breaker and Redis decision cache |
+| [`types.py`](../../src/gateway/governance/langgraph_harness/types.py) | Shared type definitions: `NemoNodeConfig`, `OpaNodeConfig`, `GovernanceNodeResult` |
+
+**Usage pattern:**
+
+```python
+from src.gateway.governance.langgraph_harness.nemo_node_factory import NemoNodeFactory
+from src.gateway.governance.langgraph_harness.opa_node_factory import OpaNodeFactory
+
+nemo_input_rail = NemoNodeFactory.create_input_rail(config=NemoNodeConfig(...))
+opa_check = OpaNodeFactory.create_policy_node(config=OpaNodeConfig(...))
+
+graph = StateGraph(MyState)
+graph.add_node("nemo_input", nemo_input_rail)
+graph.add_node("opa_check", opa_check)
+```
+
+Both factories produce nodes that are fail-closed: any exception in the guardrail or policy evaluation causes the node to return a `BLOCKED` verdict rather than propagating the exception to the agent.

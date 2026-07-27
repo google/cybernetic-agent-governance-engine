@@ -1,5 +1,14 @@
 # Change Management Process
 
+> **⚠️ REFERENCE ARCHITECTURE ONLY — NOT FOR PRODUCTION USE**
+> CAGE is a reference architecture demonstrating governance patterns for
+> AI systems. It is **not** intended for, and will **not** be deployed to,
+> any production environment. The change management categories, CAB
+> approval gates, and AO sign-off requirements below are **illustrative
+> patterns** for teams adopting this reference architecture in a real
+> production context — they carry no operational obligation for this
+> repository.
+
 **System:** Cybernetic AI Governance Engine (CAGE) — Governed Financial Advisor
 **Reference:** NIST SP 800-128 (Security-Focused Configuration Management for Information Systems); NIST SP 800-53 Rev 5 CM-3, CM-4, CM-5
 **Version:** 1.2 (Draft)

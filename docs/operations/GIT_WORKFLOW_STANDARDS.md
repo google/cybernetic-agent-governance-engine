@@ -1,5 +1,11 @@
 # Git Workflow Standards — Cybernetic Governance Engine
 
+> **⚠️ REFERENCE ARCHITECTURE ONLY — NOT FOR PRODUCTION USE**
+> CAGE is a reference architecture. The workflow standards below are
+> illustrative best practices. There is no production deployment target.
+> `hotfix/*` and `release/*` branch patterns are documented for
+> reference only — no production release process exists.
+
 **Version:** 1.1
 **Effective:** 2026-06-14
 **Applies to:** All contributors to `cybernetic-governance-engine`

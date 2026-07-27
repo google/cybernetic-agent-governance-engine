@@ -47,6 +47,18 @@ The central enforcement engine residing in the Gateway. It wraps every tool exec
 
   > **Note — SLM Tier removed:** The former Tier 3 (SLM Semantic Similarity) has been fully retired. The SLM sidecar code has been deleted. The confidence threshold (Step 1) is now enforced exclusively by OPA, with the SLM-degraded escalation (0.95 → 0.97) baked into `system_authz.rego`.
 
+### 1a. LangGraph Harness — Governance Node Composition (v2.1.0)
+
+The LangGraph harness (`src/gateway/governance/langgraph_harness/`) is the **composition layer** that bridges the neural (NeMo) and symbolic (OPA, STPA, CBF) components into typed LangGraph `StateGraph` nodes:
+
+| Module | Bridges | Pattern |
+|---|---|---|
+| [`nemo_node_factory.py`](../../src/gateway/governance/langgraph_harness/nemo_node_factory.py) | NeMo Guardrails (neural) → LangGraph node | `GovernanceNodeInput → GovernanceNodeOutput` |
+| [`opa_node_factory.py`](../../src/gateway/governance/langgraph_harness/opa_node_factory.py) | OPA Rego (symbolic) → LangGraph node | `GovernanceNodeInput → GovernanceNodeOutput` |
+| [`types.py`](../../src/gateway/governance/langgraph_harness/types.py) | Shared TypedDicts | `GovernanceNodeInput`, `GovernanceNodeOutput` |
+
+The harness ensures that both neural and symbolic governance checks participate in the same typed state machine, with deterministic state transitions and full OTel tracing. The FTRA node factory (`src/gateway/governance/ftra/node_factory.py`) uses the same pattern for the pre-execution structural reachability check.
+
 ### 1b. NeMo Guardrails Phase 4.2 Changes (`src/gateway/governance/nemo/manager.py`)
 
 Phase 4.2 introduced the following changes to the NeMo Guardrails integration:
@@ -150,6 +162,20 @@ The 10-node LangGraph StateGraph governs the full execution lifecycle:
     - _Path C (Causal Lock):_ DoWhy refutation failed → Trade blocked; violation logged.
     - _Path D (DEFER):_ Confidence below threshold → Context pushed to DEFER queue; response deferred.
 10. **Explain:** The `explainer` node generates a user-facing narrative; the NeMo output rail runs a final in-process Presidio PII egress scan before returning the response.
+
+---
+
+## Neuro-Symbolic Architecture Summary (v2.1.0)
+
+The CAGE neuro-symbolic governance architecture has three distinct layers:
+
+| Layer | Components | Role |
+|---|---|---|
+| **Neural** | NeMo Guardrails (`src/gateway/governance/nemo/`), Colang rails (`cbrn_rails.co`) | Learned safety rails; CBRN keyword detection; PII masking; hot-reloadable |
+| **Symbolic** | OPA Rego (`trade_governance.rego`, `system_authz.rego`), STPA validator (`generated_stpa_validator.py`), CBF (`safety.py`, `cbf.py`) | Formal invariants; mathematical safety properties; fail-closed |
+| **Composition** | LangGraph harness (`langgraph_harness/`), FTRA gate (`ftra/`) | Typed node factories; StateGraph integration; pre-execution structural checks |
+
+The symbolic layer provides the **safety floor** (CBF invariance theorem: `h(x) ≥ 0` must hold at all times). The neural layer provides **learned pattern recognition** (CBRN keywords, PII entities, confabulation signals) that the symbolic layer cannot express as closed-form invariants. The composition layer ensures both participate in the same typed state machine with deterministic transitions.
 
 ---
 

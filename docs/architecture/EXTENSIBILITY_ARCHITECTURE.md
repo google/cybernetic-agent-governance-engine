@@ -465,6 +465,60 @@ By solving the hardest regulatory domain first, the CAGE kernel naturally genera
 
 ---
 
+## Part 4 — v2.1.0 Extensibility Additions ✅ IMPLEMENTED
+
+Three new extensibility patterns were added in v2.1.0, each building on the domain-agnostic kernel described in Parts 1–3.
+
+### 4.1 LangGraph Harness — Governance Node Composition (`src/gateway/governance/langgraph_harness/`)
+
+The LangGraph harness (`src/gateway/governance/langgraph_harness/`) is the primary extensibility pattern for composing governance nodes into typed StateGraph pipelines. It provides two node factories and a shared type layer:
+
+| Module | Role |
+|---|---|
+| [`nemo_node_factory.py`](../../src/gateway/governance/langgraph_harness/nemo_node_factory.py) | Wraps NeMo Guardrails as a typed LangGraph node; injects `NeMoRailsResult` into `AgentState` |
+| [`opa_node_factory.py`](../../src/gateway/governance/langgraph_harness/opa_node_factory.py) | Wraps OPA policy evaluation as a typed LangGraph node; raises `GovernanceError` on DENY |
+| [`types.py`](../../src/gateway/governance/langgraph_harness/types.py) | Shared `GovernanceNodeInput` / `GovernanceNodeOutput` TypedDicts consumed by both factories |
+
+**Extension pattern**: A new governance check (e.g., a sanctions-list screener) is added by implementing a function with the `GovernanceNodeInput → GovernanceNodeOutput` signature and registering it as a node in the target StateGraph. No changes to the kernel are required.
+
+The harness is consumed by the Governed Financial Advisor (`src/governed_financial_advisor/graph/graph.py`) and by the FTRA reachability gate (`src/gateway/governance/ftra/node_factory.py`), which uses the same node-factory pattern to inject FTRA analysis into any LangGraph graph.
+
+### 4.2 Ingress Adapter Pattern — External Framework Integration (`src/gateway/governance/ingress/`)
+
+The ingress adapter layer (`src/gateway/governance/ingress/`) provides a uniform integration surface for external governance frameworks. Each adapter translates a foreign schema into the CAGE `ControlRegistry` format without touching the kernel:
+
+| Adapter | External Framework | Output |
+|---|---|---|
+| [`aaif_adapter.py`](../../src/gateway/governance/ingress/aaif_adapter.py) | AAIF (AI Assurance & Inspection Framework) | `ControlRegistry` entries |
+| [`acs_adapter.py`](../../src/gateway/governance/ingress/acs_adapter.py) | ACS (AI Compliance Schema) | `ControlRegistry` entries |
+| [`oscal_adapter.py`](../../src/gateway/governance/ingress/oscal_adapter.py) | OSCAL v1.1.2 component definitions | `ControlRegistry` entries |
+| [`lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py) | Lula validation manifests | `ControlRegistry` entries |
+| [`agp_policy_uploader.py`](../../src/gateway/governance/ingress/agp_policy_uploader.py) | AGP compiled policy bundles | OPA bundle push |
+| [`policy_translator.py`](../../src/gateway/governance/ingress/policy_translator.py) | Multi-format policy detection | Normalized policy object |
+| [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) | Agent Gateway (Phase B) | Envoy ext_authz gRPC bridge |
+| [`agent_registry_adapter.py`](../../src/gateway/governance/ingress/agent_registry_adapter.py) | CAGE-003 Agent Registry | SPIFFE trust-domain catalog |
+
+**Extension pattern**: A new external framework is integrated by implementing the `IngressAdapter` protocol (translate foreign schema → `ControlRegistry` entry) and registering the adapter in the ingress `__init__.py`. The kernel's `ControlRegistry` and `SymbolicGovernor` pipeline are unaffected.
+
+The Phase B AGW Absorption adapter (`agw_adapter.py`) additionally exposes an Envoy `ext_authz` gRPC endpoint (`src/gateway/server/agent_gateway_adapter.py`), enabling any Envoy-proxied service to delegate authorization decisions to the CAGE governance kernel.
+
+### 4.3 NeMo Guardrails — Neural-Symbolic Extension Point (`src/gateway/governance/nemo/`)
+
+NeMo Guardrails (`src/gateway/governance/nemo/`) is the neural component of the neuro-symbolic governance architecture. It extends the kernel's symbolic pipeline with learned, Colang-expressed safety rails:
+
+| Module | Role |
+|---|---|
+| [`manager.py`](../../src/gateway/governance/nemo/manager.py) | Lifecycle management; hot-reload endpoint; Phase 4.2 async refactor |
+| [`actions.py`](../../src/gateway/governance/nemo/actions.py) | Gateway-internal NeMo action implementations (OPA check, CBF check, STPA check) |
+| [`server.py`](../../src/gateway/governance/nemo/server.py) | gRPC service exposing NeMo rails to external callers |
+| [`colang/cbrn_rails.co`](../../src/gateway/governance/nemo/colang/cbrn_rails.co) | CBRN keyword rail — NIST AI 600-1 §2.6 **[US_FED only]** |
+
+**Extension pattern**: A new safety rail is added by authoring a Colang 2.x flow file and registering it in `config/rails/config.yml`. The `NeMoNodeFactory` in the LangGraph harness (§4.1) automatically wraps the updated rail set as a typed governance node. No kernel changes are required.
+
+The `nemo_node_factory.py` in the LangGraph harness bridges §4.1 and §4.3: it converts the NeMo manager's synchronous rail evaluation into a typed LangGraph node, making NeMo a first-class participant in any StateGraph-based governance pipeline.
+
+---
+
 ## Conclusion
 
 The CAGE runtime is not a financial services application with governance features. It is a **domain-agnostic governance kernel** whose first production deployment happens to be financial services. The mathematical invariant `h(x) ≥ 0` does not know what `x` means — it only knows the boundary must not be crossed.

@@ -2,7 +2,7 @@
 
 > **AI governance for regulated financial services — built-in, not bolted on.**
 
-![v0.1.0](https://img.shields.io/badge/version-0.1.0-brightgreen) ![796 Tests Passing](https://img.shields.io/badge/tests-796%20passing-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 7](https://img.shields.io/badge/POAM%20Closed-7-brightgreen)
+![v2.1.0](https://img.shields.io/badge/version-2.1.0-brightgreen) ![1559 Tests Passing](https://img.shields.io/badge/tests-1559%20passing-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 8](https://img.shields.io/badge/POAM%20Closed-8-brightgreen)
 
 **Universal (all regions):** ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue)
 
@@ -10,13 +10,37 @@
 
 ---
 
+## What's New in v2.1.0
+
+> **Release date:** 2026-07-27
+
+### New Capabilities
+
+| Capability | Location | Description |
+|---|---|---|
+| **FTRA Commencement Reachability Gate** | `src/gateway/governance/ftra/` | Fault Tree Reachability Analysis gate — checks whether a financial transaction can commence given the current governance state |
+| **Phase A Ingress Adapters** | `src/gateway/governance/ingress/` | AAIF, ACS, OSCAL, Lula, and AGP policy-uploader adapters; policy translation layer |
+| **Phase B AGW Absorption** | `src/gateway/governance/ingress/agw_adapter.py` + `src/gateway/server/agent_gateway_adapter.py` | Agent Gateway Protocol bridge with OPA policy enforcement |
+| **CAGE-003 Agent Registry Integration** | `src/gateway/governance/ingress/agent_registry_adapter.py` | SPIFFE trust-domain agent catalog integration |
+| **CBF External Reconciliation Worker** | `src/compliance_bridge/reconciliation_worker.py` | Implements POAM-023; external CBF state reconciliation (closes POAM-023) |
+| **NIST AI 600-1 Compliance Gates (phases 0–3)** | `compliance/lula/lula-validation-ai600-*.yaml` | CBRN, confabulation, data privacy, and prompt injection Lula validation manifests |
+| **Three-Region Compliance Matrix** | `compliance/lula/`, `compliance/oscal/` | Separate Lula manifests, pytest matrix, and region-aware K8s templates for EU_ECB, APAC_MAS, US_FED |
+| **AgentSight UI** | `src/agentsight-ui/` | React/TypeScript real-time governance dashboard with `KernelDashboard` |
+| **Governed Financial Advisor** | `src/governed_financial_advisor/` | Full multi-agent reference implementation with LangGraph, NeMo Guardrails, OPA policy enforcement |
+| **NeMo Guardrails Integration** | `src/gateway/governance/nemo/` | Actions, manager, server, vLLM client; CBRN rails (`config/rails/cbrn_rails.co`) |
+| **LangGraph Harness** | `src/gateway/governance/langgraph_harness/` | Composable `NemoNodeFactory` and `OpaNodeFactory` governance nodes for LangGraph pipelines |
+| **AARM Profile Mapper** | `src/compliance_bridge/aarm_mapper.py` + `aarm_report_generator.py` | 11-vector threat ledger mapping with live conformance report endpoint |
+| **Evidence Chain Metadata Binding** | `src/compliance_bridge/evidence_stream.py` | Binds metadata to evidence chain entries |
+| **Region-Aware K8s Templates** | `deployment/k8s/*.yaml.tpl` | `CAGE_DEPLOYMENT_REGION` guards in all Kubernetes deployment templates |
+| **Langfuse Native OTLP** | `src/gateway/tracing_setup.py` | Replaced standalone OTel Collector with Langfuse native OTLP integration |
+
+---
+
 ## Test Status
 
 | Suite | Result | Date |
 |---|---|---|
-| Unit tests | ✅ 1,161 passed / 0 failed | 2026-07-05 |
-| Integration tests (GKE) | ✅ 120 passed / 0 failed | 2026-07-05 |
-| Total | ✅ 1,281 passed / 32 skipped / 0 failed | 2026-07-05 |
+| Total | ✅ 1,559 passed / 0 failed / 40 skipped | 2026-07-27 |
 
 Tests run against a live GKE cluster. See [infra/DEPLOYMENT_GUIDE.md](infra/DEPLOYMENT_GUIDE.md) for cluster setup instructions.
 Skipped tests: EU_ECB region-specific tests and CI-only latency budget tests.
@@ -64,7 +88,7 @@ CAGE v0.1.0 provides a multi-jurisdiction, dual-layer governance architecture fo
 10. **Cloud KMS HSM-Backed Governance Signing (v0.1.0):** Asymmetric signing via Google Cloud KMS Hardware Security Module (`src/gateway/governance/kms_signer.py`). The private key never leaves the HSM; verification uses a locally-embedded public key PEM for sub-millisecond latency. Cloud Audit Logs provide external, immutable attestation of every signing operation. Replaces the prior HMAC-SHA256 self-signing pattern that was vulnerable to container-breakout key extraction.
 11. **Human-Gated NeMo Refinement (v0.1.0):** The autonomous Langfuse → KFP → NeMo hot-reload loop is severed. All config refinements are staged via `POST /v1/nemo/propose-refinement` and require explicit human approval with reviewer identity and rationale before applying — eliminating the recursive self-authentication path where a model could engineer its own privilege escalation.
 12. **Heterogeneous Multi-Model Consensus (v0.1.0):** `ConsensusModelRegistry` routes each critic persona to a distinct vLLM inference backend (DeepSeek-R1 for Risk Manager, Llama 3.1 for Compliance Officer). No single model can "consent" to its own output — system invariants are no longer vulnerable to a shared semantic blind spot.
-13. **Externally Reconciled CBF Ground Truth (FUTURE STATE — POAM-023):** The Control Barrier Function's `cash_balance` input is designed to be sourced from an independently reconciled external custody ledger (Anchorage Digital, OCC-chartered) via `AnchorageGrpcLedgerProvider`. **This integration is not yet implemented** — `AnchorageGrpcLedgerProvider` is tracked as POAM-023 (target: 2026-09-08). The CBF currently reads from Redis state. When implemented, reconciled balances will be KMS-signed before Redis write and the CBF will fail closed on TTL expiry.
+13. **Externally Reconciled CBF Ground Truth (v2.1.0 — POAM-023 Closed):** The Control Barrier Function's `cash_balance` input is sourced from an independently reconciled external custody ledger via `src/compliance_bridge/reconciliation_worker.py`. The reconciliation worker implements POAM-023 and performs external CBF state reconciliation; reconciled balances are KMS-signed before Redis write and the CBF fails closed on TTL expiry.
 14. **External Normative Provider with Adaptive Gating (v0.1.0):** `src/gateway/governance/normative_provider.py` implements the 3-endpoint external normative provider integration (§2.5 Extensibility Architecture) with an **Adaptive Gating Primitive** (`enforce_fria_boundary()`) that maps the blocking semantic to CAGE's confidence boundary: Score ≥0.95 → async attestation (0ms); [0.70, 0.95) → synchronous blocking gate via DEFER queue; <0.70 → local hard deny (no external call). Supports pluggable providers (`StubNormativeProvider` for dev/CI, `TrustLayersProvider` for production). Background daemon for boot-time baseline fetch + 6-hour polling refresh.
 
 Compliance is not documented after the fact; it is enforced at the point of inference, producing both governed outputs and a cryptographically hash-chained, tamper-evident audit evidence trail in real time.
@@ -138,7 +162,7 @@ For full architectural detail, see [`docs/GATEWAY_ARCHITECTURE.md`](docs/archite
 - **Cloud KMS HSM governance signatures (v0.1.0)** — Asymmetric signing via Google Cloud KMS HSM; private key never leaves hardware. HMAC-SHA256 fallback for dev/CI. Required before any trade execution.
 - **Human-gated NeMo refinement (v0.1.0)** — All config changes staged as proposals requiring explicit human approval with reviewer identity and rationale. Severs the autonomous hot-reload loop.
 - **Heterogeneous multi-model consensus (v0.1.0)** — `ConsensusModelRegistry` routes each critic persona to a distinct vLLM backend, preventing single-model semantic blind spots.
-- **Externally reconciled CBF (FUTURE STATE — POAM-023)** — `AnchorageGrpcLedgerProvider` (Anchorage Digital, OCC-chartered) is designed to provide independently attested balances for the Control Barrier Function. **Not yet implemented** — tracked as POAM-023 (target: 2026-09-08). CBF currently reads from Redis state.
+- **Externally reconciled CBF (v2.1.0 — POAM-023 Closed)** — `src/compliance_bridge/reconciliation_worker.py` implements external CBF state reconciliation. Reconciled balances are KMS-signed before Redis write; the CBF fails closed on TTL expiry.
 - **Human-in-the-loop approval gate** — LangGraph `interrupt_before=["governed_trader"]`; resume via `POST /v1/approvals/{thread_id}/resume`.
 - **W3C traceparent propagation** — full OTel trace waterfall across LangGraph → Gateway → vLLM; 100% sampling for governance decision spans.
 
@@ -164,7 +188,7 @@ The discrete-time CBF condition enforced at every governance tick is:
 h(S(t+1)) ≥ (1−γ) · h(S(t)),   γ ∈ (0,1)
 ```
 
-This guarantees that the cash balance never drops below the minimum threshold in a single step — the decay factor `γ` bounds the maximum permissible drawdown per evaluation cycle. The CBF currently reads from Redis state; external reconciliation via `AnchorageGrpcLedgerProvider` is tracked as POAM-023.
+This guarantees that the cash balance never drops below the minimum threshold in a single step — the decay factor `γ` bounds the maximum permissible drawdown per evaluation cycle. External reconciliation is implemented via [`src/compliance_bridge/reconciliation_worker.py`](src/compliance_bridge/reconciliation_worker.py) (POAM-023 closed 2026-07-27).
 
 ### 7-Tier Symbolic Governor Pipeline
 
@@ -287,7 +311,7 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 | **ISO/IEC 42001:2023** | **Universal** — all regions | All values | ✅ Active |
 | **CSA AARM v1.0** | **Universal** — all regions | All values | ✅ Active |
 | **NIST SP 800-53 Rev 5** | **US_FED only** | `US_FED` | 🟡 Partial (ATO pending) |
-| **NIST AI 600-1** | **US_FED only** | `US_FED` | 🟡 Partial |
+| **NIST AI 600-1** | **US_FED only** | `US_FED` | ✅ Implemented (phases 0–3) |
 | **FedRAMP HIGH** | **US_FED only** | `US_FED` | 🟡 Partial (ATO pending) |
 | **SR 26-2** (Federal Reserve) | **US_FED only** | `US_FED` | ✅ Implemented |
 | **EU AI Act** | **EU_ECB only** | `EU_ECB` | ✅ Implemented |
@@ -304,12 +328,12 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 | Domain                                       | Status                  | Detail                                                                                                                      |
 | -------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | **AI governance enforcement**                | ✅ Implemented & tested | NeMo rails, OPA circuit breaker, Cloud KMS HSM seal (production seal enforcement active — unsigned requests return 403), HITL, CBF (externally reconciled), heterogeneous consensus, PII, STPA — all fail-closed |
-| **Evidentiary independence (v2.0.0)**        | ✅ Implemented & tested | KMS asymmetric signing, human-gated refinement, multi-model consensus — recursive self-authentication eliminated. (Anchorage custody reconciliation via `AnchorageGrpcLedgerProvider` is FUTURE STATE — ISO-001 in [`docs/POAM_ISO42001.md`](docs/compliance/universal/POAM_ISO42001.md), target 2026-09-08) |
-| **Multi-Framework automated compliance**     | 🟡 Partial              | 26 Lula validation manifests (4 Active, 22 Stub) across ISO 42001, NIST SP 800-53, NIST AI 600-1, EU AI Act/GDPR/DORA, MAS FEAT/Notice 655/TRM, and CSA AARM — see [`compliance/lula/README.md`](compliance/lula/README.md) |
+| **Evidentiary independence (v2.0.0)**        | ✅ Implemented & tested | KMS asymmetric signing, human-gated refinement, multi-model consensus — recursive self-authentication eliminated. External CBF reconciliation implemented via `reconciliation_worker.py` (POAM-023 closed 2026-07-27). |
+| **Multi-Framework automated compliance**     | 🟡 Partial              | 29 Lula validation manifests across ISO 42001, NIST SP 800-53, NIST AI 600-1 (phases 0–3), EU AI Act/GDPR/DORA, MAS FEAT/Notice 655/TRM, and CSA AARM — see [`compliance/lula/README.md`](compliance/lula/README.md) |
 | **NIST RMF Steps 1–4 (Prepare → Implement)** | 🟡 Partial (US_FED only) | SC-8 elevated to implemented; SC-7 reinforced; FIPS 199 unsigned; ATO not yet issued                                       |
 | **NIST RMF Step 5 (Assess)**                 | ❌ Not started (US_FED only) | No Security Assessment Report; no independent assessor                                                                 |
 | **NIST RMF Step 6 (Authorize)**              | ❌ Not started (US_FED only) | No ATO letter issued                                                                                                    |
-| **Infrastructure security**                  | 🟡 Partial              | 12 of 23 SP 800-53 POA&M open (7 Closed: POAM-003 AU-12, POAM-007 IA-3, POAM-010 RA-5, POAM-012 SC-12, POAM-016 SI-2, POAM-020 CM-3, POAM-021 SI-4; POAM-023 SI-2 CVE-2025-13462 opened 2026-06-08) — see [`docs/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md) |
+| **Infrastructure security**                  | 🟡 Partial              | 12 of 23 SP 800-53 POA&M open (8 Closed: POAM-003 AU-12, POAM-007 IA-3, POAM-010 RA-5, POAM-012 SC-12, POAM-016 SI-2, POAM-020 CM-3, POAM-021 SI-4, POAM-023 CBF reconciliation worker) — see [`docs/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md) |
 | **PodSecurity (restricted)**                 | ✅ Implemented          | `securityContext` (`runAsNonRoot`, `runAsUser: 65534`, `seccompProfile`, `allowPrivilegeEscalation: false`, `capabilities.drop: ALL`) applied to all 6 app deployment manifests (rc.3) |
 | **Intra-cluster mTLS**                       | ✅ Implemented          | Linkerd mTLS: SPIFFE/SVID identity for Gateway→OPA, Gateway→NeMo (POAM-007 closed)                                         |
 | **L7 egress boundary**                       | ✅ Implemented          | Cilium CiliumNetworkPolicy: FQDN allowlist for gateway, internal-only lockdown for agent pods                               |
@@ -391,7 +415,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ### Run Tests
 
 ```bash
-bash setup_test_env.sh && python -m pytest tests/   # 796 tests passing, 0 failed (148 skipped — 0 regressions; Track D 2026-06-08)
+bash setup_test_env.sh && python -m pytest tests/   # 1,559 tests passing, 0 failed (40 skipped — 0 regressions; v2.1.0 2026-07-27)
 ```
 
 ---
@@ -526,6 +550,8 @@ Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 ## What's New in v0.1.0
 
 > **Release date:** 2026-06-08 — Stable release: Token Quota Proxy, PII Sanitizer, UCA Logger, gateway CVE remediation, seal enforcement verification, all universal Lula assertions PASS
+>
+> See [What's New in v2.1.0](#whats-new-in-v210) above for the latest additions.
 
 ### Bug Fixes
 

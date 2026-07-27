@@ -13,6 +13,9 @@
 
 ## 1. Agent Orchestration Philosophy
 
+> **v2.1.0**: The Governed Financial Advisor (`src/governed_financial_advisor/`) is the primary multi-agent reference implementation. It demonstrates the full CAGE governance stack applied to a realistic financial advisory workflow. The LangGraph harness (`src/gateway/governance/langgraph_harness/`) provides the node-factory pattern used to compose governance checks into the graph. NeMo Guardrails (`src/gateway/governance/nemo/`) enforces CBRN and PII rails as typed LangGraph nodes. OPA policy evaluation (`src/governed_financial_advisor/governance/policy/trade_governance.rego`) enforces role-based trade authorization at Tier 4.
+
+
 CAGE composes its multi-agent pipeline using LangGraph's `StateGraph`, producing a deterministic, fully auditable execution sequence. Every agent carries a single, well-defined responsibility; no agent performs work outside its declared scope. All inter-agent communication occurs through a shared, strongly typed `AgentState` TypedDict defined in `src/governed_financial_advisor/graph/state.py` — agents read fields they need and write only the fields they own.
 
 Governance checks are not advisory: they gate every state transition before execution can reach `governed_trader`. The pipeline is structured so that thinker/doer reasoning, data acquisition, plan generation, evaluation, and safety validation must all complete successfully before a trade instruction is issued, with human approval required as the final gate. This architecture ensures no path exists from user instruction to trade execution that bypasses policy enforcement.
@@ -219,6 +222,17 @@ Activated when `CAGE_NORMATIVE_PROVIDER != "static"`. The daemon polls the exter
 
 The **ConsensusModelRegistry** enables heterogeneous multi-model consensus for high-value trades (≥ `THRESHOLDS.consensus.threshold_usd`). Two independent LLM-backed critic personas — a **DeepSeek-R1 Risk Manager** (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`) and a **Llama 3.1 Compliance Officer** (`meta-llama/Llama-3.1-8B-Instruct`) — are queried concurrently via `asyncio.gather()`. This heterogeneous design neutralizes **AARM-V9 Semantic Blind Spot** — a single model cannot detect its own compliance violations.
 
+### FTRA Commencement Reachability Gate (v2.1.0)
+
+Before any LangGraph graph instance is executed, the FTRA gate (`src/gateway/governance/ftra/`) performs a structural reachability analysis:
+
+1. **`classifier.py`** — Classifies every node in the compiled graph by type: `START`, `TERMINAL`, `HITL_APPROVAL`, `ADVISORY`, `GOVERNANCE`.
+2. **`graph_analyzer.py`** — Runs BFS/DFS from the start node; raises `FTRAViolation` if no path to a `HUMAN_APPROVED` terminal exists.
+3. **`node_factory.py`** — Wraps the FTRA check as a LangGraph node using the same `GovernanceNodeInput → GovernanceNodeOutput` pattern as `langgraph_harness/`.
+4. **`ftra_reachability.py`** — Top-level entry point called by `SymbolicGovernor` at Tier 0 (pre-execution).
+
+The FTRA gate is a **pre-execution structural invariant** — it runs once per graph compilation, not per inference call. A graph that passes FTRA is guaranteed to have at least one execution path that reaches human approval.
+
 ### NeMo Guardrails Phase 4.2 Changes
 
 Phase 4.2 introduced the following changes to `src/gateway/governance/nemo/manager.py`:
@@ -232,6 +246,18 @@ Phase 4.2 introduced the following changes to `src/gateway/governance/nemo/manag
 | **Degraded mode stamping** | When degraded: all requests stamped `DEGRADED_FAIL_OPEN` in Langfuse with `stpa_hazard=UCA-1_SEMANTIC_BYPASS` and `iso_control=A.5.2`; OPA + STPA remain authoritative |
 
 ---
+
+## 5b. LangGraph Harness — Governance Node Composition (v2.1.0)
+
+The LangGraph harness (`src/gateway/governance/langgraph_harness/`) provides typed node factories for composing governance checks into any `StateGraph`:
+
+| Module | Wraps | Output injected into `AgentState` |
+|---|---|---|
+| [`nemo_node_factory.py`](../../src/gateway/governance/langgraph_harness/nemo_node_factory.py) | NeMo Guardrails manager | `nemo_result: NeMoRailsResult` |
+| [`opa_node_factory.py`](../../src/gateway/governance/langgraph_harness/opa_node_factory.py) | OPA policy evaluation | `opa_decision: OPADecision` (raises `GovernanceError` on DENY) |
+| [`types.py`](../../src/gateway/governance/langgraph_harness/types.py) | — | `GovernanceNodeInput`, `GovernanceNodeOutput` TypedDicts |
+
+The Governed Financial Advisor graph (`src/governed_financial_advisor/graph/graph.py`) uses both factories. The `guardrail_node.py` (`src/governed_financial_advisor/graph/nodes/guardrail_node.py`) invokes the NeMo node factory; the `safety_node.py` invokes the OPA node factory. This pattern ensures governance checks are first-class graph nodes with typed state transitions — not ad-hoc middleware calls.
 
 ## 6. HITL Human-in-the-Loop Approval Workflow
 
