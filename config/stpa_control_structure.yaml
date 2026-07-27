@@ -184,6 +184,10 @@ unsafe_control_actions:
     uca_type: unsafe_action
     hazard_refs: [H-1]
     description: "Agent executes write operation without a signed approval token."
+    # FTRA: write_db commits a durable record to the production database.
+    # Once written, the record cannot be silently undone — it requires an explicit
+    # compensating write (audit trail preserved).  Classified IRREVERSIBLE_TERMINAL.
+    terminal_classification: IRREVERSIBLE_TERMINAL
     condition:
       param: approval_token
       operator: is_null
@@ -197,6 +201,10 @@ unsafe_control_actions:
     uca_type: wrong_timing
     hazard_refs: [H-2]
     description: "Agent executes trade with stale market data (latency > threshold)."
+    # FTRA: execute_trade is an external financial commitment — irreversible once
+    # the order reaches the exchange matching engine.  Any plan that reaches this
+    # action inherits worst-case classification from T₀.
+    terminal_classification: IRREVERSIBLE_TERMINAL
     condition:
       param: latency_ms
       operator: greater_than
@@ -211,6 +219,8 @@ unsafe_control_actions:
     uca_type: unsafe_action
     hazard_refs: [H-3]
     description: "Agent outputs PII to user interface."
+    # FTRA: execute_trade — same classification as UCA-2 (most restrictive wins).
+    terminal_classification: IRREVERSIBLE_TERMINAL
     condition:
       semantic_pattern: "output_contains_pii"
     enforcement: [nemo]
@@ -223,6 +233,8 @@ unsafe_control_actions:
     uca_type: stopped_too_soon
     hazard_refs: [H-2]
     description: "Agent debits account but fails to credit asset (atomic failure)."
+    # FTRA: execute_trade — irreversible external financial commitment.
+    terminal_classification: IRREVERSIBLE_TERMINAL
     condition:
       semantic_pattern: "partial_transaction_detected"
     enforcement: [nemo, langgraph]
@@ -254,6 +266,8 @@ unsafe_control_actions:
     uca_type: unsafe_action
     hazard_refs: [H-4]
     description: "Agent executes buy order when daily drawdown exceeds limit."
+    # FTRA: execute_trade — irreversible external financial commitment.
+    terminal_classification: IRREVERSIBLE_TERMINAL
     condition:
       param: drawdown
       operator: greater_than
@@ -268,6 +282,8 @@ unsafe_control_actions:
     uca_type: wrong_timing
     hazard_refs: [H-5]
     description: "Agent submits market order exceeding allowable fraction of daily volume."
+    # FTRA: execute_trade — irreversible external financial commitment.
+    terminal_classification: IRREVERSIBLE_TERMINAL
     condition:
       composite: "order_size > threshold_ref(stpa.uca6_max_order_volume_fraction) * daily_vol"
     enforcement: [opa, python]
@@ -280,6 +296,10 @@ unsafe_control_actions:
     uca_type: unsafe_action
     hazard_refs: [H-6]
     description: "Adversarial prompt injection score exceeds detection threshold."
+    # FTRA: prompt_injection_check is a read-only evaluation — it does not commit
+    # any external state.  Classified READ_ONLY so plans that only reach this
+    # action are not unnecessarily escalated to HITL.
+    terminal_classification: READ_ONLY
     condition:
       param: semantic_score
       operator: greater_than
@@ -297,6 +317,8 @@ unsafe_control_actions:
     uca_type: wrong_timing
     hazard_refs: [H-1, H-2]
     description: "Agent executes trade before risk assessment is complete."
+    # FTRA: execute_trade — irreversible external financial commitment.
+    terminal_classification: IRREVERSIBLE_TERMINAL
     condition:
       param: risk_assessed
       operator: is_false
@@ -307,6 +329,8 @@ unsafe_control_actions:
     uca_type: wrong_timing
     hazard_refs: [H-1]
     description: "Agent executes trade with compliance check bypassed."
+    # FTRA: execute_trade — irreversible external financial commitment.
+    terminal_classification: IRREVERSIBLE_TERMINAL
     condition:
       param: compliance_checked
       operator: is_false

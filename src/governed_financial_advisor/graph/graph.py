@@ -28,8 +28,11 @@ following node sequence:
                   └─► doer_node
                         ├─► data_analyst      ─► nemo_output_rail ─► END
                         ├─► execution_analyst ─► evaluator
-                        │     ├─► safety_check ─► governed_trader ─► explainer
-                        │     │                └─► explainer (BLOCKED/ESCALATED)
+                        │     ├─► ftra_node   (CTRL_FTRA_001 — Tier 0.5 reachability gate)
+                        │     │     ├─► safety_check ─► governed_trader ─► explainer
+                        │     │     │                └─► explainer (BLOCKED/ESCALATED)
+                        │     │     ├─► explainer (FTRA BLOCKED)
+                        │     │     └─► [DeferQueue park] (FTRA HITL_REQUIRED)
                         │     └─► execution_analyst (loop, max 3)
                         │     └─► explainer (loop cap)
                         └─► nemo_output_rail (FINISH) ─► END
@@ -54,6 +57,8 @@ LangGraph 1.1 Notes:
 import os
 
 from langgraph.graph import END, StateGraph
+
+from src.gateway.governance.ftra.node_factory import create_ftra_node, route_after_ftra
 
 from .annotations import SIDE_EFFECT_REGISTRY
 from .checkpointer import get_checkpointer
@@ -113,6 +118,12 @@ def create_graph(redis_url=None):
     workflow.add_node("data_analyst", data_analyst_node)
     workflow.add_node("execution_analyst", execution_analyst_node)
     workflow.add_node("evaluator", evaluator_node)
+    # CTRL_FTRA_001: Tier 0.5 commencement-time reachability gate.
+    # Inserted between evaluator and safety_check.  Verdicts:
+    #   CLEAR         → safety_check
+    #   HITL_REQUIRED → DeferQueue park + NodeInterrupt (→ explainer fallback)
+    #   BLOCKED       → explainer
+    workflow.add_node("ftra_node", create_ftra_node())
     workflow.add_node("safety_check", safety_check_node)  # R-11: OPA pre-trade gate
     workflow.add_node("governed_trader", governed_trader_node)
     workflow.add_node("explainer", explainer_node)
@@ -156,7 +167,7 @@ def create_graph(redis_url=None):
 
     workflow.add_conditional_edges("doer_node", route_supervisor)
 
-    # Lifecycle: Planner -> Evaluator -> [Safety Gate] -> Trader | Re-plan
+    # Lifecycle: Planner -> Evaluator -> [FTRA Tier 0.5] -> [Safety Gate] -> Trader | Re-plan
     workflow.add_edge("execution_analyst", "evaluator")
 
     def check_safety_signature(state: AgentState):
@@ -167,15 +178,16 @@ def create_graph(redis_url=None):
         cycles infinitely when governance_signature is never set. Add a hard cap using
         loop_count (which now increments unconditionally in execution_analyst_node).
 
-        R-11 FIX: On APPROVED + signature, route to safety_check (OPA pre-trade gate)
-        rather than directly to governed_trader. The safety_check node then decides
-        whether to allow the trade to proceed to governed_trader or block/escalate.
+        CTRL_FTRA_001: On APPROVED + signature, route to ftra_node (Tier 0.5
+        commencement-time reachability gate) rather than directly to safety_check.
+        The ftra_node then routes to safety_check (CLEAR), explainer (BLOCKED), or
+        parks in DeferQueue (HITL_REQUIRED).
         """
         sig = state.get("governance_signature")
         verdict = state.get("evaluation_result", {}).get("verdict")
 
         if verdict == "APPROVED" and sig:
-            return "safety_check"  # R-11: intercept approved plans at OPA gate
+            return "ftra_node"  # CTRL_FTRA_001: Tier 0.5 gate before OPA
 
         # Safety breaker: if we've looped too many times, give up gracefully
         if (state.get("loop_count", 0) or 0) >= 3:
@@ -185,6 +197,12 @@ def create_graph(redis_url=None):
         return "execution_analyst"
 
     workflow.add_conditional_edges("evaluator", check_safety_signature)
+
+    # CTRL_FTRA_001: FTRA verdict routing
+    #   CLEAR         → safety_check (OPA pre-trade gate)
+    #   HITL_REQUIRED → explainer (NodeInterrupt parks thread; this is the fallback)
+    #   BLOCKED       → explainer
+    workflow.add_conditional_edges("ftra_node", route_after_ftra)
 
     def route_after_safety(state: AgentState):
         """

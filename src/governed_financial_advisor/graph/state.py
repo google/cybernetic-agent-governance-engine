@@ -138,3 +138,12 @@ class AgentState(TypedDict):
     # before END.  Auditors can assert this field is True to confirm the rail
     # executed on a given trace.
     output_rail_applied: bool  # default False
+
+    # FTRA — Forward-Looking Trajectory Reachability Analyzer (CTRL_FTRA_001)
+    # Set by ftra_node (Tier 0.5 gate) between evaluator and safety_check.
+    # ftra_status:    "CLEAR" | "HITL_REQUIRED" | "BLOCKED" | None (not yet run)
+    # ftra_result:    Serialised ReachabilityResult dict from PlanGraphAnalyzer.
+    # ftra_defer_id:  DeferQueue token ID when ftra_status == "HITL_REQUIRED".
+    ftra_status: str | None  # default None
+    ftra_result: dict[str, Any] | None  # default None
+    ftra_defer_id: str | None  # default None
