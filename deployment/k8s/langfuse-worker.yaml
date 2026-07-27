@@ -122,13 +122,13 @@ spec:
                   name: oscal-artifact-secrets
                   key: bucket-name
             - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
-              value: "auto"
+              value: "us-central1"  # GCS bucket region — must not be "auto" (resolves to s3.auto.amazonaws.com)
             - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
               value: "https://storage.googleapis.com"
             - name: AWS_ENDPOINT_URL_S3
               value: "https://storage.googleapis.com"
             - name: AWS_REGION
-              value: "auto"
+              value: "us-central1"  # GCS bucket region — must not be "auto"
             - name: AWS_S3_PATH_STYLE_ACCESS
               value: "true"
             - name: LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE
