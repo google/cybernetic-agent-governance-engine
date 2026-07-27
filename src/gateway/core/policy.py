@@ -279,6 +279,15 @@ class OPAClient:
     Async OPA Client with Circuit Breaker.
     """
 
+    # Default OPA data path for the trade governance policy.
+    # OPA's REST API requires POST /v1/data/<package_path> to evaluate a policy.
+    # When OPA_URL is set to a bare host (e.g. http://localhost:8181) without a
+    # path, the client appends this default so the request reaches the correct
+    # policy package (trade.governance → /v1/data/trade/governance).
+    # Override by including the full path in OPA_URL, e.g.:
+    #   OPA_URL=http://localhost:8181/v1/data/trade/governance
+    _DEFAULT_DATA_PATH: str = "/v1/data/trade/governance"
+
     def __init__(self):
         self.url = Config.OPA_URL
         self.auth_token = Config.OPA_AUTH_TOKEN
@@ -288,11 +297,27 @@ class OPAClient:
         parsed = urllib.parse.urlparse(self.url)
         if parsed.scheme == "http+unix":
             self._uds_socket_path = urllib.parse.unquote(parsed.netloc)
-            self.target_url = f"http://localhost{parsed.path}"
+            # UDS: path is the socket path; append default data path for policy eval.
+            uds_path_part = parsed.path or self._DEFAULT_DATA_PATH
+            if not uds_path_part.startswith("/v1/data"):
+                uds_path_part = self._DEFAULT_DATA_PATH
+            self.target_url = f"http://localhost{uds_path_part}"
             logger.info(f"🔌 OPAClient configured for UDS: {self._uds_socket_path}")
         else:
-            self.target_url = self.url
-            logger.info(f"🌐 OPAClient configured for HTTP: {self.target_url}")
+            # HTTP: if OPA_URL has no path (or only "/"), append the default data path
+            # so that evaluate_policy() POSTs to the correct OPA REST endpoint.
+            if not parsed.path or parsed.path in ("", "/"):
+                base = f"{parsed.scheme}://{parsed.netloc}"
+                self.target_url = f"{base}{self._DEFAULT_DATA_PATH}"
+                logger.info(
+                    "🌐 OPAClient configured for HTTP: %s "
+                    "(appended default data path %s to bare OPA_URL)",
+                    self.target_url,
+                    self._DEFAULT_DATA_PATH,
+                )
+            else:
+                self.target_url = self.url
+                logger.info(f"🌐 OPAClient configured for HTTP: {self.target_url}")
 
     def _make_client(self) -> httpx.AsyncClient:
         """Create a fresh AsyncClient per request to avoid event-loop lifetime issues."""
