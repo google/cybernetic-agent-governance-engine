@@ -257,7 +257,7 @@ class ConsensusEngine:
             # causing the test to time out before the consensus gate resolved.
             # 10 s is sufficient for a healthy vLLM instance and still allows
             # the test to complete within its 120 s pytest-timeout budget even
-            # when both critics are unreachable (2 × 10 s = 20 s worst case).
+            # when both critics are unreachable (2 x 10 s = 20 s worst case).
             _CRITIC_TIMEOUT_S: float = float(
                 os.getenv("CONSENSUS_CRITIC_TIMEOUT_S", "10.0")
             )
@@ -271,7 +271,10 @@ class ConsensusEngine:
                         dedicated_client.chat.completions.create(
                             model=model or "default",
                             messages=[
-                                {"role": "system", "content": f"You are a strict {role}."},
+                                {
+                                    "role": "system",
+                                    "content": f"You are a strict {role}.",
+                                },
                                 {"role": "user", "content": prompt},
                             ],
                             temperature=0.0,
@@ -391,12 +394,20 @@ class ConsensusEngine:
                 )
                 decision = "ESCALATE"
                 reason = "consensus_unanimous_error"
-            elif non_error_votes and all(v == "REJECT" for v in non_error_votes) and not error_votes:
+            elif (
+                non_error_votes
+                and all(v == "REJECT" for v in non_error_votes)
+                and not error_votes
+            ):
                 # Genuine unanimous rejection: ALL critics voted and ALL rejected.
                 # No ERRORs present — this is a full quorum denial.
                 decision = "REJECT"
                 reason = f"Unanimous rejection by all critics. Votes: {votes}"
-            elif non_error_votes and all(v == "REJECT" for v in non_error_votes) and error_votes:
+            elif (
+                non_error_votes
+                and all(v == "REJECT" for v in non_error_votes)
+                and error_votes
+            ):
                 # Degraded quorum: some critics errored, remaining non-error votes are
                 # all REJECT.  This is NOT a unanimous rejection — the errored critics
                 # could not participate.  Escalate for human review.

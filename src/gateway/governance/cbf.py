@@ -183,6 +183,8 @@ return {1, "COMMITTED", tostring(next_cash)}
 
         # ── Attempt 1: externally reconciled balance (POAM-023) ──────────────
         try:
+            import asyncio as _asyncio
+
             from src.compliance_bridge.reconciliation_worker import (
                 read_verified_balance,
             )
@@ -194,8 +196,6 @@ return {1, "COMMITTED", tostring(next_cash)}
             #   "the JSON object must be str, bytes or bytearray, not coroutine"
             # (CBF_USING_SELF_REPORTED_BALANCE log sentinel — POAM-023 async bug).
             from src.gateway.infrastructure.redis_client import sync_redis_client
-
-            import asyncio as _asyncio
 
             verified = await _asyncio.to_thread(
                 read_verified_balance, sync_redis_client
