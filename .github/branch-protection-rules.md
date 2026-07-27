@@ -31,6 +31,16 @@
 | Allow force pushes | ❌ Disabled | Protects immutable audit trail on `main` |
 | Allow deletions | ❌ Disabled | `main` must not be deleted |
 
+**Settings → General → Pull Requests** (repository-level, not branch-protection-rule):
+
+| Setting | Value | Rationale |
+|---|---|---|
+| Allow merge commits | ❌ Disabled | Removes the "Create a merge commit" button; enforces squash-only strategy per GIT_WORKFLOW_STANDARDS §4.5 |
+| Allow squash merging | ✅ Enabled — default message: **Pull request title** | One clean commit per PR on `main`; PR title must follow Conventional Commits |
+| Allow rebase merging | ❌ Disabled | Not used in this repository; disabling prevents accidental use |
+
+> **Why this matters:** Without disabling merge commits at the repository level, GitHub presents all three merge buttons regardless of documented policy. PRs #41–#44 were merged with standard merge commits because this setting was never applied. The CI non-squash-merge detection step (see §3) provides a secondary signal if the setting is ever accidentally re-enabled.
+
 ---
 
 ## 2. Branch Protection — `release/**`

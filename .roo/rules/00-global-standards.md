@@ -73,6 +73,27 @@
 
 ---
 
+## PR Merge Strategy Rules
+
+**Squash merge is the only permitted strategy for all PRs into `main`.**
+
+- Never suggest "Create a merge commit" or rebase merge for PRs targeting `main`.
+- Always instruct the user to use the **"Squash and merge"** button on GitHub.
+- The squash commit message is taken verbatim from the PR title — the PR title must therefore follow Conventional Commits format exactly (see Commit Message Rules above).
+- The repository setting **"Allow merge commits"** must be disabled in Settings → General → Pull Requests. If it is not, flag this as a configuration gap.
+- A `squash-merge-guard` CI job in `.github/workflows/ci.yml` detects any two-parent merge commit that reaches `main` and fails the build. If this job fires, the fix is to re-enable the repository setting and investigate how the merge commit was created.
+
+**When suggesting how to merge a PR, always say:**
+> Use "Squash and merge" on GitHub. Confirm the pre-filled commit message matches the PR title and follows Conventional Commits format before clicking.
+
+**Never suggest:**
+- `git merge <branch>` into `main` (produces a merge commit)
+- `git merge --no-ff <branch>` (produces a merge commit)
+- Clicking "Create a merge commit" on GitHub
+- Clicking "Rebase and merge" on GitHub
+
+---
+
 ## Secret & Credential Hygiene
 
 **Never commit secrets, credentials, API keys, passwords, tokens, or PII.**

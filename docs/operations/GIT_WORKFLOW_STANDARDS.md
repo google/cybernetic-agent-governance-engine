@@ -311,6 +311,18 @@ Merge commits are reserved for merging the integration branch (`rc-v*`) into `ma
 
 Rebase merging is not used in this repository.
 
+**Enforcement — repository settings (Settings → General → Pull Requests):**
+
+| Setting | Required value |
+|---|---|
+| Allow merge commits | ❌ Disabled |
+| Allow squash merging | ✅ Enabled — default message: Pull request title |
+| Allow rebase merging | ❌ Disabled |
+
+Disabling merge commits removes the "Create a merge commit" button from the GitHub PR UI, making squash the only available strategy. This is the primary enforcement mechanism. A secondary `squash-merge-guard` job in `.github/workflows/ci.yml` detects any two-parent commit that reaches `main` (e.g., if the setting is accidentally re-enabled) and fails the build with an actionable error message.
+
+> **Root cause of PRs #41–#44 non-squash merges (2026-07-27):** These PRs were merged with standard merge commits because the repository-level "Allow merge commits" setting had never been disabled. The policy was documented here but not technically enforced. The settings above and the CI guard close that gap.
+
 ---
 
 ## 5. Protected Branch Workflow

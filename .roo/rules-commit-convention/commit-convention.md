@@ -231,11 +231,34 @@ primary intent, not every commit.
 
 | Branch | Rule |
 |---|---|
-| `main` | No direct push. Requires PR + CI green + 1 reviewer approval. |
+| `main` | No direct push. Requires PR + CI green + 1 reviewer approval. Squash merge only. |
 | `rc-v*` | No direct push. Requires PR + CI green. |
 
 When the user asks to commit or push directly to `main` or `rc-v*`, refuse and
 instead suggest creating a feature branch and opening a PR.
+
+### Merge Strategy Rules
+
+**Squash merge is the only permitted strategy for all PRs into `main`.**
+
+When suggesting how to merge a PR, always say:
+> Use "Squash and merge" on GitHub. Confirm the pre-filled commit message matches
+> the PR title and follows Conventional Commits format before clicking.
+
+Never suggest:
+- `git merge <branch>` into `main` (produces a merge commit)
+- `git merge --no-ff <branch>` (produces a merge commit)
+- Clicking "Create a merge commit" on GitHub
+- Clicking "Rebase and merge" on GitHub
+
+The repository setting **"Allow merge commits"** must be disabled in
+Settings → General → Pull Requests. If it is not, flag this as a configuration
+gap and remind the user to disable it.
+
+A `squash-merge-guard` CI job in `.github/workflows/ci.yml` detects any
+two-parent merge commit that reaches `main` and fails the build. If this job
+fires, the fix is to re-enable the "Allow merge commits: disabled" repository
+setting and investigate how the merge commit was created.
 
 ### Branch Naming Self-Validation
 
