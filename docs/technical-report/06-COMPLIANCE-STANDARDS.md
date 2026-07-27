@@ -1,5 +1,8 @@
 # 06 — Compliance & Regulatory Standards
 
+> **v2.1.0 additions**: Three-region compliance matrix with separate Lula manifests per jurisdiction (EU_ECB, APAC_MAS, US_FED) and a pytest parametrize matrix covering all three. NIST AI 600-1 Compliance Gates phases 0–3 all implemented. AARM Profile Mapper (`src/compliance_bridge/aarm_mapper.py`) with 11-vector threat ledger. Evidence Chain Metadata Binding (`src/compliance_bridge/evidence_stream.py`). CBF External Reconciliation Worker (`src/compliance_bridge/reconciliation_worker.py`) — POAM-023 closed. Region-Aware K8s Templates (`deployment/k8s/*.yaml.tpl`). Langfuse Native OTLP (standalone OTel Collector deprecated 2026-05-31).
+
+
 ---
 
 | Field              | Value      |
@@ -269,6 +272,19 @@ This tool dynamically compiles STPA hazards (UCAs) and control implementations i
 
 ## 7. Lula Validation Manifests
 
+### Three-Region Compliance Matrix (v2.1.0)
+
+CAGE v2.1.0 ships separate Lula validation manifests for each of the three regulatory jurisdictions. The manifests are parametrized in CI via a pytest matrix that runs all three regions in parallel:
+
+| Jurisdiction | Lula Manifest Directory | Threshold Config | OSCAL Framework |
+|---|---|---|---|
+| `US_FED` | `compliance/lula/us_fed/` | `config/thresholds/US_FED_BASELINE.json` | NIST SP 800-53 Rev 5 |
+| `EU_ECB` | `compliance/lula/eu_ecb/` | `config/thresholds/EU_ECB_BASELINE.json` | EU AI Act + DORA |
+| `APAC_MAS` | `compliance/lula/apac_mas/` | `config/thresholds/APAC_MAS_BASELINE.json` | MAS FEAT + TRM |
+
+Each manifest set covers the same control families but with jurisdiction-specific thresholds, telemetry suppression rules (EU_ECB/APAC_MAS suppress SR 26-2 telemetry per the "no legal force" sentinel), and OSCAL framework routing.
+
+
 **Source:** [`compliance/lula/`](../../compliance/lula/)
 
 Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule ([`deployment/k8s/lula-cron.yaml`](../../deployment/k8s/lula-cron.yaml)). RBAC permissions are defined in [`deployment/k8s/lula-rbac.yaml`](../../deployment/k8s/lula-rbac.yaml).
@@ -467,6 +483,43 @@ The table below consolidates the current compliance posture across all targeted 
 | MAS TRM Guidelines          | TRM §6.3/6.4 AI controls mapped      | `APAC_MAS`       | MAS Notice 655 audit certification pending  |
 | ISO-20022                   | Transaction message format; 200 ms latency is an operational infrastructure requirement of real-time interbank rails (FedNow / SEPA Instant), not an ISO-20022 mandate | All Regions      | SLA validation testing not complete         |
 | CSA AARM v1.0               | 11 threat vectors assessed            | All Regions      | 4 vectors at PARTIAL status                 |
+
+---
+
+## 14b. AARM Profile Mapper and Evidence Chain (v2.1.0)
+
+### AARM Profile Mapper (`src/compliance_bridge/aarm_mapper.py`)
+
+The AARM Profile Mapper translates CAGE governance decisions into the 11-vector AARM (AI Assurance and Risk Management) threat ledger format. Each vector maps to a specific CAGE control:
+
+| AARM Vector | CAGE Control | Implementation |
+|---|---|---|
+| V1 — Context Accumulation | AARM-V1 context accumulator | `src/governed_financial_advisor/graph/nodes/` |
+| V2 — Confabulation Risk | Confabulation scorer | `src/gateway/governance/confabulation_scorer.py` |
+| V3 — Prompt Injection | Prompt injection detector | `src/gateway/governance/prompt_injection_detector.py` |
+| V4 — PII Leakage | PII sanitizer | `src/gateway/governance/pii_sanitizer.py` |
+| V5 — CBRN Exposure | NeMo CBRN rail | `src/gateway/governance/nemo/colang/cbrn_rails.co` |
+| V6 — Fiscal Limit Breach | FiscalLimitGuard + CBF | `src/gateway/governance/fiscal_limit_guard.py` |
+| V7 — Confidence Starvation | DEFER state machine | `src/gateway/governance/defer_queue.py` |
+| V8 — Causal Boundary Violation | DoWhy causal gatekeeper | `src/gateway/governance/causal_gatekeeper.py` |
+| V9 — Consensus Failure | ConsensusModelRegistry | `src/gateway/governance/consensus.py` |
+| V10 — HITL SLA Breach | HITL escalator + DeferQueue TTL | `src/gateway/governance/hitl_escalator.py` |
+| V11 — Provenance Chain Break | Provenance chain | `src/gateway/governance/provenance_chain.py` |
+
+The AARM report generator (`src/compliance_bridge/aarm_report_generator.py`) produces AARM-format compliance reports from the 11-vector ledger for submission to regulatory reviewers.
+
+### Evidence Chain Metadata Binding (`src/compliance_bridge/evidence_stream.py`)
+
+The evidence stream module binds governance decision metadata to OSCAL evidence artifacts at the point of creation. Each evidence record includes:
+
+- `thread_id` — LangGraph thread identifier (links evidence to the originating inference trace)
+- `control_id` — NIST SP 800-53 / ISO 42001 control identifier
+- `decision` — `PASS` | `FAIL` | `NOT_APPLICABLE` | `ERROR`
+- `governance_signature` — KMS-signed (production) or HMAC-SHA256 (dev/CI)
+- `deployment_region` — `US_FED` | `EU_ECB` | `APAC_MAS`
+- `langfuse_trace_id` — OTLP trace ID for cross-referencing in Langfuse
+
+Evidence records are streamed to the OSCAL exporter (`src/compliance_bridge/oscal_exporter.py`) and archived to the GCS WORM bucket for 7-year retention.
 
 ---
 

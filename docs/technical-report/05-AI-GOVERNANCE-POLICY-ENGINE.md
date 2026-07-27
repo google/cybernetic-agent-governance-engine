@@ -11,6 +11,9 @@ project: "Cybernetic Governance Engine (CAGE)"
 
 ## Overview
 
+> **v2.1.0**: FTRA Commencement Reachability Gate added at Tier 0 (pre-execution structural check). NIST AI 600-1 Compliance Gates phases 0–3 are all fully implemented (confabulation scorer, HITL escalator, prompt injection detector, provenance chain, CBRN NeMo rail). CBF External Reconciliation Worker (`src/compliance_bridge/reconciliation_worker.py`) closed POAM-023.
+
+
 The AI Governance & Policy Engine is the most complex and safety-critical component of the Cybernetic Governance Engine (CAGE). It enforces a layered, **neuro-symbolic hybrid governance** model over every agent action, combining deterministic symbolic constraints with LLM-based semantic judgment. No action reaches execution unless it passes all governance tiers. All governance is **fail-closed**: any tier failure raises `GovernanceError` and blocks the action.
 
 ### Jurisdiction Baseline Summary
@@ -743,6 +746,30 @@ The following governance-related risk acceptances are documented in [`compliance
 
 ---
 
+## 14b. FTRA Commencement Reachability Gate (v2.1.0) **[All Regions]**
+
+The FTRA gate (`src/gateway/governance/ftra/`) is a **Tier 0 pre-execution structural invariant** that runs before any LLM inference. It enforces that the compiled LangGraph graph contains at least one execution path from the start node to a `HUMAN_APPROVED` terminal node.
+
+### Implementation
+
+| Module | Role |
+|---|---|
+| [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | Classifies graph nodes: `START`, `TERMINAL`, `HITL_APPROVAL`, `ADVISORY`, `GOVERNANCE` |
+| [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | BFS/DFS reachability analysis; raises `FTRAViolation` if no HITL path exists |
+| [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | `FTRAResult(reachable: bool, path: list[str], violation_reason: str \| None)` |
+| [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | LangGraph node factory (same `GovernanceNodeInput → GovernanceNodeOutput` pattern as `langgraph_harness/`) |
+| [`ftra_reachability.py`](../../src/gateway/governance/ftra_reachability.py) | Top-level entry point called by `SymbolicGovernor` at Tier 0 |
+
+### Compliance Mapping
+
+| Control | Requirement | FTRA Enforcement |
+|---|---|---|
+| NIST AI 600-1 §2.5.2 | Human oversight required for high-stakes decisions | Structural guarantee: HITL path must exist |
+| SR 26-2 §3.2 | HITL SLA enforcement | FTRA ensures HITL node is reachable before execution |
+| ISO 42001 A.6.2 | AI system design must include human oversight mechanisms | FTRA is a design-time + runtime structural check |
+
+---
+
 ## 15. NIST AI 600-1 Governance Modules **[US_FED only]**
 
 > **Scope:** This section documents governance modules that implement controls from **NIST AI 600-1** (Artificial Intelligence Risk Management Framework: Generative Artificial Intelligence). These modules are scoped exclusively to `CAGE_DEPLOYMENT_REGION=US_FED`. They MUST NOT be treated as prerequisites for the global stable tag, EU_ECB deployment, or APAC_MAS deployment. The universal baseline for all regions is ISO/IEC 42001:2023 (documented in the sections above).
@@ -981,6 +1008,17 @@ GCS WORM Bucket: provenance/<date>/<trace_id>.json
 ```
 
 ---
+
+### 15.5 NIST AI 600-1 Phase Implementation Status **[US_FED only]**
+
+All four implementation phases are complete as of v2.1.0:
+
+| Phase | Scope | Status |
+|---|---|---|
+| Phase 0 — Foundation | Agentic scope statement, Lula manifest scaffolding, SBOM CI gate | ✅ Complete |
+| Phase 1 — Quick Wins | Confabulation scorer (§15.1), PII audit log hardening | ✅ Complete |
+| Phase 2 — Core Hardening | Prompt injection detector (§15.3), HITL enforcement (§15.2), provenance chain (§15.4) | ✅ Complete |
+| Phase 3 — Architectural Uplift | NeMo CBRN rail (§6 + `colang/cbrn_rails.co`), recursive governance risk mitigation | ✅ Complete |
 
 ### 15.5 NIST AI 600-1 Module Summary **[US_FED only]**
 

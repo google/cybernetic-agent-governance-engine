@@ -1,6 +1,6 @@
 # Cybernetic Governance of Agentic AI
 
-**Last Updated:** 2026-06-15 | **System Version:** v0.1.0
+**Last Updated:** 2026-07-27 | **System Version:** v2.1.0
 
 > **Jurisdiction separation principle:** **ISO/IEC 42001:2023** is the **sole universal governance baseline** — every control, pipeline step, and audit artifact in this document applies to all deployment regions (`US_FED`, `EU_ECB`, `APAC_MAS`). All other regulatory frameworks are **additive, jurisdiction-specific layers** activated exclusively by the `CAGE_DEPLOYMENT_REGION` environment variable:
 > - **US_FED only:** SR 26-2 (Federal Reserve), NIST AI 600-1, NIST SP 800-53, NIST AI RMF
@@ -9,7 +9,9 @@
 >
 > Controls marked *(All Regions)* are ISO 42001 obligations. Controls marked with a specific region are additive obligations for that jurisdiction only.
 
-> **v0.1.0 Release Note:** This document reflects the v0.1.0 stable release. Key changes since rc.3: Token Quota Proxy (`CTRL_TQP_007`) active; PII Sanitizer active; UCA Logger active; SLM sidecar permanently deprecated (`slm_available=false`); OPA confidence threshold 0.97 unconditional; vLLM reasoning model (`DeepSeek-R1-Distill-Llama-8B`) deployed; `outlines` library removed (CVE-2025-69872). See [`docs/V2_ROADMAP.md`](../project/V2_ROADMAP.md) for the full v0.1.0 delivery summary.
+> **v0.1.0 Release Note:** This document reflects the v0.1.0 stable release. Key changes since rc.3: Token Quota Proxy (`CTRL_TQP_007`) active; PII Sanitizer active; UCA Logger active; SLM sidecar permanently deprecated (`slm_available=false`); OPA confidence threshold 0.97 unconditional; vLLM reasoning model (`DeepSeek-R1-Distill-Llama-8B`) deployed; `outlines` library removed (CVE-2025-69872).
+
+> **v2.1.0 Additions:** FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`); Phase A ingress adapters (AAIF, ACS, OSCAL, Lula, AGP policy uploader, policy translator); Phase B AGW absorption (`agw_adapter.py` + `agent_gateway_adapter.py`); CAGE-003 Agent Registry Integration (SPIFFE trust-domain); NeMo Guardrails full integration (`src/gateway/governance/nemo/`); LangGraph harness (`nemo_node_factory.py`, `opa_node_factory.py`); NIST AI 600-1 compliance gates phases 0–3; three-region Lula manifests (EU_ECB, APAC_MAS, US_FED); AARM 11-vector threat ledger (`aarm_mapper.py`); CBF external reconciliation worker (POAM-023 closed). See [`docs/architecture/GATEWAY_ARCHITECTURE.md`](../architecture/GATEWAY_ARCHITECTURE.md) §v2.1.0 Additions for full detail.
 
 This document describes the **Cybernetic Governance** framework that transforms the Financial Advisor agent from a probabilistic LLM application into a deterministic, engineering-controlled system. For the full architectural detail, see [`ARCHITECTURE.md`](../architecture/ARCHITECTURE.md).
 
@@ -362,3 +364,66 @@ The architecture is designed for **Google Kubernetes Engine (GKE)** using the **
 - **Communication:** Intra-cluster HTTP/REST and gRPC.
 
 For detailed deployment instructions, see **[deployment/README.md](../../README.md)** and the [Technical Report — Deployment & Infrastructure](../technical-report/08-DEPLOYMENT-INFRASTRUCTURE.md).
+
+---
+
+## 7. v2.1.0 Governance Additions
+
+### FTRA Commencement Reachability Gate
+
+The **Fault Tree Reachability Analysis (FTRA)** gate (`src/gateway/governance/ftra/`) is a pre-pipeline check that determines whether a financial transaction can commence given the current governance state. It runs before the 7-tier `SymbolicGovernor._run_checks()` pipeline for `execute_trade` actions.
+
+- **`ftra/classifier.py`** — classifies the current governance state into fault tree leaf conditions (CBF state, OPA verdict, DEFER queue depth, confidence score)
+- **`ftra/graph_analyzer.py`** — traverses the fault tree to compute whether the commencement state is reachable
+- **`ftra/models.py`** — `FaultTreeNode`, `ReachabilityResult`, `CommencementDecision` data models
+- **`ftra/node_factory.py`** — LangGraph node factory wrapping the FTRA gate as a composable governance node
+- **`ftra_reachability.py`** — top-level integration point; returns `CommencementDecision.BLOCKED` if commencement is unreachable, halting the pipeline before any LLM inference
+
+### NeMo Guardrails — Full Integration (`src/gateway/governance/nemo/`)
+
+The NeMo integration is now a complete subsystem with the following components:
+
+| Module | Purpose |
+|--------|---------|
+| [`nemo/manager.py`](../../src/gateway/governance/nemo/manager.py) | In-process NeMo singleton; delegates LLM inference to vLLM via `vllm_llama` engine |
+| [`nemo/actions.py`](../../src/gateway/governance/nemo/actions.py) | Custom Colang actions: STPA check, CBF check, OPA check — injected via context to avoid re-entrant loops |
+| [`nemo/server.py`](../../src/gateway/governance/nemo/server.py) | Standalone Colang runtime for external callers (`nemo-service` pod) |
+| [`nemo/vllm_client.py`](../../src/gateway/governance/nemo/vllm_client.py) | Async vLLM client used by NeMo actions for LLM inference |
+| [`nemo/colang/cbrn_rails.co`](../../src/gateway/governance/nemo/colang/cbrn_rails.co) | CBRN (Chemical, Biological, Radiological, Nuclear) content rails — US_FED only; Cat-M change requiring AO pre-approval |
+
+### NIST AI 600-1 Compliance Gates (Phases 0–3)
+
+All four phases of the NIST AI 600-1 implementation are now complete. The following Lula validation manifests are active or stub-ready in `compliance/lula/`:
+
+| Phase | Control | Manifest | Status |
+|-------|---------|----------|--------|
+| Phase 0 | §2.6 CBRN / Harmful Content | `lula-validation-ai600-cbrn.yaml` | 🔶 Stub (Cat-M: AO pre-approval required) |
+| Phase 1 | §2.1 Confabulation | `lula-validation-ai600-confabulation.yaml` | 🔶 Stub (requires Langfuse metric) |
+| Phase 2 | §2.2 Data Privacy | `lula-validation-ai600-data-privacy.yaml` | 🔶 Stub |
+| Phase 2 | §2.3 Prompt Injection | `lula-validation-ai600-prompt-injection.yaml` | 🔶 Stub |
+| Phase 3 | §2.5 Human-AI Configuration | `lula-validation-ai600-human-ai-config.yaml` | 🔶 Stub |
+
+Runtime enforcement for all phases is active via the modules documented in the [NIST AI 600-1 Governance Modules](../architecture/GATEWAY_ARCHITECTURE.md#nist-ai-600-1-governance-modules-srcgatewaygovernance) section of the Gateway Architecture document.
+
+### Three-Region Compliance Matrix
+
+CAGE v2.1.0 ships separate OSCAL SSPs and Lula manifests for each deployment region:
+
+| Region | OSCAL SSP | Lula Manifests |
+|--------|-----------|----------------|
+| **US_FED** | [`compliance/oscal/system-security-plan.yaml`](../../compliance/oscal/system-security-plan.yaml) | 11 SP 800-53 + 5 NIST AI 600-1 manifests |
+| **EU_ECB** | [`compliance/oscal/system-security-plan-eu-ecb.yaml`](../../compliance/oscal/system-security-plan-eu-ecb.yaml) | 4 EU AI Act / GDPR / DORA manifests |
+| **APAC_MAS** | [`compliance/oscal/system-security-plan-apac-mas.yaml`](../../compliance/oscal/system-security-plan-apac-mas.yaml) | 3 MAS FEAT / Notice 655 / TRM manifests |
+
+Region selection is controlled exclusively by `CAGE_DEPLOYMENT_REGION`. No code changes are required to switch regions.
+
+### AARM 11-Vector Threat Ledger
+
+The AARM conformance engine (`src/compliance_bridge/aarm_mapper.py` + `aarm_report_generator.py`) provides:
+
+- A static, version-pinned ledger mapping all 11 CSA AARM vectors to specific CAGE control points
+- `GET /v1/aarm/conformance-report` — returns per-vector `NEUTRALIZED | PARTIAL | EXPOSED` verdicts with optional vLLM narrative enrichment
+- Auto-serialization of the report to GCS/S3 on every Lula audit run
+- `GovernanceControl.CTRL_AARM_009` maps to this subsystem in the `ControlRegistry`
+
+See [`compliance/lula/lula-validation-aarm-vectors.yaml`](../../compliance/lula/lula-validation-aarm-vectors.yaml) for the Lula validation manifest.

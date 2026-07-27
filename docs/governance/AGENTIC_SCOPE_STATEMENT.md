@@ -1,8 +1,8 @@
 # CAGE Agentic Scope Statement
 
 **Authority**: NIST AI 600-1 §2.5.1, §2.5.4 | SR 26-2 §3.1 | EO 14110 §4.2
-**Version**: 1.0
-**Date**: 2026-06-15
+**Version**: 2.1.0
+**Date**: 2026-07-27
 
 ---
 
@@ -93,14 +93,31 @@ The CAGE gateway (`src/gateway/server/hybrid_server.py`) is the **sole trusted
 orchestrator**. No peer-to-peer agent calls are permitted without routing seal
 verification.
 
-### 3.2 Trust Hierarchy
+### 3.2 CAGE-003 Agent Registry (v2.1.0)
+
+The CAGE-003 Agent Registry (`src/gateway/governance/ingress/agent_registry_adapter.py`)
+maintains a SPIFFE trust-domain catalog of all authorized agents. Each registered
+agent entry includes:
+
+- **SPIFFE SVID**: `spiffe://cage.local/<service-name>` — cryptographic identity
+- **Allowed tools**: enumerated set of tool names the agent may invoke
+- **Trust level**: `INTERNAL` | `DOWNSTREAM` | `EXTERNAL`
+- **Region scope**: `US_FED` | `EU_ECB` | `APAC_MAS` | `ALL`
+
+The registry is loaded at gateway startup and consulted by the OPA agent catalog
+policy (`config/opa/agent_catalog.json`). Any agent not present in the registry
+is denied at the Envoy ext_authz boundary (`src/gateway/server/agent_gateway_adapter.py`)
+before reaching the governance kernel.
+
+### 3.3 Trust Hierarchy
 
 ```
 CAGE Gateway (trusted orchestrator)
   ├── ConsensusEngine (internal — same trust boundary)
   ├── CausalGatekeeper (internal — same trust boundary)
   ├── NeMo Guardrails (internal — same trust boundary)
-  └── governed-financial-advisor (downstream — requires routing seal)
+  ├── Agent Registry (CAGE-003 — SPIFFE trust-domain catalog)
+  └── governed-financial-advisor (downstream — requires routing seal + SPIFFE SVID)
         └── Market Data API (external — read-only, pre-approved)
 ```
 
@@ -180,19 +197,42 @@ check that is independent of the LLM confidence scores.
 
 ---
 
+## 6b. FTRA Commencement Reachability Gate (v2.1.0)
+
+The FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`) enforces
+that no financial transaction advisory workflow can commence unless the agent's
+LangGraph state graph contains a reachable path from the start node to a
+`HUMAN_APPROVED` terminal node. This is a **pre-execution structural check** —
+it runs before any LLM inference.
+
+| Module | Role |
+|---|---|
+| [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | Classifies graph nodes by type (start, terminal, HITL, advisory) |
+| [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | Performs reachability analysis; raises `FTRAViolation` if no HITL path exists |
+| [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | `FTRAResult` Pydantic model with `reachable`, `path`, and `violation_reason` fields |
+| [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | LangGraph node factory — same pattern as `langgraph_harness/` |
+| [`ftra_reachability.py`](../../src/gateway/governance/ftra_reachability.py) | Top-level entry point; called by `SymbolicGovernor` at Tier 0 |
+
+**Scope enforcement**: The FTRA gate is a mandatory pre-condition for the
+`governed-financial-advisor` scope. Any graph that lacks a reachable HITL path
+is rejected before the authorized action space (§1) is evaluated.
+
+---
+
 ## 7. SR 26-2 Compliance Evidence
 
 | SR 26-2 Requirement | CAGE Implementation | Evidence |
 |---|---|---|
 | §2.5.1 Authorized action space | OPA policy + routing seal | `opa_node_factory.py`, `routing_seal.py` |
 | §2.5.2 Human oversight | ConsensusEngine + HITL escalator | `consensus.py`, `hitl_escalator.py` |
-| §2.5.3 Inter-agent trust | Gateway-only orchestration | `hybrid_server.py` |
-| §2.5.4 Scope limitation | CausalGatekeeper + OPA | `causal_gatekeeper.py` |
+| §2.5.3 Inter-agent trust | Gateway-only orchestration + CAGE-003 registry | `hybrid_server.py`, `agent_registry_adapter.py` |
+| §2.5.4 Scope limitation | CausalGatekeeper + OPA + FTRA gate | `causal_gatekeeper.py`, `ftra_reachability.py` |
 | §3.1 Scope statement | This document | `docs/governance/AGENTIC_SCOPE_STATEMENT.md` |
 | §3.2 HITL SLA (4 hours) | DeferQueue TTL + escalation | `defer_queue.py`, `hitl_escalator.py` |
+| §4.1 Agent identity | SPIFFE SVID + Envoy ext_authz | `agent_registry_adapter.py`, `agent_gateway_adapter.py` |
 
 ---
 
-*Document end — CAGE Agentic Scope Statement v1.0*
+*Document end — CAGE Agentic Scope Statement v2.1.0*
 *Authority: NIST AI 600-1 §2.5, SR 26-2 §3.1, EO 14110 §4.2*
-*Next review: 2026-09-15 (quarterly) or upon any SR 26-2 amendment*
+*Next review: 2026-10-27 (quarterly) or upon any SR 26-2 amendment*

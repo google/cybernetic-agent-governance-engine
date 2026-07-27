@@ -1,4 +1,4 @@
-# Quick Start
+# Quick Start — v2.1.0
 
 Get CAGE running locally in under 10 minutes using Docker Compose.
 
@@ -37,9 +37,10 @@ docker compose up -d
 ```
 
 This starts:
-- **Gateway** (`localhost:8080`) — Governance enforcement proxy
-- **Compliance Bridge** (`localhost:8081`) — OSCAL/compliance automation
-- **AgentSight UI** (`localhost:5173`) — Observability dashboard
+- **Gateway** (`localhost:8080`) — Governance enforcement proxy with 7-tier SymbolicGovernor, FTRA reachability gate, and Phase A/B ingress adapters
+- **Compliance Bridge** (`localhost:8081`) — OSCAL/compliance automation; CBF reconciliation worker; AARM 11-vector conformance engine
+- **AgentSight UI** (`localhost:5173`) — React/TypeScript real-time governance dashboard (`KernelDashboard` with slippage slider, price drift badges, HITL TTL countdown)
+- **Governed Financial Advisor** (`localhost:8000`) — Full multi-agent LangGraph reference implementation with NeMo Guardrails and OPA policy enforcement
 - **Redis** — State and quota management
 - **OPA** — Policy engine
 
@@ -76,7 +77,9 @@ uv run pytest tests/ -x -q
 ## Next Steps
 
 - **Deploy to GKE**: See [`infra/QUICK_START.md`](../infra/QUICK_START.md)
-- **Understand the architecture**: See [`docs/architecture/ARCHITECTURE.md`](architecture/ARCHITECTURE.md)
+- **Understand the architecture**: See [`docs/architecture/GATEWAY_ARCHITECTURE.md`](architecture/GATEWAY_ARCHITECTURE.md)
 - **Configure governance policies**: See [`docs/governance/GOVERNANCE_OVERVIEW.md`](governance/GOVERNANCE_OVERVIEW.md)
 - **Connect an MCP client**: See [`docs/MCP_SETUP.md`](MCP_SETUP.md)
+- **Run the Governed Financial Advisor**: See [`src/governed_financial_advisor/`](../src/governed_financial_advisor/)
+- **Explore the three-region compliance matrix**: See [`compliance/lula/README.md`](../compliance/lula/README.md) for EU_ECB, APAC_MAS, and US_FED Lula manifests
 - **Contribute**: See [`CONTRIBUTING.md`](../CONTRIBUTING.md)

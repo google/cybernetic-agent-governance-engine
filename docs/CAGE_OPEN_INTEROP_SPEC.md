@@ -268,7 +268,7 @@ streaming. It is an HTTP/1.1 and HTTP/2 compliant REST service.
 {
   "status": "ok",
   "service": "compliance-bridge",
-  "version": "0.1.0",
+  "version": "2.1.0",
   "langfuse_compliance_configured": true,
   "langfuse_app_configured": true,
   "oscal_storage_configured": true,

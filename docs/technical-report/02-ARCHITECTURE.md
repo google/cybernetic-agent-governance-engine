@@ -13,6 +13,9 @@
 
 ## 1. Architectural Overview
 
+> **v2.1.0 additions**: FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`), Phase A Ingress Adapters (`src/gateway/governance/ingress/`), Phase B AGW Absorption (`agw_adapter.py` + `src/gateway/server/agent_gateway_adapter.py`), CAGE-003 Agent Registry (`agent_registry_adapter.py`), LangGraph Harness (`src/gateway/governance/langgraph_harness/`), AgentSight UI (`src/agentsight-ui/`), Langfuse Native OTLP (standalone OTel Collector deprecated).
+
+
 The **Cybernetic Governance Engine (CAGE)** is a distributed, multi-runtime system composed of five major subsystems that operate cooperatively to enforce real-time AI governance over a LangGraph-based financial advisory pipeline. Each subsystem has a discrete runtime boundary, a defined communication protocol, and a specific governance responsibility.
 
 | #   | Subsystem                      | Root Path                         | Runtime                   | Port            |
@@ -68,10 +71,28 @@ flowchart TD
 ### Component Interaction & Post-HITL Feedback Loop
 
 The runtime lifecycle consists of a primary check path and an execution-time revalidation feedback loop:
-1. **Pre-Trade Checking**: The user's request traverses the multi-agent planning layers, culminating in the `SymbolicGovernor` executing 6 active tiers (STPA, confidence, CBF, OPA, Consensus, and Causal Gatekeeper; Tier 3 SLM is deprecated).
-2. **HITL Interruption**: If the trade passes the pre-trade check but requires human verification, execution is suspended and state is persisted in Redis.
-3. **Execution-Time Feedback Loop**: Once the human reviewer submits approval via `/resume`, the `governed_trader` subgraph re-hydration node retrieves a fresh pricing sample and loops back to the `SymbolicGovernor` to re-run only the deterministic, continuous tiers (Tier 2 Control Barrier Function, and Tier 4 OPA Policy Engine).
-4. **Final Actuation**: If both revalidation checks pass successfully, the transaction is committed via the trade execution actuator; otherwise, it is blocked, and a compensator rollback is initiated.
+1. **Pre-Execution FTRA Gate**: Before any LLM inference, the FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`) verifies that the compiled LangGraph graph contains a reachable path to a `HUMAN_APPROVED` terminal node. Graphs that fail this structural check are rejected before any agent runs.
+2. **Pre-Trade Checking**: The user's request traverses the multi-agent planning layers, culminating in the `SymbolicGovernor` executing 6 active tiers (STPA, confidence, CBF, OPA, Consensus, and Causal Gatekeeper; Tier 3 SLM is deprecated).
+3. **HITL Interruption**: If the trade passes the pre-trade check but requires human verification, execution is suspended and state is persisted in Redis.
+4. **Execution-Time Feedback Loop**: Once the human reviewer submits approval via `/resume`, the `governed_trader` subgraph re-hydration node retrieves a fresh pricing sample and loops back to the `SymbolicGovernor` to re-run only the deterministic, continuous tiers (Tier 2 Control Barrier Function, and Tier 4 OPA Policy Engine).
+5. **Final Actuation**: If both revalidation checks pass successfully, the transaction is committed via the trade execution actuator; otherwise, it is blocked, and a compensator rollback is initiated.
+
+### v2.1.0 Ingress Adapter Layer
+
+The ingress adapter layer (`src/gateway/governance/ingress/`) provides a uniform integration surface for external governance frameworks, translating foreign schemas into the CAGE `ControlRegistry` format:
+
+| Adapter | External Framework | Phase |
+|---|---|---|
+| [`aaif_adapter.py`](../../src/gateway/governance/ingress/aaif_adapter.py) | AAIF (AI Assurance & Inspection Framework) | Phase A |
+| [`acs_adapter.py`](../../src/gateway/governance/ingress/acs_adapter.py) | ACS (AI Compliance Schema) | Phase A |
+| [`oscal_adapter.py`](../../src/gateway/governance/ingress/oscal_adapter.py) | OSCAL v1.1.2 component definitions | Phase A |
+| [`lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py) | Lula validation manifests | Phase A |
+| [`agp_policy_uploader.py`](../../src/gateway/governance/ingress/agp_policy_uploader.py) | AGP compiled policy bundles | Phase A |
+| [`policy_translator.py`](../../src/gateway/governance/ingress/policy_translator.py) | Multi-format policy detection | Phase A |
+| [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) | Agent Gateway (Envoy ext_authz bridge) | Phase B |
+| [`agent_registry_adapter.py`](../../src/gateway/governance/ingress/agent_registry_adapter.py) | CAGE-003 Agent Registry (SPIFFE trust-domain) | Phase B |
+
+The Phase B AGW adapter pairs with `src/gateway/server/agent_gateway_adapter.py` to expose an Envoy `ext_authz` gRPC endpoint, enabling any Envoy-proxied service to delegate authorization decisions to the CAGE governance kernel without code changes.
 
 ---
 

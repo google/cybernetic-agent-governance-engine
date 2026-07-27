@@ -1,5 +1,10 @@
 # CAGE Deployment Rules & Best Practices
 
+> **⚠️ REFERENCE ARCHITECTURE ONLY — NOT FOR PRODUCTION USE**
+> CAGE is a reference architecture demonstrating AI governance patterns.
+> The deployment rules below are **illustrative** — this system is not
+> deployed to any production environment.
+
 > **Critical Policy:** This document defines mandatory deployment rules that all agents (your MCP environment, your AI assistant) and human operators must follow.
 
 ## 🚨 GKE Deployment Policy
