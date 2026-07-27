@@ -210,10 +210,11 @@ def test_assert_safe_operational_state_raises_in_production_combined_risk():
     env = {
         k: v
         for k, v in os.environ.items()
-        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
+        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT", "RECONCILIATION_PROVIDER")
     }
     env["CBF_FAIL_OPEN"] = "true"
     env["CAGE_ENV"] = "production"
+    env["RECONCILIATION_PROVIDER"] = "plaid"
 
     with (
         patch.dict(os.environ, env, clear=True),
@@ -239,10 +240,11 @@ def test_assert_safe_operational_state_raises_message_mentions_cbf_fail_open():
     env = {
         k: v
         for k, v in os.environ.items()
-        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
+        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT", "RECONCILIATION_PROVIDER")
     }
     env["CBF_FAIL_OPEN"] = "true"
     env["CAGE_ENV"] = "production"
+    env["RECONCILIATION_PROVIDER"] = "plaid"
 
     with (
         patch.dict(os.environ, env, clear=True),
@@ -271,10 +273,11 @@ def test_assert_safe_operational_state_does_not_raise_in_production_when_kms_act
     env = {
         k: v
         for k, v in os.environ.items()
-        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT")
+        if k not in ("CBF_FAIL_OPEN", "CAGE_ENV", "ENVIRONMENT", "RECONCILIATION_PROVIDER")
     }
     env["CBF_FAIL_OPEN"] = "true"
     env["CAGE_ENV"] = "production"
+    env["RECONCILIATION_PROVIDER"] = "plaid"
 
     with (
         patch.dict(os.environ, env, clear=True),
