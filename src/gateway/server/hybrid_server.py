@@ -212,53 +212,33 @@ async def _gateway_lifespan(app: FastAPI):
             provider_name,
         )
 
+    # GCP Adaptation: Agent Registry daemon (no-op if CAGE_AGENT_REGISTRY_PROJECT not set)
+    registry_daemon: Any = None
+    try:
+        from src.gateway.governance.ingress.agent_registry_adapter import (
+            AgentRegistryDaemon,
+        )
+
+        registry_daemon = AgentRegistryDaemon()
+        await registry_daemon.start()
+    except ImportError:
+        logger.warning(
+            "⚠️ agent_registry_adapter not available — using static agent catalog."
+        )
+    except Exception as reg_err:
+        logger.error("❌ AgentRegistryDaemon failed to start: %s", reg_err)
+
     # ── Start consensus background audit worker (HIGH-06) ──────────────────
     from src.gateway.governance.consensus import _background_audit_worker
 
     asyncio.create_task(_background_audit_worker())
     logger.info("✅ Consensus background audit worker started")
 
-    # ── Start Agent Gateway Adapter gRPC server (Phase B / Work Stream D) ──
-    # Cloud-agnostic Envoy ext_authz servicer on port 50051.
-    # Port 50051 is already declared in the existing Kubernetes Service manifest
-    # and whitelisted in all network policies — no infrastructure changes needed.
-    #
-    # GCP Adaptation: when deployed behind GCP Agent Gateway (AGW), this gRPC
-    # server functions as an AGW Service Extension.  No code changes required —
-    # AGW uses the same Envoy ext_authz protocol.  GCP-specific configuration
-    # (service extension resource, IAM binding) lives in infra/ Terraform modules.
-    grpc_server: Any = None
-    try:
-        from src.gateway.server.agent_gateway_adapter import serve_agent_gateway
-
-        grpc_port = int(os.getenv("AGENT_GW_GRPC_PORT", "50051"))
-        grpc_server = await serve_agent_gateway(port=grpc_port)
-        logger.info(
-            "✅ AgentGatewayAdapter gRPC server started on port %d "
-            "(ext_authz Authorization.Check ready)",
-            grpc_port,
-        )
-    except ImportError:
-        logger.warning(
-            "⚠️ grpcio not installed — AgentGatewayAdapter gRPC server not started. "
-            "Install grpcio to enable Envoy ext_authz / AGW Service Extension support."
-        )
-    except Exception as grpc_err:
-        logger.error(
-            "❌ AgentGatewayAdapter gRPC server failed to start: %s — "
-            "ext_authz enforcement will not be available.",
-            grpc_err,
-        )
-
     yield
 
-    # Shutdown: stop gRPC server gracefully before cancelling other tasks
-    if grpc_server is not None:
-        try:
-            await grpc_server.stop(grace=5.0)
-            logger.info("✅ AgentGatewayAdapter gRPC server stopped gracefully")
-        except Exception as stop_err:
-            logger.warning("⚠️ gRPC server stop raised: %s", stop_err)
+    # Shutdown: stop Agent Registry daemon if running
+    if registry_daemon is not None:
+        await registry_daemon.stop()
 
     # Shutdown: cancel polling task if running
     if polling_task is not None:

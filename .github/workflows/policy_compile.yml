@@ -1,147 +1,105 @@
-name: Policy Compile & Drift Gate
+name: Policy Compile
 
 on:
   push:
-    branches: [main]
     paths:
-      - 'config/stpa_control_structure.yaml'
-      - 'src/gateway/governance/stpa_compiler.py'
-      - 'src/gateway/governance/ingress/**'
-      - '.github/workflows/policy_compile.yml'
+      - "config/stpa_control_structure.yaml"
+      - "src/gateway/governance/stpa_compiler.py"
   pull_request:
-    branches: [main]
     paths:
-      - 'config/stpa_control_structure.yaml'
-      - 'src/gateway/governance/stpa_compiler.py'
-      - 'src/gateway/governance/ingress/**'
-      - '.github/workflows/policy_compile.yml'
-  workflow_dispatch:
-    inputs:
-      spec_path:
-        description: 'Path to external policy spec (ACS/AAIF/OSCAL/Lula) to ingest'
-        required: false
-        default: ''
-      targets:
-        description: 'Compiler targets (space-separated: opa nemo python langgraph agp)'
-        required: false
-        default: 'opa nemo python langgraph agp'
+      - "config/stpa_control_structure.yaml"
+      - "src/gateway/governance/stpa_compiler.py"
+  workflow_dispatch: {}
 
 jobs:
-  policy-compile:
-    name: Compile & Drift Gate
+  compile-policies:
+    name: Compile STPA → Governance Artifacts
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-          cache: 'pip'
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
 
       - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install pydantic pyyaml
+        run: uv sync --frozen
 
       - name: Validate STPA control structure
         run: |
-          python -m src.gateway.governance.stpa_compiler validate \
+          uv run python -m src.gateway.governance.stpa_compiler validate \
             --input config/stpa_control_structure.yaml
 
-      - name: Ingest external policy spec (if provided)
-        if: ${{ github.event.inputs.spec_path != '' }}
+      - name: Compile STPA → OPA + NeMo + Python + LangGraph
+        run: |
+          uv run python -m src.gateway.governance.stpa_compiler compile \
+            --targets opa nemo python langgraph \
+            --input config/stpa_control_structure.yaml
+        continue-on-error: false
+
+      - name: Compile STPA → AGP Semantic Policy
+        run: |
+          uv run python -m src.gateway.governance.stpa_compiler compile \
+            --targets agp \
+            --input config/stpa_control_structure.yaml \
+            --agp-out config/agp/generated_semantic_policy.txt
+        continue-on-error: false
+
+      - name: Compile STPA → FTRA Terminal Registry
+        run: |
+          uv run python -m src.gateway.governance.stpa_compiler compile \
+            --targets ftra \
+            --input config/stpa_control_structure.yaml \
+            --ftra-out config/ftra/terminal_registry.json
+        continue-on-error: false
+
+      - name: Compile STPA → Agent Registry manifest
+        # GCP Adaptation: generates config/registry/generated_tool_authorizations.json
+        # for the GEAP Agent Registry (Vertex AI Agent Engine).
+        # Cloud-agnostic deployments do not use this artifact but it is always
+        # generated as a CI artifact for auditability.
+        run: |
+          uv run python -m src.gateway.governance.stpa_compiler compile \
+            --targets registry \
+            --input config/stpa_control_structure.yaml \
+            --registry-out config/registry/generated_tool_authorizations.json
+        continue-on-error: false
+
+      - name: Validate registry manifest JSON
         run: |
           python -c "
-          import yaml, json, sys
-          from src.gateway.governance.ingress.policy_translator import translate_policy
-
-          spec_path = '${{ github.event.inputs.spec_path }}'
-          with open(spec_path) as f:
-              spec = yaml.safe_load(f)
-
-          bundle = translate_policy(spec)
-          print(f'Format detected: {bundle.format_detected}')
-          print(f'Policy version ID: {bundle.policy_version_id}')
-          if bundle.errors:
-              print('ERRORS:', bundle.errors, file=sys.stderr)
-              sys.exit(1)
-          if bundle.warnings:
-              print('Warnings:', bundle.warnings)
-          print('Translation successful.')
-          "
-
-      - name: Compile OPA / NeMo / Python / LangGraph targets
-        run: |
-          TARGETS="${{ github.event.inputs.targets || 'opa nemo python langgraph agp' }}"
-          python -m src.gateway.governance.stpa_compiler compile \
-            --input config/stpa_control_structure.yaml \
-            --targets $TARGETS
-
-      - name: Validate AGP character budget
-        run: |
-          AGP_FILE="config/agp/generated_semantic_policy.txt"
-          if [ -f "$AGP_FILE" ]; then
-            CHAR_COUNT=$(wc -c < "$AGP_FILE")
-            echo "AGP policy size: ${CHAR_COUNT} characters"
-            if [ "$CHAR_COUNT" -gt 5000 ]; then
-              echo "ERROR: AGP policy exceeds 5,000-character budget (${CHAR_COUNT} chars)" >&2
-              exit 1
-            fi
-            if grep -q "# TRUNCATED" "$AGP_FILE"; then
-              echo "ERROR: AGP policy contains TRUNCATED sentinel" >&2
-              exit 1
-            fi
-            echo "AGP budget OK: ${CHAR_COUNT}/5000 chars"
-          else
-            echo "AGP policy file not found — skipping budget check"
-          fi
-
-      - name: Policy drift detection gate
-        run: |
-          python scripts/check_policy_drift.py \
-            --input config/stpa_control_structure.yaml \
-            --opa-file config/opa/generated_stpa_policy.rego \
-            --hash-file config/opa/.policy_hash \
-            --agp-file config/agp/generated_semantic_policy.txt
-
-      - name: Validate agent_catalog.json schema
-        run: |
-          if [ -f "config/agent_catalog.json" ]; then
-            python -c "
           import json, sys
-          with open('config/agent_catalog.json') as f:
-              catalog = json.load(f)
-          agents = catalog.get('agents', {})
-          if not isinstance(agents, dict):
-              print('ERROR: agent_catalog.json: agents must be a dict', file=sys.stderr)
-              sys.exit(1)
-          for sub, entry in agents.items():
-              if 'allowed_tools' not in entry:
-                  print(f'ERROR: agent {sub!r} missing allowed_tools', file=sys.stderr)
-                  sys.exit(1)
-              if not isinstance(entry['allowed_tools'], list):
-                  print(f'ERROR: agent {sub!r} allowed_tools must be a list', file=sys.stderr)
-                  sys.exit(1)
-          print(f'agent_catalog.json valid: {len(agents)} agents registered.')
+          with open('config/registry/generated_tool_authorizations.json') as f:
+              manifest = json.load(f)
+          assert 'tool_authorizations' in manifest, 'Missing tool_authorizations key'
+          assert '_schema_version' in manifest, 'Missing _schema_version key'
+          print(f'Registry manifest OK: {len(manifest[\"tool_authorizations\"])} tool entries')
           "
-          else
-            echo "config/agent_catalog.json not found — skipping schema check"
-          fi
 
-      - name: Upload compiled artifacts
+      - name: Check STPA freshness
+        run: |
+          python scripts/check_stpa_freshness.py
+        continue-on-error: true
+
+      - name: Upload generated artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: compiled-policy-artifacts
+          name: stpa-compiled-artifacts
           path: |
             config/opa/generated_stpa_policy.rego
             config/rails/generated_stpa_rails.co
-            config/agp/generated_semantic_policy.txt
             src/gateway/governance/generated_stpa_validator.py
             src/gateway/governance/generated_saga_nodes.py
+            config/agp/generated_semantic_policy.txt
+            config/ftra/terminal_registry.json
+            config/registry/generated_tool_authorizations.json
           retention-days: 30

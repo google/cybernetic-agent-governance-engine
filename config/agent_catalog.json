@@ -1,76 +1,29 @@
 {
-    "_comment": [
-        "Agent Catalog Data Document — Work Stream F2 (Phase B)",
-        "Security: this file is version-controlled and reviewed in PRs.",
-        "Never modify directly in production — changes must go through PR + CI pipeline.",
-        "Schema validated in CI via .github/workflows/policy_compile.yml.",
-        "Loaded into OPA as data.agent_catalog_data at startup.",
-        "Caller identity (sub) is the OIDC sub claim or SPIFFE ID from mTLS peer certificate.",
-        "GCP Adaptation: when using GCP Workload Identity, sub is the service account email.",
-        "Compliance: AC-3 (Access Enforcement) — Cat-N change"
-    ],
     "agents": {
-        "spiffe://trust-domain/ns/default/sa/trader-agent": {
+        "spiffe://cage.example/governed-trader": {
             "display_name": "Governed Trader Agent",
-            "description": "Executes governed trade orders within RBAC-enforced limits",
+            "description": "Executes governed trade actions under CAGE CBF and OPA policy control.",
             "allowed_tools": [
                 "execute_trade",
-                "market_analysis",
-                "get_portfolio"
-            ],
-            "trust_domain": "trust-domain",
-            "max_trade_usd": 500000,
-            "roles": [
-                "trader"
-            ]
-        },
-        "spiffe://trust-domain/ns/default/sa/risk-agent": {
-            "display_name": "Risk Analyst Agent",
-            "description": "Performs risk assessment and portfolio analysis (read-only)",
-            "allowed_tools": [
-                "market_analysis",
                 "get_portfolio",
-                "risk_assessment"
+                "get_market_data",
+                "get_account_balance"
             ],
-            "trust_domain": "trust-domain",
-            "max_trade_usd": 0,
-            "roles": [
-                "analyst"
-            ]
-        },
-        "spiffe://trust-domain/ns/default/sa/data-analyst-agent": {
-            "display_name": "Data Analyst Agent",
-            "description": "Performs data analysis and reporting (read-only, no trade execution)",
-            "allowed_tools": [
-                "market_analysis",
-                "get_portfolio",
-                "risk_assessment",
-                "check_market_status"
+            "allowed_roles": [
+                "trader",
+                "portfolio_manager"
             ],
-            "trust_domain": "trust-domain",
-            "max_trade_usd": 0,
-            "roles": [
-                "analyst"
-            ]
-        },
-        "spiffe://trust-domain/ns/default/sa/supervisor-agent": {
-            "display_name": "Supervisor Agent",
-            "description": "Orchestrates sub-agents; cannot execute trades directly",
-            "allowed_tools": [
-                "market_analysis",
-                "get_portfolio",
-                "risk_assessment",
-                "check_market_status",
-                "verify_content_safety"
+            "approval_threshold": 1,
+            "uca_refs": [
+                "UCA-1",
+                "UCA-2",
+                "UCA-3"
             ],
-            "trust_domain": "trust-domain",
-            "max_trade_usd": 0,
-            "roles": [
-                "supervisor"
-            ]
+            "hazard_refs": [
+                "H-1",
+                "H-2"
+            ],
+            "schema_version": "1.0"
         }
-    },
-    "_schema_version": "1.0.0",
-    "_last_reviewed": "2026-07-19",
-    "_reviewed_by": "CAGE Security Team"
+    }
 }

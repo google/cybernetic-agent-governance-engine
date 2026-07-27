@@ -50,12 +50,35 @@ References:
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import cast
 
 from .aarm_mapper import AARM_THREAT_VECTORS
 from .types import CONTROL_META, FRAMEWORK_CONTROLS, OscalFinding, OscalResult
+
+# ---------------------------------------------------------------------------
+# GCP Adaptation: Agent Registry audit reference for AC-3 evidence
+# ---------------------------------------------------------------------------
+# When CAGE_AGENT_REGISTRY_PROJECT is set, the GEAP Agent Registry resource
+# name is included in AC-3 (Access Enforcement) finding evidence as an
+# additional attestation source.  Cloud-agnostic deployments are unaffected.
+
+_REGISTRY_PROJECT = os.environ.get("CAGE_AGENT_REGISTRY_PROJECT", "")
+
+if _REGISTRY_PROJECT:
+    try:
+        from src.gateway.governance.ingress.agent_registry_adapter import (
+            AgentRegistryAdapter as _AgentRegistryAdapter,
+        )
+
+        _reg_adapter = _AgentRegistryAdapter()
+        _REGISTRY_AUDIT_REF: str = _reg_adapter.get_registry_audit_reference()
+    except ImportError:
+        _REGISTRY_AUDIT_REF = ""
+else:
+    _REGISTRY_AUDIT_REF = ""
 
 # ---------------------------------------------------------------------------
 # State mapping helpers
@@ -193,6 +216,36 @@ def build_oscal_assessment_results(
                 cer_uri.rstrip("/").rsplit("/", 1)[-1] if "/" in cer_uri else cer_uri
             )
             props.append({"name": "cer-hash", "value": cer_hash})
+
+        # GCP Adaptation: include GEAP Agent Registry resource name in AC-3 evidence.
+        # AC-3 (Access Enforcement) — the registry is the authoritative source of
+        # agent tool authorization policies in GCP deployments.
+        # Cloud-agnostic deployments: _REGISTRY_AUDIT_REF is "" — this block is skipped.
+        if _REGISTRY_AUDIT_REF and f.control_id == "AC-3":
+            registry_link = {
+                "href": f"https://console.cloud.google.com/vertex-ai/agents?project={_REGISTRY_PROJECT}",
+                "rel": "gcp-agent-registry",
+                "text": f"GEAP Agent Registry — {_REGISTRY_AUDIT_REF}",
+            }
+            entry.setdefault("links", []).append(registry_link)
+            props.append(
+                {
+                    "name": "gcp-agent-registry-resource",
+                    "value": _REGISTRY_AUDIT_REF,
+                }
+            )
+            # Augment remarks with registry reference for auditor visibility
+            existing_remarks = entry.get("description", "")
+            registry_remark = (
+                f"GCP Adaptation: Agent tool authorization policies are enforced via "
+                f"GEAP Agent Registry ({_REGISTRY_AUDIT_REF}). "
+                f"Registry catalog is synced to OPA data.agent_catalog_data at runtime."
+            )
+            entry["description"] = (
+                f"{existing_remarks}\n{registry_remark}".strip()
+                if existing_remarks
+                else registry_remark
+            )
 
         oscal_findings.append(entry)
 
