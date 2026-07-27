@@ -94,6 +94,30 @@ esac
 export CAGE_ENV
 export CAGE_REGION
 
+# ---------------------------------------------------------------------------
+# Load .env if present — secrets (LANGFUSE_*, GOVERNANCE_SALT, etc.) live
+# there and must NOT be hardcoded in this script.
+# ---------------------------------------------------------------------------
+if [[ -f ".env" ]]; then
+  # Export only lines that are valid KEY=VALUE assignments; skip comments and blanks.
+  set -o allexport
+  # shellcheck source=/dev/null
+  source .env
+  set +o allexport
+fi
+
+# ---------------------------------------------------------------------------
+# Override GOOGLE_CLOUD_LOCATION based on deployment region.
+# .env sets GOOGLE_CLOUD_LOCATION=us-central1 (US_FED default); EU_ECB and
+# APAC_MAS must override to their authoritative GCP regions so that
+# data-residency tests and telemetry sinks resolve to the correct location.
+# ---------------------------------------------------------------------------
+case "$CAGE_REGION" in
+  EU_ECB)   export GOOGLE_CLOUD_LOCATION="europe-west1" ;;
+  APAC_MAS) export GOOGLE_CLOUD_LOCATION="asia-southeast1" ;;
+  US_FED)   export GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-us-central1}" ;;
+esac
+
 info "CAGE compliance matrix test run"
 info "  Environment : ${CAGE_ENV}"
 info "  Region      : ${CAGE_REGION}"
@@ -124,7 +148,7 @@ CAGE_DEPLOYMENT_REGION="${CAGE_REGION}" \
 echo ""
 info "Gate 0.1 — Core unit tests (tests/core/)"
 if [[ -d "tests/core" ]]; then
-  if pytest tests/core/ -v; then
+  if uv run pytest tests/core/ -v; then
     success "Gate 0.1 passed — core unit tests"
   else
     error "Gate 0.1 FAILED — core unit tests"
@@ -147,11 +171,12 @@ fi
 # Gate 0.3 — Langfuse posture verification
 echo ""
 info "Gate 0.3 — Langfuse posture verification"
+# Non-secret GCP context vars — safe to default here.
 export GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT:-mock-project}"
 export GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-mock-location}"
-export LANGFUSE_COMPLIANCE_HOST="${LANGFUSE_COMPLIANCE_HOST:-http://localhost:3001}"
-export LANGFUSE_COMPLIANCE_PUBLIC_KEY="${LANGFUSE_COMPLIANCE_PUBLIC_KEY:-pk-lf-comp-mock}"
-export LANGFUSE_COMPLIANCE_SECRET_KEY="${LANGFUSE_COMPLIANCE_SECRET_KEY:-sk-lf-comp-mock}"
+# All LANGFUSE_* vars (HOST, PUBLIC_KEY, SECRET_KEY, COMPLIANCE_*) are loaded
+# from .env above. Do NOT set fallback values here — missing vars must surface
+# as a real Gate 0.3 failure so operators know to populate .env.
 if python3 scripts/verify_langfuse_posture.py --dry-run --posture development; then
   success "Gate 0.3 passed — Langfuse posture verified"
 else
@@ -249,7 +274,7 @@ case "${CAGE_REGION}" in
   EU_ECB)
     echo ""
     info "Gate 1.1 — EU AI Act Art. 10 bias evaluation pipeline"
-    if pytest compliance/postures/eu_ecb/llm_eval/ -v; then
+    if uv run pytest compliance/postures/eu_ecb/llm_eval/ -v; then
       success "Gate 1.1 passed — EU AI Act bias eval pipeline"
     else
       error "Gate 1.1 FAILED — EU AI Act bias eval pipeline"
@@ -262,7 +287,7 @@ case "${CAGE_REGION}" in
 
       RESIDENCY_TEST="tests/infrastructure/test_data_residency.py"
       if [[ -f "${RESIDENCY_TEST}" ]]; then
-        if pytest "${RESIDENCY_TEST}" --region=europe-west1 -v; then
+        if uv run pytest "${RESIDENCY_TEST}" --region=europe-west1 -v; then
           success "Gate 1.2 passed — EU data residency confirmed"
         else
           error "Gate 1.2 FAILED — EU data residency validation"
