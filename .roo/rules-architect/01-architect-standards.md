@@ -1,5 +1,12 @@
 # CAGE — Architect Mode Rules
 
+> **⚠️ REFERENCE ARCHITECTURE ONLY — NOT FOR PRODUCTION USE**
+> CAGE is a reference architecture demonstrating governance patterns for
+> AI systems. It is **not** intended for, and will **not** be deployed to,
+> any production environment. All deployment, change-management, and
+> region-guard rules below exist to illustrate best-practice patterns
+> only — they carry no operational obligation.
+
 > These rules apply **only** in Architect mode (🏗️). They supplement the
 > global standards in `.roo/rules/00-global-standards.md`, which also apply.
 >
