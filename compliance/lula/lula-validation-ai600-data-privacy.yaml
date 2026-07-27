@@ -21,7 +21,7 @@
 # Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
 
 component-definition:
-  uuid: 12345678-9abc-def0-1234-567890abcdef
+  uuid: 10f64ac1-81e2-463e-a0d9-3b39c93cb9e3
   metadata:
     title: CAGE Validation — AI600-Data-Privacy
     last-modified: '2026-07-09T00:00:00Z'
@@ -31,24 +31,24 @@ component-definition:
       Always passes until Phase 2 real assertions are implemented per §5.4.
       Region: US_FED. POAM: AI600-002.'
   components:
-  - uuid: 23456789-abcd-ef01-2345-67890abcdef0
+  - uuid: a3f43860-0eca-4635-b9d9-22f81f4ca9b4
     type: software
     title: CAGE Cybernetic Governance Engine
     description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
     control-implementations:
-    - uuid: 3456789a-bcde-f012-3456-7890abcdef01
+    - uuid: 36e6e16a-a854-4ced-87a9-2b017580b199
       source: https://airc.nist.gov/Docs/1
       description: 'Control implementation for AI600-Data-Privacy. Region: US_FED. Phase: 0 stub.'
       implemented-requirements:
-      - uuid: 456789ab-cdef-0123-4567-890abcdef012
+      - uuid: 2c91e53d-5ec2-4223-99d3-be7dfce07fbc
         control-id: ai600-data-privacy
         description: Phase-0 stub for AI 600-1 §2.2 data privacy controls.
         links:
-        - href: '#56789abc-def0-1234-5678-90abcdef0123'
+        - href: '#d6734f08-028c-4170-a796-6a63a2beb311'
           rel: lula
   back-matter:
     resources:
-    - uuid: 56789abc-def0-1234-5678-90abcdef0123
+    - uuid: d6734f08-028c-4170-a796-6a63a2beb311
       title: Lula Validation — AI600-Data-Privacy
       rlinks:
       - href: lula.dev

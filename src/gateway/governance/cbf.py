@@ -187,12 +187,19 @@ return {1, "COMMITTED", tostring(next_cash)}
                 read_verified_balance,
             )
 
-            client_sync = redis_client._get()
             # read_verified_balance is synchronous (redis-py sync client).
-            # Run in a thread to avoid blocking the event loop.
+            # Use sync_redis_client (blocking redis.Redis) — NOT redis_client._get()
+            # which returns an aioredis.Redis (async) client whose .get() returns a
+            # coroutine instead of a value, causing the JSON parse to fail with:
+            #   "the JSON object must be str, bytes or bytearray, not coroutine"
+            # (CBF_USING_SELF_REPORTED_BALANCE log sentinel — POAM-023 async bug).
+            from src.gateway.infrastructure.redis_client import sync_redis_client
+
             import asyncio as _asyncio
 
-            verified = await _asyncio.to_thread(read_verified_balance, client_sync)
+            verified = await _asyncio.to_thread(
+                read_verified_balance, sync_redis_client
+            )
 
             if verified is not None and verified.is_valid:
                 if verified.signature:

@@ -21,7 +21,7 @@
 # Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
 
 component-definition:
-  uuid: a1b2c3d4-e5f6-7890-abcd-ef0123456789
+  uuid: 49b89044-4c44-41ac-a3f0-167789121666
   metadata:
     title: CAGE Validation — AI600-Confabulation
     last-modified: '2026-07-09T00:00:00Z'
@@ -31,24 +31,24 @@ component-definition:
       Always passes until Phase 2 real assertions are implemented.
       Region: US_FED. POAM: AI600-001.'
   components:
-  - uuid: b2c3d4e5-f6a7-8901-bcde-f01234567890
+  - uuid: 4b206f69-825f-41d6-902d-77d23a8c0daa
     type: software
     title: CAGE Cybernetic Governance Engine
     description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
     control-implementations:
-    - uuid: c3d4e5f6-a7b8-9012-cdef-012345678901
+    - uuid: 5e579bed-cae9-486d-a40c-e9bb88328405
       source: https://airc.nist.gov/Docs/1
       description: 'Control implementation for AI600-Confabulation. Region: US_FED. Phase: 0 stub.'
       implemented-requirements:
-      - uuid: d4e5f6a7-b8c9-0123-defa-123456789012
+      - uuid: 28838c8d-8386-4bb7-8d75-98ace7480441
         control-id: ai600-confabulation
         description: Phase-0 stub for AI 600-1 §2.1 confabulation controls.
         links:
-        - href: '#e5f6a7b8-c9d0-1234-efab-234567890123'
+        - href: '#fedddcdb-2789-4575-9b7e-dbaca5ccb90f'
           rel: lula
   back-matter:
     resources:
-    - uuid: e5f6a7b8-c9d0-1234-efab-234567890123
+    - uuid: fedddcdb-2789-4575-9b7e-dbaca5ccb90f
       title: Lula Validation — AI600-Confabulation
       rlinks:
       - href: lula.dev

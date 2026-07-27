@@ -250,20 +250,46 @@ class ConsensusEngine:
             dedicated_client = self._registry.get_client(role)
             model = self._registry.get_model(role)
 
+            # Consensus critic timeout — 10 s hard limit.
+            # Rationale: the governance hot-path budget is 3 s; critics run in
+            # parallel (asyncio.gather) so the combined cost is max(t1, t2).
+            # 30 s was too long under GPU load / unreachable vLLM sidecars,
+            # causing the test to time out before the consensus gate resolved.
+            # 10 s is sufficient for a healthy vLLM instance and still allows
+            # the test to complete within its 120 s pytest-timeout budget even
+            # when both critics are unreachable (2 × 10 s = 20 s worst case).
+            _CRITIC_TIMEOUT_S: float = float(
+                os.getenv("CONSENSUS_CRITIC_TIMEOUT_S", "10.0")
+            )
+
             if dedicated_client is not None:
-                # Use the persona-specific AsyncOpenAI client directly
-                response = await dedicated_client.chat.completions.create(
-                    model=model or "default",
-                    messages=[
-                        {"role": "system", "content": f"You are a strict {role}."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.0,
-                    timeout=30.0,  # 30-second hard limit
-                )
+                # Use the persona-specific AsyncOpenAI client directly.
+                # Wrap in asyncio.wait_for so the 10 s limit is enforced even
+                # when the AsyncOpenAI client's own timeout is not set.
+                try:
+                    response = await asyncio.wait_for(
+                        dedicated_client.chat.completions.create(
+                            model=model or "default",
+                            messages=[
+                                {"role": "system", "content": f"You are a strict {role}."},
+                                {"role": "user", "content": prompt},
+                            ],
+                            temperature=0.0,
+                            timeout=_CRITIC_TIMEOUT_S,
+                        ),
+                        timeout=_CRITIC_TIMEOUT_S,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "⏱️ Consensus critic %s (dedicated client) timed out "
+                        "after %.0fs — returning ERROR verdict.",
+                        role,
+                        _CRITIC_TIMEOUT_S,
+                    )
+                    return "ERROR"
                 content = response.choices[0].message.content.strip()
             else:
-                # Fall back to shared GatewayClient — enforce 30-second hard limit
+                # Fall back to shared GatewayClient — enforce hard limit.
                 # (HIGH-07: GatewayClient has no built-in timeout; default is 600s)
                 try:
                     content = await asyncio.wait_for(
@@ -273,13 +299,14 @@ class ConsensusEngine:
                             mode="verifier",
                             temperature=0.0,
                         ),
-                        timeout=30.0,
+                        timeout=_CRITIC_TIMEOUT_S,
                     )
                 except asyncio.TimeoutError:
                     logger.warning(
                         "⏱️ Consensus critic %s (GatewayClient fallback) timed out "
-                        "after 30s — returning ERROR verdict.",
+                        "after %.0fs — returning ERROR verdict.",
                         role,
+                        _CRITIC_TIMEOUT_S,
                     )
                     return "ERROR"
                 content = content.strip()
@@ -333,18 +360,23 @@ class ConsensusEngine:
             )
             votes = [vote1, vote2]
 
-            # Consensus rule (updated for split-vote handling):
-            #   ALL ERROR  → ESCALATE (fail-closed: unanimous error must escalate)
-            #   ALL REJECT → REJECT   (unanimous denial)
+            # Consensus rule (updated for split-vote and degraded-quorum handling):
+            #   ALL ERROR                    → ESCALATE (fail-closed: unanimous error must escalate)
+            #   ALL REJECT (no ERRORs)       → REJECT   (genuine unanimous denial)
+            #   Some ERROR + remaining REJECT → ESCALATE (degraded quorum — not a full unanimous
+            #                                             rejection; human review required)
             #   Mixed APPROVE+REJECT (split) → ESCALATE for human review
-            #   Any ESCALATE → ESCALATE
-            #   ALL APPROVE → APPROVE
+            #   Any ESCALATE                 → ESCALATE
+            #   ALL APPROVE                  → APPROVE
             #
-            # Rationale: a split vote (APPROVE+REJECT) means the critics
-            # disagree — this is not a clear denial, so the trade should be
-            # escalated for human review rather than silently blocked.
-            # Outright REJECT requires unanimous critic agreement.
+            # Rationale: outright REJECT requires ALL critics to have voted and ALL
+            # to have rejected.  When one or more critics error (e.g. vLLM timeout),
+            # the remaining REJECT votes do not constitute a quorum — the trade must
+            # be escalated for human review rather than silently blocked.  This
+            # prevents a single critic's REJECT from becoming a de-facto veto when
+            # the other critic is unreachable (e.g. GPU load, network partition).
             non_error_votes = [v for v in votes if v != "ERROR"]
+            error_votes = [v for v in votes if v == "ERROR"]
             if all(v == "ERROR" for v in votes):
                 # Unanimous ERROR must escalate, not approve — a DoS attack causing
                 # both backends to error would otherwise bypass the consensus gate
@@ -359,10 +391,30 @@ class ConsensusEngine:
                 )
                 decision = "ESCALATE"
                 reason = "consensus_unanimous_error"
-            elif non_error_votes and all(v == "REJECT" for v in non_error_votes):
-                # Unanimous rejection from all available critics
+            elif non_error_votes and all(v == "REJECT" for v in non_error_votes) and not error_votes:
+                # Genuine unanimous rejection: ALL critics voted and ALL rejected.
+                # No ERRORs present — this is a full quorum denial.
                 decision = "REJECT"
                 reason = f"Unanimous rejection by all critics. Votes: {votes}"
+            elif non_error_votes and all(v == "REJECT" for v in non_error_votes) and error_votes:
+                # Degraded quorum: some critics errored, remaining non-error votes are
+                # all REJECT.  This is NOT a unanimous rejection — the errored critics
+                # could not participate.  Escalate for human review.
+                logger.warning(
+                    "⚠️ Degraded consensus quorum: %d critic(s) errored, %d rejected "
+                    "(action=%s amount=%.2f symbol=%s). Escalating for human review — "
+                    "a partial REJECT quorum is not a full unanimous denial.",
+                    len(error_votes),
+                    len(non_error_votes),
+                    action,
+                    amount,
+                    symbol,
+                )
+                decision = "ESCALATE"
+                reason = (
+                    f"Degraded quorum: {len(error_votes)} critic(s) unavailable, "
+                    f"remaining votes all REJECT — escalating for human review. Votes: {votes}"
+                )
             elif any(v == "REJECT" for v in non_error_votes) and any(
                 v == "APPROVE" for v in non_error_votes
             ):

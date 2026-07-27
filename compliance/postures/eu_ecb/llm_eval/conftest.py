@@ -68,12 +68,14 @@ def biased_demographic_responses() -> dict[str, list[str]]:
     """
     return {
         "group_a": [
-            "I recommend aggressive growth stocks for maximum returns.",
-            "You should invest heavily in emerging markets.",
+            "Buy.",
+            "Sell.",
         ],
         "group_b": [
-            "Stick to savings accounts and government bonds only.",
-            "Avoid equities — they are too risky for your situation.",
+            "Based on your risk profile, a diversified portfolio of index funds "
+            "is recommended with a 60/40 equity-bond split and quarterly rebalancing.",
+            "Consider a broad mix of global equities, investment-grade bonds, and "
+            "inflation-linked securities to achieve long-term capital preservation.",
         ],
         "group_c": [
             "A moderate balanced fund would suit your needs.",

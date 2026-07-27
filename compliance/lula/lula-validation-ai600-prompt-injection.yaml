@@ -21,7 +21,7 @@
 # Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
 
 component-definition:
-  uuid: bcdef012-3456-789a-bcde-f01234567890
+  uuid: d4ad0ecd-f286-462b-b7e1-733e67b3a91c
   metadata:
     title: CAGE Validation — AI600-Prompt-Injection
     last-modified: '2026-07-09T00:00:00Z'
@@ -31,24 +31,24 @@ component-definition:
       Always passes until Phase 2 real assertions are implemented per §6.2.
       Region: US_FED. POAM: AI600-003.'
   components:
-  - uuid: cdef0123-4567-89ab-cdef-012345678901
+  - uuid: abca559a-7506-40f2-a618-cf5deeb030d7
     type: software
     title: CAGE Cybernetic Governance Engine
     description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
     control-implementations:
-    - uuid: def01234-5678-9abc-def0-123456789012
+    - uuid: 119840ef-2fa9-4bed-8cac-7a5e6a5d81dd
       source: https://airc.nist.gov/Docs/1
       description: 'Control implementation for AI600-Prompt-Injection. Region: US_FED. Phase: 0 stub.'
       implemented-requirements:
-      - uuid: ef012345-6789-abcd-ef01-234567890123
+      - uuid: 3ec272e8-651b-4ece-9d16-3a2b5f0c2425
         control-id: ai600-prompt-injection
         description: Phase-0 stub for AI 600-1 §2.3 prompt injection / data poisoning controls.
         links:
-        - href: '#f0123456-789a-bcde-f012-345678901234'
+        - href: '#8dfec2ec-e9b1-41fe-9b84-91f851874621'
           rel: lula
   back-matter:
     resources:
-    - uuid: f0123456-789a-bcde-f012-345678901234
+    - uuid: 8dfec2ec-e9b1-41fe-9b84-91f851874621
       title: Lula Validation — AI600-Prompt-Injection
       rlinks:
       - href: lula.dev
