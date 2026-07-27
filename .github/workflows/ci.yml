@@ -30,6 +30,25 @@ on:
       - main
 
 jobs:
+  squash-merge-guard:
+    name: "Squash Merge Guard"
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - name: Detect non-squash merge commits on main
+        run: |
+          parents=$(git cat-file -p HEAD | grep -c "^parent ")
+          if [ "$parents" -gt 1 ]; then
+            echo "::error::Non-squash merge commit detected on main ($(git rev-parse HEAD))."
+            echo "::error::GIT_WORKFLOW_STANDARDS §4.5 requires squash merge for all PRs."
+            echo "::error::Fix: Settings → General → Pull Requests → disable 'Allow merge commits'."
+            exit 1
+          fi
+          echo "OK: HEAD is a single-parent commit (squash or direct push)."
+
   license-check:
     runs-on: ubuntu-latest
     steps:
