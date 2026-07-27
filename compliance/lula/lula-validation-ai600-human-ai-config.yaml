@@ -21,7 +21,7 @@
 # Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
 
 component-definition:
-  uuid: 6789abcd-ef01-2345-6789-abcdef012345
+  uuid: 01f5f9a1-8550-42e8-98cb-13b39aef8647
   metadata:
     title: CAGE Validation — AI600-Human-AI-Config
     last-modified: '2026-07-09T00:00:00Z'
@@ -31,24 +31,24 @@ component-definition:
       Always passes until Phase 2 real assertions are implemented per §6.4.
       Region: US_FED. POAM: AI600-004.'
   components:
-  - uuid: 789abcde-f012-3456-789a-bcdef0123456
+  - uuid: d496060e-28ec-43e7-a516-53d9764b030b
     type: software
     title: CAGE Cybernetic Governance Engine
     description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
     control-implementations:
-    - uuid: 89abcdef-0123-4567-89ab-cdef01234567
+    - uuid: 312cc965-a1d8-4703-8d23-be38546aa60f
       source: https://airc.nist.gov/Docs/1
       description: 'Control implementation for AI600-Human-AI-Config. Region: US_FED. Phase: 0 stub.'
       implemented-requirements:
-      - uuid: 9abcdef0-1234-5678-9abc-def012345678
+      - uuid: 06a58dcc-ca7b-46ac-8a3a-175eac3cb336
         control-id: ai600-human-ai-config
         description: Phase-0 stub for AI 600-1 §2.5 human-AI configuration controls.
         links:
-        - href: '#abcdef01-2345-6789-abcd-ef0123456789'
+        - href: '#f64407ae-70e5-462c-9cea-4c065667c31f'
           rel: lula
   back-matter:
     resources:
-    - uuid: abcdef01-2345-6789-abcd-ef0123456789
+    - uuid: f64407ae-70e5-462c-9cea-4c065667c31f
       title: Lula Validation — AI600-Human-AI-Config
       rlinks:
       - href: lula.dev

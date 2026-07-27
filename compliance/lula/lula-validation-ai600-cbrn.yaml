@@ -22,7 +22,7 @@
 # Cat-M flag: NeMo CBRN rail deployment requires AO pre-approval
 
 component-definition:
-  uuid: b1c2d3e4-f5a6-7890-abcd-ef1234567890
+  uuid: c05ac994-f8a2-456d-8141-aff88b5603fc
   metadata:
     title: CAGE Validation — AI600-CBRN
     last-modified: '2026-07-09T00:00:00Z'
@@ -32,24 +32,24 @@ component-definition:
       Always passes until Phase 3 real assertions are implemented per §7.2.
       Region: US_FED. POAM: AI600-007.'
   components:
-  - uuid: c2d3e4f5-a6b7-8901-bcde-f12345678901
+  - uuid: fded7ef2-1e57-4f30-ba4f-c5707cfb66de
     type: software
     title: CAGE Cybernetic Governance Engine
     description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
     control-implementations:
-    - uuid: d3e4f5a6-b7c8-9012-cdef-123456789012
+    - uuid: 4e1574ab-8b13-4b48-b8bc-20daeb93e0ad
       source: https://airc.nist.gov/Docs/1
       description: 'Control implementation for AI600-CBRN. Region: US_FED. Phase: 0 stub.'
       implemented-requirements:
-      - uuid: e4f5a6b7-c8d9-0123-defa-234567890123
+      - uuid: fd641f71-329b-41db-83ce-9d2dc1e57c04
         control-id: ai600-cbrn
         description: Phase-0 stub for AI 600-1 §2.6 CBRN harmful content controls.
         links:
-        - href: '#f5a6b7c8-d9e0-1234-efab-345678901234'
+        - href: '#ab3e9842-b66a-4e1e-b518-2d47937ee8e8'
           rel: lula
   back-matter:
     resources:
-    - uuid: f5a6b7c8-d9e0-1234-efab-345678901234
+    - uuid: ab3e9842-b66a-4e1e-b518-2d47937ee8e8
       title: Lula Validation — AI600-CBRN
       rlinks:
       - href: lula.dev
