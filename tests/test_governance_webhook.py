@@ -60,7 +60,7 @@ def _make_event(event_type: str = "CBF_VIOLATION") -> dict:
 class TestWebhookRegistration:
     def test_register_returns_webhook_id(self):
         registry = _make_registry()
-        webhook_id = asyncio.get_event_loop().run_until_complete(
+        webhook_id = asyncio.run(
             registry.register(
                 endpoint_url="https://governance.example.com/events",
                 event_types=["CBF_VIOLATION"],
@@ -72,7 +72,7 @@ class TestWebhookRegistration:
 
     def test_register_stores_registration(self):
         registry = _make_registry()
-        webhook_id = asyncio.get_event_loop().run_until_complete(
+        webhook_id = asyncio.run(
             registry.register(
                 endpoint_url="https://governance.example.com/events",
                 event_types=["CBF_VIOLATION"],
@@ -83,7 +83,7 @@ class TestWebhookRegistration:
 
     def test_register_multiple_event_types(self):
         registry = _make_registry()
-        webhook_id = asyncio.get_event_loop().run_until_complete(
+        webhook_id = asyncio.run(
             registry.register(
                 endpoint_url="https://governance.example.com/events",
                 event_types=["CBF_VIOLATION", "OPA_DENY", "HITL_INTERRUPT"],
@@ -98,7 +98,7 @@ class TestWebhookRegistration:
     def test_register_invalid_event_type_raises(self):
         registry = _make_registry()
         with pytest.raises(ValueError, match="unknown event types"):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 registry.register(
                     endpoint_url="https://governance.example.com/events",
                     event_types=["INVALID_EVENT_TYPE"],
@@ -108,14 +108,14 @@ class TestWebhookRegistration:
 
     def test_deregister_removes_registration(self):
         registry = _make_registry()
-        webhook_id = asyncio.get_event_loop().run_until_complete(
+        webhook_id = asyncio.run(
             registry.register(
                 endpoint_url="https://governance.example.com/events",
                 event_types=["CBF_VIOLATION"],
                 secret="test-secret",
             )
         )
-        removed = asyncio.get_event_loop().run_until_complete(
+        removed = asyncio.run(
             registry.deregister(webhook_id)
         )
         assert removed is True
@@ -123,42 +123,42 @@ class TestWebhookRegistration:
 
     def test_deregister_nonexistent_returns_false(self):
         registry = _make_registry()
-        removed = asyncio.get_event_loop().run_until_complete(
+        removed = asyncio.run(
             registry.deregister("nonexistent-id")
         )
         assert removed is False
 
     def test_list_registrations_returns_all(self):
         registry = _make_registry()
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             registry.register(
                 endpoint_url="https://governance.example.com/events",
                 event_types=["CBF_VIOLATION"],
                 secret="test-secret",
             )
         )
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             registry.register(
                 endpoint_url="https://other.example.com/events",
                 event_types=["OPA_DENY"],
                 secret="other-secret",
             )
         )
-        registrations = asyncio.get_event_loop().run_until_complete(
+        registrations = asyncio.run(
             registry.list_registrations()
         )
         assert len(registrations) == 2
 
     def test_list_registrations_does_not_include_secret(self):
         registry = _make_registry()
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             registry.register(
                 endpoint_url="https://governance.example.com/events",
                 event_types=["CBF_VIOLATION"],
                 secret="super-secret-value",
             )
         )
-        registrations = asyncio.get_event_loop().run_until_complete(
+        registrations = asyncio.run(
             registry.list_registrations()
         )
         for reg in registrations:
@@ -210,7 +210,7 @@ class TestHMACSignature:
 class TestWebhookDispatch:
     def test_dispatch_cbf_violation_calls_deliver(self):
         registry = _make_registry()
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             registry.register(
                 endpoint_url="https://governance.example.com/events",
                 event_types=["CBF_VIOLATION"],
@@ -225,7 +225,7 @@ class TestWebhookDispatch:
             return True
 
         with mock.patch.object(registry, "_deliver", side_effect=mock_deliver):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 registry.dispatch(_make_event("CBF_VIOLATION"))
             )
 
@@ -234,7 +234,7 @@ class TestWebhookDispatch:
 
     def test_dispatch_adds_webhook_id_to_payload(self):
         registry = _make_registry()
-        webhook_id = asyncio.get_event_loop().run_until_complete(
+        webhook_id = asyncio.run(
             registry.register(
                 endpoint_url="https://governance.example.com/events",
                 event_types=["CBF_VIOLATION"],
@@ -249,7 +249,7 @@ class TestWebhookDispatch:
             return True
 
         with mock.patch.object(registry, "_deliver", side_effect=mock_deliver):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 registry.dispatch(_make_event("CBF_VIOLATION"))
             )
 
@@ -257,7 +257,7 @@ class TestWebhookDispatch:
 
     def test_dispatch_unregistered_event_type_not_dispatched(self):
         registry = _make_registry()
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             registry.register(
                 endpoint_url="https://governance.example.com/events",
                 event_types=["CBF_VIOLATION"],  # Only CBF_VIOLATION registered
@@ -272,7 +272,7 @@ class TestWebhookDispatch:
             return True
 
         with mock.patch.object(registry, "_deliver", side_effect=mock_deliver):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 registry.dispatch(_make_event("OPA_DENY"))  # Different event type
             )
 
@@ -281,32 +281,32 @@ class TestWebhookDispatch:
     def test_dispatch_no_registrations_does_not_raise(self):
         registry = _make_registry()
         # Should not raise even with no registrations
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             registry.dispatch(_make_event("CBF_VIOLATION"))
         )
 
     def test_dispatch_unknown_event_type_skipped(self):
         registry = _make_registry()
         # Should not raise for non-webhook event types
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             registry.dispatch({"type": "AUDIT_FINDING", "traceId": "x"})
         )
 
     def test_dispatch_missing_type_field_logs_warning(self):
         registry = _make_registry()
         # Should not raise for events without type field
-        asyncio.get_event_loop().run_until_complete(registry.dispatch({"traceId": "x"}))
+        asyncio.run(registry.dispatch({"traceId": "x"}))
 
     def test_dispatch_to_multiple_webhooks(self):
         registry = _make_registry()
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             registry.register(
                 endpoint_url="https://governance-1.example.com/events",
                 event_types=["CBF_VIOLATION"],
                 secret="secret-1",
             )
         )
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             registry.register(
                 endpoint_url="https://governance-2.example.com/events",
                 event_types=["CBF_VIOLATION"],
@@ -321,7 +321,7 @@ class TestWebhookDispatch:
             return True
 
         with mock.patch.object(registry, "_deliver", side_effect=mock_deliver):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 registry.dispatch(_make_event("CBF_VIOLATION"))
             )
 
@@ -337,7 +337,7 @@ class TestRegionGuard:
     def test_eu_ecb_cross_region_endpoint_raises(self):
         registry = _make_registry(region="EU_ECB")
         with pytest.raises(ValueError, match="region guard"):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 registry.register(
                     endpoint_url="https://us-central1.example.com/events",
                     event_types=["CBF_VIOLATION"],
@@ -348,7 +348,7 @@ class TestRegionGuard:
     def test_us_fed_allows_any_endpoint(self):
         registry = _make_registry(region="US_FED")
         # US_FED has no geographic restriction
-        webhook_id = asyncio.get_event_loop().run_until_complete(
+        webhook_id = asyncio.run(
             registry.register(
                 endpoint_url="https://any-region.example.com/events",
                 event_types=["CBF_VIOLATION"],
@@ -360,7 +360,7 @@ class TestRegionGuard:
     def test_eu_ecb_allows_europe_west1_endpoint(self):
         registry = _make_registry(region="EU_ECB")
         # europe-west1 endpoints should be allowed
-        webhook_id = asyncio.get_event_loop().run_until_complete(
+        webhook_id = asyncio.run(
             registry.register(
                 endpoint_url="https://europe-west1.example.com/events",
                 event_types=["CBF_VIOLATION"],
@@ -371,7 +371,7 @@ class TestRegionGuard:
 
     def test_eu_ecb_allows_localhost_for_testing(self):
         registry = _make_registry(region="EU_ECB")
-        webhook_id = asyncio.get_event_loop().run_until_complete(
+        webhook_id = asyncio.run(
             registry.register(
                 endpoint_url="http://localhost:8080/events",
                 event_types=["CBF_VIOLATION"],
@@ -383,7 +383,7 @@ class TestRegionGuard:
     def test_apac_mas_cross_region_endpoint_raises(self):
         registry = _make_registry(region="APAC_MAS")
         with pytest.raises(ValueError, match="region guard"):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 registry.register(
                     endpoint_url="https://europe-west1.example.com/events",
                     event_types=["CBF_VIOLATION"],
@@ -393,7 +393,7 @@ class TestRegionGuard:
 
     def test_apac_mas_allows_asia_southeast1_endpoint(self):
         registry = _make_registry(region="APAC_MAS")
-        webhook_id = asyncio.get_event_loop().run_until_complete(
+        webhook_id = asyncio.run(
             registry.register(
                 endpoint_url="https://asia-southeast1.example.com/events",
                 event_types=["CBF_VIOLATION"],

@@ -455,27 +455,26 @@ class WebhookRegistry:
             )
             return
 
-        # Dispatch to all matching webhooks concurrently (background tasks)
-        tasks = []
+        # Build coroutines for all matching webhooks
+        coros = []
         for registration in matching:
             payload = {
                 **event,
                 "webhook_id": registration.webhook_id,
             }
-            task = asyncio.create_task(
-                self._deliver(registration, payload),
-                name=f"webhook-{registration.webhook_id}-{event_type}",
-            )
-            tasks.append(task)
+            coros.append(self._deliver(registration, payload))
 
         logger.info(
             "WebhookRegistry: dispatching event type='%s' to %d webhook(s).",
             event_type,
-            len(tasks),
+            len(coros),
         )
 
-        # Fire-and-forget: do not await tasks here to avoid blocking the
-        # enforcement pipeline. Failures are logged in _deliver().
+        # Dispatch concurrently and await all deliveries so callers can
+        # observe results and so that event-loop teardown does not cancel
+        # in-flight tasks. Failures are logged in _deliver() and do not
+        # propagate exceptions (return_exceptions=True).
+        await asyncio.gather(*coros, return_exceptions=True)
 
 
 # ---------------------------------------------------------------------------
