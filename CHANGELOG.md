@@ -32,34 +32,68 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [v2.1.0] — 2026-07-27
 
-> 113 commits since v2.0.0 (2026-06-14). Covers multi-jurisdiction compliance
-> gates, Phase A/B gateway absorption, AgentSight UI, NeMo Guardrails integration,
-> three-region Kubernetes manifests, and public OSS readiness remediation.
+> 113 commits since v2.0.0 (2026-06-14). This release leads with 15 new
+> capabilities spanning gateway governance, multi-jurisdiction compliance,
+> observability, and reference implementations.
 
-### Added
+### Added — Gateway & Governance
 
-- CAGE-003 agent registry integration with SPIFFE trust-domain entries
-  (`feat(governance)`)
-- FTRA commencement reachability gate (`feat(governance)`)
-- Phase B AGW absorption: agent catalog, OPA bridge, AGW adapter (`feat(gateway)`)
-- Phase A ingress adapters: AAIF, ACS, OSCAL, Lula, AGP policy uploader
-  (`feat(gateway)`)
-- CBF external reconciliation worker implementing POAM-023 (`feat(compliance)`)
-- Evidence chain metadata binding (`feat(compliance)`)
-- NIST AI 600-1 compliance gates phases 0–3 (`feat(compliance)`)
-- Three-region compliance matrix: EU_ECB, APAC_MAS, US_FED (`feat(compliance)`)
-- EU_ECB and APAC_MAS Lula validation manifests (`feat(compliance)`)
-- Region-aware Kubernetes manifest templates with `CAGE_DEPLOYMENT_REGION` guards
+- FTRA Commencement Reachability Gate: graph-based transaction reachability
+  analysis for FTRA commencement decisions (`feat(governance)`) —
+  `src/gateway/governance/ftra/` (classifier, graph_analyzer, models,
+  node_factory), `src/gateway/governance/ftra_reachability.py`
+- CAGE-003 Agent Registry Integration: SPIFFE trust-domain agent catalog
+  adapter (`feat(governance)`) —
+  `src/gateway/governance/ingress/agent_registry_adapter.py`
+- Phase A Ingress Adapters: AAIF, ACS, OSCAL, Lula, AGP policy uploader, and
+  policy translator for multi-standard policy ingestion (`feat(gateway)`) —
+  `src/gateway/governance/ingress/`
+- Phase B AGW Absorption: agw_adapter and agent_gateway_adapter server-side
+  integration (`feat(gateway)`) —
+  `src/gateway/governance/ingress/agw_adapter.py`,
+  `src/gateway/server/agent_gateway_adapter.py`
+- NeMo Guardrails Integration: CBRN rails, NeMo manager, and vllm_client
+  (`feat(governance)`) — `src/gateway/governance/nemo/`
+- LangGraph Harness: NeMo and OPA node factories for governed graph execution
+  (`feat(governance)`) — `src/gateway/governance/langgraph_harness/`
+
+### Added — Compliance & Audit
+
+- NIST AI 600-1 Compliance Gates phases 0–3: CBRN, confabulation, data
+  privacy, and prompt injection (`feat(compliance)`)
+- Three-Region Compliance Matrix: EU_ECB, APAC_MAS, and US_FED with separate
+  Lula manifests and pytest jurisdiction matrix (`feat(compliance)`)
+- CBF External Reconciliation Worker: POAM-023 closed; async external
+  reconciliation loop (`feat(compliance)`) —
+  `src/compliance_bridge/reconciliation_worker.py`
+- AARM Profile Mapper: AARM profile mapping and report generation
+  (`feat(compliance)`) —
+  `src/compliance_bridge/aarm_mapper.py`,
+  `src/compliance_bridge/aarm_report_generator.py`
+- Evidence Chain Metadata Binding: evidence_stream with cryptographic
+  provenance anchoring for audit trails (`feat(compliance)`) —
+  `src/compliance_bridge/evidence_stream.py`
+
+### Added — Observability & Infrastructure
+
+- AgentSight UI: React/TypeScript real-time governance dashboard
+  (`feat(agentsight)`) — `src/agentsight-ui/`
+- Langfuse Native OTLP: replaced standalone OTel Collector with Langfuse-native
+  OTLP export (`feat(infra)`)
+- Region-Aware Kubernetes Templates: `deployment/k8s/*.yaml.tpl` with
+  `CAGE_DEPLOYMENT_REGION` guards for EU_ECB, APAC_MAS, and US_FED
   (`feat(infra)`)
-- Langfuse native OTLP integration replacing standalone OTel Collector (`feat(infra)`)
+
+### Added — Reference Implementations
+
+- Governed Financial Advisor: full multi-agent reference implementation with
+  policy enforcement, PII sanitization, and audit trail (`feat(advisor)`) —
+  `src/governed_financial_advisor/`
+
+### Added — Other
+
 - Background deployment wrapper script and make targets (`feat(ci)`)
-- Governed Financial Advisor: extended checkpointer and data analyst graph
-  (`feat(advisor)`)
 - Multi-jurisdiction matrix validation suite (`feat(compliance)`)
-- AARM profile mapper and report generator (`feat(compliance)`)
-- AgentSight UI (React/TypeScript dashboard) (`feat(agentsight)`)
-- NeMo Guardrails integration with vLLM client and CBRN rails (`feat(governance)`)
-- LangGraph harness: NeMo and OPA node factories (`feat(governance)`)
 - Governance kernel hardening with named constants and guards (`feat(governance)`)
 
 ### Fixed
