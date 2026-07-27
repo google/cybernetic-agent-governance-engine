@@ -266,6 +266,27 @@
         "output_rail_applied": {
             "type": "boolean",
             "description": "Set True by nemo_output_rail_node after output screening/masking. Auditors assert this is True on every non-blocked trace. Default false."
+        },
+        "ftra_status": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "FTRA Tier 0.5 gate outcome. One of: REACHABLE, DEFERRED, SKIPPED, ERROR. Null when FTRA has not yet run."
+        },
+        "ftra_result": {
+            "type": [
+                "object",
+                "null"
+            ],
+            "description": "Full FTRA analysis result dict from the FTRAResult model. Null when FTRA has not yet run or was skipped."
+        },
+        "ftra_defer_id": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "DeferQueue ID assigned when FTRA parks the plan for HITL review (ftra_status=DEFERRED). Null otherwise."
         }
     }
 }
