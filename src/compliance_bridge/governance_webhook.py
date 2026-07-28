@@ -74,6 +74,8 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+import httpx as _httpx
+
 logger = logging.getLogger("ComplianceBridge.GovernanceWebhook")
 
 # ---------------------------------------------------------------------------
@@ -113,6 +115,37 @@ _REGION_ALLOWED_SUFFIXES: dict[str, list[str]] = {
 _MAX_RETRIES = 3
 _RETRY_BASE_DELAY = 1.0  # seconds (exponential backoff base)
 _REQUEST_TIMEOUT = 30.0  # seconds per attempt
+
+# HIGH-8 fix: module-level shared httpx.AsyncClient for webhook delivery.
+# The previous code created a new client per retry attempt inside _deliver(),
+# which created many short-lived connections and also contained a blocking
+# urllib.request.urlopen fallback that would block the event loop for up to
+# _REQUEST_TIMEOUT seconds.  A shared client reuses TCP connections (keep-alive)
+# and avoids file-descriptor exhaustion under concurrent webhook dispatch.
+_webhook_http_client: _httpx.AsyncClient | None = None
+
+
+def _get_webhook_http_client() -> _httpx.AsyncClient:
+    """Return (or lazily create) the shared webhook httpx.AsyncClient."""
+    global _webhook_http_client
+    if _webhook_http_client is None or _webhook_http_client.is_closed:
+        _webhook_http_client = _httpx.AsyncClient(
+            limits=_httpx.Limits(
+                max_connections=50,
+                max_keepalive_connections=20,
+                keepalive_expiry=30,
+            ),
+            timeout=_httpx.Timeout(_REQUEST_TIMEOUT),
+        )
+    return _webhook_http_client
+
+
+async def close_webhook_http_client() -> None:
+    """Close the shared webhook httpx client (call during application shutdown)."""
+    global _webhook_http_client
+    if _webhook_http_client and not _webhook_http_client.is_closed:
+        await _webhook_http_client.aclose()
+        _webhook_http_client = None
 
 
 # ---------------------------------------------------------------------------
@@ -181,12 +214,11 @@ class WebhookRegistry:
         parsed = urlparse(endpoint_url)
         hostname = parsed.hostname or ""
 
-        # Allow localhost and private IPs for testing
-        if (
-            hostname in ("localhost", "127.0.0.1", "::1")
-            or hostname.startswith("10.")
-            or hostname.startswith("192.168.")
-        ):
+        # LOW-7 fix: only allow loopback addresses for EU_ECB and APAC_MAS regions.
+        # The previous code also allowed RFC-1918 private ranges (10.x, 192.168.x)
+        # which can span cross-region VPC peering in GCP, bypassing the region guard.
+        # Loopback is safe for local testing; private ranges are not safe in cloud.
+        if hostname in ("localhost", "127.0.0.1", "::1"):
             return
 
         # Check if hostname contains an allowed region suffix
@@ -341,61 +373,34 @@ class WebhookRegistry:
             "User-Agent": "CAGE-GovernanceWebhook/1.0",
         }
 
+        # HIGH-8 fix: use the shared pooled client — no new client per retry.
+        # The blocking urllib fallback has been removed; httpx is a declared
+        # dependency and must be present.
+        client = _get_webhook_http_client()
+
         for attempt in range(_MAX_RETRIES):
             try:
-                import httpx
-
-                async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
-                    response = await client.post(
-                        registration.endpoint_url,
-                        content=payload_bytes,
-                        headers=headers,
-                    )
-                    if response.status_code < 300:
-                        logger.info(
-                            "WebhookRegistry: delivered event type=%s to webhook_id=%s "
-                            "status=%d attempt=%d",
-                            payload.get("type"),
-                            registration.webhook_id,
-                            response.status_code,
-                            attempt + 1,
-                        )
-                        return True
-                    else:
-                        logger.warning(
-                            "WebhookRegistry: delivery failed webhook_id=%s status=%d attempt=%d",
-                            registration.webhook_id,
-                            response.status_code,
-                            attempt + 1,
-                        )
-            except ImportError:
-                # Fall back to urllib if httpx is not available
-                try:
-                    import urllib.request
-
-                    req = urllib.request.Request(
-                        registration.endpoint_url,
-                        data=payload_bytes,
-                        headers=headers,
-                        method="POST",
-                    )
-                    with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
-                        if resp.status < 300:
-                            logger.info(
-                                "WebhookRegistry: delivered event type=%s to webhook_id=%s "
-                                "status=%d attempt=%d (urllib fallback)",
-                                payload.get("type"),
-                                registration.webhook_id,
-                                resp.status,
-                                attempt + 1,
-                            )
-                            return True
-                except Exception as exc:
-                    logger.warning(
-                        "WebhookRegistry: urllib delivery failed webhook_id=%s attempt=%d: %s",
+                response = await client.post(
+                    registration.endpoint_url,
+                    content=payload_bytes,
+                    headers=headers,
+                )
+                if response.status_code < 300:
+                    logger.info(
+                        "WebhookRegistry: delivered event type=%s to webhook_id=%s "
+                        "status=%d attempt=%d",
+                        payload.get("type"),
                         registration.webhook_id,
+                        response.status_code,
                         attempt + 1,
-                        exc,
+                    )
+                    return True
+                else:
+                    logger.warning(
+                        "WebhookRegistry: delivery failed webhook_id=%s status=%d attempt=%d",
+                        registration.webhook_id,
+                        response.status_code,
+                        attempt + 1,
                     )
             except Exception as exc:
                 logger.warning(

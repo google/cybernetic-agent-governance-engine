@@ -23,6 +23,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from langgraph.types import Command
 from opentelemetry import trace
 from pydantic import BaseModel

@@ -23,13 +23,16 @@ from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel
 
 from src.gateway.governance.nemo.manager import load_rails, validate_with_nemo
-from src.gateway.governance.singletons import opa_client
+from src.gateway.governance.singletons import opa_client, symbolic_governor
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 from src.governed_financial_advisor.infrastructure.auth import require_api_key
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
 from src.governed_financial_advisor.infrastructure.redis_client import redis_client
 from src.governed_financial_advisor.tools.market_data_tool import get_market_data
-from src.governed_financial_advisor.utils.routing_seal import verify_seal
+from src.governed_financial_advisor.utils.routing_seal import (
+    SymbolicGovernorViolation,
+    verify_seal,
+)
 
 _tracer = otel_trace.get_tracer("gfa.tools")
 _gateway_client = GatewayClient()
@@ -216,15 +219,19 @@ async def execute_tool_endpoint(
                 )
 
                 # ── Verify routing seal before actuation ─────────────────────
-                # verify_seal() returns True on success, False on any failure.
-                # This is the defense-in-depth check (P3 fix).
-                if not verify_seal(seal, "execute_trade", params):
+                # verify_seal() raises SymbolicGovernorViolation on any failure —
+                # no need to check the return value. This is the defense-in-depth
+                # check (P3 fix); the wrapped actuation is never reached if the
+                # seal is invalid.
+                try:
+                    verify_seal(seal, "execute_trade", params)
+                except SymbolicGovernorViolation as exc:
                     root_span.set_attribute("cage.seal_valid", False)
                     root_span.set_status(Status(StatusCode.ERROR))
                     raise PermissionError(
                         "Routing seal invalid or expired — trade blocked "
-                        "(defense-in-depth)"
-                    )
+                        f"(defense-in-depth): {exc.reason}"
+                    ) from exc
 
                 root_span.set_attribute("cage.seal_valid", True)
 
