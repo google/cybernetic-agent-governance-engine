@@ -530,6 +530,7 @@ module "compliance_bridge" {
   oscal_s3_bucket        = google_storage_bucket.langfuse_events.name
   oscal_s3_region        = var.region
   cage_env               = "development"
+  cage_deployment_region = var.cage_deployment_region
 
   depends_on = [module.langfuse, module.vllm]
 }

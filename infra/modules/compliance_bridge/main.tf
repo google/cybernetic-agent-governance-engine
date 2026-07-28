@@ -62,6 +62,16 @@ resource "kubernetes_deployment" "compliance_bridge" {
             value = var.cage_env
           }
 
+          # CAGE_DEPLOYMENT_REGION controls which jurisdictional compliance
+          # framework controls (US_FED/NIST/FedRAMP, EU_ECB/EU AI Act,
+          # APAC_MAS/MAS FEAT) are exposed by GET /v1/controls and
+          # GET /v1/metrics/summary. Must match the region configured for
+          # the gateway and governed_advisor modules.
+          env {
+            name  = "CAGE_DEPLOYMENT_REGION"
+            value = var.cage_deployment_region
+          }
+
           env {
             name = "LANGFUSE_PUBLIC_KEY"
             value_from {
