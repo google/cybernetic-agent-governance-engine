@@ -65,7 +65,7 @@ async def test_symbolic_governor_version_matching(registry, mock_dependencies):
             params={"confidence": 0.99, "amount": 100},
             policy_version_id=active_hash,
         )
-        assert res["verdict"] == "APPROVED"
+        assert res["verdict"] == "ALLOW"
 
         # 2. Omitted version should also pass (default)
         res = await gov.validate_action(
@@ -73,7 +73,7 @@ async def test_symbolic_governor_version_matching(registry, mock_dependencies):
             params={"confidence": 0.99, "amount": 100},
             policy_version_id=None,
         )
-        assert res["verdict"] == "APPROVED"
+        assert res["verdict"] == "ALLOW"
 
 
 @pytest.mark.asyncio

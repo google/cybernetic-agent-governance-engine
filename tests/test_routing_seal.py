@@ -17,21 +17,30 @@ Unit tests — Routing Seal (gateway issuance + GFA verification mirror).
 
 Covers:
 - Happy path: generate → verify succeeds
-- Expired seal: verify returns False
-- Tampered sig: verify returns False
-- Action mismatch: verify returns False
-- Malformed seal: verify returns False
+- Expired seal: verify raises SymbolicGovernorViolation
+- Tampered sig: verify raises SymbolicGovernorViolation
+- Action mismatch: verify raises SymbolicGovernorViolation
+- Malformed seal: verify raises SymbolicGovernorViolation
 - Canonical payload determinism: dict ordering doesn't affect HMAC
 - GFA mirror: uses same HMAC key; verify_seal produces same result as gateway
+
+CRIT-1 fix note: verify_seal() (both gateway and GFA versions) now raises
+``SymbolicGovernorViolation`` on any verification failure instead of returning
+``False``. This prevents callers from silently ignoring a failed seal check.
 """
 
 import os
 import time
 
+import pytest
+
 # Set GOVERNANCE_SALT before importing modules under test
 os.environ.setdefault("GOVERNANCE_SALT", "TEST_SALT_UNIT_32_CHARACTERS_OK!")
 
 from src.gateway.governance.routing_seal import generate_seal
+from src.governed_financial_advisor.utils.routing_seal import (
+    SymbolicGovernorViolation,
+)
 from src.governed_financial_advisor.utils.routing_seal import (
     verify_seal as gfa_verify_seal,
 )
@@ -58,7 +67,8 @@ class TestRoutingSeal:
         seal = generate_seal("execute_trade", PARAMS, ttl_s=0)
         # Sleep 1s to ensure it's past the expiry
         time.sleep(1)
-        assert gfa_verify_seal(seal, "execute_trade", PARAMS) is False
+        with pytest.raises(SymbolicGovernorViolation):
+            gfa_verify_seal(seal, "execute_trade", PARAMS)
 
     def test_tampered_signature(self):
         """Mutating the HMAC signature component must fail verification."""
@@ -67,26 +77,31 @@ class TestRoutingSeal:
         # Flip last char of sig
         parts[2] = parts[2][:-1] + ("a" if parts[2][-1] != "a" else "b")
         tampered = ".".join(parts)
-        assert gfa_verify_seal(tampered, "execute_trade", PARAMS) is False
+        with pytest.raises(SymbolicGovernorViolation):
+            gfa_verify_seal(tampered, "execute_trade", PARAMS)
 
     def test_action_mismatch(self):
         """Verifying with a different action name must fail."""
         seal = generate_seal("execute_trade", PARAMS)
-        assert gfa_verify_seal(seal, "cancel_trade", PARAMS) is False
+        with pytest.raises(SymbolicGovernorViolation):
+            gfa_verify_seal(seal, "cancel_trade", PARAMS)
 
     def test_param_mismatch(self):
         """Verifying with modified params must fail (HMAC covers payload)."""
         seal = generate_seal("execute_trade", PARAMS)
         bad_params = {**PARAMS, "amount": 99999.0}
-        assert gfa_verify_seal(seal, "execute_trade", bad_params) is False
+        with pytest.raises(SymbolicGovernorViolation):
+            gfa_verify_seal(seal, "execute_trade", bad_params)
 
     def test_malformed_seal_too_few_parts(self):
-        """A seal missing a dot segment must return False, not raise."""
-        assert gfa_verify_seal("abc.def", "execute_trade", PARAMS) is False
+        """A seal missing a dot segment must raise SymbolicGovernorViolation."""
+        with pytest.raises(SymbolicGovernorViolation):
+            gfa_verify_seal("abc.def", "execute_trade", PARAMS)
 
     def test_malformed_seal_empty(self):
-        """An empty seal string must return False, not raise."""
-        assert gfa_verify_seal("", "execute_trade", PARAMS) is False
+        """An empty seal string must raise SymbolicGovernorViolation."""
+        with pytest.raises(SymbolicGovernorViolation):
+            gfa_verify_seal("", "execute_trade", PARAMS)
 
     def test_canonical_payload_dict_order_invariant(self):
         """Dict ordering must not affect seal validity (JSON sort_keys=True)."""
@@ -123,6 +138,7 @@ class TestRoutingSealGatewayMirrorParity:
         seal = generate_seal("execute_trade", PARAMS)
         # Correct: verify passes → actuation allowed
         assert gfa_verify_seal(seal, "execute_trade", PARAMS) is True
-        # Tampered seal: verify fails → actuation blocked
+        # Tampered seal: verify raises → actuation blocked
         tampered = seal[:-4] + "XXXX"
-        assert gfa_verify_seal(tampered, "execute_trade", PARAMS) is False
+        with pytest.raises(SymbolicGovernorViolation):
+            gfa_verify_seal(tampered, "execute_trade", PARAMS)

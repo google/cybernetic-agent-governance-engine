@@ -37,45 +37,60 @@ pytest.importorskip(
 
 
 class TestRoutingSealRejectsInvalidSeal:
-    """RoutingSeal must reject requests without a valid HMAC seal."""
+    """RoutingSeal must reject requests without a valid HMAC seal.
+
+    CRIT-1 fix note: verify_seal() now raises SymbolicGovernorViolation on any
+    verification failure instead of returning False, preventing callers from
+    silently ignoring a failed seal check.
+    """
 
     def test_verify_seal_rejects_missing_seal(self):
-        """verify_seal returns False for an empty seal string."""
+        """verify_seal raises SymbolicGovernorViolation for an empty seal string."""
         os.environ.setdefault(
             "GOVERNANCE_SALT",
             "test-salt-for-unit-tests-minimum-64-chars-padding-here-ok",
         )
-        from src.gateway.governance.routing_seal import verify_seal
+        from src.gateway.governance.routing_seal import (
+            SymbolicGovernorViolation,
+            verify_seal,
+        )
 
-        result = verify_seal("", "execute_trade", {"amount": 5000})
-        assert result is False
+        with pytest.raises(SymbolicGovernorViolation):
+            verify_seal("", "execute_trade", {"amount": 5000})
 
     def test_verify_seal_rejects_malformed_seal(self):
-        """verify_seal returns False for a malformed seal (wrong number of parts)."""
+        """verify_seal raises SymbolicGovernorViolation for a malformed seal (wrong number of parts)."""
         os.environ.setdefault(
             "GOVERNANCE_SALT",
             "test-salt-for-unit-tests-minimum-64-chars-padding-here-ok",
         )
-        from src.gateway.governance.routing_seal import verify_seal
+        from src.gateway.governance.routing_seal import (
+            SymbolicGovernorViolation,
+            verify_seal,
+        )
 
-        result = verify_seal("not-a-valid-seal", "execute_trade", {"amount": 5000})
-        assert result is False
+        with pytest.raises(SymbolicGovernorViolation):
+            verify_seal("not-a-valid-seal", "execute_trade", {"amount": 5000})
 
     def test_verify_seal_rejects_tampered_hmac(self):
-        """verify_seal returns False when the HMAC is tampered."""
+        """verify_seal raises SymbolicGovernorViolation when the HMAC is tampered."""
         os.environ.setdefault(
             "GOVERNANCE_SALT",
             "test-salt-for-unit-tests-minimum-64-chars-padding-here-ok",
         )
-        from src.gateway.governance.routing_seal import generate_seal, verify_seal
+        from src.gateway.governance.routing_seal import (
+            SymbolicGovernorViolation,
+            generate_seal,
+            verify_seal,
+        )
 
         seal = generate_seal("execute_trade", {"amount": 5000})
         # Tamper with the HMAC portion
         parts = seal.split(".")
         parts[2] = "a" * 64  # replace HMAC with garbage
         tampered = ".".join(parts)
-        result = verify_seal(tampered, "execute_trade", {"amount": 5000})
-        assert result is False
+        with pytest.raises(SymbolicGovernorViolation):
+            verify_seal(tampered, "execute_trade", {"amount": 5000})
 
     def test_verify_seal_accepts_valid_seal(self):
         """verify_seal returns True for a freshly generated valid seal."""

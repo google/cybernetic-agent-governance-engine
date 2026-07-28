@@ -303,19 +303,27 @@ def test_round_trip_with_nested_params_coerced_to_string():
 
 
 def test_gateway_verify_seal_rejects_expired_seal():
-    """verify_seal() returns False for a seal generated with ttl_s=0 (immediately expired)."""
-    from src.gateway.governance.routing_seal import generate_seal, verify_seal
+    """verify_seal() raises SymbolicGovernorViolation for a seal generated with ttl_s=0 (immediately expired)."""
+    from src.gateway.governance.routing_seal import (
+        SymbolicGovernorViolation,
+        generate_seal,
+        verify_seal,
+    )
 
     params = {"symbol": "AAPL", "amount": 1000.0}
     # ttl_s=0 means expire_ts = now, which is already past by the time verify runs
     seal = generate_seal("execute_trade", params, ttl_s=0)
     time.sleep(1)  # Ensure we're past the expiry timestamp
-    assert verify_seal(seal, "execute_trade", params) is False
+    with pytest.raises(SymbolicGovernorViolation):
+        verify_seal(seal, "execute_trade", params)
 
 
 def test_gfa_verify_seal_rejects_expired_seal():
-    """GFA verify_seal() returns False for an expired seal."""
+    """GFA verify_seal() raises SymbolicGovernorViolation for an expired seal."""
     from src.gateway.governance.routing_seal import generate_seal
+    from src.governed_financial_advisor.utils.routing_seal import (
+        SymbolicGovernorViolation as GFASymbolicGovernorViolation,
+    )
     from src.governed_financial_advisor.utils.routing_seal import (
         verify_seal as gfa_verify,
     )
@@ -323,7 +331,8 @@ def test_gfa_verify_seal_rejects_expired_seal():
     params = {"symbol": "AAPL", "amount": 1000.0}
     seal = generate_seal("execute_trade", params, ttl_s=0)
     time.sleep(1)
-    assert gfa_verify(seal, "execute_trade", params) is False
+    with pytest.raises(GFASymbolicGovernorViolation):
+        gfa_verify(seal, "execute_trade", params)
 
 
 # ---------------------------------------------------------------------------
@@ -332,29 +341,42 @@ def test_gfa_verify_seal_rejects_expired_seal():
 
 
 def test_gateway_verify_seal_rejects_wrong_action():
-    """verify_seal() returns False when the action does not match the seal's action slug."""
-    from src.gateway.governance.routing_seal import generate_seal, verify_seal
+    """verify_seal() raises SymbolicGovernorViolation when the action does not match the seal's action slug."""
+    from src.gateway.governance.routing_seal import (
+        SymbolicGovernorViolation,
+        generate_seal,
+        verify_seal,
+    )
 
     params = {"symbol": "AAPL", "amount": 1000.0}
     seal = generate_seal("execute_trade", params)
-    assert verify_seal(seal, "cancel_trade", params) is False
+    with pytest.raises(SymbolicGovernorViolation):
+        verify_seal(seal, "cancel_trade", params)
 
 
 def test_gfa_verify_seal_rejects_wrong_action():
-    """GFA verify_seal() returns False when the action does not match the seal's action slug."""
+    """GFA verify_seal() raises SymbolicGovernorViolation when the action does not match the seal's action slug."""
     from src.gateway.governance.routing_seal import generate_seal
+    from src.governed_financial_advisor.utils.routing_seal import (
+        SymbolicGovernorViolation as GFASymbolicGovernorViolation,
+    )
     from src.governed_financial_advisor.utils.routing_seal import (
         verify_seal as gfa_verify,
     )
 
     params = {"symbol": "AAPL", "amount": 1000.0}
     seal = generate_seal("execute_trade", params)
-    assert gfa_verify(seal, "cancel_trade", params) is False
+    with pytest.raises(GFASymbolicGovernorViolation):
+        gfa_verify(seal, "cancel_trade", params)
 
 
 def test_gateway_verify_seal_rejects_tampered_hmac():
-    """verify_seal() returns False when the HMAC component is tampered."""
-    from src.gateway.governance.routing_seal import generate_seal, verify_seal
+    """verify_seal() raises SymbolicGovernorViolation when the HMAC component is tampered."""
+    from src.gateway.governance.routing_seal import (
+        SymbolicGovernorViolation,
+        generate_seal,
+        verify_seal,
+    )
 
     params = {"symbol": "AAPL", "amount": 1000.0}
     seal = generate_seal("execute_trade", params)
@@ -362,29 +384,37 @@ def test_gateway_verify_seal_rejects_tampered_hmac():
     # Flip the last character of the HMAC
     parts[2] = parts[2][:-1] + ("a" if parts[2][-1] != "a" else "b")
     tampered = ".".join(parts)
-    assert verify_seal(tampered, "execute_trade", params) is False
+    with pytest.raises(SymbolicGovernorViolation):
+        verify_seal(tampered, "execute_trade", params)
 
 
 def test_gateway_verify_seal_rejects_malformed_seal():
-    """verify_seal() returns False (not raises) for a malformed seal string."""
-    from src.gateway.governance.routing_seal import verify_seal
-
-    assert (
-        verify_seal("not.a.valid.seal.with.too.many.parts", "execute_trade", {})
-        is False
+    """verify_seal() raises SymbolicGovernorViolation for a malformed seal string."""
+    from src.gateway.governance.routing_seal import (
+        SymbolicGovernorViolation,
+        verify_seal,
     )
-    assert verify_seal("only-two-parts", "execute_trade", {}) is False
-    assert verify_seal("", "execute_trade", {}) is False
+
+    with pytest.raises(SymbolicGovernorViolation):
+        verify_seal("not.a.valid.seal.with.too.many.parts", "execute_trade", {})
+    with pytest.raises(SymbolicGovernorViolation):
+        verify_seal("only-two-parts", "execute_trade", {})
+    with pytest.raises(SymbolicGovernorViolation):
+        verify_seal("", "execute_trade", {})
 
 
 def test_gfa_verify_seal_rejects_malformed_seal():
-    """GFA verify_seal() returns False (not raises) for a malformed seal string."""
+    """GFA verify_seal() raises SymbolicGovernorViolation for a malformed seal string."""
+    from src.governed_financial_advisor.utils.routing_seal import (
+        SymbolicGovernorViolation as GFASymbolicGovernorViolation,
+    )
     from src.governed_financial_advisor.utils.routing_seal import (
         verify_seal as gfa_verify,
     )
 
-    assert (
-        gfa_verify("not.a.valid.seal.with.too.many.parts", "execute_trade", {}) is False
-    )
-    assert gfa_verify("only-two-parts", "execute_trade", {}) is False
-    assert gfa_verify("", "execute_trade", {}) is False
+    with pytest.raises(GFASymbolicGovernorViolation):
+        gfa_verify("not.a.valid.seal.with.too.many.parts", "execute_trade", {})
+    with pytest.raises(GFASymbolicGovernorViolation):
+        gfa_verify("only-two-parts", "execute_trade", {})
+    with pytest.raises(GFASymbolicGovernorViolation):
+        gfa_verify("", "execute_trade", {})

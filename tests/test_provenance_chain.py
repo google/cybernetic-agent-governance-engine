@@ -134,13 +134,15 @@ class TestBuildProvenanceRecord:
                 decision="APPROVE",  # not a valid decision
             )
 
-    def test_valid_decisions_are_allow_block_escalate(self):
-        """VALID_DECISIONS contains exactly ALLOW, BLOCK, ESCALATE."""
-        assert VALID_DECISIONS == frozenset({"ALLOW", "BLOCK", "ESCALATE"})
+    def test_valid_decisions_are_allow_block_escalate_require_approval_defer(self):
+        """VALID_DECISIONS contains exactly ALLOW, BLOCK, ESCALATE, REQUIRE_APPROVAL, DEFER."""
+        assert VALID_DECISIONS == frozenset(
+            {"ALLOW", "BLOCK", "ESCALATE", "REQUIRE_APPROVAL", "DEFER"}
+        )
 
     def test_all_valid_decisions_accepted(self):
         """build_provenance_record accepts all valid decision values."""
-        for decision in ["ALLOW", "BLOCK", "ESCALATE"]:
+        for decision in ["ALLOW", "BLOCK", "ESCALATE", "REQUIRE_APPROVAL", "DEFER"]:
             record = build_provenance_record(
                 trace_id="trace-006",
                 node_id="test_node",
