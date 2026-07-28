@@ -228,7 +228,13 @@ examples/evidence/
 !examples/evidence/.gitkeep
 mcp-servers/infrastructure/setup.sh
 
-# Roo AI assistant configuration, rules, and state
+# ── VS Code / IDE dev-environment configs (personal, not project-mandatory) ──
+# LiteLLM proxy config — contains personal GCP project IDs / API keys.
+# Copy litellm_config.yaml.example → litellm_config.yaml and fill in values.
+litellm_config.yaml
+
+# Roo AI assistant — rules, state, and cache (personal dev environment).
+# Not required to contribute to CAGE. Copy .roo/ from your own Roo setup.
 .roo/
 .rooignore
 .roo.json
@@ -245,6 +251,6 @@ antigravity.yaml
 antigravity.yml
 config/antigravity_mcp_example.json
 init_antigravity.sh
--e 
+
 # AI 600-1 §2.8 — generated SBOM artifact (not committed)
 sbom.json
