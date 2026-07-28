@@ -430,9 +430,9 @@ async def chat_completions(
                 if safe_content != filtered_content:
                     logger.info("Streaming output filtered by NeMo: model=%s", model_id)
                     # Return filtered content as a non-streaming JSON response
-                    import time as _time
-
-                    ts = int(_time.time())
+                    # LOW-5 fix: removed inline `import time as _time` — time is
+                    # already imported at module level.
+                    ts = int(time.time())
                     filtered_response = {
                         "id": f"chatcmpl-{ts}",
                         "object": "chat.completion",
@@ -471,6 +471,8 @@ async def chat_completions(
             )
 
         # Non-streaming path — full response buffered before output filtering.
+        # MED-6 fix: vLLM failures now trigger quota rollback so the step counter
+        # is not permanently incremented when the downstream call fails.
         try:
             resp = await client.post(
                 target_url,
@@ -489,8 +491,16 @@ async def chat_completions(
                 )
             vllm_response = resp.json()
         except HTTPException:
+            # MED-6 fix: roll back quota on vLLM HTTP errors (4xx/5xx).
+            await _get_token_quota_proxy().rollback_step(
+                agent_id, reserved_tokens=token_delta
+            )
             raise
         except Exception as exc:
+            # MED-6 fix: roll back quota on connection/timeout errors.
+            await _get_token_quota_proxy().rollback_step(
+                agent_id, reserved_tokens=token_delta
+            )
             safe_err = _safe_error_response(exc)
             raise HTTPException(status_code=500, detail=safe_err)
 

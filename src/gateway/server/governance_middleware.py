@@ -310,6 +310,13 @@ governance_app = FastAPI(title="CAGE Governance Middleware")
 #
 # Limits: 60 requests per 60-second window per client IP.
 # Configurable via VALIDATE_ACTION_RATE_LIMIT and VALIDATE_ACTION_RATE_WINDOW.
+#
+# MED-3 LIMITATION: This is an in-process, in-memory rate limiter.  In a
+# multi-pod Kubernetes deployment each pod maintains its own independent bucket,
+# so the effective rate limit is _RATE_LIMIT_MAX × pod_count.  For true
+# cross-pod enforcement, replace this with a Redis-backed sliding window
+# (e.g. ZREMRANGEBYSCORE + ZADD + ZCARD in a Lua script, similar to the
+# TokenQuotaProxy pattern in token_quota_proxy.py).
 # ---------------------------------------------------------------------------
 
 _RATE_LIMIT_MAX: int = int(os.environ.get("VALIDATE_ACTION_RATE_LIMIT", "60"))
@@ -318,13 +325,50 @@ _RATE_LIMIT_WINDOW: int = int(os.environ.get("VALIDATE_ACTION_RATE_WINDOW", "60"
 # {client_ip: [timestamp, ...]} — timestamps of requests within the window
 _validate_action_rate_buckets: dict[str, list[float]] = defaultdict(list)
 
+# ---------------------------------------------------------------------------
+# HIGH-5: Trusted proxy CIDR list for X-Forwarded-For validation.
+#
+# X-Forwarded-For is a client-controlled header.  Only trust it when the
+# direct TCP connection comes from a known trusted proxy (load balancer, ingress
+# controller, or API gateway).  Requests from untrusted sources use the direct
+# connection IP so attackers cannot spoof their IP to bypass rate limiting.
+#
+# Configure via CAGE_TRUSTED_PROXY_CIDRS (comma-separated CIDR list).
+# Default: RFC-1918 private ranges (suitable for GKE / Cloud Load Balancing).
+# ---------------------------------------------------------------------------
+import ipaddress as _ipaddress
+
+_TRUSTED_PROXY_CIDRS: list[str] = [
+    cidr.strip()
+    for cidr in os.environ.get(
+        "CAGE_TRUSTED_PROXY_CIDRS",
+        "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1/32,::1/128",
+    ).split(",")
+    if cidr.strip()
+]
+
+
+def _is_trusted_proxy(ip: str) -> bool:
+    """Return True if *ip* is within the configured trusted proxy CIDR list."""
+    try:
+        addr = _ipaddress.ip_address(ip)
+        return any(
+            addr in _ipaddress.ip_network(cidr, strict=False)
+            for cidr in _TRUSTED_PROXY_CIDRS
+        )
+    except ValueError:
+        return False
+
 
 def _check_validate_action_rate_limit(client_ip: str) -> bool:
     """Return True if the request is within the rate limit, False if exceeded.
 
     Uses a sliding window algorithm: timestamps older than the window are
     evicted on each check.  Thread-safe under Python's GIL for single-process
-    deployments; for multi-process deployments, use Redis-backed rate limiting.
+    deployments.
+
+    MED-3: In multi-pod Kubernetes deployments this limiter is per-pod.
+    See the module-level comment above for the Redis-backed alternative.
     """
     now = time.monotonic()
     window_start = now - _RATE_LIMIT_WINDOW
@@ -536,7 +580,9 @@ async def _emit_refusal_receipt(
 
         sink = get_evidence_sink()
         await sink.ingest(receipt)
-        logger.error(
+        # MED-7 fix: a successfully emitted refusal receipt is not an error —
+        # logging it at ERROR level polluted error dashboards with normal events.
+        logger.info(
             "🔴 [P6] Signed OSCAL refusal receipt emitted: action='%s' "
             "control='%s' receipt_id=%s kms_signed=%s",
             action_id,
@@ -607,11 +653,16 @@ async def validate_action_endpoint(
     enforce_routing_seal(request, body_bytes)
 
     # ── Rate limiting: prevent DoS via rapid unauthenticated requests ─────────
-    # Client IP is extracted from X-Forwarded-For (set by the upstream proxy)
-    # or falls back to the direct connection address.
-    client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or (
-        request.client.host if request.client else "unknown"
-    )
+    # HIGH-5 fix: only trust X-Forwarded-For when the direct TCP connection
+    # comes from a known trusted proxy (load balancer / ingress controller).
+    # Untrusted sources use the direct connection IP so attackers cannot spoof
+    # their IP to bypass the per-IP rate limit.
+    direct_ip = request.client.host if request.client else "unknown"
+    if _is_trusted_proxy(direct_ip):
+        xff = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        client_ip = xff if xff else direct_ip
+    else:
+        client_ip = direct_ip
     if not _check_validate_action_rate_limit(client_ip):
         raise HTTPException(
             status_code=429,
@@ -704,11 +755,21 @@ def _get_jwks_cache_key() -> str:
     return _OIDC_JWKS_URI or ""
 
 
+# HIGH-3 fix: hardcoded allowlist — never trust the 'alg' field from the JWT
+# header.  An attacker can set alg=none or alg=HS256 to bypass signature
+# verification (JWT algorithm confusion attack, CVE-2015-9235 class).
+_OIDC_ALLOWED_ALGORITHMS: list[str] = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"]
+
+
 async def _fetch_jwks() -> dict[str, Any]:
     """Fetch and cache the JWKS from CAGE_OIDC_JWKS_URI.
 
-    Returns a dict mapping ``kid`` → public key PEM string.
+    Returns a dict mapping ``kid`` → JWK key data dict.
     Caches for ``_JWKS_CACHE_TTL_S`` seconds to avoid hammering the JWKS endpoint.
+
+    HIGH-4 fix: uses httpx.AsyncClient (already a dependency) with explicit
+    TLS verification instead of urllib.request.urlopen which used the default
+    SSL context and suppressed the Bandit S310 warning.
 
     Raises:
         RuntimeError: If the JWKS endpoint is unreachable or returns invalid JSON.
@@ -722,10 +783,12 @@ async def _fetch_jwks() -> dict[str, Any]:
         return {}
 
     try:
-        import urllib.request
+        import httpx as _httpx
 
-        with urllib.request.urlopen(_OIDC_JWKS_URI, timeout=5) as resp:  # noqa: S310
-            jwks_doc = json.loads(resp.read())
+        async with _httpx.AsyncClient(verify=True, timeout=5.0) as client:
+            resp = await client.get(_OIDC_JWKS_URI)
+            resp.raise_for_status()
+            jwks_doc = resp.json()
     except Exception as exc:
         raise RuntimeError(
             f"Failed to fetch JWKS from {_OIDC_JWKS_URI}: {exc}"
@@ -790,15 +853,29 @@ async def validate_oidc_token(token: str) -> dict[str, Any]:
     """
     try:
         import jwt as pyjwt  # PyJWT
-    except ImportError:
-        # PyJWT not installed — log warning and pass through
-        logger.warning(
-            "⚠️ PyJWT not installed — OIDC token validation skipped. "
-            "Install PyJWT to enable OIDC validation: pip install PyJWT[crypto]"
-        )
+    except ImportError as _pyjwt_exc:
+        # HIGH-2 fix: when OIDC is configured, a missing PyJWT dependency must
+        # be a hard failure — silently returning {} accepted any token without
+        # verification, creating a complete authentication bypass.
+        if _OIDC_JWKS_URI:
+            logger.error(
+                "❌ OIDC is configured (CAGE_OIDC_JWKS_URI=%s) but PyJWT is not "
+                "installed. Install with: pip install PyJWT[crypto]",
+                _OIDC_JWKS_URI,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "oidc_unavailable",
+                    "message": "OIDC token validation is configured but PyJWT is not "
+                               "installed. Contact the system administrator.",
+                },
+            ) from _pyjwt_exc
         return {}
 
-    # Decode header to get kid for JWKS lookup
+    # Decode header to get kid for JWKS lookup — do NOT read 'alg' from header.
+    # HIGH-3 fix: the algorithm is determined by the server-side allowlist
+    # (_OIDC_ALLOWED_ALGORITHMS), never by the untrusted JWT header field.
     try:
         header = _decode_jwt_header(token)
     except ValueError as exc:
@@ -810,7 +887,7 @@ async def validate_oidc_token(token: str) -> dict[str, Any]:
         )
 
     kid = header.get("kid", "default")
-    alg = header.get("alg", "RS256")
+    # HIGH-3: 'alg' is intentionally NOT read from the header here.
 
     # Fetch JWKS and find the matching key
     try:
@@ -832,9 +909,13 @@ async def validate_oidc_token(token: str) -> dict[str, Any]:
             detail={"error": "invalid_token", "message": f"No JWKS key for kid={kid}"},
         )
 
-    # Build PyJWT public key from JWK
+    # Build PyJWT public key from JWK — try RSA first, fall back to EC.
     try:
-        public_key = pyjwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key_data))
+        key_kty = key_data.get("kty", "RSA")
+        if key_kty == "EC":
+            public_key = pyjwt.algorithms.ECAlgorithm.from_jwk(json.dumps(key_data))
+        else:
+            public_key = pyjwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key_data))
     except Exception as exc:
         logger.warning("OIDC: could not construct public key from JWK: %s", exc)
         raise HTTPException(
@@ -843,9 +924,10 @@ async def validate_oidc_token(token: str) -> dict[str, Any]:
             detail={"error": "invalid_token", "message": "Invalid JWKS key format"},
         )
 
-    # Verify and decode the JWT
+    # Verify and decode the JWT using the server-side algorithm allowlist.
+    # HIGH-3 fix: algorithms are hardcoded — never sourced from the JWT header.
     decode_kwargs: dict[str, Any] = {
-        "algorithms": [alg],
+        "algorithms": _OIDC_ALLOWED_ALGORITHMS,
         "options": {"verify_exp": True},
     }
     if _OIDC_AUDIENCE:
