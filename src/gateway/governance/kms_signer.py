@@ -476,7 +476,8 @@ class KMSGovernanceSigner:
                 return True
             else:
                 logger.warning(
-                    "[KMSSigner] Unsupported public key type: %s", type(public_key).__name__
+                    "[KMSSigner] Unsupported public key type: %s",
+                    type(public_key).__name__,
                 )
                 return False
         except Exception as exc:

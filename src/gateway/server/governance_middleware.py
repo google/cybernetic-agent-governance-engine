@@ -313,7 +313,7 @@ governance_app = FastAPI(title="CAGE Governance Middleware")
 #
 # MED-3 LIMITATION: This is an in-process, in-memory rate limiter.  In a
 # multi-pod Kubernetes deployment each pod maintains its own independent bucket,
-# so the effective rate limit is _RATE_LIMIT_MAX × pod_count.  For true
+# so the effective rate limit is _RATE_LIMIT_MAX x pod_count.  For true
 # cross-pod enforcement, replace this with a Redis-backed sliding window
 # (e.g. ZREMRANGEBYSCORE + ZADD + ZCARD in a Lua script, similar to the
 # TokenQuotaProxy pattern in token_quota_proxy.py).
@@ -758,7 +758,14 @@ def _get_jwks_cache_key() -> str:
 # HIGH-3 fix: hardcoded allowlist — never trust the 'alg' field from the JWT
 # header.  An attacker can set alg=none or alg=HS256 to bypass signature
 # verification (JWT algorithm confusion attack, CVE-2015-9235 class).
-_OIDC_ALLOWED_ALGORITHMS: list[str] = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"]
+_OIDC_ALLOWED_ALGORITHMS: list[str] = [
+    "RS256",
+    "RS384",
+    "RS512",
+    "ES256",
+    "ES384",
+    "ES512",
+]
 
 
 async def _fetch_jwks() -> dict[str, Any]:
@@ -868,7 +875,7 @@ async def validate_oidc_token(token: str) -> dict[str, Any]:
                 detail={
                     "error": "oidc_unavailable",
                     "message": "OIDC token validation is configured but PyJWT is not "
-                               "installed. Contact the system administrator.",
+                    "installed. Contact the system administrator.",
                 },
             ) from _pyjwt_exc
         return {}

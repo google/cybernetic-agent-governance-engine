@@ -246,7 +246,10 @@ class JudgeAgent:
             # Reject calls to dynamic-execution / reflection builtins.
             elif isinstance(node, ast.Call):
                 func = node.func
-                if isinstance(func, ast.Name) and func.id in self._DENYLISTED_CALL_NAMES:
+                if (
+                    isinstance(func, ast.Name)
+                    and func.id in self._DENYLISTED_CALL_NAMES
+                ):
                     return f"call to denylisted function '{func.id}'"
                 if isinstance(func, ast.Attribute) and func.attr in (
                     "system",
