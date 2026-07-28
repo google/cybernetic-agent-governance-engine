@@ -89,6 +89,32 @@ try:
     if _REDIS_TLS:
         logger.info("🔒 Gateway Redis TLS enabled (rediss://)")
 
+    # HIGH-1 fix: determine TLS cert verification mode based on environment.
+    # The previous code used ssl.CERT_NONE unconditionally, making the TLS
+    # connection vulnerable to MITM attacks even in production.
+    _CAGE_ENV_REDIS: str = os.environ.get("CAGE_ENV", "prod").lower()
+    if _REDIS_TLS:
+        if _CAGE_ENV_REDIS in ("dev", "development", "test", "ci"):
+            _REDIS_SSL_CERT_REQS = ssl.CERT_NONE
+            _REDIS_CA_CERT_PATH: str | None = None
+            logger.warning(
+                "⚠️ Gateway Redis TLS: ssl_cert_reqs=NONE in %s mode. "
+                "Set CAGE_ENV=prod to enforce certificate verification.",
+                _CAGE_ENV_REDIS,
+            )
+        else:
+            _REDIS_SSL_CERT_REQS = ssl.CERT_REQUIRED
+            _REDIS_CA_CERT_PATH = os.environ.get(
+                "REDIS_CA_CERT_PATH", "/etc/ssl/certs/ca-certificates.crt"
+            )
+            logger.info(
+                "🔒 Gateway Redis TLS: ssl_cert_reqs=REQUIRED, ca_certs=%s",
+                _REDIS_CA_CERT_PATH,
+            )
+    else:
+        _REDIS_SSL_CERT_REQS = ssl.CERT_NONE
+        _REDIS_CA_CERT_PATH = None
+
     class _AsyncRedisClient:
         """Thin async Redis wrapper matching the interface expected by safety.py."""
 
@@ -105,8 +131,9 @@ try:
                     decode_responses=True,
                     socket_connect_timeout=3.0,
                     socket_timeout=3.0,
-                    ssl=_REDIS_TLS,  # rediss:// TLS (HIGH-04)
-                    ssl_cert_reqs=ssl.CERT_NONE,  # allow self-signed certs in dev/GKE
+                    ssl=_REDIS_TLS,
+                    ssl_cert_reqs=_REDIS_SSL_CERT_REQS,
+                    ssl_ca_certs=_REDIS_CA_CERT_PATH,
                 )
             return self._client
 
@@ -136,6 +163,18 @@ try:
         def watch(self, *keys: str):
             """Return a pipeline in WATCH mode for optimistic locking."""
             return self._get().pipeline()
+
+        def get_raw_client(self) -> aioredis.Redis:
+            """Return the underlying aioredis.Redis client.
+
+            Use this only when the raw client is required for operations not
+            exposed by the wrapper (e.g. Lua EVALSHA in cbf.py).  Prefer the
+            wrapper methods (get, set, setex, pipeline) for all other uses.
+
+            CRIT-4 fix: replaces direct calls to the private _get() method from
+            cbf.py, which broke encapsulation and bypassed the wrapper contract.
+            """
+            return self._get()
 
         async def watched_transaction(
             self,
@@ -247,8 +286,9 @@ try:
                     decode_responses=True,
                     socket_connect_timeout=3.0,
                     socket_timeout=3.0,
-                    ssl=_REDIS_TLS,  # rediss:// TLS (HIGH-04)
-                    ssl_cert_reqs=ssl.CERT_NONE,  # type: ignore[arg-type]  # allow self-signed certs in dev/GKE
+                    ssl=_REDIS_TLS,
+                    ssl_cert_reqs=_REDIS_SSL_CERT_REQS,  # type: ignore[arg-type]
+                    ssl_ca_certs=_REDIS_CA_CERT_PATH,
                 )
             return self._client
 

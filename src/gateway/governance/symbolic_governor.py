@@ -138,13 +138,14 @@ class GovernanceError(Exception):
 #
 #   FRIA_ZONE_DEFER  (FRIA_ZONE_DEFER ≤ confidence < FRIA_ZONE_ALLOW):
 #     Synchronous blocking gate.  The external normative provider must
-#     return before the trade proceeds.  Maps to MANUAL_REVIEW in OPA.
-#     Human sign-off is required.
+#     return before the trade proceeds.  OPA returns MANUAL_REVIEW for
+#     this zone, which is translated to GovernanceDecision.REQUIRE_APPROVAL
+#     at the validate_action() boundary.  Human sign-off is required.
 #
 #   DENY zone        (confidence < FRIA_ZONE_DEFER):
 #     Hard abort.  The external normative provider is never contacted.
-#     The trade is blocked immediately.  Maps to DEFER in OPA (route to
-#     DeferQueue for automated data-hydration, not human triage).
+#     The trade is blocked immediately.  Routes to DeferQueue for automated
+#     data-hydration (GovernanceDecision.DEFER), not human triage.
 #
 # AARM mapping: CSA AARM-V7 "Context Window Overflow"
 # ISO 42001 mapping: A.8.4 (AI System Operation Controls)
@@ -188,7 +189,17 @@ class SymbolicGovernor:
     ) -> dict[str, Any]:
         """Core governance check pipeline shared by ``govern()`` and ``verify()``.
 
-        Returns a dict: {"violations": list[str], "opa_results": dict | None}
+        Returns a dict:
+            {
+                "violations":     list[str],
+                "opa_results":    dict | None,
+                "pending_payload": dict | None,  # structured payload for GovernanceError
+            }
+
+        CRIT-5 fix: ``pending_payload`` is returned in the result dict rather
+        than stored on ``self``.  Storing it on the singleton instance created a
+        data race under concurrent async requests — two simultaneous calls could
+        overwrite each other's payload before it was read in ``govern()``.
 
         Latency optimizations (v2.0.x baseline):
         - CBF (Redis read) and OPA (HTTP) checks are fully independent and now
@@ -199,6 +210,9 @@ class SymbolicGovernor:
         """
         violations: list[str] = []
         policy_resp = None
+        # CRIT-5 fix: local variable replaces self._pending_payload to eliminate
+        # the data race on the singleton under concurrent async requests.
+        _conf_payload: dict[str, Any] | None = None
 
         # 0. STAMP/STPA: Unsafe Control Actions
         with tracer.start_as_current_span("cage.stpa_check") as stpa_span:
@@ -239,7 +253,10 @@ class SymbolicGovernor:
                     f"score {_confidence:.2f} < threshold {_confidence_threshold:.2f}. "
                     f"Violation: agent confidence below required minimum."
                 )
-                self._pending_payload = {
+                # CRIT-5 fix: store in a local variable, not on self.
+                # self._pending_payload was a data race — concurrent requests on
+                # the singleton could overwrite each other's payload.
+                _conf_payload = {
                     "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
                     "primary_framework": _conf_meta["primary_framework"],
                     "legacy_citation": _conf_meta.get("legacy_citation", ""),
@@ -692,7 +709,14 @@ class SymbolicGovernor:
             except Exception as _rel_exc:
                 logger.warning("⚠️ FiscalLimitGuard.release() failed: %s", _rel_exc)
 
-        return {"violations": violations, "opa_results": policy_resp}
+        return {
+            "violations": violations,
+            "opa_results": policy_resp,
+            # CRIT-5 fix: _conf_payload is a local variable (initialized to None
+            # above), set only when a confidence violation is detected.  Returning
+            # it here instead of storing on self eliminates the singleton race.
+            "pending_payload": _conf_payload,
+        }
 
     async def govern(self, tool_name: str, params: dict[str, Any]) -> str:
         """Orchestrate governance checks for live execution.
@@ -725,13 +749,12 @@ class SymbolicGovernor:
             )
             logger.info("⚖️ Symbolic Governor evaluating: %s", tool_name)
             try:
-                # Reset per-invocation payload state
-                if hasattr(self, "_pending_payload"):
-                    del self._pending_payload
                 result = await self._run_checks(tool_name, params, sim_mode=False)
                 violations = result["violations"]
                 if violations:
-                    payload = getattr(self, "_pending_payload", None)
+                    # CRIT-5 fix: read pending_payload from the result dict, not
+                    # from self — eliminates the data race on the singleton.
+                    payload = result.get("pending_payload")
                     raise GovernanceError(violations[0], payload=payload)
 
                 # Gap 2 fix: issue routing seal AFTER all checks pass.
@@ -868,16 +891,28 @@ class SymbolicGovernor:
         The downstream actuator MUST verify this seal before firing — ensuring
         that execution cannot proceed by simply ignoring the HTTP response.
 
+        Verdict semantics (canonical — see decisions.py):
+          - ``"ALLOW"``            — approved; routing seal issued.
+          - ``"DENY"``             — blocked; violation details included.
+          - ``"REQUIRE_APPROVAL"`` — OPA returned MANUAL_REVIEW; human sign-off
+                                     required. Routing seal NOT issued. The
+                                     adapter returns HTTP 202 with this verdict
+                                     so clients can distinguish it from DEFER.
+          - ``"DEFER"``            — context missing or below confidence
+                                     threshold; routes to DeferQueue for
+                                     automated data-hydration.
+
         Returns:
             Dict with keys:
-                - ``verdict``:     ``"APPROVED"`` | ``"DENIED"`` | ``"MANUAL_REVIEW"``
-                - ``violations``:  list of violation strings (empty if APPROVED)
-                - ``seal``:        HMAC routing seal (empty string if not APPROVED)
+                - ``verdict``:     ``"ALLOW"`` | ``"DENY"`` | ``"REQUIRE_APPROVAL"`` | ``"DEFER"``
+                - ``violations``:  list of violation strings (empty if ALLOW)
+                - ``seal``:        HMAC routing seal (non-empty only if ALLOW)
                 - ``latency_ms``:  total governance check wall-time in milliseconds
 
         Raises:
-            GovernanceError: If any mandatory check fails.
+            GovernanceError: If any mandatory check fails with DENY verdict.
         """
+        from src.gateway.governance.decisions import GovernanceDecision
         from src.gateway.governance.routing_seal import generate_seal
 
         with tracer.start_as_current_span("cage.validate_action") as span:
@@ -920,8 +955,40 @@ class SymbolicGovernor:
                 latency_ms = round((time.time() - t0) * 1000, 2)
                 span.set_attribute("cage.governance_latency_ms", latency_ms)
 
+                # ── Detect REQUIRE_APPROVAL (OPA MANUAL_REVIEW) ──────────────
+                # When OPA returns MANUAL_REVIEW, _run_checks() appends a
+                # violation string containing "Manual Review Required".  We
+                # detect this specific case and return REQUIRE_APPROVAL rather
+                # than raising GovernanceError, so the adapter can surface the
+                # correct HTTP 202 body with verdict="REQUIRE_APPROVAL" instead
+                # of collapsing it into a generic DENY or DEFERRED response.
+                _is_manual_review = violations and any(
+                    "Manual Review Required" in v for v in violations
+                )
+
+                if _is_manual_review:
+                    span.set_attribute(
+                        "cage.verdict", GovernanceDecision.REQUIRE_APPROVAL
+                    )
+                    span.set_attribute(
+                        "langfuse.observation.output",
+                        GovernanceDecision.REQUIRE_APPROVAL,
+                    )
+                    span.set_status(Status(StatusCode.OK))
+                    logger.info(
+                        "🔶 validate_action REQUIRE_APPROVAL: action=%s (%.1fms)",
+                        action,
+                        latency_ms,
+                    )
+                    return {
+                        "verdict": GovernanceDecision.REQUIRE_APPROVAL,
+                        "violations": violations,
+                        "seal": "",
+                        "latency_ms": latency_ms,
+                    }
+
                 if violations:
-                    span.set_attribute("cage.verdict", "DENIED")
+                    span.set_attribute("cage.verdict", GovernanceDecision.DENY)
                     span.set_attribute(
                         "langfuse.observation.output", json.dumps(violations)
                     )
@@ -941,17 +1008,19 @@ class SymbolicGovernor:
                     seal = generate_seal(action, params)
                     seal_span.set_attribute("cage.seal_issued", True)
 
-                span.set_attribute("cage.verdict", "APPROVED")
-                span.set_attribute("langfuse.observation.output", "APPROVED")
+                span.set_attribute("cage.verdict", GovernanceDecision.ALLOW)
+                span.set_attribute(
+                    "langfuse.observation.output", GovernanceDecision.ALLOW
+                )
                 span.set_status(Status(StatusCode.OK))
                 logger.info(
-                    "✅ validate_action APPROVED: action=%s (%.1fms)",
+                    "✅ validate_action ALLOW: action=%s (%.1fms)",
                     action,
                     latency_ms,
                 )
 
                 return {
-                    "verdict": "APPROVED",
+                    "verdict": GovernanceDecision.ALLOW,
                     "violations": [],
                     "seal": seal,
                     "latency_ms": latency_ms,

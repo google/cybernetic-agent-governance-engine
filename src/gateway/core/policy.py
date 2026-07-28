@@ -293,6 +293,11 @@ class OPAClient:
         self.auth_token = Config.OPA_AUTH_TOKEN
         self.cb = CircuitBreaker()
         self._uds_socket_path: str | None = None
+        # HIGH-7 fix: pooled httpx.AsyncClient — created once, reused across requests.
+        # The previous _make_client() created a new client per request, exhausting
+        # file descriptors under load.  The client is lazily initialised on first use
+        # and closed via close() during application shutdown.
+        self._http_client: httpx.AsyncClient | None = None
 
         parsed = urllib.parse.urlparse(self.url)
         if parsed.scheme == "http+unix":
@@ -319,16 +324,34 @@ class OPAClient:
                 self.target_url = self.url
                 logger.info(f"🌐 OPAClient configured for HTTP: {self.target_url}")
 
-    def _make_client(self) -> httpx.AsyncClient:
-        """Create a fresh AsyncClient per request to avoid event-loop lifetime issues."""
-        if self._uds_socket_path:
-            transport = httpx.AsyncHTTPTransport(uds=self._uds_socket_path)
-        else:
-            transport = httpx.AsyncHTTPTransport(retries=0)
-        return httpx.AsyncClient(transport=transport)
+    def _get_client(self) -> httpx.AsyncClient:
+        """Return (or lazily create) the shared pooled httpx.AsyncClient.
+
+        HIGH-7 fix: replaces _make_client() which created a new client per
+        request.  The pooled client reuses TCP connections (keep-alive) and
+        avoids file-descriptor exhaustion under load.
+        """
+        if self._http_client is None or self._http_client.is_closed:
+            if self._uds_socket_path:
+                transport = httpx.AsyncHTTPTransport(uds=self._uds_socket_path)
+            else:
+                transport = httpx.AsyncHTTPTransport(retries=0)
+            self._http_client = httpx.AsyncClient(
+                transport=transport,
+                limits=httpx.Limits(
+                    max_connections=20,
+                    max_keepalive_connections=10,
+                    keepalive_expiry=30,
+                ),
+                timeout=httpx.Timeout(connect=2.0, read=5.0, write=5.0, pool=2.0),
+            )
+        return self._http_client
 
     async def close(self):
-        pass  # No persistent client; each request uses its own client via context manager.
+        """Close the pooled httpx client and release connections."""
+        if self._http_client and not self._http_client.is_closed:
+            await self._http_client.aclose()
+            self._http_client = None
 
     async def check_policy_exists(self, policy_path: str) -> bool:
         """Check whether a named policy is loaded in OPA via the policy management API.
@@ -357,8 +380,8 @@ class OPAClient:
             if self.auth_token:
                 headers["Authorization"] = f"Bearer {self.auth_token}"
 
-            async with self._make_client() as client:
-                response = await client.get(probe_url, headers=headers, timeout=5.0)
+            client = self._get_client()
+            response = await client.get(probe_url, headers=headers, timeout=5.0)
 
             return response.status_code == 200
         except Exception as exc:
@@ -430,16 +453,14 @@ class OPAClient:
                 # start_explain_worker() for the background explain architecture.
                 query_url = self.target_url
 
-                # Use a fresh client per request to avoid event-loop lifetime issues
-                # (the OPAClient singleton is created at module import time, which may
-                # be on a different event loop than the one running the test/request).
-                async with self._make_client() as client:
-                    response = await client.post(
-                        query_url,
-                        json={"input": input_data},
-                        headers=headers,
-                        timeout=5.0,
-                    )
+                # HIGH-7 fix: use the pooled client — no new client per request.
+                client = self._get_client()
+                response = await client.post(
+                    query_url,
+                    json={"input": input_data},
+                    headers=headers,
+                    timeout=5.0,
+                )
 
                 governance_tax_ms = (time.time() - start_time) * 1000
                 span.set_attribute(

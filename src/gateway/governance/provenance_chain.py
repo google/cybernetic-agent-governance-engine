@@ -54,7 +54,16 @@ logger = logging.getLogger("Gateway.Governance.ProvenanceChain")
 # Valid decision values — enforced by build_provenance_record
 # ---------------------------------------------------------------------------
 
-VALID_DECISIONS = frozenset({"ALLOW", "BLOCK", "ESCALATE"})
+#: Canonical decision values accepted by build_provenance_record().
+#:
+#: Execution-phase statuses (ALLOW, BLOCK, ESCALATE) are retained for
+#: LangGraph node provenance records.  The canonical gateway-boundary
+#: decisions (REQUIRE_APPROVAL, DEFER) are added so that all four
+#: GovernanceDecision values can be recorded in the audit chain without
+#: raising ValueError.
+#:
+#: See src/gateway/governance/decisions.py for the full canonical vocabulary.
+VALID_DECISIONS = frozenset({"ALLOW", "BLOCK", "ESCALATE", "REQUIRE_APPROVAL", "DEFER"})
 
 
 # ---------------------------------------------------------------------------

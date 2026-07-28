@@ -71,6 +71,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import random
 import time
@@ -209,9 +210,9 @@ class FiscalLimitGuard:
                     backoff = (
                         _RETRY_BASE_MS * (2**attempt) + random.randint(0, 5)
                     ) / 1000.0
-                    import time as _time
-
-                    _time.sleep(backoff)
+                    # LOW-4 fix: removed inline `import time as _time` — time is
+                    # already imported at module level.
+                    time.sleep(backoff)
                     continue
                 logger.error(
                     "_atomic_increment: error on attempt %d key=%s err=%s",
@@ -241,9 +242,9 @@ class FiscalLimitGuard:
                     backoff = (
                         _RETRY_BASE_MS * (2**attempt) + random.randint(0, 5)
                     ) / 1000.0
-                    import time as _time
-
-                    _time.sleep(backoff)
+                    # LOW-4 fix: removed inline `import time as _time` — time is
+                    # already imported at module level.
+                    time.sleep(backoff)
                     continue
                 logger.error(
                     "_atomic_decrement: error on attempt %d key=%s err=%s",
@@ -269,8 +270,10 @@ class FiscalLimitGuard:
             -2 if all retries failed due to contention (treated as fail-closed).
         """
         if not self._is_async_client():
-            # Sync client — run blocking pipeline in a thread executor
-            loop = asyncio.get_event_loop()
+            # Sync client — run blocking pipeline in a thread executor.
+            # CRIT-3 fix: use get_running_loop() — get_event_loop() is deprecated
+            # in Python 3.10+ when called from a coroutine.
+            loop = asyncio.get_running_loop()
             return await loop.run_in_executor(
                 None, self._sync_atomic_increment, key, amount_cents, cap_cents
             )
@@ -314,7 +317,9 @@ class FiscalLimitGuard:
         Returns new total in cents, or -1 on error.
         """
         if not self._is_async_client():
-            loop = asyncio.get_event_loop()
+            # CRIT-3 fix: use get_running_loop() — get_event_loop() is deprecated
+            # in Python 3.10+ when called from a coroutine.
+            loop = asyncio.get_running_loop()
             return await loop.run_in_executor(
                 None, self._sync_atomic_decrement, key, amount_cents
             )
@@ -368,18 +373,16 @@ class FiscalLimitGuard:
         Returns:
             ReservationToken — always returns; check ``token.rejected``.
         """
-        if amount_usd <= 0:
-            raise ValueError(f"reserve: amount_usd must be > 0, got {amount_usd}")
-
-        # H-11: Reject non-positive trade values before any fiscal limit check.
-        # Negative values could circumvent fiscal controls or cause accounting
-        # errors in downstream systems that assume positive trade amounts.
-        # This guard is separate from the amount_usd > 0 check above so that
-        # callers receive a distinct, actionable error message.
-        if not isinstance(amount_usd, (int, float)) or amount_usd != amount_usd:
+        # CRIT-2 fix: check finiteness first so float('inf') and float('nan')
+        # are rejected before the <= 0 guard.  float('inf') passed the old
+        # amount_usd <= 0 check (inf <= 0 is False) and would have caused an
+        # OverflowError inside int(round(inf * 100)) rather than a clean ValueError.
+        if not isinstance(amount_usd, (int, float)) or not math.isfinite(amount_usd):
             raise ValueError(
                 f"reserve: amount_usd must be a finite positive number, got {amount_usd!r}"
             )
+        if amount_usd <= 0:
+            raise ValueError(f"reserve: amount_usd must be > 0, got {amount_usd}")
 
         amount_cents = int(round(amount_usd * 100))
         cap_cents = int(round(self._daily_cap_usd * 100))

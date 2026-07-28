@@ -57,6 +57,7 @@ WATCH / MULTI / EXEC optimistic locking to prevent race conditions under
 concurrent trade execution in the stateless Cloud Run environment.
 """
 
+import asyncio
 import json
 import logging
 
@@ -183,8 +184,8 @@ return {1, "COMMITTED", tostring(next_cash)}
 
         # ── Attempt 1: externally reconciled balance (POAM-023) ──────────────
         try:
-            import asyncio as _asyncio
-
+            # LOW-6 fix: removed inline `import asyncio as _asyncio` — asyncio is
+            # already imported at module level.
             from src.compliance_bridge.reconciliation_worker import (
                 read_verified_balance,
             )
@@ -197,7 +198,7 @@ return {1, "COMMITTED", tostring(next_cash)}
             # (CBF_USING_SELF_REPORTED_BALANCE log sentinel — POAM-023 async bug).
             from src.gateway.infrastructure.redis_client import sync_redis_client
 
-            verified = await _asyncio.to_thread(
+            verified = await asyncio.to_thread(
                 read_verified_balance, sync_redis_client
             )
 
@@ -311,7 +312,8 @@ return {1, "COMMITTED", tostring(next_cash)}
                 }
             )
         )
-        client = redis_client._get()
+        # CRIT-4 fix: use public get_raw_client() instead of private _get().
+        client = redis_client.get_raw_client()
         async with client.pipeline(transaction=False) as pipe:
             pipe.get(self.redis_key)
             results = await pipe.execute()
@@ -431,6 +433,13 @@ return {1, "COMMITTED", tostring(next_cash)}
     ) -> None:
         """Atomically deduct *cost* from the Redis cash balance.
 
+        .. deprecated::
+            MED-5: ``update_state()`` does not re-verify the CBF safety
+            condition before committing.  Use ``atomic_verify_and_commit()``
+            instead, which collapses the check and commit into a single atomic
+            Redis Lua hop, eliminating the TOCTOU window between
+            ``verify_action()`` (read-only) and this method (write).
+
         Uses WATCH / MULTI / EXEC optimistic locking.  Retries up to
         ``_MAX_RETRIES`` times if a concurrent writer modified the key.
 
@@ -442,6 +451,15 @@ return {1, "COMMITTED", tostring(next_cash)}
         Raises:
             RuntimeError: If all retries are exhausted or Redis is unavailable.
         """
+        import warnings
+
+        warnings.warn(
+            "update_state() does not atomically re-verify the CBF safety condition. "
+            "Use atomic_verify_and_commit() to eliminate the TOCTOU window between "
+            "verify_action() and the state commit (MED-5).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if redis_client is None:
             raise RuntimeError("Redis client unavailable — cannot update CBF state.")
 
@@ -605,7 +623,8 @@ return {1, "COMMITTED", tostring(next_cash)}
             governance_signature,
         ]
 
-        client = redis_client._get()
+        # CRIT-4 fix: use public get_raw_client() instead of private _get().
+        client = redis_client.get_raw_client()
 
         async def _run_evalsha() -> list:
             return await client.evalsha(self._lua_sha, len(keys), *keys, *argv)
