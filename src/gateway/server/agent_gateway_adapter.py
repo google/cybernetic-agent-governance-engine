@@ -42,12 +42,13 @@ Architecture
                                               symbolic_governor.validate_action()
                                               (full 7-tier CAGE pipeline)
                                                       │
-                                          ┌───────────┼───────────┐
-                                          ▼           ▼           ▼
-                                       APPROVED    DENIED    MANUAL_REVIEW
-                                          │           │           │
-                                   OkHttpResponse  403 Denied  202 DEFERRED
-                                   + routing seal  + violation  + thread_id
+                                  ┌───────────────────┼──────────────────────┐
+                                  ▼           ▼        ▼                     ▼
+                                ALLOW       DENY  REQUIRE_APPROVAL          DEFER
+                                  │           │        │                     │
+                           OkHttpResponse  403 Denied  202 REQUIRE_APPROVAL  202 DEFER
+                           + routing seal  + violation + thread_id           + defer_id
+                                                       (human sign-off)      (data-hydration)
 
 GCP Adaptation (optional deployment configuration)
 --------------------------------------------------
@@ -92,6 +93,8 @@ import os
 from typing import Any
 
 from opentelemetry import trace
+
+from src.gateway.governance.decisions import GovernanceDecision
 
 logger = logging.getLogger("Gateway.AgentGatewayAdapter")
 tracer = trace.get_tracer(__name__)
@@ -253,12 +256,15 @@ async def handle_check_request(
     This is the pure-Python core of the adapter, separated from the gRPC
     servicer so it can be unit-tested without a running gRPC server.
 
-    Decision table:
+    Decision table (canonical GovernanceDecision vocabulary):
       - Parse error          → DeniedHttpResponse(403) fail-closed
       - Body > 64KB          → DeniedHttpResponse(403) fail-closed
-      - APPROVED             → OkHttpResponse + x-cage-routing-seal header
-      - DENIED               → DeniedHttpResponse(403) + violation JSON
-      - MANUAL_REVIEW        → DeniedHttpResponse(202) + {verdict: DEFERRED, thread_id}
+      - ALLOW                → OkHttpResponse + x-cage-routing-seal header
+      - DENY                 → DeniedHttpResponse(403) + violation JSON
+      - REQUIRE_APPROVAL     → DeniedHttpResponse(202) + {verdict: REQUIRE_APPROVAL, thread_id}
+                               Client must poll GET /v1/approvals/pending (human sign-off path)
+      - DEFER                → DeniedHttpResponse(202) + {verdict: DEFER, defer_id, missing_input_reason}
+                               Client must poll GET /v1/defer/pending (data-hydration path)
 
     Args:
         body:             Raw JSON-RPC 2.0 body from the CheckRequest.
@@ -330,10 +336,12 @@ async def handle_check_request(
                 },
             )
 
-        verdict: str = result.get("verdict", "DENIED")
+        verdict: str = result.get("verdict", GovernanceDecision.DENY)
         violations: list[str] = result.get("violations", [])
         seal: str = result.get("seal", "")
         thread_id: str = result.get("thread_id", "")
+        defer_id: str = result.get("defer_id", "")
+        missing_input_reason: str = result.get("missing_input_reason", "")
 
         span.set_attribute("cage.verdict", verdict)
 
@@ -344,27 +352,29 @@ async def handle_check_request(
             detail="; ".join(violations) if violations else "",
         )
 
-        if verdict == "APPROVED":
+        if verdict == GovernanceDecision.ALLOW:
             logger.info(
-                "AgentGatewayAdapter: APPROVED tool='%s' caller='%s'",
+                "AgentGatewayAdapter: ALLOW tool='%s' caller='%s'",
                 tool_name,
                 caller_principal,
             )
             return _build_ok_response(seal)
 
-        if verdict == "MANUAL_REVIEW":
+        if verdict == GovernanceDecision.REQUIRE_APPROVAL:
             logger.info(
-                "AgentGatewayAdapter: DEFERRED tool='%s' caller='%s' thread_id='%s'",
+                "AgentGatewayAdapter: REQUIRE_APPROVAL tool='%s' caller='%s' thread_id='%s'",
                 tool_name,
                 caller_principal,
                 thread_id,
             )
-            # ext_authz timeout is typically 5s — return immediately with DEFERRED.
-            # The MCP client must poll GET /v1/approvals/pending for the outcome.
+            # ext_authz timeout is typically 5s — return immediately.
+            # The MCP client must poll GET /v1/approvals/pending for the human
+            # sign-off outcome.  This is structurally distinct from DEFER:
+            # the action context is complete; a human must approve it.
             return _build_denied_response(
                 202,
                 {
-                    "verdict": "DEFERRED",
+                    "verdict": GovernanceDecision.REQUIRE_APPROVAL,
                     "thread_id": thread_id,
                     "message": (
                         "Request requires human approval. "
@@ -373,9 +383,32 @@ async def handle_check_request(
                 },
             )
 
-        # DENIED
+        if verdict == GovernanceDecision.DEFER:
+            logger.info(
+                "AgentGatewayAdapter: DEFER tool='%s' caller='%s' defer_id='%s'",
+                tool_name,
+                caller_principal,
+                defer_id,
+            )
+            # Context is missing or below the Confidence-Starvation Boundary.
+            # Route to the DeferQueue data-hydration loop — NOT human triage.
+            # The MCP client must poll GET /v1/defer/pending for the outcome.
+            return _build_denied_response(
+                202,
+                {
+                    "verdict": GovernanceDecision.DEFER,
+                    "defer_id": defer_id,
+                    "missing_input_reason": missing_input_reason,
+                    "message": (
+                        "Request deferred pending context hydration. "
+                        "Poll GET /v1/defer/pending for the outcome."
+                    ),
+                },
+            )
+
+        # DENY (default fallback)
         logger.warning(
-            "AgentGatewayAdapter: DENIED tool='%s' caller='%s' violations=%s",
+            "AgentGatewayAdapter: DENY tool='%s' caller='%s' violations=%s",
             tool_name,
             caller_principal,
             violations,
@@ -383,7 +416,7 @@ async def handle_check_request(
         return _build_denied_response(
             403,
             {
-                "verdict": "DENIED",
+                "verdict": GovernanceDecision.DENY,
                 "violations": violations,
                 "tool_name": tool_name,
             },

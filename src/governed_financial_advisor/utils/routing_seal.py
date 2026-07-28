@@ -144,7 +144,10 @@ def _canonical_payload(action: str, params: dict) -> bytes:
 def verify_seal(seal: str, action: str, params: dict) -> bool:
     """Verify a routing seal issued by the Hybrid Gateway.
 
-    Returns ``True`` on success, ``False`` on any verification failure.
+    Returns ``True`` on success.  Raises ``SymbolicGovernorViolation`` on any
+    verification failure — the exception is never swallowed so callers cannot
+    silently ignore a failed check.  This mirrors the CRIT-1 fix applied to
+    ``src/gateway/governance/routing_seal.py``; both modules must stay in sync.
 
     Cryptographic contract:
         Algorithm : HMAC-SHA256
@@ -163,8 +166,11 @@ def verify_seal(seal: str, action: str, params: dict) -> bool:
 
     Returns:
         ``True`` if the seal is valid and unexpired.
-        ``False`` if the seal is malformed, expired, has an action mismatch,
-        or fails HMAC verification.
+
+    Raises:
+        SymbolicGovernorViolation: If the seal is malformed, expired, has an
+            action mismatch, or fails HMAC verification.  Always raised on
+            failure — never swallowed — so callers cannot ignore it.
     """
     try:
         parts = seal.split(".", 2)
@@ -211,8 +217,11 @@ def verify_seal(seal: str, action: str, params: dict) -> bool:
         return True
 
     except SymbolicGovernorViolation:
-        return False
+        # Re-raise — never swallow. Callers must handle the exception explicitly.
+        # CRIT-1 fix: the previous code caught SymbolicGovernorViolation and
+        # returned False, allowing callers to silently ignore a failed seal check.
+        raise
     except Exception as exc:
         reason = f"unexpected verification error: {exc}"
         logger.warning("🔒 Routing seal verification error: %s", exc)
-        return False
+        raise SymbolicGovernorViolation(reason, action) from exc

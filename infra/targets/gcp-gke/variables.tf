@@ -358,9 +358,21 @@ variable "langfuse_nextauth_url" {
 }
 
 variable "langfuse_s3_endpoint" {
-  description = "S3 endpoint for Langfuse blob storage (defaults to MinIO)"
+  # All gcp-gke regional tfvars (us-dev, eu-dev, eu-prod, apac-dev, apac-prod)
+  # explicitly set this to "https://storage.googleapis.com". The empty-string
+  # default previously caused LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT to be omitted
+  # entirely whenever a deployment was applied without a matching tfvars file
+  # (e.g. a targeted `-target=module.langfuse` apply or manual `terraform apply`
+  # without -var-file). With LANGFUSE_S3_EVENT_UPLOAD_REGION="auto" and no
+  # explicit endpoint, the AWS SDK falls back to constructing
+  # "s3.auto.amazonaws.com", which does not resolve (DNS ENOTFOUND) since the
+  # backing bucket is GCS, not AWS S3. This broke trace ingestion entirely
+  # (HTTP 500 on /api/public/ingestion; see test_langfuse_smoke.py).
+  # Defaulting to the GCS interop endpoint here makes the gcp-gke target
+  # correct out-of-the-box and self-healing against config drift.
+  description = "S3-compatible endpoint for Langfuse blob storage (GCS interop endpoint for the gcp-gke target)"
   type        = string
-  default     = ""
+  default     = "https://storage.googleapis.com"
 }
 
 variable "langfuse_s3_bucket" {

@@ -471,8 +471,23 @@ class ConsensusEngine:
             try:
                 _AUDIT_QUEUE.put_nowait(audit_record)
             except asyncio.QueueFull:
-                logger.warning(
-                    "Consensus audit queue full — dropping audit record for %s.", action
+                # LOW-3 fix: dropped audit records are a compliance gap — log at
+                # CRITICAL so SIEM/alerting picks them up.  Also: ensure
+                # _background_audit_worker() is started at application startup
+                # so the queue is drained and records are not dropped at all.
+                logger.critical(
+                    json.dumps(
+                        {
+                            "event": "CONSENSUS_AUDIT_RECORD_DROPPED",
+                            "severity": "CRITICAL",
+                            "action": action,
+                            "audit_note": (
+                                "Consensus audit queue full — record lost. "
+                                "Start _background_audit_worker() at application startup "
+                                "to prevent record loss."
+                            ),
+                        }
+                    )
                 )
 
             return result

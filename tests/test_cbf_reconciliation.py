@@ -176,7 +176,7 @@ def test_cbf_uses_reconciliation_balance_when_available() -> None:
     with (
         patch(
             "src.gateway.governance.cbf.redis_client",
-            new=MagicMock(_get=MagicMock(return_value=fake_redis_async)),
+            new=MagicMock(get_raw_client=MagicMock(return_value=fake_redis_async)),
         ),
         patch(
             "src.compliance_bridge.reconciliation_worker.read_verified_balance",
@@ -226,7 +226,7 @@ def test_cbf_falls_back_to_redis_when_reconciliation_absent() -> None:
     with (
         patch(
             "src.gateway.governance.cbf.redis_client",
-            new=MagicMock(_get=MagicMock(return_value=fake_redis_async)),
+            new=MagicMock(get_raw_client=MagicMock(return_value=fake_redis_async)),
         ),
         patch(
             "src.compliance_bridge.reconciliation_worker.read_verified_balance",

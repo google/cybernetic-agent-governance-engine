@@ -445,36 +445,43 @@ class KMSGovernanceSigner:
     def _kms_verify(self, plan_bytes: bytes, signature_hex: str) -> bool:
         try:
             from cryptography.hazmat.primitives import hashes, serialization
-            from cryptography.hazmat.primitives.asymmetric import ec, padding
+            from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
             from cryptography.hazmat.primitives.asymmetric import utils as asym_utils
 
             public_key = serialization.load_pem_public_key(self._public_key_pem)
             signature_bytes = bytes.fromhex(signature_hex)
             digest = hashlib.sha256(plan_bytes).digest()
 
-            if hasattr(public_key, "verify"):
-                try:
-                    public_key.verify(
-                        signature_bytes,
-                        digest,
-                        ec.ECDSA(asym_utils.Prehashed(hashes.SHA256())),
-                    )
-                    return True
-                except (TypeError, AttributeError):
-                    public_key.verify(
-                        signature_bytes,
-                        digest,
-                        padding.PSS(
-                            mgf=padding.MGF1(hashes.SHA256()),
-                            salt_length=padding.PSS.MAX_LENGTH,
-                        ),
-                        asym_utils.Prehashed(hashes.SHA256()),
-                    )
-                    return True
+            # Pyrefly fix: narrow the type explicitly so each branch calls the
+            # correct overload of verify() with the right number of arguments.
+            # EC keys (ECDSA): 3-arg verify(signature, data, algorithm)
+            # RSA keys (PSS):  4-arg verify(signature, data, padding, algorithm)
+            if isinstance(public_key, ec.EllipticCurvePublicKey):
+                public_key.verify(
+                    signature_bytes,
+                    digest,
+                    ec.ECDSA(asym_utils.Prehashed(hashes.SHA256())),
+                )
+                return True
+            elif isinstance(public_key, rsa.RSAPublicKey):
+                public_key.verify(
+                    signature_bytes,
+                    digest,
+                    padding.PSS(
+                        mgf=padding.MGF1(hashes.SHA256()),
+                        salt_length=padding.PSS.MAX_LENGTH,
+                    ),
+                    asym_utils.Prehashed(hashes.SHA256()),
+                )
+                return True
+            else:
+                logger.warning(
+                    "[KMSSigner] Unsupported public key type: %s", type(public_key).__name__
+                )
+                return False
         except Exception as exc:
             logger.warning("[KMSSigner] KMS public key verification failed: %s", exc)
             return False
-        return False
 
 
 _signer: KMSGovernanceSigner | None = None

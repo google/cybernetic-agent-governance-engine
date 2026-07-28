@@ -109,26 +109,83 @@ except ImportError:
 
 
 class JudgeAgent:
-    """Evaluates LLM-generated policy code for correctness.
+    """Evaluates LLM-generated policy code for correctness and safety.
 
     Uses AST-level parsing for Python output and structural token checks for
     Rego output.  The previous substring-match approach ("def " in code) was
     too permissive — any string containing those tokens would pass.
+
+    Beyond structural validity, Python output is also scanned for a denylist
+    of dangerous constructs (imports, dynamic execution, dunder/reflection
+    access, filesystem/process/network primitives).  This is defense-in-depth:
+    generated code is expected to undergo human review before deployment
+    (see Makefile target), but the judge should not rubber-stamp code that is
+    merely syntactically valid Python containing a function definition — that
+    was the original weakness this class was built to close, and it applies
+    equally to semantic payloads smuggled inside an otherwise well-formed
+    function body.
     """
 
     # Rego-specific tokens that must ALL be present for a valid policy fragment.
     _REGO_REQUIRED_TOKENS: tuple[str, ...] = ("package", "default", "decision")
 
+    # Names that must never be called or imported in generated governance code.
+    _DENYLISTED_CALL_NAMES: frozenset[str] = frozenset(
+        {
+            "eval",
+            "exec",
+            "compile",
+            "__import__",
+            "open",
+            "input",
+            "globals",
+            "locals",
+            "vars",
+            "getattr",
+            "setattr",
+            "delattr",
+            "exit",
+            "quit",
+            "breakpoint",
+        }
+    )
+
+    # Module roots that must never be imported in generated governance code.
+    _DENYLISTED_IMPORT_ROOTS: frozenset[str] = frozenset(
+        {
+            "os",
+            "sys",
+            "subprocess",
+            "socket",
+            "shutil",
+            "pickle",
+            "marshal",
+            "ctypes",
+            "importlib",
+            "pty",
+            "multiprocessing",
+            "asyncio",
+            "threading",
+            "http",
+            "urllib",
+            "requests",
+            "httpx",
+        }
+    )
+
     def verify(self, code: str) -> bool:
-        """Return True if the generated code is structurally valid.
+        """Return True if the generated code is structurally valid and safe.
 
         For Python: attempts ``ast.parse()``; requires at least one
-        ``FunctionDef`` or ``AsyncFunctionDef`` node at the module level.
+        ``FunctionDef`` or ``AsyncFunctionDef`` node at the module level, and
+        rejects the code outright if it contains any denylisted import,
+        dynamic-execution call, or reflection/dunder access.
 
         For Rego: checks that all required Rego tokens are present (package
         declaration, default decision, decision rule).
 
-        Returns False on any parse error or structural deficiency.
+        Returns False on any parse error, structural deficiency, or denylist
+        violation.
         """
         if not code or not code.strip():
             return False
@@ -143,7 +200,7 @@ class JudgeAgent:
         return self._verify_python(stripped)
 
     def _verify_python(self, code: str) -> bool:
-        """Parse *code* as Python and require at least one top-level function."""
+        """Parse *code* as Python, require a top-level function, and reject unsafe constructs."""
         try:
             tree = ast.parse(code)
         except SyntaxError as exc:
@@ -158,7 +215,58 @@ class JudgeAgent:
             logger.warning("JudgeAgent: Python code contains no function definitions")
             return False
 
+        violation = self._find_unsafe_construct(tree)
+        if violation:
+            logger.warning(
+                "JudgeAgent: rejecting generated code — unsafe construct: %s",
+                violation,
+            )
+            return False
+
         return True
+
+    def _find_unsafe_construct(self, tree: ast.AST) -> str | None:
+        """Walk *tree* and return a description of the first unsafe construct found.
+
+        Returns None if the tree contains no denylisted imports, dynamic-
+        execution calls, or dunder/reflection attribute access.
+        """
+        for node in ast.walk(tree):
+            # Reject any import of a denylisted module root.
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    root = alias.name.split(".")[0]
+                    if root in self._DENYLISTED_IMPORT_ROOTS:
+                        return f"import of denylisted module '{alias.name}'"
+            elif isinstance(node, ast.ImportFrom):
+                root = (node.module or "").split(".")[0]
+                if root in self._DENYLISTED_IMPORT_ROOTS:
+                    return f"import from denylisted module '{node.module}'"
+
+            # Reject calls to dynamic-execution / reflection builtins.
+            elif isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id in self._DENYLISTED_CALL_NAMES:
+                    return f"call to denylisted function '{func.id}'"
+                if isinstance(func, ast.Attribute) and func.attr in (
+                    "system",
+                    "popen",
+                    "spawn",
+                    "fork",
+                    "remove",
+                    "unlink",
+                    "rmdir",
+                    "rmtree",
+                ):
+                    return f"call to denylisted method '.{func.attr}(...)'"
+
+            # Reject dunder attribute access (reflection escape hatches like
+            # __globals__, __subclasses__, __class__, __builtins__, etc.).
+            elif isinstance(node, ast.Attribute):
+                if node.attr.startswith("__") and node.attr.endswith("__"):
+                    return f"dunder attribute access '.{node.attr}'"
+
+        return None
 
     def _verify_rego(self, code: str) -> bool:
         """Structural token check for OPA Rego policy fragments.

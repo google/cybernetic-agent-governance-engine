@@ -198,10 +198,10 @@ def generate_seal(action: str, params: dict, ttl_s: int = _TTL_S) -> str:
 def verify_seal(seal: str, action: str, params: dict) -> bool:
     """Verify a routing seal issued by the Hybrid Gateway.
 
-    Returns ``True`` on success, ``False`` on any verification failure.
-    Also raises ``SymbolicGovernorViolation`` on failure so that callers
-    using the decorator pattern (``require_cleared_seal``) cannot silently
-    ignore a failed verification.
+    Returns ``True`` on success.  Raises ``SymbolicGovernorViolation`` on any
+    verification failure — the exception is never swallowed so callers cannot
+    silently ignore a failed check.  The ``require_cleared_seal`` decorator
+    relies on this propagation contract.
 
     Cryptographic contract:
         Algorithm : HMAC-SHA256
@@ -220,12 +220,11 @@ def verify_seal(seal: str, action: str, params: dict) -> bool:
 
     Returns:
         ``True`` if the seal is valid and unexpired.
-        ``False`` if the seal is malformed, expired, has an action mismatch,
-        or fails HMAC verification.
 
     Raises:
-        SymbolicGovernorViolation: Same failure conditions as returning False —
-            raised so that ``require_cleared_seal`` callers cannot ignore failures.
+        SymbolicGovernorViolation: If the seal is malformed, expired, has an
+            action mismatch, or fails HMAC verification.  Always raised on
+            failure — never swallowed — so callers cannot ignore it.
     """
     try:
         parts = seal.split(".", 2)
@@ -272,11 +271,14 @@ def verify_seal(seal: str, action: str, params: dict) -> bool:
         return True
 
     except SymbolicGovernorViolation:
-        return False
+        # Re-raise — never swallow. Callers must handle the exception explicitly.
+        # CRIT-1 fix: the previous code caught SymbolicGovernorViolation and
+        # returned False, allowing callers to silently ignore a failed seal check.
+        raise
     except Exception as exc:
         reason = f"unexpected verification error: {exc}"
         logger.warning("🔒 Routing seal verification error: %s", exc)
-        return False
+        raise SymbolicGovernorViolation(reason, action) from exc
 
 
 def require_cleared_seal(
@@ -322,8 +324,10 @@ def require_cleared_seal(
 
             @functools.wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                if not verify_seal(seal, action, params):
-                    raise SymbolicGovernorViolation("seal verification failed", action)
+                # verify_seal() raises SymbolicGovernorViolation on any failure —
+                # no need to check the return value. The wrapped function is never
+                # called if the seal is invalid (CRIT-1 fix).
+                verify_seal(seal, action, params)
                 return await func(*args, **kwargs)
 
             return async_wrapper  # type: ignore[return-value]
@@ -331,8 +335,10 @@ def require_cleared_seal(
 
             @functools.wraps(func)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                if not verify_seal(seal, action, params):
-                    raise SymbolicGovernorViolation("seal verification failed", action)
+                # verify_seal() raises SymbolicGovernorViolation on any failure —
+                # no need to check the return value. The wrapped function is never
+                # called if the seal is invalid (CRIT-1 fix).
+                verify_seal(seal, action, params)
                 return func(*args, **kwargs)
 
             return sync_wrapper  # type: ignore[return-value]
@@ -346,7 +352,8 @@ def require_cleared_seal(
 # ---------------------------------------------------------------------------
 import os as _os
 
-if (
-    _os.environ.get("CAGE_ENV", "prod").lower() == "prod"
-):  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
-    assert_custom_salt_in_production()
+# MED-8 fix: removed the `== "prod"` guard that only triggered for CAGE_ENV=prod
+# exactly.  Deployments with CAGE_ENV=staging, CAGE_ENV=uat, or CAGE_ENV=preprod
+# using the default salt would silently pass.  assert_custom_salt_in_production()
+# already handles all non-dev/test environments correctly — call it unconditionally.
+assert_custom_salt_in_production()
