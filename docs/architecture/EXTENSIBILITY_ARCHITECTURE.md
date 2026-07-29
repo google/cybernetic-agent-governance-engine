@@ -92,9 +92,9 @@ The [`SymbolicGovernor`](../../src/gateway/governance/symbolic_governor.py) orch
 | ---- | -------------------------- | ------------------------------------------------------ | --------------- |
 | 0    | STPA/UCA Validator         | Hazard analysis predicates from YAML control structure  | None            |
 | 1    | Agentic Confidence Check   | `confidence_score ≥ threshold`                          | None            |
-| 2    | Control Barrier Function   | `h(x) ≥ 0` (state-space boundary)                      | None            |
-| 3    | SLM Sidecar                | ~~Semantic similarity `≥ threshold`~~ **Deprecated** — bypassed via `slm_available=false` sentinel; Tier 3 is a no-op in v0.1.0 | None |
-| 4    | OPA Rego Policy            | Declarative policy rules (externalized)                 | None            |
+| 2    | Control Barrier Function   | `h(x) ≥ 0` (state-space boundary); concurrent with Tier 4 | None            |
+| 3    | Fiscal Limit Pre-Reservation | Atomic Redis `WATCH`/`MULTI`/`EXEC` reservation against daily fiscal cap | None |
+| 4    | OPA Rego Policy            | Declarative policy rules (externalized); concurrent with Tier 2 | None            |
 | 5    | Multi-Model Consensus      | Heterogeneous critic agreement                          | None            |
 | 6    | DoWhy Causal Gatekeeper    | Placebo refutation `p-value ≥ 0.05`                     | None            |
 | 6b   | Adaptive FRIA Gate         | Confidence-mapped external validation (§2.5)            | None            |
@@ -243,7 +243,7 @@ All external provider interactions fall into three categories, each with a disti
 | **Attestation Logging**   | None (async fire-and-forget)              | CAGE → Provider           | Background; no acknowledgment wait                  |
 | **External Validation**   | **Adaptive** (confidence-dependent)       | CAGE ↔ Provider           | Async at ≥0.95; sync gate at [0.70, 0.95); deny <0.70 |
 
-**Critical constraint:** No external provider call may appear on the synchronous hot path between a user request entering the SymbolicGovernor pipeline and the governed response being returned. The CBF check ([`safety.py`](../../src/gateway/governance/safety.py) L192-199) executes in sub-microseconds. The full 7-tier SymbolicGovernor pipeline includes the SLM sidecar (1.5s timeout) and OPA query (~10-50ms). Introducing a synchronous external HTTP call would trade model non-determinism for network non-determinism — violating the architectural guarantee that local enforcement is deterministic and bounded.
+**Critical constraint:** No external provider call may appear on the synchronous hot path between a user request entering the SymbolicGovernor pipeline and the governed response being returned. The CBF check ([`safety.py`](../../src/gateway/governance/safety.py) L192-199) executes in sub-microseconds. The full 7-tier SymbolicGovernor pipeline includes the OPA query (~10-50ms); the legacy SLM sidecar tier slot has been fully retired (`slm_available=false` permanent sentinel, 0ms overhead). Introducing a synchronous external HTTP call would trade model non-determinism for network non-determinism — violating the architectural guarantee that local enforcement is deterministic and bounded.
 
 #### 2.5.2 Reference Handshake: 3-Endpoint External Provider
 
