@@ -194,17 +194,19 @@ This guarantees that the cash balance never drops below the minimum threshold in
 
 Source: [`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py)
 
-Every agent action passes through seven sequential tiers before execution is permitted:
+Every `execute_trade` action passes through the following sequential tiers (as implemented in `SymbolicGovernor._run_checks()`) before a routing seal is issued:
 
 | Tier | Name | Mechanism |
 |------|------|-----------|
-| **1** | NoDirectBind invariant | Structural binding check — prevents direct tool invocation without governance wrapper |
-| **2** | PII sanitization | Five compiled regex patterns (SSN, credit card, email, phone, API key/Bearer) applied before any persistence |
-| **3** | CBF + OPA concurrent | `asyncio.gather` runs Control Barrier Function and OPA Rego evaluation in parallel |
-| **4** | Causal gatekeeper | SCM + `PlaceboTreatmentRefuter` (50 sims, p < 0.05, \|eff\| > 0.2) validates world-model integrity |
-| **5** | Confabulation scoring | `risk_score = 1.0 − confidence`; blocks when score exceeds threshold |
-| **6** | Consensus gate | Heterogeneous multi-model consensus required for trades ≥ $10k; 30 s timeout |
-| **7** | FRIA zones | `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70`; scores below 0.70 hard-deny locally |
+| **0** | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` checks Unsafe Control Actions defined in the STPA ontology |
+| **1** | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) before any network I/O |
+| **2 / 3** | CBF + OPA concurrent | `asyncio.gather` runs the Control Barrier Function and OPA Rego evaluation in parallel |
+| **4** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` atomically pre-reserves the daily fiscal cap in Redis before the consensus gate |
+| **5** | Consensus gate | Heterogeneous multi-model consensus required for trades ≥ $10k; 30 s timeout |
+| **6** | Causal gatekeeper | SCM + `PlaceboTreatmentRefuter` (50 sims, p < 0.05, \|eff\| > 0.2) validates world-model integrity |
+| **6b** | Adaptive FRIA enforcement | `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70`; scores below 0.70 hard-deny locally |
+
+The routing seal is issued only after all tiers pass. PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are separate, standalone components — PII sanitization runs on audit records immediately before WORM persistence (inside `uca_logger.py`), and confabulation scoring is a Langfuse observability metric — neither is a sequential tier of `_run_checks()`.
 
 ### Confabulation Risk Formula
 
@@ -506,7 +508,7 @@ cybernetic-agent-governance-engine/
 | Document                                                                               | Description                                                        |
 | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | [`COMPLIANCE.md`](COMPLIANCE.md)                                                       | **Core Compliance Posture & Framework Mapping (SR 26-2, ISO 42001, DORA)** |
-| `README_GOVERNANCE.md`                                         | **Detailed 7-Tier Symbolic Governor & Decoupled Architecture Spec** |
+| [`docs/governance/GOVERNANCE_OVERVIEW.md`](docs/governance/GOVERNANCE_OVERVIEW.md)                                         | **Detailed 7-Tier Symbolic Governor & Decoupled Architecture Spec** |
 | [`docs/AUDIT_LOG_SCHEMA.md`](docs/architecture/AUDIT_LOG_SCHEMA.md)                                 | **`cage-intent/1.0` & `cage-view-access/1.0` schema reference** — hash-chain mechanics, all fields, regulatory mapping (MiFID II Art. 25 / GDPR Art. 30 / ISO 42001 A.8.4) |
 | [`docs/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md)                                   | Security posture, NIST RMF status, open POA&M items                |
 | [`docs/POAM_INDEX.md`](docs/compliance/cross-region/POAM_INDEX.md)                                             | POA&M Master Index — cross-region traceability matrix (38 items)   |
