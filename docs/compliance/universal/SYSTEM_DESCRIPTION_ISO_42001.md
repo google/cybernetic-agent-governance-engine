@@ -23,7 +23,7 @@ The transition to Agentic AI represents a shift from deterministic software to p
 
 ## 3. CAGE Architecture & VSM Mapping
 
-**v2.0.0 System State (GO: 2026-06-08):** CAGE implements a **7-tier SymbolicGovernor** (Tiers 0–6: STPA → Aho-Corasick → CBF → [SLM — DEPRECATED] → OPA → Consensus → CausalGatekeeper) with a 10-node LangGraph StateGraph. The SLM sidecar (Tier 3) is permanently deprecated with `slm_available=False` sentinel. NeMo Guardrails is integrated into the gateway process (not a standalone sidecar). Sensitive data detection covers **15 PII entity types** via Presidio/spaCy. Implemented v2.0.0 controls include: **Token Quota Proxy** (`token_quota_proxy.py`), **PII Sanitizer** (`pii_sanitizer.py`), and **UCA Logger** (`uca_logger.py`). All controls are ISO 42001 obligations active in every region; SR 26-2 MRM scope (CBF + DoWhy Phase 1) applies **US_FED only**.
+**v2.0.0 System State (GO: 2026-06-08):** CAGE implements a **7-tier SymbolicGovernor** (Tiers 0–6, plus Tier 6b adaptive FRIA gate: STPA → Agentic Confidence → CBF + OPA [concurrent] → Fiscal Limit Pre-Reservation → Consensus → CausalGatekeeper → FRIA) with a 10-node LangGraph StateGraph. The legacy SLM sidecar has been fully retired with a permanent `slm_available=False` sentinel; OPA Policy Evaluation runs concurrently with the CBF check. NeMo Guardrails (including the Aho-Corasick keyword scan) runs as a pre-pipeline screening layer, integrated into the gateway process (not a standalone sidecar). Sensitive data detection covers **15 PII entity types** via Presidio/spaCy. Implemented v2.0.0 controls include: **Token Quota Proxy** (`token_quota_proxy.py`), **PII Sanitizer** (`pii_sanitizer.py`), and **UCA Logger** (`uca_logger.py`). All controls are ISO 42001 obligations active in every region; SR 26-2 MRM scope (CBF + DoWhy Phase 1) applies **US_FED only**.
 
 > **FUTURE STATE — AnchorageGrpcLedgerProvider (POAM-023, target 2026-09-08):** External CBF ledger reconciliation via `AnchorageGrpcLedgerProvider` is **not yet implemented**. The Control Barrier Function currently uses Redis-only state. gRPC-based external ledger integration is tracked as POAM-023.
 
@@ -68,17 +68,20 @@ The **Explainer** ensures the output is grounded in reality, addressing the "Bla
 
 ### 4.4. 7-Tier Symbolic Governor Pipeline
 
-The [`SymbolicGovernor`](../../../src/gateway/governance/symbolic_governor.py) implements a 7-tier pipeline that every agent action must traverse before execution. Each tier is a distinct safety layer with formal properties:
+The [`SymbolicGovernor`](../../../src/gateway/governance/symbolic_governor.py) implements a 7-tier pipeline (`_run_checks()`) that every `execute_trade` action must traverse before a routing seal is issued. Each tier is a distinct safety layer with formal properties; Tiers 2 and 4 execute concurrently:
 
 | Tier | Name | Mechanism | Formal Property |
 | :--- | :--- | :-------- | :-------------- |
-| **Tier 1** | NoDirectBind invariant | Aho-Corasick keyword scan | Bright-line block — no override |
-| **Tier 2** | PII sanitization | Presidio/spaCy (15 entity types) | Pre-ledger redaction |
-| **Tier 3** | CBF + OPA concurrent | `asyncio.gather()` | Fail-closed on Redis/OPA unavailability |
-| **Tier 4** | Causal gatekeeper | SCM + `PlaceboTreatmentRefuter` | World-model consistency |
-| **Tier 5** | Confabulation scoring | `risk_score = 1.0 − confidence` | Hallucination detection |
-| **Tier 6** | Consensus | ≥$10k trades, 30s timeout | Multi-critic unanimity |
-| **Tier 7** | FRIA zones | `FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70` | Human oversight gate |
+| **Tier 0** | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` | Bright-line block on unsafe control actions — no override |
+| **Tier 1** | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` | Avoids unneeded CBF/OPA round-trips |
+| **Tier 2** | Control Barrier Function | Redis-backed cash balance invariant; concurrent with Tier 4 | Fail-closed on Redis unavailability |
+| **Tier 3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` (Redis WATCH/MULTI/EXEC) | Closes TOCTOU race on daily fiscal cap |
+| **Tier 4** | OPA policy evaluation | `asyncio.gather()`; concurrent with Tier 2 | Fail-closed on OPA unavailability |
+| **Tier 5** | Consensus | ≥$10k trades, 30s timeout | Multi-critic unanimity |
+| **Tier 6** | Causal gatekeeper | SCM + `PlaceboTreatmentRefuter` | World-model consistency |
+| **Tier 6b** | FRIA zones | `FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70` | Human oversight gate |
+
+> PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules, not sequential tiers of `_run_checks()`. PII sanitization runs inside `uca_logger.py` immediately before a UCA audit record is written to the WORM ledger; confabulation scoring is a standalone Langfuse observability metric.
 
 ## 5. Mathematical Safety Controls
 
