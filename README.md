@@ -200,8 +200,8 @@ Every `execute_trade` action passes through the following sequential tiers (as i
 |------|------|-----------|
 | **0** | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` checks Unsafe Control Actions defined in the STPA ontology |
 | **1** | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) before any network I/O |
-| **2 / 3** | CBF + OPA concurrent | `asyncio.gather` runs the Control Barrier Function and OPA Rego evaluation in parallel |
-| **4** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` atomically pre-reserves the daily fiscal cap in Redis before the consensus gate |
+| **2 / 4** | CBF + OPA concurrent | `asyncio.gather` runs the Control Barrier Function (Tier 2) and OPA Rego evaluation (Tier 4) in parallel |
+| **3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` atomically pre-reserves the daily fiscal cap in Redis before the consensus gate |
 | **5** | Consensus gate | Heterogeneous multi-model consensus required for trades ≥ $10k; 30 s timeout |
 | **6** | Causal gatekeeper | SCM + `PlaceboTreatmentRefuter` (50 sims, p < 0.05, \|eff\| > 0.2) validates world-model integrity |
 | **6b** | Adaptive FRIA enforcement | `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70`; scores below 0.70 hard-deny locally |
