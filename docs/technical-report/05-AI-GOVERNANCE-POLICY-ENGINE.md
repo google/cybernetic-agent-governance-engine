@@ -63,28 +63,26 @@ Neither paradigm alone is sufficient. Neural systems can hallucinate; symbolic s
 GovernanceError ← Tier 0: STPA UCA Validation
 GovernanceError ← Tier 1: Agentic Confidence Check
                            [US_FED: SR 26-2 §IV.B] [EU_ECB: EU AI Act Art. 10]
-GovernanceError ← Tier 2: Control Barrier Function (suppressed in EU_ECB)
-      sentinel ← Tier 3: SLM Sidecar (Deprecated / Bypassed / slm_available=false)
-GovernanceError ← Tier 4: OPA Policy Evaluation
+GovernanceError ← Tier 2: Control Barrier Function (concurrent with Tier 4; suppressed in EU_ECB)
+GovernanceError ← Tier 3: Fiscal Limit Pre-Reservation (Redis WATCH/MULTI/EXEC)
+GovernanceError ← Tier 4: OPA Policy Evaluation (concurrent with Tier 2)
 GovernanceError ← Tier 5: Multi-Agent Consensus
 GovernanceError ← Tier 6: Causal Gatekeeper (DoWhy Placebo Refutation)
          adaptive ← Tier 6b: Adaptive FRIA Gate (External Normative Provider)
-      attestation ← Step 8: Fundamental Rights Impact Assessment (EU_ECB only)
 ```
 
 | Tier | Name                                    | Class / Function                                                                                    | Threshold Source                                                   | Fail Behavior                                 | Active Regions |
 | ---- | --------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------- | --- |
 | 0    | STPA UCA Validation                     | `GeneratedSTPAValidator.validate()` in [`src/gateway/governance/generated_stpa_validator.py`](../../src/gateway/governance/generated_stpa_validator.py) (imported as `STPAValidator` by `symbolic_governor.py`; `stpa_validator.py` is a deprecated shim) | `governance_thresholds.json` `stpa.*`                              | `GovernanceError`                             | *All Regions* |
 | 1    | Agentic Confidence Check                | inline logic in `src/gateway/governance/symbolic_governor.py`                                                              | Region-specific thresholds (`Confidence: 0.95` or `0.97` for EU)   | `GovernanceError`                             | *All Regions* |
-| 2    | Control Barrier Function                | `ControlBarrierFunction` in [`cbf.py`](../../src/gateway/governance/cbf.py) (`safety.py` is a deprecated shim that re-exports from `cbf.py`) | Region-specific thresholds (`Drawdown: 5%` or `4%` for EU)         | `GovernanceError`                             | `US_FED`, `APAC_MAS` |
-| 3    | SLM Sidecar (Deprecated)               | Bypassed to optimize latency budget (runs permanently offline)                            | N/A (0ms)                                                         | Runs with `slm_available=False` sentinel | *All Regions* |
-| 4    | OPA Policy Evaluation                   | `OPAClient` in [`core/policy.py`](../../src/gateway/core/policy.py) + `CircuitBreaker`              | `trade.governance` Rego package                                    | `GovernanceError`; DENY on circuit open       | *All Regions* |
+| 2    | Control Barrier Function                | `ControlBarrierFunction` in [`cbf.py`](../../src/gateway/governance/cbf.py) (`safety.py` is a deprecated shim that re-exports from `cbf.py`); concurrent with Tier 4 | Region-specific thresholds (`Drawdown: 5%` or `4%` for EU)         | `GovernanceError`                             | `US_FED`, `APAC_MAS` |
+| 3    | Fiscal Limit Pre-Reservation             | `FiscalLimitGuard.reserve()` in [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) — atomic Redis `WATCH`/`MULTI`/`EXEC`                            | `FISCAL_DAILY_CAP_USD` (default $500,000); 300s reservation TTL                                                         | `GovernanceError`; reservation released on downstream failure | *All Regions* |
+| 4    | OPA Policy Evaluation                   | `OPAClient` in [`core/policy.py`](../../src/gateway/core/policy.py) + `CircuitBreaker`; concurrent with Tier 2              | `trade.governance` Rego package                                    | `GovernanceError`; DENY on circuit open       | *All Regions* |
 | 5    | Multi-Agent Consensus                   | `ConsensusEngine` in [`consensus.py:71`](../../src/gateway/governance/consensus.py)                 | Region-specific thresholds (`Consensus: $10k` / `$7.5k` / `$5k`)   | `GovernanceError`                             | *All Regions* |
 | 6    | Causal Gatekeeper                       | `causal_safety_check()` in `src/gateway/governance/causal_gatekeeper.py`                           | Placebo p-value < 0.05 or placebo effect > 0.2                      | `GovernanceError`                             | *All Regions* |
-| 6b   | Adaptive FRIA Gate                      | `enforce_fria_boundary()` in [`normative_provider.py`](../../src/gateway/governance/normative_provider.py)  | Confidence-mapped: ≥0.95 async; [0.70,0.95) sync gate; <0.70 deny  | `GovernanceError` (on DENY path)              | *All Regions* (when `CAGE_NORMATIVE_PROVIDER != "static"`) |
-| 8    | Step 8 FRIA Attestation                 | inline logic in `src/gateway/governance/symbolic_governor.py`                                                              | `CTRL_FRIA_006` in `EU_ECB_BASELINE.json`                          | Logs attestation on OTel span attributes      | `EU_ECB` only |
+| 6b   | Adaptive FRIA Gate                      | `enforce_fria_boundary()` in [`normative_provider.py`](../../src/gateway/governance/normative_provider.py)  | Confidence-mapped: ≥0.95 async; [0.70,0.95) sync gate; <0.70 deny  | `GovernanceError` (on DENY path)              | *All Regions* (when `CAGE_NORMATIVE_PROVIDER != "static"`); EU_ECB additionally stamps EU AI Act Art. 29a attestation on every OTel span |
 
-> **Numbering note:** Tier 7 is intentionally skipped. Tier 6b (Adaptive FRIA Gate, v2.1.0) is a confidence-dependent gate that invokes external normative providers only when `CAGE_NORMATIVE_PROVIDER != "static"` and only after all local tiers (0–6) have passed. FRIA Attestation remains "Step 8" rather than a tier because it is a non-blocking pre-market attestation stamp, not a runtime enforcement gate.
+> **Numbering note:** Tier 7 is intentionally skipped — there is no standalone Tier 7. Tier 6b (Adaptive FRIA Gate, v2.1.0) is a confidence-dependent gate that invokes external normative providers only when `CAGE_NORMATIVE_PROVIDER != "static"` and only after all local tiers (0–6) have passed. The legacy SLM (semantic similarity) sidecar tier slot has been fully retired; `slm_available=false` is a permanent sentinel value injected into the OPA payload. For `EU_ECB` deployments, the FRIA attestation stamp (EU AI Act Art. 29a) is applied as part of Tier 6b itself rather than as a separate numbered step.
 
 **Public methods on `SymbolicGovernor`:**
 
@@ -102,16 +100,17 @@ flowchart TD
     T0 -->|FAIL| GE0[GovernanceError BLOCKED]
     T0 -->|PASS| T1["Tier 1: Agentic Confidence Check [US_FED: SR 26-2 §IV.B]"]
     T1 -->|confidence < 0.95| GE1[GovernanceError BLOCKED]
-    T1 -->|PASS| T2[Tier 2: Control Barrier Function]
-    T2 -->|h-x < 0| GE2[GovernanceError BLOCKED]
-    T2 -->|PASS| T3[Tier 3: SLM (Deprecated / Bypassed)]
-    T3 -->|slm_available=false| T4[Tier 4: OPA Policy Evaluation]
-    T4 -->|DENY or circuit open| GE4[GovernanceError BLOCKED]
-    T4 -->|ALLOW| T5[Tier 5: Multi-Agent Consensus]
+    T1 -->|PASS| T24["Tiers 2/4: CBF + OPA (concurrent)"]
+    T24 -->|FAIL either| GE24[GovernanceError BLOCKED]
+    T24 -->|PASS both| T3[Tier 3: Fiscal Limit Pre-Reservation]
+    T3 -->|FAIL| GE3[GovernanceError BLOCKED]
+    T3 -->|PASS| T5[Tier 5: Multi-Agent Consensus]
     T5 -->|disagreement| GE5[GovernanceError BLOCKED]
     T5 -->|consensus reached| T6[Tier 6: Causal Gatekeeper]
     T6 -->|FAIL| GE6[GovernanceError BLOCKED]
-    T6 -->|PASS| EXEC[Execution APPROVED]
+    T6 -->|PASS| T6B[Tier 6b: Adaptive FRIA Gate]
+    T6B -->|DENY| GE6B[GovernanceError BLOCKED]
+    T6B -->|ALLOW / DEFER| EXEC[Execution APPROVED]
 ```
 
 ### Execution-Time Revalidation
@@ -1049,8 +1048,8 @@ The [`SymbolicGovernor._run_checks()`](../../src/gateway/governance/symbolic_gov
 | ---- | ---- | ------------------------- | ------------- |
 | 0 | STPA UCA Validation | `trade_value ≤ position_limit`, `portfolio_concentration ≤ 0.25`, `order_size ≤ 0.1 × daily_volume` | `GovernanceError` |
 | 1 | Agentic Confidence Check | `confidence ≥ 0.95` (US_FED/APAC_MAS) or `≥ 0.97` (EU_ECB) | `GovernanceError` |
-| 2 | Control Barrier Function | `h(S(t+1)) ≥ (1−γ)·h(S(t))`, `h(x) = cash_balance − min_cash_balance` | `GovernanceError` |
-| 3 | SLM Sidecar | Deprecated / bypassed (`slm_available=False` sentinel) | Sentinel only |
+| 2 | Control Barrier Function | `h(S(t+1)) ≥ (1−γ)·h(S(t))`, `h(x) = cash_balance − min_cash_balance`; concurrent with Tier 4 | `GovernanceError` |
+| 3 | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — atomic Redis `WATCH`/`MULTI`/`EXEC` against `FISCAL_DAILY_CAP_USD` | `GovernanceError`; reservation released on downstream failure |
 | 4 | OPA Policy Evaluation | `trade.governance` Rego package; `asyncio.gather` concurrent with CBF (Tier 2+4 concurrent) | `GovernanceError`; DENY on circuit open |
 | 5 | Multi-Agent Consensus | `amount > consensus_threshold_usd` → two LLM critics via `asyncio.gather`; 30s timeout | `GovernanceError` |
 | 6 | Causal Gatekeeper | `(0.5 + estimate.value × amount) ≤ 0.95`; PlaceboTreatmentRefuter 50 sims, p < 0.05, \|eff\| > 0.2 | `GovernanceError` |
@@ -1166,7 +1165,7 @@ The STPA freshness check ([`scripts/check_stpa_freshness.py`](../../scripts/chec
 
 ## Summary
 
-The CAGE AI Governance & Policy Engine enforces a **neuro-symbolic, defense-in-depth** governance model across 6 active sequential tiers (0–6, plus tier 6b adaptive FRIA gate, with Tier 3 SLM deprecated), plus an optional 8th step for EU deployments. Every trade request must survive STPA semantic safety checks, confidence thresholds, a Redis-atomic Control Barrier Function, OPA Rego role-based authorization, multi-agent LLM consensus voting (two concurrent critic personas with a strict priority ladder), DoWhy causal gatekeeping, and adaptive external normative validation before execution is approved. All active tiers are fail-closed.
+The CAGE AI Governance & Policy Engine enforces a **neuro-symbolic, defense-in-depth** governance model across a 7-tier sequential pipeline (Tiers 0–6, plus the adaptive Tier 6b FRIA gate; Tiers 2 and 4 execute concurrently). Every trade request must survive STPA semantic safety checks, confidence thresholds, a Redis-atomic Control Barrier Function, a Fiscal Limit Pre-Reservation, OPA Rego role-based authorization, multi-agent LLM consensus voting (two concurrent critic personas with a strict priority ladder), DoWhy causal gatekeeping, and adaptive external normative validation before execution is approved. All active tiers are fail-closed; the EU_ECB region additionally stamps a FRIA attestation as part of Tier 6b rather than as a separate numbered step.
 
 The **universal baseline** (ISO/IEC 42001:2023 + CSA AARM) applies to all regions. The **NIST AI 600-1 governance modules** (§15) are US_FED-only additive controls: confabulation scoring (§2.1), PII audit logging (§2.2), prompt injection detection (§2.3), CBRN keyword scanning (§2.6), HITL escalation (§2.5), and cryptographic provenance chaining (§2.7). The **PII Sanitizer** (§13) is a universal pre-ledger pipeline implementing ISO 42001 A.6 across all regions. The **Text Filter** (§4) provides universal Aho-Corasick keyword scanning with a US_FED-only CBRN extension gated by `tier1_keywords_cbrn_enabled`.
 
