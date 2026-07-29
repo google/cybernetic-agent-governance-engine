@@ -113,11 +113,11 @@ The following documents contain the primary mathematical formalism for the CAGE 
 
 | Constant | Value | Role |
 |---|---|---|
-| `CAUSAL_LOCK_P_VALUE_THRESHOLD` | `0.05` | Significance threshold for PlaceboTreatmentRefuter (Tier 4) |
+| `CAUSAL_LOCK_P_VALUE_THRESHOLD` | `0.05` | Significance threshold for PlaceboTreatmentRefuter (Tier 6) |
 | `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` | `0.2` | Maximum tolerated placebo effect magnitude |
 | `CAUSAL_LOCK_RISK_BOUNDARY` | `0.95` | Risk boundary above which causal lock is enforced |
-| `FRIA_ZONE_ALLOW` | `0.95` | Confidence floor for autonomous approval (Tier 7) |
-| `FRIA_ZONE_DEFER` | `0.70` | Confidence floor for deferred human review (Tier 7) |
+| `FRIA_ZONE_ALLOW` | `0.95` | Confidence floor for autonomous approval (Tier 6b) |
+| `FRIA_ZONE_DEFER` | `0.70` | Confidence floor for deferred human review (Tier 6b) |
 
 ---
 
