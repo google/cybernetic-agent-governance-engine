@@ -212,7 +212,7 @@ class WebhookRegistry:
             return  # No restriction configured
 
         parsed = urlparse(endpoint_url)
-        hostname = parsed.hostname or ""
+        hostname = (parsed.hostname or "").lower()
 
         # LOW-7 fix: only allow loopback addresses for EU_ECB and APAC_MAS regions.
         # The previous code also allowed RFC-1918 private ranges (10.x, 192.168.x)
@@ -221,9 +221,15 @@ class WebhookRegistry:
         if hostname in ("localhost", "127.0.0.1", "::1"):
             return
 
-        # Check if hostname contains an allowed region suffix
+        # Match the region designator only when it is a full dot-delimited DNS
+        # label of the hostname. The earlier `suffix in hostname` test was an
+        # unanchored substring match, so a host that merely embeds the region
+        # token inside a longer label (e.g. "europe-west1-attacker.com" for
+        # EU_ECB) passed the guard even though it is not in-region.
+        labels = hostname.split(".")
         for suffix in allowed_suffixes:
-            if suffix in hostname:
+            token = suffix.strip(".")
+            if token and token in labels:
                 return
 
         raise ValueError(

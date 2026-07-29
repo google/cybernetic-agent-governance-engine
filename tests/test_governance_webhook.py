@@ -383,3 +383,39 @@ class TestRegionGuard:
             )
         )
         assert webhook_id is not None
+
+    def test_eu_ecb_allows_region_as_subdomain_label(self):
+        registry = _make_registry(region="EU_ECB")
+        # region token as an interior DNS label is still in-region
+        webhook_id = asyncio.run(
+            registry.register(
+                endpoint_url="https://svc.europe-west1.example.com/events",
+                event_types=["CBF_VIOLATION"],
+                secret="test-secret",
+            )
+        )
+        assert webhook_id is not None
+
+    def test_eu_ecb_embedded_region_token_rejected(self):
+        registry = _make_registry(region="EU_ECB")
+        # "europe-west1" here is only part of a longer label, not a full label,
+        # so the host is not in-region and must be rejected.
+        with pytest.raises(ValueError, match="region guard"):
+            asyncio.run(
+                registry.register(
+                    endpoint_url="https://europe-west1-attacker.com/events",
+                    event_types=["CBF_VIOLATION"],
+                    secret="test-secret",
+                )
+            )
+
+    def test_apac_mas_embedded_region_token_rejected(self):
+        registry = _make_registry(region="APAC_MAS")
+        with pytest.raises(ValueError, match="region guard"):
+            asyncio.run(
+                registry.register(
+                    endpoint_url="https://asia-southeast1x.attacker.com/events",
+                    event_types=["CBF_VIOLATION"],
+                    secret="test-secret",
+                )
+            )
