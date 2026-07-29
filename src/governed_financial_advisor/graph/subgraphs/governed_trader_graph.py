@@ -488,8 +488,9 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
         Tier 4: OPA Rego policy — drawdown, position limits, fiscal cap
 
     Tiers NOT re-run (input-time checks, independent of market state):
-        Tier 1: Keyword scan
-        Tier 3: SLM similarity sidecar
+        Tier 0: STPA/STAMP UCA validation
+        Tier 1: Agent confidence pre-check
+        Tier 3: Fiscal Limit Pre-Reservation
         Tier 5: Multi-agent consensus
         Tier 6: DoWhy causal gatekeeper
 
