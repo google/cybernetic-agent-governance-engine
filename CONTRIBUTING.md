@@ -28,7 +28,7 @@ bash scripts/setup_git_hooks.sh
 This installs:
 - A **commit message template** (`.gitmessage`) shown in your editor on every `git commit`
 - A **commit-msg hook** that rejects non-Conventional-Commits messages
-- A **pre-push hook** that blocks direct pushes to `main` and `rc-v0.1.0`
+- A **pre-push hook** that blocks direct pushes to `main` and `rc-v*` branches
 
 ---
 
@@ -144,11 +144,22 @@ feat(gateway): add Redis rate limiter
 
 ## Merge Strategy
 
+**Squash merge is the only permitted strategy for all PRs into `main`**, including
+release integration branches (`rc-v<version>`). This applies uniformly regardless
+of scenario:
+
 | Scenario | Strategy |
 |---|---|
 | Feature / fix PR → integration branch | **Squash merge** |
-| Integration branch → `main` (release) | **Merge commit** (preserves release boundary) |
-| Hotfix → `main` + integration branch | **Cherry-pick** |
+| Integration branch → `main` (release) | **Squash merge** |
+| Hotfix → `main` + integration branch | **Cherry-pick**, each landing via its own squash-merged PR |
+
+> **Deprecated:** An earlier version of this document described release
+> integration merges as "merge commit (preserves release boundary)". That
+> guidance is superseded — a `squash-merge-guard` CI job
+> (`.github/workflows/ci.yml`) now fails the build on any two-parent merge
+> commit reaching `main`. The release boundary is preserved by the annotated
+> git tag, not by commit topology.
 
 **Never force-push to `main` or `rc-v*` branches.**
 
@@ -160,10 +171,12 @@ feat(gateway): add Redis rate limiter
 2. Update `CHANGELOG.md` — add release date under the version header
 3. Create an **annotated tag**:
    ```bash
-   git tag -a v0.1.0 -m "release: v0.1.0 — Cybernetic Governance Engine GA"
-   git push origin v0.1.0
+   git tag -a v2.1.0 -m "release: v2.1.0 — Cybernetic Governance Engine"
+   git push origin v2.1.0
    ```
-4. Merge the integration branch into `main` via merge commit
+4. Open a PR from the integration branch into `main` and **squash-merge** it
+   (see [Merge Strategy](#merge-strategy) above — merge commits are not
+   permitted, even for releases)
 5. Create a GitHub Release from the tag, copying the CHANGELOG section as the body
 
 ### Tag Format
@@ -172,7 +185,7 @@ feat(gateway): add Redis rate limiter
 v<MAJOR>.<MINOR>.<PATCH>[-<pre-release>]
 ```
 
-Examples: `v0.1.0`, `v0.1.0-rc.1`, `v2.1.0-dev.1`
+Examples: `v2.0.0`, `v2.1.0-rc.1`, `v2.1.0-dev.1`
 
 ---
 
