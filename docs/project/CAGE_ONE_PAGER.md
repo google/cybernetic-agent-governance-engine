@@ -10,7 +10,7 @@ Any operator deploying high-reliability agentic AI faces a fundamental audit gap
 
 The cost of inaction is concrete: a single unchecked `execute_trade_action` call can bypass drawdown limits, leak PII in the response payload, and produce no evidence of the policy evaluation that should have blocked it. Automated red-team exercises against naive gateway implementations routinely achieve **100% adversarial success rates** on RBAC-002 (excessive permissions) and PII-004 (data leakage) attack classes.
 
-**CAGE v0.1.0** is an open-source, Python-first governance runtime that wraps every LLM call and tool invocation in a deterministic, 7-tier policy enforcement pipeline — without sacrificing production latency. The architecture is bifurcated: application logic (a LangGraph `StateGraph` multi-agent pipeline) is fully decoupled from the cloud provider, while a dedicated **Inference Gateway** (`src/gateway/`) handles all model traffic through a split-brain topology routing to two specialized vLLM pools (DeepSeek-R1 for reasoning; Llama 3.1 for structured governance output). The governance stack executes on every request: Aho-Corasick keyword scan → NeMo Guardrails (Colang 2.x + in-process Presidio PII) → STPA hazard validator → OPA policy engine → Control Barrier Function → multi-agent consensus → causal gatekeeper → adaptive FRIA gate. The SLM sidecar (formerly Tier 3) has been deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. All compliance mapping is performed by the Python OSCAL exporter (`src/compliance_bridge/oscal_exporter.py`), achieving sub-millisecond audit-trail generation.
+**CAGE v0.1.0** is an open-source, Python-first governance runtime that wraps every LLM call and tool invocation in a deterministic, 7-tier policy enforcement pipeline — without sacrificing production latency. The architecture is bifurcated: application logic (a LangGraph `StateGraph` multi-agent pipeline) is fully decoupled from the cloud provider, while a dedicated **Inference Gateway** (`src/gateway/`) handles all model traffic through a split-brain topology routing to two specialized vLLM pools (DeepSeek-R1 for reasoning; Llama 3.1 for structured governance output). The governance stack executes on every request: Aho-Corasick keyword scan → NeMo Guardrails (Colang 2.x + in-process Presidio PII) → STPA hazard validator (Tier 0) → agent confidence pre-check (Tier 1) → Control Barrier Function + OPA policy engine (concurrent, Tiers 2/4) → Fiscal Limit Pre-Reservation (Tier 3) → multi-agent consensus (Tier 5) → causal gatekeeper (Tier 6) → adaptive FRIA gate (Tier 6b). The legacy SLM sidecar has been fully deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. All compliance mapping is performed by the Python OSCAL exporter (`src/compliance_bridge/oscal_exporter.py`), achieving sub-millisecond audit-trail generation.
 
 **v0.1.0 introduces evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
 
@@ -42,13 +42,16 @@ This discrete-time CBF condition ([`src/gateway/governance/cbf.py`](../../src/ga
 
 | Tier | Control | Key Invariant |
 |------|---------|---------------|
-| 1 | NoDirectBind | No tool call bypasses the governance wrapper |
-| 2 | PII sanitization | All inputs scrubbed before downstream processing |
-| 3 | CBF + OPA concurrent | `asyncio.gather` — barrier check + policy engine in parallel |
-| 4 | Causal gatekeeper | SCM + PlaceboTreatmentRefuter (50 sims, p < 0.05, \|eff\| > 0.2); marginal risk boundary: `(0.5 + estimate.value × amount) > 0.95` |
-| 5 | Confabulation scoring | `risk_score = 1.0 − confidence` |
-| 6 | Consensus | High-stakes actions (≥$10k trades in the financial deployment), 30s timeout, heterogeneous multi-model quorum |
-| 7 | FRIA zones | `FRIA_ZONE_ALLOW=0.95` / `FRIA_ZONE_DEFER=0.70` / score < 0.70 → BLOCK |
+| 0 | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` checks Unsafe Control Actions |
+| 1 | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) |
+| 2 | Control Barrier Function | Redis-backed cash balance invariant; concurrent with Tier 4 via `asyncio.gather` |
+| 3 | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — atomic Redis WATCH/MULTI/EXEC before the consensus gate |
+| 4 | OPA policy engine | Declarative rule enforcement; concurrent with Tier 2 via `asyncio.gather` |
+| 5 | Consensus | High-stakes actions (≥$10k trades in the financial deployment), 30s timeout, heterogeneous multi-model quorum |
+| 6 | Causal gatekeeper | SCM + PlaceboTreatmentRefuter (50 sims, p < 0.05, \|eff\| > 0.2); marginal risk boundary: `(0.5 + estimate.value × amount) > 0.95` |
+| 6b | FRIA zones | `FRIA_ZONE_ALLOW=0.95` / `FRIA_ZONE_DEFER=0.70` / score < 0.70 → DENY |
+
+> PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules, not sequential tiers of `_run_checks()`. PII sanitization runs inside `uca_logger.py` immediately before a UCA audit record is written to the WORM ledger; confabulation scoring is a standalone Langfuse observability metric.
 
 Source: [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
 
