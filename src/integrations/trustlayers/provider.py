@@ -50,6 +50,7 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any
+from urllib.parse import quote
 
 logger = logging.getLogger("cage.integrations.trustlayers")
 
@@ -114,7 +115,7 @@ class TrustLayersProvider:
 
         from src.gateway.governance.normative_provider import NormativeBaseline
 
-        url = f"{self._endpoint}/legal-baseline/{region}"
+        url = f"{self._endpoint}/legal-baseline/{quote(region, safe='')}"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.get(url, headers=self._headers())
@@ -158,7 +159,7 @@ class TrustLayersProvider:
 
         from src.gateway.governance.normative_provider import EvidenceSeal
 
-        url = f"{self._endpoint}/evidence-chain/{thread_id}"
+        url = f"{self._endpoint}/evidence-chain/{quote(thread_id, safe='')}"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.get(
