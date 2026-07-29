@@ -198,9 +198,7 @@ return {1, "COMMITTED", tostring(next_cash)}
             # (CBF_USING_SELF_REPORTED_BALANCE log sentinel — POAM-023 async bug).
             from src.gateway.infrastructure.redis_client import sync_redis_client
 
-            verified = await asyncio.to_thread(
-                read_verified_balance, sync_redis_client
-            )
+            verified = await asyncio.to_thread(read_verified_balance, sync_redis_client)
 
             if verified is not None and verified.is_valid:
                 if verified.signature:
