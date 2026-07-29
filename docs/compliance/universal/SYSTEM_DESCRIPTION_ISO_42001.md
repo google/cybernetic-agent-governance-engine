@@ -103,7 +103,7 @@ The CBF condition guarantees that the system cannot transition from a safe state
 
 **Source:** [`src/gateway/governance/symbolic_governor.py`](../../../src/gateway/governance/symbolic_governor.py)
 
-The Fundamental Rights Impact Assessment (FRIA) zone thresholds determine the disposition of each governance decision at Tier 7:
+The Fundamental Rights Impact Assessment (FRIA) zone thresholds determine the disposition of each governance decision at Tier 6b:
 
 | Score Range | Zone | Action |
 | :---------- | :--- | :----- |
@@ -123,7 +123,7 @@ The confabulation (hallucination) risk score is computed as the complement of th
 risk_score = 1.0 − confidence
 ```
 
-A `risk_score` approaching 1.0 indicates high hallucination risk. The score feeds into the Tier 7 FRIA zone classification.
+A `risk_score` approaching 1.0 indicates high hallucination risk. Confabulation scoring is a standalone Langfuse observability metric computed independently of the FRIA zone classification (Tier 6b).
 
 ### 5.4. Causal Marginal Risk Boundary
 
