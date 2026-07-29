@@ -181,7 +181,7 @@ guarantees `h(S(t)) ≥ 0` for all `t` — i.e., the cash balance never falls be
 
 ### 8.2 NoDirectBind Invariant
 
-All agent tool calls must arrive via the `@governed_tool` decorator (Tier 1 of the symbolic governor). Direct binding from an agent to an actuator — bypassing the governance pipeline — is structurally prohibited. This invariant is enforced at the framework level: no code path exists from agent intent to trade execution that does not traverse `SymbolicGovernor._run_checks()`.
+All agent tool calls must pass through `validate_action()` — the single choke point for tool execution — and present a valid HMAC-SHA256 routing seal (`X-CAGE-Routing-Seal`) verified via `verify_seal()` before the downstream actuator fires. Direct binding from an agent to an actuator — bypassing the governance pipeline — is structurally prohibited. This invariant is enforced at the framework level: no code path exists from agent intent to trade execution that does not traverse `SymbolicGovernor._run_checks()`. There is no `@governed_tool` decorator in the codebase.
 
 ### 8.3 FRIA Zone Classification
 
@@ -211,27 +211,30 @@ The chain uses **deterministic sorted-key JSON serialization** to ensure reprodu
 
 ### 9.1 7-Tier Symbolic Governor Pipeline
 
-The `SymbolicGovernor` in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) enforces a 7-tier pipeline on every `execute_trade` action. The pipeline is **fail-closed**: any tier raising a validation error halts execution and returns `BLOCKED`.
+The `SymbolicGovernor` in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) enforces a 7-tier pipeline (`_run_checks()`) on every `execute_trade` action, with Tiers 2 and 4 executing concurrently. The pipeline is **fail-closed**: any tier raising a validation error halts execution and returns `BLOCKED`.
 
 | Tier | Name | Mathematical Invariant |
 |------|------|----------------------|
-| 1 | NoDirectBind | All tool calls via `@governed_tool`; no direct actuator binding |
-| 2 | PII sanitization | 7 regex patterns; pre-ledger redaction |
-| 3 | CBF + OPA concurrent | `h(S(t+1)) ≥ (1−γ)·h(S(t))` via `asyncio.gather(cbf_check, opa_check)` |
-| 4 | Causal gatekeeper | SCM backdoor adjustment; PlaceboTreatmentRefuter p < 0.05 |
-| 5 | Confabulation scoring | `risk_score = 1.0 − confidence`; blocks if `confidence < 0.95` |
-| 6 | Consensus | Unanimous APPROVE required for trades ≥ $10,000 USD; 30s timeout |
-| 7 | FRIA zones | `ALLOW ≥ 0.95`, `DEFER ≥ 0.70`, `DENY < 0.70` |
+| 0 | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` against the STPA ontology |
+| 1 | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) |
+| 2 | Control Barrier Function | `h(S(t+1)) ≥ (1−γ)·h(S(t))`; concurrent with Tier 4 via `asyncio.gather` |
+| 3 | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — atomic Redis WATCH/MULTI/EXEC |
+| 4 | OPA policy evaluation | `asyncio.gather(cbf_check, opa_check)`; concurrent with Tier 2 |
+| 5 | Consensus | Unanimous APPROVE required for trades ≥ $10,000 USD; 30s timeout |
+| 6 | Causal gatekeeper | SCM backdoor adjustment; PlaceboTreatmentRefuter p < 0.05 |
+| 6b | FRIA zones | `ALLOW ≥ 0.95`, `DEFER ≥ 0.70`, `DENY < 0.70` |
+
+> PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules, not sequential tiers of `_run_checks()`. PII sanitization runs inside `uca_logger.py` immediately before a UCA audit record is written to the WORM ledger; confabulation scoring is a standalone Langfuse observability metric.
 
 ### 9.2 Key Mathematical Invariants
 
-**CBF (Tier 3a):** `h(S(t+1)) ≥ (1−γ)·h(S(t))` ensures cash balance never falls below `min_cash_balance`.
+**CBF (Tier 2):** `h(S(t+1)) ≥ (1−γ)·h(S(t))` ensures cash balance never falls below `min_cash_balance`.
 
-**Confabulation (Tier 5):** `risk_score = 1.0 − confidence` maps agent confidence directly to a risk score. A confidence of 0.95 yields `risk_score = 0.05` — the maximum tolerated confabulation risk.
+**Confabulation (Langfuse metric, not a tier):** `risk_score = 1.0 − confidence` maps agent confidence directly to a risk score. A confidence of 0.95 yields `risk_score = 0.05` — the maximum tolerated confabulation risk.
 
-**Causal (Tier 4):** The marginal risk boundary `(0.5 + estimate.value × amount) > 0.95` triggers a causal block. The PlaceboTreatmentRefuter runs 50 simulations; a statistically significant placebo effect (p < 0.05 or |effect| > 0.2) indicates poisoned model assumptions.
+**Causal (Tier 6):** The marginal risk boundary `(0.5 + estimate.value × amount) > 0.95` triggers a causal block. The PlaceboTreatmentRefuter runs 50 simulations; a statistically significant placebo effect (p < 0.05 or |effect| > 0.2) indicates poisoned model assumptions.
 
-**Consensus (Tier 6):** Boolean consensus logic — unanimous `APPROVE` → pass; unanimous `REJECT` → block; split vote or any `ESCALATE` → human escalation; unanimous `ERROR` → escalate (fail-closed, DoS bypass prevention).
+**Consensus (Tier 5):** Boolean consensus logic — unanimous `APPROVE` → pass; unanimous `REJECT` → block; split vote or any `ESCALATE` → human escalation; unanimous `ERROR` → escalate (fail-closed, DoS bypass prevention).
 
 ### 9.3 Routing Seal
 
