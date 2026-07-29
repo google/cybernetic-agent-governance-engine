@@ -145,7 +145,7 @@
 | Library        | Status                                                                                                   |
 | -------------- | -------------------------------------------------------------------------------------------------------- |
 | ~~`outlines`~~ | **REMOVED** — CVE-2025-69872 (critical vulnerability). Structured output now enforced via vLLM FSM natively. |
-| ~~SLM sidecar~~| **DEPRECATED** — `slm_available=False` permanent sentinel injected into OPA payload; 0ms overhead; Tier 3 bypassed to optimize latency budget. |
+| ~~SLM sidecar~~| **DEPRECATED** — `slm_available=False` permanent sentinel injected into OPA payload; 0ms overhead; the legacy SLM tier slot has been fully retired to optimize latency budget. |
 
 ### Known Environment Issues
 
