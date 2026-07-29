@@ -64,7 +64,7 @@ The Gateway acts as the central orchestrator and compliance enforcement point fo
 5.  **Header Injection:** The client generates a trace ID and injects `X-Trace-Id`.
 6.  **LLM Call:** Request is sent to vLLM. AgentSight intercepts this call.
 7.  **MCP Tool Execution:** If the model requests a tool via MCP, the client injects `traceparent` and calls the Gateway. The Gateway extracts the context, creates a child span, and executes the tool.
-8.  **HITL Gate (TOCTOU Remediation):** For trades >$10,000 USD or risk_score >0.7, the `hitl_gate` node interrupts the graph. On human approval, `post_hitl_rehydrate` fetches a live market quote and computes price drift, then `post_hitl_revalidate` re-runs **Tier 2 (CBF)** and **Tier 4 (OPA)** only with fresh market data before proceeding (or blocking on drift/governance violation).
+8.  **HITL Gate (TOCTOU Remediation):** For trades >$10,000 USD or risk_score >0.7, the `hitl_gate` node interrupts the graph. On human approval, `post_hitl_rehydrate` fetches a live market quote and computes price drift, then `post_hitl_revalidate` re-runs **Tier 2 (CBF)** and **Tier 4 (OPA)** concurrently with fresh market data before proceeding (or blocking on drift/governance violation).
 9.  **DEFER Queue:** Contexts in the DEFER zone (confidence 0.70–0.95) are pushed to Redis `db=1` (noeviction, 4-hour TTL) for deferred resolution. Three-zone model: ALLOW ≥ 0.95, DEFER 0.70–0.95, DENY < 0.70. Resolved via `POST /v1/defer/{id}/inject` (automated) or `POST /v1/defer/{id}/escalate` (HITL). (AARM-V7)
 10. **Logging:**
     - Application metadata is sent **directly** via OTLP to Langfuse (`http://langfuse-web:3000/api/public/otel/v1/traces`). The OTel Collector is **deprecated** as of 2026-05-31.
@@ -92,7 +92,7 @@ The Gateway acts as the central orchestrator and compliance enforcement point fo
 | AARM-V2 | Goal Hijacking | NeMo Guardrails input rail + OPA semantic score threshold (0.85) |
 | AARM-V3 | Confused Deputy | HMAC-SHA256 routing seal + Cloud KMS HSM asymmetric signing; all execution paths cryptographically attested |
 | AARM-V4 | Cross-Agent Propagation | SBOM generation (`scripts/generate_sbom.py`); `outlines` package removed (CVE-2025-69872) |
-| AARM-V5 | Prompt Injection | Aho-Corasick keyword scan (Tier 1) + NeMo Guardrails Colang 2.x input rail (Tier 3) |
+| AARM-V5 | Prompt Injection | Aho-Corasick keyword scan (pre-pipeline) + NeMo Guardrails Colang 2.x input rail (pre-pipeline) |
 | AARM-V6 | Reward Hacking | OPA RBAC policy (Tier 4); Linkerd mTLS workload identity |
 | AARM-V7 | Context Window Overflow | DEFER queue (Redis db=1 noeviction, 4h TTL); three-zone model (ALLOW≥0.95, DEFER 0.70–0.95, DENY<0.70) |
 | AARM-V8 | Temporal Deception | LangGraph Saga WAL + LIFO rollback; idempotency keys |
@@ -170,9 +170,9 @@ This is the **Single Choke Point** for all tool-level governance decisions — t
 
 - **Tier 0 — STPA/STAMP UCA validation:** Runs for all tool names when `stpa_validator` is injected. Checks unsafe control actions (UCA-1 through UCA-6) against `governance_thresholds.json`.
 - **Tier 1 — Agent confidence threshold pre-check:** `execute_trade` only. Fast-fails if `confidence < AGENT_CONFIDENCE_THRESHOLD` (default 0.95, env-overridable). Skips CBF/OPA round-trips when confidence is obviously below threshold.
-- **Tier 2 — Control Barrier Function (CBF):** `execute_trade` only. Mathematical safety bounds check via Redis-backed cash balance verification (γ=0.5, min=$1,000) implemented in [`cbf.py`](../../src/gateway/governance/cbf.py). External ledger reconciliation via `AnchorageGrpcLedgerProvider` is a planned future enhancement (POAM-023); the current implementation uses Redis `WATCH/MULTI/EXEC` optimistic locking. `verify_action()` is **read-only** — it does not modify Redis state.
-- **Tier 3 — OPA Rego policy evaluation:** All tool names. Declarative rule enforcement against the active regional compliance profile (`CAGE_DEPLOYMENT_REGION`). OPA circuit breaker: 5 failures → OPEN, 30s recovery, 3000ms hard latency budget. Redis decision cache: 10s TTL, SHA-256 keyed (`cage:opa:decision:{sha256_prefix}`), `OPA_CACHE_ENABLED` env var (default true). Cache is checked **before** the HTTP call; a hit short-circuits the entire round-trip. For `execute_trade`, CBF (Tier 2) and OPA (Tier 3) run **concurrently** via `asyncio.gather` to minimize latency.
-- **Tier 4 — Fiscal Limit Pre-Reservation (FiscalLimitGuard):** `execute_trade` only, when `fiscal_limit_guard` is injected and no prior violations exist. Atomically reserves the requested USD amount against the daily fiscal cap in Redis (`WATCH/MULTI/EXEC`) before the consensus gate. Closes the TOCTOU race between the CBF balance check and actual trade execution. Released immediately if any subsequent tier produces a violation.
+- **Tier 2 — Control Barrier Function (CBF):** `execute_trade` only. Mathematical safety bounds check via Redis-backed cash balance verification (γ=0.5, min=$1,000) implemented in [`cbf.py`](../../src/gateway/governance/cbf.py). External ledger reconciliation via `AnchorageGrpcLedgerProvider` is a planned future enhancement (POAM-023); the current implementation uses Redis `WATCH/MULTI/EXEC` optimistic locking. `verify_action()` is **read-only** — it does not modify Redis state. Runs **concurrently** with Tier 4 (OPA) via `asyncio.gather`.
+- **Tier 3 — Fiscal Limit Pre-Reservation (FiscalLimitGuard):** `execute_trade` only, when `fiscal_limit_guard` is injected and no prior violations exist. Atomically reserves the requested USD amount against the daily fiscal cap in Redis (`WATCH/MULTI/EXEC`) before the consensus gate. Closes the TOCTOU race between the CBF balance check and actual trade execution. Released immediately if any subsequent tier produces a violation.
+- **Tier 4 — OPA Rego policy evaluation:** All tool names. Declarative rule enforcement against the active regional compliance profile (`CAGE_DEPLOYMENT_REGION`). OPA circuit breaker: 5 failures → OPEN, 30s recovery, 3000ms hard latency budget. Redis decision cache: 10s TTL, SHA-256 keyed (`cage:opa:decision:{sha256_prefix}`), `OPA_CACHE_ENABLED` env var (default true). Cache is checked **before** the HTTP call; a hit short-circuits the entire round-trip. For `execute_trade`, CBF (Tier 2) and OPA (Tier 4) run **concurrently** via `asyncio.gather` to minimize latency.
 - **Tier 4b — Token Quota Proxy (TQP):** All tool names. Per-session step-count (≤12) and token (≤100k) quota enforcement via Redis atomic Lua counters (`token_quota_proxy.py`). Fail-closed: HTTP 429 on quota exceeded. Two-phase commit (reserve → reconcile); rollback on downstream failure. ISO 42001 Annex A.4. UCA type: `quota_exceeded` logged to WORM via UCA Logger.
 - **Tier 5 — Multi-agent Consensus (ISO 42001 A.8.4):** `execute_trade` only, **conditional on amount ≥ $10,000 USD** (`consensus.threshold_usd` in `governance_thresholds.json`). Trades below $10,000 receive an immediate `SKIPPED` result with zero LLM calls. Above threshold: two critic personas (Risk Manager → DeepSeek-R1, Compliance Officer → Llama 3.1) are queried concurrently via `asyncio.gather`. Consensus rules: unanimous `APPROVE` → pass; unanimous `REJECT` → block; split vote or any `ESCALATE` → escalate for human review; unanimous `ERROR` → escalate (fail-closed, DoS bypass prevention). Results are pushed to a background audit queue (`_AUDIT_QUEUE`) for post-execution logging.
 - **Tier 6 — DoWhy Causal Gatekeeper:** `execute_trade` only. Redis-cached by `(action_type, market_regime)` with a 60-second TTL (`CAUSAL_CACHE_TTL_SECONDS`); cache hits skip both phases entirely. On cache miss: Phase 1 runs DoWhy causal model + linear regression (SR 26-2 MRM scope); Phase 2 runs 50-simulation placebo refutation against live telemetry (ISO 42001 §A.9.4). Fails closed if telemetry is stale (> `TELEMETRY_MAX_STALENESS_SECONDS`, default 300s) or if `dowhy` is not installed (production startup raises `RuntimeError` if `dowhy` is absent).
@@ -221,7 +221,7 @@ The following modules were added as part of the NIST AI 600-1 implementation (`C
 
 ### Module Integration in the Governance Pipeline
 
-These modules integrate into the gateway's governance pipeline as follows:
+These modules integrate around the gateway's governance pipeline as follows. Note that `confabulation_scorer.py`, `hitl_escalator.py`, and `pii_sanitizer.py` are **standalone utility modules** — none of them are imported by or invoked from `symbolic_governor.py`'s `_run_checks()`. They are wired into adjacent parts of the request lifecycle (Langfuse scoring, DEFER-queue/HITL tooling, and pre-ledger audit-record sanitization respectively), not into the sequential tier chain itself.
 
 ```
 Incoming Request
@@ -233,12 +233,18 @@ Incoming Request
       │
       ▼
 SymbolicGovernor._run_checks()
-  Step 1: Confidence gate → [confabulation_scorer.py] scores low-confidence events
-  Step 4: Consensus gate → [hitl_escalator.py] routes split votes / low-confidence to HITL
-  Step 5: Causal gate   → [hitl_escalator.py] routes causal blocks to HITL
+  Tier 0: STPA/STAMP UCA validation
+  Tier 1: Agent confidence pre-check
+  Tier 2/4: CBF + OPA concurrent
+  Tier 3: Fiscal Limit Pre-Reservation
+  Tier 5: Consensus gate
+  Tier 6: Causal gatekeeper
+  Tier 6b: Adaptive FRIA enforcement
       │
-      ▼
-[pii_sanitizer.py]        ← Pre-ledger PII redaction before WORM write (all regions)
+      ▼ (parallel / adjacent utilities — not pipeline tiers)
+[confabulation_scorer.py] ← Langfuse confabulation-risk score payload builder
+[hitl_escalator.py]       ← DEFER-queue / human-escalation helper functions
+[pii_sanitizer.py]        ← Pre-ledger PII redaction inside uca_logger.py before WORM write (all regions)
 [provenance_chain.py]     ← SHA-256 hash chain record per governance node (all regions)
       │
       ▼
@@ -249,21 +255,23 @@ UCA Logger → GCS WORM bucket (region-gated path)
 
 ## Governance Pipeline
 
-The 7-tier symbolic governance pipeline is implemented in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) and executed by `SymbolicGovernor._run_checks()` for every `execute_trade` action. Tiers execute in strict sequential order except where noted.
+The 7-tier symbolic governance pipeline is implemented in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) and executed by `SymbolicGovernor._run_checks()` for every `execute_trade` action. Tiers execute in strict sequential order except Tiers 2/4, which run concurrently.
 
 | Tier | Name | Key Invariant / Threshold |
 |------|------|--------------------------|
-| **Tier 1** | NoDirectBind invariant | All tool calls must arrive via `@governed_tool` decorator; direct binding to actuators is structurally prohibited |
-| **Tier 2** | PII sanitization | 7 compiled regex patterns applied before any ledger write; active in all regions |
-| **Tier 3** | CBF + OPA concurrent | `asyncio.gather(cbf_check, opa_check)` — both checks fire simultaneously to minimize latency |
-| **Tier 4** | Causal gatekeeper | SCM with `backdoor.linear_regression`; PlaceboTreatmentRefuter (50 sims, p < 0.05, \|eff\| > 0.2) |
-| **Tier 5** | Confabulation scoring | `risk_score = 1.0 − confidence`; blocks when `confidence < CONFIDENCE_MIN_SCORE` (default 0.95) |
-| **Tier 6** | Consensus | Required for trades ≥ $10,000 USD; 30-second timeout; heterogeneous DeepSeek-R1 + Llama 3.1 critics |
-| **Tier 7** | FRIA zones | `FRIA_ZONE_ALLOW ≥ 0.95` → async attestation; `FRIA_ZONE_DEFER ≥ 0.70` → synchronous blocking gate; `< 0.70` → hard DENY |
+| **Tier 0** | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` checks Unsafe Control Actions defined in the STPA ontology |
+| **Tier 1** | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95), avoiding unneeded network I/O |
+| **Tier 2 / 4** | CBF + OPA concurrent | `asyncio.gather(cbf_check, opa_check)` — both checks fire simultaneously to minimize latency |
+| **Tier 3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` atomically pre-reserves the daily fiscal cap in Redis (WATCH/MULTI/EXEC) before the consensus gate |
+| **Tier 5** | Consensus | Required for trades ≥ $10,000 USD; 30-second timeout; heterogeneous DeepSeek-R1 + Llama 3.1 critics |
+| **Tier 6** | Causal gatekeeper | SCM with `backdoor.linear_regression`; PlaceboTreatmentRefuter (50 sims, p < 0.05, \|eff\| > 0.2) |
+| **Tier 6b** | Adaptive FRIA enforcement | `FRIA_ZONE_ALLOW ≥ 0.95` → async attestation; `FRIA_ZONE_DEFER ≥ 0.70` → synchronous blocking gate; `< 0.70` → hard DENY |
 
-### Tier 3 Concurrent Execution
+> **Note:** PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are **not** tiers of `_run_checks()`. PII sanitization runs inside `uca_logger.py` immediately before a UCA audit record is written to the WORM ledger; confabulation scoring is a standalone Langfuse observability metric independent of the governance decision path. The routing seal is issued by `validate_action()` (the single choke point for tool execution) only after all tiers above pass — there is no `@governed_tool` decorator in the codebase.
 
-CBF (Tier 3a) and OPA (Tier 3b) are fired **simultaneously** via:
+### Tier 2/4 Concurrent Execution
+
+CBF (Tier 2) and OPA (Tier 4) are fired **simultaneously** via:
 
 ```python
 cbf_result, opa_result = await asyncio.gather(cbf_check, opa_check)
@@ -271,7 +279,7 @@ cbf_result, opa_result = await asyncio.gather(cbf_check, opa_check)
 
 This design keeps the combined latency equal to `max(t_cbf, t_opa)` rather than their sum. The TOCTOU race between the two checks is closed by the `FiscalLimitGuard` atomic pre-reservation step that follows.
 
-### FRIA Zone Decision Semantics
+### FRIA Zone Decision Semantics (Tier 6b)
 
 | Zone | Confidence Threshold | Behavior |
 |------|---------------------|----------|
