@@ -100,7 +100,7 @@ This document records the FRIA for the EU_ECB deployment profile.
 
 ## 5. FRIA Zone Mathematical Definition
 
-The CAGE governance kernel implements a three-zone FRIA scoring model in Tier 7 of the Symbolic Governor pipeline ([`src/gateway/governance/symbolic_governor.py`](../../../src/gateway/governance/symbolic_governor.py)). This model operationalises the EU AI Act Art. 29a requirement for proportionate human oversight of High-Risk AI decisions.
+The CAGE governance kernel implements a three-zone FRIA scoring model in Tier 6b of the Symbolic Governor pipeline ([`src/gateway/governance/symbolic_governor.py`](../../../src/gateway/governance/symbolic_governor.py)). This model operationalises the EU AI Act Art. 29a requirement for proportionate human oversight of High-Risk AI decisions.
 
 ### 5.1 Zone Thresholds
 
@@ -133,7 +133,7 @@ The mathematical thresholds complement the qualitative FRIA controls documented 
 
 - **§4.1 Non-discrimination (Art. 21):** The DEFER zone (`0.70 ≤ score < 0.95`) ensures that recommendations with moderate uncertainty are always reviewed by a human before affecting a client — directly mitigating demographic bias risk.
 - **§4.3 Effective remedy (Art. 47):** The BLOCK zone (`score < 0.70`) provides an absolute safety net: no AI recommendation with high fundamental-rights risk can be autonomously executed, preserving the client's right to challenge decisions made by a human reviewer rather than an opaque algorithm.
-- **§4.2 Data protection (Art. 8):** The FRIA score is computed after PII sanitization (Tier 2) — the score never incorporates raw PII, satisfying GDPR Art. 25 data minimisation.
+- **§4.2 Data protection (Art. 8):** The FRIA score is computed after PII sanitization (a pre-pipeline / audit-log stage, not a numbered `_run_checks()` tier) — the score never incorporates raw PII, satisfying GDPR Art. 25 data minimisation.
 
 ### 5.4 TrustLayers Integration
 
