@@ -140,7 +140,6 @@ The following documents contain the primary mathematical formalism for the CAGE 
 
 | File | Description |
 |---|---|
-| SECURITY_AUDIT_REPORT.md | Security audit report |
 | [SECURITY_ASSESSMENT_PLAN.md](security/SECURITY_ASSESSMENT_PLAN.md) | Security assessment plan |
 | [SECURITY_STATUS.md](security/SECURITY_STATUS.md) | Current security status |
 | [INCIDENT_RESPONSE_PLAN.md](security/INCIDENT_RESPONSE_PLAN.md) | Incident response plan (summary) |
@@ -173,13 +172,11 @@ The following documents contain the primary mathematical formalism for the CAGE 
 
 | File | Description |
 |---|---|
-| RELEASE_RUNBOOK.md | Release runbook |
 | [DEPLOYMENT_RULES.md](operations/DEPLOYMENT_RULES.md) | Deployment rules & constraints |
 | [DEPLOYMENT_DECISION_RECORD.md](operations/DEPLOYMENT_DECISION_RECORD.md) | Deployment decision record |
-| DEPLOYMENT_FIX_REPORT_2026Q2.md | Q2 2026 deployment fix report |
+| [DEPLOYMENT_EXECUTION_PLAN_US_FED_DEV.md](operations/DEPLOYMENT_EXECUTION_PLAN_US_FED_DEV.md) | US_FED dev deployment execution plan |
 | [GIT_WORKFLOW_STANDARDS.md](operations/GIT_WORKFLOW_STANDARDS.md) | Git workflow standards |
 | [HOW_TO_DEMO_OBSERVABILITY.md](operations/HOW_TO_DEMO_OBSERVABILITY.md) | Observability demo guide |
-| MCP_INTEGRATION_GUIDE.md | MCP integration guide |
 
 ---
 
@@ -187,14 +184,10 @@ The following documents contain the primary mathematical formalism for the CAGE 
 
 | File | Description |
 |---|---|
-| RELEASE_PLAN.md | Release plan |
 | [V2_ROADMAP.md](project/V2_ROADMAP.md) | V2 roadmap |
 | [IMPLEMENTATION_PLAN_V2.md](project/IMPLEMENTATION_PLAN_V2.md) | **v2.0 combined implementation plan** — Gap 1–6 sequenced delivery, AGW Service Extension, ACS/AAIF ingress, SDK, spec update cross-reference |
-| PRODUCTION_READINESS_REPORT.md | Production readiness report |
-| REPOSITORY_CLEANUP_PLAN.md | Repository cleanup plan |
-| PROJECT_ANALYSIS.md | Project analysis |
-| CODE_QUALITY_ANALYSIS.md | Code quality analysis |
-| PRESENTATION_PROMPTS.md | Presentation prompts |
+| [MERGE_TO_MAIN_PLAN.md](project/MERGE_TO_MAIN_PLAN.md) | Merge-to-main plan |
+| [POAM_023_IMPLEMENTATION_PLAN.md](project/POAM_023_IMPLEMENTATION_PLAN.md) | POAM-023 (external ledger reconciliation) implementation plan |
 | [CAGE_ONE_PAGER.md](project/CAGE_ONE_PAGER.md) | CAGE executive one-pager |
 
 ---
