@@ -152,7 +152,7 @@ has changed, the request is rejected with HTTP 409 Conflict.
 
 ### 2.3 Governance Pipeline Tiers
 
-Before `validate_action()` is invoked, requests are screened by pre-pipeline layers (Aho-Corasick / prompt-injection detection and NeMo Guardrails, including Presidio PII masking). `validate_action()` itself then runs the 7-tier `SymbolicGovernor._run_checks()` pipeline, with Tiers 2 and 3 executing concurrently:
+Before `validate_action()` is invoked, requests are screened by pre-pipeline layers (Aho-Corasick / prompt-injection detection and NeMo Guardrails, including Presidio PII masking). `validate_action()` itself then runs the 7-tier `SymbolicGovernor._run_checks()` pipeline, with Tiers 2 and 4 executing concurrently:
 
 | Stage | Name | Implementation |
 |---|---|---|
@@ -160,8 +160,8 @@ Before `validate_action()` is invoked, requests are screened by pre-pipeline lay
 | *(pre-pipeline)* | NeMo Guardrails (incl. Presidio PII masking) | [`nemo/manager.py`](../src/gateway/governance/nemo/manager.py) |
 | Tier 0 | STPA/STAMP UCA validation | [`generated_stpa_validator.py`](../src/gateway/governance/generated_stpa_validator.py) |
 | Tier 1 | Agent confidence pre-check | [`symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) |
-| Tier 2 / 3 | CBF + OPA (concurrent) | [`cbf.py`](../src/gateway/governance/cbf.py), OPA `system_authz.rego` |
-| Tier 4 | Fiscal Limit Pre-Reservation | [`fiscal_limit_guard.py`](../src/gateway/governance/fiscal_limit_guard.py) |
+| Tier 2 / 4 | CBF + OPA (concurrent) | [`cbf.py`](../src/gateway/governance/cbf.py), OPA `system_authz.rego` |
+| Tier 3 | Fiscal Limit Pre-Reservation | [`fiscal_limit_guard.py`](../src/gateway/governance/fiscal_limit_guard.py) |
 | Tier 5 | Multi-Agent Consensus | [`consensus.py`](../src/gateway/governance/consensus.py) |
 | Tier 6 | DoWhy Causal Gatekeeper | [`causal_gatekeeper.py`](../src/gateway/governance/causal_gatekeeper.py) |
 | Tier 6b | Adaptive FRIA Enforcement | [`normative_provider.py`](../src/gateway/governance/normative_provider.py) |
