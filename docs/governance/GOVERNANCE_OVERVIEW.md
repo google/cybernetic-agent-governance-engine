@@ -48,15 +48,15 @@ The `SymbolicGovernor` in `src/gateway/governance/symbolic_governor.py` is the c
 | Step | Name | Implementation | Notes |
 |------|------|---------------|-------|
 | **0** | STPA UCA Constraint Check | `stpa_validator.validate()` | Aho-Corasick keyword scan feeds this; checks for Unsafe Control Actions defined in the ontology |
-| **1** | Agentic Confidence Gate | OPA `system_authz.rego` | **OPA is the sole enforcer** of the confidence threshold (0.95 normal; 0.97 for EU_ECB region). The Python-side confidence check has been removed. SLM sidecar is permanently deprecated (`slm_available=false`). |
-| **2** | Control Barrier Function | `ControlBarrierFunction.verify_action()` (`cbf.py`) | Redis-backed cash balance invariant `h(x) = cash_balance − min_cash_balance ≥ 0` |
-| **2b** | OPA Policy Evaluation | `OPAClient.evaluate_policy()` | Runs **concurrently** with CBF via `asyncio.gather` — combined latency is `max(CBF_ms, OPA_ms)` |
+| **1** | Agentic Confidence Gate | Local pre-check + OPA `system_authz.rego` | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95; 0.97 for EU_ECB region); OPA also enforces confidence consistently. SLM sidecar is permanently deprecated (`slm_available=false`). |
+| **2** | Control Barrier Function | `ControlBarrierFunction.verify_action()` (`cbf.py`) | Redis-backed cash balance invariant `h(x) = cash_balance − min_cash_balance ≥ 0`. Runs **concurrently** with Tier 4 (OPA) via `asyncio.gather`. |
 | **3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` | Atomically reserves the requested USD amount against the daily cap in Redis (WATCH/MULTI/EXEC) **before** the consensus gate, closing the TOCTOU race between the CBF balance check and actual trade execution. Released on any subsequent failure. |
-| **4** | Multi-Agent Consensus | `consensus_engine.check_consensus()` | For trades exceeding $10,000: two concurrent LLM critics ("Risk Manager" and "Compliance Officer") must reach unanimity. Any dissent blocks the trade. |
-| **5** | DoWhy Causal Gatekeeper | `causal_safety_check()` | Constructs a `CausalModel` (market_volatility → trade_amount → risk_score), estimates causal effect via backdoor linear regression, then applies a **Placebo Treatment Refuter** (50 simulations, p < 0.05). Fail-safe: blocks on any exception. |
-| **6** | FRIA Normative Boundary + Attestation | `enforce_fria_boundary()` + OTel stamp | **Merged step:** adaptive FRIA enforcement (ALLOW/DEFER/DENY based on consensus score) combined with EU AI Act Art. 29a OTel attestation. Runs only when `CAGE_NORMATIVE_PROVIDER != "static"` for enforcement; attestation stamp always applied for EU_ECB deployments. |
+| **4** | OPA Policy Evaluation | `OPAClient.evaluate_policy()` | Runs **concurrently** with Tier 2 (CBF) via `asyncio.gather` — combined latency is `max(CBF_ms, OPA_ms)` |
+| **5** | Multi-Agent Consensus | `consensus_engine.check_consensus()` | For trades exceeding $10,000: two concurrent LLM critics ("Risk Manager" and "Compliance Officer") must reach unanimity. Any dissent blocks the trade. |
+| **6** | DoWhy Causal Gatekeeper | `causal_safety_check()` | Constructs a `CausalModel` (market_volatility → trade_amount → risk_score), estimates causal effect via backdoor linear regression, then applies a **Placebo Treatment Refuter** (50 simulations, p < 0.05). Fail-safe: blocks on any exception. |
+| **6b** | FRIA Normative Boundary + Attestation | `enforce_fria_boundary()` + OTel stamp | **Merged step:** adaptive FRIA enforcement (ALLOW/DEFER/DENY based on consensus score) combined with EU AI Act Art. 29a OTel attestation. Runs only when `CAGE_NORMATIVE_PROVIDER != "static"` for enforcement; attestation stamp always applied for EU_ECB deployments. |
 
-**Routing Seal timing:** The KMS-backed routing seal (`generate_seal()`) is issued **only after all 7 pipeline steps complete successfully**. Previously `validate_action()` issued the seal after only CBF + OPA (Steps 2/2b), implying full governance approval that was never actually granted. That gap is now closed.
+**Routing Seal timing:** The KMS-backed routing seal (`generate_seal()`) is issued **only after all 7 pipeline tiers complete successfully**. Previously `validate_action()` issued the seal after only CBF + OPA (Tiers 2/4), implying full governance approval that was never actually granted. That gap is now closed.
 
 **HITL (Human-in-the-Loop):** Handled by `defer_queue.py`, triggered by pipeline decisions (e.g., `MANUAL_REVIEW` from OPA or confidence starvation). LangGraph's `interrupt_before=["governed_trader"]` enforces a physical pause before every trade execution; the full pipeline is re-run after human approval via `post_hitl_revalidate`.
 
@@ -70,7 +70,7 @@ The following components are essential infrastructure but are **not** numbered g
 | **Pydantic Schema Validation** | Structural integrity at the request boundary | Strict Pydantic v2 models validate every tool call before it reaches the pipeline. UUID v4, ticker regex `^[A-Z]{1,5}$`, and `trader_role` enforced here. Implementation: `src/governed_financial_advisor/tools/trades.py` |
 | **KMS Routing Seal** | Cryptographic authorization between agent nodes | Issued after full pipeline approval (see above). GCP KMS asymmetric signing (primary); HMAC-SHA256 fallback for dev/CI only. Implementation: `src/gateway/governance/kms_signer.py` |
 
-**OPA RBAC thresholds** (enforced in Step 2b):
+**OPA RBAC thresholds** (enforced in Tier 4):
 
 | Role     | ALLOW up to | MANUAL_REVIEW         | DENY         |
 | -------- | ----------- | --------------------- | ------------ |
@@ -87,19 +87,22 @@ The following components are essential infrastructure but are **not** numbered g
 
 > **Source:** [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
 
-The `SymbolicGovernor._run_checks()` method implements a strict **7-tier sequential pipeline**. Every tool execution request must pass all applicable tiers before a routing seal is issued. The tiers below use 1-based numbering aligned to the source implementation; the existing Step 0–6 table in §2 uses 0-based numbering for historical reasons — both refer to the same pipeline.
+The `SymbolicGovernor._run_checks()` method implements a strict **7-tier sequential pipeline** (Tiers 2 and 4 execute concurrently). Every tool execution request must pass all applicable tiers before a routing seal is issued. This table uses the same numbering as the Step 0–6 table in §2 above — both describe the identical pipeline.
 
 ### 7-Tier Pipeline
 
 | Tier | Name | Key Invariant / Action | Source Module |
 |------|------|------------------------|---------------|
-| **1** | NoDirectBind invariant check | No LLM output may bind directly to an executable action without passing the full governance pipeline | `symbolic_governor.py` |
-| **2** | PII sanitization | Microsoft Presidio (15 entity types) masks PII in request payload before any downstream evaluation | `nemo/manager.py`, `privacy.py` |
-| **3** | CBF + OPA concurrent evaluation | `asyncio.gather(cbf_check, opa_check)` — combined latency = `max(CBF_ms, OPA_ms)` | `cbf.py`, OPA `system_authz.rego` |
-| **4** | Causal gatekeeper | DoWhy `CausalModel` + Placebo Treatment Refuter (50 sims, p < 0.05, \|eff\| > 0.2) | `causal_gatekeeper.py` |
-| **5** | Confabulation scoring | `risk_score = 1.0 − confidence`; score ≥ 0.95 → BLOCK | `confabulation_scorer.py` |
-| **6** | Consensus (high-value trades) | Boolean unanimity via `asyncio.gather`; threshold $10,000 USD; 30 s timeout | `consensus.py` |
-| **7** | FRIA zone classification | Fundamental Rights Impact Assessment — score-based zone assignment (ALLOW / DEFER / BLOCK) | `symbolic_governor.py` |
+| **0** | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` checks Unsafe Control Actions defined in the ontology | `generated_stpa_validator.py` |
+| **1** | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) | `symbolic_governor.py` |
+| **2** | Control Barrier Function | Redis-backed cash balance invariant check; runs **concurrently** with Tier 4 (OPA) via `asyncio.gather` | `cbf.py` |
+| **3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` atomically pre-reserves the daily fiscal cap in Redis (WATCH/MULTI/EXEC) before the consensus gate | `fiscal_limit_guard.py` |
+| **4** | OPA policy evaluation | `OPAClient.evaluate_policy()`; runs **concurrently** with Tier 2 (CBF) — combined latency = `max(CBF_ms, OPA_ms)` | OPA `system_authz.rego` |
+| **5** | Consensus (high-value trades) | Boolean unanimity via `asyncio.gather`; threshold $10,000 USD; 30 s timeout | `consensus.py` |
+| **6** | Causal gatekeeper | DoWhy `CausalModel` + Placebo Treatment Refuter (50 sims, p < 0.05, \|eff\| > 0.2) | `causal_gatekeeper.py` |
+| **6b** | FRIA normative boundary + attestation | Adaptive enforcement (ALLOW/DEFER/DENY based on consensus score) + EU AI Act Art. 29a OTel attestation | `symbolic_governor.py`, `normative_provider.py` |
+
+> **Note:** PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are **not** sequential tiers of `_run_checks()`. PII sanitization runs inside `uca_logger.py` immediately before a UCA audit record is written to the WORM ledger. Confabulation scoring is a standalone Langfuse observability metric computed independently of the governance decision path.
 
 ### NoDirectBind Invariant
 
@@ -107,11 +110,11 @@ The **NoDirectBind invariant** is the foundational safety property of the pipeli
 
 > *No output produced by an LLM may be bound directly to an executable action (trade, API call, state mutation) without first passing through the full `SymbolicGovernor._run_checks()` pipeline.*
 
-This invariant is enforced structurally: the `@governed_tool` decorator intercepts every tool call at the gateway boundary and invokes `_run_checks()` before any execution occurs. A routing seal (`X-CAGE-Routing-Seal`) is issued **only** after all 7 tiers complete successfully.
+This invariant is enforced structurally: `validate_action()` is the single choke point through which every tool execution request must pass, and the caller must present a valid HMAC-SHA256 routing seal (`X-CAGE-Routing-Seal`, verified via `verify_seal()`) before the downstream actuator will fire. A routing seal is issued **only** after all tiers complete successfully — there is no `@governed_tool` decorator in the codebase.
 
-### Tier 3 — Concurrent CBF + OPA Evaluation
+### Tier 2/4 — Concurrent CBF + OPA Evaluation
 
-Tier 3 runs the Control Barrier Function check and the OPA policy evaluation **concurrently** using `asyncio.gather`:
+Tiers 2 and 4 run the Control Barrier Function check and the OPA policy evaluation **concurrently** using `asyncio.gather`:
 
 ```python
 cbf_result, opa_result = await asyncio.gather(cbf_check(), opa_check())
@@ -119,9 +122,9 @@ cbf_result, opa_result = await asyncio.gather(cbf_check(), opa_check())
 
 Both checks must pass. The combined latency is `max(CBF_ms, OPA_ms)` rather than the sum, reducing p99 pipeline latency.
 
-### FRIA Zone Decision Semantics (Tier 7)
+### FRIA Zone Decision Semantics (Tier 6b)
 
-The Fundamental Rights Impact Assessment (FRIA) at Tier 7 classifies each request into one of three zones based on a composite governance score:
+The Fundamental Rights Impact Assessment (FRIA) at Tier 6b classifies each request into one of three zones based on a composite governance score:
 
 | Zone | Score Condition | Decision | Mechanism |
 |------|----------------|----------|-----------|
@@ -137,7 +140,7 @@ Constants: `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70` (defined in [`src/
 
 The following formal conditions are evaluated at runtime. A violation of any invariant causes the pipeline to halt and the request to be denied.
 
-### Control Barrier Function (CBF) — Tier 3
+### Control Barrier Function (CBF) — Tier 2
 
 **Barrier function:** `h(x) = cash_balance − min_cash_balance`
 
@@ -151,17 +154,17 @@ where γ ∈ (0, 1] is the decay parameter (default γ = 0.5). If `h(S(t)) ≥ 0
 
 > **Source:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)
 
-### Confabulation Risk Score — Tier 5
+### Confabulation Risk Score — Langfuse Observability Metric (not a pipeline tier)
 
 ```
 risk_score = 1.0 − confidence
 ```
 
-**Decision rule:** if `risk_score ≥ 0.95` (equivalently, `confidence ≤ 0.05`) → **BLOCK**. The threshold guards against LLM outputs with near-zero grounding confidence being passed to execution.
+**Decision rule:** `is_confabulation_blocked(confidence)` returns `True` when `confidence < CONFIDENCE_THRESHOLD` (default 0.95). This is a standalone Langfuse score payload builder (`score_confabulation()`), not a step invoked from `SymbolicGovernor._run_checks()`.
 
 > **Source:** [`src/gateway/governance/confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py)
 
-### Causal Marginal Risk Boundary — Tier 4
+### Causal Marginal Risk Boundary — Tier 6
 
 The causal gatekeeper blocks a trade when the estimated marginal effect of `trade_amount` on `risk_score` pushes the predicted risk above the safety boundary:
 
@@ -173,7 +176,7 @@ Additionally, the Placebo Treatment Refuter (50 simulations) must confirm the wo
 
 > **Source:** [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)
 
-### FRIA Zone Boundaries — Tier 7
+### FRIA Zone Boundaries — Tier 6b
 
 ```
 score ≥ 0.95              →  ALLOW  (async attestation)
@@ -189,7 +192,7 @@ score < 0.70              →  BLOCK  (hard deny)
 
 > **Source:** [`src/gateway/governance/ontology.py`](../../src/gateway/governance/ontology.py)
 
-The STPA (Systems-Theoretic Process Analysis) ontology defines Unsafe Control Actions (UCAs) as formal inequalities. The `GeneratedSTPAValidator` evaluates these constraints on every request; any violation halts the pipeline at Tier 1 (Step 0 in the 0-based table).
+The STPA (Systems-Theoretic Process Analysis) ontology defines Unsafe Control Actions (UCAs) as formal inequalities. The `GeneratedSTPAValidator` evaluates these constraints on every request; any violation halts the pipeline at Tier 0.
 
 ### Financial UCAs (FIN-*)
 
@@ -322,14 +325,15 @@ The canonical agent graph is assembled by `create_graph(redis_url)` in `src/gove
 
 All agent transitions are explicitly managed by routing functions (`route_supervisor`, `check_safety_signature`, `route_after_safety`). Agents return structured state fields; the graph decides the next node deterministically based on those fields.
 
-### Governance Decorator
+### Governance Enforcement Path
 
-The `@governed_tool` decorator (gateway-side) intercepts all tool executions:
+The gateway-side `validate_action()` / `verify_seal()` pair is the single choke point that intercepts all tool executions (there is no `@governed_tool` decorator in the codebase):
 
 1. Validates Pydantic schema (infrastructure boundary — not a pipeline step).
-2. Checks HMAC `X-CAGE-Routing-Seal` header (issued only after full pipeline approval).
-3. Invokes the full `SymbolicGovernor._run_checks()` pipeline: STPA (Step 0) → Confidence/OPA (Steps 1/2b) → CBF (Step 2) → Fiscal Limit Pre-Reservation (Step 3) → Consensus (Step 4) → Causal Gatekeeper (Step 5) → FRIA (Step 6).
-4. Wraps execution in ISO 42001-stamped OpenTelemetry spans.
+2. Invokes the full `SymbolicGovernor._run_checks()` pipeline: STPA (Tier 0) → Confidence (Tier 1) → CBF/OPA concurrent (Tiers 2/4) → Fiscal Limit Pre-Reservation (Tier 3) → Consensus (Tier 5) → Causal Gatekeeper (Tier 6) → FRIA (Tier 6b).
+3. Issues an HMAC-SHA256 routing seal (`X-CAGE-Routing-Seal`) only after all tiers pass.
+4. The downstream actuator calls `verify_seal()` before firing — the wrapped action is never invoked if the seal is missing, expired, or tampered.
+5. Wraps execution in ISO 42001-stamped OpenTelemetry spans.
 
 ## 5. Local Development
 
