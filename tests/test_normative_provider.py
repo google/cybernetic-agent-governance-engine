@@ -535,6 +535,67 @@ class TestTrustLayersProvider:
         provider = TrustLayersProvider(endpoint="https://api.trustlayers.example.com/")
         assert provider._endpoint == "https://api.trustlayers.example.com"
 
+    async def test_thread_id_cannot_retarget_request_path(self) -> None:
+        """A thread_id with path separators stays a single encoded segment.
+
+        thread_id reaches submit_evidence from the governed tool-call params
+        (symbolic_governor), so a value like ``../../admin`` must not walk the
+        outbound request off the ``/evidence-chain/`` prefix on the provider host.
+        """
+        import httpx
+
+        captured: dict[str, Any] = {}
+
+        class _Client:
+            def __init__(self, *a: Any, **k: Any) -> None:
+                pass
+
+            async def __aenter__(self) -> _Client:
+                return self
+
+            async def __aexit__(self, *a: Any) -> bool:
+                return False
+
+            async def get(self, url: str, headers: Any = None, params: Any = None):
+                captured["url"] = url
+                raise RuntimeError("stop after URL capture")
+
+        provider = TrustLayersProvider(endpoint="https://api.trustlayers.example.com")
+        with patch("httpx.AsyncClient", _Client):
+            await provider.submit_evidence("../../admin/rotate-key", "HASH")
+
+        target = httpx.URL(captured["url"])
+        assert target.host == "api.trustlayers.example.com"
+        assert target.raw_path.startswith(b"/evidence-chain/")
+
+    async def test_region_cannot_retarget_baseline_path(self) -> None:
+        """A region containing separators stays a single encoded path segment."""
+        import httpx
+
+        captured: dict[str, Any] = {}
+
+        class _Client:
+            def __init__(self, *a: Any, **k: Any) -> None:
+                pass
+
+            async def __aenter__(self) -> _Client:
+                return self
+
+            async def __aexit__(self, *a: Any) -> bool:
+                return False
+
+            async def get(self, url: str, headers: Any = None, params: Any = None):
+                captured["url"] = url
+                raise RuntimeError("stop after URL capture")
+
+        provider = TrustLayersProvider(endpoint="https://api.trustlayers.example.com")
+        with patch("httpx.AsyncClient", _Client):
+            await provider.fetch_baseline("../../secret")
+
+        target = httpx.URL(captured["url"])
+        assert target.host == "api.trustlayers.example.com"
+        assert target.raw_path.startswith(b"/legal-baseline/")
+
 
 class TestDeferReasonExternalValidation:
     """Test that EXTERNAL_VALIDATION DeferReason is properly registered."""
