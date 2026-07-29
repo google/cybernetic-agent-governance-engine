@@ -95,7 +95,7 @@ The SLA is returned by `get_hitl_sla_hours(region)` in `hitl_escalator.py`.
 
 **Source:** [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
 
-The `SymbolicGovernor` Tier 7 FRIA zone classification determines whether a governance decision is handled automatically or escalated to human review. The thresholds are named constants enforced at runtime:
+The `SymbolicGovernor` Tier 6b FRIA zone classification determines whether a governance decision is handled automatically or escalated to human review. The thresholds are named constants enforced at runtime:
 
 ### FRIA Zone Classification
 
@@ -109,7 +109,7 @@ The DEFER zone maps directly to the DeferQueue escalation path. A DEFER decision
 
 ### Consensus Requirement
 
-Trades with `amount ≥ $10,000 USD` require multi-critic consensus (Tier 6) before reaching the FRIA zone classifier. The consensus engine invokes multiple LLM critics with a **30-second hard timeout** per critic call. Unanimity is required; a single dissenting critic escalates the decision to human review via the DeferQueue.
+Trades with `amount ≥ $10,000 USD` require multi-critic consensus (Tier 5) before reaching the FRIA zone classifier. The consensus engine invokes multiple LLM critics with a **30-second hard timeout** per critic call. Unanimity is required; a single dissenting critic escalates the decision to human review via the DeferQueue.
 
 ### Causal Lock Escalation
 
