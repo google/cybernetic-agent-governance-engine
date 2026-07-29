@@ -131,11 +131,12 @@ The governance pipeline is a **7-tier symbolic governor (Tiers 0–6)**. The SLM
 |------|------|---------|--------|
 | 0 | STPA Unsafe Control Action validation | UCA-* | `stpa_validator.py` |
 | 1 | Agentic model confidence threshold | CTRL_AGT_001 | `symbolic_governor.py` |
-| 2 | Control Barrier Function (CBF) | Safety filter | `cbf.py` |
-| 3 | OPA Rego policy enforcement (concurrent with CBF) | CTRL_OPA_001 | `system_authz.rego` |
-| 4 | Fiscal Limit Pre-Reservation (FiscalLimitGuard) | CTRL_FLG_001 | `fiscal_limit_guard.py` |
+| 2 | Control Barrier Function (CBF), concurrent with Tier 4 | Safety filter | `cbf.py` |
+| 3 | Fiscal Limit Pre-Reservation (FiscalLimitGuard) | CTRL_FLG_001 | `fiscal_limit_guard.py` |
+| 4 | OPA Rego policy enforcement (concurrent with CBF) | CTRL_OPA_001 | `system_authz.rego` |
 | 5 | Multi-agent consensus | ISO 42001 A.8.4 | `symbolic_governor.py` |
 | 6 | DoWhy causal gatekeeper | Refutation | `causal_gatekeeper.py` |
+| 6b | Adaptive FRIA gate | EU AI Act Art. 29a | `symbolic_governor.py` |
 
 ---
 
