@@ -141,6 +141,21 @@ def create_ftra_node(
         try:
             return _run_ftra(state, analyzer)
         except Exception as exc:
+            # CRITICAL: NodeInterrupt (and its parent GraphInterrupt) are
+            # subclasses of Exception in LangGraph — they are the mechanism
+            # by which _raise_node_interrupt() suspends the thread for HITL
+            # review. They must propagate to the LangGraph runtime, not be
+            # swallowed here. A prior version of this handler caught them
+            # unconditionally, silently converting every HITL_REQUIRED
+            # verdict into a fail-closed BLOCKED response and defeating the
+            # DeferQueue human-in-the-loop pathway entirely.
+            try:
+                from langgraph.errors import GraphInterrupt
+
+                if isinstance(exc, GraphInterrupt):
+                    raise
+            except ImportError:
+                pass
             logger.error(
                 "FTRA node: unhandled exception (%s) — failing closed (BLOCKED).", exc
             )
@@ -323,11 +338,25 @@ def _park_in_defer_queue(
 ) -> str:
     """Park the suspended plan in DeferQueue db=1 and return the defer_id.
 
-    Uses a synchronous Redis write via the existing DeferQueue infrastructure.
-    Falls back to a UUID-only token if Redis is unavailable (fail-open for
-    parking — the HITL_REQUIRED verdict is still enforced by the graph interrupt).
+    Connects to Redis db=1 via REDIS_URL (matching the deployment contract
+    documented in defer_queue.py — the DEFER token store is isolated from the
+    LangGraph checkpointer at db=0) and parks the token through the existing
+    DeferQueue infrastructure. Falls back to a local, unpersisted UUID token
+    if Redis is unavailable — the HITL_REQUIRED verdict is still enforced by
+    the graph interrupt/state routing, but external HITL API resolution
+    (POST /v1/defer/{id}/escalate or /inject) will not find this token in
+    that fallback case, since it was never written to Redis.
+
+    NOTE (fixed): a prior version instantiated DeferQueue() with zero
+    arguments, but DeferQueue.__init__ requires a redis_client. That always
+    raised TypeError, which was silently caught by the except-Exception
+    fallback below — meaning every HITL_REQUIRED verdict previously fell
+    through to the unpersisted-token path unconditionally. See
+    src/compliance_bridge/main.py's list_defer_pending()/resolve endpoints
+    for the correct DeferQueue(client) instantiation pattern this mirrors.
     """
     import asyncio
+    import os
 
     from src.gateway.governance.defer_queue import DeferQueue, DeferReason, DeferToken
 
@@ -343,12 +372,18 @@ def _park_in_defer_queue(
         aarm_vector="AARM-V9",  # Forward-looking reachability block
     )
 
-    try:
-        queue = DeferQueue()
+    async def _park() -> str:
+        import redis.asyncio as aioredis
 
-        async def _park() -> str:
+        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+        client = aioredis.from_url(redis_url, db=1, decode_responses=True)
+        try:
+            queue = DeferQueue(client)
             return await queue.park(token)
+        finally:
+            await client.aclose()
 
+    try:
         # Run in a new event loop if we're not already in one
         try:
             asyncio.get_running_loop()
@@ -363,7 +398,9 @@ def _park_in_defer_queue(
             return asyncio.run(_park())
     except Exception as exc:
         logger.error(
-            "FTRA: DeferQueue park failed (%s) — using local defer_id only.", exc
+            "FTRA: DeferQueue park failed (%s) — using local defer_id only "
+            "(token NOT persisted to Redis; HITL API will not find it).",
+            exc,
         )
         return token.defer_id
 

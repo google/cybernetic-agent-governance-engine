@@ -760,7 +760,7 @@ The **Forward-Looking Trajectory Reachability Analyzer** (FTRA, `CTRL_FTRA_001`,
 
 **Verdict routing:** `CLEAR` → proceed to the `safety_check` OPA gate. `HITL_REQUIRED` (irreversible terminal reachable, confidence ≥ `FRIA_ZONE_DEFER` = 0.70) → park in DeferQueue `db=1` pending human clearance. `BLOCKED` (irreversible terminal reachable, confidence < 0.70) → route to `explainer`; plan halted outright. All construction/traversal errors fail closed to `HITL_REQUIRED`/`BLOCKED`, mirroring the OPA `default stpa_allow = false` pattern.
 
-> **Note:** `src/gateway/governance/ftra_reachability.py` is a standalone, unwired `FtraReachabilityGate` scaffold committed alongside this package in the same commit. It is not imported by `SymbolicGovernor` or any production code path — the actual Tier 0.5 gate is `ftra/node_factory.py`.
+> **Removed scaffold:** `src/gateway/governance/ftra_reachability.py` was a standalone, unwired `FtraReachabilityGate` scaffold committed alongside this package in the same commit. It was never imported by `SymbolicGovernor` or any production code path — the actual Tier 0.5 gate has always been `ftra/node_factory.py`. The scaffold and its dedicated test module were removed.
 
 ### Compliance Mapping
 

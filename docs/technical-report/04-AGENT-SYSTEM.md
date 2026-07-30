@@ -232,7 +232,7 @@ Before any step of a proposed `ExecutionPlan` runs, the FTRA gate (`src/gateway/
 
 The FTRA gate runs **per plan, before any step executes** — not once per graph compilation. `FTRAVerdict.CLEAR` (no irreversible terminal reachable) proceeds to the OPA `safety_check` node. `HITL_REQUIRED` (irreversible terminal reachable, Evaluator confidence ≥ 0.70) parks the thread in DeferQueue `db=1` pending human clearance. `BLOCKED` (confidence < 0.70) halts the plan and routes to `explainer`.
 
-> **Note:** `src/gateway/governance/ftra_reachability.py` is a separate, unwired `FtraReachabilityGate` scaffold committed in the same commit as this package. It is not called by `SymbolicGovernor` or any production code path — the FTRA gate actually wired into `src/governed_financial_advisor/graph/graph.py` is exclusively `ftra/node_factory.py`.
+> **Removed scaffold:** `src/gateway/governance/ftra_reachability.py` was a separate, unwired `FtraReachabilityGate` scaffold committed in the same commit as this package. It was never called by `SymbolicGovernor` or any production code path — the FTRA gate actually wired into `src/governed_financial_advisor/graph/graph.py` has always been exclusively `ftra/node_factory.py`. The scaffold and its dedicated test module were removed.
 
 ### NeMo Guardrails Phase 4.2 Changes
 
