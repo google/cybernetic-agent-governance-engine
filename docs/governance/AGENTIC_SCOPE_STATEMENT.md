@@ -220,10 +220,11 @@ reachable is either routed to human review (`HITL_REQUIRED`) or blocked
 outright (`BLOCKED`, confidence < 0.70) before the authorized action space
 (§1) is evaluated further.
 
-> **Note:** `src/gateway/governance/ftra_reachability.py` is a separate,
-> standalone `FtraReachabilityGate` scaffold committed alongside this package
-> in the same commit. It is not called by `SymbolicGovernor` or any
-> production code path.
+> **Removed scaffold:** `src/gateway/governance/ftra_reachability.py` was a
+> separate, standalone `FtraReachabilityGate` scaffold committed alongside
+> this package in the same commit. It was never called by `SymbolicGovernor`
+> or any production code path. The scaffold and its dedicated test module
+> were removed.
 
 ---
 

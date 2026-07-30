@@ -384,7 +384,7 @@ The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)**
 
 **Decision semantics:** `CLEAR` proceeds to the OPA `safety_check` node. `HITL_REQUIRED` (irreversible terminal reachable, confidence ≥ 0.70) parks the thread in DeferQueue `db=1` pending human clearance. `BLOCKED` (confidence < 0.70) routes to `explainer`, halting the plan before any further LLM inference.
 
-> **Note:** `src/gateway/governance/ftra_reachability.py` is a separate, standalone `FtraReachabilityGate` scaffold committed alongside this package in the same commit. It is not imported or called by `SymbolicGovernor` or any production code path — the actual Tier 0.5 gate is exclusively `ftra/node_factory.py`.
+> **Removed scaffold:** `src/gateway/governance/ftra_reachability.py` was a separate, standalone `FtraReachabilityGate` scaffold committed alongside this package in the same commit. It was never imported or called by `SymbolicGovernor` or any production code path — the actual Tier 0.5 gate has always been exclusively `ftra/node_factory.py`. The scaffold and its dedicated test module were removed.
 
 ### NeMo Guardrails — Full Integration (`src/gateway/governance/nemo/`)
 
