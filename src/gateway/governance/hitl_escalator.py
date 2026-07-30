@@ -19,8 +19,9 @@ the confidence threshold to a human reviewer via the DeferQueue.
 
 POAM: AI600-004
 Controls: ConsensusEngine (threshold USD 10,000), HITL escalation path
-Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
-SR 26-2 §3.2: HITL SLA — escalations must be resolved within 4 hours.
+SR 26-2 §3.2: HITL SLA — escalations must be resolved within 4 hours (US_FED
+only). EU_ECB and APAC_MAS deployments apply their own regional SLA — see
+get_hitl_sla_hours() below and docs/governance/HUMAN_OVERSIGHT_SCOPE.md.
 
 Usage::
 
@@ -41,11 +42,67 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Any
 
 logger = logging.getLogger("Gateway.Governance.HITLEscalator")
+
+
+# ---------------------------------------------------------------------------
+# FINDING-09 (MEDIUM) — Jurisdictional HITL SLA / regulatory citation
+#
+# This module previously declared "Region: US_FED" in its docstring only,
+# with no runtime CAGE_DEPLOYMENT_REGION check. The SR 26-2 §3.2 4-hour SLA
+# is a US Federal Reserve requirement with no legal force outside US_FED.
+# get_hitl_sla_hours() / get_hitl_regulatory_citation() resolve the correct
+# region-specific value at call time. The citation strings themselves live
+# in constants.py (HITL_CITATIONS / HITL_SLA_HOURS), which is intentionally
+# excluded from the "no hardcoded regulatory strings" architecture guardrail
+# (see tests/test_governance_architecture.py).
+# ---------------------------------------------------------------------------
+
+
+def _get_region() -> str:
+    return os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+
+
+def get_hitl_sla_hours(region: str | None = None) -> float:
+    """Return the HITL resolution SLA, in hours, for the active region.
+
+    Args:
+        region: CAGE_DEPLOYMENT_REGION value. If None, reads from the
+                environment. One of "US_FED", "EU_ECB", "APAC_MAS".
+
+    Returns:
+        4.0 for US_FED (SR 26-2 §3.2), 2.0 for EU_ECB (DORA Art. 10),
+        1.0 for APAC_MAS (MAS FEAT §3.2), 4.0 (ISO 42001 §A.8.4 fallback)
+        for any other/unset region.
+    """
+    from src.gateway.governance.constants import HITL_SLA_HOURS, HITL_SLA_HOURS_DEFAULT
+
+    active_region = (region or _get_region()).strip().upper()
+    return HITL_SLA_HOURS.get(active_region, HITL_SLA_HOURS_DEFAULT)
+
+
+def get_hitl_regulatory_citation(region: str | None = None) -> str:
+    """Return the jurisdiction-specific HITL regulatory citation.
+
+    Args:
+        region: CAGE_DEPLOYMENT_REGION value. If None, reads from the
+                environment. One of "US_FED", "EU_ECB", "APAC_MAS".
+
+    Returns:
+        The regulatory authority citation string for the active region, or
+        the universal ISO 42001 §A.8.4 citation if the region is unset or
+        unrecognised.
+    """
+    from src.gateway.governance.constants import HITL_CITATION_DEFAULT, HITL_CITATIONS
+
+    active_region = (region or _get_region()).strip().upper()
+    return HITL_CITATIONS.get(active_region, HITL_CITATION_DEFAULT)
 
 
 # ---------------------------------------------------------------------------
@@ -215,3 +272,77 @@ def should_escalate_for_confidence(confidence: float, threshold: float = 0.95) -
         True if ``confidence < threshold``, False otherwise.
     """
     return confidence < threshold
+
+
+# ---------------------------------------------------------------------------
+# hitl_override_audit_span — AI600-005 human override audit trail
+# ---------------------------------------------------------------------------
+
+
+def hitl_override_audit_span(
+    trace_id: str,
+    reviewer_id: str,
+    decision: str,
+    original_escalation_reason: str,
+    reason: str = "",
+    region: str | None = None,
+) -> dict[str, Any]:
+    """Emit a structured OTel span recording a human override decision.
+
+    Called when a human reviewer resolves a pending HITL escalation. Persists
+    an immutable evidence trail for ISO 42001 §A.8.4 / AI 600-1 §2.5, with a
+    jurisdiction-specific regulatory citation attached via
+    ``get_hitl_regulatory_citation()``.
+
+    Args:
+        trace_id:                   Langfuse trace ID of the governed request.
+        reviewer_id:                Pseudonymised reviewer identifier.
+        decision:                   One of "OVERRIDE", "UPHOLD", "DEFER".
+        original_escalation_reason: The ``EscalationReason.value`` that
+                                     triggered the original escalation.
+        reason:                     Free-text justification (\u2264500 chars).
+        region:                     CAGE_DEPLOYMENT_REGION value. If None,
+                                     reads from the environment.
+
+    Returns:
+        The dict of attributes stamped onto the current OTel span (also
+        returned for callers that want to inspect / log it directly).
+    """
+    _ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+    citation = get_hitl_regulatory_citation(region)
+    truncated_reason = reason[:500]
+
+    attributes: dict[str, Any] = {
+        "hitl.reviewer_id": reviewer_id,
+        "hitl.decision": decision,
+        "hitl.reason": truncated_reason,
+        "hitl.original_escalation_reason": original_escalation_reason,
+        "hitl.override_ts": _ts,
+        "hitl.trace_id": trace_id,
+        "hitl.regulatory_citation": citation,
+        "langfuse.trace.metadata.iso.control_id": "A.8.4",
+        "langfuse.trace.metadata.iso.requirement": "Human Oversight and Control",
+        "langfuse.trace.metadata.poam_ref": "AI600-005",
+    }
+
+    try:
+        from opentelemetry import trace as _otel_trace
+
+        span = _otel_trace.get_current_span()
+        if span is not None:
+            for key, value in attributes.items():
+                span.set_attribute(key, value)
+    except Exception as exc:  # pragma: no cover — OTel must never break HITL flow
+        logger.debug("hitl_override_audit_span: OTel stamping skipped: %s", exc)
+
+    logger.info(
+        "\u2696\ufe0f HITL override: trace_id=%s reviewer_id=%s decision=%s "
+        "original_reason=%s citation=%s",
+        trace_id,
+        reviewer_id,
+        decision,
+        original_escalation_reason,
+        citation,
+    )
+
+    return attributes

@@ -132,3 +132,42 @@ class TestPiiAuditLog:
         assert len(record["entity_types"]) == 5
         assert "PERSON" in record["entity_types"]
         assert "SSN" in record["entity_types"]
+
+
+class TestPiiAuditLogJurisdictionalRetentionAuthority:
+    """FINDING-08 (MEDIUM): retention_authority citation must be jurisdiction-aware.
+
+    pii_audit_log() previously cited "FISMA AU-11" unconditionally regardless
+    of CAGE_DEPLOYMENT_REGION. These tests assert the correct regulatory
+    citation is emitted per-region, with a universal ISO 42001 fallback.
+    """
+
+    def test_us_fed_cites_fisma_au11(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
+        record = pii_audit_log(trace_id="trace-us", entity_types=["SSN"], redacted=True)
+        assert "FISMA AU-11" in record["retention_authority"]
+
+    def test_eu_ecb_cites_gdpr(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
+        record = pii_audit_log(trace_id="trace-eu", entity_types=["SSN"], redacted=True)
+        assert "GDPR" in record["retention_authority"]
+
+    def test_apac_mas_cites_notice_655(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "APAC_MAS")
+        record = pii_audit_log(trace_id="trace-apac", entity_types=["SSN"], redacted=True)
+        assert "MAS Notice 655" in record["retention_authority"]
+
+    def test_unset_region_falls_back_to_iso_42001(self, monkeypatch):
+        monkeypatch.delenv("CAGE_DEPLOYMENT_REGION", raising=False)
+        record = pii_audit_log(trace_id="trace-none", entity_types=["SSN"], redacted=True)
+        assert "ISO 42001" in record["retention_authority"]
+
+    def test_explicit_region_parameter_overrides_environment(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
+        record = pii_audit_log(
+            trace_id="trace-explicit",
+            entity_types=["SSN"],
+            redacted=True,
+            region="EU_ECB",
+        )
+        assert "GDPR" in record["retention_authority"]

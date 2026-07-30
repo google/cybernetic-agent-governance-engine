@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Prompt injection detector — AI 600-1 §2.3 control.
+"""Prompt injection detector — structural robustness control.
 
 Detects structural prompt injection patterns that bypass keyword-based filters.
 Complements the Aho-Corasick Tier-1 keyword scanner (text_filter.py) with
@@ -20,7 +20,9 @@ semantic/structural pattern matching for injection attempts.
 
 POAM: AI600-003
 Controls: CausalGatekeeper (pre-check), CTRL_WAL_002 (WAL integrity)
-Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
+Detection logic is universal (active in all regions). The regulatory
+citation attached to detection events is jurisdiction-specific — see
+get_injection_citation() below.
 
 Usage::
 
@@ -37,10 +39,51 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 
 logger = logging.getLogger("Gateway.Governance.PromptInjectionDetector")
+
+
+# ---------------------------------------------------------------------------
+# FINDING-09 (MEDIUM) — Jurisdictional prompt-injection regulatory citation
+#
+# This module previously declared "Region: US_FED" in its docstring only,
+# with no runtime CAGE_DEPLOYMENT_REGION check, even though the detection
+# logic itself is universal (structural pattern matching applies regardless
+# of jurisdiction). get_injection_citation() attaches the correct regional
+# regulatory authority to detection log lines / audit records. The citation
+# strings live in constants.py (INJECTION_CITATION), which is intentionally
+# excluded from the "no hardcoded regulatory strings" architecture guardrail
+# (see tests/test_governance_architecture.py).
+# ---------------------------------------------------------------------------
+
+
+def _get_region() -> str:
+    return os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+
+
+def get_injection_citation(region: str | None = None) -> str:
+    """Return the jurisdiction-specific prompt-injection regulatory citation.
+
+    Args:
+        region: CAGE_DEPLOYMENT_REGION value. If None, reads from the
+                environment. One of "US_FED", "EU_ECB", "APAC_MAS".
+
+    Returns:
+        The regulatory authority citation string for the active region, or
+        the universal ISO 42001 A.9.2 citation if the region is unset or
+        unrecognised.
+    """
+    from src.gateway.governance.constants import (
+        INJECTION_CITATION,
+        INJECTION_CITATION_DEFAULT,
+    )
+
+    active_region = (region or _get_region()).strip().upper()
+    return INJECTION_CITATION.get(active_region, INJECTION_CITATION_DEFAULT)
+
 
 # ---------------------------------------------------------------------------
 # Structural injection patterns — not keyword-based.
@@ -145,9 +188,10 @@ def detect_prompt_injection(text: str) -> InjectionResult:
         if pattern.search(text):
             logger.warning(
                 "🚨 Prompt injection detected: pattern=%s text_preview=%r "
-                "(AI 600-1 §2.3 — blocking request)",
+                "(citation=%s — blocking request)",
                 pattern_name,
                 text[:100],
+                get_injection_citation(),
             )
             return InjectionResult(
                 detected=True,
@@ -187,8 +231,9 @@ def detect_indirect_injection(tool_name: str, response_text: str) -> InjectionRe
     if result.detected:
         logger.warning(
             "🚨 [AI600-003] Indirect injection detected in tool response: "
-            "tool=%s pattern=%s (AI 600-1 §2.3 — blocking response)",
+            "tool=%s pattern=%s (citation=%s — blocking response)",
             tool_name,
             result.pattern_matched,
+            get_injection_citation(),
         )
     return result

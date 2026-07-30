@@ -475,6 +475,17 @@ HITL_CITATIONS: dict[str, str] = {
 }
 HITL_CITATION_DEFAULT: str = "ISO 42001 A.8.4 (AI system operation controls)"
 
+# FINDING-09 — HITL SLA hours, keyed identically to HITL_CITATIONS above.
+# SR 26-2 §3.2 (4-hour SLA) has no legal force outside US_FED; EU_ECB and
+# APAC_MAS deployments must use their respective regional SLAs.
+# See docs/governance/HUMAN_OVERSIGHT_SCOPE.md#sla-requirements-by-region.
+HITL_SLA_HOURS: dict[str, float] = {
+    "US_FED": 4.0,
+    "EU_ECB": 2.0,
+    "APAC_MAS": 1.0,
+}
+HITL_SLA_HOURS_DEFAULT: float = 4.0  # ISO 42001 §A.8.4 fallback
+
 # PII audit retention authority — jurisdiction-specific data retention law
 PII_RETENTION_AUTHORITY: dict[str, str] = {
     "US_FED": "FISMA AU-11",

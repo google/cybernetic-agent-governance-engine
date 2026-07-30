@@ -256,48 +256,48 @@ def stamp_iso_control(span, control_id: str, region: str) -> None:
 
 ---
 
-### FINDING-07 🟡 MEDIUM — `pii_audit_retention_days` hardcodes FISMA AU-11 as universal default
+### FINDING-07 ✅ REMEDIATED — `pii_audit_retention_days` hardcodes FISMA AU-11 as universal default
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `src/gateway/governance/schemas/thresholds.py:129` |
+| **File** | `src/gateway/governance/schemas/thresholds.py` |
 | **Violation** | Type 3 — Insufficient Namespacing |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-2, R-6 |
 
-**Issue:** `pii_audit_retention_days: int = 90  # FISMA AU-11` hardcodes a US federal retention requirement as the universal Pydantic default. EU_ECB deployments are subject to GDPR Art. 5(1)(e) storage limitation; APAC_MAS to MAS Notice 655.
+**Issue:** `pii_audit_retention_days: int = 90  # FISMA AU-11` hardcoded a US federal retention requirement as the universal Pydantic default. EU_ECB deployments are subject to GDPR Art. 5(1)(e) storage limitation; APAC_MAS to MAS Notice 655.
 
-**Remediation:** Remove the hardcoded default. Load retention days from the appropriate baseline JSON (`US_FED_BASELINE.json`, `EU_ECB_BASELINE.json`, `APAC_MAS_BASELINE.json`) based on `CAGE_DEPLOYMENT_REGION`. Add a `pii_audit_retention_authority: str` field that carries the applicable regulatory citation.
+**Status: ✅ REMEDIATED.** `GovernanceThresholds.pii_audit_retention_authority` now resolves via `_resolve_pii_retention()`, which reads `CAGE_DEPLOYMENT_REGION` at call time and looks up the citation from `constants.PII_RETENTION_AUTHORITY` (excluded from the architecture guardrail — see `tests/test_governance_architecture.py`). An explicit value for either field in `governance_thresholds.json` still overrides the region-derived default. Covered by `tests/test_governance_thresholds_pii_retention.py`.
 
 ---
 
-### FINDING-08 🟡 MEDIUM — `pii_audit_log()` cites FISMA AU-11 universally
+### FINDING-08 ✅ REMEDIATED — `pii_audit_log()` cites FISMA AU-11 universally
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `src/gateway/governance/pii_sanitizer.py:201` |
+| **File** | `src/gateway/governance/pii_sanitizer.py` |
 | **Violation** | Type 1 — Jurisdictional Intermixing |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-2, R-3, R-4 |
 
-**Issue:** `pii_audit_log()` cites `FISMA AU-11` as the universal retention authority with no `CAGE_DEPLOYMENT_REGION` guard.
+**Issue:** `pii_audit_log()` cited `FISMA AU-11` as the universal retention authority with no `CAGE_DEPLOYMENT_REGION` guard.
 
-**Remediation:** Add `region: str` parameter. Emit the correct citation: `FISMA AU-11` for US_FED, `GDPR Art. 5(1)(e)` for EU_ECB, `MAS Notice 655 §4.3` for APAC_MAS.
+**Status: ✅ REMEDIATED.** `pii_audit_log()` now accepts an optional `region: str | None` parameter (falling back to `CAGE_DEPLOYMENT_REGION` when omitted) and emits the correct citation via `constants.PII_RETENTION_AUTHORITY`: `FISMA AU-11` for US_FED, `GDPR Art. 5(1)(e)` for EU_ECB, `MAS Notice 655 §4.3` for APAC_MAS, with an ISO 42001 §A.9.2 fallback. The returned record now includes a `retention_authority` field. Covered by `tests/test_pii_audit_log.py::TestPiiAuditLogJurisdictionalRetentionAuthority`.
 
 ---
 
-### FINDING-09 🟡 MEDIUM — HITL and prompt injection modules declare US_FED scope in docstrings only
+### FINDING-09 ✅ REMEDIATED — HITL and prompt injection modules declare US_FED scope in docstrings only
 
 | Attribute | Value |
 |-----------|-------|
-| **Files** | `src/gateway/governance/hitl_escalator.py:15`, `src/gateway/governance/prompt_injection_detector.py:15` |
+| **Files** | `src/gateway/governance/hitl_escalator.py`, `src/gateway/governance/prompt_injection_detector.py` |
 | **Violation** | Type 2 — Missing Region Guard |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-2 |
 
-**Issue:** Both modules declare `Region: US_FED` in their docstrings but contain no runtime `CAGE_DEPLOYMENT_REGION` check. The HITL SLA of 4 hours (SR 26-2 §3.2) is a US Federal Reserve requirement applied universally.
+**Issue:** Both modules declared `Region: US_FED` in their docstrings but contained no runtime `CAGE_DEPLOYMENT_REGION` check. The HITL SLA of 4 hours (SR 26-2 §3.2) is a US Federal Reserve requirement that has no legal force outside US_FED.
 
-**Remediation:** Add runtime guards: `if os.environ.get("CAGE_DEPLOYMENT_REGION") == "US_FED":` around SR 26-2-specific SLA enforcement. For EU_ECB, apply DORA Art. 10 HITL requirements. For APAC_MAS, apply MAS FEAT §3.2 requirements.
+**Status: ✅ REMEDIATED.** `hitl_escalator.py` now exposes `get_hitl_sla_hours(region)` (4h US_FED / SR 26-2 §3.2, 2h EU_ECB / DORA Art. 10, 1h APAC_MAS / MAS FEAT §3.2, 4h ISO 42001 §A.8.4 fallback) and `get_hitl_regulatory_citation(region)`, both backed by lookup tables in `constants.py` (`HITL_SLA_HOURS`, `HITL_CITATIONS`). A new `hitl_override_audit_span()` function stamps the resolved citation onto the OTel human-override audit trail (AI600-005). `prompt_injection_detector.py` now exposes `get_injection_citation(region)` (backed by `constants.INJECTION_CITATION`) and attaches it to detection log lines; the detection logic itself remains universal by design. Covered by `tests/test_hitl_escalator.py` and `tests/test_prompt_injection_detector.py::TestGetInjectionCitation`.
 
 ---
 
@@ -1263,9 +1263,9 @@ Findings are grouped into four priority tiers based on severity and deployment r
 |----|---------|------|--------|
 | FINDING-03 | `validate_cmek_configuration()` cites NIST universally | `src/compliance_bridge/cmek_guard.py` | S |
 | FINDING-04 | `TradingKnowledgeGraph.ISO_CONTROL_MAP` embeds EU controls | `src/gateway/governance/ontology.py` | M |
-| FINDING-07 | `pii_audit_retention_days` hardcodes FISMA AU-11 | `src/gateway/governance/schemas/thresholds.py` | S |
-| FINDING-08 | `pii_audit_log()` cites FISMA AU-11 universally | `src/gateway/governance/pii_sanitizer.py` | S |
-| FINDING-09 | HITL/prompt injection modules lack runtime region guards | `src/gateway/governance/hitl_escalator.py` | S |
+| FINDING-07 | ✅ Remediated — `_resolve_pii_retention()` now resolves the citation from `constants.PII_RETENTION_AUTHORITY` at call time | `src/gateway/governance/schemas/thresholds.py` | S |
+| FINDING-08 | ✅ Remediated — `pii_audit_log()` now accepts a `region` param and emits the jurisdiction-specific citation | `src/gateway/governance/pii_sanitizer.py` | S |
+| FINDING-09 | ✅ Remediated — `get_hitl_sla_hours()` / `get_hitl_regulatory_citation()` / `get_injection_citation()` added | `src/gateway/governance/hitl_escalator.py` | S |
 | DEP-16 | NIST annotations on all K8s NetworkPolicy resources | `deployment/k8s/network-policy-hardening.yaml` | M |
 | DEP-17 | NIST SC-39 labels on all Namespace definitions | `deployment/k8s/pod-security-admission.yaml` | S |
 | DEP-19 | OPA policy bundle has no jurisdiction-specific overlay | `deployment/opa_config.yaml` | L |
@@ -1347,9 +1347,9 @@ Use this pattern as the template for the missing `eu-ecb-compliance-gate` and `a
 | FINDING-04 | 🟠 HIGH | Source Code | `src/gateway/governance/ontology.py:162` | R-3,R-6 |
 | FINDING-05 | 🟠 HIGH | Source Code | `src/compliance_bridge/types.py:285` | R-2,R-6 |
 | FINDING-06 | 🟡 MEDIUM | Source Code | `src/compliance_bridge/main.py:332` | R-2,R-3,R-4 |
-| FINDING-07 | 🟡 MEDIUM | Source Code | `src/gateway/governance/schemas/thresholds.py:129` | R-2,R-6 |
-| FINDING-08 | 🟡 MEDIUM | Source Code | `src/gateway/governance/pii_sanitizer.py:201` | R-2,R-3,R-4 |
-| FINDING-09 | 🟡 MEDIUM | Source Code | `src/gateway/governance/hitl_escalator.py:15` | R-2 |
+| FINDING-07 | ✅ Remediated — see FINDING-07 above | `src/gateway/governance/schemas/thresholds.py` | R-2,R-6 |
+| FINDING-08 | ✅ Remediated — see FINDING-08 above | `src/gateway/governance/pii_sanitizer.py` | R-2,R-3,R-4 |
+| FINDING-09 | ✅ Remediated — see FINDING-09 above | `src/gateway/governance/hitl_escalator.py`, `src/gateway/governance/prompt_injection_detector.py` | R-2 |
 | FINDING-10 | 🟢 LOW | Source Code | `src/governed_financial_advisor/utils/privacy.py:25` | R-3,R-4 |
 | DEP-01 | 🟠 HIGH | Deployment | `deploy_all.sh:238` | R-2,R-7 |
 | DEP-02 | 🟠 HIGH | Deployment | `deploy_all.sh:100` | R-7 |
