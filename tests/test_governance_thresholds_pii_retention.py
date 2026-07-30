@@ -39,22 +39,22 @@ class TestResolvePiiRetention:
 
     def test_eu_ecb_cites_gdpr(self, monkeypatch):
         monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
-        days, authority = _resolve_pii_retention()
+        _days, authority = _resolve_pii_retention()
         assert "GDPR Art. 5" in authority
 
     def test_apac_mas_cites_notice_655(self, monkeypatch):
         monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "APAC_MAS")
-        days, authority = _resolve_pii_retention()
+        _days, authority = _resolve_pii_retention()
         assert "MAS Notice 655" in authority
 
     def test_unset_region_falls_back_to_iso_42001(self, monkeypatch):
         monkeypatch.delenv("CAGE_DEPLOYMENT_REGION", raising=False)
-        days, authority = _resolve_pii_retention()
+        _days, authority = _resolve_pii_retention()
         assert "ISO 42001" in authority
 
     def test_unknown_region_falls_back_to_iso_42001(self, monkeypatch):
         monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "UNKNOWN_REGION")
-        days, authority = _resolve_pii_retention()
+        _days, authority = _resolve_pii_retention()
         assert "ISO 42001" in authority
 
 
