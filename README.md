@@ -3,13 +3,20 @@
 
 > **AI governance for regulated financial services — built-in, not bolted on.**
 
-![v2.1.0](https://img.shields.io/badge/version-2.1.0-brightgreen) ![1559 Tests Passing](https://img.shields.io/badge/tests-1559%20passing-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 8](https://img.shields.io/badge/POAM%20Closed-8-brightgreen)
+![v2.1.1](https://img.shields.io/badge/version-2.1.1-brightgreen) ![1670 Tests Passing](https://img.shields.io/badge/tests-1670%20passing-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 8](https://img.shields.io/badge/POAM%20Closed-8-brightgreen)
 
 **Universal (all regions):** ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue)
 
 **Jurisdictional Extensions:** ![SR 26-2](https://img.shields.io/badge/US__FED-SR%2026--2-orange) ![NIST AI RMF](https://img.shields.io/badge/US__FED-NIST%20AI%20RMF-orange) ![FedRAMP HIGH](https://img.shields.io/badge/US__FED-FedRAMP%20HIGH-orange) ![EU AI Act](https://img.shields.io/badge/EU__ECB-EU%20AI%20Act-purple) ![DORA](https://img.shields.io/badge/EU__ECB-DORA-purple) ![MAS FEAT](https://img.shields.io/badge/APAC__MAS-MAS%20FEAT-green)
 
 ---
+
+## What's New in v2.1.1
+
+> **Release date:** 2026-07-30 — Patch release: jurisdiction-aware compliance
+> fixes (FINDING-05/07/08/09), two production HITL bug fixes surfaced by new
+> FTRA test coverage, and a documentation completeness audit. No new features.
+> See [CHANGELOG.md](CHANGELOG.md#v211--2026-07-30) for full details.
 
 ## What's New in v2.1.0
 
@@ -41,10 +48,12 @@
 
 | Suite | Result | Date |
 |---|---|---|
-| Total | ✅ 1,559 passed / 0 failed / 40 skipped | 2026-07-27 |
+| Unit (`pytest tests/`) | ✅ 1,509 passed / 0 failed / 161 skipped | 2026-07-30 |
+| Integration (`pytest tests/ --run-integration`) | ✅ 1,622 passed / 0 failed / 48 skipped | 2026-07-30 |
+| Total | ✅ 1,670 collected, 0 failed | 2026-07-30 |
 
-Tests run against a live GKE cluster. See [infra/DEPLOYMENT_GUIDE.md](infra/DEPLOYMENT_GUIDE.md) for cluster setup instructions.
-Skipped tests: EU_ECB region-specific tests and CI-only latency budget tests.
+Tests run against a live GKE cluster (`governance-cluster-2`, project `laah-cybernetics`). See [infra/DEPLOYMENT_GUIDE.md](infra/DEPLOYMENT_GUIDE.md) for cluster setup instructions.
+Skipped tests: the 48 integration skips are region-specific tests (`eu_ecb`, `apac_mas`) that require `CAGE_DEPLOYMENT_REGION` set to a non-US_FED value — expected behaviour for a US_FED cluster posture.
 
 ---
 
@@ -418,7 +427,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ### Run Tests
 
 ```bash
-bash setup_test_env.sh && python -m pytest tests/   # 1,559 tests passing, 0 failed (40 skipped — 0 regressions; v2.1.0 2026-07-27)
+bash setup_test_env.sh && python -m pytest tests/   # 1,509 unit tests passing, 0 failed (161 skipped); 1,622 integration passing, 0 failed (48 skipped — v2.1.1 2026-07-30)
 ```
 
 ---
@@ -554,7 +563,7 @@ Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 
 > **Release date:** 2026-06-08 — Stable release: Token Quota Proxy, PII Sanitizer, UCA Logger, gateway CVE remediation, seal enforcement verification, all universal Lula assertions PASS
 >
-> See [What's New in v2.1.0](#whats-new-in-v210) above for the latest additions.
+> See [What's New in v2.1.1](#whats-new-in-v211) above for the latest additions.
 
 ### Bug Fixes
 
