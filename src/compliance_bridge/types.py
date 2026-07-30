@@ -40,15 +40,13 @@ with NIST SP 800-53 / FedRAMP (US_FED only) and EU AI Act (EU_ECB only) controls
 Restructured into _UNIVERSAL_CONTROLS + _JURISDICTIONAL_CONTROLS with get_control_meta()
 accessor so each region only receives its applicable controls.
 
-FINDING-05 (HIGH): EVIDENCE_SLA_SECONDS mixed ISO and NIST SLA targets in a flat
-dict. Restructured into _UNIVERSAL_SLA + _JURISDICTIONAL_SLA with get_sla_seconds()
-accessor so the SLA monitor can alert only on controls applicable to the active
-region. NOTE (partial remediation): sla_monitor.py does not yet call
-get_sla_seconds(region) — it still imports the deprecated EVIDENCE_SLA_SECONDS
-alias directly, so jurisdictional SLA targets (_JURISDICTIONAL_SLA) are not yet
-monitored in any region. See FINDING-05 in
-docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md for the
-tracked remaining work.
+FINDING-05 (HIGH, REMEDIATED): EVIDENCE_SLA_SECONDS mixed ISO and NIST SLA
+targets in a flat dict. Restructured into _UNIVERSAL_SLA + _JURISDICTIONAL_SLA
+with get_sla_seconds() accessor so the SLA monitor can alert only on controls
+applicable to the active region. sla_monitor.py now calls
+get_sla_seconds(CAGE_DEPLOYMENT_REGION) via its _active_sla_seconds() helper,
+resolved fresh on every poll cycle. See FINDING-05 in
+docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md.
 
 src/governed_financial_advisor/utils/langfuse_utils.py imports ISO_CONTROL_MAP
 from here (single source of truth). src/gateway/governance/ontology.py keeps
@@ -382,14 +380,16 @@ for _cid, _meta in _ALL_CONTROLS.items():
 SUPPORTED_FRAMEWORKS: list[str] = sorted(FRAMEWORK_CONTROLS.keys())
 
 # ---------------------------------------------------------------------------
-# FINDING-05 (HIGH) — Region-keyed SLA targets
+# FINDING-05 (HIGH, REMEDIATED) — Region-keyed SLA targets
 #
 # _UNIVERSAL_SLA: ISO 42001 controls only — applicable in all regions.
 # _JURISDICTIONAL_SLA: region-keyed SLA overrides for jurisdictional controls.
 #
-# The SLA monitor background task must call get_sla_seconds(region) rather
-# than iterating EVIDENCE_SLA_SECONDS directly, so that NIST SLA targets
-# (SC-7, SC-8) do not generate spurious breach alerts in EU_ECB / APAC_MAS.
+# The SLA monitor background task (src/compliance_bridge/sla_monitor.py) calls
+# get_sla_seconds(region) rather than iterating EVIDENCE_SLA_SECONDS directly,
+# so that NIST SLA targets (SC-7, SC-8) do not generate spurious breach alerts
+# in EU_ECB / APAC_MAS, and jurisdictional targets are monitored in their
+# applicable region.
 # ---------------------------------------------------------------------------
 
 _UNIVERSAL_SLA: dict[str, int] = {

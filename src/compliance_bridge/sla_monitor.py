@@ -17,17 +17,25 @@ sla_monitor.py — Evidence Age SLA Background Monitor  (Tier 2.5)
 
 Implements NIST SP 800-53 CA-7 (Continuous Monitoring) by periodically
 polling per-control compliance metrics and firing notifier alerts when
-evidence age exceeds the per-control SLA defined in EVIDENCE_SLA_SECONDS.
+evidence age exceeds the per-control SLA for the active deployment region
+(see get_sla_seconds() in types.py).
 
 Lifecycle:
   - Started as an asyncio background task in compliance_bridge/main.py lifespan.
   - Polls every EVIDENCE_SLA_POLL_INTERVAL_SECONDS (default: 300 = 5 min).
-  - Each poll calls get_compliance_metrics() for every SLA-gated control.
+  - Each poll calls get_compliance_metrics() for every SLA-gated control
+    applicable to CAGE_DEPLOYMENT_REGION (universal ISO 42001 controls plus
+    any jurisdictional controls for the active region — FINDING-05).
   - On SLA breach, calls notifier.send_critical_alert() with a synthetic
     OscalFinding (result="FAIL", remarks="Evidence SLA breach").
   - Startup grace period is respected — no alerts during grace window.
 
 Environment variables:
+  CAGE_DEPLOYMENT_REGION             — one of "US_FED", "EU_ECB", "APAC_MAS".
+                                        Unset/unrecognised values monitor
+                                        universal ISO 42001 SLA targets only
+                                        (mirrors get_control_meta() region
+                                        resolution in main.py).
   EVIDENCE_SLA_POLL_INTERVAL_SECONDS — poll cadence (default: 300)
   EVIDENCE_SLA_DISABLED              — set to "1" to disable the monitor
 """
@@ -41,7 +49,7 @@ from datetime import datetime, timezone
 
 from .metrics import get_compliance_metrics
 from .notifier import create_notifier
-from .types import EVIDENCE_SLA_SECONDS, OscalFinding
+from .types import OscalFinding, get_sla_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +66,30 @@ def _poll_interval() -> int:
     )
 
 
+def _active_sla_seconds() -> dict[str, int]:
+    """Return the SLA thresholds applicable to the active deployment region.
+
+    Reads CAGE_DEPLOYMENT_REGION fresh on every call (not cached at import
+    time) so that runtime region changes and per-test env var patches are
+    respected — mirrors the active_region resolution pattern used by
+    GET /v1/controls and GET /v1/controls/summary in main.py.  Defaults to
+    "" (empty string) when unset, which resolves to the universal ISO 42001
+    SLA targets only (get_sla_seconds ignores unrecognised region values).
+
+    FINDING-05: this replaces the previous direct iteration over the
+    deprecated flat EVIDENCE_SLA_SECONDS alias, which silently excluded
+    jurisdictional SLA targets (SC-7/SC-8 for US_FED, Article 12 for EU_ECB,
+    MAS-FEAT-1 for APAC_MAS) in every region.
+    """
+    region = os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+    return get_sla_seconds(region)
+
+
 async def _check_sla_once() -> list[str]:
     """Check all SLA-gated controls. Returns list of breached control IDs."""
     breached: list[str] = []
 
-    for control_id, sla_seconds in EVIDENCE_SLA_SECONDS.items():
+    for control_id, sla_seconds in _active_sla_seconds().items():
         try:
             metrics = await get_compliance_metrics(control_id, window_hours=24)
 
@@ -102,10 +129,11 @@ async def _fire_sla_alerts(breached: list[str]) -> None:
         return
 
     notifier = create_notifier()
+    sla_seconds_map = _active_sla_seconds()
     findings: list[OscalFinding] = []
     for control_id in breached:
         metrics = await get_compliance_metrics(control_id, window_hours=24)
-        sla_h = EVIDENCE_SLA_SECONDS[control_id] / 3600
+        sla_h = sla_seconds_map[control_id] / 3600
         age_h = metrics.evidence_age_seconds / 3600
         findings.append(
             OscalFinding(
@@ -151,10 +179,12 @@ async def run_sla_monitor() -> None:
         return
 
     poll_interval = _poll_interval()
+    active_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
     logger.info(
-        "[sla_monitor] Starting evidence SLA monitor. Poll interval: %ds. Controls: %s",
+        "[sla_monitor] Starting evidence SLA monitor. Poll interval: %ds. Region: %s. Controls: %s",
         poll_interval,
-        ", ".join(EVIDENCE_SLA_SECONDS.keys()),
+        active_region or "(unset — universal ISO 42001 only)",
+        ", ".join(_active_sla_seconds().keys()),
     )
 
     try:
