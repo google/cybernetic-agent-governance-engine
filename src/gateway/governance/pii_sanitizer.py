@@ -70,6 +70,7 @@ logger = logging.getLogger("Gateway.Governance.PIISanitizer")
 def _get_region() -> str:
     return os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
 
+
 # ---------------------------------------------------------------------------
 # AI600-002 — Presidio score threshold (configurable per jurisdiction).
 #

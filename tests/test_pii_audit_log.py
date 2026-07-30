@@ -154,12 +154,16 @@ class TestPiiAuditLogJurisdictionalRetentionAuthority:
 
     def test_apac_mas_cites_notice_655(self, monkeypatch):
         monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "APAC_MAS")
-        record = pii_audit_log(trace_id="trace-apac", entity_types=["SSN"], redacted=True)
+        record = pii_audit_log(
+            trace_id="trace-apac", entity_types=["SSN"], redacted=True
+        )
         assert "MAS Notice 655" in record["retention_authority"]
 
     def test_unset_region_falls_back_to_iso_42001(self, monkeypatch):
         monkeypatch.delenv("CAGE_DEPLOYMENT_REGION", raising=False)
-        record = pii_audit_log(trace_id="trace-none", entity_types=["SSN"], redacted=True)
+        record = pii_audit_log(
+            trace_id="trace-none", entity_types=["SSN"], redacted=True
+        )
         assert "ISO 42001" in record["retention_authority"]
 
     def test_explicit_region_parameter_overrides_environment(self, monkeypatch):
