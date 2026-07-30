@@ -88,7 +88,7 @@ The Privacy Impact Assessment ([`compliance/pia/PRIVACY_IMPACT_ASSESSMENT.md`](.
 | CA (Security Assessment)             | 19%      | Lula 6h CronJob; SAR target 2026Q1                                                                                  |
 | CM (Configuration Management)        | 32%      | `config/governance_thresholds.json`; Terraform IaC                                                                         |
 | IA (Identification & Authentication) | 15%      | HMAC routing seals; no MFA; no account management procedures                                                        |
-| IR (Incident Response)               | 28%      | [`docs/IR_PLAN.md`](../security/IR_PLAN.md) (draft); `GovernanceEventBus`                                                    |
+| IR (Incident Response)               | 28%      | `GovernanceEventBus`; IR-6 reporting implemented (see [`docs/POAM.md`](../POAM.md)); full IRP authorship is an adopter responsibility for real deployments |
 | RA (Risk Assessment)                 | 15%      | [`compliance/rar/RISK_ASSESSMENT_REPORT.md`](../../compliance/rar/RISK_ASSESSMENT_REPORT.md); Lula automated checks |
 | SC (System & Communications)         | 33%      | `NetworkPolicy` enforcement; **Linkerd mTLS (FIND-011 resolved)**              |
 | SI (System & Information Integrity)  | 42%      | Presidio PII detection; NeMo guardrails; Aho-Corasick scanning                                                      |

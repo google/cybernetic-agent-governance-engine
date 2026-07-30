@@ -782,7 +782,7 @@ Source: [`tests/red_team/`](../../tests/red_team/), [`src/governed_financial_adv
 
 ## 11. Security Assessment Findings Summary
 
-Sources: [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md), [`docs/SECURITY_ASSESSMENT_PLAN.md`](../security/SECURITY_ASSESSMENT_PLAN.md), [`docs/POAM.md`](../compliance/cross-region/POAM.md)
+Sources: [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md), [`docs/POAM.md`](../POAM.md)
 
 > ⚠️ **Overall Assessment: HIGH Risk — ATO Not Recommended**
 
@@ -801,12 +801,19 @@ Sources: [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md), [
 
 ### Supporting Security Documents
 
-| Document                                                               | Purpose                            |
-| ---------------------------------------------------------------------- | ---------------------------------- |
-| [`docs/SECURITY_ASSESSMENT_PLAN.md`](../security/SECURITY_ASSESSMENT_PLAN.md)   | Security Assessment Plan (SAP)     |
-| [`docs/IR_PLAN.md`](../security/IR_PLAN.md)                                     | Incident Response Plan (draft)     |
-| [`docs/CHANGE_MANAGEMENT_PROCESS.md`](../governance/CHANGE_MANAGEMENT_PROCESS.md) | Change Management Process          |
-| [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md)   | Security Assessment Report Q1 2026 |
+| Document                                                             | Purpose                            |
+| --------------------------------------------------------------------- | ---------------------------------- |
+| [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md) | Security Assessment Report Q1 2026 |
+
+> **Note (FIND-006, FIND-007):** Draft Incident Response Plan, Security
+> Assessment Plan, and Change Management Process documents previously lived
+> under `docs/security/` and `docs/governance/`. They were removed — CAGE
+> is a reference architecture, not an operating organization, and fictional
+> `[TBD]` role incumbents and AO sign-off blocks provided no engineering
+> value. Adopters deploying CAGE in a real regulated environment author
+> their own IRP/SAP/change-management process using the control mapping in
+> `docs/compliance/` and the engineering standards in
+> [`AGENTS.md`](../../AGENTS.md) as the starting point.
 
 ---
 

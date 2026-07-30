@@ -260,7 +260,6 @@ When submitting policies via `POST /governance/ingest-policy`:
 | Document | Role |
 |---|---|
 | [`docs/CAGE_OPEN_INTEROP_SPEC.md`](CAGE_OPEN_INTEROP_SPEC.md) | Full external API surface contract |
-| [`docs/project/IMPLEMENTATION_PLAN_V2.md`](project/IMPLEMENTATION_PLAN_V2.md) | Phase A implementation plan |
 | [`src/gateway/governance/ingress/policy_translator.py`](../src/gateway/governance/ingress/policy_translator.py) | Unified ingress pipeline |
 | [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py) | `ControlRegistry` and `GovernanceControl` enum |
 | [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) | `validate_action()` — the single choke point |

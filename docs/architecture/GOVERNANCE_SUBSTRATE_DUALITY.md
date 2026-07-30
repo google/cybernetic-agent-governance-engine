@@ -69,8 +69,8 @@ committed code.
 This is the **handshake** the framing describes. CAGE already implements the
 right half of this handshake (substrate enforcement). The left half — ingesting
 OSCAL/Lula policy declarations and compiling them into CAGE enforcement
-artifacts — is the Phase A work in
-[`IMPLEMENTATION_PLAN_V2.md`](../project/IMPLEMENTATION_PLAN_V2.md).
+artifacts — is proposed future work (previously tracked as "Phase A" in a
+now-removed implementation plan; see §9 for the current action items).
 
 Current state of the handshake:
 
@@ -105,8 +105,8 @@ developer-authored OSCAL/Lula specs.
 ## 3. The Handshake Architecture — What Needs to Be Built
 
 To make the "policy-as-code feeds into infrastructure-as-code" claim
-technically complete, three new components are required. These map directly to
-Phase A of [`IMPLEMENTATION_PLAN_V2.md`](../project/IMPLEMENTATION_PLAN_V2.md).
+technically complete, three new components are required — see the action
+items in §9.
 
 ### 3.1 OSCAL Policy Ingestion Adapter
 
@@ -272,7 +272,7 @@ its technical substantiation in the CAGE codebase:
 |---|---|---|
 | "machine-readable, out-of-process invariants" | OPA Rego AST compiled from STPA UCAs; OPA runs out-of-process | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) |
 | "physically gate the runtime" | Redis atomic Lua CBF check+commit; HMAC routing seal | [`cbf.py`](../../src/gateway/governance/cbf.py), [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
-| "policy-as-code feeds into infrastructure-as-code" | Phase A ingress adapters (in progress); `stpa_compiler.py` already compiles CAGE YAML to enforcement artifacts | [`IMPLEMENTATION_PLAN_V2.md`](../project/IMPLEMENTATION_PLAN_V2.md) |
+| "policy-as-code feeds into infrastructure-as-code" | Ingress adapters proposed but not yet implemented; `stpa_compiler.py` already compiles CAGE YAML to enforcement artifacts | See §9 action items |
 | "governance frameworks to manage the logic of risk" | `ControlRegistry` resolves CTRL_* IDs to NIST SP 800-53 / ISO 42001 / SR 26-2 citations | [`constants.py`](../../src/gateway/governance/constants.py) |
 | "substrate engines to enforce the physics of compliance" | Discrete-time CBF (Ames et al. IEEE TAC 2017) — a mathematical theorem, not a policy rule | [`cbf.py`](../../src/gateway/governance/cbf.py) |
 | "at the commit boundary" | `atomic_verify_and_commit()` — single Lua hop, zero TOCTOU | [`cbf.py`](../../src/gateway/governance/cbf.py) |
@@ -322,8 +322,7 @@ ACS and AAIF formats but not OSCAL/Lula directly.
 | `POST /governance/ingest-policy` | CI/CD-callable policy ingestion endpoint | Extend `src/gateway/server/hybrid_server.py` |
 
 **Change category:** Cat-N (Normal) — Python modules only, no new
-infrastructure. Extend Phase A scope in
-[`IMPLEMENTATION_PLAN_V2.md`](../project/IMPLEMENTATION_PLAN_V2.md).
+infrastructure.
 
 **Compliance note:** Adding `oscal_adapter.py` touches NIST SP 800-53 control
 implementations. OSCAL component update in `compliance/oscal/` required within
@@ -388,7 +387,6 @@ document (and corresponding OpenAPI schema) that defines:
 | Document | Relationship to this analysis |
 |---|---|
 | [`SUBSTRATE_MOAT_STRATEGY.md`](SUBSTRATE_MOAT_STRATEGY.md) | Parent document — this analysis extends the substrate moat framing with the Governance Layer / Enforcement Substrate vocabulary and maps it to new functionality |
-| [`IMPLEMENTATION_PLAN_V2.md`](../project/IMPLEMENTATION_PLAN_V2.md) | Phase A work items (ACS/AAIF ingress adapters) are the engineering instantiation of the "policy-as-code feeds into infrastructure-as-code" claim; this analysis adds OSCAL/Lula adapters to Phase A scope |
 | [`CAGE_OPEN_INTEROP_SPEC.md`](../CAGE_OPEN_INTEROP_SPEC.md) | The external API surface that exposes the substrate contract; needs §11 (Policy Ingestion API) and §12 (Governance Webhook) added |
 | [`CAGE_ONE_PAGER.md`](../project/CAGE_ONE_PAGER.md) | The CISO-facing summary; the "Governance Layer vs. Enforcement Substrate" vocabulary should be incorporated into the Problem/Solution framing |
 | [`CAGE_AGW_SERVICE_EXTENSION_RESEARCH.md`](CAGE_AGW_SERVICE_EXTENSION_RESEARCH.md) | The AGW Service Extension (Phase B) is the network-layer instantiation of the substrate — AGW owns the identity and network moat; CAGE owns the state and invariant moat; the two-layer model maps directly onto the AGW + CAGE defense-in-depth stack |
@@ -430,28 +428,25 @@ close the audit cycle:
 
 The gap — the left side of the handshake — is the ingestion path from
 Governance Layer outputs (OSCAL, Lula, ACS, AAIF) into CAGE enforcement
-artifacts. Phase A of [`IMPLEMENTATION_PLAN_V2.md`](../project/IMPLEMENTATION_PLAN_V2.md)
-closes this gap. When Phase A ships, the handshake is complete and the
-"policy-as-code feeds into infrastructure-as-code" claim is technically
-substantiated end-to-end.
+artifacts. Closing this gap (see the action items in §9) would complete the
+handshake and technically substantiate the "policy-as-code feeds into
+infrastructure-as-code" claim end-to-end.
 
 ---
 
 ## 9. Recommended Next Steps
 
-| Action | Owner | Priority | Change category |
-|---|---|---|---|
-| Add `oscal_adapter.py` and `lula_adapter.py` to Phase A scope in `IMPLEMENTATION_PLAN_V2.md` | Engineering lead | HIGH | Cat-N |
-| Add `POST /governance/ingest-policy` to `CAGE_OPEN_INTEROP_SPEC.md` §11 | Engineering lead | HIGH | Cat-S |
-| Draft `docs/SUBSTRATE_CONTRACT.md` — versioned substrate contract specification | Engineering lead | HIGH | Cat-S |
-| Incorporate "Governance Layer vs. Enforcement Substrate" vocabulary into `CAGE_ONE_PAGER.md` Problem/Solution framing | Engineering lead | MEDIUM | Cat-S |
-| Add `governance_webhook.py` and `POST /v1/webhooks/register` to Phase A extension | Engineering lead | MEDIUM | Cat-N |
-| Update `CAGE_OPEN_INTEROP_SPEC.md` §12 with Governance Webhook specification | Engineering lead | MEDIUM | Cat-S |
+| Action | Priority |
+|---|---|
+| Implement `oscal_adapter.py` and `lula_adapter.py` OSCAL/Lula policy ingestion adapters | HIGH |
+| Add `POST /governance/ingest-policy` to `CAGE_OPEN_INTEROP_SPEC.md` §11 | HIGH |
+| Incorporate "Governance Layer vs. Enforcement Substrate" vocabulary into `CAGE_ONE_PAGER.md` Problem/Solution framing | MEDIUM |
+| Add `governance_webhook.py` and `POST /v1/webhooks/register` | MEDIUM |
+| Update `CAGE_OPEN_INTEROP_SPEC.md` §12 with Governance Webhook specification | MEDIUM |
 
-**Change management:** All items above are Cat-S (Standard) or Cat-N (Normal).
-No Cat-M (Major) changes are implied by this analysis. The Phase B AGW Service
-Extension (Cat-M) is addressed separately in
-[`IMPLEMENTATION_PLAN_V2.md`](../project/IMPLEMENTATION_PLAN_V2.md) §3.
+See [`SUBSTRATE_CONTRACT.md`](../SUBSTRATE_CONTRACT.md) for the current
+versioned substrate contract specification, which already exists and
+partially supersedes the ingestion-gap analysis above.
 
 ---
 

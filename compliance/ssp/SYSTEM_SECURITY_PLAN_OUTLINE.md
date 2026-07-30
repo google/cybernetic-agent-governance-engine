@@ -94,7 +94,7 @@ _List other individuals who have security roles and responsibilities for this sy
 | AI Model Operator    | [NAME — TBD]      | [ORG]        | [PHONE] | [EMAIL] |
 | System Administrator | [NAME — TBD]      | [ORG]        | [PHONE] | [EMAIL] |
 
-[Add rows for all individuals listed in `docs/ROLES_AND_RESPONSIBILITIES.md`.]
+[Add rows for all individuals with a security role for this deployment.]
 
 ---
 
@@ -102,7 +102,7 @@ _List other individuals who have security roles and responsibilities for this sy
 
 _Document who is designated as the Information System Security Officer (ISSO) or equivalent. Include a signed acknowledgement from the ISSO accepting security responsibility. Reference the full Roles and Responsibilities document for complete role definitions._
 
-**Cross-reference:** [`docs/ROLES_AND_RESPONSIBILITIES.md`](../../docs/governance/ROLES_AND_RESPONSIBILITIES.md)
+[A real deployment maintains its own Roles and Responsibilities document as a cross-reference here.]
 
 The following individual has been designated as the ISSO for the CAGE system and accepts responsibility for coordinating and overseeing all security activities:
 
@@ -329,7 +329,7 @@ _The following documents constitute the NIST RMF authorization package and relat
 | FIPS 199 Security Categorization      | [`compliance/categorization/FIPS199_CATEGORIZATION.md`](../categorization/FIPS199_CATEGORIZATION.md) | Draft — Pending AO Signature |
 | System Security Plan (this document)  | [`compliance/ssp/SYSTEM_SECURITY_PLAN_OUTLINE.md`](SYSTEM_SECURITY_PLAN_OUTLINE.md)                  | Stub — Pending Completion    |
 | Plan of Action and Milestones         | [`docs/POAM.md`](../../docs/POAM.md)                                                                                                                                 | Active (23 items)            |
-| Roles and Responsibilities            | [`docs/ROLES_AND_RESPONSIBILITIES.md`](../../docs/governance/ROLES_AND_RESPONSIBILITIES.md)                     | Draft                        |
+| Roles and Responsibilities            | [Adopter-authored — not included in this reference architecture]                     | N/A                        |
 | Information Type Registry             | [`compliance/oscal/information-type-registry.yaml`](../oscal/information-type-registry.yaml)         | Complete (v1.0)              |
 | Security Assessment Report (SAR)      | TBD — to be created post-assessment                                                                  | Not Started                  |
 | Authorization to Operate (ATO) Letter | TBD — issued by AO upon authorization                                                                | Not Started                  |
