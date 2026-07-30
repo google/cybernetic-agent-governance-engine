@@ -237,6 +237,8 @@ def stamp_iso_control(span, control_id: str, region: str) -> None:
 
 **Remediation:** Apply the same split pattern as FINDING-01: `_UNIVERSAL_SLA` (ISO 42001 controls only) + `_JURISDICTIONAL_SLA` per region. The SLA monitor must call `get_sla_seconds(region)` rather than iterating the flat dict.
 
+**Status: 🟡 PARTIALLY REMEDIATED.** `src/compliance_bridge/types.py` now defines `_UNIVERSAL_SLA`, `_JURISDICTIONAL_SLA`, and the `get_sla_seconds(region)` accessor exactly as recommended above. However, `src/compliance_bridge/sla_monitor.py` (the actual consumer) still imports and iterates the deprecated `EVIDENCE_SLA_SECONDS` backward-compat alias directly, rather than calling `get_sla_seconds(CAGE_DEPLOYMENT_REGION)`. The original spurious-alert risk for NIST/EU/MAS-specific controls is therefore neutralized (those controls are simply never monitored for staleness in any region, since `EVIDENCE_SLA_SECONDS` now only contains the universal ISO 42001 subset) — but the jurisdictional SLA coverage the accessor was built to provide is not yet wired up. Remaining work: update `sla_monitor.py` to call `get_sla_seconds()` with the active region. See also `docs/technical-report/06-COMPLIANCE-STANDARDS.md` §5.3.1.
+
 ---
 
 ### FINDING-06 🟡 MEDIUM — `/v1/controls` endpoint returns all frameworks to all regions
@@ -1251,7 +1253,7 @@ Findings are grouped into four priority tiers based on severity and deployment r
 | DEP-07 | `compliance-bridge.yaml` sets `OSCAL_S3_REGION: "auto"` | `deployment/k8s/compliance-bridge.yaml` | S |
 | DEP-11 | `app_secrets/main.tf` hardcodes `AWS_REGION = "us-east-1"` | `infra/modules/app_secrets/main.tf` | S |
 | DEP-12 | No `eu-prod.tfvars` or `apac-prod.tfvars` | `infra/targets/gcp-gke/` | M |
-| FINDING-05 | `EVIDENCE_SLA_SECONDS` mixes ISO and NIST SLA targets | `src/compliance_bridge/types.py` | M |
+| FINDING-05 | `sla_monitor.py` still consumes deprecated flat `EVIDENCE_SLA_SECONDS` instead of region-aware `get_sla_seconds()` (data model already split in `types.py`) | `src/compliance_bridge/sla_monitor.py` | S |
 | CA-02 | AI 600-1 Lula stubs lack `cage.region: US_FED` metadata | `compliance/lula/` | S |
 | CA-01 | `lula-validation-sc4.yaml` has three incompatible identities | `compliance/lula/` | S |
 
