@@ -404,7 +404,7 @@ This positioning is credible because AGW explicitly supports **Service Extension
 **What is missing:**
 CAGE has no integration with Google Agent Gateway's Service Extensions mechanism. Service Extensions allow AGW to delegate authorization decisions to a custom gRPC endpoint implementing the **Envoy `ext_authz` v3 protocol** (`envoy.service.auth.v3.Authorization.Check`) — CAGE's [`hybrid_server.py`](../../src/gateway/server/hybrid_server.py) would host this endpoint, making CAGE the semantic governance layer that AGW calls before allowing egress MCP traffic. On approval, the adapter injects the `X-CAGE-Routing-Seal` header so the backend MCP server can verify governance authority before executing the tool.
 
-**Full protocol and implementation analysis:** [`CAGE_AGW_SERVICE_EXTENSION_RESEARCH.md`](CAGE_AGW_SERVICE_EXTENSION_RESEARCH.md)
+**Full protocol and implementation analysis:** see the proposed implementation steps below.
 
 **Proposed implementation:**
 1. A **Service Extension Adapter** (`src/gateway/server/agw_service_extension.py`, new) — an async gRPC servicer implementing `envoy.service.auth.v3.Authorization.Check` that parses the JSON-RPC 2.0 MCP tool call body, delegates to [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/symbolic_governor.py:837), and returns `OkHttpResponse` (with `X-CAGE-Routing-Seal` header) or `DeniedHttpResponse(403)`.

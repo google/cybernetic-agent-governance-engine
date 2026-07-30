@@ -389,7 +389,7 @@ document (and corresponding OpenAPI schema) that defines:
 | [`SUBSTRATE_MOAT_STRATEGY.md`](SUBSTRATE_MOAT_STRATEGY.md) | Parent document — this analysis extends the substrate moat framing with the Governance Layer / Enforcement Substrate vocabulary and maps it to new functionality |
 | [`CAGE_OPEN_INTEROP_SPEC.md`](../CAGE_OPEN_INTEROP_SPEC.md) | The external API surface that exposes the substrate contract; needs §11 (Policy Ingestion API) and §12 (Governance Webhook) added |
 | [`CAGE_ONE_PAGER.md`](../project/CAGE_ONE_PAGER.md) | The CISO-facing summary; the "Governance Layer vs. Enforcement Substrate" vocabulary should be incorporated into the Problem/Solution framing |
-| [`CAGE_AGW_SERVICE_EXTENSION_RESEARCH.md`](CAGE_AGW_SERVICE_EXTENSION_RESEARCH.md) | The AGW Service Extension (Phase B) is the network-layer instantiation of the substrate — AGW owns the identity and network moat; CAGE owns the state and invariant moat; the two-layer model maps directly onto the AGW + CAGE defense-in-depth stack |
+| [`SUBSTRATE_MOAT_STRATEGY.md` §9.6](SUBSTRATE_MOAT_STRATEGY.md#96-gap-6-no-agw-service-extension-integration-high--strategic-opportunity) | The AGW Service Extension (Phase B) is the network-layer instantiation of the substrate — AGW owns the identity and network moat; CAGE owns the state and invariant moat; the two-layer model maps directly onto the AGW + CAGE defense-in-depth stack |
 
 ---
 
