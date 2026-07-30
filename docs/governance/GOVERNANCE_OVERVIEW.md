@@ -375,13 +375,16 @@ For detailed deployment instructions, see **[deployment/README.md](../../README.
 
 ### FTRA Commencement Reachability Gate
 
-The **Fault Tree Reachability Analysis (FTRA)** gate (`src/gateway/governance/ftra/`) is a pre-pipeline check that determines whether a financial transaction can commence given the current governance state. It runs before the 7-tier `SymbolicGovernor._run_checks()` pipeline for `execute_trade` actions.
+The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)** (`src/gateway/governance/ftra/`) is a Tier 0.5 LangGraph node — inserted between `evaluator` and `safety_check` — that analyzes a proposed multi-step `ExecutionPlan` *before any step runs* to determine whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable from step 0, and routes accordingly based on Evaluator confidence.
 
-- **`ftra/classifier.py`** — classifies the current governance state into fault tree leaf conditions (CBF state, OPA verdict, DEFER queue depth, confidence score)
-- **`ftra/graph_analyzer.py`** — traverses the fault tree to compute whether the commencement state is reachable
-- **`ftra/models.py`** — `FaultTreeNode`, `ReachabilityResult`, `CommencementDecision` data models
-- **`ftra/node_factory.py`** — LangGraph node factory wrapping the FTRA gate as a composable governance node
-- **`ftra_reachability.py`** — top-level integration point; returns `CommencementDecision.BLOCKED` if commencement is unreachable, halting the pipeline before any LLM inference
+- **`ftra/classifier.py`** — `IrreversibilityClassifier` classifies each plan-step action name (via `config/ftra/terminal_registry.json`) as `IRREVERSIBLE_TERMINAL`, `REVERSIBLE`, or `READ_ONLY`; fail-closed for unregistered actions
+- **`ftra/graph_analyzer.py`** — `PlanGraphAnalyzer` builds a NetworkX `DiGraph` over `ExecutionPlan.steps` and runs DFS from step 0 to compute the reachable terminals and critical path
+- **`ftra/models.py`** — `TerminalClassification`, `FTRAVerdict` (`CLEAR` \| `HITL_REQUIRED` \| `BLOCKED`), `ReachabilityResult` data models
+- **`ftra/node_factory.py`** — `create_ftra_node()` / `route_after_ftra()` — LangGraph node factory and conditional-edge routing, wired into `src/governed_financial_advisor/graph/graph.py`
+
+**Decision semantics:** `CLEAR` proceeds to the OPA `safety_check` node. `HITL_REQUIRED` (irreversible terminal reachable, confidence ≥ 0.70) parks the thread in DeferQueue `db=1` pending human clearance. `BLOCKED` (confidence < 0.70) routes to `explainer`, halting the plan before any further LLM inference.
+
+> **Note:** `src/gateway/governance/ftra_reachability.py` is a separate, standalone `FtraReachabilityGate` scaffold committed alongside this package in the same commit. It is not imported or called by `SymbolicGovernor` or any production code path — the actual Tier 0.5 gate is exclusively `ftra/node_factory.py`.
 
 ### NeMo Guardrails — Full Integration (`src/gateway/governance/nemo/`)
 

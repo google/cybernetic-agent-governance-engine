@@ -144,6 +144,8 @@ cybernetic-governance-engine/
 | `src/gateway/governance/langgraph_harness/`                   | Reusable Factory/Builder nodes for NeMo and OPA            |
 | `src/gateway/governance/symbolic_governor.py`                 | Neuro-symbolic governance engine                           |
 | `src/gateway/governance/nemo/manager.py`                      | NeMo Guardrails integration                                |
+| `src/gateway/governance/contracts.py`                         | `Protocol` interfaces (`SafetyFilter`, `ConsensusProvider`, `PolicyClient`, `CausalGatekeeper`, `FiscalGuard`) decoupling `SymbolicGovernor` from concrete implementations — structural subtyping (PEP 544) allows any object implementing the right method signatures to substitute for a real component in tests |
+| `src/gateway/governance/singletons.py`                        | Module-level singleton construction and wiring for `SymbolicGovernor` and its dependencies (`OPAClient`, `STPAValidator`, `FiscalLimitGuard`, `safety_filter`, `consensus_engine`) — see [GAP-03](../compliance/REGION_GUARD_AUDIT.md) for the tracked single-Redis-instance regional data-residency gap |
 
 ## Governance Endpoints
 
@@ -493,17 +495,18 @@ The AGW absorption layer bridges the Agent Gateway Protocol into the CAGE govern
 
 ### FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`)
 
-The **Fault Tree Reachability Analysis (FTRA)** gate determines whether a financial transaction can commence given the current governance state. It runs as a pre-condition check before the 7-tier SymbolicGovernor pipeline for `execute_trade` actions.
+The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)** is a Tier 0.5 gate — inserted between the `evaluator` and `safety_check` LangGraph nodes — that analyzes a multi-step `ExecutionPlan` *before any step executes* to determine whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable, and if so, whether the plan's confidence score is high enough to warrant only human review rather than an outright block.
 
 | File | Purpose |
 |------|---------|
-| [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | Data models: `FaultTreeNode`, `ReachabilityResult`, `CommencementDecision` |
-| [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | Classifies governance state into fault tree leaf conditions |
-| [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | Traverses the fault tree graph to compute reachability from current state to commencement |
-| [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | LangGraph node factory — wraps the FTRA gate as a composable governance node |
-| [`ftra_reachability.py`](../../src/gateway/governance/ftra_reachability.py) | Top-level entry point; integrates FTRA result into the governance pipeline |
+| [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | Pydantic models: `TerminalClassification` (`IRREVERSIBLE_TERMINAL` \| `REVERSIBLE` \| `READ_ONLY`), `FTRAVerdict` (`CLEAR` \| `HITL_REQUIRED` \| `BLOCKED`), `ReachabilityResult` |
+| [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | `IrreversibilityClassifier` — classifies each plan-step action name via a compiled terminal registry (`config/ftra/terminal_registry.json`); fail-closed: any action absent from the registry is classified `IRREVERSIBLE_TERMINAL` |
+| [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | `PlanGraphAnalyzer` — builds a NetworkX `DiGraph` from `ExecutionPlan.steps` (linear chain by default; honors an optional `depends_on` field), runs DFS from step 0, and returns a `ReachabilityResult` with `worst_case_classification`, `reachable_terminals`, `critical_path`, and `verdict` |
+| [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | `create_ftra_node()` — LangGraph node factory; `route_after_ftra()` — conditional-edge function reading `ftra_status` from `AgentState` |
 
-**Decision semantics:** If the fault tree analysis determines that the commencement state is unreachable from the current governance state (e.g., CBF violated, OPA DENY, DEFER queue saturated), the gate returns `CommencementDecision.BLOCKED` and the pipeline halts before any LLM inference is invoked.
+**Decision semantics:** `PlanGraphAnalyzer.analyze()` returns `FTRAVerdict.CLEAR` when no `IRREVERSIBLE_TERMINAL` step is reachable from step 0 — the plan proceeds to the OPA `safety_check` node. When an irreversible terminal *is* reachable, the verdict depends on Evaluator confidence: `HITL_REQUIRED` (confidence ≥ `FRIA_ZONE_DEFER`, default 0.70) parks the thread in DeferQueue `db=1` pending synchronous human clearance; `BLOCKED` (confidence < 0.70) routes to the `explainer` node and halts the plan outright — the confidence is too low to even warrant human review. All graph-construction or DFS-traversal exceptions fail closed to `IRREVERSIBLE_TERMINAL` / `HITL_REQUIRED` or `BLOCKED`, mirroring the OPA `default stpa_allow = false` pattern. Every analysis emits an OTel `cage.ftra_analysis` span tagged `cage.ftra.ctrl_id=CTRL_FTRA_001`.
+
+> **Implementation note:** `src/gateway/governance/ftra_reachability.py` is a separate, standalone `FtraReachabilityGate` class committed alongside the `ftra/` package in the same commit. It is not imported or called anywhere in the codebase — the production FTRA gate wired into `src/governed_financial_advisor/graph/graph.py` is exclusively `ftra/node_factory.py`'s `create_ftra_node()`/`route_after_ftra()`. Treat `ftra_reachability.py` as inactive scaffold code, not a pipeline entry point.
 
 ### LangGraph Governance Harness (`src/gateway/governance/langgraph_harness/`)
 

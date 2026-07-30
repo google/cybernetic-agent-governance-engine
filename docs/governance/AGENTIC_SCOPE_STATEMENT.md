@@ -199,23 +199,31 @@ check that is independent of the LLM confidence scores.
 
 ## 6b. FTRA Commencement Reachability Gate (v2.1.0)
 
-The FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`) enforces
-that no financial transaction advisory workflow can commence unless the agent's
-LangGraph state graph contains a reachable path from the start node to a
-`HUMAN_APPROVED` terminal node. This is a **pre-execution structural check** —
-it runs before any LLM inference.
+The Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`,
+`src/gateway/governance/ftra/`) enforces that no step of a proposed
+`ExecutionPlan` can commence if it would reach an irreversible terminal action
+(e.g. `execute_trade`, `write_db`) without either sufficient Evaluator
+confidence or human clearance. The gate runs as a LangGraph node inserted
+between `evaluator` and `safety_check` — a **pre-execution, per-plan
+structural check**, not a one-time graph-compilation check.
 
 | Module | Role |
 |---|---|
-| [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | Classifies graph nodes by type (start, terminal, HITL, advisory) |
-| [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | Performs reachability analysis; raises `FTRAViolation` if no HITL path exists |
-| [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | `FTRAResult` Pydantic model with `reachable`, `path`, and `violation_reason` fields |
-| [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | LangGraph node factory — same pattern as `langgraph_harness/` |
-| [`ftra_reachability.py`](../../src/gateway/governance/ftra_reachability.py) | Top-level entry point; called by `SymbolicGovernor` at Tier 0 |
+| [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | `IrreversibilityClassifier` — classifies each plan-step action name via the compiled `config/ftra/terminal_registry.json`; fail-closed to `IRREVERSIBLE_TERMINAL` for unregistered actions |
+| [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | `PlanGraphAnalyzer` — builds a NetworkX `DiGraph` over plan steps, runs DFS from step 0, returns a `ReachabilityResult` |
+| [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | `TerminalClassification`, `FTRAVerdict` (`CLEAR` \| `HITL_REQUIRED` \| `BLOCKED`), `ReachabilityResult` |
+| [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | `create_ftra_node()` / `route_after_ftra()` — LangGraph node factory and conditional-edge routing |
 
-**Scope enforcement**: The FTRA gate is a mandatory pre-condition for the
-`governed-financial-advisor` scope. Any graph that lacks a reachable HITL path
-is rejected before the authorized action space (§1) is evaluated.
+**Scope enforcement**: FTRA is a mandatory pre-condition for the
+`governed-financial-advisor` scope. Any plan where an irreversible terminal is
+reachable is either routed to human review (`HITL_REQUIRED`) or blocked
+outright (`BLOCKED`, confidence < 0.70) before the authorized action space
+(§1) is evaluated further.
+
+> **Note:** `src/gateway/governance/ftra_reachability.py` is a separate,
+> standalone `FtraReachabilityGate` scaffold committed alongside this package
+> in the same commit. It is not called by `SymbolicGovernor` or any
+> production code path.
 
 ---
 
@@ -226,7 +234,7 @@ is rejected before the authorized action space (§1) is evaluated.
 | §2.5.1 Authorized action space | OPA policy + routing seal | `opa_node_factory.py`, `routing_seal.py` |
 | §2.5.2 Human oversight | ConsensusEngine + HITL escalator | `consensus.py`, `hitl_escalator.py` |
 | §2.5.3 Inter-agent trust | Gateway-only orchestration + CAGE-003 registry | `hybrid_server.py`, `agent_registry_adapter.py` |
-| §2.5.4 Scope limitation | CausalGatekeeper + OPA + FTRA gate | `causal_gatekeeper.py`, `ftra_reachability.py` |
+| §2.5.4 Scope limitation | CausalGatekeeper + OPA + FTRA gate | `causal_gatekeeper.py`, `ftra/node_factory.py` |
 | §3.1 Scope statement | This document | `docs/governance/AGENTIC_SCOPE_STATEMENT.md` |
 | §3.2 HITL SLA (4 hours) | DeferQueue TTL + escalation | `defer_queue.py`, `hitl_escalator.py` |
 | §4.1 Agent identity | SPIFFE SVID + Envoy ext_authz | `agent_registry_adapter.py`, `agent_gateway_adapter.py` |

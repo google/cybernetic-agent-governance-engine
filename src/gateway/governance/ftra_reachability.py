@@ -12,12 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""FTRA Tier 0.5 — Commencement Reachability Gate.
+"""FTRA Tier 0.5 — Commencement Reachability Gate (standalone scaffold — NOT WIRED IN).
 
 Performs NetworkX graph reachability analysis before the first LangGraph node
 executes. Verdicts: CLEAR / HITL_REQUIRED / BLOCKED.
 
 FTRA-001: Commencement Reachability
+
+.. warning::
+    This module was committed alongside ``src/gateway/governance/ftra/`` in the
+    same commit as a parallel, independent implementation of the FTRA concept.
+    Only ``ftra/`` (``PlanGraphAnalyzer`` + ``create_ftra_node()`` /
+    ``route_after_ftra()``) is imported by
+    ``src/governed_financial_advisor/graph/graph.py`` and actually runs in
+    production. This standalone ``FtraReachabilityGate`` class is not imported
+    or called anywhere outside this file and its dedicated test module
+    (``tests/test_ftra_reachability.py``). Treat it as an unwired scaffold, not
+    a production entry point, until it is either wired in or removed. See
+    ``docs/architecture/GATEWAY_ARCHITECTURE.md`` ("FTRA Commencement
+    Reachability Gate") for the actual production implementation.
 """
 
 import logging

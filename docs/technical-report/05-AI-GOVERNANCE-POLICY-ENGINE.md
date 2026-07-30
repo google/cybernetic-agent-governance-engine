@@ -747,17 +747,20 @@ The following governance-related risk acceptances are documented in [`compliance
 
 ## 14b. FTRA Commencement Reachability Gate (v2.1.0) **[All Regions]**
 
-The FTRA gate (`src/gateway/governance/ftra/`) is a **Tier 0 pre-execution structural invariant** that runs before any LLM inference. It enforces that the compiled LangGraph graph contains at least one execution path from the start node to a `HUMAN_APPROVED` terminal node.
+The **Forward-Looking Trajectory Reachability Analyzer** (FTRA, `CTRL_FTRA_001`, `src/gateway/governance/ftra/`) is a **Tier 0.5 pre-execution gate**, inserted between the `evaluator` and `safety_check` LangGraph nodes, that analyzes the multi-step `ExecutionPlan` produced by the Execution Analyst *before any step runs*. It determines whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable from step 0 and, if so, routes the plan to human review or blocks it outright based on Evaluator confidence.
 
 ### Implementation
 
 | Module | Role |
 |---|---|
-| [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | Classifies graph nodes: `START`, `TERMINAL`, `HITL_APPROVAL`, `ADVISORY`, `GOVERNANCE` |
-| [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | BFS/DFS reachability analysis; raises `FTRAViolation` if no HITL path exists |
-| [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | `FTRAResult(reachable: bool, path: list[str], violation_reason: str \| None)` |
-| [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | LangGraph node factory (same `GovernanceNodeInput → GovernanceNodeOutput` pattern as `langgraph_harness/`) |
-| [`ftra_reachability.py`](../../src/gateway/governance/ftra_reachability.py) | Top-level entry point called by `SymbolicGovernor` at Tier 0 |
+| [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | `IrreversibilityClassifier` — classifies each plan-step action name (via a compiled `config/ftra/terminal_registry.json`) as `IRREVERSIBLE_TERMINAL`, `REVERSIBLE`, or `READ_ONLY`. Fail-closed: unregistered actions default to `IRREVERSIBLE_TERMINAL`. |
+| [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | `PlanGraphAnalyzer` — builds a NetworkX `DiGraph` over `ExecutionPlan.steps` and runs DFS from step 0 to compute reachable terminals and the critical path |
+| [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | `TerminalClassification`, `FTRAVerdict` (`CLEAR` \| `HITL_REQUIRED` \| `BLOCKED`), `ReachabilityResult` (`worst_case_classification`, `reachable_terminals`, `critical_path`, `verdict`, `confidence_at_analysis`) |
+| [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | `create_ftra_node()` — LangGraph node factory; `route_after_ftra()` — conditional-edge routing function reading `ftra_status` from `AgentState` |
+
+**Verdict routing:** `CLEAR` → proceed to the `safety_check` OPA gate. `HITL_REQUIRED` (irreversible terminal reachable, confidence ≥ `FRIA_ZONE_DEFER` = 0.70) → park in DeferQueue `db=1` pending human clearance. `BLOCKED` (irreversible terminal reachable, confidence < 0.70) → route to `explainer`; plan halted outright. All construction/traversal errors fail closed to `HITL_REQUIRED`/`BLOCKED`, mirroring the OPA `default stpa_allow = false` pattern.
+
+> **Note:** `src/gateway/governance/ftra_reachability.py` is a standalone, unwired `FtraReachabilityGate` scaffold committed alongside this package in the same commit. It is not imported by `SymbolicGovernor` or any production code path — the actual Tier 0.5 gate is `ftra/node_factory.py`.
 
 ### Compliance Mapping
 
