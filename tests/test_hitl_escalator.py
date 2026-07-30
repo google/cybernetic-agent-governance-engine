@@ -24,6 +24,9 @@ from src.gateway.governance.hitl_escalator import (
     EscalationReason,
     EscalationRequest,
     escalate_to_human,
+    get_hitl_regulatory_citation,
+    get_hitl_sla_hours,
+    hitl_override_audit_span,
     should_escalate_for_confidence,
     should_escalate_for_consensus,
 )
@@ -198,6 +201,110 @@ class TestShouldEscalateForConfidence:
         """Default threshold is 0.95 (CTRL_AGT_001)."""
         assert should_escalate_for_confidence(0.94) is True
         assert should_escalate_for_confidence(0.95) is False
+
+
+class TestGetHitlSlaHours:
+    """FINDING-09 (MEDIUM): HITL SLA must be jurisdiction-aware.
+
+    The module previously declared "Region: US_FED" in its docstring only,
+    with no runtime CAGE_DEPLOYMENT_REGION check.
+    """
+
+    def test_us_fed_sla_is_4_hours(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
+        assert get_hitl_sla_hours() == 4.0
+
+    def test_eu_ecb_sla_is_2_hours(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
+        assert get_hitl_sla_hours() == 2.0
+
+    def test_apac_mas_sla_is_1_hour(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "APAC_MAS")
+        assert get_hitl_sla_hours() == 1.0
+
+    def test_unset_region_falls_back_to_4_hours(self, monkeypatch):
+        monkeypatch.delenv("CAGE_DEPLOYMENT_REGION", raising=False)
+        assert get_hitl_sla_hours() == 4.0
+
+    def test_explicit_region_parameter_overrides_environment(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
+        assert get_hitl_sla_hours(region="APAC_MAS") == 1.0
+
+
+class TestGetHitlRegulatoryCitation:
+    """FINDING-09 (MEDIUM): HITL regulatory citation must be jurisdiction-aware."""
+
+    def test_us_fed_cites_sr_26_2(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
+        citation = get_hitl_regulatory_citation()
+        assert "SR 26-2" in citation
+
+    def test_eu_ecb_cites_dora(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
+        citation = get_hitl_regulatory_citation()
+        assert "DORA" in citation
+
+    def test_apac_mas_cites_mas_feat(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "APAC_MAS")
+        citation = get_hitl_regulatory_citation()
+        assert "MAS FEAT" in citation
+
+    def test_unset_region_falls_back_to_iso_42001(self, monkeypatch):
+        monkeypatch.delenv("CAGE_DEPLOYMENT_REGION", raising=False)
+        citation = get_hitl_regulatory_citation()
+        assert "ISO 42001" in citation
+
+
+class TestHitlOverrideAuditSpan:
+    """hitl_override_audit_span() must produce a complete, jurisdiction-aware
+    audit record (AI600-005 / ISO 42001 §A.8.4)."""
+
+    def test_returns_all_required_attributes(self):
+        attrs = hitl_override_audit_span(
+            trace_id="trace-100",
+            reviewer_id="reviewer-123",
+            decision="OVERRIDE",
+            original_escalation_reason=EscalationReason.CONSENSUS_THRESHOLD.value,
+            reason="Verified with client via phone.",
+        )
+        required = {
+            "hitl.reviewer_id",
+            "hitl.decision",
+            "hitl.reason",
+            "hitl.original_escalation_reason",
+            "hitl.override_ts",
+            "hitl.trace_id",
+            "hitl.regulatory_citation",
+            "langfuse.trace.metadata.iso.control_id",
+            "langfuse.trace.metadata.iso.requirement",
+            "langfuse.trace.metadata.poam_ref",
+        }
+        assert required.issubset(attrs.keys())
+        assert attrs["hitl.decision"] == "OVERRIDE"
+        assert attrs["hitl.trace_id"] == "trace-100"
+        assert attrs["langfuse.trace.metadata.poam_ref"] == "AI600-005"
+        assert attrs["langfuse.trace.metadata.iso.control_id"] == "A.8.4"
+
+    def test_reason_truncated_to_500_chars(self):
+        long_reason = "x" * 1000
+        attrs = hitl_override_audit_span(
+            trace_id="trace-101",
+            reviewer_id="reviewer-456",
+            decision="UPHOLD",
+            original_escalation_reason=EscalationReason.CAUSAL_BLOCK.value,
+            reason=long_reason,
+        )
+        assert len(attrs["hitl.reason"]) == 500
+
+    def test_citation_reflects_region(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
+        attrs = hitl_override_audit_span(
+            trace_id="trace-102",
+            reviewer_id="reviewer-789",
+            decision="DEFER",
+            original_escalation_reason=EscalationReason.MANUAL_REVIEW.value,
+        )
+        assert "DORA" in attrs["hitl.regulatory_citation"]
 
 
 class TestEscalationReasonEnum:

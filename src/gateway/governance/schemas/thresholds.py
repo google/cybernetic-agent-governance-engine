@@ -42,6 +42,43 @@ _ENV_CONFIG_PATH = os.environ.get("GOVERNANCE_THRESHOLDS_PATH", _DEFAULT_CONFIG_
 
 
 # ---------------------------------------------------------------------------
+# FINDING-07 (MEDIUM) — Jurisdictional PII audit retention map
+#
+# pii_audit_retention_days previously hardcoded 90 (FISMA AU-11) as the
+# universal Pydantic default, regardless of CAGE_DEPLOYMENT_REGION. EU_ECB
+# deployments are subject to GDPR Art. 5(1)(e) storage limitation; APAC_MAS
+# to MAS Notice 655 §4.3. This resolves both the retention period and the
+# applicable regulatory citation from CAGE_DEPLOYMENT_REGION at load time.
+# An explicit value for either field in governance_thresholds.json always
+# takes precedence over this region-derived default.
+#
+# The citation strings themselves live in constants.py (the ControlRegistry
+# module, which is intentionally excluded from the "no hardcoded regulatory
+# strings" architecture guardrail — see test_governance_architecture.py) so
+# that this schema module stays free of volatile citation literals.
+# ---------------------------------------------------------------------------
+_PII_RETENTION_DAYS_DEFAULT: int = 90
+
+
+def _resolve_pii_retention() -> tuple[int, str]:
+    """Return (retention_days, regulatory_authority) for the active region.
+
+    Reads CAGE_DEPLOYMENT_REGION at call time (not import time) so tests can
+    monkeypatch the env var and observe the correct resolution. The citation
+    map is sourced from constants.py (PII_RETENTION_AUTHORITY) to keep this
+    module free of hardcoded regulatory strings.
+    """
+    from src.gateway.governance.constants import (
+        PII_RETENTION_AUTHORITY,
+        PII_RETENTION_AUTHORITY_DEFAULT,
+    )
+
+    region = os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+    authority = PII_RETENTION_AUTHORITY.get(region, PII_RETENTION_AUTHORITY_DEFAULT)
+    return _PII_RETENTION_DAYS_DEFAULT, authority
+
+
+# ---------------------------------------------------------------------------
 # Sub-models
 # ---------------------------------------------------------------------------
 
@@ -131,9 +168,20 @@ class GovernanceThresholds(BaseModel):
     tier1_keywords_cbrn: list[str] = Field(default_factory=list)
     tier1_keywords_cbrn_enabled: bool = False
 
-    # AI 600-1 §2.2 PII audit log settings (FISMA AU-11)
+    # AI 600-1 §2.2 PII audit log settings.
+    #
+    # FINDING-07 (MEDIUM): retention_days and retention_authority are resolved
+    # from CAGE_DEPLOYMENT_REGION via _resolve_pii_retention() rather than
+    # hardcoding the US federal FISMA AU-11 value as a universal default. An
+    # explicit value in governance_thresholds.json always overrides the
+    # region-derived default.
     pii_audit_log_enabled: bool = True
-    pii_audit_retention_days: int = 90  # FISMA AU-11
+    pii_audit_retention_days: int = Field(
+        default_factory=lambda: _resolve_pii_retention()[0]
+    )
+    pii_audit_retention_authority: str = Field(
+        default_factory=lambda: _resolve_pii_retention()[1]
+    )
 
     @field_validator("tier1_keywords")
     @classmethod

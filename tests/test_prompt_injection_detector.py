@@ -23,6 +23,7 @@ import pathlib
 
 from src.gateway.governance.prompt_injection_detector import (
     detect_prompt_injection,
+    get_injection_citation,
     get_injection_patterns,
 )
 
@@ -196,6 +197,41 @@ class TestAdversarialFixtures:
             "The following benign queries were incorrectly flagged as injection:\n"
             + "\n".join(f"  - {p!r} (pattern={m})" for p, m in false_positives)
         )
+
+
+class TestGetInjectionCitation:
+    """FINDING-09 (MEDIUM): prompt-injection regulatory citation must be
+    jurisdiction-aware.
+
+    The module previously declared "Region: US_FED" in its docstring only,
+    with no runtime CAGE_DEPLOYMENT_REGION check, even though detection logic
+    is universal (active in all regions).
+    """
+
+    def test_us_fed_cites_ai_600_1(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
+        citation = get_injection_citation()
+        assert "AI 600-1" in citation
+
+    def test_eu_ecb_cites_eu_ai_act(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
+        citation = get_injection_citation()
+        assert "EU AI Act" in citation
+
+    def test_apac_mas_cites_mas_feat(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "APAC_MAS")
+        citation = get_injection_citation()
+        assert "MAS FEAT" in citation
+
+    def test_unset_region_falls_back_to_iso_42001(self, monkeypatch):
+        monkeypatch.delenv("CAGE_DEPLOYMENT_REGION", raising=False)
+        citation = get_injection_citation()
+        assert "ISO 42001" in citation
+
+    def test_explicit_region_parameter_overrides_environment(self, monkeypatch):
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
+        citation = get_injection_citation(region="EU_ECB")
+        assert "EU AI Act" in citation
 
 
 class TestPatternCoverage:

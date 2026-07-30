@@ -206,19 +206,20 @@ def get_regional_profile(region: str | None = None) -> dict:
 ### GUARDED-06 — `hitl_escalator.py`: SLA Hours and Regulatory Citation
 
 **File:** `src/gateway/governance/hitl_escalator.py`
-**Lines:** 78–93 (`get_hitl_sla_hours()`), 246–261 (`get_hitl_regulatory_citation()`)
-**Sink type:** Structured log / escalation record metadata
-**Verdict:** ✅ GUARDED
+**Lines:** 73–89 (`get_hitl_sla_hours()`), 91–105 (`get_hitl_regulatory_citation()`)
+**Sink type:** Structured log / escalation record metadata / OTel span attributes (`hitl_override_audit_span()`)
+**Verdict:** ✅ GUARDED (remediated under FINDING-09 — see §3 note below; this section previously described code that did not exist in the module)
 
 **Evidence:**
 ```python
-# hitl_escalator.py lines 78-93
+# hitl_escalator.py — actual implementation
 def get_hitl_sla_hours(region: str | None = None) -> float:
-    active = region or os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
-    return _HITL_SLA_HOURS.get(active, _HITL_SLA_HOURS["US_FED"])
+    from src.gateway.governance.constants import HITL_SLA_HOURS, HITL_SLA_HOURS_DEFAULT
+    active_region = (region or _get_region()).strip().upper()
+    return HITL_SLA_HOURS.get(active_region, HITL_SLA_HOURS_DEFAULT)
 ```
 
-Both SLA hours and regulatory citation are region-dispatched. No direct storage writes occur in this module; the region guard ensures correct metadata is embedded in escalation records before they are passed to downstream sinks.
+Both SLA hours and regulatory citation are region-dispatched via lookup tables defined in `constants.py` (`HITL_SLA_HOURS`, `HITL_CITATIONS`), which is excluded from the "no hardcoded regulatory strings" architecture guardrail. No direct storage writes occur in this module; the region guard ensures correct metadata is embedded in escalation records and in the `hitl_override_audit_span()` OTel attributes before they are passed to downstream sinks.
 
 ---
 
