@@ -81,7 +81,7 @@ For EU_ECB deployments where CAGE is considered an AI product (not a service), C
 **Information required for registration:**
 - Name and contact information of the provider/deployer
 - Trade name of the AI system: "CAGE Governed Financial Advisor"
-- Version: v0.1.0
+- Version: v2.1.0
 - Purpose: Financial advisory and investment recommendation
 - Classification: High-Risk AI (Annex III §5(b))
 - Member states where deployed: [TBD — all EU_ECB deployment regions]

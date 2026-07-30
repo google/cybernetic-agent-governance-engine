@@ -6,7 +6,7 @@
 | **Date**             | 2026-06-03                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | ACTIVE — v0.1.0 stable (GO — 2026-06-08; GKE deployment verified 2026-06-03)                                |
+| **Status**           | ACTIVE — v2.1.0 stable (GO — 2026-06-08; GKE deployment verified 2026-06-03)                                |
 | **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md`, `docs/NEURO_SYMBOLIC_GOVERNANCE.md` |
 
 ---
@@ -380,10 +380,10 @@ flowchart TD
 
 For the full 14-mechanism latency mitigation analysis and latency budget breakdown, see [`08-DEPLOYMENT-INFRASTRUCTURE.md` §10](./08-DEPLOYMENT-INFRASTRUCTURE.md#latency-strategy).
 
-### 6.2 Concurrency & Transaction Control (v0.1.0 Add-ons)
+### 6.2 Concurrency & Transaction Control (v2.0.0 Add-ons)
 
 #### FiscalLimitGuard
-To prevent concurrent multi-agent "race to the rail" limit depletion where multiple agents check the same remaining daily cap simultaneously, CAGE v0.1.0 enforces atomic limit pre-reservation via the `FiscalLimitGuard` class (`src/gateway/governance/fiscal_limit_guard.py`).
+To prevent concurrent multi-agent "race to the rail" limit depletion where multiple agents check the same remaining daily cap simultaneously, CAGE v2.0.0 enforces atomic limit pre-reservation via the `FiscalLimitGuard` class (`src/gateway/governance/fiscal_limit_guard.py`).
 1. **Pre-Reservation (Tier 3):** After concurrent CBF+OPA (Tiers 2+4), the agent atomically reserves the trade amount in Redis using a `WATCH`/`MULTI`/`EXEC` optimistic lock transaction. This is the tier that closes the TOCTOU race. Default daily cap: **$500,000 USD** (`FISCAL_DAILY_CAP_USD` env var). Cap is stored in **cents** for integer precision.
 2. **TTL Safety:** Returns a `ReservationToken` with a **300s TTL**. If the agent node crashes before execution, the cap is automatically reclaimed. Fail-closed: if Redis is unavailable, the trade is blocked.
 3. **Commit & Rollback:** On success, the spend is confirmed. On failure, the Saga compensating node releases the token back to Redis headroom.
@@ -506,7 +506,7 @@ For the full design rationale, threat model, implementation map, and verificatio
 | `AUDIT_FINDING`        | Compliance Bridge detects a control finding during OSCAL audit   |
 | `GOVERNANCE_VIOLATION` | SymbolicGovernor or evaluator node raises a governance rejection |
 
-### 9.4 AgentSight UI (Phase 1 — v0.1.0-rc.1)
+### 9.4 AgentSight UI (Phase 1 — v2.0.0-rc.1)
 
 `src/agentsight-ui/src/KernelDashboard.tsx` is the primary compliance operator interface. It connects to `{BACKEND_URL}/v1/events/stream` as an SSE consumer and renders real-time governance signals.
 
@@ -517,7 +517,7 @@ For the full design rationale, threat model, implementation map, and verificatio
 | Alert threshold       | `ALERT_THRESHOLD=0.8`             |
 | Monitored control IDs | `A.5.2`, `A.5.3`, `A.9.2`, `SC-4` |
 
-**Phase 1 operator controls (v0.1.0-rc.1):**
+**Phase 1 operator controls (v2.0.0-rc.1):**
 
 | Feature | Implementation | Details |
 |---------|---------------|---------|
@@ -544,7 +544,7 @@ The `deployment/agentsight/` DaemonSet deploys a kernel-level BPF program target
 
 The system that gives CAGE its name — a **cybernetic** (self-correcting) governance engine — is the closed-loop feedback path from Langfuse telemetry scores through Kubeflow Pipelines back to live NeMo Guardrails hot-reload.
 
-> **v0.1.0 Note:** The NeMo refinement step in this loop requires human approval before executing remediation actions. Specifically, the KFP pipeline's Step 3 calls `POST /v1/nemo/apply-refinement`, which applies a hot-reload of the NeMo rails configuration — but the *propose-refinement* → *human approval* → *apply-refinement* sequence is enforced for any model-initiated refinement (AARM-V8 neutralization). Fully autonomous correction without human approval in the low-latency path is planned for v2.1.0 (POAM-031).
+> **v2.0.0 Note:** The NeMo refinement step in this loop requires human approval before executing remediation actions. Specifically, the KFP pipeline's Step 3 calls `POST /v1/nemo/apply-refinement`, which applies a hot-reload of the NeMo rails configuration — but the *propose-refinement* → *human approval* → *apply-refinement* sequence is enforced for any model-initiated refinement (AARM-V8 neutralization). Fully autonomous correction without human approval in the low-latency path is planned for v2.1.0 (POAM-031).
 
 > **Naming note:** The KFP pipeline is registered as `green-stack-governance-loop` and the pipeline file is `green_stack_pipeline.py`. "Green-Stack Pipeline" is the original implementation name; "Cybernetic Governance Loop" is the architectural concept it implements. They refer to the same system — the same code, the same endpoints, the same trigger flow. This document uses the canonical term **Cybernetic Governance Loop**.
 

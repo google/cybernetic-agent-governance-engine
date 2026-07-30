@@ -165,7 +165,7 @@ The system implements an automated evidence pipeline satisfying ISO 42001 Clause
 Lula CronJob (6h)
   → OSCAL Assessment Results (YAML)
     → POST /v1/audit/ingest (Compliance Bridge)
-      → run_audit_workflow (6-step pipeline, upgraded in CAGE v0.1.0)
+      → run_audit_workflow (6-step pipeline, upgraded in CAGE v2.0.0)
         ├── Step 1:  Artifact persistence
         ├── Step 2:  OSCAL parse (OscalFinding extraction)
         │            OscalResult: PASS | FAIL | NOT_APPLICABLE | ERROR
@@ -218,9 +218,9 @@ Masking an `ERROR` as `NOT_APPLICABLE` would:
 | [`_step4_alert_on_critical_fail()`](../../src/compliance_bridge/audit_workflow.py) | Critical-control filter matches `result ∈ {FAIL, ERROR}`. A scanner failure on SC-4, A.9.2, or A.8.4 triggers the same Slack/PagerDuty alert as an explicit FAIL. |
 | [`_ingest_sync()`](../../src/compliance_bridge/audit_workflow.py) | `ERROR` findings score `0.0` in Langfuse — identical to FAIL. They are never scored as `1.0` (PASS). |
 
-### 5.4 Compliance Bridge API Endpoints (v0.1.0-rc.1)
+### 5.4 Compliance Bridge API Endpoints (v2.0.0-rc.1)
 
-CAGE v0.1.0 adds four new REST endpoints to the Compliance Bridge (`src/compliance_bridge/main.py`):
+CAGE v2.0.0 adds four new REST endpoints to the Compliance Bridge (`src/compliance_bridge/main.py`):
 
 | Endpoint | Method | Description |
 | -------- | ------ | ----------- |
@@ -525,7 +525,7 @@ Evidence records are streamed to the OSCAL exporter (`src/compliance_bridge/osca
 
 ## 15. Multi-Jurisdiction Compliance Engine
 
-CAGE v0.1.0 introduced a **multi-jurisdiction compliance engine** that allows the system to seamlessly shift its entire regulatory compliance posture between United States, European Union, and Singapore regulatory environments without any code changes. This section documents the architecture, configuration, and operational behavior of the multi-jurisdiction system.
+CAGE v2.0.0 introduced a **multi-jurisdiction compliance engine** that allows the system to seamlessly shift its entire regulatory compliance posture between United States, European Union, and Singapore regulatory environments without any code changes. This section documents the architecture, configuration, and operational behavior of the multi-jurisdiction system.
 
 ### 15.1 Activation Mechanism
 

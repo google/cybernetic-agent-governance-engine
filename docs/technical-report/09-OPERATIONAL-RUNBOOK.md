@@ -14,7 +14,7 @@ classification: "INTERNAL"
 | **Date**           | 2026-06-03                                |
 | **Classification** | INTERNAL                                  |
 | **Series**         | CAGE Technical Report — Document 9 / 10  |
-| **Status**         | Updated — v0.1.0-rc.2 promoted 2026-06-03; GKE deployment + full test cycle completed 2026-06-03 |
+| **Status**         | Updated — v2.1.0 current; v2.0.0-rc.2 promoted 2026-06-03; GKE deployment + full test cycle completed 2026-06-03 |
 
 ---
 
@@ -562,9 +562,9 @@ httpx.ConnectError: [Errno -2] Name or service not known (nemo)
 
 ---
 
-## 7. v0.1.0 Operational Procedures
+## 7. v2.0.0 Operational Procedures
 
-The following procedures cover operational tasks introduced in CAGE v0.1.0 (Cloud KMS HSM signing, DEFER queue, dual-project Langfuse, normative provider, direct Langfuse OTLP).
+The following procedures cover operational tasks introduced in CAGE v2.0.0 (Cloud KMS HSM signing, DEFER queue, dual-project Langfuse, normative provider, direct Langfuse OTLP).
 
 ### 7.0 Verifying OTLP Trace Ingestion (Direct Langfuse — OTel Collector Deprecated)
 
@@ -698,7 +698,7 @@ kubectl exec -n governance-stack deploy/gateway -- \
 
 As of the 2026-06-03 GKE deployment cycle, the automated test suite has grown significantly from the 2026-03-08 session baseline:
 
-| Metric                    | 2026-03-08 Session | v0.1.0 Current | v0.1.0-rc.1 (2026-06-01) | 2026-06-03 GKE Cycle (rc.1) | **2026-06-03 GKE Cycle (rc.2)** |
+| Metric                    | 2026-03-08 Session | v2.0.0 Current | v2.0.0-rc.1 (2026-06-01) | 2026-06-03 GKE Cycle (rc.1) | **2026-06-03 GKE Cycle (rc.2)** |
 | ------------------------- | ------------------ | -------------- | ------------------------- | --------------------------- | -------------------------------- |
 | **Tests Passing**         | 152                | **561**        | **644**                   | 853                         | **844**                          |
 | **Tests Failing**         | 10                 | 0 (connectivity-only) | **0**            | 0                           | **0**                            |
@@ -707,7 +707,7 @@ As of the 2026-06-03 GKE deployment cycle, the automated test suite has grown si
 | **Runtime**               | —                  | —              | 24.44s                    | 772.78s (12:52)             | —                                |
 | **Result file**           | —                  | —              | —                         | `run_20260603T103414.txt`   | current GKE cycle                |
 
-**RC-07 test command (v0.1.0-rc.1):**
+**RC-07 test command (v2.0.0-rc.1):**
 
 ```bash
 SKIP_LANGFUSE_CHECKS=1 .venv/bin/pytest tests/ -q --tb=short --ignore=tests/test_integration
@@ -895,7 +895,7 @@ The following source files were confirmed present and operational during the 202
 
 ---
 
-## 8. AgentSight UI Operational Guidance (Phase 1 — v0.1.0-rc.1)
+## 8. AgentSight UI Operational Guidance (Phase 1 — v2.0.0-rc.1)
 
 The **AgentSight KernelDashboard** (`src/agentsight-ui/src/KernelDashboard.tsx`) is the primary compliance operator interface. It connects to `{BACKEND_URL}/v1/events/stream` as an SSE consumer and renders real-time governance signals.
 
@@ -956,7 +956,7 @@ kubectl logs -n governance-stack deploy/governed-financial-advisor --tail=50 | \
 
 ## 6. Saga Engine and Ghost-State Recovery Procedures
 
-CAGE v0.1.0's distributed transaction layer introduces new failure modes and standard operational recovery sequences.
+CAGE v2.0.0's distributed transaction layer introduces new failure modes and standard operational recovery sequences.
 
 ### 6.1 Runbook: Recovering from Saga Execution Failure (LIFO Rollback)
 

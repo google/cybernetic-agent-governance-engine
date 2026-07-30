@@ -132,7 +132,7 @@ These attributes are the same tags that flow into Langfuse, the Compliance Bridg
 
 # CAGE · Governance-as-Code Demo (`governance_demo.py`)
 
-> **"Three acts, zero infrastructure."** — A self-contained walkthrough of the three headline governance capabilities of CAGE v0.1.0: atomic fiscal pre-reservation, HITL mandatory rationale, and tamper-evident hash chain verification.
+> **"Three acts, zero infrastructure."** — A self-contained walkthrough of the three headline governance capabilities of CAGE: atomic fiscal pre-reservation, HITL mandatory rationale, and tamper-evident hash chain verification.
 
 No Kubernetes, no external services, no LLM calls required. Uses `fakeredis` for Act 1 and the real `PlaygroundTelemetry` evidence chain for Acts 2 & 3.
 

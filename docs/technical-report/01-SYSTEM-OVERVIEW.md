@@ -6,14 +6,14 @@
 | **Date**             | 2026-06-03                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | ACTIVE — v0.1.0 stable (GO — 2026-06-08; GKE deployment verified 2026-06-03)                                |
-| **Reference**        | `docs/ROLES_AND_RESPONSIBILITIES.md`, `docs/banking_regs.md`, `compliance/boundary/AUTHORIZATION_BOUNDARY.md` |
+| **Status**           | ACTIVE — v2.1.0 stable (GO — 2026-06-08; GKE deployment verified 2026-06-03)                                |
+| **Reference**        | [`compliance/boundary/AUTHORIZATION_BOUNDARY.md`](../../compliance/boundary/AUTHORIZATION_BOUNDARY.md) (no `ROLES_AND_RESPONSIBILITIES.md` or `banking_regs.md` exist in this repository — see note in §3 below) |
 
 ---
 
 ## 1. System Identity
 
-The **Cybernetic Agent Governance Engine (CAGE)** v0.1.0 is a production-grade, multi-agent AI governance framework purpose-built for regulated financial advising. CAGE runs on Google Kubernetes Engine (GKE) and is designed from the ground up to satisfy the overlapping — and often conflicting — compliance obligations facing AI systems deployed in financial services contexts.
+The **Cybernetic Agent Governance Engine (CAGE)** v2.1.0 is a production-grade, multi-agent AI governance framework purpose-built for regulated financial advising. CAGE runs on Google Kubernetes Engine (GKE) and is designed from the ground up to satisfy the overlapping — and often conflicting — compliance obligations facing AI systems deployed in financial services contexts.
 
 ### 1.1 Core Problem Solved
 
@@ -42,7 +42,9 @@ These constraints are not aspirational. They are encoded as machine-enforceable 
 
 ## 3. System Stakeholders and Roles
 
-CAGE follows the NIST SP 800-37 Rev. 2 role taxonomy. The table below summarizes each organizational role and its primary accountability domain. All incumbent positions are designated **TBD** as of 2026-03-06 pending ATO approval. Full role definitions, RACI matrix, and required qualifications are maintained in `docs/ROLES_AND_RESPONSIBILITIES.md`.
+CAGE follows the NIST SP 800-37 Rev. 2 role taxonomy. The table below summarizes each organizational role and its primary accountability domain. All incumbent positions are designated **TBD** as of 2026-03-06 pending ATO approval.
+
+> **Note:** A standalone `docs/ROLES_AND_RESPONSIBILITIES.md` with a full RACI matrix and named incumbents was removed during a documentation-scope cleanup (2026-07) — CAGE is a reference architecture, not an operating organization, and a fictional roles document with placeholder `[TBD]` incumbents provided no engineering value. Adopters deploying CAGE in a real regulated environment should author their own RACI matrix naming real AO/ISSO/System Owner incumbents before pursuing an authorization package.
 
 | Role                                    | Abbreviation | Primary Accountability                                                    |
 | --------------------------------------- | ------------ | ------------------------------------------------------------------------- |
@@ -60,7 +62,7 @@ CAGE follows the NIST SP 800-37 Rev. 2 role taxonomy. The table below summarizes
 
 ## 4. Primary Capabilities
 
-> **v2.1.0 additions** (since v0.1.0): FTRA Commencement Reachability Gate, Phase A/B Ingress Adapters, CAGE-003 Agent Registry (SPIFFE), CBF External Reconciliation Worker (POAM-023 closed), NIST AI 600-1 Compliance Gates (phases 0–3 all implemented), Three-Region Compliance Matrix with separate Lula manifests, AgentSight UI (React/TypeScript), Governed Financial Advisor multi-agent reference implementation, NeMo Guardrails Integration, LangGraph Harness, AARM Profile Mapper, Evidence Chain Metadata Binding, Region-Aware K8s Templates, Langfuse Native OTLP.
+> **v2.1.0 additions** (since v2.0.0): FTRA Commencement Reachability Gate, Phase A/B Ingress Adapters, CAGE-003 Agent Registry (SPIFFE), CBF External Reconciliation Worker (POAM-023 closed), NIST AI 600-1 Compliance Gates (phases 0–3 all implemented), Three-Region Compliance Matrix with separate Lula manifests, AgentSight UI (React/TypeScript), Governed Financial Advisor multi-agent reference implementation, NeMo Guardrails Integration, LangGraph Harness, AARM Profile Mapper, Evidence Chain Metadata Binding, Region-Aware K8s Templates, Langfuse Native OTLP.
 
 
 CAGE provides eight integrated capabilities that together constitute a full-stack governed AI financial advisor:
@@ -85,7 +87,7 @@ CAGE provides eight integrated capabilities that together constitute a full-stac
 
 ## 5. Current Compliance Posture (NIST RMF Readiness)
 
-CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v0.1.0 stable release was tagged on 2026-06-08 (GO — branch `rc-v0.1.0`, tag `v0.1.0`). Both application images were built via Cloud Build and deployed to GKE cluster `<your-kubectl-context>`, namespace `governance-stack`, on 2026-06-03. The full test suite now reports **844 passed, 0 failed, 24 skipped** (2026-06-03 GKE cycle).
+CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v2.0.0 stable release was tagged on 2026-06-08 (GO — branch `rc-v2.0.0`, tag `v2.0.0`; current release is v2.1.0). Both application images were built via Cloud Build and deployed to GKE cluster `<your-kubectl-context>`, namespace `governance-stack`, on 2026-06-03. The full test suite now reports **844 passed, 0 failed, 24 skipped** (2026-06-03 GKE cycle).
 
 ### 5.1 Control Family Readiness
 

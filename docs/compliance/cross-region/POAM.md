@@ -18,7 +18,7 @@ For the original NIST SP 800-53 / US_FED content (all 23 original entries), see 
 
 ---
 
-## Notable Items Added in v0.1.0 (2026-06-08)
+## Notable Items Added in v2.0.0 (2026-06-08)
 
 | ID | Control | Weakness | Severity | Status | Target Date |
 |----|---------|----------|----------|--------|-------------|

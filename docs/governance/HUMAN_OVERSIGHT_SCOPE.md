@@ -1,4 +1,4 @@
-# Human Oversight Scope — CAGE v0.1.0
+# Human Oversight Scope — CAGE v2.1.0
 
 **Document:** AI600-005 / NIST AI 600-1 §2.5 / ISO 42001 §A.8.4
 **Date:** 2026-06-23

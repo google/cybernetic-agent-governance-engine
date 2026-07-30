@@ -1,4 +1,4 @@
-# System-Theoretic Process Analysis (STPA) Implementation — v0.1.0
+# System-Theoretic Process Analysis (STPA) Implementation — v2.1.0
 
 ## Overview
 

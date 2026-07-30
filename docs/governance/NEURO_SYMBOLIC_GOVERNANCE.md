@@ -1,4 +1,4 @@
-# Neuro-Symbolic Governance Architecture — v0.1.0
+# Neuro-Symbolic Governance Architecture — v2.1.0
 
 ## Overview
 
@@ -101,7 +101,7 @@ Enables the **Explicit Lifecycle** model, replacing asynchronous interrupts with
   - `KMS_GOVERNANCE_KEY` — Full KMS key version resource name (enables KMS path)
   - `KMS_GOVERNANCE_PUBLIC_PEM` — Path to PEM-encoded public key file (embedded at build time for sub-millisecond verification)
   - `GOVERNANCE_SALT` — Legacy HMAC salt (fallback only; used when KMS is not configured)
-- **Compliance:** Satisfies strict financial audit requirements under SR 26-2 (agentic systems) and ISO 42001 §6.1. Closes the recursive self-authentication vulnerability identified in the evidentiary independence analysis (v0.1.0).
+- **Compliance:** Satisfies strict financial audit requirements under SR 26-2 (agentic systems) and ISO 42001 §6.1. Closes the recursive self-authentication vulnerability identified in the evidentiary independence analysis (v2.0.0).
 
 ### 4. DoWhy Causal Gatekeeper (`src/gateway/governance/causal_gatekeeper.py`)
 

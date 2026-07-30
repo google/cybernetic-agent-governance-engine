@@ -1096,7 +1096,7 @@ implementations. This is required for the ATO package under EO 14110 / OMB M-24-
        title: CAGE AI 600-1 Governance Profile
        description: >
          NIST AI 600-1 (July 2024) Generative AI Profile implementation
-         for CAGE v0.1.0 US_FED deployment.
+         for CAGE v2.0.0 US_FED deployment.
        control-implementations:
          - uuid: <generate-uuid>
            source: https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf
@@ -1207,7 +1207,7 @@ Kubernetes assertions. This is the final step before AI 600-1 release gate closu
 4. Run `lula validate` against all 5 manifests against the live GKE cluster
    as part of the release gate (`.roo/rules` §5.1 universal gates).
 
-5. Add AI 600-1 Lula results to the release checklist in `docs/RELEASE_RUNBOOK.md`.
+5. Add AI 600-1 Lula results to the release checklist in [`docs/technical-report/09-OPERATIONAL-RUNBOOK.md`](../../technical-report/09-OPERATIONAL-RUNBOOK.md) (no standalone `RELEASE_RUNBOOK.md` exists in this repository).
 
 **Prod acceptance criteria**:
 - All 5 AI 600-1 Lula manifests pass in CI
