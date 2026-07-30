@@ -152,17 +152,21 @@ has changed, the request is rejected with HTTP 409 Conflict.
 
 ### 2.3 Governance Pipeline Tiers
 
-Every `validate_action()` call passes through the 7-tier governance pipeline:
+Before `validate_action()` is invoked, requests are screened by pre-pipeline layers (Aho-Corasick / prompt-injection detection and NeMo Guardrails, including Presidio PII masking). `validate_action()` itself then runs the 7-tier `SymbolicGovernor._run_checks()` pipeline, with Tiers 2 and 4 executing concurrently:
 
-| Tier | Name | Implementation |
+| Stage | Name | Implementation |
 |---|---|---|
-| 0 | Aho-Corasick / Prompt Injection Detection | [`prompt_injection_detector.py`](../src/gateway/governance/prompt_injection_detector.py) |
-| 1 | NeMo Guardrails | [`nemo/manager.py`](../src/gateway/governance/nemo/manager.py) |
-| 2 | STPA Validator | [`stpa_validator.py`](../src/gateway/governance/stpa_validator.py) |
-| 3 | OPA RBAC | [`symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) |
-| 4 | CBF / Token Quota | [`cbf.py`](../src/gateway/governance/cbf.py) |
-| 5 | Consensus / Multi-Agent | [`consensus.py`](../src/gateway/governance/consensus.py) |
-| 6 | DoWhy Causal Gatekeeper | [`causal_gatekeeper.py`](../src/gateway/governance/causal_gatekeeper.py) |
+| *(pre-pipeline)* | Aho-Corasick / Prompt Injection Detection | [`prompt_injection_detector.py`](../src/gateway/governance/prompt_injection_detector.py), [`text_filter.py`](../src/gateway/governance/text_filter.py) |
+| *(pre-pipeline)* | NeMo Guardrails (incl. Presidio PII masking) | [`nemo/manager.py`](../src/gateway/governance/nemo/manager.py) |
+| Tier 0 | STPA/STAMP UCA validation | [`generated_stpa_validator.py`](../src/gateway/governance/generated_stpa_validator.py) |
+| Tier 1 | Agent confidence pre-check | [`symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) |
+| Tier 2 / 4 | CBF + OPA (concurrent) | [`cbf.py`](../src/gateway/governance/cbf.py), OPA `system_authz.rego` |
+| Tier 3 | Fiscal Limit Pre-Reservation | [`fiscal_limit_guard.py`](../src/gateway/governance/fiscal_limit_guard.py) |
+| Tier 5 | Multi-Agent Consensus | [`consensus.py`](../src/gateway/governance/consensus.py) |
+| Tier 6 | DoWhy Causal Gatekeeper | [`causal_gatekeeper.py`](../src/gateway/governance/causal_gatekeeper.py) |
+| Tier 6b | Adaptive FRIA Enforcement | [`normative_provider.py`](../src/gateway/governance/normative_provider.py) |
+
+> PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules invoked outside `_run_checks()` — PII sanitization runs on audit records inside `uca_logger.py`, and confabulation scoring is a Langfuse observability metric.
 
 ---
 

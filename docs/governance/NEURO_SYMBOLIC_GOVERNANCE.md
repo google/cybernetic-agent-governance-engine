@@ -32,7 +32,7 @@ The central enforcement engine residing in the Gateway. It wraps every tool exec
 
   > **Note on Step 2b:** Step 2b (OPA Policy Evaluation) runs concurrently with Step 2 (CBF) via `asyncio.gather` as a conditional branch within the pipeline. It is counted as a distinct step, making the total 8 steps (Steps 0, 1, 2, 2b, 3, 4, 5, 6).
 
-  > **See also:** `README_GOVERNANCE.md` for the canonical layer model and infrastructure context.
+  > **See also:** [`docs/governance/GOVERNANCE_OVERVIEW.md`](GOVERNANCE_OVERVIEW.md) for the canonical layer model and infrastructure context.
 
   | Step | Name | Implementation | Notes |
   |------|------|---------------|-------|
@@ -217,35 +217,35 @@ All regulatory citations are decoupled from Python execution code via the `Gover
 
 ### 7-Tier Pipeline Diagram
 
-The `SymbolicGovernor._run_checks()` method executes the following tiers in strict sequential order. A failure at any tier halts the pipeline and denies the request.
+The `SymbolicGovernor._run_checks()` method executes the following tiers in strict sequential order (Tiers 2 and 4 run concurrently with each other). A failure at any tier halts the pipeline and denies the request.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                  SymbolicGovernor._run_checks()                     │
 │                                                                     │
-│  Tier 1 ──► NoDirectBind invariant check                            │
-│      │      (LLM output must not bind directly to executable action) │
+│  Tier 0 ──► STPA/STAMP UCA validation                               │
+│      │      (GeneratedSTPAValidator.validate() — ontology checks)   │
 │      ▼                                                              │
-│  Tier 2 ──► PII sanitization                                        │
-│      │      (Presidio — 15 entity types masked before evaluation)   │
+│  Tier 1 ──► Agent confidence pre-check                              │
+│      │      (fast-fail local check; AGENT_CONFIDENCE_THRESHOLD)     │
 │      ▼                                                              │
-│  Tier 3 ──► CBF + OPA concurrent evaluation                         │
+│  Tier 2/4 ─► CBF + OPA concurrent evaluation                        │
 │      │      asyncio.gather(cbf_check, opa_check)                    │
 │      │      latency = max(CBF_ms, OPA_ms)                           │
 │      ▼                                                              │
-│  Tier 4 ──► Causal gatekeeper                                       │
-│      │      (DoWhy CausalModel + PlaceboTreatmentRefuter)           │
+│  Tier 3 ──► Fiscal Limit Pre-Reservation                            │
+│      │      FiscalLimitGuard.reserve() — Redis WATCH/MULTI/EXEC     │
 │      ▼                                                              │
-│  Tier 5 ──► Confabulation scoring                                   │
-│      │      risk_score = 1.0 − confidence; threshold 0.95           │
-│      ▼                                                              │
-│  Tier 6 ──► Consensus (high-value trades ≥ $10k)                   │
+│  Tier 5 ──► Consensus (high-value trades ≥ $10k)                   │
 │      │      asyncio.gather — unanimity required; 30 s timeout       │
 │      ▼                                                              │
-│  Tier 7 ──► FRIA zone classification                                │
+│  Tier 6 ──► Causal gatekeeper                                       │
+│      │      (DoWhy CausalModel + PlaceboTreatmentRefuter)           │
+│      ▼                                                              │
+│  Tier 6b ─► FRIA normative boundary + attestation                   │
 │             score ≥ 0.95 → ALLOW (async attestation)               │
 │             0.70 ≤ score < 0.95 → DEFER (blocking gate)            │
-│             score < 0.70 → BLOCK (hard deny)                        │
+│             score < 0.70 → DENY (hard deny)                         │
 └─────────────────────────────────────────────────────────────────────┘
                               │
                               ▼ (all tiers pass)
@@ -253,9 +253,11 @@ The `SymbolicGovernor._run_checks()` method executes the following tiers in stri
                     (X-CAGE-Routing-Seal header)
 ```
 
-### Tier 3 — Concurrent CBF + OPA Execution
+> **Note:** PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are **not** tiers of `_run_checks()`. PII sanitization runs inside `uca_logger.py` immediately before a UCA audit record is written to the WORM ledger; confabulation scoring is a standalone Langfuse observability metric.
 
-Tier 3 is the only tier that executes two sub-checks in parallel. The implementation uses `asyncio.gather` so that the Control Barrier Function and the OPA policy evaluation run concurrently:
+### Tier 2/4 — Concurrent CBF + OPA Execution
+
+Tiers 2 and 4 are the only tiers that execute two sub-checks in parallel. The implementation uses `asyncio.gather` so that the Control Barrier Function and the OPA policy evaluation run concurrently:
 
 ```python
 cbf_result, opa_result = await asyncio.gather(
@@ -266,9 +268,9 @@ cbf_result, opa_result = await asyncio.gather(
 
 Both results must be `ALLOW` for the tier to pass. The combined latency is `max(CBF_ms, OPA_ms)` rather than their sum.
 
-### FRIA Zone Decision Boundaries (Tier 7)
+### FRIA Zone Decision Boundaries (Tier 6b)
 
-The Fundamental Rights Impact Assessment at Tier 7 uses two threshold constants to partition the governance score space:
+The Fundamental Rights Impact Assessment at Tier 6b uses two threshold constants to partition the governance score space:
 
 | Constant | Value | Zone | Decision Semantics |
 |----------|-------|------|--------------------|
@@ -311,7 +313,7 @@ Let `LLM_output` be any token sequence produced by the language model and `exec(
     only if SymbolicGovernor._run_checks(LLM_output) = ALLOW
 ```
 
-Equivalently, there is no code path from LLM inference to tool execution that bypasses `_run_checks()`. This is enforced structurally by the `@governed_tool` decorator at the gateway boundary — the decorator intercepts every tool call and invokes the full 7-tier pipeline before any execution occurs.
+Equivalently, there is no code path from LLM inference to tool execution that bypasses `_run_checks()`. This is enforced structurally by `validate_action()` — the single choke point for tool execution — combined with the HMAC-SHA256 routing seal (`generate_seal()` / `verify_seal()` in `routing_seal.py`). A seal is issued only after all tiers of `_run_checks()` complete successfully, and the downstream actuator raises `SymbolicGovernorViolation` (refusing to execute) if `verify_seal()` fails.
 
 > **Source:** [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
 
@@ -379,21 +381,21 @@ The `ControlRegistry` singleton reads this variable at startup and loads the cor
 
 | Control | Framework | Pipeline Tier | Obligation |
 |---------|-----------|--------------|------------|
-| `CTRL_MRM_004` | SR 26-2 §IV — Model Risk Management (Federal Reserve, April 17, 2026) | Tier 3 (CBF) + Tier 4 (Causal) | Deterministic formula validation + causal coefficient back-testing |
-| NIST AI RMF MEASURE-2.6 | NIST AI RMF | Tier 4 (Causal) | Explicit CONTROL transitions + continuous world-model MEASURE validation |
+| `CTRL_MRM_004` | SR 26-2 §IV — Model Risk Management (Federal Reserve, April 17, 2026) | Tier 2 (CBF) + Tier 6 (Causal) | Deterministic formula validation + causal coefficient back-testing |
+| NIST AI RMF MEASURE-2.6 | NIST AI RMF | Tier 6 (Causal) | Explicit CONTROL transitions + continuous world-model MEASURE validation |
 | NIST SP 800-53 | NIST SP 800-53 (10 Lula assertions) | All tiers | Access control, audit, system integrity controls |
-| `CTRL_AGT_001` | ISO 42001 §A.5.2 + NIST AI 600-1 | Tier 3 (OPA) | Agentic AI bounding; confidence threshold ≥ 0.95 |
-| Consensus threshold | SR 26-2 §IV.B | Tier 6 | $10,000 USD threshold for multi-agent consensus |
+| `CTRL_AGT_001` | ISO 42001 §A.5.2 + NIST AI 600-1 | Tier 4 (OPA) | Agentic AI bounding; confidence threshold ≥ 0.95 |
+| Consensus threshold | SR 26-2 §IV.B | Tier 5 | $10,000 USD threshold for multi-agent consensus |
 
 ### EU_ECB Regional Control Map (`CAGE_DEPLOYMENT_REGION=EU_ECB`)
 
 | Control | Framework | Pipeline Tier | Obligation |
 |---------|-----------|--------------|------------|
-| `CTRL_FRIA_006` | EU AI Act Art. 29a | Tier 7 (FRIA) | Fundamental Rights Impact Assessment; ALLOW/DEFER/BLOCK zone enforcement + OTel attestation |
-| GDPR Art. 22 | GDPR | Tier 7 (FRIA) | Automated decision-making safeguards; DEFER zone triggers human review |
+| `CTRL_FRIA_006` | EU AI Act Art. 29a | Tier 6b (FRIA) | Fundamental Rights Impact Assessment; ALLOW/DEFER/BLOCK zone enforcement + OTel attestation |
+| GDPR Art. 22 | GDPR | Tier 6b (FRIA) | Automated decision-making safeguards; DEFER zone triggers human review |
 | `CTRL_WAL_002` addendum | DORA Art. 12 | WAL SAGA nodes | Operational resilience logging obligation |
-| Telemetry suppression | SR 26-2 "no legal force" sentinel | Tier 4 (Causal) | Causal gatekeeper suppressed in EU_ECB; GDPR / MAS Notice 655 telemetry restriction |
-| Consensus threshold | EU AI Act | Tier 6 | $7,500 USD threshold (lower than US_FED) |
+| Telemetry suppression | SR 26-2 "no legal force" sentinel | Tier 6 (Causal) | Causal gatekeeper suppressed in EU_ECB; GDPR / MAS Notice 655 telemetry restriction |
+| Consensus threshold | EU AI Act | Tier 5 | $7,500 USD threshold (lower than US_FED) |
 | Data residency | GDPR Art. 44 | All storage paths | All GCS writes and Langfuse sinks must remain within `europe-west1` |
 
 ### APAC_MAS Regional Control Map (`CAGE_DEPLOYMENT_REGION=APAC_MAS`)
@@ -401,10 +403,10 @@ The `ControlRegistry` singleton reads this variable at startup and loads the cor
 | Control | Framework | Pipeline Tier | Obligation |
 |---------|-----------|--------------|------------|
 | MAS FEAT Principles | MAS FEAT | All tiers | Fairness, Ethics, Accountability, Transparency obligations |
-| MAS Notice 655 | MAS Notice 655 | Tier 4 (Causal) | Audit logging enabled; telemetry suppression sentinel active |
+| MAS Notice 655 | MAS Notice 655 | Tier 6 (Causal) | Audit logging enabled; telemetry suppression sentinel active |
 | MAS TRM §4.2 | MAS TRM | All storage paths | All data paths must remain within `asia-southeast1` |
-| Consensus threshold | MAS FEAT | Tier 6 | $5,000 USD threshold (most conservative) |
-| SR 26-2 sentinel | "no legal force" | Tier 4 (Causal) | Telemetry suppression active — same sentinel as EU_ECB |
+| Consensus threshold | MAS FEAT | Tier 5 | $5,000 USD threshold (most conservative) |
+| SR 26-2 sentinel | "no legal force" | Tier 6 (Causal) | Telemetry suppression active — same sentinel as EU_ECB |
 
 ### Cross-Region Shared-Module Guard Obligation
 

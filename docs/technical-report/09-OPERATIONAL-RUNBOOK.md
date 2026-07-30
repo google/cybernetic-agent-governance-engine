@@ -868,7 +868,7 @@ The following source files were confirmed present and operational during the 202
 | `src/gateway/governance/stpa_validator.py` | STPA validator (alongside generated version) |
 | `src/gateway/governance/telemetry_provider.py` | Telemetry provider for causal gatekeeper |
 | `src/gateway/governance/schemas/thresholds.py` | `GovernanceThresholds` Pydantic model |
-| `src/gateway/slm/mock_slm.py` | Mock SLM for testing (Tier 3 deprecated) |
+| `src/gateway/slm/mock_slm.py` | Mock SLM for testing (legacy SLM tier slot fully retired) |
 | `src/governed_financial_advisor/governance/nemo_action_registry.py` | NeMo action registry |
 | `src/governed_financial_advisor/governance/nemo_actions.py` | Advisor NeMo actions (fallback implementations) |
 | `src/governed_financial_advisor/governance/structs.py` | Governance structs |

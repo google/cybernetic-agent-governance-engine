@@ -124,7 +124,7 @@ class GovernanceError(Exception):
 # FRIA Confidence-Starvation Boundary — three-zone enforcement thresholds
 # ---------------------------------------------------------------------------
 # These constants define the three enforcement zones for the adaptive FRIA
-# (Fundamental Rights Impact Assessment) tier (Tier 7 of the governance
+# (Fundamental Rights Impact Assessment) tier (Tier 6b of the governance
 # pipeline).  They are read at module load time and may be overridden via
 # environment variables for staged rollouts or regional tuning.
 #

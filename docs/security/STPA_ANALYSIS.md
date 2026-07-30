@@ -226,7 +226,7 @@ stpa_compiler.py (code generation)
     ↓
 generated_stpa_validator.py (_check_uca_5(), _check_uca_6(), FIN-1, FIN-2)
     ↓
-symbolic_governor.py (Tier 3 — concurrent with CBF + OPA)
+symbolic_governor.py (Tier 0 — STPA UCA validation runs first, sequentially, before Tiers 2/4 CBF + OPA)
     ↓
 uca_logger.py (WORM audit record, KMS-signed)
 ```

@@ -76,7 +76,7 @@ The following GCP services are **optional drivers** — the system functions ful
 
 CAGE v0.1.0 provides a multi-jurisdiction, dual-layer governance architecture for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
 
-1.  **The Governance Gateway:** A high-performance inference proxy and MCP tool server that enforces a 7-tier symbolic governance model (STPA/UCA validation, agentic confidence check, Control Barrier Function, OPA Rego, multi-agent consensus, causal gatekeeper, and adaptive FRIA gate) combined with network and runtime hardening (Linkerd mTLS, Cilium L7, eBPF telemetry). The SLM sidecar (formerly Tier 3) has been deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. It acts as the "Controller" in our Controller-Plant architecture, intercepting all agent-to-tool and agent-to-LLM communications.
+1.  **The Governance Gateway:** A high-performance inference proxy and MCP tool server that enforces a 7-tier symbolic governance model (STPA/UCA validation, agentic confidence check, Control Barrier Function concurrent with OPA Rego, Fiscal Limit Pre-Reservation, multi-agent consensus, causal gatekeeper, and adaptive FRIA gate) combined with network and runtime hardening (Linkerd mTLS, Cilium L7, eBPF telemetry). The legacy SLM sidecar has been fully deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. It acts as the "Controller" in our Controller-Plant architecture, intercepting all agent-to-tool and agent-to-LLM communications.
 2.  **The Reusable Agent Harness:** A set of deterministic LangGraph factories (`OpaNodeConfig`/`NemoNodeConfig`) that allow developers to wrap *any* agentic workflow in mandatory, non-bypassable governance guardrails.
 3.  **The STPA-to-Policy Compiler:** A CLI tool that ingests a declarative YAML control structure (`config/stpa_control_structure.yaml`) and auto-generates OPA Rego policies, NeMo Colang rails, Python validator classes, and **LangGraph Saga compensating sub-graphs** — eliminating the Natural Language Tax between design-time hazard analysis and runtime enforcement.
 4.  **The DoWhy Causal Gatekeeper:** An optional, refutation-based causal inference safety lock (`src/gateway/governance/causal_gatekeeper.py`) that validates world-model integrity via DoWhy placebo refutation before allowing high-stakes trade actions. Integrated as Tier 6 in the SymbolicGovernor pipeline.
@@ -194,17 +194,19 @@ This guarantees that the cash balance never drops below the minimum threshold in
 
 Source: [`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py)
 
-Every agent action passes through seven sequential tiers before execution is permitted:
+Every `execute_trade` action passes through the following sequential tiers (as implemented in `SymbolicGovernor._run_checks()`) before a routing seal is issued:
 
 | Tier | Name | Mechanism |
 |------|------|-----------|
-| **1** | NoDirectBind invariant | Structural binding check — prevents direct tool invocation without governance wrapper |
-| **2** | PII sanitization | Five compiled regex patterns (SSN, credit card, email, phone, API key/Bearer) applied before any persistence |
-| **3** | CBF + OPA concurrent | `asyncio.gather` runs Control Barrier Function and OPA Rego evaluation in parallel |
-| **4** | Causal gatekeeper | SCM + `PlaceboTreatmentRefuter` (50 sims, p < 0.05, \|eff\| > 0.2) validates world-model integrity |
-| **5** | Confabulation scoring | `risk_score = 1.0 − confidence`; blocks when score exceeds threshold |
-| **6** | Consensus gate | Heterogeneous multi-model consensus required for trades ≥ $10k; 30 s timeout |
-| **7** | FRIA zones | `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70`; scores below 0.70 hard-deny locally |
+| **0** | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` checks Unsafe Control Actions defined in the STPA ontology |
+| **1** | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) before any network I/O |
+| **2 / 4** | CBF + OPA concurrent | `asyncio.gather` runs the Control Barrier Function (Tier 2) and OPA Rego evaluation (Tier 4) in parallel |
+| **3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` atomically pre-reserves the daily fiscal cap in Redis before the consensus gate |
+| **5** | Consensus gate | Heterogeneous multi-model consensus required for trades ≥ $10k; 30 s timeout |
+| **6** | Causal gatekeeper | SCM + `PlaceboTreatmentRefuter` (50 sims, p < 0.05, \|eff\| > 0.2) validates world-model integrity |
+| **6b** | Adaptive FRIA enforcement | `FRIA_ZONE_ALLOW = 0.95`, `FRIA_ZONE_DEFER = 0.70`; scores below 0.70 hard-deny locally |
+
+The routing seal is issued only after all tiers pass. PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are separate, standalone components — PII sanitization runs on audit records immediately before WORM persistence (inside `uca_logger.py`), and confabulation scoring is a Langfuse observability metric — neither is a sequential tier of `_run_checks()`.
 
 ### Confabulation Risk Formula
 
@@ -506,7 +508,7 @@ cybernetic-agent-governance-engine/
 | Document                                                                               | Description                                                        |
 | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | [`COMPLIANCE.md`](COMPLIANCE.md)                                                       | **Core Compliance Posture & Framework Mapping (SR 26-2, ISO 42001, DORA)** |
-| `README_GOVERNANCE.md`                                         | **Detailed 7-Tier Symbolic Governor & Decoupled Architecture Spec** |
+| [`docs/governance/GOVERNANCE_OVERVIEW.md`](docs/governance/GOVERNANCE_OVERVIEW.md)                                         | **Detailed 7-Tier Symbolic Governor & Decoupled Architecture Spec** |
 | [`docs/AUDIT_LOG_SCHEMA.md`](docs/architecture/AUDIT_LOG_SCHEMA.md)                                 | **`cage-intent/1.0` & `cage-view-access/1.0` schema reference** — hash-chain mechanics, all fields, regulatory mapping (MiFID II Art. 25 / GDPR Art. 30 / ISO 42001 A.8.4) |
 | [`docs/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md)                                   | Security posture, NIST RMF status, open POA&M items                |
 | [`docs/POAM_INDEX.md`](docs/compliance/cross-region/POAM_INDEX.md)                                             | POA&M Master Index — cross-region traceability matrix (38 items)   |

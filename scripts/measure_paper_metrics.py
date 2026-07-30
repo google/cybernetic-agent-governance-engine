@@ -107,16 +107,21 @@ REQUEST_TIMEOUT_S: int = 30  # per-request HTTP timeout for deflection test
 # Paper §6 SLA budget (FedNow/SEPA Instant 10 s clearing window)
 GOVERNANCE_BUDGET_MS: float = 200.0
 
-# Tier names matching the paper's Table 2 rows
+# Paper Table 2 row labels, in measurement order. NOTE: these row numbers
+# are sequential positions in the *paper's table*, not the SymbolicGovernor's
+# internal `_run_checks()` tier numbers (where CBF=Tier 2, FiscalLimit=Tier 3,
+# OPA=Tier 4 [concurrent with CBF], Consensus=Tier 5, Causal=Tier 6,
+# FRIA=Tier 6b). CBF and OPA are measured here as a single combined
+# wall-clock entry ("CBF+OPA") since they execute concurrently.
 TIER_NAMES = [
-    "FTRA",  # Tier 0.5 — Fault-Tree Reachability Analysis
-    "STPA",  # Tier 1   — STAMP/STPA UCA check
-    "Confidence",  # Tier 2   — confidence threshold pre-check
-    "CBF+OPA",  # Tier 3   — parallel CBF + OPA (combined wall-clock)
-    "FiscalLimit",  # Tier 4   — FiscalLimitGuard WATCH/MULTI/EXEC
-    "Consensus",  # Tier 5   — consensus gate
-    "Causal",  # Tier 6   — DoWhy causal gatekeeper
-    "FRIA",  # Tier 7   — FRIA confidence-starvation boundary
+    "FTRA",  # commencement-time reachability gate (Tier 0.5)
+    "STPA",  # STAMP/STPA UCA check (Tier 0)
+    "Confidence",  # confidence threshold pre-check (Tier 1)
+    "CBF+OPA",  # parallel CBF + OPA combined wall-clock (Tiers 2/4)
+    "FiscalLimit",  # FiscalLimitGuard WATCH/MULTI/EXEC (Tier 3)
+    "Consensus",  # consensus gate (Tier 5)
+    "Causal",  # DoWhy causal gatekeeper (Tier 6)
+    "FRIA",  # FRIA confidence-starvation boundary (Tier 6b)
     "Total_APPROVED",  # end-to-end approved path
     "Total_REJECTED",  # end-to-end rejected path (early-exit)
 ]
@@ -253,7 +258,7 @@ def _percentiles(samples: list[float]) -> dict[str, float]:
 
 
 async def _sample_stpa_tier(runs: int) -> list[float]:
-    """Tier 1 — STPA UCA check (synchronous validator, no I/O)."""
+    """Tier 0 — STPA UCA check (synchronous validator, no I/O)."""
     gov = _build_governor()
     params = {"tool_name": "get_stock_price", "symbol": "AAPL", "latency_ms": 5.0}
     samples: list[float] = []
@@ -266,7 +271,7 @@ async def _sample_stpa_tier(runs: int) -> list[float]:
 
 
 async def _sample_confidence_tier(runs: int) -> list[float]:
-    """Tier 2 — confidence threshold pre-check (pure Python, no I/O)."""
+    """Tier 1 — confidence threshold pre-check (pure Python, no I/O)."""
     gov = _build_governor(opa_decision="ALLOW", cbf_result="SAFE")
     # Use execute_trade with confidence just above threshold to exercise the
     # confidence check path without triggering a violation early-exit.
@@ -287,7 +292,7 @@ async def _sample_confidence_tier(runs: int) -> list[float]:
 
 
 async def _sample_cbf_opa_tier(runs: int) -> list[float]:
-    """Tier 3 — CBF + OPA parallel gate (mocked, measures asyncio.gather overhead)."""
+    """Tiers 2/4 — CBF + OPA parallel gate (mocked, measures asyncio.gather overhead)."""
     gov = _build_governor(opa_decision="ALLOW", cbf_result="SAFE")
     params = {
         "symbol": "AAPL",
@@ -339,7 +344,7 @@ async def _sample_total_rejected(runs: int) -> list[float]:
         "symbol": "AAPL",
         "quantity": 10,
         "price": 195.0,
-        "confidence": 0.50,  # below 0.95 threshold → early exit at Tier 2
+        "confidence": 0.50,  # below 0.95 threshold → early exit at Tier 1
         "account_balance": 50000.0,
         "trade_value": 1950.0,
     }

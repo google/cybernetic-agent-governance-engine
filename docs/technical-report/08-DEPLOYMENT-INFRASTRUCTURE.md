@@ -474,15 +474,17 @@ The following table documents the typical per-request latency budget for a gover
 | ----- | --------- | ------- | --- | ---------- |
 | **Tier 0** | STPA/UCA Validation | <1ms | 5ms | Pure Python dict checks |
 | **Tier 1** | Agentic Confidence Check | <1ms | 1ms | Float comparison |
-| **Tier 2** | Control Barrier Function | ~5ms | 15ms | Redis `WATCH`/`MULTI`/`EXEC` — single round-trip |
-| **Tier 3** | SLM Sidecar Query (Deprecated) | 0ms | **0ms (Bypassed)** | Bypassed permanently; evaluates under `slm_available = False` |
-| **Tier 4** | OPA Policy Evaluation | ~10-50ms | **1000ms timeout** | Circuit breaker; bankruptcy at 3000ms cumulative |
+| **Tier 2** | Control Barrier Function | ~5ms | 15ms | Redis `WATCH`/`MULTI`/`EXEC` — single round-trip; concurrent with Tier 4 |
+| **Tier 3** | Fiscal Limit Pre-Reservation | ~5ms | 15ms | Redis `WATCH`/`MULTI`/`EXEC` — single round-trip |
+| **Tier 4** | OPA Policy Evaluation | ~10-50ms | **1000ms timeout** | Circuit breaker; bankruptcy at 3000ms cumulative; concurrent with Tier 2 |
 | **Tier 5** | Multi-Agent Consensus | ~200ms | ~3000ms | Parallel `asyncio.gather`; skip if < $10k threshold |
 | **Tier 6** | DoWhy Causal Gatekeeper | ~100ms | 500ms | 50 simulations; fail-open on import error |
-| **Step 8** | FRIA Attestation [EU_ECB only] | <1ms | 1ms | Non-blocking span attribute stamp |
+| **Tier 6b** | Adaptive FRIA Gate [+ EU_ECB attestation] | <1ms | 1ms | Non-blocking span attribute stamp for EU_ECB |
 | **Network** | Inference Proxy → vLLM | <10ms | 50ms | httpx connection pooling; keep-alive |
 | **Inference** | vLLM TTFT (Prefix-Cached) | ~40ms | 200ms | Prefix caching; governance prompt reuse |
 | **Total** | End-to-end governance overhead | ~200ms | ~3000ms (bankruptcy) | Layered mitigations keep typical well under SLA |
+
+> The legacy SLM (semantic similarity) sidecar tier slot has been fully retired and no longer occupies a position in this table; `slm_available=false` is a permanent sentinel injected into the OPA payload (0ms overhead).
 
 ### 10.4 vLLM Prefix Caching Mechanics
 Since every governance check shares the same massive system prompt and JSON schema definition, vLLM hashes this prompt prefix and stores the KV attention states. Subsequent requests matching the prefix skip attention computation entirely. This drops the Time-To-First-Token (TTFT) from ~200ms to **<50ms**, preserving the bulk of the 200ms SLA budget for downstream agent reasoning.

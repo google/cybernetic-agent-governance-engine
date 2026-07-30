@@ -72,7 +72,7 @@ flowchart TD
 
 The runtime lifecycle consists of a primary check path and an execution-time revalidation feedback loop:
 1. **Pre-Execution FTRA Gate**: Before any LLM inference, the FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`) verifies that the compiled LangGraph graph contains a reachable path to a `HUMAN_APPROVED` terminal node. Graphs that fail this structural check are rejected before any agent runs.
-2. **Pre-Trade Checking**: The user's request traverses the multi-agent planning layers, culminating in the `SymbolicGovernor` executing 6 active tiers (STPA, confidence, CBF, OPA, Consensus, and Causal Gatekeeper; Tier 3 SLM is deprecated).
+2. **Pre-Trade Checking**: The user's request traverses the multi-agent planning layers, culminating in the `SymbolicGovernor` executing its 7-tier pipeline (STPA, confidence, CBF + OPA concurrent, Fiscal Limit Pre-Reservation, Consensus, and Causal Gatekeeper, plus the adaptive Tier 6b FRIA gate; the legacy SLM tier slot has been fully retired).
 3. **HITL Interruption**: If the trade passes the pre-trade check but requires human verification, execution is suspended and state is persisted in Redis.
 4. **Execution-Time Feedback Loop**: Once the human reviewer submits approval via `/resume`, the `governed_trader` subgraph re-hydration node retrieves a fresh pricing sample and loops back to the `SymbolicGovernor` to re-run only the deterministic, continuous tiers (Tier 2 Control Barrier Function, and Tier 4 OPA Policy Engine).
 5. **Final Actuation**: If both revalidation checks pass successfully, the transaction is committed via the trade execution actuator; otherwise, it is blocked, and a compensator rollback is initiated.
@@ -326,39 +326,44 @@ flowchart LR
 
 ## 6. Symbolic Governor 7-Tier Pipeline
 
-The `SymbolicGovernor` class in `src/gateway/governance/symbolic_governor.py` is the neuro-symbolic enforcement core of CAGE. Its `_run_checks()` method executes the governance tiers in **strict sequential order**, with the exception of Steps 2 and 4 (CBF and OPA) which are fired **concurrently** via `asyncio.gather`. The pipeline is **fail-closed**: any active tier raising a validation error produces a `GovernanceError` and halts the pipeline. No partial approval is possible. Tier 3 (SLM Sidecar) is deprecated to optimize the latency budget.
+The `SymbolicGovernor` class in `src/gateway/governance/symbolic_governor.py` is the neuro-symbolic enforcement core of CAGE. Its `_run_checks()` method executes the governance tiers in **strict sequential order**, with the exception of Tiers 2 and 4 (CBF and OPA) which are fired **concurrently** via `asyncio.gather`. The pipeline is **fail-closed**: any active tier raising a validation error produces a `GovernanceError` and halts the pipeline. No partial approval is possible. The legacy SLM sidecar tier slot has been fully retired; `slm_available=false` is a permanent sentinel injected into the OPA payload.
 
 ```mermaid
 flowchart TD
     Input([Governance Request]) --> T0[Tier 0\nSTPA UCA Validation\nSTPAValidator.validate]
     T0 --> T1["Tier 1\nSR 26-2 §IV.B Agentic Confidence\nconfidence_sufficient ≥ 0.95"]
-    T1 --> T2[Tier 2\nControl Barrier Function\nRedis WATCH/MULTI/EXEC]
-    T2 --> T3[Tier 3\nSLM (Deprecated / Bypassed)]
-    T3 --> T4[Tier 4\nOPA Policy Evaluation\nCircuitBreaker - 5 failures/30s]
-    T4 --> T5[Tier 5\nMulti-Agent Consensus\nasyncio critics]
-    T5 --> Approved([APPROVED])
+    T1 --> T24["Tiers 2/4\nCBF + OPA (concurrent)\nasyncio.gather"]
+    T24 --> T3[Tier 3\nFiscal Limit Pre-Reservation\nRedis WATCH/MULTI/EXEC]
+    T3 --> T5[Tier 5\nMulti-Agent Consensus\nasyncio critics]
+    T5 --> T6[Tier 6\nCausal Gatekeeper\nDoWhy PlaceboTreatmentRefuter]
+    T6 --> T6b[Tier 6b\nFRIA Adaptive Boundary]
+    T6b --> Approved([APPROVED])
 
     T0 -->|GovernanceError| Blocked([BLOCKED])
     T1 -->|GovernanceError| Blocked
-    T2 -->|GovernanceError| Blocked
-    T3 -->|slm_available=false| T4
-    T4 -->|GovernanceError| Blocked
+    T24 -->|GovernanceError| Blocked
+    T3 -->|GovernanceError| Blocked
     T5 -->|GovernanceError| Blocked
+    T6 -->|GovernanceError| Blocked
+    T6b -->|GovernanceError| Blocked
 ```
 
 ### 6.1 Tier Specifications
 
 | Tier | Name                     | Implementation                                                           | Key Threshold                                                                      |
 | ---- | ------------------------ | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| 0    | STPA UCA Validation      | `STPAValidator.validate()` in `src/gateway/governance/stpa_validator.py` | Thresholds from `src/gateway/governance/safety_params.json`                        |
-| 1    | SR 26-2 §IV.B Agentic Confidence | Inline check in `_run_checks()`                                          | `confidence_sufficient ≥ 0.95`                                                     |
+| 0    | STPA UCA Validation      | `GeneratedSTPAValidator.validate()` in `src/gateway/governance/generated_stpa_validator.py` | Thresholds from `src/gateway/governance/safety_params.json`                        |
+| 1    | SR 26-2 §IV.B Agentic Confidence | Inline fast-fail check in `_run_checks()`                                          | `confidence ≥ AGENT_CONFIDENCE_THRESHOLD` (default 0.95)                                                     |
 | 2    | Control Barrier Function | `ControlBarrierFunction` — Redis read-only `verify_action()` (concurrent with Tier 4) | `min_cash_balance=1000.0`, `gamma=0.5`                                             |
-| 3    | SLM Sidecar (Deprecated) | Bypassed to optimize latency budget (runs permanently offline)             | N/A (0ms)                                                                          |
+| 3    | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — Redis `WATCH`/`MULTI`/`EXEC`             | `FISCAL_DAILY_CAP_USD` (default $500,000); 300s reservation TTL                                                                          |
 | 4    | OPA Policy               | `OPAClient` with `CircuitBreaker` (concurrent with Tier 2 via `asyncio.gather`) | 5 consecutive failures → 30s open-circuit recovery; 3000ms hard latency budget; `trade.governance` Rego bundle |
 | 5    | Multi-Agent Consensus    | `ConsensusEngine` — parallel `asyncio` critic tasks                      | `consensus.threshold_usd=10000.0`                                                  |
 | 6    | Causal Gatekeeper        | `causal_safety_check()` in `src/gateway/governance/causal_gatekeeper.py` | placebo p-value < 0.05 or placebo effect > 0.2                                      |
+| 6b   | FRIA Adaptive Boundary   | `enforce_fria_boundary()` in `symbolic_governor.py`                      | `FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70`                                       |
 
-**Tier 2 (Control Barrier Function):** CBF's `verify_action()` is **read-only** — it does NOT modify Redis state at this stage. It verifies that executing the proposed trade will not violate the cash balance floor (`min_cash_balance=1000.0`). The `gamma=0.5` parameter controls the CBF decay coefficient. Steps 2 and 4 (CBF and OPA) are fired **simultaneously** via `asyncio.gather`. The TOCTOU race is closed by Step 3 (FiscalLimitGuard), NOT by making these sequential — this is intentional, correct design.
+> The legacy SLM (semantic similarity) sidecar tier slot has been fully retired. `slm_available=false` is a permanent sentinel value injected into the OPA payload; the SLM-degraded confidence escalation (0.95 → 0.97) is now handled entirely within `system_authz.rego`.
+
+**Tier 2 (Control Barrier Function):** CBF's `verify_action()` is **read-only** — it does NOT modify Redis state at this stage. It verifies that executing the proposed trade will not violate the cash balance floor (`min_cash_balance=1000.0`). The `gamma=0.5` parameter controls the CBF decay coefficient. Tiers 2 and 4 (CBF and OPA) are fired **simultaneously** via `asyncio.gather`. The TOCTOU race is closed by Tier 3 (FiscalLimitGuard), NOT by making these sequential — this is intentional, correct design.
 
 **Tier 4 (OPA Circuit Breaker):** The `CircuitBreaker` wrapping the `OPAClient` protects the governance pipeline from OPA service degradation. After 5 consecutive failures, the breaker opens for 30 seconds. During open-circuit state, all governance requests are rejected with `BLOCKED` — the system does not fall back to permissive defaults.
 
@@ -367,9 +372,9 @@ flowchart TD
 **Latency Mitigations (per-tier):** Each governance tier incorporates specific latency controls to keep the pipeline within the 200 ms operational latency requirement imposed by real-time interbank rails (FedNow / SEPA Instant) to support synchronous, inline AML and fraud-screening pipelines:
 - **Tier 0** (STPA): Pure Python dict checks (<1ms)
 - **Tier 1** (Confidence): Float comparison (<1ms)
-- **Tier 2** (CBF): Redis `WATCH`/`MULTI`/`EXEC` atomic single-roundtrip (~5ms)
-- **Tier 3** (SLM): Deprecated to optimize latency budget — permanently runs with `slm_available=false` sentinel injected into OPA payload (0ms overhead)
-- **Tier 4** (OPA): `CircuitBreaker` with 1.0s hard timeout per request, 2000ms soft ceiling warning, 3000ms bankruptcy protocol → immediate DENY
+- **Tier 2** (CBF): Redis `WATCH`/`MULTI`/`EXEC` atomic single-roundtrip (~5ms); concurrent with Tier 4
+- **Tier 3** (Fiscal Limit Pre-Reservation): Redis `WATCH`/`MULTI`/`EXEC` atomic single-roundtrip (~5ms)
+- **Tier 4** (OPA): `CircuitBreaker` with 1.0s hard timeout per request, 2000ms soft ceiling warning, 3000ms bankruptcy protocol → immediate DENY; concurrent with Tier 2
 - **Tier 5** (Consensus): `asyncio.gather()` parallel critic calls (Phase 4.4); background audit queue (`maxsize=1000`) for non-blocking post-execution logging
 - **Tier 6** (Causal): 50 simulations; fail-open on `ImportError` (DoWhy optional)
 
@@ -379,7 +384,7 @@ For the full 14-mechanism latency mitigation analysis and latency budget breakdo
 
 #### FiscalLimitGuard
 To prevent concurrent multi-agent "race to the rail" limit depletion where multiple agents check the same remaining daily cap simultaneously, CAGE v0.1.0 enforces atomic limit pre-reservation via the `FiscalLimitGuard` class (`src/gateway/governance/fiscal_limit_guard.py`).
-1. **Pre-Reservation (Step 3):** After concurrent CBF+OPA (Steps 2+4), the agent atomically reserves the trade amount in Redis using a `WATCH`/`MULTI`/`EXEC` optimistic lock transaction. This is the step that closes the TOCTOU race. Default daily cap: **$500,000 USD** (`FISCAL_DAILY_CAP_USD` env var). Cap is stored in **cents** for integer precision.
+1. **Pre-Reservation (Tier 3):** After concurrent CBF+OPA (Tiers 2+4), the agent atomically reserves the trade amount in Redis using a `WATCH`/`MULTI`/`EXEC` optimistic lock transaction. This is the tier that closes the TOCTOU race. Default daily cap: **$500,000 USD** (`FISCAL_DAILY_CAP_USD` env var). Cap is stored in **cents** for integer precision.
 2. **TTL Safety:** Returns a `ReservationToken` with a **300s TTL**. If the agent node crashes before execution, the cap is automatically reclaimed. Fail-closed: if Redis is unavailable, the trade is blocked.
 3. **Commit & Rollback:** On success, the spend is confirmed. On failure, the Saga compensating node releases the token back to Redis headroom.
 
@@ -397,7 +402,7 @@ The Symbolic Governor pipeline is region-aware. The `CAGE_DEPLOYMENT_REGION` env
 
 2. **Governance Threshold Calibration:** Region-specific threshold files (`config/thresholds/{REGION}_BASELINE.json`) override default governance parameters. The EU profile is consistently stricter — confidence minimum 0.97 (vs US 0.95), drawdown limit 4% (vs US 5%), latency SLA 150ms (vs US 200ms), and consensus threshold $7,500 (vs US $10,000).
 
-3. **EU-Only Step 8 (FRIA Attestation):** When `CAGE_DEPLOYMENT_REGION=EU_ECB`, the governor executes an additional non-blocking Step 8 after Tier 6, stamping a Fundamental Rights Impact Assessment attestation (`CTRL_FRIA_006`, EU AI Act Art. 29a) into the OTel span attributes. This step is absent in `US_FED` and `APAC_MAS` deployments. The `ControlRegistry.get_mapping_safe()` method handles this gracefully — returning `None` for controls not present in the active region.
+3. **EU-Only Tier 6b (FRIA Attestation):** When `CAGE_DEPLOYMENT_REGION=EU_ECB`, the governor's adaptive FRIA tier (Tier 6b, after Tier 6 Causal Gatekeeper) additionally stamps a Fundamental Rights Impact Assessment attestation (`CTRL_FRIA_006`, EU AI Act Art. 29a) into the OTel span attributes. This attestation is absent in `US_FED` and `APAC_MAS` deployments. The `ControlRegistry.get_mapping_safe()` method handles this gracefully — returning `None` for controls not present in the active region.
 
 | Region Code | Target Jurisdiction | Compliance Profile | Active Frameworks | Key Threshold Differences |
 | ----------- | ------------------- | --------------------------------------------------- | ----- | ---------- |

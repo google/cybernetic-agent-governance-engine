@@ -78,12 +78,12 @@ DORA Art. 12 requires financial entities to establish, maintain, and review a **
 
 **DORA Art. 12(3):** Threat-led penetration testing (TLPT).
 
-**Objective:** Verify that the three-tier semantic shielding cannot be bypassed by adversarial prompt injection.
+**Objective:** Verify that the semantic shielding layers cannot be bypassed by adversarial prompt injection.
 
 **Procedure (to be conducted by an accredited TLPT provider):**
-1. Tier 1 bypass attempts: Aho-Corasick filter evasion (character substitution, encoding tricks)
-2. Tier 2 bypass attempts: SLM semantic similarity evasion (paraphrase attacks)
-3. Tier 3 bypass attempts: OPA policy bypass (malformed input, type coercion)
+1. Aho-Corasick keyword filter evasion (character substitution, encoding tricks) — pre-pipeline scan
+2. NeMo Guardrails Colang rail evasion (paraphrase attacks) — pre-pipeline scan. The legacy SLM semantic-similarity sidecar has been fully retired (`slm_available=False` permanent sentinel); OPA now applies an elevated confidence threshold (0.97) unconditionally as a replacement mitigation.
+3. OPA policy bypass attempts (malformed input, type coercion) — Tier 4 of the SymbolicGovernor pipeline
 4. Indirect injection via MCP tool responses (see `docs/PII_SCRUBBING_POLICY.md`)
 5. HITL bypass attempts (TOCTOU attack simulation)
 
