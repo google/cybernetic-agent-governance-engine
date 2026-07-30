@@ -4,8 +4,9 @@
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | ✅ Yes    |
-| < 0.1.0 | ❌ No     |
+| 2.1.x   | ✅ Yes    |
+| 2.0.x   | ⚠️ Critical fixes only |
+| < 2.0.0 | ❌ No     |
 
 ## Reporting a Vulnerability
 
@@ -62,6 +63,6 @@ controls are documented in:
 - [`deployment/k8s/K8S_SECURITY_HARDENING.md`](deployment/k8s/K8S_SECURITY_HARDENING.md)
 - [`COMPLIANCE.md`](COMPLIANCE.md)
 
-> **Note:** CAGE v0.1.0 has not received a NIST Authorization to Operate (ATO).
+> **Note:** CAGE v2.1.0 has not received a NIST Authorization to Operate (ATO).
 > Regulated-environment deployers must conduct their own risk assessment before
 > production use.

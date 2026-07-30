@@ -1,8 +1,8 @@
 # SLM (Small Language Model) Inference Module
 
-> **⚠️ DEPRECATED — v0.1.0**
+> **⚠️ DEPRECATED — since v2.0.0**
 >
-> The SLM sidecar has been **fully deprecated** as of CAGE v0.1.0. The
+> The SLM sidecar has been **fully deprecated** as of CAGE v2.0.0. The
 > `SymbolicGovernor` no longer calls the SLM HTTP endpoint; semantic
 > similarity filtering is bypassed via the `slm_available=false` sentinel
 > (see `src/gateway/governance/symbolic_governor.py`). This Terraform module
@@ -11,7 +11,7 @@
 
 Deploys a semantic similarity sidecar using sentence-transformers BERT models.
 
-## Purpose (Historical — Pre-v0.1.0)
+## Purpose (Historical — Pre-v2.0.0)
 
 The SLM sidecar previously provided **Tier-2 semantic filtering** in CAGE's
 three-tier semantic shielding architecture:

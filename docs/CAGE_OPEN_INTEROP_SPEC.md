@@ -823,23 +823,31 @@ changes.
 | `attributes.request.http.body` | `string` | JSON-RPC 2.0 request body (max 64KB) |
 | `attributes.source.principal` | `string` | SPIFFE ID or service account from mTLS peer certificate |
 
-**`CheckResponse` — decision outcomes:**
+**`CheckResponse` — decision outcomes** (canonical `GovernanceDecision` four-state vocabulary, [`src/gateway/governance/decisions.py`](../src/gateway/governance/decisions.py)):
 
 | Verdict | Response type | HTTP status | Body |
 |---|---|---|---|
-| `APPROVED` | `OkHttpResponse` | 200 (proxy forwards) | — |
-| `DENIED` | `DeniedHttpResponse` | 403 | `{"verdict":"DENIED","violations":[...]}` |
-| `MANUAL_REVIEW` | `DeniedHttpResponse` | 202 | `{"verdict":"DEFERRED","thread_id":"..."}` |
+| `ALLOW` | `OkHttpResponse` | 200 (proxy forwards) | — |
+| `DENY` | `DeniedHttpResponse` | 403 | `{"verdict":"DENY","violations":[...]}` |
+| `REQUIRE_APPROVAL` | `DeniedHttpResponse` | 202 | `{"verdict":"REQUIRE_APPROVAL","thread_id":"..."}` |
+| `DEFER` | `DeniedHttpResponse` | 202 | `{"verdict":"DEFER","defer_id":"...","missing_input_reason":"..."}` |
 | Parse error | `DeniedHttpResponse` | 403 | `{"error":"parse_error","message":"..."}` |
 | Body > 64KB | `DeniedHttpResponse` | 403 | `{"error":"parse_error","message":"..."}` |
 
-**On `APPROVED`:** The `OkHttpResponse` includes the `x-cage-routing-seal`
+**On `ALLOW`:** The `OkHttpResponse` includes the `x-cage-routing-seal`
 header so the downstream MCP tool server can verify it via
 `enforce_routing_seal()`.
 
-**On `MANUAL_REVIEW` (DEFERRED):** The adapter returns 202 immediately
+**On `REQUIRE_APPROVAL`:** The action context is complete and evaluable, but
+requires explicit human sign-off. The adapter returns 202 immediately
 (ext_authz timeout is typically 5s). The MCP client must poll
 `GET /v1/approvals/pending?thread_id=<tid>` for the human approval outcome.
+
+**On `DEFER`:** The action context is incomplete or below the
+Confidence-Starvation Boundary (default 0.70) — trusted context or evidence
+is missing. This is structurally distinct from `REQUIRE_APPROVAL`: it routes
+to automated data-hydration, not human triage. The MCP client must poll
+`GET /v1/defer/pending?defer_id=<did>` for the outcome.
 
 **GCP Adaptation note:** When deployed as a GCP AGW Service Extension, this
 endpoint is called by the AGW control plane. No code changes are required —
@@ -1083,7 +1091,7 @@ catalog or is not authorized to call the requested tool.
 
 ```json
 {
-  "verdict": "DENIED",
+  "verdict": "DENY",
   "violations": ["caller 'spiffe://...' is not authorized to call tool 'execute_trade'"],
   "tool_name": "execute_trade"
 }

@@ -134,7 +134,7 @@ has changed, the request is rejected with HTTP 409 Conflict.
 
 ```json
 {
-  "verdict": "APPROVED | DENIED | DEFERRED",
+  "verdict": "ALLOW | DENY | REQUIRE_APPROVAL | DEFER",
   "violations": [],
   "audit_id": "uuid",
   "policy_version_id": "a1b2c3d4e5f6a7b8",
@@ -144,11 +144,14 @@ has changed, the request is rejected with HTTP 409 Conflict.
 
 ### 2.2 Verdict Semantics
 
+Canonical four-state vocabulary — see [`src/gateway/governance/decisions.py`](../src/gateway/governance/decisions.py):
+
 | Verdict | Meaning | HTTP status |
 |---|---|---|
-| `APPROVED` | All governance tiers passed; action may proceed | 200 |
-| `DENIED` | One or more governance tiers rejected the action | 403 |
-| `DEFERRED` | Action requires human approval; parked in DEFER queue | 202 |
+| `ALLOW` | All governance tiers passed; action may proceed; routing seal issued | 200 |
+| `DENY` | One or more governance tiers rejected the action; no seal issued | 403 |
+| `REQUIRE_APPROVAL` | Action is understood but requires explicit human sign-off before execution; routes to HITL approval queue | 202 |
+| `DEFER` | Action cannot be evaluated — trusted context or evidence is missing; routes to DeferQueue for automated data-hydration (not human triage) | 202 |
 
 ### 2.3 Governance Pipeline Tiers
 
@@ -260,7 +263,6 @@ When submitting policies via `POST /governance/ingest-policy`:
 | Document | Role |
 |---|---|
 | [`docs/CAGE_OPEN_INTEROP_SPEC.md`](CAGE_OPEN_INTEROP_SPEC.md) | Full external API surface contract |
-| [`docs/project/IMPLEMENTATION_PLAN_V2.md`](project/IMPLEMENTATION_PLAN_V2.md) | Phase A implementation plan |
 | [`src/gateway/governance/ingress/policy_translator.py`](../src/gateway/governance/ingress/policy_translator.py) | Unified ingress pipeline |
 | [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py) | `ControlRegistry` and `GovernanceControl` enum |
 | [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) | `validate_action()` — the single choke point |

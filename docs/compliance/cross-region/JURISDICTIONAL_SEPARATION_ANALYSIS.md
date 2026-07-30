@@ -2,8 +2,8 @@
 
 **Report Date:** 2026-06-15  
 **Scope:** Full codebase — source code, deployment scripts, documentation, compliance artifacts  
-**Authority:** `.roo/rules` Sections 1–14, `docs/GIT_WORKFLOW_STANDARDS.md`, `docs/DEPLOYMENT_RULES.md`  
-**Status:** FINDINGS ONLY — no code has been modified
+**Authority (at time of report):** `.roo/rules` Sections 1–14, `docs/GIT_WORKFLOW_STANDARDS.md`, `docs/DEPLOYMENT_RULES.md`
+**Status:** FINDINGS ONLY — historical record; most HIGH/CRITICAL findings have since been remediated (see closure notes inline) or superseded by the current [`AGENTS.md`](../../../AGENTS.md), [`docs/operations/GIT_WORKFLOW_STANDARDS.md`](../../operations/GIT_WORKFLOW_STANDARDS.md), and [`docs/operations/DEPLOYMENT_RULES.md`](../../operations/DEPLOYMENT_RULES.md)
 
 ---
 
@@ -236,6 +236,8 @@ def stamp_iso_control(span, control_id: str, region: str) -> None:
 **Issue:** `EVIDENCE_SLA_SECONDS` mixes ISO and NIST SLA targets in a flat dict. The SLA monitor iterates all entries in all regions, generating spurious breach alerts for NIST SA-11/SC-7/SC-8 in EU_ECB and APAC_MAS deployments.
 
 **Remediation:** Apply the same split pattern as FINDING-01: `_UNIVERSAL_SLA` (ISO 42001 controls only) + `_JURISDICTIONAL_SLA` per region. The SLA monitor must call `get_sla_seconds(region)` rather than iterating the flat dict.
+
+**Status: 🟡 PARTIALLY REMEDIATED.** `src/compliance_bridge/types.py` now defines `_UNIVERSAL_SLA`, `_JURISDICTIONAL_SLA`, and the `get_sla_seconds(region)` accessor exactly as recommended above. However, `src/compliance_bridge/sla_monitor.py` (the actual consumer) still imports and iterates the deprecated `EVIDENCE_SLA_SECONDS` backward-compat alias directly, rather than calling `get_sla_seconds(CAGE_DEPLOYMENT_REGION)`. The original spurious-alert risk for NIST/EU/MAS-specific controls is therefore neutralized (those controls are simply never monitored for staleness in any region, since `EVIDENCE_SLA_SECONDS` now only contains the universal ISO 42001 subset) — but the jurisdictional SLA coverage the accessor was built to provide is not yet wired up. Remaining work: update `sla_monitor.py` to call `get_sla_seconds()` with the active region. See also `docs/technical-report/06-COMPLIANCE-STANDARDS.md` §5.3.1.
 
 ---
 
@@ -789,33 +791,19 @@ lifecycle {
 
 ---
 
-### DOC-03 🟠 HIGH — `docs/IR_PLAN.md` presents NIST SP 800-61 as the universal IRP foundation
+### DOC-03 ✅ CLOSED — `docs/IR_PLAN.md` presented NIST SP 800-61 as the universal IRP foundation
 
-| Attribute | Value |
-|-----------|-------|
-| **File** | `docs/IR_PLAN.md:27` |
-| **Violation** | Type G — Incorrect Hierarchy Presentation |
-| **Severity** | HIGH |
-| **Rule Violated** | R-8 |
+> **Closed 2026-07:** `docs/security/IR_PLAN.md` (and the duplicate `docs/security/INCIDENT_RESPONSE_PLAN.md`) were deleted as part of a documentation-scope cleanup. CAGE is a reference architecture, not an operating organization — a fictional Incident Response Plan with placeholder `[TBD]` role incumbents and no real Authorizing Official provided no engineering value. Adopters deploying CAGE in a real regulated environment should author their own jurisdiction-aware IRP, using the compliance mapping in `docs/compliance/` as the control-traceability reference.
 
-**Issue:** The Incident Response Plan opens with NIST SP 800-61 as the foundational framework with no ISO 42001 baseline section. NIST SP 800-61 is a US federal standard. EU_ECB deployments are subject to DORA Art. 17-23 incident reporting; APAC_MAS to MAS TRM §11.
-
-**Remediation:** Add a "Universal Baseline (ISO 42001 A.10.1)" section as the opening section. Restructure the document with explicit `### US_FED (NIST SP 800-61)`, `### EU_ECB (DORA Art. 17-23)`, and `### APAC_MAS (MAS TRM §11)` subsections.
+**Original finding (for historical record):** The Incident Response Plan opened with NIST SP 800-61 as the foundational framework with no ISO 42001 baseline section. NIST SP 800-61 is a US federal standard. EU_ECB deployments are subject to DORA Art. 17-23 incident reporting; APAC_MAS to MAS TRM §11. A real IRP should add a "Universal Baseline (ISO 42001 A.10.1)" section as the opening section, and restructure with explicit `### US_FED (NIST SP 800-61)`, `### EU_ECB (DORA Art. 17-23)`, and `### APAC_MAS (MAS TRM §11)` subsections.
 
 ---
 
-### DOC-04 🟠 HIGH — `docs/IR_PLAN.md` has no multi-jurisdiction incident notification structure
+### DOC-04 ✅ CLOSED — `docs/IR_PLAN.md` had no multi-jurisdiction incident notification structure
 
-| Attribute | Value |
-|-----------|-------|
-| **File** | `docs/IR_PLAN.md:313` |
-| **Violation** | Type F — Missing Jurisdictional Segmentation |
-| **Severity** | HIGH |
-| **Rule Violated** | R-8 |
+> **Closed 2026-07:** See DOC-03 — the source file was deleted.
 
-**Issue:** The incident notification procedures section does not distinguish between US_FED (CISA notification within 72 hours), EU_ECB (DORA Art. 19 — competent authority notification within 4 hours for major ICT incidents), and APAC_MAS (MAS TRM §11.3 — MAS notification within 1 hour for P1 incidents). All three have different timelines and recipients.
-
-**Remediation:** Create jurisdiction-specific notification tables with timelines, recipients, and regulatory citations for each of the three jurisdictions.
+**Original finding (for historical record):** The incident notification procedures section did not distinguish between US_FED (CISA notification within 72 hours), EU_ECB (DORA Art. 19 — competent authority notification within 4 hours for major ICT incidents), and APAC_MAS (MAS TRM §11.3 — MAS notification within 1 hour for P1 incidents). All three have different timelines and recipients. A real IRP should create jurisdiction-specific notification tables with timelines, recipients, and regulatory citations for each of the three jurisdictions.
 
 ---
 
@@ -954,16 +942,9 @@ lifecycle {
 
 ---
 
-### DOC-14 🟢 LOW — `docs/IR_PLAN.md` SR 26-2 HITL SLA presented as universal
+### DOC-14 ✅ CLOSED — `docs/IR_PLAN.md` SR 26-2 HITL SLA presented as universal
 
-| Attribute | Value |
-|-----------|-------|
-| **File** | `docs/IR_PLAN.md:55` |
-| **Violation** | Type E — Ambiguous Universal vs. Jurisdictional Scope |
-| **Severity** | LOW |
-| **Rule Violated** | R-8 |
-
-**Remediation:** Add `> **US_FED Only:** SR 26-2 §3.2 HITL SLA applies exclusively to CAGE_DEPLOYMENT_REGION=US_FED.` callout.
+> **Closed 2026-07:** See DOC-03 — the source file was deleted. The correct universal-vs-regional HITL SLA callout pattern is preserved and enforced in [`docs/governance/HUMAN_OVERSIGHT_SCOPE.md`](../../governance/HUMAN_OVERSIGHT_SCOPE.md#sla-requirements-by-region).
 
 ---
 
@@ -972,7 +953,7 @@ lifecycle {
 | File | Findings | Highest Severity |
 |------|----------|-----------------|
 | `README.md` | 2 | 🟠 HIGH |
-| `docs/IR_PLAN.md` | 3 | 🟠 HIGH |
+| `docs/IR_PLAN.md` | 3 | ✅ CLOSED (file deleted) |
 | `infra/modules/gcp_gke_cluster/NIST_CONTROLS.md` | 1 | 🟠 HIGH |
 | `infra/modules/gcp_gke_cluster/README.md` | 1 | 🟠 HIGH |
 | `docs/INFERENCE_GATEWAY_ARCHITECTURE.md` | 1 | 🟠 HIGH |
@@ -982,7 +963,7 @@ lifecycle {
 | `docs/DEPLOYMENT_RULES.md` | 1 | 🟡 MEDIUM |
 | `COMPLIANCE.md` | 1 | 🟡 MEDIUM |
 | `infra/modules/k8s_namespace/README.md` | 1 | 🟡 MEDIUM |
-| `docs/IR_PLAN.md` (SR 26-2) | 1 | 🟢 LOW |
+| `docs/IR_PLAN.md` (SR 26-2) | 1 | ✅ CLOSED (file deleted) |
 
 ---
 
@@ -1272,7 +1253,7 @@ Findings are grouped into four priority tiers based on severity and deployment r
 | DEP-07 | `compliance-bridge.yaml` sets `OSCAL_S3_REGION: "auto"` | `deployment/k8s/compliance-bridge.yaml` | S |
 | DEP-11 | `app_secrets/main.tf` hardcodes `AWS_REGION = "us-east-1"` | `infra/modules/app_secrets/main.tf` | S |
 | DEP-12 | No `eu-prod.tfvars` or `apac-prod.tfvars` | `infra/targets/gcp-gke/` | M |
-| FINDING-05 | `EVIDENCE_SLA_SECONDS` mixes ISO and NIST SLA targets | `src/compliance_bridge/types.py` | M |
+| FINDING-05 | `sla_monitor.py` still consumes deprecated flat `EVIDENCE_SLA_SECONDS` instead of region-aware `get_sla_seconds()` (data model already split in `types.py`) | `src/compliance_bridge/sla_monitor.py` | S |
 | CA-02 | AI 600-1 Lula stubs lack `cage.region: US_FED` metadata | `compliance/lula/` | S |
 | CA-01 | `lula-validation-sc4.yaml` has three incompatible identities | `compliance/lula/` | S |
 
@@ -1420,4 +1401,4 @@ Use this pattern as the template for the missing `eu-ecb-compliance-gate` and `a
 
 ---
 
-*Report generated: 2026-06-15. This document is a findings-only analysis. No source files were modified during this analysis. All remediation work requires separate PRs following the CAGE Git Workflow Standards (`docs/GIT_WORKFLOW_STANDARDS.md`) with appropriate Change Request IDs per `docs/CHANGE_MANAGEMENT_PROCESS.md`.*
+*Report generated: 2026-06-15. This document is a findings-only analysis; it is retained as a historical record. No source files were modified during the original analysis. Remediation work follows [`docs/operations/GIT_WORKFLOW_STANDARDS.md`](../../operations/GIT_WORKFLOW_STANDARDS.md) and the standards in [`AGENTS.md`](../../../AGENTS.md).*

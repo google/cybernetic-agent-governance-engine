@@ -161,7 +161,7 @@ Source: `deployment/docker/`
 | NeMo              | `Dockerfile.nemo`                              | NeMo base                 | Guardrails server                                                                      |
 | Main              | `Dockerfile`                                   | Python 3.11-slim          | Governed Financial Advisor; `google-adk>=1.28.1` (advisor extras)                      |
 
-> **Note:** The Compliance Bridge base image is `python:3.12-slim` (NOT `python:3.11-slim`). This was updated in v0.1.0 to align with the Python ≥3.10, <3.13 constraint and to pick up 3.12 performance improvements.
+> **Note:** The Compliance Bridge base image is `python:3.12-slim` (NOT `python:3.11-slim`). This was updated in v2.0.0 to align with the Python ≥3.10, <3.13 constraint and to pick up 3.12 performance improvements.
 
 **Root-Level Compose Files**
 

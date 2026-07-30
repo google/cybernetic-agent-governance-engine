@@ -1,4 +1,4 @@
-# Security & Compliance Status — CAGE v0.1.0
+# Security & Compliance Status — CAGE v2.1.0
 
 **Date:** 2026-06-23
 **Status:** Public disclosure of current security posture and compliance implementation state
@@ -7,7 +7,7 @@
 
 ## Summary
 
-CAGE v0.1.0 provides a **production-grade AI governance enforcement runtime**. The AI-layer controls (NeMo Guardrails, OPA policy enforcement, Cloud KMS HSM-backed asymmetric signing with HMAC-SHA256 dev/CI fallback, HITL with TOCTOU remediation, LangGraph safety nodes, DEFER state machine, SHA-256 hash-chained context accumulator) are fully implemented and tested. However, the full **NIST Risk Management Framework (RMF) authorization process has not been completed**, and several infrastructure-level security controls have known gaps documented in [`docs/POAM.md`](../compliance/cross-region/POAM.md).
+CAGE v2.1.0 provides a **production-grade AI governance enforcement runtime**. The AI-layer controls (NeMo Guardrails, OPA policy enforcement, Cloud KMS HSM-backed asymmetric signing with HMAC-SHA256 dev/CI fallback, HITL with TOCTOU remediation, LangGraph safety nodes, DEFER state machine, SHA-256 hash-chained context accumulator) are fully implemented and tested. However, the full **NIST Risk Management Framework (RMF) authorization process has not been completed**, and several infrastructure-level security controls have known gaps documented in [`docs/POAM.md`](../compliance/cross-region/POAM.md).
 
 > [!IMPORTANT]
 > This system has **not received an Authorization to Operate (ATO)** from a NIST-designated Authorizing Official. It has not undergone a formal Security Assessment. Deployers in regulated environments must complete their own risk assessment before production use.
@@ -35,13 +35,13 @@ CAGE v0.1.0 provides a **production-grade AI governance enforcement runtime**. T
 | Presidio PII detection           | 15 entity types; input and output (in-process within NeMo Guardrails)      | ✅ Implemented & tested |
 | W3C traceparent propagation      | Full OTel trace waterfall; 100% sampling for governance spans; direct Langfuse OTLP (OTel Collector deprecated 2026-05-31) | ✅ Implemented & tested |
 | Recursion guard                  | `loop_count >= 3 → explainer` escape hatch                                | ✅ Implemented & tested |
-| DEFER state machine (AARM-V7)    | Redis db=1 noeviction; SSE events; OTel metrics; closes AARM-V7 threat vector | ✅ Implemented (v0.1.0) |
-| SHA-256 hash-chained context     | Context accumulator with hash-chain integrity; closes AARM-V1 threat vector | ✅ Implemented (v0.1.0) |
-| External Normative Provider      | Adaptive FRIA gating (EU AI Act); stub mode until TrustLayers credentials provisioned (POAM-022) | ✅ Implemented (v0.1.0) |
+| DEFER state machine (AARM-V7)    | Redis db=1 noeviction; SSE events; OTel metrics; closes AARM-V7 threat vector | ✅ Implemented |
+| SHA-256 hash-chained context     | Context accumulator with hash-chain integrity; closes AARM-V1 threat vector | ✅ Implemented |
+| External Normative Provider      | Adaptive FRIA gating (EU AI Act); stub mode until TrustLayers credentials provisioned (POAM-022) | ✅ Implemented |
 | Linkerd mTLS (SC-8 / IA-3)       | SPIFFE/SVID identity; gateway↔OPA, gateway↔NeMo; closes POAM-007          | ✅ Implemented (v1.1.0) |
 | Cilium L7 egress lockdown (SC-7) | FQDN allowlist (gateway); internal-only (agent pods)                      | ✅ Implemented (v1.1.0) |
 | Cryptographic evidence chain     | SHA-256 hash-chained NDJSON; MiFID II / GDPR view-access log; KMS batch signing for OSCAL artifacts | ✅ Implemented (v1.1.0) |
-| AgentSight UI Phase 1            | React/Vite frontend; eBPF kernel observability via `deployment/k8s/agentsight-daemon.yaml`; remote exporter active | ✅ Implemented (v0.1.0) |
+| AgentSight UI Phase 1            | React/Vite frontend; eBPF kernel observability via `deployment/k8s/agentsight-daemon.yaml`; remote exporter active | ✅ Implemented |
 | Token Quota Proxy (CTRL_TQP_007) | Per-session step-count (≤12) and token (≤100k) quota enforcement via Redis atomic Lua counters; fail-CLOSED; HTTP 429 on quota exceeded; two-phase commit (reserve → reconcile); rollback on downstream failure. ISO 42001 Annex A.4. | ✅ Implemented (fix/track-b-v2-release-gates) |
 | PII Sanitizer                    | Pre-ledger regex sanitization pipeline (SSN, CC, email, phone, API key/Bearer token) applied to all UCA records before WORM persistence. ISO 42001 Annex A.6. | ✅ Implemented (fix/track-b-v2-release-gates) |
 | UCA Logger                       | ISO 42001 Clause 6.1 UCA record builder; KMS-signed (HMAC-SHA256 stub in `CAGE_ENV=test`); region-gated WORM persistence (`CAGE_DEPLOYMENT_REGION` → `OSCAL_S3_BUCKET_{REGION}`); UCA types: `quota_exceeded`, `prompt_injection`, `pii_sanitization`. | ✅ Implemented (fix/track-b-v2-release-gates) |
@@ -103,7 +103,7 @@ The following weaknesses are documented in [`docs/POAM_US_FED.md`](../compliance
 | POAM-005 | CA-6       | **No Authorization to Operate (ATO) letter**                          | **Critical** | Open            | 2026-06-30  |
 | POAM-006 | CM-8       | No SBOM in CI/CD pipeline                                             | High         | Open            | 2026-05-01  |
 | POAM-007 | IA-3       | ~~No intra-cluster mTLS~~ **✅ Closed** — Linkerd SPIFFE/SVID deployed | High         | **Closed**      | 2026-05-17  |
-| POAM-008 | IR-1       | ~~No formal Incident Response Plan~~ **🔄 In Progress** — `docs/INCIDENT_RESPONSE_PLAN.md` created (2026-06-23); pending AO sign-off | High | In Progress | 2026-07-31  |
+| POAM-008 | IR-1       | No formal Incident Response Plan. A draft `docs/security/IR_PLAN.md` was created 2026-06-23 but was deleted 2026-07 during a documentation-scope cleanup — it presented NIST SP 800-61 as a universal (rather than US_FED-specific) foundation with no real Authorizing Official and placeholder `[TBD]` incumbents (see `docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md` DOC-03/DOC-04/DOC-14). Adopters deploying CAGE in a real regulated environment must author their own jurisdiction-aware IRP. | High | Open | 2026-07-31  |
 | POAM-009 | RA-2       | FIPS 199 categorization unsigned                                      | **Critical** | In Progress     | 2026-03-31  |
 | POAM-010 | RA-5       | ~~No vulnerability scanning in CI pipeline~~ **✅ Closed** — pip-audit, Trivy, Grype, CycloneDX SBOM in `security-scan.yml` | High | **Closed** | 2026-04-15 |
 | POAM-011 | SC-8       | No TLS enforcement validation test — test suite does not assert TLS 1.2+ on all endpoints | Moderate | Open | 2026-05-15 |
@@ -115,7 +115,7 @@ The following weaknesses are documented in [`docs/POAM_US_FED.md`](../compliance
 | POAM-017 | SI-2       | CVE-2026-4810 (google-adk): code injection; upgrade blocked by OTel SDK version conflict | Moderate | Open | 2026-07-31 |
 | POAM-018 | AU-9       | ~~Langfuse compliance project credentials fail silently~~ **✅ Closed** — `_validate_langfuse_credentials()` now raises `RuntimeError` in non-dev environments; `/health` endpoint reports `langfuse_compliance_configured` status (2026-06-23) | High | **Closed** | 2026-06-23  |
 | POAM-019 | AU-9, SC-7 | ~~Terraform fallback silently collapses dual-project telemetry isolation~~ **✅ Closed** — `lifecycle.precondition` added to `app_secrets` module call in `main.tf`; `variables.tf` adds `nullable=false` + validation blocks on compliance key vars (2026-06-23) | High | **Closed** | 2026-06-23 |
-| POAM-020 | CM-3       | ~~Technical report README version mismatch~~ **✅ Closed** — aligned to v0.1.0 | Moderate | **Closed** | 2026-06-15 |
+| POAM-020 | CM-3       | ~~Technical report README version mismatch~~ **✅ Closed** — aligned to current release | Moderate | **Closed** | 2026-06-15 |
 | POAM-021 | SI-4       | ~~AgentSight eBPF exporter in console mode~~ **✅ Closed** — `exporter.type: "remote"` confirmed | High | **Closed** | 2026-07-15 |
 | POAM-022 | SA-9, CA-7 | External Normative Provider operating in stub mode (TrustLayers credentials not provisioned) | Moderate | In Progress | 2026-08-31 |
 | POAM-023 | SI-2       | CVE-2025-13462 in `libpython3.11` (python:3.12-slim-bookworm base layer) — 19 CRITICAL CVEs; gateway Dockerfile pinned to `python:3.12-slim-bookworm` with `apt-get upgrade -y` applied at build time; no Debian bookworm fix available as of 2026-06-08; residual CVEs suppressed via `.trivyignore`; Cilium egress lockdown reduces exploitability; risk accepted with review date 2026-09-08 | **Critical** | Open | 2026-09-08 |
@@ -195,7 +195,6 @@ Before deploying CAGE in a regulated financial environment:
 | NIST RMF Current-State Inventory    | [`docs/NIST_RMF_CHUNK1_CURRENT_STATE.md`](../compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md)                                                                                        |
 | NIST RMF Gap Analysis (Steps 2–5)   | [`docs/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md`](../compliance/us_fed/NIST_RMF_CHUNK2_PREPARE_CATEGORIZE.md) — [`NIST_RMF_CHUNK5_MONITOR_ROADMAP.md`](../compliance/us_fed/NIST_RMF_CHUNK5_MONITOR_ROADMAP.md) |
 | ISO 42001 Compliance Detail         | [`docs/ISO_42001_COMPLIANCE.md`](../compliance/universal/ISO_42001_COMPLIANCE.md)                                                                                                          |
-| Security Assessment Plan            | [`docs/SECURITY_ASSESSMENT_PLAN.md`](SECURITY_ASSESSMENT_PLAN.md)                                                                                                  |
 | Governance Crosswalk                | [`docs/GOVERNANCE_CROSSWALK.md`](../compliance/cross-region/GOVERNANCE_CROSSWALK.md)                                                                                                          |
 | SR 26-2 (Federal Reserve)           | Federal Reserve Supervisory Letter SR 26-2, April 17, 2026 — Agentic AI Governance                                                                                 |
 | CSA AARM v1.0                       | Cloud Security Alliance AI Risk Management v1.0 — 11-vector threat taxonomy                                                                                        |

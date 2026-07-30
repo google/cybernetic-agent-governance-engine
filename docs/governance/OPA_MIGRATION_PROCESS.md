@@ -208,7 +208,7 @@ git push origin fix/<ticket-id>-revert-a92-policy-regression
 
 Open a PR with title: `fix(opa): revert A.9.2 policy regression [A.9.2]`
 
-- Tag as **Cat-E (Emergency)** change per `docs/governance/CHANGE_MANAGEMENT_PROCESS.md`
+- Tag as **Cat-E (Emergency)** change per the adopting organization's own change-management process
 - Notify the AO within 1 hour of the revert push
 - Update `docs/POAM.md` with: revert commit SHA, Lula result, and closure date
 

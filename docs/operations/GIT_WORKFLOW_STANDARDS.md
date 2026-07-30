@@ -6,11 +6,11 @@
 > `hotfix/*` and `release/*` branch patterns are documented for
 > reference only — no production release process exists.
 
-**Version:** 1.1
-**Effective:** 2026-06-14
+**Version:** 1.2
+**Effective:** 2026-07-29
 **Applies to:** All contributors to `cybernetic-governance-engine`
 
-> **v0.1.0 Release Note (2026-06-08):** The stable `v0.1.0` tag has been pushed to origin and the GitHub Release is published as Latest. The `rc-v0.1.0` branch is retained as a permanent release boundary marker per §4.3 of `docs/RELEASE_PLAN.md`. All future feature work branches from `main`. The `pre-push` hook blocks direct pushes to both `main` and `rc-v0.1.0`.
+> **Release Note:** The stable `v2.1.0` tag has been pushed to origin and the GitHub Release is published as Latest (prior stable: `v2.0.0`). There is no `rc-v*` branch currently retained in the repository — release-candidate branches are deleted once their tag is cut. All feature work branches from `main`. The `pre-push` hook blocks direct pushes to `main`.
 
 This document is the authoritative reference for Git commit standards, branch naming, local setup requirements, pull request process, and protected branch workflow. Compliance is mandatory. Deviations will cause CI failures, rejected commits, or blocked pushes.
 
@@ -43,7 +43,7 @@ This is not optional. The script installs two enforcement mechanisms that are pr
 |---|---|---|
 | Commit message template | `.gitmessage` (via `git config commit.template`) | Pre-fills your editor with the required format on every `git commit` |
 | `commit-msg` hook | `.git/hooks/commit-msg` | Validates the commit message before the commit is recorded |
-| `pre-push` hook | `.git/hooks/pre-push` | Blocks direct pushes to `main` and `rc-v0.1.0` |
+| `pre-push` hook | `.git/hooks/pre-push` | Blocks direct pushes to `main` (and any currently active `rc-v*` release branch) |
 
 ### 1.2 What the `commit-msg` hook enforces
 
@@ -245,7 +245,7 @@ The following branches trigger the full CI suite (including the License Guard wo
 | Branch pattern | Trigger type |
 |---|---|
 | `main` | `push` and `pull_request` |
-| `rc-v0.1.0` | `push` and `pull_request` |
+| `rc-v*` (active release branch, if any) | `push` and `pull_request` |
 | `release/**` | `push` and `pull_request` |
 
 Feature branches (`feat/**`, `fix/**`, etc.) trigger CI only when a pull request is opened against one of the above protected branches. CI does not run on arbitrary pushes to feature branches unless a PR exists.
@@ -360,7 +360,7 @@ The `commit-msg` hook validates each commit as you make it. Fix rejections immed
 git push origin feat/42-redis-rate-limiter
 ```
 
-The `pre-push` hook will block this command if your current branch is `main` or `rc-v0.1.0`. If you are on a feature branch, the push proceeds normally.
+The `pre-push` hook will block this command if your current branch is `main` (or an active `rc-v*` release branch). If you are on a feature branch, the push proceeds normally.
 
 ### Step 4 — Open a pull request
 
@@ -413,7 +413,7 @@ git commit -m "fix: quick patch"
 git push origin main
 ```
 
-The `pre-push` hook blocks pushes to `main` and `rc-v0.1.0`. GitHub branch protection rules enforce this server-side as a second layer. There are no exceptions, including for maintainers.
+The `pre-push` hook blocks pushes to `main` (and any active `rc-v*` release branch). GitHub branch protection rules enforce this server-side as a second layer. There are no exceptions, including for maintainers.
 
 ### 6.2 Vague or non-conforming commit messages
 
@@ -469,4 +469,5 @@ A single commit that touches more than ~20 files or ~500 lines (excluding genera
 | Version | Date       | Change Summary |
 |---------|------------|----------------|
 | 1.0     | 2026-06-03 | Initial Git workflow standards |
-| 1.1     | 2026-06-14 | Added v0.1.0 release note; clarified `rc-v0.1.0` is retained as permanent release boundary marker; confirmed `pre-push` hook blocks both `main` and `rc-v0.1.0` |
+| 1.1     | 2026-06-14 | Added v0.1.0 (later v2.0.0) release note; clarified `rc-v0.1.0` was retained as a release boundary marker at the time; confirmed `pre-push` hook blocks both `main` and the active `rc-v*` branch |
+| 1.2     | 2026-07-29 | Corrected fictional `v0.1.0`/`rc-v0.1.0` refs to the actual `v2.1.0` release; noted that `rc-v*` release branches are deleted after their tag is cut and no `rc-v*` branch is currently retained |

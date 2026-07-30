@@ -4,8 +4,8 @@
 | ------------------ | ------------------------- |
 | **Classification** | PUBLIC                    |
 | **Date**           | 2026-06-03                |
-| **Version**        | v0.1.0                    |
-| **Status**         | Current State + Roadmap (v0.1.0-rc.2; GKE deployment verified 2026-06-03) |
+| **Version**        | v2.1.0                    |
+| **Status**         | Current State + Roadmap (GKE deployment verified 2026-06-03; see `CHANGELOG.md` for v2.1.0 additions) |
 
 ---
 
@@ -25,7 +25,7 @@ This document describes both the **current implementation** (grounded in source 
 
 ## Part 1 — Current Implementation (Verified)
 
-The following capabilities are implemented, tested, and operational in the CAGE v0.1.0 codebase.
+The following capabilities are implemented, tested, and operational in the CAGE codebase.
 
 ### 1.1 The Domain-Agnostic Kernel
 
@@ -103,7 +103,7 @@ Every tier's decision boundary is parameterized through [`governance_thresholds.
 
 ### 1.5 Fail-Closed Posture
 
-The CBF engine defaults to `BLOCKED` when its state source (Redis) is unreachable. This is the `CBF_FAIL_OPEN=false` enforcement verified in the v0.1.0 integration test suite (136/136 passing against live GKE `<your-cluster-name>` cluster).
+The CBF engine defaults to `BLOCKED` when its state source (Redis) is unreachable. This is the `CBF_FAIL_OPEN=false` enforcement verified in the v2.0.0 integration test suite (136/136 passing against live GKE `<your-cluster-name>` cluster).
 
 The system will not permit an action it cannot independently verify as safe. This property is invariant across all domains.
 

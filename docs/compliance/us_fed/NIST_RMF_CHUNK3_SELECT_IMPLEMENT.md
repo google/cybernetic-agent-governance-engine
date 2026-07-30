@@ -3,7 +3,7 @@
 ## Cybernetic Governance Engine — Gap Analysis Report (Chunk 3 of 5)
 
 **Date:** 2026-06-01
-**System:** Cybernetic Governance Engine (CAGE) v0.1.0
+**System:** Cybernetic Governance Engine (CAGE) v2.0.0
 **Baseline:** NIST SP 800-53 Rev 5 **HIGH** baseline (derived from FIPS 199: C=Moderate / I=High / A=Moderate → overall High)
 **Scope:** Steps 3 (Select) and 4 (Implement) — Control families AC, AU, CA, CM, IA, IR, RA, SC, SI
 **Additional Frameworks:** SR 26-2 (Federal Reserve, April 17, 2026), CSA AARM v1.0
@@ -65,7 +65,7 @@
 
 **Current State:**
 
-- `src/gateway/infrastructure/telemetry.py` provides an OTel tracer factory via `get_tracer()`. OpenTelemetry spans are emitted for all governance pipeline stages. Graceful fallback to `None` when OTel is not installed. **v0.1.0:** Standalone OTel Collector **deprecated 2026-05-31**; direct Langfuse OTLP ingestion at `http://langfuse-web:3000/api/public/otel/v1/traces`.
+- `src/gateway/infrastructure/telemetry.py` provides an OTel tracer factory via `get_tracer()`. OpenTelemetry spans are emitted for all governance pipeline stages. Graceful fallback to `None` when OTel is not installed. **v2.0.0:** Standalone OTel Collector **deprecated 2026-05-31**; direct Langfuse OTLP ingestion at `http://langfuse-web:3000/api/public/otel/v1/traces`.
 - `src/gateway/observability/mcp_tracing.py` patches `ToolManager.call_tool` with W3C distributed trace context propagation. Every MCP tool invocation is wrapped in a child span with `mcp.tool.name`, input, and output attributes. Tool result is truncated to 4096 chars and recorded on the span.
 - `src/compliance_bridge/audit_workflow.py` implements a 5-step audit pipeline: (1) persist OSCAL to S3/GCS with **KMS batch signing** (`kms_batch_signer.py`), (2) parse OSCAL deterministically, (3) ingest findings to Langfuse compliance project via direct OTLP, (4) alert on critical failures via Slack/console, (5) generate LLM remediation advisory. Each step records model version and trace IDs. Human review is mandatory before applying LLM suggestions (ISO 42001 A.7.2 annotation).
 - `src/compliance_bridge/metrics.py` provides TTL-cached compliance metric aggregation from Langfuse with 5-minute cache. Queries ISO 42001 control-tagged traces.
@@ -76,7 +76,7 @@
 1. **AU-3 (Content of Audit Records):** OTel spans record `mcp.tool.name` and truncated I/O but do not systematically capture the **who** (authenticated principal identity) on every audit record. `input.identity` is present in OPA payloads but not propagated into OTel span attributes.
 2. **AU-4 (Audit Log Storage Capacity):** No audit log retention policy or capacity management documented. OSCAL artifacts are stored to S3/GCS but the bucket lifecycle policy (defined in `deployment/terraform/variables.tf`) names `cage-oscal-artifacts` with 7-year intent but the actual S3 lifecycle rule is not in the Terraform files.
 3. **AU-9 (Protection of Audit Information):** OTel spans to Langfuse are not tamper-protected at the transport layer (no client-cert mTLS to Langfuse endpoint verified in config). OSCAL artifacts are stored with SHA-256 content hash in object metadata (`storage.py:169`) — this provides integrity evidence but no access-control restriction on the S3 bucket policy is demonstrated.
-4. **AU-10 (Non-repudiation):** **v0.1.0 PARTIALLY ADDRESSED:** Cloud KMS HSM-backed asymmetric signing (`kms_signer.py`) is now the primary signing mechanism for governance verdicts, providing genuine non-repudiation. HMAC-SHA256 routing seal remains as dev/CI fallback only. KMS batch signing (`kms_batch_signer.py`) signs OSCAL artifacts before GCS persistence.
+4. **AU-10 (Non-repudiation):** **v2.0.0 PARTIALLY ADDRESSED:** Cloud KMS HSM-backed asymmetric signing (`kms_signer.py`) is now the primary signing mechanism for governance verdicts, providing genuine non-repudiation. HMAC-SHA256 routing seal remains as dev/CI fallback only. KMS batch signing (`kms_batch_signer.py`) signs OSCAL artifacts before GCS persistence.
 5. **AU-11 (Audit Record Retention):** No explicit retention schedule enforced programmatically. `compliance/lula/lula-validation-a53.yaml` checks evidence freshness (≤48h) but does not enforce minimum retention.
 6. **AU-12 (Audit Record Generation):** `TraceAuditor` in `automated_auditor.py` must be connected to a live OTLP endpoint (Google Cloud Trace API or Jaeger) — the mock source at line 32 (`"Mock source. In production, this would query..."`) represents a critical gap.
 
@@ -159,7 +159,7 @@
 - `src/gateway/server/governance_middleware.py` implements `_verify_routing_seal()` using `hmac.new(CAGE_ROUTING_SEAL_SECRET, body_bytes, sha256)`. This is a message authentication code on the request body — it authenticates the _message_ origin but not the _user or service identity_. It is a seal, not an identity assertion.
 - `deployment/system_authz.rego` performs identity check via `input.identity == data.auth_token` — a single shared secret comparison. No MFA, no role encoding, no expiry.
 - `deployment/terraform/iam.tf` — GKE Workload Identity is configured for both SAs (`roles/iam.workloadIdentityUser`). This provides pod-level identity to GCP services via the metadata server — a meaningful IA control for GCP service calls.
-- **v0.1.0:** Cloud KMS HSM-backed asymmetric signing (`kms_signer.py`) provides cryptographic service identity for governance verdict signing. Workload Identity used for GCS/KMS access. Linkerd mTLS (POAM-007 closed 2026-05-17) provides SPIFFE/SVID-based service identity for intra-cluster communication.
+- **v2.0.0:** Cloud KMS HSM-backed asymmetric signing (`kms_signer.py`) provides cryptographic service identity for governance verdict signing. Workload Identity used for GCS/KMS access. Linkerd mTLS (POAM-007 closed 2026-05-17) provides SPIFFE/SVID-based service identity for intra-cluster communication.
 - No JWT or OAuth 2.0 token validation is present at the API gateway layer.
 
 **Gaps:**
@@ -247,7 +247,7 @@
 **Current State:**
 
 - `deployment/k8s/network-policy.yaml` implements 9 Kubernetes NetworkPolicy objects with default-deny ingress and egress. Explicit allow rules for: gateway ingress (port 8080, from `cage.io/role=orchestrator` pods only), OPA (8181), Redis (6379), DNS (53/UDP), vLLM (8000), Langfuse OTLP (3000). **Note:** OTLP collector ports 4317/4318 removed — standalone OTel Collector deprecated 2026-05-31. This is a strong boundary protection implementation.
-- **v0.1.0 — Linkerd mTLS + Cilium L7 egress lockdown (POAM-007 closed 2026-05-17):** [`deployment/k8s/linkerd-mtls-policy.yaml`](../../../deployment/k8s/linkerd-mtls-policy.yaml) enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths via Server + AuthorizationPolicy + MeshTLSAuthentication resources. [`deployment/k8s/cilium-egress-lockdown.yaml`](../../../deployment/k8s/cilium-egress-lockdown.yaml) enforces FQDN allowlist for all egress traffic. This addresses SC-8(1) and IA-3 gaps identified in the prior version.
+- **v2.0.0 — Linkerd mTLS + Cilium L7 egress lockdown (POAM-007 closed 2026-05-17):** [`deployment/k8s/linkerd-mtls-policy.yaml`](../../../deployment/k8s/linkerd-mtls-policy.yaml) enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths via Server + AuthorizationPolicy + MeshTLSAuthentication resources. [`deployment/k8s/cilium-egress-lockdown.yaml`](../../../deployment/k8s/cilium-egress-lockdown.yaml) enforces FQDN allowlist for all egress traffic. This addresses SC-8(1) and IA-3 gaps identified in the prior version.
 - `deployment/terraform/networking.tf` provisions a GCP Cloud NAT and Cloud Router for controlled egress. NAT logging is enabled (`filter = "ERRORS_ONLY"`). All subnets use Cloud NAT for outbound connectivity (no direct internet IPs on nodes).
 - `src/gateway/server/governance_middleware.py` enforces `X-CAGE-Routing-Seal` HMAC-SHA256 on the request body. Enforcement mode (enforce vs. log) is configurable via `CAGE_SEAL_ENFORCEMENT` env var. If `CAGE_ROUTING_SEAL_SECRET` is not set, the check is bypassed with a warning — this is a gap in production hardening.
 - `src/gateway/governance/safety.py` implements the Control Barrier Function with SC-relevant safety attributes (`iso42001.control = "A.4.2"` stamped on OTel spans).
@@ -285,14 +285,14 @@
 
 **Current State:**
 
-- `src/gateway/governance/symbolic_governor.py` orchestrates the full governance pipeline: STPA → CBF → OPA → Consensus (7-tier). **v0.1.0:** SLM sidecar permanently deprecated; `slm_available=False` sentinel is always injected; OPA always applies elevated confidence threshold (0.97). Fail-secure degraded mode is the permanent operating mode.
+- `src/gateway/governance/symbolic_governor.py` orchestrates the full governance pipeline: STPA → CBF → OPA → Consensus (7-tier). **v2.0.0:** SLM sidecar permanently deprecated; `slm_available=False` sentinel is always injected; OPA always applies elevated confidence threshold (0.97). Fail-secure degraded mode is the permanent operating mode.
 - `src/gateway/governance/stpa_validator.py` implements deterministic input validation against 5 STPA constraints (SC-1, FIN-1, FIN-2, UCA-5, UCA-6). All constraint failures return error messages and the action is blocked — SI-10 (Information Input Validation) is partially implemented for the trade domain.
 - `src/gateway/governance/safety.py` — `ac_keyword_scan()` provides Aho-Corasick O(n) Tier-1 keyword scanning for 14 forbidden prompts. This is an information integrity control preventing prompt injection (SI-3 analog).
 - `scripts/automated_auditor.py` — `TraceAuditor.audit_trace()` implements span invariant checking: every `tool.execution` span must have a causally preceding `governance.check` span with `decision=ALLOW`. Detects "Missing Governance Check," "Execution despite DENY," and "Orphaned Execution" violations. **However, it uses mock traces (see AU-12 gap).**
 
 **Gaps:**
 
-1. **SI-2 (Flaw Remediation):** **v0.1.0 PARTIALLY ADDRESSED:** `CVE-2025-69872` (`outlines` package — diskcache pickle deserialization RCE) remediated by removing `outlines` from gateway dependencies entirely (POAM-016 closed 2026-05-29). SBOM CronJob deployed with pip-audit/Trivy enforcement (POAM-010 closed). Remaining gap: no documented flaw remediation SLA policy; `CVE-2026-4810` (`google-adk`) open (POAM-017, blocked by `opentelemetry-sdk` version conflict).
+1. **SI-2 (Flaw Remediation):** **v2.0.0 PARTIALLY ADDRESSED:** `CVE-2025-69872` (`outlines` package — diskcache pickle deserialization RCE) remediated by removing `outlines` from gateway dependencies entirely (POAM-016 closed 2026-05-29). SBOM CronJob deployed with pip-audit/Trivy enforcement (POAM-010 closed). Remaining gap: no documented flaw remediation SLA policy; `CVE-2026-4810` (`google-adk`) open (POAM-017, blocked by `opentelemetry-sdk` version conflict).
 2. **SI-3 (Malicious Code Protection):** Tier-1 keyword scan and NeMo Guardrails protect against prompt injection but there is no container image antivirus/malware scanning in the CI pipeline, no runtime threat detection (e.g., Falco), and no supply chain integrity verification for model weights.
 3. **SI-4 (System Monitoring):** `TraceAuditor` provides the monitoring concept but uses mock data. No real-time anomaly detection on governance decision rates, no baseline established for normal operation.
 4. **SI-4(2) (Automated Tools and Mechanisms):** No automated intrusion detection system (IDS) beyond OPA/STPA policy enforcement. No network-level anomaly detection for lateral movement.
@@ -429,4 +429,4 @@ The cybernetic-governance-engine demonstrates sophisticated domain-specific cont
 
 ---
 
-_Document authored by the Architect mode analysis pipeline. Source files read directly — no content inferred. This document covers RMF Steps 3 (Select) and 4 (Implement) only. Steps 5–7 are covered in Chunks 4–5. Updated 2026-06-01 for CAGE v0.1.0: SR 26-2 framework added, CSA AARM v1.0 added, Linkerd mTLS + Cilium L7 egress lockdown noted (POAM-007 closed), outlines CVE-2025-69872 remediated (POAM-016 closed), OTel Collector deprecation noted, Lula manifest count updated to 15, Cloud KMS HSM signing noted for AU-10/IA controls._
+_Document authored by the Architect mode analysis pipeline. Source files read directly — no content inferred. This document covers RMF Steps 3 (Select) and 4 (Implement) only. Steps 5–7 are covered in Chunks 4–5. Updated 2026-06-01 for CAGE v2.0.0: SR 26-2 framework added, CSA AARM v1.0 added, Linkerd mTLS + Cilium L7 egress lockdown noted (POAM-007 closed), outlines CVE-2025-69872 remediated (POAM-016 closed), OTel Collector deprecation noted, Lula manifest count updated to 15, Cloud KMS HSM signing noted for AU-10/IA controls._

@@ -331,7 +331,9 @@ All access to PII-containing systems is logged via:
 
 ### 9.4 Incident Response
 
-Security incidents involving PII are handled per `docs/IR_PLAN.md`, which includes:
+Runtime PII-incident detection is implemented (`GovernanceEventBus`, IR-6
+reporting — see [`docs/POAM.md`](../../docs/POAM.md)). A real deployment
+authors its own Incident Response Plan covering:
 
 - AI-specific incident categories (governance bypass, prompt injection, PII exfiltration)
 - GLBA breach notification procedures (expedited for financial PII incidents)

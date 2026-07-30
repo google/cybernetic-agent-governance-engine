@@ -67,13 +67,13 @@ Explicit allow rules cover: agent server → gateway, gateway → OPA, gateway �
 
 ---
 
-## 3a. Remediation Update — Closure of Ungated Variant Vulnerabilities (v0.1.0-rc.2)
+## 3a. Remediation Update — Closure of Ungated Variant Vulnerabilities (v2.0.0-rc.2)
 
 > **Classification:** Security Hardening — Pre-ATO Package Update
 > **Date:** 2026-06-03
 > **Sprint:** No-Direct-Bind Formal Verification Lock
 
-The v0.1.0-rc.2 security hardening sprint closed four architectural gaps identified during formal analysis of the `NoDirectBind` safety invariant. The invariant is defined as:
+The v2.0.0-rc.2 security hardening sprint closed four architectural gaps identified during formal analysis of the `NoDirectBind` safety invariant. The invariant is defined as:
 
 $$\text{NoDirectBind} \equiv (\text{phase} = \texttt{EXECUTED}) \Rightarrow (\text{resolvedAllow} = \texttt{TRUE})$$
 
@@ -674,7 +674,7 @@ ProvenanceRecord[n]  (parent_hash=chain_hash[n-1])
 
 ### 9.1 Cryptographic Context Accumulator (AARM-V1)
 
-CAGE v0.1.0 introduces a **Cryptographic Context Accumulator** (`src/compliance_bridge/context_accumulator.py`) to seal audit evidence against retroactive tampering or Memory Poisoning attempts. 
+CAGE v2.0.0 introduces a **Cryptographic Context Accumulator** (`src/compliance_bridge/context_accumulator.py`) to seal audit evidence against retroactive tampering or Memory Poisoning attempts. 
 *   **SHA-256 Hash-Chaining:** Every emitted `OscalFinding` is chained cryptographically to its predecessor. The `record_hash` for finding $n$ is calculated as `SHA-256(prev_hash || content_json)`.
 *   **Seal Sentinel:** Each audit execution is capped by a `CHAIN_SEALED` sentinel payload. The compliance API validates `chain_root`, `chain_length`, and `chain_integrity_valid` on all reads, satisfying **ISO 42001 Annex A.5.3** evidence logging controls.
 
@@ -782,7 +782,7 @@ Source: [`tests/red_team/`](../../tests/red_team/), [`src/governed_financial_adv
 
 ## 11. Security Assessment Findings Summary
 
-Sources: [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md), [`docs/SECURITY_ASSESSMENT_PLAN.md`](../security/SECURITY_ASSESSMENT_PLAN.md), [`docs/POAM.md`](../compliance/cross-region/POAM.md)
+Sources: [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md), [`docs/POAM.md`](../POAM.md)
 
 > ⚠️ **Overall Assessment: HIGH Risk — ATO Not Recommended**
 
@@ -801,12 +801,19 @@ Sources: [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md), [
 
 ### Supporting Security Documents
 
-| Document                                                               | Purpose                            |
-| ---------------------------------------------------------------------- | ---------------------------------- |
-| [`docs/SECURITY_ASSESSMENT_PLAN.md`](../security/SECURITY_ASSESSMENT_PLAN.md)   | Security Assessment Plan (SAP)     |
-| [`docs/IR_PLAN.md`](../security/IR_PLAN.md)                                     | Incident Response Plan (draft)     |
-| [`docs/CHANGE_MANAGEMENT_PROCESS.md`](../governance/CHANGE_MANAGEMENT_PROCESS.md) | Change Management Process          |
-| [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md)   | Security Assessment Report Q1 2026 |
+| Document                                                             | Purpose                            |
+| --------------------------------------------------------------------- | ---------------------------------- |
+| [`compliance/sar/SAR_2026Q1.md`](../../compliance/sar/SAR_2026Q1.md) | Security Assessment Report Q1 2026 |
+
+> **Note (FIND-006, FIND-007):** Draft Incident Response Plan, Security
+> Assessment Plan, and Change Management Process documents previously lived
+> under `docs/security/` and `docs/governance/`. They were removed — CAGE
+> is a reference architecture, not an operating organization, and fictional
+> `[TBD]` role incumbents and AO sign-off blocks provided no engineering
+> value. Adopters deploying CAGE in a real regulated environment author
+> their own IRP/SAP/change-management process using the control mapping in
+> `docs/compliance/` and the engineering standards in
+> [`AGENTS.md`](../../AGENTS.md) as the starting point.
 
 ---
 

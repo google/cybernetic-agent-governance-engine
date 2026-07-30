@@ -442,11 +442,11 @@ Every consensus check emits OpenTelemetry span attributes for the audit trail:
 
 ---
 
-## 7a. DEFER State Machine — Confidence-Starvation Bypass (v0.1.0)
+## 7a. DEFER State Machine — Confidence-Starvation Bypass (v2.0.0)
 
 Source: [`src/gateway/governance/defer_queue.py`](../../src/gateway/governance/defer_queue.py)
 
-CAGE v0.1.0 extends the governance tri-state decision (`ALLOW | DENY | MANUAL_REVIEW`) to **four states** by introducing `DEFER`. This satisfies the CSA AARM specification's **Deferral Service** mandate — providing a formal state for situational ambiguity that avoids forcing a brittle binary allow/deny choice.
+CAGE v2.0.0 extends the governance tri-state decision (`ALLOW | DENY | MANUAL_REVIEW`) to **four states** by introducing `DEFER`. (Note: as of `decisions.py`, the canonical vocabulary is `ALLOW | DENY | REQUIRE_APPROVAL | DEFER` — `MANUAL_REVIEW` is the internal OPA string translated to `REQUIRE_APPROVAL` at the gateway boundary.) This satisfies the CSA AARM specification's **Deferral Service** mandate — providing a formal state for situational ambiguity that avoids forcing a brittle binary allow/deny choice.
 
 ### Confidence-Starvation Boundary
 
@@ -495,7 +495,7 @@ Pending tokens are resolved by:
 
 ---
 
-## 8. DoWhy Causal Gatekeeper — Tier 6 (v0.1.0)
+## 8. DoWhy Causal Gatekeeper — Tier 6 (v2.0.0)
 
 The **DoWhy Causal Gatekeeper** ([`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)) serves as CAGE's final mathematical validation layer—the "Lock" on the CAGE. It utilizes **Microsoft DoWhy** causal inference and placebo simulation to confirm that the system's world-model is structurally sound before high-stakes trade actions.
 
@@ -510,7 +510,7 @@ The gatekeeper enforces two complementary validation phases:
 
 ## 8.2 FiscalLimitGuard Concurrency Control
 
-To prevent race conditions where multiple parallel agent execution threads concurrently read the same daily OPA limit and execute trades that in aggregate exceed the limit ("race to the rail"), CAGE v0.1.0 introduces the **FiscalLimitGuard** (`src/gateway/governance/fiscal_limit_guard.py`).
+To prevent race conditions where multiple parallel agent execution threads concurrently read the same daily OPA limit and execute trades that in aggregate exceed the limit ("race to the rail"), CAGE v2.0.0 introduces the **FiscalLimitGuard** (`src/gateway/governance/fiscal_limit_guard.py`).
 *   **Redis Atomic Transactions:** Uses Redis `WATCH/MULTI/EXEC` optimistic locking. If another thread updates the cap during OPA validation, the current pipeline commits are rejected, retrying with exponential backoff and jitter.
 *   **Headroom Pre-Reservation (Step 3):** Headroom is reserved in Redis *after* concurrent CBF+OPA (Steps 2+4), closing the TOCTOU race. Default daily cap: **$500,000 USD** (`FISCAL_DAILY_CAP_USD` env var). Cap stored in **cents** for integer precision. Fail-closed: if Redis is unavailable, the trade is blocked.
 *   **Release & Expiry:** Unused limits are dynamically returned to Redis via `release(token)` by the Saga engine on transaction rollback, while a **300s TTL** reclaims limits from crashed nodes.
@@ -519,7 +519,7 @@ To prevent race conditions where multiple parallel agent execution threads concu
 
 ## 9. Governance Signing: Cloud KMS HSM (Primary) + HMAC-SHA256 (Fallback)
 
-CAGE v0.1.0 promotes **Cloud KMS HSM-backed asymmetric signing** as the primary governance signing mechanism, replacing HMAC-SHA256 as the primary. HMAC-SHA256 is retained as a fallback for development and CI environments only.
+CAGE v2.0.0 promotes **Cloud KMS HSM-backed asymmetric signing** as the primary governance signing mechanism, replacing HMAC-SHA256 as the primary. HMAC-SHA256 is retained as a fallback for development and CI environments only.
 
 ### Cloud KMS HSM Signing (Primary — Production)
 
@@ -563,7 +563,7 @@ When implemented, `AnchorageGrpcLedgerProvider` will provide an externally recon
 - `@lru_cache(maxsize=1)` singleton — loaded once at startup via the module-level `THRESHOLDS` constant
 - [`load_and_validate_thresholds()`](../../src/gateway/governance/schemas/thresholds.py) at line 138: calls `sys.exit(1)` on validation failure — **fail-fast startup**
 - NeMo actions hot-reload with 60-second TTL
-- **v0.1.0-rc.1:** `max_slippage_pct` is now operator-adjustable at runtime via `POST /api/governance/thresholds` from the AgentSight KernelDashboard slider (0–10%, step 0.1); persisted to the running threshold store without service restart
+- **v2.0.0-rc.1:** `max_slippage_pct` is now operator-adjustable at runtime via `POST /api/governance/thresholds` from the AgentSight KernelDashboard slider (0–10%, step 0.1); persisted to the running threshold store without service restart
 
 **22 tracked thresholds** with full regulatory traceability (see [`compliance/risk_acceptance/THRESHOLD_TRACEABILITY_MATRIX.md`](../../compliance/risk_acceptance/THRESHOLD_TRACEABILITY_MATRIX.md)):
 
@@ -747,17 +747,20 @@ The following governance-related risk acceptances are documented in [`compliance
 
 ## 14b. FTRA Commencement Reachability Gate (v2.1.0) **[All Regions]**
 
-The FTRA gate (`src/gateway/governance/ftra/`) is a **Tier 0 pre-execution structural invariant** that runs before any LLM inference. It enforces that the compiled LangGraph graph contains at least one execution path from the start node to a `HUMAN_APPROVED` terminal node.
+The **Forward-Looking Trajectory Reachability Analyzer** (FTRA, `CTRL_FTRA_001`, `src/gateway/governance/ftra/`) is a **Tier 0.5 pre-execution gate**, inserted between the `evaluator` and `safety_check` LangGraph nodes, that analyzes the multi-step `ExecutionPlan` produced by the Execution Analyst *before any step runs*. It determines whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable from step 0 and, if so, routes the plan to human review or blocks it outright based on Evaluator confidence.
 
 ### Implementation
 
 | Module | Role |
 |---|---|
-| [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | Classifies graph nodes: `START`, `TERMINAL`, `HITL_APPROVAL`, `ADVISORY`, `GOVERNANCE` |
-| [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | BFS/DFS reachability analysis; raises `FTRAViolation` if no HITL path exists |
-| [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | `FTRAResult(reachable: bool, path: list[str], violation_reason: str \| None)` |
-| [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | LangGraph node factory (same `GovernanceNodeInput → GovernanceNodeOutput` pattern as `langgraph_harness/`) |
-| [`ftra_reachability.py`](../../src/gateway/governance/ftra_reachability.py) | Top-level entry point called by `SymbolicGovernor` at Tier 0 |
+| [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | `IrreversibilityClassifier` — classifies each plan-step action name (via a compiled `config/ftra/terminal_registry.json`) as `IRREVERSIBLE_TERMINAL`, `REVERSIBLE`, or `READ_ONLY`. Fail-closed: unregistered actions default to `IRREVERSIBLE_TERMINAL`. |
+| [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | `PlanGraphAnalyzer` — builds a NetworkX `DiGraph` over `ExecutionPlan.steps` and runs DFS from step 0 to compute reachable terminals and the critical path |
+| [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | `TerminalClassification`, `FTRAVerdict` (`CLEAR` \| `HITL_REQUIRED` \| `BLOCKED`), `ReachabilityResult` (`worst_case_classification`, `reachable_terminals`, `critical_path`, `verdict`, `confidence_at_analysis`) |
+| [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | `create_ftra_node()` — LangGraph node factory; `route_after_ftra()` — conditional-edge routing function reading `ftra_status` from `AgentState` |
+
+**Verdict routing:** `CLEAR` → proceed to the `safety_check` OPA gate. `HITL_REQUIRED` (irreversible terminal reachable, confidence ≥ `FRIA_ZONE_DEFER` = 0.70) → park in DeferQueue `db=1` pending human clearance. `BLOCKED` (irreversible terminal reachable, confidence < 0.70) → route to `explainer`; plan halted outright. All construction/traversal errors fail closed to `HITL_REQUIRED`/`BLOCKED`, mirroring the OPA `default stpa_allow = false` pattern.
+
+> **Note:** `src/gateway/governance/ftra_reachability.py` is a standalone, unwired `FtraReachabilityGate` scaffold committed alongside this package in the same commit. It is not imported by `SymbolicGovernor` or any production code path — the actual Tier 0.5 gate is `ftra/node_factory.py`.
 
 ### Compliance Mapping
 

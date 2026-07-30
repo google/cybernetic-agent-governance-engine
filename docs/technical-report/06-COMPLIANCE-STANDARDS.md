@@ -88,7 +88,7 @@ The Privacy Impact Assessment ([`compliance/pia/PRIVACY_IMPACT_ASSESSMENT.md`](.
 | CA (Security Assessment)             | 19%      | Lula 6h CronJob; SAR target 2026Q1                                                                                  |
 | CM (Configuration Management)        | 32%      | `config/governance_thresholds.json`; Terraform IaC                                                                         |
 | IA (Identification & Authentication) | 15%      | HMAC routing seals; no MFA; no account management procedures                                                        |
-| IR (Incident Response)               | 28%      | [`docs/IR_PLAN.md`](../security/IR_PLAN.md) (draft); `GovernanceEventBus`                                                    |
+| IR (Incident Response)               | 28%      | `GovernanceEventBus`; IR-6 reporting implemented (see [`docs/POAM.md`](../POAM.md)); full IRP authorship is an adopter responsibility for real deployments |
 | RA (Risk Assessment)                 | 15%      | [`compliance/rar/RISK_ASSESSMENT_REPORT.md`](../../compliance/rar/RISK_ASSESSMENT_REPORT.md); Lula automated checks |
 | SC (System & Communications)         | 33%      | `NetworkPolicy` enforcement; **Linkerd mTLS (FIND-011 resolved)**              |
 | SI (System & Information Integrity)  | 42%      | Presidio PII detection; NeMo guardrails; Aho-Corasick scanning                                                      |
@@ -165,23 +165,49 @@ The system implements an automated evidence pipeline satisfying ISO 42001 Clause
 Lula CronJob (6h)
   → OSCAL Assessment Results (YAML)
     → POST /v1/audit/ingest (Compliance Bridge)
-      → run_audit_workflow (6-step pipeline, upgraded in CAGE v0.1.0)
-        ├── Step 1:  Artifact persistence
+      → run_audit_workflow (`src/compliance_bridge/audit_workflow.py`)
+        ├── Step 1:  Artifact persistence (idempotent GCS/S3 write)
         ├── Step 2:  OSCAL parse (OscalFinding extraction)
         │            OscalResult: PASS | FAIL | NOT_APPLICABLE | ERROR
         │            (see §5.5 for ERROR state semantics)
         ├── Step 2b: ContextAccumulator SHA-256 hash chain (AARM-V1)
         ├── Step 3:  Langfuse trace flush + compliance scores
         │            ERROR findings score 0.0 (same as FAIL — never masked as PASS)
-        ├── Step 4:  SSE event publish (AUDIT_FINDING, CONTEXT_CHAIN_SEALED)
-        │            GOVERNANCE_VIOLATION fired for FAIL **and** ERROR on CRITICAL_CONTROLS
-        ├── Step 5:  Critical alert routing (Slack / PagerDuty)
+        ├── Step 3b: SSE event publish — AUDIT_FINDING per finding (non-fatal)
+        ├── Step 3c: Langfuse eval-dataset auto-population for FAIL findings
+        │            (background task, Tier 3.2 / ISO 42001 A.7.5 — see §5.3.1)
+        ├── Step 4:  Critical-control alert detection
         │            Triggered by result ∈ {FAIL, ERROR} on {A.9.2, SC-4, A.8.4}
+        ├── Step 4b: SSE event publish — GOVERNANCE_VIOLATION for critical FAIL/ERROR
+        │            (response returned to caller immediately after Step 4b)
+        ├── Step 5:  Remediation advisor via vLLM (background task, fire-and-forget)
         └── Step 6:  AARM Conformance Report (11-vector NEUTRALIZED/PARTIAL/EXPOSED)
                GCS/S3: context_chain.ndjson + aarm_conformance.json
 ```
 
+Steps 3c, 5, and 6 execute as background `asyncio` tasks scheduled after the Step 4b response is returned — they do not add to the caller-facing audit-ingest latency. All Step 5/6 errors are non-fatal (wrapped in try/except) and logged rather than raised.
+
 This loop produces time-stamped OSCAL Assessment Result artifacts that serve as machine-readable evidence for both ISO 42001 and NIST SP 800-53 assessment records.
+
+### 5.3.1 Continuous Monitoring — Evidence Age SLA (NIST SP 800-53 CA-7)
+
+Independent of the Lula-triggered audit-ingest pipeline above, the Compliance Bridge runs a background evidence-freshness monitor implementing NIST SP 800-53 **CA-7 (Continuous Monitoring)**:
+
+| Component | Behaviour |
+| --------- | --------- |
+| [`run_sla_monitor()`](../../src/compliance_bridge/sla_monitor.py) | Started as an `asyncio` background task in the Compliance Bridge FastAPI `lifespan` context (`main.py`). Polls every `EVIDENCE_SLA_POLL_INTERVAL_SECONDS` (default 300s / 5 min). |
+| Per-control SLA | Each control has an independent maximum evidence age. A breach is detected when `get_compliance_metrics()` reports `evidence_age_seconds > sla_seconds` for that control. |
+| Startup grace period | No alerts fire while `metrics.startup_grace_active` is true — prevents false-positive breaches immediately after a fresh deployment before the first Lula cycle has run. |
+| Breach alerting | On breach, a synthetic `OscalFinding` (`result="FAIL"`, `remarks="Evidence SLA breach"`) is built per breached control and routed through the same `notifier.send_critical_alert()` path used by Step 4/4b — Slack/PagerDuty receive an identical alert shape whether the failure came from a live Lula scan or a stale-evidence detection. |
+| Fail-soft design | Exceptions in a single poll cycle are logged and the loop continues; the monitor never crashes the Compliance Bridge process. Disable via `EVIDENCE_SLA_DISABLED=1`. |
+
+> **Known gap (tracked as FINDING-05 in [`JURISDICTIONAL_SEPARATION_ANALYSIS.md`](../../compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md)):** `types.py` defines a region-aware `get_sla_seconds(region)` accessor (merging `_UNIVERSAL_SLA` with per-region `_JURISDICTIONAL_SLA` overrides) specifically so that NIST-only SLA targets like `SC-7`/`SC-8` do not fire spurious breach alerts in `EU_ECB`/`APAC_MAS` deployments. However, `sla_monitor.py` still imports and iterates the deprecated flat `EVIDENCE_SLA_SECONDS` alias directly rather than calling `get_sla_seconds(CAGE_DEPLOYMENT_REGION)`. In practice this currently limits the SLA monitor to the universal ISO 42001 SLA targets only (`A.9.2`, `SC-4`, `A.8.4`, `A.5.3`) in every region, rather than also covering the jurisdictional controls (`SC-7`/`SC-8` for `US_FED`, `Article 12` for `EU_ECB`, `MAS-FEAT-1` for `APAC_MAS`) that the region-aware accessor was built to support. This is a one-line fix (`from .types import get_sla_seconds` + call with the active region) — see FINDING-05 for the tracked remediation.
+
+This closes a gap that a purely CronJob-triggered audit pipeline cannot cover: if the Lula CronJob itself stops running (misconfigured schedule, RBAC failure, cluster outage), Steps 1–6 above never execute and no new evidence is produced — but no alert would fire from the audit-ingest pipeline alone, since there is nothing to ingest. `sla_monitor.py` independently detects the resulting evidence staleness and raises the same critical-alert path, satisfying the "detect silence, not just failure" requirement of continuous monitoring.
+
+### 5.3.2 Evaluation Dataset Auto-Population (ISO 42001 A.7.5)
+
+[`populate_eval_dataset()`](../../src/compliance_bridge/eval_dataset.py) (invoked from Step 3c above) creates a Langfuse **Dataset Item** for every `FAIL` finding in a per-control dataset named `cage-compliance-<control_id>` (e.g. `cage-compliance-A.9.2`). Each item records the full `OscalFinding` as `input`, an `expected_output` of `result: PASS` (i.e. the item is a regression baseline — "this should not fail again"), and metadata linking back to the `audit_id`, ISO clause, and framework cross-references from `CONTROL_META`. Only `FAIL` findings are recorded; `PASS` findings provide no negative-example value for regression-detection eval suites. This satisfies ISO 42001 **A.7.5 (Documented Information)** by retaining control-failure evidence in a structured, queryable form that QA engineers and future LLM-based remediation advisories can evaluate against, rather than relying solely on point-in-time Langfuse traces.
 
 ### 5.5 OSCAL Assessment State Semantics (NIST SP 800-53A §3.2)
 
@@ -218,9 +244,9 @@ Masking an `ERROR` as `NOT_APPLICABLE` would:
 | [`_step4_alert_on_critical_fail()`](../../src/compliance_bridge/audit_workflow.py) | Critical-control filter matches `result ∈ {FAIL, ERROR}`. A scanner failure on SC-4, A.9.2, or A.8.4 triggers the same Slack/PagerDuty alert as an explicit FAIL. |
 | [`_ingest_sync()`](../../src/compliance_bridge/audit_workflow.py) | `ERROR` findings score `0.0` in Langfuse — identical to FAIL. They are never scored as `1.0` (PASS). |
 
-### 5.4 Compliance Bridge API Endpoints (v0.1.0-rc.1)
+### 5.4 Compliance Bridge API Endpoints (v2.0.0-rc.1)
 
-CAGE v0.1.0 adds four new REST endpoints to the Compliance Bridge (`src/compliance_bridge/main.py`):
+CAGE v2.0.0 adds four new REST endpoints to the Compliance Bridge (`src/compliance_bridge/main.py`):
 
 | Endpoint | Method | Description |
 | -------- | ------ | ----------- |
@@ -525,7 +551,7 @@ Evidence records are streamed to the OSCAL exporter (`src/compliance_bridge/osca
 
 ## 15. Multi-Jurisdiction Compliance Engine
 
-CAGE v0.1.0 introduced a **multi-jurisdiction compliance engine** that allows the system to seamlessly shift its entire regulatory compliance posture between United States, European Union, and Singapore regulatory environments without any code changes. This section documents the architecture, configuration, and operational behavior of the multi-jurisdiction system.
+CAGE v2.0.0 introduced a **multi-jurisdiction compliance engine** that allows the system to seamlessly shift its entire regulatory compliance posture between United States, European Union, and Singapore regulatory environments without any code changes. This section documents the architecture, configuration, and operational behavior of the multi-jurisdiction system.
 
 ### 15.1 Activation Mechanism
 

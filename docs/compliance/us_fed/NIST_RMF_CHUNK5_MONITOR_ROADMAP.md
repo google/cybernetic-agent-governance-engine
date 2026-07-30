@@ -4,8 +4,8 @@
 
 **Classification:** For Official Use Only ()
 **Prepared:** 2026-06-01
-**System:** Cybernetic Governance Engine (CAGE) v0.1.0 — GKE-hosted AI Governance Platform
-**Document Status:** Final Synthesis — references all prior chunk findings; updated for v0.1.0
+**System:** Cybernetic Governance Engine (CAGE) v2.0.0 — GKE-hosted AI Governance Platform
+**Document Status:** Final Synthesis — references all prior chunk findings; updated for v2.0.0
 **Additional Frameworks:** SR 26-2 (Federal Reserve, April 17, 2026), CSA AARM v1.0
 
 ---
@@ -52,13 +52,13 @@ The system implements a **two-tier monitoring approach** that partially addresse
 **Tier 3 — Application-Level OTel Tracing (continuous):**
 `src/gateway/infrastructure/telemetry.py` provides an OTel tracer factory consumed by all gateway modules. `src/gateway/observability/mcp_tracing.py` monkey-patches `ToolManager.call_tool` to inject W3C trace context into every MCP tool invocation, bridging SSE transport gaps and producing complete Langfuse waterfall traces.
 
-**OTel Export Pipeline (v0.1.0):**
+**OTel Export Pipeline (v2.0.0):**
 The standalone OTel Collector (`opentelemetry-collector-contrib`) has been **deprecated 2026-05-31**. Services now export OTLP traces directly to Langfuse's integrated OTLP ingestion endpoint at `http://langfuse-web:3000/api/public/otel/v1/traces`, eliminating the collector as an intermediary. W3C `traceparent` propagation is preserved end-to-end via `patch_mcp_tools()` in `src/gateway/observability/mcp_tracing.py`.
 
-**DEFER Queue Monitoring (v0.1.0 — AARM-V7):**
+**DEFER Queue Monitoring (v2.0.0 — AARM-V7):**
 [`src/gateway/governance/defer_queue.py`](../../../src/gateway/governance/defer_queue.py) implements the DEFER state machine for confidence-starved contexts. Redis db=1 (noeviction policy) stores deferred governance decisions pending human review. The DEFER queue is monitored via SSE events (`DEFER_QUEUED`, `DEFER_RESOLVED`) published to the `GovernanceEventBus` and visible in the AgentSight KernelDashboard. Queue depth and resolution latency are tracked as OTel metrics.
 
-**AgentSight UI Phase 1 (v0.1.0):**
+**AgentSight UI Phase 1 (v2.0.0):**
 `src/agentsight-ui/` — React/Vite frontend with eBPF kernel observability. `deployment/agentsight/agentsight-config.yaml` deploys an eBPF daemon targeting `python3` processes, intercepting SSL/TLS via OpenSSL uprobes and monitoring syscalls (`execve`, `openat`, `connect`, `socket`, `bind`). **✅ POAM-021 RESOLVED:** Exporter is configured as `type: "remote"`, targeting `http://agentsight-dashboard:8080`. The prior gap (console mode) has been corrected. `KernelDashboard.tsx` displays real-time governance events, DEFER queue state, and eBPF syscall telemetry.
 
 **SSE Real-Time Event Bus:**
@@ -340,7 +340,7 @@ SC-4 (OPA ConfigMap label compliance) has continuous drift detection via the 60-
 | P2-8  | `deployment/k8s/network-policy.yaml`                                                           | Add Pod Security Admission `enforce: restricted` label to `governance-stack` namespace; add `securityContext.runAsNonRoot: true`, `readOnlyRootFilesystem: true` to all Deployments                                    | SC-7, AC-3             | 3d               |
 | P2-9  | `src/compliance_bridge/notifier.py`, GitHub Actions                                            | On `GOVERNANCE_VIOLATION` event, auto-create GitHub Issue with: control ID, severity label, audit ID, link to Langfuse compliance trace, due-date (15/30/90 days by severity)                                          | CA-5, IR-6             | 4d               |
 | P2-10 | `deployment/terraform/secrets.tf`                                                              | Add Secret Manager rotation schedule (`rotation_period: 7776000s` = 90 days) for all secrets; add `next_rotation_time` notification                                                                                    | IA-5, SC-12            | 2d               |
-| P2-11 | `docs/CHANGE_MANAGEMENT_PROCESS.md` + `.github/CODEOWNERS`                                     | Formalize change management: CODEOWNERS requiring ISSO review for `compliance/`, `deployment/terraform/`, `src/gateway/governance/`; define significant-change re-authorization trigger                                | CM-3, CA-3             | 2d               |
+| P2-11 | `.github/CODEOWNERS`                                                                            | Formalize change management: CODEOWNERS requiring security review for `compliance/`, `deployment/terraform/`, `src/gateway/governance/`; define significant-change re-authorization trigger. (A real deployment authors its own change-management process document at this point — see `AGENTS.md` for the applicable engineering rules this repository already enforces.) | CM-3, CA-3             | 2d               |
 | P2-12 | `compliance/oscal/sp80053-assessment-results.yaml` (new)                                       | Template for OSCAL Assessment Results format for SP 800-53 controls; populate from Lula SP 800-53 validation runs; link to `sp80053-profile.yaml`                                                                      | CA-2, CA-7             | 3d               |
 
 ---
@@ -358,7 +358,7 @@ SC-4 (OPA ConfigMap label compliance) has continuous drift detection via the 60-
 | P3-5  | **SP 800-53 Lula Validation Expansion**                 | 1. Create Lula validations for 20+ SP 800-53 controls across AC, AU, CM, IA, IR, RA, SC, SI families. 2. Add to CronJob. 3. Produce OSCAL Assessment Results. 4. Automate POAM creation on failures. Target: 70% control coverage.                                                        | CA-7, CA-2, All            | 6w                |
 | P3-6  | **Full OSCAL SSP (Machine-Readable)**                   | 1. Convert `compliance/ssp/SYSTEM_SECURITY_PLAN.md` to OSCAL System Security Plan XML/YAML. 2. Link all Lula Assessment Results via `import-ssp`. 3. Submit to AO as primary authorization artifact.                                                                                      | CA-6, CA-2                 | 4w                |
 | P3-7  | **Zero-Trust Network Architecture**                     | 1. Implement Kubernetes NetworkPolicy for all pod-to-pod flows (replace current 9-object set with comprehensive allow-list). 2. Add egress NetworkPolicy blocking unauthorized external calls. 3. Implement API gateway WAF rules.                                                        | SC-7, SC-7(5), AC-4        | 4w                |
-| P3-8  | **Incident Response Automation**                        | 1. Create `docs/IR_PLAN.md` (SP 800-61 Rev 2 format). 2. Implement automated containment: on GOVERNANCE_VIOLATION CRITICAL, suspend traffic to affected pod via NetworkPolicy patch. 3. Integrate with SIEM.                                                                              | IR-1, IR-4, IR-5, IR-6     | 5w                |
+| P3-8  | **Incident Response Automation**                        | 1. Author an Incident Response Plan (SP 800-61 Rev 2 format) as part of the adopting organization's own operational documentation. 2. Implement automated containment: on GOVERNANCE_VIOLATION CRITICAL, suspend traffic to affected pod via NetworkPolicy patch. 3. Integrate with SIEM.                                                                              | IR-1, IR-4, IR-5, IR-6     | 5w                |
 | P3-9  | **Supply Chain Risk Management**                        | 1. Implement Sigstore/cosign container image signing in CI. 2. Add admission controller verifying image signatures. 3. Create approved software list. 4. Map to NIST SP 800-161r1.                                                                                                        | SA-12, SR-3, SR-4          | 4w                |
 | P3-10 | **ATO Package Submission**                              | 1. Compile all 21 ATO artifacts (use P0-3 index). 2. Schedule Security Assessment (SA) with independent assessor. 3. Submit to AO for Authorization Decision. 4. Establish ongoing authorization process for cATO.                                                                        | CA-6, CA-7, CA-2           | 4w                |
 | P3-11 | **Dual GCP Project Separation**                         | 1. Create `cage-compliance` GCP project with independent IAM policy. 2. Deploy compliance Langfuse instance in isolated project. 3. Establish VPC peering / Private Service Connect for compliance bridge → compliance Langfuse. 4. Remove Terraform fallback on `main.tf` L546-547 that silently collapses to app keys. 5. Update `prod.tfvars` with compliance project credentials. See [`DUAL_PROJECT_ARCHITECTURE.md` §6](../../architecture/DUAL_PROJECT_ARCHITECTURE.md). | AU-9, AC-6, SC-7           | 3w                |
@@ -450,11 +450,11 @@ The **Cybernetic Governance Engine (CAGE)** is a GKE-hosted AI governance platfo
 - Periodic assessment cadence exists (6h Lula Critical, daily High, weekly Medium, 60s SC-4 watch): +5 points
 - Alert/notification pipeline exists (Slack/PagerDuty capable): +5 points
 - **✅ RESOLVED (POAM-021):** AgentSight exporter confirmed as `"remote"` mode targeting `http://agentsight-dashboard:8080`
-- **v0.1.0 additions:** DEFER queue monitoring (AARM-V7), SHA-256 hash-chained context accumulator (AARM-V1), KMS batch-signed OSCAL artifacts, SR 26-2 framework adopted, CSA AARM v1.0 11-vector threat coverage
+- **v2.0.0 additions:** DEFER queue monitoring (AARM-V7), SHA-256 hash-chained context accumulator (AARM-V1), KMS batch-signed OSCAL artifacts, SR 26-2 framework adopted, CSA AARM v1.0 11-vector threat coverage
 - Deducted: No ISCM strategy doc (−20), no POA&M (−20), no status reporting format (−10), no decommission controls (−10), no SP 800-53 ongoing assessment (−25)
 
 ---
 
-_Document prepared as part of the 5-chunk NIST RMF analysis series for the Cybernetic Governance Engine. This is a living document — update after each Phase completion milestone. Updated 2026-06-01 for CAGE v0.1.0._
+_Document prepared as part of the 5-chunk NIST RMF analysis series for the Cybernetic Governance Engine. This is a living document — update after each Phase completion milestone. Updated 2026-06-01 for CAGE v2.0.0._
 
 _References: NIST SP 800-37 Rev 2, SP 800-53 Rev 5, SP 800-137, SP 800-18 Rev 1, FIPS 199, FIPS 200, ISO/IEC 42001:2023, NIST SP 800-161r1, SR 26-2 (Federal Reserve, April 17, 2026), CSA AARM v1.0._

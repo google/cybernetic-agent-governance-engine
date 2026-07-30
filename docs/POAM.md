@@ -72,6 +72,8 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-024 | CM-6 | Staging environment compliance posture not yet verified against Lula validation suite | Moderate | 2026-09-30 |
 | POAM-2026-025 | NIST AI 600-1 §2.6 | CBRN / harmful content Lula validation is a stub pending AO pre-approval for NeMo CBRN rail deployment | High | 2026-12-31 |
 | POAM-2026-026 | ISO 42001 A.8.4 | Standalone `token-quota-proxy` Deployment not yet created; TokenQuotaProxy runs inline in gateway | Moderate | 2026-09-30 |
+| POAM-2026-029 | CA-7 | `src/compliance_bridge/sla_monitor.py` imports the deprecated flat `EVIDENCE_SLA_SECONDS` alias instead of the region-aware `get_sla_seconds(region)` accessor added to `types.py`; jurisdictional SLA controls (SC-7/SC-8 for US_FED, Article 12 for EU_ECB, MAS-FEAT-1 for APAC_MAS) are not yet monitored for evidence staleness in any region (tracked as FINDING-05 in `docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md`) | Moderate | 2026-09-30 |
+| POAM-2026-030 | SA-11 | `src/gateway/governance/ftra/` (the production FTRA Tier 0.5 gate, wired into `src/governed_financial_advisor/graph/graph.py`) has zero test coverage; the only FTRA test file (`tests/test_ftra_reachability.py`) exercises the separate, unwired `ftra_reachability.py` scaffold instead | Moderate | 2026-09-30 |
 
 ### EU ECB Region (EU_ECB)
 

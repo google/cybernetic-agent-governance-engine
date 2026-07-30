@@ -201,7 +201,7 @@ The following work items are ordered by strategic priority. Items marked **[BLOC
 | Substrate Contract Specification | HIGH | TBD | `docs/SUBSTRATE_CONTRACT.md` (new) |
 | CI/CD Integration Hook | HIGH | TBD | `.github/workflows/policy_compile.yml` (new) |
 
-**Change Management:** Adding new cloud provider services or container orchestrator namespaces for the ingress adapter constitutes a **Cat-M (Major)** change requiring AO pre-approval per `docs/governance/CHANGE_MANAGEMENT_PROCESS.md`. The ingress adapter itself (Python module only, no new infrastructure) is **Cat-N (Normal)**.
+**Change Management:** Adding new cloud provider services or container orchestrator namespaces for the ingress adapter constitutes a **Cat-M (Major)** change requiring AO pre-approval in a real deployment's own change-management process (see `AGENTS.md` for this repository's engineering standards). The ingress adapter itself (Python module only, no new infrastructure) is **Cat-N (Normal)**.
 
 ### Phase 2 — SDK & Developer Experience (Q4 2026)
 
@@ -297,7 +297,7 @@ When implementing the Phase 1 ingress adapters:
 |---|---|
 | CAGE Open Interop Spec | [`docs/CAGE_OPEN_INTEROP_SPEC.md`](../CAGE_OPEN_INTEROP_SPEC.md) |
 | Agentic Scope Statement | [`docs/AGENTIC_SCOPE_STATEMENT.md`](../AGENTIC_SCOPE_STATEMENT.md) |
-| NIST AI 600-1 Implementation Plan | [`docs/AI_600_1_IMPLEMENTATION_PLAN.md`](../AI_600_1_IMPLEMENTATION_PLAN.md) |
+| NIST AI 600-1 Implementation Plan | [`docs/compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md`](../compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md) |
 | POAM | [`docs/POAM.md`](../POAM.md) |
 | Control Barrier Function | [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py) |
 | Symbolic Governor | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
@@ -404,7 +404,7 @@ This positioning is credible because AGW explicitly supports **Service Extension
 **What is missing:**
 CAGE has no integration with Google Agent Gateway's Service Extensions mechanism. Service Extensions allow AGW to delegate authorization decisions to a custom gRPC endpoint implementing the **Envoy `ext_authz` v3 protocol** (`envoy.service.auth.v3.Authorization.Check`) — CAGE's [`hybrid_server.py`](../../src/gateway/server/hybrid_server.py) would host this endpoint, making CAGE the semantic governance layer that AGW calls before allowing egress MCP traffic. On approval, the adapter injects the `X-CAGE-Routing-Seal` header so the backend MCP server can verify governance authority before executing the tool.
 
-**Full protocol and implementation analysis:** [`CAGE_AGW_SERVICE_EXTENSION_RESEARCH.md`](CAGE_AGW_SERVICE_EXTENSION_RESEARCH.md)
+**Full protocol and implementation analysis:** see the proposed implementation steps below.
 
 **Proposed implementation:**
 1. A **Service Extension Adapter** (`src/gateway/server/agw_service_extension.py`, new) — an async gRPC servicer implementing `envoy.service.auth.v3.Authorization.Check` that parses the JSON-RPC 2.0 MCP tool call body, delegates to [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/symbolic_governor.py:837), and returns `OkHttpResponse` (with `X-CAGE-Routing-Seal` header) or `DeniedHttpResponse(403)`.
@@ -442,4 +442,4 @@ The AGW Service Extension integration (Gap 6) should be elevated to **Phase 1** 
 | IaC AGW Integration Module *(GCP-specific, optional)* | HIGH | Phase 1 | `infra/agw/` (new, e.g., Terraform / Pulumi / OpenTofu) |
 | CAGE + AGW Defense-in-Depth Quickstart | HIGH | Phase 2 | `docs/QUICKSTART_AGW.md` (new) |
 
-**Change Management:** The AGW Service Extension adapter is a new external API integration, which constitutes a **Cat-M (Major)** change requiring AO pre-approval per `docs/governance/CHANGE_MANAGEMENT_PROCESS.md`. The IaC module for AGW constitutes a new cloud provider service integration, also **Cat-M**. Both items apply only to GCP deployments; operators on other platforms are unaffected.
+**Change Management:** The AGW Service Extension adapter is a new external API integration, which constitutes a **Cat-M (Major)** change requiring AO pre-approval in a real deployment's own change-management process. The IaC module for AGW constitutes a new cloud provider service integration, also **Cat-M**. Both items apply only to GCP deployments; operators on other platforms are unaffected.

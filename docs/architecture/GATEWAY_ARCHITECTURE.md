@@ -4,7 +4,7 @@
 
 The Gateway acts as the central orchestrator and compliance enforcement point for the AI financial advisor. It implements a **Kubernetes Inference Gateway** architecture, abstracting a "Split-Brain" topology that routes tasks between a high-capacity Reasoning Model (`DeepSeek-R1-Distill-Llama-8B`) and a low-latency Governance Model (`Meta-Llama-3.1-8B-Instruct`). Both models are hosted on cost-optimized **Spot/preemptible GPU nodes** (NVIDIA L4). (GKE is the reference deployment; other Kubernetes distributions are supported)
 
-**Version:** v0.1.0
+**Version:** v2.1.0
 **Universal Compliance Baseline:** ISO/IEC 42001:2023 · CSA AARM v1.0 *(all deployment regions)*
 **Jurisdiction-Specific Addenda:** SR 26-2 / NIST AI 600-1 / NIST SP 800-53 *(US_FED only)* · EU AI Act / GDPR / DORA *(EU_ECB only)* · MAS FEAT / MAS Notice 655 *(APAC_MAS only)*
 
@@ -49,10 +49,10 @@ The Gateway acts as the central orchestrator and compliance enforcement point fo
     - Activated for trades ≥ $10,000 USD (consensus_threshold_usd).
     - Prevents single-model capture by requiring agreement across model families.
 
-7.  **AnchorageGrpcLedgerProvider (Externally Reconciled CBF — FUTURE STATE / POAM-023):**
-    - **Status:** Not yet implemented. Referenced in architecture as a planned enhancement.
-    - When implemented, the Control Barrier Function (CBF) cash-balance barrier (γ=0.5, min=$1,000) will be reconciled against an external ledger via gRPC, eliminating reliance on Redis-cached balances for safety-critical checks.
-    - The current implementation uses Redis `WATCH/MULTI/EXEC` optimistic locking for CBF enforcement. The "Stale Ground Truth" risk is mitigated by the TTL-gated staleness check in the DEFER state machine (AARM-V7) and the `post_hitl_revalidate_node` execution-time re-sampling.
+7.  **ExternalLedgerReconciler (Externally Reconciled CBF — POAM-023 Closed 2026-07-27):**
+    - **Status:** Implemented. `src/compliance_bridge/reconciliation_worker.py` provides the `ExternalLedgerReconciler` polling loop with pluggable `LedgerProvider` backends: `StubLedgerProvider` (dev/CI), `PlaidLedgerProvider` (production-ready, OAuth 2.0), and `AnchorageGrpcLedgerProvider` (interface contract defined; `fetch_balance()` raises `NotImplementedError` until Anchorage enterprise gRPC credentials and generated stubs are provisioned).
+    - The Control Barrier Function (CBF) cash-balance barrier (γ=0.5, min=$1,000) is reconciled against the external ledger balance when available; reconciled balances are KMS-signed before Redis write via `read_verified_balance()`.
+    - When no fresh externally reconciled balance is available (TTL expiry or provider not configured), the CBF falls back to Redis `WATCH/MULTI/EXEC` optimistic locking. The "Stale Ground Truth" risk is mitigated by the TTL-gated staleness check in the DEFER state machine (AARM-V7) and the `post_hitl_revalidate_node` execution-time re-sampling.
     - See POAM-023 for tracking status.
 
 ## Data Flow
@@ -144,6 +144,8 @@ cybernetic-governance-engine/
 | `src/gateway/governance/langgraph_harness/`                   | Reusable Factory/Builder nodes for NeMo and OPA            |
 | `src/gateway/governance/symbolic_governor.py`                 | Neuro-symbolic governance engine                           |
 | `src/gateway/governance/nemo/manager.py`                      | NeMo Guardrails integration                                |
+| `src/gateway/governance/contracts.py`                         | `Protocol` interfaces (`SafetyFilter`, `ConsensusProvider`, `PolicyClient`, `CausalGatekeeper`, `FiscalGuard`) decoupling `SymbolicGovernor` from concrete implementations — structural subtyping (PEP 544) allows any object implementing the right method signatures to substitute for a real component in tests |
+| `src/gateway/governance/singletons.py`                        | Module-level singleton construction and wiring for `SymbolicGovernor` and its dependencies (`OPAClient`, `STPAValidator`, `FiscalLimitGuard`, `safety_filter`, `consensus_engine`) — see [GAP-03](../compliance/REGION_GUARD_AUDIT.md) for the tracked single-Redis-instance regional data-residency gap |
 
 ## Governance Endpoints
 
@@ -170,7 +172,7 @@ This is the **Single Choke Point** for all tool-level governance decisions — t
 
 - **Tier 0 — STPA/STAMP UCA validation:** Runs for all tool names when `stpa_validator` is injected. Checks unsafe control actions (UCA-1 through UCA-6) against `governance_thresholds.json`.
 - **Tier 1 — Agent confidence threshold pre-check:** `execute_trade` only. Fast-fails if `confidence < AGENT_CONFIDENCE_THRESHOLD` (default 0.95, env-overridable). Skips CBF/OPA round-trips when confidence is obviously below threshold.
-- **Tier 2 — Control Barrier Function (CBF):** `execute_trade` only. Mathematical safety bounds check via Redis-backed cash balance verification (γ=0.5, min=$1,000) implemented in [`cbf.py`](../../src/gateway/governance/cbf.py). External ledger reconciliation via `AnchorageGrpcLedgerProvider` is a planned future enhancement (POAM-023); the current implementation uses Redis `WATCH/MULTI/EXEC` optimistic locking. `verify_action()` is **read-only** — it does not modify Redis state. Runs **concurrently** with Tier 4 (OPA) via `asyncio.gather`.
+- **Tier 2 — Control Barrier Function (CBF):** `execute_trade` only. Mathematical safety bounds check via cash balance verification (γ=0.5, min=$1,000) implemented in [`cbf.py`](../../src/gateway/governance/cbf.py). External ledger reconciliation via `ExternalLedgerReconciler` (POAM-023 closed 2026-07-27, `src/compliance_bridge/reconciliation_worker.py`) is preferred when a fresh KMS-signed reconciled balance is available; falls back to Redis `WATCH/MULTI/EXEC` optimistic locking otherwise. `verify_action()` is **read-only** — it does not modify Redis state. Runs **concurrently** with Tier 4 (OPA) via `asyncio.gather`.
 - **Tier 3 — Fiscal Limit Pre-Reservation (FiscalLimitGuard):** `execute_trade` only, when `fiscal_limit_guard` is injected and no prior violations exist. Atomically reserves the requested USD amount against the daily fiscal cap in Redis (`WATCH/MULTI/EXEC`) before the consensus gate. Closes the TOCTOU race between the CBF balance check and actual trade execution. Released immediately if any subsequent tier produces a violation.
 - **Tier 4 — OPA Rego policy evaluation:** All tool names. Declarative rule enforcement against the active regional compliance profile (`CAGE_DEPLOYMENT_REGION`). OPA circuit breaker: 5 failures → OPEN, 30s recovery, 3000ms hard latency budget. Redis decision cache: 10s TTL, SHA-256 keyed (`cage:opa:decision:{sha256_prefix}`), `OPA_CACHE_ENABLED` env var (default true). Cache is checked **before** the HTTP call; a hit short-circuits the entire round-trip. For `execute_trade`, CBF (Tier 2) and OPA (Tier 4) run **concurrently** via `asyncio.gather` to minimize latency.
 - **Tier 4b — Token Quota Proxy (TQP):** All tool names. Per-session step-count (≤12) and token (≤100k) quota enforcement via Redis atomic Lua counters (`token_quota_proxy.py`). Fail-closed: HTTP 429 on quota exceeded. Two-phase commit (reserve → reconcile); rollback on downstream failure. ISO 42001 Annex A.4. UCA type: `quota_exceeded` logged to WORM via UCA Logger.
@@ -182,10 +184,10 @@ This is the **Single Choke Point** for all tool-level governance decisions — t
 
 **Tools exempt from all governance overhead:** `check_market_status` and `verify_content_safety` return an empty seal immediately in `enforce_governance()` without entering `_run_checks()`.
 
-**Response** (on approval):
+**Response** (on approval — canonical `GovernanceDecision` vocabulary, [`src/gateway/governance/decisions.py`](../../src/gateway/governance/decisions.py)):
 ```json
 {
-  "verdict": "APPROVED",
+  "verdict": "ALLOW",
   "violations": [],
   "seal": "<kms-asymmetric-routing-seal-hex>",
   "latency_ms": 12.4
@@ -195,12 +197,33 @@ This is the **Single Choke Point** for all tool-level governance decisions — t
 **Response** (on denial — HTTP 403):
 ```json
 {
-  "verdict": "DENIED",
+  "verdict": "DENY",
   "violations": ["OPA: policy denied 'execute_trade'"],
   "seal": "",
   "latency_ms": 0
 }
 ```
+
+**Response** (human sign-off required — HTTP 202):
+```json
+{
+  "verdict": "REQUIRE_APPROVAL",
+  "thread_id": "<hitl-approval-thread-id>"
+}
+```
+Client action: poll `GET /v1/approvals/pending` for the outcome.
+
+**Response** (evidence/context missing — HTTP 202):
+```json
+{
+  "verdict": "DEFER",
+  "defer_id": "<defer-queue-id>",
+  "missing_input_reason": "<reason>"
+}
+```
+Client action: poll `GET /v1/defer/pending` for the outcome.
+
+> **Canonical four-state vocabulary:** `ALLOW` / `DENY` / `REQUIRE_APPROVAL` / `DEFER` is the single authoritative decision vocabulary at every CAGE gateway boundary (`validate_action()` return values, HTTP response bodies, audit events, provenance records). Internal OPA policy strings (`ALLOW`/`DENY`/`MANUAL_REVIEW`) and LangGraph execution-phase statuses (`APPROVED`/`BLOCKED`/`ESCALATED`) are translated to this vocabulary at the gateway boundary and must never leak into client-facing responses. See [`decisions.py`](../../src/gateway/governance/decisions.py) for the full translation table.
 
 **W3C Trace Context:** The GFA injects a `traceparent` header via `opentelemetry.propagate.inject(headers)`. This endpoint extracts it and attaches the incoming span context so that all `cage.validate_action` child spans are connected to the GFA's `cage.tool_execute` root span in Langfuse, producing a unified trace tree across the service boundary.
 
@@ -337,7 +360,7 @@ EXEC
 
 `verify_action()` is **read-only** at governance-check time — it does not debit the balance. The actual debit is performed by the `FiscalLimitGuard` atomic pre-reservation step after both CBF and OPA pass.
 
-> **POAM-023:** External ledger reconciliation via `AnchorageGrpcLedgerProvider` (gRPC) is a planned future enhancement that will eliminate reliance on Redis-cached balances for safety-critical checks. The current Redis implementation is the production baseline.
+> **POAM-023 (Closed 2026-07-27):** External ledger reconciliation via `ExternalLedgerReconciler` (`src/compliance_bridge/reconciliation_worker.py`) is implemented, reducing reliance on Redis-cached balances for safety-critical checks. `PlaidLedgerProvider` is production-ready; `AnchorageGrpcLedgerProvider` remains an interface contract pending Anchorage enterprise credentials. Redis `WATCH/MULTI/EXEC` remains the fallback path.
 
 ---
 
@@ -472,17 +495,18 @@ The AGW absorption layer bridges the Agent Gateway Protocol into the CAGE govern
 
 ### FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`)
 
-The **Fault Tree Reachability Analysis (FTRA)** gate determines whether a financial transaction can commence given the current governance state. It runs as a pre-condition check before the 7-tier SymbolicGovernor pipeline for `execute_trade` actions.
+The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)** is a Tier 0.5 gate — inserted between the `evaluator` and `safety_check` LangGraph nodes — that analyzes a multi-step `ExecutionPlan` *before any step executes* to determine whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable, and if so, whether the plan's confidence score is high enough to warrant only human review rather than an outright block.
 
 | File | Purpose |
 |------|---------|
-| [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | Data models: `FaultTreeNode`, `ReachabilityResult`, `CommencementDecision` |
-| [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | Classifies governance state into fault tree leaf conditions |
-| [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | Traverses the fault tree graph to compute reachability from current state to commencement |
-| [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | LangGraph node factory — wraps the FTRA gate as a composable governance node |
-| [`ftra_reachability.py`](../../src/gateway/governance/ftra_reachability.py) | Top-level entry point; integrates FTRA result into the governance pipeline |
+| [`ftra/models.py`](../../src/gateway/governance/ftra/models.py) | Pydantic models: `TerminalClassification` (`IRREVERSIBLE_TERMINAL` \| `REVERSIBLE` \| `READ_ONLY`), `FTRAVerdict` (`CLEAR` \| `HITL_REQUIRED` \| `BLOCKED`), `ReachabilityResult` |
+| [`ftra/classifier.py`](../../src/gateway/governance/ftra/classifier.py) | `IrreversibilityClassifier` — classifies each plan-step action name via a compiled terminal registry (`config/ftra/terminal_registry.json`); fail-closed: any action absent from the registry is classified `IRREVERSIBLE_TERMINAL` |
+| [`ftra/graph_analyzer.py`](../../src/gateway/governance/ftra/graph_analyzer.py) | `PlanGraphAnalyzer` — builds a NetworkX `DiGraph` from `ExecutionPlan.steps` (linear chain by default; honors an optional `depends_on` field), runs DFS from step 0, and returns a `ReachabilityResult` with `worst_case_classification`, `reachable_terminals`, `critical_path`, and `verdict` |
+| [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py) | `create_ftra_node()` — LangGraph node factory; `route_after_ftra()` — conditional-edge function reading `ftra_status` from `AgentState` |
 
-**Decision semantics:** If the fault tree analysis determines that the commencement state is unreachable from the current governance state (e.g., CBF violated, OPA DENY, DEFER queue saturated), the gate returns `CommencementDecision.BLOCKED` and the pipeline halts before any LLM inference is invoked.
+**Decision semantics:** `PlanGraphAnalyzer.analyze()` returns `FTRAVerdict.CLEAR` when no `IRREVERSIBLE_TERMINAL` step is reachable from step 0 — the plan proceeds to the OPA `safety_check` node. When an irreversible terminal *is* reachable, the verdict depends on Evaluator confidence: `HITL_REQUIRED` (confidence ≥ `FRIA_ZONE_DEFER`, default 0.70) parks the thread in DeferQueue `db=1` pending synchronous human clearance; `BLOCKED` (confidence < 0.70) routes to the `explainer` node and halts the plan outright — the confidence is too low to even warrant human review. All graph-construction or DFS-traversal exceptions fail closed to `IRREVERSIBLE_TERMINAL` / `HITL_REQUIRED` or `BLOCKED`, mirroring the OPA `default stpa_allow = false` pattern. Every analysis emits an OTel `cage.ftra_analysis` span tagged `cage.ftra.ctrl_id=CTRL_FTRA_001`.
+
+> **Implementation note:** `src/gateway/governance/ftra_reachability.py` is a separate, standalone `FtraReachabilityGate` class committed alongside the `ftra/` package in the same commit. It is not imported or called anywhere in the codebase — the production FTRA gate wired into `src/governed_financial_advisor/graph/graph.py` is exclusively `ftra/node_factory.py`'s `create_ftra_node()`/`route_after_ftra()`. Treat `ftra_reachability.py` as inactive scaffold code, not a pipeline entry point.
 
 ### LangGraph Governance Harness (`src/gateway/governance/langgraph_harness/`)
 

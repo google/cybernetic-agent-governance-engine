@@ -380,7 +380,7 @@ When adding new tools:
 1. Add tool definition to `list_tools()`
 2. Implement handler in `call_tool()`
 3. Add usage example to this README
-4. Update the MCP Integration Guide in `docs/MCP_INTEGRATION_GUIDE.md`
+4. Update the MCP setup guide in [`docs/MCP_SETUP.md`](../../docs/MCP_SETUP.md)
 
 ## License
 
@@ -388,6 +388,6 @@ Apache License 2.0 - See [LICENSE](../../LICENSE) file.
 
 ## Related Documentation
 
-- MCP Integration Guide - How to share configs between your MCP environment and your AI assistant
+- [MCP Setup Guide](../../docs/MCP_SETUP.md) - How to configure and run the MCP server for your AI assistant
 - [Infrastructure Deployment Guide](../../infra/DEPLOYMENT_GUIDE.md) - General deployment instructions
 - [Model Context Protocol](https://modelcontextprotocol.io/) - Official MCP specification

@@ -128,11 +128,17 @@ The following documents contain the primary mathematical formalism for the CAGE 
 | [GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | CAGE governance framework overview — **7-tier pipeline, STPA UCAs, mathematical invariants** |
 | [AGENTIC_SCOPE_STATEMENT.md](governance/AGENTIC_SCOPE_STATEMENT.md) | Agentic system scope statement |
 | [HUMAN_OVERSIGHT_SCOPE.md](governance/HUMAN_OVERSIGHT_SCOPE.md) | Human oversight scope definition |
-| [ROLES_AND_RESPONSIBILITIES.md](governance/ROLES_AND_RESPONSIBILITIES.md) | Roles and responsibilities |
-| [CHANGE_MANAGEMENT_PROCESS.md](governance/CHANGE_MANAGEMENT_PROCESS.md) | Change management process |
-| [MODEL_CARD_REVIEW.md](governance/MODEL_CARD_REVIEW.md) | AI model card review |
 | [CAUSAL_AND_CBF_GOVERNANCE.md](governance/CAUSAL_AND_CBF_GOVERNANCE.md) | Causal & CBF governance — **CBF condition, causal SCM, confabulation, consensus** |
 | [NEURO_SYMBOLIC_GOVERNANCE.md](governance/NEURO_SYMBOLIC_GOVERNANCE.md) | Neuro-symbolic governance layer — **formal safety properties, FRIA zones, regional compliance** |
+| [OPA_MIGRATION_PROCESS.md](governance/OPA_MIGRATION_PROCESS.md) | OPA policy migration process |
+
+> **Note:** Organizational process templates (change management, incident response,
+> roles & responsibilities, security assessment) previously lived under
+> `docs/governance/` and `docs/security/`. They have been removed — this is a
+> reference architecture, not an operating organization, and fictional
+> role-incumbent placeholders (`[TBD]`) provided no engineering value. Adopters
+> deploying CAGE in a real regulated environment should author their own
+> process documents using `docs/compliance/` as the control-mapping reference.
 
 ---
 
@@ -140,10 +146,7 @@ The following documents contain the primary mathematical formalism for the CAGE 
 
 | File | Description |
 |---|---|
-| [SECURITY_ASSESSMENT_PLAN.md](security/SECURITY_ASSESSMENT_PLAN.md) | Security assessment plan |
 | [SECURITY_STATUS.md](security/SECURITY_STATUS.md) | Current security status |
-| [INCIDENT_RESPONSE_PLAN.md](security/INCIDENT_RESPONSE_PLAN.md) | Incident response plan (summary) |
-| [IR_PLAN.md](security/IR_PLAN.md) | Full incident response plan |
 | [HITL_TOCTOU_REMEDIATION.md](security/HITL_TOCTOU_REMEDIATION.md) | HITL TOCTOU vulnerability remediation |
 | [STPA_ANALYSIS.md](security/STPA_ANALYSIS.md) | STPA (Systems Theoretic Process Analysis) |
 | [SECRET_MANAGEMENT_OPTIONS.md](security/SECRET_MANAGEMENT_OPTIONS.md) | Secret management options analysis |
@@ -163,8 +166,6 @@ The following documents contain the primary mathematical formalism for the CAGE 
 | [LATENCY_STRATEGY.md](architecture/LATENCY_STRATEGY.md) | Latency strategy |
 | [AUDIT_LOG_SCHEMA.md](architecture/AUDIT_LOG_SCHEMA.md) | Audit log schema |
 | [SUBSTRATE_MOAT_STRATEGY.md](architecture/SUBSTRATE_MOAT_STRATEGY.md) | Competitive positioning — CAGE vs MXC/ACS, AAIF, Google AGW |
-| [CAGE_AGW_SERVICE_EXTENSION_RESEARCH.md](architecture/CAGE_AGW_SERVICE_EXTENSION_RESEARCH.md) | Research: CAGE × Google Agent Gateway Service Extension integration (Gap 6) — **Cat-M, AO pre-approval required** |
-| [CAGE_STPA_TO_AGP_SEMANTIC_POLICY_RESEARCH.md](architecture/CAGE_STPA_TO_AGP_SEMANTIC_POLICY_RESEARCH.md) | Research: CAGE STPA/STAMP pipeline → Google Agent Platform Semantic Governance Policies — fifth compiler output target |
 
 ---
 
@@ -174,7 +175,6 @@ The following documents contain the primary mathematical formalism for the CAGE 
 |---|---|
 | [DEPLOYMENT_RULES.md](operations/DEPLOYMENT_RULES.md) | Deployment rules & constraints |
 | [DEPLOYMENT_DECISION_RECORD.md](operations/DEPLOYMENT_DECISION_RECORD.md) | Deployment decision record |
-| [DEPLOYMENT_EXECUTION_PLAN_US_FED_DEV.md](operations/DEPLOYMENT_EXECUTION_PLAN_US_FED_DEV.md) | US_FED dev deployment execution plan |
 | [GIT_WORKFLOW_STANDARDS.md](operations/GIT_WORKFLOW_STANDARDS.md) | Git workflow standards |
 | [HOW_TO_DEMO_OBSERVABILITY.md](operations/HOW_TO_DEMO_OBSERVABILITY.md) | Observability demo guide |
 
@@ -184,10 +184,6 @@ The following documents contain the primary mathematical formalism for the CAGE 
 
 | File | Description |
 |---|---|
-| [V2_ROADMAP.md](project/V2_ROADMAP.md) | V2 roadmap |
-| [IMPLEMENTATION_PLAN_V2.md](project/IMPLEMENTATION_PLAN_V2.md) | **v2.0 combined implementation plan** — Gap 1–6 sequenced delivery, AGW Service Extension, ACS/AAIF ingress, SDK, spec update cross-reference |
-| [MERGE_TO_MAIN_PLAN.md](project/MERGE_TO_MAIN_PLAN.md) | Merge-to-main plan |
-| [POAM_023_IMPLEMENTATION_PLAN.md](project/POAM_023_IMPLEMENTATION_PLAN.md) | POAM-023 (external ledger reconciliation) implementation plan |
 | [CAGE_ONE_PAGER.md](project/CAGE_ONE_PAGER.md) | CAGE executive one-pager |
 
 ---

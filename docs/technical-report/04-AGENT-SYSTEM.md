@@ -6,7 +6,7 @@
 | **Date**             | 2026-06-03                                                                        |
 | **Classification**   | INTERNAL                                                                          |
 | **Document Series**  | CAGE Technical Report                                                             |
-| **Status**           | ACTIVE — v0.1.0 stable (GO — 2026-06-08; GKE deployment verified 2026-06-03; **844 passing, 0 failed, 24 skipped**) |
+| **Status**           | ACTIVE — v2.1.0 stable (GO — 2026-06-08; GKE deployment verified 2026-06-03; **844 passing, 0 failed, 24 skipped** at time of v2.0.0 GKE cycle) |
 | **Reference**        | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/` |
 
 ---
@@ -182,7 +182,7 @@ The subgraph is structured so that no trade call can be made without successfull
 
 ---
 
-## 5a. DEFER Queue and Context Accumulator (v0.1.0)
+## 5a. DEFER Queue and Context Accumulator (v2.0.0)
 
 ### DEFER State Machine (AARM-V7)
 
@@ -224,14 +224,15 @@ The **ConsensusModelRegistry** enables heterogeneous multi-model consensus for h
 
 ### FTRA Commencement Reachability Gate (v2.1.0)
 
-Before any LangGraph graph instance is executed, the FTRA gate (`src/gateway/governance/ftra/`) performs a structural reachability analysis:
+Before any step of a proposed `ExecutionPlan` runs, the FTRA gate (`src/gateway/governance/ftra/`, `CTRL_FTRA_001`) — inserted between the `evaluator` and `safety_check` LangGraph nodes — performs a per-plan reachability analysis:
 
-1. **`classifier.py`** — Classifies every node in the compiled graph by type: `START`, `TERMINAL`, `HITL_APPROVAL`, `ADVISORY`, `GOVERNANCE`.
-2. **`graph_analyzer.py`** — Runs BFS/DFS from the start node; raises `FTRAViolation` if no path to a `HUMAN_APPROVED` terminal exists.
-3. **`node_factory.py`** — Wraps the FTRA check as a LangGraph node using the same `GovernanceNodeInput → GovernanceNodeOutput` pattern as `langgraph_harness/`.
-4. **`ftra_reachability.py`** — Top-level entry point called by `SymbolicGovernor` at Tier 0 (pre-execution).
+1. **`classifier.py`** — `IrreversibilityClassifier` classifies each plan-step action name (via the compiled `config/ftra/terminal_registry.json`) as `IRREVERSIBLE_TERMINAL`, `REVERSIBLE`, or `READ_ONLY`. Fail-closed: any action absent from the registry defaults to `IRREVERSIBLE_TERMINAL`.
+2. **`graph_analyzer.py`** — `PlanGraphAnalyzer` builds a NetworkX `DiGraph` over `ExecutionPlan.steps` and runs DFS from step 0, returning a `ReachabilityResult` (worst-case classification, reachable terminals, critical path, verdict).
+3. **`node_factory.py`** — `create_ftra_node()` wraps the analysis as a LangGraph node; `route_after_ftra()` is the conditional-edge function reading `ftra_status` from `AgentState`.
 
-The FTRA gate is a **pre-execution structural invariant** — it runs once per graph compilation, not per inference call. A graph that passes FTRA is guaranteed to have at least one execution path that reaches human approval.
+The FTRA gate runs **per plan, before any step executes** — not once per graph compilation. `FTRAVerdict.CLEAR` (no irreversible terminal reachable) proceeds to the OPA `safety_check` node. `HITL_REQUIRED` (irreversible terminal reachable, Evaluator confidence ≥ 0.70) parks the thread in DeferQueue `db=1` pending human clearance. `BLOCKED` (confidence < 0.70) halts the plan and routes to `explainer`.
+
+> **Note:** `src/gateway/governance/ftra_reachability.py` is a separate, unwired `FtraReachabilityGate` scaffold committed in the same commit as this package. It is not called by `SymbolicGovernor` or any production code path — the FTRA gate actually wired into `src/governed_financial_advisor/graph/graph.py` is exclusively `ftra/node_factory.py`.
 
 ### NeMo Guardrails Phase 4.2 Changes
 
@@ -267,7 +268,7 @@ CAGE enforces mandatory human oversight on all trade execution via LangGraph's i
 
 The graph is compiled with `interrupt_before=["governed_trader"]`. When execution reaches this node, the graph suspends and persists its current state to Redis via `AsyncRedisSaver` before returning control to the API layer. The `approval_node` prepares a `trade_payload` containing the `expires_at` TTL timestamp and the structural `ExecutionPlan`. Importantly, the `approval_node` exposes `max_slippage_pct` to the UI, allowing the human reviewer to inspect and, if necessary, tighten the slippage tolerance before submitting their approval.
 
-The AgentSight KernelDashboard (Phase 1, v0.1.0-rc.1) surfaces `hitl_expires_at` as a live countdown timer per pending telemetry item, and `price_fresh` / `price_stale` as a ΔP drift badge — giving operators real-time visibility into HITL expiry and price movement without leaving the dashboard.
+The AgentSight KernelDashboard (Phase 1, v2.0.0-rc.1) surfaces `hitl_expires_at` as a live countdown timer per pending telemetry item, and `price_fresh` / `price_stale` as a ΔP drift badge — giving operators real-time visibility into HITL expiry and price movement without leaving the dashboard.
 
 ### State Preparation
 

@@ -1,4 +1,4 @@
-# AI Fairness Assessment — CAGE v0.1.0
+# AI Fairness Assessment — CAGE v2.1.0
 
 **Document:** AI600-004 / ECOA / Reg B / MAS FEAT F2 / ISO 42001 §A.6
 **Date:** 2026-06-23
