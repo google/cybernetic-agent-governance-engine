@@ -370,6 +370,105 @@ class TestSlaMonitor:
         assert findings[0].result == "FAIL"
         assert "SLA breach" in (findings[0].remarks or "")
 
+    # FINDING-05 (POAM-2026-029) — region-aware SLA coverage.
+    # sla_monitor.py must call get_sla_seconds(region) rather than iterating
+    # the deprecated flat EVIDENCE_SLA_SECONDS alias, so that jurisdictional
+    # SLA targets (SC-7/SC-8 for US_FED, Article 12 for EU_ECB, MAS-FEAT-1 for
+    # APAC_MAS) are monitored in their applicable region.
+
+    def test_active_sla_seconds_universal_only_when_region_unset(self):
+        from src.compliance_bridge.sla_monitor import _active_sla_seconds
+        from src.compliance_bridge.types import _UNIVERSAL_SLA
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CAGE_DEPLOYMENT_REGION", None)
+            sla_map = _active_sla_seconds()
+
+        assert sla_map == _UNIVERSAL_SLA
+        assert "SC-7" not in sla_map
+        assert "SC-8" not in sla_map
+        assert "Article 12" not in sla_map
+        assert "MAS-FEAT-1" not in sla_map
+
+    def test_active_sla_seconds_includes_us_fed_jurisdictional(self):
+        from src.compliance_bridge.sla_monitor import _active_sla_seconds
+
+        with patch.dict(os.environ, {"CAGE_DEPLOYMENT_REGION": "US_FED"}):
+            sla_map = _active_sla_seconds()
+
+        assert "SC-7" in sla_map
+        assert "SC-8" in sla_map
+        # Universal controls remain present alongside jurisdictional ones
+        assert "A.9.2" in sla_map
+        # EU/APAC-only controls must not leak into US_FED
+        assert "Article 12" not in sla_map
+        assert "MAS-FEAT-1" not in sla_map
+
+    def test_active_sla_seconds_includes_eu_ecb_jurisdictional(self):
+        from src.compliance_bridge.sla_monitor import _active_sla_seconds
+
+        with patch.dict(os.environ, {"CAGE_DEPLOYMENT_REGION": "EU_ECB"}):
+            sla_map = _active_sla_seconds()
+
+        assert "Article 12" in sla_map
+        assert "SC-7" not in sla_map
+        assert "SC-8" not in sla_map
+        assert "MAS-FEAT-1" not in sla_map
+
+    def test_active_sla_seconds_includes_apac_mas_jurisdictional(self):
+        from src.compliance_bridge.sla_monitor import _active_sla_seconds
+
+        with patch.dict(os.environ, {"CAGE_DEPLOYMENT_REGION": "APAC_MAS"}):
+            sla_map = _active_sla_seconds()
+
+        assert "MAS-FEAT-1" in sla_map
+        assert "SC-7" not in sla_map
+        assert "Article 12" not in sla_map
+
+    @pytest.mark.asyncio
+    async def test_check_sla_once_monitors_jurisdictional_control_in_region(self):
+        """With CAGE_DEPLOYMENT_REGION=US_FED, a stale SC-7 must be detected as a
+        breach — proving _check_sla_once() now iterates region-aware SLA targets
+        rather than only the universal ISO 42001 subset."""
+        from src.compliance_bridge.sla_monitor import _check_sla_once
+
+        async def _mock_metrics(control_id, window_hours=24):
+            if control_id == "SC-7":
+                # SC-7 SLA is 86_400s (US_FED) — simulate 2x SLA staleness
+                return _make_metrics(control_id, evidence_age=200_000.0)
+            return _make_metrics(control_id, evidence_age=60.0)
+
+        with patch.dict(os.environ, {"CAGE_DEPLOYMENT_REGION": "US_FED"}):
+            with patch(
+                "src.compliance_bridge.sla_monitor.get_compliance_metrics",
+                new=AsyncMock(side_effect=_mock_metrics),
+            ):
+                breached = await _check_sla_once()
+
+        assert "SC-7" in breached
+
+    @pytest.mark.asyncio
+    async def test_check_sla_once_ignores_jurisdictional_control_outside_region(self):
+        """A stale SC-7 must NOT be flagged when CAGE_DEPLOYMENT_REGION is unset
+        (or EU_ECB/APAC_MAS) — SC-7 is a US_FED-only NIST control and is not even
+        in the polled control set outside US_FED."""
+        from src.compliance_bridge.sla_monitor import _check_sla_once
+
+        async def _mock_metrics(control_id, window_hours=24):
+            if control_id == "SC-7":
+                return _make_metrics(control_id, evidence_age=200_000.0)
+            return _make_metrics(control_id, evidence_age=60.0)
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CAGE_DEPLOYMENT_REGION", None)
+            with patch(
+                "src.compliance_bridge.sla_monitor.get_compliance_metrics",
+                new=AsyncMock(side_effect=_mock_metrics),
+            ):
+                breached = await _check_sla_once()
+
+        assert "SC-7" not in breached
+
 
 # ---------------------------------------------------------------------------
 # 2.6 — GET /v1/metrics/summary

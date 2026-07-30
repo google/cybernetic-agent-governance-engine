@@ -72,7 +72,6 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-024 | CM-6 | Staging environment compliance posture not yet verified against Lula validation suite | Moderate | 2026-09-30 |
 | POAM-2026-025 | NIST AI 600-1 §2.6 | CBRN / harmful content Lula validation is a stub pending AO pre-approval for NeMo CBRN rail deployment | High | 2026-12-31 |
 | POAM-2026-026 | ISO 42001 A.8.4 | Standalone `token-quota-proxy` Deployment not yet created; TokenQuotaProxy runs inline in gateway | Moderate | 2026-09-30 |
-| POAM-2026-029 | CA-7 | `src/compliance_bridge/sla_monitor.py` imports the deprecated flat `EVIDENCE_SLA_SECONDS` alias instead of the region-aware `get_sla_seconds(region)` accessor added to `types.py`; jurisdictional SLA controls (SC-7/SC-8 for US_FED, Article 12 for EU_ECB, MAS-FEAT-1 for APAC_MAS) are not yet monitored for evidence staleness in any region (tracked as FINDING-05 in `docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md`) | Moderate | 2026-09-30 |
 | POAM-2026-030 | SA-11 | `src/gateway/governance/ftra/` (the production FTRA Tier 0.5 gate, wired into `src/governed_financial_advisor/graph/graph.py`) has zero test coverage; the only FTRA test file (`tests/test_ftra_reachability.py`) exercises the separate, unwired `ftra_reachability.py` scaffold instead | Moderate | 2026-09-30 |
 
 ### EU ECB Region (EU_ECB)
@@ -105,6 +104,7 @@ The following findings have been remediated and verified via Lula validation:
 | POAM-2026-023 | CBF / SI-2 | External CBF state reconciliation not implemented — remediated by `src/compliance_bridge/reconciliation_worker.py` (v2.1.0); reconciled balances are KMS-signed before Redis write; CBF fails closed on TTL expiry | 2026-07-27 |
 | POAM-2026-027 | Structural | POAM tracking document absent from repository — remediated by creating this document | 2026-06-30 |
 | POAM-2026-028 | RA-5 / SI-2 | `langchain` GHSA-gr75-jv2w-4656 and related transitive CVEs — remediated by upgrading to `langchain==1.3.11`, `langsmith==0.9.5`, `python-multipart==0.0.32` | 2026-07-02 |
+| POAM-2026-029 | CA-7 | `src/compliance_bridge/sla_monitor.py` imported the deprecated flat `EVIDENCE_SLA_SECONDS` alias instead of the region-aware `get_sla_seconds(region)` accessor in `types.py` — remediated via a new `_active_sla_seconds()` helper that resolves `CAGE_DEPLOYMENT_REGION` fresh on every poll cycle; jurisdictional SLA controls (SC-7/SC-8 for US_FED, Article 12 for EU_ECB, MAS-FEAT-1 for APAC_MAS) are now monitored in their applicable region; FINDING-05 in `docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md` closed; covered by 6 new tests in `tests/test_compliance_bridge_tier2.py::TestSlaMonitor` | 2026-07-30 |
 
 ---
 
