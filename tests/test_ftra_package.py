@@ -174,9 +174,7 @@ class TestIrreversibilityClassifier:
         )
 
         classifier = IrreversibilityClassifier(registry_path=custom_path)
-        assert (
-            classifier.classify("custom_action") == TerminalClassification.REVERSIBLE
-        )
+        assert classifier.classify("custom_action") == TerminalClassification.REVERSIBLE
         # Action absent from the *custom* registry still fails closed
         assert (
             classifier.classify("execute_trade")
@@ -379,9 +377,7 @@ class TestPlanGraphAnalyzer:
         assert result.verdict == FTRAVerdict.BLOCKED
 
     def test_explain_returns_step_details(self, tmp_path):
-        analyzer = self._analyzer(
-            tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"}
-        )
+        analyzer = self._analyzer(tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"})
         plan = _make_plan([("s1", "execute_trade")])
         explanation = analyzer.explain(plan, confidence=0.9)
 
@@ -551,9 +547,7 @@ class TestCreateFtraNode:
         mock_client = MagicMock()
         mock_client.aclose = AsyncMock()
 
-        with patch(
-            "redis.asyncio.from_url", return_value=mock_client
-        ) as mock_from_url:
+        with patch("redis.asyncio.from_url", return_value=mock_client) as mock_from_url:
             with patch(
                 "src.gateway.governance.defer_queue.DeferQueue",
                 return_value=mock_queue_instance,
@@ -594,9 +588,7 @@ class TestCreateFtraNode:
             "thread_id": "thread-hitl-002",
         }
 
-        with patch(
-            "redis.asyncio.from_url", side_effect=ConnectionError("redis down")
-        ):
+        with patch("redis.asyncio.from_url", side_effect=ConnectionError("redis down")):
             with pytest.raises(NodeInterrupt) as exc_info:
                 node(state)
 
