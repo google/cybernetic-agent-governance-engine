@@ -4,7 +4,7 @@
 
 ## Abstract
 
-The rapid advancement of agentic AI systems built on non-deterministic Large Language Models (LLMs) presents significant challenges for safety, reliability, and regulatory compliance in high-stakes industries. We present the **Cybernetic Agent Governance Engine (CAGE)**, grounded in Ashby's Law of Requisite Variety and Stafford Beer's Viable System Model (VSM), which frames the governance problem as matching the immense variety of emergent LLM behaviors with a sufficiently rich, deterministic set of control states. CAGE is a compiler-driven runtime governance framework that translates System-Theoretic Process Analysis (STPA) hazard models into executable enforcement policies, then evaluates every agent action through an eight-tier symbolic governor (including a pre-execution Forward-Looking Trajectory Reachability Analyzer, FTRA) before execution is permitted. The governor combines discrete-time Control Barrier Functions (CBF), Open Policy Agent (OPA) Rego policies, causal intervention simulation, and human-in-the-loop escalation into a single, formally verified pipeline. Governance is enforced at the HTTP layer for all message roles, eliminating role-based bypass paths. We prove the **NoDirectBind invariant** — that no action can reach the EXECUTED state without passing all governance tiers — via exhaustive breadth-first search over 19 reachable automaton states. We further prove CBF invariance, FiscalLimitGuard race-condition freedom, Cloud KMS non-repudiation, and evidence chain integrity via cryptographic `record_hash` binding across the full NDJSON audit chain. To close a recursive self-authentication gap in the CBF (POAM-023), we design and implement an isolated reconciliation daemon that fetches externally attested balances from Plaid Production, signs them with Cloud KMS, and writes them to Redis with strict TTL; the CBF is built to prefer this signed external ground truth over the self-reported balance whenever it is present. We benchmark this mechanism against live Redis and Cloud KMS infrastructure and report its performance characteristics; as discussed in §5.4, deploying the daemon into the live serving path of the reference system is ongoing integration work, distinct from the design and implementation reported here. We evaluate CAGE against a corpus of 21 adversarial attacks across five attack categories and report governance latency, reconciliation write-path cost, and per-request CBF read overhead. CAGE is open-source at [https://github.com/google/cybernetic-agent-governance-engine](https://github.com/google/cybernetic-agent-governance-engine) and targets NIST SP 800-53, ISO 42001, SR 26-2, and multi-jurisdiction compliance (US FED, EU ECB, APAC MAS).
+The rapid advancement of agentic AI systems built on non-deterministic Large Language Models (LLMs) presents significant challenges for safety, reliability, and regulatory compliance in high-stakes industries. We present the **Cybernetic Agent Governance Engine (CAGE)**, grounded in Ashby's Law of Requisite Variety and Stafford Beer's Viable System Model (VSM), which frames the governance problem as matching the immense variety of emergent LLM behaviors with a sufficiently rich, deterministic set of control states. CAGE is a compiler-driven runtime governance framework that translates System-Theoretic Process Analysis (STPA) hazard models into executable enforcement policies, then evaluates every agent action through an eight-tier symbolic governor (including a pre-execution Forward-Looking Trajectory Reachability Analyzer, FTRA) before execution is permitted. The governor combines discrete-time Control Barrier Functions (CBF), Open Policy Agent (OPA) Rego policies, causal intervention simulation, and human-in-the-loop escalation into a single, formally verified pipeline. Governance is enforced at the HTTP layer for all message roles, eliminating role-based bypass paths. We prove the **NoDirectBind invariant** — that no action can reach the EXECUTED state without passing all governance tiers — via exhaustive breadth-first search over 21 reachable automaton states. We further prove CBF invariance, FiscalLimitGuard race-condition freedom, Cloud KMS non-repudiation, and evidence chain integrity via cryptographic `record_hash` binding across the full NDJSON audit chain. To close a recursive self-authentication gap in the CBF (POAM-023), we design and implement an isolated reconciliation daemon that fetches externally attested balances from Plaid Production, signs them with Cloud KMS, and writes them to Redis with strict TTL; the CBF is built to prefer this signed external ground truth over the self-reported balance whenever it is present. We benchmark this mechanism against live Redis and Cloud KMS infrastructure and report its performance characteristics; as discussed in §5.4, deploying the daemon into the live serving path of the reference system is ongoing integration work, distinct from the design and implementation reported here. We evaluate CAGE against a corpus of 21 adversarial attacks across five attack categories and report governance latency, reconciliation write-path cost, and per-request CBF read overhead. CAGE is open-source at [https://github.com/google/cybernetic-agent-governance-engine](https://github.com/google/cybernetic-agent-governance-engine) and targets NIST SP 800-53, ISO 42001, SR 26-2, and multi-jurisdiction compliance (US FED, EU ECB, APAC MAS).
 
 ---
 
@@ -20,7 +20,7 @@ We address these gaps with CAGE. Our contributions are:
      
 2. **Eight-tier symbolic governor**: A formally specified pipeline that evaluates every agent action through a pre-execution FTRA reachability gate (Tier 0.5), STPA validation, confidence scoring, CBF \+ OPA (parallel), FiscalLimitGuard, consensus, causal gatekeeper, and FRIA before execution. Governance is enforced at the HTTP layer for all message roles — not only `user`\-role messages — eliminating role-based bypass paths in the inference proxy.  
      
-3. **Machine-verified NoDirectBind invariant**: Exhaustive BFS over 19 reachable automaton states proves that `(phase=EXECUTED) ⟹ (resolvedAllow=TRUE)` — no action can bypass the governance pipeline.  
+3. **Machine-verified NoDirectBind invariant**: Exhaustive BFS over 21 reachable automaton states proves that `(phase=EXECUTED) ⟹ (resolvedAllow=TRUE)` — no action can bypass the governance pipeline.  
      
 4. **External balance reconciliation design (POAM-023)**: An isolated reconciliation daemon is designed and implemented to fetch KMS-signed external balances from Plaid Production, eliminating the recursive self-authentication vulnerability where the execution system writes its own balance to Redis and then uses that balance to pass the CBF check. A module-level `_IS_PRODUCTION` guard raises `RuntimeError` at startup if `RECONCILIATION_PROVIDER=stub` in production. As detailed in §5.4, the daemon is not yet wired into the live serving path of the reference deployment; this contribution should be read as a validated, benchmarked design pending deployment, not as an active production control.  
      
@@ -45,7 +45,7 @@ CAGE conceptualizes the agentic ecosystem through Stafford Beer's Viable System 
 - **System 1 (Operation)**: Represented by the reasoning plane (the "Plant"), which executes the primary tasks and proposes tool actions.  
 - **System 2 (Coordination)**: Managed by the outer gateway layer, preventing oscillatory behaviors, repetitive actions, and conflicting commands across multi-agent workflows.  
 - **System 3 (Control/Execution)**: Enforced by the SymbolicGovernor, which synchronously intercepts and evaluates proposed actions against hard security limits.  
-- **System 4 (Intelligence/Adaptation)**: Sustained by the adaptive self-healing feedback loop that dynamically adjusts policy variables based on environment feedback.  
+- **System 4 (Intelligence/Adaptation)**: Represented by the STPA compiler and OSCAL exporter, which translate environmental hazard analysis into updated policy artifacts. A fully adaptive, self-healing policy-adjustment loop is tracked as future work (§7.3); the current implementation uses statically compiled policies regenerated on each CI run.  
 - **System 5 (Policy)**: Formulated by the enterprise-defined STPA safety requirements, establishing the absolute boundary of acceptable behavior.
 
 ### 2.3 The Controller-Plant Separation
@@ -62,13 +62,13 @@ Rather than embedding safety guardrails inside the agent's prompt — which are 
 
 Tallam \[1\] propose a five-plane architecture for runtime governance: a reasoning plane that monitors agent cognition, and four enforcement planes (network, identity, endpoint, data) that implement interruption primitives. They identify six primitives: BLOCK, DEFER, REDACT, AUDIT, ESCALATE, and TERMINATE. Their correctness invariants include completeness (all actions pass through at least one enforcement plane), non-circumventability (no action bypasses enforcement), auditability (all decisions are logged), and recoverability (blocked actions can be replayed after human review).
 
-CAGE implements all six primitives and satisfies all four invariants. Table 1 maps the five-plane taxonomy to CAGE subsystems.
+CAGE implements all six primitives and satisfies all four invariants. BLOCK and DEFER map to the governor's DENY and HITL escalation paths. REDACT maps to `inference_proxy.py`'s `scrub_pii()` function, which masks PII before the payload reaches the agent. TERMINATE maps to the `dge_action: TERMINATED_WITH_ROLLBACK` verdict emitted by the governor when a saga compensating action is triggered. AUDIT and ESCALATE map to the NDJSON audit chain and the `DeferQueue` HITL path respectively. Table 1 maps the five-plane taxonomy to CAGE subsystems.
 
 **Table 1: Five-Plane to CAGE Mapping**
 
 | Plane | CAGE Subsystem |
 | :---- | :---- |
-| Reasoning | SymbolicGovernor (7-tier pipeline) \+ ConfabulationScorer |
+| Reasoning | SymbolicGovernor (8-tier pipeline) + ConfabulationScorer (a non-blocking AI 600-1 §2.1 scorer that evaluates response faithfulness via Langfuse and emits a `confabulation_score` OTel attribute; it does not gate execution) |
 | Network | Kubernetes `NetworkPolicy` L3/L4 default-deny (`deployment/k8s/network-policy.yaml`, live in the reference GKE deployment); a Cilium CNI L7 FQDN-egress design exists (`deployment/k8s/cilium-egress-lockdown.yaml`) but is not installed by the automated deployment pipeline — see §4.7 and §7.2 |
 | Identity | Cloud KMS asymmetric signing \+ Workload Identity |
 | Endpoint | OPA Rego policies \+ NeMo Colang rails |
@@ -96,8 +96,6 @@ The CAGE framework operates at the intersection of neuro-symbolic AI oversight, 
 
 **AgentSpec** \[32\] provides a lightweight, trigger-predicate-enforcement DSL that achieves robust runtime safety, but operates primarily on agent-level event streams rather than concrete wire-protocol schemas. CAGE integrates event-driven predicate validation with OPA and continuous barrier functions to capture dynamic, physical and digital state deviations.
 
-**AgenTRIM** \[2026\] similarly addresses tool misuse in LLM agents, while adversarial evaluation studies \[Deng et al., 2025\] confirm the attack surface that CAGE's deflection pipeline targets.
-
 **AgenTRIM** \[35\] similarly addresses tool misuse in LLM agents, while adversarial evaluation studies \[36\] confirm the attack surface that CAGE's deflection pipeline targets.
 
 **Multi-agent governance architectures** \[13\] and **neurosymbolic runtime verification frameworks** \[20\] further validate the need for deterministic enforcement layers. Zero-trust identity frameworks for agentic AI \[14, 15, 16, 17, 18\] confirm that boundary-based perimeter controls are inadequate for multi-service and multi-agent systems, motivating CAGE's identity-centric posture.
@@ -122,15 +120,15 @@ CAGE consists of four subsystems:
 
 ### 4.2 Eight-Tier Symbolic Governor
 
-The governor evaluates every action through seven tiers in sequence:
+The governor evaluates every agent action through eight tiers in sequence (Tiers 1–7 within `_run_checks()`, plus Tier 0.5 at the LangGraph graph level):
 
-**Tier 0.5 — FTRA (Forward-Looking Trajectory Reachability Analyzer)**: Before the first LangGraph node fires, the FTRA builds a NetworkX directed graph from `ExecutionPlan.steps`, classifies each reachable action against the compiled terminal registry, and issues one of three verdicts: `CLEAR` (proceed to OPA safety gate), `HITL_REQUIRED` (park in `DeferQueue` \+ `NodeInterrupt`), or `BLOCKED` (route to explainer; plan cannot proceed). This pre-execution gate catches unsafe trajectories before any tool call is made.
+**Tier 0.5 — FTRA (Forward-Looking Trajectory Reachability Analyzer)**: Before the first LangGraph node fires, the FTRA builds a NetworkX directed graph from `ExecutionPlan.steps`, classifies each reachable action against the compiled terminal registry, and issues one of three verdicts: `CLEAR` (proceed to OPA safety gate), `HITL_REQUIRED` (park in `DeferQueue` \+ `NodeInterrupt`), or `BLOCKED` (route to explainer; plan cannot proceed). This pre-execution gate catches unsafe trajectories before any tool call is made. **Architectural assumption:** FTRA assumes a plan-and-execute agent architecture where a complete multi-step trajectory is formulated prior to any execution. For agent architectures that dynamically or reactively resolve future tool calls based on intermediate environment observations, FTRA operates on the plan available at commencement time and applies a fail-closed default (`BLOCKED`) when the plan is incomplete or absent.
 
-**HTTP-layer enforcement**: Governance is applied at the HTTP layer for all message roles (`user`, `system`, `assistant`). The inference proxy enforces input governance — Tier-1 keyword scan, token/step quota, and NeMo input rails — regardless of whether a `user`\-role message is present, and applies output filtering for all response paths including `stream: true`. This eliminates the role-based bypass path identified in GHSA-hfqj-24cj-693g.
+**HTTP-layer enforcement**: Governance is applied at the HTTP layer for all message roles (`user`, `system`, `assistant`). The inference proxy enforces input governance — HTTP-layer keyword scan, token/step quota, and NeMo input rails — regardless of whether a `user`\-role message is present, and applies output filtering for all response paths including `stream: true`. This eliminates the role-based bypass path identified in GHSA-hfqj-24cj-693g.
 
 **Tier 1 — STPA Validation**: Checks the action against compiled UCAs. If the action matches a UCA pattern, it is blocked with a structured violation record.
 
-**Tier 2 — Confidence Scoring**: Evaluates the agent's confidence in the action. Actions below the threshold (default: 0.95) are escalated to HITL.
+**Tier 2 — Confidence Scoring**: Evaluates the agent's confidence in the action. The confidence score is a field in the action payload (`params["confidence"]`), expected to be set by the agent's reasoning layer before submitting the action for governance. The SLM sidecar that previously computed an independent confidence score has been deprecated to reduce latency; the OPA policy (`system_authz.rego`) enforces a higher threshold (0.97 vs. 0.95) when the `slm_available: false` sentinel is present. Actions below the threshold (default: 0.95) are escalated to HITL.
 
 **Tier 3 — CBF \+ OPA (parallel)**: Evaluates the discrete-time CBF condition and OPA Rego policies \[30\] concurrently. Either can block the action.
 
@@ -152,7 +150,7 @@ The CBF condition requires:
 
 h(S(t+1)) ≥ (1 − γ) · h(S(t))
 
-where `γ = 0.1` (default). An action is safe if and only if the post-action balance satisfies this condition.
+where `γ` is configurable via `THRESHOLDS.cbf.gamma` in `config/governance_thresholds.json` (default: 0.5 in the reference configuration). An action is safe if and only if the post-action balance satisfies this condition.
 
 **POAM-023 gap (design and code complete; deployment pending — see §5.4)**: Prior to this work, the CBF read `safety:current_cash` from Redis — a value written by the execution system itself. This creates a recursive self-authentication vulnerability: the execution system could write an inflated balance, pass the CBF check, then execute a trade that violates the true safety constraint.
 
@@ -169,13 +167,15 @@ A module-level `_IS_PRODUCTION` constant in `cbf.py` (patchable in tests) gates 
 
 ### 4.4 NoDirectBind Invariant
 
-**Definition**: A state is a tuple `(phase, tier_results, seal_present, resolvedAllow)` where `phase ∈ {PENDING, CHECKING, SEAL_ISSUED, EXECUTED, DENIED}`; `tier_results` is a 7-tuple recording each governance tier (`stpa, confidence, cbf, opa, fiscal, consensus, causal`) as `PENDING | PASS | FAIL`; `seal_present ∈ {TRUE, FALSE}` records whether a routing seal has been issued; and `resolvedAllow ∈ {TRUE, FALSE}` is TRUE only once every tier has resolved to `PASS` and a seal has been issued. The NoDirectBind invariant states:
+**Definition**: A state is a tuple `(phase, tier_results, seal_present, resolvedAllow)` where `phase ∈ {PENDING, CHECKING, SEAL_ISSUED, EXECUTED, DENIED}`; `tier_results` is an 8-tuple recording each governance tier within `_run_checks()` (`stpa, confidence, cbf, opa, fiscal, consensus, causal, fria`) as `PENDING | PASS | FAIL`. Tier 0.5 (FTRA) is not included in this tuple because it executes at the LangGraph graph level before `_run_checks()` is invoked; its verdict (`CLEAR | HITL_REQUIRED | BLOCKED`) is recorded separately in the LangGraph state; `seal_present ∈ {TRUE, FALSE}` records whether a routing seal has been issued; and `resolvedAllow ∈ {TRUE, FALSE}` is TRUE only once every tier has resolved to `PASS` and a seal has been issued. The NoDirectBind invariant states:
 
 ∀ states s: (s.phase \= EXECUTED) ⟹ (s.resolvedAllow \= TRUE)
 
-**Proof**: We enumerate all reachable states via BFS from the initial state `(PENDING, all tiers PENDING, seal_present=FALSE, resolvedAllow=FALSE)` using the gated transition function `gated_transitions()` defined in `proof/model.py`, which mirrors `SymbolicGovernor._run_checks()`: from `CHECKING`, each of the 7 tiers resolves to `PASS` or `FAIL` in sequence; any `FAIL` moves immediately to `DENIED` (fail-closed); once all 7 tiers have resolved to `PASS`, a routing seal is issued and the state moves to `SEAL_ISSUED` with `resolvedAllow=TRUE`; `SEAL_ISSUED` then transitions to either `EXECUTED` (valid seal) or `DENIED` (invalid/expired seal). The BFS visits 19 reachable states, of which exactly 1 has `phase=EXECUTED`, and that state has `resolvedAllow=TRUE, seal_present=TRUE`. The state `(phase=EXECUTED, resolvedAllow=FALSE)` is unreachable under `gated_transitions()`. ∎
+**Proof**: We enumerate all reachable states via BFS from the initial state `(PENDING, all tiers PENDING, seal_present=FALSE, resolvedAllow=FALSE)` using the gated transition function `gated_transitions()` defined in `proof/model.py`, which mirrors `SymbolicGovernor._run_checks()`: from `CHECKING`, each of the 8 tiers within `_run_checks()` resolves to `PASS` or `FAIL` in sequence; any `FAIL` moves immediately to `DENIED` (fail-closed); once all 8 tiers have resolved to `PASS`, a routing seal is issued and the state moves to `SEAL_ISSUED` with `resolvedAllow=TRUE`; `SEAL_ISSUED` then transitions to either `EXECUTED` (valid seal) or `DENIED` (invalid/expired seal). The BFS visits 21 reachable states, of which exactly 1 has `phase=EXECUTED`, and that state has `resolvedAllow=TRUE, seal_present=TRUE`. The state `(phase=EXECUTED, resolvedAllow=FALSE)` is unreachable under `gated_transitions()`. ∎
 
-The proof is machine-verified: `proof/model.py` implements the BFS enumerator and asserts the invariant over all reachable states (run `python proof/model.py` to reproduce; see Appendix A for the additional sub-proofs it checks). The proof runs in O(|S|) time where |S| \= 19\. As a negative control, `proof/model.py` also defines `ungated_transitions()`, an intentionally unsafe variant that transitions directly from `CHECKING` to `EXECUTED` once all tiers pass, without requiring a seal. This variant has 17 reachable states and produces an explicit counterexample — `(phase=EXECUTED, resolvedAllow=FALSE, seal_present=FALSE)` — confirming the seal-issuance gate in the real transition function is load-bearing rather than a vacuous check.
+**Parallelism note:** The formal model treats tier evaluation as sequential for the purpose of the NoDirectBind invariant — the invariant concerns reachability of the `EXECUTED` state, not the order in which tiers evaluate. In the runtime implementation, Tier 3 (CBF + OPA) evaluates concurrently via `asyncio.gather()` (`symbolic_governor.py:324`); the invariant holds because both results are collected before any transition to `SEAL_ISSUED` is permitted. `proof/model.py`'s `concurrent_tier_transitions()` sub-proof explores both CBF/OPA interleavings (24 reachable states, a strict superset of the 21-state sequential model) and confirms the invariant holds under every ordering.
+
+The proof is machine-verified: `proof/model.py` implements the BFS enumerator and asserts the invariant over all reachable states (run `python proof/model.py` to reproduce; see Appendix A for the additional sub-proofs it checks). The proof runs in O(|S|) time where |S| = 21\. As a negative control, `proof/model.py` also defines `ungated_transitions()`, an intentionally unsafe variant that transitions directly from `CHECKING` to `EXECUTED` once all tiers pass, without requiring a seal. This variant has 17 reachable states and produces an explicit counterexample — `(phase=EXECUTED, resolvedAllow=FALSE, seal_present=FALSE)` — confirming the seal-issuance gate in the real transition function is load-bearing rather than a vacuous check.
 
 ### 4.5 STPA Compiler
 
@@ -190,6 +190,8 @@ UCA → STPA validator check (runtime assertion)
 UCA → Agent Registry authorization manifest (--targets registry)
 
 The `--targets registry` flag emits a tool-authorization JSON manifest from the STPA YAML, which the GEAP Agent Registry adapter (`src/gateway/governance/agent_registry_adapter.py`) pushes to OPA via `PUT /v1/data/agent_catalog_data` at boot and on a background poll. This extends OSCAL AC-3 (Access Enforcement) evidence to cover agent-level tool authorization, not only human-level access control.
+
+The compiler is a deterministic, template-based code generator (no LLM involvement). It ingests `config/stpa_control_structure.yaml`, validates it against a Pydantic schema (`ControlStructureModel`), and generates artifacts via per-target template functions: `generate_opa()` emits Rego rules by mapping each UCA's `condition` (operator, parameter, threshold) to a Rego predicate; `generate_nemo()` emits Colang 2.x flow definitions from `nemo_rail` fields; `generate_python()` emits a `GeneratedSTPAValidator` class with one check method per UCA; `generate_langgraph()` emits Write-Ahead Log forward nodes and idempotent compensating nodes from `langgraph_saga` fields. The compiler is invoked as `python -m src.gateway.governance.stpa_compiler compile`.
 
 The compiler eliminates the manual translation step that introduces policy drift between the hazard model and the enforcement code. The generated validator (`src/gateway/governance/generated_stpa_validator.py`) is regenerated from the STPA source on every CI run; a freshness check (`scripts/check_stpa_freshness.py`) fails the build if the generated code is stale.
 
@@ -207,13 +209,12 @@ Every new storage path, GCS write, Langfuse sink, or telemetry export in shared 
 
 A critical vulnerability in distributed multi-agent systems is the "direct-bind shortcut" \[23\] — when an agent, under the influence of an adversarial attack or unexpected emergent state, attempts to bypass the governance plane to bind directly with raw system tools or databases. Boundary-based perimeter controls are consistently inadequate for multi-service and multi-agent systems \[14, 15, 16, 17, 18\]. CAGE mitigates this risk by enforcing an identity-centric, zero-trust architecture at each request boundary.
 
-**Fail-Safe Startup Assertions**: The SymbolicGovernor enforces module-level startup assertions that raise a `RuntimeError` at import time under two conditions: (1) `CBF_FAIL_OPEN=true` in a production environment — this removes the cash-barrier tier from the governance gate; (2) the `dowhy` library is absent or fails to import in production — this silently removes the causal gatekeeper (Tier 6\) from the pipeline. These checks run before the gateway begins accepting traffic, ensuring the service fails fast rather than surfacing gaps on the first live request.
+**Fail-Safe Startup Assertions**: The SymbolicGovernor enforces module-level startup assertions that raise a `RuntimeError` at import time under two conditions: (1) `CBF_FAIL_OPEN=true` in a production environment — this removes the cash-barrier tier from the governance gate; (2) the `dowhy` library is absent or fails to import in production — this raises a `RuntimeError` at import time, preventing the service from starting at all. These checks run before the gateway begins accepting traffic, ensuring the service fails fast rather than surfacing gaps on the first live request. (Note: the phrase 'silently removes' in an earlier draft was a contradiction — a `RuntimeError` at startup is not silent; the service halts before accepting any traffic.)
 
 **Cluster-Level Mesh Microsegmentation (design; not automated in the current deployment pipeline)**: CAGE treats the underlying network as hostile, and provides committed Kubernetes manifests for workload identity and mutual TLS (mTLS) via Linkerd \[33\] (`deployment/k8s/linkerd-mtls-policy.yaml`) and Layer-7 FQDN egress lockdown via Cilium (`deployment/k8s/cilium-egress-lockdown.yaml`). When the Linkerd control plane and Cilium CNI are installed on the target cluster, Linkerd automatically intercepts TCP traffic and performs bidirectional validation using SPIFFE-verifiable identity documents (SVIDs) \[11\] mapped to Kubernetes ServiceAccounts, matching the standard format `spiffe://cluster.local/ns/<namespace>/sa/<service-account>`. **Neither installation step is currently automated**: `deploy_all.sh` and the Terraform modules under `infra/` provision a standard GKE cluster with the native `network_policy { enabled = true }` block (GKE's built-in L3/L4 NetworkPolicy provider, not Cilium), and contain no `linkerd install` or `cilium install` step. The manifests therefore express a validated *design* for mesh microsegmentation and L7 egress control, not a control that is active by default on a freshly provisioned cluster; an operator must run the documented prerequisite commands (`linkerd install | kubectl apply -f -`; `cilium install --set l7Proxy=true`) out-of-band before applying `linkerd-mtls-policy.yaml` and `cilium-egress-lockdown.yaml`. Automating this installation step is tracked in §7.3.
 
 **Continuous Verification**: Unlike static access controls that verify credentials once at session initiation, CAGE performs continuous, intent-aware verification \[Pappu et al., 2026; Bhushan et al., 2025\]. This is essential for agentic environments because agents can dynamically spawn subagents and change execution intents at runtime, necessitating constant re-evaluation of security postures.  
-**Runtime Routing Seal**: Once all checks inside `_run_checks()` return zero violations, `routing_seal.py` generates an ephemeral symmetric routing token formatted as `<expire_ts_hex>.<action_slug>.<hmac_hex>` using HMAC-SHA256 keyed by a high-entropy `GOVERNANCE_SALT`. The seal lifetime is 30 seconds (configurable via `GOVERNANCE_SEAL_TTL_S`). The `require_cleared_seal` decorator provides strict enforcement: it calls `verify_seal()` and raises a `SymbolicGovernorViolation` before the wrapped callable is invoked, making it impossible for callers to silently ignore a failed verification. This design directly eliminates the Confused Deputy class of attacks catalogued in AARM-V3 \[23, 24\].  
-**Runtime Routing Seal**: Once all checks inside `_run_checks()` return zero violations, `routing_seal.py` generates an ephemeral symmetric routing token formatted as `<expire_ts_hex>.<action_slug>.<hmac_hex>` using HMAC-SHA256 keyed by a high-entropy `GOVERNANCE_SALT`. The seal lifetime is 30 seconds (configurable via `GOVERNANCE_SEAL_TTL_S`). The `require_cleared_seal` decorator provides strict enforcement: it calls `verify_seal()` and raises a `SymbolicGovernorViolation` before the wrapped callable is invoked, making it impossible for callers to silently ignore a failed verification. This design directly eliminates the Confused Deputy class of attacks catalogued in AARM-V3 \[Errico, 2026; Cloud Security Alliance, 2026\].
+**Runtime Routing Seal**: Once all checks inside `_run_checks()` return zero violations, `routing_seal.py` generates an ephemeral symmetric routing token formatted as `<expire_ts_hex>.<action_slug>.<hmac_hex>` using HMAC-SHA256 keyed by a high-entropy `GOVERNANCE_SALT`. The seal lifetime is 30 seconds (configurable via `GOVERNANCE_SEAL_TTL_S`). The `require_cleared_seal` decorator provides strict enforcement: it calls `verify_seal()` and raises a `SymbolicGovernorViolation` before the wrapped callable is invoked, making it impossible for callers to silently ignore a failed verification. This design directly eliminates the Confused Deputy class of attacks catalogued in AARM-V3 \[23, 24\].
 
 **Asymmetric Plan Attestation**: To prevent tampering with static policy manifests deployed across federated clusters, CAGE implements asymmetric signature validation inside `kms_signer.py`. Manifests are cryptographically signed and validated using Key Management Services across three cloud providers: GCP Cloud KMS, AWS KMS (ECDSA\_SHA\_256), and Azure Key Vault (ES256). For GCP, the governor performs verification against the configured public key using EC-DSA (SHA-256 prehashed) with RSA-PSS as a fallback, supporting both key families transparently.
 
@@ -231,7 +232,17 @@ A critical vulnerability in distributed multi-agent systems is the "direct-bind 
 
   ⟹ h(S(t+1)) ≥ (1 − γ) · h(S(t)) ≥ 0
 
-**Proof sketch**: By definition of `verify_action`, if the result is "SAFE" then `h(S(t+1)) ≥ (1 − γ) · h(S(t))`. Since `γ ∈ (0, 1)` and `h(S(t)) ≥ 0`, we have `h(S(t+1)) ≥ 0`. By induction, `h(S(t)) ≥ 0` for all `t ≥ 0`. ∎
+**Proof:**
+
+*Base case (t = 0):* The system is initialized with `cash_balance(0) = 100,000` and `min_cash_balance` from `THRESHOLDS.cbf.min_cash_balance` (default: 1,000 per `config/governance_thresholds.json`). The operator is responsible for ensuring `h(S(0)) ≥ 0` at deployment; the CBF `setup()` method bootstraps this value.
+
+*Inductive step:* Assume `h(S(t)) ≥ 0`. By definition of `verify_action()` in `cbf.py`, the action is blocked if and only if `h(S(t+1)) < (1 − γ) · h(S(t))` or `h(S(t+1)) < 0`. Therefore, if `verify_action()` returns `"SAFE"`, both conditions hold: `h(S(t+1)) ≥ (1 − γ) · h(S(t))` and `h(S(t+1)) ≥ 0`. Since `γ ∈ (0, 1)` and `h(S(t)) ≥ 0`, we have `h(S(t+1)) ≥ 0`. By induction, `h(S(t)) ≥ 0` for all `t ≥ 0`. ∎
+
+*Rejection branch:* If `verify_action()` returns a violation string, the action is blocked before execution; `S(t+1) = S(t)` and `h(S(t+1)) = h(S(t)) ≥ 0`.
+
+**Premises and limitations:** This theorem assumes (1) `h(S(0)) ≥ 0` at initialization; (2) the reconciliation daemon provides a valid KMS-signed balance (§4.3, §5.4) — if the daemon is absent, the CBF raises `CBFStateUnverifiedError` in production (fail-closed); (3) `verify_action()` and trade execution are atomic — this is not currently guaranteed (see §5.2 TOCTOU note and §7.2).
+
+**TOCTOU limitation:** `verify_action()` is read-only; `atomic_verify_and_commit()` is implemented in `cbf.py` but is not yet wired into the live request-handling pipeline. Under concurrent agent execution, two agents can both pass the CBF check against the same pre-action balance and jointly overdraw. The FiscalLimitGuard's atomic reservation (§5.2) mitigates this at the daily-cap level but not at the per-trade CBF level. Wiring `atomic_verify_and_commit()` into the serving path is tracked as future work (§7.3).
 
 ### 5.2 FiscalLimitGuard Race-Condition Freedom
 
@@ -239,11 +250,17 @@ A critical vulnerability in distributed multi-agent systems is the "direct-bind 
 
 **Proof**: `FiscalLimitGuard.reserve()` (`src/gateway/governance/fiscal_limit_guard.py`) implements a Redis WATCH/MULTI/EXEC optimistic-locking transaction: it `WATCH`es the daily-spend key, reads the current committed total, computes `current + requested_amount`, and only commits the increment via `MULTI/EXEC` if the requested amount would not exceed the cap `C`. If a concurrent writer modifies the watched key between the `WATCH` and the `EXEC`, Redis aborts the transaction (`WatchError`) and the guard retries up to `_MAX_RETRIES = 5` times before raising. Because the check ("would this reservation exceed `C`?") and the commit (incrementing the daily total) occur inside the same optimistic-locking transaction, no two concurrent agents can both observe a pre-reservation total that admits their request and then both successfully commit reservations that jointly exceed `C` — one of the two `EXEC` calls will observe the other's committed write and abort. Reservations are released via a symmetric `WATCH/MULTI/EXEC` decrement (`release()`) on any downstream failure, so a rejected or rolled-back trade does not permanently consume budget. This mechanism enforces the fiscal cap; it is independent of the CBF's own per-trade cash-barrier check (§4.3, §5.1), and does not use the Lua-atomic `atomic_verify_and_commit()` path in `cbf.py`, which is not invoked anywhere in the current request-handling pipeline (`SymbolicGovernor` calls `verify_action()`, not `atomic_verify_and_commit()`) and is documented for future use pending integration with the reconciled-balance read path. ∎
 
-### 5.3 Cloud KMS Non-Repudiation
+### 5.3 Routing Seal Authenticity and Reconciliation Non-Repudiation
 
-**Theorem**: Every governance decision is non-repudiably attested by a Cloud KMS asymmetric signature that cannot be forged without access to the HSM-backed private key.
+**Theorem (Routing Seal Authenticity):** Every governance approval is attested by an ephemeral HMAC-SHA256 routing seal that cannot be forged without access to the `GOVERNANCE_SALT` secret.
 
-**Proof**: Cloud KMS uses FIPS 140-2 Level 3 HSMs. The private key never leaves the HSM. The signature is produced by `asymmetricSign` over the SHA-256 hash of the governance decision payload. Forgery requires either breaking ECDSA-P256 or compromising the HSM — both computationally infeasible under standard cryptographic assumptions. ∎
+**Proof (routing seal):** The routing seal is generated by `generate_seal()` in `routing_seal.py` as `HMAC-SHA256(GOVERNANCE_SALT, expire_hex || action_slug || canonical_payload)`. HMAC-SHA256 is existentially unforgeable under chosen-message attack (EUF-CMA) when the key is secret. The seal provides *authenticity* — any party holding `GOVERNANCE_SALT` can verify it — but not *non-repudiation*, since the key is shared between the gateway (issuer) and the actuator (verifier). The 30-second TTL prevents replay attacks. ∎
+
+**Theorem (Reconciliation Non-Repudiation):** Every reconciliation balance payload is non-repudiably attested by a Cloud KMS ECDSA-P256 asymmetric signature.
+
+**Proof (reconciliation attestation):** The reconciliation daemon signs balance payloads with Cloud KMS ECDSA-P256 (`asymmetricSign`). Cloud KMS uses FIPS 140-2 Level 3 HSMs; the private key never leaves the HSM. This signature provides non-repudiation: only the KMS key holder can produce a valid signature, and any party with the public key can verify it. The CBF verifies this signature before trusting the reconciled balance (§4.3).
+
+**Scope clarification:** The routing seal (HMAC) attests governance *approval* on the synchronous request path (Table 2, sub-ms latency). The KMS signature (ECDSA-P256) attests balance *provenance* on the background reconciliation path (Table 3, 108.3 ms P50). These are distinct mechanisms on distinct paths; the KMS latency does not appear in Table 2. ∎
 
 ### 5.4 Reconciliation Isolation Design
 
@@ -263,17 +280,23 @@ A critical vulnerability in distributed multi-agent systems is the "direct-bind 
 
 **Formal statement**: Let `r_i` denote the `i`\-th node record with fields `content_json`, `control_id`, `event_type`, `node_index`, `audit_id`, and `prev_hash`. The record hash is:
 
-record\_hash(r\_i) \= SHA-256(
+record_hash(r_i) = SHA-256(
 
-    prev\_hash(r\_{i-1}) ‖ content\_json(r\_i) ‖ control\_id(r\_i)
-
-    ‖ event\_type(r\_i) ‖ node\_index(r\_i) ‖ audit\_id(r\_i)
+    JSON_sorted({
+        "schema":      _SCHEMA,
+        "node_index":  r_i.node_index,
+        "audit_id":    r_i.audit_id,
+        "control_id":  r_i.control_id,
+        "event_type":  r_i.event_type
+    }) || json.dumps(r_i.payload, sort_keys=True)
 
 )
 
+where `JSON_sorted` denotes `json.dumps(..., sort_keys=True, separators=(",", ":"))` and `||` denotes UTF-8 string concatenation. The `prev_hash` field of `r_i` stores `record_hash(r_{i-1})` (or the sentinel `"GENESIS"` for i=0), so any modification to `r_{i-1}` changes `record_hash(r_{i-1})`, which changes `r_i.prev_hash`, which changes `record_hash(r_i)`, propagating invalidation forward through the chain. Key-sorted JSON serialization provides canonical encoding, preventing field-reordering attacks. This formula matches `_link_hash()` in `src/compliance_bridge/context_accumulator.py`.
+
 **Proof**: SHA-256 is collision-resistant under standard cryptographic assumptions. Any modification to any bound field changes the input to SHA-256, producing a different digest with overwhelming probability. Since each node's `prev_hash` is the `record_hash` of its predecessor, a modification to node `r_i` invalidates `record_hash(r_i)` and therefore `prev_hash(r_{i+1})`, propagating the invalidation to all subsequent nodes. An auditor re-computing the chain from the NDJSON artifact will detect the mismatch. ∎
 
-Prior to this work, `content_json` alone was hashed; `control_id`, `event_type`, `node_index`, and `audit_id` were serialised beside the payload in the NDJSON artifact but not bound into the hash, allowing those fields to be altered without chain invalidation. The fix (PR \#23, `evidence-chain-metadata-binding`) binds all metadata fields into the hash. Note: existing NDJSON artifacts produced before this change will not re-verify under the new hash function; a schema version bump to `cage-context-accumulator/1.1` with version-dispatched verification preserves backward compatibility.
+Prior to this work, `content_json` alone was hashed; `control_id`, `event_type`, `node_index`, and `audit_id` were serialised beside the payload in the NDJSON artifact but not bound into the hash, allowing those fields to be altered without chain invalidation. The fix (PR \#23, `evidence-chain-metadata-binding`) binds all metadata fields into the hash. Note: existing NDJSON artifacts produced before this change will not re-verify under the new hash function; The current implementation uses schema `cage-context-accumulator/1.0` (`context_accumulator.py:71`). A schema version bump to `1.1` with version-dispatched verification to support both old and new artifacts in the same WORM archive is tracked as future work (§7.3).
 
 ---
 
@@ -299,6 +322,8 @@ We measure:
 ### 6.2 Governance Latency
 
 All latency measurements are in-process with mocked I/O-bound dependencies (Redis, OPA HTTP, consensus RPC) to isolate pure governance-logic cost from network jitter. Measurements use 200 iterations per tier; reported values are wall-clock time in milliseconds. All tiers complete well within the 200 ms FedNow/SEPA Instant budget.
+
+**Scope of Table 2:** These measurements isolate pure governance-logic CPU cost by mocking all I/O-bound dependencies. They establish that the *computational* overhead of the governance pipeline is negligible relative to the 200 ms SLA. End-to-end latency in a deployed system will be dominated by network round-trips to Redis (~1–3 ms in-cluster), OPA HTTP (~2–5 ms in-cluster), and consensus RPC (variable). A full end-to-end benchmark against the live GKE cluster is tracked as future work (§7.3). The 200 ms SLA claim should be read as: 'the governance logic itself does not consume a material fraction of the SLA budget,' not as 'the full governed request completes in sub-ms time.'
 
 **Table 2: Eight-Tier Governor Latency (ms)**
 
@@ -336,7 +361,7 @@ T\_reconcile \= t\_plaid\_fetch \+ t\_kms\_sign \+ t\_redis\_write
 
 *Note: the KMS P99 outlier (\~9.6 s) reflects an infrequent gRPC channel re-initialization observed in a subset of runs against the live Cloud KMS endpoint from a non-GCP-hosted client; P50/P95 (108/245 ms) are representative of steady-state signing cost once the channel is warm. Production deployments running the reconciliation daemon in-cluster (GKE, same region as the KMS key ring) are expected to see materially lower and less variable latency than this out-of-cluster measurement, because the daemon holds a long-lived gRPC channel across its 60 s polling loop rather than re-establishing one per invocation. This numerical revision supersedes an earlier draft's placeholder Plaid-fetch/KMS-sign figures, which were not backed by a corresponding measurement script.*
 
-Amortised per-request overhead: `T_reconcile / (poll_interval_s × request_rate_hz)`. Using the P50 total (\~172 ms) at 60 s polling and 10 req/s, amortised overhead ≈ 0.29 ms/request — still negligible relative to the 200 ms governance budget, even before accounting for in-cluster KMS latency improvements.
+**Background amortisation note:** The reconciliation daemon operates on a decoupled 60-second polling loop; its execution duration dictates data freshness but does not sequentially block the synchronous gateway pipeline. The calculation `T_reconcile / (poll_interval_s × request_rate_hz)` = 172 ms / (60 s × 10 req/s) ≈ 0.29 ms/request expresses the *background* write-path cost amortised across requests — it is not a per-request synchronous overhead and should not be compared directly to the 200 ms synchronous governance SLA. The practical conclusion is that the reconciliation daemon background polling cost is negligible relative to the request rate, not that each request incurs 0.29 ms of reconciliation overhead.
 
 ### 6.4 CBF Read-Path Overhead
 
@@ -368,7 +393,7 @@ Contrary to the naive expectation that the reconciled path is strictly more expe
 
 **Correction to an earlier draft.** An earlier version of this section described injecting a false self-reported balance of $500,000 against a reconciled balance of $48,250 for a $10,000 trade, and reported that the CBF emitted an audit event named `CBF_RECONCILIATION_MISMATCH`. Neither claim survives verification against the live code: under the actual barrier formula (`h(x) = cash_balance - min_cash_balance`, γ from `THRESHOLDS.cbf.gamma`), a $10,000 trade against a $48,250 reconciled balance is SAFE (h(next) exceeds the required threshold), and no event named `CBF_RECONCILIATION_MISMATCH` exists anywhere in the codebase. The corrected experiment below was executed against the real `ControlBarrierFunction.verify_action()` method with a genuinely unsafe reconciled balance.
 
-We seeded an inflated self-reported balance of $500,000 into `safety:current_cash` — simulating a compromised execution system attempting to make an unsafe trade appear safe — while writing the true, KMS-signed balance of $8,000 to `reconciliation:verified_balance`. A subsequent `execute_trade` request for $10,000 produced two different verdicts depending on which balance the CBF consulted:
+We seeded an inflated self-reported balance of $500,000 into `safety:current_cash` — simulating a compromised execution system attempting to make an unsafe trade appear safe — while writing the true, KMS-signed balance of $8,000 to `reconciliation:verified_balance`. The experiment used the following CBF parameters from `config/governance_thresholds.json`: `min_cash_balance = $1,000`, `γ = 0.5`. With these parameters: `h(current) = $8,000 − $1,000 = $7,000`; `h(next) = $8,000 − $10,000 − $1,000 = −$3,000`; `threshold = (1 − 0.5) × $7,000 = $3,500`. Since `h(next) = −$3,000 < threshold = $3,500`, the action is blocked. A subsequent `execute_trade` request for $10,000 produced two different verdicts depending on which balance the CBF consulted:
 
 | Balance source consulted | CBF verdict |
 | :---- | :---- |
@@ -396,13 +421,15 @@ We evaluate CAGE's governance pipeline against a corpus of 21 adversarial attack
 
 This security was achieved without sacrificing performance: the total governance pipeline operates within the 200 ms soft SLA target, demonstrating that robust, multi-layered cybernetic governance and zero-trust verification can be deployed in production without introducing significant performance overhead to real-time financial systems.
 
+**Evaluation limitations:** We do not report an un-governed baseline (the same 21 payloads against the LLM without CAGE) or a benign prompt evaluation (false positive rate). Without a baseline, the 100% deflection rate cannot be attributed specifically to CAGE's governance pipeline vs. the underlying model's native safety tuning. Without a benign evaluation, the false positive rate of the pipeline is unknown. A benign dataset (`tests/red_team/benign_dataset.json`, 20 prompts) and an un-governed baseline mode have been added to `scripts/measure_paper_metrics.py` for future measurement runs; results are tracked as future work (§7.3).
+
 ---
 
 ## 7\. Discussion
 
 ### 7.1 Comparison with Five-Plane Architecture
 
-CAGE implements all five planes of the reference architecture \[1\] and extends it in three dimensions:
+CAGE implements all five planes of the reference architecture \[1\] and extends it in four dimensions:
 
 **Compiler-driven policy generation**: The five-plane architecture assumes policies are written manually. CAGE's STPA compiler generates OPA Rego, NeMo Colang, and Agent Registry authorization manifests from hazard analysis, eliminating policy drift across all three enforcement surfaces.
 
@@ -422,15 +449,14 @@ CAGE implements all five planes of the reference architecture \[1\] and extends 
 
 **Reconciliation TTL**: The 300-second TTL means the CBF may evaluate against a balance that is up to 5 minutes stale. For high-frequency trading, a shorter TTL (e.g., 30 seconds) may be required, increasing the write-path cost. OTel span attributes `safety.balance.source` and `safety.balance.reconciled` allow operators to detect TTL expiry events in production dashboards.
 
-**Evidence chain schema versioning**: The `record_hash` binding change (§5.5) is not backward-compatible. NDJSON artifacts produced before the `cage-context-accumulator/1.1` schema bump will not re-verify under the new hash function. Deployments with WORM archive requirements must coordinate a schema migration or accept that pre-migration artifacts are verified only against the v1.0 hash function.
+**Evidence chain schema versioning**: The `record_hash` binding change (§5.5) is not backward-compatible. NDJSON artifacts produced before this change will not re-verify under the new hash function. The current schema is `cage-context-accumulator/1.0`; a `1.1` bump with version-dispatched verification is tracked as future work (§7.3). Deployments with WORM archive requirements must coordinate a schema migration or accept that pre-migration artifacts are verified only against the v1.0 hash function.
 
-**ReDoS in PII scrubbing**: Prior to this work, the email PII pattern in `PIISanitizer` and `scrub_pii` used unbounded quantifiers, causing quadratic backtracking on adversarial no-TLD inputs. A crafted 128 KB body could stall the async event loop for seconds on the unauthenticated `POST /v1/chat/completions` path. Bounding the local part to `{1,64}` and the domain to `{1,255}` (RFC 5321 maxima) makes the scan linear while preserving matching behaviour for all valid addresses.
+**PII scrubbing hardening (resolved)**: An earlier version of the email PII pattern in `PIISanitizer` and `scrub_pii` used unbounded quantifiers, causing quadratic backtracking on adversarial no-TLD inputs. This was remediated by bounding the local part to `{1,64}` and the domain to `{1,255}` (RFC 5321 maxima), making the scan linear while preserving matching behaviour for all valid addresses. This is a resolved historical hardening item, not an ongoing limitation.
 
 **Adversarial corpus size**: The adversarial deflection evaluation (§6.6) covers 21 hand-authored payloads across five attack categories — a useful smoke test of the deflection pipeline, but a small sample for drawing strong generalization claims about adversarial robustness. An earlier draft of this paper cited a larger "290+" figure that could not be substantiated against any dataset file in the repository (§6.6); we have corrected the reported corpus size to the verified value. Expanding the corpus with a larger, more diverse and adversarially-generated payload set (e.g., via automated red-teaming or garak/PyRIT-style fuzzing) is tracked as future work (§7.3).
 
 **Causal model accuracy**: The DoWhy causal gatekeeper uses a structural causal model that must be calibrated to the specific financial domain. An inaccurate causal model may produce false positives (blocking safe actions) or false negatives (allowing unsafe actions).
 
-**Endorsement requirement**: arxiv requires endorsement from an established researcher for first-time submitters to cs.CR or cs.AI. This is a non-technical blocker that must be resolved before submission.
 
 ### 7.3 Future Work
 
@@ -467,7 +493,7 @@ CAGE translates STPA hazard analysis into executable enforcement policies and ev
 
 \[5\] ISO. "Information technology — Artificial intelligence — Management system." ISO/IEC 42001:2023.
 
-\[6\] Federal Reserve. "Supervisory Guidance on Model Risk Management." SR 11-7, 2011\. \[Note: SR 26-2 is the successor guidance — verify citation when published.\]
+\[6\] Federal Reserve. "Supervisory Guidance on Model Risk Management." SR 11-7, 2011\. (SR 26-2 is the anticipated successor guidance; cite SR 11-7 until SR 26-2 is formally published.)
 
 \[7\] Doshi, A., Hong, Y., Xu, C., Kang, E., Kapravelos, A., & Kastner, C. (2026). Towards Verifiably Safe Tool Use for LLM Agents. ICSE NIER 2026\. [https://doi.org/10.48550/arXiv.2601.08012](https://doi.org/10.48550/arXiv.2601.08012)
 
@@ -539,21 +565,22 @@ States S \= {(phase, tier\_results, seal\_present, resolvedAllow) :
 
   phase ∈ {PENDING, CHECKING, SEAL\_ISSUED, EXECUTED, DENIED},
 
-  tier\_results ∈ {PENDING, PASS, FAIL}^7  (one per governance tier: stpa, confidence, cbf, opa, fiscal, consensus, causal),
+  tier_results ∈ {PENDING, PASS, FAIL}^8  (one per governance tier within _run_checks(): stpa, confidence, cbf, opa, fiscal, consensus, causal, fria),
 
   seal\_present ∈ {TRUE, FALSE},
 
   resolvedAllow ∈ {TRUE, FALSE}}
 
-The gated transition function `gated_transitions(): S → 2^S`, defined in `proof/model.py`, mirrors `SymbolicGovernor._run_checks()`. The BFS visits 19 reachable states from the initial state `(PENDING, all-PENDING, FALSE, FALSE)`. The invariant `(phase=EXECUTED) ⟹ (resolvedAllow=TRUE)` holds in all 19 reachable states; exactly one reachable state has `phase=EXECUTED`.
+The gated transition function `gated_transitions(): S → 2^S`, defined in `proof/model.py`, mirrors `SymbolicGovernor._run_checks()`. The BFS visits 21 reachable states from the initial state `(PENDING, all-PENDING, FALSE, FALSE)`. The invariant `(phase=EXECUTED) ⟹ (resolvedAllow=TRUE)` holds in all 21 reachable states; exactly one reachable state has `phase=EXECUTED`.
 
-`proof/model.py` additionally verifies three gap-specific sub-proofs, run automatically by `python proof/model.py`:
+`proof/model.py` additionally verifies four gap-specific sub-proofs, run automatically by `python proof/model.py`:
 
-- **Gap 2 (`govern()` without seal)**: `no_seal_govern_transitions()` models the pre-fix code path in which `govern()` could return without issuing a routing seal. This variant reaches 17 states and produces the counterexample `(phase=EXECUTED, resolvedAllow=FALSE, seal_present=FALSE)` — an explicit violation of the invariant, confirming the historical bug this fix addresses was real and structurally exploitable in the model.
-- **Gap 3 (`CBF_FAIL_OPEN=true`)**: `cbf_fail_open_transitions()` models the CBF tier being unconditionally marked `PASS` without evaluation. The structural invariant still holds (18 reachable states) because the seal is issued only after all *other* tiers also pass — but the CBF tier itself is absent from the gate. CAGE therefore backs this with an operational control outside the state-space model: a module-level startup assertion in `symbolic_governor.py` raises `RuntimeError` if `CBF_FAIL_OPEN=true` in a production environment, preventing this configuration from being deployed at all.
-- **Gap 4 (DoWhy import failure)**: `dowhy_absent_transitions()` models the causal gatekeeper tier being silently skipped. As with Gap 3, the structural invariant holds (18 reachable states) but the causal tier is absent from the gate; the same class of startup assertion prevents this configuration in production.
+- **Gap 1 (no routing seal on approval)**: `ungated_transitions()` models the pre-fix code path in which `govern()` transitions directly from `CHECKING` to `EXECUTED` once all tiers pass, without requiring a routing seal. This variant reaches 19 reachable states and produces the explicit counterexample `(phase=EXECUTED, resolvedAllow=FALSE, seal_present=FALSE)` — a direct violation of the NoDirectBind invariant. This confirms that the seal-issuance step in `gated_transitions()` is load-bearing: removing it structurally (not merely skipping one tier's evaluation) produces a genuine, minimal counterexample.
+- **Gap 2 (`govern()` without seal)**: `no_seal_govern_transitions()` models the pre-fix code path in which `govern()` could return without issuing a routing seal. This variant reaches 19 states and produces the counterexample `(phase=EXECUTED, resolvedAllow=FALSE, seal_present=FALSE)` — an explicit violation of the invariant, confirming the historical bug this fix addresses was real and structurally exploitable in the model.
+- **Gap 3 (`CBF_FAIL_OPEN=true`)**: `cbf_fail_open_transitions()` models the CBF tier being unconditionally marked `PASS` without evaluation. The structural invariant still holds (20 reachable states) because the seal is issued only after all *other* tiers also pass — but the CBF tier itself is absent from the gate. CAGE therefore backs this with an operational control outside the state-space model: a module-level startup assertion in `symbolic_governor.py` raises `RuntimeError` if `CBF_FAIL_OPEN=true` in a production environment, preventing this configuration from being deployed at all.
+- **Gap 4 (DoWhy import failure)**: `dowhy_absent_transitions()` models the causal gatekeeper tier being silently skipped. As with Gap 3, the structural invariant holds (20 reachable states) but the causal tier is absent from the gate; the same class of startup assertion prevents this configuration in production.
 
-The `ungated_transitions()` negative control (§4.4) additionally confirms that removing the seal-gate structurally — rather than merely skipping one tier's evaluation — produces a genuine, minimal counterexample (17 reachable states, one violating the invariant), which is the sense in which the seal-issuance step is load-bearing.
+The `ungated_transitions()` negative control (§4.4) additionally confirms that removing the seal-gate structurally — rather than merely skipping one tier's evaluation — produces a genuine, minimal counterexample (19 reachable states, one violating the invariant), which is the sense in which the seal-issuance step is load-bearing.
 
 **Attribution**: The BFS enumerator in `proof/model.py` is based on prior work by LalaSkye (https://github.com/LalaSkye/no-direct-bind), released under the Apache 2.0 license.
 
