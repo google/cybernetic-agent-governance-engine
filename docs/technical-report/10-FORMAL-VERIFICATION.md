@@ -5,7 +5,7 @@
 | **Classification** | INTERNAL                  |
 | **Date**           | 2026-06-03                |
 | **Version**        | 2.1                       |
-| **Status**         | Current — v2.1.0 stable; v2.0.0 GO tag 2026-06-08; GKE deployment verified 2026-06-03; **844 passing, 0 failed, 24 skipped** (`test_results/run_20260603T103414.txt`, as of v2.0.0 GKE cycle); NoDirectBind invariant machine-verified over 19 reachable states |
+| **Status**         | Current — v2.1.0 stable; v2.0.0 GO tag 2026-06-08; GKE deployment verified 2026-06-03; **844 passing, 0 failed, 24 skipped** (`test_results/run_20260603T103414.txt`, as of v2.0.0 GKE cycle); NoDirectBind invariant machine-verified over 21 reachable states |
 | **Series**         | CAGE Technical Report — Document 10 / 10 |
 
 As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v2.1.0 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
@@ -47,7 +47,7 @@ We evaluate the updated architecture against Stafford Beer's Viable System Model
 * **System 1 (Operations):** The `StateGraph` sub-agents generate bounded intent rather than point-in-time snapshots.
 * **System 2 (Coordination):** The addition of the `hitl_expires_at` Time-To-Live (TTL) timestamp to the `AgentState` checkpoint. This guarantees that suspended states cannot persist indefinitely, repairing temporal coordination breakdowns.
 * **System 3 (Control):** The `SymbolicGovernor` now utilizes a bifurcated execution model. Tiers 2 and 4 are explicitly re-triggered post-HITL.
-* **System 4 (Intelligence):** (Unchanged) Cybernetic Governance Loop adapts to environmental shifts.
+* **System 4 (Intelligence):** *Partially realised.* Langfuse trace evaluation and the POAM remediation cycle provide an out-of-band feedback path from operational telemetry to policy revision. An automated, in-band loop that adjusts policy variables at runtime in response to environment feedback is **not implemented** — policy artefacts are statically compiled from `config/stpa_control_structure.yaml` by the STPA compiler. Closing this loop is tracked as future work.
 * **System 5 (Policy):** (Unchanged) `ControlRegistry` loads normative profiles.
 
 **Structural Completeness Assessment:** The severed algedonic (feedback) loop between continuous operational reality and System 3 (Control) has been formally closed. System 3 now has the structural mandate to re-assert its control variables immediately prior to System 1's final actuation.
@@ -183,29 +183,31 @@ This is a theorem, not a test result. A test demonstrates that the gate works on
 
 ### Exhaustive State-Space Proof (`proof/model.py`)
 
-The CAGE 7-tier governance pipeline is modelled as a deterministic state machine and verified exhaustively using a breadth-first search (BFS) enumerator implemented in [`proof/model.py`. The proof requires no external dependencies beyond the Python standard library.
+The CAGE governance pipeline is modelled as a deterministic state machine and verified exhaustively using a breadth-first search (BFS) enumerator implemented in [`proof/model.py`. The proof requires no external dependencies beyond the Python standard library.
+
+**Scope of the model.** The tuple covers `SymbolicGovernor._run_checks()` — Tiers 1 through 7, with Tier 3 split into its two concurrently-evaluated components (`cbf` and `opa`), giving 8 tuple positions. Tier 0.5 (FTRA) is deliberately outside the tuple: it is a pre-execution gate that runs at the LangGraph graph level, before `_run_checks()` is invoked, and operates on a whole `ExecutionPlan` rather than a single tool call. Its verdict (`CLEAR` | `HITL_REQUIRED` | `BLOCKED`) is recorded separately in the LangGraph state — see [`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py).
 
 **State machine definition:**
 
 | Component | Definition |
 | --------- | ---------- |
-| **Tiers** | `stpa` → `confidence` → `cbf` → `opa` → `fiscal` → `consensus` → `causal` (7 tiers, in order) |
+| **Tiers** | `stpa` → `confidence` → `cbf` → `opa` → `fiscal` → `consensus` → `causal` → `fria` (8 tuple positions, in order) |
 | **Phases** | `PENDING` → `CHECKING` → `SEAL_ISSUED` → `EXECUTED` \| `DENIED` |
-| **`resolvedAllow`** | `TRUE` if and only if all 7 tiers have passed **and** a routing seal has been issued |
+| **`resolvedAllow`** | `TRUE` if and only if all tiers have passed **and** a routing seal has been issued |
 | **Terminal states** | `EXECUTED` (success) and `DENIED` (fail-closed) |
 
 **Transition rules (gated architecture):**
 
 - Any tier failure immediately transitions to `DENIED` — fail-closed by construction.
-- All 7 tiers passing transitions to `SEAL_ISSUED` with `resolvedAllow = TRUE`.
+- All tiers passing transitions to `SEAL_ISSUED` with `resolvedAllow = TRUE`.
 - `SEAL_ISSUED` → `EXECUTED` only after the downstream actuator calls `verify_seal()` and the seal is cryptographically valid and unexpired.
 - `SEAL_ISSUED` → `DENIED` if the seal is invalid or expired (e.g., TTL elapsed, HMAC mismatch).
 
 **Proof results (run: `python3 proof/model.py`):**
 
 ```
-[gated]   Reachable states: 19
-[gated]   No-Direct-Bind holds over all 19 reachable states: True
+[gated]   Reachable states: 21
+[gated]   No-Direct-Bind holds over all 21 reachable states: True
 [gated]   EXECUTED states: 1
 [gated]     → resolvedAllow=True  seal_present=True
 
@@ -214,12 +216,25 @@ The CAGE 7-tier governance pipeline is modelled as a deterministic state machine
 [ungated]   phase         = EXECUTED
 [ungated]   resolvedAllow = False
 [ungated]   seal_present  = False
-[ungated]   tier_results  = {all 7 tiers: PASS}
+[ungated]   tier_results  = {all 8 tiers: PASS}
+
+Concurrency sub-proof (CBF ∥ OPA interleaving):
+  Reachable states: 24 (gated: 21) — superset=True
+  No-Direct-Bind holds under every interleaving: True
+  EXECUTED states: 1 (all with resolvedAllow=TRUE: True)
 
 ✅ All assertions passed.
 ```
 
-The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE` and `seal_present = True`. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all 7 tiers pass, because no seal was issued and no seal was verified.
+The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE` and `seal_present = True`. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all tiers pass, because no seal was issued and no seal was verified.
+
+### Concurrency: Order-Independence of the CBF ∥ OPA Gate
+
+`gated_transitions()` advances tiers in a fixed order, which *under-approximates* the runtime: `_run_checks()` dispatches the CBF and OPA checks together via `asyncio.gather()` ([`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)), so either may resolve first. A sequential-only model could therefore mask an interleaving-dependent violation.
+
+`concurrent_tier_transitions()` closes this gap by allowing *any* pending tier in `CONCURRENT_TIERS = {cbf, opa}` to advance whenever the pipeline reaches the concurrent gate. This explores both orderings and every partial-resolution state (one check resolved, the other still pending). The resulting reachable set is a strict superset of the sequential one — 24 states versus 21 — and the invariant holds across all of them, with a single `EXECUTED` state carrying `resolvedAllow = TRUE`.
+
+Proving the invariant over the superset is a strictly stronger result than proving it over the canonical order alone: the seal gate holds under *every* interleaving, not merely under one scheduling.
 
 ### Closure of the Direct-Bind Shortcut (Gap 2)
 
@@ -240,10 +255,11 @@ Both `govern()` and `validate_action()` now satisfy the invariant. There is no l
 
 ### Gap-Specific Sub-Proofs
 
-The proof file also verifies three additional sub-cases:
+The proof file also verifies four additional sub-cases:
 
 | Sub-proof | Configuration modelled | Invariant holds? | Interpretation |
 | --------- | ---------------------- | ---------------- | -------------- |
+| Gap 1 (no routing seal on approval) | `ungated_transitions()` — seal-issuance step removed structurally | ❌ **No** — violation confirmed (19 states) | Confirms the seal gate is load-bearing, not decorative |
 | Gap 2 (pre-fix `govern()`) | All tiers pass; no seal issued; direct transition to `EXECUTED` | ❌ **No** — violation confirmed | Confirms the pre-fix path was a direct-bind shortcut |
 | Gap 3 (`CBF_FAIL_OPEN`) | CBF tier silently skipped (always PASS) | ✅ Yes (structurally) | Seal path preserved, but CBF tier absent from gate; production startup `RuntimeError` prevents this configuration |
 | Gap 4 (DoWhy absent) | Causal tier silently skipped (always PASS) | ✅ Yes (structurally) | Seal path preserved, but causal tier absent from gate; production startup `RuntimeError` prevents this configuration |
@@ -493,7 +509,7 @@ The key is set with `EXPIRE window_seconds` on every write, ensuring automatic r
 | 4 | AARM 11-vector neutralization | **10/11 NEUTRALIZED** (V11 PARTIAL — POAM-022) |
 | 5 | FiscalLimitGuard race-condition proof | **PASS** |
 | 6 | KMS HSM non-repudiation proof | **PASS** |
-| 7 | NoDirectBind invariant — exhaustive state-space proof over 19 reachable states | **PASS** |
+| 7 | NoDirectBind invariant — exhaustive state-space proof over 21 reachable states (24 under CBF∥OPA interleaving) | **PASS** |
 | 8 | CBF discrete-time invariance — `h(S(t+1)) ≥ (1−γ)·h(S(t))`, Lua atomic enforcement | **PASS** |
 | 9 | Routing seal integrity — HMAC-SHA256, 30s TTL, `hmac.compare_digest` constant-time | **PASS** |
 | 10 | Provenance hash chain — SHA-256, O(n) tamper detection, deterministic serialization | **PASS** |

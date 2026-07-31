@@ -160,6 +160,21 @@ jobs:
         run: |
           python scripts/check_stpa_freshness.py --verbose
 
+  no-direct-bind-proof:
+    name: "NoDirectBind State-Space Proof"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      # The proof is pure standard library — no dependency install needed.
+      # It asserts internally and exits non-zero if the invariant is violated
+      # or if a negative-control variant fails to produce a counterexample.
+      - name: Run exhaustive NoDirectBind enumeration
+        run: |
+          python proof/model.py
+
   langfuse-posture-check:
     name: "Langfuse Posture Dry-Run Check"
     runs-on: ubuntu-latest

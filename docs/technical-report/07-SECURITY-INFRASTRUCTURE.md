@@ -136,7 +136,7 @@ Additionally, runtime exceptions during DoWhy refutation (e.g., numerical instab
 
 | Gap | Description | Status | Enforcement Point |
 | --- | ----------- | ------ | ----------------- |
-| Gap 1 | No exhaustive state-space proof | ✅ **CLOSED** | `proof/model.py` — BFS over 19 reachable states |
+| Gap 1 | No exhaustive state-space proof | ✅ **CLOSED** | `proof/model.py` — BFS over 21 reachable states |
 | Gap 2 | `govern()` path issued no seal | ✅ **CLOSED** | [`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) + [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) |
 | Gap 3 | `CBF_FAIL_OPEN=true` silently degraded gate | ✅ **CLOSED** | Module-level `RuntimeError` in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
 | Gap 4 | DoWhy absence silently removed Tier 6 | ✅ **CLOSED** | Module-level `RuntimeError` + fail-closed runtime handler in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
