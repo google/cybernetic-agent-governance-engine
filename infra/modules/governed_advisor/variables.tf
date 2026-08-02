@@ -159,3 +159,27 @@ variable "gcp_service_account_name" {
   type        = string
   default     = "financial-advisor-sa"
 }
+
+variable "cage_env" {
+  description = "Runtime environment for the advisor (development, staging, production). Controls dev-mode auth bypass (auth.py) and KMS/salt startup enforcement guards."
+  type        = string
+  default     = "development"
+}
+
+variable "cage_seal_enforcement" {
+  description = "Routing seal enforcement mode for the advisor: 'enforce' or 'log'."
+  type        = string
+  default     = "log"
+}
+
+variable "kms_governance_key" {
+  description = "Full Cloud KMS key version resource name for CTRL_KMS_001 asymmetric governance signing (KMS_GOVERNANCE_KEY). Empty string falls back to legacy HMAC-SHA256 GOVERNANCE_SALT signing — acceptable only in dev/CI."
+  type        = string
+  default     = ""
+}
+
+variable "cage_kms_provider" {
+  description = "Cloud KMS provider backend for governance signing (CAGE_KMS_PROVIDER): gcp, aws, or azure."
+  type        = string
+  default     = "gcp"
+}

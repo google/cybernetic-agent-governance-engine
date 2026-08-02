@@ -266,7 +266,31 @@ resource "kubernetes_deployment" "governed_advisor" {
             value = var.governance_salt
           }
 
+          # Runtime environment posture. Controls the dev-mode auth bypass in
+          # src/governed_financial_advisor/infrastructure/auth.py (requires
+          # CAGE_ENV in {dev, development} with no CAGE_API_KEY to allow
+          # unauthenticated requests) and the KMS/salt startup enforcement
+          # guards (assert_kms_active_in_production(), assert_custom_salt_in_production()).
+          env {
+            name  = "CAGE_ENV"
+            value = var.cage_env
+          }
+          env {
+            name  = "CAGE_SEAL_ENFORCEMENT"
+            value = var.cage_seal_enforcement
+          }
 
+          # Cloud KMS asymmetric governance signing (CTRL_KMS_001).
+          # Empty kms_governance_key falls back to legacy HMAC-SHA256 signing
+          # via GOVERNANCE_SALT above — acceptable only in dev/CI.
+          env {
+            name  = "CAGE_KMS_PROVIDER"
+            value = var.cage_kms_provider
+          }
+          env {
+            name  = "KMS_GOVERNANCE_KEY"
+            value = var.kms_governance_key
+          }
 
           # MCP Configuration
           env {

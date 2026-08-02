@@ -1017,7 +1017,7 @@ wheels = [
 
 [[package]]
 name = "cybernetic-governance-engine"
-version = "2.1.0"
+version = "2.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "cachetools" },
@@ -1062,6 +1062,7 @@ compliance = [
 ]
 gateway = [
     { name = "en-core-web-sm" },
+    { name = "google-cloud-kms" },
     { name = "grpcio" },
     { name = "mcp" },
     { name = "nemoguardrails" },
@@ -1120,6 +1121,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.110.0" },
     { name = "flask", marker = "extra == 'slm'", specifier = ">=3.0.0" },
     { name = "google-adk", marker = "extra == 'advisor'", specifier = ">=1.28.1" },
+    { name = "google-cloud-kms", marker = "extra == 'gateway'", specifier = ">=2.24.0" },
     { name = "google-cloud-storage", marker = "extra == 'compliance'", specifier = ">=2.0.0" },
     { name = "grpcio", marker = "extra == 'gateway'", specifier = ">=1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
@@ -1683,6 +1685,23 @@ wheels = [
 ]
 
 [[package]]
+name = "google-cloud-kms"
+version = "3.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpc-google-iam-v1" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/73/53/4bde1d2c31e72e898c2bdfac25ac27da52c3b4e1936a411fbe96f01d65a4/google_cloud_kms-3.16.0.tar.gz", hash = "sha256:c89c66ccffc1358f973801ed1b45bd92b35ddbbc2545db9032af6d4643b20c76", size = 448119, upload-time = "2026-07-16T20:36:20.6Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/76/b0/f102b5c077df60cfeac7ace7a1ccbe6d5e934dfadf37ff8b8ddbcdce8a24/google_cloud_kms-3.16.0-py3-none-any.whl", hash = "sha256:ad3c102961ba58179f7261814d9cd28dded93603bd33c8224b4b072897bbe81e", size = 359027, upload-time = "2026-07-16T20:35:57.575Z" },
+]
+
+[[package]]
 name = "google-cloud-storage"
 version = "3.12.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1785,6 +1804,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/c8/e2645aa8ed02fd4c7a2f59d68783b65b1f3cbdfe39a6308e156509d1fee8/googleapis_common_protos-1.75.0-py3-none-any.whl", hash = "sha256:961ed60399c457ceb0ee8f285a84c870aabc9c6a832b9d37bb281b5bebde43ed", size = 300631, upload-time = "2026-05-07T08:03:30.345Z" },
 ]
 
+[package.optional-dependencies]
+grpc = [
+    { name = "grpcio" },
+]
+
 [[package]]
 name = "graphviz"
 version = "0.21"
@@ -1792,6 +1816,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f8/b3/3ac91e9be6b761a4b30d66ff165e54439dcd48b83f4e20d644867215f6ca/graphviz-0.21.tar.gz", hash = "sha256:20743e7183be82aaaa8ad6c93f8893c923bd6658a04c32ee115edb3c8a835f78", size = 200434, upload-time = "2025-06-15T09:35:05.824Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/91/4c/e0ce1ef95d4000ebc1c11801f9b944fa5910ecc15b5e351865763d8657f8/graphviz-0.21-py3-none-any.whl", hash = "sha256:54f33de9f4f911d7e84e4191749cac8cc5653f815b06738c54db9a15ab8b1e42", size = 47300, upload-time = "2025-06-15T09:35:04.433Z" },
+]
+
+[[package]]
+name = "grpc-google-iam-v1"
+version = "0.14.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "googleapis-common-protos", extra = ["grpc"] },
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/44/4f/d098419ad0bfc06c9ce440575f05aa22d8973b6c276e86ac7890093d3c37/grpc_google_iam_v1-0.14.4.tar.gz", hash = "sha256:392b3796947ed6334e61171d9ab06bf7eb357f554e5fc7556ad7aab6d0e17038", size = 23706, upload-time = "2026-04-01T01:57:49.813Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/89/22/c2dd50c09bf679bd38173656cd4402d2511e563b33bc88f90009cf50613c/grpc_google_iam_v1-0.14.4-py3-none-any.whl", hash = "sha256:412facc320fcbd94034b4df3d557662051d4d8adfa86e0ddb4dca70a3f739964", size = 32675, upload-time = "2026-04-01T01:57:47.69Z" },
 ]
 
 [[package]]

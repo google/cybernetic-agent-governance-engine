@@ -34,15 +34,21 @@ from src.gateway.governance.kms_signer import get_governance_signer
 def generate_governance_signature(plan: dict) -> str:
     """Generate a cryptographic governance signature for a plan.
 
-    In production (Cloud KMS configured via KMS_GOVERNANCE_KEY):
-      - Calls ``asymmetricSign`` on the KMS HSM — the private key never
-        leaves the hardware security module.
+    KMS_GOVERNANCE_KEY must be set to the full Cloud KMS key version
+    resource name:
+      - ``KMSGovernanceSigner.from_env()`` calls ``asymmetricSign`` on the
+        KMS HSM — the private key never leaves the hardware security module.
       - The signature is non-repudiable: Cloud Audit Logs independently
         record when and by what workload identity the signing occurred.
 
-    In dev/CI (KMS not available):
-      - Falls back to legacy HMAC-SHA256 using GOVERNANCE_SALT.
-      - Emits an audit WARNING so the evidentiary gap is visible.
+    There is NO runtime HMAC fallback: the legacy HMAC-SHA256/GOVERNANCE_SALT
+    signing path was intentionally removed (CTRL_KMS_001 evidentiary
+    independence control). If KMS_GOVERNANCE_KEY is unset, empty, or the
+    google-cloud-kms client fails to initialise, ``get_governance_signer()``
+    raises ``RuntimeError`` immediately — this node does not catch it, so the
+    whole request fails (surfaces as HTTP 500). Dev/CI environments must
+    either provision a real (or emulated) KMS key, or route around this node
+    entirely; they must NOT rely on a silent fallback that no longer exists.
 
     See: ``src/gateway/governance/kms_signer.py`` for full architecture.
     """

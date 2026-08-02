@@ -160,6 +160,31 @@ jobs:
         run: |
           python scripts/check_stpa_freshness.py --verbose
 
+  no-direct-bind-proof:
+    name: "NoDirectBind State-Space Proof"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      # The proof is pure standard library — no dependency install needed.
+      # It asserts internally and exits non-zero if the invariant is violated
+      # or if a negative-control variant fails to produce a counterexample.
+      - name: Run exhaustive NoDirectBind enumeration
+        run: |
+          python proof/model.py
+      - name: Install pytest
+        run: pip install pytest pytest-timeout
+      # Pins the exact reachable-state counts (21/24/19/20) quoted in
+      # CAGE_ARXIV.MD and docs/technical-report/. This is a second,
+      # independent check on top of `python proof/model.py` above so a
+      # change to TIERS/transition functions cannot silently drift from the
+      # published figures without failing CI. See REVISION_TRACKER.md.
+      - name: Run pinned NoDirectBind regression tests
+        run: |
+          python -m pytest tests/test_no_direct_bind_proof.py -m local -v
+
   langfuse-posture-check:
     name: "Langfuse Posture Dry-Run Check"
     runs-on: ubuntu-latest

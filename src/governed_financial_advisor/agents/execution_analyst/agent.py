@@ -22,24 +22,47 @@ from config.settings import MODEL_REASONING
 
 
 # Define the Pydantic schema for the execution plan
+#
+# BUG-FTRA-SCHEMA-001 fix: plan_id/strategy_name/risk_factors and
+# PlanStep.id/PlanStep.parameters were previously required with no defaults.
+# The system prompt (EXECUTION_ANALYST_FALLBACK_PROMPT above) explicitly
+# instructs the model to emit a minimal "Clarification Plan" — e.g. a single
+# `ask_user` step with no strategy/risk-factor context — whenever the user's
+# risk profile or investment horizon is missing. That minimal, prompt-mandated
+# shape then failed strict Pydantic validation (5 "Field required" errors),
+# which FTRA's dict->ExecutionPlan conversion (ftra/node_factory.py) treats as
+# a parse failure and BLOCKs the request with CTRL_FTRA_001 — a plausible-
+# looking governance denial that is actually a schema/prompt mismatch, not a
+# governance decision. Giving these fields safe, empty defaults lets a valid
+# Clarification Plan (steps=[ask_user], rationale=<why>, plan_id/strategy_name/
+# risk_factors omitted) pass validation without forcing the LLM to fabricate
+# placeholder strategy names or risk factors it has no basis for — the fields
+# remain fully populated for any real trade-execution plan, since the model
+# is still instructed (and, for the guided_json path, schema-constrained) to
+# emit them whenever it has enough context to do so.
 class PlanStep(BaseModel):
-    id: str = Field(description="Unique identifier for the step")
+    id: str = Field(default="", description="Unique identifier for the step")
     action: str = Field(
         description="Action to perform (e.g., execute_trade, check_price)"
     )
     description: str = Field(description="Description of what this step does")
-    parameters: dict[str, Any] = Field(description="Parameters for the action")
+    parameters: dict[str, Any] = Field(
+        default_factory=dict, description="Parameters for the action"
+    )
 
 
 class ExecutionPlan(BaseModel):
-    plan_id: str = Field(description="Unique identifier for the plan")
+    plan_id: str = Field(default="", description="Unique identifier for the plan")
     strategy_name: str = Field(
-        description="Name of the strategy (e.g., 'Conservative Dividend Growth')"
+        default="",
+        description="Name of the strategy (e.g., 'Conservative Dividend Growth')",
     )
     rationale: str = Field(
         description="Detailed explanation of why this strategy fits the user profile"
     )
-    risk_factors: list[str] = Field(description="List of identified risk factors")
+    risk_factors: list[str] = Field(
+        default_factory=list, description="List of identified risk factors"
+    )
     steps: list[PlanStep] = Field(description="Ordered list of execution steps")
 
     # Context Fields
@@ -148,11 +171,31 @@ def parse_execution_plan(raw_content: str) -> ExecutionPlan:
 
     The guided_json FSM guarantees valid JSON, but DeepSeek may still prepend
     <think>...</think> reasoning blocks before the JSON payload.
+
+    vLLM defect workaround: under certain guided-decoding (outlines FSM) code
+    paths, vLLM has been observed to return the raw GPT-2-style byte-level BPE
+    placeholder characters instead of properly detokenized whitespace —
+    U+0120 "Ġ" for a literal space and U+010A "Ċ" for a literal newline (these
+    are the byte-level BPE encodings ChatGPT-family tokenizers use internally
+    for " " and "\n" respectively; they should never survive detokenization
+    into user-facing text). When this happens, e.g. `{Ġ"steps":Ġ[Ċ]}`,
+    `json.loads()` fails immediately with "Expecting property name enclosed
+    in double quotes: line 1 column 2" because Ġ/Ċ are not valid JSON
+    whitespace. Confirmed via live GKE trace (BUG-FTRA-JSON-001): every
+    execution-plan generation failed this way, causing the downstream FTRA
+    gate to BLOCK the trade with a plausible-looking but incorrect governance
+    denial (CTRL_FTRA_001) — a generation/tokenizer defect masquerading as a
+    real policy decision. Translating these markers back to real whitespace
+    before parsing is a safe, targeted fix that does not affect normal
+    (correctly detokenized) output, since Ġ/Ċ never appear in valid content.
     """
     import re
 
     # Strip DeepSeek <think>...</think> reasoning blocks
     cleaned = re.sub(r"<think>.*?</think>", "", raw_content, flags=re.DOTALL).strip()
+    # Normalize raw GPT-2 byte-level BPE whitespace markers back to real
+    # whitespace (see docstring above) before attempting to locate/parse JSON.
+    cleaned = cleaned.replace("\u0120", " ").replace("\u010a", "\n")
     # Extract JSON object (first {...} block)
     match = re.search(r"\{.*\}", cleaned, re.DOTALL)
     if not match:

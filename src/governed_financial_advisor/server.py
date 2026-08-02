@@ -71,6 +71,46 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Agent Graph...")
     app.state.graph = create_graph(redis_url=Config.REDIS_URL)
 
+    # ── CTRL_KMS_001: Eagerly initialise the governance signer ────────────
+    # generate_governance_signature() (evaluator_node.py) calls
+    # get_governance_signer() lazily on the first plan approval. If
+    # KMS_GOVERNANCE_KEY is unset/misconfigured or google-cloud-kms isn't
+    # installed, that first call raises RuntimeError deep inside a request,
+    # surfacing as an opaque HTTP 500 on every trade/execution request — the
+    # 2026-08-01 measurement-run defect. Initialise (and validate) it here
+    # instead, so a broken signer fails fast at pod startup with a clear log
+    # line and a non-ready pod, rather than silently 500-ing every request.
+    app.state.kms_active = False
+    try:
+        from src.gateway.governance.kms_signer import (
+            assert_kms_active_in_production,
+            get_governance_signer,
+        )
+
+        _signer = get_governance_signer()
+        app.state.kms_active = _signer.is_kms_active
+        if _signer.is_kms_active:
+            logger.info(
+                "✅ CTRL_KMS_001: KMSGovernanceSigner active (%s)",
+                _signer.signing_algorithm,
+            )
+        else:
+            logger.warning(
+                "⚠️  CTRL_KMS_001: KMSGovernanceSigner is in HMAC fallback mode "
+                "(KMS_GOVERNANCE_KEY unset or not applicable). This is only "
+                "acceptable in dev/CI — see CTRL_KMS_001 in control_mappings.json."
+            )
+        # Fail fast in non-dev environments: raises RuntimeError if the
+        # signer is in fallback mode outside development/test/ci.
+        assert_kms_active_in_production()
+    except Exception as _kms_exc:
+        logger.error(
+            "❌ CTRL_KMS_001 STARTUP FAILURE: governance signer did not "
+            "initialise correctly: %s",
+            _kms_exc,
+        )
+        raise
+
     # ── Connect the GFA AsyncRedisClient singleton ────────────────────────
     # The singleton is created at module import time (redis_client.py) but
     # connect() must be called explicitly to establish the connection pool.

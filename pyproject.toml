@@ -73,6 +73,12 @@ gateway = [
     "en-core-web-sm",
     "opentelemetry-instrumentation-fastapi>=0.58b0",
     "opentelemetry-instrumentation-requests>=0.58b0",
+    # google-cloud-kms: CTRL_KMS_001 evidentiary-independence control.
+    # Required by src/gateway/governance/kms_signer.py's GCPKMSProvider for
+    # asymmetric HSM signing of governance decisions (asymmetricSign / getPublicKey).
+    # Without this, KMSGovernanceSigner.from_env() raises RuntimeError even when
+    # KMS_GOVERNANCE_KEY is set correctly.
+    "google-cloud-kms>=2.24.0",
 ]
 
 advisor = [

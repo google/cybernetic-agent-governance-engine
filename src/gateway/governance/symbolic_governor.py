@@ -238,33 +238,44 @@ class SymbolicGovernor:
         # the dynamic SLM-degraded escalation (0.95→0.97) is applied consistently.
         # This local check fires first to avoid unnecessary CBF/OPA round-trips when
         # the confidence score is obviously below threshold.
-        if tool_name == "execute_trade":
-            _confidence = float(params.get("confidence", 0.0))
-            _confidence_threshold = float(
-                os.getenv("AGENT_CONFIDENCE_THRESHOLD", "0.95")
+        with tracer.start_as_current_span("cage.confidence_check") as conf_span:
+            conf_span.set_attribute("langfuse.observation.name", "confidence_threshold_check")
+            conf_span.set_attribute("governance.stage", "confidence")
+            _t0_conf = time.perf_counter()
+            if tool_name == "execute_trade":
+                _confidence = float(params.get("confidence", 0.0))
+                _confidence_threshold = float(
+                    os.getenv("AGENT_CONFIDENCE_THRESHOLD", "0.95")
+                )
+                if _confidence < _confidence_threshold:
+                    _conf_meta = ControlRegistry().get_mapping(
+                        GovernanceControl.AGENT_CONFIDENCE_THRESHOLD
+                    )
+                    _conf_msg = (
+                        f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
+                        f"{_conf_meta['primary_framework']} Confidence Violation: "
+                        f"score {_confidence:.2f} < threshold {_confidence_threshold:.2f}. "
+                        f"Violation: agent confidence below required minimum."
+                    )
+                    # CRIT-5 fix: store in a local variable, not on self.
+                    # self._pending_payload was a data race — concurrent requests on
+                    # the singleton could overwrite each other's payload.
+                    _conf_payload = {
+                        "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                        "primary_framework": _conf_meta["primary_framework"],
+                        "legacy_citation": _conf_meta.get("legacy_citation", ""),
+                        "scope": _conf_meta.get("scope", ""),
+                        "confidence": _confidence,
+                        "threshold": _confidence_threshold,
+                    }
+                    violations.append(_conf_msg)
+                conf_span.set_attribute("governance.confidence.score", _confidence)
+                conf_span.set_attribute("governance.confidence.threshold", _confidence_threshold)
+                conf_span.set_attribute("governance.confidence.passed", _confidence >= _confidence_threshold)
+            conf_span.set_attribute(
+                "governance.stage.latency_ms",
+                round((time.perf_counter() - _t0_conf) * 1000, 2),
             )
-            if _confidence < _confidence_threshold:
-                _conf_meta = ControlRegistry().get_mapping(
-                    GovernanceControl.AGENT_CONFIDENCE_THRESHOLD
-                )
-                _conf_msg = (
-                    f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
-                    f"{_conf_meta['primary_framework']} Confidence Violation: "
-                    f"score {_confidence:.2f} < threshold {_confidence_threshold:.2f}. "
-                    f"Violation: agent confidence below required minimum."
-                )
-                # CRIT-5 fix: store in a local variable, not on self.
-                # self._pending_payload was a data race — concurrent requests on
-                # the singleton could overwrite each other's payload.
-                _conf_payload = {
-                    "control_id": GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                    "primary_framework": _conf_meta["primary_framework"],
-                    "legacy_citation": _conf_meta.get("legacy_citation", ""),
-                    "scope": _conf_meta.get("scope", ""),
-                    "confidence": _confidence,
-                    "threshold": _confidence_threshold,
-                }
-                violations.append(_conf_msg)
 
         if tool_name == "execute_trade" and not violations:
             # 2 + 4. CBF (Redis) and OPA policy checks run CONCURRENTLY.
