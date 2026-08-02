@@ -537,7 +537,7 @@ def generate_nemo(cs: ControlStructureModel) -> str:
                 f"  await {_pascal(flow)}CheckAction as $check_{uca.id.lower().replace('-', '_')}"
             )
             lines.append(
-                f"  if $check_{uca.id.lower().replace('-', '_')}.detected == true"
+                f"  if $check_{uca.id.lower().replace('-', '_')}.detected == True"
             )
             lines.append(f"    await {flow}")
             lines.append("")

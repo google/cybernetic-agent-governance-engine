@@ -224,12 +224,22 @@ async def custom_self_check_input(
 ):
     """Hybrid self-check for financial domain inputs - PHASE 2 UPGRADE.
 
-    Three-stage approach:
-    1. Allowlist financial keywords → ALLOW (0ms) [~70% of queries]
-    2. Blocklist jailbreak patterns → BLOCK (0ms) [~5% of queries]
+    Three-stage approach (ORDER IS SECURITY-CRITICAL — see 2026-08-02 fix):
+    1. Blocklist jailbreak patterns → BLOCK (0ms) [~5% of queries]
+    2. Allowlist financial keywords → ALLOW (0ms) [~70% of queries]
     3. LLM-based semantic check → EVALUATE (2-5s) [~25% of queries]
 
-    This preserves security while maintaining performance.
+    SECURITY NOTE (2026-08-02): The blocklist MUST run before the allowlist.
+    Running the allowlist first (as this function originally did) allows any
+    injection payload that also mentions a common finance word (e.g.
+    "trading", "stock", "analyze", "market") to short-circuit ALLOW before
+    the jailbreak blocklist is ever consulted — this was measured to let
+    4/6 adversarial prompt-injection payloads (INJ-001, INJ-003, INJ-004,
+    INJ-005) bypass detection entirely, since each one references finance in
+    the same sentence as its attack. See docs/paper/REVISION_TRACKER.md for
+    the full measurement writeup. This preserves the same 0ms fast-path
+    performance characteristic for genuinely safe queries while closing the
+    bypass — the blocklist check is equally O(1) substring matching.
     """
     with _tracer.start_as_current_span("nemo.action.self_check_input") as span:
         span.set_attribute("langfuse.observation.type", "span")
@@ -246,7 +256,33 @@ async def custom_self_check_input(
             span.set_attribute("nemo.action.outcome", "ALLOW")
             return True
 
-        # STAGE 1: ALLOWLIST - Fast-path for known-safe financial queries (0ms)
+        # STAGE 1: BLOCKLIST — checked FIRST so a jailbreak attempt cannot be
+        # short-circuited to ALLOW merely by co-mentioning a finance keyword.
+        jailbreak_patterns = [
+            "ignore previous instructions",
+            "ignore all previous",
+            "dan mode",
+            "developer mode",
+            "repeat your prompt",
+            "show me your system prompt",
+            "bypass your restrictions",
+            "you are now unrestricted",
+            "jailbreak",
+            "forget everything",
+            "pretend you",
+            "roleplay as",
+            "act as if",
+            "act as a developer with root access",
+            "system:",
+        ]
+
+        if any(pattern in text for pattern in jailbreak_patterns):
+            logger.warning("HybridSelfCheckInput: STAGE 1 BLOCK (jailbreak pattern)")
+            span.set_attribute("nemo.action.stage", "BLOCKLIST")
+            span.set_attribute("nemo.action.outcome", "BLOCK")
+            return False
+
+        # STAGE 2: ALLOWLIST - Fast-path for known-safe financial queries (0ms)
         financial_keywords = [
             "portfolio",
             "diversification",
@@ -279,34 +315,10 @@ async def custom_self_check_input(
         ]
 
         if any(keyword in text for keyword in financial_keywords):
-            logger.debug("HybridSelfCheckInput: STAGE 1 ALLOW (financial keyword)")
+            logger.debug("HybridSelfCheckInput: STAGE 2 ALLOW (financial keyword)")
             span.set_attribute("nemo.action.stage", "ALLOWLIST")
             span.set_attribute("nemo.action.outcome", "ALLOW")
             return True
-
-        # STAGE 2: BLOCKLIST - Fast-path for obvious jailbreak attempts (0ms)
-        jailbreak_patterns = [
-            "ignore previous instructions",
-            "ignore all previous",
-            "dan mode",
-            "developer mode",
-            "repeat your prompt",
-            "show me your system prompt",
-            "bypass your restrictions",
-            "you are now unrestricted",
-            "jailbreak",
-            "forget everything",
-            "pretend you",
-            "roleplay as",
-            "act as if",
-            "system:",
-        ]
-
-        if any(pattern in text for pattern in jailbreak_patterns):
-            logger.warning("HybridSelfCheckInput: STAGE 2 BLOCK (jailbreak pattern)")
-            span.set_attribute("nemo.action.stage", "BLOCKLIST")
-            span.set_attribute("nemo.action.outcome", "BLOCK")
-            return False
 
         # STAGE 3: LLM JUDGE - Semantic analysis for ambiguous cases (2-5s)
         logger.info(
@@ -341,10 +353,18 @@ async def custom_self_check_output(
 ):
     """Hybrid self-check for financial domain outputs - PHASE 2 UPGRADE.
 
-    Three-stage approach:
-    1. Safe financial content → ALLOW (0ms) [~80% of outputs]
-    2. Harmful pattern blocklist → BLOCK (0ms) [~2% of outputs]
+    Three-stage approach (ORDER IS SECURITY-CRITICAL — see 2026-08-02 fix,
+    matches the identical reordering applied to CustomSelfCheckInputAction):
+    1. Harmful pattern blocklist → BLOCK (0ms) [~2% of outputs]
+    2. Safe financial content → ALLOW (0ms) [~80% of outputs]
     3. LLM-based semantic check → EVALUATE (2-5s) [~18% of outputs]
+
+    SECURITY NOTE (2026-08-02): The blocklist MUST run before the
+    safe-indicator allowlist. A harmful output that also contains a
+    hedging/safe word (e.g. "risk", "may", "could") would otherwise
+    short-circuit ALLOW before the harmful-pattern blocklist is ever
+    consulted. See CustomSelfCheckInputAction for the analogous input-side
+    fix and rationale.
     """
     with _tracer.start_as_current_span("nemo.action.self_check_output") as span:
         span.set_attribute("langfuse.observation.type", "span")
@@ -366,7 +386,27 @@ async def custom_self_check_output(
             span.set_attribute("nemo.action.outcome", "ALLOW")
             return True
 
-        # STAGE 1: Safe financial content (allow without LLM check)
+        # STAGE 1: BLOCKLIST — checked FIRST so a harmful output cannot be
+        # short-circuited to ALLOW merely by co-mentioning a hedging word.
+        harmful_patterns = [
+            "guaranteed returns",
+            "risk-free investment",
+            "can't lose",
+            "insider information",
+            "sure thing",
+            "100% profit",
+            "no risk",
+            "guaranteed profit",
+            "get rich quick",
+        ]
+
+        if any(pattern in text for pattern in harmful_patterns):
+            logger.warning("HybridSelfCheckOutput: STAGE 1 BLOCK (harmful pattern)")
+            span.set_attribute("nemo.action.stage", "BLOCKLIST")
+            span.set_attribute("nemo.action.outcome", "BLOCK")
+            return False
+
+        # STAGE 2: Safe financial content (allow without LLM check)
         safe_indicators = [
             "risk",
             "portfolio",
@@ -384,30 +424,11 @@ async def custom_self_check_output(
 
         if any(indicator in text for indicator in safe_indicators):
             logger.debug(
-                "HybridSelfCheckOutput: STAGE 1 ALLOW (safe financial content)"
+                "HybridSelfCheckOutput: STAGE 2 ALLOW (safe financial content)"
             )
             span.set_attribute("nemo.action.stage", "SAFE_INDICATOR")
             span.set_attribute("nemo.action.outcome", "ALLOW")
             return True
-
-        # STAGE 2: BLOCKLIST - Harmful patterns (block immediately)
-        harmful_patterns = [
-            "guaranteed returns",
-            "risk-free investment",
-            "can't lose",
-            "insider information",
-            "sure thing",
-            "100% profit",
-            "no risk",
-            "guaranteed profit",
-            "get rich quick",
-        ]
-
-        if any(pattern in text for pattern in harmful_patterns):
-            logger.warning("HybridSelfCheckOutput: STAGE 2 BLOCK (harmful pattern)")
-            span.set_attribute("nemo.action.stage", "BLOCKLIST")
-            span.set_attribute("nemo.action.outcome", "BLOCK")
-            return False
 
         # STAGE 3: LLM JUDGE - For ambiguous outputs
         logger.info(

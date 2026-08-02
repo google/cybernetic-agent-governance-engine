@@ -4,11 +4,43 @@
 # version's standard library files contain Colang 2.x syntax that the
 # lark parser rejects (UnexpectedToken at import statements).
 #
-# Instead we define @override flow main directly here with no imports.
+# We therefore define flow main directly here with no imports and WITHOUT
+# the `@override` decorator. `@override` requires a pre-existing base flow
+# with the same name to override (Colang 2.x hard-errors at LLMRails
+# construction time with "Override flow with name 'main' does not override
+# any flow with that name!" otherwise) — since no library flow named `main`
+# is ever imported here, there is nothing to override.
+#
+# BUG HISTORY (2026-08-02): This `@override` bug was previously masked by an
+# unrelated Colang syntax error in generated_stpa_rails.co (lowercase `true`
+# instead of `True`) that caused RailsConfig.from_path() to fail first,
+# triggering the transparent-fallback path below `@override` was fixed. Once
+# that syntax bug was fixed, LLMRails construction proceeded far enough to
+# reach — and fail on — this `@override` defect. Both bugs independently
+# disabled all NeMo semantic rails; both must be fixed together.
+#
 # The Python validate_with_nemo() has a "No main flow" pass-through guard
 # so NeMo config failures are non-fatal; OPA + STPA remain authoritative.
 
-@override
 flow main
   match UtteranceUser() as $msg
   await bot say $msg.text
+
+# ---------------------------------------------------------------------------
+# self check input — locally-defined replacement for NeMo's library flow
+# ---------------------------------------------------------------------------
+# NeMo's built-in `nemoguardrails.library.self_check.input_check` flow (which
+# config.yml's deprecated `rails.input.flows: [self check input]` normally
+# resolves against) cannot be imported here — the installed NeMo version's
+# library Colang 2.x files fail to parse (see header comment above). We
+# therefore define our own `flow self check input` locally, using the same
+# flow name NeMo's rails-flow-generation code expects (see
+# nemoguardrails/rails/llm/config.py::_generate_rails_flows(), which emits
+# `flow input rails $input_text` containing an indented call to this exact
+# flow name), but backed by our own CustomSelfCheckInputAction instead of
+# NeMo's library SelfCheckInputAction + self_check_input prompt template.
+flow self check input
+  $allowed = await CustomSelfCheckInputAction
+  if not $allowed
+    bot refuse to respond
+    abort
