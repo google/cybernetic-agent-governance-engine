@@ -159,3 +159,35 @@ the tracker's own self-reported status) found the following, on branch
 All five of V1–V3 are code/doc fixes committed in this pass. V4 is a measurement-process outcome
 (no promotable numbers, but the attempt and root cause are now documented per the runbook's
 auditability requirement). V5 is a known script portability bug, deferred.
+
+---
+
+## Verification pass (2026-08-02) — five production defects fixed, first crash-free measurement
+
+Continuing from the 2026-08-01 KMS misconfiguration finding, this session fixed the KMS defect
+and discovered **four additional independent production defects**, each blocking on the last —
+every execution-path request failed until all five were resolved. Full details in
+`docs/paper/measurements/2026-08-02-4277888/PROVENANCE.md` and `PERFORMANCE_REVIEW.md`.
+Fixes committed in `4277888`.
+
+| # | Defect | Fix |
+|---|---|---|
+| D1 | `kms_signer.py`'s digest-width fix (from a prior session) existed only in the uncommitted working tree — the deployed Cloud Build image predated it, so production still hardcoded sha256 against a sha512 key (`400 INVALID_ARGUMENT`). The `financial-advisor-sa` service account was also missing `roles/cloudkms.viewer`, needed for `_detect_hash_width()`'s `get_crypto_key_version()` call. | Rebuilt/redeployed the image with the fix; granted the missing IAM role. Verified live: digest width now correctly resolves to sha512. |
+| D2 | `redis_client.py` parsed host/port from `REDIS_URL` but silently dropped any embedded password, connecting the CBF's `sync_redis_client` (`read_verified_balance`) unauthenticated and causing every trade to fail-closed with `NOAUTH`. | Extract the URL-embedded password when `REDIS_PASSWORD` is unset. Verified live: CBF check passes cleanly, no more NOAUTH errors. |
+| D3 | vLLM's `guided_json` FSM decoder leaked raw GPT-2 byte-level BPE whitespace markers (U+0120 "Ġ", U+010A "Ċ") into otherwise-valid JSON, breaking `json.loads()` at the first character. | `parse_execution_plan()` now normalizes these markers to real whitespace before parsing. Verified live: JSON now parses correctly. |
+| D4 | `ExecutionPlan`'s `plan_id`/`strategy_name`/`risk_factors` and `PlanStep.id`/`parameters` were required with no defaults, but the system prompt instructs the model to emit a minimal "Clarification Plan" (a single `ask_user` step) when risk profile/investment horizon are missing — that valid, prompt-mandated shape failed strict Pydantic validation (5 `Field required` errors), and FTRA then `BLOCK`ed the request with `CTRL_FTRA_001`, a plausible-looking but incorrect governance denial. | Gave the affected fields safe, empty defaults. Verified live: Clarification Plans now validate and pass through FTRA correctly. |
+| D5 | `GatewayMCPClient.call_tool()` always returns a joined plain string regardless of the underlying MCP tool's declared return type; `simulate_governance_check()` (declared `dict[str, Any]`) got a raw JSON string back, and `evaluator_node.py`'s `safety_resp.get("status")` crashed with `AttributeError` once D1–D4 let a request finally reach this code path. | `simulate_governance_check()` now parses the JSON string response back into a dict before returning. Verified live: evaluator node runs to completion. |
+
+**Result:** the in-cluster re-measurement of Table 5 (adversarial deflection) and the benign FPR
+(S2) produced **0 server crashes** across 41 live requests — the first crash-free live-backend
+measurement in the project's history. Corrected figures: adversarial deflection 70.0% (14/20
+evaluated, down from the unverifiable published 100%), benign FPR 25.0% (5/20), though the
+`trade_execution` benign-FPR category is itself a measurement-methodology artifact (keyword
+classifier misreads legitimate "please provide your risk profile" clarification requests as
+denials) — see `PERFORMANCE_REVIEW.md` §3 for the full analysis and §6 for the promotion
+recommendation. **No change has yet been made to `CAGE_ARXIV.MD`** pending a decision on which
+figures to promote.
+
+Also found and disclosed: GPU spot-node preemption (`vllm-inference`/`vllm-reasoning`) recurred
+four times during this session (~30-60 min intervals), consistent with the 2026-08-01 session's
+P2-8 finding — now elevated to P0 given the recurrence rate across two consecutive sessions.
