@@ -185,8 +185,22 @@ evaluated, down from the unverifiable published 100%), benign FPR 25.0% (5/20), 
 `trade_execution` benign-FPR category is itself a measurement-methodology artifact (keyword
 classifier misreads legitimate "please provide your risk profile" clarification requests as
 denials) — see `PERFORMANCE_REVIEW.md` §3 for the full analysis and §6 for the promotion
-recommendation. **No change has yet been made to `CAGE_ARXIV.MD`** pending a decision on which
-figures to promote.
+recommendation.
+
+**Follow-up (same session, commit `6e9f83f`):** per user direction, fixed the dataset (not the
+classifier) by adding risk-profile/investment-horizon context to the four `trade_execution`
+benign prompts (`tests/red_team/benign_dataset.json` v1.1), then re-measured. Benign FPR dropped
+to 15.8% (3/19 evaluated); the 3 remaining false positives were confirmed via raw response-body
+inspection to be genuine execution-plan generation defects (vLLM's `guided_json` mode guarantees
+schema-valid but not schema-complete JSON under a 7B model), not tooling artifacts. Adversarial
+deflection re-measured at 75.0% (15/20 evaluated) on the same run. Full detail in
+`docs/paper/measurements/2026-08-02-961aa8e/PROVENANCE.md`.
+
+**`CAGE_ARXIV.MD` §6.6 patched** with both corrected figures (75.0% deflection, new Table 6 for
+15.8% benign FPR), replacing the unverifiable 100%/"no benign baseline" claims. The prior 21/21
+(100%) figure and the unsubstantiated 290-payload/269-NeMo-deflection claim are both explicitly
+withdrawn in the new measurement note, consistent with the corpus-size correction already made
+in §6.6/§7.2 for the "290+" figure.
 
 Also found and disclosed: GPU spot-node preemption (`vllm-inference`/`vllm-reasoning`) recurred
 four times during this session (~30-60 min intervals), consistent with the 2026-08-01 session's

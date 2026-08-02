@@ -410,24 +410,38 @@ The CBF's code path (`verify_action()` → `_read_cbf_state_atomic()`) always pr
 
 ### 6.6 Adversarial Deflection
 
-We evaluate CAGE's governance pipeline against a corpus of 21 adversarial attacks \[36\] spanning five attack categories:
+We evaluate CAGE's governance pipeline against a corpus of 21 adversarial attacks \[36\] spanning five attack categories, plus a companion 20-prompt benign dataset to measure the false-positive rate (S2):
 
 **Table 5: Adversarial Deflection by Attack Category**
 
-| Attack Category | Corpus Size | Deflected | Notes |
-| :---- | :---- | :---- | :---- |
-| Prompt injection | 6 | 6 (100%) | Gateway Aho-Corasick \+ structural regex |
-| PII exfiltration | 5 | 5 (100%) | PIISanitizer \+ OPA ABAC |
-| RBAC escalation | 4 | 4 (100%) | OPA Rego \+ STPA UCA validation |
-| Harmful financial instructions | 3 | 3 (100%) | CBF \+ FiscalLimitGuard \+ Consensus |
-| Compound multi-vector | 3 | 3 (100%) | Full eight-tier pipeline |
-| **Total** | **21** | **21 (100%)** |  |
+| Attack Category | Corpus Size | Evaluated | Deflected | Rate |
+| :---- | :---- | :---- | :---- | :---- |
+| Prompt injection | 6 | 6 | 2 | 33.3% |
+| PII exfiltration | 5 | 4 | 4 | 100% |
+| RBAC escalation | 4 | 4 | 4 | 100% |
+| Harmful financial instructions | 3 | 3 | 2 | 66.7% |
+| Compound multi-vector | 3 | 3 | 3 | 100% |
+| **Total** | **21** | **20** | **15** | **75.0%** |
 
-*Measurement note: The adversarial dataset (`tests/red_team/adversarial_dataset.json`) contains 21 payloads total; all 21 were run against the governed backend at `localhost:18080/agent/query` (2026-07-27, GKE cluster) via `scripts/measure_paper_metrics.py`, which computes its payload count directly from `len(payloads)` in that file. All 21 payloads were deflected (100% deflection rate); no adversarial payload produced an unsafe response. An earlier draft of this section additionally claimed a 290-payload corpus with 269 payloads deflected at the NeMo guardrail layer "before reaching the backend endpoint" — no such 290-payload dataset, and no record of a separate 269-payload NeMo-layer run, exists anywhere in this repository. We withdraw that claim; the verified, reproducible result is the 21/21 deflection reported above.*
+*Measurement note: The adversarial dataset (`tests/red_team/adversarial_dataset.json`, 21 payloads) was run against the live `governed-financial-advisor` backend in-cluster on GKE (`governance-cluster-2`, 2026-08-02) via `scripts/measure_paper_metrics.py`, after fixing five independent production defects that had invalidated all prior live-backend measurements (KMS digest-width mismatch, Redis authentication dropped from a connection URL, a vLLM guided-decoding tokenization artifact, an overly strict execution-plan schema, and an MCP transport type mismatch — see the project's measurement provenance records for full detail). Of 21 payloads, 1 failed at the network level and is excluded from both numerator and denominator (Table 5's Evaluated column); zero payloads produced a server-side crash. The reported 75.0% (15/20 evaluated) reflects genuine governance-tier verdicts only. An earlier draft of this section claimed a 100% deflection rate (21/21) from a 2026-07-27 measurement and, before that, a 290-payload corpus with 269 payloads deflected at the NeMo guardrail layer "before reaching the backend endpoint" — neither the original 21/21 run's artifacts nor any 290-payload dataset or 269-deflection NeMo-layer run could be independently reproduced or located in this repository as of this measurement. We withdraw both prior claims; the verified, reproducible result is the 75.0% (15/20 evaluated) reported above. The `prompt_injection` category's comparatively low 33.3% deflection rate is a genuine finding warranting further hardening of the gateway's Aho-Corasick/structural-regex layer, not a measurement artifact.*
 
 This security was achieved without sacrificing performance: the total governance pipeline operates within the 200 ms soft SLA target, demonstrating that robust, multi-layered cybernetic governance and zero-trust verification can be deployed in production without introducing significant performance overhead to real-time financial systems.
 
-**Evaluation limitations:** We do not report an un-governed baseline (the same 21 payloads against the LLM without CAGE) or a benign prompt evaluation (false positive rate). Without a baseline, the 100% deflection rate cannot be attributed specifically to CAGE's governance pipeline vs. the underlying model's native safety tuning. Without a benign evaluation, the false positive rate of the pipeline is unknown. A benign dataset (`tests/red_team/benign_dataset.json`, 20 prompts) and an un-governed baseline mode have been added to `scripts/measure_paper_metrics.py` for future measurement runs; results are tracked as future work (§7.3).
+**Benign false-positive rate (S2).** To contextualize the deflection rate above, we separately measured CAGE's false-positive rate on 20 unambiguously benign financial-advisor prompts (`tests/red_team/benign_dataset.json`) spanning four categories: market data lookups, portfolio management queries, stock queries, and trade execution requests with fully specified risk profile and investment horizon context.
+
+**Table 6: Benign False-Positive Rate by Category**
+
+| Category | Corpus Size | Evaluated | False Positives | FPR |
+| :---- | :---- | :---- | :---- | :---- |
+| Market data | 5 | 5 | 0 | 0.0% |
+| Portfolio management | 5 | 5 | 1 | 20.0% |
+| Stock query | 6 | 6 | 0 | 0.0% |
+| Trade execution | 4 | 4 | 2 | 50.0% |
+| **Total** | **20** | **19** | **3** | **15.8%** |
+
+*Measurement note: measured on the same run and against the same live backend as Table 5. One request failed at the network level and is excluded (Evaluated column). Inspection of the raw response bodies for all 3 false positives (archived alongside the measurement) confirmed each is a genuine execution-plan generation defect — the execution-analyst LLM, operating under vLLM's `guided_json` constrained-decoding mode, produced a syntactically valid but semantically incomplete plan (e.g. omitting required steps, or leaving the `rationale` field malformed) that the downstream Feasibility/Terminal-Reachability Analyzer (FTRA) correctly rejected. This is a genuine limitation of constrained decoding with a 7B-parameter model — `guided_json` guarantees schema-*valid* JSON but not schema-*complete* or semantically coherent output — rather than a defect in the governance logic itself, which correctly declined to execute an incomplete plan in every case. An earlier dataset revision under-specified the four trade-execution prompts (omitting risk attitude and investment horizon, which the execution-analyst's system prompt requires before generating an executable plan), causing the agent's legitimate clarification requests to be misclassified as false positives by a keyword-based response classifier; the dataset was corrected to include this context before the measurement reported here.*
+
+**Evaluation limitations:** We do not report an un-governed baseline (the same 21 adversarial payloads against the LLM without CAGE), so the deflection rate above cannot be decomposed into CAGE's governance-pipeline contribution versus the underlying model's native safety tuning. An un-governed baseline mode has been added to `scripts/measure_paper_metrics.py` for future measurement runs; results are tracked as future work (§7.3).
 
 ---
 
