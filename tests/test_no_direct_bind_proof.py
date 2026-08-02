@@ -33,6 +33,14 @@ from pathlib import Path
 
 import pytest
 
+# This module is pure-stdlib (no Redis/OPA/network dependencies) and is safe
+# to run in every CI matrix leg. Without this marker, `pytest tests/ -m local`
+# (the invocation used by the `pytest-logic` CI job) silently excludes this
+# file, leaving the 21/24/19/20 state-count regression tests unexercised by
+# CI — only the bare `python proof/model.py` script assertions run via the
+# separate `no-direct-bind-proof` job. See REVISION_TRACKER.md.
+pytestmark = pytest.mark.local
+
 # ---------------------------------------------------------------------------
 # proof/ is not a package (no __init__.py) — load the module by path so the
 # test runs regardless of how pytest is invoked.

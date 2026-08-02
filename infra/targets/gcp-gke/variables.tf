@@ -524,6 +524,18 @@ variable "governance_salt" {
   default     = ""
 }
 
+variable "kms_governance_key" {
+  description = "Full Cloud KMS key version resource name for CTRL_KMS_001 asymmetric governance signing (from KMS_GOVERNANCE_KEY). Empty string falls back to legacy HMAC-SHA256 signing via governance_salt — acceptable only in dev/CI postures."
+  type        = string
+  default     = ""
+}
+
+variable "cage_kms_provider" {
+  description = "Cloud KMS provider backend for governance signing (from CAGE_KMS_PROVIDER): gcp, aws, or azure."
+  type        = string
+  default     = "gcp"
+}
+
 # DEP-21: Remove default = "" from routing_seal_secret.
 # A missing or empty value previously caused terraform apply to silently write
 # an empty string into advisor-secrets.CAGE_ROUTING_SEAL_SECRET, triggering

@@ -169,9 +169,25 @@ async def simulate_governance_check(
     is handled in infrastructure by the ``safety_check`` LangGraph node.
 
     Returns structured dict with status, violations, and OPA results.
+
+    BUG-MCP-DICT-001 fix: GatewayMCPClient.call_tool() always returns a plain
+    ``str`` — it joins every MCP content block's ``.text`` field with "\\n"
+    regardless of the underlying tool's declared return type (see
+    ``mcp_client.py::call_tool``). The Gateway's ``simulate_governance_check``
+    MCP tool (mcp_tool_server.py) returns a ``dict[str, Any]``, which the MCP
+    transport serialises to a JSON string content block; the client then
+    handed that raw JSON string straight back to ``evaluator_node.py``, which
+    called ``.get("status")`` on it and crashed with
+    ``AttributeError: 'str' object has no attribute 'get'`` — a real
+    production defect surfaced only once the KMS/Redis/schema fixes earlier
+    in this session let a request finally reach this code path. Parsing the
+    string back into a dict here (at the single call site expecting
+    structured data) fixes this without having to change the generic
+    ``call_tool()`` contract that every other (string-returning) MCP tool
+    call in this codebase relies on.
     """
     try:
-        return await get_mcp_client().call_tool(
+        raw = await get_mcp_client().call_tool(
             "simulate_governance_check",
             {
                 "target_tool": target_tool,
@@ -179,6 +195,25 @@ async def simulate_governance_check(
                 "risk_profile": risk_profile,
             },
         )
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+            logger.warning(
+                "simulate_governance_check: MCP tool returned a non-JSON-dict "
+                "string; treating as an error. raw=%r",
+                raw[:500],
+            )
+        return {
+            "status": "ERROR",
+            "message": f"Unexpected MCP response type/shape: {raw!r:.200}",
+            "violations": ["System Error"],
+        }
     except Exception as e:
         logger.error(f"Safety Simulation Failed: {e}")
         return {"status": "ERROR", "message": str(e), "violations": ["System Error"]}

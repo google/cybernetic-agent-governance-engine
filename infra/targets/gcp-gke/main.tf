@@ -376,6 +376,19 @@ module "vllm" {
   # Dynamic weight streaming if gs:// is provided
   vllm_load_format = can(regex("^gs://", var.model_fast)) ? "gcs_filesystem" : "auto"
 
+  # --enable-auto-tool-choice + --tool-call-parser hermes: this pool serves
+  # MODEL_FAST (Qwen2.5-7B-Instruct), which is bound via llm.bind_tools() in
+  # data_analyst_graph.py (Doer node) and governed_trader_graph.py (Executor
+  # node). Without these flags, vLLM rejects any request containing an
+  # OpenAI-style `tool_choice: "auto"` payload with HTTP 400
+  # ("\"auto\" tool choice requires --enable-auto-tool-choice and
+  # --tool-call-parser to be set"), which the FastAPI layer surfaces as a
+  # 500 to the caller — this crashed every DataAnalyst/GovernedTrader
+  # tool-calling request in the 2026-08-01 measurement run. "hermes" is the
+  # vLLM tool-call parser compatible with Qwen2.5-Instruct's tool-calling
+  # output format.
+  vllm_command = "python3 -m vllm.entrypoints.openai.api_server --model $MODEL_PATH --host 0.0.0.0 --port 8000 --enable-auto-tool-choice --tool-call-parser hermes"
+
   # GCS model streamer requires GOOGLE_CLOUD_PROJECT to authenticate with GCS.
   # Without it, runai_model_streamer_gcs raises OSError: Project was not passed.
   env_vars = {
@@ -602,6 +615,10 @@ module "governed_advisor" {
   # Workload Identity: annotate financial-advisor-sa KSA so it can impersonate
   # the GCP SA and access GCS without a key file (fixes vllm-reasoning 403 on GCS).
   gcp_service_account_name = "financial-advisor-sa"
+  # Cloud KMS asymmetric governance signing (CTRL_KMS_001). Empty value falls
+  # back to legacy HMAC-SHA256 via governance_salt above.
+  kms_governance_key       = var.kms_governance_key
+  cage_kms_provider        = var.cage_kms_provider
 
   depends_on = [module.gateway, module.langfuse, module.vllm, module.opa]
 }

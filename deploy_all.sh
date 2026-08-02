@@ -174,6 +174,19 @@ load_env() {
     _lf_host=$(_read_env_var LANGFUSE_HOST)
     [[ -n "$_lf_host" ]] && export TF_VAR_langfuse_host="$_lf_host"
 
+    # ── Cloud KMS governance signing (CTRL_KMS_001) ───────────────────────
+    # CAGE_KMS_PROVIDER is non-secret (gcp/aws/azure). KMS_GOVERNANCE_KEY is
+    # a resource name (not a private key), but is read via _read_env_var
+    # alongside the other secret-adjacent vars to keep a single propagation
+    # path. Empty means HMAC fallback (dev/CI only).
+    local _cage_kms_provider
+    _cage_kms_provider=$(_read_env_var CAGE_KMS_PROVIDER)
+    [[ -n "$_cage_kms_provider" ]] && export TF_VAR_cage_kms_provider="$_cage_kms_provider"
+
+    _secret_val=$(_read_env_var KMS_GOVERNANCE_KEY)
+    [[ -n "$_secret_val" ]] && export TF_VAR_kms_governance_key="$_secret_val"
+    unset _secret_val
+
     # ── Secrets — mapped directly to TF_VAR_* (never exported as bare vars) ─
     # These are read and immediately assigned to TF_VAR_* names.  The raw
     # secret values are never exported as standalone env vars, preventing them

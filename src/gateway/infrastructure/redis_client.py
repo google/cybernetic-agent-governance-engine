@@ -52,6 +52,7 @@ class TransactionAbortedError(Exception):
 
 
 try:
+    from urllib.parse import unquote as _unquote
     from urllib.parse import urlparse as _urlparse
 
     import redis
@@ -59,16 +60,32 @@ try:
 
     _REDIS_URL = os.environ.get("REDIS_URL", "")
     _REDIS_DB = int(os.environ.get("REDIS_DB", "0"))
-    _REDIS_PASSWORD: str | None = os.environ.get("REDIS_PASSWORD") or None
 
     # Parse defaults from REDIS_URL if present, then allow REDIS_HOST/REDIS_PORT overrides
     if _REDIS_URL:
         _parsed_url = _urlparse(_REDIS_URL)
         _url_host: str = _parsed_url.hostname or "localhost"
         _url_port: int = _parsed_url.port or 6379
+        # CRIT fix: REDIS_URL commonly carries the password as the URL
+        # password component (redis://:<password>@host:port), but this
+        # module previously only read a standalone REDIS_PASSWORD env var
+        # and silently dropped any password embedded in REDIS_URL. In
+        # deployments that only set REDIS_URL (not a separate
+        # REDIS_PASSWORD), this caused every Redis command from this
+        # client to be sent unauthenticated, surfacing as
+        # "NOAUTH Authentication required." at call time — e.g. in the
+        # CBF's read_verified_balance() path — even though a manual
+        # redis.from_url(REDIS_URL) connection (which parses the password
+        # correctly) succeeds.
+        _url_password: str | None = (
+            _unquote(_parsed_url.password) if _parsed_url.password else None
+        )
     else:
         _url_host = "localhost"
         _url_port = 6379
+        _url_password = None
+
+    _REDIS_PASSWORD: str | None = os.environ.get("REDIS_PASSWORD") or _url_password
 
     _REDIS_HOST = os.environ.get("REDIS_HOST", _url_host)
     _raw_port = os.environ.get("REDIS_PORT", "")

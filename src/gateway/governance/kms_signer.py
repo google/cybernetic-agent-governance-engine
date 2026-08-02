@@ -57,7 +57,8 @@ class BaseKMSProvider(abc.ABC):
 
     @abc.abstractmethod
     def sign_digest(self, digest: bytes) -> bytes:
-        """Sign a 32-byte SHA-256 digest returning signature bytes."""
+        """Sign a pre-hashed digest (width per ``digest_algorithm``) returning
+        signature bytes."""
         pass
 
     @abc.abstractmethod
@@ -71,6 +72,33 @@ class BaseKMSProvider(abc.ABC):
         """Returns provider name identifier for telemetry."""
         pass
 
+    @property
+    def digest_algorithm(self) -> str:
+        """hashlib algorithm name for the digest this provider expects.
+
+        Defaults to "sha256"; providers whose key requires a different
+        digest width (e.g. GCP RSA_SIGN_*_SHA512 keys) override this.
+        """
+        return "sha256"
+
+
+# CryptoKeyVersionAlgorithm names (as returned by CryptoKeyVersion.algorithm)
+# that use each hash width. Anything not listed here defaults to SHA-256,
+# preserving prior behaviour for EC_SIGN_P256_SHA256 and similar keys.
+_GCP_KMS_SHA384_ALGORITHMS = frozenset(
+    {
+        "RSA_SIGN_PKCS1_3072_SHA384",
+        "RSA_SIGN_PSS_3072_SHA384",
+        "EC_SIGN_P384_SHA384",
+    }
+)
+_GCP_KMS_SHA512_ALGORITHMS = frozenset(
+    {
+        "RSA_SIGN_PKCS1_4096_SHA512",
+        "RSA_SIGN_PSS_4096_SHA512",
+    }
+)
+
 
 class GCPKMSProvider(BaseKMSProvider):
     """Google Cloud KMS HSM provider."""
@@ -78,6 +106,7 @@ class GCPKMSProvider(BaseKMSProvider):
     def __init__(self, key_version_name: str, kms_client: object | None = None) -> None:
         self._key_version_name = key_version_name
         self._kms_client = kms_client
+        self._hash_width = "sha256"
         if not kms_client and key_version_name:
             try:
                 from google.cloud import kms  # type: ignore[import]
@@ -91,20 +120,63 @@ class GCPKMSProvider(BaseKMSProvider):
                 raise RuntimeError(
                     f"[GCPKMSProvider] KMS client init failed: {exc}"
                 ) from exc
+        self._detect_hash_width()
+
+    def _detect_hash_width(self) -> None:
+        """Determine the digest width required by this key's signing algorithm.
+
+        CryptoKeyVersionAlgorithm dictates the required digest length —
+        e.g. RSA_SIGN_PKCS1_4096_SHA512 requires a SHA-512 digest, not
+        SHA-256. Calling asymmetricSign with the wrong digest field
+        (previously hardcoded to sha256) fails with a 400 INVALID_ARGUMENT
+        ("The digest SHA256 is not valid for CryptoKeys with algorithm
+        RSA_SIGN_PKCS1_4096_SHA512"). Querying the version metadata once at
+        construction time and caching the required width avoids this class
+        of misconfiguration entirely, regardless of which key is provisioned.
+        """
+        if not self._kms_client or not self._key_version_name:
+            return
+        try:
+            version = self._kms_client.get_crypto_key_version(  # type: ignore[union-attr]
+                name=self._key_version_name
+            )
+            algorithm_name = version.algorithm.name
+            if algorithm_name in _GCP_KMS_SHA512_ALGORITHMS:
+                self._hash_width = "sha512"
+            elif algorithm_name in _GCP_KMS_SHA384_ALGORITHMS:
+                self._hash_width = "sha384"
+            else:
+                self._hash_width = "sha256"
+            logger.info(
+                "[GCPKMSProvider] Key algorithm=%s → digest width=%s",
+                algorithm_name,
+                self._hash_width,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[GCPKMSProvider] Could not determine key algorithm (defaulting "
+                "to sha256 digest width): %s",
+                exc,
+            )
 
     @property
     def provider_name(self) -> str:
         return "KMS_ASYMMETRIC"
+
+    @property
+    def digest_algorithm(self) -> str:
+        return self._hash_width
 
     def sign_digest(self, digest: bytes) -> bytes:
         from google.cloud.kms_v1.types import (
             service as kms_service,  # type: ignore[import]
         )
 
+        digest_kwargs = {self._hash_width: digest}
         response = self._kms_client.asymmetric_sign(  # type: ignore[union-attr]
             request=kms_service.AsymmetricSignRequest(
                 name=self._key_version_name,
-                digest=kms_service.Digest(sha256=digest),
+                digest=kms_service.Digest(**digest_kwargs),
             )
         )
         return response.signature
@@ -387,14 +459,20 @@ class KMSGovernanceSigner:
 
     def _kms_sign(self, plan_bytes: bytes) -> str:
         try:
-            digest = hashlib.sha256(plan_bytes).digest()
             if self._provider:
+                # Use the digest width the provider's key actually requires
+                # (e.g. sha512 for RSA_SIGN_PKCS1_4096_SHA512) rather than
+                # hardcoding sha256, which fails with a 400 INVALID_ARGUMENT
+                # against keys provisioned with a different algorithm.
+                hash_fn = getattr(hashlib, self._provider.digest_algorithm)
+                digest = hash_fn(plan_bytes).digest()
                 sig_bytes = self._provider.sign_digest(digest)
             elif self._kms_client:
                 from google.cloud.kms_v1.types import (
                     service as kms_service,  # type: ignore[import]
                 )
 
+                digest = hashlib.sha256(plan_bytes).digest()
                 response = self._kms_client.asymmetric_sign(  # type: ignore[union-attr]
                     request=kms_service.AsymmetricSignRequest(
                         name=self._key_version_name,
@@ -450,28 +528,38 @@ class KMSGovernanceSigner:
 
             public_key = serialization.load_pem_public_key(self._public_key_pem)
             signature_bytes = bytes.fromhex(signature_hex)
-            digest = hashlib.sha256(plan_bytes).digest()
+
+            # Use the same digest width the provider's key requires (e.g.
+            # sha512 for RSA_SIGN_PKCS1_4096_SHA512) — hardcoding SHA-256
+            # here previously caused verification to fail (silently, since
+            # this method returns False rather than raising) against any
+            # non-default key algorithm.
+            hash_alg_name = (
+                self._provider.digest_algorithm.upper() if self._provider else "SHA256"
+            )
+            hash_alg = getattr(hashes, hash_alg_name)()
+            digest = hashlib.new(hash_alg_name.lower(), plan_bytes).digest()
 
             # Pyrefly fix: narrow the type explicitly so each branch calls the
             # correct overload of verify() with the right number of arguments.
             # EC keys (ECDSA): 3-arg verify(signature, data, algorithm)
-            # RSA keys (PSS):  4-arg verify(signature, data, padding, algorithm)
+            # RSA keys: 4-arg verify(signature, data, padding, algorithm).
+            # GCP's RSA_SIGN_PKCS1_* algorithms use PKCS1v15 padding, not PSS
+            # — using PSS here (the prior hardcoded behaviour) would make
+            # every signature fail verification against a PKCS1 key.
             if isinstance(public_key, ec.EllipticCurvePublicKey):
                 public_key.verify(
                     signature_bytes,
                     digest,
-                    ec.ECDSA(asym_utils.Prehashed(hashes.SHA256())),
+                    ec.ECDSA(asym_utils.Prehashed(hash_alg)),
                 )
                 return True
             elif isinstance(public_key, rsa.RSAPublicKey):
                 public_key.verify(
                     signature_bytes,
                     digest,
-                    padding.PSS(
-                        mgf=padding.MGF1(hashes.SHA256()),
-                        salt_length=padding.PSS.MAX_LENGTH,
-                    ),
-                    asym_utils.Prehashed(hashes.SHA256()),
+                    padding.PKCS1v15(),
+                    asym_utils.Prehashed(hash_alg),
                 )
                 return True
             else:

@@ -67,11 +67,11 @@ response to the reviewer is grounded in code rather than in the analysis:
 | S3 | §6.5 arithmetic uses undisclosed γ and `min_cash_balance` | 4 | **FIXED** | §6.5 explicit parameter disclosure added (γ=0.5, min_cash=1000) |
 | S4 | STPA compiler mechanism undefined | 4 | **FIXED** | §4.5 compiler mechanism paragraph added (template-based, Pydantic, generate_opa/nemo/python/langgraph) |
 | S5 | Tier 2 confidence derivation unspecified | 4 | **FIXED** | §4.2 Tier 2 description updated (payload field, SLM deprecated, OPA threshold 0.97) |
-| S6 | Tier 5 critic pool and aggregation logic unspecified | 4 | OPEN | `consensus.py` — heterogeneous registry, 10 s timeout, degraded-quorum lattice |
-| S7 | Tier 6 causal graph, treatment/outcome, thresholds unspecified | 4 | OPEN | `causal_gatekeeper.py` — `market_volatility → trade_amount → risk_score`, placebo refuter n=50 |
-| S8 | §6.4 confounded read-path baseline (`pipeline()` vs `get()`) | 4 | OPEN | §6.4 already concedes this; needs framing as a limitation |
+| S6 | Tier 5 critic pool and aggregation logic unspecified | 4 | **FIXED** | §4.2 Tier 5 paragraph rewritten with `ConsensusModelRegistry`, per-persona model routing, 10 s timeout, and full aggregation lattice (unanimous/degraded-quorum/split/ERROR handling), sourced from `consensus.py` |
+| S7 | Tier 6 causal graph, treatment/outcome, thresholds unspecified | 4 | **FIXED** | §4.2 Tier 6 paragraph rewritten with the fixed causal graph, treatment/outcome variables, `PlaceboTreatmentRefuter` (n=50, p<0.05, effect>0.2), and the marginal-risk boundary formula, sourced from `causal_gatekeeper.py` |
+| S8 | §6.4 confounded read-path baseline (`pipeline()` vs `get()`) | 4 | **FIXED** | §6.4 now has an explicit "Limitation — confounded baseline" paragraph naming the confound and proposing an architecturally-equivalent re-measurement as future work |
 | S9 | Amortised background latency compared to a synchronous SLA | 4 | **FIXED** | §6.3 reframed as background amortisation note, not synchronous SLA comparison |
-| S10 | Plaid fetch proxy underestimates true fetch cost | 4 | OPEN | §6.3 methodology note |
+| S10 | Plaid fetch proxy underestimates true fetch cost | 4 | **FIXED** | §6.3 now has an explicit "Limitation — Plaid fetch likely underestimated" paragraph stating the 62.0 ms P50 is a lower bound, with a sandbox/mock-provider re-measurement tracked as future work |
 
 ## Structural / editorial findings (ST1–ST19)
 
@@ -85,17 +85,17 @@ response to the reviewer is grounded in code rather than in the analysis:
 | ST6 | "Tier-1 keyword scan" overloads the Tier 1 label | 4 | **FIXED** | §4.2 HTTP-layer paragraph: "Tier-1 keyword scan" → "HTTP-layer keyword scan" |
 | ST7 | §4.7 "silently removes Tier 6" contradicts a startup `RuntimeError` | 4 | **FIXED** | §4.7 corrected: "silently removes" → "raises a RuntimeError at import time" |
 | ST8 | Duplicate paragraphs (§3.4 AgenTRIM, §4.7 Routing Seal) | 5 | **FIXED** | Both duplicate paragraphs removed in 41f1d6c |
-| ST9 | Four unresolved `[CITE]` placeholders in §3.2/§3.3 | 5 | OPEN | Lines 83, 87 — need CBF/STPA prior-work citations |
+| ST9 | Four unresolved `[CITE]` placeholders in §3.2/§3.3 | 5 | **FIXED** | §3.2 CBF citations → [37] (Ames et al. 2019 ECC), [38] (Ames et al. 2017 TAC); §3.3 STPA citations → [39] (Abdulkhaleq & Wagner, automotive), [40] (Antoine, medical devices); all four added to References |
 | ST10 | LaTeX escape artifacts in §5.5 and §6.4 | 5 | OPEN | §5.5 formula rewritten (C5 fix); §6.4 artifacts remain |
-| ST11 | Mixed numeric and author-year citation schemas | 5 | OPEN | Throughout |
-| ST12 | Uncited references `[7] [8] [9] [28] [31]` | 5 | OPEN | References section |
-| ST13 | `[31]`/`[35]` list system names as authors | 5 | OPEN | References |
+| ST11 | Mixed numeric and author-year citation schemas | 5 | **FIXED** | §2.1/§2.2/§4.7 author-year citations (`[Ashby, 1956]`, `[Conant & Ashby, 1970]`, `[Beer, 1972; Beer, 1979]`, `[Pappu et al., 2026; Bhushan et al., 2025]`) converted to the dominant numeric bracket style (`[25]`, `[34]`, `[26, 27]`, `[17, 15]`) |
+| ST12 | Uncited references `[7] [8] [9] [28] [31]` | 5 | **FIXED** | All five now cited in body text — integrated into the new §3.4 related-work positioning paragraph (ST19 fix) |
+| ST13 | `[31]`/`[35]` list system names as authors | 5 | **FIXED (partial)** | Both entries reworded to remove the system name from the author position; genuine author names could not be independently verified in this pass, so each entry carries an explicit "to be verified before camera-ready" note rather than fabricated names |
 | ST14 | `[6]` contains an editorial note to the authors | 5 | **FIXED** | [6] editorial note replaced with proper citation note in 41f1d6c |
-| ST15 | Inconsistent title quoting in bibliography | 5 | OPEN | `[1]`–`[4]` vs `[7]`+ |
-| ST16 | Inconsistent `et al.` usage (`[13]`, `[36]`) | 5 | OPEN | References |
+| ST15 | Inconsistent title quoting in bibliography | 5 | **FIXED** | References [1]–[6] converted from quoted-title style to the unquoted style used by [7]+, for a single consistent format throughout |
+| ST16 | Inconsistent `et al.` usage (`[13]`, `[36]`) | 5 | **FIXED (partial)** | Comma-normalized to `, et al.` in both entries; full author lists could not be independently verified in this pass, so each entry carries an explicit "to be verified" note |
 | ST17 | §7.1 says "three dimensions", lists four | 4 | **FIXED** | §7.1 "three" → "four" dimensions in 41f1d6c |
 | ST18 | §7.2 contains non-scientific items (ReDoS resolved; arXiv endorsement) | 4 | **FIXED** | arXiv endorsement bullet removed; ReDoS reframed as resolved hardening item |
-| ST19 | Related-work positioning against seven reviewer-named papers absent | 5 | OPEN | §3.4 — [7] and [31] already in bibliography; need positioning text |
+| ST19 | Related-work positioning against seven reviewer-named papers absent | 5 | **FIXED** | §3.4 extended with a positioning paragraph covering all seven reviewer-named papers ([41] STPA-for-frontier-AI, [7] verifiably-safe-tool-use, [42] Pro2Guard, [43] AgentROA, [44] CBF-under-sensor-attacks, [8] Prose2Policy, [9] MCP runtime enforcement, [28] excessive agency, [31] AgentGuard); [41]-[44] added to References with a verification note pending exact bibliographic confirmation |
 
 ---
 
@@ -139,3 +139,23 @@ The VSM System 4 correction (ST4) must also be applied to
 - [x] `docs/technical-report/10-FORMAL-VERIFICATION.md` — status header, Step 7 scope note, tier table, proof output, Gap sub-proof table (Gap 1 row added), Overall Summary row 7, VSM System 4 claim
 - [x] `docs/architecture/ARCHITECTURE.md` — footer state count
 - [x] `CAGE_ARXIV.MD` — abstract, §4.4, Appendix A (completed in 41f1d6c)
+
+---
+
+## Verification pass (2026-08-01) — defects found in already-"FIXED" work
+
+A subsequent audit of the tracker's claimed-FIXED items against actual file contents (not just
+the tracker's own self-reported status) found the following, on branch
+`fix/proof-model-fria-tier`:
+
+| # | Defect | Fix |
+|---|---|---|
+| V1 | `CAGE_ARXIV.MD` §4.4 (line ~178) claimed the Gap 1 `ungated_transitions()` negative control has "17 reachable states" — inconsistent with `proof/model.py`, `tests/test_no_direct_bind_proof.py` (`EXPECTED_UNGATED_STATES = 19`), this tracker (line 111), `MEASUREMENT_RUNBOOK.md`, and the paper's own Appendix A (line 578), all of which say 19. | Corrected the §4.4 prose to 19; grepped the full document for any other stale "17 states" occurrences (none found). |
+| V2 | `tests/test_no_direct_bind_proof.py` (18 pytest tests pinning the published state counts) carried no `@pytest.mark.local` marker, so `pytest tests/ -m local` (the invocation used by the `pytest-logic` CI job) silently excluded it. Only the bare `python proof/model.py` script assertions ran in CI — the regression tests pinning 21/24/19/20 were never exercised by CI at all. | Added `pytestmark = pytest.mark.local` to the test module; verified 18/18 pass under `pytest -m local`. Also added an explicit `pytest tests/test_no_direct_bind_proof.py -m local -v` step to the `no-direct-bind-proof` CI job in `.github/workflows/ci.yml` as defense-in-depth. |
+| V3 | `scripts/measure_paper_metrics.py`'s `measure_adversarial_deflection()` classified network-level failures (`status == 0`, e.g. a `kubectl port-forward` tunnel drop or vLLM cold-start timeout) as `"DEFLECTED"` and folded them into both the numerator and denominator of the reported deflection rate. Under an unstable network path this silently inflates the deflection percentage with connectivity failures rather than genuine governance denials — a data-validity defect discovered while attempting to re-run Step B2 live against the GKE cluster (`governance-cluster-2`) for this session. Two consecutive live runs produced `errors == total` (100% of "deflections" were actually timeouts) before the pod/tunnel health was diagnosed and the code fixed. | `measure_adversarial_deflection()` rewritten to exclude network errors from both the numerator and denominator (matching the methodology `measure_benign_fpr()` already used), report `evaluated = total - errors` explicitly in the JSON output, and print an explicit warning if `errors` is non-trivial relative to `total`, directing the operator to Gate E7 in `MEASUREMENT_RUNBOOK.md`. |
+| V4 | The live re-measurement attempt against the GKE backend (`governance-cluster-2`) this session failed **Gate E7** (skipped components must be disclosed) because a large fraction of both the deflection (10/21) and benign-FPR (14/20) requests failed at the network level (unstable `kubectl port-forward` tunnel, ~15-minute connection lifetime observed via `/tmp/cage-pf/backend.log`). Per the runbook's own rule, a run that fails a gate must be re-run, not promoted. | Documented in `docs/paper/measurements/2026-08-01-67e17bf/PROVENANCE.md`; **no change was made to CAGE_ARXIV.MD §6.6's deflection/FPR figures** as a result — the previously published 21/21 (100%) deflection figure and "no benign baseline" framing remain the last validated state. Re-running Step B2 from a more stable network path (e.g. a GCE VM in-region, or a Cloud Build step) is tracked as follow-up, now that the V3 fix makes the resulting percentages trustworthy once a clean run is achieved. |
+| V5 | `scripts/archive_paper_evidence.sh` uses `declare -A` (associative arrays), which fails on macOS's default `/bin/bash` (3.2, no associative-array support) with `declare: -A: invalid option`. | Worked around manually for this session (files copied and hashed via `shasum -a 256` directly); the script itself should be updated to avoid `declare -A` or require bash ≥4 via an explicit version check — tracked as follow-up, not fixed in this pass. |
+
+All five of V1–V3 are code/doc fixes committed in this pass. V4 is a measurement-process outcome
+(no promotable numbers, but the attempt and root cause are now documented per the runbook's
+auditability requirement). V5 is a known script portability bug, deferred.

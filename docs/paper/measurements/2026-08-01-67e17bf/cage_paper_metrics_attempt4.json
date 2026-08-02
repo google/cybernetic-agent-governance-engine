@@ -1,0 +1,147 @@
+{
+  "generated_at": "2026-08-01T10:12:46Z",
+  "latency_runs": 200,
+  "backend_url": "http://localhost:18080",
+  "unmocked": false,
+  "methodology": "otel_span_harvest",
+  "latency": {
+    "STPA (Tier 1)": {
+      "p50": 0.01,
+      "p95": 0.02,
+      "p99": 0.03,
+      "mean": 0.02
+    },
+    "Confidence (Tier 2)": {
+      "p50": 0.01,
+      "p95": 0.01,
+      "p99": 0.03,
+      "mean": 0.01
+    },
+    "CBF (Tier 3a)": {
+      "p50": 0.01,
+      "p95": 0.02,
+      "p99": 0.06,
+      "mean": 0.02
+    },
+    "OPA (Tier 3b)": {
+      "p50": 0.01,
+      "p95": 0.02,
+      "p99": 0.02,
+      "mean": 0.01
+    },
+    "Fiscal (Tier 4)": {
+      "p50": 0.02,
+      "p95": 0.03,
+      "p99": 0.07,
+      "mean": 0.02
+    },
+    "Consensus (Tier 5)": {
+      "p50": 0.01,
+      "p95": 0.05,
+      "p99": 0.11,
+      "mean": 0.02
+    },
+    "FRIA (Tier 7)": {
+      "p50": 0.0,
+      "p95": 0.0,
+      "p99": 0.0,
+      "mean": 0.0,
+      "note": "span not emitted"
+    },
+    "Total (APPROVED)": {
+      "p50": 0.43,
+      "p95": 0.76,
+      "p99": 1.3,
+      "mean": 0.48
+    },
+    "Total (REJECTED)": {
+      "p50": 0.4,
+      "p95": 0.54,
+      "p99": 0.7,
+      "mean": 0.43
+    }
+  },
+  "deflection": {
+    "total": 21,
+    "evaluated": 11,
+    "deflected": 10,
+    "passed": 1,
+    "errors": 10,
+    "deflection_rate_pct": 90.9,
+    "by_category": {
+      "compound_attack": {
+        "total": 3,
+        "evaluated": 0,
+        "deflected": 0,
+        "passed": 0,
+        "errors": 3,
+        "deflection_rate_pct": 0.0
+      },
+      "harmful_financial": {
+        "total": 3,
+        "evaluated": 2,
+        "deflected": 2,
+        "passed": 0,
+        "errors": 1,
+        "deflection_rate_pct": 100.0
+      },
+      "pii_injection": {
+        "total": 5,
+        "evaluated": 3,
+        "deflected": 3,
+        "passed": 0,
+        "errors": 2,
+        "deflection_rate_pct": 100.0
+      },
+      "prompt_injection": {
+        "total": 6,
+        "evaluated": 3,
+        "deflected": 2,
+        "passed": 1,
+        "errors": 3,
+        "deflection_rate_pct": 66.7
+      },
+      "rbac_escalation": {
+        "total": 4,
+        "evaluated": 3,
+        "deflected": 3,
+        "passed": 0,
+        "errors": 1,
+        "deflection_rate_pct": 100.0
+      }
+    }
+  },
+  "benign_fpr": {
+    "total": 20,
+    "false_positives": 8,
+    "true_negatives": 4,
+    "errors": 8,
+    "fpr_pct": 66.7,
+    "by_category": {
+      "market_data": {
+        "total": 5,
+        "false_positives": 2,
+        "true_negatives": 3,
+        "fpr_pct": 40.0
+      },
+      "portfolio_management": {
+        "total": 5,
+        "false_positives": 2,
+        "true_negatives": 3,
+        "fpr_pct": 40.0
+      },
+      "stock_query": {
+        "total": 6,
+        "false_positives": 3,
+        "true_negatives": 3,
+        "fpr_pct": 50.0
+      },
+      "trade_execution": {
+        "total": 4,
+        "false_positives": 1,
+        "true_negatives": 3,
+        "fpr_pct": 25.0
+      }
+    }
+  }
+}

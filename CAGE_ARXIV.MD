@@ -36,11 +36,11 @@ A fundamental challenge in agentic AI governance is controlling a system whose o
 
 ### 2.1 Ashby's Law of Requisite Variety
 
-Ashby's Law states that "only variety can destroy variety" \[Ashby, 1956\]. If an LLM-based agent possesses an enormous variety of potentially unsafe emergent behaviors, the governance engine must match this variety with a sufficiently rich, deterministic set of control states. CAGE accomplishes this by mapping fine-grained safety boundaries to a multi-tiered, deterministic policy enforcement runtime. By translating specific, complex hazard scenarios into modular, machine-readable rules, CAGE provides a matching regulatory variety that guarantees deterministic safety bounds regardless of the LLM's non-deterministic reasoning steps.
+Ashby's Law states that "only variety can destroy variety" \[25\]. If an LLM-based agent possesses an enormous variety of potentially unsafe emergent behaviors, the governance engine must match this variety with a sufficiently rich, deterministic set of control states. CAGE accomplishes this by mapping fine-grained safety boundaries to a multi-tiered, deterministic policy enforcement runtime. By translating specific, complex hazard scenarios into modular, machine-readable rules, CAGE provides a matching regulatory variety that guarantees deterministic safety bounds regardless of the LLM's non-deterministic reasoning steps.
 
 ### 2.2 Stafford Beer's Viable System Model (VSM)
 
-CAGE conceptualizes the agentic ecosystem through Stafford Beer's Viable System Model (VSM) \[Beer, 1972; Beer, 1979\] to ensure systemic viability and compliance:
+CAGE conceptualizes the agentic ecosystem through Stafford Beer's Viable System Model (VSM) \[26, 27\] to ensure systemic viability and compliance:
 
 - **System 1 (Operation)**: Represented by the reasoning plane (the "Plant"), which executes the primary tasks and proposes tool actions.  
 - **System 2 (Coordination)**: Managed by the outer gateway layer, preventing oscillatory behaviors, repetitive actions, and conflicting commands across multi-agent workflows.  
@@ -50,7 +50,7 @@ CAGE conceptualizes the agentic ecosystem through Stafford Beer's Viable System 
 
 ### 2.3 The Controller-Plant Separation
 
-CAGE maintains a strict physical and logical separation between the agent reasoning plane (the "Plant") and the hybrid neuro-symbolic governance plane (the "Controller" or SymbolicGovernor). This design pattern is mathematically grounded in the Good Regulator Theorem \[Conant & Ashby, 1970\], which dictates that any optimal controller must contain a structural model of the system being controlled.
+CAGE maintains a strict physical and logical separation between the agent reasoning plane (the "Plant") and the hybrid neuro-symbolic governance plane (the "Controller" or SymbolicGovernor). This design pattern is mathematically grounded in the Good Regulator Theorem \[34\], which dictates that any optimal controller must contain a structural model of the system being controlled.
 
 Rather than embedding safety guardrails inside the agent's prompt — which are easily bypassed via jailbreaks or prompt injections — the Controller acts as an external, untrusted gateway. When the Plant proposes a tool invocation, it cannot execute it directly. Instead, it must send a structured payload to the Controller. The Controller evaluates the request against compiled policies and only returns the necessary credentials or permits execution upon successful verification.
 
@@ -80,11 +80,11 @@ Discrete-time CBFs \[2\] provide a formal mechanism for enforcing safety constra
 
 h(S(t+1)) ≥ (1 − γ) · h(S(t))   for all t, γ ∈ (0, 1\)
 
-This ensures the system remains in the safe set `{s : h(s) ≥ 0}` for all future time steps. Prior work applies CBFs to robotic systems \[CITE\] and autonomous vehicles \[CITE\]; we apply them to financial agent governance.
+This ensures the system remains in the safe set `{s : h(s) ≥ 0}` for all future time steps. Prior work applies CBFs to robotic systems \[37\] and autonomous vehicles \[38\]; we apply them to financial agent governance.
 
 ### 3.3 STPA for AI Systems
 
-System-Theoretic Process Analysis \[3\] identifies Unsafe Control Actions (UCAs) — control actions that are unsafe given the system context. Prior work applies STPA to autonomous vehicles \[CITE\] and medical devices \[CITE\]. Mylius \[10\] confirms that STPA dramatically improves traceability, exposes complex causal factors missed by unstructured hazard analysis, and adapts naturally to AI systems with minimal domain-specific tailoring. We apply STPA to AI agent governance and introduce a compiler that translates UCAs into executable enforcement policies, guided by the Process-oriented Hazard Analysis for AI Systems (PHASE) methodology \[19\].
+System-Theoretic Process Analysis \[3\] identifies Unsafe Control Actions (UCAs) — control actions that are unsafe given the system context. Prior work applies STPA to autonomous vehicles \[39\] and medical devices \[40\]. Mylius \[10\] confirms that STPA dramatically improves traceability, exposes complex causal factors missed by unstructured hazard analysis, and adapts naturally to AI systems with minimal domain-specific tailoring. We apply STPA to AI agent governance and introduce a compiler that translates UCAs into executable enforcement policies, guided by the Process-oriented Hazard Analysis for AI Systems (PHASE) methodology \[19\].
 
 ### 3.4 Related Work and Positioning
 
@@ -101,6 +101,8 @@ The CAGE framework operates at the intersection of neuro-symbolic AI oversight, 
 **Multi-agent governance architectures** \[13\] and **neurosymbolic runtime verification frameworks** \[20\] further validate the need for deterministic enforcement layers. Zero-trust identity frameworks for agentic AI \[14, 15, 16, 17, 18\] confirm that boundary-based perimeter controls are inadequate for multi-service and multi-agent systems, motivating CAGE's identity-centric posture.
 
 **AARM-V3** \[23, 24\] catalogues the Confused Deputy attack class that CAGE's routing seal and zero-trust controls directly neutralize.
+
+**STPA for frontier AI systems** \[41\] extends STPA-based hazard analysis to general-purpose frontier models, corroborating our application of the same methodology to agentic financial governance in §3.3 and §4.5, though that work stops at hazard identification rather than compiling UCAs directly into executable enforcement artifacts. **Verifiably safe tool use** \[7\] similarly targets pre-execution safety verification for LLM agent tool calls; CAGE's FTRA reachability gate (Tier 0.5) addresses an analogous class of problem — verifying an entire proposed trajectory before execution — but does so via graph reachability over a compiled `ExecutionPlan` rather than per-call formal verification of tool arguments. **Proactive probabilistic enforcement** \[42\] shares FTRA's pre-execution orientation, using probabilistic model checking to estimate the likelihood of unsafe trajectories before they are taken; FTRA instead makes a deterministic CLEAR/HITL_REQUIRED/BLOCKED classification based on reachability of an irreversible terminal step, trading probabilistic nuance for the fail-closed determinism required by CAGE's regulatory posture. **Cryptographic route-origin authorization for agent actions** \[43\] independently motivates the same class of mechanism as CAGE's HMAC routing seal (§4.7) — binding a governance decision cryptographically to the specific action it authorizes to prevent a Confused Deputy substitution — though CAGE's seal is a short-TTL symmetric token scoped to a single synchronous request rather than a persistent route-authorization credential. **Control barrier functions under sensor attacks** \[44\] formalizes exactly the state-spoofing threat that motivates CAGE's external reconciliation daemon (§4.3, §5.4): an adversary that can manipulate the CBF's input state can render the barrier certificate vacuous regardless of the correctness of the barrier function itself, which is the precise vulnerability (POAM-023) the reconciliation mechanism is designed to close. **Access-control policy generation from natural language** \[8\] and **runtime policy enforcement for MCP-based agents** \[9\] both target machine-generated enforcement policy, paralleling CAGE's STPA compiler (§4.5) — Prose2Policy \[8\] generates Rego from natural-language access policies via an LLM pipeline, whereas CAGE's compiler is a deterministic, template-based generator with no LLM in the translation path, trading Prose2Policy's input flexibility for a translation process that cannot itself introduce non-deterministic drift. **Excessive agency risk** \[28\] and **attribute-based access control for tool-use agents** \[31\] frame the general class of unauthorized tool-invocation risk that CAGE's OPA Rego authorization layer (Tier 3b) and Agent Registry manifest (§4.5) are designed to constrain at the individual tool-call level.
 
 ---
 
@@ -134,9 +136,9 @@ The governor evaluates every agent action through eight tiers in sequence (Tiers
 
 **Tier 4 — FiscalLimitGuard**: Enforces daily spending caps with atomic WATCH/MULTI/EXEC Redis transactions, preventing TOCTOU races under concurrent agent execution.
 
-**Tier 5 — Consensus**: For high-value actions (above configurable threshold), requires agreement from multiple independent critic models.
+**Tier 5 — Consensus**: For actions above `THRESHOLDS.consensus.threshold_usd`, two critic personas ("Risk Manager" and "Compliance Officer") are consulted in parallel via `asyncio.gather()`, each routed by the `ConsensusModelRegistry` to a distinct model backend (by default, the existing split-brain infrastructure: Risk Manager → the reasoning vLLM pool running DeepSeek-R1; Compliance Officer → the fast vLLM pool running Llama 3.1) so that consensus reflects genuine algorithmic diversity rather than one model voting with itself under different prompts. Each critic returns `APPROVE`, `REJECT`, `ESCALATE`, or (on a 10 s timeout or exception) `ERROR`. Aggregation is not simple majority: unanimous `APPROVE` passes the gate; unanimous `REJECT` with no `ERROR` votes blocks the trade; any split between `APPROVE` and `REJECT`, any `ESCALATE` vote, or a "degraded quorum" (one critic `ERROR`, the remaining critic `REJECT`) routes to human review via `ESCALATE` rather than resolving automatically; and a unanimous `ERROR` (e.g. both backends unreachable) also escalates rather than fail-open-approving, so a denial-of-service against both critic backends cannot bypass the gate. All results — including the raw per-critic votes — are pushed to a non-blocking background queue for post-hoc audit logging.
 
-**Tier 6 — DoWhy Causal Gatekeeper**: Simulates the causal effect of the action using a structural causal model. Actions with high marginal risk are blocked.
+**Tier 6 — DoWhy Causal Gatekeeper**: Constructs a fixed structural causal graph — `market_volatility → trade_amount`, `market_volatility → risk_score`, `trade_amount → risk_score`, with `trade_amount` as the DoWhy treatment variable and `risk_score` as the outcome — and estimates the treatment effect via `backdoor.linear_regression`. The estimate is validated against live Langfuse telemetry (fail-closed if older than `TELEMETRY_MAX_STALENESS_SECONDS`, default 300 s) using a `PlaceboTreatmentRefuter` with 50 simulations; the gate locks (blocks the trade) if the refuter's p-value falls below 0.05 or its placebo effect magnitude exceeds 0.2, indicating the world-model's causal assumptions cannot be trusted. If both checks pass, the gate additionally blocks when the predicted marginal risk `(0.5 + estimate.value × amount)` exceeds a `CAUSAL_LOCK_RISK_BOUNDARY` of 0.95 — the same quantity reported as "high marginal risk" above. Results are cached in Redis for `CAUSAL_CACHE_TTL_SECONDS` (default 60 s), keyed on `(action_type, market_regime)`.
 
 **Tier 7 — FRIA**: Financial Risk Impact Assessment. Classifies the action into risk zones and applies zone-specific controls.
 
@@ -175,7 +177,7 @@ A module-level `_IS_PRODUCTION` constant in `cbf.py` (patchable in tests) gates 
 
 **Parallelism note:** The formal model treats tier evaluation as sequential for the purpose of the NoDirectBind invariant — the invariant concerns reachability of the `EXECUTED` state, not the order in which tiers evaluate. In the runtime implementation, Tier 3 (CBF + OPA) evaluates concurrently via `asyncio.gather()` (`symbolic_governor.py:324`); the invariant holds because both results are collected before any transition to `SEAL_ISSUED` is permitted. `proof/model.py`'s `concurrent_tier_transitions()` sub-proof explores both CBF/OPA interleavings (24 reachable states, a strict superset of the 21-state sequential model) and confirms the invariant holds under every ordering.
 
-The proof is machine-verified: `proof/model.py` implements the BFS enumerator and asserts the invariant over all reachable states (run `python proof/model.py` to reproduce; see Appendix A for the additional sub-proofs it checks). The proof runs in O(|S|) time where |S| = 21\. As a negative control, `proof/model.py` also defines `ungated_transitions()`, an intentionally unsafe variant that transitions directly from `CHECKING` to `EXECUTED` once all tiers pass, without requiring a seal. This variant has 17 reachable states and produces an explicit counterexample — `(phase=EXECUTED, resolvedAllow=FALSE, seal_present=FALSE)` — confirming the seal-issuance gate in the real transition function is load-bearing rather than a vacuous check.
+The proof is machine-verified: `proof/model.py` implements the BFS enumerator and asserts the invariant over all reachable states (run `python proof/model.py` to reproduce; see Appendix A for the additional sub-proofs it checks). The proof runs in O(|S|) time where |S| = 21\. As a negative control, `proof/model.py` also defines `ungated_transitions()`, an intentionally unsafe variant that transitions directly from `CHECKING` to `EXECUTED` once all tiers pass, without requiring a seal. This variant has 19 reachable states and produces an explicit counterexample — `(phase=EXECUTED, resolvedAllow=FALSE, seal_present=FALSE)` — confirming the seal-issuance gate in the real transition function is load-bearing rather than a vacuous check.
 
 ### 4.5 STPA Compiler
 
@@ -213,7 +215,7 @@ A critical vulnerability in distributed multi-agent systems is the "direct-bind 
 
 **Cluster-Level Mesh Microsegmentation (design; not automated in the current deployment pipeline)**: CAGE treats the underlying network as hostile, and provides committed Kubernetes manifests for workload identity and mutual TLS (mTLS) via Linkerd \[33\] (`deployment/k8s/linkerd-mtls-policy.yaml`) and Layer-7 FQDN egress lockdown via Cilium (`deployment/k8s/cilium-egress-lockdown.yaml`). When the Linkerd control plane and Cilium CNI are installed on the target cluster, Linkerd automatically intercepts TCP traffic and performs bidirectional validation using SPIFFE-verifiable identity documents (SVIDs) \[11\] mapped to Kubernetes ServiceAccounts, matching the standard format `spiffe://cluster.local/ns/<namespace>/sa/<service-account>`. **Neither installation step is currently automated**: `deploy_all.sh` and the Terraform modules under `infra/` provision a standard GKE cluster with the native `network_policy { enabled = true }` block (GKE's built-in L3/L4 NetworkPolicy provider, not Cilium), and contain no `linkerd install` or `cilium install` step. The manifests therefore express a validated *design* for mesh microsegmentation and L7 egress control, not a control that is active by default on a freshly provisioned cluster; an operator must run the documented prerequisite commands (`linkerd install | kubectl apply -f -`; `cilium install --set l7Proxy=true`) out-of-band before applying `linkerd-mtls-policy.yaml` and `cilium-egress-lockdown.yaml`. Automating this installation step is tracked in §7.3.
 
-**Continuous Verification**: Unlike static access controls that verify credentials once at session initiation, CAGE performs continuous, intent-aware verification \[Pappu et al., 2026; Bhushan et al., 2025\]. This is essential for agentic environments because agents can dynamically spawn subagents and change execution intents at runtime, necessitating constant re-evaluation of security postures.  
+**Continuous Verification**: Unlike static access controls that verify credentials once at session initiation, CAGE performs continuous, intent-aware verification \[17, 15\]. This is essential for agentic environments because agents can dynamically spawn subagents and change execution intents at runtime, necessitating constant re-evaluation of security postures.
 **Runtime Routing Seal**: Once all checks inside `_run_checks()` return zero violations, `routing_seal.py` generates an ephemeral symmetric routing token formatted as `<expire_ts_hex>.<action_slug>.<hmac_hex>` using HMAC-SHA256 keyed by a high-entropy `GOVERNANCE_SALT`. The seal lifetime is 30 seconds (configurable via `GOVERNANCE_SEAL_TTL_S`). The `require_cleared_seal` decorator provides strict enforcement: it calls `verify_seal()` and raises a `SymbolicGovernorViolation` before the wrapped callable is invoked, making it impossible for callers to silently ignore a failed verification. This design directly eliminates the Confused Deputy class of attacks catalogued in AARM-V3 \[23, 24\].
 
 **Asymmetric Plan Attestation**: To prevent tampering with static policy manifests deployed across federated clusters, CAGE implements asymmetric signature validation inside `kms_signer.py`. Manifests are cryptographically signed and validated using Key Management Services across three cloud providers: GCP Cloud KMS, AWS KMS (ECDSA\_SHA\_256), and Azure Key Vault (ES256). For GCP, the governor performs verification against the configured public key using EC-DSA (SHA-256 prehashed) with RSA-PSS as a fallback, supporting both key families transparently.
@@ -361,6 +363,8 @@ T\_reconcile \= t\_plaid\_fetch \+ t\_kms\_sign \+ t\_redis\_write
 
 *Note: the KMS P99 outlier (\~9.6 s) reflects an infrequent gRPC channel re-initialization observed in a subset of runs against the live Cloud KMS endpoint from a non-GCP-hosted client; P50/P95 (108/245 ms) are representative of steady-state signing cost once the channel is warm. Production deployments running the reconciliation daemon in-cluster (GKE, same region as the KMS key ring) are expected to see materially lower and less variable latency than this out-of-cluster measurement, because the daemon holds a long-lived gRPC channel across its 60 s polling loop rather than re-establishing one per invocation. This numerical revision supersedes an earlier draft's placeholder Plaid-fetch/KMS-sign figures, which were not backed by a corresponding measurement script.*
 
+**Limitation — Plaid fetch likely underestimated.** Because the `network_rtt_proxy` methodology uses intentionally invalid credentials, Plaid's server returns a fast `INVALID_FIELD` error immediately after the TLS handshake and request-parsing stage, without performing the downstream application-layer processing, ledger-database query, or full JSON response-body construction that a genuine, successfully authenticated `/accounts/balance/get` call would incur. The 62.0 ms P50 reported above should therefore be read as a lower bound on true Plaid fetch latency, not a representative estimate of it — the real figure, once production Plaid credentials are available, is expected to be higher. Re-measuring against a Plaid sandbox environment or a mock provider that fully replays a successful response's processing path is tracked as future work (§7.3).
+
 **Background amortisation note:** The reconciliation daemon operates on a decoupled 60-second polling loop; its execution duration dictates data freshness but does not sequentially block the synchronous gateway pipeline. The calculation `T_reconcile / (poll_interval_s × request_rate_hz)` = 172 ms / (60 s × 10 req/s) ≈ 0.29 ms/request expresses the *background* write-path cost amortised across requests — it is not a per-request synchronous overhead and should not be compared directly to the 200 ms synchronous governance SLA. The practical conclusion is that the reconciliation daemon background polling cost is negligible relative to the request rate, not that each request incurs 0.29 ms of reconciliation overhead.
 
 ### 6.4 CBF Read-Path Overhead
@@ -388,6 +392,8 @@ KMS signature verification is a local ECDSA-P256 verify operation using the cach
 | **Δt overhead** | **\-0.159** | **\-0.315** |
 
 Contrary to the naive expectation that the reconciled path is strictly more expensive (it performs a Redis GET *plus* a local KMS-signature verify, versus a single Redis GET for the self-reported path), the measured reconciled-path latency is **lower**, not higher. We attribute this to two effects: (1) the self-reported path additionally executes a fallback code branch (`redis_client.get_raw_client().pipeline(...)`) that is heavier than the direct `redis_client.get()` used inside `read_verified_balance()`, and (2) local ECDSA-P256 verification against a cached PEM is sub-0.1 ms and is dwarfed by measurement noise at this scale. In either case, the practical conclusion holds: **KMS-backed provenance verification does not introduce a materially higher read-path cost than the self-reported baseline** — the reconciled path is not measurably slower, and by this measurement is in fact marginally faster. This revises an earlier draft's placeholder "+0.02 ms" claim, which was not backed by a corresponding measurement.
+
+**Limitation — confounded baseline.** The two code paths compared above are not architecturally equivalent: the self-reported path's `pipeline(...)` fallback branch and the reconciled path's direct `get()` call differ in more than the presence or absence of a KMS-signature check, which confounds the isolation of ECDSA-P256 verification cost specifically. A cleaner experiment would compare `read_verified_balance()` (reconciled + KMS verify) against an equivalent direct `redis_client.get("safety:current_cash")` call that bypasses the `pipeline(...)` fallback entirely, isolating the KMS-verify delta from the unrelated code-path difference. We report the as-measured production-code comparison above because both paths are exactly what the live system executes; the qualitative conclusion (KMS verification adds no material overhead, since it is sub-0.1 ms against measurement noise on the order of 0.3–1.1 ms) is robust to this confound, but the *precise* Δt figures in Table 4 should not be read as an isolated measurement of ECDSA-P256 verification cost alone. An apples-to-apples re-measurement against an equivalent `get()` baseline is tracked as future work (§7.3).
 
 ### 6.5 Safety Violation Detection
 
@@ -483,17 +489,17 @@ CAGE translates STPA hazard analysis into executable enforcement policies and ev
 
 ## References
 
-\[1\] Tallam, K. "A Five-Plane Reference Architecture for Runtime Governance of Production AI Agents." arXiv:2606.12320, 2026\.
+\[1\] Tallam, K. (2026). A Five-Plane Reference Architecture for Runtime Governance of Production AI Agents. arXiv:2606.12320.
 
-\[2\] Ames, A. D., Xu, X., Grizzle, J. W., and Tabuada, P. "Control Barrier Function Based Quadratic Programs for Safety Critical Systems." IEEE Transactions on Automatic Control, 62(8):3861–3876, 2017\.
+\[2\] Ames, A. D., Xu, X., Grizzle, J. W., and Tabuada, P. (2017). Control Barrier Function Based Quadratic Programs for Safety Critical Systems. IEEE Transactions on Automatic Control, 62(8):3861–3876.
 
-\[3\] Leveson, N. G. "Engineering a Safer World: Systems Thinking Applied to Safety." MIT Press, 2011\. [https://doi.org/10.7551/mitpress/8179.001.0001](https://doi.org/10.7551/mitpress/8179.001.0001)
+\[3\] Leveson, N. G. (2011). Engineering a Safer World: Systems Thinking Applied to Safety. MIT Press. [https://doi.org/10.7551/mitpress/8179.001.0001](https://doi.org/10.7551/mitpress/8179.001.0001)
 
-\[4\] NIST. "Security and Privacy Controls for Information Systems and Organizations." Special Publication 800-53 Rev 5, 2020\.
+\[4\] NIST. (2020). Security and Privacy Controls for Information Systems and Organizations. Special Publication 800-53 Rev 5.
 
-\[5\] ISO. "Information technology — Artificial intelligence — Management system." ISO/IEC 42001:2023.
+\[5\] ISO. (2023). Information technology — Artificial intelligence — Management system. ISO/IEC 42001:2023.
 
-\[6\] Federal Reserve. "Supervisory Guidance on Model Risk Management." SR 11-7, 2011\. (SR 26-2 is the anticipated successor guidance; cite SR 11-7 until SR 26-2 is formally published.)
+\[6\] Federal Reserve. (2011). Supervisory Guidance on Model Risk Management. SR 11-7. (SR 26-2 is the anticipated successor guidance; cite SR 11-7 until SR 26-2 is formally published.)
 
 \[7\] Doshi, A., Hong, Y., Xu, C., Kang, E., Kapravelos, A., & Kastner, C. (2026). Towards Verifiably Safe Tool Use for LLM Agents. ICSE NIER 2026\. [https://doi.org/10.48550/arXiv.2601.08012](https://doi.org/10.48550/arXiv.2601.08012)
 
@@ -507,7 +513,7 @@ CAGE translates STPA hazard analysis into executable enforcement policies and ev
 
 \[12\] Zhou, J., Sheng, H., Lou, Y., Yang, Y., & Fu, J. (2026). FormalJudge: A Neuro-Symbolic Paradigm for Agentic Oversight. arXiv:2602.11136. [https://doi.org/10.48550/arXiv.2602.11136](https://doi.org/10.48550/arXiv.2602.11136)
 
-\[13\] Aguiar, V. A. et al. (2025). A Multi-Agent Architecture for Governance and Security of LLM-Based Knowledge Access. IEEE BigData 2025\. [https://doi.org/10.1109/bigdata66926.2025.11401633](https://doi.org/10.1109/bigdata66926.2025.11401633)
+\[13\] Aguiar, V. A., et al. (2025). A Multi-Agent Architecture for Governance and Security of LLM-Based Knowledge Access. [Full author list to be verified against the published proceedings before camera-ready.] IEEE BigData 2025\. [https://doi.org/10.1109/bigdata66926.2025.11401633](https://doi.org/10.1109/bigdata66926.2025.11401633)
 
 \[14\] Raza, S., Sapkota, R., & Emmanouilidis, C. (2026). TRiSM for Agentic AI: A Review of Trust, Risk, and Security Management in Multi-Agent Systems. AI Open. [https://doi.org/10.1016/j.aiopen.2026.02.006](https://doi.org/10.1016/j.aiopen.2026.02.006)
 
@@ -543,7 +549,7 @@ CAGE translates STPA hazard analysis into executable enforcement policies and ev
 
 \[30\] Cloud Native Computing Foundation. (2021). Open Policy Agent (OPA) (Graduated CNCF Project). [https://openpolicyagent.org/docs](https://openpolicyagent.org/docs)
 
-\[31\] AgentGuard. (2026). Attribute-Based Access Control (ABAC) for Tool-Use LLM Agents. arXiv:2605.28071. [https://arxiv.org/abs/2605.28071](https://arxiv.org/abs/2605.28071)
+\[31\] AgentGuard: Attribute-Based Access Control (ABAC) for Tool-Use LLM Agents. (2026). arXiv:2605.28071. [https://arxiv.org/abs/2605.28071](https://arxiv.org/abs/2605.28071) [Author names to be verified against the published preprint before camera-ready; "AgentGuard" is the system name, not the author.]
 
 \[32\] Wang, H., Poskitt, C. M., & Sun, J. (2025). AgentSpec: Customizable Runtime Enforcement for Safe and Reliable LLM Agents. arXiv:2503.18666. [https://arxiv.org/abs/2503.18666](https://arxiv.org/abs/2503.18666)
 
@@ -551,9 +557,25 @@ CAGE translates STPA hazard analysis into executable enforcement policies and ev
 
 \[34\] Conant, R. C., & Ashby, W. R. (1970). Every Good Regulator of a System Must Be a Model of that System. International Journal of Systems Science, 1(2), 89–97. [https://doi.org/10.1080/00207727008920220](https://doi.org/10.1080/00207727008920220)
 
-\[35\] AgenTRIM. (2026). Balancing Tool-Driven Agency in LLM-Based Agents to Address Tool Misuse. arXiv:2601.12449. [https://arxiv.org/abs/2601.12449](https://arxiv.org/abs/2601.12449)
+\[35\] AgenTRIM: Balancing Tool-Driven Agency in LLM-Based Agents to Address Tool Misuse. (2026). arXiv:2601.12449. [https://arxiv.org/abs/2601.12449](https://arxiv.org/abs/2601.12449) [Author names to be verified against the published preprint before camera-ready; "AgenTRIM" is the system name, not the author.]
 
-\[36\] Deng et al. (2025). Systematic Evaluation of Agentic AI Security Vulnerabilities under Cost and Delay Amplification Attacks. ProQuest Dissertations Publishing.
+\[36\] Deng, et al. (2025). Systematic Evaluation of Agentic AI Security Vulnerabilities under Cost and Delay Amplification Attacks. [Full author list to be verified against the published dissertation before camera-ready.] ProQuest Dissertations Publishing.
+
+\[37\] Ames, A. D., Coogan, S., Egerstedt, M., Notomista, G., Sreenath, K., & Tabuada, P. (2019). Control Barrier Functions: Theory and Applications. 2019 18th European Control Conference (ECC), 3420–3431. [https://doi.org/10.23919/ECC.2019.8796030](https://doi.org/10.23919/ECC.2019.8796030)
+
+\[38\] Ames, A. D., Xu, X., Grizzle, J. W., & Tabuada, P. (2017). Control Barrier Function Based Quadratic Programs for Safety Critical Systems. IEEE Transactions on Automatic Control, 62(8), 3861–3876. [https://doi.org/10.1109/TAC.2016.2638961](https://doi.org/10.1109/TAC.2016.2638961)
+
+\[39\] Abdulkhaleq, A., & Wagner, S. (2013). Experiences with Applying STPA to Software-Intensive Systems in the Automotive Domain. Proceedings of the 2013 STAMP Conference, MIT.
+
+\[40\] Antoine, B. (2013). Systems Theoretic Hazard Analysis (STPA) Applied to the Risk Review of Complex Systems: An Example from the Medical Device Industry. S.M. Thesis, Massachusetts Institute of Technology.
+
+\[41\] Systematic Hazard Analysis for Frontier AI using STPA. (2025). [Full author/venue metadata to be verified before camera-ready — cited per reviewer-suggested related work.]
+
+\[42\] Pro2Guard: Proactive Runtime Enforcement of LLM Agent Safety via Probabilistic Model Checking. (2025). [Full author/venue metadata to be verified before camera-ready — cited per reviewer-suggested related work.]
+
+\[43\] Agent Route Origin Authorization (AgentROA): A Cryptographic Policy Enforcement Framework for AI Agent Actions. (2026). [Full author/venue metadata to be verified before camera-ready — cited per reviewer-suggested related work.]
+
+\[44\] System Safety Under Sensor Attacks: A Control Barrier Function Approach. (2024). [Full author/venue metadata to be verified before camera-ready — cited per reviewer-suggested related work.]
 
 ---
 
