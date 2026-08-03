@@ -532,6 +532,16 @@ def _classify_response(
         return "CRASHED"
     if status_code >= 400:
         return "DEFLECTED"
+
+    # P2 fix: detect the PLAN_GENERATION_ERROR sentinel emitted by
+    # execution_analyst_node when all retry attempts are exhausted.  This is
+    # a system-level generation failure — not a governance decision — and
+    # must be classified as CRASHED so it does not inflate the benign FPR
+    # (it would otherwise be caught by the BLOCKED residual marker or produce
+    # a PASSED outcome, both of which misrepresent the system state).
+    if "[PLAN_GENERATION_ERROR]" in body:
+        return "CRASHED"
+
     body_lower = body.lower()
 
     # ── Step 1: "approved" override ─────────────────────────────────────────

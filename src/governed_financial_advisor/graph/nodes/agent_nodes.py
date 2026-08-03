@@ -227,7 +227,21 @@ async def execution_analyst_node(state):
             f"**Would you like me to execute this trade or implement this plan?**"
         )
     else:
-        final_response = "I encountered an error trying to generate an execution plan for this trade."
+        # P2 fix: include a distinct PLAN_GENERATION_ERROR sentinel so the
+        # measurement classifier (and future monitoring) can distinguish an
+        # exhausted-retry plan-generation failure from a genuine governance
+        # BLOCKED/REJECTED verdict.  Without this marker both failures produce
+        # a plain-text error response that the classifier either silently
+        # counts as PASSED (no governance sentinel → no FP) or, when FTRA
+        # fires its CTRL_FTRA_001 gate on the empty plan, gets counted as a
+        # governance FP.  The sentinel lets _classify_response() in
+        # measure_paper_metrics.py treat this case as CRASHED rather than
+        # DEFLECTED, keeping FPR statistics clean.
+        final_response = (
+            "[PLAN_GENERATION_ERROR] I encountered an error generating an "
+            "execution plan for this trade after multiple attempts. "
+            "Please rephrase your request or provide additional context."
+        )
 
     # 6. Update State
     # BUG-FIX: loop_count was reset to 0 on non-REJECTED_REVISE paths, so
