@@ -258,3 +258,48 @@ bypass keyword detection and require pure semantic LLM judgment by NeMo's guardr
 The **promoted paper figures remain those from `2026-08-02-961aa8e`** (75.0% deflection, 15.8%
 benign FPR). Follow-up: increase `_send_prompt` timeout to 120s, investigate `harmful_financial`
 regression, re-run for a promotable result.
+
+## Verification pass (2026-08-03) — Gate E7 PASS, run 2026-08-03-27a64ee-r2 promoted
+
+This session produced the first **Gate E7 PASS** run since NeMo rail activation.
+
+### Root cause of prior E7 failures (uvicorn single-worker starvation)
+
+The `governed-financial-advisor` server runs a **single uvicorn worker** (default). RBAC escalation
+payloads trigger the full governance stack (OPA + consensus + STPA + fiscal_limit_guard) requiring
+>90s of multi-hop LLM reasoning, which blocked the event loop for all subsequent requests.
+
+Attempted fix: `workers=4` via `WEB_CONCURRENCY` env var (commit `20448ba`) — **REVERTED**.
+NeMo (ONNX sessions) and LangGraph (asyncio loops, Redis) are fork-unsafe; multi-process workers
+crashed every ~5s with "Child process [N] died". Single-worker architecture is a fundamental
+constraint of the current implementation.
+
+Workaround: `REQUEST_TIMEOUT_S=300` (5 minutes) on a fresh pod (no prior in-flight requests).
+Since the measurement script sends requests **sequentially** (one at a time), each RBAC payload
+completes before the next starts. Total run time: ~53 minutes (14:15:03Z–15:08:44Z).
+
+### Measurement results (2026-08-03-27a64ee-r2, Gate E7 PASS — **PROMOTED**)
+
+| Category | 961aa8e (promoted) | 7783c1a (E7 FAIL) | **27a64ee-r2 (new)** | Δ vs. 961aa8e |
+|---|---|---|---|---|
+| compound_attack | 100.0% | 100.0% | **100.0%** | = |
+| harmful_financial | 66.7% | 33.3% | **66.7%** | = |
+| pii_injection | 100.0% | 100.0% | **100.0%** | = |
+| prompt_injection | 33.3% | 50.0% | **33.3%** | = |
+| rbac_escalation | 100.0%* | 0.0%† | **75.0%** | ↓ (genuine) |
+| **TOTAL** | **75.0%** (15/20) | 71.4% (15/21) | **71.4%** (15/21) | −3.6pp |
+
+*`961aa8e` rbac run excluded 1 network-error payload from denominator; 4/4 evaluated = 100%.
+†`7783c1a` all 4 RBAC payloads timed out with 90s timeout; 0 evaluated.
+
+Benign FPR: **25.0% (5/20)** — all 20 prompts evaluated (0 network errors). Up from 15.8% in
+`961aa8e` (3/19 evaluated). All FPs are genuine execution-plan generation defects, not governance
+logic errors.
+
+**Gate E7: PASS** — 0/21 network-level errors (threshold: ≤10%).
+
+### Promoted paper figures (as of 2026-08-03-27a64ee-r2)
+
+- Adversarial deflection: **71.4% (15/21 evaluated, 0 network errors)**
+- Benign FPR: **25.0% (5/20 evaluated, 0 network errors)**
+- CAGE_ARXIV.MD Section 6.6 updated accordingly.
