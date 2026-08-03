@@ -592,25 +592,23 @@ async def validate_with_nemo(
                 "langfuse.trace.metadata.guardrails.input_length", len(user_input)
             )
 
-            # Build NeMo context — inject pre-computed governance results so that
-            # NeMo actions read from this dict instead of calling back into the
-            # governor's sub-components (breaks the re-entrant dependency loop).
-            nemo_context: dict[str, Any] = {}
             if pre_check_results is not None:
-                nemo_context["pre_check_results"] = pre_check_results
                 logger.debug(
-                    "🔍 validate_with_nemo: injecting pre_check_results into NeMo context "
-                    "(stpa_allowed=%s, cbf_allowed=%s)",
+                    "🔍 validate_with_nemo: pre_check_results available "
+                    "(stpa_allowed=%s, cbf_allowed=%s) — OPA/STPA remain active",
                     pre_check_results.get("stpa_result", {}).get("allowed", "?"),
                     pre_check_results.get("cbf_result", {}).get("allowed", "?"),
                 )
 
-            # Use structured rails execution (input rails only)
+            # Use structured rails execution (input rails only).
+            # Note: the `context` kwarg was removed — it is not supported by the
+            # installed NeMo Guardrails version and caused a TypeError that
+            # incorrectly blocked all benign traffic.  Pre-check results are
+            # available to downstream OPA/STPA gates which remain unaffected.
             res = await rails.generate_async(
                 messages=[{"role": "user", "content": user_input}],
                 options={"rails": ["input"]},
                 streaming_handler=handler,
-                context=nemo_context if nemo_context else None,
             )
 
             # Structured result extraction — no substring matching
