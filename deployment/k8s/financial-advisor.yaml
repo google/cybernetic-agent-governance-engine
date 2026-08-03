@@ -45,7 +45,7 @@ spec:
           # Override with: kubectl set image deployment/governed-financial-advisor governed-financial-advisor=<your-registry>/governed-financial-advisor:latest
           # Or use kustomize: kustomize edit set image gcr.io/YOUR_PROJECT_ID/governed-financial-advisor=<your-registry>/governed-financial-advisor:latest
           # IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
-          image: gcr.io/YOUR_PROJECT_ID/governed-financial-advisor:latest
+          image: gcr.io/laah-cybernetics/governed-financial-advisor:40f764d
           imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false

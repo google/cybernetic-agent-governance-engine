@@ -40,6 +40,13 @@ GOVERNANCE_BLOCK_SENTINELS: tuple[str, ...] = (
     "compliance block",
     "trade was rejected by the governance",
     "rejected by the governance policy",
+    # STPA validator output — emitted when a UCA (Unsafe Control Action) is matched.
+    # Format: "STPA Violation UCA-N: <description>" — prefix is sufficient.
+    "STPA Violation",
+    # Internal governance error path — emitted when the governance pipeline
+    # raises an exception before producing a substantive response.
+    "Validation failed due to internal governance error",
+    "internal governance error",
 )
 
 # Predetermined scores for a governance-blocked response.
