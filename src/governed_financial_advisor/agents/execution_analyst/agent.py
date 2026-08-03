@@ -16,7 +16,7 @@
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from config.settings import MODEL_REASONING
 
@@ -73,6 +73,45 @@ class ExecutionPlan(BaseModel):
         None, description="The user's investment horizon"
     )
 
+    # P1 validators — catch semantically-incomplete plans that the guided_json
+    # FSM can produce even when the schema is syntactically satisfied.  Both
+    # validators raise ValueError on bad input so parse_execution_plan() and
+    # the node's retry loop can detect and retry the generation.
+    @field_validator("rationale")
+    @classmethod
+    def rationale_must_be_substantive(cls, v: str) -> str:
+        """Reject empty or trivially short rationale strings.
+
+        vLLM guided_json guarantees schema-valid JSON but not semantic
+        completeness — it can produce rationale="" or rationale="N/A" while
+        still satisfying the schema (no min_length constraint).  Enforcing a
+        minimum length here causes parse_execution_plan() to raise ValueError,
+        which the execution_analyst_node retry loop catches and retries.
+        """
+        stripped = v.strip()
+        if len(stripped) < 20:  # noqa: PLR2004
+            raise ValueError(
+                f"rationale is too short ({len(stripped)} chars < 20); "
+                "the model must provide a substantive explanation."
+            )
+        return stripped
+
+    @field_validator("steps")
+    @classmethod
+    def steps_must_be_non_empty(cls, v: list[PlanStep]) -> list[PlanStep]:
+        """Reject plans with no steps.
+
+        An empty steps list is schema-valid but governance-fatal — FTRA's
+        _parse_plan() returns None when steps=[] and the node_factory then
+        BLOCKs the request with CTRL_FTRA_001.  Catching it here surfaces the
+        defect as a ValueError so the retry loop can attempt regeneration.
+        """
+        if not v:
+            raise ValueError(
+                "steps list is empty; the model must produce at least one step."
+            )
+        return v
+
 
 EXECUTION_ANALYST_FALLBACK_PROMPT = """You are the **Execution Analyst (Planner)**, the "System 4 Feedforward" engine of the CAGE architecture.
 Your role is to translate high-level user intent into a concrete, machine-verifiable **Execution Plan**.
@@ -94,8 +133,8 @@ Your role is to translate high-level user intent into a concrete, machine-verifi
 You must output a valid JSON object matching the `ExecutionPlan` schema.
 DO NOT output any conversational text or markdown code blocks.
 ONLY output the raw JSON.
-- `steps`: A DAG (Directed Acyclic Graph) of actions.
-- `rationale`: Explain *why* this plan is safe and suitable.
+- `steps`: A DAG (Directed Acyclic Graph) of actions. MUST contain at least one step.
+- `rationale`: Explain *why* this plan is safe and suitable. MUST be at least one full sentence (≥20 characters). An empty string or "N/A" is NOT acceptable.
 
 **Constraint - Missing Info:**
 If the user says "buy Apple" but has not specified an amount, your plan should NOT include an `execute_trade` step.
@@ -109,6 +148,36 @@ You are called when a STRATEGY is needed, but you need context to generate it.
 **Handling Rejections:**
 If your previous plan was REJECTED by the Evaluator, you will receive `risk_feedback`.
 You MUST revise your plan to address the specific feedback (e.g., "Market Closed" -> "Schedule for Open").
+
+**Few-shot examples** (output ONLY the JSON — no markdown fences, no prose):
+
+Example 1 — Trade execution plan (full context available):
+{
+  "plan_id": "plan-001",
+  "strategy_name": "Conservative Dollar Cost Averaging — NVDA",
+  "rationale": "The user has a conservative risk profile with a medium-term horizon. NVDA shows strong fundamentals and the market is currently open. A single-tranche market-order entry minimises timing risk while keeping position size within the user's stated budget.",
+  "risk_factors": ["equity market volatility", "semiconductor sector concentration"],
+  "steps": [
+    {"id": "s1", "action": "check_market_status", "description": "Confirm NVDA market is open before placing order", "parameters": {"symbol": "NVDA"}},
+    {"id": "s2", "action": "check_balance", "description": "Verify sufficient funds for $1000 purchase", "parameters": {"required_amount": 1000, "currency": "USD"}},
+    {"id": "s3", "action": "execute_trade", "description": "Buy $1000 of NVDA at market price", "parameters": {"symbol": "NVDA", "amount": 1000, "currency": "USD"}}
+  ],
+  "user_risk_attitude": "Conservative",
+  "user_investment_period": "Medium"
+}
+
+Example 2 — Clarification plan (risk profile missing):
+{
+  "plan_id": "plan-002",
+  "strategy_name": "Clarification Required",
+  "rationale": "The user has not specified a risk tolerance or investment horizon. Without these parameters it is not possible to formulate a safe, personalised strategy. Clarification must be obtained before any trade can be planned.",
+  "risk_factors": [],
+  "steps": [
+    {"id": "s1", "action": "check_balance", "description": "Ask the user for their risk profile and investment horizon before proceeding", "parameters": {}}
+  ],
+  "user_risk_attitude": null,
+  "user_investment_period": null
+}
 """
 
 
