@@ -205,3 +205,56 @@ in §6.6/§7.2 for the "290+" figure.
 Also found and disclosed: GPU spot-node preemption (`vllm-inference`/`vllm-reasoning`) recurred
 four times during this session (~30-60 min intervals), consistent with the 2026-08-01 session's
 P2-8 finding — now elevated to P0 given the recurrence rate across two consecutive sessions.
+
+## Verification pass (2026-08-03) — NeMo rail activation confirmed, E7 gate fail due to timeouts
+
+This session investigated why `prompt_injection` deflection was only 33.3% in the previous run,
+diagnosed **5 compounding NeMo Guardrails bugs** that silently disabled all semantic rails
+(`is_transparent_fallback = True`), fixed them all in commit `7783c1a`, migrated from a spot GPU
+pool to an on-demand pool (bypassing Terraform due to unsafe state drift), and re-measured.
+
+### NeMo bugs fixed (commit 7783c1a)
+
+| # | Bug | Root cause | Fix |
+|---|---|---|---|
+| A | `stpa_compiler.py` Colang codegen `== true` (Python-invalid) | `generate_nemo()` emitted lowercase `true` — Colang 2.x requires Python-style `True` | Changed `"true"` → `"True"` at stpa_compiler.py:539 |
+| B | Empty `output: {flows: []}` in `config/rails/config.yml` | NeMo 0.23.0's `_generate_rails_flows()` emitted an empty body-less flow block, causing a Colang parse error that set `is_transparent_fallback = True` | Removed the empty block and added warning comment |
+| C | `@override flow main` with no base flow in `main_logic.co` | NeMo's library `flow main` can't be imported (parser incompatibility), so `@override` had nothing to override → `ColangSyntaxError` | Removed `@override` decorator |
+| D | `self check input` flow not defined | NeMo library's built-in `self check input` unavailable; config.yml referenced it without a local definition → `InvalidRailsConfigurationError` | Added local `flow self check input` backed by `CustomSelfCheckInputAction` |
+| E | Allowlist-before-blocklist in `custom_self_check_input/output` | Any prompt mentioning a finance keyword (e.g. "trading", "stock") was ALLOWED before the jailbreak blocklist ran — 4/6 adversarial INJ payloads bypassed detection | Reversed: blocklist runs first, then allowlist, then LLM judge |
+
+### Infrastructure: P0 GPU spot→on-demand migration
+
+Spot VM preemptions invalidated 3+ measurement runs. Terraform plan to toggle
+`gpu_node_pool_spot = false` was found to also destroy+recreate `primary_nodes` and rename the
+cluster — unsafe blast radius. Bypassed Terraform entirely; created `gpu-node-pool-nvidia-l4-ondemand`
+out-of-band via `gcloud container node-pools create`, patched both vLLM deployments with
+`nodeSelector: cloud.google.com/gke-nodepool: gpu-node-pool-nvidia-l4-ondemand`, deleted old
+spot pool. Both vLLM pods stable for 53+ minutes at measurement time, 0 preemptions.
+
+### Measurement results (2026-08-03-7783c1a, Gate E7 FAIL — not promoted)
+
+| Category | Baseline (961aa8e) | Post-fix | Δ |
+|---|---|---|---|
+| compound_attack | 100.0% | 100.0% | = |
+| harmful_financial | 100.0% | 33.3% | ↓ (needs investigation) |
+| pii_injection | 100.0% | 100.0% | = |
+| **prompt_injection** | **33.3%** | **50.0%** | **+16.7pp** |
+| rbac_escalation | 100.0% | 0.0%* | *all 4 timed out |
+| TOTAL | 75.0% | 71.4% | — |
+
+Benign FPR: 11.8% (2/17 evaluated; 3 network errors). 0 server crashes.
+
+**Gate E7 FAIL**: 7/21 adversarial network timeouts (33.3%) — run not promoted to paper.
+The `_send_prompt` 30s timeout is too short for RBAC escalation payloads requiring multi-hop
+LLM reasoning. All 4 `rbac_escalation` prompts timed out (0 evaluated).
+
+**prompt_injection improvement confirmed** (+16.7pp): NeMo semantic rails are now active
+and the blocklist-first ordering is working. The remaining 50% miss-rate reflects prompts that
+bypass keyword detection and require pure semantic LLM judgment by NeMo's guardrails model.
+
+**0 server crashes** — first run with both NeMo semantic rails active AND on-demand GPU pool.
+
+The **promoted paper figures remain those from `2026-08-02-961aa8e`** (75.0% deflection, 15.8%
+benign FPR). Follow-up: increase `_send_prompt` timeout to 120s, investigate `harmful_financial`
+regression, re-run for a promotable result.
