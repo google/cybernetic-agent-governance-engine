@@ -1324,11 +1324,4 @@ async def langfuse_webhook(req: LangfuseWebhookEvent):
 
 
 if __name__ == "__main__":
-    _workers = int(os.environ.get("WEB_CONCURRENCY", "4"))
-    uvicorn.run(
-        "src.governed_financial_advisor.server:app",
-        host="0.0.0.0",
-        port=Config.PORT,
-        log_config=None,
-        workers=_workers,
-    )
+    uvicorn.run(app, host="0.0.0.0", port=Config.PORT, log_config=None)
