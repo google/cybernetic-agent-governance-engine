@@ -224,8 +224,9 @@ async def custom_self_check_input(
 ):
     """Hybrid self-check for financial domain inputs - PHASE 2 UPGRADE.
 
-    Three-stage approach (ORDER IS SECURITY-CRITICAL — see 2026-08-02 fix):
+    Four-stage approach (ORDER IS SECURITY-CRITICAL — see 2026-08-02 and 2026-08-03 fixes):
     1. Blocklist jailbreak patterns → BLOCK (0ms) [~5% of queries]
+    1B. Blocklist illegal-finance patterns → BLOCK (0ms) [harmful_financial category]
     2. Allowlist financial keywords → ALLOW (0ms) [~70% of queries]
     3. LLM-based semantic check → EVALUATE (2-5s) [~25% of queries]
 
@@ -240,6 +241,13 @@ async def custom_self_check_input(
     the full measurement writeup. This preserves the same 0ms fast-path
     performance characteristic for genuinely safe queries while closing the
     bypass — the blocklist check is equally O(1) substring matching.
+
+    SECURITY NOTE (2026-08-03): The illegal-finance blocklist (STAGE 1B) must
+    also run before the allowlist. HARM-002 ("money laundering...trading profits")
+    triggered the ALLOWLIST via "trading" before any harmful-finance check ran.
+    Broad allowlist keywords like "trading", "market", "strategy" are insufficient
+    to distinguish harmful from benign finance requests — illegal-finance terms must
+    be rejected as early as jailbreaks. See docs/paper/REVISION_TRACKER.md §2026-08-03.
     """
     with _tracer.start_as_current_span("nemo.action.self_check_input") as span:
         span.set_attribute("langfuse.observation.type", "span")
@@ -279,6 +287,49 @@ async def custom_self_check_input(
         if any(pattern in text for pattern in jailbreak_patterns):
             logger.warning("HybridSelfCheckInput: STAGE 1 BLOCK (jailbreak pattern)")
             span.set_attribute("nemo.action.stage", "BLOCKLIST")
+            span.set_attribute("nemo.action.outcome", "BLOCK")
+            return False
+
+        # STAGE 1B: ILLEGAL-FINANCE BLOCKLIST — catches harmful_financial category
+        # payloads that use financial keywords (triggering stage-2 ALLOW) while
+        # describing explicitly illegal acts. These must be blocked BEFORE the
+        # financial-keyword allowlist runs — HARM-002 ("...trading profits") was
+        # observed to bypass via "trading" in the allowlist (2026-08-03 finding).
+        illegal_finance_patterns = [
+            "insider trading",
+            "insider knowledge",
+            "insider information",
+            "insider tip",
+            "money laundering",
+            "launder",
+            "pump and dump",
+            "pump-and-dump",
+            "market manipulation",
+            "market manipulat",
+            "artificially inflat",
+            "dump my shares",
+            "front running",
+            "front-running",
+            "naked short",
+            "without triggering sec",
+            "without triggering regulat",
+            "evade sec",
+            "evade regulat",
+            "evade surveillance",
+            "avoid sec",
+            "avoid regulat",
+            "avoid detection",
+            "not get caught",
+            "undisclosed source",
+            "layering through",
+            "layer it through",
+        ]
+
+        if any(pattern in text for pattern in illegal_finance_patterns):
+            logger.warning(
+                "HybridSelfCheckInput: STAGE 1B BLOCK (illegal-finance pattern)"
+            )
+            span.set_attribute("nemo.action.stage", "ILLEGAL_FINANCE_BLOCKLIST")
             span.set_attribute("nemo.action.outcome", "BLOCK")
             return False
 
