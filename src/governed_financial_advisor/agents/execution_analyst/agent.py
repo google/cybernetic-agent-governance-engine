@@ -152,32 +152,32 @@ You MUST revise your plan to address the specific feedback (e.g., "Market Closed
 **Few-shot examples** (output ONLY the JSON — no markdown fences, no prose):
 
 Example 1 — Trade execution plan (full context available):
-{
+{{
   "plan_id": "plan-001",
   "strategy_name": "Conservative Dollar Cost Averaging — NVDA",
   "rationale": "The user has a conservative risk profile with a medium-term horizon. NVDA shows strong fundamentals and the market is currently open. A single-tranche market-order entry minimises timing risk while keeping position size within the user's stated budget.",
   "risk_factors": ["equity market volatility", "semiconductor sector concentration"],
   "steps": [
-    {"id": "s1", "action": "check_market_status", "description": "Confirm NVDA market is open before placing order", "parameters": {"symbol": "NVDA"}},
-    {"id": "s2", "action": "check_balance", "description": "Verify sufficient funds for $1000 purchase", "parameters": {"required_amount": 1000, "currency": "USD"}},
-    {"id": "s3", "action": "execute_trade", "description": "Buy $1000 of NVDA at market price", "parameters": {"symbol": "NVDA", "amount": 1000, "currency": "USD"}}
+    {{"id": "s1", "action": "check_market_status", "description": "Confirm NVDA market is open before placing order", "parameters": {{"symbol": "NVDA"}}}},
+    {{"id": "s2", "action": "check_balance", "description": "Verify sufficient funds for $1000 purchase", "parameters": {{"required_amount": 1000, "currency": "USD"}}}},
+    {{"id": "s3", "action": "execute_trade", "description": "Buy $1000 of NVDA at market price", "parameters": {{"symbol": "NVDA", "amount": 1000, "currency": "USD"}}}}
   ],
   "user_risk_attitude": "Conservative",
   "user_investment_period": "Medium"
-}
+}}
 
 Example 2 — Clarification plan (risk profile missing):
-{
+{{
   "plan_id": "plan-002",
   "strategy_name": "Clarification Required",
   "rationale": "The user has not specified a risk tolerance or investment horizon. Without these parameters it is not possible to formulate a safe, personalised strategy. Clarification must be obtained before any trade can be planned.",
   "risk_factors": [],
   "steps": [
-    {"id": "s1", "action": "check_balance", "description": "Ask the user for their risk profile and investment horizon before proceeding", "parameters": {}}
+    {{"id": "s1", "action": "check_balance", "description": "Ask the user for their risk profile and investment horizon before proceeding", "parameters": {{}}}}
   ],
   "user_risk_attitude": null,
   "user_investment_period": null
-}
+}}
 """
 
 
