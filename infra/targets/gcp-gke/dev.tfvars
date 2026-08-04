@@ -110,3 +110,18 @@ nemo_image = ""
 presidio_analyzer_image   = "mcr.microsoft.com/presidio-analyzer:latest"
 presidio_anonymizer_image = "mcr.microsoft.com/presidio-anonymizer:latest"
 
+# ─── Secrets (set in terraform.auto.tfvars — gitignored) ──────────────────────
+# K-1: CAGE_ROUTING_SEAL_SECRET for gateway routing seal enforcement (POAM-012).
+#   routing_seal_secret = "<random-32-char-hex>"  # Set in terraform.auto.tfvars
+
+# K-3: KMS_GOVERNANCE_KEY for compliance-bridge KMSBatchSigner.
+#   kms_governance_key = "projects/<proj>/locations/<loc>/keyRings/<ring>/cryptoKeys/<key>/cryptoKeyVersions/1"
+#   # Set in terraform.auto.tfvars
+
+# K-4: OTLP auth header for Langfuse trace ingestion (gateway + governed_advisor).
+#   Option A — provide explicit header:
+#     otel_exporter_otlp_headers = "Authorization=Basic <base64(publicKey:secretKey)>"
+#   Option B — leave empty and set langfuse_public_key + langfuse_secret_key; the
+#     root module will derive the header automatically from those two values.
+#   Both must go in terraform.auto.tfvars (gitignored) — never commit real keys here.
+

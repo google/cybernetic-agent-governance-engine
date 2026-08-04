@@ -545,6 +545,12 @@ module "compliance_bridge" {
   cage_env               = "development"
   cage_deployment_region = var.cage_deployment_region
 
+  # K-3: wire KMS_GOVERNANCE_KEY so KMSBatchSigner loads at startup.
+  # Set the actual GCP KMS key resource name in terraform.auto.tfvars (gitignored).
+  # Empty string is acceptable in dev/CI — the bridge will fall back to HMAC-SHA256.
+  # See: infra/modules/compliance_bridge/variables.tf kms_governance_key
+  kms_governance_key = var.kms_governance_key
+
   depends_on = [module.langfuse, module.vllm]
 }
 
@@ -585,6 +591,17 @@ module "gateway" {
   opa_url                 = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181/v1/data/trade/governance"
   governance_salt         = var.governance_salt
 
+  # K-1: wire CAGE_ROUTING_SEAL_SECRET into the gateway pod explicitly.
+  # Value must be supplied via terraform.auto.tfvars (gitignored).
+  routing_seal_secret = var.routing_seal_secret
+
+  # K-4: wire OTLP auth header so Langfuse trace ingestion returns 200, not 401.
+  # If an explicit override is provided use it; otherwise derive from the
+  # Langfuse project keys using HTTP Basic-auth encoding (publicKey:secretKey).
+  otel_exporter_otlp_headers = var.otel_exporter_otlp_headers != "" ? var.otel_exporter_otlp_headers : (
+    var.langfuse_public_key != "" ? "Authorization=Basic ${base64encode("${var.langfuse_public_key}:${var.langfuse_secret_key}")}" : ""
+  )
+
   depends_on = [module.app_secrets, module.opa, module.vllm, module.redis]
 }
 
@@ -619,6 +636,13 @@ module "governed_advisor" {
   # back to legacy HMAC-SHA256 via governance_salt above.
   kms_governance_key       = var.kms_governance_key
   cage_kms_provider        = var.cage_kms_provider
+
+  # K-4: wire OTLP auth header so governed-financial-advisor traces reach
+  # Langfuse rather than returning 401 Unauthorized.
+  # If an explicit override is provided use it; otherwise derive from keys.
+  otel_exporter_otlp_headers = var.otel_exporter_otlp_headers != "" ? var.otel_exporter_otlp_headers : (
+    var.langfuse_public_key != "" ? "Authorization=Basic ${base64encode("${var.langfuse_public_key}:${var.langfuse_secret_key}")}" : ""
+  )
 
   depends_on = [module.gateway, module.langfuse, module.vllm, module.opa]
 }

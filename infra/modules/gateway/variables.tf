@@ -110,3 +110,16 @@ variable "otel_exporter_otlp_headers" {
   default     = ""
   sensitive   = true
 }
+
+# K-1: Explicit variable for CAGE_ROUTING_SEAL_SECRET.
+# The gateway pod already receives this via the advisor-secrets bulk env_from
+# mount, but declaring it here makes the Terraform dependency graph explicit
+# and allows verify_remote.py / plan-time checks to confirm the value is
+# non-empty before apply.  Actual value must come from terraform.auto.tfvars
+# (gitignored) — never commit a real secret here.
+variable "routing_seal_secret" {
+  description = "Gateway routing seal secret (CAGE_ROUTING_SEAL_SECRET). Set via terraform.auto.tfvars (gitignored). Empty string silently disables seal enforcement in non-dev environments."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

@@ -549,6 +549,18 @@ variable "routing_seal_secret" {
   sensitive   = true
 }
 
+# K-4: otel_exporter_otlp_headers — Langfuse OTLP Basic-auth header.
+# Format: "Authorization=Basic <base64(publicKey:secretKey)>"
+# If left empty the root module derives it from langfuse_public_key /
+# langfuse_secret_key (see module.gateway and module.governed_advisor calls).
+# Set an explicit override in terraform.auto.tfvars (gitignored) for prod.
+variable "otel_exporter_otlp_headers" {
+  description = "OTLP Authorization header for Langfuse trace ingestion (Authorization=Basic <b64>). If empty, derived from langfuse_public_key/langfuse_secret_key."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "hf_token" {
   description = "Hugging Face Hub token (from HUGGING_FACE_HUB_TOKEN)"
   type        = string

@@ -206,6 +206,16 @@ resource "kubernetes_deployment" "gateway" {
             name  = "OPA_URL"
             value = var.opa_url
           }
+          # K-1: Explicit CAGE_ROUTING_SEAL_SECRET env var.
+          # The advisor-secrets bulk env_from mount also delivers this key, but
+          # the explicit declaration ensures Terraform tracks the dependency,
+          # plan-time checks (verify_remote.py / scripts/verify_remote.py) can
+          # confirm the value is non-empty, and pod env inspection shows the var
+          # even when the secret mount is stripped by policy auditing tools.
+          env {
+            name  = "CAGE_ROUTING_SEAL_SECRET"
+            value = var.routing_seal_secret
+          }
           resources {
             requests = {
               cpu    = "1000m"
