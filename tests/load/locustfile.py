@@ -179,7 +179,11 @@ class GovernanceUser(HttpUser):
         with self.client.post(
             "/governance/validate-action",
             json=payload,
-            headers={"X-Governance-Seal": _TEST_SEAL},
+            # K-6 fix: use the correct header name that governance_middleware.py
+            # checks (_SEAL_HEADER = "X-CAGE-Routing-Seal").  The previous value
+            # "X-Governance-Seal" caused every request to fail with HTTP 403 in
+            # environments where CAGE_ROUTING_SEAL_SECRET is set.
+            headers={"X-CAGE-Routing-Seal": _TEST_SEAL},
             name="POST /governance/validate-action",
             catch_response=True,
             timeout=30,
