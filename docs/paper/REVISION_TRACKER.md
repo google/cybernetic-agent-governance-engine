@@ -303,3 +303,58 @@ logic errors.
 - Adversarial deflection: **71.4% (15/21 evaluated, 0 network errors)**
 - Benign FPR: **25.0% (5/20 evaluated, 0 network errors)**
 - CAGE_ARXIV.MD Section 6.6 updated accordingly.
+
+---
+
+## Verification pass (2026-08-03) — NeMo output-rail ColangSyntaxError fixed, run 2026-08-03-6edb597-r1 promoted
+
+This session fixed the root cause of suppressed NeMo output-rail activation and produced an
+**improved Gate E7 PASS** with 76.2% deflection (up from 71.4%).
+
+### Root cause: `ColangSyntaxError: Keyword 'match' cannot be used with flows`
+
+Pod logs revealed that every request since NeMo rail activation was crashing the Colang runtime:
+
+```
+ColangSyntaxError: Keyword 'match' cannot be used with flows (flow 'bot said')
+  on source line 62 in flow 'stpa_output_guardrail' (generated_stpa_rails.co)
+```
+
+The STPA compiler (`src/gateway/governance/stpa_compiler.py`) emitted `match bot said $msg` as
+the trigger line for `flow stpa_output_guardrail`. In Colang 2.x, `match` is only valid with
+user intent patterns — not flow names. Output rails are registered via `config/rails/config.yml`
+and called automatically by the NeMo runtime; they must not have a `match` trigger.
+
+**Fix (commit `6edb597`):**
+- Removed `match bot said $msg` from `stpa_compiler.py` (lines 521–529).
+- Regenerated `config/rails/generated_stpa_rails.co`.
+- `scripts/check_stpa_freshness.py` passed.
+- Cloud Build SUCCESS (2m46s).
+
+Previously this bug caused all NeMo output-rail checks to crash silently, meaning the output-side
+PII and safety rail (`stpa_output_guardrail`) was effectively disabled. With the fix, output rails
+are now active, explaining the improvement in `harmful_financial` (66.7%→100%).
+
+### Measurement results (2026-08-03-6edb597-r1, Gate E7 PASS — **PROMOTED**)
+
+| Category | 27a64ee-r2 (prev promoted) | **6edb597-r1 (new)** | Δ |
+|---|---|---|---|
+| compound_attack | 100.0% | **100.0%** | = |
+| harmful_financial | 66.7% | **100.0%** | ↑ +33.3pp |
+| pii_injection | 100.0% | **100.0%** | = |
+| prompt_injection | 33.3% | **33.3%** | = |
+| rbac_escalation | 75.0% | **75.0%** | = |
+| **TOTAL** | **71.4%** (15/21) | **76.2%** (16/21) | +4.8pp |
+
+Benign FPR: **25.0% (5/20)** — unchanged total. Category breakdown:
+- portfolio_management: 2→1 FP (40%→20%)
+- trade_execution: 3→4 FP (75%→100%)
+- All 4 trade_execution FPs are genuine OPA DENY + missing drawdown parameter.
+
+**Gate E7: PASS** — 0/21 network errors (threshold: ≤10%). Both gates met.
+
+### Promoted paper figures (as of 2026-08-03-6edb597-r1)
+
+- Adversarial deflection: **76.2% (16/21 evaluated, 0 network errors)**
+- Benign FPR: **25.0% (5/20 evaluated, 0 network errors)**
+- CAGE_ARXIV.MD Section 6.6 updated accordingly.

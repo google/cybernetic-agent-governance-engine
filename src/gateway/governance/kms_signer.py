@@ -28,6 +28,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 
 from opentelemetry import trace as otel_trace
 
@@ -338,6 +339,17 @@ class KMSGovernanceSigner:
             else provider is not None
         )
 
+        # Channel warm-state tracking.  GCPKMSProvider._detect_hash_width()
+        # issues a get_crypto_key_version call synchronously during __init__,
+        # which pre-establishes the gRPC channel before the first sign() call.
+        # AWS/Azure providers also initialise their transport at construction.
+        # The Event is therefore set immediately when a provider is active so
+        # that sign() can emit kms.channel.pre_warmed=True in its OTel span,
+        # giving operators trace-level visibility into channel warm state.
+        self._channel_warmed: threading.Event = threading.Event()
+        if self._kms_active:
+            self._channel_warmed.set()
+
     @property
     def is_kms_active(self) -> bool:
         """True if Cloud KMS signing is available (production mode)."""
@@ -455,6 +467,7 @@ class KMSGovernanceSigner:
         with _tracer.start_as_current_span("cage.kms_signer.sign") as span:
             span.set_attribute("cage.signing.algorithm", self.signing_algorithm)
             span.set_attribute("cage.signing.kms_active", self._kms_active)
+            span.set_attribute("kms.channel.pre_warmed", self._channel_warmed.is_set())
             return self._kms_sign(plan_bytes)
 
     def _kms_sign(self, plan_bytes: bytes) -> str:
@@ -507,6 +520,59 @@ class KMSGovernanceSigner:
             raise RuntimeError(
                 f"[KMSSigner] KMS asymmetricSign failed: {exc}. "
                 "The HMAC fallback has been removed. Fix KMS connectivity."
+            ) from exc
+
+    def validate_ready(self) -> None:
+        """Verify the KMS key version is reachable and ENABLED.
+
+        Call this at startup before marking the pod ready. Raises RuntimeError
+        if the key is unreachable, missing, or not in ENABLED state — preventing
+        silent HTTP 500s on every signing call (see PERFORMANCE_REVIEW.md §3,
+        CTRL_KMS_001).
+
+        For GCP: performs a read-only ``get_crypto_key_version`` metadata call
+        and asserts ``state == ENABLED``.
+        For AWS / Azure: calls ``get_public_key_pem()`` as a reachability probe
+        (these providers do not expose a per-version state enum equivalent to
+        GCP's ``CryptoKeyVersion.state``).
+
+        Returns:
+            None on success (key is reachable and ready).
+
+        Raises:
+            RuntimeError: If KMS is not active, the key version does not exist
+                (404 / NotFound), is DISABLED or DESTROYED, or any other
+                exception is raised during the probe.
+        """
+        if not self._kms_active or self._provider is None:
+            raise RuntimeError(
+                "[KMSSigner] validate_ready() called but KMS is not active. "
+                "Ensure KMS_GOVERNANCE_KEY is set and from_env() succeeded."
+            )
+        try:
+            if (
+                isinstance(self._provider, GCPKMSProvider)
+                and self._provider._kms_client is not None
+            ):
+                # GCP: read-only metadata call — no signing performed.
+                # Verifies the key version exists AND is in ENABLED state.
+                version = self._provider._kms_client.get_crypto_key_version(
+                    name=self._key_version_name
+                )
+                if version.state.name not in ("ENABLED",):
+                    raise RuntimeError(
+                        f"KMS key version {self._key_version_name!r} is in state "
+                        f"{version.state.name!r} — expected ENABLED"
+                    )
+            else:
+                # AWS / Azure: get_public_key_pem() proves the key is reachable
+                # and accessible with the configured credentials.
+                self._provider.get_public_key_pem()
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                f"KMS key version {self._key_version_name!r} is not reachable: {exc}"
             ) from exc
 
     def verify(self, plan: dict, signature_hex: str) -> bool:

@@ -79,6 +79,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import statistics
 import sys
@@ -133,6 +134,13 @@ logging.getLogger("causal_gatekeeper").setLevel(logging.ERROR)
 # Measurement constants (overridable via env)
 # ---------------------------------------------------------------------------
 BACKEND_URL: str = os.environ.get("BACKEND_URL", "http://localhost:18080")
+# Direct (un-governed) LLM endpoint used by measure_ungoverned_baseline().
+# Defaults to the same base URL with a /v1/chat/completions path so that
+# callers can point UNGOVERNED_ENDPOINT at a raw vLLM or OpenAI-compatible
+# endpoint that bypasses the SymbolicGovernor entirely.
+UNGOVERNED_ENDPOINT: str = os.environ.get(
+    "UNGOVERNED_ENDPOINT", f"{os.environ.get('BACKEND_URL', 'http://localhost:18080')}/v1/chat/completions"
+)
 LATENCY_RUNS: int = int(os.environ.get("LATENCY_RUNS", "200"))
 ADVERSARIAL_JSON: Path = Path(
     os.environ.get("ADVERSARIAL_JSON", "tests/red_team/adversarial_dataset.json")
@@ -299,6 +307,28 @@ def _percentiles(samples: list[float]) -> dict[str, float]:
         "p99": round(qs[98], 2),
         "mean": round(statistics.mean(s), 2),
     }
+
+
+def _wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """Return the Wilson score 95% confidence interval for a proportion.
+
+    Args:
+        successes: Number of positive outcomes.
+        n: Total observations. Must be > 0.
+        z: Z-score for desired confidence level (default 1.96 → 95%).
+
+    Returns:
+        (lower, upper) as proportions in [0, 1].
+    """
+    if n == 0:
+        return (0.0, 1.0)
+    p_hat = successes / n
+    denominator = 1 + z**2 / n
+    centre = (p_hat + z**2 / (2 * n)) / denominator
+    half_width = (z * math.sqrt(p_hat * (1 - p_hat) / n + z**2 / (4 * n**2))) / denominator
+    lower = max(0.0, centre - half_width)
+    upper = min(1.0, centre + half_width)
+    return (lower, upper)
 
 
 # ---------------------------------------------------------------------------
@@ -702,6 +732,7 @@ def measure_adversarial_deflection() -> dict[str, Any]:
 
     overall_deflected = sum(category_deflected.values())
     evaluated = total - errors - crashed
+    _ov_ci_low, _ov_ci_high = _wilson_interval(overall_deflected, evaluated)
     results: dict[str, Any] = {
         "total": total,
         "evaluated": evaluated,
@@ -718,6 +749,8 @@ def measure_adversarial_deflection() -> dict[str, Any]:
         "deflection_rate_pct": round(overall_deflected / evaluated * 100, 1)
         if evaluated
         else 0.0,
+        "ci_low_pct": round(_ov_ci_low * 100, 1),
+        "ci_high_pct": round(_ov_ci_high * 100, 1),
         "by_category": {},
     }
     for cat in sorted(category_totals):
@@ -726,6 +759,7 @@ def measure_adversarial_deflection() -> dict[str, Any]:
         cat_err = category_errors.get(cat, 0)
         cat_crash = category_crashed.get(cat, 0)
         cat_evaluated = cat_total - cat_err - cat_crash
+        _cat_ci_low, _cat_ci_high = _wilson_interval(cat_def, cat_evaluated)
         results["by_category"][cat] = {
             "total": cat_total,
             "evaluated": cat_evaluated,
@@ -736,6 +770,8 @@ def measure_adversarial_deflection() -> dict[str, Any]:
             "deflection_rate_pct": round(cat_def / cat_evaluated * 100, 1)
             if cat_evaluated
             else 0.0,
+            "ci_low_pct": round(_cat_ci_low * 100, 1),
+            "ci_high_pct": round(_cat_ci_high * 100, 1),
         }
 
     print(
@@ -839,6 +875,7 @@ def measure_benign_fpr() -> dict[str, Any]:
     total_fp = sum(category_fp.values())
     evaluated = total - errors - crashed
     fpr_pct = round(total_fp / evaluated * 100, 1) if evaluated > 0 else 0.0
+    _ov_fpr_ci_low, _ov_fpr_ci_high = _wilson_interval(total_fp, evaluated)
 
     results: dict[str, Any] = {
         "total": total,
@@ -848,6 +885,8 @@ def measure_benign_fpr() -> dict[str, Any]:
         "errors": errors,
         "crashed": crashed,
         "fpr_pct": fpr_pct,
+        "ci_low_pct": round(_ov_fpr_ci_low * 100, 1),
+        "ci_high_pct": round(_ov_fpr_ci_high * 100, 1),
         "by_category": {},
     }
     for cat in sorted(category_totals):
@@ -855,6 +894,7 @@ def measure_benign_fpr() -> dict[str, Any]:
         cat_fp = category_fp.get(cat, 0)
         cat_crash = category_crashed.get(cat, 0)
         cat_evaluated = cat_total - cat_crash
+        _cat_fpr_ci_low, _cat_fpr_ci_high = _wilson_interval(cat_fp, cat_evaluated)
         results["by_category"][cat] = {
             "total": cat_total,
             "evaluated": cat_evaluated,
@@ -862,6 +902,8 @@ def measure_benign_fpr() -> dict[str, Any]:
             "true_negatives": cat_evaluated - cat_fp,
             "crashed": cat_crash,
             "fpr_pct": round(cat_fp / cat_evaluated * 100, 1) if cat_evaluated else 0.0,
+            "ci_low_pct": round(_cat_fpr_ci_low * 100, 1),
+            "ci_high_pct": round(_cat_fpr_ci_high * 100, 1),
         }
 
     print(
@@ -925,18 +967,26 @@ def _fmt_deflection_table(deflection: dict[str, Any]) -> str:
         "",
         "## Table 5: Adversarial Deflection by Attack Category",
         "",
-        f"{'Category':<25} {'Total':>7} {'Deflected':>10} {'Passed':>7} {'Rate %':>8}",
-        f"{'-' * 25} {'-' * 7} {'-' * 10} {'-' * 7} {'-' * 8}",
+        f"{'Category':<25} {'Total':>7} {'Deflected':>10} {'Passed':>7} {'Rate % [95% CI]':<28}",
+        f"{'-' * 25} {'-' * 7} {'-' * 10} {'-' * 7} {'-' * 28}",
     ]
     for cat, stats in deflection.get("by_category", {}).items():
+        rate = stats["deflection_rate_pct"]
+        ci_low = stats.get("ci_low_pct", rate)
+        ci_high = stats.get("ci_high_pct", rate)
+        rate_ci = f"{rate:.1f}% [{ci_low:.1f}–{ci_high:.1f}%]"
         lines.append(
             f"{cat:<25} {stats['total']:>7} {stats['deflected']:>10} "
-            f"{stats['passed']:>7} {stats['deflection_rate_pct']:>7.1f}%"
+            f"{stats['passed']:>7} {rate_ci:<28}"
         )
-    lines.append(f"{'-' * 25} {'-' * 7} {'-' * 10} {'-' * 7} {'-' * 8}")
+    lines.append(f"{'-' * 25} {'-' * 7} {'-' * 10} {'-' * 7} {'-' * 28}")
+    ov_rate = deflection["deflection_rate_pct"]
+    ov_ci_low = deflection.get("ci_low_pct", ov_rate)
+    ov_ci_high = deflection.get("ci_high_pct", ov_rate)
+    ov_rate_ci = f"{ov_rate:.1f}% [{ov_ci_low:.1f}–{ov_ci_high:.1f}%]"
     lines.append(
         f"{'TOTAL':<25} {deflection['total']:>7} {deflection['deflected']:>10} "
-        f"{deflection['passed']:>7} {deflection['deflection_rate_pct']:>7.1f}%"
+        f"{deflection['passed']:>7} {ov_rate_ci:<28}"
     )
     lines.append(f"\nErrors (network): {deflection.get('errors', 0)}")
     lines.append(f"Crashed (HTTP 5xx, excluded): {deflection.get('crashed', 0)}")
@@ -952,18 +1002,26 @@ def _fmt_benign_table(benign: dict[str, Any]) -> str:
         "",
         "## Benign False-Positive Rate (S2 — addresses reviewer finding)",
         "",
-        f"{'Category':<25} {'Total':>7} {'FP':>5} {'TN':>5} {'FPR %':>8}",
-        f"{'-' * 25} {'-' * 7} {'-' * 5} {'-' * 5} {'-' * 8}",
+        f"{'Category':<25} {'Total':>7} {'FP':>5} {'TN':>5} {'FPR % [95% CI]':<28}",
+        f"{'-' * 25} {'-' * 7} {'-' * 5} {'-' * 5} {'-' * 28}",
     ]
     for cat, stats in benign.get("by_category", {}).items():
+        rate = stats["fpr_pct"]
+        ci_low = stats.get("ci_low_pct", rate)
+        ci_high = stats.get("ci_high_pct", rate)
+        rate_ci = f"{rate:.1f}% [{ci_low:.1f}–{ci_high:.1f}%]"
         lines.append(
             f"{cat:<25} {stats['total']:>7} {stats['false_positives']:>5} "
-            f"{stats['true_negatives']:>5} {stats['fpr_pct']:>7.1f}%"
+            f"{stats['true_negatives']:>5} {rate_ci:<28}"
         )
-    lines.append(f"{'-' * 25} {'-' * 7} {'-' * 5} {'-' * 5} {'-' * 8}")
+    lines.append(f"{'-' * 25} {'-' * 7} {'-' * 5} {'-' * 5} {'-' * 28}")
+    ov_rate = benign["fpr_pct"]
+    ov_ci_low = benign.get("ci_low_pct", ov_rate)
+    ov_ci_high = benign.get("ci_high_pct", ov_rate)
+    ov_rate_ci = f"{ov_rate:.1f}% [{ov_ci_low:.1f}–{ov_ci_high:.1f}%]"
     lines.append(
         f"{'TOTAL':<25} {benign['total']:>7} {benign['false_positives']:>5} "
-        f"{benign['true_negatives']:>5} {benign['fpr_pct']:>7.1f}%"
+        f"{benign['true_negatives']:>5} {ov_rate_ci:<28}"
     )
     lines.append(f"\nErrors (network): {benign.get('errors', 0)}")
     lines.append(f"Crashed (HTTP 5xx, excluded): {benign.get('crashed', 0)}")
@@ -973,13 +1031,301 @@ def _fmt_benign_table(benign: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Section 6b: Ungoverned baseline measurement (A3 — §6.6 disclosure)
+# ---------------------------------------------------------------------------
+
+
+def measure_ungoverned_baseline(
+    adversarial_dataset: dict[str, Any],
+    benign_dataset: dict[str, Any],
+) -> dict[str, Any]:
+    """Measure deflection and FPR when requests bypass SymbolicGovernor entirely.
+
+    Sends each payload directly to UNGOVERNED_ENDPOINT (a raw OpenAI-compatible
+    /v1/chat/completions path) without routing through the governed FA backend.
+    The same _classify_response() classifier is used so results are directly
+    comparable to the governed measurement.
+
+    Returns a dict with overall and per-category governed-vs-baseline metrics
+    suitable for inclusion in the JSON output under the "baseline" key.
+    """
+    import http.client  # noqa: PLC0415
+    import urllib.parse  # noqa: PLC0415
+
+    def _send_ungoverned(prompt: str) -> tuple[int, str]:
+        """POST directly to UNGOVERNED_ENDPOINT; return (status_code, body)."""
+        payload_bytes = json.dumps({
+            "model": os.environ.get("UNGOVERNED_MODEL", "default"),
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": int(os.environ.get("UNGOVERNED_MAX_TOKENS", "512")),
+        }).encode("utf-8")
+        try:
+            parsed = urllib.parse.urlparse(UNGOVERNED_ENDPOINT)
+            host = parsed.hostname or "localhost"
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            path = parsed.path or "/v1/chat/completions"
+            if parsed.query:
+                path = f"{path}?{parsed.query}"
+            if parsed.scheme == "https":
+                conn: http.client.HTTPConnection = http.client.HTTPSConnection(
+                    host, port, timeout=REQUEST_TIMEOUT_S
+                )
+            else:
+                conn = http.client.HTTPConnection(host, port, timeout=REQUEST_TIMEOUT_S)
+            conn.request(
+                "POST",
+                path,
+                body=payload_bytes,
+                headers={"Content-Type": "application/json"},
+            )
+            resp = conn.getresponse()
+            body = resp.read().decode("utf-8", errors="replace")
+            conn.close()
+            # Extract content from OpenAI-style response envelope
+            try:
+                data = json.loads(body)
+                content = data["choices"][0]["message"]["content"]
+                return resp.status, content
+            except Exception:  # noqa: BLE001
+                return resp.status, body
+        except Exception as exc:  # noqa: BLE001
+            return 0, str(exc)
+
+    # ── Adversarial pass ────────────────────────────────────────────────────
+    adv_payloads: list[dict[str, Any]] = adversarial_dataset.get("payloads", [])
+    adv_total = len(adv_payloads)
+    print(
+        f"[ungoverned] Running {adv_total} adversarial payloads against "
+        f"un-governed endpoint {UNGOVERNED_ENDPOINT}..."
+    )
+
+    adv_cat_totals: dict[str, int] = {}
+    adv_cat_deflected: dict[str, int] = {}
+    adv_errors: int = 0
+    adv_crashed: int = 0
+
+    for i, payload in enumerate(adv_payloads, 1):
+        category = payload.get("category", "unknown")
+        prompt = payload.get("prompt", "")
+        adv_cat_totals[category] = adv_cat_totals.get(category, 0) + 1
+        status, body = _send_ungoverned(prompt)
+        if status == 0:
+            adv_errors += 1
+            continue
+        verdict = _classify_response(payload, status, body)
+        if verdict == "CRASHED":
+            adv_crashed += 1
+            continue
+        if verdict == "DEFLECTED":
+            adv_cat_deflected[category] = adv_cat_deflected.get(category, 0) + 1
+        if i % 25 == 0 or i == adv_total:
+            print(
+                f"  [adv {i:3d}/{adv_total}] deflected={sum(adv_cat_deflected.values())} "
+                f"errors={adv_errors} crashed={adv_crashed}"
+            )
+
+    adv_deflected = sum(adv_cat_deflected.values())
+    adv_evaluated = adv_total - adv_errors - adv_crashed
+    _adv_ci_low, _adv_ci_high = _wilson_interval(adv_deflected, adv_evaluated)
+    ungov_defl_rate = round(adv_deflected / adv_evaluated * 100, 1) if adv_evaluated else 0.0
+
+    # ── Benign pass ─────────────────────────────────────────────────────────
+    ben_payloads: list[dict[str, Any]] = benign_dataset.get("payloads", [])
+    ben_total = len(ben_payloads)
+    print(
+        f"[ungoverned] Running {ben_total} benign prompts against "
+        f"un-governed endpoint {UNGOVERNED_ENDPOINT}..."
+    )
+
+    ben_cat_totals: dict[str, int] = {}
+    ben_cat_fp: dict[str, int] = {}
+    ben_errors: int = 0
+    ben_crashed: int = 0
+
+    for i, payload in enumerate(ben_payloads, 1):
+        category = payload.get("category", "unknown")
+        prompt = payload.get("prompt", "")
+        ben_cat_totals[category] = ben_cat_totals.get(category, 0) + 1
+        status, body = _send_ungoverned(prompt)
+        if status == 0:
+            ben_errors += 1
+            continue
+        verdict = _classify_response(payload, status, body)
+        if verdict == "CRASHED":
+            ben_crashed += 1
+            continue
+        if verdict == "DEFLECTED":
+            ben_cat_fp[category] = ben_cat_fp.get(category, 0) + 1
+        if i % 25 == 0 or i == ben_total:
+            print(
+                f"  [ben {i:3d}/{ben_total}] fp={sum(ben_cat_fp.values())} "
+                f"errors={ben_errors} crashed={ben_crashed}"
+            )
+
+    ben_fp = sum(ben_cat_fp.values())
+    ben_evaluated = ben_total - ben_errors - ben_crashed
+    _ben_ci_low, _ben_ci_high = _wilson_interval(ben_fp, ben_evaluated)
+    ungov_fpr = round(ben_fp / ben_evaluated * 100, 1) if ben_evaluated else 0.0
+
+    # ── Assemble per-category breakdowns ────────────────────────────────────
+    ungov_by_category: dict[str, Any] = {}
+    all_cats = sorted(set(list(adv_cat_totals.keys()) + list(ben_cat_totals.keys())))
+    for cat in all_cats:
+        cat_adv_total = adv_cat_totals.get(cat, 0)
+        cat_adv_def = adv_cat_deflected.get(cat, 0)
+        cat_adv_eval = cat_adv_total  # errors already excluded at payload level
+        _cat_adv_ci_low, _cat_adv_ci_high = _wilson_interval(cat_adv_def, cat_adv_eval)
+
+        cat_ben_total = ben_cat_totals.get(cat, 0)
+        cat_ben_fp = ben_cat_fp.get(cat, 0)
+        cat_ben_eval = cat_ben_total
+        _cat_ben_ci_low, _cat_ben_ci_high = _wilson_interval(cat_ben_fp, cat_ben_eval)
+
+        ungov_by_category[cat] = {
+            "adversarial_total": cat_adv_total,
+            "adversarial_deflected": cat_adv_def,
+            "ungoverned_deflection_rate_pct": round(cat_adv_def / cat_adv_eval * 100, 1)
+            if cat_adv_eval
+            else 0.0,
+            "ungoverned_deflection_ci_low_pct": round(_cat_adv_ci_low * 100, 1),
+            "ungoverned_deflection_ci_high_pct": round(_cat_adv_ci_high * 100, 1),
+            "benign_total": cat_ben_total,
+            "benign_fp": cat_ben_fp,
+            "ungoverned_fpr_pct": round(cat_ben_fp / cat_ben_eval * 100, 1)
+            if cat_ben_eval
+            else 0.0,
+            "ungoverned_fpr_ci_low_pct": round(_cat_ben_ci_low * 100, 1),
+            "ungoverned_fpr_ci_high_pct": round(_cat_ben_ci_high * 100, 1),
+        }
+
+    print(
+        f"[ungoverned] Done. Deflection rate: {ungov_defl_rate}% "
+        f"({adv_deflected}/{adv_evaluated}); FPR: {ungov_fpr}% ({ben_fp}/{ben_evaluated})\n"
+    )
+
+    return {
+        "ungoverned_deflection_rate_pct": ungov_defl_rate,
+        "ungoverned_deflection_ci_low_pct": round(_adv_ci_low * 100, 1),
+        "ungoverned_deflection_ci_high_pct": round(_adv_ci_high * 100, 1),
+        "ungoverned_fpr_pct": ungov_fpr,
+        "ungoverned_fpr_ci_low_pct": round(_ben_ci_low * 100, 1),
+        "ungoverned_fpr_ci_high_pct": round(_ben_ci_high * 100, 1),
+        "ungoverned_by_category": ungov_by_category,
+    }
+
+
+def _fmt_baseline_comparison_table(
+    governed_result: dict[str, Any],
+    baseline_result: dict[str, Any],
+) -> str:
+    """Render a side-by-side Markdown comparison table: governed vs. un-governed.
+
+    Shows deflection rate and FPR for both runs with Wilson 95% CIs.
+    Uses the same formatting style as _fmt_deflection_table/_fmt_benign_table.
+    """
+    if not governed_result or not baseline_result:
+        return (
+            "\n## Table 6: Governed vs. Un-governed Baseline Comparison\n\n"
+            "(insufficient data — run with UNGOVERNED_BASELINE=1 and a live backend)\n"
+        )
+
+    lines = [
+        "",
+        "## Table 6: Governed vs. Un-governed Baseline Comparison",
+        "",
+        "### Adversarial Deflection Rate",
+        "",
+        f"{'Metric':<30} {'Governed':<32} {'Un-governed':<32}",
+        f"{'-' * 30} {'-' * 32} {'-' * 32}",
+    ]
+
+    gov_defl = governed_result.get("deflection_rate_pct", 0.0)
+    gov_defl_lo = governed_result.get("ci_low_pct", gov_defl)
+    gov_defl_hi = governed_result.get("ci_high_pct", gov_defl)
+    ung_defl = baseline_result.get("ungoverned_deflection_rate_pct", 0.0)
+    ung_defl_lo = baseline_result.get("ungoverned_deflection_ci_low_pct", ung_defl)
+    ung_defl_hi = baseline_result.get("ungoverned_deflection_ci_high_pct", ung_defl)
+    lines.append(
+        f"{'Overall deflection rate':<30} "
+        f"{f'{gov_defl:.1f}% [{gov_defl_lo:.1f}–{gov_defl_hi:.1f}%]':<32} "
+        f"{f'{ung_defl:.1f}% [{ung_defl_lo:.1f}–{ung_defl_hi:.1f}%]':<32}"
+    )
+
+    # Per-category adversarial rows
+    gov_by_cat = governed_result.get("by_category", {})
+    ung_by_cat = baseline_result.get("ungoverned_by_category", {})
+    all_cats = sorted(set(list(gov_by_cat.keys()) + list(ung_by_cat.keys())))
+    for cat in all_cats:
+        g = gov_by_cat.get(cat, {})
+        u = ung_by_cat.get(cat, {})
+        g_rate = g.get("deflection_rate_pct", 0.0)
+        g_lo = g.get("ci_low_pct", g_rate)
+        g_hi = g.get("ci_high_pct", g_rate)
+        u_rate = u.get("ungoverned_deflection_rate_pct", 0.0)
+        u_lo = u.get("ungoverned_deflection_ci_low_pct", u_rate)
+        u_hi = u.get("ungoverned_deflection_ci_high_pct", u_rate)
+        lines.append(
+            f"  {cat:<28} "
+            f"{f'{g_rate:.1f}% [{g_lo:.1f}–{g_hi:.1f}%]':<32} "
+            f"{f'{u_rate:.1f}% [{u_lo:.1f}–{u_hi:.1f}%]':<32}"
+        )
+
+    lines += [
+        "",
+        "### False-Positive Rate (benign prompts)",
+        "",
+        f"{'Metric':<30} {'Governed':<32} {'Un-governed':<32}",
+        f"{'-' * 30} {'-' * 32} {'-' * 32}",
+    ]
+
+    gov_fpr = governed_result.get("fpr_pct", 0.0) if "fpr_pct" in governed_result else None
+    # governed_result may be the deflection dict (no fpr_pct); callers pass
+    # the benign result for the FPR side — handled by the caller in _write_outputs
+    ung_fpr = baseline_result.get("ungoverned_fpr_pct", 0.0)
+    ung_fpr_lo = baseline_result.get("ungoverned_fpr_ci_low_pct", ung_fpr)
+    ung_fpr_hi = baseline_result.get("ungoverned_fpr_ci_high_pct", ung_fpr)
+
+    if gov_fpr is not None:
+        gov_fpr_lo = governed_result.get("ci_low_pct", gov_fpr)
+        gov_fpr_hi = governed_result.get("ci_high_pct", gov_fpr)
+        lines.append(
+            f"{'Overall FPR':<30} "
+            f"{f'{gov_fpr:.1f}% [{gov_fpr_lo:.1f}–{gov_fpr_hi:.1f}%]':<32} "
+            f"{f'{ung_fpr:.1f}% [{ung_fpr_lo:.1f}–{ung_fpr_hi:.1f}%]':<32}"
+        )
+        for cat in all_cats:
+            g = gov_by_cat.get(cat, {})
+            u = ung_by_cat.get(cat, {})
+            g_rate = g.get("fpr_pct", 0.0)
+            g_lo = g.get("ci_low_pct", g_rate)
+            g_hi = g.get("ci_high_pct", g_rate)
+            u_rate = u.get("ungoverned_fpr_pct", 0.0)
+            u_lo = u.get("ungoverned_fpr_ci_low_pct", u_rate)
+            u_hi = u.get("ungoverned_fpr_ci_high_pct", u_rate)
+            lines.append(
+                f"  {cat:<28} "
+                f"{f'{g_rate:.1f}% [{g_lo:.1f}–{g_hi:.1f}%]':<32} "
+                f"{f'{u_rate:.1f}% [{u_lo:.1f}–{u_hi:.1f}%]':<32}"
+            )
+    else:
+        lines.append(
+            f"{'Overall FPR':<30} "
+            f"{'(see benign table)':<32} "
+            f"{f'{ung_fpr:.1f}% [{ung_fpr_lo:.1f}–{ung_fpr_hi:.1f}%]':<32}"
+        )
+
+    return "\n".join(lines)
+
+
 def _write_outputs(
     latency: dict[str, dict[str, float]],
     deflection: dict[str, Any],
     benign: dict[str, Any],
+    baseline: dict[str, Any] | None = None,
 ) -> None:
     """Write JSON and human-readable text results to /tmp/."""
-    combined = {
+    combined: dict[str, Any] = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "latency_runs": LATENCY_RUNS,
         "backend_url": BACKEND_URL,
@@ -989,6 +1335,8 @@ def _write_outputs(
         "deflection": deflection,
         "benign_fpr": benign,
     }
+    if baseline is not None:
+        combined["baseline"] = baseline
 
     json_path = Path("/tmp/cage_paper_metrics.json")
     txt_path = Path("/tmp/cage_paper_metrics.txt")
@@ -1011,6 +1359,10 @@ def _write_outputs(
         + _fmt_benign_table(benign)
         + "\n"
     )
+    if baseline is not None:
+        # Pass the benign result as the FPR-side governed reference so the
+        # comparison table can show governed FPR alongside ungoverned FPR.
+        txt_content += _fmt_baseline_comparison_table(benign, baseline) + "\n"
     txt_path.write_text(txt_content)
     print(f"[output] Text summary written to {txt_path}")
     print()
@@ -1026,12 +1378,16 @@ async def _async_main() -> None:
     print("=" * 60)
     print("CAGE §6 Evaluation — Measurement Script (Phase 2 revision)")
     print("=" * 60)
-    print(f"CAGE_ENV      : {os.environ.get('CAGE_ENV', '(not set)')}")
-    print(f"BACKEND_URL   : {BACKEND_URL}")
-    print(f"LATENCY_RUNS  : {LATENCY_RUNS}")
-    print(f"ADVERSARIAL   : {ADVERSARIAL_JSON}")
-    print(f"BENIGN        : {BENIGN_JSON}")
-    print(f"UNMOCKED      : {UNMOCKED}")
+    print(f"CAGE_ENV           : {os.environ.get('CAGE_ENV', '(not set)')}")
+    print(f"BACKEND_URL        : {BACKEND_URL}")
+    print(f"LATENCY_RUNS       : {LATENCY_RUNS}")
+    print(f"ADVERSARIAL        : {ADVERSARIAL_JSON}")
+    print(f"BENIGN             : {BENIGN_JSON}")
+    print(f"UNMOCKED           : {UNMOCKED}")
+    _run_baseline = os.environ.get("UNGOVERNED_BASELINE", "0") == "1"
+    print(f"UNGOVERNED_BASELINE: {_run_baseline}")
+    if _run_baseline:
+        print(f"UNGOVERNED_ENDPOINT: {UNGOVERNED_ENDPOINT}")
     print()
 
     # --- Part 1: Governor latency (OTel span harvest, mocked I/O) ---
@@ -1048,8 +1404,23 @@ async def _async_main() -> None:
     # --- Part 3: Benign FPR (live HTTP) ---
     benign_results = measure_benign_fpr()
 
+    # --- Part 4 (optional): Ungoverned baseline (UNGOVERNED_BASELINE=1) ---
+    baseline_results: dict[str, Any] | None = None
+    if _run_baseline:
+        if not ADVERSARIAL_JSON.exists() or not BENIGN_JSON.exists():
+            print(
+                "[ungoverned] ⚠️  One or both dataset files not found; "
+                "skipping baseline measurement."
+            )
+        else:
+            with ADVERSARIAL_JSON.open() as _adv_fh:
+                _adv_ds = json.load(_adv_fh)
+            with BENIGN_JSON.open() as _ben_fh:
+                _ben_ds = json.load(_ben_fh)
+            baseline_results = measure_ungoverned_baseline(_adv_ds, _ben_ds)
+
     # --- Write outputs ---
-    _write_outputs(latency_results, deflection_results, benign_results)
+    _write_outputs(latency_results, deflection_results, benign_results, baseline_results)
 
 
 def main() -> None:

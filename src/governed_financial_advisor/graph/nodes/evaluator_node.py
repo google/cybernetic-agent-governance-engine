@@ -31,29 +31,49 @@ from src.gateway.governance.kms_signer import get_governance_signer
 
 
 @side_effect_node(kind="api_call", external_system="cloud_kms")
-def generate_governance_signature(plan: dict) -> str:
+def generate_governance_signature(plan: dict) -> str | None:
     """Generate a cryptographic governance signature for a plan.
 
-    KMS_GOVERNANCE_KEY must be set to the full Cloud KMS key version
+    KMS signing is mandatory (CTRL_KMS_001 — evidentiary independence control).
+    ``KMS_GOVERNANCE_KEY`` must be set to the full Cloud KMS key version
     resource name:
       - ``KMSGovernanceSigner.from_env()`` calls ``asymmetricSign`` on the
         KMS HSM — the private key never leaves the hardware security module.
       - The signature is non-repudiable: Cloud Audit Logs independently
         record when and by what workload identity the signing occurred.
 
-    There is NO runtime HMAC fallback: the legacy HMAC-SHA256/GOVERNANCE_SALT
-    signing path was intentionally removed (CTRL_KMS_001 evidentiary
-    independence control). If KMS_GOVERNANCE_KEY is unset, empty, or the
-    google-cloud-kms client fails to initialise, ``get_governance_signer()``
-    raises ``RuntimeError`` immediately — this node does not catch it, so the
-    whole request fails (surfaces as HTTP 500). Dev/CI environments must
-    either provision a real (or emulated) KMS key, or route around this node
-    entirely; they must NOT rely on a silent fallback that no longer exists.
+    If ``KMS_GOVERNANCE_KEY`` is unset, empty, or the google-cloud-kms client
+    fails to initialise, ``get_governance_signer()`` raises ``RuntimeError``
+    immediately — this node does not catch it, so the whole request fails
+    (surfaces as HTTP 500). Dev/CI environments must provision a real (or
+    emulated) KMS key, or route around this node entirely.
+
+    Zero-step plan exemption: signing is skipped entirely when the plan
+    contains no executable steps.  A zero-step (analysis/conversational) plan
+    has no governed action to attest — calling Cloud KMS asymmetricSign
+    (P50 108ms, P99 9.6s) provides no safety value and wastes HSM capacity.
+    Returns ``None`` on the skipped path; callers must handle ``None`` for
+    ``governance_signature``.
 
     See: ``src/gateway/governance/kms_signer.py`` for full architecture.
     """
-    signer = get_governance_signer()
-    return signer.sign(plan)
+    with tracer.start_as_current_span("evaluator.generate_governance_signature") as span:
+        plan_steps = plan.get("steps", [])
+        if not plan_steps:
+            # Zero-step analysis/conversation plan — no governed action to attest.
+            # Signing a no-action plan with Cloud KMS (P50 108ms, P99 9.6s) provides
+            # no safety value and wastes HSM capacity. Skip unconditionally.
+            logger.debug(
+                "Skipping KMS signature for zero-step plan (no governed action)",
+                extra={"plan_type": plan.get("type", "unknown")},
+            )
+            span.set_attribute("kms.signing.skipped", True)
+            span.set_attribute("kms.signing.skip_reason", "zero_step_plan")
+            return None
+
+        span.set_attribute("kms.signing.skipped", False)
+        signer = get_governance_signer()
+        return signer.sign(plan)
 
 
 @side_effect_node(kind="api_call", external_system="opa_engine")

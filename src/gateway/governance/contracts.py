@@ -31,6 +31,34 @@ class SafetyFilter(Protocol):
         """
         Verifies if the action is safe.
         Returns "SAFE" or an error message starting with "UNSAFE".
+
+        .. deprecated::
+            Use ``atomic_verify_and_commit()`` instead to eliminate the TOCTOU
+            window between this read-only check and the subsequent balance debit
+            (see CBF Invariance Theorem atomicity premise, Issue #6).
+        """
+        ...
+
+    async def atomic_verify_and_commit(
+        self,
+        action_name: str,
+        payload: dict[str, Any],
+        governance_signature: str = "",
+    ) -> tuple[bool, str]:
+        """Collapse CBF check and state commit into one atomic Redis Lua hop.
+
+        Eliminates the TOCTOU window between ``verify_action()`` (read-only)
+        and ``update_state()`` (write) by executing both as a single Lua script
+        inside Redis.
+
+        Args:
+            action_name:          Name of the action being evaluated.
+            payload:              Action parameters dict.
+            governance_signature: Optional KMS governance signature string.
+
+        Returns:
+            ``(True, "COMMITTED")`` on success.
+            ``(False, reason_string)`` when the CBF envelope is violated.
         """
         ...
 

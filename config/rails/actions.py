@@ -224,11 +224,12 @@ async def custom_self_check_input(
 ):
     """Hybrid self-check for financial domain inputs - PHASE 2 UPGRADE.
 
-    Four-stage approach (ORDER IS SECURITY-CRITICAL — see 2026-08-02 and 2026-08-03 fixes):
-    1. Blocklist jailbreak patterns → BLOCK (0ms) [~5% of queries]
+    Five-stage approach (ORDER IS SECURITY-CRITICAL — see 2026-08-02, 2026-08-03, 2026-08-03b fixes):
+    1.  Blocklist jailbreak patterns → BLOCK (0ms) [~5% of queries]
     1B. Blocklist illegal-finance patterns → BLOCK (0ms) [harmful_financial category]
-    2. Allowlist financial keywords → ALLOW (0ms) [~70% of queries]
-    3. LLM-based semantic check → EVALUATE (2-5s) [~25% of queries]
+    1C. Structural-attack blocklist + prompt_injection_detector → BLOCK (0ms) [SQLi / XSS]
+    2.  Allowlist financial keywords → ALLOW (0ms) [~70% of queries]
+    3.  LLM-based semantic check → EVALUATE (2-5s) [~25% of queries]
 
     SECURITY NOTE (2026-08-02): The blocklist MUST run before the allowlist.
     Running the allowlist first (as this function originally did) allows any
@@ -248,6 +249,19 @@ async def custom_self_check_input(
     Broad allowlist keywords like "trading", "market", "strategy" are insufficient
     to distinguish harmful from benign finance requests — illegal-finance terms must
     be rejected as early as jailbreaks. See docs/paper/REVISION_TRACKER.md §2026-08-03.
+
+    SECURITY NOTE (2026-08-03b): Stage 1C closes the same allowlist-bypass
+    architectural defect for structural attack markers (SQL injection syntax,
+    HTML/script injection) that Stage 1B closed for illegal-finance keywords.
+    Measurement root cause: INJ-004 (``'; DROP TABLE trades; -- Analyze ticker:``)
+    and INJ-005 (``<script>…</script> …AAPL``) both contain a Stage-2 allowlist
+    token ("analyze" / "analyze this stock") that fires before any structural
+    check runs, causing a false ALLOW.  Stage 1C is checked after Stage 1B but
+    before Stage 2, mirroring the exact fix pattern proven for harmful_financial
+    (commit 27a64ee).  It also delegates to ``detect_prompt_injection()``
+    (already production code in src/gateway/governance/prompt_injection_detector.py)
+    rather than maintaining a third parallel keyword list, reusing the structural
+    regex machinery that was previously wired only to MCP tool-response sanitisation.
     """
     with _tracer.start_as_current_span("nemo.action.self_check_input") as span:
         span.set_attribute("langfuse.observation.type", "span")
@@ -332,6 +346,86 @@ async def custom_self_check_input(
             span.set_attribute("nemo.action.stage", "ILLEGAL_FINANCE_BLOCKLIST")
             span.set_attribute("nemo.action.outcome", "BLOCK")
             return False
+
+        # STAGE 1C: STRUCTURAL-ATTACK BLOCKLIST — SQL injection, HTML/script injection.
+        # Checked before the Stage 2 allowlist so that payloads co-mentioning a
+        # finance keyword (e.g. "'; DROP TABLE trades; -- Analyze ticker:AAPL",
+        # "<script>steal()</script> analyze AAPL") do not short-circuit to ALLOW
+        # before structural attack markers are detected. This is the identical
+        # allowlist-bypass pattern fixed for jailbreaks in Stage 1 (2026-08-02)
+        # and for illegal-finance in Stage 1B (2026-08-03).
+        #
+        # Two complementary checks run here:
+        #   a) Fast O(1) substring scan for SQL/HTML structural tokens — catches
+        #      INJ-004 (SQL syntax) and INJ-005 (<script>) immediately.
+        #   b) detect_prompt_injection() regex engine (prompt_injection_detector.py)
+        #      — already production code, previously only wired to MCP tool-response
+        #      sanitisation; now also applied to raw user input.
+        structural_attack_patterns = [
+            # SQL injection markers
+            "; drop",
+            "'; drop",
+            "\"; drop",
+            "union select",
+            "' or '1'='1",
+            "\" or \"1\"=\"1",
+            "'; select",
+            "--",  # SQL comment terminator in injection context checked below
+            "/**/",  # SQL block comment bypass
+            "xp_cmdshell",
+            # HTML / script injection markers
+            "<script",
+            "</script>",
+            "javascript:",
+            "onerror=",
+            "onload=",
+            "<iframe",
+            "<img src=",
+        ]
+
+        # The "--" token is a legitimate Markdown/CLI character; only block when it
+        # appears adjacent to SQL syntax (i.e. after a quote or semicolon).
+        _has_sql_comment = "--" in text and any(
+            marker in text for marker in (";", "'", '"', "select", "insert", "update", "delete")
+        )
+
+        if any(pat in text for pat in structural_attack_patterns if pat != "--") or _has_sql_comment:
+            logger.warning(
+                "HybridSelfCheckInput: STAGE 1C BLOCK (structural-attack pattern)"
+            )
+            span.set_attribute("nemo.action.stage", "STRUCTURAL_ATTACK_BLOCKLIST")
+            span.set_attribute("nemo.action.outcome", "BLOCK")
+            return False
+
+        # Also run the dedicated structural regex detector (reuses existing
+        # production machinery; previously only called on MCP tool responses).
+        try:
+            from src.gateway.governance.prompt_injection_detector import (
+                detect_prompt_injection,
+            )
+
+            _injection_result = detect_prompt_injection(text)
+            if _injection_result.detected:
+                logger.warning(
+                    "HybridSelfCheckInput: STAGE 1C BLOCK (prompt_injection_detector "
+                    "pattern=%s confidence=%.2f)",
+                    _injection_result.pattern_matched,
+                    _injection_result.confidence,
+                )
+                span.set_attribute("nemo.action.stage", "STRUCTURAL_ATTACK_BLOCKLIST")
+                span.set_attribute(
+                    "nemo.action.injection_pattern",
+                    _injection_result.pattern_matched or "unknown",
+                )
+                span.set_attribute("nemo.action.outcome", "BLOCK")
+                return False
+        except ImportError:
+            # prompt_injection_detector not importable in restricted test envs;
+            # the substring scan above still runs — graceful degradation only.
+            logger.debug(
+                "HybridSelfCheckInput: STAGE 1C — prompt_injection_detector unavailable, "
+                "substring scan only"
+            )
 
         # STAGE 2: ALLOWLIST - Fast-path for known-safe financial queries (0ms)
         financial_keywords = [

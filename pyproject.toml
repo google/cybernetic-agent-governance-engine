@@ -64,6 +64,12 @@ gateway = [
     "protobuf>=5.26.1,<7.0.0",
     "mcp>=0.1.0",
     "nemoguardrails>=0.20.0,<1.0.0",
+    # pyahocorasick: O(n) Aho-Corasick automaton for the Tier-1 keyword scanner
+    # (src/gateway/governance/text_filter.py). Without this, text_filter falls back
+    # to an O(n*m) any() loop and logs a WARN on every import. The package is an
+    # optional performance dependency — the fallback is functionally correct but
+    # slower under high-throughput inference traffic.
+    "pyahocorasick>=2.0.0",
     # NOTE: 'outlines' was removed — CVE-2025-69872 (diskcache pickle RCE).
     # The guided_json FSM decoder runs server-side inside vLLM, not client-side.
     # CAGE never imports the outlines package; vLLM bundles its own copy.

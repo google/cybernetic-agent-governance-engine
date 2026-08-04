@@ -593,11 +593,15 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
         fresh_price_logged = rehydration.get("fresh_price") or 0.0
         span.set_attribute("toctou.revalidation.fresh_price", fresh_price_logged)
 
-        # --- Step 3: Tier 2 (CBF) + Tier 4 (OPA) re-check via SymbolicGovernor ---
+        # --- Step 3: Tier 3a (CBF) + Tier 3b (OPA) targeted re-check ---
+        # Post-HITL revalidation: only Tiers 3a (CBF) and 3b (OPA) are re-checked.
+        # Tiers 1 (STPA), 2 (confidence), 5 (consensus), and 6 (causal) are
+        # deterministic w.r.t. the static approved plan and do not need re-evaluation.
         # Direct singleton path — identical architectural invariant to safety_node.py.
         # Cannot be bypassed or intercepted by any LLM agent.
+        span.set_attribute("toctou.revalidation.scope", "cbf_opa_only")
         try:
-            await symbolic_governor.govern("execute_trade", fresh_params)
+            await symbolic_governor.revalidate_post_hitl(fresh_params, trace_id=None)
 
             logger.info(
                 "[RevalidateNode] ✅ Post-HITL re-validation APPROVED — %s within safe bounds.",

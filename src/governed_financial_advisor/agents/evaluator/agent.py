@@ -127,36 +127,6 @@ async def verify_policy_opa(action: str, params: str) -> str:
         return f"DENIED: System Error: {e}"
 
 
-async def verify_semantic_nemo(text: str) -> str:
-    """
-    Checks Semantic Safety via in-process NeMo guardrails (no MCP dependency).
-
-    Calls validate_with_nemo() directly, mirroring the mandatory nemo_guardrail_node
-    pattern. This avoids an extra MCP round-trip and ensures NeMo runs in-process
-    for defense-in-depth policy checks in the evaluator tool path.
-    """
-    with tracer.start_as_current_span("nemo.verify_content_safety") as span:
-        span.set_attribute("langfuse.observation.type", "span")
-        span.set_attribute("nemo.input_length", len(text))
-        try:
-            from src.gateway.governance.nemo.manager import validate_with_nemo
-            from src.governed_financial_advisor.graph.nodes.guardrail_node import (
-                get_nemo_rails,
-            )
-
-            rails = get_nemo_rails()
-            is_safe, reason = await validate_with_nemo(text, rails)
-            result = "SAFE" if is_safe else f"BLOCKED: {reason}"
-            span.set_attribute("nemo.result", result[:256])
-            span.set_attribute("nemo.is_safe", is_safe)
-            return result
-        except Exception as e:
-            span.record_exception(e)
-            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
-            logger.error(f"Semantic Check Failed: {e}")
-            return f"BLOCKED: System Error: {e}"
-
-
 async def simulate_governance_check(
     target_tool: str, target_params: dict[str, Any], risk_profile: str = "Medium"
 ) -> dict[str, Any]:

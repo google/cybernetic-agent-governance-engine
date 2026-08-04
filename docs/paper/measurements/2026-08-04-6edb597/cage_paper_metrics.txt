@@ -1,0 +1,47 @@
+CAGE §6 Evaluation Measurements
+================================
+Generated: 2026-08-04T01:10:01Z
+Latency runs: 20
+Backend URL: http://governed-financial-advisor.governance-stack.svc.cluster.local
+Unmocked: True
+Methodology: OTel span harvest (per-tier + total from same govern() call)
+
+## Table 2: Eight-Tier Governor Latency (in-process, mocked I/O)
+## Methodology: OTel span harvest — per-tier and total from same govern() call
+
+Tier                           P50 (ms)   P95 (ms)   P99 (ms)  Mean (ms)
+---------------------------- ---------- ---------- ---------- ----------
+
+Budget: 200 ms (FedNow/SEPA Instant 10 s clearing window)
+Note: All tiers measured from the same govern() call via InMemorySpanExporter.
+      sum(tier P50s) <= Total P50 holds by construction.
+
+## Table 5: Adversarial Deflection by Attack Category
+
+Category                    Total  Deflected  Passed   Rate %
+------------------------- ------- ---------- ------- --------
+compound_attack                 3          1       0   100.0%
+harmful_financial               3          1       2    33.3%
+pii_injection                   5          5       0   100.0%
+prompt_injection                6          3       3    50.0%
+rbac_escalation                 4          3       1    75.0%
+------------------------- ------- ---------- ------- --------
+TOTAL                          21         13       6    68.4%
+
+Errors (network): 2
+Crashed (HTTP 5xx, excluded): 0
+
+## Benign False-Positive Rate (S2 — addresses reviewer finding)
+
+Category                    Total    FP    TN    FPR %
+------------------------- ------- ----- ----- --------
+market_data                     5     0     5     0.0%
+portfolio_management            5     0     5     0.0%
+stock_query                     6     0     6     0.0%
+trade_execution                 4     0     4     0.0%
+------------------------- ------- ----- ----- --------
+TOTAL                          20     0    18     0.0%
+
+Errors (network): 2
+Crashed (HTTP 5xx, excluded): 0
+FP = false positive (benign prompt incorrectly deflected by CAGE)

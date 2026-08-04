@@ -95,6 +95,19 @@ def test_concurrent_tiers_are_the_gathered_pair() -> None:
     assert model.CONCURRENT_TIERS <= set(model.TIERS)
 
 
+def test_tier_count_is_exactly_8() -> None:
+    """Pin the number of modelled governance tiers to exactly 8.
+
+    # Issue #4: 21-state, 8-tier scope is the hand-abstracted automaton, not
+    # full production code or LTL.  This figure is cited in CAGE_ARXIV.MD §4.2
+    # and §7.2 Limitations.  Update this constant AND every location listed in
+    # docs/paper/REVISION_TRACKER.md if the pipeline adds or removes a tier.
+    """
+    assert len(model.TIERS) == 8, (
+        f"Expected exactly 8 governance tiers; got {len(model.TIERS)}: {model.TIERS}"
+    )
+
+
 def test_initial_state_has_all_tiers_pending() -> None:
     initial = model.initial_state()
     assert initial.phase == "PENDING"
@@ -116,7 +129,10 @@ def test_gated_architecture_satisfies_no_direct_bind() -> None:
 
 
 def test_gated_reachable_state_count_is_stable() -> None:
-    """Pins the figure quoted in CAGE_ARXIV.MD §4.4 and Appendix A."""
+    """Pins the figure quoted in CAGE_ARXIV.MD §4.4 and Appendix A.
+
+    # Issue #4: proof scope is 21 states, no LTL — documented in §7.2 Limitations.
+    """
     states = model.enumerate_reachable(model.gated_transitions)
     assert len(states) == EXPECTED_GATED_STATES
 

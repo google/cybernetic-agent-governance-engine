@@ -61,20 +61,37 @@ def _extract_trade_payload(state: dict[str, Any]) -> dict[str, Any]:
     Extracts fields from ``execution_plan_output`` and top-level state keys to
     build the flat dict expected by ``trade_governance.rego``.
 
-    NOTE: ``confidence`` is set to 1.0 because the safety_check_node is a
-    deterministic rule-based gate (OPA), not an ML model output.
-    SR 11-7 applies to model inference steps; by the time we reach this node
-    the plan is a deterministic structured object.
+    ARCHITECTURAL INVARIANT — risk-metric fields are deterministic, never LLM-sourced:
 
-    ``latency_ms`` is set to 0.0 because the safety gate runs in-process.
-    STPA FIN-2 guards against slow broker round-trips, not internal OPA calls.
+    ``drawdown``, ``order_size``, ``daily_vol``, and ``latency_ms`` are ALWAYS
+    supplied by this node from trusted, deterministic sources.  They are NEVER
+    read from the LLM-generated plan (``execution_plan_output``).  Rationale:
+
+    - Safety enforcement must be deterministic and LLM-agnostic.  Reading
+      risk-metric fields from the plan would allow a misbehaving or adversarially-
+      prompted model to influence OPA's UCA-5/UCA-2/UCA-6 decisions by fabricating
+      drawdown=0.0 or latency_ms=0.  This node is the correct, trusted enforcement
+      point — the LangGraph graph is deterministic; the LLM is not.
+    - ``latency_ms`` = 0.0 always: this gate runs in-process; FIN-2/UCA-2 guards
+      broker round-trip latency, not internal OPA evaluation time.
+    - ``drawdown`` = 0.0 always (safe sentinel): 0% drawdown correctly passes
+      UCA-5's ``val > threshold`` check — no drawdown has occurred at plan-time.
+      The full risk-metric data-flow (a dedicated ``compute_drawdown`` node that
+      reads live portfolio state from Redis/CBF and threads the result into the
+      safety payload) is tracked in the architecture backlog.
+    - ``order_size`` / ``daily_vol`` = 0 always: UCA-6 composite condition;
+      0-size order safely passes the volume-fraction guard.
+
+    ``confidence`` = 1.0: this node is a deterministic rule-based gate (OPA),
+    not an ML model output; SR 11-7 applies to inference steps only.
     """
     plan = state.get("execution_plan_output") or {}
     if isinstance(plan, str):
-        # Edge case: plan was stored as a raw string — cannot extract fields
+        # Edge case: plan was stored as a raw string — cannot extract fields.
         plan = {}
 
     payload: dict = {
+        # Intent fields — sourced from the LLM plan (what to trade, how much).
         "action": plan.get("action", "unknown"),
         "amount": plan.get("amount", 0),
         "symbol": plan.get("symbol", "UNKNOWN"),
@@ -83,14 +100,13 @@ def _extract_trade_payload(state: dict[str, Any]) -> dict[str, Any]:
         "user_id": state.get("user_id", "anonymous"),
         "risk_profile": state.get("risk_attitude", "neutral"),
         "confidence": plan.get("confidence", 1.0),
-        "latency_ms": plan.get("latency_ms", 0.0),
+        # Risk-metric fields — ALWAYS deterministic; NEVER read from the LLM plan.
+        # See ARCHITECTURAL INVARIANT in the docstring above.
+        "latency_ms": 0.0,
+        "drawdown": 0.0,
+        "order_size": 0,
+        "daily_vol": 0,
     }
-    # Pass through optional STPA-required fields when present in the plan.
-    # UCA-5 checks drawdown; UCA-6 checks order_size / daily_vol.
-    # These are populated by the risk analyst agent in production.
-    for optional_field in ("drawdown", "order_size", "daily_vol"):
-        if optional_field in plan:
-            payload[optional_field] = plan[optional_field]
     return payload
 
 

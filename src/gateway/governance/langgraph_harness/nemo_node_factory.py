@@ -504,6 +504,37 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
             ).lower()
             span.set_attribute("nemo.cage_enforcement", cage_enforcement)
 
+            # --- Optimization opportunity (Group D / D2) ---
+            # Currently PII masking and semantic validation are two sequential
+            # NeMo LLMRails invocations on the same LLMRails instance.  They
+            # cannot be collapsed into a single Colang execution pass without a
+            # dedicated combined output flow in config/rails/main_logic.co.
+            #
+            # What a future combined Colang flow would look like:
+            #
+            #   flow verify and validate output $output_text
+            #     $masked = await MaskPIIAction text=$output_text
+            #     $safe   = await CustomSelfCheckOutputAction text=$masked
+            #     if not $safe
+            #       bot refuse to respond
+            #       abort
+            #     return $masked
+            #
+            # Once that flow exists, both calls below collapse to a single
+            # rails.generate() invocation, saving one full LLM round-trip per
+            # request on the output path.  Track this as a Colang authoring task.
+            #
+            # OTel attributes below make the two-call cost visible in traces so
+            # it can be measured and prioritised for the Colang authoring sprint.
+            span.set_attribute("nemo.output_rail.pii_mask_call", 1)
+            span.set_attribute("nemo.output_rail.semantic_validate_call", 1)
+            span.set_attribute("nemo.output_rail.total_llm_calls", 2)
+            span.set_attribute(
+                "nemo.output_rail.optimization_opportunity",
+                "combine_into_single_colang_flow",
+            )
+
+            # --- Call 1 of 2: PII masking ---
             try:
                 rails = get_nemo_rails()
                 masked_text = await verify_and_mask_output(rails, output_text)
@@ -519,7 +550,7 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
                 span.set_status(trace.Status(trace.StatusCode.ERROR, str(exc)))
                 masked_text = cfg.output_blocked_sentinel
 
-            # --- Semantic safety validation (P2) ---
+            # --- Call 2 of 2: Semantic safety validation ---
             # Run validate_output_semantics() on the PII-masked text.
             # In enforce mode: block on UNSAFE verdict.
             # In log mode: warn but pass through.

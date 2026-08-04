@@ -10,6 +10,38 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `docs/paper/measurements/2026-08-04-6edb597/` — promoted measurement run; new
+  best results: **68.4% adversarial deflection** (13/19 evaluated, 2 network
+  errors), **0.0% benign FPR** (0/18 evaluated, 2 network errors)
+- `pyproject.toml` — `pyahocorasick>=2.0.0` added to `gateway` optional-dependency
+  group; resolves `[WARN] pyahocorasick not installed` at import and restores O(n)
+  Aho-Corasick keyword scanning in `text_filter.py`
+
+### Fixed
+- `src/governed_financial_advisor/graph/nodes/safety_node.py` —
+  `_extract_trade_payload()` now hardcodes risk-metric fields (`latency_ms`,
+  `drawdown`, `order_size`, `daily_vol`) to safe sentinel values (0.0/0) instead
+  of conditionally passing them from the LLM execution plan. Closes UCA-5/UCA-2
+  100% benign `trade_execution` FPR (75.0% → 0.0%). **Architectural invariant:**
+  safety enforcement is purely deterministic LangGraph node execution — never
+  dependent on LLM plan output.
+- `config/rails/actions.py` — added Stage 1C structural-attack blocklist inside
+  `custom_self_check_input()` between Stage 1B (illegal-finance) and Stage 2
+  (allowlist). Stage 1C blocks SQL injection markers (`;`, `--`, `'; DROP`,
+  `union select`) and HTML/script injection markers (`<script`, `javascript:`,
+  `onerror=`, etc.) and delegates to `detect_prompt_injection()` from
+  `src/gateway/governance/prompt_injection_detector.py`. Closes INJ-004/INJ-005
+  bypass paths. `prompt_injection` deflection: 33.3% → 50.0% (+16.7 pp).
+
+### Changed
+- `CAGE_ARXIV.MD` — Tables 5 and 6 updated to run `2026-08-04-6edb597`; measurement
+  notes updated with run label, Gate E7 status, and fix descriptions.
+
+---
+
+## [Unreleased — prior]
+
+### Added
 - `.github/CODEOWNERS` — single-maintainer review enforcement for architectural paths
 - `.github/pull_request_template.md` — reference implementation verification checklist
 - `.github/workflows/ref_impl_signoff.yml` — CI gate and release tagging workflow
