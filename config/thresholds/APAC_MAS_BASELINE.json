@@ -82,6 +82,14 @@
       "description": "Per-session token and step-count quota enforcement via Redis atomic counters",
       "enforcement_tier": 2,
       "worm_bucket_env_var": "OSCAL_S3_BUCKET_APAC_MAS"
+    },
+    "SR_26_2_SENTINEL": {
+      "control_id": "SR_26_2_SENTINEL",
+      "sentinel_ref": "SR 26-2",
+      "description": "Telemetry suppression control sentinel — SR 26-2 (MAS TRM §6.3 / ECB supervisory guidance). Signals that the requirement prohibiting AI systems from suppressing or concealing telemetry/audit output is acknowledged and wired into the APAC_MAS governance posture. This sentinel carries no legal force independent of the referenced supervisory text; its presence in the baseline JSON is a governance acknowledgement record only.",
+      "rationale": "MAS TRM Guidelines §6.3 require that AI systems cannot disable, suppress, or conceal audit logging or telemetry output. This sentinel confirms the APAC_MAS deployment posture enforces anti-suppression controls aligned with SR 26-2.",
+      "status": "ACKNOWLEDGED",
+      "enforcement_tier": 1
     }
   }
 }
