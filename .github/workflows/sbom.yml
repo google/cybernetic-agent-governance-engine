@@ -93,7 +93,9 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Trivy
         run: |
@@ -109,14 +111,16 @@ jobs:
         id: tag
         run: |
           echo "IMAGE_TAG=${{ github.sha }}" >> $GITHUB_OUTPUT
-          echo "IMAGE_REF=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ matrix.service.image_suffix }}:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "IMAGE_REF=${{ env.REGISTRY }}/${PROJECT_ID}/${{ matrix.service.image_suffix }}:${{ github.sha }}" >> $GITHUB_OUTPUT
 
       - name: Build container image
         run: |
           docker build \
             -f ${{ matrix.service.dockerfile }} \
-            -t ${{ steps.tag.outputs.IMAGE_REF }} \
+            -t ${STEPS_TAG_OUTPUTS_IMAGE_REF} \
             .
+        env:
+          STEPS_TAG_OUTPUTS_IMAGE_REF: ${{ steps.tag.outputs.IMAGE_REF }}
 
       # POAM-006: Generate CycloneDX SBOM for this container image
       - name: Generate CycloneDX SBOM
@@ -124,8 +128,10 @@ jobs:
           trivy image \
             --format cyclonedx \
             --output sbom-${{ matrix.service.name }}.cdx.json \
-            ${{ steps.tag.outputs.IMAGE_REF }}
+            ${STEPS_TAG_OUTPUTS_IMAGE_REF}
           echo "✅ SBOM generated: sbom-${{ matrix.service.name }}.cdx.json"
+        env:
+          STEPS_TAG_OUTPUTS_IMAGE_REF: ${{ steps.tag.outputs.IMAGE_REF }}
 
       # POAM-006: Fail if CRITICAL CVEs are found (except .trivyignore allowlist)
       - name: Scan for CRITICAL CVEs
@@ -135,11 +141,13 @@ jobs:
             --severity CRITICAL,HIGH \
             --ignorefile .trivyignore \
             --exit-code 1 \
-            ${{ steps.tag.outputs.IMAGE_REF }}
+            ${STEPS_TAG_OUTPUTS_IMAGE_REF}
         continue-on-error: false  # Hard fail on CRITICAL CVEs
+        env:
+          STEPS_TAG_OUTPUTS_IMAGE_REF: ${{ steps.tag.outputs.IMAGE_REF }}
 
       - name: Upload SBOM as GitHub Artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom-${{ matrix.service.name }}-${{ github.sha }}
           path: sbom-${{ matrix.service.name }}.cdx.json
@@ -165,11 +173,11 @@ jobs:
           # endpoints; 'auto' is accepted by most S3-compatible backends.
           AWS_DEFAULT_REGION: ${{ secrets.SBOM_S3_REGION || 'auto' }}
         run: |
-          DEST="s3://${{ env.SBOM_S3_BUCKET }}/sboms/${{ github.sha }}/sbom-${{ matrix.service.name }}.cdx.json"
+          DEST="s3://${SBOM_S3_BUCKET}/sboms/${{ github.sha }}/sbom-${{ matrix.service.name }}.cdx.json"
 
           # Build endpoint flag — omit for native AWS S3
-          if [ -n "${{ env.SBOM_S3_ENDPOINT }}" ]; then
-            ENDPOINT_FLAG="--endpoint-url ${{ env.SBOM_S3_ENDPOINT }}"
+          if [ -n "${SBOM_S3_ENDPOINT}" ]; then
+            ENDPOINT_FLAG="--endpoint-url ${SBOM_S3_ENDPOINT}"
           else
             ENDPOINT_FLAG=""
           fi
@@ -181,8 +189,8 @@ jobs:
             --no-progress
 
           echo "✅ SBOM uploaded to $DEST"
-          if [ -n "${{ env.SBOM_S3_ENDPOINT }}" ]; then
-            echo "   Endpoint: ${{ env.SBOM_S3_ENDPOINT }}"
+          if [ -n "${SBOM_S3_ENDPOINT}" ]; then
+            echo "   Endpoint: ${SBOM_S3_ENDPOINT}"
           fi
 
       - name: Summary
@@ -190,15 +198,17 @@ jobs:
           echo "## SBOM Generation Summary — ${{ matrix.service.name }}" >> $GITHUB_STEP_SUMMARY
           echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| Image | \`${{ steps.tag.outputs.IMAGE_REF }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | \`${STEPS_TAG_OUTPUTS_IMAGE_REF}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| SBOM Format | CycloneDX |" >> $GITHUB_STEP_SUMMARY
           echo "| POAM Reference | POAM-006 (CM-8 / ISO 42001 §A.8.3) |" >> $GITHUB_STEP_SUMMARY
           echo "| Artifact | \`sbom-${{ matrix.service.name }}.cdx.json\` |" >> $GITHUB_STEP_SUMMARY
-          if [ -n "${{ env.SBOM_S3_BUCKET }}" ] && [ -n "${{ env.SBOM_S3_ACCESS_KEY }}" ]; then
-            ENDPOINT="${{ env.SBOM_S3_ENDPOINT }}"
+          if [ -n "${SBOM_S3_BUCKET}" ] && [ -n "${SBOM_S3_ACCESS_KEY}" ]; then
+            ENDPOINT="${SBOM_S3_ENDPOINT}"
             BACKEND="${ENDPOINT:-AWS S3}"
             echo "| Storage backend | \`${BACKEND}\` |" >> $GITHUB_STEP_SUMMARY
-            echo "| Storage path | \`s3://${{ env.SBOM_S3_BUCKET }}/sboms/${{ github.sha }}/\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Storage path | \`s3://${SBOM_S3_BUCKET}/sboms/${{ github.sha }}/\` |" >> $GITHUB_STEP_SUMMARY
           else
             echo "| Storage backend | GitHub Artifact only (SBOM_S3_BUCKET not configured) |" >> $GITHUB_STEP_SUMMARY
           fi
+        env:
+          STEPS_TAG_OUTPUTS_IMAGE_REF: ${{ steps.tag.outputs.IMAGE_REF }}
