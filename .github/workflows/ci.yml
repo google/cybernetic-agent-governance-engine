@@ -174,8 +174,13 @@ jobs:
       - name: Run exhaustive NoDirectBind enumeration
         run: |
           python proof/model.py
+      # pytest-asyncio is required because tests/conftest.py defines an
+      # autouse=True async fixture (cleanup_redis_client) that applies to
+      # every test collected under tests/, including this narrow proof file.
+      # Without it, pytest raises "async fixture ... no plugin or hook that
+      # handled it" during setup for all 19 tests in this file.
       - name: Install pytest
-        run: pip install pytest pytest-timeout
+        run: pip install pytest pytest-timeout pytest-asyncio
       # Pins the exact reachable-state counts (21/24/19/20) quoted in
       # CAGE_ARXIV.MD and docs/technical-report/. This is a second,
       # independent check on top of `python proof/model.py` above so a

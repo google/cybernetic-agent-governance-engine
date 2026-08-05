@@ -26,7 +26,7 @@ different threat class (RBAC escalation tokens such as ``ADMIN-9999``,
 
 Calling convention in ``config/rails/actions.py``::
 
-    # Stage 1′ — runs FIRST, before all other blocklist checks
+    # Stage 1' — runs FIRST, before all other blocklist checks
     result = detect_prompt_injection(query)
     if result.detected:
         return False  # block immediately
@@ -65,7 +65,9 @@ logger = logging.getLogger("Gateway.Governance.PromptInjectionDetector")
 # installed (e.g. lightweight gateway deployments, offline environments).
 # ---------------------------------------------------------------------------
 try:
-    from sentence_transformers import SentenceTransformer as _SentenceTransformer  # type: ignore[import-untyped]
+    from sentence_transformers import (
+        SentenceTransformer as _SentenceTransformer,  # type: ignore[import-untyped]
+    )
 
     _SENTENCE_TRANSFORMERS_AVAILABLE = True
 except ImportError:
@@ -78,7 +80,7 @@ except ImportError:
 #
 # _INJECTION_ANCHOR_TEXTS: canonical adversarial examples that cover the
 # semantic archetypes regex misses (synonym/paraphrase rephrasing).
-# _SEMANTIC_INJECTION_THRESHOLD: cosine-similarity cutoff (0.0–1.0).
+# _SEMANTIC_INJECTION_THRESHOLD: cosine-similarity cutoff (0.0-1.0).
 # A candidate scoring >= threshold against ANY anchor is classified as
 # injection and returned before the expensive LLM judge (Stage 3).
 # ---------------------------------------------------------------------------
@@ -109,11 +111,11 @@ _INJECTION_ANCHOR_TEXTS: list[str] = [
 _SEMANTIC_INJECTION_THRESHOLD: float = 0.82
 
 # Singleton embedding model + lock (lazy-loaded on first Stage 2.5 call).
-_EMBEDDING_MODEL: "_SentenceTransformer | None" = None  # type: ignore[valid-type]
+_EMBEDDING_MODEL: _SentenceTransformer | None = None  # type: ignore[valid-type]
 _EMBEDDING_MODEL_LOCK: threading.Lock = threading.Lock()
 
 
-def _get_embedding_model() -> "_SentenceTransformer":  # type: ignore[valid-type]
+def _get_embedding_model() -> _SentenceTransformer:  # type: ignore[valid-type]
     """Return the lazily-loaded SentenceTransformer singleton.
 
     Thread-safe: uses a module-level lock so only one thread ever calls
@@ -166,7 +168,7 @@ def _semantic_injection_score(text: str) -> float:
         show_progress_bar=False,
     )
     # cosine similarity == dot product when both vectors are L2-normalised.
-    similarities: "np.ndarray" = anchor_vecs @ candidate_vec[0]
+    similarities: np.ndarray = anchor_vecs @ candidate_vec[0]
     return float(np.max(similarities))
 
 

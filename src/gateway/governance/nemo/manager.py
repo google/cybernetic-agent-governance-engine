@@ -471,7 +471,7 @@ def _detect_bypass(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 # ContextVar used by CustomSelfCheckInputAction (config/rails/actions.py) to
-# signal that the BLOCK verdict came from a deterministic stage (Stage 1/1′/
+# signal that the BLOCK verdict came from a deterministic stage (Stage 1/1'/
 # 1B/1C/1D/2 — regex, keyword, structural) rather than the stochastic Stage-3
 # LLM judge.  The flag is read by validate_with_nemo() after generate_async()
 # returns so it can include it in the 3-tuple returned to nemo_guardrail_node.
@@ -498,7 +498,7 @@ async def validate_with_nemo(
     Returns ``(is_safe: bool, response: str, deterministic: bool)``.
 
     The third element ``deterministic`` is ``True`` when the BLOCK verdict was
-    produced by a deterministic detection stage (Stage 1/1′/1B/1C/1D/2 in
+    produced by a deterministic detection stage (Stage 1/1'/1B/1C/1D/2 in
     ``CustomSelfCheckInputAction``) rather than the stochastic Stage-3 LLM
     judge.  Callers can use this flag to hard-block regardless of the
     ``CAGE_SEAL_ENFORCEMENT`` env var — deterministic verdicts are not subject
@@ -644,7 +644,7 @@ async def validate_with_nemo(
 
             # Read the deterministic flag AFTER generate_async completes.
             # CustomSelfCheckInputAction sets _deterministic_verdict.set(True)
-            # for Stage-1/1′/1B/1C/1D blocks before returning False.
+            # for Stage-1/1'/1B/1C/1D blocks before returning False.
             # For Stage-3 LLM judge blocks and pass-throughs the flag stays False.
             is_deterministic = _deterministic_verdict.get(False)
 

@@ -43,7 +43,6 @@ os.environ.setdefault("CAGE_ENV", "test")
 
 from src.gateway.governance.symbolic_governor import GovernanceError, SymbolicGovernor
 
-
 # ---------------------------------------------------------------------------
 # Helpers — minimal SymbolicGovernor assembly
 # ---------------------------------------------------------------------------
@@ -120,7 +119,7 @@ async def test_confidence_spoofing_does_not_bypass_cbf_block() -> None:
         "symbol": "AAPL",
         "quantity": 50000,
         "amount": 1_000_000.0,  # massively over-limit
-        "confidence": 1.0,       # spoofed maximum confidence
+        "confidence": 1.0,  # spoofed maximum confidence
         "trader_role": "junior",
     }
 
@@ -161,8 +160,8 @@ async def test_confidence_spoofing_does_not_bypass_opa_deny() -> None:
     params = {
         "symbol": "PROHIBITED_TICKER",
         "quantity": 100,
-        "amount": 5_000.0,     # within CBF limits
-        "confidence": 1.0,      # spoofed maximum confidence
+        "amount": 5_000.0,  # within CBF limits
+        "confidence": 1.0,  # spoofed maximum confidence
         "trader_role": "junior",
     }
 
@@ -206,7 +205,7 @@ async def test_low_confidence_within_limits_raises_tier2_violation() -> None:
         "symbol": "AAPL",
         "quantity": 10,
         "amount": 1_500.0,  # well within fiscal limits
-        "confidence": 0.1,   # genuinely low — below 0.95 threshold
+        "confidence": 0.1,  # genuinely low — below 0.95 threshold
         "trader_role": "junior",
     }
 
@@ -222,8 +221,7 @@ async def test_low_confidence_within_limits_raises_tier2_violation() -> None:
         f"Expected a Tier-2 confidence violation; got: {msg!r}"
     )
     assert "UNSAFE" not in msg, (
-        "CBF UNSAFE reason must not appear for a within-limits trade; "
-        f"got: {msg!r}"
+        f"CBF UNSAFE reason must not appear for a within-limits trade; got: {msg!r}"
     )
 
 
@@ -286,7 +284,7 @@ async def test_confidence_spoofing_with_manual_review_escalates() -> None:
         "symbol": "AAPL",
         "quantity": 10,
         "amount": 1_500.0,
-        "confidence": 1.0,      # spoofed maximum confidence
+        "confidence": 1.0,  # spoofed maximum confidence
         "trader_role": "junior",
     }
 

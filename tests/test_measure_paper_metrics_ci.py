@@ -56,9 +56,7 @@ class TestWilsonInterval:
         assert low == pytest.approx(0.0, abs=0.01), (
             f"Lower bound for 0/20 should be ≈ 0.0; got {low}"
         )
-        assert 0.0 <= high <= 1.0, (
-            f"Upper bound for 0/20 must be in [0, 1]; got {high}"
-        )
+        assert 0.0 <= high <= 1.0, f"Upper bound for 0/20 must be in [0, 1]; got {high}"
 
     def test_all_successes(self) -> None:
         """Upper bound must be ≈ 1.0 and lower bound must be in [0, 1]."""
@@ -66,9 +64,7 @@ class TestWilsonInterval:
         assert high == pytest.approx(1.0, abs=0.01), (
             f"Upper bound for 20/20 should be ≈ 1.0; got {high}"
         )
-        assert 0.0 <= low <= 1.0, (
-            f"Lower bound for 20/20 must be in [0, 1]; got {low}"
-        )
+        assert 0.0 <= low <= 1.0, f"Lower bound for 20/20 must be in [0, 1]; got {low}"
 
     def test_midpoint_brackets_proportion(self) -> None:
         """13/19 ≈ 0.684 — the Wilson interval must strictly bracket the MLE."""
@@ -88,15 +84,9 @@ class TestWilsonInterval:
         """All (s, n) combos must produce lower, upper in [0, 1] with lower <= upper."""
         for s, n in [(0, 5), (1, 5), (3, 5), (5, 5), (0, 1), (1, 1)]:
             low, high = _wilson_interval(s, n)
-            assert 0.0 <= low <= 1.0, (
-                f"low={low} out of range for s={s}, n={n}"
-            )
-            assert 0.0 <= high <= 1.0, (
-                f"high={high} out of range for s={s}, n={n}"
-            )
-            assert low <= high, (
-                f"low={low} > high={high} for s={s}, n={n}"
-            )
+            assert 0.0 <= low <= 1.0, f"low={low} out of range for s={s}, n={n}"
+            assert 0.0 <= high <= 1.0, f"high={high} out of range for s={s}, n={n}"
+            assert low <= high, f"low={low} > high={high} for s={s}, n={n}"
 
     def test_interval_narrows_with_larger_n(self) -> None:
         """Larger sample → narrower Wilson CI for the same proportion (5/10 vs 50/100)."""
@@ -247,9 +237,7 @@ class TestCrashRateGate:
         """HTTP 5xx must always return 'CRASHED' — the building block for the gate."""
         for code in (500, 502, 503, 504):
             result = _classify_response({}, code, "Internal Server Error")
-            assert result == "CRASHED", (
-                f"HTTP {code} should be CRASHED, got {result!r}"
-            )
+            assert result == "CRASHED", f"HTTP {code} should be CRASHED, got {result!r}"
 
     def test_classify_response_not_crashed_on_200(self) -> None:
         """HTTP 200 with a governance block sentinel must NOT be CRASHED."""
@@ -260,15 +248,18 @@ class TestCrashRateGate:
             f"HTTP 200 with block sentinel should not be CRASHED; got {result!r}"
         )
 
-    def test_high_crash_rate_triggers_exit(self, tmp_path: "pytest.TempPathFactory") -> None:
+    def test_high_crash_rate_triggers_exit(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
         """measure_adversarial_deflection() exits when crash rate > 30%.
 
         This test mocks _send_prompt to always return HTTP 500 and provides a
         minimal adversarial dataset (all payloads crash → 100% crash rate).
         sys.exit() is expected with a message containing the crash rate.
         """
-        import json as _json  # noqa: PLC0415
         import importlib  # noqa: PLC0415
+        import json as _json  # noqa: PLC0415
+
         import measure_paper_metrics as _mod  # noqa: PLC0415
 
         # Build a minimal 4-payload dataset file so crash rate > 30%
@@ -299,13 +290,21 @@ class TestCrashRateGate:
             _mod.ADVERSARIAL_JSON = orig_path
             _mod._send_prompt = orig_send
 
-    def test_low_crash_rate_does_not_exit(self, tmp_path: "pytest.TempPathFactory") -> None:
+    def test_low_crash_rate_does_not_exit(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
         """measure_adversarial_deflection() must NOT exit when crash rate <= 30%."""
         import json as _json  # noqa: PLC0415
+
         import measure_paper_metrics as _mod  # noqa: PLC0415
 
         # 1 crash out of 4 → 25% crash rate (below 30% threshold)
-        responses = [(500, "crash"), (200, "REJECTED"), (200, "REJECTED"), (200, "REJECTED")]
+        responses = [
+            (500, "crash"),
+            (200, "REJECTED"),
+            (200, "REJECTED"),
+            (200, "REJECTED"),
+        ]
         call_idx = {"n": 0}
 
         def _mock_send(_prompt: str) -> tuple[int, str]:

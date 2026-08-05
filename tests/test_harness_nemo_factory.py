@@ -251,7 +251,6 @@ class TestNemoGuardrailNodeFactory:
         assert result["guardrail_blocked"] is True
         assert "GUARDRAIL_ERROR" in result["guardrail_reason"]
 
-
     @pytest.mark.asyncio
     async def test_deterministic_block_in_log_mode(self):
         """Deterministic verdict (e.g. Stage-1D) must hard-block even when CAGE_SEAL_ENFORCEMENT=log.
@@ -279,7 +278,10 @@ class TestNemoGuardrailNodeFactory:
 
         # Must block regardless of log mode because deterministic=True
         assert result["guardrail_blocked"] is True
-        assert "BLOCK_AUTHCLAIM" in result["guardrail_reason"] or "rbac" in result["guardrail_reason"].lower()
+        assert (
+            "BLOCK_AUTHCLAIM" in result["guardrail_reason"]
+            or "rbac" in result["guardrail_reason"].lower()
+        )
 
     @pytest.mark.asyncio
     async def test_nondeterministic_block_proceeds_in_log_mode(self):

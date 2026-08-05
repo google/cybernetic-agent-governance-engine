@@ -75,7 +75,11 @@ async def test_guardrail_blocks_unsafe_input():
             with patch(
                 "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
                 new_callable=AsyncMock,
-                return_value=(False, "STPA Violation UCA-7: bypass attempt detected", True),
+                return_value=(
+                    False,
+                    "STPA Violation UCA-7: bypass attempt detected",
+                    True,
+                ),
             ):
                 result = await nemo_guardrail_node(
                     _build_state("BYPASS-ALL-LIMITS now")

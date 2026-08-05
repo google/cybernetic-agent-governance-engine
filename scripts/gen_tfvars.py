@@ -143,6 +143,7 @@ def parse_env_file(path: Path) -> dict[str, str]:
 # Secret masking — AGENTS.md obligation
 # ---------------------------------------------------------------------------
 
+
 def _mask(value: str) -> str:
     """Return a masked representation of *value* safe to log.
 
@@ -159,6 +160,7 @@ def _mask(value: str) -> str:
 # ---------------------------------------------------------------------------
 # OTLP header derivation
 # ---------------------------------------------------------------------------
+
 
 def _derive_otlp_headers(pub: str, secret: str) -> str:
     """Derive the OTLP Authorization header from Langfuse public + secret keys.
@@ -209,6 +211,7 @@ def build_tfvars_content(
     Returns:
         Formatted HCL string ready to write to ``terraform.auto.tfvars``.
     """
+
     def _hcl_str(v: str) -> str:
         # Escape backslashes and double-quotes for HCL string literals.
         return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
@@ -226,6 +229,7 @@ def build_tfvars_content(
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -260,8 +264,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help=(
-            "Print masked variable values to stderr and exit without writing "
-            "any file."
+            "Print masked variable values to stderr and exit without writing any file."
         ),
     )
     return parser.parse_args(argv)
@@ -290,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
         log.error(
             "CAGE_ROUTING_SEAL_SECRET is missing or empty in %s.\n"
             "  Generate a value with:\n"
-            "    python -c \"import secrets; print(secrets.token_hex(32))\"",
+            '    python -c "import secrets; print(secrets.token_hex(32))"',
             env_path,
         )
         return 1
@@ -336,7 +339,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     log.info("Variable resolution summary (values masked):")
     log.info("  routing_seal_secret        = %s", _mask(routing_seal_secret))
     log.info("  kms_governance_key         = %s", _mask(kms_governance_key))
-    log.info("  otel_exporter_otlp_headers = %s  [source: %s]", _mask(otlp_headers), otlp_source)
+    log.info(
+        "  otel_exporter_otlp_headers = %s  [source: %s]",
+        _mask(otlp_headers),
+        otlp_source,
+    )
 
     if args.dry_run:
         log.info("--dry-run: skipping file write. No disk changes made.")

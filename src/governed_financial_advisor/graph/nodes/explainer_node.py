@@ -140,11 +140,11 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
                 f"ACTION PLAN: {execution_plan}\n"
             )
             fast_llm = create_explainer_agent(MODEL_FAST)
-            final_resp = await fast_llm.ainvoke([SystemMessage(content=combined_prompt)])
-            content = strip_thinking_tags(final_resp.content)
-            justification = (
-                f"[Low-risk verdict — justification embedded in response. Verdict: {verdict}]"
+            final_resp = await fast_llm.ainvoke(
+                [SystemMessage(content=combined_prompt)]
             )
+            content = strip_thinking_tags(final_resp.content)
+            justification = f"[Low-risk verdict — justification embedded in response. Verdict: {verdict}]"
             span.set_attribute("explainer.llm_calls", 1)
             span.set_attribute("explainer.optimization", "low_risk_single_call")
         else:
@@ -155,7 +155,9 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
             )
 
             # 2. Semantic Justification (using MODEL_REASONING)
-            justification = "Manual justification required: No reasoning model available."
+            justification = (
+                "Manual justification required: No reasoning model available."
+            )
             try:
                 llm = create_explainer_agent(MODEL_REASONING)
                 prompt = (

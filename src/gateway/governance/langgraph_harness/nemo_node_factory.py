@@ -433,7 +433,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
             if not is_safe:
                 if deterministic or cage_enforcement == "enforce":
                     # Hard-block when:
-                    #   (a) the verdict came from a deterministic stage (Stage 1/1′/1B/1C/1D) — always block
+                    #   (a) the verdict came from a deterministic stage (Stage 1/1'/1B/1C/1D) — always block
                     #       regardless of enforcement mode, because these detectors have zero false-positive
                     #       risk and are the primary defence against regex/keyword/structural attacks; OR
                     #   (b) CAGE_SEAL_ENFORCEMENT=enforce — enforce mode always blocks on any unsafe verdict.

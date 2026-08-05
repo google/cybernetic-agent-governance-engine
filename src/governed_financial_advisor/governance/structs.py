@@ -39,7 +39,9 @@ class ExecutionPlan(BaseModel):
     action: str = Field(
         description="Action to perform (e.g. 'execute_trade', 'market_analysis')"
     )
-    amount: float = Field(default=0.0, description="Trade amount in the specified currency")
+    amount: float = Field(
+        default=0.0, description="Trade amount in the specified currency"
+    )
     symbol: str = Field(default="UNKNOWN", description="Trading instrument symbol")
     currency: str = Field(default="USD", description="ISO 4217 currency code")
     trader_role: str = Field(
@@ -65,6 +67,7 @@ class ExecutionPlan(BaseModel):
             "Set programmatically; never LLM-sourced."
         ),
     )
+
 
 # ---------------------------------------------------------------------------
 # Governance-block detection sentinels (canonical single source of truth)

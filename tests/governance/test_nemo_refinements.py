@@ -178,7 +178,9 @@ class TestNeMoMainFlowInvokesSelfCheck(unittest.TestCase):
             "canonical benign payload.",
         )
         self.assertEqual(
-            content, "", "Benign canonical payload must pass through (empty bot response)."
+            content,
+            "",
+            "Benign canonical payload must pass through (empty bot response).",
         )
 
     def test_adversarial_rephrasing_invokes_self_check(self):
@@ -244,7 +246,9 @@ class TestNeMoMainFlowInvokesSelfCheck(unittest.TestCase):
                     f"{payload_id}: CustomSelfCheckInputAction must be invoked exactly once.",
                 )
                 self.assertNotEqual(
-                    content, "", f"{payload_id}: must be BLOCKed (non-empty bot response)."
+                    content,
+                    "",
+                    f"{payload_id}: must be BLOCKed (non-empty bot response).",
                 )
 
 

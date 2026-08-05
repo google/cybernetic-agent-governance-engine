@@ -31,7 +31,15 @@ jobs:
           version: "latest"
 
       - name: Install dependencies
-        run: uv sync --frozen
+        # --all-extras is required so the 'compliance' extra (which now owns
+        # dowhy, the Tier-6 causal gatekeeper) is installed. Without it,
+        # src/gateway/governance/symbolic_governor.py's Gap-4 startup guard
+        # raises RuntimeError as soon as the stpa_compiler CLI imports the
+        # governance package, because it treats any non-development/test/ci
+        # CAGE_ENV as production and hard-fails on missing dowhy.
+        run: uv sync --frozen --all-extras
+        env:
+          CAGE_ENV: ci
 
       - name: Validate STPA control structure
         run: |

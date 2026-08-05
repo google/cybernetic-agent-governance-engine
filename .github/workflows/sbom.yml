@@ -48,7 +48,12 @@ on:
 
 env:
   REGISTRY: gcr.io
-  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  # Fallback to a placeholder when GCP_PROJECT_ID is not configured (e.g. PRs
+  # from forks or CI contexts without GCP secrets). Without this, the
+  # interpolated value is an empty string, producing "gcr.io//<image>:<tag>"
+  # — an invalid Docker reference ("invalid reference format") that fails
+  # `docker build` before the image can even be built for SBOM/CVE scanning.
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || 'cage-ci-placeholder' }}
 
 permissions:
   contents: read

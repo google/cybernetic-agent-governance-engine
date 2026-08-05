@@ -25,7 +25,13 @@ dependencies = [
     "uvicorn>=0.29.0",
     "sse-starlette>=1.0.0",
     "openai>=1.0.0",
-    "cryptography>=48.0.1",
+    # cryptography>=50.0.0: fixes PYSEC-2026-3552 / CVE-2026-69247 / GHSA-g6cj-pr64-35w5
+    "cryptography>=50.0.0",
+    # aiohttp>=3.14.3: fixes PYSEC-2026-3545/3546/3547 (CVE-2026-69244,
+    # CVE-2026-69243, CVE-2026-59881). Pinned as a direct dependency to force
+    # the resolver to select a patched version even though aiohttp is only
+    # pulled in transitively (e.g. via google-adk / langfuse).
+    "aiohttp>=3.14.3",
     "pytest-cov>=7.1.0",
 ]
 

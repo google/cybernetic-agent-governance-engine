@@ -13,6 +13,7 @@ committing.  Never suppress this exit code — it is the machine-enforceable
 complement to the human evaluation gate in Step E of the measurement runbook
 (docs/paper/MEASUREMENT_RUNBOOK.md).
 """
+
 import sys
 from pathlib import Path
 

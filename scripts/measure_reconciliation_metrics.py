@@ -252,6 +252,7 @@ def _measure_reconciliation_write_path(
 
     Returns a dict with per-stage percentile latencies and a mode label.
     """
+    import redis as _redis_sync
     from opentelemetry import trace as otel_trace
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
@@ -259,8 +260,6 @@ def _measure_reconciliation_write_path(
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
         InMemorySpanExporter,
     )
-
-    import redis as _redis_sync
 
     from src.compliance_bridge.reconciliation_worker import ExternalLedgerReconciler
 
@@ -375,7 +374,9 @@ async def _measure_cbf_read_overhead(
 
     from src.gateway.infrastructure.redis_client import redis_client as gw_redis
 
-    sync_redis = _redis_sync.Redis(host=redis_host, port=redis_port, decode_responses=True)
+    sync_redis = _redis_sync.Redis(
+        host=redis_host, port=redis_port, decode_responses=True
+    )
 
     # Seed a self-reported balance.
     await gw_redis.set(cbf.redis_key, "48250.0")
@@ -393,10 +394,10 @@ async def _measure_cbf_read_overhead(
 
     # --- reconciled path: write a real, KMS-signed reconciliation result to Redis ---
     if kms_key:
-        from src.gateway.governance.kms_signer import get_governance_signer
         from src.compliance_bridge.reconciliation_worker import (
             ReconciliationResult,
         )
+        from src.gateway.governance.kms_signer import get_governance_signer
 
         signer = get_governance_signer()
         payload_dict = {
@@ -473,22 +474,26 @@ async def _measure_safety_violation_detection(
     so the entire read+verify code path executes unmodified).
     """
     if not kms_key:
-        return {"skipped": "KMS_GOVERNANCE_KEY not set — cannot KMS-sign a reconciled balance"}
+        return {
+            "skipped": "KMS_GOVERNANCE_KEY not set — cannot KMS-sign a reconciled balance"
+        }
 
     import redis as _redis_sync
 
     os.environ["REDIS_HOST"] = redis_host
     os.environ["REDIS_PORT"] = str(redis_port)
 
+    from src.compliance_bridge.reconciliation_worker import (
+        _REDIS_KEY_VERIFIED_BALANCE,
+        ReconciliationResult,
+    )
     from src.gateway.governance.cbf import ControlBarrierFunction
     from src.gateway.governance.kms_signer import get_governance_signer
-    from src.compliance_bridge.reconciliation_worker import (
-        ReconciliationResult,
-        _REDIS_KEY_VERIFIED_BALANCE,
-    )
     from src.gateway.infrastructure.redis_client import redis_client as gw_redis
 
-    sync_redis = _redis_sync.Redis(host=redis_host, port=redis_port, decode_responses=True)
+    sync_redis = _redis_sync.Redis(
+        host=redis_host, port=redis_port, decode_responses=True
+    )
 
     cbf = ControlBarrierFunction()
     cbf.tracer = None
@@ -584,9 +589,7 @@ def _fmt_read_overhead_table(read_overhead: dict[str, Any]) -> str:
     ]
     self_p = read_overhead.get("self_reported_ms") or {}
     recon_p = read_overhead.get("reconciled_ms")
-    lines.append(
-        f"{'Path':<45} {'P50':>8} {'P95':>8}"
-    )
+    lines.append(f"{'Path':<45} {'P50':>8} {'P95':>8}")
     lines.append(f"{'-' * 45} {'-' * 8} {'-' * 8}")
     lines.append(
         f"{'Self-reported (safety:current_cash)':<45} "
@@ -672,7 +675,7 @@ async def _async_main() -> None:
     )
 
     print(f"Redis available       : {redis_ok} ({redis_info})")
-    print(f"KMS configured        : {kms_ok} ({kms_info if kms_ok else kms_info})")
+    print(f"KMS configured        : {kms_ok} ({kms_info})")
     print(f"Plaid credentials set : {plaid_creds_ok}")
     print()
 
@@ -702,7 +705,10 @@ async def _async_main() -> None:
     write_path = _measure_reconciliation_write_path(
         N_ITERATIONS, redis_host, redis_port, use_live_plaid=plaid_creds_ok
     )
-    print(f"  mode={write_path['mode']} " f"succeeded={write_path['iterations_succeeded']}/{write_path['iterations_requested']}")
+    print(
+        f"  mode={write_path['mode']} "
+        f"succeeded={write_path['iterations_succeeded']}/{write_path['iterations_requested']}"
+    )
 
     print("\n[6.4] Measuring CBF read-path overhead...")
     read_overhead = await _measure_cbf_read_overhead(

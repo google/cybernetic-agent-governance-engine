@@ -124,7 +124,9 @@ async def execute_tool_endpoint(
                 span.set_attribute("langfuse.observation.type", "span")
                 span.set_attribute("langfuse.observation.name", "cage.tool_execute")
                 text = params.get("text", "")
-                is_safe, response, _deterministic = await validate_with_nemo(text, get_rails())
+                is_safe, response, _deterministic = await validate_with_nemo(
+                    text, get_rails()
+                )
                 if not is_safe:
                     span.set_attribute("cage.verdict", "BLOCKED")
                     output = f"BLOCKED: {response}"

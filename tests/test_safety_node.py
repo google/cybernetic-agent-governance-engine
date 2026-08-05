@@ -275,11 +275,11 @@ class TestSafetyNodeUnit:
     # -----------------------------------------------------------------------
 
     def test_extract_trade_payload_computes_amount_from_quantity_price(self):
-        """_extract_trade_payload must compute amount = quantity × price when plan
+        """_extract_trade_payload must compute amount = quantity x price when plan
         carries quantity+symbol but amount=0 (CONF-SPOOF-001 / RBAC-004 pattern).
 
         get_current_price is mocked to return 195.50; the extractor must produce
-        amount == 50000 × 195.50 == 9_775_000.0 deterministically.
+        amount == 50000 x 195.50 == 9_775_000.0 deterministically.
         """
         state = {
             "messages": [],
@@ -305,9 +305,7 @@ class TestSafetyNodeUnit:
         assert payload["symbol"] == "AAPL"
 
     @pytest.mark.asyncio
-    async def test_zero_amount_with_auth_claim_denied_by_opa(
-        self, minimal_trade_state
-    ):
+    async def test_zero_amount_with_auth_claim_denied_by_opa(self, minimal_trade_state):
         """When claimed_authorization_present=True and amount=0 (no market price
         available), the OPA policy must hard-DENY — safety_status must be BLOCKED.
 

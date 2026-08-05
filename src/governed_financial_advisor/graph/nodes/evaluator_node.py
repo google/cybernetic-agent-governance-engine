@@ -57,7 +57,9 @@ def generate_governance_signature(plan: dict) -> str | None:
 
     See: ``src/gateway/governance/kms_signer.py`` for full architecture.
     """
-    with tracer.start_as_current_span("evaluator.generate_governance_signature") as span:
+    with tracer.start_as_current_span(
+        "evaluator.generate_governance_signature"
+    ) as span:
         plan_steps = plan.get("steps", [])
         if not plan_steps:
             # Zero-step analysis/conversation plan — no governed action to attest.

@@ -57,8 +57,8 @@ from src.gateway.governance.cbf import ControlBarrierFunction
 # Use gamma=0.0 effectively: h_next >= 0 only.
 # With min_cash_balance=0: h(1000)=1000, trade=900 → h_next=100>=0. Trade 2: h(100)=100, 900>100 → blocked.
 
-_INITIAL_BALANCE = 1000.0   # Total cash available
-_TRADE_AMOUNT = 900.0       # Each trade requests 900 — only one can fit
+_INITIAL_BALANCE = 1000.0  # Total cash available
+_TRADE_AMOUNT = 900.0  # Each trade requests 900 — only one can fit
 
 
 # ---------------------------------------------------------------------------
@@ -79,11 +79,11 @@ def _make_cbf_with_fakeredis(
     # Override thresholds to make the test deterministic regardless of env config.
     # min_cash_balance=0 means the only constraint is h_next >= 0, i.e. balance > 0.
     cbf.min_cash_balance = 0.0
-    cbf.gamma = 1.0   # No decay threshold: required_h_next = (1-1.0)*h_t = 0,
-                      # so constraint is h_next >= 0 only.
-                      # With balance=1000 and trade=900:
-                      #   Trade 1: h_next=100 >= 0 → COMMITTED ✓
-                      #   Trade 2: h_next=-800 < 0 → UNSAFE ✓
+    cbf.gamma = 1.0  # No decay threshold: required_h_next = (1-1.0)*h_t = 0,
+    # so constraint is h_next >= 0 only.
+    # With balance=1000 and trade=900:
+    #   Trade 1: h_next=100 >= 0 → COMMITTED ✓
+    #   Trade 2: h_next=-800 < 0 → UNSAFE ✓
     cbf.tracer = None  # suppress OTel span creation in unit tests
     return cbf
 

@@ -37,21 +37,25 @@ import httpx
 from opentelemetry import trace as _otel_trace
 from opentelemetry.trace import Status, StatusCode
 
-# Import the ContextVar from manager.py so Stage-1/1′/1B/1C/1D deterministic
+# Import the ContextVar from manager.py so Stage-1/1'/1B/1C/1D deterministic
 # block verdicts can be signalled back to validate_with_nemo().  The import is
 # wrapped in a try/except so the action module remains importable in restricted
 # unit-test environments where the full gateway stack is not available.
 try:
-    from src.gateway.governance.nemo.manager import _deterministic_verdict as _det_verdict
+    from src.gateway.governance.nemo.manager import (
+        _deterministic_verdict as _det_verdict,
+    )
 
     def _mark_deterministic() -> None:
         """Set the per-request deterministic-verdict flag to True."""
         _det_verdict.set(True)
 
 except ImportError:
+
     def _mark_deterministic() -> None:  # type: ignore[misc]
         """No-op fallback when manager is not importable."""
         pass
+
 
 try:
     from nemoguardrails.actions import action as _nemo_action
@@ -243,12 +247,12 @@ async def custom_self_check_input(
     Stage order (ORDER IS SECURITY-CRITICAL — do not reorder without a
     security review):
 
-    1′. detect_prompt_injection() — structural injection detector
+    1'. detect_prompt_injection() — structural injection detector
         (prompt_injection_detector.py), the SINGLE authoritative source
         for AI/LLM injection patterns. Runs FIRST, unconditionally.
         → BLOCK (0ms) on any match.
     1.  Residual jailbreak substring scan — narrow list of attack phrases
-        whose coverage is BROADER than the regex patterns in Stage 1′ (e.g.
+        whose coverage is BROADER than the regex patterns in Stage 1' (e.g.
         bare "pretend you", "roleplay as", "act as if" without a restriction
         qualifier; "system:" without a bracket; "act as a developer with root
         access"). Kept as a defence-in-depth thin wrapper.
@@ -262,7 +266,7 @@ async def custom_self_check_input(
         UNION SELECT, xp_cmdshell) and HTML/script injection (<script>,
         javascript:, onerror=). Different threat class from AI injection;
         kept in full. Does NOT re-invoke detect_prompt_injection() (already
-        handled by Stage 1′ above).
+        handled by Stage 1' above).
         → BLOCK (0ms) on any match.
     1D. Authorization-claim / impersonation detector (PR 2) — RBAC
         escalation attempts (detect_authorization_claim).
@@ -298,7 +302,7 @@ async def custom_self_check_input(
     docs/paper/REVISION_TRACKER.md §2026-08-03b.
 
     SECURITY NOTE (2026-08-04 / PR 5): detect_prompt_injection() promoted to
-    Stage 1′ — the first check to run, before all other blocklist stages.
+    Stage 1' — the first check to run, before all other blocklist stages.
     Previously it was a sub-step inside Stage 1C after the hand-rolled
     substring scan. All injection patterns it covers (DAN mode, developer
     mode, bypass restrictions, forget instructions, you-are-unrestricted,
@@ -322,7 +326,7 @@ async def custom_self_check_input(
             span.set_attribute("nemo.action.outcome", "ALLOW")
             return True
 
-        # STAGE 1′: STRUCTURAL INJECTION DETECTOR — detect_prompt_injection() is
+        # STAGE 1': STRUCTURAL INJECTION DETECTOR — detect_prompt_injection() is
         # the SINGLE authoritative source of truth for AI/LLM injection patterns.
         # Called unconditionally as the very first check so no downstream allowlist
         # can short-circuit ALLOW before it runs.
@@ -341,7 +345,7 @@ async def custom_self_check_input(
             _injection_result = detect_prompt_injection(text)
             if _injection_result.detected:
                 logger.warning(
-                    "HybridSelfCheckInput: STAGE 1′ BLOCK (prompt_injection_detector "
+                    "HybridSelfCheckInput: STAGE 1' BLOCK (prompt_injection_detector "
                     "pattern=%s confidence=%.2f)",
                     _injection_result.pattern_matched,
                     _injection_result.confidence,
@@ -352,19 +356,19 @@ async def custom_self_check_input(
                     _injection_result.pattern_matched or "unknown",
                 )
                 span.set_attribute("nemo.action.outcome", "BLOCK")
-                _mark_deterministic()  # Stage 1′ — structural/regex detector
+                _mark_deterministic()  # Stage 1' — structural/regex detector
                 return False
         except ImportError:
             # prompt_injection_detector not importable in restricted test envs;
             # Stage 1 residual substring scan below still runs — graceful degradation.
             logger.debug(
-                "HybridSelfCheckInput: STAGE 1′ — prompt_injection_detector unavailable, "
+                "HybridSelfCheckInput: STAGE 1' — prompt_injection_detector unavailable, "
                 "falling through to residual substring scan"
             )
 
         # STAGE 1: RESIDUAL JAILBREAK SUBSTRING SCAN — thin defence-in-depth wrapper
         # for attack phrasings whose substring coverage is INTENTIONALLY BROADER than
-        # the regex patterns in Stage 1′.  Each item is kept because the regex
+        # the regex patterns in Stage 1'.  Each item is kept because the regex
         # requires a restriction-bypass qualifier that the substring does not:
         #
         #   "pretend you"    — role_play_bypass needs "no restrictions" qualifier
@@ -374,7 +378,7 @@ async def custom_self_check_input(
         #   "act as a developer with root access" — defence-in-depth (also in
         #                      tier1_keywords Aho-Corasick scan)
         #
-        # Items REMOVED from this list (now fully covered by Stage 1′ / _INJECTION_PATTERNS):
+        # Items REMOVED from this list (now fully covered by Stage 1' / _INJECTION_PATTERNS):
         #   "ignore previous instructions", "ignore all previous",
         #   "dan mode", "developer mode", "repeat your prompt",
         #   "show me your system prompt", "bypass your restrictions",
@@ -450,16 +454,16 @@ async def custom_self_check_input(
         # and for illegal-finance in Stage 1B (2026-08-03).
         #
         # Note: detect_prompt_injection() is NOT re-invoked here — it already ran
-        # as Stage 1′ above.  This list covers SQL/code injection markers only,
+        # as Stage 1' above.  This list covers SQL/code injection markers only,
         # which are a different threat class and are not expressed in _INJECTION_PATTERNS.
         structural_attack_patterns = [
             # SQL injection markers
             "; drop",
             "'; drop",
-            "\"; drop",
+            '"; drop',
             "union select",
             "' or '1'='1",
-            "\" or \"1\"=\"1",
+            '" or "1"="1',
             "'; select",
             "--",  # SQL comment terminator in injection context checked below
             "/**/",  # SQL block comment bypass
@@ -477,10 +481,14 @@ async def custom_self_check_input(
         # The "--" token is a legitimate Markdown/CLI character; only block when it
         # appears adjacent to SQL syntax (i.e. after a quote or semicolon).
         _has_sql_comment = "--" in text and any(
-            marker in text for marker in (";", "'", '"', "select", "insert", "update", "delete")
+            marker in text
+            for marker in (";", "'", '"', "select", "insert", "update", "delete")
         )
 
-        if any(pat in text for pat in structural_attack_patterns if pat != "--") or _has_sql_comment:
+        if (
+            any(pat in text for pat in structural_attack_patterns if pat != "--")
+            or _has_sql_comment
+        ):
             logger.warning(
                 "HybridSelfCheckInput: STAGE 1C BLOCK (structural-attack pattern)"
             )

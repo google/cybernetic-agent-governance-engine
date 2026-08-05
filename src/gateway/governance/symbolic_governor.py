@@ -290,7 +290,9 @@ class SymbolicGovernor:
         # This local check fires first to avoid unnecessary CBF/OPA round-trips when
         # the confidence score is obviously below threshold.
         with tracer.start_as_current_span("cage.confidence_check") as conf_span:
-            conf_span.set_attribute("langfuse.observation.name", "confidence_threshold_check")
+            conf_span.set_attribute(
+                "langfuse.observation.name", "confidence_threshold_check"
+            )
             conf_span.set_attribute("governance.stage", "confidence")
             _t0_conf = time.perf_counter()
             if tool_name == "execute_trade":
@@ -326,8 +328,12 @@ class SymbolicGovernor:
                     }
                     violations.append(_conf_msg)
                 conf_span.set_attribute("governance.confidence.score", _confidence)
-                conf_span.set_attribute("governance.confidence.threshold", _confidence_threshold)
-                conf_span.set_attribute("governance.confidence.passed", _confidence >= _confidence_threshold)
+                conf_span.set_attribute(
+                    "governance.confidence.threshold", _confidence_threshold
+                )
+                conf_span.set_attribute(
+                    "governance.confidence.passed", _confidence >= _confidence_threshold
+                )
             conf_span.set_attribute(
                 "governance.stage.latency_ms",
                 round((time.perf_counter() - _t0_conf) * 1000, 2),
@@ -363,7 +369,10 @@ class SymbolicGovernor:
                     cbf_span.set_attribute("governance.cbf.atomic", True)
                     _t = time.perf_counter()
                     try:
-                        committed, reason = await self.safety_filter.atomic_verify_and_commit(
+                        (
+                            committed,
+                            reason,
+                        ) = await self.safety_filter.atomic_verify_and_commit(
                             action_name=tool_name,
                             payload=params,
                         )
@@ -540,8 +549,12 @@ class SymbolicGovernor:
         # Conservative treatment: if STPA or OPA results are unavailable (e.g. a tier
         # raised an exception and we have no result at all), treat as structural risk.
         if tool_name == "execute_trade":
-            with tracer.start_as_current_span("cage.tier2_structural_corroboration") as _t2_span:
-                _t2_span.set_attribute("langfuse.observation.name", "tier2_structural_corroboration")
+            with tracer.start_as_current_span(
+                "cage.tier2_structural_corroboration"
+            ) as _t2_span:
+                _t2_span.set_attribute(
+                    "langfuse.observation.name", "tier2_structural_corroboration"
+                )
                 _t2_span.set_attribute("governance.stage", "tier2_corroboration")
                 _t2_corr_t0 = time.perf_counter()
 
@@ -569,7 +582,10 @@ class SymbolicGovernor:
                     os.getenv("AGENT_CONFIDENCE_THRESHOLD", "0.95")
                 )
 
-                if _structural_risk_flagged and _self_reported_confidence >= _confidence_threshold_t2:
+                if (
+                    _structural_risk_flagged
+                    and _self_reported_confidence >= _confidence_threshold_t2
+                ):
                     # Independent structural signal contradicts high self-reported confidence:
                     # force HITL regardless of self-reported value.
                     _corroboration_source = "structural_heuristic_override"
@@ -586,9 +602,15 @@ class SymbolicGovernor:
                     _corroboration_source = "structural_heuristic_pass"
 
                 _t2_span.set_attribute("tier2.confidence.independently_verified", True)
-                _t2_span.set_attribute("tier2.confidence.corroboration_source", _corroboration_source)
-                _t2_span.set_attribute("tier2.confidence.stpa_violations", _stpa_violation_count)
-                _t2_span.set_attribute("tier2.confidence.structural_risk_flagged", _structural_risk_flagged)
+                _t2_span.set_attribute(
+                    "tier2.confidence.corroboration_source", _corroboration_source
+                )
+                _t2_span.set_attribute(
+                    "tier2.confidence.stpa_violations", _stpa_violation_count
+                )
+                _t2_span.set_attribute(
+                    "tier2.confidence.structural_risk_flagged", _structural_risk_flagged
+                )
                 _t2_span.set_attribute(
                     "governance.stage.latency_ms",
                     round((time.perf_counter() - _t2_corr_t0) * 1000, 2),
@@ -994,32 +1016,25 @@ class SymbolicGovernor:
             # --- CBF coroutine ---
             async def _cbf_revalidate() -> str | None:
                 """Atomic CBF verify-and-commit inside a dedicated span."""
-                with tracer.start_as_current_span(
-                    "cage.cbf_check"
-                ) as cbf_span:
+                with tracer.start_as_current_span("cage.cbf_check") as cbf_span:
                     cbf_span.set_attribute(
                         "langfuse.observation.name", "cbf_barrier_check"
                     )
                     cbf_span.set_attribute("governance.stage", "cbf")
                     cbf_span.set_attribute("governance.cbf.atomic", True)
-                    cbf_span.set_attribute(
-                        "toctou.revalidation.scope", "cbf_opa_only"
-                    )
+                    cbf_span.set_attribute("toctou.revalidation.scope", "cbf_opa_only")
                     _t = time.perf_counter()
                     try:
-                        committed, reason = (
-                            await self.safety_filter.atomic_verify_and_commit(
-                                action_name=tool_name,
-                                payload=params,
-                            )
+                        (
+                            committed,
+                            reason,
+                        ) = await self.safety_filter.atomic_verify_and_commit(
+                            action_name=tool_name,
+                            payload=params,
                         )
                         result = "SAFE" if committed else reason
-                        cbf_span.set_attribute(
-                            "governance.cbf.result", result[:80]
-                        )
-                        cbf_span.set_attribute(
-                            "governance.cbf.committed", committed
-                        )
+                        cbf_span.set_attribute("governance.cbf.result", result[:80])
+                        cbf_span.set_attribute("governance.cbf.committed", committed)
                         cbf_span.set_attribute(
                             "governance.stage.latency_ms",
                             round((time.perf_counter() - _t) * 1000, 2),
@@ -1027,9 +1042,7 @@ class SymbolicGovernor:
                         return result
                     except Exception as exc:
                         cbf_span.record_exception(exc)
-                        cbf_span.set_attribute(
-                            "governance.cbf.result", "EXCEPTION"
-                        )
+                        cbf_span.set_attribute("governance.cbf.result", "EXCEPTION")
                         raise
 
             # --- OPA coroutine ---
@@ -1038,16 +1051,12 @@ class SymbolicGovernor:
 
             async def _opa_revalidate() -> Any:
                 """OPA policy evaluation inside a dedicated span."""
-                with tracer.start_as_current_span(
-                    "cage.opa_pre_check"
-                ) as opa_span:
+                with tracer.start_as_current_span("cage.opa_pre_check") as opa_span:
                     opa_span.set_attribute(
                         "langfuse.observation.name", "opa_policy_pre_check"
                     )
                     opa_span.set_attribute("governance.stage", "opa")
-                    opa_span.set_attribute(
-                        "toctou.revalidation.scope", "cbf_opa_only"
-                    )
+                    opa_span.set_attribute("toctou.revalidation.scope", "cbf_opa_only")
                     _t = time.perf_counter()
                     try:
                         resp = await self.opa_client.evaluate_policy(opa_payload)
@@ -1067,9 +1076,7 @@ class SymbolicGovernor:
                 _opa_revalidate(),
                 return_exceptions=True,
             )
-            _parallel_ms = round(
-                (time.perf_counter() - _t_parallel_start) * 1000, 2
-            )
+            _parallel_ms = round((time.perf_counter() - _t_parallel_start) * 1000, 2)
             logger.debug(
                 "⚡ [revalidate_post_hitl] CBF+OPA parallel re-check completed "
                 "in %.1fms (tool=%s)",
@@ -1135,9 +1142,7 @@ class SymbolicGovernor:
                         f"Required [post-HITL revalidation]."
                     )
 
-            span.set_attribute(
-                "toctou.revalidation.cbf_opa_parallel_ms", _parallel_ms
-            )
+            span.set_attribute("toctou.revalidation.cbf_opa_parallel_ms", _parallel_ms)
 
             try:
                 if violations:
@@ -1147,9 +1152,7 @@ class SymbolicGovernor:
                 with tracer.start_as_current_span("cage.routing_seal") as seal_span:
                     seal = generate_seal(tool_name, params)
                     seal_span.set_attribute("cage.seal_issued", True)
-                    seal_span.set_attribute(
-                        "cage.seal_path", "revalidate_post_hitl"
-                    )
+                    seal_span.set_attribute("cage.seal_path", "revalidate_post_hitl")
 
                 logger.info(
                     "✅ [revalidate_post_hitl] CBF+OPA re-check APPROVED: %s "

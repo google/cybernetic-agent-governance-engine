@@ -63,6 +63,7 @@ except (ImportError, AttributeError):
         """Stub: market price lookup not yet implemented — returns None."""
         return None
 
+
 from src.gateway.governance.authorization_claim_detector import (
     detect_authorization_claim,
 )
@@ -155,7 +156,7 @@ def _extract_trade_payload(state: dict[str, Any]) -> dict[str, Any]:
     #   1. Read the LLM plan's raw amount (may be 0 or absent).
     #   2. If amount==0 but quantity + symbol are present, attempt to resolve
     #      current market price from the market data layer and compute
-    #      amount = quantity × price deterministically.
+    #      amount = quantity x price deterministically.
     #   3. If the price lookup fails (module absent, network error, etc.) the
     #      raw amount (0) is preserved — fail-open on the lookup, fail-closed
     #      via the OPA rule below (DENY when claimed_authorization_present &&
@@ -184,7 +185,7 @@ def _extract_trade_payload(state: dict[str, Any]) -> dict[str, Any]:
     payload: dict = {
         # Intent fields — sourced from the LLM plan (what to trade, how much).
         "action": plan.get("action", "unknown"),
-        # amount: deterministically computed above (quantity × price when
+        # amount: deterministically computed above (quantity x price when
         # possible); falls back to 0 which is handled fail-closed by OPA.
         "amount": _raw_amount,
         "symbol": plan.get("symbol", "UNKNOWN"),
