@@ -470,15 +470,39 @@ def _detect_bypass(text: str) -> bool:
 # validate_with_nemo — Phase 4.2: substring heuristics REMOVED
 # ---------------------------------------------------------------------------
 
+# ContextVar used by CustomSelfCheckInputAction (config/rails/actions.py) to
+# signal that the BLOCK verdict came from a deterministic stage (Stage 1/1′/
+# 1B/1C/1D/2 — regex, keyword, structural) rather than the stochastic Stage-3
+# LLM judge.  The flag is read by validate_with_nemo() after generate_async()
+# returns so it can include it in the 3-tuple returned to nemo_guardrail_node.
+#
+# ContextVar is async-safe: NeMo invokes actions via direct await (not
+# create_task), so set() calls inside the action are visible to the caller in
+# the same async context.  The default is False so benign traffic and LLM-
+# judge paths always arrive with deterministic=False unless the action
+# explicitly sets it True.
+from contextvars import ContextVar as _ContextVar
+
+_deterministic_verdict: _ContextVar[bool] = _ContextVar(
+    "_nemo_deterministic_verdict", default=False
+)
+
 
 async def validate_with_nemo(
     user_input: str,
     rails: LLMRails,
     pre_check_results: dict[str, Any] | None = None,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, bool]:
     """Validates user input using NeMo Guardrails.
 
-    Returns (is_safe: bool, response: str).
+    Returns ``(is_safe: bool, response: str, deterministic: bool)``.
+
+    The third element ``deterministic`` is ``True`` when the BLOCK verdict was
+    produced by a deterministic detection stage (Stage 1/1′/1B/1C/1D/2 in
+    ``CustomSelfCheckInputAction``) rather than the stochastic Stage-3 LLM
+    judge.  Callers can use this flag to hard-block regardless of the
+    ``CAGE_SEAL_ENFORCEMENT`` env var — deterministic verdicts are not subject
+    to enforcement-mode softening.
 
     Phase 4.2: The legacy ``"I cannot answer"`` substring check is removed.
     Safety is determined solely from whether NeMo's rails pipeline emitted a
@@ -550,6 +574,7 @@ async def validate_with_nemo(
                 return (
                     False,
                     "NeMo guardrails unavailable in enforce mode — request rejected",
+                    False,  # circuit-breaker: not a stage-based deterministic verdict
                 )
             else:
                 # Log-only / dev posture: preserve existing fail-open behaviour.
@@ -564,7 +589,7 @@ async def validate_with_nemo(
                 span.set_status(Status(StatusCode.OK))
                 if token is not None:
                     streaming_handler_var.reset(token)
-                return True, ""
+                return True, "", False
 
         if _detect_bypass(user_input):
             logger.warning(
@@ -579,6 +604,7 @@ async def validate_with_nemo(
             return (
                 False,
                 "STPA Violation UCA-7: Request contains systemic bypass attempt.",
+                True,  # _detect_bypass is a deterministic structural check
             )
 
         try:
@@ -600,6 +626,11 @@ async def validate_with_nemo(
                     pre_check_results.get("cbf_result", {}).get("allowed", "?"),
                 )
 
+            # Reset the ContextVar BEFORE generate_async so that any residual
+            # True from a previous request (same async task recycled) doesn't
+            # leak into this one.
+            _deterministic_verdict.set(False)
+
             # Use structured rails execution (input rails only).
             # Note: the `context` kwarg was removed — it is not supported by the
             # installed NeMo Guardrails version and caused a TypeError that
@@ -610,6 +641,12 @@ async def validate_with_nemo(
                 options={"rails": ["input"]},
                 streaming_handler=handler,
             )
+
+            # Read the deterministic flag AFTER generate_async completes.
+            # CustomSelfCheckInputAction sets _deterministic_verdict.set(True)
+            # for Stage-1/1′/1B/1C/1D blocks before returning False.
+            # For Stage-3 LLM judge blocks and pass-throughs the flag stays False.
+            is_deterministic = _deterministic_verdict.get(False)
 
             # Structured result extraction — no substring matching
             bot_response = _extract_bot_response(res)
@@ -631,13 +668,14 @@ async def validate_with_nemo(
                 "langfuse.trace.metadata.guardrails.intervened", not is_safe
             )
             span.set_attribute("output", response_content)
+            span.set_attribute("guardrails.deterministic_verdict", is_deterministic)
             stamp_iso_control(
                 span,
                 tier=3,
                 control="A.6.1.2",
                 outcome="PASS" if is_safe else "BLOCK",
             )
-            return is_safe, response_content
+            return is_safe, response_content, is_deterministic
 
         except Exception as exc:
             exc_str = str(exc)
@@ -660,11 +698,11 @@ async def validate_with_nemo(
                     "langfuse.observation.metadata.stpa_hazard", "UCA-1_SEMANTIC_BYPASS"
                 )
                 span.set_attribute("langfuse.observation.metadata.iso_control", "A.5.2")
-                return True, ""
+                return True, "", False
             logger.error("NeMo Validation Error: %s", exc)
             span.record_exception(exc)
             span.set_status(Status(StatusCode.ERROR))
-            return False, "Validation failed due to internal governance error."
+            return False, "Validation failed due to internal governance error.", False
         finally:
             if token is not None:
                 streaming_handler_var.reset(token)

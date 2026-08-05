@@ -41,6 +41,31 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from langchain_core.messages import HumanMessage
+
+# ---------------------------------------------------------------------------
+# Market-price resolver — module-level so tests can patch it by name.
+#
+# get_current_price(symbol) → float | None
+#
+# src.gateway.core.market currently exposes MarketService (async sentiment,
+# sync status) but no synchronous get_current_price helper.  The try/except
+# below attempts to import it when a future sprint adds it; until then it
+# falls back to a no-op stub that returns None.  The caller in
+# _extract_trade_payload handles None by keeping amount=0, which is then
+# handled fail-closed by the OPA rule in trade_governance.rego.
+# ---------------------------------------------------------------------------
+try:
+    from src.gateway.core.market import get_current_price  # type: ignore[attr-defined]
+except (ImportError, AttributeError):
+
+    def get_current_price(symbol: str) -> float | None:  # type: ignore[misc]
+        """Stub: market price lookup not yet implemented — returns None."""
+        return None
+
+from src.gateway.governance.authorization_claim_detector import (
+    detect_authorization_claim,
+)
 from src.gateway.governance.langgraph_harness import (
     OpaNodeConfig,
     create_opa_safety_node,
@@ -84,16 +109,84 @@ def _extract_trade_payload(state: dict[str, Any]) -> dict[str, Any]:
 
     ``confidence`` = 1.0: this node is a deterministic rule-based gate (OPA),
     not an ML model output; SR 11-7 applies to inference steps only.
+
+    ``claimed_authorization_present``: populated by calling
+    ``detect_authorization_claim`` on the raw text of the last HumanMessage in
+    ``state["messages"]``.  This flag is set ONLY from the structural detector
+    output — never from the LLM-generated plan — so it cannot be influenced by
+    adversarial prompt content.  If no human message is present (e.g. unit tests
+    that inject only the plan dict), the flag defaults to ``False``.
     """
     plan = state.get("execution_plan_output") or {}
     if isinstance(plan, str):
         # Edge case: plan was stored as a raw string — cannot extract fields.
         plan = {}
 
+    # ------------------------------------------------------------------
+    # Authorization-claim detection — defense-in-depth (PR 4).
+    # Extract the raw text of the last HumanMessage and run the structural
+    # detector.  The result is passed to OPA as ``claimed_authorization_present``.
+    # This path is independent of (and complementary to) the NeMo input rail:
+    # even if the NeMo layer missed the claim, OPA will force MANUAL_REVIEW.
+    # ------------------------------------------------------------------
+    claimed_authorization_present: bool = False
+    messages = state.get("messages") or []
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            raw_text = msg.content if isinstance(msg.content, str) else ""
+            if raw_text:
+                authclaim_result = detect_authorization_claim(raw_text)
+                claimed_authorization_present = authclaim_result.detected
+                if authclaim_result.detected:
+                    logger.warning(
+                        "🚨 _extract_trade_payload: authorization-claim detected "
+                        "in user message — setting claimed_authorization_present=True "
+                        "in OPA input (category=%s)",
+                        authclaim_result.category,
+                    )
+            break
+
+    # ------------------------------------------------------------------
+    # Deterministic amount computation — defense against RBAC-004 /
+    # CONF-SPOOF-001 adversarial patterns where "sell ALL" or high-notional
+    # natural-language requests produce amount=0 after LLM plan extraction.
+    #
+    # Algorithm:
+    #   1. Read the LLM plan's raw amount (may be 0 or absent).
+    #   2. If amount==0 but quantity + symbol are present, attempt to resolve
+    #      current market price from the market data layer and compute
+    #      amount = quantity × price deterministically.
+    #   3. If the price lookup fails (module absent, network error, etc.) the
+    #      raw amount (0) is preserved — fail-open on the lookup, fail-closed
+    #      via the OPA rule below (DENY when claimed_authorization_present &&
+    #      amount==0 for execute_trade).
+    #
+    # NEVER trust plan["amount"] as the sole source of truth for fiscal checks.
+    # ------------------------------------------------------------------
+    _raw_amount: float = float(plan.get("amount", 0) or 0)
+    _quantity = plan.get("quantity", plan.get("shares", 0))
+    _symbol_for_price = plan.get("symbol", plan.get("ticker", ""))
+
+    if _quantity and _symbol_for_price and _raw_amount == 0:
+        # Attempt to resolve current price from the module-level get_current_price.
+        # The module-level binding resolves to the real implementation when
+        # src.gateway.core.market exports it, or to a no-op stub (returns None)
+        # when not yet implemented — making it patchable in unit tests.
+        # Broad except: any I/O, import, or runtime failure keeps _raw_amount=0;
+        # OPA fail-closed rule will DENY when claimed_authorization_present is True.
+        try:
+            _price = get_current_price(_symbol_for_price)
+            if _price is not None and float(_price) > 0:
+                _raw_amount = float(_quantity) * float(_price)
+        except Exception:
+            pass
+
     payload: dict = {
         # Intent fields — sourced from the LLM plan (what to trade, how much).
         "action": plan.get("action", "unknown"),
-        "amount": plan.get("amount", 0),
+        # amount: deterministically computed above (quantity × price when
+        # possible); falls back to 0 which is handled fail-closed by OPA.
+        "amount": _raw_amount,
         "symbol": plan.get("symbol", "UNKNOWN"),
         "currency": plan.get("currency", "USD"),
         "trader_role": plan.get("trader_role", "junior"),
@@ -106,6 +199,9 @@ def _extract_trade_payload(state: dict[str, Any]) -> dict[str, Any]:
         "drawdown": 0.0,
         "order_size": 0,
         "daily_vol": 0,
+        # Defense-in-depth authorization-claim flag (PR 4).
+        # Set by the structural detector above; never LLM-sourced.
+        "claimed_authorization_present": claimed_authorization_present,
     }
     return payload
 

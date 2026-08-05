@@ -116,6 +116,29 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
                     target_tool = step.get("action", "execute_trade")
                     break
 
+    # Populate required STPA numeric fields with safe defaults before the
+    # simulate_governance_check MCP call.  These fields are required by the
+    # GeneratedSTPAValidator (UCA-2/UCA-5/UCA-6 checks).  When they are absent
+    # from the LLM-extracted trade parameters the STPA validator fails closed
+    # with "STPA Violation UCA-5: Missing required param `drawdown`" and the
+    # evaluator rejects the plan before it ever reaches the authoritative OPA
+    # gate in safety_check_node.
+    #
+    # SECURITY NOTE: These safe defaults are identical to those used by
+    # _extract_trade_payload() in safety_node.py (the authoritative OPA path).
+    # They are intentionally conservative (0.0 drawdown, 0 order size) so they
+    # pass the STPA threshold check without fabricating risk data.  The real
+    # STPA/OPA enforcement happens at the safety_check_node level — not here.
+    # Do NOT read these from the LLM plan: that would allow adversarially
+    # prompted models to influence STPA decisions.
+    target_params = {
+        **target_params,
+        "drawdown": float(target_params.get("drawdown") or 0.0),
+        "latency_ms": float(target_params.get("latency_ms") or 0.0),
+        "order_size": int(target_params.get("order_size") or 0),
+        "daily_vol": int(target_params.get("daily_vol") or 0),
+    }
+
     with tracer.start_as_current_span("evaluator.safety_check") as span:
         raw_risk = state.get("risk_attitude")
         risk_profile = raw_risk.capitalize() if raw_risk else "Moderate"

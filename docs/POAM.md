@@ -3,7 +3,7 @@
 **System:** Cybernetic AI Governance Engine (CAGE)
 **Document:** Public Security Posture Statement
 **Frameworks:** NIST SP 800-53 Rev. 5, NIST AI 600-1, ISO 42001, EU AI Act, DORA, GDPR, MAS FEAT, MAS TRM, MAS Notice 655
-**Last Updated:** 2026-07-27
+**Last Updated:** 2026-08-05
 
 ---
 
@@ -11,7 +11,7 @@
 
 This document is a public transparency statement about the security posture of the Cybernetic Governance Engine (CAGE). It describes the compliance controls being addressed, the frameworks they map to, and the general remediation timeline.
 
-CAGE is an open-source AI governance platform for financial services. It enforces governance policies over multi-agent LLM workflows via a layered pipeline (NeMo Guardrails → OPA → STPA → Control Barrier Function → Consensus → Causal/FRIA). The system is designed for deployment across three regulatory regions: US Federal (`US_FED`), EU ECB (`EU_ECB`), and APAC MAS (`APAC_MAS`).
+CAGE is an open-source AI governance platform for financial services. It enforces governance policies over multi-agent LLM workflows via an 8-tier pipeline: FTRA pre-execution reachability gate (Tier 0.5) → NeMo Guardrails → STPA/UCA validation → Agentic confidence check → Control Barrier Function + OPA Rego (concurrent) → Fiscal Limit Pre-Reservation → Multi-model consensus → Causal gatekeeper → Adaptive FRIA gate. The system is designed for deployment across three regulatory regions: US Federal (`US_FED`), EU ECB (`EU_ECB`), and APAC MAS (`APAC_MAS`).
 
 ---
 

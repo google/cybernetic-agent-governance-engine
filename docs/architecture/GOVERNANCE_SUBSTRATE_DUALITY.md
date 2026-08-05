@@ -94,11 +94,13 @@ Current state of the handshake:
 [Tool execution / actuator endpoint]
 ```
 
-The gap is at the top of the stack: CAGE has no native parser for OSCAL
-component definitions or Lula validation manifests as policy ingestion inputs.
-The [`NormativeProvider`](../../src/gateway/governance/normative_provider.py)
-protocol handles regulatory baseline data (TrustLayers, Nexart), but not
-developer-authored OSCAL/Lula specs.
+**Update (v2.1.0):** The OSCAL and Lula ingress adapters are now implemented:
+- [`src/gateway/governance/ingress/oscal_adapter.py`](../../src/gateway/governance/ingress/oscal_adapter.py) — `translate_oscal()` maps OSCAL implemented-requirements to CAGE UCAs via `_OSCAL_STATUS_TO_UCA_TYPE`
+- [`src/gateway/governance/ingress/lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py) — `translate_lula()` extracts OPA Rego modules and Kubernetes resource specs from Lula validation manifests
+- [`src/gateway/governance/ingress/aaif_adapter.py`](../../src/gateway/governance/ingress/aaif_adapter.py) — `translate_aaif()` maps AAIF stage names to CAGE tiers
+- [`src/gateway/governance/ingress/agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) — `AgwAdapter` with OIDC token validation for Agent Gateway Protocol absorption
+
+The remaining gap is a `POST /governance/ingest-policy` CI/CD-callable endpoint (not yet implemented) and a bidirectional push webhook from CAGE to the Governance Layer.
 
 ---
 
@@ -108,45 +110,17 @@ To make the "policy-as-code feeds into infrastructure-as-code" claim
 technically complete, three new components are required — see the action
 items in §9.
 
-### 3.1 OSCAL Policy Ingestion Adapter
+### 3.1 OSCAL Policy Ingestion Adapter ✅ IMPLEMENTED
 
-**What it does:** Accepts an OSCAL component definition
-(`compliance/oscal/component-definition.yaml`) and translates the implemented
-controls into CAGE UCA format, feeding `stpa_compiler.py`.
+**Status:** Implemented in v2.1.0. See [`src/gateway/governance/ingress/oscal_adapter.py`](../../src/gateway/governance/ingress/oscal_adapter.py).
 
-**Why it closes the gap:** OSCAL is the machine-readable output of the
-Governance Layer (NIST RMF, FedRAMP, DoD RMF). If CAGE can ingest OSCAL
-directly, the handshake becomes: "author your controls in OSCAL, CAGE compiles
-them into enforcement artifacts automatically."
+**What it does:** `translate_oscal()` accepts an OSCAL component definition and translates `implemented-requirements` to CAGE UCA format via `_OSCAL_STATUS_TO_UCA_TYPE` mapping. `oscal_to_control_structure_patch()` produces a partial `ControlStructureModel` dict from an OSCAL document.
 
-**Proposed location:** `src/gateway/governance/ingress/oscal_adapter.py` (new)
+### 3.2 Lula Validation Manifest Adapter ✅ IMPLEMENTED
 
-**Integration point:** Extends the existing
-[`NormativeProvider`](../../src/gateway/governance/normative_provider.py)
-protocol with a new `ingest_oscal_component()` method, or registers as a new
-ingress adapter in the Phase A `policy_translator.py` pipeline.
+**Status:** Implemented in v2.1.0. See [`src/gateway/governance/ingress/lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py).
 
-**Compliance note:** This adapter touches NIST SP 800-53 control
-implementations. An OSCAL component update in `compliance/oscal/` is required
-within 2 business days of PR merge per the Code Mode compliance obligations.
-
-### 3.2 Lula Validation Manifest Adapter
-
-**What it does:** Accepts a Lula validation manifest
-(`compliance/lula/*.yaml`) and extracts the Kubernetes resource assertions as
-CAGE governance constraints, feeding the OPA policy engine.
-
-**Why it closes the gap:** Lula is the policy-as-code layer that validates
-Kubernetes resources against OSCAL controls. If CAGE can ingest Lula manifests,
-the handshake becomes bidirectional: CAGE enforcement artifacts can be validated
-by Lula, and Lula validation results can feed back into CAGE's
-`ControlRegistry` as runtime compliance evidence.
-
-**Proposed location:** `src/gateway/governance/ingress/lula_adapter.py` (new)
-
-**Integration point:** Feeds into `ControlRegistry.active_hash` validation and
-the `compliance_bridge` reconciliation worker
-([`reconciliation_worker.py`](../../src/compliance_bridge/reconciliation_worker.py)).
+**What it does:** `translate_lula()` extracts inline Rego from OSCAL-wrapped Lula back-matter and Kubernetes resource specs from Lula validation manifests. `lula_to_opa_bundle_patch()` produces an OPA bundle patch for the policy engine.
 
 ### 3.3 Policy Ingestion API Endpoint
 
@@ -160,10 +134,9 @@ A governance architect authors controls in OSCAL; the CI/CD pipeline calls
 parameters + NeMo Colang rails; the pipeline deploys the compiled artifacts.
 This is the "commit boundary" enforcement the framing describes.
 
-**Proposed location:** Extend
-[`src/gateway/server/hybrid_server.py`](../../src/gateway/server/hybrid_server.py)
-with the new endpoint; add §11 to
-[`docs/CAGE_OPEN_INTEROP_SPEC.md`](../CAGE_OPEN_INTEROP_SPEC.md).
+**Proposed location:** Extend [`src/gateway/server/hybrid_server.py`](../../src/gateway/server/hybrid_server.py) with the new endpoint; add §11 to [`docs/CAGE_OPEN_INTEROP_SPEC.md`](../CAGE_OPEN_INTEROP_SPEC.md).
+
+> **Note:** The individual ingress adapters (OSCAL, Lula, AAIF, AGW) are implemented in `src/gateway/governance/ingress/`. The unified `POST /governance/ingest-policy` HTTP endpoint is not yet implemented.
 
 ---
 

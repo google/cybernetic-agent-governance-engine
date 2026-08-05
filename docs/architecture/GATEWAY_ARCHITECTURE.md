@@ -237,9 +237,9 @@ The following modules were added as part of the NIST AI 600-1 implementation (`C
 |--------|-----------------|---------|------|
 | [`confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) | §2.1 — Confabulation/Hallucination | Scores LLM outputs for confabulation risk. Computes `risk_score = 1.0 − confidence` and emits a structured Langfuse score payload (`confabulation_risk`) for every governed request. Blocks requests where `confidence < CONFIDENCE_MIN_SCORE` (default 0.95, sourced from `CONFIDENCE_MIN_SCORE` env var or `governance_thresholds.json`). Implements `CTRL_AGT_001`. | AI600-001 |
 | [`hitl_escalator.py`](../../src/gateway/governance/hitl_escalator.py) | §2.5 — Human-AI Configuration | Human-in-the-Loop escalation for high-risk decisions. Produces structured `EscalationRecord` objects written to the DeferQueue (Redis db=1, noeviction). Escalation reasons: `CONSENSUS_THRESHOLD` (amount > $10k), `CONFIDENCE_LOW` (confidence < 0.95), `CAUSAL_BLOCK` (DoWhy refutation failed), `MANUAL_REVIEW` (OPA policy decision), `GOVERNANCE_CONFIDENCE_LOW` (recursive governance risk). SR 26-2 §3.2 SLA: 4-hour resolution window. | AI600-004 |
-| [`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py) | §2.3 — Prompt Injection | Detects structural prompt injection patterns in incoming requests. Complements the Aho-Corasick Tier-1 keyword scanner (`text_filter.py`) with 8 structural regex patterns targeting instruction overrides, persona hijacking, ChatML injection, jailbreak attempts, and role-play bypasses. Returns on first match (fail-fast); detection confidence 0.95. Violations logged to UCA Logger. | AI600-003 |
-| [`provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | §2.7 — Information Integrity | Builds a cryptographic SHA-256 hash chain linking each LangGraph governance node's input and output, creating an immutable audit trail of governance decisions. Each `ProvenanceRecord` carries `input_hash`, `output_hash`, `decision` (ALLOW/BLOCK/ESCALATE), and `parent_hash` for chain linkage. In production, records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`. `verify_chain_integrity()` validates the full chain on demand. | AI600-005 |
-| [`text_filter.py`](../../src/gateway/governance/text_filter.py) | §2.6 — CBRN / Hazardous Content | Stateless O(n) Tier-1 keyword scanner using a lazy-initialised Aho-Corasick automaton (`pyahocorasick`). Falls back to O(n×m) `any()` loop when the optional dependency is absent. Keyword list sourced exclusively from `config/governance_thresholds.json` (no inline literals). Includes a separate `ac_cbrn_keyword_scan()` function for CBRN-specific multi-word phrase detection, enabled via `tier1_keywords_cbrn_enabled` flag. **US_FED only** for CBRN enforcement; general keyword scan is active in all regions. | — |
+| [`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py) | §2.3 — Prompt Injection | Detects structural prompt injection patterns in incoming requests. Complements the Aho-Corasick Tier-1 keyword scanner (`text_filter.py`) with 14 structural regex patterns targeting instruction overrides, persona hijacking, ChatML injection, jailbreak attempts, and role-play bypasses. Stage 2.5 applies semantic similarity via `all-MiniLM-L6-v2` at threshold 0.82. Returns on first match (fail-fast). Violations logged to UCA Logger. | AI600-003 |
+| [`provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | §2.7 — Information Integrity | Builds a cryptographic SHA-256 hash chain linking each LangGraph governance node's input and output, creating an immutable audit trail of governance decisions. Each `ProvenanceRecord` carries `input_hash`, `output_hash`, `decision` (one of `ALLOW`, `BLOCK`, `ESCALATE`, `REQUIRE_APPROVAL`, `DEFER`), and `parent_hash` for chain linkage. In production, records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`. `verify_chain_integrity()` validates the full chain on demand. | AI600-005 |
+| [`text_filter.py`](../../src/gateway/governance/text_filter.py) | §2.6 — CBRN / Hazardous Content | Stateless O(n) Tier-1 keyword scanner using a lazy-initialised Aho-Corasick automaton (`pyahocorasick`). Falls back to O(n×m) `any()` loop when the optional dependency is absent. Keyword list sourced exclusively from `config/governance_thresholds.json` (`tier1_keywords` and `tier1_keywords_cbrn` arrays; `tier1_keywords_cbrn_enabled: true`). Includes a separate `ac_cbrn_keyword_scan()` function for CBRN-specific multi-word phrase detection. **US_FED only** for CBRN enforcement; general keyword scan is active in all regions. Note: `src/gateway/governance/safety.py` is a **deprecated backward-compatibility shim** that re-exports `ac_keyword_scan` and `ControlBarrierFunction` — do not reference it as the authoritative implementation. | — |
 | [`pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py) | §2.2 — Data Privacy | Pre-ledger PII sanitization pipeline (ISO 42001 Annex A.6). Applies 7 compiled regex patterns sequentially: SSN (IRS-valid ranges), credit card (Visa/MC/Amex/Discover/JCB/Diners), IBAN, SWIFT/BIC, email, phone (US/international), and API keys/Bearer tokens. Thread-safe singleton (`PIISanitizer`). `sanitize_dict()` recursively sanitizes nested dicts before WORM persistence. `pii_audit_log()` produces structured audit records (FISMA AU-11, 90-day retention). Active in **all regions**. | — |
 
 ### Module Integration in the Governance Pipeline
@@ -403,36 +403,6 @@ The following frameworks apply regardless of `CAGE_DEPLOYMENT_REGION`:
 | **CSA AARM v1.0** | 11-vector AI agent threat model — all mitigations active in all regions | Active |
 | **OSCAL v1.0.4** | Machine-readable artifact persistence to GCS | Active |
 | **Lula** | 15 Lula validation manifests (4 Active, 11 Stub — see [`compliance/lula/README.md`](../../README.md)) | Active (4 of 15) |
-
-### US_FED Jurisdiction Addendum (`CAGE_DEPLOYMENT_REGION=US_FED`)
-
-The following frameworks apply **only** when `CAGE_DEPLOYMENT_REGION=US_FED`:
-
-| Framework | Scope | Status |
-|-----------|-------|--------|
-| **SR 26-2** (Federal Reserve, April 17, 2026) | Agentic AI model risk management; HITL SLA 4h; MRM scope for CBF + DoWhy | Active |
-| **NIST AI 600-1** | Confabulation scoring, HITL escalation, prompt injection detection, provenance chain, CBRN filtering | Active |
-| **NIST SP 800-53 Rev 5 HIGH** | 24% readiness; FedRAMP ATO in progress | In Progress |
-| **NIST AI RMF** (SP 800-37) | MEASURE-2.6 continuous world-model validation | Active |
-
-### EU_ECB Jurisdiction Addendum (`CAGE_DEPLOYMENT_REGION=EU_ECB`)
-
-The following frameworks apply **only** when `CAGE_DEPLOYMENT_REGION=EU_ECB`:
-
-| Framework | Scope | Status |
-|-----------|-------|--------|
-| **EU AI Act** (Reg. 2024/1689) Art. 29a | Adaptive FRIA gating; OTel attestation stamp on every span | Active |
-| **GDPR** Art. 22 | Automated decision-making; 24h PII retention limit | Active |
-| **DORA** (Reg. 2022/2554) Art. 10 | Audit logging obligation; telemetry suppression sentinel | Active |
-
-### APAC_MAS Jurisdiction Addendum (`CAGE_DEPLOYMENT_REGION=APAC_MAS`)
-
-The following frameworks apply **only** when `CAGE_DEPLOYMENT_REGION=APAC_MAS`:
-
-| Framework | Scope | Status |
-|-----------|-------|--------|
-| **MAS FEAT Principles** | Singapore-specific AI fairness, ethics, accountability, transparency controls | Active |
-| **MAS Notice 655 / MAS TRM §4.2** | Audit logging; data residency within `asia-southeast1` | Active |
 
 ### US_FED Jurisdiction Addendum (`CAGE_DEPLOYMENT_REGION=US_FED`)
 

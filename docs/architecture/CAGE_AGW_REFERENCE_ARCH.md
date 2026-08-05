@@ -223,7 +223,7 @@ mTLS policy (Istio `PeerAuthentication`) or AGW IAM binding — not by CAGE.
 ### OSCAL update obligation
 
 An OSCAL component update in `compliance/oscal/` is required within
-**2 business days** of PR merge for this Cat-M change (D2).
+**2 business days** of PR merge for this Cat-S change.
 
 ### Lula validation obligation
 

@@ -29,14 +29,15 @@ The following capabilities are implemented, tested, and operational in the CAGE 
 
 ### 1.1 The Domain-Agnostic Kernel
 
-The CBF engine ([`safety.py`](../../src/gateway/governance/safety.py)) implements a pure mathematical invariant with no domain-specific logic:
+The CBF engine ([`cbf.py`](../../src/gateway/governance/cbf.py)) implements a pure mathematical invariant with no domain-specific logic. The barrier function is:
 
-```python
-# src/gateway/governance/safety.py — ControlBarrierFunction.get_h()
-def get_h(self, cash_balance: float) -> float:
-    """Safety function h(x). Safe when h(x) >= 0."""
-    return cash_balance - self.min_cash_balance
 ```
+h(x) = cash_balance - min_cash_balance
+```
+
+where `min_cash_balance = 1000.0` (sourced from `THRESHOLDS.cbf.min_cash_balance` in `config/governance_thresholds.json`).
+
+Note: [`safety.py`](../../src/gateway/governance/safety.py) is a **deprecated backward-compatibility shim** that re-exports `ControlBarrierFunction` from `cbf.py` via `__getattr__` lazy re-export. New code must reference `cbf.py` directly.
 
 The enforcement boundary:
 
@@ -47,7 +48,7 @@ Where:
 - $\gamma$ = decay coefficient (sourced from `THRESHOLDS.cbf.gamma`)
 - $h(x) = 0$ defines the critical safety boundary
 
-The function `get_h()` accepts any continuous scalar. The financial semantics (`cash_balance`, `min_cash_balance`) are injected via the threshold configuration singleton ([`governance_thresholds.json`](../../config/governance_thresholds.json)), not hardcoded in the kernel. This is the structural property that enables domain generalization.
+The barrier condition `h(x) >= 0` accepts any continuous scalar. The financial semantics (`cash_balance`, `min_cash_balance=1000.0`, `gamma=0.5`) are injected via the threshold configuration singleton ([`governance_thresholds.json`](../../config/governance_thresholds.json)), not hardcoded in the kernel. This is the structural property that enables domain generalization.
 
 ### 1.2 The ControlRegistry: Decoupled Compliance Metadata
 
@@ -78,9 +79,9 @@ Three production profiles are implemented and loadable via `CAGE_DEPLOYMENT_REGI
 
 | Region     | Profile File                        | Primary Framework            | Controls Defined |
 | ---------- | ----------------------------------- | ---------------------------- | ---------------- |
-| `US_FED`   | [`US_FED_BASELINE.json`](../../config/thresholds/US_FED_BASELINE.json)     | SR 26-2 / ISO 42001          | 5                |
-| `EU_ECB`   | [`EU_ECB_BASELINE.json`](../../config/thresholds/EU_ECB_BASELINE.json)     | EU AI Act / DORA / GDPR      | 6 (+FRIA)        |
-| `APAC_MAS` | [`APAC_MAS_BASELINE.json`](../../config/thresholds/APAC_MAS_BASELINE.json) | MAS FEAT / MAS TRM / ISO 42001 | 5              |
+| `US_FED`   | [`US_FED_BASELINE.json`](../../config/compliance/US_FED_BASELINE.json)     | SR 26-2 / ISO 42001          | 5                |
+| `EU_ECB`   | [`EU_ECB_BASELINE.json`](../../config/compliance/EU_ECB_BASELINE.json)     | EU AI Act / DORA / GDPR      | 6 (+FRIA)        |
+| `APAC_MAS` | [`APAC_MAS_BASELINE.json`](../../config/compliance/APAC_MAS_BASELINE.json) | MAS FEAT / MAS TRM / ISO 42001 | 5              |
 
 **Runtime behavior:** Setting `CAGE_DEPLOYMENT_REGION=EU_ECB` causes the ControlRegistry to load the EU profile at container startup. All `GovernanceError` payloads, OTel span attributes, SIEM emissions, and OSCAL findings automatically reference EU AI Act citations instead of SR 26-2 — with zero code changes.
 
@@ -436,7 +437,7 @@ The `FINANCE_SR26_2_DORA` profile (current `US_FED_BASELINE.json`) serves as the
 
 | Capability                         | Source                                                                                   | Status       |
 | ---------------------------------- | ---------------------------------------------------------------------------------------- | ------------ |
-| CBF with `h(x) = cash - floor`    | [`safety.py`](../../src/gateway/governance/safety.py) L151-153                        | ✅ Production |
+| CBF with `h(x) = cash - floor`    | [`cbf.py`](../../src/gateway/governance/cbf.py) (Lua atomic script `LUA_ATOMIC_CBF`)  | ✅ Production |
 | ControlRegistry (3 regions)        | [`constants.py`](../../src/gateway/governance/constants.py) L121-308                  | ✅ Production |
 | 7-Tier SymbolicGovernor            | [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)            | ✅ Production |
 | Cloud KMS HSM signing              | [`kms_signer.py`](../../src/gateway/governance/kms_signer.py)                         | ✅ Production |

@@ -132,7 +132,7 @@ The following external systems exchange data with CAGE across the authorization 
 
 **Internal Flows (Within Boundary):**
 
-7. **Gateway → NeMo Guardrails → OPA → LangGraph:** 5-tier governance pipeline processing. All HMAC-sealed inter-service calls. Data types: IT-001, IT-002, IT-004, IT-005. Authentication: HMAC routing seal (mTLS pending — POAM-007).
+7. **Gateway → NeMo Guardrails → OPA → LangGraph:** 5-tier governance pipeline processing. All HMAC-sealed inter-service calls protected by Linkerd mTLS (POAM-007 Closed 2026-05-17). Data types: IT-001, IT-002, IT-004, IT-005. Authentication: HMAC routing seal + Linkerd mTLS (SPIFFE/X.509).
 
 8. **Gateway → Redis Cache:** Session state and governance decision caching. Data types: IT-001, IT-002. No external network traversal.
 
@@ -144,7 +144,7 @@ The highest-risk data flows are:
 
 - **Flow 4 (to vLLM/Vertex AI):** PII leakage risk if NeMo Guardrails fails to scrub input. Mitigated by NeMo Guardrails but requires validation.
 - **Flow 5 (to Langfuse):** Audit traces may contain PII echoed from inference context. Requires Langfuse DPA and trace PII scrubbing validation.
-- **Flow 7 (internal governance pipeline):** Shared HMAC (POAM-007) creates lateral movement risk if compromised. mTLS implementation required.
+- **Flow 7 (internal governance pipeline):** Linkerd mTLS (POAM-007 Closed 2026-05-17) provides mutual authentication via SPIFFE/X.509 certificates for all intra-cluster governance pipeline traffic. HMAC routing seal remains as an application-layer defense-in-depth control.
 
 ---
 

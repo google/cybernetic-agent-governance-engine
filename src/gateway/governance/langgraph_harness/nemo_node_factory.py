@@ -55,7 +55,7 @@ _NEMO_AVAILABLE = False
 create_nemo_manager = None  # type: ignore[assignment]
 
 
-async def validate_with_nemo(user_input, rails, pre_check_results=None):  # type: ignore[misc]
+async def validate_with_nemo(user_input, rails, pre_check_results=None) -> tuple:  # type: ignore[misc]
     """Fail-closed stub — NeMo not available."""
     raise RuntimeError("NeMo manager not available (validate_with_nemo stub)")
 
@@ -394,7 +394,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                     )
                     span.set_attribute("input.pii_redacted", False)
 
-                is_safe, reason = await validate_with_nemo(
+                is_safe, reason, deterministic = await validate_with_nemo(
                     user_input, rails, pre_check_results=pre_check_results
                 )
                 span.set_attribute(
@@ -402,6 +402,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                     "PASSED" if is_safe else "BLOCKED",
                 )
                 span.set_attribute("nemo.input_rail.reason", reason or "")
+                span.set_attribute("nemo.input_rail.deterministic", deterministic)
             except Exception as exc:
                 if cage_enforcement == "enforce":
                     logger.error(
@@ -430,9 +431,19 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                     }
 
             if not is_safe:
-                if cage_enforcement == "enforce":
+                if deterministic or cage_enforcement == "enforce":
+                    # Hard-block when:
+                    #   (a) the verdict came from a deterministic stage (Stage 1/1′/1B/1C/1D) — always block
+                    #       regardless of enforcement mode, because these detectors have zero false-positive
+                    #       risk and are the primary defence against regex/keyword/structural attacks; OR
+                    #   (b) CAGE_SEAL_ENFORCEMENT=enforce — enforce mode always blocks on any unsafe verdict.
+                    #
+                    # The stochastic Stage-3 LLM judge with enforcement=log is the ONLY path that proceeds
+                    # despite an unsafe verdict.
                     logger.warning(
-                        "nemo_guardrail_node: input BLOCKED — reason: %s",
+                        "nemo_guardrail_node: input BLOCKED (deterministic=%s, enforcement=%s) — reason: %s",
+                        deterministic,
+                        cage_enforcement,
                         reason,
                     )
                     base = {**state} if cfg.pass_through_state else {}
@@ -443,7 +454,8 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                     }
                 else:
                     logger.warning(
-                        "⚠️ nemo_guardrail_node: input flagged (enforcement=%s) — proceeding. reason: %s",
+                        "⚠️ nemo_guardrail_node: input flagged by non-deterministic stage "
+                        "(enforcement=%s) — proceeding. reason: %s",
                         cage_enforcement,
                         reason,
                     )

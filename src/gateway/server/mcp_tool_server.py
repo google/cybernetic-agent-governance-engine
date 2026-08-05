@@ -444,7 +444,7 @@ async def verify_content_safety(text: str) -> str:
     rails = getattr(app.state, "nemo_rails", None)
     if rails is None:
         return "ERROR: NeMo rails not initialised."
-    is_safe, response = await validate_with_nemo(text, rails)
+    is_safe, response, _deterministic = await validate_with_nemo(text, rails)
     return "SAFE" if is_safe else f"BLOCKED: {response}"
 
 

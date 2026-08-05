@@ -102,24 +102,22 @@ The matrix claims CAGE uses a **4-state asymmetric router** where high-confidenc
 
 ## 3. Substrate Moat Strategy — Gap Analysis
 
-### 3.1 Gap 1: No ACS/AAIF Ingress Adapter (CRITICAL — Strategy Blocker)
+### 3.1 Gap 1: Ingress Adapters — PARTIALLY CLOSED ✅
 
-**What the strategy requires:**  
-> "Allow CAGE's front-end pipelines to ingest open specifications from Microsoft's ACS or the Linux Foundation's AAIF frameworks."
+**Update (v2.1.0):** The `src/gateway/governance/ingress/` package is now implemented with the following adapters:
 
-**Current state:**  
-CAGE has no ingress adapter for external policy specifications. The [`NormativeProvider`](../../src/gateway/governance/normative_provider.py:255) protocol defines a 3-endpoint integration surface (`fetch_baseline`, `validate_fria`, `submit_evidence`), and the [`NormativeProviderDaemon`](../../src/gateway/governance/normative_provider.py:573) handles boot-time fetch and background polling. However, this is designed for regulatory baseline data (e.g., TrustLayers), not for ingesting developer-authored ACS behavior declarations or AAIF governed run loop specifications.
+| Adapter | File | Status |
+|---------|------|--------|
+| AAIF Run Loop Adapter | [`aaif_adapter.py`](../../src/gateway/governance/ingress/aaif_adapter.py) | ✅ Implemented — `translate_aaif()` maps AAIF stages to CAGE tiers |
+| ACS Adapter | [`acs_adapter.py`](../../src/gateway/governance/ingress/acs_adapter.py) | ✅ Implemented |
+| Policy Translation Pipeline | [`policy_translator.py`](../../src/gateway/governance/ingress/policy_translator.py) | ✅ Implemented |
+| OSCAL Adapter | [`oscal_adapter.py`](../../src/gateway/governance/ingress/oscal_adapter.py) | ✅ Implemented |
+| Lula Adapter | [`lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py) | ✅ Implemented |
+| AGW Adapter | [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) | ✅ Implemented |
+| Agent Registry Adapter | [`agent_registry_adapter.py`](../../src/gateway/governance/ingress/agent_registry_adapter.py) | ✅ Implemented |
+| AGP Policy Uploader | [`agp_policy_uploader.py`](../../src/gateway/governance/ingress/agp_policy_uploader.py) | ✅ Implemented |
 
-**What is missing:**
-1. An **ACS Policy Ingestion Adapter** — a parser that accepts Microsoft ACS open standard behavior declarations (JSON/YAML) and translates them into CAGE's `stpa_control_structure.yaml` UCA format or directly into OPA Rego AST rules.
-2. An **AAIF Run Loop Adapter** — a parser that accepts AAIF governed run loop specifications and maps them to CAGE's 7-tier governance pipeline stages.
-3. A **Policy Translation Pipeline** — a CI/CD step that takes ingested external specs and runs them through [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) to produce compiled enforcement artifacts.
-
-**Proposed location:** `src/gateway/governance/ingress/` (new package)  
-**Proposed modules:**
-- `src/gateway/governance/ingress/acs_adapter.py` — ACS spec parser and UCA translator
-- `src/gateway/governance/ingress/aaif_adapter.py` — AAIF run loop spec parser
-- `src/gateway/governance/ingress/policy_translator.py` — unified translation pipeline
+**Remaining gap:** A unified CI/CD-callable `POST /governance/ingest-policy` HTTP endpoint that orchestrates the full translation pipeline into compiled enforcement artifacts is not yet implemented.
 
 ---
 
@@ -191,15 +189,16 @@ CAGE enforces at the Redis database commit tier (application-layer substrate), n
 
 The following work items are ordered by strategic priority. Items marked **[BLOCKER]** must be completed before the "Substrate Moat" positioning can be credibly claimed to enterprise customers.
 
-### Phase 1 — Ingress Interoperability (Q3 2026)
+### Phase 1 — Ingress Interoperability (Partially Complete)
 
-| Work Item | Priority | Owner | Files |
+| Work Item | Priority | Status | Files |
 |---|---|---|---|
-| ACS Policy Ingestion Adapter | **[BLOCKER]** | TBD | `src/gateway/governance/ingress/acs_adapter.py` (new) |
-| AAIF Run Loop Adapter | **[BLOCKER]** | TBD | `src/gateway/governance/ingress/aaif_adapter.py` (new) |
-| Policy Translation Pipeline | **[BLOCKER]** | TBD | `src/gateway/governance/ingress/policy_translator.py` (new) |
-| Substrate Contract Specification | HIGH | TBD | `docs/SUBSTRATE_CONTRACT.md` (new) |
-| CI/CD Integration Hook | HIGH | TBD | `.github/workflows/policy_compile.yml` (new) |
+| ACS Policy Ingestion Adapter | **[BLOCKER]** | ✅ Implemented | [`src/gateway/governance/ingress/acs_adapter.py`](../../src/gateway/governance/ingress/acs_adapter.py) |
+| AAIF Run Loop Adapter | **[BLOCKER]** | ✅ Implemented | [`src/gateway/governance/ingress/aaif_adapter.py`](../../src/gateway/governance/ingress/aaif_adapter.py) |
+| Policy Translation Pipeline | **[BLOCKER]** | ✅ Implemented | [`src/gateway/governance/ingress/policy_translator.py`](../../src/gateway/governance/ingress/policy_translator.py) |
+| POST /governance/ingest-policy endpoint | HIGH | ❌ Not implemented | Extend `src/gateway/server/hybrid_server.py` |
+| Substrate Contract Specification | HIGH | See `docs/SUBSTRATE_CONTRACT.md` | `docs/SUBSTRATE_CONTRACT.md` |
+| CI/CD Integration Hook | HIGH | ❌ Not implemented | `.github/workflows/policy_compile.yml` (new) |
 
 **Change Management:** Adding new cloud provider services or container orchestrator namespaces for the ingress adapter constitutes a **Cat-M (Major)** change requiring AO pre-approval in a real deployment's own change-management process (see `AGENTS.md` for this repository's engineering standards). The ingress adapter itself (Python module only, no new infrastructure) is **Cat-N (Normal)**.
 
@@ -437,8 +436,8 @@ The AGW Service Extension integration (Gap 6) should be elevated to **Phase 1** 
 
 | Work Item | Priority | Phase | Files |
 |---|---|---|---|
-| AGW Service Extension Adapter | **[BLOCKER for GCP GTM]** | Phase 1 | `src/gateway/server/agw_service_extension.py` (new) |
-| AGW + CAGE Joint Reference Architecture | HIGH | Phase 1 | `docs/architecture/CAGE_AGW_REFERENCE_ARCH.md` (new) |
+| AGW Service Extension Adapter (gRPC port 50051) | **[BLOCKER for GCP GTM]** | Phase 1 | [`src/gateway/server/agent_gateway_adapter.py`](../../src/gateway/server/agent_gateway_adapter.py) (partial), gRPC ext_authz servicer pending |
+| AGW + CAGE Joint Reference Architecture | HIGH | Phase 1 | [`docs/architecture/CAGE_AGW_REFERENCE_ARCH.md`](CAGE_AGW_REFERENCE_ARCH.md) ✅ exists |
 | IaC AGW Integration Module *(GCP-specific, optional)* | HIGH | Phase 1 | `infra/agw/` (new, e.g., Terraform / Pulumi / OpenTofu) |
 | CAGE + AGW Defense-in-Depth Quickstart | HIGH | Phase 2 | `docs/QUICKSTART_AGW.md` (new) |
 

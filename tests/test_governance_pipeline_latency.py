@@ -181,7 +181,7 @@ def _nemo_input_patches(safe: bool = True):
         patch(
             "src.gateway.governance.langgraph_harness.nemo_node_factory.validate_with_nemo",
             new_callable=AsyncMock,
-            return_value=(safe, ""),
+            return_value=(safe, "", False),
         ),
         patch(
             "src.gateway.governance.langgraph_harness.nemo_node_factory._get_symbolic_governor",

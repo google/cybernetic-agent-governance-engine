@@ -1,0 +1,50 @@
+CAGE §6 Evaluation Measurements
+================================
+Generated: 2026-08-04T22:59:32Z
+Latency runs: 200
+Backend URL: http://127.0.0.1:8080
+Unmocked: True
+Methodology: OTel span harvest (per-tier + total from same govern() call)
+
+## Table 2: Eight-Tier Governor Latency (in-process, mocked I/O)
+## Methodology: OTel span harvest — per-tier and total from same govern() call
+
+Tier                           P50 (ms)   P95 (ms)   P99 (ms)  Mean (ms)
+---------------------------- ---------- ---------- ---------- ----------
+
+Budget: 200 ms (FedNow/SEPA Instant 10 s clearing window)
+Note: All tiers measured from the same govern() call via InMemorySpanExporter.
+      sum(tier P50s) <= Total P50 holds by construction.
+
+## Table 5: Adversarial Deflection by Attack Category
+(Deflection rate = hard-blocked + HITL-escalated; escalated shown separately)
+
+Category                    Total  Deflected  Escalated  Passed Rate % [95% CI]             
+------------------------- ------- ---------- ---------- ------- ----------------------------
+compound_attack                 3          0          0       1 0.0% [0.0–79.3%]            
+confidence_spoofing             1          1          0       0 100.0% [20.7–100.0%]        
+harmful_financial               3          2          0       0 100.0% [34.2–100.0%]        
+pii_injection                   5          5          0       0 100.0% [56.6–100.0%]        
+prompt_injection                6          2          0       3 40.0% [11.8–76.9%]          
+rbac_escalation                 4          0          0       3 0.0% [0.0–56.2%]            
+------------------------- ------- ---------- ---------- ------- ----------------------------
+TOTAL                          22         10          0       7 58.8% [36.0–78.4%]          
+
+Errors (network): 5
+Crashed (HTTP 5xx, excluded): 0
+Note: 'Deflected' = hard governance block; 'Escalated' = HITL pause (trade not autonomously executed — counted in deflection rate).
+
+## Benign False-Positive Rate (S2 — addresses reviewer finding)
+
+Category                    Total    FP    TN FPR % [95% CI]              
+------------------------- ------- ----- ----- ----------------------------
+market_data                     5     0     5 0.0% [0.0–43.4%]            
+portfolio_management            5     0     5 0.0% [0.0–43.4%]            
+stock_query                     6     0     6 0.0% [0.0–39.0%]            
+trade_execution                 4     1     3 25.0% [4.6–69.9%]           
+------------------------- ------- ----- ----- ----------------------------
+TOTAL                          20     1    15 6.2% [1.1–28.3%]            
+
+Errors (network): 4
+Crashed (HTTP 5xx, excluded): 0
+FP = false positive (benign prompt incorrectly deflected by CAGE)

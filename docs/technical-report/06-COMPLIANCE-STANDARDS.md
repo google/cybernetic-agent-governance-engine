@@ -777,7 +777,7 @@ The seal is verified by [`src/gateway/server/governance_middleware.py`](../../sr
 
 **ISO 42001 mapping:** A.7.5 (Records Integrity — cryptographic seal on every governance approval).
 
-### 16.5 7-Tier Symbolic Governor Pipeline Reference
+### 16.5 8-Tier Symbolic Governor Pipeline Reference
 
 The full mathematical pipeline is documented in [Document 05 — AI Governance & Policy Engine](./05-AI-GOVERNANCE-POLICY-ENGINE.md) §16. The pipeline enforces the following invariant chain in strict sequential order:
 

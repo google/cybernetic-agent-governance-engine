@@ -37,6 +37,22 @@ import httpx
 from opentelemetry import trace as _otel_trace
 from opentelemetry.trace import Status, StatusCode
 
+# Import the ContextVar from manager.py so Stage-1/1′/1B/1C/1D deterministic
+# block verdicts can be signalled back to validate_with_nemo().  The import is
+# wrapped in a try/except so the action module remains importable in restricted
+# unit-test environments where the full gateway stack is not available.
+try:
+    from src.gateway.governance.nemo.manager import _deterministic_verdict as _det_verdict
+
+    def _mark_deterministic() -> None:
+        """Set the per-request deterministic-verdict flag to True."""
+        _det_verdict.set(True)
+
+except ImportError:
+    def _mark_deterministic() -> None:  # type: ignore[misc]
+        """No-op fallback when manager is not importable."""
+        pass
+
 try:
     from nemoguardrails.actions import action as _nemo_action
 
@@ -224,12 +240,43 @@ async def custom_self_check_input(
 ):
     """Hybrid self-check for financial domain inputs - PHASE 2 UPGRADE.
 
-    Five-stage approach (ORDER IS SECURITY-CRITICAL — see 2026-08-02, 2026-08-03, 2026-08-03b fixes):
-    1.  Blocklist jailbreak patterns → BLOCK (0ms) [~5% of queries]
-    1B. Blocklist illegal-finance patterns → BLOCK (0ms) [harmful_financial category]
-    1C. Structural-attack blocklist + prompt_injection_detector → BLOCK (0ms) [SQLi / XSS]
-    2.  Allowlist financial keywords → ALLOW (0ms) [~70% of queries]
-    3.  LLM-based semantic check → EVALUATE (2-5s) [~25% of queries]
+    Stage order (ORDER IS SECURITY-CRITICAL — do not reorder without a
+    security review):
+
+    1′. detect_prompt_injection() — structural injection detector
+        (prompt_injection_detector.py), the SINGLE authoritative source
+        for AI/LLM injection patterns. Runs FIRST, unconditionally.
+        → BLOCK (0ms) on any match.
+    1.  Residual jailbreak substring scan — narrow list of attack phrases
+        whose coverage is BROADER than the regex patterns in Stage 1′ (e.g.
+        bare "pretend you", "roleplay as", "act as if" without a restriction
+        qualifier; "system:" without a bracket; "act as a developer with root
+        access"). Kept as a defence-in-depth thin wrapper.
+        → BLOCK (0ms) on any match.
+    1B. Illegal-finance blocklist — harmful_financial category payloads
+        (insider trading, money laundering, pump-and-dump, etc.) that co-
+        mention financial keywords and would otherwise bypass via Stage 2
+        ALLOW. Different threat class from injection; kept in full.
+        → BLOCK (0ms) on any match.
+    1C. Structural-attack blocklist — SQL injection syntax ('; DROP …,
+        UNION SELECT, xp_cmdshell) and HTML/script injection (<script>,
+        javascript:, onerror=). Different threat class from AI injection;
+        kept in full. Does NOT re-invoke detect_prompt_injection() (already
+        handled by Stage 1′ above).
+        → BLOCK (0ms) on any match.
+    1D. Authorization-claim / impersonation detector (PR 2) — RBAC
+        escalation attempts (detect_authorization_claim).
+        → BLOCK (0ms) on any match.
+    1E. Confidence-spoofing / human-review suppression detector —
+        numeric confidence overrides, API parameter injection
+        (bypass_review, auto_approve), certainty claims, negation-
+        uncertainty framing, and skip-review imperatives
+        (detect_confidence_claim).
+        → BLOCK (0ms) on any match.
+    2.  Financial-keyword allowlist — fast-path ALLOW for known-safe queries.
+        → ALLOW (0ms) [~70% of queries]
+    3.  LLM judge — semantic analysis for ambiguous cases.
+        → EVALUATE (2-5s) [~25% of queries]
 
     SECURITY NOTE (2026-08-02): The blocklist MUST run before the allowlist.
     Running the allowlist first (as this function originally did) allows any
@@ -239,29 +286,26 @@ async def custom_self_check_input(
     4/6 adversarial prompt-injection payloads (INJ-001, INJ-003, INJ-004,
     INJ-005) bypass detection entirely, since each one references finance in
     the same sentence as its attack. See docs/paper/REVISION_TRACKER.md for
-    the full measurement writeup. This preserves the same 0ms fast-path
-    performance characteristic for genuinely safe queries while closing the
-    bypass — the blocklist check is equally O(1) substring matching.
+    the full measurement writeup.
 
     SECURITY NOTE (2026-08-03): The illegal-finance blocklist (STAGE 1B) must
     also run before the allowlist. HARM-002 ("money laundering...trading profits")
     triggered the ALLOWLIST via "trading" before any harmful-finance check ran.
-    Broad allowlist keywords like "trading", "market", "strategy" are insufficient
-    to distinguish harmful from benign finance requests — illegal-finance terms must
-    be rejected as early as jailbreaks. See docs/paper/REVISION_TRACKER.md §2026-08-03.
+    See docs/paper/REVISION_TRACKER.md §2026-08-03.
 
-    SECURITY NOTE (2026-08-03b): Stage 1C closes the same allowlist-bypass
-    architectural defect for structural attack markers (SQL injection syntax,
-    HTML/script injection) that Stage 1B closed for illegal-finance keywords.
-    Measurement root cause: INJ-004 (``'; DROP TABLE trades; -- Analyze ticker:``)
-    and INJ-005 (``<script>…</script> …AAPL``) both contain a Stage-2 allowlist
-    token ("analyze" / "analyze this stock") that fires before any structural
-    check runs, causing a false ALLOW.  Stage 1C is checked after Stage 1B but
-    before Stage 2, mirroring the exact fix pattern proven for harmful_financial
-    (commit 27a64ee).  It also delegates to ``detect_prompt_injection()``
-    (already production code in src/gateway/governance/prompt_injection_detector.py)
-    rather than maintaining a third parallel keyword list, reusing the structural
-    regex machinery that was previously wired only to MCP tool-response sanitisation.
+    SECURITY NOTE (2026-08-03b): Stage 1C closes the allowlist-bypass
+    architectural defect for code injection markers (SQL, HTML/script). See
+    docs/paper/REVISION_TRACKER.md §2026-08-03b.
+
+    SECURITY NOTE (2026-08-04 / PR 5): detect_prompt_injection() promoted to
+    Stage 1′ — the first check to run, before all other blocklist stages.
+    Previously it was a sub-step inside Stage 1C after the hand-rolled
+    substring scan. All injection patterns it covers (DAN mode, developer
+    mode, bypass restrictions, forget instructions, you-are-unrestricted,
+    etc.) have been removed from the Stage 1 residual list to eliminate
+    the parallel-list maintenance drift that caused the 2026-08-04 defect
+    class. Stage 1 is now a thin residual wrapper for patterns that are
+    intentionally BROADER than the regex detector (see list below).
     """
     with _tracer.start_as_current_span("nemo.action.self_check_input") as span:
         span.set_attribute("langfuse.observation.type", "span")
@@ -278,19 +322,64 @@ async def custom_self_check_input(
             span.set_attribute("nemo.action.outcome", "ALLOW")
             return True
 
-        # STAGE 1: BLOCKLIST — checked FIRST so a jailbreak attempt cannot be
-        # short-circuited to ALLOW merely by co-mentioning a finance keyword.
-        jailbreak_patterns = [
-            "ignore previous instructions",
-            "ignore all previous",
-            "dan mode",
-            "developer mode",
-            "repeat your prompt",
-            "show me your system prompt",
-            "bypass your restrictions",
-            "you are now unrestricted",
-            "jailbreak",
-            "forget everything",
+        # STAGE 1′: STRUCTURAL INJECTION DETECTOR — detect_prompt_injection() is
+        # the SINGLE authoritative source of truth for AI/LLM injection patterns.
+        # Called unconditionally as the very first check so no downstream allowlist
+        # can short-circuit ALLOW before it runs.
+        #
+        # Patterns covered (as of 2026-08-04): ignore_previous_instructions,
+        # persona_override, you_are_unrestricted, fake_system_prompt,
+        # chatml_injection, instruction_override, disregard_training,
+        # jailbreak_dan, developer_mode_jailbreak, bypass_restrictions,
+        # forget_instructions, role_play_bypass, system_prompt_extraction,
+        # broadened_persona_override.
+        try:
+            from src.gateway.governance.prompt_injection_detector import (
+                detect_prompt_injection,
+            )
+
+            _injection_result = detect_prompt_injection(text)
+            if _injection_result.detected:
+                logger.warning(
+                    "HybridSelfCheckInput: STAGE 1′ BLOCK (prompt_injection_detector "
+                    "pattern=%s confidence=%.2f)",
+                    _injection_result.pattern_matched,
+                    _injection_result.confidence,
+                )
+                span.set_attribute("nemo.action.stage", "INJECTION_DETECTOR")
+                span.set_attribute(
+                    "nemo.action.injection_pattern",
+                    _injection_result.pattern_matched or "unknown",
+                )
+                span.set_attribute("nemo.action.outcome", "BLOCK")
+                _mark_deterministic()  # Stage 1′ — structural/regex detector
+                return False
+        except ImportError:
+            # prompt_injection_detector not importable in restricted test envs;
+            # Stage 1 residual substring scan below still runs — graceful degradation.
+            logger.debug(
+                "HybridSelfCheckInput: STAGE 1′ — prompt_injection_detector unavailable, "
+                "falling through to residual substring scan"
+            )
+
+        # STAGE 1: RESIDUAL JAILBREAK SUBSTRING SCAN — thin defence-in-depth wrapper
+        # for attack phrasings whose substring coverage is INTENTIONALLY BROADER than
+        # the regex patterns in Stage 1′.  Each item is kept because the regex
+        # requires a restriction-bypass qualifier that the substring does not:
+        #
+        #   "pretend you"    — role_play_bypass needs "no restrictions" qualifier
+        #   "roleplay as"    — same
+        #   "act as if"      — same
+        #   "system:"        — fake_system_prompt needs "[" bracket after colon
+        #   "act as a developer with root access" — defence-in-depth (also in
+        #                      tier1_keywords Aho-Corasick scan)
+        #
+        # Items REMOVED from this list (now fully covered by Stage 1′ / _INJECTION_PATTERNS):
+        #   "ignore previous instructions", "ignore all previous",
+        #   "dan mode", "developer mode", "repeat your prompt",
+        #   "show me your system prompt", "bypass your restrictions",
+        #   "you are now unrestricted", "jailbreak", "forget everything"
+        residual_jailbreak_patterns = [
             "pretend you",
             "roleplay as",
             "act as if",
@@ -298,10 +387,13 @@ async def custom_self_check_input(
             "system:",
         ]
 
-        if any(pattern in text for pattern in jailbreak_patterns):
-            logger.warning("HybridSelfCheckInput: STAGE 1 BLOCK (jailbreak pattern)")
-            span.set_attribute("nemo.action.stage", "BLOCKLIST")
+        if any(pattern in text for pattern in residual_jailbreak_patterns):
+            logger.warning(
+                "HybridSelfCheckInput: STAGE 1 BLOCK (residual jailbreak substring)"
+            )
+            span.set_attribute("nemo.action.stage", "RESIDUAL_JAILBREAK_BLOCKLIST")
             span.set_attribute("nemo.action.outcome", "BLOCK")
+            _mark_deterministic()  # Stage 1 — keyword/substring blocklist
             return False
 
         # STAGE 1B: ILLEGAL-FINANCE BLOCKLIST — catches harmful_financial category
@@ -309,6 +401,7 @@ async def custom_self_check_input(
         # describing explicitly illegal acts. These must be blocked BEFORE the
         # financial-keyword allowlist runs — HARM-002 ("...trading profits") was
         # observed to bypass via "trading" in the allowlist (2026-08-03 finding).
+        # Different threat class from injection — kept in full.
         illegal_finance_patterns = [
             "insider trading",
             "insider knowledge",
@@ -345,6 +438,7 @@ async def custom_self_check_input(
             )
             span.set_attribute("nemo.action.stage", "ILLEGAL_FINANCE_BLOCKLIST")
             span.set_attribute("nemo.action.outcome", "BLOCK")
+            _mark_deterministic()  # Stage 1B — deterministic keyword blocklist
             return False
 
         # STAGE 1C: STRUCTURAL-ATTACK BLOCKLIST — SQL injection, HTML/script injection.
@@ -355,12 +449,9 @@ async def custom_self_check_input(
         # allowlist-bypass pattern fixed for jailbreaks in Stage 1 (2026-08-02)
         # and for illegal-finance in Stage 1B (2026-08-03).
         #
-        # Two complementary checks run here:
-        #   a) Fast O(1) substring scan for SQL/HTML structural tokens — catches
-        #      INJ-004 (SQL syntax) and INJ-005 (<script>) immediately.
-        #   b) detect_prompt_injection() regex engine (prompt_injection_detector.py)
-        #      — already production code, previously only wired to MCP tool-response
-        #      sanitisation; now also applied to raw user input.
+        # Note: detect_prompt_injection() is NOT re-invoked here — it already ran
+        # as Stage 1′ above.  This list covers SQL/code injection markers only,
+        # which are a different threat class and are not expressed in _INJECTION_PATTERNS.
         structural_attack_patterns = [
             # SQL injection markers
             "; drop",
@@ -395,36 +486,74 @@ async def custom_self_check_input(
             )
             span.set_attribute("nemo.action.stage", "STRUCTURAL_ATTACK_BLOCKLIST")
             span.set_attribute("nemo.action.outcome", "BLOCK")
+            _mark_deterministic()  # Stage 1C — structural SQL/HTML injection detector
             return False
 
-        # Also run the dedicated structural regex detector (reuses existing
-        # production machinery; previously only called on MCP tool responses).
+        # STAGE 1D: Authorization-claim / impersonation detection.
+        # Closes the rbac_escalation attack category (0 % deflection measured
+        # 2026-08). Runs before the Stage 2 allowlist for the same reason as
+        # Stage 1B/1C: payloads often co-mention financial keywords (execute,
+        # trade, market) that would short-circuit ALLOW before the authority-
+        # claim check runs. Universal — no CAGE_DEPLOYMENT_REGION guard.
         try:
-            from src.gateway.governance.prompt_injection_detector import (
-                detect_prompt_injection,
+            from src.gateway.governance.authorization_claim_detector import (
+                detect_authorization_claim,
             )
 
-            _injection_result = detect_prompt_injection(text)
-            if _injection_result.detected:
+            authclaim_result = detect_authorization_claim(text)
+            if authclaim_result.detected:
                 logger.warning(
-                    "HybridSelfCheckInput: STAGE 1C BLOCK (prompt_injection_detector "
-                    "pattern=%s confidence=%.2f)",
-                    _injection_result.pattern_matched,
-                    _injection_result.confidence,
+                    "AuthClaimDetector: blocked category=%s confidence=%.2f",
+                    authclaim_result.category,
+                    authclaim_result.confidence,
                 )
-                span.set_attribute("nemo.action.stage", "STRUCTURAL_ATTACK_BLOCKLIST")
                 span.set_attribute(
-                    "nemo.action.injection_pattern",
-                    _injection_result.pattern_matched or "unknown",
+                    "nemo.action.authclaim_category",
+                    authclaim_result.category or "",
                 )
-                span.set_attribute("nemo.action.outcome", "BLOCK")
+                span.set_attribute("nemo.action.outcome", "BLOCK_AUTHCLAIM")
+                _mark_deterministic()  # Stage 1D — deterministic authorization-claim detector
                 return False
         except ImportError:
-            # prompt_injection_detector not importable in restricted test envs;
-            # the substring scan above still runs — graceful degradation only.
+            # authorization_claim_detector not importable in restricted test envs;
+            # graceful degradation — previous stages still active.
             logger.debug(
-                "HybridSelfCheckInput: STAGE 1C — prompt_injection_detector unavailable, "
-                "substring scan only"
+                "HybridSelfCheckInput: STAGE 1D — authorization_claim_detector unavailable"
+            )
+
+        # STAGE 1E: Confidence-spoofing / human-review suppression detection.
+        # Closes the confidence_spoofing attack category (CONF-SPOOF-002 through
+        # 005 had zero detector coverage before this stage). Runs before the
+        # Stage 2 allowlist for the same reason as Stage 1B/1C/1D: payloads
+        # co-mention financial keywords (execute, trade, market, confidence)
+        # that would short-circuit ALLOW before the confidence-claim check runs.
+        # Universal — no CAGE_DEPLOYMENT_REGION guard required.
+        try:
+            from src.gateway.governance.confidence_claim_detector import (
+                detect_confidence_claim,
+            )
+
+            _conf_result = detect_confidence_claim(text)
+            if _conf_result.detected:
+                _mark_deterministic()
+                logger.warning(
+                    "Stage 1E BLOCK: confidence_spoofing detected",
+                    extra={
+                        "pattern": _conf_result.pattern_matched,
+                        "details": _conf_result.details,
+                    },
+                )
+                span.set_attribute(
+                    "nemo.action.confclaim_pattern",
+                    _conf_result.pattern_matched or "",
+                )
+                span.set_attribute("nemo.action.outcome", "BLOCK_CONFCLAIM")
+                return False
+        except ImportError:
+            # confidence_claim_detector not importable in restricted test envs;
+            # graceful degradation — previous stages still active.
+            logger.debug(
+                "HybridSelfCheckInput: STAGE 1E — confidence_claim_detector unavailable"
             )
 
         # STAGE 2: ALLOWLIST - Fast-path for known-safe financial queries (0ms)
@@ -483,13 +612,18 @@ async def custom_self_check_input(
             span.set_attribute("nemo.action.outcome", "ALLOW" if is_safe else "BLOCK")
             return is_safe
         except Exception as e:
-            # On LLM failure, fail OPEN (allow query through)
-            # Rationale: OPA layer still enforces financial policy downstream
-            logger.error("HybridSelfCheckInput: LLM judge failed: %s - failing OPEN", e)
+            # On LLM failure, fail CLOSED (block input) — an attacker inducing
+            # timeouts or errors must not receive an automatic ALLOW. The OPA
+            # downstream layer remains a second line of defence, but the
+            # guardrail itself must be conservative on any LLM exception.
+            logger.error(
+                "HybridSelfCheckInput: LLM judge failed: %s - failing CLOSED (block)", e
+            )
             span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
             span.set_attribute("nemo.action.stage", "LLM_JUDGE_FAILED")
-            span.set_attribute("nemo.action.outcome", "ALLOW_ON_ERROR")
-            return True
+            span.set_attribute("nemo.action.outcome", "BLOCK_ON_ERROR")
+            return False
 
 
 @action(name="CustomSelfCheckOutputAction")
@@ -565,6 +699,23 @@ async def custom_self_check_output(
             "could",
             "potential",
             "assessment",
+            # Trade operation confirmation words (prevent false positives on
+            # terse trade confirmations such as "Your limit order has been
+            # cancelled" — these contain none of the above hedging words and
+            # were falling through to Stage 3 LLM judge, which errors under
+            # certain conditions, triggering the fail-closed handler → FP).
+            "order",
+            "shares",
+            "executed",
+            "cancelled",
+            "filled",
+            "placed",
+            "confirmed",
+            "trade",
+            "position",
+            "market order",
+            "limit order",
+            "stop order",
         ]
 
         if any(indicator in text for indicator in safe_indicators):

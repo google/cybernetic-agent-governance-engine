@@ -185,7 +185,7 @@ This is a theorem, not a test result. A test demonstrates that the gate works on
 
 The CAGE governance pipeline is modelled as a deterministic state machine and verified exhaustively using a breadth-first search (BFS) enumerator implemented in [`proof/model.py`. The proof requires no external dependencies beyond the Python standard library.
 
-**Scope of the model.** The tuple covers `SymbolicGovernor._run_checks()` — Tiers 1 through 7, with Tier 3 split into its two concurrently-evaluated components (`cbf` and `opa`), giving 8 tuple positions. Tier 0.5 (FTRA) is deliberately outside the tuple: it is a pre-execution gate that runs at the LangGraph graph level, before `_run_checks()` is invoked, and operates on a whole `ExecutionPlan` rather than a single tool call. Its verdict (`CLEAR` | `HITL_REQUIRED` | `BLOCKED`) is recorded separately in the LangGraph state — see [`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py).
+**Scope of the model.** The tuple covers `SymbolicGovernor._run_checks()` — Tiers 0 through 6b (8 tiers: `stpa`, `confidence`, `cbf`, `opa`, `fiscal`, `consensus`, `causal`, `fria`), with the CBF and OPA tiers evaluated concurrently, giving 8 tuple positions. Tier 0.5 (FTRA) is deliberately outside the tuple: it is a pre-execution gate that runs at the LangGraph graph level, before `_run_checks()` is invoked, and operates on a whole `ExecutionPlan` rather than a single tool call. Its verdict (`CLEAR` | `HITL_REQUIRED` | `BLOCKED`) is recorded separately in the LangGraph state — see [`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py).
 
 **State machine definition:**
 

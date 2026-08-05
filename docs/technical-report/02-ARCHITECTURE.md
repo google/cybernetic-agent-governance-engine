@@ -324,7 +324,7 @@ flowchart LR
 
 ---
 
-## 6. Symbolic Governor 7-Tier Pipeline
+## 6. Symbolic Governor 8-Tier Pipeline
 
 The `SymbolicGovernor` class in `src/gateway/governance/symbolic_governor.py` is the neuro-symbolic enforcement core of CAGE. Its `_run_checks()` method executes the governance tiers in **strict sequential order**, with the exception of Tiers 2 and 4 (CBF and OPA) which are fired **concurrently** via `asyncio.gather`. The pipeline is **fail-closed**: any active tier raising a validation error produces a `GovernanceError` and halts the pipeline. No partial approval is possible. The legacy SLM sidecar tier slot has been fully retired; `slm_available=false` is a permanent sentinel injected into the OPA payload.
 
@@ -376,7 +376,7 @@ flowchart TD
 - **Tier 3** (Fiscal Limit Pre-Reservation): Redis `WATCH`/`MULTI`/`EXEC` atomic single-roundtrip (~5ms)
 - **Tier 4** (OPA): `CircuitBreaker` with 1.0s hard timeout per request, 2000ms soft ceiling warning, 3000ms bankruptcy protocol → immediate DENY; concurrent with Tier 2
 - **Tier 5** (Consensus): `asyncio.gather()` parallel critic calls (Phase 4.4); background audit queue (`maxsize=1000`) for non-blocking post-execution logging
-- **Tier 6** (Causal): 50 simulations; fail-open on `ImportError` (DoWhy optional)
+- **Tier 6** (Causal): 50 simulations; fail-closed in production when `telemetry=None` (CAGE_ENV not in dev/test)
 
 For the full 14-mechanism latency mitigation analysis and latency budget breakdown, see [`08-DEPLOYMENT-INFRASTRUCTURE.md` §10](./08-DEPLOYMENT-INFRASTRUCTURE.md#latency-strategy).
 

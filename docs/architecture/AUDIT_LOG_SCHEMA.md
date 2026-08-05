@@ -129,14 +129,13 @@ The governance pipeline is a **7-tier symbolic governor (Tiers 0–6)**. The SLM
 
 | Tier | Gate | Control | Source |
 |------|------|---------|--------|
-| 0 | STPA Unsafe Control Action validation | UCA-* | `stpa_validator.py` |
-| 1 | Agentic model confidence threshold | CTRL_AGT_001 | `symbolic_governor.py` |
-| 2 | Control Barrier Function (CBF), concurrent with Tier 4 | Safety filter | `cbf.py` |
-| 3 | Fiscal Limit Pre-Reservation (FiscalLimitGuard) | CTRL_FLG_001 | `fiscal_limit_guard.py` |
-| 4 | OPA Rego policy enforcement (concurrent with CBF) | CTRL_OPA_001 | `system_authz.rego` |
-| 5 | Multi-agent consensus | ISO 42001 A.8.4 | `symbolic_governor.py` |
-| 6 | DoWhy causal gatekeeper | Refutation | `causal_gatekeeper.py` |
-| 6b | Adaptive FRIA gate | EU AI Act Art. 29a | `symbolic_governor.py` |
+| 0 | STPA Unsafe Control Action validation | UCA-* (from `config/stpa_control_structure.yaml`) | `generated_stpa_validator.py` |
+| 1 | Agentic model confidence threshold (`AGENT_CONFIDENCE_THRESHOLD=0.95`) | `CTRL_AGT_001` | `symbolic_governor.py` |
+| 2/4 | Control Barrier Function (CBF) + OPA concurrent (`asyncio.gather`) | CBF: `h(x)≥0`, γ=0.5; OPA: `CTRL_OPA_005` | `cbf.py`, `core/policy.py` |
+| 3 | Fiscal Limit Pre-Reservation (FiscalLimitGuard, daily cap $500k) | Redis atomic WATCH/MULTI/EXEC | `fiscal_limit_guard.py` |
+| 5 | Multi-agent consensus (≥$10,000 USD) | ISO 42001 A.8.4 | `consensus.py` |
+| 6 | DoWhy causal gatekeeper (placebo refutation, p<0.05) | `CTRL_MRM_004`, `CTRL_TEL_003` | `causal_gatekeeper.py` |
+| 6b | Adaptive FRIA gate (EU_ECB only) | `CTRL_FRIA_006` | `normative_provider.py` |
 
 ---
 

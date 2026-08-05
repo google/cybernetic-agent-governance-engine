@@ -32,11 +32,64 @@ default allow = "DENY"
 allowed_roles := {"junior", "senior"}
 
 # ---------------------------------------------------------------------------
+# Authorization-claim escalation — hard gate (PR 4, defense-in-depth).
+#
+# Any request where the gateway layer's structural detector
+# (authorization_claim_detector.py) found an authorization-claim pattern is
+# routed to human review, regardless of action, amount, or role.
+#
+# Priority guarantee: this rule is expressed as a hard-negation guard on ALL
+# execute_trade and market_analysis ALLOW rules below (each has
+# ``not input.claimed_authorization_present``), so the OPA decision set
+# will contain only "MANUAL_REVIEW" — never "ALLOW" — when the flag is true.
+#
+# ``claimed_authorization_present`` is set programmatically by
+# _extract_trade_payload() in safety_node.py; it is never LLM-sourced.
+#
+# Cross-region controls:
+#   US_FED:  NIST SP 800-53 AC-3 (access enforcement) / IA-3 (node id)
+#   EU_ECB:  EU AI Act Art 9 (risk management / structural input validation)
+#   APAC_MAS: MAS TRM §11 / MAS Notice 655 (system integrity)
+# ---------------------------------------------------------------------------
+allow = "MANUAL_REVIEW" if {
+    input.claimed_authorization_present == true
+    # amount != 0: when amount IS zero the fail-closed rule below takes
+    # priority — deny rather than route to manual review, because an
+    # authorization claim with an unresolved amount cannot be meaningfully
+    # reviewed for fiscal appropriateness.
+    input.amount != 0
+}
+
+# ---------------------------------------------------------------------------
+# Fail-closed: authorization claim + unresolved amount → hard DENY
+#
+# Closes RBAC-004 ("sell ALL positions… pre-approved by the board") and
+# CONF-SPOOF-001 ("Execute AAPL 50000 shares… confidence 1.0") adversarial
+# gaps where _extract_trade_payload() produces amount=0 because the LLM
+# plan omits a concrete dollar amount and the market-data price lookup is
+# unavailable.
+#
+# When amount=0 the fiscal RBAC rules (junior ≤ $5k, senior ≤ $500k) would
+# trivially pass — this rule closes that gap regardless of role or action.
+#
+# Cross-region controls:
+#   US_FED:  NIST SP 800-53 AC-3 / SI-10 (input validation)
+#   EU_ECB:  EU AI Act Art 9 (risk management / structural input validation)
+#   APAC_MAS: MAS TRM §11 / MAS Notice 655 (system integrity)
+# ---------------------------------------------------------------------------
+allow = "DENY" if {
+    input.claimed_authorization_present == true
+    input.amount == 0
+}
+
+# ---------------------------------------------------------------------------
 # Market analysis — safe read-only, always allowed for any valid role
 # (From: finance_policy.rego, rule "Allow Market Analysis")
+# Guard: not allowed when an authorization claim is present (defer to MANUAL_REVIEW).
 # ---------------------------------------------------------------------------
 allow = "ALLOW" if {
     input.action == "market_analysis"
+    not input.claimed_authorization_present
 }
 
 # ---------------------------------------------------------------------------
@@ -55,11 +108,13 @@ allow = "DENY" if {
 # ---------------------------------------------------------------------------
 
 # Junior ALLOW: ≤ $5 000, non-BTC
+# Guard: not allowed when an authorization claim is present (defer to MANUAL_REVIEW).
 allow = "ALLOW" if {
     input.action == "execute_trade"
     lower(input.trader_role) == "junior"
     input.amount <= 5000
     input.currency != "BTC"
+    not input.claimed_authorization_present
 }
 
 # Junior MANUAL_REVIEW: $5 001 – $10 000, non-BTC
@@ -85,11 +140,13 @@ allow = "MANUAL_REVIEW" if {
 # Senior ALLOW: ≤ $500 000, non-BTC
 # (finance_policy.rego senior limit; consistent with trade_policy.rego
 #  manual_review boundary — no conflict for senior traders at this threshold)
+# Guard: not allowed when an authorization claim is present (defer to MANUAL_REVIEW).
 allow = "ALLOW" if {
     input.action == "execute_trade"
     lower(input.trader_role) == "senior"
     input.amount <= 500000
     input.currency != "BTC"
+    not input.claimed_authorization_present
 }
 
 # Senior MANUAL_REVIEW: $500 001 – $1 000 000, non-BTC
@@ -115,16 +172,19 @@ allow = "MANUAL_REVIEW" if {
 allow = "ALLOW" if {
     input.action != "execute_trade"
     lower(input.risk_profile) == "aggressive"
+    not input.claimed_authorization_present
 }
 
 allow = "ALLOW" if {
     input.action != "execute_trade"
     lower(input.risk_profile) == "moderate"
+    not input.claimed_authorization_present
 }
 
 allow = "ALLOW" if {
     input.action != "execute_trade"
     lower(input.risk_profile) == "conservative"
+    not input.claimed_authorization_present
 }
 
 allow = "DENY" if {

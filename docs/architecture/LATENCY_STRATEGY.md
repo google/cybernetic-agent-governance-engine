@@ -137,9 +137,9 @@ Both Redis clients enforce strict connection timeouts to prevent governance hang
 
 ### 7. DEFER Queue (4-Hour Park Window)
 
-`DeferQueue` implements a fourth decision state (ALLOW | DENY | MANUAL_REVIEW | **DEFER**) that prevents operational fatigue from forcing binary decisions under fundamentally incomplete context:
+`DeferQueue` implements a fourth decision state (ALLOW | DENY | REQUIRE_APPROVAL | **DEFER**) that prevents operational fatigue from forcing binary decisions under fundamentally incomplete context:
 
-- **Confidence-Starvation Boundary:** `DEFER_CONFIDENCE_THRESHOLD = 0.70` — execution contexts with confidence below this route to DEFER rather than MANUAL_REVIEW
+- **Confidence-Starvation Boundary:** `DEFER_CONFIDENCE_THRESHOLD = 0.70` — execution contexts with confidence below this route to DEFER rather than REQUIRE_APPROVAL
 - **Park TTL:** `_DEFAULT_TTL = 14400s` (4 hours) before auto-escalation to MANUAL_REVIEW
 - **Redis isolation:** `db=1` with `noeviction` maxmemory policy (separate from LangGraph checkpointer at `db=0`)
 - **Data structures:** Redis Hash `DEFER:{defer_id}` + ZSet `DEFER:expiry_index` (scored by expiry timestamp)

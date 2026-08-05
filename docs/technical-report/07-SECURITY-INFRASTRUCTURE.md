@@ -499,8 +499,8 @@ OTel Telemetry Export
 
 ### Layer 1 — NeMo Guardrails with In-Process Presidio
 
-- Configuration: [`config/rails/config.yml`](../../config/rails/config.yml) — 15 Presidio PII entity types configured
-- Microsoft Presidio is executed **in-process** as a custom action within NeMo Guardrails, scanning for 15 entity types (names, SSNs, account numbers, addresses, etc.) at `score_threshold = 0.3`.
+- Configuration: [`config/rails/config.yml`](../../config/rails/config.yml) — **10** Presidio PII entity types configured
+- Microsoft Presidio is executed **in-process** as a custom action within NeMo Guardrails, scanning for **10** entity types at `score_threshold = 0.3` (NeMo config); the standalone `PIISanitizer` uses `PRESIDIO_SCORE_THRESHOLD=0.5`.
 - Input scan (`nemo_input_scan`): blocks PII-containing prompts before LLM inference
 - Output rail (`nemo_output_rail`): masks PII in LLM responses
 - ISO 42001 mapping: A.9.2 (data minimization) and A.5.2 (privacy by design)
@@ -606,7 +606,7 @@ All third-party compliance and attestation provider adapters are isolated under 
 
 | Mechanism               | Algorithm                  | Usage                            | FIPS Status              | Gaps                             |
 | ----------------------- | -------------------------- | -------------------------------- | ------------------------ | -------------------------------- |
-| **KMS Governance Signing** | RSA-PKCS1-4096-SHA256 (HSM) | **Primary** — all governance decisions; non-repudiation | ✅ FIPS-approved | Production only; HMAC fallback for dev/CI |
+| **KMS Governance Signing** | RSA asymmetric HSM (GCP/AWS/Azure; algorithm auto-detected per key) | **Primary** — all governance decisions; non-repudiation; provider selected via `CAGE_KMS_PROVIDER` | ✅ FIPS-approved | Production only; HMAC routing seal for dev/CI when KMS inactive |
 | Routing Seal            | HMAC-SHA256                | Every `POST /tools/execute` call | ✅ FIPS-approved         | Fallback only when KMS unavailable |
 | Governance Signature    | HMAC-SHA256                | Agent state transitions          | ✅ FIPS-approved         | None — fully implemented         |
 | TLS (external)          | TLS 1.2+                   | External service connections     | ✅ FIPS-compliant        | No intra-cluster equivalent      |

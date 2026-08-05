@@ -148,7 +148,7 @@ Vulnerabilities are mapped to open POA&M items and assessed threat scenarios:
 
 | Vuln ID  | Vulnerability Description                              | Threat IDs             | POAM Reference | CVSS Est.      |
 | -------- | ------------------------------------------------------ | ---------------------- | -------------- | -------------- |
-| VULN-001 | No intra-cluster mTLS; shared HMAC authentication only | TH-001, TH-003, TH-005 | POAM-007       | 8.8 (High)     |
+| VULN-001 | ~~No intra-cluster mTLS; shared HMAC authentication only~~ **CLOSED 2026-05-17** — Linkerd mTLS deployed via `deployment/k8s/linkerd-mtls-policy.yaml` | TH-001, TH-003, TH-005 | POAM-007 (Closed) | N/A (Remediated) |
 | VULN-002 | No account management procedures; ad-hoc provisioning  | TH-003, TH-008         | POAM-001       | 7.5 (High)     |
 | VULN-003 | Overly broad IAM bindings (roles/editor pattern)       | TH-003, TH-008         | POAM-002       | 8.1 (High)     |
 | VULN-004 | Audit trace generator uses synthetic mock traces       | TH-006                 | POAM-003       | 5.3 (Moderate) |

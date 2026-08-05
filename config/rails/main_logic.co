@@ -1,44 +1,78 @@
 # NeMo Guardrails - Colang 2.x Entry Point
 #
-# We do NOT import llm, guardrails, or core because the installed NeMo
-# version's standard library files contain Colang 2.x syntax that the
-# lark parser rejects (UnexpectedToken at import statements).
+# BUG HISTORY (2026-08-05 / prompt_injection 50% gap fix):
+# `flow main` previously matched a nonexistent event type, `UtteranceUser()`.
+# NeMo Guardrails 2.x emits `UtteranceUserAction.Finished(final_transcript=...)`
+# for user turns (see nemoguardrails/colang/v2_x/library/core.co). Because
+# `UtteranceUser()` never matches any real event, `flow main` never advanced
+# past its `match` statement for ANY input — benign or adversarial — which
+# meant `CustomSelfCheckInputAction` (and therefore every Stage 1'/1B/1C/1D/1E
+# /2/3 detector inside it) was NEVER invoked in production. The only reason
+# any prompt_injection payloads were blocked at all was an unrelated Tier-1
+# Aho-Corasick keyword pre-check (`_detect_bypass()` in
+# src/gateway/governance/nemo/manager.py) that runs BEFORE generate_async()
+# is ever called — a coincidental, narrow-coverage safety net, not the
+# intended NeMo semantic pipeline.
 #
-# We therefore define flow main directly here with no imports and WITHOUT
-# the `@override` decorator. `@override` requires a pre-existing base flow
-# with the same name to override (Colang 2.x hard-errors at LLMRails
-# construction time with "Override flow with name 'main' does not override
-# any flow with that name!" otherwise) — since no library flow named `main`
-# is ever imported here, there is nothing to override.
+# Confirmed via instrumented diagnostics: wrapping CustomSelfCheckInputAction
+# and calling rails.generate_async(options={"rails": ["input"]}) against the
+# unmodified config showed 0 invocations for both a canonical benign payload
+# and an adversarial payload. After this fix, all 6 INJ-00x regression
+# payloads correctly BLOCK and the benign canonical payload correctly ALLOWs.
 #
-# BUG HISTORY (2026-08-02): This `@override` bug was previously masked by an
+# FIX: `flow main` now:
+#   1. Imports `core` (the one NeMo 2.x standard-library file that parses
+#      cleanly under the installed lark grammar — `guardrails`, `llm`, and
+#      `timing` still fail to parse and remain unimported).
+#   2. Matches the correct event: `UtteranceUserAction.Finished()`.
+#   3. Explicitly and unconditionally awaits `CustomSelfCheckInputAction`
+#      with the user's text passed as the `content` argument — making the
+#      self-check a true "programmatic" rail that always runs on every turn,
+#      rather than relying on Colang's dialog-rail auto-routing (which
+#      requires `import guardrails`'s `_user_said` override and was never
+#      wired up, since that import still fails to parse in this NeMo build).
+#
+# We still do NOT `import guardrails` or `import llm` — the installed NeMo
+# version's standard library files for those modules contain Colang 2.x
+# syntax the lark parser rejects (UnexpectedToken at import statements).
+# We also still do NOT use the `@override` decorator on `flow main` — that
+# requires a pre-existing base flow of the same name to override, and no
+# library `main` flow is imported here (see 2026-08-02 bug history below).
+#
+# BUG HISTORY (2026-08-02): The `@override` bug was previously masked by an
 # unrelated Colang syntax error in generated_stpa_rails.co (lowercase `true`
 # instead of `True`) that caused RailsConfig.from_path() to fail first,
-# triggering the transparent-fallback path below `@override` was fixed. Once
+# triggering the transparent-fallback path before `@override` was fixed. Once
 # that syntax bug was fixed, LLMRails construction proceeded far enough to
-# reach — and fail on — this `@override` defect. Both bugs independently
-# disabled all NeMo semantic rails; both must be fixed together.
+# reach — and fail on — the `@override` defect. Both bugs independently
+# disabled all NeMo semantic rails; both had to be fixed together.
 #
-# The Python validate_with_nemo() has a "No main flow" pass-through guard
-# so NeMo config failures are non-fatal; OPA + STPA remain authoritative.
+# The Python validate_with_nemo() retains a "No main flow" pass-through guard
+# for genuine Colang parse/construction failures; OPA + STPA remain
+# authoritative defence-in-depth regardless of NeMo's semantic-rail status.
+
+import core
 
 flow main
-  match UtteranceUser() as $msg
-  await bot say $msg.text
+  match UtteranceUserAction.Finished() as $msg
+  $allowed = await CustomSelfCheckInputAction(content=$msg.final_transcript)
+  if not $allowed
+    await bot refuse to respond
 
 # ---------------------------------------------------------------------------
-# self check input — locally-defined replacement for NeMo's library flow
+# self check input — retained for config.yml's deprecated rails.input.flows
 # ---------------------------------------------------------------------------
-# NeMo's built-in `nemoguardrails.library.self_check.input_check` flow (which
-# config.yml's deprecated `rails.input.flows: [self check input]` normally
-# resolves against) cannot be imported here — the installed NeMo version's
-# library Colang 2.x files fail to parse (see header comment above). We
-# therefore define our own `flow self check input` locally, using the same
-# flow name NeMo's rails-flow-generation code expects (see
-# nemoguardrails/rails/llm/config.py::_generate_rails_flows(), which emits
-# `flow input rails $input_text` containing an indented call to this exact
-# flow name), but backed by our own CustomSelfCheckInputAction instead of
-# NeMo's library SelfCheckInputAction + self_check_input prompt template.
+# config.yml still declares `rails.input.flows: [self check input]` (NeMo's
+# deprecated YAML-based rail configuration). NeMo's LLMRails constructor
+# validates at startup that every flow named in `rails.input.flows` actually
+# exists (`_validate_config()` in nemoguardrails/rails/llm/llmrails.py) and
+# hard-errors with InvalidRailsConfigurationError if it is missing — so this
+# flow definition MUST remain even though `flow main` above no longer relies
+# on Colang's dialog-rail auto-routing to reach it. It is dead code on the
+# execution path (never invoked by `flow main`, and the `_user_said` override
+# that would normally auto-invoke it via `run input rails` requires
+# `import guardrails`, which is not imported here) but is required to satisfy
+# NeMo's config-validation pass at construction time.
 flow self check input
   $allowed = await CustomSelfCheckInputAction
   if not $allowed

@@ -1,192 +1,336 @@
 # CAGE Deployment Rules & Best Practices
 
-> **⚠️ REFERENCE ARCHITECTURE ONLY — NOT FOR PRODUCTION USE**
-> CAGE is a reference architecture demonstrating AI governance patterns.
-> The deployment rules below are **illustrative** — this system is not
-> deployed to any production environment.
+> **Reference architecture only.** CAGE demonstrates governance patterns for AI systems;
+> it is not deployed to production. The deployment rules below are **illustrative**
+> patterns for adopters.
 
-> **Critical Policy:** This document defines mandatory deployment rules that all agents (your MCP environment, your AI assistant) and human operators must follow.
+> **Critical Policy:** This document defines mandatory deployment rules that all
+> contributors (human and AI agent) must follow. The canonical source for the
+> summary of these rules is [`AGENTS.md`](../../AGENTS.md) §Deployment Rules.
 
-## 🚨 GKE Deployment Policy
+---
 
-### Mandatory Rule: Cloud Build Only
+## 🚨 GKE Deployment Policy — Cloud Build Mandatory
 
-**When deploying to Google Kubernetes Engine (GKE), you MUST use Cloud Build. Local Docker builds are prohibited for GKE deployments.**
+**When deploying to Google Kubernetes Engine (GKE), you MUST use Cloud Build.
+Local `docker build` is prohibited for GKE-targeted images.**
 
-#### Why This Matters
+### Why This Matters
 
 | Issue | Local Docker Build | Cloud Build |
 |-------|-------------------|-------------|
-| **Platform consistency** | ❌ May use ARM64 on M-series Macs | ✅ Always uses AMD64 for GKE |
-| **Build reproducibility** | ❌ Depends on local environment | ✅ Controlled build environment |
-| **Security scanning** | ❌ Manual/optional | ✅ Integrated vulnerability scanning |
+| **Platform consistency** | ❌ May produce ARM64 on M-series Macs; GKE nodes run AMD64 | ✅ Always AMD64 |
+| **Build reproducibility** | ❌ Depends on local environment | ✅ Controlled environment |
+| **Security scanning** | ❌ Manual/optional | ✅ Integrated via Cloud Logging |
 | **Audit trail** | ❌ No automated logs | ✅ Full build provenance in GCP |
-| **Team collaboration** | ❌ "Works on my machine" issues | ✅ Consistent across all developers |
+| **Team collaboration** | ❌ "Works on my machine" | ✅ Consistent across developers |
 
-### Enforcement
+---
 
-#### ✅ Approved Methods for GKE
+## Deployment Entry Point
+
+All deployments are driven by [`deploy_all.sh`](../../deploy_all.sh) at the
+repository root. Direct use of `terraform apply` or `gcloud builds submit` is
+supported for advanced scenarios but `deploy_all.sh` is the approved entry point
+for end-to-end deployment.
+
+### ✅ Approved Methods for GKE
 
 ```bash
-# Option 1: Using deployment script (recommended)
-./deploy_all.sh --target gcp-gke --env dev
+# Full deployment to GKE dev
+./deploy_all.sh --target gcp-gke --env dev --auto-approve
 
-# Option 2: Using MCP server via agents
-# Ask your MCP environment or Roo: "Deploy to GKE development environment"
-# The agent will use the cage-infrastructure MCP server
+# Full deployment to GKE dev (background — survives terminal closure)
+make deploy-bg TARGET=gcp-gke ENV=dev EXTRA_ARGS="--auto-approve"
 
-# Option 3: Direct Cloud Build (advanced)
-gcloud builds submit --config deployment/docker/cloudbuild_gateway.yaml
+# Direct Cloud Build submit (single service)
+gcloud builds submit \
+  --config deployment/docker/cloudbuild.gateway.yaml \
+  --substitutions=_GCP_PROJECT_ID=<PROJECT_ID>
 ```
 
-#### ❌ Prohibited for GKE
+### ✅ Approved Methods for Local / Agnostic
 
 ```bash
-# NEVER do this for GKE deployments:
+# Deploy to any existing Kubernetes cluster (k3s, EKS, AKS, GKE)
+./deploy_all.sh --target agnostic --env dev
+```
+
+### ❌ Prohibited for GKE
+
+```bash
+# NEVER — architecture mismatch crashes GKE pods
 docker build -t gcr.io/PROJECT/image:tag .
 docker push gcr.io/PROJECT/image:tag
-kubectl apply -f deployment.yaml
+kubectl apply -f deployment.yaml   # without a preceding Cloud Build step
 
-# NEVER do this:
-docker-compose build
-docker-compose push
+# NEVER
+docker-compose build && docker-compose push
+--platform linux/amd64   # local/BuildKit cross-compilation
 ```
 
-### Exception Process
+---
 
-If Cloud Build is unavailable:
-1. **Do not** proceed with local builds
-2. Investigate the Cloud Build failure:
-   - Check GCP Console > Cloud Build > History
-   - Verify service account permissions
-   - Check GCP quotas and billing
-3. Fix the Cloud Build issue
-4. **Only** if Cloud Build is permanently unavailable: escalate to senior engineer for approval
+## `deploy_all.sh` Options
+
+```
+Usage: ./deploy_all.sh --target TARGET --env ENV [OPTIONS]
+
+Targets:
+  agnostic     Deploy to any existing Kubernetes cluster (k3s, EKS, AKS, GKE)
+  gcp-gke      Provision and deploy to Google Cloud GKE cluster
+
+Environments:
+  dev          Development (fast iteration, reduced security posture)
+  prod         Production (ISO 42001 baseline hardening; jurisdiction-specific
+               posture controlled by CAGE_DEPLOYMENT_REGION)
+
+Options:
+  --auto-approve          Skip Terraform confirmation prompts
+  --var-file=PATH         Additional .tfvars file (e.g. prod.tfvars)
+  --skip-build            Skip container image builds (Cloud Build step)
+  --kubeconfig=PATH       Kubeconfig path (agnostic target only)
+  --var KEY=VALUE         Override any Terraform variable
+```
+
+### `staging` environment
+
+The `staging` environment is defined in the Terraform schema but **not yet
+provisioned** (POAM-024, target v2.1.0, 2026-12-31). Passing `--env staging`
+causes `deploy_all.sh` to exit with an error. Use `--env dev` or `--env prod`.
+
+---
 
 ## Deployment Target Matrix
 
-> **Jurisdiction Prerequisite:** Before deploying, set `CAGE_DEPLOYMENT_REGION` in your `.env` file and select the matching `--var-file`. The `--env prod` flag activates baseline hardening; jurisdiction-specific compliance posture is controlled by `CAGE_DEPLOYMENT_REGION` and the var-file.
->
-> | `CAGE_DEPLOYMENT_REGION` | `--var-file` | GCP Region |
-> |--------------------------|-------------|------------|
-> | `US_FED` | `prod.tfvars` | `us-central1` |
-> | `EU_ECB` | `eu-prod.tfvars` | `europe-west1` |
-> | `APAC_MAS` | `apac-prod.tfvars` | `asia-southeast1` |
+> **Jurisdiction prerequisite:** Set `CAGE_DEPLOYMENT_REGION` in `.env` (or as
+> an environment variable) before running any `prod` deployment. The script
+> propagates it to `TF_VAR_cage_deployment_region`. The `--env prod` flag
+> activates ISO 42001 baseline hardening; NIST SP 800-53 hardening
+> (`enable_nist_compliance`) is additionally activated only for `US_FED`.
 
-| Target | Environment | Jurisdiction | Build Method | Command | Use Case |
-|--------|------------|-------------|--------------|---------|----------|
-| `gcp-gke` | prod | US_FED | ☁️ Cloud Build | `CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod` | US_FED production deployment |
-| `gcp-gke` | prod | EU_ECB | ☁️ Cloud Build | `CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env prod` | EU_ECB production deployment |
-| `gcp-gke` | prod | APAC_MAS | ☁️ Cloud Build | `CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod` | APAC_MAS production deployment |
-| `gcp-gke` | dev | US_FED | ☁️ Cloud Build | `CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env dev --auto-approve` | US_FED GKE dev cluster |
-| `gcp-gke` | dev | EU_ECB | ☁️ Cloud Build | `CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env dev --auto-approve` | EU_ECB GKE dev cluster |
-| `gcp-gke` | dev | APAC_MAS | ☁️ Cloud Build | `CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env dev --auto-approve` | APAC_MAS GKE dev cluster |
-| `agnostic` | dev | Any | 🐳 Local Docker | `./deploy_all.sh --target agnostic --env dev` | k3d/kind local cluster |
-| `docker-compose` | dev | Any | 🐳 Local Docker | `./deploy_all.sh` | Local development |
+| `CAGE_DEPLOYMENT_REGION` | `--var-file` | GCP region |
+|--------------------------|-------------|------------|
+| `US_FED` | `infra/targets/gcp-gke/prod.tfvars` | `us-central1` |
+| `EU_ECB` | `infra/targets/gcp-gke/eu-prod.tfvars` | `europe-west1` |
+| `APAC_MAS` | `infra/targets/gcp-gke/apac-prod.tfvars` | `asia-southeast1` |
+
+| Target | Env | Jurisdiction | Command |
+|--------|-----|-------------|---------|
+| `gcp-gke` | `prod` | US_FED | `CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/prod.tfvars` |
+| `gcp-gke` | `prod` | EU_ECB | `CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/eu-prod.tfvars` |
+| `gcp-gke` | `prod` | APAC_MAS | `CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/apac-prod.tfvars` |
+| `gcp-gke` | `dev` | Any | `CAGE_DEPLOYMENT_REGION=<REGION> ./deploy_all.sh --target gcp-gke --env dev --auto-approve` |
+| `agnostic` | `dev` | Any | `./deploy_all.sh --target agnostic --env dev` |
+
+---
 
 ## Cloud Build Configuration Files
 
-| Service | Config File | Purpose |
-|---------|------------|---------|
-| Gateway | `deployment/docker/cloudbuild_gateway.yaml` | Inference gateway (primary — uses `_GCP_PROJECT_ID` substitution) |
-| Advisor | `deployment/docker/cloudbuild.advisor.yaml` | Governed Financial Advisor service |
-| vLLM | `deployment/docker/cloudbuild.vllm.yaml` | LLM inference engine |
-| LULA | `deployment/docker/cloudbuild.lula.yaml` | Compliance validation |
+All Cloud Build configs live under [`deployment/docker/`](../docker/).
+`scripts/build_images.sh` generates ephemeral Cloud Build configs for most
+services and submits them in parallel; the pre-built configs below are used for
+direct `gcloud builds submit` invocations.
 
-> **Note:** Two Cloud Build configs exist for the Gateway: `deployment/docker/cloudbuild_gateway.yaml` (primary, with `_GCP_PROJECT_ID` substitution variable) and `deployment/docker/cloudbuild.gateway.yaml` (alternate). Use `cloudbuild_gateway.yaml` for standard GKE builds. The Advisor service uses `deployment/docker/cloudbuild.advisor.yaml` — trigger this via `./deploy_all.sh --target gcp-gke --env prod` or directly via `gcloud builds submit --config deployment/docker/cloudbuild.advisor.yaml`.
+| Service | Config file | Substitutions |
+|---------|------------|---------------|
+| Gateway | `deployment/docker/cloudbuild.gateway.yaml` | `_GCP_PROJECT_ID`, `_SHORT_SHA` |
+| Governed Financial Advisor | `deployment/docker/cloudbuild.advisor.yaml` | — |
+| vLLM streamer | `deployment/docker/cloudbuild.vllm.yaml` | `_SHORT_SHA`, `_HF_TOKEN` (optional) |
+| Compliance bridge | `deployment/docker/cloudbuild.compliance.yaml` | — |
+| Lula validation | `deployment/docker/cloudbuild.lula.yaml` | — |
+| NeMo Guardrails | `deployment/docker/cloudbuild.nemo.yaml` | — |
+| AgentSight UI | `deployment/docker/cloudbuild.ui.yaml` | — |
 
-## MCP Server Integration
+`scripts/build_images.sh` builds the following images in parallel via Cloud Build:
+1. `governed-financial-advisor` / `financial-advisor` (root `Dockerfile`)
+2. `gateway` (`src/gateway/Dockerfile`)
+3. `agentsight-ui` (`src/agentsight-ui/Dockerfile`)
+4. `compliance-bridge` (`src/compliance_bridge/Dockerfile`)
+5. `nemo-guardrails` (`deployment/docker/Dockerfile.nemo`)
+6. vLLM streamer (`deployment/docker/cloudbuild.vllm.yaml`)
 
-The `cage-infrastructure` MCP server enforces these rules automatically:
+All images are tagged `:latest` and `:<short-sha>` and pushed to
+`gcr.io/<PROJECT_ID>/<image-name>`.
 
-```json
-{
-  "tool": "deploy_environment",
-  "arguments": {
-    "target": "gcp-gke",
-    "environment": "dev"
-  }
-}
+---
+
+## Background Deployment (Makefile Targets)
+
+For long-running deployments that must survive terminal/tool closure, use the
+`scripts/deploy_bg.sh`-backed Makefile targets:
+
+```bash
+# Launch full deployment in background
+make deploy-bg TARGET=gcp-gke ENV=dev EXTRA_ARGS="--auto-approve"
+
+# Launch image builds only (no Terraform)
+make build-bg
+
+# Check status of in-progress deployment
+make deploy-status
+
+# Tail live log output
+make deploy-logs
+
+# Cancel in-progress deployment
+make deploy-kill
 ```
 
-- When `target: "gcp-gke"` → Uses Cloud Build automatically
-- When `target: "agnostic"` → Uses local Docker
-- When `target: "docker-compose"` → Uses Docker Compose
+Background deployments write logs to `/tmp/cage-deploy-*.log` and their PIDs to
+`/tmp/cage-deploy.pid`.
 
-## Verification
+---
 
-### Before Deployment Checklist
+## Terraform Rules
 
-- [ ] Correct target selected (`gcp-gke` vs `agnostic` vs `docker-compose`)
-- [ ] If GKE: Cloud Build will be used (not local Docker)
-- [ ] Environment variables configured (`.env` file)
-- [ ] GCP credentials available (`gcloud auth list`)
-- [ ] Kubernetes context correct (`kubectl config current-context`)
+- `terraform plan` must **always** precede `terraform apply`. `deploy_all.sh`
+  enforces this automatically.
+- Never edit Terraform state directly.
+- Secret values belong in `terraform.auto.tfvars` (gitignored via
+  `scripts/gen_tfvars.py`) — never in committed `.tf` files.
+- Active IaC lives under `infra/targets/`. The removed `deployment/terraform/`
+  directory is historical reference only (see
+  [`deployment/TERRAFORM_MIGRATION.md`](../TERRAFORM_MIGRATION.md)).
 
-### After Deployment Verification
+### Terraform state backends
+
+| Target | Backend | State path |
+|--------|---------|-----------|
+| `gcp-gke` | GCS (optional, configure in `infra/targets/gcp-gke/providers.tf`) | `cage/gcp-gke` |
+| `agnostic` | Kubernetes Secret | namespace `terraform-state`, suffix `tfstate-agnostic` |
+
+For the agnostic target, ensure the namespace exists before the first deploy:
+
+```bash
+kubectl create namespace terraform-state
+```
+
+---
+
+## Pre-Deployment Checklist
+
+- [ ] `CAGE_DEPLOYMENT_REGION` set correctly (`US_FED` / `EU_ECB` / `APAC_MAS`)
+- [ ] `.env` populated (copy `.env.example` to `.env` if needed)
+- [ ] `infra/targets/gcp-gke/terraform.auto.tfvars` will be generated by
+      `scripts/gen_tfvars.py` (gcp-gke target only — do not commit this file)
+- [ ] GCP credentials available: `gcloud auth application-default login`
+- [ ] `kubectl` context correct: `kubectl config current-context`
+- [ ] For GKE: Cloud Build API enabled, service account has `roles/container.developer`
+
+---
+
+## Post-Deployment Verification
 
 ```bash
 # Check Cloud Build history
-gcloud builds list --limit=5
+gcloud builds list --limit=5 --project=<PROJECT_ID>
 
-# Verify images in GCR
-gcloud container images list
+# Check pod status (default namespace)
+kubectl get pods -n governance-stack
 
-# Check deployment status
+# Verify key services
 kubectl get deployments -n governance-stack
+
+# Access MinIO console
+kubectl port-forward svc/minio 9001:9001 -n governance-stack
+# Open: http://localhost:9001
+
+# Port-forward all dev services (auto-reconnecting)
+bash scripts/port_forward_dev.sh
 ```
 
-## Agent Instructions
+### Make targets for ongoing operations
 
-### For your MCP environment
+```bash
+# vLLM diagnostics
+make vllm-status          # pod status for vLLM
+make vllm-verify-models   # query /v1/models on each vLLM service
 
-This file serves as a knowledge artifact. When asked to deploy to GKE, reference this document and use the `cage-infrastructure` MCP server with `target: "gcp-gke"`.
+# Financial advisor diagnostics
+make advisor-status        # pod status
+make advisor-health        # curl /health via port-forward
+make advisor-rollback      # kubectl rollout undo
+make advisor-watch         # live pod watch
+make advisor-verify-env    # env dump (no secrets)
+make advisor-port-forward  # port-forward to localhost:8080
 
-### For your AI assistant
+# Recovery checklist
+make recovery             # prints ordered recovery steps
+```
 
-The deployment rules are enforced via `.roo/rules` at the project root. When deploying to GKE, always use the approved methods above.
+---
 
-### For Human Operators
+## Exception Process for Cloud Build Unavailability
 
-Follow the deployment matrix above. If unsure, use `./deploy_all.sh` with the appropriate `--target` flag. The script enforces the correct build method.
+If Cloud Build is unavailable:
+
+1. **Do not** proceed with local Docker builds for GKE.
+2. Investigate:
+   - GCP Console → Cloud Build → History
+   - Verify Cloud Build service account permissions
+   - Check GCP quotas and billing status
+3. Fix the Cloud Build issue.
+4. Only if Cloud Build is permanently unavailable: escalate to a senior
+   engineer for written approval before any local build path is used.
+
+---
 
 ## Troubleshooting
 
-### Cloud Build Failures
+### Cloud Build: "Permission denied"
 
-**Error: "Permission denied"**
 ```bash
-# Fix: Grant Cloud Build service account permissions
-gcloud projects add-iam-policy-binding PROJECT_ID \
-  --member=serviceAccount:PROJECT_NUMBER@cloudbuild.gserviceaccount.com \
+gcloud projects add-iam-policy-binding <PROJECT_ID> \
+  --member=serviceAccount:<PROJECT_NUMBER>@cloudbuild.gserviceaccount.com \
   --role=roles/container.developer
 ```
 
-**Error: "Quota exceeded"**
-```bash
-# Check quotas
-gcloud compute project-info describe --project=PROJECT_ID
+### Cloud Build: "Quota exceeded"
 
-# Request quota increase in GCP Console
+```bash
+gcloud compute project-info describe --project=<PROJECT_ID>
+# Request quota increase in GCP Console if needed
 ```
 
-**Error: "Build timeout"**
+### Terraform: "terraform-state namespace not found" (agnostic)
+
 ```bash
-# Increase timeout in cloudbuild.yaml
-timeout: 3600s  # 1 hour
+kubectl create namespace terraform-state
 ```
 
-## Related Documentation
+### Terraform: "Storage class not found" (k3s)
 
-- [Deployment Guide](../../infra/DEPLOYMENT_GUIDE.md) - Complete deployment procedures
-- MCP Integration Guide - Using MCP servers for deployment
-- [Infrastructure README](../../README.md) - Infrastructure architecture
+```bash
+kubectl get storageclass
+# Update infra/targets/agnostic/dev.tfvars with correct storage_class value
+```
+
+### Pods in CrashLoopBackOff after deployment
+
+```bash
+make advisor-rollback   # rolls back governed-financial-advisor
+make advisor-watch      # monitors recovery
+```
+
+---
 
 ## Compliance Note
 
-This policy supports:
-- **ISO 42001 A.5.2** (AI system deployment control)
-- **NIST AI RMF** (Controlled deployment practices)
-- **SOC 2 CC8.1** (Change management controls)
+Cloud Build deployments support the following controls:
 
-All GKE deployments using Cloud Build are automatically logged for audit purposes.
+- **ISO 42001 A.5.2** — AI system deployment control
+- **NIST AI RMF** — Controlled deployment practices
+- **SOC 2 CC8.1** — Change management controls
+
+All GKE deployments via Cloud Build are automatically logged to Cloud Logging
+for audit purposes.
+
+---
+
+## Related Documentation
+
+- [`AGENTS.md`](../../AGENTS.md) — canonical source for deployment rules summary
+- [`docs/operations/DEPLOYMENT_DECISION_RECORD.md`](DEPLOYMENT_DECISION_RECORD.md) — ADRs
+- [`infra/QUICK_START.md`](../../infra/QUICK_START.md) — 5-minute quick start
+- [`deployment/TERRAFORM_MIGRATION.md`](../TERRAFORM_MIGRATION.md) — migration from `deployment/terraform/`
