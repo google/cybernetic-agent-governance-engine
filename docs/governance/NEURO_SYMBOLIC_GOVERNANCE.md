@@ -171,7 +171,7 @@ The CAGE neuro-symbolic governance architecture has three distinct layers:
 
 | Layer | Components | Role |
 |---|---|---|
-| **Neural** | NeMo Guardrails (`src/gateway/governance/nemo/`), Colang rails (`cbrn_rails.co`) | Learned safety rails; CBRN keyword detection; PII masking; hot-reloadable |
+| **Neural** | NeMo Guardrails (`src/gateway/governance/nemo/`), Colang rails (`cbrn_rails.co`) | Learned safety rails; CBRN keyword detection; PII masking; hot-reloadable. **Note (2026-08-06):** inside the GFA pod, all consumers (LangGraph guardrail nodes, `tools/api.py`, `server.py` hot-reload endpoints) share a single `LLMRails` singleton owned by `nemo_node_factory.py`, reloaded atomically via `reload_nemo_rails()` — see [`src/gateway/governance/nemo/README.md`](../../src/gateway/governance/nemo/README.md#gfa-pod--singleton-consolidation-2026-08-06). |
 | **Symbolic** | OPA Rego (`src/governed_financial_advisor/governance/policy/trade_governance.rego`, `config/opa/`), STPA validator (`generated_stpa_validator.py`), CBF (`cbf.py`) | Formal invariants; mathematical safety properties; fail-closed. **Note:** `safety.py` is a deprecated backward-compatibility shim that re-exports from `cbf.py` — new code must import from `cbf.py` directly. |
 | **Composition** | LangGraph harness (`langgraph_harness/`), FTRA gate (`ftra/`) | Typed node factories; StateGraph integration; pre-execution structural checks |
 

@@ -232,7 +232,7 @@ The Terraform code is organised as a **modular monorepo** under `infra/` with re
 | `gcp_gke_cluster`    | `infra/modules/gcp_gke_cluster/` | GKE cluster provisioning (GCP-specific)          |
 | `vllm_inference`     | `infra/modules/vllm_inference/`  | vLLM deployment (generic or GCP GCS Fuse)        |
 | `slm_inference`      | `infra/modules/slm_inference/`   | SLM sidecar deployment (Deprecated/Retired)      |
-| `nemo_guardrails`    | `infra/modules/nemo_guardrails/` | NeMo Guardrails server deployment                |
+| `nemo_guardrails`    | `infra/modules/nemo_guardrails/` | **HISTORICAL-ONLY — DO NOT APPLY** (2026-08-06). Predates and diverges from the canonical `config/rails/` Colang source; retained for reference only. |
 | `opa_policy`         | `infra/modules/opa_policy/`      | OPA engine + Rego bundle                         |
 | `redis_cache`        | `infra/modules/redis_cache/`     | Redis StatefulSet                                |
 | `postgres_db`        | `infra/modules/postgres_db/`     | PostgreSQL (Helm chart wrapper)                  |

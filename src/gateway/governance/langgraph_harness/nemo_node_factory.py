@@ -28,6 +28,7 @@ Domain-specific message extraction is injected via ``NemoNodeConfig.message_extr
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import Callable
@@ -173,6 +174,55 @@ def _get_symbolic_governor():
                 exc,
             )
     return _symbolic_governor
+
+
+_nemo_reload_lock: asyncio.Lock | None = None
+
+
+def _get_reload_lock() -> asyncio.Lock:
+    """Return (lazily creating) the module-level reload lock.
+
+    A factory is used instead of a module-level instantiation because
+    ``asyncio.Lock()`` must be created inside a running event-loop context on
+    Python ≥ 3.10.
+    """
+    global _nemo_reload_lock
+    if _nemo_reload_lock is None:
+        _nemo_reload_lock = asyncio.Lock()
+    return _nemo_reload_lock
+
+
+async def reload_nemo_rails(config_path: str = "config/rails") -> None:
+    """Atomically replace the module-level ``LLMRails`` singleton.
+
+    Called by the GFA hot-reload approval endpoint so that a rail-config
+    update is propagated to **all** call sites (graph nodes, tools, server
+    endpoints) in a single atomic swap rather than each call site maintaining
+    its own independent ``LLMRails`` instance.
+
+    The swap is guarded by ``_nemo_reload_lock`` to prevent a race between
+    an in-flight ``validate_with_nemo()`` call and a concurrent reload.  The
+    lock is intentionally coarse-grained (covers the entire manager creation)
+    because ``create_nemo_manager()`` is fast relative to the safety margin
+    required for governance-critical rail changes.
+
+    Args:
+        config_path: Path to the NeMo Guardrails config directory.
+            Defaults to ``"config/rails"`` (same default used by
+            ``get_nemo_rails()``).
+    """
+    global _nemo_rails
+    async with _get_reload_lock():
+        logger.info(
+            "nemo_singleton_reload_start",
+            extra={"config_path": config_path},
+        )
+        new_rails = create_nemo_manager(config_path=config_path)
+        _nemo_rails = new_rails
+        logger.info(
+            "nemo_singleton_reload_complete",
+            extra={"config_path": config_path},
+        )
 
 
 def get_nemo_rails():

@@ -130,6 +130,19 @@ The pipeline is named "green-stack" because it operates as the "self-healing" la
 
 **Current status:** Fully implemented and validated. The `POST /v1/refinement/trigger` endpoint enqueues a Kubeflow Pipelines (KFP) refinement run. A reactive `POST /v1/webhooks/langfuse` webhook receiver automatically triggers KFP runs when the safety score drops below the 0.95 threshold, utilizing a 5-minute cooldown gate (`REFINEMENT_COOLDOWN_SECONDS=300`) and a 10-sample minimum (`REFINEMENT_MIN_SAMPLES=10`) to prevent policy flapping during noisy bursts. The final step of the KFP pipeline calls the hot-reload `POST /v1/nemo/apply-refinement` endpoint on the backend to apply and reload new guardrails in-process without pod restarts. **Human-gated refinement (v2.0.0):** All NeMo config refinements require explicit human approval via `POST /v1/nemo/propose-refinement` before the apply step executes — the autonomous hot-reload loop is human-gated.
 
+**Singleton consolidation (2026-08-06):** The hot-reload endpoints
+(`/v1/nemo/propose-refinement` → `/v1/nemo/approve-refinement/{id}`, and the
+legacy dev/test `/v1/nemo/apply-refinement` auto-apply path) call
+`reload_nemo_rails()` from
+[`nemo_node_factory.py`](../../src/gateway/governance/langgraph_harness/nemo_node_factory.py),
+which atomically swaps the **single** module-level `LLMRails` singleton
+shared by the GFA pod's LangGraph guardrail nodes, `tools/api.py`, and
+`server.py`. This replaced a prior fragmented lifecycle in which each of
+those three call sites independently constructed its own `LLMRails`
+instance, so a hot-reload against one instance did not propagate to the
+others. See [`src/gateway/governance/nemo/README.md`](../../src/gateway/governance/nemo/README.md#gfa-pod--singleton-consolidation-2026-08-06)
+for full detail.
+
 ---
 
 ## Infrastructure Layer (`src/governed_financial_advisor/infrastructure/`)

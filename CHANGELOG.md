@@ -9,6 +9,31 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `refactor(nemo): consolidate GFA LLMRails to single harness singleton` —
+  - Added `reload_nemo_rails(config_path)` (async, `asyncio.Lock`-guarded) and
+    `_get_reload_lock()` to
+    `src/gateway/governance/langgraph_harness/nemo_node_factory.py`; the
+    module-level `_nemo_rails` singleton is now the sole `LLMRails` instance
+    for the entire GFA pod.
+  - Removed the module-level `rails = load_rails()` global and all
+    `global rails` declarations from `src/governed_financial_advisor/server.py`;
+    both hot-reload endpoints (`/v1/nemo/propose-refinement` and
+    `/v1/nemo/approve-refinement/{id}`) now call `await reload_nemo_rails()`
+    from the harness instead of maintaining their own `LLMRails` instance.
+  - Removed the `_rails` singleton and `get_rails()` helper from
+    `src/governed_financial_advisor/tools/api.py`; it now calls
+    `get_nemo_rails()` from the harness directly.
+  - Net result: one `LLMRails` instance per GFA pod (down from three); a
+    single approved refinement now propagates to every consumer
+    simultaneously instead of only the instance it was applied against.
+  - Quarantined `infra/modules/nemo_guardrails/main.tf` with a
+    `HISTORICAL-ONLY — DO NOT APPLY` banner (predates and diverges from the
+    canonical `config/rails/` source) and added a `nemo-freshness-check` CI
+    job (`.github/workflows/ci.yml`) that diffs `config/rails/actions.py`
+    against `deployment/k8s/nemo-rails-configmap.yaml`.
+
 ---
 
 ## [v2.1.1-post — 2026-08-05]
