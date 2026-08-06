@@ -130,16 +130,25 @@ def _percentiles(samples: list[float]) -> dict[str, float]:
     }
 
 
+def _make_sync_redis(host: str, port: int, *, decode_responses: bool = True) -> Any:
+    """Create a sync Redis client respecting REDIS_PASSWORD from the environment."""
+    import redis as _redis_sync
+
+    password = os.environ.get("REDIS_PASSWORD") or None
+    return _redis_sync.Redis(
+        host=host,
+        port=port,
+        password=password,
+        decode_responses=decode_responses,
+    )
+
+
 def _redis_available() -> tuple[bool, str]:
     """Probe Redis connectivity using the same env vars as redis_client.py."""
     try:
-        import redis as _redis_sync
-
         host = os.environ.get("REDIS_HOST", "localhost")
         port = int(os.environ.get("REDIS_PORT", "6379"))
-        client = _redis_sync.Redis(
-            host=host, port=port, socket_connect_timeout=2.0, socket_timeout=2.0
-        )
+        client = _make_sync_redis(host, port)
         client.ping()
         client.close()
         return True, f"{host}:{port}"
@@ -268,9 +277,7 @@ def _measure_reconciliation_write_path(
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     otel_trace.set_tracer_provider(provider)
 
-    redis_client = _redis_sync.Redis(
-        host=redis_host, port=redis_port, decode_responses=True
-    )
+    redis_client = _make_sync_redis(redis_host, redis_port)
 
     if use_live_plaid:
         from src.compliance_bridge.reconciliation_worker import PlaidLedgerProvider
@@ -374,9 +381,7 @@ async def _measure_cbf_read_overhead(
 
     from src.gateway.infrastructure.redis_client import redis_client as gw_redis
 
-    sync_redis = _redis_sync.Redis(
-        host=redis_host, port=redis_port, decode_responses=True
-    )
+    sync_redis = _make_sync_redis(redis_host, redis_port)
 
     # Seed a self-reported balance.
     await gw_redis.set(cbf.redis_key, "48250.0")
@@ -491,9 +496,7 @@ async def _measure_safety_violation_detection(
     from src.gateway.governance.kms_signer import get_governance_signer
     from src.gateway.infrastructure.redis_client import redis_client as gw_redis
 
-    sync_redis = _redis_sync.Redis(
-        host=redis_host, port=redis_port, decode_responses=True
-    )
+    sync_redis = _make_sync_redis(redis_host, redis_port)
 
     cbf = ControlBarrierFunction()
     cbf.tracer = None

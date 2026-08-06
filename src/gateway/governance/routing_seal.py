@@ -186,7 +186,10 @@ def generate_seal(action: str, params: dict, ttl_s: int = _TTL_S) -> str:
     """
     expire_ts = int(time.time()) + ttl_s
     expire_hex = format(expire_ts, "x")
-    action_slug = action.replace("_", "-").lower()[:32]
+    # Strip dots from action_slug to guarantee unambiguous 3-way split on "."
+    # during verify_seal (seal.split(".", 2)).  Any dots in the action name
+    # would shift the split boundary and cause verification to fail on a valid seal.
+    action_slug = action.replace("_", "-").replace(".", "-").lower()[:32]
     payload = _canonical_payload(action, params)
     message = f"{expire_hex}.{action_slug}.".encode() + payload
     sig = hmac.new(_HMAC_KEY, message, hashlib.sha256).hexdigest()

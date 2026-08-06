@@ -1,0 +1,26 @@
+CAGE §6.3/6.4/6.5 Reconciliation Measurements
+===============================================
+Generated: 2026-08-06T12:24:30Z
+
+## Table 3: Reconciliation Write-Path Latency (ms)
+(mode: network_rtt_proxy; 20/20 iterations succeeded)
+
+Component                         P50      P95      P99     Mean
+---------------------------- -------- -------- -------- --------
+Plaid balance fetch             73.27   221.83   221.83   104.03
+Cloud KMS asymmetricSign       191.40 12751.20 12751.20   807.83
+Redis SETEX pipeline             2.50    27.10    27.10     3.67
+
+## Table 4: CBF Read-Path Overhead (ms)
+(200 iterations)
+
+Path                                               P50      P95
+--------------------------------------------- -------- --------
+Self-reported (safety:current_cash)              0.922    1.629
+
+KMS_GOVERNANCE_KEY not set — reconciled path skipped
+
+## Section 6.5: Safety Violation Detection
+
+SKIPPED — KMS_GOVERNANCE_KEY not set — cannot KMS-sign a reconciled balance
+

@@ -357,6 +357,74 @@ class FiscalLimitGuard:
     # Public API
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Per-reservation key helpers
+    # ------------------------------------------------------------------
+
+    def _reservation_key(self, reservation_id: str) -> str:
+        """Return the per-reservation Redis key for a given reservation UUID.
+
+        Key schema: ``fiscal:reservation:{uuid}``
+        Value:       ``{amount_cents}:{window_key}``
+        TTL:         ``_reservation_ttl`` (default 300 s)
+
+        This short-TTL sentinel key bounds crash-leakage: if an agent crashes
+        after ``reserve()`` but before ``confirm()`` / ``release()``, the key
+        auto-expires in ≤ ``_reservation_ttl`` seconds instead of the full
+        86 400 s window.  A background cleanup process can use Redis keyspace
+        notifications on ``__keyevent@*__:expired`` to decrement the aggregate
+        counter; until that is deployed, the TTL provides a bounded-leak
+        guarantee noted in §5.2 of the paper.
+        """
+        return f"fiscal:reservation:{reservation_id}"
+
+    async def _write_reservation_key(
+        self, reservation_id: str, amount_cents: int, window_key: str
+    ) -> None:
+        """Best-effort write of per-reservation sentinel key.
+
+        Failures are logged as warnings and do not affect the main reservation
+        result — the aggregate counter increment has already succeeded.
+        """
+        key = self._reservation_key(reservation_id)
+        value = f"{amount_cents}:{window_key}"
+        try:
+            if self._is_async_client():
+                await self._redis.set(key, value, ex=self._reservation_ttl)  # type: ignore[attr-defined]
+            else:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: self._redis.set(key, value, ex=self._reservation_ttl),  # type: ignore[attr-defined]
+                )
+        except Exception as exc:
+            logger.warning(
+                "FiscalLimitGuard: failed to write per-reservation key %s: %s "
+                "(crash-leakage TTL not set — reservation will persist until window expiry)",
+                key,
+                exc,
+            )
+
+    async def _delete_reservation_key(self, reservation_id: str) -> None:
+        """Best-effort deletion of the per-reservation sentinel key."""
+        key = self._reservation_key(reservation_id)
+        try:
+            if self._is_async_client():
+                await self._redis.delete(key)  # type: ignore[attr-defined]
+            else:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, self._redis.delete, key)  # type: ignore[attr-defined]
+        except Exception as exc:
+            logger.warning(
+                "FiscalLimitGuard: failed to delete per-reservation key %s: %s",
+                key,
+                exc,
+            )
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     async def reserve(
         self,
         agent_id: str,
@@ -372,6 +440,15 @@ class FiscalLimitGuard:
 
         Returns:
             ReservationToken — always returns; check ``token.rejected``.
+
+        Crash-leakage bound: a per-reservation key ``fiscal:reservation:{uuid}``
+        is written with TTL = ``_reservation_ttl`` (default 300 s).  If the
+        agent process crashes before calling ``confirm()`` or ``release()``,
+        Redis auto-expires the sentinel key after at most 300 s.  The aggregate
+        counter ``fiscal:daily_limit:{day}`` retains the over-count until a
+        background cleanup process reconciles expired reservation keys; without
+        that process the maximum leakage window is ``_reservation_ttl`` for the
+        sentinel and ``_window_seconds`` for the aggregate (tracked as POAM-2026-038).
         """
         # CRIT-2 fix: check finiteness first so float('inf') and float('nan')
         # are rejected before the <= 0 guard.  float('inf') passed the old
@@ -424,14 +501,19 @@ class FiscalLimitGuard:
                 result,
             )
         else:
+            # Write the per-reservation sentinel key with a short TTL so that a
+            # crash between reserve() and confirm()/release() auto-expires in ≤
+            # reservation_ttl seconds (P2.2 crash-leakage fix).
+            await self._write_reservation_key(reservation_id, amount_cents, window_key)
             logger.info(
                 "FiscalLimitGuard: RESERVED agent=%s amount=%.2f "
-                "running_total=%.2f/%.2f id=%s",
+                "running_total=%.2f/%.2f id=%s ttl=%ds",
                 agent_id,
                 amount_usd,
                 running_total_usd,
                 self._daily_cap_usd,
                 reservation_id,
+                self._reservation_ttl,
             )
         return token
 
@@ -446,6 +528,9 @@ class FiscalLimitGuard:
             return 0.0
 
         result = await self._atomic_decrement(token.window_key, token.amount_cents)
+        # Delete the per-reservation sentinel key now that the aggregate counter
+        # has been decremented.  Best-effort; auto-expiry is the safety net.
+        await self._delete_reservation_key(token.reservation_id)
         new_total_usd = max(0.0, result / 100.0) if result >= 0 else 0.0
         logger.info(
             "FiscalLimitGuard: RELEASED agent=%s amount=%.2f new_total=%.2f id=%s",
@@ -456,13 +541,17 @@ class FiscalLimitGuard:
         )
         return new_total_usd
 
-    def confirm(self, token: ReservationToken) -> None:
+    async def confirm(self, token: ReservationToken) -> None:
         """Confirm that a reservation became a real spend (trade executed).
 
-        Currently a semantic hook — the counter already reflects the spend.
+        Deletes the short-TTL per-reservation sentinel key so the aggregate
+        counter persists for the full window without auto-expiry interference.
         """
         if token.rejected:
             return
+        # Delete the per-reservation sentinel key — the aggregate counter already
+        # reflects the confirmed spend for the full window duration.
+        await self._delete_reservation_key(token.reservation_id)
         logger.info(
             "FiscalLimitGuard: CONFIRMED spend agent=%s amount=%.2f id=%s",
             token.agent_id,

@@ -612,6 +612,32 @@ def causal_safety_check(
             mrm_span.set_attribute("governance.deployment_region", active_region)
             mrm_span.set_attribute("causal.graph", causal_graph.strip())
 
+            # Minimum sample guard — fail closed when there is insufficient
+            # telemetry to fit a linear regression reliably.  This mirrors the
+            # MIN_SAMPLES = 50 guard in telemetry_provider.py and prevents a
+            # cold-start or sparse-data path from producing a meaningless
+            # estimate that could incorrectly approve or reject a trade.
+            _MIN_CAUSAL_SAMPLES = int(
+                os.getenv("CAUSAL_MIN_SAMPLES", "50")
+            )
+            n_samples = len(current_telemetry)
+            if n_samples < _MIN_CAUSAL_SAMPLES:
+                mrm_span.set_attribute("causal.samples_available", n_samples)
+                mrm_span.set_attribute("causal.min_samples_required", _MIN_CAUSAL_SAMPLES)
+                mrm_span.set_attribute("causal.result", "insufficient_data_fail_closed")
+                logger.warning(
+                    "CausalGatekeeper: insufficient telemetry (%d < %d samples) — "
+                    "failing closed (action BLOCKED). Set CAUSAL_MIN_SAMPLES env var "
+                    "to adjust the threshold.",
+                    n_samples,
+                    _MIN_CAUSAL_SAMPLES,
+                )
+                return False, (
+                    f"[CTRL_TEL_003] Causal gatekeeper: insufficient telemetry "
+                    f"({n_samples} < {_MIN_CAUSAL_SAMPLES} samples required). "
+                    f"Action blocked until sufficient data is available."
+                )
+
             model = _CausalModel(
                 data=current_telemetry,
                 treatment="trade_amount",

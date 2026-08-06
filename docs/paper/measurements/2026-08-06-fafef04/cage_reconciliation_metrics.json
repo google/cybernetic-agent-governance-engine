@@ -1,0 +1,46 @@
+{
+  "generated_at": "2026-08-06T12:24:30Z",
+  "redis_target": "localhost:17379",
+  "kms_configured": false,
+  "plaid_credentials_configured": false,
+  "write_path": {
+    "mode": "network_rtt_proxy",
+    "iterations_requested": 20,
+    "iterations_succeeded": 20,
+    "failures": 0,
+    "plaid_fetch_ms": {
+      "p50": 73.273,
+      "p95": 221.826,
+      "p99": 221.826,
+      "mean": 104.027
+    },
+    "kms_sign_ms": {
+      "p50": 191.4,
+      "p95": 12751.2,
+      "p99": 12751.2,
+      "mean": 807.825
+    },
+    "redis_write_ms": {
+      "p50": 2.5,
+      "p95": 27.1,
+      "p99": 27.1,
+      "mean": 3.665
+    }
+  },
+  "read_overhead": {
+    "iterations": 200,
+    "self_reported_ms": {
+      "p50": 0.922,
+      "p95": 1.629,
+      "p99": 2.94,
+      "mean": 1.073
+    },
+    "reconciled_ms": null,
+    "delta_p50_ms": null,
+    "delta_p95_ms": null,
+    "note": "KMS_GOVERNANCE_KEY not set \u2014 reconciled path skipped"
+  },
+  "safety_violation": {
+    "skipped": "KMS_GOVERNANCE_KEY not set \u2014 cannot KMS-sign a reconciled balance"
+  }
+}
