@@ -220,6 +220,7 @@ gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml
 | `lula-cron.yaml` | Scheduled Lula compliance scan CronJob |
 | `lula-rbac.yaml` | RBAC for Lula scanner |
 | `security-scan-cronjob.yaml` | Security scan CronJob (Trivy) |
+| `reconciliation-worker.yaml` | CronJob (`*/5 * * * *`) + Secret template + CiliumNetworkPolicy. Runs `ExternalLedgerReconciler` against an object-store-backed WORM ledger snapshot; writes KMS-signed balances to Redis. Provider selectable via `RECONCILIATION_PROVIDER` (`gcs`, `s3`/`object-store`, `plaid`, `anchorage`, `stub`); default `s3`. |
 | `sbom-cronjob.yaml` | SBOM generation CronJob |
 | `oscal-artifact-secrets.yaml` | OSCAL artifact secret template |
 | `service-account.yaml` | `financial-advisor-sa` ServiceAccount |

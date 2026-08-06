@@ -376,7 +376,7 @@ Copy `.env.example` to `.env` and configure at minimum:
 | `KMS_GOVERNANCE_PUBLIC_PEM`                      | Path to public key PEM for local signature verification (v2.0.0) |
 | `GOVERNANCE_SALT`                                | _(Legacy)_ HMAC salt — used as fallback when KMS is not configured |
 | `NEMO_AUTO_APPLY_ENABLED`                        | Set `true` to bypass human-gated refinement (dev/CI only; default `false`) |
-| `RECONCILIATION_PROVIDER`                        | Custody provider (`stub` or `anchorage`; default `stub`) |
+| `RECONCILIATION_PROVIDER`                        | Custody provider (`stub`, `gcs`, `s3` / `object-store`, `plaid`, or `anchorage`; default `stub`) |
 | `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `_SECRET_KEY` | Keys for ISO 42001 audit Langfuse project            |
 | `REDIS_URL`                                      | Redis connection URL (e.g. `redis://localhost:6379`) |
 | `OPA_URL`                                        | OPA policy engine URL (e.g. `http://localhost:8181`) |
@@ -478,7 +478,7 @@ cybernetic-agent-governance-engine/
 │   │   ├── US_FED_BASELINE.json      #   SR 26-2 / NIST AI RMF / ISO 42001
 │   │   ├── EU_ECB_BASELINE.json      #   EU AI Act / DORA / GDPR / EBA
 │   │   ├── APAC_MAS_BASELINE.json    #   MAS FEAT / MAS TRM / ISO 42001
-│   │   └── reconciliation_worker.py  #   v2.0.0: External ledger reconciliation daemon + AnchorageGrpcLedgerProvider
+│   │   └── reconciliation_worker.py  # External ledger reconciliation daemon: Stub/GCS/S3(ObjectStore)/Plaid/Anchorage providers
 │   ├── thresholds/                   # v2.0.0: Regionalized numeric threshold profiles
 │   │   ├── US_FED_BASELINE.json
 │   │   ├── EU_ECB_BASELINE.json
