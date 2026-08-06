@@ -426,6 +426,21 @@ class ConsensusEngine:
                     f"Degraded quorum: {len(error_votes)} critic(s) unavailable, "
                     f"remaining votes all REJECT — escalating for human review. Votes: {votes}"
                 )
+            # Reviewer note H54: degraded quorum (ERROR + APPROVE) → ESCALATE to HITL.
+            elif set(votes) == {"ERROR", "APPROVE"}:
+                # Degraded quorum: one critic errored, one approved.  The single
+                # APPROVE does not constitute a genuine unanimous quorum — escalate
+                # for human review rather than letting a lone APPROVE pass through
+                # when its counterpart critic is unreachable.
+                logger.warning(
+                    "⚠️ Degraded consensus quorum: ERROR + APPROVE — escalating for human review "
+                    "(action=%s amount=%.2f symbol=%s).",
+                    action,
+                    amount,
+                    symbol,
+                )
+                decision = "ESCALATE"
+                reason = f"Degraded quorum (ERROR + APPROVE) — escalating for human review. Votes: {votes}"
             elif any(v == "REJECT" for v in non_error_votes) and any(
                 v == "APPROVE" for v in non_error_votes
             ):

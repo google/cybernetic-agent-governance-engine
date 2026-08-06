@@ -517,6 +517,36 @@ class FiscalLimitGuard:
             )
         return token
 
+    # Reviewer note H56: saga compensation for post-CBF-commit tier failures. Tracked in CAGE paper §7.3.
+    async def rollback_state(self, amount: float, audit_id: str) -> None:
+        """Compensating transaction for a failed downstream tier. Called when a tier after
+        atomic_verify_and_commit() fails, to restore the debited balance. This implements
+        the Saga pattern compensation step tracked in §7.3 of the CAGE paper."""
+        logger.warning(
+            "[SAGA-ROLLBACK] Rolling back %s debit for audit_id=%s",
+            amount,
+            audit_id,
+        )
+        window_key = self._window_key()
+        amount_cents = int(round(amount * 100))
+        try:
+            result = await self._atomic_decrement(window_key, amount_cents)
+            logger.info(
+                "[SAGA-ROLLBACK] Rollback complete: amount=%.2f audit_id=%s "
+                "new_running_total_cents=%d",
+                amount,
+                audit_id,
+                result,
+            )
+        except Exception as exc:
+            logger.error(
+                "[SAGA-ROLLBACK] Redis rollback failed for audit_id=%s amount=%.2f: %s",
+                audit_id,
+                amount,
+                exc,
+            )
+            raise
+
     async def release(self, token: ReservationToken) -> float:
         """Release a reservation — called by the Saga compensating node on rollback.
 

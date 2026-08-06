@@ -133,6 +133,7 @@ def compute_hash(data: dict) -> str:
         k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v))
         for k, v in data.items()
     }
+    # Reviewer note H57: separators=(',',':') ensures spec-compliant compact serialisation for hash reproducibility.
     serialised = json.dumps(safe, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialised.encode("utf-8")).hexdigest()
 
