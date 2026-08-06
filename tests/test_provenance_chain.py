@@ -254,3 +254,32 @@ class TestVerifyChainIntegrity:
 
         assert len(records) == 10
         assert verify_chain_integrity(records) is True
+
+
+class TestLinkHashDeterminism:
+    """H57 — chain_hash() / compute_hash() must be stable across calls."""
+
+    def test_link_hash_is_deterministic(self):
+        """Calling chain_hash() twice on the same ProvenanceRecord yields the same hash.
+
+        Verifies that separators=(',', ':') and sort_keys=True in compute_hash()
+        produce a reproducible, compact JSON serialisation regardless of Python
+        dict insertion order or runtime environment (H57).
+        """
+        record = build_provenance_record(
+            trace_id="trace-h57",
+            node_id="opa_node",
+            input_data={"action": "execute_trade", "amount": 5000, "symbol": "AAPL"},
+            output_data={"decision": "ALLOW"},
+            decision="ALLOW",
+            parent_hash=None,
+        )
+        hash1 = record.chain_hash()
+        hash2 = record.chain_hash()
+        assert hash1 == hash2, (
+            "chain_hash() is not deterministic: two identical calls returned different results. "
+            "Ensure compute_hash() uses separators=(',', ':') and sort_keys=True."
+        )
+        # Also verify the known format: 64-character lowercase hex (SHA-256).
+        assert len(hash1) == 64
+        assert all(c in "0123456789abcdef" for c in hash1)

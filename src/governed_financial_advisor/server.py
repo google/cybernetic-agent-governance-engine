@@ -45,9 +45,7 @@ except ImportError:
     _LANGCHAIN_INSTRUMENTOR_AVAILABLE = False
 
 from config.settings import Config
-from src.gateway.governance.nemo.manager import (
-    load_rails,
-)
+from src.gateway.governance.nemo.manager import load_rails
 from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.infrastructure.auth import require_api_key
 from src.governed_financial_advisor.infrastructure.mcp_client import get_mcp_client
@@ -186,10 +184,8 @@ if (
 
     app.include_router(demo_router)
     logger.warning("Demo endpoints enabled — do not use in production")
-
-# --- GLOBAL SINGLETONS ---
-rails = load_rails()
 # Graph is now in app.state.graph
+
 
 
 class QueryRequest(BaseModel):
@@ -961,8 +957,6 @@ async def approve_nemo_refinement(
         404 if the proposal_id is not found or already processed.
         400 if rationale is empty.
     """
-    global rails
-
     if not req.rationale or not req.rationale.strip():
         raise HTTPException(
             status_code=400,
@@ -1007,8 +1001,11 @@ async def approve_nemo_refinement(
 
     # Apply the refinement
     try:
-        new_rails = load_rails()
-        rails = new_rails
+        from src.gateway.governance.langgraph_harness.nemo_node_factory import (
+            reload_nemo_rails,
+        )
+
+        await reload_nemo_rails()
         proposal["status"] = "applied"
         logger.info(
             "[NeMo/Refinement] Proposal APPLIED: id=%s reviewer=%s control_id=%s",
@@ -1053,8 +1050,6 @@ async def apply_nemo_refinement(req: NeMoApplyRefinementRequest):
     This gating eliminates the recursive self-authentication loop where
     the system's telemetry autonomously modified its own governance rules.
     """
-    global rails
-
     if not _NEMO_AUTO_APPLY:
         # Production: route through proposal flow
         logger.info(
@@ -1104,8 +1099,18 @@ async def apply_nemo_refinement(req: NeMoApplyRefinementRequest):
         current_span.set_attribute("ai.refinement.auto_apply", True)
 
     try:
+        # R-LOOP-4: reload the rails singleton via the module-level ``load_rails``
+        # symbol so that tests (and future callers) can patch
+        # ``src.governed_financial_advisor.server.load_rails`` to control both
+        # the reload result and failure behaviour.  The freshly built rails
+        # instance is then propagated into the shared langgraph_harness
+        # singleton so all call sites (graph nodes, tools, server endpoints)
+        # observe the update atomically.
         new_rails = load_rails()
-        rails = new_rails
+
+        from src.gateway.governance.langgraph_harness import nemo_node_factory
+
+        nemo_node_factory._nemo_rails = new_rails
         logger.info("[NeMo/Refinement] NeMo rails singleton reloaded (auto-apply).")
     except Exception as exc:
         raise HTTPException(

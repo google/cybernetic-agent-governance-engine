@@ -226,7 +226,7 @@ class TestPostHitlRevalidateNode:
         )
 
         with patch(
-            "src.gateway.governance.singletons.symbolic_governor.govern",
+            "src.gateway.governance.singletons.symbolic_governor.revalidate_post_hitl",
             new_callable=AsyncMock,
         ):
             result = await post_hitl_revalidate_node(state)
@@ -321,7 +321,7 @@ class TestPostHitlRevalidateNode:
 
         govern_mock = AsyncMock()
         with patch(
-            "src.gateway.governance.singletons.symbolic_governor.govern",
+            "src.gateway.governance.singletons.symbolic_governor.revalidate_post_hitl",
             govern_mock,
         ):
             result = await post_hitl_revalidate_node(state)

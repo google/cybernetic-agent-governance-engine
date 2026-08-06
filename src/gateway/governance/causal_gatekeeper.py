@@ -337,21 +337,44 @@ def _causal_cache_get_sync(cache_key: str) -> dict | None:
     """Return a cached causal result dict, or None if absent/unavailable.
 
     Thread-safe: uses the synchronous ``sync_redis_client`` (blocking I/O).
+
+    # Reviewer note H55: connection errors fail-closed; absent keys treated as zero-deflection (first-boot safe).
+    Distinguishes between two failure modes:
+      - Key absent (successful GET returns None): treat as a cache miss and
+        return None so the causal check runs from scratch.  This is safe on
+        first boot before any results have been cached.
+      - Connection error (exception from redis client): raise RuntimeError so
+        the caller cannot silently skip the causal gate due to Redis being down.
     """
-    try:
-        from src.gateway.infrastructure.redis_client import (
-            sync_redis_client,
+    from src.gateway.infrastructure.redis_client import (
+        sync_redis_client,
+    )
+
+    if sync_redis_client is None:
+        # Reviewer note H55: connection errors fail-closed; absent keys treated as zero-deflection (first-boot safe).
+        raise RuntimeError(
+            "Redis unavailable: cannot compute deflection rate; failing closed"
         )
 
-        if sync_redis_client is None:
-            return None
+    try:
         raw = sync_redis_client.get(cache_key)
-        if raw is None:
-            return None
+    except Exception as exc:
+        # Connection error — fail-closed: the causal gate must not be bypassed
+        # because Redis is unreachable.
+        # Reviewer note H55: connection errors fail-closed; absent keys treated as zero-deflection (first-boot safe).
+        raise RuntimeError(
+            "Redis unavailable: cannot compute deflection rate; failing closed"
+        ) from exc
+
+    # Key absent → legitimate cache miss (first-boot safe, zero-deflection sentinel).
+    if raw is None:
+        return None
+
+    try:
         return json.loads(raw)
     except Exception as exc:
         logger.warning(
-            "Causal cache GET (sync) failed (key=%s): %s — proceeding without cache.",
+            "Causal cache GET (sync): JSON decode failed (key=%s): %s — treating as cache miss.",
             cache_key,
             exc,
         )
@@ -611,6 +634,32 @@ def causal_safety_check(
             mrm_span.set_attribute("governance.scope", mrm_meta["scope"])
             mrm_span.set_attribute("governance.deployment_region", active_region)
             mrm_span.set_attribute("causal.graph", causal_graph.strip())
+
+            # Minimum sample guard — fail closed when there is insufficient
+            # telemetry to fit a linear regression reliably.  This mirrors the
+            # MIN_SAMPLES = 50 guard in telemetry_provider.py and prevents a
+            # cold-start or sparse-data path from producing a meaningless
+            # estimate that could incorrectly approve or reject a trade.
+            _MIN_CAUSAL_SAMPLES = int(
+                os.getenv("CAUSAL_MIN_SAMPLES", "50")
+            )
+            n_samples = len(current_telemetry)
+            if n_samples < _MIN_CAUSAL_SAMPLES:
+                mrm_span.set_attribute("causal.samples_available", n_samples)
+                mrm_span.set_attribute("causal.min_samples_required", _MIN_CAUSAL_SAMPLES)
+                mrm_span.set_attribute("causal.result", "insufficient_data_fail_closed")
+                logger.warning(
+                    "CausalGatekeeper: insufficient telemetry (%d < %d samples) — "
+                    "failing closed (action BLOCKED). Set CAUSAL_MIN_SAMPLES env var "
+                    "to adjust the threshold.",
+                    n_samples,
+                    _MIN_CAUSAL_SAMPLES,
+                )
+                # NOTE: must return a bare bool, not a tuple — callers use
+                # `if not causal_safety_check(...)` to detect failure, and a
+                # non-empty tuple is truthy in Python, which would silently
+                # invert this fail-closed guard into fail-open.
+                return False
 
             model = _CausalModel(
                 data=current_telemetry,

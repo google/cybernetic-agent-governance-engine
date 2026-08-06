@@ -149,8 +149,8 @@ For full architectural detail, see [`docs/GATEWAY_ARCHITECTURE.md`](docs/archite
 
 - **Multi-Jurisdiction Compliance Profiles** — Dynamic loading of regional control profiles (`config/compliance/`) and thresholds (`config/thresholds/`) via `CAGE_DEPLOYMENT_REGION`. Supports `US_FED`, `EU_ECB` (EU AI Act, GDPR Art. 22, DORA, with Step 7 Fundamental Rights Impact Assessment attestation and SR 26-2 telemetry suppression), and `APAC_MAS` (MAS FEAT Principles) baselines.
 - **Reusable LangGraph Governance Harness** — `OpaNodeConfig` and `NemoNodeConfig` factories allow any agent to inherit enterprise governance (tracing, metrics, fail-closed mechanisms) with pluggable domain-state extractors.
-- **DoWhy Causal Gatekeeper** — Microsoft DoWhy causal inference validates world-model integrity via placebo refutation before allowing high-stakes actions; fail-safe on error (blocks when causal assumptions cannot be verified).
-- **LangGraph Saga Pattern** — STPA compiler now generates WAL forward nodes, idempotent compensating nodes, and a centralized `saga_router_node` from UCA definitions in YAML. UCA-4 (atomic debit/credit failure) is fully enforced. Ghost-state recovery (OOM crash between PENDING and COMPLETED) escalates to `human_review`. Rollback evidence emitted as OTel spans via `SagaCallbackHandler` (ISO 42001 A.8.4).
+- **DoWhy Causal Gatekeeper** — Microsoft DoWhy causal inference validates world-model integrity via placebo refutation before allowing high-stakes actions; fail-safe on error (blocks when causal assumptions cannot be verified). The Causal Gatekeeper's Redis fallback is now fail-closed: connection errors raise `RuntimeError` rather than returning a zero sentinel; absent keys return `None` (first-boot safe).
+- **LangGraph Saga Pattern** — STPA compiler now generates WAL forward nodes, idempotent compensating nodes, and a centralized `saga_router_node` from UCA definitions in YAML. UCA-4 (atomic debit/credit failure) is fully enforced. Ghost-state recovery (OOM crash between PENDING and COMPLETED) escalates to `human_review`. Rollback evidence emitted as OTel spans via `SagaCallbackHandler` (ISO 42001 A.8.4). A `rollback_state()` Saga compensation stub has been added to `FiscalLimitGuard` to reverse Redis debits when a downstream tier fails after Tier 3a commitment (saga-atomicity gap, not a concurrency race).
 - **FiscalLimitGuard** — Redis `WATCH/MULTI/EXEC` optimistic-lock pre-reservation guard prevents multi-agent "race to the rail" where concurrent threads all read the same OPA limit and all pass. Fail-closed on Redis failure. Integrates with Saga rollback via `release(token)`.
 - **Token Quota Proxy (CTRL_TQP_007)** — `src/gateway/governance/token_quota_proxy.py` enforces hard per-session step-count (`≤12`) and token (`≤100,000`) quotas via Redis atomic Lua counters. Fail-CLOSED: Redis unavailability blocks the request (HTTP 429). Two-phase commit: `check_and_increment()` reserves quota before the vLLM call; `reconcile_actual_tokens()` corrects over-allocation after the response. `rollback_step()` atomically decrements counters on downstream failure. Implements ISO 42001 Annex A.4 (Resource Management). Governance control: `CTRL_TQP_007`.
 - **PII Sanitizer** — `src/gateway/governance/pii_sanitizer.py` applies five compiled regex patterns (SSN, credit card, email, phone, API key/Bearer token) sequentially to every UCA compliance record before WORM persistence. Implements ISO 42001 Annex A.6 (Data Lineage and PII Leak Mitigation). Thread-safe; no per-call state.
@@ -170,10 +170,10 @@ For full architectural detail, see [`docs/GATEWAY_ARCHITECTURE.md`](docs/archite
 - **OSCAL-compliant compliance bridge** — SSE event bus with 7-year audit retention; ISO 42001, FedRAMP HIGH, and EU AI Act evidence artifacts via Langfuse dual-project setup.
 - **Langfuse observability** — LLM chain-of-thought, tool use, governance verdicts, and compliance scores captured without blocking inference.
 - **Kubernetes-native secret management** — all secrets injected as environment variables via K8s `Secret` objects; no Google Secret Manager.
-- **Cloud KMS HSM governance signatures (v2.0.0)** — Asymmetric signing via Google Cloud KMS HSM; private key never leaves hardware. HMAC-SHA256 fallback for dev/CI. Required before any trade execution.
+- **Cloud KMS HSM governance signatures (v2.0.0)** — Asymmetric signing via Google Cloud KMS HSM; private key never leaves hardware. HMAC-SHA256 fallback for dev/CI. Required before any trade execution. KMS-signed payloads now embed a `signed_at` timestamp; the verifier rejects payloads older than 300 seconds, closing a replay-attack vector.
 - **Human-gated NeMo refinement (v2.0.0)** — All config changes staged as proposals requiring explicit human approval with reviewer identity and rationale. Severs the autonomous hot-reload loop.
-- **Heterogeneous multi-model consensus (v2.0.0)** — `ConsensusModelRegistry` routes each critic persona to a distinct vLLM backend, preventing single-model semantic blind spots.
-- **Externally reconciled CBF (v2.1.0 — POAM-023 Closed)** — `src/compliance_bridge/reconciliation_worker.py` implements external CBF state reconciliation. Reconciled balances are KMS-signed before Redis write; the CBF fails closed on TTL expiry.
+- **Heterogeneous multi-model consensus (v2.0.0)** — `ConsensusModelRegistry` routes each critic persona to a distinct vLLM backend, preventing single-model semantic blind spots. The degraded-quorum case (`ERROR + APPROVE`) is now explicitly routed to HITL escalation.
+- **Externally reconciled CBF (v2.1.0 — POAM-023 Closed)** — `src/compliance_bridge/reconciliation_worker.py` implements external CBF state reconciliation. Reconciled balances are KMS-signed before Redis write; the CBF fails closed on TTL expiry. The CBF module tracks intra-window debits locally (`_local_debits`) to prevent double-spend within the KMS snapshot refresh window (60 s fetch / 300 s TTL).
 - **Human-in-the-loop approval gate** — LangGraph `interrupt_before=["governed_trader"]`; resume via `POST /v1/approvals/{thread_id}/resume`.
 - **W3C traceparent propagation** — full OTel trace waterfall across LangGraph → Gateway → vLLM; 100% sampling for governance decision spans.
 
@@ -376,7 +376,7 @@ Copy `.env.example` to `.env` and configure at minimum:
 | `KMS_GOVERNANCE_PUBLIC_PEM`                      | Path to public key PEM for local signature verification (v2.0.0) |
 | `GOVERNANCE_SALT`                                | _(Legacy)_ HMAC salt — used as fallback when KMS is not configured |
 | `NEMO_AUTO_APPLY_ENABLED`                        | Set `true` to bypass human-gated refinement (dev/CI only; default `false`) |
-| `RECONCILIATION_PROVIDER`                        | Custody provider (`stub` or `anchorage`; default `stub`) |
+| `RECONCILIATION_PROVIDER`                        | Custody provider (`stub`, `gcs`, `s3` / `object-store`, `plaid`, or `anchorage`; default `stub`) |
 | `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `_SECRET_KEY` | Keys for ISO 42001 audit Langfuse project            |
 | `REDIS_URL`                                      | Redis connection URL (e.g. `redis://localhost:6379`) |
 | `OPA_URL`                                        | OPA policy engine URL (e.g. `http://localhost:8181`) |
@@ -478,7 +478,7 @@ cybernetic-agent-governance-engine/
 │   │   ├── US_FED_BASELINE.json      #   SR 26-2 / NIST AI RMF / ISO 42001
 │   │   ├── EU_ECB_BASELINE.json      #   EU AI Act / DORA / GDPR / EBA
 │   │   ├── APAC_MAS_BASELINE.json    #   MAS FEAT / MAS TRM / ISO 42001
-│   │   └── reconciliation_worker.py  #   v2.0.0: External ledger reconciliation daemon + AnchorageGrpcLedgerProvider
+│   │   └── reconciliation_worker.py  # External ledger reconciliation daemon: Stub/GCS/S3(ObjectStore)/Plaid/Anchorage providers
 │   ├── thresholds/                   # v2.0.0: Regionalized numeric threshold profiles
 │   │   ├── US_FED_BASELINE.json
 │   │   ├── EU_ECB_BASELINE.json

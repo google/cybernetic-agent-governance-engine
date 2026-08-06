@@ -1385,15 +1385,15 @@ def _fmt_benign_table(benign: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
-# measure_ungoverned_baseline removed — script is hard-coded to three phases:
-# 1. mocked-I/O latency (OTel span harvest)
-# 2. live adversarial deflection
-# 3. live benign FPR
-# The ungoverned-baseline comparison added significant runtime via real LLM
-# inference and is not part of the core §6 measurements.
+# measure_ungoverned_baseline is an optional fourth phase (set MEASURE_UNGOVERNED_BASELINE=true).
+# It sends each payload to UNGOVERNED_ENDPOINT without the governance pipeline,
+# using the same _classify_response() classifier for direct comparison.
+# Requires a running LLM endpoint; adds significant wall-clock time.
 
 
-def _REMOVED_measure_ungoverned_baseline(
+
+
+def measure_ungoverned_baseline(
     adversarial_dataset: dict[str, Any],
     benign_dataset: dict[str, Any],
 ) -> dict[str, Any]:

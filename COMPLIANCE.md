@@ -108,6 +108,8 @@ h(S(t+1)) ≥ (1−γ) · h(S(t)),   γ ∈ (0,1)
 
 This guarantees the cash balance never drops below the minimum threshold in a single step. The decay factor `γ` bounds the maximum permissible drawdown per evaluation cycle. External CBF state reconciliation is implemented via [`src/compliance_bridge/reconciliation_worker.py`](src/compliance_bridge/reconciliation_worker.py) — **POAM-2026-031 closed 2026-07-27**. Reconciled balances are KMS-signed before Redis write; the CBF fails closed on TTL expiry.
 
+> **CBF intra-window hardening:** `CbfGovernor.verify_action()` now computes `effective_balance = snapshot_balance - self._local_debits`, where `_local_debits` accumulates approved-trade costs within the current 300 s KMS snapshot TTL window. `reset_local_debits()` is called by the reconciliation daemon on each snapshot refresh. This closes the intra-window double-spend gap previously documented as a limitation.
+
 ### 2.2 Confabulation Risk Formula
 
 **Source:** [`src/gateway/governance/confabulation_scorer.py`](src/gateway/governance/confabulation_scorer.py) · **Control:** `CTRL_AGT_001`
@@ -156,6 +158,8 @@ Scores below `FRIA_ZONE_DEFER` trigger a local hard deny without invoking the ex
 | Contention strategy | Exponential backoff |
 | Redis failure mode | Fail-closed (blocks request) |
 
+> **Consensus degraded-quorum routing:** The `ERROR + APPROVE` verdict combination is now explicitly routed to `ESCALATE` (HITL) before the catch-all case.
+
 ### 2.6 Provenance Hash Chain Integrity
 
 **Source:** [`src/gateway/governance/provenance_chain.py`](src/gateway/governance/provenance_chain.py) · **Control:** `CTRL_CTX_007`
@@ -179,6 +183,10 @@ HMAC-SHA256 token format:
 ```
 
 TTL: **30 seconds**. Unsigned or expired requests return HTTP 403.
+
+### 2.8 FTRA Reachability Verification Gap (Documented)
+
+> **FTRA verification gap (documented):** Tier 0.5 (FTRA) is not included in the 21-state BFS automaton. This is a documented under-approximation. Gap closure requires integrating FTRA into the state tuple or enforcing it at the controller boundary.
 
 ---
 
@@ -209,7 +217,9 @@ Full STPA hazard analysis (UCAs 1–9, Saga pattern, FiscalLimitGuard): [`docs/s
 ### B. ISO/IEC 42001 & DORA (Digital Operational Resilience Act)
 *   **Status:** Technical Controls Implemented & Observable.
 *   **Mechanism:**
-    *   **Transaction Atomicity (DORA Art. 12):** The LangGraph SAGA Write-Ahead Log (WAL) pattern isolates tool calls and model actions, guaranteeing LIFO (Last-In, First-Out) rollbacks during system or execution faults to prevent partial "ghost states" in ledger positions.
+    *   **Transaction Atomicity (DORA Art. 12):** The LangGraph SAGA Write-Ahead Log (WAL) pattern isolates tool calls and model actions, guaranteeing LIFO (Last-In, First-Out) rollbacks during system or execution faults to prevent partial "ghost states" in ledger positions. A residual **saga-atomicity gap** exists where Tier 3a commitment precedes downstream tier execution; this is addressed by the compensation stub described below.
+
+    *   **Saga compensation stub:** `FiscalLimitGuard.rollback_state(amount, audit_id)` reverses the Redis debit if a downstream tier fails after Tier 3a commitment. This implements the Saga pattern compensation step and closes the residual saga-atomicity gap.
     *   **Continuous Telemetry Validation (DORA Art. 10):** Real-time Langfuse OpenTelemetry spans are piped through the placebo refuter at runtime to verify that the agent's world-model matches execution reality, rather than drifting on synthetic variables.
     *   **Tamper-Proof Audit Logging:** All decisions and system exceptions generate a cryptographically hash-chained SHA-256 ledger (`cage-intent/1.0`) to satisfy strict non-repudiation and lifecycle logging policies.
 *   **Companion Documentation:** 
@@ -235,6 +245,8 @@ Full STPA hazard analysis (UCAs 1–9, Saga pattern, FiscalLimitGuard): [`docs/s
     *   **Zero-Trust Network Hardening:** Deploys Linkerd SPIFFE/SVID mTLS for cryptographic workload validation (**POAM-007 / IA-3**, closed 2026-05-17) and Cilium Layer 7 network policies for default-deny egress lockdown (**POAM-011 / SC-8**, Open). Both controls are technically active in the `governance-stack` Kubernetes namespace; POAM-011 (SC-8) and POAM-012 (SC-12) remain Open pending formal assessment closure.
     *   **Programmatic Evidence:** The automated script `oscal_ssp_exporter.py` automatically compiles these exact control configurations and implementation narratives into the authoritative 1,330-line Open Security Controls Assessment Language (OSCAL) document on every build pipeline run. OSCAL artifacts are persisted to GCS using the native GCS SDK (boto3 S3-compat fallback) at schema version **OSCAL v1.0.4**.
     *   **KMS Batch Signing for Audit Evidence:** All OSCAL findings and AARM conformance reports are asymmetrically signed via Google Cloud KMS HSM (`src/gateway/governance/kms_signer.py`) before GCS persistence. The private key never leaves the HSM; Cloud Audit Logs provide external, immutable attestation of every signing operation. This constitutes the audit evidence chain for FedRAMP HIGH AU-9 and AU-10.
+
+    *   **KMS replay-attack closure:** `KmsSigner.sign()` now embeds `"signed_at": int(time.time())` in every signed payload. `KmsSigner.verify()` raises `ValueError` if `now - signed_at > 300 s`. This closes the replay-attack vector where a compromised agent with Redis write access could reset the 300 s TTL indefinitely.
     *   **⚠️ Gaps to Authorization:** The CAGE software runtime does not inherently possess an official **Authority to Operate (ATO)**. To close this loop, the parent organization must deploy independent assessors to complete RMF Step 5 (Assess) and Step 6 (Authorize), as well as remediate the remaining 11 open infrastructure POA&M infrastructure tickets.
 *   **Companion Documentation:** For infrastructure configurations, Linkerd policy files, and security posture tracking, see [docs/SECURITY_STATUS.md](docs/security/SECURITY_STATUS.md) and [docs/POAM.md](docs/compliance/cross-region/POAM.md).
 

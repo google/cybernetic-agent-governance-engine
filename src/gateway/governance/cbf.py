@@ -147,6 +147,8 @@ return {1, "COMMITTED", tostring(next_cash)}
         self.redis_key: str = "safety:current_cash"
         self.tracer = get_tracer("src.gateway.governance.safety")
         self._lua_sha: str | None = None
+        # Reviewer note H53: local intra-window debits subtracted from snapshot to prevent double-spend within TTL window.
+        self._local_debits: float = 0.0
 
     async def setup(self) -> None:
         """Bootstrap Redis state if the key is absent (first run)."""
@@ -383,12 +385,14 @@ return {1, "COMMITTED", tostring(next_cash)}
         if action_name == "execute_trade":
             cost = float(payload.get("amount", 0.0))
 
-        next_cash = current_cash - cost
-        h_t = self.get_h(current_cash)
+        # Reviewer note H53: local intra-window debits subtracted from snapshot to prevent double-spend within TTL window.
+        effective_balance = current_cash - self._local_debits
+        next_cash = effective_balance - cost
+        h_t = self.get_h(effective_balance)
         h_next = self.get_h(next_cash)
         required_h_next = (1.0 - self.gamma) * h_t
 
-        logger.info("🛡️ CBF Check | Cash: %.2f → %.2f", current_cash, next_cash)
+        logger.info("🛡️ CBF Check | Cash: %.2f (effective=%.2f) → %.2f", current_cash, effective_balance, next_cash)
 
         result = "SAFE"
         if h_next < required_h_next or h_next < 0:
@@ -404,6 +408,11 @@ return {1, "COMMITTED", tostring(next_cash)}
             if h_next < 0 and span:
                 span.set_attribute("safety.bankruptcy", True)
                 span.set_attribute("safety.bankruptcy_deficit", abs(h_next))
+
+        # H53: accumulate local debit when the trade is approved, so subsequent
+        # intra-TTL calls see the already-committed debit against the snapshot.
+        if result == "SAFE" and action_name == "execute_trade" and cost > 0:
+            self._local_debits += cost
 
         # Drawdown check — read limit from threshold singleton
         if "drawdown_pct" in payload:
@@ -506,6 +515,19 @@ return {1, "COMMITTED", tostring(next_cash)}
     # ------------------------------------------------------------------
     # rollback_state — WATCH/MULTI/EXEC atomic transaction (Phase 4.1)
     # ------------------------------------------------------------------
+
+    def reset_local_debits(self) -> None:
+        """Reset the local intra-window debit accumulator to zero.
+
+        Called by the reconciliation daemon on each successful snapshot refresh
+        cycle so that the next CBF check starts from the fresh external balance
+        rather than accumulating debits across TTL windows indefinitely.
+
+        The daemon should call this immediately after writing a new
+        ``reconciliation:verified_balance`` key so that ``verify_action()``
+        picks up the refreshed snapshot on the next call.
+        """
+        self._local_debits = 0.0
 
     async def rollback_state(
         self, cost: float, governance_signature: str | None = None

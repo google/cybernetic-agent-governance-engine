@@ -114,7 +114,7 @@ def _link_hash(
 
 def _content_hash(payload: dict) -> str:
     """Return the SHA-256 hash of a JSON-serialised payload (deterministic key ordering)."""
-    return _sha256(json.dumps(payload, sort_keys=True, default=str))
+    return _sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str))
 
 
 # ---------------------------------------------------------------------------

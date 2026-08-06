@@ -354,7 +354,7 @@ flowchart TD
 | ---- | ------------------------ | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
 | 0    | STPA UCA Validation      | `GeneratedSTPAValidator.validate()` in `src/gateway/governance/generated_stpa_validator.py` | Thresholds from `src/gateway/governance/safety_params.json`                        |
 | 1    | SR 26-2 §IV.B Agentic Confidence | Inline fast-fail check in `_run_checks()`                                          | `confidence ≥ AGENT_CONFIDENCE_THRESHOLD` (default 0.95)                                                     |
-| 2    | Control Barrier Function | `ControlBarrierFunction` — Redis read-only `verify_action()` (concurrent with Tier 4) | `min_cash_balance=1000.0`, `gamma=0.5`                                             |
+| 2    | Control Barrier Function | `ControlBarrierFunction` — Redis read-write for gateway (`verify_action()` is read-only at check time; Tier 4 `FiscalLimitGuard` uses `WATCH/MULTI/EXEC` for atomic Redis commits) (concurrent with Tier 4) | `min_cash_balance=1000.0`, `gamma=0.5`                                             |
 | 3    | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — Redis `WATCH`/`MULTI`/`EXEC`             | `FISCAL_DAILY_CAP_USD` (default $500,000); 300s reservation TTL                                                                          |
 | 4    | OPA Policy               | `OPAClient` with `CircuitBreaker` (concurrent with Tier 2 via `asyncio.gather`) | 5 consecutive failures → 30s open-circuit recovery; 3000ms hard latency budget; `trade.governance` Rego bundle |
 | 5    | Multi-Agent Consensus    | `ConsensusEngine` — parallel `asyncio` critic tasks                      | `consensus.threshold_usd=10000.0`                                                  |
@@ -364,6 +364,8 @@ flowchart TD
 > The legacy SLM (semantic similarity) sidecar tier slot has been fully retired. `slm_available=false` is a permanent sentinel value injected into the OPA payload; the SLM-degraded confidence escalation (0.95 → 0.97) is now handled entirely within `system_authz.rego`.
 
 **Tier 2 (Control Barrier Function):** CBF's `verify_action()` is **read-only** — it does NOT modify Redis state at this stage. It verifies that executing the proposed trade will not violate the cash balance floor (`min_cash_balance=1000.0`). The `gamma=0.5` parameter controls the CBF decay coefficient. Tiers 2 and 4 (CBF and OPA) are fired **simultaneously** via `asyncio.gather`. The TOCTOU race is closed by Tier 3 (FiscalLimitGuard), NOT by making these sequential — this is intentional, correct design.
+
+> **Implementation note (H53):** `verify_action()` computes `effective_balance = snapshot_balance - self._local_debits` where `_local_debits` accumulates approved-trade costs since the last snapshot refresh. Call `reset_local_debits()` on each successful reconciliation cycle. This closes the intra-window double-spend gap: repeated trades within the 300 s KMS snapshot TTL window are evaluated against a decremented balance rather than the static snapshot.
 
 **Tier 4 (OPA Circuit Breaker):** The `CircuitBreaker` wrapping the `OPAClient` protects the governance pipeline from OPA service degradation. After 5 consecutive failures, the breaker opens for 30 seconds. During open-circuit state, all governance requests are rejected with `BLOCKED` — the system does not fall back to permissive defaults.
 
@@ -384,9 +386,9 @@ For the full 14-mechanism latency mitigation analysis and latency budget breakdo
 
 #### FiscalLimitGuard
 To prevent concurrent multi-agent "race to the rail" limit depletion where multiple agents check the same remaining daily cap simultaneously, CAGE v2.0.0 enforces atomic limit pre-reservation via the `FiscalLimitGuard` class (`src/gateway/governance/fiscal_limit_guard.py`).
-1. **Pre-Reservation (Tier 3):** After concurrent CBF+OPA (Tiers 2+4), the agent atomically reserves the trade amount in Redis using a `WATCH`/`MULTI`/`EXEC` optimistic lock transaction. This is the tier that closes the TOCTOU race. Default daily cap: **$500,000 USD** (`FISCAL_DAILY_CAP_USD` env var). Cap is stored in **cents** for integer precision.
+1. **Pre-Reservation (Tier 3):** After concurrent CBF+OPA (Tiers 2+4), the agent atomically reserves the trade amount in Redis using a `WATCH`/`MULTI`/`EXEC` optimistic lock transaction. This is the tier that closes the saga-atomicity gap (distributed-transaction atomicity failure, not a concurrency race). Default daily cap: **$500,000 USD** (`FISCAL_DAILY_CAP_USD` env var). Cap is stored in **cents** for integer precision.
 2. **TTL Safety:** Returns a `ReservationToken` with a **300s TTL**. If the agent node crashes before execution, the cap is automatically reclaimed. Fail-closed: if Redis is unavailable, the trade is blocked.
-3. **Commit & Rollback:** On success, the spend is confirmed. On failure, the Saga compensating node releases the token back to Redis headroom.
+3. **Commit & Rollback:** On success, the spend is confirmed. On failure, the Saga compensating node releases the token back to Redis headroom. `FiscalLimitGuard.rollback_state(amount, audit_id)` is a Saga compensation stub that reverses the Redis debit when a downstream tier fails after Tier 3a commitment; it logs `[SAGA-ROLLBACK]` and re-raises on Redis failure.
 
 #### LangGraph Saga Engine
 To guarantee atomic transactional consistency across distributed, non-deterministic agent steps (e.g. trade execution vs cash debiting), CAGE implements a **LangGraph Saga Engine** (`src/gateway/governance/generated_saga_nodes.py`). 
@@ -741,6 +743,7 @@ Multi-model consensus is required for trades ≥ **$10,000 USD** (`consensus.thr
 | BLOCK | Unanimous `REJECT` | Trade blocked |
 | ESCALATE | Split vote or any `ESCALATE` | Human review required |
 | ESCALATE | Unanimous `ERROR` | Fail-closed (DoS bypass prevention) |
+| ESCALATE | `ERROR + APPROVE` (degraded quorum) | Degraded-quorum case — routed to `ESCALATE` (HITL) before catch-all |
 
 Trades below $10,000 receive an immediate `SKIPPED` result with zero LLM calls.
 
@@ -768,7 +771,7 @@ Each `ProvenanceRecord` is linked to its predecessor via SHA-256:
 record_hash_n = SHA-256(parent_hash_{n-1} || sorted_key_json(record_n))
 ```
 
-**Deterministic sorted-key JSON serialization** ensures reproducibility across Python versions and runtimes. Chain construction is **O(n)** in the number of governance nodes. `verify_chain_integrity()` validates the full chain on demand. In production, records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`.
+**Deterministic sorted-key JSON serialization** ensures reproducibility across Python versions and runtimes. `compute_hash()` uses `json.dumps(…, separators=(',', ':'), sort_keys=True)` — matching the formal specification; earlier versions omitted `separators`. Chain construction is **O(n)** in the number of governance nodes. `verify_chain_integrity()` validates the full chain on demand. In production, records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`.
 
 ### 11.7 HMAC-SHA256 Routing Seal
 

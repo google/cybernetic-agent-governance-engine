@@ -130,6 +130,19 @@ The pipeline is named "green-stack" because it operates as the "self-healing" la
 
 **Current status:** Fully implemented and validated. The `POST /v1/refinement/trigger` endpoint enqueues a Kubeflow Pipelines (KFP) refinement run. A reactive `POST /v1/webhooks/langfuse` webhook receiver automatically triggers KFP runs when the safety score drops below the 0.95 threshold, utilizing a 5-minute cooldown gate (`REFINEMENT_COOLDOWN_SECONDS=300`) and a 10-sample minimum (`REFINEMENT_MIN_SAMPLES=10`) to prevent policy flapping during noisy bursts. The final step of the KFP pipeline calls the hot-reload `POST /v1/nemo/apply-refinement` endpoint on the backend to apply and reload new guardrails in-process without pod restarts. **Human-gated refinement (v2.0.0):** All NeMo config refinements require explicit human approval via `POST /v1/nemo/propose-refinement` before the apply step executes — the autonomous hot-reload loop is human-gated.
 
+**Singleton consolidation (2026-08-06):** The hot-reload endpoints
+(`/v1/nemo/propose-refinement` → `/v1/nemo/approve-refinement/{id}`, and the
+legacy dev/test `/v1/nemo/apply-refinement` auto-apply path) call
+`reload_nemo_rails()` from
+[`nemo_node_factory.py`](../../src/gateway/governance/langgraph_harness/nemo_node_factory.py),
+which atomically swaps the **single** module-level `LLMRails` singleton
+shared by the GFA pod's LangGraph guardrail nodes, `tools/api.py`, and
+`server.py`. This replaced a prior fragmented lifecycle in which each of
+those three call sites independently constructed its own `LLMRails`
+instance, so a hot-reload against one instance did not propagate to the
+others. See [`src/gateway/governance/nemo/README.md`](../../src/gateway/governance/nemo/README.md#gfa-pod--singleton-consolidation-2026-08-06)
+for full detail.
+
 ---
 
 ## Infrastructure Layer (`src/governed_financial_advisor/infrastructure/`)
@@ -228,7 +241,7 @@ All governance enforcement layers are Python-only:
 | 12   | Recursion guard             | [`graph.py:82`](../../src/governed_financial_advisor/graph/graph.py)                      | `loop_count >= 3 → explainer` escape hatch                                                         | evaluator→execution_analyst loop         |
 | 13   | Linkerd mTLS                | [`linkerd-mtls-policy.yaml`](../../deployment/k8s/linkerd-mtls-policy.yaml)               | SPIFFE/SVID identity; `Server`/`AuthorizationPolicy`/`MeshTLSAuthentication` v1beta2               | All intra-cluster service communication  |
 | 14   | Cilium L7 egress            | [`cilium-egress-lockdown.yaml`](../../deployment/k8s/cilium-egress-lockdown.yaml)          | FQDN allowlist (gateway); internal-only lockdown (sovereign-agent pods); default-deny              | All outbound network traffic             |
-| 15   | FiscalLimitGuard            | [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py)              | Redis `WATCH/MULTI/EXEC` atomic pre-reservation; prevents multi-agent TOCTOU on OPA fiscal limits  | Every `execute_trade` call, pre-OPA      |
+| 15   | FiscalLimitGuard            | [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py)              | Redis `WATCH/MULTI/EXEC` atomic pre-reservation (read-write); closes the saga-atomicity gap (distributed-transaction atomicity failure, not a concurrency race). `rollback_state(amount, audit_id)` Saga compensation stub reverses the Redis debit when a downstream tier fails after Tier 3a commitment.  | Every `execute_trade` call, pre-OPA      |
 | 16   | Token Quota Proxy           | [`token_quota_proxy.py`](../../src/gateway/governance/token_quota_proxy.py)                | Redis atomic Lua counters; step-count ≤12 and token ≤100k per session; fail-CLOSED on Redis error; two-phase commit (reserve → reconcile); rollback on downstream failure. ISO 42001 Annex A.4. `CTRL_TQP_007`. | Every inference proxy request (Step 2 in `inference_proxy.py`) |
 
 > **CTRL_TQP_007 — Token Quota Proxy:** Implements ISO 42001 Annex A.4 (Resource Management). Every blocked execution produces a KMS-signed UCA record persisted to the region-gated WORM ledger via [`uca_logger.py`](../../src/gateway/governance/uca_logger.py). Pre-ledger PII sanitization applied by [`pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py) (ISO 42001 Annex A.6). OPA `quota_within_limits` and `token_quota_within_limits` rules in `deployment/system_authz.rego` provide secondary declarative evidence; Python `TokenQuotaProxy` is the primary enforcer.

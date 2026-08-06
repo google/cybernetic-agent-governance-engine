@@ -686,6 +686,194 @@ class PlaidLedgerProvider:
 
 
 # ---------------------------------------------------------------------------
+# GCS WORM Ledger Provider
+# ---------------------------------------------------------------------------
+
+
+class GcsLedgerProvider:
+    """Ledger provider backed by a GCS WORM object written by the audit pipeline.
+
+    This provider reads the most-recent balance snapshot from a GCS bucket
+    (``GCS_RECONCILIATION_BUCKET`` / ``GCS_RECONCILIATION_OBJECT``) rather
+    than fetching live from Plaid.  It is appropriate for deployments where a
+    separate audit-ledger pipeline writes a KMS-signed balance object to GCS
+    on a scheduled basis, and the reconciliation daemon merely reads that
+    object.
+
+    The object must be a JSON blob matching the ``ReconciliationResult``
+    ``to_redis_payload()`` / ``from_redis_payload()`` format, i.e.::
+
+        {
+            "balance": <float>,
+            "currency": "USD",
+            "provider": "gcs",
+            "fetched_at": "<ISO-8601 UTC>",
+            "kms_signature": "<base64-encoded-signature>",
+            "account_id": "<account-id>"
+        }
+
+    Environment variables:
+        GCS_RECONCILIATION_BUCKET  GCS bucket name (required).
+        GCS_RECONCILIATION_OBJECT  Object key within the bucket
+                                   (default: ``reconciliation/latest.json``).
+    """
+
+    def __init__(self) -> None:
+        self._bucket = os.environ.get("GCS_RECONCILIATION_BUCKET", "")
+        self._object = os.environ.get(
+            "GCS_RECONCILIATION_OBJECT", "reconciliation/latest.json"
+        )
+        if not self._bucket:
+            raise ValueError(
+                "GcsLedgerProvider requires GCS_RECONCILIATION_BUCKET to be set."
+            )
+
+    def fetch_balance(self, account_id: str) -> "ReconciliationResult":  # type: ignore[override]
+        """Download the balance snapshot from GCS and return a ReconciliationResult."""
+        try:
+            from google.cloud import storage  # type: ignore[import-untyped]
+        except ImportError as exc:
+            raise RuntimeError(
+                "google-cloud-storage is required for GcsLedgerProvider. "
+                "Install it with: pip install google-cloud-storage"
+            ) from exc
+
+        import datetime
+        import json as _json
+
+        client = storage.Client()
+        bucket = client.bucket(self._bucket)
+        blob = bucket.blob(self._object)
+        raw = blob.download_as_text()
+        data = _json.loads(raw)
+
+        return ReconciliationResult(
+            balance=float(data.get("balance", 0.0)),
+            currency=data.get("currency", "USD"),
+            provider="gcs",
+            fetched_at=datetime.datetime.fromisoformat(
+                data.get("fetched_at", datetime.datetime.now(datetime.timezone.utc).isoformat())
+            ),
+            kms_signature=data.get("kms_signature"),
+            account_id=account_id,
+        )
+
+
+# ---------------------------------------------------------------------------
+# ObjectStoreLedgerProvider — S3-compatible cloud-agnostic ledger provider
+# ---------------------------------------------------------------------------
+
+
+class ObjectStoreLedgerProvider:
+    """Ledger provider backed by any S3-compatible object store.
+
+    Supports AWS S3, GCS (via S3 Interoperability API), Azure Blob (via S3
+    proxy), MinIO, Ceph, or any endpoint that speaks the S3 REST protocol.
+    This makes the reconciliation worker fully cloud-agnostic — no Google SDK
+    dependency is required.
+
+    Object format (JSON — identical to ``GcsLedgerProvider``):
+
+    .. code-block:: json
+
+        {
+            "balance": 48250.0,
+            "currency": "USD",
+            "provider": "s3",
+            "fetched_at": "2026-08-06T12:00:00+00:00",
+            "kms_signature": "<base64-encoded-signature>",
+            "account_id": "<account-id>"
+        }
+
+    Environment variables:
+        S3_RECONCILIATION_BUCKET   — Bucket name (required).
+        S3_RECONCILIATION_OBJECT   — Object key within the bucket
+                                     (default: ``reconciliation/latest.json``).
+        S3_ENDPOINT_URL            — Custom endpoint URL for non-AWS backends
+                                     (e.g. ``https://storage.googleapis.com``
+                                     for GCS S3 Interop, or
+                                     ``http://minio:9000`` for MinIO).
+                                     Omit for standard AWS S3.
+        S3_REGION_NAME             — AWS region (default: ``us-east-1``).
+        AWS_ACCESS_KEY_ID          — Access key (standard boto3 env var; also
+                                     used for GCS HMAC keys or MinIO creds).
+        AWS_SECRET_ACCESS_KEY      — Secret key (standard boto3 env var).
+
+    On GKE with Workload Identity, leave ``AWS_ACCESS_KEY_ID`` and
+    ``AWS_SECRET_ACCESS_KEY`` unset and instead configure an IAM binding
+    that allows the Kubernetes service account to assume the required IAM role
+    (IRSA on EKS) or use a GCP HMAC key pair mounted as a K8s Secret.
+
+    On-premises / hermetic testing:
+        docker run -d -p 9000:9000 minio/minio server /data
+        export S3_ENDPOINT_URL=http://localhost:9000
+        export S3_RECONCILIATION_BUCKET=cage-ledger
+        export AWS_ACCESS_KEY_ID=minioadmin
+        export AWS_SECRET_ACCESS_KEY=minioadmin
+    """
+
+    def __init__(self) -> None:
+        self._bucket = os.environ.get("S3_RECONCILIATION_BUCKET", "")
+        self._object = os.environ.get(
+            "S3_RECONCILIATION_OBJECT", "reconciliation/latest.json"
+        )
+        self._endpoint_url: str | None = os.environ.get("S3_ENDPOINT_URL") or None
+        self._region_name: str = os.environ.get("S3_REGION_NAME", "us-east-1")
+        if not self._bucket:
+            raise ValueError(
+                "ObjectStoreLedgerProvider requires S3_RECONCILIATION_BUCKET to be set."
+            )
+
+    def _make_client(self) -> object:
+        """Construct a boto3 S3 client.  Import is deferred to keep the module
+        importable in environments that do not have boto3 installed."""
+        try:
+            import boto3  # type: ignore[import-untyped]
+            from botocore.config import Config  # type: ignore[import-untyped]
+        except ImportError as exc:
+            raise RuntimeError(
+                "boto3 is required for ObjectStoreLedgerProvider. "
+                "Install it with: pip install boto3"
+            ) from exc
+
+        kwargs: dict[str, object] = {
+            "region_name": self._region_name,
+            "config": Config(
+                signature_version="s3v4",
+                retries={"max_attempts": 3, "mode": "adaptive"},
+            ),
+        }
+        if self._endpoint_url:
+            kwargs["endpoint_url"] = self._endpoint_url
+
+        return boto3.client("s3", **kwargs)
+
+    def fetch_balance(self, account_id: str) -> "ReconciliationResult":  # type: ignore[override]
+        """Download the balance snapshot from S3-compatible storage."""
+        import datetime
+        import json as _json
+
+        client = self._make_client()
+        response = client.get_object(Bucket=self._bucket, Key=self._object)
+        raw = response["Body"].read().decode("utf-8")
+        data = _json.loads(raw)
+
+        return ReconciliationResult(
+            balance=float(data.get("balance", 0.0)),
+            currency=data.get("currency", "USD"),
+            provider="s3",
+            fetched_at=datetime.datetime.fromisoformat(
+                data.get(
+                    "fetched_at",
+                    datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                )
+            ),
+            kms_signature=data.get("kms_signature"),
+            account_id=account_id,
+        )
+
+
+# ---------------------------------------------------------------------------
 # OTel null-context helper (used when opentelemetry is unavailable)
 # ---------------------------------------------------------------------------
 
@@ -960,6 +1148,12 @@ class ExternalLedgerReconciler:
             "stub": StubLedgerProvider,
             "anchorage": AnchorageGrpcLedgerProvider,
             "plaid": PlaidLedgerProvider,
+            # GCS-native provider (google-cloud-storage SDK required).
+            "gcs": GcsLedgerProvider,
+            # S3-compatible provider (boto3 required).
+            # Supports AWS S3, GCS S3 Interop, MinIO, Ceph, Azure Blob (via proxy).
+            "s3": ObjectStoreLedgerProvider,
+            "object-store": ObjectStoreLedgerProvider,
         }
 
         provider: LedgerProvider
