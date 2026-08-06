@@ -91,7 +91,7 @@ controls are documented in:
 | Prompt injection detection | Aho-Corasick O(n) scan; 14+ patterns |
 | PII protection | Presidio; 15 entity types; input + output |
 | Human-in-the-loop | Redis-persisted checkpoint; TOCTOU remediation via `post_hitl_rehydrate` + `post_hitl_revalidate` |
-| Control Barrier Function | Redis `WATCH/MULTI/EXEC` optimistic locking; externally attested balances via Plaid Production + Cloud KMS (POAM-023 closed) |
+| Control Barrier Function | Redis `WATCH/MULTI/EXEC` optimistic locking (read-write); externally attested balances via Plaid Production + Cloud KMS (POAM-023 closed) |
 | Audit chain integrity | SHA-256 hash-chained NDJSON; 7-year retention |
 | mTLS | Linkerd SPIFFE/SVID; gateway↔OPA, gateway↔NeMo |
 | Egress lockdown | Cilium L7 FQDN allowlist |
@@ -101,3 +101,19 @@ controls are documented in:
 > Regulated-environment deployers must conduct their own risk assessment before
 > production use. See [`docs/security/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md)
 > for the complete posture breakdown and pre-deployment checklist.
+
+### KMS Cryptographic Signing Security
+
+> **Replay-attack closure (2026-08-06):** KMS-signed reconciliation payloads now embed a `signed_at` Unix timestamp. The verifier (`KmsSigner.verify()`) rejects any payload where `now - signed_at > 300 s` (`MAX_KMS_PAYLOAD_AGE_SECONDS`). Previously, a compromised agent with Redis write access could overwrite a validly-signed payload immediately before TTL expiry, resetting the verification window indefinitely. This vector is now closed.
+
+### Redis / Data-Layer Security
+
+> **Causal Gatekeeper fail-closed hardening (2026-08-06):** The CausalGatekeeper's Redis fallback is now fail-closed: connection errors raise `RuntimeError("Redis unavailable: cannot compute deflection rate; failing closed")` rather than returning a zero-deflection sentinel. Absent Redis keys (cache miss on first boot) continue to return `None` safely. The previous fail-open behaviour created an attack surface: an adversary disrupting Redis connectivity during evaluation could suppress FPR reporting.
+
+### FTRA Trust-Boundary and Governance Bypass
+
+> **FTRA trust-boundary note:** Tier 0.5 (FTRA) currently executes at the LangGraph graph level, inside the untrusted reasoning plane (Plant). An adversarial agent with direct HTTP access to the Controller could bypass this check. Hardening options include moving the FTRA check to the Controller ingress boundary or enforcing it via a cryptographic capability token. This is tracked as a security limitation.
+
+### CBF / Fiscal-Safety Security
+
+> **CBF intra-window double-spend hardening (2026-08-06):** The CBF now tracks `_local_debits` locally between reconciliation snapshots. `effective_balance = snapshot - local_debits` is used for all threshold checks, preventing repeated trades within the same 300 s snapshot window from being evaluated against the same un-decremented balance.

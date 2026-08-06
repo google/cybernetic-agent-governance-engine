@@ -187,6 +187,10 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
 
 **Scope of the model.** The tuple covers `SymbolicGovernor._run_checks()` — Tiers 0 through 6b (8 tiers: `stpa`, `confidence`, `cbf`, `opa`, `fiscal`, `consensus`, `causal`, `fria`), with the CBF and OPA tiers evaluated concurrently, giving 8 tuple positions. Tier 0.5 (FTRA) is deliberately outside the tuple: it is a pre-execution gate that runs at the LangGraph graph level, before `_run_checks()` is invoked, and operates on a whole `ExecutionPlan` rather than a single tool call. Its verdict (`CLEAR` | `HITL_REQUIRED` | `BLOCKED`) is recorded separately in the LangGraph state — see [`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py).
 
+> **Scope limitation:** The current BFS proof covers the governance state machine (21-state tuple). It does not model the full implementation including the LangGraph harness, Redis state, and the FTRA boundary. A TLA+/Alloy extension to the full implementation is tracked as future work.
+
+> **FTRA exclusion note:** Tier 0.5 (FTRA) is not included in the 21-state BFS state tuple. The automaton provides an under-approximation: HITL-resumption paths are pruned (mapping `ESCALATE`/`ERROR` to terminal `FAIL`), leaving manually-approved trade resumptions outside the verified envelope.
+
 **State machine definition:**
 
 | Component | Definition |
@@ -330,6 +334,8 @@ where `γ` is the decay rate (configured via `THRESHOLDS.cbf.gamma`). This condi
 
 **CBF Invariance Theorem:** If `h(S(0)) ≥ 0` and the discrete-time CBF condition holds at every step `t`, then `h(S(t)) ≥ 0` for all `t ≥ 0`. The system trajectory remains within the safe set `S` indefinitely.
 
+> **Conditional implication note:** The CBF safety theorem is a conditional implication — it is vacuously true when `verify_action()` does not return `SAFE`. The `S(t+1) = S(t)` rejection-branch premise holds only if `atomic_verify_and_commit()` performs no state mutation before rejection. The current implementation debits balance at Tier 3a without a compensating rollback on subsequent-tier failure; `rollback_state()` addresses this as a Saga compensation stub.
+
 **Enforcement in code:**
 
 ```python
@@ -449,6 +455,8 @@ record_n = ProvenanceRecord(
 **Chain hash:** `chain_hash(record) = SHA-256(json.dumps(record.to_dict(), sort_keys=True))`
 
 **Deterministic serialization:** All hashes use `json.dumps(..., sort_keys=True, separators=(",", ":"))` with non-serializable values coerced to strings. This guarantees identical digests regardless of Python dict insertion order.
+
+> **Serialisation note (H57):** `compute_hash()` in `provenance_chain.py` uses `json.dumps(…, separators=(',', ':'), sort_keys=True)`. This matches the formal specification. Earlier versions omitted `separators`, producing non-spec-compliant hash values.
 
 **Tamper detection:** Any mutation at node `k` produces `chain_hash(record_k) ≠ expected_k`, which is detectable by `verify_chain_integrity()` in O(n) time:
 

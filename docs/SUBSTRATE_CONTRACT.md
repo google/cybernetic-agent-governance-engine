@@ -172,6 +172,16 @@ Before `validate_action()` is invoked, requests are screened by pre-pipeline lay
 
 > PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules invoked outside `_run_checks()` — PII sanitization runs on audit records inside `uca_logger.py`, and confabulation scoring is a Langfuse observability metric.
 
+> **Tier 0.5 — FTRA BFS-exclusion caveat:** Tier 0.5 (FTRA) is **not** included in the 21-state BFS automaton used for NoDirectBind reachability verification. This is a documented under-approximation; the BFS covers the governance state machine only. Gap closure requires integrating FTRA into the state tuple or enforcing it at the controller boundary. TLA+/Alloy full-implementation modelling is future work.
+
+> **Tier 2/4 — CBF effective-balance note:** The CBF (`cbf.py`) now tracks `_local_debits` intra-window. `verify_action()` computes `effective_balance = snapshot_balance - self._local_debits` for all threshold checks; `reset_local_debits()` is called by the reconciliation daemon on each KMS snapshot refresh. Redis access for Tier 4 is **read-write** (`WATCH/MULTI/EXEC`).
+
+> **Tier 3 — Saga-atomicity gap and rollback stub:** The residual distributed-transaction atomicity failure (previously labelled "TOCTOU gap") is correctly a **saga-atomicity gap**: Tier 3a (`atomic_verify_and_commit()`) debits the balance before downstream tiers execute. `FiscalLimitGuard.rollback_state(amount, audit_id)` is the Saga compensation stub — it reverses the Redis debit, logs `[SAGA-ROLLBACK]`, and re-raises on Redis failure.
+
+> **Tier 5 — Consensus degraded-quorum routing:** The `ERROR + APPROVE` verdict combination is now explicitly routed to `ESCALATE` (HITL) before the catch-all case in `consensus.py`.
+
+> **KMS signing contract — `signed_at` staleness rejection:** `KmsSigner.sign()` embeds `"signed_at": int(time.time())` in every reconciliation payload. `KmsSigner.verify()` raises `ValueError` if `now - signed_at > MAX_KMS_PAYLOAD_AGE_SECONDS` (300 s). Payloads missing `signed_at` are rejected as malformed.
+
 ---
 
 ## 3. Routing Seal Contract

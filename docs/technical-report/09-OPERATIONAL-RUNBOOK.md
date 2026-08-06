@@ -615,6 +615,8 @@ print('KMS sign/verify OK')
 
 **Failure path:** If `CAGE_KMS_KEY_NAME` is unset or the service account lacks `roles/cloudkms.signerVerifier`, the signer falls back to HMAC-SHA256. Check pod logs for `[KMSSigner] Falling back to HMAC` warning.
 
+> **KMS payload freshness:** Each signed reconciliation payload now includes `signed_at`. If `verify()` raises `ValueError("KMS payload has expired")`, the payload is older than 300 s — this indicates either a clock skew issue or a replay attempt. Resolution: check NTP synchronisation on the signing node; if clocks are correct, rotate the Redis key and re-sign.
+
 ---
 
 ### 7.2 Checking the DEFER Queue (Redis db=1)
@@ -971,6 +973,16 @@ CAGE v2.0.0's distributed transaction layer introduces new failure modes and sta
    # Run the release script manually with the token payload
    python3 scripts/release_stale_limit.py --token <token_id>
    ```
+
+> **Saga `rollback_state()` recovery:** If a downstream tier (Tier 4–7) fails after `atomic_verify_and_commit()` has debited the balance (Tier 3a), call `await fiscal_limit_guard.rollback_state(amount, audit_id)` to reverse the Redis debit. Logs will show `[SAGA-ROLLBACK]`. If `rollback_state()` itself fails (Redis unavailable), the error is re-raised — treat this as a critical incident requiring manual Redis ledger reconciliation.
+
+### 6.1a CBF Reconciliation Daemon — `reset_local_debits()` on Snapshot Refresh
+
+> **CBF `reset_local_debits()` on snapshot refresh:** The reconciliation daemon must call `cbf.reset_local_debits()` after each successful KMS snapshot refresh to clear the intra-window debit accumulator. Failure to call this will cause `effective_balance` to drift downward across snapshot cycles, eventually blocking all trades.
+
+### 6.1b CausalGatekeeper Redis Failure Handling
+
+> **CausalGatekeeper Redis failure handling:** Redis connection errors now raise `RuntimeError` (fail-closed). If this is observed in production, check Redis connectivity and certificate validity. Absent keys (fresh deployment, cache miss) return `None` and are first-boot safe — this is not an error condition. Do not suppress the `RuntimeError`; treat it as a P1 incident.
 
 ## 10. Governance Threshold Reference
 

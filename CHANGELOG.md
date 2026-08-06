@@ -10,6 +10,25 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `KmsSigner.sign()` now embeds `signed_at` Unix timestamp in every signed payload; `verify()` rejects payloads older than `MAX_KMS_PAYLOAD_AGE_SECONDS` (300 s), closing replay-attack vector.
+- `CbfGovernor._local_debits` intra-window debit ledger: `verify_action()` computes `effective_balance = snapshot - local_debits` to prevent double-spend within KMS TTL window; `reset_local_debits()` added for reconciliation daemon.
+- `ConsensusGate`: degraded-quorum routing (`ERROR + APPROVE → ESCALATE`) now explicitly handled before catch-all case.
+- `FiscalLimitGuard.rollback_state(amount, audit_id)`: Saga compensation stub — logs `[SAGA-ROLLBACK]`, reverses Redis debit, re-raises on failure.
+- `tests/test_provenance_chain.py`: `test_link_hash_is_deterministic` asserts hash stability across calls.
+
+### Fixed
+- `CausalGatekeeper`: Redis connection errors are now fail-closed (raise `RuntimeError`) rather than returning a zero-deflection sentinel (fail-open). Absent keys remain first-boot safe.
+- Terminology: "TOCTOU gap" for the rollback atomicity issue renamed to "saga-atomicity gap" throughout docs and paper.
+- Redis access model for gateway corrected in documentation: gateway has read-write access (Tier 4 FiscalLimitGuard uses `WATCH/MULTI/EXEC`), not read-only as previously documented.
+
+### Documentation
+- `CAGE_ARXIV.MD`: 58 peer-review items addressed — bibliography fixes, formal-proof caveats (under-approximation, saga-atomicity, CBF conditional implication), security notes (FTRA trust boundary, replay vulnerability, intra-window double-spend), new Appendix D (adversarial payload examples), expanded roadmap (NoDirectBind, POAM-TIER2-001, FTRA formal verification).
+
+---
+
+## [Unreleased — prior]
+
+### Added
 
 - `src/compliance_bridge/reconciliation_worker.py` — `ObjectStoreLedgerProvider` (S3-compatible via boto3: AWS S3, GCS S3 Interop, MinIO, Ceph). Registered `"s3"` and `"object-store"` aliases in the `_PROVIDERS` factory.
 - `deployment/k8s/reconciliation-worker.yaml` — new CronJob manifest running `ExternalLedgerReconciler` every 5 minutes; default `RECONCILIATION_PROVIDER` changed to `"s3"`; added `S3_RECONCILIATION_BUCKET`, `S3_ENDPOINT_URL`, `S3_REGION_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` env vars; CiliumNetworkPolicy egress extended to `*.amazonaws.com`.
@@ -49,8 +68,6 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     canonical `config/rails/` source) and added a `nemo-freshness-check` CI
     job (`.github/workflows/ci.yml`) that diffs `config/rails/actions.py`
     against `deployment/k8s/nemo-rails-configmap.yaml`.
-
----
 
 ## [v2.1.1-post — 2026-08-05]
 
@@ -98,8 +115,6 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-execution gate (`docs`).
 
 ---
-
-## [Unreleased — prior]
 
 ### Added
 - `.github/CODEOWNERS` — single-maintainer review enforcement for architectural paths

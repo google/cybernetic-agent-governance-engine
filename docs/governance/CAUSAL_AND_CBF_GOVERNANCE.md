@@ -97,6 +97,8 @@ Causal results are cached in Redis keyed on `causal_cache:{action_type}:{market_
 
 Two Redis client variants are provided: `_causal_cache_get_sync` / `_causal_cache_set_sync` (synchronous, for thread-pool workers dispatched via `asyncio.to_thread`) and `_causal_cache_get` / `_causal_cache_set` (async, for callers already inside an async context).
 
+> **Fail-closed behaviour:** Redis connection errors raise `RuntimeError`; absent keys return `None` (first-boot safe). The previous fail-open sentinel (returning `0.0`) has been removed.
+
 ### Causal Ordering Validation
 
 `validate_causal_ordering(governance_span, execution_span)` verifies that a governance span temporally and causally precedes an execution span. It performs:
@@ -192,13 +194,15 @@ The script is loaded via `SCRIPT LOAD` / `EVALSHA` with automatic NOSCRIPT retry
 
 `ControlBarrierFunction.verify_action()` is **read-only** — it reads the current cash balance via `_read_cbf_state_atomic()` but does **not** modify Redis state. It is used in `pre_check()` (NeMo Layer-0 context injection) and in `revalidate_post_hitl()` for targeted CBF re-checks. For primary governance enforcement in `_run_checks()`, the governor uses `atomic_verify_and_commit()` instead.
 
+> **Implementation note (intra-window double-spend prevention):** `verify_action()` uses `effective_balance = snapshot_balance - self._local_debits` where `_local_debits` accumulates approved trades since the last snapshot refresh. Call `reset_local_debits()` on each successful reconciliation cycle.
+
 CBF (`atomic_verify_and_commit()`) and OPA run **concurrently** via `asyncio.gather` — combined latency is `max(CBF_ms, OPA_ms)`. The TOCTOU race between the CBF balance check and actual trade execution is closed by the **FiscalLimitGuard** (Tier 3) using atomic WATCH/MULTI/EXEC pre-reservation.
 
 ---
 
-## 3. FiscalLimitGuard — Atomic TOCTOU Remediation
+## 3. FiscalLimitGuard — Saga-Atomicity Gap Remediation
 
-`FiscalLimitGuard` (`src/gateway/governance/fiscal_limit_guard.py`) closes the TOCTOU race between the CBF balance check and actual trade execution using atomic Redis pre-reservation. It runs as **Tier 3** in the `SymbolicGovernor` pipeline — after CBF+OPA (Tiers 2/4, concurrent) and before the ConsensusEngine (Tier 5).
+`FiscalLimitGuard` (`src/gateway/governance/fiscal_limit_guard.py`) closes the saga-atomicity gap (distributed-transaction atomicity failure, not a concurrency race) between the CBF balance check and actual trade execution using atomic Redis pre-reservation (read-write: `WATCH/MULTI/EXEC`). It runs as **Tier 3** in the `SymbolicGovernor` pipeline — after CBF+OPA (Tiers 2/4, concurrent) and before the ConsensusEngine (Tier 5). A `rollback_state(amount, audit_id)` Saga compensation stub reverses the Redis debit when a downstream tier fails after Tier 3a commitment.
 
 ### Key Implementation Details
 
@@ -209,7 +213,7 @@ CBF (`atomic_verify_and_commit()`) and OPA run **concurrently** via `asyncio.gat
 | Default cap | $500,000 USD (env: `FISCAL_DAILY_CAP_USD`) |
 | Reservation TTL | 300 seconds (ghost-state auto-expiry) |
 | Fail mode | **Fail-closed** — Redis error → rejected token (never fail-open) |
-| Atomicity | `WATCH/MULTI/EXEC` optimistic locking |
+| Atomicity | `WATCH/MULTI/EXEC` optimistic locking (read-write) |
 
 ### How It Closes the TOCTOU Race
 
@@ -294,6 +298,7 @@ Combined latency is `max(Risk_Manager_ms, Compliance_Officer_ms)` — parallel, 
 | All `REJECT` (non-error) | `REJECT` | Unanimous denial |
 | Mixed `APPROVE` + `REJECT` | `ESCALATE` | Split vote — critics disagree; human review required |
 | Any `ESCALATE` | `ESCALATE` | Explicit escalation request |
+| `ERROR + APPROVE` (degraded quorum) | `ESCALATE` | Degraded-quorum case explicitly routed to HITL escalation before the catch-all |
 | All `APPROVE` | `APPROVE` | Unanimous approval |
 
 ### Model Independence
