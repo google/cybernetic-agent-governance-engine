@@ -655,11 +655,11 @@ def causal_safety_check(
                     n_samples,
                     _MIN_CAUSAL_SAMPLES,
                 )
-                return False, (
-                    f"[CTRL_TEL_003] Causal gatekeeper: insufficient telemetry "
-                    f"({n_samples} < {_MIN_CAUSAL_SAMPLES} samples required). "
-                    f"Action blocked until sufficient data is available."
-                )
+                # NOTE: must return a bare bool, not a tuple — callers use
+                # `if not causal_safety_check(...)` to detect failure, and a
+                # non-empty tuple is truthy in Python, which would silently
+                # invert this fail-closed guard into fail-open.
+                return False
 
             model = _CausalModel(
                 data=current_telemetry,

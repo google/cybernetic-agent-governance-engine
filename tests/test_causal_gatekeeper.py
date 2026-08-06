@@ -96,10 +96,31 @@ class TestCausalSafetyCheckUnit:
         assert result is True
 
     def test_small_trade_with_stable_data_passes(self, stable_telemetry):
-        """A small trade against stable telemetry should pass the causal check."""
+        """A small trade against stable telemetry should pass the causal check.
+
+        Redis (cache get/set) is mocked out here because this is a unit test
+        of the causal-inference logic, not of Redis connectivity — in this
+        test environment there is no live Redis/OPA to connect to, and the
+        cache is purely an optimisation layered on top of the DoWhy checks
+        below. Production fail-closed behaviour on genuine Redis errors is
+        preserved and is exercised separately by
+        test_causal_check_fails_safe_on_error.
+        """
+        from unittest.mock import patch
+
         from src.gateway.governance.causal_gatekeeper import causal_safety_check
 
-        result = causal_safety_check({"amount": 1}, stable_telemetry)
+        with (
+            patch(
+                "src.gateway.governance.causal_gatekeeper._causal_cache_get_sync",
+                return_value=None,
+            ),
+            patch(
+                "src.gateway.governance.causal_gatekeeper._causal_cache_set_sync",
+                return_value=None,
+            ),
+        ):
+            result = causal_safety_check({"amount": 1}, stable_telemetry)
         assert result is True
 
     def test_generate_mock_telemetry_shape(self):
