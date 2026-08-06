@@ -29,6 +29,13 @@ on:
     branches:
       - main
 
+# Default least-privilege permissions for every job in this workflow.
+# zizmor's excessive-permissions audit flags jobs with no permissions:
+# block because they inherit the (potentially broad) repository default.
+# Individual jobs may still narrow further if they need write access.
+permissions:
+  contents: read
+
 jobs:
   squash-merge-guard:
     name: "Squash Merge Guard"

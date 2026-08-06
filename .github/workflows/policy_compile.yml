@@ -11,6 +11,12 @@ on:
       - "src/gateway/governance/stpa_compiler.py"
   workflow_dispatch: {}
 
+# Default least-privilege permissions for every job in this workflow.
+# zizmor's excessive-permissions audit flags jobs with no permissions:
+# block because they inherit the (potentially broad) repository default.
+permissions:
+  contents: read
+
 jobs:
   compile-policies:
     name: Compile STPA → Governance Artifacts

@@ -72,6 +72,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-024 | CM-6 | Staging environment compliance posture not yet verified against Lula validation suite | Moderate | 2026-09-30 |
 | POAM-2026-025 | NIST AI 600-1 §2.6 | CBRN / harmful content Lula validation is a stub pending AO pre-approval for NeMo CBRN rail deployment | High | 2026-12-31 |
 | POAM-2026-026 | ISO 42001 A.8.4 | Standalone `token-quota-proxy` Deployment not yet created; TokenQuotaProxy runs inline in gateway | Moderate | 2026-09-30 |
+| POAM-2026-037 | RA-5 / SI-2 | `python:3.12-slim` base image (Debian 13 "trixie") ships 56 OS-package CVEs (kernel, util-linux/libblkid, perl, gzip, ncurses, libacl, zlib) with no Fixed Version available from Debian as of 2026-08-05, confirmed via `trivy image --format json`; affects both `gateway` and `compliance-bridge` images; tracked in `.trivyignore` | High | 2026-09-05 |
 
 ### EU ECB Region (EU_ECB)
 

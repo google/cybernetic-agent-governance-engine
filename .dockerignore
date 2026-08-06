@@ -23,3 +23,20 @@ htmlcov/
 .antigravity/
 .dockerignore
 .jules/
+
+# Local Terraform state/provider artifacts. These are never needed inside a
+# built image and inflate SBOM/CVE Trivy scans with irrelevant host-platform
+# (e.g. darwin_arm64) provider binaries that don't exist in a fresh checkout.
+# "**/" prefix is required — Docker's ignore matcher does not recurse into
+# subdirectories for a bare "dirname/" pattern the way .gitignore does.
+**/.terraform/
+**/.terraform.lock.hcl
+**/*.tfstate
+**/*.tfstate.*
+**/.manual_deploy_venv/
+**/.deploy_venv/
+**/.build_venv/
+**/.mirror_venv/
+**/.venv_migrate/
+**/.new_venv/
+**/.eval_venv/

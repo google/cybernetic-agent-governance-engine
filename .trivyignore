@@ -2,3 +2,69 @@
 # No Debian bookworm fix available as of 2026-06-08.
 # Risk accepted via POAM-023. Review date: 2026-09-08.
 CVE-2025-13462
+
+# POAM-2026-037 — python:3.12-slim (Debian 13 "trixie") base image OS-package
+# CVEs with no upstream/Debian-patched Fixed Version available as of 2026-08-05,
+# confirmed via `trivy image --format json` (FixedVersion empty for all entries
+# below). These affect the Linux kernel, glibc/util-linux family, perl, gzip,
+# ncurses, libacl, and zlib packages shipped in the base image and are not
+# introduced by CAGE application code. Re-run `trivy image` against gateway and
+# compliance-bridge images after each base-image rebuild; remove entries below
+# as soon as a Fixed Version becomes available upstream. Risk accepted via
+# POAM-2026-037. Review date: 2026-09-05.
+CVE-2013-7445
+CVE-2019-19449
+CVE-2019-19814
+CVE-2021-3847
+CVE-2021-3864
+CVE-2024-21803
+CVE-2024-58015
+CVE-2025-22104
+CVE-2025-38137
+CVE-2025-38187
+CVE-2025-38204
+CVE-2025-38206
+CVE-2025-38421
+CVE-2025-38636
+CVE-2025-39859
+CVE-2025-39862
+CVE-2025-39958
+CVE-2025-69720
+CVE-2026-12064
+CVE-2026-13221
+CVE-2026-23102
+CVE-2026-23208
+CVE-2026-23327
+CVE-2026-31493
+CVE-2026-31536
+CVE-2026-31568
+CVE-2026-41992
+CVE-2026-42496
+CVE-2026-42497
+CVE-2026-43185
+CVE-2026-43198
+CVE-2026-43263
+CVE-2026-46130
+CVE-2026-46181
+CVE-2026-46279
+CVE-2026-48962
+CVE-2026-52991
+CVE-2026-53000
+CVE-2026-53010
+CVE-2026-53089
+CVE-2026-53091
+CVE-2026-53109
+CVE-2026-53118
+CVE-2026-53277
+CVE-2026-53330
+CVE-2026-53615
+CVE-2026-54369
+CVE-2026-57432
+CVE-2026-57433
+CVE-2026-63879
+CVE-2026-64017
+CVE-2026-64561
+CVE-2026-8286
+CVE-2026-8376
+CVE-2026-8927
+CVE-2026-9538
