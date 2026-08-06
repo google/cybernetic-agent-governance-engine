@@ -29,7 +29,7 @@ spec:
       serviceAccountName: financial-advisor-sa
       containers:
         # --- CONTAINER 1: The Agent (Ingress) ---
-        - name: ingress-agent
+        - name: governed-financial-advisor
           image: gcr.io/PROJECT_ID/financial-advisor:latest
           # Note: Container dependency is handled via startupProbe on sidecar
           ports:

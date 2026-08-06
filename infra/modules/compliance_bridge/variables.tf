@@ -118,6 +118,20 @@ variable "cage_env" {
   default     = "development"
 }
 
+# K-3: KMS_GOVERNANCE_KEY for compliance-bridge KMSBatchSigner.
+# Without this the compliance-bridge logs:
+#   "[KMSBatchSigner] Failed to load signer at startup: KMS_GOVERNANCE_KEY is not set"
+# and starts degraded (no asymmetric signatures on compliance evidence).
+# The actual key resource name goes in terraform.auto.tfvars (gitignored) —
+# never commit a real value here. Empty string falls back to HMAC-SHA256
+# GOVERNANCE_SALT signing — acceptable in dev/CI postures.
+variable "kms_governance_key" {
+  description = "Full Cloud KMS key version resource name for CTRL_KMS_001 asymmetric governance signing (KMS_GOVERNANCE_KEY). Empty string falls back to legacy HMAC-SHA256 signing — acceptable only in dev/CI."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 # CAGE_DEPLOYMENT_REGION selects which jurisdictional compliance framework
 # controls (US_FED/NIST/FedRAMP, EU_ECB/EU AI Act, APAC_MAS/MAS FEAT) are
 # exposed by GET /v1/controls and GET /v1/metrics/summary. Without this,

@@ -3,7 +3,7 @@
 **System:** Cybernetic AI Governance Engine (CAGE)
 **Document:** Public Security Posture Statement
 **Frameworks:** NIST SP 800-53 Rev. 5, NIST AI 600-1, ISO 42001, EU AI Act, DORA, GDPR, MAS FEAT, MAS TRM, MAS Notice 655
-**Last Updated:** 2026-07-27
+**Last Updated:** 2026-08-05
 
 ---
 
@@ -11,7 +11,7 @@
 
 This document is a public transparency statement about the security posture of the Cybernetic Governance Engine (CAGE). It describes the compliance controls being addressed, the frameworks they map to, and the general remediation timeline.
 
-CAGE is an open-source AI governance platform for financial services. It enforces governance policies over multi-agent LLM workflows via a layered pipeline (NeMo Guardrails → OPA → STPA → Control Barrier Function → Consensus → Causal/FRIA). The system is designed for deployment across three regulatory regions: US Federal (`US_FED`), EU ECB (`EU_ECB`), and APAC MAS (`APAC_MAS`).
+CAGE is an open-source AI governance platform for financial services. It enforces governance policies over multi-agent LLM workflows via an 8-tier pipeline: FTRA pre-execution reachability gate (Tier 0.5) → NeMo Guardrails → STPA/UCA validation → Agentic confidence check → Control Barrier Function + OPA Rego (concurrent) → Fiscal Limit Pre-Reservation → Multi-model consensus → Causal gatekeeper → Adaptive FRIA gate. The system is designed for deployment across three regulatory regions: US Federal (`US_FED`), EU ECB (`EU_ECB`), and APAC MAS (`APAC_MAS`).
 
 ---
 
@@ -72,6 +72,7 @@ The following findings are tracked as open items with target remediation dates. 
 | POAM-2026-024 | CM-6 | Staging environment compliance posture not yet verified against Lula validation suite | Moderate | 2026-09-30 |
 | POAM-2026-025 | NIST AI 600-1 §2.6 | CBRN / harmful content Lula validation is a stub pending AO pre-approval for NeMo CBRN rail deployment | High | 2026-12-31 |
 | POAM-2026-026 | ISO 42001 A.8.4 | Standalone `token-quota-proxy` Deployment not yet created; TokenQuotaProxy runs inline in gateway | Moderate | 2026-09-30 |
+| POAM-2026-037 | RA-5 / SI-2 | `python:3.12-slim` base image (Debian 13 "trixie") ships 56 OS-package CVEs (kernel, util-linux/libblkid, perl, gzip, ncurses, libacl, zlib) with no Fixed Version available from Debian as of 2026-08-05, confirmed via `trivy image --format json`; affects both `gateway` and `compliance-bridge` images; tracked in `.trivyignore` | High | 2026-09-05 |
 
 ### EU ECB Region (EU_ECB)
 

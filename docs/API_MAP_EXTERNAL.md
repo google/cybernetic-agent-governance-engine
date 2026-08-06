@@ -1,6 +1,6 @@
 # CAGE External API Reference
 
-> **Generated:** 2026-07-05 · **Scope:** Consumer-facing HTTP REST, gRPC, and
+> **Generated:** 2026-08-05 · **Scope:** Consumer-facing HTTP REST, gRPC, and
 > SSE endpoints intended for external clients and integrations.
 
 This document covers APIs intended for external consumers and client

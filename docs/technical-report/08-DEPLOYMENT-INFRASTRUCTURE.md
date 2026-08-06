@@ -291,13 +291,15 @@ Source: `generate_reasoning_manifest.py`, `deployment/k8s/vllm-inference-spot.ya
 | Instance type          | Spot (cost-optimized)                    |
 | Prefix caching         | Enabled — governance system prompt reuse |
 
-### Fast Node — Qwen/Qwen2.5-1.5B-Instruct
+### Fast Node — meta-llama/Meta-Llama-3.1-8B-Instruct
 
 | Parameter         | Value                      |
 | ----------------- | -------------------------- |
+| Model             | `meta-llama/Meta-Llama-3.1-8B-Instruct` |
 | Precision         | Standard (non-quantized)   |
 | Instance type     | Spot                       |
 | API compatibility | OpenAI-compatible endpoint |
+| Usage             | Consensus Compliance Officer critic; `VLLM_FAST_API_BASE` |
 
 ### Cold-Start Acceleration
 

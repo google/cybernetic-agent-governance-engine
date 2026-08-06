@@ -54,7 +54,12 @@ gpu_node_pool_min_count     = 1               # Provision 1 node immediately for
 gpu_node_pool_max_count     = 2               # 2 nodes needed: vllm-inference + vllm-reasoning
 gpu_node_pool_initial_count = 1
 gpu_node_pool_name          = "gpu-node-pool-nvidia-l4" # used as cloud.google.com/gke-nodepool nodeSelector
-gpu_node_pool_spot          = true                      # Enable spot instances for dev posture capacity
+gpu_node_pool_spot          = false                      # P0 fix (2026-08-03): spot VMs were being repeatedly
+                                                            # preempted mid-measurement-run (vllm-inference evicted
+                                                            # 3x in a single session), invalidating paper deflection/
+                                                            # FPR measurements under Gate E7 (see PERFORMANCE_REVIEW.md
+                                                            # and docs/paper/REVISION_TRACKER.md P2-8). Switched to
+                                                            # on-demand to guarantee measurement-run stability.
 gpu_node_locations          = ["us-central1-a", "us-central1-b", "us-central1-c"]
 
 # ─── Storage (Dev: Smaller, Cheaper) ──────────────────────────────────────────
@@ -104,4 +109,19 @@ nemo_image = ""
 # Presidio — use Microsoft public images
 presidio_analyzer_image   = "mcr.microsoft.com/presidio-analyzer:latest"
 presidio_anonymizer_image = "mcr.microsoft.com/presidio-anonymizer:latest"
+
+# ─── Secrets (set in terraform.auto.tfvars — gitignored) ──────────────────────
+# K-1: CAGE_ROUTING_SEAL_SECRET for gateway routing seal enforcement (POAM-012).
+#   routing_seal_secret = "<random-32-char-hex>"  # Set in terraform.auto.tfvars
+
+# K-3: KMS_GOVERNANCE_KEY for compliance-bridge KMSBatchSigner.
+#   kms_governance_key = "projects/<proj>/locations/<loc>/keyRings/<ring>/cryptoKeys/<key>/cryptoKeyVersions/1"
+#   # Set in terraform.auto.tfvars
+
+# K-4: OTLP auth header for Langfuse trace ingestion (gateway + governed_advisor).
+#   Option A — provide explicit header:
+#     otel_exporter_otlp_headers = "Authorization=Basic <base64(publicKey:secretKey)>"
+#   Option B — leave empty and set langfuse_public_key + langfuse_secret_key; the
+#     root module will derive the header automatically from those two values.
+#   Both must go in terraform.auto.tfvars (gitignored) — never commit real keys here.
 

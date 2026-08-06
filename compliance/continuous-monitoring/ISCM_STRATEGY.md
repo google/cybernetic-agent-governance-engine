@@ -32,7 +32,7 @@ This ISCM Strategy covers:
 | ---------------------------- | --------------------------------------------------------------------------------- |
 | **AI Governance Pipeline**   | LangGraph agent graph, gateway enforcement middleware, OPA policy engine          |
 | **Infrastructure**           | GKE cluster, Cloud SQL (PostgreSQL), Redis StatefulSet, Cloud Storage             |
-| **Compliance Controls**      | All SP 800-53 Rev. 5 controls in the CAGE security baseline (MODERATE impact)     |
+| **Compliance Controls**      | All SP 800-53 Rev. 5 controls in the CAGE security baseline (HIGH impact)          |
 | **Third-Party Dependencies** | Python packages, container base images, OPA policies, Lula validators             |
 | **Interfaces**               | REST/gRPC gateway, SSE event bus, Langfuse observability, MCP tool server         |
 | **Data Flows**               | Financial advisor requests → governance enforcement → model inference → audit log |

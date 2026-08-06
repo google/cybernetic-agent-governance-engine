@@ -11,27 +11,51 @@ on:
       - "src/gateway/governance/stpa_compiler.py"
   workflow_dispatch: {}
 
+# Default least-privilege permissions for every job in this workflow.
+# zizmor's excessive-permissions audit flags jobs with no permissions:
+# block because they inherit the (potentially broad) repository default.
+permissions:
+  contents: read
+
 jobs:
   compile-policies:
     name: Compile STPA → Governance Artifacts
     runs-on: ubuntu-latest
+    # CAGE_ENV=ci must be set at job level (not just on the "Install
+    # dependencies" step) because src/gateway/governance/symbolic_governor.py
+    # and kms_signer.py both run module-level startup guards (Gap 4: DoWhy
+    # presence; Gap 5: KMS readiness) the moment the governance package is
+    # imported by the stpa_compiler CLI in every later step of this job.
+    # Those guards treat any CAGE_ENV outside development/test/dev/ci as
+    # "production" and hard-fail — env set only on one step does not
+    # propagate to sibling steps.
+    env:
+      CAGE_ENV: ci
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "latest"
 
       - name: Install dependencies
-        run: uv sync --frozen
+        # --all-extras is required so the 'compliance' extra (which now owns
+        # dowhy, the Tier-6 causal gatekeeper) is installed. Without it,
+        # src/gateway/governance/symbolic_governor.py's Gap-4 startup guard
+        # raises RuntimeError as soon as the stpa_compiler CLI imports the
+        # governance package, because it treats any non-development/test/ci
+        # CAGE_ENV as production and hard-fails on missing dowhy.
+        run: uv sync --frozen --all-extras
 
       - name: Validate STPA control structure
         run: |
@@ -90,7 +114,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload generated artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: stpa-compiled-artifacts

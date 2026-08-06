@@ -211,9 +211,9 @@ The chain uses **deterministic sorted-key JSON serialization** to ensure reprodu
 
 ## 9. Governance Architecture
 
-### 9.1 7-Tier Symbolic Governor Pipeline
+### 9.1 8-Tier Symbolic Governor Pipeline
 
-The `SymbolicGovernor` in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) enforces a 7-tier pipeline (`_run_checks()`) on every `execute_trade` action, with Tiers 2 and 4 executing concurrently. The pipeline is **fail-closed**: any tier raising a validation error halts execution and returns `BLOCKED`.
+The `SymbolicGovernor` in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) enforces an 8-tier pipeline (`_run_checks()`) on every `execute_trade` action, with Tiers 2 and 4 executing concurrently. The pipeline is **fail-closed**: any tier raising a validation error halts execution and returns `BLOCKED`.
 
 | Tier | Name | Mathematical Invariant |
 |------|------|----------------------|
@@ -222,7 +222,7 @@ The `SymbolicGovernor` in [`src/gateway/governance/symbolic_governor.py`](../../
 | 2 | Control Barrier Function | `h(S(t+1)) ≥ (1−γ)·h(S(t))`; concurrent with Tier 4 via `asyncio.gather` |
 | 3 | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — atomic Redis WATCH/MULTI/EXEC |
 | 4 | OPA policy evaluation | `asyncio.gather(cbf_check, opa_check)`; concurrent with Tier 2 |
-| 5 | Consensus | Unanimous APPROVE required for trades ≥ $10,000 USD; 30s timeout |
+| 5 | Consensus | Unanimous APPROVE required for trades ≥ $10,000 USD; `_CRITIC_TIMEOUT_S=10.0` per critic |
 | 6 | Causal gatekeeper | SCM backdoor adjustment; PlaceboTreatmentRefuter p < 0.05 |
 | 6b | FRIA zones | `ALLOW ≥ 0.95`, `DEFER ≥ 0.70`, `DENY < 0.70` |
 

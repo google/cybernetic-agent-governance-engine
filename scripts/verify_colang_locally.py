@@ -18,7 +18,7 @@ import sys
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from src.utils.nemo_manager import load_rails
+from src.gateway.governance.nemo.manager import load_rails
 
 
 def test_colang_syntax():

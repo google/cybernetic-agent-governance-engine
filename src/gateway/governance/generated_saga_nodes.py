@@ -142,6 +142,30 @@ def forward_execute_trade_node_uca_4(state: AgentState) -> dict[str, Any]:
     return {"completed_transactions": [confirmed]}
 
 
+# CAGE-TOCTOU-FIX: atomicity assumption change — compensating logic may be incomplete.
+#
+# Previously, the CBF check in _cbf_check_with_span() called verify_action(), which
+# is READ-ONLY (no balance debit occurs during governance check time).  The balance
+# debit happened later in a separate update_state() call.  Under that model, if any
+# tier AFTER the CBF check (e.g. Consensus, Causal, FRIA) rejected the trade, no
+# CBF balance had been consumed, so this compensating node correctly needed only to
+# reverse the broker-side trade — NOT to restore a CBF balance.
+#
+# As of the A1 (Issue #6) remediation, _cbf_check_with_span() now calls
+# atomic_verify_and_commit(), which DEBITS the Redis cash balance atomically at
+# CBF-check time (inside the Lua script).  This means:
+#
+#   If a post-CBF tier (Consensus, Causal, FRIA) rejects the trade AFTER
+#   atomic_verify_and_commit() has already committed the debit, the Redis balance
+#   has been reduced even though no broker trade was executed.  This compensating
+#   node does NOT currently call safety_filter.rollback_state() to restore that
+#   debit — leaving the CBF cash balance permanently reduced for a trade that never
+#   settled.
+#
+# TODO: A future compensating action must call safety_filter.rollback_state(cost)
+#       (or atomic_verify_and_commit equivalent) when reversing a trade that was
+#       committed at CBF level but rejected by a subsequent governance tier.
+#       Track this as a follow-on item linked to CAGE_ARXIV.MD Issue #6.
 def compensate_reverse_trade_node_uca_4(state: AgentState) -> dict[str, Any]:
     """Idempotent compensating node for UCA-4 (reverse_trade).
 

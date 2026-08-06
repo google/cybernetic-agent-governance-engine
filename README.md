@@ -26,7 +26,7 @@
 
 | Capability | Location | Description |
 |---|---|---|
-| **FTRA Commencement Reachability Gate** | `src/gateway/governance/ftra/` | Fault Tree Reachability Analysis gate — checks whether a financial transaction can commence given the current governance state |
+| **FTRA Commencement Reachability Gate** | `src/gateway/governance/ftra/` | Forward-Looking Trajectory Reachability Analyzer (Tier 0.5) — builds a NetworkX directed graph from `ExecutionPlan.steps`, classifies terminal steps via `IrreversibilityClassifier`, and issues `CLEAR` / `HITL_REQUIRED` / `BLOCKED` before any tool call executes. Implemented by `create_ftra_node()`, `PlanGraphAnalyzer`, `IrreversibilityClassifier`. Two production defects fixed in v2.1.1 (POAM-2026-033): `DeferQueue` instantiation and `NodeInterrupt` re-raise |
 | **Phase A Ingress Adapters** | `src/gateway/governance/ingress/` | AAIF, ACS, OSCAL, Lula, and AGP policy-uploader adapters; policy translation layer |
 | **Phase B AGW Absorption** | `src/gateway/governance/ingress/agw_adapter.py` + `src/gateway/server/agent_gateway_adapter.py` | Agent Gateway Protocol bridge with OPA policy enforcement |
 | **CAGE-003 Agent Registry Integration** | `src/gateway/governance/ingress/agent_registry_adapter.py` | SPIFFE trust-domain agent catalog integration |
@@ -86,8 +86,9 @@ The following GCP services are **optional drivers** — the system functions ful
 
 CAGE v2.1.0 provides a multi-jurisdiction, dual-layer governance architecture for enterprise AI with **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
 
-1.  **The Governance Gateway:** A high-performance inference proxy and MCP tool server that enforces a 7-tier symbolic governance model (STPA/UCA validation, agentic confidence check, Control Barrier Function concurrent with OPA Rego, Fiscal Limit Pre-Reservation, multi-agent consensus, causal gatekeeper, and adaptive FRIA gate) combined with network and runtime hardening (Linkerd mTLS, Cilium L7, eBPF telemetry). The legacy SLM sidecar has been fully deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. It acts as the "Controller" in our Controller-Plant architecture, intercepting all agent-to-tool and agent-to-LLM communications.
-2.  **The Reusable Agent Harness:** A set of deterministic LangGraph factories (`OpaNodeConfig`/`NemoNodeConfig`) that allow developers to wrap *any* agentic workflow in mandatory, non-bypassable governance guardrails.
+1.  **The Governance Gateway:** A high-performance inference proxy and MCP tool server that enforces an **8-tier symbolic governance model** — a pre-execution Forward-Looking Trajectory Reachability Analysis (FTRA, Tier 0.5) plus seven in-pipeline tiers: STPA/UCA validation, agentic confidence check, Control Barrier Function concurrent with OPA Rego, Fiscal Limit Pre-Reservation, multi-agent consensus, causal gatekeeper, and adaptive FRIA gate — combined with network and runtime hardening (Linkerd mTLS, Cilium L7, eBPF telemetry). The legacy SLM sidecar has been fully deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. It acts as the "Controller" in our Controller-Plant architecture, intercepting all agent-to-tool and agent-to-LLM communications.
+2.  **The FTRA Reachability Gate:** A pre-execution Forward-Looking Trajectory Reachability Analyzer (`src/gateway/governance/ftra/`) that builds a NetworkX directed graph from the agent's `ExecutionPlan`, classifies each step with `IrreversibilityClassifier` against the compiled terminal registry, and issues a CLEAR / HITL_REQUIRED / BLOCKED verdict before any tool call is made. This is Tier 0.5 — it fires at the LangGraph graph level before the `SymbolicGovernor`'s `_run_checks()` pipeline begins.
+3.  **The Reusable Agent Harness:** A set of deterministic LangGraph factories (`OpaNodeConfig`/`NemoNodeConfig`) that allow developers to wrap *any* agentic workflow in mandatory, non-bypassable governance guardrails.
 3.  **The STPA-to-Policy Compiler:** A CLI tool that ingests a declarative YAML control structure (`config/stpa_control_structure.yaml`) and auto-generates OPA Rego policies, NeMo Colang rails, Python validator classes, and **LangGraph Saga compensating sub-graphs** — eliminating the Natural Language Tax between design-time hazard analysis and runtime enforcement.
 4.  **The DoWhy Causal Gatekeeper:** An optional, refutation-based causal inference safety lock (`src/gateway/governance/causal_gatekeeper.py`) that validates world-model integrity via DoWhy placebo refutation before allowing high-stakes trade actions. Integrated as Tier 6 in the SymbolicGovernor pipeline.
 5.  **The LangGraph Saga Engine:** A Write-Ahead Log + LIFO rollback + idempotent compensating node pattern that provides atomic transaction guarantees for `execute_trade` actions, with ghost-state recovery and ISO 42001 telemetry on every rollback.
@@ -113,7 +114,7 @@ CAGE is composed of six runtime subsystems:
 | -------------------------------- | --------------------------------- | --------------------------------------------------------------------------- |
 | **Gateway / Governance Harness** | `src/gateway/governance/`         | Reusable `langgraph_harness` factories, OPA symbolic governor, NeMo manager |
 | **Governed Financial Advisor**   | `src/governed_financial_advisor/` | LangGraph multi-agent pipeline; FastAPI server; all agents, pipelines, demo |
-| **Hybrid Inference Gateway**     | `src/gateway/`                    | MCP tool server + inference proxy + 7-tier SymbolicGovernor + KMS signer + ConsensusModelRegistry |
+| **Hybrid Inference Gateway**     | `src/gateway/`                    | MCP tool server + inference proxy + 8-tier SymbolicGovernor (FTRA + 7 in-pipeline tiers) + KMS signer + ConsensusModelRegistry |
 | **Compliance Bridge**            | `src/compliance_bridge/`          | OSCAL audit ingest; SSE event bus; Langfuse integration; AARM Conformance Engine; DEFER Queue API |
 | **AgentSight UI**                | `src/agentsight-ui/`              | React/TypeScript operator dashboard; real-time governance and remediation events |
 | **AgentSight eBPF DaemonSet**    | `deployment/agentsight/`          | Kernel-level process telemetry via BPF uprobes                              |
@@ -200,14 +201,15 @@ h(S(t+1)) ≥ (1−γ) · h(S(t)),   γ ∈ (0,1)
 
 This guarantees that the cash balance never drops below the minimum threshold in a single step — the decay factor `γ` bounds the maximum permissible drawdown per evaluation cycle. External reconciliation is implemented via [`src/compliance_bridge/reconciliation_worker.py`](src/compliance_bridge/reconciliation_worker.py) (POAM-023 closed 2026-07-27).
 
-### 7-Tier Symbolic Governor Pipeline
+### 8-Tier Symbolic Governor Pipeline
 
-Source: [`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py)
+Sources: [`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/ftra/`](src/gateway/governance/ftra/)
 
-Every `execute_trade` action passes through the following sequential tiers (as implemented in `SymbolicGovernor._run_checks()`) before a routing seal is issued:
+Every `execute_trade` action passes through the following sequential tiers before a routing seal is issued. Tier 0.5 (FTRA) executes at the LangGraph graph level before the first node fires; Tiers 0–6b run inside `SymbolicGovernor._run_checks()`:
 
 | Tier | Name | Mechanism |
 |------|------|-----------|
+| **0.5** | FTRA — Forward-Looking Trajectory Reachability Analyzer | `create_ftra_node()` builds a NetworkX directed graph from the `ExecutionPlan`, classifies terminal steps with `IrreversibilityClassifier`, and issues `CLEAR` / `HITL_REQUIRED` / `BLOCKED` before any tool call executes |
 | **0** | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` checks Unsafe Control Actions defined in the STPA ontology |
 | **1** | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) before any network I/O |
 | **2 / 4** | CBF + OPA concurrent | `asyncio.gather` runs the Control Barrier Function (Tier 2) and OPA Rego evaluation (Tier 4) in parallel |

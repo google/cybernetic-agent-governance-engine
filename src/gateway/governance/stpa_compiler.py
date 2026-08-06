@@ -518,14 +518,17 @@ def generate_nemo(cs: ControlStructureModel) -> str:
             "",
         ]
 
-    # Main output guardrail that chains all safety flows
+    # Main output guardrail that chains all safety flows.
+    # NOTE: `match bot said` is invalid Colang 2.x syntax — `match` only works
+    # with user intent patterns.  This flow is registered as an output rail via
+    # config/rails/config.yml and called by the NeMo runtime automatically; it
+    # must NOT contain a `match` trigger statement.
     lines += [
         "# ---------------------------------------------------------------------------",
         "# Composite output guardrail — invoked on every bot response",
         "# ---------------------------------------------------------------------------",
         "",
         "flow stpa_output_guardrail",
-        "  match bot said $msg",
     ]
     for uca in nemo_ucas:
         assert uca.nemo_rail is not None
@@ -537,7 +540,7 @@ def generate_nemo(cs: ControlStructureModel) -> str:
                 f"  await {_pascal(flow)}CheckAction as $check_{uca.id.lower().replace('-', '_')}"
             )
             lines.append(
-                f"  if $check_{uca.id.lower().replace('-', '_')}.detected == true"
+                f"  if $check_{uca.id.lower().replace('-', '_')}.detected == True"
             )
             lines.append(f"    await {flow}")
             lines.append("")

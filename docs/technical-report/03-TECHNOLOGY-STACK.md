@@ -68,7 +68,7 @@
 
 | Library               | Purpose                                                                  |
 | --------------------- | ------------------------------------------------------------------------ |
-| `presidio-analyzer`   | Microsoft Presidio PII detection; **15 entity types**; `score_threshold=0.3` |
+| `presidio-analyzer`   | Microsoft Presidio PII detection; **10 entity types** configured in `config/rails/config.yml`; `score_threshold=0.3` in NeMo, `PRESIDIO_SCORE_THRESHOLD=0.5` in `pii_sanitizer.py` |
 | `presidio-anonymizer` | PII anonymization and redaction before LLM submission                    |
 
 ### Policy
@@ -128,8 +128,10 @@
 
 | Library              | Purpose                                                                                   |
 | -------------------- | ----------------------------------------------------------------------------------------- |
-| `google-cloud-kms`   | **Primary** governance signing — Cloud KMS HSM-backed asymmetric RSA-4096 signatures; non-repudiation for all governance decisions |
-| `hmac`               | **Fallback** HMAC-SHA256 routing seal (`X-CAGE-Routing-Seal`) and governance signature; used when `CAGE_KMS_KEY_NAME` is unset (dev/CI only) |
+| `google-cloud-kms`   | **GCP** governance signing — Cloud KMS HSM-backed asymmetric RSA-4096 signatures (`GCPKMSProvider`); selected via `CAGE_KMS_PROVIDER=gcp` |
+| `boto3`              | **AWS** governance signing — AWS KMS HSM provider (`AWSKMSProvider`); selected via `CAGE_KMS_PROVIDER=aws` |
+| `azure-keyvault-keys`| **Azure** governance signing — Azure Key Vault Managed HSM provider (`AzureKMSProvider`); selected via `CAGE_KMS_PROVIDER=azure` |
+| `hmac`               | HMAC-SHA256 routing seal (`X-CAGE-Routing-Seal`); used when KMS is inactive (dev/CI only) |
 | `hashlib`            | Digest backend for HMAC and SHA-256 hash-chain operations                                 |
 
 ### gRPC

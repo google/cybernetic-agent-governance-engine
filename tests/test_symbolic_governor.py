@@ -28,6 +28,7 @@ async def test_symbolic_governor_confidence_pass():
 
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
+    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
 
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -68,6 +69,7 @@ async def test_symbolic_governor_opa_fail():
 
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
+    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
 
     consensus_engine = AsyncMock()
 
@@ -120,9 +122,12 @@ async def test_symbolic_governor_cbf_fail():
     opa_client = AsyncMock()
     opa_client.evaluate_policy.return_value = "ALLOW"
 
-    # verify_action is async — must use AsyncMock so the await in _run_checks works correctly
+    # atomic_verify_and_commit is the CBF gate — return (False, "UNSAFE: Bankruptcy") to trigger CBF rejection
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "UNSAFE: Bankruptcy"
+    safety_filter.atomic_verify_and_commit = AsyncMock(
+        return_value=(False, "UNSAFE: Bankruptcy")
+    )
 
     consensus_engine = AsyncMock()
 
@@ -143,6 +148,7 @@ async def test_symbolic_governor_consensus_fail():
 
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
+    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
 
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {

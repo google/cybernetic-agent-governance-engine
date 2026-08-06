@@ -57,7 +57,7 @@ def _make_plan(steps: list[tuple[str, str]], plan_id: str = "plan-1"):
     return ExecutionPlan(
         plan_id=plan_id,
         strategy_name="Test Strategy",
-        rationale="Test rationale",
+        rationale="Comprehensive test rationale for unit testing purposes",
         risk_factors=[],
         steps=[
             PlanStep(
@@ -203,9 +203,22 @@ class TestPlanGraphAnalyzer:
 
     def test_empty_plan_is_clear(self, tmp_path):
         from src.gateway.governance.ftra.models import FTRAVerdict
+        from src.governed_financial_advisor.agents.execution_analyst.agent import (
+            ExecutionPlan,
+        )
 
         analyzer = self._analyzer(tmp_path, {})
-        plan = _make_plan([])
+        # Use model_construct to bypass validators (steps_must_be_non_empty enforces
+        # non-empty steps in the Pydantic model; for this test we need to exercise
+        # the graph analyzer's behavior on a zero-step plan without going through
+        # LLM-output validation).
+        plan = ExecutionPlan.model_construct(
+            plan_id="plan-1",
+            strategy_name="Test Strategy",
+            rationale="Comprehensive test rationale for unit testing purposes",
+            risk_factors=[],
+            steps=[],
+        )
         result = analyzer.analyze(plan, confidence=0.9)
 
         assert result.verdict == FTRAVerdict.CLEAR
@@ -308,7 +321,7 @@ class TestPlanGraphAnalyzer:
         plan = ExecutionPlan(
             plan_id="plan-deps",
             strategy_name="Test",
-            rationale="Test",
+            rationale="Comprehensive test rationale for unit testing purposes",
             risk_factors=[],
             steps=[
                 PlanStepWithDeps(
@@ -430,7 +443,7 @@ class TestCreateFtraNode:
         return {
             "plan_id": plan_id,
             "strategy_name": "Test Strategy",
-            "rationale": "Test rationale",
+            "rationale": "Comprehensive test rationale for unit testing purposes",
             "risk_factors": [],
             "steps": [
                 {

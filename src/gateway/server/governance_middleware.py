@@ -859,12 +859,15 @@ async def validate_oidc_token(token: str) -> dict[str, Any]:
         HTTPException(401): If the token is invalid, expired, or fails
             signature verification.
     """
+    # Step 1: Import PyJWT.
+    # HIGH-2 fix: when OIDC is configured, a missing PyJWT dependency must be a
+    # hard failure — silently returning {} accepted any token without verification,
+    # creating a complete authentication bypass.
+    # NOTE: the import is attempted first so that if PyJWT is absent AND OIDC is
+    # not configured, we return {} immediately (backward compat, no token parsing).
     try:
         import jwt as pyjwt  # PyJWT
     except ImportError as _pyjwt_exc:
-        # HIGH-2 fix: when OIDC is configured, a missing PyJWT dependency must
-        # be a hard failure — silently returning {} accepted any token without
-        # verification, creating a complete authentication bypass.
         if _OIDC_JWKS_URI:
             logger.error(
                 "❌ OIDC is configured (CAGE_OIDC_JWKS_URI=%s) but PyJWT is not "
@@ -881,9 +884,11 @@ async def validate_oidc_token(token: str) -> dict[str, Any]:
             ) from _pyjwt_exc
         return {}
 
-    # Decode header to get kid for JWKS lookup — do NOT read 'alg' from header.
-    # HIGH-3 fix: the algorithm is determined by the server-side allowlist
+    # Step 2: Decode JWT header to get kid — do NOT read 'alg' from header.
+    # HIGH-3 fix: algorithm is determined by server-side allowlist
     # (_OIDC_ALLOWED_ALGORITHMS), never by the untrusted JWT header field.
+    # Structural validation (3-segment check, valid base64 JSON) always runs when
+    # PyJWT is available, so malformed tokens always yield 401.
     try:
         header = _decode_jwt_header(token)
     except ValueError as exc:
@@ -895,9 +900,14 @@ async def validate_oidc_token(token: str) -> dict[str, Any]:
         )
 
     kid = header.get("kid", "default")
-    # HIGH-3: 'alg' is intentionally NOT read from the header here.
 
-    # Fetch JWKS and find the matching key
+    # Step 3: If OIDC is not configured, skip JWKS-dependent validation.
+    # This path is only reachable when PyJWT IS installed but no JWKS URI is set
+    # (token structure was valid above). Return empty identity — backward compat.
+    if not _OIDC_JWKS_URI:
+        return {}
+
+    # Step 4: Fetch JWKS and find the matching key.
     try:
         jwks = await _fetch_jwks()
     except RuntimeError as exc:
@@ -917,7 +927,7 @@ async def validate_oidc_token(token: str) -> dict[str, Any]:
             detail={"error": "invalid_token", "message": f"No JWKS key for kid={kid}"},
         )
 
-    # Build PyJWT public key from JWK — try RSA first, fall back to EC.
+    # Step 5: Build PyJWT public key from JWK — try RSA first, fall back to EC.
     try:
         key_kty = key_data.get("kty", "RSA")
         if key_kty == "EC":

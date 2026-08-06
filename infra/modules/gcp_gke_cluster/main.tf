@@ -364,6 +364,24 @@ resource "google_container_node_pool" "gpu_nodes" {
       #     post-creation that are not in the Terraform config.
       #   - network_config: GKE auto-populates pod_range and enable_private_nodes
       #     from the cluster's VPC-native config.
+      #
+      # NOTE (2026-08-03, P0 spot-preemption finding): a `terraform plan
+      # -target=module.gke.google_container_node_pool.gpu_nodes` to flip
+      # gpu_node_pool_spot to false (see dev.tfvars) revealed severe
+      # pre-existing state/config drift: it also proposed destroying and
+      # recreating `primary_nodes` (hosting the advisor/Redis/OPA pods) and
+      # showed `cluster_name` drifting from `governance-cluster-2` to
+      # `cage-gke`. This is NOT safe to apply via `terraform apply` without
+      # a dedicated drift-remediation pass first (see
+      # docs/paper/REVISION_TRACKER.md P2-8 follow-up). The GPU pool spot->
+      # on-demand migration for THIS session was instead performed
+      # out-of-band via `gcloud container node-pools create` (new on-demand
+      # pool) + workload migration + old pool deletion, bypassing Terraform
+      # entirely to avoid the primary_nodes blast radius. Terraform state
+      # for this resource is expected to show additional drift until a
+      # dedicated remediation pass reconciles it — do not `terraform apply`
+      # this module without re-running `terraform plan` and reviewing the
+      # full diff first.
       node_config,
     ]
   }

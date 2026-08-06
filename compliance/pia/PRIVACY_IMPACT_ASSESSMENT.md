@@ -61,7 +61,7 @@ The system handles PII in the context of financial advisory services, including 
 
 ### 1.3 System Categorization
 
-- **FIPS 199 Impact Level:** HIGH (Confidentiality: HIGH, Integrity: HIGH, Availability: MODERATE)
+- **FIPS 199 Impact Level:** HIGH (Confidentiality: HIGH, Integrity: HIGH, Availability: HIGH)
 - **PII Confidentiality Impact:** HIGH (per NIST SP 800-122 §3.1 — financial PII is inherently sensitive)
 - **Reference:** `compliance/categorization/FIPS199_CATEGORIZATION.md`
 

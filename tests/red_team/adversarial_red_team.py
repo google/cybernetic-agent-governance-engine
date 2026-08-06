@@ -92,6 +92,7 @@ class AttackPayload:
     expected_behavior: str
     severity: str
     description: str
+    expected_verdict: str = ""
 
 
 @dataclass

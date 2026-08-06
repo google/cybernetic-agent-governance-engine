@@ -60,12 +60,12 @@ Tier 7 (FRIA) caveat
 --------------------
 The ``fria`` tier is included in the tuple because ``enforce_fria_boundary()``
 runs as a distinct step inside ``_run_checks()`` after the causal gatekeeper.
-However, the *adaptive* FRIA enforcement path (lines 603–660 of
+However, the *adaptive* FRIA enforcement path (lines 603-660 of
 ``symbolic_governor.py``) is gated on
 ``CAGE_NORMATIVE_PROVIDER != "static"``.  That environment variable is not
 set in any committed deployment manifest, so the adaptive path is unreachable
 in the reference deployment.  The unconditional portion (OTel attribute
-stamping, lines 662–693) always runs.  The proof models the tier as present
+stamping, lines 662-693) always runs.  The proof models the tier as present
 and capable of blocking (FAIL) — which is the conservative, safe-side
 assumption: if the tier can block, the invariant must hold even when it does.
 What the proof does NOT claim is that the adaptive FRIA logic is exercised in
@@ -99,14 +99,14 @@ from dataclasses import dataclass
 # independently block the action; see ``concurrent_tier_transitions()`` for
 # the proof that their evaluation order does not affect the invariant.
 TIERS = (
-    "stpa",          # Tier 1:  STAMP/STPA unsafe control action check
-    "confidence",    # Tier 2:  agent confidence threshold
-    "cbf",           # Tier 3a: Control Barrier Function (Redis cash barrier)
-    "opa",           # Tier 3b: OPA Rego policy evaluation
-    "fiscal",        # Tier 4:  fiscal limit pre-reservation
-    "consensus",     # Tier 5:  multi-agent consensus gate
-    "causal",        # Tier 6:  DoWhy causal gatekeeper
-    "fria",          # Tier 7:  FRIA normative boundary enforcement
+    "stpa",  # Tier 1:  STAMP/STPA unsafe control action check
+    "confidence",  # Tier 2:  agent confidence threshold
+    "cbf",  # Tier 3a: Control Barrier Function (Redis cash barrier)
+    "opa",  # Tier 3b: OPA Rego policy evaluation
+    "fiscal",  # Tier 4:  fiscal limit pre-reservation
+    "consensus",  # Tier 5:  multi-agent consensus gate
+    "causal",  # Tier 6:  DoWhy causal gatekeeper
+    "fria",  # Tier 7:  FRIA normative boundary enforcement
 )
 
 # The subset of tiers that the runtime evaluates concurrently
@@ -130,6 +130,7 @@ class State:
         resolved_allow: True if all tiers have passed AND a seal is present.
                         This is the ``resolvedAllow`` variable in the TLA+ spec.
     """
+
     phase: str
     tier_results: tuple[tuple[str, str], ...]
     seal_present: bool
@@ -158,6 +159,7 @@ def initial_state() -> State:
 # ---------------------------------------------------------------------------
 # Gated transition function (the correct CAGE architecture)
 # ---------------------------------------------------------------------------
+
 
 def gated_transitions(state: State) -> Iterator[State]:
     """Generate all successor states from *state* under the gated architecture.
@@ -254,6 +256,7 @@ def gated_transitions(state: State) -> Iterator[State]:
 # Ungated (direct-bind) transition function — the violation variant
 # ---------------------------------------------------------------------------
 
+
 def ungated_transitions(state: State) -> Iterator[State]:
     """Generate successor states under the UNGATED (direct-bind) architecture.
 
@@ -333,6 +336,7 @@ def ungated_transitions(state: State) -> Iterator[State]:
 # Concurrent transition function — models the CBF/OPA parallel gate
 # ---------------------------------------------------------------------------
 
+
 def concurrent_tier_transitions(state: State) -> Iterator[State]:
     """Gated transitions in which the concurrent tiers may resolve in any order.
 
@@ -399,6 +403,7 @@ def concurrent_tier_transitions(state: State) -> Iterator[State]:
 # BFS reachable-state enumerator
 # ---------------------------------------------------------------------------
 
+
 def enumerate_reachable(
     transition_fn,
     start: State | None = None,
@@ -426,6 +431,7 @@ def enumerate_reachable(
 # Invariant checker
 # ---------------------------------------------------------------------------
 
+
 def check_no_direct_bind(states: set[State]) -> tuple[bool, State | None]:
     """Check the No-Direct-Bind invariant over all states.
 
@@ -445,6 +451,7 @@ def check_no_direct_bind(states: set[State]) -> tuple[bool, State | None]:
 # Main — run both proofs
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     print("=" * 70)
     print("CAGE No-Direct-Bind Exhaustive State-Space Proof")
@@ -456,7 +463,9 @@ def main() -> None:
     gated_holds, gated_cex = check_no_direct_bind(gated_states)
 
     print(f"[gated]   Reachable states: {len(gated_states)}")
-    print(f"[gated]   No-Direct-Bind holds over all {len(gated_states)} reachable states: {gated_holds}")
+    print(
+        f"[gated]   No-Direct-Bind holds over all {len(gated_states)} reachable states: {gated_holds}"
+    )
 
     if not gated_holds:
         print(f"[gated]   ❌ COUNTEREXAMPLE FOUND: {gated_cex}")
@@ -465,7 +474,9 @@ def main() -> None:
         executed = [s for s in gated_states if s.phase == "EXECUTED"]
         print(f"[gated]   EXECUTED states: {len(executed)}")
         for s in executed:
-            print(f"[gated]     → resolvedAllow={s.resolved_allow}  seal_present={s.seal_present}")
+            print(
+                f"[gated]     → resolvedAllow={s.resolved_allow}  seal_present={s.seal_present}"
+            )
 
     print()
 
@@ -486,8 +497,10 @@ def main() -> None:
         print(f"[ungated]   tier_results  = {tier_summary}")
     else:
         print("[ungated] direct-bind shortcut produces a violation: False")
-        print("[ungated] ⚠️  WARNING: ungated variant did not produce a violation — "
-              "check transition function.")
+        print(
+            "[ungated] ⚠️  WARNING: ungated variant did not produce a violation — "
+            "check transition function."
+        )
 
     print()
 
@@ -501,12 +514,16 @@ def main() -> None:
     concurrent_executed = [s for s in concurrent_states if s.phase == "EXECUTED"]
 
     print("Concurrency sub-proof (CBF ∥ OPA interleaving):")
-    print(f"  Reachable states: {len(concurrent_states)} "
-          f"(gated: {len(gated_states)}) — superset={gated_states <= concurrent_states}")
+    print(
+        f"  Reachable states: {len(concurrent_states)} "
+        f"(gated: {len(gated_states)}) — superset={gated_states <= concurrent_states}"
+    )
     print(f"  No-Direct-Bind holds under every interleaving: {concurrent_holds}")
-    print(f"  EXECUTED states: {len(concurrent_executed)} "
-          f"(all with resolvedAllow=TRUE: "
-          f"{all(s.resolved_allow for s in concurrent_executed)})")
+    print(
+        f"  EXECUTED states: {len(concurrent_executed)} "
+        f"(all with resolvedAllow=TRUE: "
+        f"{all(s.resolved_allow for s in concurrent_executed)})"
+    )
     if not concurrent_holds:
         print(f"  ❌ COUNTEREXAMPLE FOUND: {concurrent_cex}")
     print()
@@ -518,14 +535,15 @@ def main() -> None:
     # Gap 1: ungated architecture — the seal gate removed structurally.
     # Re-uses the ungated enumeration above; reported here so the four
     # gap-specific sub-proofs are enumerated contiguously (Gaps 1-4).
-    print(f"  Gap 1 (no routing seal on approval): reachable states="
-          f"{len(ungated_states)}, invariant holds={ungated_holds}")
-    print("  → Violation confirmed: EXECUTED with resolvedAllow=False, "
-          "seal_present=False")
-    print("  → Removing the seal-issuance step structurally (not merely "
-          "skipping one")
-    print("    tier's evaluation) yields a genuine, minimal counterexample — "
-          "the")
+    print(
+        f"  Gap 1 (no routing seal on approval): reachable states="
+        f"{len(ungated_states)}, invariant holds={ungated_holds}"
+    )
+    print(
+        "  → Violation confirmed: EXECUTED with resolvedAllow=False, seal_present=False"
+    )
+    print("  → Removing the seal-issuance step structurally (not merely skipping one")
+    print("    tier's evaluation) yields a genuine, minimal counterexample — the")
     print("    seal gate in gated_transitions() is load-bearing.")
     print()
 
@@ -556,8 +574,10 @@ def main() -> None:
     # even with CBF skipped — the Gap 3 fix (RuntimeError at startup) prevents
     # this configuration from being reachable in production at all.
     cbf_holds, _cbf_cex = check_no_direct_bind(cbf_states)
-    print(f"  Gap 3 (CBF_FAIL_OPEN): reachable states={len(cbf_states)}, "
-          f"invariant holds={cbf_holds}")
+    print(
+        f"  Gap 3 (CBF_FAIL_OPEN): reachable states={len(cbf_states)}, "
+        f"invariant holds={cbf_holds}"
+    )
     print("  → Structural invariant preserved, but CBF tier is absent from gate.")
     print("  → Production startup RuntimeError prevents this configuration.")
     print()
@@ -584,8 +604,10 @@ def main() -> None:
 
     dowhy_states = enumerate_reachable(dowhy_absent_transitions)
     dowhy_holds, _dowhy_cex = check_no_direct_bind(dowhy_states)
-    print(f"  Gap 4 (DoWhy absent): reachable states={len(dowhy_states)}, "
-          f"invariant holds={dowhy_holds}")
+    print(
+        f"  Gap 4 (DoWhy absent): reachable states={len(dowhy_states)}, "
+        f"invariant holds={dowhy_holds}"
+    )
     print("  → Structural invariant preserved, but causal tier is absent from gate.")
     print("  → Production startup RuntimeError prevents this configuration.")
     print()
@@ -610,8 +632,10 @@ def main() -> None:
 
     no_seal_states = enumerate_reachable(no_seal_govern_transitions)
     no_seal_holds, no_seal_cex = check_no_direct_bind(no_seal_states)
-    print(f"  Gap 2 (govern() no seal): reachable states={len(no_seal_states)}, "
-          f"invariant holds={no_seal_holds}")
+    print(
+        f"  Gap 2 (govern() no seal): reachable states={len(no_seal_states)}, "
+        f"invariant holds={no_seal_holds}"
+    )
     if no_seal_cex:
         print("  → Violation confirmed: EXECUTED with resolvedAllow=False")
         print("  → Fix: govern() now issues seal; callers verify before executing.")
@@ -620,8 +644,12 @@ def main() -> None:
     # ── Final assertions ──────────────────────────────────────────────────────
     print("=" * 70)
     assert gated_holds, "PROOF FAILED: gated architecture violates No-Direct-Bind!"
-    assert not ungated_holds, "PROOF FAILED: ungated variant should violate No-Direct-Bind!"
-    assert not no_seal_holds, "PROOF FAILED: no-seal govern() should violate No-Direct-Bind!"
+    assert not ungated_holds, (
+        "PROOF FAILED: ungated variant should violate No-Direct-Bind!"
+    )
+    assert not no_seal_holds, (
+        "PROOF FAILED: no-seal govern() should violate No-Direct-Bind!"
+    )
     assert concurrent_holds, (
         "PROOF FAILED: No-Direct-Bind does not hold under CBF/OPA interleaving!"
     )

@@ -1,6 +1,6 @@
 # Cybernetic Agent Governance Engine (CAGE) — One-Pager
 
-**Authors:** CAGE Engineering Team · **Last updated:** 2026-07-27 · **Status:** GO — STABLE RELEASE (v2.1.0, 2026-07-27)
+**Authors:** CAGE Engineering Team · **Last updated:** 2026-08-05 · **Status:** GO — STABLE RELEASE (v2.1.1, 2026-07-30)
 
 ---
 
@@ -10,7 +10,7 @@ Any operator deploying high-reliability agentic AI faces a fundamental audit gap
 
 The cost of inaction is concrete: a single unchecked `execute_trade_action` call can bypass drawdown limits, leak PII in the response payload, and produce no evidence of the policy evaluation that should have blocked it. Automated red-team exercises against naive gateway implementations routinely achieve **100% adversarial success rates** on RBAC-002 (excessive permissions) and PII-004 (data leakage) attack classes.
 
-**CAGE v2.1.0** is an open-source, Python-first governance runtime that wraps every LLM call and tool invocation in a deterministic, 7-tier policy enforcement pipeline — without sacrificing production latency. The architecture is bifurcated: application logic (a LangGraph `StateGraph` multi-agent pipeline) is fully decoupled from the cloud provider, while a dedicated **Inference Gateway** (`src/gateway/`) handles all model traffic through a split-brain topology routing to two specialized vLLM pools (DeepSeek-R1 for reasoning; Llama 3.1 for structured governance output). The governance stack executes on every request: Aho-Corasick keyword scan → NeMo Guardrails (Colang 2.x + in-process Presidio PII) → STPA hazard validator (Tier 0) → agent confidence pre-check (Tier 1) → Control Barrier Function + OPA policy engine (concurrent, Tiers 2/4) → Fiscal Limit Pre-Reservation (Tier 3) → multi-agent consensus (Tier 5) → causal gatekeeper (Tier 6) → adaptive FRIA gate (Tier 6b). The legacy SLM sidecar has been fully deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. All compliance mapping is performed by the Python OSCAL exporter (`src/compliance_bridge/oscal_exporter.py`), achieving sub-millisecond audit-trail generation.
+**CAGE v2.1.1** is an open-source, Python-first governance runtime that wraps every LLM call and tool invocation in a deterministic, **8-tier policy enforcement pipeline** — without sacrificing production latency. The architecture is bifurcated: application logic (a LangGraph `StateGraph` multi-agent pipeline) is fully decoupled from the cloud provider, while a dedicated **Inference Gateway** (`src/gateway/`) handles all model traffic through a split-brain topology routing to two specialized vLLM pools (DeepSeek-R1 for reasoning; Llama 3.1 for structured governance output). The governance stack executes on every request: Aho-Corasick keyword scan → NeMo Guardrails (Colang 2.x + in-process Presidio PII) → **FTRA pre-execution reachability gate** (Tier 0.5, `src/gateway/governance/ftra/`) → STPA hazard validator (Tier 0) → agent confidence pre-check (Tier 1) → Control Barrier Function + OPA policy engine (concurrent, Tiers 2/4) → Fiscal Limit Pre-Reservation (Tier 3) → multi-agent consensus (Tier 5) → causal gatekeeper (Tier 6) → adaptive FRIA gate (Tier 6b). The legacy SLM sidecar has been fully deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. All compliance mapping is performed by the Python OSCAL exporter (`src/compliance_bridge/oscal_ssp_exporter.py`), achieving sub-millisecond audit-trail generation.
 
 
 **CAGE introduces evidentiary independence** (v2.0.0) — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
@@ -43,6 +43,7 @@ This discrete-time CBF condition ([`src/gateway/governance/cbf.py`](../../src/ga
 
 | Tier | Control | Key Invariant |
 |------|---------|---------------|
+| 0.5 | FTRA — Forward-Looking Trajectory Reachability Analyzer | `create_ftra_node()` / `PlanGraphAnalyzer` / `IrreversibilityClassifier` — pre-execution graph reachability; CLEAR / HITL_REQUIRED / BLOCKED before any tool call |
 | 0 | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` checks Unsafe Control Actions |
 | 1 | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) |
 | 2 | Control Barrier Function | Redis-backed cash balance invariant; concurrent with Tier 4 via `asyncio.gather` |
@@ -83,7 +84,7 @@ Source: [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/govern
 | Document type         | Engineering one-pager                                                                                                                                                   |
 | Audience              | Engineering leads, compliance reviewers, AI governance evaluators                                                                                                       |
 | Companion documents   | [`README.md`](../README.md), [`COMPLIANCE.md`](../../COMPLIANCE.md), [`docs/GOVERNANCE_CROSSWALK.md`](../compliance/cross-region/GOVERNANCE_CROSSWALK.md), [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](../governance/NEURO_SYMBOLIC_GOVERNANCE.md) |
-| Implementation status | v2.1.0 — 2026-07-27                                                                                                                                                    |
-| Production readiness  | **GO — STABLE RELEASE (v2.1.0, 2026-07-27)**; see `CHANGELOG.md` and `docs/security/SECURITY_STATUS.md` for current posture. CAGE has not received a NIST Authorization to Operate (ATO) — see the ATO caveat in `README.md`.                                     |
+| Implementation status | v2.1.1 — 2026-07-30                                                                                                                                                    |
+| Production readiness  | **GO — STABLE RELEASE (v2.1.1, 2026-07-30)**; see `CHANGELOG.md` and `docs/security/SECURITY_STATUS.md` for current posture. CAGE has not received a NIST Authorization to Operate (ATO) — see the ATO caveat in `README.md`.                                     |
 | Open issues           | File a GitHub issue for any defects or feature requests                                                                                                                 |
 | Feedback              | File a GitHub issue or suggest edits via pull request                                                                                                                   |

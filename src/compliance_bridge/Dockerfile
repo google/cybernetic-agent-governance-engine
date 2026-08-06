@@ -26,7 +26,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Pin to a specific version to guarantee reproducible builds — never use :latest,
 # which can silently introduce breaking changes between Cloud Build runs.
 # To upgrade: bump the version here, run `uv lock` locally, and commit both files.
-COPY --from=ghcr.io/astral-sh/uv:0.10.9 /uv /usr/local/bin/uv
+# Bumped from 0.10.9: that build statically links quinn-proto 0.11.12 and
+# rustls-webpki 0.103.8, both with fixed-version CVEs (CVE-2026-31812,
+# GHSA-4w2j-m93h-cj5j, GHSA-82j2-j2ch-gfr8) flagged by the SBOM/CVE Trivy scan.
+COPY --from=ghcr.io/astral-sh/uv:0.12.2 /uv /usr/local/bin/uv
 
 # Copy dependency definitions — both files required for uv sync --frozen.
 # Build context must be the monorepo root so pyproject.toml and uv.lock are reachable.

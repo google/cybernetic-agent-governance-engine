@@ -55,7 +55,7 @@ _NEMO_AVAILABLE = False
 create_nemo_manager = None  # type: ignore[assignment]
 
 
-async def validate_with_nemo(user_input, rails, pre_check_results=None):  # type: ignore[misc]
+async def validate_with_nemo(user_input, rails, pre_check_results=None) -> tuple:  # type: ignore[misc]
     """Fail-closed stub — NeMo not available."""
     raise RuntimeError("NeMo manager not available (validate_with_nemo stub)")
 
@@ -394,7 +394,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                     )
                     span.set_attribute("input.pii_redacted", False)
 
-                is_safe, reason = await validate_with_nemo(
+                is_safe, reason, deterministic = await validate_with_nemo(
                     user_input, rails, pre_check_results=pre_check_results
                 )
                 span.set_attribute(
@@ -402,6 +402,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                     "PASSED" if is_safe else "BLOCKED",
                 )
                 span.set_attribute("nemo.input_rail.reason", reason or "")
+                span.set_attribute("nemo.input_rail.deterministic", deterministic)
             except Exception as exc:
                 if cage_enforcement == "enforce":
                     logger.error(
@@ -430,9 +431,19 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                     }
 
             if not is_safe:
-                if cage_enforcement == "enforce":
+                if deterministic or cage_enforcement == "enforce":
+                    # Hard-block when:
+                    #   (a) the verdict came from a deterministic stage (Stage 1/1'/1B/1C/1D) — always block
+                    #       regardless of enforcement mode, because these detectors have zero false-positive
+                    #       risk and are the primary defence against regex/keyword/structural attacks; OR
+                    #   (b) CAGE_SEAL_ENFORCEMENT=enforce — enforce mode always blocks on any unsafe verdict.
+                    #
+                    # The stochastic Stage-3 LLM judge with enforcement=log is the ONLY path that proceeds
+                    # despite an unsafe verdict.
                     logger.warning(
-                        "nemo_guardrail_node: input BLOCKED — reason: %s",
+                        "nemo_guardrail_node: input BLOCKED (deterministic=%s, enforcement=%s) — reason: %s",
+                        deterministic,
+                        cage_enforcement,
                         reason,
                     )
                     base = {**state} if cfg.pass_through_state else {}
@@ -443,7 +454,8 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                     }
                 else:
                     logger.warning(
-                        "⚠️ nemo_guardrail_node: input flagged (enforcement=%s) — proceeding. reason: %s",
+                        "⚠️ nemo_guardrail_node: input flagged by non-deterministic stage "
+                        "(enforcement=%s) — proceeding. reason: %s",
                         cage_enforcement,
                         reason,
                     )
@@ -504,6 +516,37 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
             ).lower()
             span.set_attribute("nemo.cage_enforcement", cage_enforcement)
 
+            # --- Optimization opportunity (Group D / D2) ---
+            # Currently PII masking and semantic validation are two sequential
+            # NeMo LLMRails invocations on the same LLMRails instance.  They
+            # cannot be collapsed into a single Colang execution pass without a
+            # dedicated combined output flow in config/rails/main_logic.co.
+            #
+            # What a future combined Colang flow would look like:
+            #
+            #   flow verify and validate output $output_text
+            #     $masked = await MaskPIIAction text=$output_text
+            #     $safe   = await CustomSelfCheckOutputAction text=$masked
+            #     if not $safe
+            #       bot refuse to respond
+            #       abort
+            #     return $masked
+            #
+            # Once that flow exists, both calls below collapse to a single
+            # rails.generate() invocation, saving one full LLM round-trip per
+            # request on the output path.  Track this as a Colang authoring task.
+            #
+            # OTel attributes below make the two-call cost visible in traces so
+            # it can be measured and prioritised for the Colang authoring sprint.
+            span.set_attribute("nemo.output_rail.pii_mask_call", 1)
+            span.set_attribute("nemo.output_rail.semantic_validate_call", 1)
+            span.set_attribute("nemo.output_rail.total_llm_calls", 2)
+            span.set_attribute(
+                "nemo.output_rail.optimization_opportunity",
+                "combine_into_single_colang_flow",
+            )
+
+            # --- Call 1 of 2: PII masking ---
             try:
                 rails = get_nemo_rails()
                 masked_text = await verify_and_mask_output(rails, output_text)
@@ -519,7 +562,7 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
                 span.set_status(trace.Status(trace.StatusCode.ERROR, str(exc)))
                 masked_text = cfg.output_blocked_sentinel
 
-            # --- Semantic safety validation (P2) ---
+            # --- Call 2 of 2: Semantic safety validation ---
             # Run validate_output_semantics() on the PII-masked text.
             # In enforce mode: block on UNSAFE verdict.
             # In log mode: warn but pass through.

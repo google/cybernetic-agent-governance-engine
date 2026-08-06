@@ -196,7 +196,7 @@ opa test ./compliance/postures/us_fed/opa/ -v
 for f in tests/opa_snapshots/*.json; do
   echo "Validating snapshot: $f"
   opa eval -d src/governed_financial_advisor/governance/policy/trade_governance.rego \
-    -i "$f" "data.trade_governance" --format pretty
+    -i "$f" "data.trade.governance" --format pretty
 done
 ```
 

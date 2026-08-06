@@ -28,24 +28,23 @@ To prevent the AI from learning how to circumvent rules, CAGE employs a **Bifurc
 The central enforcement engine residing in the Gateway. It wraps every tool execution request.
 
 - **Responsibility:** Intercepts tool calls and validates them against safety rules _before_ execution (or concurrently in Optimistic mode).
-- **Checks (8-Step Pipeline (Steps 0–6 including Step 2b)):**
-
-  > **Note on Step 2b:** Step 2b (OPA Policy Evaluation) runs concurrently with Step 2 (CBF) via `asyncio.gather` as a conditional branch within the pipeline. It is counted as a distinct step, making the total 8 steps (Steps 0, 1, 2, 2b, 3, 4, 5, 6).
+- **Module-level startup guards:** `symbolic_governor.py` raises `RuntimeError` at import time if any of the following unsafe conditions are detected: `CBF_FAIL_OPEN=true` in production, `dowhy` package absent in production, KMS readiness failure, Redis readiness failure, or `RECONCILIATION_PROVIDER=stub` with `CAGE_ENV=production` (CAGE-SEC-007).
+- **Checks (7-Tier Pipeline):**
 
   > **See also:** [`docs/governance/GOVERNANCE_OVERVIEW.md`](GOVERNANCE_OVERVIEW.md) for the canonical layer model and infrastructure context.
 
-  | Step | Name | Implementation | Notes |
+  | Tier | Name | Implementation | Notes |
   |------|------|---------------|-------|
-  | **0** | STPA UCA Constraint Check | `stpa_validator.validate()` | Aho-Corasick keyword scan against 14 tier-1 keywords; checks for Unsafe Control Actions (UCAs) defined in the ontology *(All Regions)* |
-  | **1** | Agentic Confidence Gate | OPA `system_authz.rego` | **OPA is the sole enforcer** of `CTRL_AGT_001` — three-zone confidence model: ALLOW ≥ 0.95, DEFER 0.70–0.95, DENY < 0.70 (`DEFER_CONFIDENCE_THRESHOLD = 0.70`). Normal threshold 0.95; SLM-degraded escalation to 0.97 baked into `system_authz.rego`. The Python-side confidence check has been removed. Contexts in the DEFER zone are pushed to the **DEFER queue** (Redis db=1, 4h TTL, AARM-V7) rather than outright denied. **Note:** `min_trade_confidence` in `governance_thresholds.json` is **deprecated** — OPA `system_authz.rego` is now authoritative for confidence enforcement. ISO 42001 §A.5.2 *(All Regions)* |
-  | **2** | Control Barrier Function | `ControlBarrierFunction.verify_action()` (`cbf.py`) | Redis-backed cash balance invariant `h(x) = cash_balance − min_cash_balance ≥ 0` (γ=0.5, min=$1,000; 5% drawdown default; 4% for EU_ECB). Currently reads position state from Redis cache. External reconciliation via `AnchorageGrpcLedgerProvider` is planned (POAM-023, not yet implemented). *(All Regions)* |
-  | **2b** | OPA Policy Evaluation | `OPAClient.evaluate_policy()` | Runs **concurrently** with CBF via `asyncio.gather` — combined latency is `max(CBF_ms, OPA_ms)`. Evaluates declarative, role-based authorization constraints *(All Regions)*. |
-  | **3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` | **Active in pipeline.** Atomically reserves the requested USD amount against the daily cap in Redis (WATCH/MULTI/EXEC) **before** the consensus gate, closing the TOCTOU race between the CBF balance check and actual trade execution. Released on any subsequent failure. *(All Regions)* |
-  | **4** | Multi-Agent Consensus | `consensus_engine.check_consensus()` | Triggers heterogeneous multi-model consensus via ConsensusModelRegistry for trades exceeding threshold ($10k default **US_FED**; $7.5k **EU_ECB**; $5k **APAC_MAS**). Unanimity required — any dissent blocks the trade *(All Regions)*. |
-  | **5** | DoWhy Causal Gatekeeper | `causal_safety_check()` | 50-simulation placebo refutation causal validation of world-model (p<0.05). Active in **US_FED** and **APAC_MAS**; suppressed in **EU_ECB** per SR 26-2 "no legal force" sentinel (GDPR / MAS Notice 655 telemetry restriction). |
-  | **6** | FRIA Normative Boundary + Attestation | `enforce_fria_boundary()` + OTel stamp | **Merged step** (formerly Steps 6b and 7): adaptive FRIA enforcement (ALLOW/DEFER/DENY based on consensus score) combined with EU AI Act Art. 29a OTel attestation (`CTRL_FRIA_006`). Enforcement runs when `CAGE_NORMATIVE_PROVIDER != "static"`; attestation stamp always applied for **EU_ECB** deployments. **EU_ECB only** — no-op for US_FED and APAC_MAS. |
+  | **0** | STPA UCA Constraint Check | `GeneratedSTPAValidator.validate()` | Aho-Corasick keyword scan against 14 tier-1 keywords; checks for Unsafe Control Actions (UCAs) defined in the ontology *(All Regions)* |
+  | **1** | Agentic Confidence Pre-check | Fast-fail local check | `AGENT_CONFIDENCE_THRESHOLD` fast-fail before CBF/OPA; OPA `trade_governance.rego` (package `trade.governance`) is the **sole enforcer** of `CTRL_AGT_001` — three-zone confidence model: ALLOW ≥ 0.95, DEFER 0.70–0.95, DENY < 0.70. `min_trade_confidence` in `governance_thresholds.json` is **deprecated** — OPA is now authoritative. ISO 42001 §A.5.2 *(All Regions)* |
+  | **2/4** | CBF + OPA concurrent evaluation | `asyncio.gather(cbf_check, opa_check)` | **Tier 2:** `ControlBarrierFunction.atomic_verify_and_commit()` (`cbf.py`) — Redis-backed Lua atomic cash balance invariant `h(x) = cash_balance − min_cash_balance ≥ 0` (γ=0.5, min=$1,000). `atomic_verify_and_commit()` collapses check+commit into a single Lua hop, eliminating TOCTOU. `_read_cbf_state_atomic()` prioritises `reconciliation:verified_balance` (KMS-signed external balance from reconciliation worker, POAM-023) then falls back to `safety:current_cash` with CRITICAL audit log. **Tier 4:** `OPAClient.evaluate_policy()` evaluates `trade_governance.rego`. Combined latency = `max(CBF_ms, OPA_ms)`. *(All Regions)* |
+  | **2 (post)** | POAM-TIER2-001 Structural Corroboration | Inline in `_run_checks()` after Tier 2/4 | Structural corroboration heuristic: derives independent confidence signal from STPA violation count and OPA margin. Flags structural risk when STPA violation count ≥ 1 AND OPA margin below threshold, overriding the model-supplied confidence signal. *(All Regions)* |
+  | **3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` | Atomically reserves the requested USD amount against the daily cap in Redis (WATCH/MULTI/EXEC) **before** the consensus gate, closing the TOCTOU race between the CBF balance check and actual trade execution. Released on any subsequent pipeline failure. *(All Regions)* |
+  | **5** | Multi-Agent Consensus | `ConsensusEngine.check_consensus()` | Triggers heterogeneous multi-model consensus via `ConsensusModelRegistry` for trades exceeding threshold ($10k default **US_FED**; $7.5k **EU_ECB**; $5k **APAC_MAS**). Unanimity required — any dissent blocks the trade. 30-second hard timeout per critic. Background audit logging via `_AUDIT_QUEUE` (`asyncio.Queue(maxsize=1000)`). *(All Regions)* |
+  | **6** | DoWhy Causal Gatekeeper | `causal_safety_check()` (`causal_gatekeeper.py`) | 50-simulation placebo refutation causal validation (p<0.05). **Fails closed** when no live telemetry is provided in production — no mock fallback. Sync cache helpers (`_causal_cache_get_sync`/`_causal_cache_set_sync`) used for `asyncio.to_thread` safety. Active in **US_FED** and **APAC_MAS**; suppressed in **EU_ECB** per GDPR / MAS Notice 655 telemetry restriction. |
+  | **6b** | FRIA Normative Boundary + Attestation | `enforce_fria_boundary()` + OTel stamp | **Merged step** (formerly Steps 6b and 7): adaptive FRIA enforcement (ALLOW/DEFER/DENY based on consensus score) combined with EU AI Act Art. 29a OTel attestation (`CTRL_FRIA_006`). Enforcement runs when `CAGE_NORMATIVE_PROVIDER != "static"`; attestation stamp always applied for **EU_ECB** deployments. **EU_ECB only** — no-op for US_FED and APAC_MAS. |
 
-  > **Note — SLM Tier removed:** The former Tier 3 (SLM Semantic Similarity) has been fully retired. The SLM sidecar code has been deleted. The confidence threshold (Step 1) is now enforced exclusively by OPA, with the SLM-degraded escalation (0.95 → 0.97) baked into `system_authz.rego`.
+  > **Note — SLM Tier removed:** The former Tier 3 (SLM Semantic Similarity) has been fully retired. The SLM sidecar code has been deleted. The confidence threshold (Tier 1) is now enforced exclusively by OPA, with the SLM-degraded escalation (0.95 → 0.97) baked into `trade_governance.rego`.
 
 ### 1a. LangGraph Harness — Governance Node Composition (v2.1.0)
 
@@ -120,11 +119,12 @@ The **"Lock on the CAGE"** — a causal inference layer that validates the syste
   3. **Estimation:** Estimates the Average Treatment Effect (ATE) via linear regression for real-time speed.
   4. **Refutation (The Lock):** Applies a Placebo Treatment Refuter — replaces the real treatment with random noise. If the model still detects a significant effect (p < 0.05 or |effect| > 0.2), the world-model is deemed untrustworthy.
   5. **Safety Boundary:** Also blocks trades where the estimated marginal effect pushes the predicted risk score above 0.95.
-- **Fail-Safe:** Returns `False` (blocks trade) on any exception — if causal validity cannot be proven, the action is denied.
-- **Integration:** Injected as Step 6 in `SymbolicGovernor._run_checks()`, executed only for `execute_trade` actions.
-- **Telemetry Source — Dual Phase:** Accepts a `BaseTelemetryProvider`. In production, `LangfuseTelemetryProvider` sources live governance spans from Langfuse. The function now emits **two OTel child spans**:
+- **Fail-Safe:** Returns `False` (blocks trade) on any exception — if causal validity cannot be proven, the action is denied. In production (`CAGE_ENV=production`), the function **fails closed** when no live telemetry is provided — there is no mock fallback for missing telemetry.
+- **Cache:** Results cached in Redis using synchronous helpers `_causal_cache_get_sync` / `_causal_cache_set_sync` — these are safe for `asyncio.to_thread` worker pools. TTL = `CAUSAL_CACHE_TTL_SECONDS` (60 s). Telemetry staleness limit = `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
+- **Integration:** Injected as Tier 6 in `SymbolicGovernor._run_checks()`, executed only for `execute_trade` actions via `validate_causal_ordering()`.
+- **Telemetry Source — Dual Phase:** Accepts a `BaseTelemetryProvider`. In production, `LangfuseTelemetryProvider` sources live governance spans from Langfuse. The function emits **two OTel child spans**:
   - `causal_gatekeeper.statistical_kernel` — tagged `CTRL_MRM_004` (SR 26-2 MRM): causal model setup, effect identification, and coefficient estimation.
-  - `causal_gatekeeper.placebo_refutation` — tagged `CTRL_TEL_003` (ISO 42001 §A.9.4): 50-simulation placebo refuter against live telemetry. Falls back to `MockTelemetryProvider` when live sample count is below `CAUSAL_MIN_LIVE_SAMPLES` (default: 50).
+  - `causal_gatekeeper.placebo_refutation` — tagged `CTRL_TEL_003` (ISO 42001 §A.9.4): 50-simulation placebo refuter against live telemetry.
 
 ---
 
@@ -137,11 +137,11 @@ The 10-node LangGraph StateGraph governs the full execution lifecycle:
 | 1 | `nemo_input_rail` | NeMo Guardrails input screening |
 | 2 | `stpa_validator` | STPA UCA policy check |
 | 3 | `causal_gatekeeper` | DoWhy SCM intervention simulation |
-| 4 | `symbolic_governor` | 7-step symbolic check pipeline (Steps 0–6) |
+| 4 | `symbolic_governor` | 7-tier symbolic check pipeline (Tiers 0–6b) |
 | 5 | `consensus_node` | Multi-model consensus (≥$10k trades) |
 | 6 | `hitl_gate` | Human-in-the-loop interrupt |
 | 7 | `post_hitl_rehydrate` | TOCTOU remediation — state rehydration |
-| 8 | `post_hitl_revalidate` | TOCTOU remediation — re-validation |
+| 8 | `post_hitl_revalidate` | TOCTOU remediation — Tiers 2/4 re-validation only (CBF + OPA) |
 | 9 | `saga_router` | LangGraph Saga WAL + LIFO rollback |
 | 10 | `nemo_output_rail` | NeMo Guardrails output screening |
 
@@ -149,13 +149,13 @@ The 10-node LangGraph StateGraph governs the full execution lifecycle:
 
 1.  **Plan:** Agent generates a plan.
 2.  **Evaluate:** Graph routes to the **Evaluator** node.
-3.  **Governance Check:** Evaluator calls `check_safety_constraints` (OPA, CBF, STPA) in the Gateway via the 7-step `SymbolicGovernor._run_checks()` pipeline (Steps 0–6: STPA → Confidence/OPA → CBF → Fiscal Limit Pre-Reservation → Consensus → Causal → FRIA).
+3.  **Governance Check:** Evaluator calls `check_safety_constraints` (OPA, CBF, STPA) in the Gateway via the 7-tier `SymbolicGovernor._run_checks()` pipeline (Tiers 0–6b: STPA → Confidence/OPA concurrent with CBF → POAM-TIER2-001 structural corroboration → Fiscal Limit Pre-Reservation → Consensus → Causal → FRIA).
 4.  **Context Accumulation (AARM-V1):** The SHA-256 hash-chained context accumulator (`src/compliance_bridge/context_accumulator.py`) appends each governance decision to the immutable chain, preventing context poisoning.
-5.  **Causal Validation:** DoWhy Causal Gatekeeper validates world-model integrity via 50-simulation placebo refutation (p<0.05).
+5.  **Causal Validation:** DoWhy Causal Gatekeeper validates world-model integrity via 50-simulation placebo refutation (p<0.05). Fails closed if no live telemetry in production.
 6.  **Sign:** If safe, Evaluator generates a **Cloud KMS HSM-backed asymmetric signature** (primary) and appends it to the shared state. HMAC-SHA256 is used only in dev/CI when KMS is unavailable.
 7.  **HITL Gate:** For trades >$10,000 USD or risk_score >0.7, the `hitl_gate` node interrupts the graph for human review.
-    - **TOCTOU Remediation:** On human approval, `post_hitl_rehydrate` reloads the latest state from the Redis checkpointer (preventing stale-state execution), then `post_hitl_revalidate` re-runs the full 7-step pipeline before proceeding.
-8.  **DEFER Queue (AARM-V7):** Contexts failing the confidence threshold but not outright denied are pushed to Redis `db=1` (noeviction) for deferred human review.
+    - **TOCTOU Remediation:** On human approval, `post_hitl_rehydrate` reloads the latest state from the Redis checkpointer (preventing stale-state execution), then `revalidate_post_hitl()` in `symbolic_governor.py` re-runs **only Tiers 2 and 4** (CBF + OPA) — the tiers most likely to drift during a HITL review window. STPA, consensus, causal, and FRIA tiers are not re-run.
+8.  **DEFER Queue (AARM-V7):** Contexts failing the confidence threshold but not outright denied are pushed to Redis `db=1` (noeviction, key prefix `DEFER:`, TTL 4 h) for deferred human review.
 9.  **Audit Gate:**
     - _Path A (Safe):_ Signature verified → Graph transitions to `governed_trader` node.
     - _Path B (Unsafe):_ Signature missing/failed → Graph routes to `explainer` node (no trade executed).
@@ -172,7 +172,7 @@ The CAGE neuro-symbolic governance architecture has three distinct layers:
 | Layer | Components | Role |
 |---|---|---|
 | **Neural** | NeMo Guardrails (`src/gateway/governance/nemo/`), Colang rails (`cbrn_rails.co`) | Learned safety rails; CBRN keyword detection; PII masking; hot-reloadable |
-| **Symbolic** | OPA Rego (`trade_governance.rego`, `system_authz.rego`), STPA validator (`generated_stpa_validator.py`), CBF (`safety.py`, `cbf.py`) | Formal invariants; mathematical safety properties; fail-closed |
+| **Symbolic** | OPA Rego (`src/governed_financial_advisor/governance/policy/trade_governance.rego`, `config/opa/`), STPA validator (`generated_stpa_validator.py`), CBF (`cbf.py`) | Formal invariants; mathematical safety properties; fail-closed. **Note:** `safety.py` is a deprecated backward-compatibility shim that re-exports from `cbf.py` — new code must import from `cbf.py` directly. |
 | **Composition** | LangGraph harness (`langgraph_harness/`), FTRA gate (`ftra/`) | Typed node factories; StateGraph integration; pre-execution structural checks |
 
 The symbolic layer provides the **safety floor** (CBF invariance theorem: `h(x) ≥ 0` must hold at all times). The neural layer provides **learned pattern recognition** (CBRN keywords, PII entities, confabulation signals) that the symbolic layer cannot express as closed-form invariants. The composition layer ensures both participate in the same typed state machine with deterministic transitions.
@@ -181,16 +181,19 @@ The symbolic layer provides the **safety floor** (CBF invariance theorem: `h(x) 
 
 ## Compliance Mapping
 
-All regulatory citations are decoupled from Python execution code via the `GovernanceControl` registry ([`src/gateway/governance/constants.py`](../../src/gateway/governance/constants.py) → `config/control_mappings.json`). Violation messages carry structured `[CTRL_*]` prefixes; legacy citation strings are stored only in the JSON registry.
+All regulatory citations are decoupled from Python execution code via the `GovernanceControl` registry ([`src/gateway/governance/constants.py`](../../src/gateway/governance/constants.py)). The `ControlRegistry` singleton loads the JSON baseline profile for the active region; `active_hash` returns the SHA-256 of the loaded profile, used for drift detection via `validate_action(policy_version_id=...)`. Violation messages carry structured `[CTRL_*]` prefixes.
 
 ### Universal Controls (All Deployment Regions — ISO 42001 Baseline)
 
 | Control ID | Framework | Component | Requirement |
 |---|---|---|---|
-| `CTRL_AGT_001` | **ISO 42001 §A.5.2** | `symbolic_governor.py` Step 1 — OPA `system_authz.rego` | Agentic AI bounding; minimum confidence threshold enforced **exclusively by OPA** (0.95 normal; 0.97 SLM-degraded). Python-side check removed. *(All Regions)* |
+| `CTRL_AGT_001` | **ISO 42001 §A.5.2** | `symbolic_governor.py` Tier 1 + `trade_governance.rego` (package `trade.governance`) | Agentic AI bounding; minimum confidence threshold enforced **exclusively by OPA** (0.95 normal; 0.97 SLM-degraded). `min_trade_confidence` in `governance_thresholds.json` is deprecated. *(All Regions)* |
 | `CTRL_WAL_002` | **ISO 42001 §A.8.4** | `generated_saga_nodes.py` WAL SAGA nodes | Non-determinism containment; transactional atomicity + rollback *(All Regions)* |
 | `CTRL_TEL_003` | **ISO 42001 §A.9.4** | `causal_gatekeeper.py` (Phase 2), `telemetry_provider.py` | Live telemetry validation; DoWhy 50-simulation placebo refutation monitoring *(All Regions)* |
 | `CTRL_OPA_005` | **ISO 42001 §A.6.1** | `symbolic_governor.py` OPA policy check | Enterprise policy enforcement gate *(All Regions)* |
+| `CTRL_FRIA_006` | **EU AI Act Art. 29a** | `symbolic_governor.py` Tier 6b — `enforce_fria_boundary()` + OTel stamp | FRIA normative boundary enforcement + attestation — **EU_ECB only** |
+| `CTRL_TQP_007` | **ISO 42001 §A.6.1** | Token quota exhaustion policy in `trade_governance.rego` | Token quota hard deny via OPA *(All Regions)* |
+| `CTRL_FTRA_001` | **FTRA reachability** | `ftra/` structural analysis | Pre-execution FTRA commencement reachability gate *(All Regions)* |
 | KMS Signed Trail | **ISO 42001 §A.7.4** | `kms_signer.py`, `evaluator_node.py` | Non-repudiation; HSM-backed asymmetric signed auditor trail for agentic actions (KMS primary; HMAC fallback dev/CI only) *(All Regions)* |
 | AARM-V1 Context Chain | **CSA AARM v1.0** | `context_accumulator.py` | SHA-256 hash-chained context accumulator; prevents context poisoning *(All Regions)* |
 | AARM-V7 DEFER Queue | **CSA AARM v1.0** | `defer_queue.py` (Redis db=1 noeviction) | Confidence starvation handling; deferred human review *(All Regions)* |
@@ -206,7 +209,7 @@ All regulatory citations are decoupled from Python execution code via the `Gover
 
 | Control ID | Framework | Component | Requirement |
 |---|---|---|---|
-| `CTRL_FRIA_006` | **EU AI Act Art. 29a** | `symbolic_governor.py` Step 6 — `enforce_fria_boundary()` + OTel stamp | FRIA normative boundary enforcement + attestation stamped on OTel span attributes — **EU_ECB only** |
+| `CTRL_FRIA_006` | **EU AI Act Art. 29a** | `symbolic_governor.py` Tier 6b — `enforce_fria_boundary()` + OTel stamp | FRIA normative boundary enforcement + attestation stamped on OTel span attributes — **EU_ECB only** |
 | `CTRL_WAL_002` addendum | **DORA Art. 12** | `generated_saga_nodes.py` WAL SAGA nodes | DORA operational resilience logging obligation — **EU_ECB only** (addendum to ISO 42001 §A.8.4 base control) |
 
 ---
@@ -231,7 +234,11 @@ The `SymbolicGovernor._run_checks()` method executes the following tiers in stri
 │      ▼                                                              │
 │  Tier 2/4 ─► CBF + OPA concurrent evaluation                        │
 │      │      asyncio.gather(cbf_check, opa_check)                    │
+│      │      CBF: atomic_verify_and_commit() — single Lua hop        │
 │      │      latency = max(CBF_ms, OPA_ms)                           │
+│      ▼                                                              │
+│  Tier 2 post ► POAM-TIER2-001 structural corroboration              │
+│      │      (STPA violation count + OPA margin heuristic)           │
 │      ▼                                                              │
 │  Tier 3 ──► Fiscal Limit Pre-Reservation                            │
 │      │      FiscalLimitGuard.reserve() — Redis WATCH/MULTI/EXEC     │
@@ -241,6 +248,7 @@ The `SymbolicGovernor._run_checks()` method executes the following tiers in stri
 │      ▼                                                              │
 │  Tier 6 ──► Causal gatekeeper                                       │
 │      │      (DoWhy CausalModel + PlaceboTreatmentRefuter)           │
+│      │      fails closed in production with no live telemetry       │
 │      ▼                                                              │
 │  Tier 6b ─► FRIA normative boundary + attestation                   │
 │             score ≥ 0.95 → ALLOW (async attestation)               │
@@ -261,12 +269,14 @@ Tiers 2 and 4 are the only tiers that execute two sub-checks in parallel. The im
 
 ```python
 cbf_result, opa_result = await asyncio.gather(
-    cbf_check(),   # src/gateway/governance/cbf.py
-    opa_check(),   # OPA system_authz.rego via OPAClient
+    cbf_check(),   # src/gateway/governance/cbf.py — atomic_verify_and_commit()
+    opa_check(),   # trade_governance.rego via OPAClient
 )
 ```
 
 Both results must be `ALLOW` for the tier to pass. The combined latency is `max(CBF_ms, OPA_ms)` rather than their sum.
+
+The preferred CBF path is `ControlBarrierFunction.atomic_verify_and_commit()` — a single Lua script (`LUA_ATOMIC_CBF`) that collapses the read-check-write sequence into one atomic Redis hop, eliminating the TOCTOU window that existed with the deprecated `update_state()` method. `update_state()` still exists but emits a `DeprecationWarning` on every call.
 
 ### FRIA Zone Decision Boundaries (Tier 6b)
 
@@ -278,7 +288,7 @@ The Fundamental Rights Impact Assessment at Tier 6b uses two threshold constants
 | `FRIA_ZONE_DEFER` | `0.70` | DEFER | 0.70 ≤ score < 0.95 → synchronous blocking gate; request pushed to DEFER queue (Redis db=1, 4 h TTL) |
 | *(implicit)* | `< 0.70` | BLOCK | Score < 0.70 → hard deny; violation logged with `[CTRL_FRIA_006]` prefix |
 
-The FRIA enforcement path (`enforce_fria_boundary()`) runs only when `CAGE_NORMATIVE_PROVIDER != "static"`. The OTel attestation stamp is always applied for `EU_ECB` deployments regardless of the normative provider setting.
+Both constants are env-overridable at startup. The FRIA enforcement path (`enforce_fria_boundary()`) runs only when `CAGE_NORMATIVE_PROVIDER != "static"`. The OTel attestation stamp is always applied for `EU_ECB` deployments regardless of the normative provider setting.
 
 ---
 
@@ -300,7 +310,7 @@ h(S(t+1)) ≥ (1−γ) · h(S(t))
 
 **Proof sketch:** By induction. Base case: `h(S(0)) ≥ 0` by assumption. Inductive step: if `h(S(t)) ≥ 0` then `h(S(t+1)) ≥ (1−γ)·h(S(t)) ≥ 0` since γ ∈ (0,1]. Therefore the cash balance never falls below `min_cash_balance` as long as every proposed state transition satisfies the CBF condition.
 
-Parameters: γ = 0.5 (default), `min_cash_balance` = $1,000 (US_FED/APAC_MAS), 4% drawdown floor for EU_ECB.
+Parameters (from `config/governance_thresholds.json`): γ = 0.5, `min_cash_balance` = $1,000.
 
 > **Source:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)
 
@@ -313,7 +323,7 @@ Let `LLM_output` be any token sequence produced by the language model and `exec(
     only if SymbolicGovernor._run_checks(LLM_output) = ALLOW
 ```
 
-Equivalently, there is no code path from LLM inference to tool execution that bypasses `_run_checks()`. This is enforced structurally by `validate_action()` — the single choke point for tool execution — combined with the HMAC-SHA256 routing seal (`generate_seal()` / `verify_seal()` in `routing_seal.py`). A seal is issued only after all tiers of `_run_checks()` complete successfully, and the downstream actuator raises `SymbolicGovernorViolation` (refusing to execute) if `verify_seal()` fails.
+Equivalently, there is no code path from LLM inference to tool execution that bypasses `_run_checks()`. This is enforced structurally by `validate_action()` — the single choke point for tool execution — combined with the HMAC-SHA256 routing seal (`generate_seal()` / `verify_seal()` in `routing_seal.py`). A seal is issued only after all tiers of `_run_checks()` complete successfully, and the downstream actuator raises `GovernanceError` (refusing to execute) if `verify_seal()` fails.
 
 > **Source:** [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
 
@@ -355,7 +365,7 @@ Additionally, the **Placebo Treatment Refuter** (50 simulations) validates world
 p < 0.05  OR  |placebo_effect| > 0.2  →  BLOCK (world-model untrustworthy)
 ```
 
-**Fail-safe:** any exception in the causal pipeline returns `False` (blocks the trade). Causal validity must be positively proven; it cannot be assumed.
+**Fail-safe:** any exception in the causal pipeline returns `False` (blocks the trade). In production, missing live telemetry also returns `False` — causal validity must be positively proven; it cannot be assumed.
 
 > **Source:** [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)
 
@@ -375,7 +385,7 @@ export CAGE_DEPLOYMENT_REGION=EU_ECB    # EU AI Act / GDPR / DORA obligations
 export CAGE_DEPLOYMENT_REGION=APAC_MAS  # MAS FEAT / MAS Notice 655 / MAS TRM obligations
 ```
 
-The `ControlRegistry` singleton reads this variable at startup and loads the corresponding baseline profile from `config/compliance/{REGION}_BASELINE.json`. All `CTRL_*` control IDs resolve to region-specific framework citations via this registry. No Python source changes are required to add or modify a regional mapping — it is a JSON-only operation.
+The `ControlRegistry` singleton reads this variable at startup and loads the corresponding baseline profile. `active_hash` (SHA-256 of the loaded profile JSON) is compared against `policy_version_id` in `validate_action()` calls for drift detection. `reconfigure(region)` uses a TOCTOU-safe atomic swap. No Python source changes are required to add or modify a regional mapping — it is a JSON-only operation.
 
 ### US_FED Regional Control Map (`CAGE_DEPLOYMENT_REGION=US_FED`)
 

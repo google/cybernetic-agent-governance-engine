@@ -1,6 +1,6 @@
 # CAGE Compliance & Governance Posture Framework
-**CAGE Version:** v2.1.0
-**Last Evaluated:** 2026-06-15
+**CAGE Version:** v2.1.1
+**Last Evaluated:** 2026-08-05
 
 ---
 
@@ -106,7 +106,7 @@ The discrete-time CBF condition enforced at every governance tick:
 h(S(t+1)) ≥ (1−γ) · h(S(t)),   γ ∈ (0,1)
 ```
 
-This guarantees the cash balance never drops below the minimum threshold in a single step. The decay factor `γ` bounds the maximum permissible drawdown per evaluation cycle. CBF currently reads from Redis state; external reconciliation via `AnchorageGrpcLedgerProvider` is FUTURE STATE (POAM-023, target 2026-09-08).
+This guarantees the cash balance never drops below the minimum threshold in a single step. The decay factor `γ` bounds the maximum permissible drawdown per evaluation cycle. External CBF state reconciliation is implemented via [`src/compliance_bridge/reconciliation_worker.py`](src/compliance_bridge/reconciliation_worker.py) — **POAM-2026-031 closed 2026-07-27**. Reconciled balances are KMS-signed before Redis write; the CBF fails closed on TTL expiry.
 
 ### 2.2 Confabulation Risk Formula
 
@@ -238,9 +238,9 @@ Full STPA hazard analysis (UCAs 1–9, Saga pattern, FiscalLimitGuard): [`docs/s
     *   **⚠️ Gaps to Authorization:** The CAGE software runtime does not inherently possess an official **Authority to Operate (ATO)**. To close this loop, the parent organization must deploy independent assessors to complete RMF Step 5 (Assess) and Step 6 (Authorize), as well as remediate the remaining 11 open infrastructure POA&M infrastructure tickets.
 *   **Companion Documentation:** For infrastructure configurations, Linkerd policy files, and security posture tracking, see [docs/SECURITY_STATUS.md](docs/security/SECURITY_STATUS.md) and [docs/POAM.md](docs/compliance/cross-region/POAM.md).
 
-### F. Lula Automated Compliance Validation (20 Manifests — 4 Active, 16 Stub)
+### F. Lula Automated Compliance Validation (29 Manifests)
 *   **Status:** Partially Automated.
-*   **Mechanism:** Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule (`deployment/k8s/lula-cron.yaml`). There are **20 validation manifests** in `compliance/lula/` — 4 are production-ready and Active; 16 are Stubs that require cluster-specific namespace/resource name configuration before activation. See [`compliance/lula/README.md`](compliance/lula/README.md) for the full status table and activation instructions.
+*   **Mechanism:** Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule (`deployment/k8s/lula-cron.yaml`). There are **29 validation manifests** in `compliance/lula/` covering ISO 42001 (universal), NIST SP 800-53 (US_FED), NIST AI 600-1 (US_FED), EU AI Act/GDPR/DORA (EU_ECB), and MAS FEAT/Notice 655/TRM (APAC_MAS). See [`compliance/lula/README.md`](compliance/lula/README.md) for the full status table and activation instructions.
 
     **✅ Active (4):**
     *   `lula-validation-a52.yaml` (ISO 42001 A.5.2, **ALL regions**) — Social impact assessment; NeMo Guardrails toxicity blocking ≥ 99%

@@ -353,16 +353,18 @@ _The following documents constitute the NIST RMF authorization package and relat
 | Governance Crosswalk | [`docs/GOVERNANCE_CROSSWALK.md`](../../docs/compliance/cross-region/GOVERNANCE_CROSSWALK.md) | Control crosswalk to governance implementation |
 | ISO 42001 Compliance | [`docs/ISO_42001_COMPLIANCE.md`](../../docs/compliance/universal/ISO_42001_COMPLIANCE.md) | ISO 42001 AI management system compliance      |
 
-### OSCAL Artifacts (To Be Created)
+### OSCAL Artifacts
 
-| Artifact                     | Location                                          | Description                                              |
-| ---------------------------- | ------------------------------------------------- | -------------------------------------------------------- |
-| Component Definition         | `compliance/oscal/component-definition.yaml`      | OSCAL machine-readable control implementation statements |
-| System Security Plan (OSCAL) | `compliance/oscal/system-security-plan.yaml`      | OSCAL SSP representation                                 |
-| Assessment Plan              | `compliance/oscal/assessment-plan.yaml`           | OSCAL assessment plan                                    |
-| Assessment Results           | `compliance/oscal/assessment-results.yaml`        | OSCAL assessment results                                 |
-| POA&M (OSCAL)                | `compliance/oscal/plan-of-action-milestones.yaml` | OSCAL POA&M representation                               |
-| Lula Specifications          | `compliance/oscal/lula-*.yaml`                    | Automated control validation specifications              |
+| Artifact                     | Location                                                               | Description                                                | Status    |
+| ---------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------- | --------- |
+| Component Definition         | `compliance/oscal/component-definition.yaml`                          | OSCAL machine-readable control implementation statements (ISO 42001 AIMS) | ✅ Exists |
+| System Security Plan — US_FED | `compliance/oscal/system-security-plan.yaml`                         | OSCAL SSP — NIST SP 800-53 Rev 5 HIGH + NIST AI 600-1     | ✅ Exists |
+| System Security Plan — EU_ECB | `compliance/oscal/system-security-plan-eu-ecb.yaml`                  | OSCAL SSP — EU AI Act / GDPR Art. 22 / DORA               | ✅ Exists |
+| System Security Plan — APAC_MAS | `compliance/oscal/system-security-plan-apac-mas.yaml`              | OSCAL SSP — MAS FEAT / MAS Notice 655 / MAS TRM §6.3      | ✅ Exists |
+| Assessment Results           | `compliance/lula/assessment-results.yaml`                             | OSCAL assessment results (Lula-generated)                  | ✅ Exists |
+| Assessment Plan              | `compliance/oscal/assessment-plan.yaml`                               | OSCAL assessment plan                                      | ⬜ Pending |
+| POA&M (OSCAL)                | `compliance/oscal/plan-of-action-milestones.yaml`                     | OSCAL POA&M representation                                 | ⬜ Pending |
+| Lula Specifications          | `compliance/lula/lula-validation-*.yaml`                              | Automated control validation specifications (29 manifests) | ✅ Exists |
 
 ---
 

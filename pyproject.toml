@@ -25,7 +25,13 @@ dependencies = [
     "uvicorn>=0.29.0",
     "sse-starlette>=1.0.0",
     "openai>=1.0.0",
-    "cryptography>=48.0.1",
+    # cryptography>=50.0.0: fixes PYSEC-2026-3552 / CVE-2026-69247 / GHSA-g6cj-pr64-35w5
+    "cryptography>=50.0.0",
+    # aiohttp>=3.14.3: fixes PYSEC-2026-3545/3546/3547 (CVE-2026-69244,
+    # CVE-2026-69243, CVE-2026-59881). Pinned as a direct dependency to force
+    # the resolver to select a patched version even though aiohttp is only
+    # pulled in transitively (e.g. via google-adk / langfuse).
+    "aiohttp>=3.14.3",
     "pytest-cov>=7.1.0",
 ]
 
@@ -64,6 +70,12 @@ gateway = [
     "protobuf>=5.26.1,<7.0.0",
     "mcp>=0.1.0",
     "nemoguardrails>=0.20.0,<1.0.0",
+    # pyahocorasick: O(n) Aho-Corasick automaton for the Tier-1 keyword scanner
+    # (src/gateway/governance/text_filter.py). Without this, text_filter falls back
+    # to an O(n*m) any() loop and logs a WARN on every import. The package is an
+    # optional performance dependency — the fallback is functionally correct but
+    # slower under high-throughput inference traffic.
+    "pyahocorasick>=2.0.0",
     # NOTE: 'outlines' was removed — CVE-2025-69872 (diskcache pickle RCE).
     # The guided_json FSM decoder runs server-side inside vLLM, not client-side.
     # CAGE never imports the outlines package; vLLM bundles its own copy.

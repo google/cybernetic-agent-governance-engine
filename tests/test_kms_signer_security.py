@@ -207,12 +207,23 @@ def test_kms_sign_emits_critical_log_and_raises_on_failure():
         side_effect=RuntimeError("KMS unavailable")
     )
     mock_kms_service.Digest = MagicMock()
+    # `from google.cloud.kms_v1.types import service` resolves via attribute lookup
+    # on sys.modules["google.cloud.kms_v1.types"], NOT via sys.modules key lookup.
+    # The types mock must expose .service = mock_kms_service so the import binds
+    # to our mock rather than to an auto-generated MagicMock attribute.
+    mock_kms_types = MagicMock()
+    mock_kms_types.service = mock_kms_service
+    kms_modules = {
+        "google": MagicMock(),
+        "google.cloud": MagicMock(),
+        "google.cloud.kms_v1": MagicMock(),
+        "google.cloud.kms_v1.types": mock_kms_types,
+        "google.cloud.kms_v1.types.service": mock_kms_service,
+    }
 
     with (
         patch("src.gateway.governance.kms_signer.logger") as mock_logger,
-        patch.dict(
-            "sys.modules", {"google.cloud.kms_v1.types.service": mock_kms_service}
-        ),
+        patch.dict("sys.modules", kms_modules),
     ):
         with pytest.raises(RuntimeError, match="KMS asymmetricSign failed"):
             signer._kms_sign(plan_bytes)
@@ -240,12 +251,19 @@ def test_kms_sign_critical_log_contains_severity_critical():
         side_effect=RuntimeError("KMS unavailable")
     )
     mock_kms_service.Digest = MagicMock()
+    mock_kms_types = MagicMock()
+    mock_kms_types.service = mock_kms_service
+    kms_modules = {
+        "google": MagicMock(),
+        "google.cloud": MagicMock(),
+        "google.cloud.kms_v1": MagicMock(),
+        "google.cloud.kms_v1.types": mock_kms_types,
+        "google.cloud.kms_v1.types.service": mock_kms_service,
+    }
 
     with (
         patch("src.gateway.governance.kms_signer.logger") as mock_logger,
-        patch.dict(
-            "sys.modules", {"google.cloud.kms_v1.types.service": mock_kms_service}
-        ),
+        patch.dict("sys.modules", kms_modules),
     ):
         with pytest.raises(RuntimeError):
             signer._kms_sign(plan_bytes)
@@ -268,12 +286,19 @@ def test_kms_sign_critical_log_contains_audit_note():
         side_effect=RuntimeError("KMS unavailable")
     )
     mock_kms_service.Digest = MagicMock()
+    mock_kms_types = MagicMock()
+    mock_kms_types.service = mock_kms_service
+    kms_modules = {
+        "google": MagicMock(),
+        "google.cloud": MagicMock(),
+        "google.cloud.kms_v1": MagicMock(),
+        "google.cloud.kms_v1.types": mock_kms_types,
+        "google.cloud.kms_v1.types.service": mock_kms_service,
+    }
 
     with (
         patch("src.gateway.governance.kms_signer.logger") as mock_logger,
-        patch.dict(
-            "sys.modules", {"google.cloud.kms_v1.types.service": mock_kms_service}
-        ),
+        patch.dict("sys.modules", kms_modules),
     ):
         with pytest.raises(RuntimeError):
             signer._kms_sign(plan_bytes)
@@ -477,20 +502,30 @@ def test_kms_sign_emits_critical_log_and_raises_on_runtime_failure():
     key_name = "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"
     signer = _make_signer(kms_client=mock_kms_client, key_version_name=key_name)
 
-    # Make the KMS service types import succeed but the actual sign call fail
+    # Make the KMS service types import succeed but the actual sign call fail.
+    # `from google.cloud.kms_v1.types import service` resolves .service via attribute
+    # access on sys.modules["google.cloud.kms_v1.types"], so mock_kms_types.service
+    # must equal mock_kms_service for the side_effect to be applied.
     mock_kms_service = MagicMock()
     mock_kms_service.AsymmetricSignRequest = MagicMock(
         side_effect=RuntimeError("KMS unavailable")
     )
     mock_kms_service.Digest = MagicMock()
+    mock_kms_types = MagicMock()
+    mock_kms_types.service = mock_kms_service
+    kms_modules = {
+        "google": MagicMock(),
+        "google.cloud": MagicMock(),
+        "google.cloud.kms_v1": MagicMock(),
+        "google.cloud.kms_v1.types": mock_kms_types,
+        "google.cloud.kms_v1.types.service": mock_kms_service,
+    }
 
     plan_bytes = b'{"action":"test"}'
 
     with (
         patch("src.gateway.governance.kms_signer.logger") as mock_logger,
-        patch.dict(
-            "sys.modules", {"google.cloud.kms_v1.types.service": mock_kms_service}
-        ),
+        patch.dict("sys.modules", kms_modules),
     ):
         with pytest.raises(RuntimeError, match="KMS asymmetricSign failed"):
             signer._kms_sign(plan_bytes)

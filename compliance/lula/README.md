@@ -53,6 +53,14 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 | [`lula-validation-gdpr-art22.yaml`](lula-validation-gdpr-art22.yaml)     | Art. 22         | GDPR                 | EU_ECB       | 🔶 Stub   | Automated Decision-Making — human oversight endpoint check         |
 | [`lula-validation-dora-art10.yaml`](lula-validation-dora-art10.yaml)     | Art. 10         | DORA                 | EU_ECB       | 🔶 Stub   | ICT Resilience Testing — audit logging endpoint check              |
 
+### APAC_MAS Controls (MAS FEAT / MAS Notice 655 / MAS TRM — APAC_MAS only)
+
+| Validation File                                                              | Control          | Standard             | Region Scope | Status  | Description                                                                |
+| ---------------------------------------------------------------------------- | ---------------- | -------------------- | ------------ | ------- | -------------------------------------------------------------------------- |
+| [`lula-validation-mas-feat.yaml`](lula-validation-mas-feat.yaml)             | MAS FEAT         | MAS FEAT Principles  | APAC_MAS     | 🔶 Stub | Fairness, Ethics, Accountability, Transparency — `demographic_parity_gap ≤ 0.08`, 180-day transparency report |
+| [`lula-validation-mas-notice655.yaml`](lula-validation-mas-notice655.yaml)   | MAS Notice 655   | MAS Notice 655       | APAC_MAS     | 🔶 Stub | Technology Risk Management — `data_residency_region = "asia-southeast1"`   |
+| [`lula-validation-mas-trm-s6.yaml`](lula-validation-mas-trm-s6.yaml)         | MAS TRM §6.3     | MAS TRM              | APAC_MAS     | 🔶 Stub | AI/ML Controls — `confidence_threshold ≥ 0.96`                             |
+
 **Legend:**
 
 - ✅ **Active** — Validation is production-ready and enabled in the Lula CronJob
@@ -63,11 +71,13 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 
 The active/stub split is **intentional and aligned with the posture architecture**:
 
-- **3 Active (ALL scope):** ISO 42001 universal controls (A.5.2, A.5.3, A.9.2) — production-ready across all deployment regions
+- **5 Active (ALL scope):** ISO 42001 universal controls (A.5.2, A.5.3, A.9.2) + TokenQuotaProxy fail-closed (A.8.4 / CTRL_TQP_007) + Token Quota OPA Injection (A.4 / ISO-001) — production-ready across all deployment regions
 - **1 Active (US_FED scope):** SC-4 fiscal limits — production-ready for US Federal deployments
 - **1 Stub (ALL scope):** CSA AARM vectors — universal but requires cluster configuration. **Note:** This validation is listed as `Status: 🔶 Stub` and counted as 1 stub (ALL scope). It is NOT counted as an active validation for release gate purposes until real assertions replace the stub. See CA-05 remediation note below.
 - **10 Stub (US_FED scope):** NIST SP 800-53 controls — US Federal only; require cluster-specific namespace/resource configuration before activation
 - **5 Stub (US_FED scope):** NIST AI 600-1 controls — phases 0–3 implemented in v2.1.0 (runtime enforcement active); Lula manifests are stub-ready and require Langfuse metric availability and cluster-specific configuration before activation
+- **3 Stub (EU_ECB scope):** EU AI Act / GDPR / DORA controls — EU regional only; require cluster-specific resource configuration and live compliance-bridge endpoints
+- **3 Stub (APAC_MAS scope):** MAS FEAT / MAS Notice 655 / MAS TRM §6.3 controls — APAC regional only; require cluster-specific configuration and `data_residency_region = "asia-southeast1"` assertion
 
 The 10 US_FED NIST SP 800-53 stubs represent an **implementation gap** tracked as open POAM items in [`docs/POAM.md`](../../docs/POAM.md) (see POAM-2026-010, POAM-2026-011, POAM-2026-012, POAM-2026-013): activating all 10 would raise NIST SP 800-53 Lula coverage from 1/11 to 11/11 controls, directly supporting the US_FED release gate. The CSA AARM stub (1 manifest, ALL scope) is a separate gap affecting all regions.
 
@@ -100,7 +110,9 @@ lula validate -f compliance/lula/lula-validation-a53.yaml
 ```bash
 for f in compliance/lula/lula-validation-a52.yaml \
           compliance/lula/lula-validation-a53.yaml \
-          compliance/lula/lula-validation-a92.yaml; do
+          compliance/lula/lula-validation-a92.yaml \
+          compliance/lula/lula-validation-tqp007.yaml \
+          compliance/lula/lula-validation-iso001-token-quota.yaml; do
   echo "=== Validating $f ==="
   lula validate -f "$f"
 done
@@ -113,19 +125,24 @@ done
 for f in compliance/lula/lula-validation-a52.yaml \
           compliance/lula/lula-validation-a53.yaml \
           compliance/lula/lula-validation-a92.yaml \
+          compliance/lula/lula-validation-tqp007.yaml \
+          compliance/lula/lula-validation-iso001-token-quota.yaml \
           compliance/lula/lula-validation-sc4.yaml; do
   echo "=== Validating $f ==="
   lula validate -f "$f"
 done
 ```
 
-### Run EU_ECB validations (when stubs are activated)
+### Run EU_ECB active validations
 
 ```bash
 # Only run when CAGE_DEPLOYMENT_REGION=EU_ECB
 for f in compliance/lula/lula-validation-a52.yaml \
           compliance/lula/lula-validation-a53.yaml \
           compliance/lula/lula-validation-a92.yaml \
+          compliance/lula/lula-validation-tqp007.yaml \
+          compliance/lula/lula-validation-iso001-token-quota.yaml \
+          compliance/lula/lula-validation-eu-fria.yaml \
           compliance/lula/lula-validation-eu-ai-act-art9.yaml \
           compliance/lula/lula-validation-gdpr-art22.yaml \
           compliance/lula/lula-validation-dora-art10.yaml; do
@@ -141,6 +158,8 @@ done
 for f in compliance/lula/lula-validation-a52.yaml \
           compliance/lula/lula-validation-a53.yaml \
           compliance/lula/lula-validation-a92.yaml \
+          compliance/lula/lula-validation-tqp007.yaml \
+          compliance/lula/lula-validation-iso001-token-quota.yaml \
           compliance/lula/lula-validation-mas-feat.yaml \
           compliance/lula/lula-validation-mas-notice655.yaml \
           compliance/lula/lula-validation-mas-trm-s6.yaml; do

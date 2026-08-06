@@ -441,7 +441,7 @@ The **NoDirectBind invariant** is the foundational structural guarantee of the a
 
 This invariant ensures that even if an agent is compromised or produces a malformed output, it cannot actuate a trade without traversing the full 7-tier pipeline.
 
-### 13.2 How Agents Traverse the 7-Tier Pipeline
+### 13.2 How Agents Traverse the 8-Tier Pipeline
 
 When an agent calls a governed tool (e.g., `execute_trade_action`), the following sequence executes:
 
@@ -459,7 +459,7 @@ SymbolicGovernor._run_checks()
            ├─ CBF (Tier 2): h(S(t+1)) ≥ (1−γ)·h(S(t)) verified against Redis balance
            └─ OPA (Tier 4): trade.governance Rego policy evaluated
   Tier 3: Fiscal Limit Pre-Reservation — FiscalLimitGuard.reserve() (Redis WATCH/MULTI/EXEC)
-  Tier 5: Consensus — required if amount ≥ $10,000 USD (30s timeout)
+  Tier 5: Consensus — required if amount ≥ $10,000 USD (_CRITIC_TIMEOUT_S=10.0 per critic)
   Tier 6: Causal gatekeeper — SCM + PlaceboTreatmentRefuter (60s Redis cache)
   Tier 6b: FRIA zone classification — ALLOW / DEFER / DENY
         │
@@ -481,7 +481,7 @@ For trades at or above the **$10,000 USD consensus threshold** (`consensus.thres
 | Risk Manager | `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` | Financial risk assessment |
 | Compliance Officer | `meta-llama/Llama-3.1-8B-Instruct` | Regulatory compliance check |
 
-Both critics are queried **concurrently** via `asyncio.gather()` with a 30-second timeout. The heterogeneous model design (different architectures and training data) neutralizes **AARM-V9 Semantic Blind Spot** — a single model cannot detect its own compliance violations.
+Both critics are queried **concurrently** via `asyncio.gather()` with `_CRITIC_TIMEOUT_S=10.0` per critic. The heterogeneous model design (different architectures and training data) neutralizes **AARM-V9 Semantic Blind Spot** — a single model cannot detect its own compliance violations.
 
 **Decision outcomes:**
 

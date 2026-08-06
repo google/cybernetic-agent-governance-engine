@@ -149,31 +149,59 @@ async def execution_analyst_node(state):
         span.set_attribute("langfuse.trace.metadata.current_node", "execution_analyst")
         span.set_attribute("langfuse.observation.input", injected_msg)
 
-        try:
-            # Chain returns a raw AIMessage (json_object mode, no tool-calling)
-            from src.governed_financial_advisor.agents.execution_analyst.agent import (
-                parse_execution_plan,
-            )
+        # P1 fix: bounded retry loop — up to MAX_PLAN_RETRIES additional
+        # attempts on semantically-incomplete plans (empty rationale, empty
+        # steps list) that pass the guided_json FSM but fail the Pydantic
+        # field_validator guards added in agent.py.  Total attempts = 1 +
+        # MAX_PLAN_RETRIES = 3; each retry re-invokes the LLM with the same
+        # prompt (temperature=0.0 with guided_json gives deterministic output
+        # per run, so retries primarily help when vLLM produces a truncated
+        # response due to token budget exhaustion on a first attempt).
+        _MAX_PLAN_RETRIES = 2
+        from src.governed_financial_advisor.agents.execution_analyst.agent import (
+            parse_execution_plan,
+        )
 
-            ai_msg = await agent_chain.ainvoke(
-                {"messages": [HumanMessage(content=injected_msg)]}
-            )
-            raw_content = ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
-            plan_obj = parse_execution_plan(raw_content)
+        plan_obj = None
+        last_exc: Exception | None = None
+        for _attempt in range(1 + _MAX_PLAN_RETRIES):
+            try:
+                # Chain returns a raw AIMessage (json_object mode, no tool-calling)
+                ai_msg = await agent_chain.ainvoke(
+                    {"messages": [HumanMessage(content=injected_msg)]}
+                )
+                raw_content = (
+                    ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
+                )
+                plan_obj = parse_execution_plan(raw_content)
+                last_exc = None
+                break  # success — exit retry loop
+            except Exception as e:
+                last_exc = e
+                if _attempt < _MAX_PLAN_RETRIES:
+                    logger.warning(
+                        f"⚠️ Execution Plan attempt {_attempt + 1} failed "
+                        f"({type(e).__name__}: {e}); retrying…"
+                    )
+                else:
+                    logger.warning(
+                        f"⚠️ Execution Plan failed after {1 + _MAX_PLAN_RETRIES} "
+                        f"attempts: {e}"
+                    )
 
+        if plan_obj is not None:
             # Serialize for state dictionary
             plan_output = plan_obj.model_dump()
             span.set_attribute("langfuse.observation.output", json.dumps(plan_output))
             logger.info(
                 f"✅ Generated Execution Plan: {plan_output.get('plan_id', 'unknown')}"
             )
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to generate Execution Plan: {e}")
-            span.record_exception(e)
+        else:
+            span.record_exception(last_exc)
             plan_output = {
                 "steps": [],
-                "reasoning": f"Error generating plan: {e}",
-                "error": str(e),
+                "reasoning": f"Error generating plan: {last_exc}",
+                "error": str(last_exc),
             }
 
     # 5. Format Output Message
@@ -199,7 +227,21 @@ async def execution_analyst_node(state):
             f"**Would you like me to execute this trade or implement this plan?**"
         )
     else:
-        final_response = "I encountered an error trying to generate an execution plan for this trade."
+        # P2 fix: include a distinct PLAN_GENERATION_ERROR sentinel so the
+        # measurement classifier (and future monitoring) can distinguish an
+        # exhausted-retry plan-generation failure from a genuine governance
+        # BLOCKED/REJECTED verdict.  Without this marker both failures produce
+        # a plain-text error response that the classifier either silently
+        # counts as PASSED (no governance sentinel → no FP) or, when FTRA
+        # fires its CTRL_FTRA_001 gate on the empty plan, gets counted as a
+        # governance FP.  The sentinel lets _classify_response() in
+        # measure_paper_metrics.py treat this case as CRASHED rather than
+        # DEFLECTED, keeping FPR statistics clean.
+        final_response = (
+            "[PLAN_GENERATION_ERROR] I encountered an error generating an "
+            "execution plan for this trade after multiple attempts. "
+            "Please rephrase your request or provide additional context."
+        )
 
     # 6. Update State
     # BUG-FIX: loop_count was reset to 0 on non-REJECTED_REVISE paths, so

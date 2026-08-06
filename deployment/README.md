@@ -1,122 +1,344 @@
-# Governed Financial Advisor Deployment
+# Cybernetic Governance Engine — Deployment
 
-This directory contains the configuration and scripts to deploy the Financial Advisor agent to **Kubernetes** (GKE on Google Cloud is the reference deployment; EKS, AKS, and bare-metal Kubernetes are also supported).
+This directory contains Kubernetes manifests, Docker configurations, deployment scripts, and operational runbooks for the Cybernetic Governance Engine (CAGE) stack.
 
-## Architecture
+Active IaC lives under [`infra/`](../infra/). The canonical deployment entry point is [`deploy_all.sh`](../deploy_all.sh) at the repository root.
 
-The system is deployed as a distributed microservices architecture on GKE:
+---
 
-1.  **Gateway Service (`gateway-service`)**:
-    - FastAPI HTTP service (port 8080), with gRPC available on port 50051 for streaming.
-    - Acts as the central router and "Physical Layer" for the agent.
-    - Handles Tool Execution and LLM Routing.
-    - Connects to OPA and NeMo Guardrails.
+## Architecture Overview
 
-2.  **Financial Advisor Agent (`governed-financial-advisor`)**:
-    - FastAPI backend. K8s service port 80, local port-forward 8081.
-    - Hosts the LangGraph control plane and ADK agents.
-    - Connects to the Gateway via internal DNS.
+CAGE is deployed as a set of Kubernetes workloads across two namespaces:
 
-3.  **Inference Services**:
-    - `vllm-inference`: Hosted vLLM instance for the "Fast Path" (Control Plane/Format Enforcer).
-    - `vllm-reasoning`: Hosted vLLM instance for the "Reasoning Plane".
+| Namespace | PSA Level | Description |
+|-----------|-----------|-------------|
+| `governance-stack` | `restricted` | All application services (gateway, advisor, OPA, Langfuse, Redis, compliance bridge) |
+| `vllm-inference` | `baseline` | vLLM GPU workloads (requires elevated privileges for CUDA) |
+| `agentsight` | `privileged` | AgentSight eBPF DaemonSet (requires host PID/network) |
 
-4.  **Governance Sidecars/Services**:
-    - `opa-service`: Open Policy Agent server.
-    - `langfuse-server`: Langfuse v3 observability stack (Web, Worker, ClickHouse, MinIO, Redis).
+### Services in `governance-stack`
 
-> **Note:** NeMo Guardrails is integrated directly into the gateway process (in-process), not deployed as a standalone `nemo-service` sidecar.
+| Deployment / Kind | K8s Name | Port | Image |
+|-------------------|----------|------|-------|
+| Gateway (HTTP + gRPC) | `gateway` | 8080 (HTTP), 50051 (gRPC) | `gcr.io/<PROJECT>/gateway:latest` |
+| Governed Financial Advisor | `governed-financial-advisor` | 80 → 8080 | `gcr.io/<PROJECT>/governed-financial-advisor:latest` |
+| OPA policy engine | `opa-service` | 8181 (policy), 8282 (diag) | `openpolicyagent/opa:latest-static` |
+| NeMo Guardrails | `nemo-service` | 8000 | `gcr.io/<PROJECT>/nemo-guardrails:latest` |
+| Compliance Bridge | `compliance-bridge` | 80 → 3001 | `gcr.io/<PROJECT>/compliance-bridge:latest` |
+| Langfuse Web | `langfuse-web` | 80 → 3000 | `langfuse/langfuse:3` |
+| Langfuse Worker | `langfuse-worker` | — | `langfuse/langfuse-worker:3` |
+| Redis (Bitnami Sentinel) | `redis-node` (StatefulSet, 3 pods) | 6379 | Bitnami Helm chart |
+| AgentSight daemon | `agentsight-daemon` (DaemonSet) | — | `ghcr.io/agent-sight/agentsight-daemon:latest` |
+
+### Services in `vllm-inference`
+
+| Deployment | K8s Name | Port | Notes |
+|------------|----------|------|-------|
+| Fast inference (Qwen2.5-7B) | `vllm-service` | 8000 | Proxied into `governance-stack` via `vllm-services.yaml` ExternalName |
+| Reasoning inference | `vllm-reasoning` | 8000 | Proxied into `governance-stack` via `vllm-services.yaml` ExternalName |
+
+> **Note:** NeMo Guardrails also runs as an in-process module embedded inside the gateway. The standalone `nemo-service` Deployment handles requests that require an isolated NeMo process.
+
+---
+
+## Deployment Entry Point
+
+### `deploy_all.sh` (recommended)
+
+```bash
+# Cloud-agnostic target (k3s, EKS, AKS, any Kubernetes ≥ 1.24)
+./deploy_all.sh --target agnostic --env dev
+
+# GCP GKE — dev
+./deploy_all.sh --target gcp-gke --env dev --auto-approve
+
+# GCP GKE — US_FED production (ISO 42001 + NIST SP 800-53)
+CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
+  --var-file=infra/targets/gcp-gke/prod.tfvars
+
+# GCP GKE — EU_ECB production (ISO 42001 + EU AI Act / GDPR / DORA)
+CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env prod \
+  --var-file=infra/targets/gcp-gke/eu-prod.tfvars
+
+# GCP GKE — APAC_MAS production (ISO 42001 + MAS FEAT / Notice 655 / TRM)
+CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod \
+  --var-file=infra/targets/gcp-gke/apac-prod.tfvars
+```
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--target agnostic\|gcp-gke` | Infrastructure target (required) |
+| `--env dev\|prod` | Deployment tier (default: `dev`) |
+| `--auto-approve` | Skip Terraform confirmation prompt |
+| `--var-file=PATH` | Additional `.tfvars` file |
+| `--var KEY=VALUE` | Override any Terraform variable |
+| `--skip-build` | Skip container image builds |
+| `--kubeconfig=PATH` | Kubeconfig path (agnostic target only) |
+
+The script:
+1. Reads `.env` and maps variables to `TF_VAR_*` (secrets go directly to `TF_VAR_*`, never as bare env vars — H-16).
+2. Propagates `CAGE_DEPLOYMENT_REGION` → `TF_VAR_cage_deployment_region`.
+3. Generates `infra/targets/gcp-gke/terraform.auto.tfvars` from `.env` via `scripts/gen_tfvars.py`.
+4. Runs `terraform init`, `terraform plan`, and (on confirmation) `terraform apply`.
+5. Pre-builds all container images via Cloud Build (`scripts/build_images.sh`) before apply.
+
+### Background deployments (bypasses tool timeouts)
+
+```bash
+# Launch deploy_all.sh detached — survives terminal/tool closure
+make deploy-bg TARGET=gcp-gke ENV=dev EXTRA_ARGS="--auto-approve"
+
+# Build images only (background)
+make build-bg
+
+# Monitor progress
+make deploy-status    # PID + last 20 log lines
+make deploy-logs      # live tail
+make deploy-kill      # cancel
+```
+
+---
+
+## Container Images
+
+All GKE images are built via Cloud Build — **never** with local `docker build` for GKE-targeted images (architecture mismatch: ARM64 laptop vs. x86 GKE nodes).
+
+### Cloud Build configs
+
+| Image | Cloud Build config | Dockerfile |
+|-------|--------------------|------------|
+| `governed-financial-advisor` | inline (generated by `build_images.sh`) | `Dockerfile` |
+| `gateway` | inline | `src/gateway/Dockerfile` |
+| `compliance-bridge` | `deployment/docker/cloudbuild.compliance.yaml` | `src/compliance_bridge/Dockerfile` |
+| `nemo-guardrails` | `deployment/docker/cloudbuild.nemo.yaml` | `deployment/docker/Dockerfile.nemo` |
+| `vllm-streamer` | `deployment/docker/cloudbuild.vllm.yaml` | `deployment/docker/Dockerfile.vllm` |
+| `agentsight-ui` | inline | `src/agentsight-ui/Dockerfile` |
+
+Tags: both `:latest` and `:<short-git-sha>` (for auditability).
+
+### Approved commands
+
+```bash
+# APPROVED — build all images for GKE
+./scripts/build_images.sh   # requires PROJECT_ID env var
+
+# APPROVED — build specific image
+gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml
+
+# NEVER for GKE — architecture mismatch
+# docker build ...
+# docker-compose build && docker push ...
+```
+
+---
+
+## Kubernetes Manifests (`deployment/k8s/`)
+
+### Core application manifests
+
+| File | Kind | Notes |
+|------|------|-------|
+| `gateway.yaml` | Deployment + NodePort Service | Gateway HTTP :8080, gRPC :50051; NodePort 30080 for GCE Ingress |
+| `gateway.yaml.tpl` | Template | Rendered by `deploy_all.sh` — substitutes `${CAGE_ENV}`, `${CAGE_DEPLOYMENT_REGION}` |
+| `gateway-hpa.yaml` | HPA | Scale 1–5 replicas at 50% CPU |
+| `gateway-deployment.yaml.tpl` | Template | Alternative Deployment template |
+| `financial-advisor.yaml` | Deployment + ClusterIP Service | Port 80 → 8080; uses `financial-advisor-sa` ServiceAccount |
+| `backend-deployment.yaml` | Deployment | Static (non-templated) version |
+| `backend-deployment.yaml.tpl` | Template | Rendered for region-specific deployments |
+| `compliance-bridge.yaml` | Deployment + ClusterIP Service | Port 80 → 3001; 150s startup delay (dowhy/matplotlib import) |
+| `nemo.yaml` | Deployment + ClusterIP Service | Port 8000 |
+| `nemo-rails-configmap.yaml` | ConfigMap | NeMo Colang/actions; regenerate with `make update-nemo-configmap` |
+| `opa.yaml` | Deployment + ConfigMap × 2 + ClusterIP Service | Ports 8181 (policy), 8282 (diagnostics); policy package `trade.governance` |
+
+### vLLM manifests
+
+| File | Description |
+|------|-------------|
+| `vllm-namespace.yaml` | `vllm-inference` namespace (PSA: baseline) |
+| `vllm-services.yaml` | ExternalName Services in `governance-stack` proxying to `vllm-inference` |
+| `vllm-cross-namespace-services.yaml` | Real ClusterIP Services in `vllm-inference` |
+| `vllm-deployment.yaml.tpl` | vLLM fast-path Deployment template |
+| `vllm-inference-spot.yaml` / `.tpl` | Spot-node vLLM Deployment |
+| `vllm-reasoning.yaml.tpl` | Reasoning vLLM Deployment template |
+| `vllm-reasoning-pdb.yaml` | PodDisruptionBudget for reasoning vLLM |
+| `vllm-pdb.yaml` | PodDisruptionBudget for fast-path vLLM |
+| `vllm-streaming.yaml` | Streaming configuration |
+| `vllm-governance.yaml` | vLLM governance sidecar |
+| `model-pvc.yaml` / `.tpl` | PVC for model weights |
+| `model-downloader.yaml.tpl` | Model downloader Job template |
+| `tensorize-job.yaml` | One-time tensorization Job (HuggingFace → MinIO) |
+
+### Observability and state
+
+| File | Description |
+|------|-------------|
+| `langfuse-web.yaml` | Langfuse v3 Web (2 replicas, avoids Spot nodes); ClusterIP :3000 |
+| `langfuse-web.yaml.tpl` | Rendered template |
+| `langfuse-worker.yaml` | Langfuse Worker |
+| `langfuse-worker.yaml.tpl` | Rendered template |
+| `langfuse-worker-hpa.yaml` | HPA: 2–15 replicas (70% CPU / 80% memory) |
+| `langfuse-db.yaml` | PostgreSQL for Langfuse |
+| `langfuse-db-secrets.yaml` | Secret template (gitignored after population) |
+| `redis-stack-fresh.yaml` | Active Bitnami Redis Sentinel StatefulSet |
+| `redis-statefulset.yaml` | **DEPRECATED** — do not apply; retained for reference |
+| `redis-config.yaml` | Redis ConfigMap (`cage-redis-config`) |
+| `redis-credentials-secret.yaml` | Secret template |
+| `redis-master-service.yaml` | Write-only ClusterIP pinned to Sentinel primary (`redis-node-1`) |
+| `minio.yaml` | MinIO object storage (Langfuse event upload; S3-compatible) |
+| `agentsight-daemon.yaml` | AgentSight eBPF DaemonSet (namespace: `agentsight`) |
+| `agentsight-ui.yaml.tpl` | AgentSight UI template |
+
+### Security manifests
+
+| File | Description |
+|------|-------------|
+| `pod-security-admission.yaml` | Namespace PSA labels: `governance-stack` (restricted), `langfuse` (baseline), `vllm` (baseline) |
+| `security-context-patch.yaml` | Pod security context patches |
+| `linkerd-mtls-policy.yaml` | Linkerd mTLS `AuthorizationPolicy` |
+| `cilium-egress-lockdown.yaml` | Cilium egress `NetworkPolicy` |
+| `network-policy.yaml` | Default deny + allow rules |
+| `network-policy-hardening.yaml` | Hardened network policies |
+| `lula-network-policy.yaml` | NetworkPolicy for Lula compliance scanner |
+| `trivy-egress-policy.yaml` | Egress policy for Trivy scanner |
+
+### Compliance and operations
+
+| File | Description |
+|------|-------------|
+| `lula-cron.yaml` | Scheduled Lula compliance scan CronJob |
+| `lula-rbac.yaml` | RBAC for Lula scanner |
+| `security-scan-cronjob.yaml` | Security scan CronJob (Trivy) |
+| `sbom-cronjob.yaml` | SBOM generation CronJob |
+| `oscal-artifact-secrets.yaml` | OSCAL artifact secret template |
+| `service-account.yaml` | `financial-advisor-sa` ServiceAccount |
+| `ingress.yaml` | GCE Ingress (HTTPS; uses NodePort 30080 for gateway) |
+| `db-reset.yaml` | Database reset Job (one-time; dev only) |
+
+### Inference Gateway (KEP-4121)
+
+| File | Description |
+|------|-------------|
+| `inference-gateway/gateway.yaml` | Gateway API `Gateway` resource |
+| `inference-gateway/http-route.yaml` | `HTTPRoute` for inference routing |
+| `inference-gateway/inference-pool.yaml` | `InferencePool` resource |
+| `inference-gateway/reference-grant.yaml` | `ReferenceGrant` for cross-namespace routing |
+
+---
 
 ## Prerequisites
 
-- Google Cloud Project with billing enabled.
-- `gcloud` CLI installed and authenticated.
-- `kubectl` installed (or installed via script).
-- Permissions to manage GKE and Artifact Registry.
+### For GCP deployments
 
-> **Note:** The prerequisites above apply to GCP deployments. For other Kubernetes providers, use your cloud provider's CLI and ensure cluster access via kubectl.
+- `gcloud` CLI authenticated (`gcloud auth application-default login`)
+- GCP project with billing enabled
+- APIs enabled: `container.googleapis.com`, `compute.googleapis.com`, `storage.googleapis.com`, `cloudbuild.googleapis.com`
+- IAM: Kubernetes Engine Admin, Cloud Build Editor, Storage Admin
 
-## Deployment Script
+### For any Kubernetes target
 
-> **⚠️ Superseded:** `deploy_sw.py` is superseded. `deployment/terraform/` was removed 2026-03-15; active IaC is under `infra/targets/gcp-gke/`. Current deployment uses `deploy_all.sh`. The instructions below are retained for historical reference only.
+- `kubectl` ≥ 1.24 with cluster access configured
+- `terraform` ≥ 1.5.0
+- `uv` (Python package manager)
+- `.env` file populated (copy from `.env.example`)
 
-The `deploy_sw.py` script is the central entry point for deploying the entire Cybernetic Governance Engine stack to GKE.
+### Key `.env` variables
 
-### Usage
+| Variable | Description |
+|----------|-------------|
+| `GOOGLE_CLOUD_PROJECT` | GCP project ID → `TF_VAR_project_id` |
+| `GOOGLE_CLOUD_LOCATION` | GCP region → `TF_VAR_region` |
+| `CAGE_DEPLOYMENT_REGION` | Compliance posture: `US_FED` \| `EU_ECB` \| `APAC_MAS` |
+| `K8S_NAMESPACE` | Target namespace (default: `governance-stack`) |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse credentials → `TF_VAR_langfuse_public_key` |
+| `CAGE_ROUTING_SEAL_SECRET` | HMAC routing seal (≥ 32 chars; required in production) → `TF_VAR_routing_seal_secret` |
+| `HUGGING_FACE_HUB_TOKEN` | HuggingFace token for model downloads → `TF_VAR_hf_token` |
+| `GOVERNANCE_SALT` | Governance salt secret → `TF_VAR_governance_salt` |
 
-**1. Staged Deployment (Recommended)**
-For production environments with pre-existing resources, follow the staged flow:
+---
 
-a. **Infrastructure State Reconciliation:**
+## Post-Deployment Verification
 
-```bash
-cd infra/targets/gcp-gke
-# Import existing resources (if any)
-# terraform import google_container_cluster.primary projects/<PROJECT>/zones/<ZONE>/clusters/governance-cluster
-terraform apply -auto-approve
-```
-
-b. **Software & Manifest Deployment:**
-Use the manual deployment venv to ensure dependency isolation:
-
-```bash
-python3 -m venv .manual_deploy_venv
-.manual_deploy_venv/bin/pip install -e ".[dev,deployment]"
-.manual_deploy_venv/bin/python deployment/deploy_sw.py --project-id YOUR_PROJECT_ID --is-oss
-```
-
-**2. Standard Deployment (Automation)**
-This will attempt to provision and build everything in one pass (best for fresh projects).
+### Check pod status
 
 ```bash
-python3 deployment/deploy_sw.py --project-id YOUR_PROJECT_ID --is-oss
+kubectl get pods -n governance-stack
+kubectl get pods -n vllm-inference
+kubectl get pods -n agentsight
 ```
 
-**3. Mandatory OIDC Configuration**
-The system uses OIDC/Workload Identity for secure communication. Ensure the following are in your `.env`:
+Expected running pods in `governance-stack`:
 
-- `GOOGLE_CLOUD_PROJECT`: Target project. (GCP-specific — only required for GCP deployments with Workload Identity)
-- `GOOGLE_CLOUD_LOCATION`: Target region (e.g. `us-central1`). (GCP-specific — only required for GCP deployments with Workload Identity)
-- `BACKEND_URL`: The audience for OIDC tokens.
+- `gateway-*`
+- `governed-financial-advisor-*`
+- `opa-service-*`
+- `nemo-service-*`
+- `compliance-bridge-*`
+- `langfuse-web-*` (2 replicas)
+- `langfuse-worker-*`
+- `redis-node-0`, `redis-node-1`, `redis-node-2`
+- `clickhouse-0`
+- `minio-*`
 
-**3. Customizing Region/Zone**
+### Local port-forwards (development)
 
 ```bash
-python3 deployment/deploy_sw.py \
-    --project-id YOUR_PROJECT_ID \
-    --is-oss \
-    --region us-east1 \
-    --zone us-east1-c
+# Start all port-forwards with auto-reconnect
+bash scripts/port_forward_dev.sh
 ```
 
-**3. Skipping Build (Fast Redeploy)**
-If images are already built and you only modified manifests:
+| Service | Local Port | Remote Port |
+|---------|------------|-------------|
+| OPA | 8181 | 8181 |
+| Langfuse API | 3001 | 3000 |
+| Langfuse UI | 3000 | 3000 |
+| vLLM fast (`vllm-service`) | 8001 | 8000 |
+| vLLM fast (alt) | 18081 | 8000 |
+| vLLM reasoning (`vllm-reasoning`) | 8000 | 8000 |
+| vLLM reasoning (alt) | 18082 | 8000 |
+| Gateway | 8080 | 8080 |
+| Governed FA backend | 18080 | 80 |
+| Redis | 6379 | 6379 |
+| Compliance Bridge | 3002 | 80 |
+
+### Test the backend
 
 ```bash
-python3 deployment/deploy_sw.py --project-id YOUR_PROJECT_ID --skip-build
+# Forward the backend service
+kubectl port-forward svc/governed-financial-advisor 18080:80 -n governance-stack
+
+# Health check
+curl http://localhost:18080/health
+
+# Agent query
+curl -X POST http://localhost:18080/agent/query \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Hello"}'
 ```
 
-### Configuration
+### Makefile targets
 
-Configuration is managed via `deployment/config.yaml` (default settings) and `.env` (secrets/overrides).
+```bash
+make advisor-status        # governed-financial-advisor pod status
+make advisor-rollback      # rollout undo
+make advisor-watch         # watch pod events
+make advisor-verify-env    # dump env vars in running pod
+make advisor-port-forward  # forward svc/governed-financial-advisor 8080:8080
+make advisor-health        # /health check
+make vllm-status           # vLLM pod status
+make vllm-verify-models    # list loaded models on both vLLM services
+make test-integration      # run local (non-infrastructure) tests
+make recovery              # print recovery checklist
+```
 
-**Key Environment Variables:**
+---
 
-- `MODEL_FAST`: Model path for the fast path (e.g., `gs://your-bucket/models--Qwen--Qwen2.5-7B-Instruct/snapshots/...`).
-- `MODEL_REASONING`: Model path for the reasoning path (e.g., `gs://your-bucket/casperhansen/deepseek-r1-distill-qwen-14b-awq`).
-- `HUGGING_FACE_HUB_TOKEN`: Optional - only needed if downloading from HuggingFace Hub. Models now stream from GCS by default.
-- `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`: Credentials for the in-cluster MinIO instance used as the vLLM model weight store. `deploy_sw.py` automatically bootstraps these via `_bootstrap_minio_credentials()` and `_ensure_minio_bucket()` pre-flight functions.
-- `OPENAI_API_KEY`: Required if using OpenAI models via NeMo.
+## Model Weight Loading
 
-## vLLM Model Weight Loading
+GCS (`gs://<bucket>/`) is the **primary** model artifact store. vLLM pods stream weights directly from GCS at startup.
 
-> **Model Store Note:** GCS (`gs://your-bucket/`) is now the **primary** model artifact store. See `deployment/scripts/upload_to_gcs.py` for artifact upload. MinIO is used for Langfuse event storage only; the MinIO + Tensorizer cold-start path below is a secondary/fallback option.
-
-vLLM deployments can also load model weights from **MinIO** (in-cluster S3-compatible object store) using vLLM's native `--load-format tensorizer`. This replaces the previous approach of mounting GCS buckets via the GKE-proprietary GCS Fuse CSI driver.
-
-### One-Time Tensorization
-
-Before starting vLLM pods for the first time (or when adding a new model), run the tensorization job:
+### One-time tensorization (optional MinIO path)
 
 ```bash
 kubectl apply -f deployment/k8s/tensorize-job.yaml -n governance-stack
@@ -124,74 +346,88 @@ kubectl wait --for=condition=complete job/tensorize-weights \
   --timeout=30m -n governance-stack
 ```
 
-This Job:
+This downloads weights from HuggingFace Hub, serializes to TensorSerializer format, and uploads to MinIO `vllm-models` bucket. Once tensorized, vLLM starts in ~60–90 seconds instead of ~20 minutes.
 
-1. Downloads model weights from HuggingFace Hub (requires `HUGGING_FACE_HUB_TOKEN` as a K8s Secret).
-2. Serializes weights to TensorSerializer format using the `tensorizer` library.
-3. Uploads serialized shards to the MinIO `vllm-models` bucket via S3-compatible API.
+---
 
-### Runtime Loading
+## Local Compose Stack (Development Only)
 
-Once tensorized, vLLM pods start in **~60–90 seconds** (vs. ~20 minutes for a full HuggingFace download) by streaming shards directly from MinIO via `--load-format tensorizer`.
+For local development without Kubernetes:
 
-**No GCS Fuse CSI driver required** — works on any Kubernetes distribution with MinIO or any S3-compatible object store.
+```bash
+cp .env.example .env
+# Edit .env with your credentials
+docker-compose up -d
+```
 
-### Pre-flight Bootstrap
+Services:
 
-`deploy_sw.py` automatically runs `_bootstrap_minio_credentials()` and `_ensure_minio_bucket()` before applying the stack, ensuring MinIO is operational and the `vllm-models` bucket exists before vLLM pods start.
+| Service | Port | Description |
+|---------|------|-------------|
+| `opa` | 127.0.0.1:8181 | OPA policy engine |
+| `slm` | 5000 | Sentence-transformers sidecar (all-MiniLM-L6-v2) |
+| `gateway` | 8080 | Gateway (HTTP) |
+| `app` | 3000 | Main agent service |
+
+The OPA port is bound to `127.0.0.1` only to prevent unauthenticated external access (HIGH-01).
+
+### AgentSight local stack
+
+```bash
+cd deployment/agentsight
+docker-compose -f docker-compose.agentsight.yaml up -d
+# Dashboard: http://localhost:3000
+```
+
+---
+
+## NeMo ConfigMap Sync
+
+After any change to `config/rails/`:
+
+```bash
+make update-nemo-configmap
+# Review diff, then:
+kubectl apply -f deployment/k8s/nemo-rails-configmap.yaml
+```
+
+---
 
 ## Terraform (Infrastructure as Code)
 
-For managing the GKE cluster and underlying VPC via Terraform, use the active IaC directory:
+Active IaC is in `infra/`. The old `deployment/terraform/` directory was removed 2026-03-15.
 
 ```bash
+# Minimal manual apply (GCP target)
 cd infra/targets/gcp-gke
 terraform init
-terraform apply -var="project_id=YOUR_PROJECT_ID"
+terraform apply -var-file=dev.tfvars
+
+# Regional production
+cd infra/targets/gcp-gke
+CAGE_DEPLOYMENT_REGION=US_FED terraform apply -var-file=prod.tfvars
 ```
 
-> **Note:** `deployment/terraform/` was removed 2026-03-15. All active Terraform configuration is under `infra/`. The `deploy_sw.py` script respects existing infrastructure.
+See [`deployment/TERRAFORM_MIGRATION.md`](TERRAFORM_MIGRATION.md) for migration notes.
 
-## Post-Deployment Verification
+---
 
-### 1. Check Pod Status
+## Security Notes
 
-```bash
-kubectl get pods -n governance-stack
-```
+- All application Secrets use `secretKeyRef` / `secretRef` — never plain `value:` for sensitive data.
+- The `governance-stack` namespace enforces PSA `restricted:latest` (no privileged containers, no root, RuntimeDefault seccomp).
+- The `vllm-inference` namespace uses PSA `baseline` for GPU/CUDA access.
+- The `agentsight` namespace requires PSA `privileged` for eBPF (host PID + network).
+- `CAGE_ROUTING_SEAL_SECRET` must be ≥ 32 characters; the gateway raises `RuntimeError` at startup if absent and `CAGE_ENV=production`.
+- `KMS_GOVERNANCE_KEY` activates Cloud KMS asymmetric signing (CTRL_KMS_001); HMAC fallback is dev/CI only.
 
-Expected output should show `Running` status for:
+---
 
-- `gateway-service-*`
-- `governed-financial-advisor-*`
-- `vllm-fast-*` (if enabled)
-- `agentsight-ui-*`
-- `langfuse-web-*`
-- `langfuse-worker-*`
-- `clickhouse-0`
-- `minio-*`
+## Related Documentation
 
-ACCESS_UI_INSTRUCTIONS
-The deployment is fully hardened and uses **ClusterIP** for all services. To access the UI locally:
-
-```bash
-kubectl port-forward svc/agentsight-ui 3000:80 -n governance-stack
-```
-
-Open `http://localhost:3000` in your browser.
-
-### 3. Test Backend API
-
-Use `kubectl port-forward` to access the backend locally:
-
-```bash
-kubectl port-forward svc/governed-financial-advisor 8081:80 -n governance-stack
-```
-
-Then query the agent:
-
-```bash
-curl -X POST localhost:8081/agent/query \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Hello"}'
-```
+- [`infra/QUICK_START.md`](../infra/QUICK_START.md) — infrastructure quick-start
+- [`infra/DEPLOYMENT_GUIDE.md`](../infra/DEPLOYMENT_GUIDE.md) — full deployment reference
+- [`deployment/k8s/NAMESPACE-GUIDE.md`](k8s/NAMESPACE-GUIDE.md) — namespace inventory and Redis topology
+- [`deployment/agentsight/README.md`](agentsight/README.md) — AgentSight setup
+- [`deployment/TERRAFORM_MIGRATION.md`](TERRAFORM_MIGRATION.md) — Terraform migration notes
+- [`docs/operations/DEPLOYMENT_RULES.md`](../docs/operations/DEPLOYMENT_RULES.md) — deployment rules (Cloud Build requirement)

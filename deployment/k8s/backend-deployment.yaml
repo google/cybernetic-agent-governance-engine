@@ -39,9 +39,9 @@ spec:
             secretName: opa-configuration
       containers:
         # Main Agent Container
-        - name: ingress-agent
+        - name: governed-financial-advisor
           # Set IMAGE_REGISTRY to your container registry prefix (e.g. gcr.io/your-project, ghcr.io/your-org)
-          # Override with: kubectl set image deployment/governed-financial-advisor ingress-agent=<your-registry>/governed-financial-advisor:latest
+          # Override with: kubectl set image deployment/governed-financial-advisor governed-financial-advisor=<your-registry>/governed-financial-advisor:latest
           # Or use kustomize: kustomize edit set image gcr.io/YOUR_PROJECT_ID/governed-financial-advisor=<your-registry>/governed-financial-advisor:latest
           # IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
           image: gcr.io/YOUR_PROJECT_ID/governed-financial-advisor:latest

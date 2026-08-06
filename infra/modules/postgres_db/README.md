@@ -1,140 +1,169 @@
 # PostgreSQL Database Module
 
-Deploys PostgreSQL database using the Bitnami Helm chart. Cloud-agnostic and suitable for Langfuse trace storage, audit logs, and general application use.
+Deploys PostgreSQL using the Bitnami Helm chart. Cloud-agnostic and suitable for Langfuse metadata storage, audit logs, and general application persistence.
 
 ## Features
 
-- ✅ Cloud-agnostic (works on any Kubernetes cluster)
-- ✅ Automated password generation
-- ✅ Persistent storage with configurable size
-- ✅ Kubernetes Secret with connection details
-- ✅ Optional automated backups
-- ✅ Configurable resource limits
+- Cloud-agnostic (works on any Kubernetes cluster)
+- Automated password generation via `random_password`
+- Persistent storage with configurable size and storage class
+- Kubernetes Secret created with all connection details
+- Optional automated backups (CronJob-based)
+- Configurable resource requests and limits
+
+---
 
 ## Usage
 
-### Basic Deployment
+### Basic deployment (dev)
 
 ```hcl
 module "postgres" {
-  source = "../../modules/postgres_db"
-  
-  namespace = "my-namespace"
+  source    = "../../modules/postgres_db"
+  namespace = "governance-stack"
 }
 ```
 
-### Production Deployment
+### Production deployment
 
 ```hcl
 module "postgres" {
   source = "../../modules/postgres_db"
-  
-  namespace               = "my-namespace"
+
+  namespace               = "governance-stack"
   storage_size            = "100Gi"
   storage_class           = "pd-ssd"
   enable_backup           = true
-  backup_schedule         = "0 2 * * *"  # 2 AM daily
+  backup_schedule         = "0 2 * * *"    # 2 AM daily
   resources_limits_memory = "4Gi"
   resources_limits_cpu    = "2000m"
+  resources_requests_memory = "1Gi"
+  resources_requests_cpu    = "500m"
 }
 ```
 
-### Custom Database
+### Custom database name and user
 
 ```hcl
 module "postgres" {
   source = "../../modules/postgres_db"
-  
-  namespace     = "my-namespace"
-  database_name = "my_app"
-  database_user = "app_user"
-  release_name  = "my-postgres"
+
+  namespace     = "governance-stack"
+  database_name = "langfuse"
+  database_user = "langfuse"
+  release_name  = "postgresql"
 }
 ```
+
+---
 
 ## Inputs
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|----------|
-| namespace | Kubernetes namespace | string | - | yes |
-| release_name | Helm release name | string | "postgresql" | no |
-| chart_version | PostgreSQL Helm chart version | string | "15.5.38" | no |
-| database_name | Database name | string | "langfuse" | no |
-| database_user | Database user | string | "langfuse" | no |
-| storage_size | PVC storage size | string | "50Gi" | no |
-| storage_class | Storage class for PVC | string | "" | no |
-| enable_persistence | Enable persistent storage | bool | true | no |
-| enable_backup | Enable automated backups | bool | false | no |
-| backup_schedule | Cron schedule for backups | string | "0 2 * * *" | no |
-| resources_limits_memory | Memory limit | string | "" | no |
-| resources_limits_cpu | CPU limit | string | "" | no |
-| credentials_secret_name | Secret name for credentials | string | "langfuse-db-credentials" | no |
+| `namespace` | Kubernetes namespace | string | — | yes |
+| `release_name` | Helm release name | string | `"postgresql"` | no |
+| `chart_version` | Bitnami PostgreSQL Helm chart version | string | `"18.5.6"` | no |
+| `database_name` | Database name | string | `"langfuse"` | no |
+| `database_user` | Database user | string | `"langfuse"` | no |
+| `storage_size` | PVC storage size | string | `"50Gi"` | no |
+| `storage_class` | Storage class for PVC (`""` = cluster default) | string | `""` | no |
+| `enable_persistence` | Enable persistent storage | bool | `true` | no |
+| `enable_backup` | Enable automated backups | bool | `false` | no |
+| `backup_schedule` | Cron schedule for backups | string | `"0 2 * * *"` | no |
+| `resources_requests_cpu` | CPU request | string | `"100m"` | no |
+| `resources_requests_memory` | Memory request | string | `"256Mi"` | no |
+| `resources_limits_cpu` | CPU limit (`""` = none) | string | `""` | no |
+| `resources_limits_memory` | Memory limit (`""` = none) | string | `""` | no |
+| `credentials_secret_name` | Kubernetes Secret name for credentials | string | `"langfuse-db-credentials"` | no |
+
+---
 
 ## Outputs
 
 | Name | Description |
 |------|-------------|
-| release_name | Helm release name |
-| service_name | Kubernetes service FQDN |
-| connection_string | PostgreSQL connection string (sensitive) |
-| database_url_secret_name | Kubernetes Secret name |
-| database_name | Database name |
-| database_user | Database user |
-| password | Generated password (sensitive) |
+| `release_name` | Helm release name |
+| `service_name` | Kubernetes service FQDN |
+| `connection_string` | PostgreSQL connection string (sensitive) |
+| `database_url_secret_name` | Kubernetes Secret name |
+| `database_name` | Database name |
+| `database_user` | Database user |
+| `password` | Generated password (sensitive) |
 
-## Accessing the Database
+---
 
-### From Another Pod
+## Accessing PostgreSQL
 
-The module creates a Kubernetes Secret with all connection details:
+### From another pod (via Secret)
 
 ```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: myapp
-spec:
-  containers:
-    - name: app
-      env:
-        - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: langfuse-db-credentials
-              key: DATABASE_URL
+env:
+  - name: DATABASE_URL
+    valueFrom:
+      secretKeyRef:
+        name: langfuse-db-credentials
+        key: DATABASE_URL
 ```
 
-### Port-Forward for Local Access
+### Port-forward for local access
 
 ```bash
-kubectl port-forward svc/postgresql 5432:5432 -n <namespace>
+kubectl port-forward svc/postgresql 5432:5432 -n governance-stack
 psql postgresql://langfuse:<password>@localhost:5432/langfuse
 ```
+
+### Get the generated password
+
+```bash
+kubectl get secret langfuse-db-credentials -n governance-stack \
+  -o jsonpath='{.data.DATABASE_URL}' | base64 -d
+```
+
+---
+
+## Storage Class Reference
+
+Choose the appropriate storage class for your platform:
+
+| Platform | Dev | Prod |
+|----------|-----|------|
+| k3s | `local-path` | `local-path` |
+| minikube | `standard` | `standard` |
+| kind | `standard` | `standard` |
+| EKS | `gp2` | `gp3` |
+| AKS | `default` | `managed-premium` |
+| GKE | `standard-rwo` | `premium-rwo` (pd-ssd) |
+
+---
 
 ## Backups
 
 Enable automated backups for production:
 
 ```hcl
-enable_backup = true
-backup_schedule = "0 2 * * *"  # Daily at 2 AM
+enable_backup   = true
+backup_schedule = "0 2 * * *"   # Daily at 2 AM UTC
 ```
 
-Backups are stored in the PVC. For external backup solutions, configure separately.
+Backups are stored in the PostgreSQL PVC. For external backup solutions (e.g., Cloud Storage), configure an additional backup sidecar or CronJob separately.
 
-## Monitoring
-
-The Bitnami PostgreSQL chart includes:
-- Liveness and readiness probes
-- Metrics exporter (can be enabled)
-- StatefulSet for data persistence
+---
 
 ## Upgrading
 
-To upgrade PostgreSQL version:
+To upgrade the PostgreSQL Helm chart version:
 
-1. Update `chart_version` variable
+1. Update `chart_version` in the module call
 2. Run `terraform plan` to review changes
 3. Run `terraform apply`
 
-Note: Major version upgrades may require data migration.
+> **Note:** Major PostgreSQL version upgrades (e.g., 15 → 16) require a data dump/restore or pgupgrade procedure. Review the Bitnami chart release notes before upgrading major versions.
+
+---
+
+## See Also
+
+- [`infra/modules/langfuse_stack/README.md`](../langfuse_stack/README.md) — Langfuse (primary consumer of this module)
+- [`infra/modules/redis_cache/README.md`](../redis_cache/README.md) — Redis cache (required by Langfuse v3)
+- [`infra/modules/clickhouse/README.md`](../clickhouse/README.md) — ClickHouse (required by Langfuse v3)

@@ -3,7 +3,7 @@
 **System:** Cybernetic Agent Governance Engine (CAGE) — High-Reliability Agentic AI Governance Platform
 
 > **Reference deployment:** The first production vertical is a governed financial advisory workflow (`src/governed_financial_advisor/`). All domain-specific identifiers in the codebase (e.g. `safety:current_cash`, `execute_trade`, `FiscalLimitGuard`) reflect that deployment. The governance kernel itself is domain-agnostic and applies to any high-reliability agentic system where an agent can trigger consequential writes to authoritative state stores.
-**Last updated:** 2026-07-01
+**Last updated:** 2026-08-05
 
 This directory is organised using a **hybrid layout**: function-based top-level sections, with compliance artefacts further sub-divided by jurisdiction. This mirrors the system's own architectural principle: ISO 42001 as the universal baseline, with jurisdiction-specific addenda for US_FED, EU_ECB, and APAC_MAS.
 

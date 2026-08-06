@@ -363,7 +363,29 @@ deploy_terraform_target() {
     info "GCS backend configuration in providers.tf (optional)"
     info "Uncomment backend block to use remote state"
   fi
-  
+
+  # ── Auto-generate terraform.auto.tfvars from .env (gitignored) ───────────
+  # Reads CAGE_ROUTING_SEAL_SECRET, KMS_GOVERNANCE_KEY, and
+  # OTEL_EXPORTER_OTLP_HEADERS (or derives it from LANGFUSE_PUBLIC_KEY +
+  # LANGFUSE_SECRET_KEY) and writes infra/targets/gcp-gke/terraform.auto.tfvars.
+  # The output file is gitignored — it must never be committed.
+  if [[ "$target" == "gcp-gke" ]]; then
+    local _tfvars_output="$tf_dir/terraform.auto.tfvars"
+    if [[ -f "$REPO_ROOT/.env" ]]; then
+      info "Generating terraform.auto.tfvars from .env..."
+      uv run python "$REPO_ROOT/scripts/gen_tfvars.py" \
+        --env "$REPO_ROOT/.env" \
+        --output "$_tfvars_output"
+      success "terraform.auto.tfvars written: $_tfvars_output"
+    else
+      warn ".env not found — skipping terraform.auto.tfvars generation."
+      warn "  If secrets are not set via TF_VAR_* or another tfvars file,"
+      warn "  terraform apply will fail on missing required variables."
+      warn "  Copy .env.example to .env and fill in your values:"
+      warn "    cp .env.example .env"
+    fi
+  fi
+
   # Initialize Terraform
   info "Initializing Terraform..."
   if [[ ${#backend_config_args[@]} -gt 0 ]]; then

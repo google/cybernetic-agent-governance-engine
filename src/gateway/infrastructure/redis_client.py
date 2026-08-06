@@ -268,6 +268,34 @@ try:
                         f"WATCH aborted: concurrent modification of {watch_keys}"
                     ) from None
 
+        async def ping_ready(self) -> None:
+            """Verify Redis is reachable by issuing a PING command.
+
+            Call this at startup before marking the pod ready. Raises
+            RuntimeError if the ping fails or times out — preventing silent
+            failures on every CBF call when Redis is unreachable
+            (see PERFORMANCE_REVIEW.md §3).
+
+            Returns:
+                None on success.
+
+            Raises:
+                RuntimeError: If the PING command fails or raises any exception.
+            """
+            try:
+                result = await self._get().ping()
+                if not result:
+                    raise RuntimeError(
+                        f"Redis PING returned falsy response at "
+                        f"{_REDIS_HOST}:{_REDIS_PORT}"
+                    )
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Redis is not reachable at {_REDIS_HOST}:{_REDIS_PORT}: {exc}"
+                ) from exc
+
         async def close(self) -> None:
             if self._client is not None:
                 await self._client.aclose()
@@ -316,6 +344,34 @@ try:
             """Set *key* to *value* with an expiry of *ttl_seconds* seconds."""
             self._get().setex(key, ttl_seconds, value)
 
+        def ping_ready(self) -> None:
+            """Verify Redis is reachable by issuing a synchronous PING command.
+
+            Designed for module-import-time startup probes (which run in a
+            synchronous context). Raises RuntimeError if the ping fails or
+            times out — preventing silent CBF failures when Redis is
+            unreachable (see PERFORMANCE_REVIEW.md §3).
+
+            Returns:
+                None on success.
+
+            Raises:
+                RuntimeError: If the PING command fails or raises any exception.
+            """
+            try:
+                result = self._get().ping()
+                if not result:
+                    raise RuntimeError(
+                        f"Redis PING returned falsy response at "
+                        f"{_REDIS_HOST}:{_REDIS_PORT}"
+                    )
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Redis is not reachable at {_REDIS_HOST}:{_REDIS_PORT}: {exc}"
+                ) from exc
+
         def close(self) -> None:
             if self._client is not None:
                 self._client.close()
@@ -336,3 +392,22 @@ except ImportError:
     )
     redis_client = None  # type: ignore[assignment]
     sync_redis_client = None  # type: ignore[assignment]
+
+
+def get_redis_client() -> "_SyncRedisClient":  # type: ignore[name-defined]
+    """Return the module-level synchronous Redis client singleton.
+
+    Use this factory for startup readiness probes and any synchronous
+    context (e.g. module-import-time assertions in symbolic_governor.py).
+    The async ``redis_client`` singleton is preferred for all async paths.
+
+    Raises:
+        RuntimeError: If the redis package is not installed
+            (``sync_redis_client`` is None).
+    """
+    if sync_redis_client is None:
+        raise RuntimeError(
+            "Redis client is not available — redis package not installed. "
+            "Install with: pip install redis[asyncio]"
+        )
+    return sync_redis_client  # type: ignore[return-value]

@@ -990,7 +990,7 @@ This section provides a quick-reference table of all key governance thresholds f
 | Causal placebo effect magnitude | `0.2` | `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | Block when `|placebo_effect| > 0.2` |
 | PlaceboTreatmentRefuter simulations | `50` | hardcoded in `causal_safety_check()` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | 50 placebo simulations per causal check |
 | Consensus threshold (US_FED) | `$10,000` | `consensus.threshold_usd` | [`consensus.py`](../../src/gateway/governance/consensus.py) | Trades `> $10k` require two-critic LLM consensus |
-| Consensus timeout | `30 seconds` | `asyncio.gather` timeout | [`consensus.py`](../../src/gateway/governance/consensus.py) | Both critics dispatched concurrently; 30s wall-clock limit |
+| Consensus timeout | `10 seconds` per critic | `_CRITIC_TIMEOUT_S=10.0` | [`consensus.py`](../../src/gateway/governance/consensus.py) | Both critics dispatched concurrently via `asyncio.gather`; each critic times out independently at 10s |
 | Fiscal daily cap | `$500,000` | `FISCAL_DAILY_CAP_USD` env var | [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) | Stored in integer cents; 86,400s rolling window |
 | Fiscal window | `86,400 seconds` | hardcoded rolling window | [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) | 24-hour rolling window |
 | Fiscal reservation TTL | `300 seconds` | hardcoded TTL | [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) | Reclaims limits from crashed nodes |

@@ -34,8 +34,16 @@ rails:
   input:
     flows:
       - self check input
-  output:
-    flows: []
+  # NOTE: `output.flows: []` was removed (2026-08-02). NeMo 0.23.0's
+  # deprecated input/output-flow-generation code path in
+  # nemoguardrails/rails/llm/config.py (_generate_rails_flows) chokes on an
+  # empty output.flows list and emits malformed Colang, causing a hard
+  # ColangParsingError at RailsConfig.from_path() time and silently
+  # disabling ALL NeMo semantic rails (including block_prompt_injection /
+  # UCA-7) via the transparent-fallback path in nemo/manager.py. Since this
+  # list was already empty (no output flows configured), omitting the key
+  # entirely is a lossless fix. Do not re-add an empty `output: {flows: []}`
+  # block without re-verifying against the installed nemoguardrails version.
   config:
     sensitive_data_detection:
       input:

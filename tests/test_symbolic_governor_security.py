@@ -49,6 +49,10 @@ def _make_governor(fiscal_limit_guard=None):
 
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
+    # atomic_verify_and_commit is called by _run_checks() instead of verify_action()
+    # for the CBF gate. Stub it to return (True, "SAFE") so tests that don't
+    # specifically exercise CBF-block behavior pass through the CBF tier cleanly.
+    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
 
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
@@ -219,10 +223,11 @@ def test_assert_safe_operational_state_raises_in_production_combined_risk():
 
     with (
         patch.dict(os.environ, env, clear=True),
+        # assert_safe_operational_state() does a local import from kms_signer,
+        # so the correct patch target is the kms_signer module, not symbolic_governor.
         patch(
-            "src.gateway.governance.symbolic_governor.get_governance_signer",
+            "src.gateway.governance.kms_signer.get_governance_signer",
             return_value=mock_signer,
-            create=True,
         ),
     ):
         from src.gateway.governance.symbolic_governor import (
@@ -250,10 +255,11 @@ def test_assert_safe_operational_state_raises_message_mentions_cbf_fail_open():
 
     with (
         patch.dict(os.environ, env, clear=True),
+        # assert_safe_operational_state() does a local import from kms_signer,
+        # so the correct patch target is the kms_signer module, not symbolic_governor.
         patch(
-            "src.gateway.governance.symbolic_governor.get_governance_signer",
+            "src.gateway.governance.kms_signer.get_governance_signer",
             return_value=mock_signer,
-            create=True,
         ),
     ):
         from src.gateway.governance.symbolic_governor import (
@@ -515,6 +521,7 @@ async def test_fiscal_limit_guard_release_awaited_on_post_reservation_violation(
     opa_client.evaluate_policy.return_value = "ALLOW"
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
+    safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {
         "status": "REJECT",

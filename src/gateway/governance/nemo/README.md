@@ -1,6 +1,6 @@
 # NeMo Guardrails — Integration Overview
 
-> **Last updated:** 2026-06-15 (v2.0.0-rc.4)
+> **Last updated:** 2026-08-05 (v2.1.1)
 
 This package (`src/gateway/governance/nemo/`) contains everything the
 Cybernetic Governance Engine needs to run NVIDIA NeMo Guardrails as a
