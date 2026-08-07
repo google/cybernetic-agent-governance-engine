@@ -281,7 +281,8 @@ class SymbolicGovernor:
         # OPA margin branch is currently inactive (treated as None → no signal). STPA branch
         # is active. Full closure requires OPA response enrichment or a dedicated scorer.
         #
-        # PAPER REFERENCE: §4.2 (Tier 2), §7.2 (Limitations), CAGE_ARXIV.MD Issue #5.
+        # See docs/POAM.md (POAM-TIER2-001) for the open gap tracking and
+        # docs/technical-report/05-AI-GOVERNANCE-POLICY-ENGINE.md for the tier design.
         # ──────────────────────────────────────────────────────────────────────────────────────
 
         # 1. Confidence threshold — local pre-check (fast-fail before network I/O).

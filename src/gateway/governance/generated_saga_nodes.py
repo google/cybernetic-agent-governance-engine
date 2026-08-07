@@ -165,7 +165,7 @@ def forward_execute_trade_node_uca_4(state: AgentState) -> dict[str, Any]:
 # TODO: A future compensating action must call safety_filter.rollback_state(cost)
 #       (or atomic_verify_and_commit equivalent) when reversing a trade that was
 #       committed at CBF level but rejected by a subsequent governance tier.
-#       Track this as a follow-on item linked to CAGE_ARXIV.MD Issue #6.
+#       Track this as a follow-on item linked to POAM-023 (docs/POAM.md).
 def compensate_reverse_trade_node_uca_4(state: AgentState) -> dict[str, Any]:
     """Idempotent compensating node for UCA-4 (reverse_trade).
 
