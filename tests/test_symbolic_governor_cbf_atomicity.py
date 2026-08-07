@@ -16,8 +16,9 @@
 Tests for CBF atomicity: verifies that atomic_verify_and_commit() prevents
 two concurrent execute_trade actions from jointly overdrawing the account.
 
-Issue #6 in peer-review remediation: CBF TOCTOU race condition.
-See CAGE_ARXIV.MD §5.1, §5.2 and POAM-TIER2-001 comments in symbolic_governor.py.
+CBF TOCTOU race condition tracked as POAM-023 (docs/POAM.md).
+See POAM-TIER2-001 comments in symbolic_governor.py and the CBF Invariance
+Theorem discussion in docs/technical-report/10-FORMAL-VERIFICATION.md.
 
 All tests run without live Redis (fakeredis) or live KMS (mocked).
 """
@@ -157,7 +158,8 @@ async def test_concurrent_atomic_verify_exactly_one_commits() -> None:
     and one UNSAFE rejection — never both committed.
 
     This directly verifies the CBF Invariance Theorem atomicity premise
-    described in CAGE_ARXIV.MD §5.1 and §5.2.
+    documented in docs/technical-report/10-FORMAL-VERIFICATION.md and
+    tracked as POAM-023 in docs/POAM.md.
     """
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=False)
     await _seed_balance(fake_redis, _INITIAL_BALANCE)

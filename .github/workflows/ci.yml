@@ -277,11 +277,12 @@ jobs:
       # handled it" during setup for all 19 tests in this file.
       - name: Install pytest
         run: pip install pytest pytest-timeout pytest-asyncio
-      # Pins the exact reachable-state counts (21/24/19/20) quoted in
-      # CAGE_ARXIV.MD and docs/technical-report/. This is a second,
-      # independent check on top of `python proof/model.py` above so a
-      # change to TIERS/transition functions cannot silently drift from the
-      # published figures without failing CI. See REVISION_TRACKER.md.
+      # Pins the exact reachable-state counts (21/24/19/20) documented in
+      # docs/technical-report/10-FORMAL-VERIFICATION.md and cross-checked
+      # by proof/model.py. This is a second, independent check on top of
+      # `python proof/model.py` above so a change to TIERS/transition
+      # functions cannot silently drift from the documented figures without
+      # failing CI. See docs/paper/REVISION_TRACKER.md.
       - name: Run pinned NoDirectBind regression tests
         run: |
           python -m pytest tests/test_no_direct_bind_proof.py -m local -v

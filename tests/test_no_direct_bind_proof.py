@@ -14,11 +14,11 @@
 
 """Regression tests for the NoDirectBind exhaustive state-space proof.
 
-``proof/model.py`` is cited in CAGE_ARXIV.MD §4.4 and Appendix A, and its
-reachable-state counts are quoted verbatim in the paper and in
-``docs/technical-report/``.  These tests pin those numbers so that a change to
-the tier list or the transition functions cannot silently invalidate the
-published figures.
+``proof/model.py`` defines the hand-abstracted automaton whose reachable-state
+counts (21/24/19/20) are documented in ``docs/technical-report/10-FORMAL-VERIFICATION.md``
+and cross-referenced in ``docs/architecture/ARCHITECTURE.md``.  These tests pin
+those numbers so that a change to the tier list or the transition functions
+cannot silently invalidate the documented figures.
 
 If a test here fails because the model legitimately changed, update BOTH the
 expected constant below AND every location listed in
@@ -98,10 +98,11 @@ def test_concurrent_tiers_are_the_gathered_pair() -> None:
 def test_tier_count_is_exactly_8() -> None:
     """Pin the number of modelled governance tiers to exactly 8.
 
-    # Issue #4: 21-state, 8-tier scope is the hand-abstracted automaton, not
-    # full production code or LTL.  This figure is cited in CAGE_ARXIV.MD §4.2
-    # and §7.2 Limitations.  Update this constant AND every location listed in
-    # docs/paper/REVISION_TRACKER.md if the pipeline adds or removes a tier.
+    The 21-state, 8-tier scope is the hand-abstracted automaton defined in
+    proof/model.py — not full production code or LTL.  The figure is documented
+    in docs/technical-report/10-FORMAL-VERIFICATION.md and
+    docs/architecture/ARCHITECTURE.md.  Update this constant AND every location
+    listed in docs/paper/REVISION_TRACKER.md if the pipeline adds or removes a tier.
     """
     assert len(model.TIERS) == 8, (
         f"Expected exactly 8 governance tiers; got {len(model.TIERS)}: {model.TIERS}"
@@ -129,9 +130,11 @@ def test_gated_architecture_satisfies_no_direct_bind() -> None:
 
 
 def test_gated_reachable_state_count_is_stable() -> None:
-    """Pins the figure quoted in CAGE_ARXIV.MD §4.4 and Appendix A.
+    """Pins the 21-state gated reachable count from proof/model.py.
 
-    # Issue #4: proof scope is 21 states, no LTL — documented in §7.2 Limitations.
+    The proof scope is 21 states, no LTL — documented in
+    docs/technical-report/10-FORMAL-VERIFICATION.md and
+    docs/architecture/ARCHITECTURE.md.
     """
     states = model.enumerate_reachable(model.gated_transitions)
     assert len(states) == EXPECTED_GATED_STATES
