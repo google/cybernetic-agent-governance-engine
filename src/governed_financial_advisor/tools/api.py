@@ -22,7 +22,8 @@ from opentelemetry import trace as otel_trace
 from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel
 
-from src.gateway.governance.nemo.manager import load_rails, validate_with_nemo
+from src.gateway.governance.langgraph_harness.nemo_node_factory import get_nemo_rails
+from src.gateway.governance.nemo.manager import validate_with_nemo
 from src.gateway.governance.singletons import opa_client, symbolic_governor
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 from src.governed_financial_advisor.infrastructure.auth import require_api_key
@@ -40,20 +41,6 @@ _gateway_client = GatewayClient()
 logger = logging.getLogger("ToolsRouter")
 
 tools_router = APIRouter(prefix="/tools", tags=["tools"])
-
-# Initialize Rails (Lazy load or use singleton if possible)
-# In server.py, rails is initialized. We can try to import it or re-initialize.
-# Re-initializing might be expensive. Best to share.
-# For now, we'll load it here too or rely on caching.
-_rails = None
-
-
-def get_rails():
-    global _rails
-    if _rails is None:
-        _rails = load_rails()
-    return _rails
-
 
 class ToolExecutionRequest(BaseModel):
     tool_name: str
@@ -125,7 +112,7 @@ async def execute_tool_endpoint(
                 span.set_attribute("langfuse.observation.name", "cage.tool_execute")
                 text = params.get("text", "")
                 is_safe, response, _deterministic = await validate_with_nemo(
-                    text, get_rails()
+                    text, get_nemo_rails()
                 )
                 if not is_safe:
                     span.set_attribute("cage.verdict", "BLOCKED")

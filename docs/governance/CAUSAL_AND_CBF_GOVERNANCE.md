@@ -73,6 +73,7 @@ Additional configuration constants:
 
 ### Mechanism
 1. **Phase 1 — Statistical Kernel (`CTRL_MRM_004` / SR 26-2 MRM):** A DoWhy `CausalModel` is instantiated using recent telemetry data from the configured `BaseTelemetryProvider`. The causal effect is identified via the **backdoor criterion** and estimated via `backdoor.linear_regression`. The causal graph structure and regression coefficients are the SR 26-2 MRM-governed artefacts; this phase emits a `causal_gatekeeper.statistical_kernel` OTel span tagged with `CTRL_MRM_004`.
+   - **Minimum sample guard:** Before fitting `backdoor.linear_regression`, the gatekeeper checks `len(current_telemetry) >= _MIN_CAUSAL_SAMPLES` (default `30`, overridable via `CAUSAL_MIN_SAMPLES` env var). Telemetry below this floor fails closed (`insufficient_data_fail_closed`) rather than fitting a degenerate regression on sparse data.
    - **Production:** `LangfuseTelemetryProvider` (`src/gateway/governance/telemetry_provider.py`) fetches live `{market_volatility, trade_amount, risk_score}` triples from Langfuse governance spans, ensuring world-model beliefs are validated against actual runtime conditions rather than synthetic data. **In production (`CAGE_ENV != development/test`), missing live telemetry is a fail-closed condition — the function returns `False` immediately.**
    - **Fallback:** `MockTelemetryProvider` (deterministic seed=42) activates only in dev/test environments when live telemetry is unavailable, and emits a warning.
 2. **Phase 2 — Placebo Refutation (`CTRL_TEL_003` / ISO 42001 §A.9.4):** The model is subjected to a **PlaceboTreatmentRefuter** with `num_simulations=50` per trade call, which replaces the real treatment with a random variable. This is the agentic operational check — non-deterministic, live-sourced, high-frequency — and emits a `causal_gatekeeper.placebo_refutation` OTel span tagged with `CTRL_TEL_003`.
@@ -95,6 +96,8 @@ Before Phase 2 placebo refutation, the most-recent observation timestamp in `cur
 Causal results are cached in Redis keyed on `causal_cache:{action_type}:{market_regime}` with a TTL of **60 seconds** (configurable via `CAUSAL_CACHE_TTL_SECONDS` env var; set to `0` to disable). Cache hits skip both Phase 1 and Phase 2 entirely, reducing DoWhy overhead on repeated calls. Cache misses and Redis errors are handled gracefully — the causal check always runs when the cache is unavailable.
 
 Two Redis client variants are provided: `_causal_cache_get_sync` / `_causal_cache_set_sync` (synchronous, for thread-pool workers dispatched via `asyncio.to_thread`) and `_causal_cache_get` / `_causal_cache_set` (async, for callers already inside an async context).
+
+> **Fail-closed behaviour:** Redis connection errors raise `RuntimeError`; absent keys return `None` (first-boot safe). The previous fail-open sentinel (returning `0.0`) has been removed.
 
 ### Causal Ordering Validation
 
@@ -159,7 +162,7 @@ where:
 1. **`reconciliation:verified_balance`** — written by the isolated reconciliation-worker daemon (`src/compliance_bridge/reconciliation_worker.py`), KMS-signed, TTL-gated. When present and KMS-signature-valid, this is the authoritative balance (source: `"reconciled"`).
 2. **`safety:current_cash`** — self-reported by the execution system. Used only as fallback when the reconciled balance is absent, unsigned in production, or has an invalid KMS signature. A `CRITICAL` audit log (`CBF_USING_SELF_REPORTED_BALANCE`) is emitted so the fallback is always visible in Langfuse and SIEM.
 
-In production, `RECONCILIATION_PROVIDER=stub` raises `RuntimeError` at startup (enforced by `symbolic_governor.py` CAGE-SEC-007 guard). Set `RECONCILIATION_PROVIDER=plaid` or `RECONCILIATION_PROVIDER=anchorage` to enable external ground truth.
+In production, `RECONCILIATION_PROVIDER=stub` raises `RuntimeError` at startup (enforced by `symbolic_governor.py` CAGE-SEC-007 guard). Set `RECONCILIATION_PROVIDER` to `gcs`, `s3` (alias: `object-store`), `plaid`, or `anchorage` to enable external ground truth.
 
 Every `verify_action()` decision is stamped with a `safety.balance.source` OTel span attribute (`"reconciled"` | `"reconciled_unsigned"` | `"self_reported"`) to make the balance provenance auditable.
 
@@ -191,13 +194,15 @@ The script is loaded via `SCRIPT LOAD` / `EVALSHA` with automatic NOSCRIPT retry
 
 `ControlBarrierFunction.verify_action()` is **read-only** — it reads the current cash balance via `_read_cbf_state_atomic()` but does **not** modify Redis state. It is used in `pre_check()` (NeMo Layer-0 context injection) and in `revalidate_post_hitl()` for targeted CBF re-checks. For primary governance enforcement in `_run_checks()`, the governor uses `atomic_verify_and_commit()` instead.
 
+> **Implementation note (intra-window double-spend prevention):** `verify_action()` uses `effective_balance = snapshot_balance - self._local_debits` where `_local_debits` accumulates approved trades since the last snapshot refresh. Call `reset_local_debits()` on each successful reconciliation cycle.
+
 CBF (`atomic_verify_and_commit()`) and OPA run **concurrently** via `asyncio.gather` — combined latency is `max(CBF_ms, OPA_ms)`. The TOCTOU race between the CBF balance check and actual trade execution is closed by the **FiscalLimitGuard** (Tier 3) using atomic WATCH/MULTI/EXEC pre-reservation.
 
 ---
 
-## 3. FiscalLimitGuard — Atomic TOCTOU Remediation
+## 3. FiscalLimitGuard — Saga-Atomicity Gap Remediation
 
-`FiscalLimitGuard` (`src/gateway/governance/fiscal_limit_guard.py`) closes the TOCTOU race between the CBF balance check and actual trade execution using atomic Redis pre-reservation. It runs as **Tier 3** in the `SymbolicGovernor` pipeline — after CBF+OPA (Tiers 2/4, concurrent) and before the ConsensusEngine (Tier 5).
+`FiscalLimitGuard` (`src/gateway/governance/fiscal_limit_guard.py`) closes the saga-atomicity gap (distributed-transaction atomicity failure, not a concurrency race) between the CBF balance check and actual trade execution using atomic Redis pre-reservation (read-write: `WATCH/MULTI/EXEC`). It runs as **Tier 3** in the `SymbolicGovernor` pipeline — after CBF+OPA (Tiers 2/4, concurrent) and before the ConsensusEngine (Tier 5). A `rollback_state(amount, audit_id)` Saga compensation stub reverses the Redis debit when a downstream tier fails after Tier 3a commitment.
 
 ### Key Implementation Details
 
@@ -208,7 +213,7 @@ CBF (`atomic_verify_and_commit()`) and OPA run **concurrently** via `asyncio.gat
 | Default cap | $500,000 USD (env: `FISCAL_DAILY_CAP_USD`) |
 | Reservation TTL | 300 seconds (ghost-state auto-expiry) |
 | Fail mode | **Fail-closed** — Redis error → rejected token (never fail-open) |
-| Atomicity | `WATCH/MULTI/EXEC` optimistic locking |
+| Atomicity | `WATCH/MULTI/EXEC` optimistic locking (read-write) |
 
 ### How It Closes the TOCTOU Race
 
@@ -293,6 +298,7 @@ Combined latency is `max(Risk_Manager_ms, Compliance_Officer_ms)` — parallel, 
 | All `REJECT` (non-error) | `REJECT` | Unanimous denial |
 | Mixed `APPROVE` + `REJECT` | `ESCALATE` | Split vote — critics disagree; human review required |
 | Any `ESCALATE` | `ESCALATE` | Explicit escalation request |
+| `ERROR + APPROVE` (degraded quorum) | `ESCALATE` | Degraded-quorum case explicitly routed to HITL escalation before the catch-all |
 | All `APPROVE` | `APPROVE` | Unanimous approval |
 
 ### Model Independence

@@ -9,7 +9,65 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `KmsSigner.sign()` now embeds `signed_at` Unix timestamp in every signed payload; `verify()` rejects payloads older than `MAX_KMS_PAYLOAD_AGE_SECONDS` (300 s), closing replay-attack vector.
+- `CbfGovernor._local_debits` intra-window debit ledger: `verify_action()` computes `effective_balance = snapshot - local_debits` to prevent double-spend within KMS TTL window; `reset_local_debits()` added for reconciliation daemon.
+- `ConsensusGate`: degraded-quorum routing (`ERROR + APPROVE → ESCALATE`) now explicitly handled before catch-all case.
+- `FiscalLimitGuard.rollback_state(amount, audit_id)`: Saga compensation stub — logs `[SAGA-ROLLBACK]`, reverses Redis debit, re-raises on failure.
+- `tests/test_provenance_chain.py`: `test_link_hash_is_deterministic` asserts hash stability across calls.
+
+### Fixed
+- `CausalGatekeeper`: Redis connection errors are now fail-closed (raise `RuntimeError`) rather than returning a zero-deflection sentinel (fail-open). Absent keys remain first-boot safe.
+- Terminology: "TOCTOU gap" for the rollback atomicity issue renamed to "saga-atomicity gap" throughout docs and paper.
+- Redis access model for gateway corrected in documentation: gateway has read-write access (Tier 4 FiscalLimitGuard uses `WATCH/MULTI/EXEC`), not read-only as previously documented.
+
+### Documentation
+- `CAGE_ARXIV.MD`: 58 peer-review items addressed — bibliography fixes, formal-proof caveats (under-approximation, saga-atomicity, CBF conditional implication), security notes (FTRA trust boundary, replay vulnerability, intra-window double-spend), new Appendix D (adversarial payload examples), expanded roadmap (NoDirectBind, POAM-TIER2-001, FTRA formal verification).
+
 ---
+
+## [Unreleased — prior]
+
+### Added
+
+- `src/compliance_bridge/reconciliation_worker.py` — `ObjectStoreLedgerProvider` (S3-compatible via boto3: AWS S3, GCS S3 Interop, MinIO, Ceph). Registered `"s3"` and `"object-store"` aliases in the `_PROVIDERS` factory.
+- `deployment/k8s/reconciliation-worker.yaml` — new CronJob manifest running `ExternalLedgerReconciler` every 5 minutes; default `RECONCILIATION_PROVIDER` changed to `"s3"`; added `S3_RECONCILIATION_BUCKET`, `S3_ENDPOINT_URL`, `S3_REGION_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` env vars; CiliumNetworkPolicy egress extended to `*.amazonaws.com`.
+- `docs/POAM.md` — added POAM-2026-038 through -042.
+
+### Fixed
+
+- `src/gateway/governance/fiscal_limit_guard.py` — per-reservation TTL sentinel key `fiscal:reservation:{uuid}` (`ex=reservation_ttl`, default 300 s) bounds the crash-leakage window between `reserve()` and `confirm()`/`release()`.
+- `src/gateway/governance/routing_seal.py` — `generate_seal()` / `_canonical_payload()` sanitize dots (`.replace(".", "-")`) in the action slug to guarantee an unambiguous 3-part `.` split during `verify_seal()`.
+- `src/compliance_bridge/context_accumulator.py` — `_content_hash()` now passes `separators=(",", ":")` to `json.dumps()` for canonical, whitespace-free serialization.
+- `src/gateway/governance/causal_gatekeeper.py` — added `_MIN_CAUSAL_SAMPLES` guard (default 30, overridable via `CAUSAL_MIN_SAMPLES`) before `backdoor.linear_regression` to fail closed on sparse telemetry.
+- `src/governed_financial_advisor/graph/nodes/safety_node.py` — replaced hardcoded zero sentinels for `drawdown`, `order_size`, `daily_vol` with `_fetch_live_risk_metrics()`, reading live values from Redis (`cbf:portfolio_drawdown:{account_id}`, `portfolio:daily_vol:{account_id}`) with 200 ms socket timeout and safe-sentinel fallback.
+- `scripts/measure_paper_metrics.py` — re-enabled `measure_ungoverned_baseline()`.
+- `scripts/measure_reconciliation_metrics.py` — `_make_sync_redis()` now honours `REDIS_PASSWORD`.
+
+### Changed
+
+- `refactor(nemo): consolidate GFA LLMRails to single harness singleton` —
+  - Added `reload_nemo_rails(config_path)` (async, `asyncio.Lock`-guarded) and
+    `_get_reload_lock()` to
+    `src/gateway/governance/langgraph_harness/nemo_node_factory.py`; the
+    module-level `_nemo_rails` singleton is now the sole `LLMRails` instance
+    for the entire GFA pod.
+  - Removed the module-level `rails = load_rails()` global and all
+    `global rails` declarations from `src/governed_financial_advisor/server.py`;
+    both hot-reload endpoints (`/v1/nemo/propose-refinement` and
+    `/v1/nemo/approve-refinement/{id}`) now call `await reload_nemo_rails()`
+    from the harness instead of maintaining their own `LLMRails` instance.
+  - Removed the `_rails` singleton and `get_rails()` helper from
+    `src/governed_financial_advisor/tools/api.py`; it now calls
+    `get_nemo_rails()` from the harness directly.
+  - Net result: one `LLMRails` instance per GFA pod (down from three); a
+    single approved refinement now propagates to every consumer
+    simultaneously instead of only the instance it was applied against.
+  - Quarantined `infra/modules/nemo_guardrails/main.tf` with a
+    `HISTORICAL-ONLY — DO NOT APPLY` banner (predates and diverges from the
+    canonical `config/rails/` source) and added a `nemo-freshness-check` CI
+    job (`.github/workflows/ci.yml`) that diffs `config/rails/actions.py`
+    against `deployment/k8s/nemo-rails-configmap.yaml`.
 
 ## [v2.1.1-post — 2026-08-05]
 
@@ -37,7 +95,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   of conditionally passing them from the LLM execution plan. Closes UCA-5/UCA-2
   100% benign `trade_execution` FPR (75.0% → 0.0%). **Architectural invariant:**
   safety enforcement is purely deterministic LangGraph node execution — never
-  dependent on LLM plan output (`fix(governance)`).
+  dependent on LLM plan output (`fix(governance)`). *(Superseded 2026-08-06: `drawdown`/`daily_vol` are now read live from Redis with sentinel fallback — see `[Unreleased]`.)*
 - `config/rails/actions.py` — added Stage 1C structural-attack blocklist inside
   `custom_self_check_input()` between Stage 1B (illegal-finance) and Stage 2
   (allowlist). Stage 1C blocks SQL injection markers (`;`, `--`, `'; DROP`,
@@ -57,8 +115,6 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-execution gate (`docs`).
 
 ---
-
-## [Unreleased — prior]
 
 ### Added
 - `KmsSigner.sign()` now embeds `signed_at` Unix timestamp in every signed payload; `verify()` rejects payloads older than `MAX_KMS_PAYLOAD_AGE_SECONDS` (300 s), closing replay-attack vector.

@@ -137,6 +137,8 @@ Additionally, runtime exceptions during DoWhy refutation (e.g., numerical instab
 | Gap | Description | Status | Enforcement Point |
 | --- | ----------- | ------ | ----------------- |
 | Gap 1 | No exhaustive state-space proof | ✅ **CLOSED** | `proof/model.py` — BFS over 21 reachable states |
+
+> **Scope limitation:** The current BFS proof covers the governance state machine (21-state tuple). It does not model the full implementation including the LangGraph harness, Redis state, and the FTRA boundary. A TLA+/Alloy extension to the full implementation is tracked as future work.
 | Gap 2 | `govern()` path issued no seal | ✅ **CLOSED** | [`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) + [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) |
 | Gap 3 | `CBF_FAIL_OPEN=true` silently degraded gate | ✅ **CLOSED** | Module-level `RuntimeError` in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
 | Gap 4 | DoWhy absence silently removed Tier 6 | ✅ **CLOSED** | Module-level `RuntimeError` + fail-closed runtime handler in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
@@ -607,6 +609,8 @@ All third-party compliance and attestation provider adapters are isolated under 
 | Mechanism               | Algorithm                  | Usage                            | FIPS Status              | Gaps                             |
 | ----------------------- | -------------------------- | -------------------------------- | ------------------------ | -------------------------------- |
 | **KMS Governance Signing** | RSA asymmetric HSM (GCP/AWS/Azure; algorithm auto-detected per key) | **Primary** — all governance decisions; non-repudiation; provider selected via `CAGE_KMS_PROVIDER` | ✅ FIPS-approved | Production only; HMAC routing seal for dev/CI when KMS inactive |
+
+> **Security hardening (H52):** `KmsSigner.sign()` embeds `"signed_at": int(time.time())` in every signed payload. `KmsSigner.verify()` raises `ValueError` if `now - signed_at > 300 s` (`MAX_KMS_PAYLOAD_AGE_SECONDS`). This closes the replay-attack vector where a compromised agent with Redis write access could reset the 300 s TTL indefinitely by overwriting a stale-but-signed payload.
 | Routing Seal            | HMAC-SHA256                | Every `POST /tools/execute` call | ✅ FIPS-approved         | Fallback only when KMS unavailable |
 | Governance Signature    | HMAC-SHA256                | Agent state transitions          | ✅ FIPS-approved         | None — fully implemented         |
 | TLS (external)          | TLS 1.2+                   | External service connections     | ✅ FIPS-compliant        | No intra-cluster equivalent      |
@@ -652,7 +656,7 @@ The routing seal satisfies the `NoDirectBind` formal invariant: there is no code
 
 The provenance chain builds a tamper-evident SHA-256 hash chain across all LangGraph governance nodes. Any modification to any node's input, output, or decision invalidates all subsequent chain links.
 
-**Hash computation:** [`compute_hash(data)`](../../src/gateway/governance/provenance_chain.py) serialises the dict with `json.dumps(sort_keys=True)` before SHA-256 hashing — **deterministic sorted-key JSON** regardless of insertion order. Non-serialisable values are coerced to strings.
+**Hash computation:** [`compute_hash(data)`](../../src/gateway/governance/provenance_chain.py) serialises the dict with `json.dumps(sort_keys=True, separators=(',', ':'))` before SHA-256 hashing — **deterministic sorted-key JSON** regardless of insertion order. Non-serialisable values are coerced to strings. Earlier versions omitted `separators`, producing non-spec-compliant hash values.
 
 **Chain construction complexity:** O(n) — each record's `parent_hash` is the SHA-256 of the preceding record's full dict (sorted keys). The first record has `parent_hash=None`.
 
@@ -723,7 +727,7 @@ h(S(t+1)) ≥ (1−γ) · h(S(t))     where γ ∈ (0,1)
 | `γ` (decay rate) | `0.5` | US_FED, APAC_MAS |
 | `γ` (decay rate) | `0.6` | EU_ECB (stricter CRD VI buffer) |
 
-**Enforcement mechanism:** Redis `WATCH/MULTI/EXEC` atomic transaction (5 retries on contention). A violation of `h(x) ≥ 0` raises `GovernanceError` immediately (fail-closed). The CBF is re-evaluated at execution time by `post_hitl_revalidate_node` using the fresh live price to prevent TOCTOU exploits.
+**Enforcement mechanism:** Redis `WATCH/MULTI/EXEC` atomic transaction (5 retries on contention). A violation of `h(x) ≥ 0` raises `GovernanceError` immediately (fail-closed). The CBF is re-evaluated at execution time by `post_hitl_revalidate_node` using the fresh live price to prevent price-drift races.
 
 **Security significance:** The CBF is the primary financial safety gate. Setting `CBF_FAIL_OPEN=true` in production raises a `RuntimeError` at startup (Gap 3 remediation — see §3a), preventing any degraded-gate configuration from reaching production.
 
@@ -743,7 +747,7 @@ The `FiscalLimitGuard` prevents race conditions where parallel agent threads col
 | Retry strategy | Exponential backoff: `_RETRY_BASE_MS × 2^attempt` | Handles Redis `WATCH/MULTI/EXEC` contention |
 | Reservation TTL | 300 seconds | Reclaims limits from crashed nodes automatically |
 
-**Headroom pre-reservation:** Fiscal headroom is reserved in Redis *after* concurrent CBF+OPA validation (Tiers 2+4), closing the TOCTOU race window. Unused limits are returned via `release(token)` on Saga LIFO rollback. If Redis is unavailable, the trade is blocked (fail-closed).
+**Headroom pre-reservation:** Fiscal headroom is reserved in Redis *after* concurrent CBF+OPA validation (Tiers 2+4), closing the saga-atomicity gap (distributed-transaction atomicity failure, not a concurrency race). Unused limits are returned via `release(token)` on Saga LIFO rollback. `FiscalLimitGuard.rollback_state(amount, audit_id)` is a Saga compensation stub that reverses the Redis debit when a downstream tier fails after Tier 3a commitment; it logs `[SAGA-ROLLBACK]` and re-raises on Redis failure. If Redis is unavailable, the trade is blocked (fail-closed).
 
 **ISO 42001 mapping:** A.8.4 (AI System Operation Controls). **[US_FED only]** NIST SP 800-53 SC-4 (Information in Shared Resources).
 
