@@ -243,7 +243,7 @@ class GovernanceEventBus:
         """
         return len(self._queues)
 
-    def attach_evidence_sink(self, sink) -> None:
+    def attach_evidence_sink(self, sink) -> None:  # type: ignore[no-untyped-def]
         """Attach an EvidenceStreamSink for hash-chained event persistence.
 
         Args:

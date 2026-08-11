@@ -185,7 +185,7 @@ def generate_mock_telemetry(n_samples: int = 1000) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def _check_telemetry_freshness(
+def _check_telemetry_freshness(  # type: ignore[no-untyped-def]
     telemetry: pd.DataFrame,
     span,
 ) -> bool:

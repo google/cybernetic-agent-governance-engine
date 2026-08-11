@@ -42,7 +42,7 @@ Environment variables
 Status
 ------
 **INTERFACE READY** — HTTP client is fully implemented.  Production
-activation requires TrustLayers API credentials from Dani's team.
+activation requires TrustLayers API credentials from the TrustLayers team.
 """
 
 from __future__ import annotations
@@ -109,7 +109,7 @@ class TrustLayersProvider:
             headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
 
-    async def fetch_baseline(self, region: str):
+    async def fetch_baseline(self, region: str):  # type: ignore[no-untyped-def]
         """Fetch the active legal baseline from TrustLayers."""
         import httpx
 
@@ -130,7 +130,7 @@ class TrustLayersProvider:
             logger.error("[TrustLayersProvider] fetch_baseline failed: %s %s", url, exc)
             return NormativeBaseline(region=region, profile={}, error=str(exc))
 
-    async def validate_fria(self, payload: dict[str, Any]):
+    async def validate_fria(self, payload: dict[str, Any]):  # type: ignore[no-untyped-def]
         """Submit FRIA validation to TrustLayers (synchronous blocking gate)."""
         import httpx
 
@@ -153,7 +153,7 @@ class TrustLayersProvider:
                 error=str(exc),
             )
 
-    async def submit_evidence(self, thread_id: str, evidence_hash: str):
+    async def submit_evidence(self, thread_id: str, evidence_hash: str):  # type: ignore[no-untyped-def]
         """Submit governance evidence hash for external sealing."""
         import httpx
 

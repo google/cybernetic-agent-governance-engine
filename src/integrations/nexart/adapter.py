@@ -199,7 +199,7 @@ def _serialize_state_snapshot(state: dict[str, Any]) -> dict[str, Any]:
                     }
                 )
             else:
-                serialized_messages.append(str(msg)[:500])
+                serialized_messages.append(str(msg)[:500])  # type: ignore[arg-type]
         snapshot["messages"] = serialized_messages
 
     # Remove non-serializable or sensitive fields
@@ -444,7 +444,7 @@ class NexArtAttestationCallback:
                 "rationale": approval.get("rationale"),
                 "timestamp": approval.get("timestamp"),
             }
-        signals["interruptType"] = "HITL_MANUAL_REVIEW"
+        signals["interruptType"] = "HITL_MANUAL_REVIEW"  # type: ignore[assignment]
         signals["approvalRequired"] = state.get("approval_required", False)
 
         step = ProjectBundleStepEntry(

@@ -15,6 +15,16 @@ metadata:
   labels:
     app: vllm-reasoning
 spec:
+  # ── Replica-count note (gpu_node_pool_min_count=0 interaction) ────────────────
+  # Setting gpu_node_pool_min_count=0 in Terraform lets the GKE cluster autoscaler
+  # drain and remove the GPU node after ~10 minutes of no pending GPU pod. However,
+  # the autoscaler only removes a node once ALL pods on it have been evicted —
+  # meaning the node will NOT be drained while this Deployment has replicas > 0.
+  # To achieve full node scale-to-zero you must also scale this Deployment to 0
+  # replicas (or delete the pod). Consider a companion CronJob (see cost-analysis
+  # Option 2) that runs `kubectl scale deployment/vllm-reasoning --replicas=0` on a
+  # schedule and restores replicas before the workload window begins.
+  # DO NOT change this value here without also updating the CronJob schedule.
   replicas: 1
   selector:
     matchLabels:

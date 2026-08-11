@@ -1019,8 +1019,10 @@ class TestEnforceGovernanceHelper:
 class TestGovernanceAppRoutes:
     """Smoke tests verifying that the expected routes exist on governance_app."""
 
-    @pytest.fixture()
+    @pytest.fixture(scope="class")
     def client(self):
+        # scope="class": governance_app has no mutable state and all three
+        # smoke tests in this class share the same (read-only) app config.
         from src.gateway.server.governance_middleware import governance_app
 
         return TestClient(governance_app, raise_server_exceptions=False)

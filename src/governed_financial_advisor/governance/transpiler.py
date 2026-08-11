@@ -88,7 +88,7 @@ def _safe_dispatch(generated_code: str, context: dict) -> dict:
     args = [ast.literal_eval(arg) for arg in tree.body.args]
     kwargs = {kw.arg: ast.literal_eval(kw.value) for kw in tree.body.keywords}
 
-    return dispatch_map[func_name](*args, **kwargs)
+    return dispatch_map[func_name](*args, **kwargs)  # type: ignore[arg-type]
 
 
 logger = logging.getLogger("governance.transpiler")
@@ -386,7 +386,7 @@ class PolicyTranspiler:
         if not self._llm:
             raise RuntimeError("LLM is not initialised")
         response = self._llm.invoke(prompt)
-        return response.content if hasattr(response, "content") else str(response)
+        return response.content if hasattr(response, "content") else str(response)  # type: ignore[return-value]
 
     def _safe_func_name(self, text: str) -> str:
         """Return a deterministic Python identifier for *text*.
@@ -406,7 +406,7 @@ class PolicyTranspiler:
     # Public API
     # ------------------------------------------------------------------
 
-    def generate_nemo_action(self, uca) -> str:
+    def generate_nemo_action(self, uca) -> str:  # type: ignore[no-untyped-def]
         """Generate a Python NeMo Guardrails action stub for *uca*.
 
         Args:
@@ -450,7 +450,7 @@ class PolicyTranspiler:
             threshold=logic.threshold,
         )
 
-    def generate_rego_policy(self, uca) -> str:
+    def generate_rego_policy(self, uca) -> str:  # type: ignore[no-untyped-def]
         """Generate an OPA Rego policy fragment for *uca*.
 
         Args:

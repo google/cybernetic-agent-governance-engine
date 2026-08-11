@@ -175,7 +175,7 @@ class StructuredLLMClient:
     def __init__(
         self,
         base_url: str | None = None,
-        api_key: str = None,
+        api_key: str = None,  # type: ignore[assignment]
         model_name: str | None = None,
         timeout_seconds: float = 30.0,
     ):

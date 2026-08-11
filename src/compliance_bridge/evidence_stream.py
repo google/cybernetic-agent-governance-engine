@@ -206,13 +206,13 @@ class EvidenceStreamSink:
         try:
             import redis.asyncio as aioredis
 
-            self._redis = aioredis.from_url(
+            self._redis = aioredis.from_url(  # type: ignore[assignment]
                 self._redis_url,
                 db=self._redis_db,
                 decode_responses=True,
             )
             # Verify connectivity
-            await self._redis.ping()
+            await self._redis.ping()  # type: ignore[attr-defined]
             logger.info(
                 "[EvidenceStream] Connected to Redis: %s db=%d stream=%s",
                 self._redis_url,
@@ -405,7 +405,7 @@ class EvidenceStreamSink:
         retains all data).
         """
         try:
-            from google.cloud import storage  # type: ignore[import]
+            from google.cloud import storage  # type: ignore[import, attr-defined]
 
             client = storage.Client()
             bucket = client.bucket(_GCS_BUCKET)

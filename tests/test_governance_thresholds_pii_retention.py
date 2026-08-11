@@ -22,6 +22,8 @@ implemented in src/gateway/governance/schemas/thresholds.py.
 Ref: docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md#FINDING-07
 """
 
+import pytest
+
 from src.gateway.governance.schemas.thresholds import (
     GovernanceThresholds,
     _resolve_pii_retention,
@@ -31,29 +33,35 @@ from src.gateway.governance.schemas.thresholds import (
 class TestResolvePiiRetention:
     """_resolve_pii_retention() must key off CAGE_DEPLOYMENT_REGION at call time."""
 
-    def test_us_fed_cites_fisma_au11(self, monkeypatch):
-        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
+    @pytest.mark.parametrize(
+        "region, expected_authority_fragment, expected_days",
+        [
+            ("US_FED", "FISMA AU-11", 90),
+            ("EU_ECB", "GDPR Art. 5", None),
+            ("APAC_MAS", "MAS Notice 655", None),
+        ],
+    )
+    def test_known_regions(self, monkeypatch, region, expected_authority_fragment, expected_days):
+        """_resolve_pii_retention returns the correct authority citation for each known region."""
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", region)
         days, authority = _resolve_pii_retention()
-        assert days == 90
-        assert "FISMA AU-11" in authority
+        assert expected_authority_fragment in authority
+        if expected_days is not None:
+            assert days == expected_days
 
-    def test_eu_ecb_cites_gdpr(self, monkeypatch):
-        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
-        _days, authority = _resolve_pii_retention()
-        assert "GDPR Art. 5" in authority
-
-    def test_apac_mas_cites_notice_655(self, monkeypatch):
-        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "APAC_MAS")
-        _days, authority = _resolve_pii_retention()
-        assert "MAS Notice 655" in authority
-
-    def test_unset_region_falls_back_to_iso_42001(self, monkeypatch):
-        monkeypatch.delenv("CAGE_DEPLOYMENT_REGION", raising=False)
-        _days, authority = _resolve_pii_retention()
-        assert "ISO 42001" in authority
-
-    def test_unknown_region_falls_back_to_iso_42001(self, monkeypatch):
-        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "UNKNOWN_REGION")
+    @pytest.mark.parametrize(
+        "setup",
+        [
+            pytest.param("unset", id="unset-region-falls-back-to-iso-42001"),
+            pytest.param("UNKNOWN_REGION", id="unknown-region-falls-back-to-iso-42001"),
+        ],
+    )
+    def test_fallback_to_iso_42001(self, monkeypatch, setup):
+        """Unset or unknown CAGE_DEPLOYMENT_REGION falls back to ISO 42001."""
+        if setup == "unset":
+            monkeypatch.delenv("CAGE_DEPLOYMENT_REGION", raising=False)
+        else:
+            monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", setup)
         _days, authority = _resolve_pii_retention()
         assert "ISO 42001" in authority
 

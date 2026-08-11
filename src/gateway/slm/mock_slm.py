@@ -46,7 +46,7 @@ INJECTION_TARGET = (
 
 
 @app.route("/similarity", methods=["POST"])
-def similarity():
+def similarity():  # type: ignore[no-untyped-def]
     data = request.get_json(force=True, silent=True)
     if not data:
         return jsonify({"error": "Invalid JSON body"}), 400
@@ -75,7 +75,7 @@ def similarity():
 
 
 @app.route("/health", methods=["GET"])
-def health():
+def health():  # type: ignore[no-untyped-def]
     return jsonify({"status": "ok", "model": _SLM_MODEL_NAME})
 
 

@@ -150,7 +150,7 @@ class AsyncRedisClient:
                     password=password if password else None,
                     decode_responses=True,
                 )
-                await self.client.ping()
+                await self.client.ping()  # type: ignore[misc]  # redis-py ping() returns bool | Awaitable[bool] depending on connection type
                 logger.info(
                     "✅ Async Redis Pool established via Sentinel master connection."
                 )
@@ -196,7 +196,7 @@ class AsyncRedisClient:
                 **pool_kwargs,
             )
             self.client = Redis(connection_pool=self.pool)
-            await self.client.ping()
+            await self.client.ping()  # type: ignore[misc]  # redis-py ping() returns bool | Awaitable[bool]
             logger.info(f"✅ Async Redis Pool established at {self.redis_url}")
         except (ConnectionError, TimeoutError) as e:
             logger.error(f"❌ CRITICAL: Async Redis Connection Failed: {e}")

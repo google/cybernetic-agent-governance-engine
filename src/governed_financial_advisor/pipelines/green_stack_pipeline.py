@@ -31,10 +31,10 @@ except ImportError:
     _KFP_AVAILABLE = False
 
 
-def _noop_decorator(*args, **kwargs):
+def _noop_decorator(*args, **kwargs):  # type: ignore[no-untyped-def]
     """Stand-in decorator when kfp is not installed."""
 
-    def wrapper(fn):
+    def wrapper(fn):  # type: ignore[no-untyped-def]
         return fn
 
     if len(args) == 1 and callable(args[0]):

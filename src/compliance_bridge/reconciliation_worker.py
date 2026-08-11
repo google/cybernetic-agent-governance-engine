@@ -731,7 +731,7 @@ class GcsLedgerProvider:
     def fetch_balance(self, account_id: str) -> "ReconciliationResult":  # type: ignore[override]
         """Download the balance snapshot from GCS and return a ReconciliationResult."""
         try:
-            from google.cloud import storage  # type: ignore[import-untyped]
+            from google.cloud import storage  # type: ignore[import-untyped, attr-defined]
         except ImportError as exc:
             raise RuntimeError(
                 "google-cloud-storage is required for GcsLedgerProvider. "
@@ -747,7 +747,7 @@ class GcsLedgerProvider:
         raw = blob.download_as_text()
         data = _json.loads(raw)
 
-        return ReconciliationResult(
+        return ReconciliationResult(  # type: ignore[call-arg]
             balance=float(data.get("balance", 0.0)),
             currency=data.get("currency", "USD"),
             provider="gcs",
@@ -854,11 +854,11 @@ class ObjectStoreLedgerProvider:
         import json as _json
 
         client = self._make_client()
-        response = client.get_object(Bucket=self._bucket, Key=self._object)
+        response = client.get_object(Bucket=self._bucket, Key=self._object)  # type: ignore[attr-defined]
         raw = response["Body"].read().decode("utf-8")
         data = _json.loads(raw)
 
-        return ReconciliationResult(
+        return ReconciliationResult(  # type: ignore[call-arg]
             balance=float(data.get("balance", 0.0)),
             currency=data.get("currency", "USD"),
             provider="s3",
@@ -882,7 +882,7 @@ from contextlib import contextmanager
 
 
 @contextmanager
-def _null_context():
+def _null_context():  # type: ignore[no-untyped-def]
     """No-op context manager used when OTel is unavailable."""
     yield
 

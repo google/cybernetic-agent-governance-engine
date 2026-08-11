@@ -76,7 +76,7 @@ except Exception as _flg_exc:
 
 symbolic_governor = SymbolicGovernor(
     opa_client=opa_client,
-    safety_filter=safety_filter,
+    safety_filter=safety_filter,  # type: ignore[arg-type]  # CBF implements SafetyFilter but async methods differ
     consensus_engine=consensus_engine,
     stpa_validator=stpa_validator,
     fiscal_limit_guard=fiscal_limit_guard,

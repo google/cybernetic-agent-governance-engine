@@ -44,7 +44,7 @@ pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def client():
     """TestClient with Langfuse patched and C-07 auth dependency overridden."""
     with patch("src.compliance_bridge.main.Langfuse") as MockLF:

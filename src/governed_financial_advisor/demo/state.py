@@ -18,13 +18,13 @@ from typing import Any
 class DemoState:
     _instance = None
 
-    def __new__(cls):
+    def __new__(cls):  # type: ignore[no-untyped-def]
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance.reset()
         return cls._instance
 
-    def reset(self):
+    def reset(self):  # type: ignore[no-untyped-def]
         """Resets the state to default."""
         self.simulated_latency: float = 0.0
         self.forced_risk_profile: str | None = None

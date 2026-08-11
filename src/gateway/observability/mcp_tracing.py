@@ -42,7 +42,7 @@ tracer = trace.get_tracer("mcp.server.tools")
 propagator = TraceContextTextMapPropagator()
 
 
-def patch_mcp_tools(mcp_server) -> None:
+def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
     """
     Monkey-patches ToolManager.call_tool to extract the W3C traceparent
     from arguments (before Pydantic validation strips it) and wrap
@@ -53,7 +53,7 @@ def patch_mcp_tools(mcp_server) -> None:
     tool_manager = mcp_server._tool_manager
     original_call_tool = tool_manager.call_tool
 
-    async def traced_call_tool(name, arguments, context=None, convert_result=False):
+    async def traced_call_tool(name, arguments, context=None, convert_result=False):  # type: ignore[no-untyped-def]
         # 1. Extract carrier BEFORE Pydantic validation strips it
         carrier = arguments.pop("_otel_carrier", None) or {}
         otel_ctx = propagator.extract(carrier)

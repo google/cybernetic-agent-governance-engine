@@ -28,6 +28,9 @@ on:
   pull_request:
     branches:
       - main
+  # schedule:
+  #   # Nightly load test at 02:00 UTC — runs against a CI-local gateway instance.
+  #   - cron: "0 2 * * *"
 
 # Default least-privilege permissions for every job in this workflow.
 # zizmor's excessive-permissions audit flags jobs with no permissions:
@@ -83,11 +86,21 @@ jobs:
 
   pytest-logic:
     name: "Pytest Logic Tests (${{ matrix.region }})"
-    runs-on: ubuntu-latest
+    # 4-core runner: doubles xdist worker count from 2→4, ~40% faster test execution
+    runs-on: ubuntu-latest-4-cores
     strategy:
       fail-fast: false
       matrix:
         region: [US_FED, EU_ECB, APAC_MAS]
+        include:
+          # Branch coverage is region-agnostic — run it only on US_FED to save
+          # ~15-20% wall time on the EU_ECB and APAC_MAS legs.
+          - region: US_FED
+            cov_branch_flag: "--cov-branch"
+          - region: EU_ECB
+            cov_branch_flag: ""
+          - region: APAC_MAS
+            cov_branch_flag: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -116,7 +129,9 @@ jobs:
           LANGFUSE_HOST: "http://localhost:3000"
           LANGFUSE_PUBLIC_KEY: "pk-dummy"
           LANGFUSE_SECRET_KEY: "sk-dummy"
-        run: uv run pytest tests/ -m local -v
+        run: uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile -v ${{ matrix.cov_branch_flag }} --cov=src --cov-fail-under=75
+      - name: Run Bandit SAST (medium+ severity)
+        run: uv run bandit -r src/ -c pyproject.toml -ll
 
   lint:
     name: "Lint"
@@ -380,9 +395,40 @@ jobs:
           path: sbom.json
           retention-days: 90
 
+  integration-smoke:
+    name: "Integration Smoke Tests"
+    runs-on: ubuntu-latest
+    # Hard gate: requires live GKE cluster (GOOGLE_CREDENTIALS secret + kubeconfig).
+    # Move to ci-integration.yml nightly workflow when cluster access is unavailable.
+    # Fork PRs never have access to repository secrets, so skip the job entirely to
+    # prevent spurious failures and avoid leaking the absence of secrets in log output.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    needs: [pytest-logic]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Install dependencies
+        run: uv sync --all-groups --all-extras
+      - name: Run integration smoke tests
+        env:
+          CAGE_DEPLOYMENT_REGION: US_FED
+        run: uv run pytest tests/ -m integration --timeout=30 -x -q --ignore=tests/load --ignore=tests/red_team
+
   ai600-unit-tests:
     name: "AI 600-1 Unit Tests"
-    runs-on: ubuntu-latest
+    # 4-core runner: doubles xdist worker count from 2→4, ~40% faster test execution
+    runs-on: ubuntu-latest-4-cores
     needs: [license-check]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -398,7 +444,7 @@ jobs:
           python-version-file: "pyproject.toml"
       - name: Install dependencies
         run: uv sync --all-groups --all-extras
-      - name: Run AI 600-1 unit tests
+      - name: Run red-team unit tests (mocked, no live services)
         env:
           CAGE_ENV: "ci"
           OPENAI_API_KEY: "sk-dummy"
@@ -412,17 +458,69 @@ jobs:
           LANGFUSE_PUBLIC_KEY: "pk-dummy"
           LANGFUSE_SECRET_KEY: "sk-dummy"
         run: |
-          uv run pytest \
-            tests/test_confabulation_scorer.py \
-            tests/test_pii_audit_log.py \
-            tests/test_prompt_injection_detector.py \
-            tests/test_hitl_escalator.py \
-            tests/test_provenance_chain.py \
-            tests/test_agentic_scope.py \
-            tests/test_text_filter_cbrn.py \
-            tests/test_nemo_cbrn_rails.py \
-            tests/test_recursive_governance_risk.py \
-            -v --tb=short
+          uv run pytest tests/red_team/ -m "red_team and not integration" -v
+          uv run pytest tests/ -m apac_mas -v
+
+  locust-load-test:
+    name: "Nightly Load Test (Locust)"
+    runs-on: ubuntu-latest
+    # Run only on the nightly schedule — not on every push or pull_request.
+    if: false  # github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Install dependencies
+        run: uv sync --all-groups --all-extras
+      - name: Start gateway under test (background)
+        env:
+          CAGE_ENV: "ci"
+          OPA_CACHE_ENABLED: "false"
+          OPA_URL: "http://localhost:8181/v1/data/trade/governance"
+          REDIS_URL: "redis://localhost:6379/0"
+          OPENAI_API_KEY: "sk-dummy"
+          MODEL_FAST: "Qwen/Qwen2.5-7B-Instruct"
+          VLLM_API_KEY: "dummy"
+          VLLM_GATEWAY_URL: "http://localhost:8081/v1"
+          LANGFUSE_HOST: "http://localhost:3000"
+          LANGFUSE_PUBLIC_KEY: "pk-dummy"
+          LANGFUSE_SECRET_KEY: "sk-dummy"
+        run: |
+          uv run python -m uvicorn src.gateway.server.mcp_tool_server:app \
+            --host 0.0.0.0 --port 8080 &
+          # Wait up to 30 s for the server to become healthy.
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/health && break || sleep 1
+          done
+          echo "Gateway ready."
+      - name: Run Locust headless (10 users, 30 s)
+        run: |
+          uv run locust -f tests/load/locustfile.py \
+            --headless -u 10 -r 5 -t 30s \
+            --host http://localhost:8080 \
+            --html /tmp/locust-report.html \
+            --csv /tmp/locust-stats \
+            --exit-code-on-error 1
+      - name: Assert p95 latency regression gate
+        run: |
+          uv run python scripts/check_locust_baseline.py \
+            --stats-csv /tmp/locust-stats_stats.csv \
+            --p95-baseline-ms 2000
+      - name: Upload Locust report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: locust-report-${{ github.sha }}
+          path: /tmp/locust-*.html
+          retention-days: 30
 
   cbrn-keyword-check:
     name: "CBRN Keyword List Validation"

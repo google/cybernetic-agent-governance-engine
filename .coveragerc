@@ -1,0 +1,11 @@
+[run]
+branch = true
+parallel = true
+omit =
+    src/gateway/protos/*_pb2*.py
+    src/gateway/protos/*_pb2_grpc.py
+    src/integrations/nexart/tests/*
+    src/integrations/*/tests/*
+
+[report]
+fail_under = 75

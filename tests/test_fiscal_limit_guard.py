@@ -27,7 +27,7 @@ Tests run against fakeredis (no live Redis required) and exercise:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -262,3 +262,192 @@ async def test_reservation_token_fields(guard: FiscalLimitGuard) -> None:
     assert token.window_key.startswith("fiscal:daily_limit:")
     assert token.ttl_seconds == 300
     assert not token.rejected
+
+
+# ---------------------------------------------------------------------------
+# Test 6: confirm() — properly awaited
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_confirm_awaitable_does_not_raise(guard: FiscalLimitGuard) -> None:
+    """confirm() when properly awaited should not raise and not change the spend total."""
+    token = await guard.reserve(agent_id="trading-agent", amount_usd=50_000.0)
+    before = await guard.current_spend_usd()
+    await guard.confirm(token)  # properly awaited
+    assert await guard.current_spend_usd() == before
+
+
+@pytest.mark.asyncio
+async def test_confirm_on_rejected_token_is_noop(guard: FiscalLimitGuard) -> None:
+    """confirm() on a rejected token must be a no-op (no Redis writes)."""
+    # Fill the cap
+    await guard.reserve(agent_id="agent-a", amount_usd=500_000.0)
+    rejected = await guard.reserve(agent_id="agent-b", amount_usd=10_000.0)
+    assert rejected.rejected
+    # confirm on a rejected token must not raise
+    await guard.confirm(rejected)
+    assert await guard.current_spend_usd() == pytest.approx(500_000.0, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# Test 7: rollback_state() — Saga compensating transaction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rollback_state_decrements_spend(guard: FiscalLimitGuard) -> None:
+    """rollback_state() decrements the aggregate spend counter."""
+    await guard.reserve(agent_id="agent-a", amount_usd=200_000.0)
+    assert await guard.current_spend_usd() == pytest.approx(200_000.0, abs=0.01)
+
+    await guard.rollback_state(amount=100_000.0, audit_id="audit-123")
+    assert await guard.current_spend_usd() == pytest.approx(100_000.0, abs=0.01)
+
+
+@pytest.mark.asyncio
+async def test_rollback_state_floors_at_zero(guard: FiscalLimitGuard) -> None:
+    """rollback_state() never goes below zero (floor-at-zero)."""
+    await guard.reserve(agent_id="agent-a", amount_usd=50_000.0)
+    # Roll back more than spent
+    await guard.rollback_state(amount=200_000.0, audit_id="audit-456")
+    assert await guard.current_spend_usd() >= 0.0
+
+
+@pytest.mark.asyncio
+async def test_rollback_state_redis_error_re_raises(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """rollback_state() re-raises Redis errors (Saga error handling responsibility)."""
+    guard = FiscalLimitGuard(redis_client=redis_client, daily_cap_usd=500_000.0)
+    await guard.reserve(agent_id="agent-a", amount_usd=100_000.0)
+
+    guard._atomic_decrement = AsyncMock(side_effect=RuntimeError("Redis gone"))
+    with pytest.raises(RuntimeError, match="Redis gone"):
+        await guard.rollback_state(amount=50_000.0, audit_id="audit-err")
+
+
+# ---------------------------------------------------------------------------
+# Test 8: _reservation_key helper
+# ---------------------------------------------------------------------------
+
+
+def test_reservation_key_format(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """_reservation_key() returns the expected key schema."""
+    guard = FiscalLimitGuard(redis_client=redis_client)
+    key = guard._reservation_key("test-uuid-1234")
+    assert key == "fiscal:reservation:test-uuid-1234"
+
+
+def test_window_key_format(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """_window_key() returns a key starting with fiscal:daily_limit:."""
+    guard = FiscalLimitGuard(redis_client=redis_client)
+    key = guard._window_key()
+    assert key.startswith("fiscal:daily_limit:")
+    # Should contain a date string like 2026-08-09
+    import re
+    assert re.search(r"\d{4}-\d{2}-\d{2}$", key)
+
+
+# ---------------------------------------------------------------------------
+# Test 9: _write_reservation_key and _delete_reservation_key
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_reservation_key_success(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """_write_reservation_key() stores a sentinel key with TTL."""
+    guard = FiscalLimitGuard(redis_client=redis_client, reservation_ttl=60)
+    await guard._write_reservation_key("res-uuid", 5_000_00, "fiscal:daily_limit:2026-08-09")
+
+    key = "fiscal:reservation:res-uuid"
+    val = await redis_client.get(key)
+    assert val is not None
+    assert "500000" in val  # amount_cents
+
+
+@pytest.mark.asyncio
+async def test_delete_reservation_key_removes_key(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """_delete_reservation_key() removes the sentinel key."""
+    guard = FiscalLimitGuard(redis_client=redis_client, reservation_ttl=60)
+    await guard._write_reservation_key("del-uuid", 100_00, "fiscal:daily_limit:2026-08-09")
+
+    key = "fiscal:reservation:del-uuid"
+    assert await redis_client.get(key) is not None
+
+    await guard._delete_reservation_key("del-uuid")
+    assert await redis_client.get(key) is None
+
+
+@pytest.mark.asyncio
+async def test_write_reservation_key_failure_is_logged(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """_write_reservation_key() failure is logged as warning, not raised."""
+    guard = FiscalLimitGuard(redis_client=redis_client)
+    # Patch redis.set to raise an error
+    with patch.object(redis_client, "set", side_effect=ConnectionError("no redis")):
+        # Must not raise
+        await guard._write_reservation_key("fail-uuid", 1000, "fiscal:daily_limit:2026-08-09")
+
+
+@pytest.mark.asyncio
+async def test_delete_reservation_key_failure_is_logged(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """_delete_reservation_key() failure is logged as warning, not raised."""
+    guard = FiscalLimitGuard(redis_client=redis_client)
+    # Patch redis.delete to raise an error
+    with patch.object(redis_client, "delete", side_effect=ConnectionError("no redis")):
+        # Must not raise
+        await guard._delete_reservation_key("fail-del-uuid")
+
+
+# ---------------------------------------------------------------------------
+# Test 10: current_spend_usd Redis error path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_current_spend_usd_redis_error_returns_zero(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """current_spend_usd() returns 0.0 when Redis raises an error (fail-safe)."""
+    guard = FiscalLimitGuard(redis_client=redis_client)
+    with patch.object(redis_client, "get", side_effect=ConnectionError("redis down")):
+        result = await guard.current_spend_usd()
+    assert result == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Test 11: nan / inf input validation (CRIT-2 fix paths)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_infinite_amount_raises_value_error(guard: FiscalLimitGuard) -> None:
+    """reserve() with float('inf') raises ValueError (CRIT-2 fix)."""
+    with pytest.raises(ValueError, match="finite positive number"):
+        await guard.reserve(agent_id="agent", amount_usd=float("inf"))
+
+
+@pytest.mark.asyncio
+async def test_nan_amount_raises_value_error(guard: FiscalLimitGuard) -> None:
+    """reserve() with float('nan') raises ValueError (CRIT-2 fix)."""
+    with pytest.raises(ValueError, match="finite positive number"):
+        await guard.reserve(agent_id="agent", amount_usd=float("nan"))
+
+
+@pytest.mark.asyncio
+async def test_negative_infinity_raises_value_error(guard: FiscalLimitGuard) -> None:
+    """reserve() with -float('inf') raises ValueError."""
+    with pytest.raises(ValueError, match="finite positive number"):
+        await guard.reserve(agent_id="agent", amount_usd=float("-inf"))

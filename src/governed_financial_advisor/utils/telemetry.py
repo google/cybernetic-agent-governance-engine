@@ -35,7 +35,7 @@ from pythonjsonlogger import json as jsonlogger
 class TraceIdFilter(logging.Filter):
     """Injects OpenTelemetry trace_id and span_id into log records."""
 
-    def filter(self, record):
+    def filter(self, record):  # type: ignore[no-untyped-def]
         try:
             from opentelemetry import trace
 
@@ -54,7 +54,7 @@ class TraceIdFilter(logging.Filter):
 class ServiceContextFilter(logging.Filter):
     """Injects serviceContext for GCP Cloud Logging/Error Reporting."""
 
-    def filter(self, record):
+    def filter(self, record):  # type: ignore[no-untyped-def]
         record.serviceContext = {
             "service": os.getenv("SERVICE_NAME", "financial-advisor"),
             "version": os.getenv("DEPLOY_TIMESTAMP", "unknown"),
@@ -62,7 +62,7 @@ class ServiceContextFilter(logging.Filter):
         return True
 
 
-def setup_canonical_logging():
+def setup_canonical_logging():  # type: ignore[no-untyped-def]
     """Configures the root logger to output structured JSON with trace correlation."""
     root_logger = logging.getLogger()
 
@@ -252,7 +252,7 @@ def _install_otlp_error_filter() -> None:
 _install_otlp_error_filter()
 
 
-def configure_telemetry():
+def configure_telemetry():  # type: ignore[no-untyped-def]
     """
     Configures OpenTelemetry tracing (Centralized Mode).
     Uses standard OTLP exporting to an OpenTelemetry Collector.
@@ -289,13 +289,13 @@ def configure_telemetry():
         class RedactingSpanProcessor(SpanProcessor):
             """Intercepts all spans and redacts PII from attributes before export."""
 
-            def __init__(self, inner):
+            def __init__(self, inner):  # type: ignore[no-untyped-def]
                 self.inner = inner
 
-            def on_start(self, span, parent_context=None):
+            def on_start(self, span, parent_context=None):  # type: ignore[no-untyped-def]
                 self.inner.on_start(span, parent_context)
 
-            def on_end(self, span):
+            def on_end(self, span):  # type: ignore[no-untyped-def]
                 # Mutate the internal _attributes of the ReadableSpan snapshot
                 attrs = getattr(span, "_attributes", None)
                 if attrs is not None:
@@ -306,10 +306,10 @@ def configure_telemetry():
                                 attrs[key] = scrubbed
                 self.inner.on_end(span)
 
-            def shutdown(self):
+            def shutdown(self):  # type: ignore[no-untyped-def]
                 self.inner.shutdown()
 
-            def force_flush(self, timeout_millis=5_000):
+            def force_flush(self, timeout_millis=5_000):  # type: ignore[no-untyped-def]
                 # Honour the short timeout so shutdown does not block > 5 s
                 return self.inner.force_flush(timeout_millis)
 
@@ -331,7 +331,7 @@ def configure_telemetry():
         from opentelemetry.sdk.trace.sampling import Decision, Sampler, SamplingResult
 
         class HealthProbeSampler(Sampler):
-            def should_sample(
+            def should_sample(  # type: ignore[no-untyped-def]
                 self,
                 parent_context,
                 trace_id,
@@ -362,7 +362,7 @@ def configure_telemetry():
 
                 return SamplingResult(Decision.RECORD_AND_SAMPLE)
 
-            def get_description(self):
+            def get_description(self):  # type: ignore[no-untyped-def]
                 return "HealthProbeSampler"
 
         # Configure Resource
@@ -432,7 +432,7 @@ def configure_telemetry():
                     otlp_configured = True
                 else:
                     # Use gRPC Exporter — 5 s timeout
-                    otlp_exporter = GRPCSpanExporter(
+                    otlp_exporter = GRPCSpanExporter(  # type: ignore[assignment]
                         endpoint=otel_endpoint,
                         insecure=True,
                         timeout=_OTLP_EXPORT_TIMEOUT_S,
@@ -499,7 +499,7 @@ def configure_telemetry():
 
 
 # Tracer for creating custom spans
-def get_tracer():
+def get_tracer():  # type: ignore[no-untyped-def]
     """Returns a tracer for creating custom spans."""
     try:
         from opentelemetry import trace
@@ -549,7 +549,7 @@ def _truncate_attr(value: str, max_chars: int = _SPAN_ATTR_MAX_CHARS) -> str:
 
 
 @contextlib.contextmanager
-def genai_span(name: str, prompt: str = None, model: str = None):
+def genai_span(name: str, prompt: str = None, model: str = None):  # type: ignore[assignment, no-untyped-def]
     """
     Context manager for GenAI Semantic Conventions (Centralized).
 
@@ -590,7 +590,7 @@ def genai_span(name: str, prompt: str = None, model: str = None):
             raise
 
 
-def record_completion(span, completion: str):
+def record_completion(span, completion: str):  # type: ignore[no-untyped-def]
     """Helper to record completion metadata.
 
     The completion string is truncated to ``_SPAN_ATTR_MAX_CHARS`` characters
@@ -606,7 +606,7 @@ def record_completion(span, completion: str):
         span.set_attribute("langfuse.observation.output", truncated)
 
 
-def record_usage(span, usage):
+def record_usage(span, usage):  # type: ignore[no-untyped-def]
     """
     Helper to add token usage stats to the current span.
     """

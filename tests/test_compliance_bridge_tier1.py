@@ -58,7 +58,7 @@ assessment-results:
 """
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def client():
     """TestClient with Langfuse patched — required for app import.
 

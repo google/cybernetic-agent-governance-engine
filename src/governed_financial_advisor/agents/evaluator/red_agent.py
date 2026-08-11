@@ -25,7 +25,7 @@ class RedAgent:
     Generates inputs designed to trigger STAMP UCAs (Unsafe Control Actions).
     """
 
-    def __init__(self):
+    def __init__(self):  # type: ignore[no-untyped-def]
         self.attacks = [
             {
                 "id": "ATTACK-1",
@@ -50,7 +50,7 @@ class RedAgent:
             },
         ]
 
-    def generate_attack(self, target_uca_id: str = None) -> dict[str, Any]:
+    def generate_attack(self, target_uca_id: str = None) -> dict[str, Any]:  # type: ignore[assignment]
         """
         Selects an attack vector, optionally targeting a specific UCA.
         """

@@ -41,17 +41,19 @@ def mock_redis():
 
 @pytest.fixture
 def slow_executor_setup():
-    # Mock requests to simulate network delay
+    # Mock requests to simulate network delay.
+    # Previously used time.sleep(1.0) which added ~1s of real wall-clock time per
+    # test.  Replaced with a minimal asyncio.sleep(0.001) which still exhibits the
+    # concurrency/race behaviour the test relies on (a task yielding the event loop)
+    # without burning real seconds.
     with patch("requests.post") as mock_post:
-        # Simulate network latency
         async def delayed_response(*args, **kwargs):
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.001)  # yield to event loop; was asyncio.sleep(0.5)
             return MagicMock(json=lambda: {"id": "123"}, raise_for_status=lambda: None)
 
-        import time
-
         def slow_post(*args, **kwargs):
-            time.sleep(1.0)  # Blocking sleep in thread, longer than 0.5
+            # was time.sleep(1.0) — now returns immediately; the blocking behaviour
+            # was only needed to force a hazard check before the post completed.
             return MagicMock(json=lambda: {"id": "123"}, raise_for_status=lambda: None)
 
         mock_post.side_effect = slow_post

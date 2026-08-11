@@ -253,3 +253,4 @@ init_antigravity.sh
 
 # AI 600-1 §2.8 — generated SBOM artifact (not committed)
 sbom.json
+coverage.json

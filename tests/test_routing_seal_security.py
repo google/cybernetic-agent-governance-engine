@@ -29,9 +29,12 @@ Test cases:
   7. verify_seal() rejects wrong action
 """
 
+import datetime
 import os
 import time
 from unittest.mock import patch
+
+from freezegun import freeze_time
 
 import pytest
 
@@ -311,11 +314,13 @@ def test_gateway_verify_seal_rejects_expired_seal():
     )
 
     params = {"symbol": "AAPL", "amount": 1000.0}
-    # ttl_s=0 means expire_ts = now, which is already past by the time verify runs
+    # ttl_s=0 means expire_ts = now; freeze time 2 s ahead to ensure past expiry
+    now = time.time()
     seal = generate_seal("execute_trade", params, ttl_s=0)
-    time.sleep(1)  # Ensure we're past the expiry timestamp
-    with pytest.raises(SymbolicGovernorViolation):
-        verify_seal(seal, "execute_trade", params)
+    frozen_dt = datetime.datetime.fromtimestamp(now + 2, tz=datetime.timezone.utc)
+    with freeze_time(frozen_dt):
+        with pytest.raises(SymbolicGovernorViolation):
+            verify_seal(seal, "execute_trade", params)
 
 
 def test_gfa_verify_seal_rejects_expired_seal():
@@ -329,10 +334,12 @@ def test_gfa_verify_seal_rejects_expired_seal():
     )
 
     params = {"symbol": "AAPL", "amount": 1000.0}
+    now = time.time()
     seal = generate_seal("execute_trade", params, ttl_s=0)
-    time.sleep(1)
-    with pytest.raises(GFASymbolicGovernorViolation):
-        gfa_verify(seal, "execute_trade", params)
+    frozen_dt = datetime.datetime.fromtimestamp(now + 2, tz=datetime.timezone.utc)
+    with freeze_time(frozen_dt):
+        with pytest.raises(GFASymbolicGovernorViolation):
+            gfa_verify(seal, "execute_trade", params)
 
 
 # ---------------------------------------------------------------------------

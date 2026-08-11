@@ -50,7 +50,7 @@ def _dataset_name(control_id: str) -> str:
     return f"{_DATASET_PREFIX}-{control_id}"
 
 
-def _create_dataset_item_sync(
+def _create_dataset_item_sync(  # type: ignore[no-untyped-def]
     control_id: str,
     finding: OscalFinding,
     audit_id: str,
@@ -117,7 +117,7 @@ def _create_dataset_item_sync(
     )
 
 
-async def populate_eval_dataset(
+async def populate_eval_dataset(  # type: ignore[no-untyped-def]
     findings: list[OscalFinding],
     audit_id: str,
     langfuse,

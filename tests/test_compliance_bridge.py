@@ -41,110 +41,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
-# ── types ──
-# ---------------------------------------------------------------------------
-
-
-class TestOscalFindingModel:
-    """OscalFinding Pydantic model instantiation and validation."""
-
-    def test_oscal_finding_valid(self):
-        from src.compliance_bridge.types import OscalFinding
-
-        f = OscalFinding(
-            control_id="A.5.2",
-            result="PASS",
-            finding_id="uuid-abc-123",
-            remarks="All good",
-            safety_rate=0.995,
-            evidence_age_s=3600.0,
-        )
-        assert f.control_id == "A.5.2"
-        assert f.result == "PASS"
-        assert f.safety_rate == 0.995
-
-    def test_oscal_finding_invalid_result(self):
-        from pydantic import ValidationError
-
-        from src.compliance_bridge.types import OscalFinding
-
-        with pytest.raises(ValidationError):
-            OscalFinding(
-                control_id="A.5.2",
-                result="INVALID_STATUS",  # not in Literal
-                finding_id="uuid-abc",
-            )
-
-    def test_oscal_finding_safety_rate_bounds(self):
-        from pydantic import ValidationError
-
-        from src.compliance_bridge.types import OscalFinding
-
-        with pytest.raises(ValidationError):
-            OscalFinding(
-                control_id="A.5.2",
-                result="PASS",
-                finding_id="uuid-abc",
-                safety_rate=1.5,  # > 1.0
-            )
-
-    def test_oscal_finding_optional_fields(self):
-        from src.compliance_bridge.types import OscalFinding
-
-        f = OscalFinding(
-            control_id="SC-4",
-            result="FAIL",
-            finding_id="uuid-sc4",
-        )
-        assert f.remarks is None
-        assert f.safety_rate is None
-        assert f.evidence_age_s is None
-
-
-class TestComplianceMetricsModel:
-    """ComplianceMetrics Pydantic model instantiation and validation."""
-
-    def test_compliance_metrics_valid(self):
-        from src.compliance_bridge.types import ComplianceMetrics
-
-        m = ComplianceMetrics(
-            control_id="A.5.3",
-            safety_rate=0.99,
-            total_traces=150,
-            blocked_traces=1,
-            passed_traces=149,
-            window_hours=24.0,
-            last_event_utc="2026-03-03T00:00:00+00:00",
-            evidence_age_seconds=1800.0,
-            startup_grace_active=False,
-            startup_grace_remaining_hours=0.0,
-        )
-        assert m.control_id == "A.5.3"
-        assert m.safety_rate == 0.99
-        assert m.total_traces == 150
-
-    def test_compliance_metrics_safety_rate_bounds(self):
-        from pydantic import ValidationError
-
-        from src.compliance_bridge.types import ComplianceMetrics
-
-        with pytest.raises(ValidationError):
-            ComplianceMetrics(
-                control_id="A.5.3",
-                safety_rate=1.1,  # > 1.0
-                total_traces=10,
-                blocked_traces=0,
-                passed_traces=10,
-                window_hours=24.0,
-                last_event_utc="2026-03-03T00:00:00+00:00",
-                evidence_age_seconds=0.0,
-                startup_grace_active=False,
-                startup_grace_remaining_hours=0.0,
-            )
-
-
-# ---------------------------------------------------------------------------
 # ── OSCAL parser ──
+# NOTE: OscalFinding and ComplianceMetrics Pydantic model tests have been
+# consolidated into tests/test_governance_contracts_runtime.py (TestOscalFindingModel
+# and TestComplianceMetricsModel classes) to avoid duplication.
 # ---------------------------------------------------------------------------
 
 # Minimal valid OSCAL YAML that matches `lula validate` output
@@ -281,7 +181,7 @@ assessment-results:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def client():
     """
     TestClient for the FastAPI app.
@@ -291,6 +191,12 @@ def client():
     a fixed sentinel so tests are not blocked by auth and can focus on
     business-logic assertions.  A separate ``TestAuditIngestAuth`` class
     exercises the auth behaviour directly.
+
+    scope="function": kept function-scoped because TestAuditIngestAuth creates
+    its own TestClient instances inside patch.dict contexts, and requires that
+    the app.dependency_overrides dict is clean (no auth bypass) at that point.
+    Widening to module-scope would leave the override active across the class
+    boundary, silently bypassing C-07 auth in the auth-specific tests.
     """
     with patch("src.compliance_bridge.main.Langfuse") as MockLangfuse:
         mock_lf = MagicMock()

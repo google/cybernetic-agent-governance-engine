@@ -56,7 +56,7 @@ class TradingKnowledgeGraph:
     ucas: dict[str, STAMP_UCA] = field(default_factory=dict)
     constraints: dict[str, Constraint] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self):  # type: ignore[no-untyped-def]
         # 1. Map STAMP UCAs (From STPA Analysis)
 
         # UCA-1: Not Providing Authorization
@@ -254,10 +254,10 @@ class TradingKnowledgeGraph:
         # APAC_MAS and unknown regions: universal controls only
         return dict(cls._UNIVERSAL_CONTROL_MAP)
 
-    def add_uca(self, uca: STAMP_UCA):
+    def add_uca(self, uca: STAMP_UCA):  # type: ignore[no-untyped-def]
         self.ucas[uca.id] = uca
 
-    def add_constraint(self, constraint: Constraint):
+    def add_constraint(self, constraint: Constraint):  # type: ignore[no-untyped-def]
         self.constraints[constraint.id] = constraint
 
     def get_rubric(self) -> list[STAMP_UCA]:

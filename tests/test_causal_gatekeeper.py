@@ -17,23 +17,386 @@ Tests for the DoWhy Causal Gatekeeper module.
 
 Tests the causal_safety_check function directly (unit tests) and its
 integration with the SymbolicGovernor (integration tests via mock).
+
+Classes:
+  TestCausalOrderingValidation  — no dowhy dependency; tests validate_causal_ordering
+  TestTelemetryFreshness        — no dowhy dependency; tests _check_telemetry_freshness
+  TestCausalCacheHelpers        — no dowhy dependency; tests sync cache helpers
+  TestCausalSafetyCheckUnit     — requires dowhy (skipped when not installed)
+  TestCausalGatekeeperIntegration — requires dowhy (skipped when not installed)
 """
 
+from __future__ import annotations
+
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+# causal_gatekeeper.py imports networkx at module level; skip entire file when
+# the compliance extras (networkx, dowhy) are not installed — this prevents a
+# hard collection error from propagating to the standard CI pytest job.
+pytest.importorskip(
+    "networkx",
+    reason="networkx not installed — skipping causal gatekeeper tests (install compliance extras)",
+)
 
 import numpy as np
 import pandas as pd
-import pytest
-
-# Skip the entire module gracefully when dowhy is not installed (e.g. in CI
-# environments that install only the base dependency group without the
-# [compliance] extra).  This prevents a hard collection error from propagating
-# to the AI 600-1 Unit Tests job.
-pytest.importorskip(
-    "dowhy", reason="dowhy not installed — skipping causal gatekeeper tests"
-)
 
 pytestmark = pytest.mark.local
+
+# ---------------------------------------------------------------------------
+# Tests that do NOT require dowhy
+# ---------------------------------------------------------------------------
+
+
+class TestCausalOrderingValidation:
+    """Tests for validate_causal_ordering() — no dowhy required."""
+
+    def test_valid_ordering_same_trace_id(self):
+        """Governance span before execution span with matching trace_id → True."""
+        from src.gateway.governance.causal_gatekeeper import validate_causal_ordering
+
+        gov = {"timestamp": 1000.0, "trace_id": "trace-abc"}
+        exe = {"timestamp": 2000.0, "trace_id": "trace-abc"}
+        assert validate_causal_ordering(gov, exe) is True
+
+    def test_trace_id_mismatch_returns_false(self):
+        """Mismatched trace_ids → False (different causal chains)."""
+        from src.gateway.governance.causal_gatekeeper import validate_causal_ordering
+
+        gov = {"timestamp": 1000.0, "trace_id": "trace-A"}
+        exe = {"timestamp": 2000.0, "trace_id": "trace-B"}
+        assert validate_causal_ordering(gov, exe) is False
+
+    def test_governance_after_execution_returns_false(self):
+        """Governance timestamp >= execution timestamp → False."""
+        from src.gateway.governance.causal_gatekeeper import validate_causal_ordering
+
+        gov = {"timestamp": 3000.0, "trace_id": "trace-abc"}
+        exe = {"timestamp": 2000.0, "trace_id": "trace-abc"}
+        assert validate_causal_ordering(gov, exe) is False
+
+    def test_equal_timestamps_returns_false(self):
+        """Equal timestamps violate strict ordering → False."""
+        from src.gateway.governance.causal_gatekeeper import validate_causal_ordering
+
+        gov = {"timestamp": 2000.0, "trace_id": "trace-abc"}
+        exe = {"timestamp": 2000.0, "trace_id": "trace-abc"}
+        assert validate_causal_ordering(gov, exe) is False
+
+    def test_missing_trace_ids_non_strict_mode_uses_timestamp(self):
+        """Missing trace_ids in non-strict mode: falls back to timestamp check."""
+        from src.gateway.governance import causal_gatekeeper
+
+        original = causal_gatekeeper.CAUSAL_GATEKEEPER_STRICT_MODE
+        try:
+            causal_gatekeeper.CAUSAL_GATEKEEPER_STRICT_MODE = False
+            gov = {"timestamp": 1000.0}  # no trace_id
+            exe = {"timestamp": 2000.0}  # no trace_id
+            result = causal_gatekeeper.validate_causal_ordering(gov, exe)
+            assert result is True
+        finally:
+            causal_gatekeeper.CAUSAL_GATEKEEPER_STRICT_MODE = original
+
+    def test_missing_trace_ids_strict_mode_returns_false(self):
+        """Missing trace_ids in strict mode → False."""
+        from src.gateway.governance import causal_gatekeeper
+
+        original = causal_gatekeeper.CAUSAL_GATEKEEPER_STRICT_MODE
+        try:
+            causal_gatekeeper.CAUSAL_GATEKEEPER_STRICT_MODE = True
+            gov = {"timestamp": 1000.0}
+            exe = {"timestamp": 2000.0}
+            result = causal_gatekeeper.validate_causal_ordering(gov, exe)
+            assert result is False
+        finally:
+            causal_gatekeeper.CAUSAL_GATEKEEPER_STRICT_MODE = original
+
+    def test_no_timestamps_with_matching_trace_ids_returns_true(self):
+        """Matching trace_ids, no timestamps → True (ordering not violated)."""
+        from src.gateway.governance.causal_gatekeeper import validate_causal_ordering
+
+        gov = {"trace_id": "trace-xyz"}
+        exe = {"trace_id": "trace-xyz"}
+        assert validate_causal_ordering(gov, exe) is True
+
+    def test_empty_spans_non_strict_returns_true(self):
+        """Empty spans with no trace_id in non-strict mode → True (no violation)."""
+        from src.gateway.governance import causal_gatekeeper
+
+        original = causal_gatekeeper.CAUSAL_GATEKEEPER_STRICT_MODE
+        try:
+            causal_gatekeeper.CAUSAL_GATEKEEPER_STRICT_MODE = False
+            result = causal_gatekeeper.validate_causal_ordering({}, {})
+            assert result is True
+        finally:
+            causal_gatekeeper.CAUSAL_GATEKEEPER_STRICT_MODE = original
+
+
+class TestTelemetryFreshness:
+    """Tests for _check_telemetry_freshness() — no dowhy required."""
+
+    def _make_span(self):
+        """Return a mock OTel span."""
+        return MagicMock()
+
+    def test_fresh_telemetry_returns_true(self):
+        """Telemetry with recent timestamps returns True."""
+        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+
+        now = time.time()
+        df = pd.DataFrame({"timestamp": [now - 60, now - 30, now - 10]})
+        result = _check_telemetry_freshness(df, self._make_span())
+        assert result is True
+
+    def test_stale_telemetry_returns_false(self):
+        """Telemetry older than TELEMETRY_MAX_STALENESS_SECONDS → False."""
+        from src.gateway.governance import causal_gatekeeper
+
+        original = causal_gatekeeper.TELEMETRY_MAX_STALENESS_SECONDS
+        try:
+            causal_gatekeeper.TELEMETRY_MAX_STALENESS_SECONDS = 10
+            now = time.time()
+            df = pd.DataFrame({"timestamp": [now - 3600, now - 1800]})
+            result = causal_gatekeeper._check_telemetry_freshness(df, self._make_span())
+            assert result is False
+        finally:
+            causal_gatekeeper.TELEMETRY_MAX_STALENESS_SECONDS = original
+
+    def test_no_timestamp_column_returns_false(self):
+        """DataFrame without any timestamp column → False (fail-closed)."""
+        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+
+        df = pd.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
+        result = _check_telemetry_freshness(df, self._make_span())
+        assert result is False
+
+    def test_alternative_timestamp_column_names(self):
+        """Checks 'ts', 'event_time', 'time', 'created_at' column names."""
+        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+
+        now = time.time()
+        for col in ("ts", "event_time", "time", "created_at"):
+            df = pd.DataFrame({col: [now - 10, now - 5]})
+            result = _check_telemetry_freshness(df, self._make_span())
+            assert result is True, f"Expected True for column '{col}'"
+
+    def test_unparseable_timestamp_returns_false(self):
+        """Timestamp column with unparseable values → False (fail-closed)."""
+        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+
+        df = pd.DataFrame({"timestamp": ["not-a-date", "also-not"]})
+        result = _check_telemetry_freshness(df, self._make_span())
+        assert result is False
+
+    def test_millisecond_timestamps_supported(self):
+        """Timestamps >1e12 are treated as milliseconds → fresh."""
+        from src.gateway.governance.causal_gatekeeper import _check_telemetry_freshness
+
+        now_ms = time.time() * 1000  # milliseconds
+        df = pd.DataFrame({"timestamp": [now_ms - 5000, now_ms - 1000]})
+        result = _check_telemetry_freshness(df, self._make_span())
+        assert result is True
+
+
+class TestCausalCacheHelpers:
+    """Tests for sync cache helpers — no dowhy required."""
+
+    def test_cache_get_sync_returns_none_when_redis_unavailable(self):
+        """_causal_cache_get_sync raises RuntimeError when sync_redis_client is None."""
+        from src.gateway.governance import causal_gatekeeper
+
+        with patch(
+            "src.gateway.infrastructure.redis_client.sync_redis_client", None
+        ):
+            with pytest.raises(RuntimeError, match="Redis unavailable"):
+                causal_gatekeeper._causal_cache_get_sync("test-key")
+
+    def test_cache_get_sync_returns_none_on_cache_miss(self):
+        """_causal_cache_get_sync returns None when key is absent."""
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None
+
+        with patch(
+            "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
+        ):
+            from src.gateway.governance import causal_gatekeeper
+            result = causal_gatekeeper._causal_cache_get_sync("missing-key")
+        assert result is None
+
+    def test_cache_get_sync_returns_parsed_dict_on_hit(self):
+        """_causal_cache_get_sync parses and returns cached JSON."""
+        import json
+
+        mock_redis = MagicMock()
+        payload = json.dumps({"result": True, "reason": "all_checks_passed"})
+        mock_redis.get.return_value = payload
+
+        with patch(
+            "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
+        ):
+            from src.gateway.governance import causal_gatekeeper
+            result = causal_gatekeeper._causal_cache_get_sync("hit-key")
+        assert result == {"result": True, "reason": "all_checks_passed"}
+
+    def test_cache_get_sync_raises_on_connection_error(self):
+        """_causal_cache_get_sync raises RuntimeError on Redis connection error."""
+        mock_redis = MagicMock()
+        mock_redis.get.side_effect = ConnectionError("Redis down")
+
+        with patch(
+            "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
+        ):
+            from src.gateway.governance import causal_gatekeeper
+            with pytest.raises(RuntimeError, match="Redis unavailable"):
+                causal_gatekeeper._causal_cache_get_sync("error-key")
+
+    def test_cache_get_sync_returns_none_on_json_decode_error(self):
+        """_causal_cache_get_sync returns None when cached value is invalid JSON."""
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = "not-valid-json{"
+
+        with patch(
+            "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
+        ):
+            from src.gateway.governance import causal_gatekeeper
+            result = causal_gatekeeper._causal_cache_get_sync("bad-json-key")
+        assert result is None
+
+    def test_cache_set_sync_noop_when_ttl_zero(self):
+        """_causal_cache_set_sync is a no-op when CAUSAL_CACHE_TTL_SECONDS=0."""
+        from src.gateway.governance import causal_gatekeeper
+
+        original = causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS
+        try:
+            causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS = 0
+            mock_redis = MagicMock()
+            with patch(
+                "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
+            ):
+                causal_gatekeeper._causal_cache_set_sync("k", True, "reason")
+            mock_redis.setex.assert_not_called()
+        finally:
+            causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS = original
+
+    def test_cache_set_sync_writes_when_redis_available(self):
+        """_causal_cache_set_sync calls setex when sync_redis_client is available."""
+        from src.gateway.governance import causal_gatekeeper
+
+        original = causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS
+        try:
+            causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS = 60
+            mock_redis = MagicMock()
+            with patch(
+                "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
+            ):
+                causal_gatekeeper._causal_cache_set_sync("my-key", True, "passed")
+            mock_redis.setex.assert_called_once()
+            call_args = mock_redis.setex.call_args
+            assert call_args[0][0] == "my-key"
+            assert call_args[0][1] == 60
+        finally:
+            causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS = original
+
+    def test_cache_set_sync_noop_when_redis_unavailable(self):
+        """_causal_cache_set_sync is a no-op when sync_redis_client is None."""
+        from src.gateway.governance import causal_gatekeeper
+
+        original = causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS
+        try:
+            causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS = 60
+            with patch(
+                "src.gateway.infrastructure.redis_client.sync_redis_client", None
+            ):
+                # Should not raise
+                causal_gatekeeper._causal_cache_set_sync("k", False, "no-redis")
+        finally:
+            causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS = original
+
+
+class TestCausalSafetyCheckNoDoWhy:
+    """Tests for causal_safety_check() paths that don't require dowhy."""
+
+    def test_zero_amount_returns_true_without_dowhy(self):
+        """amount <= 0 returns True immediately — no dowhy needed."""
+        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+
+        df = pd.DataFrame({
+            "market_volatility": [0.5],
+            "trade_amount": [1000.0],
+            "risk_score": [0.5],
+            "timestamp": [time.time() - 10],
+        })
+        assert causal_safety_check({"amount": 0}, df) is True
+
+    def test_negative_amount_returns_true_without_dowhy(self):
+        """Negative amount returns True immediately — no dowhy needed."""
+        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+
+        df = pd.DataFrame({
+            "market_volatility": [0.3],
+            "trade_amount": [500.0],
+            "risk_score": [0.3],
+            "timestamp": [time.time() - 5],
+        })
+        assert causal_safety_check({"amount": -1}, df) is True
+
+    def test_production_env_without_telemetry_returns_false(self):
+        """In production (CAGE_ENV=production), missing telemetry → fail-closed."""
+        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+        import os
+
+        original = os.environ.get("CAGE_ENV")
+        try:
+            os.environ["CAGE_ENV"] = "production"
+            result = causal_safety_check({"amount": 100}, None)
+            assert result is False
+        finally:
+            if original is None:
+                os.environ.pop("CAGE_ENV", None)
+            else:
+                os.environ["CAGE_ENV"] = original
+
+    def test_dowhy_unavailable_fails_closed_for_nonzero_amount(self):
+        """When dowhy is not installed, nonzero amount → False (fail-closed)."""
+        from src.gateway.governance import causal_gatekeeper
+        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+
+        original_available = causal_gatekeeper._DOWHY_AVAILABLE
+        try:
+            causal_gatekeeper._DOWHY_AVAILABLE = False
+            df = pd.DataFrame({
+                "market_volatility": [0.5],
+                "trade_amount": [1000.0],
+                "risk_score": [0.5],
+                "timestamp": [time.time() - 10],
+            })
+            with patch(
+                "src.gateway.governance.causal_gatekeeper._causal_cache_get_sync",
+                return_value=None,
+            ):
+                result = causal_safety_check({"amount": 100}, df)
+            assert result is False
+        finally:
+            causal_gatekeeper._DOWHY_AVAILABLE = original_available
+
+
+# ---------------------------------------------------------------------------
+# Tests that DO require dowhy (skipped when not installed)
+# ---------------------------------------------------------------------------
+
+try:
+    import dowhy as _dowhy_mod  # noqa: F401
+    _DOWHY_INSTALLED = True
+except ImportError:
+    _DOWHY_INSTALLED = False
+
+_skip_if_no_dowhy = pytest.mark.skipif(
+    not _DOWHY_INSTALLED,
+    reason="dowhy not installed — skipping dowhy-dependent causal gatekeeper tests",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +441,7 @@ def stable_telemetry():
 # ---------------------------------------------------------------------------
 
 
+@_skip_if_no_dowhy
 class TestCausalSafetyCheckUnit:
     """Unit tests for the causal_safety_check function."""
 
@@ -175,6 +539,7 @@ class TestCausalSafetyCheckUnit:
 # ---------------------------------------------------------------------------
 
 
+@_skip_if_no_dowhy
 class TestCausalGatekeeperIntegration:
     """Tests causal gatekeeper integration within the SymbolicGovernor."""
 

@@ -90,6 +90,18 @@ JUDGE_MODEL = os.environ.get(
     os.environ.get("MODEL_FAST", os.environ.get("MODEL_REASONING", "mock-judge")),
 )
 
+# ── Rate-limit throttle ───────────────────────────────────────────────────────
+# Minimum sleep between backend calls to avoid overwhelming the API.
+# Override with LANGFUSE_EVAL_RATE_LIMIT_S env var (e.g. set to "0.1" in CI
+# for faster integration runs while production red-team keeps the full 0.3–0.8s).
+_RATE_LIMIT_S: float = float(os.environ.get("LANGFUSE_EVAL_RATE_LIMIT_S", "0.3"))
+
+
+def _rate_limit_wait() -> None:
+    """Sleep for the configured minimum rate-limit interval between API calls."""
+    time.sleep(_RATE_LIMIT_S)
+
+
 # ── OTel setup ────────────────────────────────────────────────────────────────
 # Guard: when OTEL_TRACES_EXPORTER=none (set by conftest.py for unit/CI runs)
 # do NOT create a BatchSpanProcessor — its background thread retries failed
@@ -596,7 +608,7 @@ def test_langfuse_llm_judge_evaluation():
                         "skipped": True,
                     }
                 )
-                time.sleep(random.uniform(0.3, 0.8))
+                _rate_limit_wait()
                 continue
 
             # 2. Judge the response — returns None when the judge LLM fails or
@@ -620,7 +632,7 @@ def test_langfuse_llm_judge_evaluation():
                         "skipped": True,
                     }
                 )
-                time.sleep(random.uniform(0.3, 0.8))
+                _rate_limit_wait()
                 continue
 
             # 3. Post scores to Langfuse
@@ -641,8 +653,10 @@ def test_langfuse_llm_judge_evaluation():
             }
         )
 
-        # Brief delay to avoid overwhelming the backend
-        time.sleep(random.uniform(0.3, 0.8))
+        # Brief delay to avoid overwhelming the backend.
+        # Use configurable _rate_limit_wait() instead of random.uniform so CI
+        # can set LANGFUSE_EVAL_RATE_LIMIT_S=0.1 for faster integration runs.
+        _rate_limit_wait()
 
     # ── Compute mean scores (only over successfully scored responses) ──────────
     metrics = list(SCORE_THRESHOLDS.keys())

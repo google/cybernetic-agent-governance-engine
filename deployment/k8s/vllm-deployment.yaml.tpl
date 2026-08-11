@@ -14,6 +14,16 @@ metadata:
     # Harmless on non-GCS clusters (annotation is ignored if driver absent).
     gke-gcsfuse/volumes: "true"
 spec:
+  # ── Replica-count note (gpu_node_pool_min_count=0 interaction) ────────────────
+  # Setting gpu_node_pool_min_count=0 in Terraform lets the GKE cluster autoscaler
+  # drain and remove the GPU node after ~10 minutes of no pending GPU pod. However,
+  # the autoscaler only removes a node once ALL pods on it have been evicted —
+  # meaning the node will NOT be drained while this Deployment has replicas > 0.
+  # To achieve full node scale-to-zero you must also scale this Deployment to 0
+  # replicas (or delete the pod). Consider a companion CronJob (see cost-analysis
+  # Option 2) that runs `kubectl scale deployment/<name> --replicas=0` on a
+  # schedule and restores replicas before the workload window begins.
+  # DO NOT change this value here without also updating the CronJob schedule.
   replicas: 1
   # Recreate strategy: GPU pods require the full VRAM of the node. With only one
   # GPU node per model, a RollingUpdate would attempt to start a 2nd pod before

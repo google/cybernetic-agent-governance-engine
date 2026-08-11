@@ -159,7 +159,7 @@ class AsyncBatchSigner:
             try:
                 from src.gateway.governance.kms_signer import get_governance_signer
 
-                self._signer = get_governance_signer()
+                self._signer = get_governance_signer()  # type: ignore[assignment]
             except Exception as _exc:
                 logger.error(
                     "[KMSBatchSigner] Failed to load signer at startup: %s", _exc
@@ -285,12 +285,12 @@ class AsyncBatchSigner:
         if self._signer is None:
             from src.gateway.governance.kms_signer import get_governance_signer
 
-            self._signer = get_governance_signer()
+            self._signer = get_governance_signer()  # type: ignore[assignment]
 
         signed = 0
         for record in batch:
             try:
-                signature = self._signer.sign(record.payload)
+                signature = self._signer.sign(record.payload)  # type: ignore[attr-defined]
 
                 if record.callback is not None:
                     record.callback(record.record_hash, signature)

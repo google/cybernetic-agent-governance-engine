@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-def __getattr__(name: str):
+def __getattr__(name: str):  # type: ignore[no-untyped-def]
     """Lazy sub-module resolver for the compliance_bridge package.
 
     Python calls ``__getattr__`` on a package object when an attribute lookup

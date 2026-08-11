@@ -12,29 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# GovernanceError and SymbolicGovernor are in symbolic_governor.py which only
-# depends on core packages (opentelemetry, pydantic). Import them separately so
-# they remain accessible even when optional extras (e.g. langgraph) are absent.
-try:
-    from .symbolic_governor import GovernanceError, SymbolicGovernor
-except ImportError:
-    pass
+# ---------------------------------------------------------------------------
+# Lazy-import shim for heavy optional submodules.
+#
+# Importing src.gateway.governance used to eagerly pull in:
+#   • symbolic_governor   → langgraph_harness → nemo.manager → presidio/torch (~6s)
+#   • langgraph_harness   → nemo_node_factory → presidio/spacy/langchain_core (~6s)
+#   • causal_gatekeeper   → dowhy → sklearn/transformers (~1.3s)
+#
+# Because 71 test files import from this package, the eager import cost was
+# paid unconditionally at collection time — even for tests that only need
+# lightweight siblings like contracts.py or safety.py.
+#
+# This __getattr__ shim defers each heavy submodule until its name is first
+# accessed, reducing pytest --collect-only from ~11 s to ~1-2 s for test
+# files that don't actually exercise the NeMo / DoWhy tiers.
+#
+# Production code that uses `from src.gateway.governance import SymbolicGovernor`
+# or `from src.gateway.governance import causal_gatekeeper` is unaffected —
+# the import still happens, just on first access rather than package import.
+# ---------------------------------------------------------------------------
 
-# langgraph_harness requires the 'advisor' extra (langgraph, langchain_core …).
-# Keep it in a separate try so the failure doesn't suppress GovernanceError above.
-try:
-    from . import langgraph_harness
-except ImportError:
-    pass
+from __future__ import annotations
 
-# causal_gatekeeper.py depends on networkx / numpy / pandas which are optional.
-# Expose the module itself as a package attribute so tests can patch
-# `src.gateway.governance.causal_gatekeeper.*` correctly.
-try:
-    from . import causal_gatekeeper
-    from .causal_gatekeeper import causal_safety_check, generate_mock_telemetry
-except ImportError:
-    pass
+import importlib
 
 __all__ = [
     "GovernanceError",
@@ -44,3 +45,59 @@ __all__ = [
     "generate_mock_telemetry",
     "langgraph_harness",
 ]
+
+
+def __getattr__(name: str) -> object:  # noqa: N807
+    """Lazily import heavy submodules on first attribute access.
+
+    This function is called by Python's import machinery when an attribute
+    lookup on this module fails the normal attribute dict lookup.  We use it
+    to defer the import of expensive ML-stack submodules until they are
+    actually needed.
+
+    After the first access each name is cached in the module's ``__dict__``
+    (via ``globals()``), so subsequent lookups are O(1) dict hits and this
+    function is never called again for that name.
+
+    Note: ``unittest.mock.patch("src.gateway.governance.causal_gatekeeper.X")``
+    triggers a ``getattr(module, "causal_gatekeeper")`` call, which correctly
+    reaches this function and loads the submodule before patching its attribute.
+    """
+    if name in ("GovernanceError", "SymbolicGovernor"):
+        try:
+            from .symbolic_governor import GovernanceError, SymbolicGovernor
+            globals()["GovernanceError"] = GovernanceError
+            globals()["SymbolicGovernor"] = SymbolicGovernor
+        except ImportError:
+            pass
+        return globals().get(name)
+
+    if name == "langgraph_harness":
+        try:
+            # NOTE: `from . import langgraph_harness` would trigger Python's
+            # internal `hasattr(package, "langgraph_harness")` check while
+            # resolving the fromlist, which re-enters this __getattr__ for the
+            # same name before the submodule is cached in globals() —
+            # causing infinite recursion (RecursionError). importlib.import_module
+            # loads the submodule directly via sys.modules, sidestepping the
+            # package attribute lookup entirely.
+            langgraph_harness = importlib.import_module(f"{__name__}.langgraph_harness")
+            globals()["langgraph_harness"] = langgraph_harness
+            return langgraph_harness
+        except ImportError:
+            return None
+
+    if name in ("causal_gatekeeper", "causal_safety_check", "generate_mock_telemetry"):
+        try:
+            # See note above re: avoiding `from . import causal_gatekeeper`.
+            causal_gatekeeper = importlib.import_module(f"{__name__}.causal_gatekeeper")
+            causal_safety_check = causal_gatekeeper.causal_safety_check
+            generate_mock_telemetry = causal_gatekeeper.generate_mock_telemetry
+            globals()["causal_gatekeeper"] = causal_gatekeeper
+            globals()["causal_safety_check"] = causal_safety_check
+            globals()["generate_mock_telemetry"] = generate_mock_telemetry
+        except ImportError:
+            pass
+        return globals().get(name)
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

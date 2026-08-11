@@ -74,12 +74,12 @@ class NeMoOTelCallback(StreamingHandler):
     in separate asyncio Tasks each maintain their own isolated span reference.
     """
 
-    def __init__(self):
+    def __init__(self):  # type: ignore[no-untyped-def]
         super().__init__()
         # NOTE: self.current_span has been removed (R-21).
         # All span references now go through _current_nemo_span ContextVar.
 
-    async def on_action_start(self, action: str, **kwargs: Any):
+    async def on_action_start(self, action: str, **kwargs: Any):  # type: ignore[no-untyped-def]
         """
         Called when a guardrail action starts.
         We start a span to track the execution of this specific control.
@@ -108,7 +108,7 @@ class NeMoOTelCallback(StreamingHandler):
             _current_nemo_span.set(span)
             logger.info(f"🛡️ Guardrail Started: {action} (ISO {iso_control})")
 
-    async def on_action_end(self, action: str, result: Any = None, **kwargs: Any):
+    async def on_action_end(self, action: str, result: Any = None, **kwargs: Any):  # type: ignore[no-untyped-def]
         """
         Called when a guardrail action finishes.
         We record the outcome (Allowed/Blocked) and close the span.

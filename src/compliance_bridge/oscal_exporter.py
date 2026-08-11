@@ -371,9 +371,9 @@ def findings_from_metrics_dict(
         # M-10: safety_rate is None when no traces exist — treat as NOT_APPLICABLE
         # (no evidence yet) rather than crashing or falsely reporting PASS/FAIL.
         if sr is None:
-            result: OscalResult = cast(OscalResult, "NOT_APPLICABLE")
+            result: OscalResult = "NOT_APPLICABLE"
         else:
-            result = cast(OscalResult, "PASS" if sr >= 1.0 else "FAIL")
+            result = "PASS" if sr >= 1.0 else "FAIL"
         findings.append(
             OscalFinding(
                 control_id=cid,

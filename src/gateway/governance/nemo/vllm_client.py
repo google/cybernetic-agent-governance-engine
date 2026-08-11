@@ -34,7 +34,7 @@ except ImportError:
         def get(self, key: str, default: Any = None) -> Any:
             return os.environ.get(key, default)
 
-    config_manager = _MockConfigManager()
+    config_manager = _MockConfigManager()  # type: ignore[assignment]
 
 # Configure Logging
 logger = logging.getLogger("NeMo.LLM")
@@ -78,7 +78,7 @@ class VLLMLLM(BaseChatModel):
     # should pass timeout=ADVISOR_VLLM_TIMEOUT_SECONDS at construction time.
     timeout: float = NEMO_VLLM_TIMEOUT_SECONDS
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs):  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
         if not self.api_base:
             raise RuntimeError(
@@ -199,7 +199,7 @@ class VLLMLLM(BaseChatModel):
         result = await self._agenerate(
             messages, stop=stop, run_manager=run_manager, **kwargs
         )
-        return result.generations[0].message.content
+        return result.generations[0].message.content  # type: ignore[return-value]
 
     async def _agenerate(
         self,

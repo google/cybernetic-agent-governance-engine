@@ -36,7 +36,7 @@ _USE_MOCK_BROKER: bool = os.getenv("USE_MOCK_BROKER", "false").lower() in (
 )
 
 
-async def _redis_get(key: str):
+async def _redis_get(key: str):  # type: ignore[no-untyped-def]
     """Compatibility wrapper: awaits redis_client.get() when it returns a coroutine,
     falls back to calling it synchronously (used by unit test mocks that return plain values)."""
     result = redis_client.get(key)
@@ -102,7 +102,7 @@ async def execute_trade(order: TradeOrder) -> str:
         "time_in_force": "day",
     }
 
-    def _do_post():
+    def _do_post():  # type: ignore[no-untyped-def]
         import requests
 
         resp = requests.post(f"{base_url}/v2/orders", json=payload, headers=headers)

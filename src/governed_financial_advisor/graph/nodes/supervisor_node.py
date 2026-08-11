@@ -36,7 +36,7 @@ from src.governed_financial_advisor.utils.telemetry import genai_span
 class MockChatModel(BaseChatModel):
     model_name: str = "mock-llm"
 
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):  # type: ignore[no-untyped-def]
         # Extract prompt or history content
         prompt = ""
         for m in messages:
@@ -93,7 +93,7 @@ class RouteRequest(BaseModel):
     )
 
 
-def _build_reasoner_llm():
+def _build_reasoner_llm():  # type: ignore[no-untyped-def]
     """Lazy factory — validates env vars at call time, not at import time."""
     if os.environ.get("USE_MOCK_LLM", "").lower() == "true":
         logger.info("Using MockChatModel for reasoning LLM.")
@@ -103,14 +103,14 @@ def _build_reasoner_llm():
         logger.info("Using MockChatModel for reasoning LLM.")
         return MockChatModel()
     return ChatOpenAI(
-        model=os.getenv("MODEL_REASONING"),
+        model=os.getenv("MODEL_REASONING"),  # type: ignore[arg-type]
         base_url=api_base,
         temperature=0.6,
-        max_tokens=1024,  # DeepSeek reasoning model has max_model_len=2048; keep output ≤1024
+        max_tokens=1024,  # type: ignore[call-arg]  # DeepSeek reasoning model has max_model_len=2048; keep output ≤1024
     )
 
 
-def _build_fast_llm():
+def _build_fast_llm():  # type: ignore[no-untyped-def]
     """Lazy factory — validates env vars at call time, not at import time."""
     if os.environ.get("USE_MOCK_LLM", "").lower() == "true":
         logger.info("Using MockChatModel for fast LLM.")
@@ -120,7 +120,7 @@ def _build_fast_llm():
         logger.info("Using MockChatModel for fast LLM.")
         return MockChatModel()
     return ChatOpenAI(
-        model=os.getenv("MODEL_FAST"),
+        model=os.getenv("MODEL_FAST"),  # type: ignore[arg-type]
         base_url=api_base,
         temperature=0.0,
     )
@@ -131,14 +131,14 @@ _reasoner_llm: "ChatOpenAI | None" = None
 _fast_llm: "ChatOpenAI | None" = None
 
 
-def _get_reasoner_llm():
+def _get_reasoner_llm():  # type: ignore[no-untyped-def]
     global _reasoner_llm
     if _reasoner_llm is None:
         _reasoner_llm = _build_reasoner_llm()
     return _reasoner_llm
 
 
-def _get_fast_llm():
+def _get_fast_llm():  # type: ignore[no-untyped-def]
     global _fast_llm
     if _fast_llm is None:
         _fast_llm = _build_fast_llm()
@@ -226,7 +226,7 @@ def _sanitize_user_message(text: str) -> str:
     return sanitized[:4096]
 
 
-def thinker_node(state):
+def thinker_node(state):  # type: ignore[no-untyped-def]
     """DeepSeek analyzes the state and creates a plan."""
     logger.debug("--- [Graph] Supervisor (Thinker) ---")
 
@@ -299,7 +299,7 @@ def thinker_node(state):
         HumanMessage(content=augmented_message),
     ]
 
-    with genai_span(name="reasoning", model=os.getenv("MODEL_REASONING")):
+    with genai_span(name="reasoning", model=os.getenv("MODEL_REASONING")):  # type: ignore[arg-type]
         # 1. Run Thinker Agent (The "Brain")
         response = _get_reasoner_llm().invoke(messages_to_pass)
 
@@ -312,7 +312,7 @@ def thinker_node(state):
         return final_output
 
 
-def doer_node(state):
+def doer_node(state):  # type: ignore[no-untyped-def]
     """Parse the thinker's routing decision and forward to the correct sub-agent.
 
     The thinker (reasoner_llm) emits a structured response where Line 1 is
@@ -375,7 +375,7 @@ def doer_node(state):
         )
 
         with genai_span(
-            name="final_response_generation", model=os.getenv("MODEL_FAST")
+            name="final_response_generation", model=os.getenv("MODEL_FAST")  # type: ignore[arg-type]
         ):
             final_response = _get_fast_llm().invoke(
                 [final_gen_system_prompt, final_gen_human_prompt]

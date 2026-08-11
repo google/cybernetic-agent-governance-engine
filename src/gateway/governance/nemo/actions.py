@@ -260,8 +260,8 @@ check_slippage_risk = CheckSlippageRiskAction
 check_atomic_execution = CheckAtomicExecutionAction
 
 
-async def InvokeVllmFallbackAction(
-    context: dict = {}, events: list = [], content: str = None, **kwargs
+async def InvokeVllmFallbackAction(  # type: ignore[no-untyped-def]
+    context: dict = {}, events: list = [], content: str = None, **kwargs  # type: ignore[assignment]
 ) -> str:
     """
     Action to call vLLM directly for fallback responses.
@@ -319,7 +319,7 @@ async def InvokeVllmFallbackAction(
             messages = [HumanMessage(content=final_content)]
 
             # Use _acall (or _agenerate) directly
-            response = await llm._acall(messages)
+            response = await llm._acall(messages)  # type: ignore[arg-type]
 
             if span:
                 span.set_attribute("langfuse.observation.output", response)

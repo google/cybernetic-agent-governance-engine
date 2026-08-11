@@ -46,6 +46,9 @@ def mock_thresholds():
         nemo_actions._safety_params_cache = {}
         nemo_actions._last_check_time = 0.0
         yield mock_load
+        # Teardown: reset cache to prevent stale state leaking into subsequent tests
+        nemo_actions._safety_params_cache = {}
+        nemo_actions._last_check_time = 0.0
 
 
 def _get_mock_thresholds(drawdown_limit: float) -> GovernanceThresholds:
