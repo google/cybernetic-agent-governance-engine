@@ -45,7 +45,6 @@ except ImportError:
     _LANGCHAIN_INSTRUMENTOR_AVAILABLE = False
 
 from config.settings import Config
-from src.gateway.governance.nemo.manager import load_rails
 from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.infrastructure.auth import require_api_key
 from src.governed_financial_advisor.infrastructure.mcp_client import get_mcp_client
@@ -1099,18 +1098,11 @@ async def apply_nemo_refinement(req: NeMoApplyRefinementRequest):
         current_span.set_attribute("ai.refinement.auto_apply", True)
 
     try:
-        # R-LOOP-4: reload the rails singleton via the module-level ``load_rails``
-        # symbol so that tests (and future callers) can patch
-        # ``src.governed_financial_advisor.server.load_rails`` to control both
-        # the reload result and failure behaviour.  The freshly built rails
-        # instance is then propagated into the shared langgraph_harness
-        # singleton so all call sites (graph nodes, tools, server endpoints)
-        # observe the update atomically.
-        new_rails = load_rails()
+        from src.gateway.governance.langgraph_harness.nemo_node_factory import (
+            reload_nemo_rails,
+        )
 
-        from src.gateway.governance.langgraph_harness import nemo_node_factory
-
-        nemo_node_factory._nemo_rails = new_rails
+        await reload_nemo_rails()
         logger.info("[NeMo/Refinement] NeMo rails singleton reloaded (auto-apply).")
     except Exception as exc:
         raise HTTPException(
