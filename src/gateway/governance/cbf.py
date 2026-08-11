@@ -60,6 +60,7 @@ concurrent trade execution in the stateless Cloud Run environment.
 import asyncio
 import json
 import logging
+import math
 
 # ---------------------------------------------------------------------------
 # Canonical gateway-internal imports (Phase 1.1)
@@ -325,6 +326,30 @@ return {1, "COMMITTED", tostring(next_cash)}
         """Safety function h(x).  Safe when h(x) >= 0."""
         return cash_balance - self.min_cash_balance
 
+    @staticmethod
+    def _resolve_trade_cost(action_name: str, payload: dict[str, Any]) -> float:
+        """Return the validated cash cost for *action_name*.
+
+        Only ``execute_trade`` carries a cash cost; every other action is 0.
+        A non-finite (NaN/inf) or negative ``amount`` is rejected here so it can
+        never reach the barrier certificate or the Redis cash-state write. A
+        negative cost makes ``next_cash = current - cost`` larger than the
+        current balance, so the ``h_next >= (1-gamma)*h_t`` envelope check passes
+        and the atomic commit inflates ``safety:current_cash``; a NaN cost makes
+        every comparison false, so the barrier also passes and the balance is
+        poisoned. This mirrors the finiteness/positive guard that
+        ``FiscalLimitGuard.reserve`` already applies to reservations.
+        """
+        if action_name != "execute_trade":
+            return 0.0
+        cost = float(payload.get("amount", 0.0))
+        if not math.isfinite(cost) or cost < 0:
+            raise ValueError(
+                f"invalid trade amount {payload.get('amount')!r} — "
+                "must be a finite, non-negative number"
+            )
+        return cost
+
     # ------------------------------------------------------------------
     # verify_action
     # ------------------------------------------------------------------
@@ -381,9 +406,20 @@ return {1, "COMMITTED", tostring(next_cash)}
             )
             span.set_attribute("governance.scope", _mrm_meta["scope"])
 
-        cost = 0.0
-        if action_name == "execute_trade":
-            cost = float(payload.get("amount", 0.0))
+        try:
+            cost = self._resolve_trade_cost(action_name, payload)
+        except (TypeError, ValueError) as exc:
+            _mrm_meta = ControlRegistry().get_mapping(
+                GovernanceControl.TRADITIONAL_MRM_VALIDATION
+            )
+            result = (
+                f"[{GovernanceControl.TRADITIONAL_MRM_VALIDATION.value}] "
+                f"{_mrm_meta['primary_framework']} Violation: {exc}"
+            )
+            logger.warning("⛔ CBF check rejected trade: %s", exc)
+            if span:
+                span.set_attribute("safety.result", result)
+            return result
 
         # Reviewer note H53: local intra-window debits subtracted from snapshot to prevent double-spend within TTL window.
         effective_balance = current_cash - self._local_debits
@@ -631,9 +667,12 @@ return {1, "COMMITTED", tostring(next_cash)}
         if redis_client is None:
             raise RuntimeError("Redis client unavailable — cannot run atomic CBF.")
 
-        cost = 0.0
-        if action_name == "execute_trade":
-            cost = float(payload.get("amount", 0.0))
+        try:
+            cost = self._resolve_trade_cost(action_name, payload)
+        except (TypeError, ValueError) as exc:
+            reason = f"UNSAFE: {exc}"
+            logger.warning("⛔ CBF atomic check rejected trade: %s", exc)
+            return (False, reason)
 
         keys = ["safety:current_cash", "audit:state_ledger"]
         argv = [
