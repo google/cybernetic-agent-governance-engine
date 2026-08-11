@@ -49,17 +49,12 @@ primary_node_pool_disk_type     = "pd-standard" # Cheaper
 enable_gpu_node_pool        = true
 gpu_type                    = "nvidia-l4"
 gpu_count                   = 1
-gpu_node_pool_machine_type  = "g2-standard-8" # Upgraded from 4 to 8 (32 GB RAM) to prevent OOM eviction during 15GB weight loading
-gpu_node_pool_min_count     = 1               # Provision 1 node immediately for faster deployment
+gpu_node_pool_machine_type  = "g2-standard-8" # Upgraded from g2-standard-4 (32 GB RAM) to prevent OOM eviction during 15 GB weight loading
+gpu_node_pool_min_count     = 0               # cost-opt: scale to zero when idle; cluster autoscaler removes node after ~10 min of no GPU pod
 gpu_node_pool_max_count     = 2               # 2 nodes needed: vllm-inference + vllm-reasoning
 gpu_node_pool_initial_count = 1
 gpu_node_pool_name          = "gpu-node-pool-nvidia-l4" # used as cloud.google.com/gke-nodepool nodeSelector
-gpu_node_pool_spot          = false                      # P0 fix (2026-08-03): spot VMs were being repeatedly
-                                                            # preempted mid-measurement-run (vllm-inference evicted
-                                                            # 3x in a single session), invalidating paper deflection/
-                                                            # FPR measurements under Gate E7 (see PERFORMANCE_REVIEW.md
-                                                            # and docs/paper/REVISION_TRACKER.md P2-8). Switched to
-                                                            # on-demand to guarantee measurement-run stability.
+gpu_node_pool_spot          = false                      # on-demand: prevents spot preemptions from disrupting measurement runs
 gpu_node_locations          = ["us-central1-a", "us-central1-b", "us-central1-c"]
 
 # ─── Storage (Dev: Smaller, Cheaper) ──────────────────────────────────────────

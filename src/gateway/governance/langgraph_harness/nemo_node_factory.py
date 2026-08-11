@@ -34,7 +34,6 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from langchain_core.messages import AIMessage, BaseMessage
 from opentelemetry import trace
 
 from src.gateway.governance.langgraph_harness.types import NemoNodeConfig, StateDict
@@ -56,23 +55,23 @@ _NEMO_AVAILABLE = False
 create_nemo_manager = None  # type: ignore[assignment]
 
 
-async def validate_with_nemo(user_input, rails, pre_check_results=None) -> tuple:  # type: ignore[misc]
+async def validate_with_nemo(user_input, rails, pre_check_results=None) -> tuple:  # type: ignore[misc, no-untyped-def]
     """Fail-closed stub — NeMo not available."""
     raise RuntimeError("NeMo manager not available (validate_with_nemo stub)")
 
 
-async def verify_and_mask_output(rails, text):  # type: ignore[misc]
+async def verify_and_mask_output(rails, text):  # type: ignore[misc, no-untyped-def]
     """Fail-closed stub — NeMo not available."""
     raise RuntimeError("NeMo manager not available (verify_and_mask_output stub)")
 
 
-async def validate_output_semantics(rails, text):  # type: ignore[misc]
+async def validate_output_semantics(rails, text):  # type: ignore[misc, no-untyped-def]
     """Fail-closed stub — NeMo not available."""
     raise RuntimeError("NeMo manager not available (validate_output_semantics stub)")
 
 
 try:
-    from src.gateway.governance.nemo.manager import (
+    from src.gateway.governance.nemo.manager import (  # type: ignore[assignment]
         create_nemo_manager,
         validate_output_semantics,
         validate_with_nemo,
@@ -112,44 +111,67 @@ _PII_ENTITIES: list[str] = [
 
 _presidio_analyzer = None
 _presidio_anonymizer = None
+_presidio_init_done = False
 
-try:
-    import spacy as _spacy
-    from presidio_analyzer import AnalyzerEngine
-    from presidio_analyzer.nlp_engine import NlpEngineProvider
-    from presidio_anonymizer import AnonymizerEngine
 
-    _spacy_model = (
-        "en_core_web_lg"
-        if _spacy.util.is_package("en_core_web_lg")
-        else "en_core_web_sm"
-    )
-    _nlp_provider = NlpEngineProvider(
-        nlp_configuration={
-            "nlp_engine_name": "spacy",
-            "models": [{"lang_code": "en", "model_name": _spacy_model}],
-        }
-    )
-    _presidio_analyzer = AnalyzerEngine(
-        nlp_engine=_nlp_provider.create_engine(),
-        default_score_threshold=0.3,
-    )
-    _presidio_anonymizer = AnonymizerEngine()
-    logger.info(
-        "✅ Presidio input-PII engines initialised (model=%s, entities=%d)",
-        _spacy_model,
-        len(_PII_ENTITIES),
-    )
-except ImportError:
-    logger.warning(
-        "⚠️ Presidio not available — input-side PII scan disabled (graceful degradation). "
-        "Install presidio-analyzer, presidio-anonymizer, and a spaCy model to enable."
-    )
-except Exception as _presidio_init_exc:
-    logger.warning(
-        "⚠️ Presidio engine initialisation failed — input-side PII scan disabled: %s",
-        _presidio_init_exc,
-    )
+def _ensure_presidio_engines() -> None:
+    """Lazy-initialise Presidio engines on first use.
+
+    Presidio (spaCy + transformer NLP engine) takes ~2-3 s to import and
+    build at module load time.  Because this module is imported by
+    governance/__init__.py (and thus by every test file that touches the
+    governance package), that cost was paid unconditionally at collection
+    time — even for tests that never exercise the PII-scan path.
+
+    Moving initialization here means the cost is only paid when the first
+    actual NeMo guardrail invocation runs, not at pytest --collect-only.
+
+    Tests that need to patch ``_presidio_analyzer`` / ``_presidio_anonymizer``
+    can do so normally — the module-level names remain visible as ``None``
+    until this function is called, and unittest.mock.patch replaces them
+    before any call site reaches ``_ensure_presidio_engines()``.
+    """
+    global _presidio_analyzer, _presidio_anonymizer, _presidio_init_done
+    if _presidio_init_done:
+        return
+    _presidio_init_done = True
+    try:
+        import spacy as _spacy
+        from presidio_analyzer import AnalyzerEngine
+        from presidio_analyzer.nlp_engine import NlpEngineProvider
+        from presidio_anonymizer import AnonymizerEngine
+
+        _spacy_model = (
+            "en_core_web_lg"
+            if _spacy.util.is_package("en_core_web_lg")
+            else "en_core_web_sm"
+        )
+        _nlp_provider = NlpEngineProvider(
+            nlp_configuration={
+                "nlp_engine_name": "spacy",
+                "models": [{"lang_code": "en", "model_name": _spacy_model}],
+            }
+        )
+        _presidio_analyzer = AnalyzerEngine(
+            nlp_engine=_nlp_provider.create_engine(),
+            default_score_threshold=0.3,
+        )
+        _presidio_anonymizer = AnonymizerEngine()
+        logger.info(
+            "✅ Presidio input-PII engines initialised (model=%s, entities=%d)",
+            _spacy_model,
+            len(_PII_ENTITIES),
+        )
+    except ImportError:
+        logger.warning(
+            "⚠️ Presidio not available — input-side PII scan disabled (graceful degradation). "
+            "Install presidio-analyzer, presidio-anonymizer, and a spaCy model to enable."
+        )
+    except Exception as _presidio_init_exc:
+        logger.warning(
+            "⚠️ Presidio engine initialisation failed — input-side PII scan disabled: %s",
+            _presidio_init_exc,
+        )
 
 # ---------------------------------------------------------------------------
 # SymbolicGovernor singleton — imported lazily to avoid circular imports.
@@ -159,7 +181,7 @@ except Exception as _presidio_init_exc:
 _symbolic_governor = None
 
 
-def _get_symbolic_governor():
+def _get_symbolic_governor():  # type: ignore[no-untyped-def]
     """Return the SymbolicGovernor singleton, or None if unavailable."""
     global _symbolic_governor
     if _symbolic_governor is None:
@@ -217,7 +239,7 @@ async def reload_nemo_rails(config_path: str = "config/rails") -> None:
             "nemo_singleton_reload_start",
             extra={"config_path": config_path},
         )
-        new_rails = create_nemo_manager(config_path=config_path)
+        new_rails = create_nemo_manager(config_path=config_path)  # type: ignore[misc]  # create_nemo_manager is set at import; None only before _NEMO_AVAILABLE guard
         _nemo_rails = new_rails
         logger.info(
             "nemo_singleton_reload_complete",
@@ -225,7 +247,7 @@ async def reload_nemo_rails(config_path: str = "config/rails") -> None:
         )
 
 
-def get_nemo_rails():
+def get_nemo_rails():  # type: ignore[no-untyped-def]
     """Return the singleton LLMRails instance, initializing on first call.
 
     Raises ``RuntimeError`` (fail-closed) if initialization fails.
@@ -238,7 +260,7 @@ def get_nemo_rails():
                 "Ensure nemoguardrails is installed and config/rails/ is accessible."
             )
         logger.info("Initializing NeMo rails singleton for harness guardrail node")
-        _nemo_rails = create_nemo_manager()
+        _nemo_rails = create_nemo_manager()  # type: ignore[misc]  # create_nemo_manager is set at import; None only before _NEMO_AVAILABLE guard
         logger.info("NeMo rails singleton initialized successfully")
     return _nemo_rails
 
@@ -275,8 +297,14 @@ def _default_ai_message_extractor(state: StateDict) -> tuple[str, bool]:
     if not messages:
         return "", False
     last_msg = messages[-1]
-    if isinstance(last_msg, BaseMessage):
-        return str(last_msg.content), True
+    try:
+        from langchain_core.messages import BaseMessage as _LCBaseMessage
+
+        if isinstance(last_msg, _LCBaseMessage):
+            return str(last_msg.content), True
+    except ImportError:
+        if hasattr(last_msg, "content"):
+            return str(last_msg.content), True
     if isinstance(last_msg, dict):
         return str(last_msg.get("content", "")), True
     if isinstance(last_msg, tuple) and len(last_msg) >= 2:
@@ -312,6 +340,19 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
     """
     cfg = config or NemoNodeConfig()
     _extract = cfg.message_extractor or _default_user_message_extractor
+
+    # Eagerly warm up the Presidio/spaCy engines when the node is constructed
+    # (i.e. once, at LangGraph build time / process startup) rather than
+    # lazily on the first live request. create_nemo_guardrail_node() is only
+    # called once per process (see governed_financial_advisor/graph/nodes/
+    # guardrail_node.py), so this pays the ~0.2-2s Presidio/spaCy init cost
+    # a single time at startup instead of on the first user-facing trade or
+    # inference call — which would otherwise silently blow the Tier 1 input
+    # rail's latency budget for that one unlucky request.
+    # _ensure_presidio_engines() is idempotent (guarded by
+    # _presidio_init_done), so repeated calls (e.g. across multiple node
+    # instances in tests) are cheap after the first.
+    _ensure_presidio_engines()
 
     async def nemo_guardrail_node(state: StateDict) -> dict[str, Any]:
         with tracer.start_as_current_span("nemo.input_rail") as span:
@@ -396,6 +437,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                 # The scan is wrapped in try/except so a Presidio failure never
                 # blocks the input rail (graceful degradation).
                 try:
+                    _ensure_presidio_engines()
                     if (
                         _presidio_analyzer is not None
                         and _presidio_anonymizer is not None
@@ -419,7 +461,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
 
                             anonymized = _presidio_anonymizer.anonymize(
                                 text=user_input,
-                                analyzer_results=pii_results,
+                                analyzer_results=pii_results,  # type: ignore[arg-type]
                                 operators={
                                     et: OperatorConfig(
                                         "replace", {"new_value": f"<{et}>"}
@@ -661,10 +703,18 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
             messages = state.get("messages", [])
             last_msg = messages[-1] if messages else None
 
-            if isinstance(last_msg, BaseMessage) and last_msg.id:
-                replacement = AIMessage(content=final_text, id=last_msg.id)
-            else:
-                replacement = AIMessage(content=final_text)
+            try:
+                from langchain_core.messages import (
+                    AIMessage as _LCAIMessage,
+                    BaseMessage as _LCBaseMessage,
+                )
+
+                if isinstance(last_msg, _LCBaseMessage) and last_msg.id:
+                    replacement = _LCAIMessage(content=final_text, id=last_msg.id)
+                else:
+                    replacement = _LCAIMessage(content=final_text)
+            except ImportError:
+                replacement = {"role": "assistant", "content": final_text}  # type: ignore[assignment]
 
             logger.info("nemo_output_rail_node: output rail applied")
             return {

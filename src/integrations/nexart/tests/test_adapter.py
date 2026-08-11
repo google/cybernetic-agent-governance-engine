@@ -49,7 +49,7 @@ from src.integrations.nexart.adapter import (
 # ---------------------------------------------------------------------------
 
 
-def _base_state(**overrides) -> dict:
+def _base_state(**overrides) -> dict:  # type: ignore[no-untyped-def]
     """Build a minimal AgentState-like dict for testing."""
     state = {
         "messages": [],
@@ -127,7 +127,7 @@ def _hitl_state() -> dict:
 class TestStateSerialization:
     """Tests for state snapshot serialization and hashing."""
 
-    def test_deepcopy_protects_against_mutation(self):
+    def test_deepcopy_protects_against_mutation(self):  # type: ignore[no-untyped-def]
         """Modifying the original state after serialization does not affect the snapshot."""
         state = _base_state(governance_signature="original_sig")
         snapshot = _serialize_state_snapshot(state)
@@ -138,7 +138,7 @@ class TestStateSerialization:
         # Snapshot should be unchanged
         assert snapshot["governance_signature"] == "original_sig"
 
-    def test_messages_are_truncated(self):
+    def test_messages_are_truncated(self):  # type: ignore[no-untyped-def]
         """BaseMessage objects are converted to truncated string representations."""
         msg = MagicMock()
         msg.content = "A" * 1000
@@ -148,20 +148,20 @@ class TestStateSerialization:
         snapshot = _serialize_state_snapshot(state)
         assert len(snapshot["messages"][0]["content"]) == 500
 
-    def test_completed_transactions_removed(self):
+    def test_completed_transactions_removed(self):  # type: ignore[no-untyped-def]
         """Saga ledger is removed from snapshot (handled separately in signals)."""
         state = _base_state(completed_transactions=[{"sequence_id": 1}])
         snapshot = _serialize_state_snapshot(state)
         assert "completed_transactions" not in snapshot
 
-    def test_hash_deterministic(self):
+    def test_hash_deterministic(self):  # type: ignore[no-untyped-def]
         """Same state produces the same hash."""
         state = _base_state(governance_signature="test_sig")
         h1 = _hash_state(_serialize_state_snapshot(state))
         h2 = _hash_state(_serialize_state_snapshot(state))
         assert h1 == h2
 
-    def test_hash_different_for_different_states(self):
+    def test_hash_different_for_different_states(self):  # type: ignore[no-untyped-def]
         """Different states produce different hashes."""
         s1 = _base_state(governance_signature="sig_a")
         s2 = _base_state(governance_signature="sig_b")
@@ -178,40 +178,40 @@ class TestStateSerialization:
 class TestSignalExtraction:
     """Tests for governance signal extraction from AgentState."""
 
-    def test_extracts_governance_signature(self):
+    def test_extracts_governance_signature(self):  # type: ignore[no-untyped-def]
         """Governance signature is captured in signals."""
         state = _base_state(governance_signature="abc123")
         signals = _extract_signals("evaluator", state)
         assert signals["governanceSignature"] == "abc123"
 
-    def test_extracts_evaluation_result(self):
+    def test_extracts_evaluation_result(self):  # type: ignore[no-untyped-def]
         """Evaluation verdict and reasoning are captured."""
         state = _approved_state()
         signals = _extract_signals("evaluator", state)
         assert signals["evaluationVerdict"] == "APPROVED"
         assert signals["policyCheck"] == "PASSED"
 
-    def test_extracts_safety_status(self):
+    def test_extracts_safety_status(self):  # type: ignore[no-untyped-def]
         """Safety status is captured."""
         state = _base_state(safety_status="BLOCKED")
         signals = _extract_signals("safety_check", state)
         assert signals["safetyStatus"] == "BLOCKED"
 
-    def test_extracts_hitl_approval(self):
+    def test_extracts_hitl_approval(self):  # type: ignore[no-untyped-def]
         """HITL approval decision fields are captured."""
         state = _hitl_state()
         signals = _extract_signals("governed_trader", state)
         assert signals["hitlApproval"]["approved"] is True
         assert signals["hitlApproval"]["reviewer"] == "jane.doe@example.com"
 
-    def test_extracts_guardrail_block(self):
+    def test_extracts_guardrail_block(self):  # type: ignore[no-untyped-def]
         """Guardrail blocked status and reason are captured."""
         state = _blocked_state()
         signals = _extract_signals("nemo_guardrail", state)
         assert signals["guardrailBlocked"] is True
         assert signals["guardrailReason"] == "Harmful content detected"
 
-    def test_extracts_saga_ledger(self):
+    def test_extracts_saga_ledger(self):  # type: ignore[no-untyped-def]
         """Completed transactions are serialized into signals."""
         state = _base_state(
             completed_transactions=[
@@ -227,7 +227,7 @@ class TestSignalExtraction:
         assert len(signals["sagaLedger"]) == 1
         assert signals["sagaLedger"][0]["action"] == "execute_trade"
 
-    def test_no_signals_for_empty_state(self):
+    def test_no_signals_for_empty_state(self):  # type: ignore[no-untyped-def]
         """Minimal state produces minimal signals."""
         state = _base_state()
         signals = _extract_signals("thinker_node", state)
@@ -243,7 +243,7 @@ class TestSignalExtraction:
 class TestCallbackHandler:
     """Tests for NexArtAttestationCallback step recording."""
 
-    def test_records_attestation_node(self):
+    def test_records_attestation_node(self):  # type: ignore[no-untyped-def]
         """Governance-significant nodes produce step entries."""
         cb = NexArtAttestationCallback(thread_id="test-thread")
         state = _approved_state()
@@ -253,7 +253,7 @@ class TestCallbackHandler:
 
         assert cb.step_count == 1
 
-    def test_skips_non_attestation_node(self):
+    def test_skips_non_attestation_node(self):  # type: ignore[no-untyped-def]
         """Non-governance nodes don't produce step entries but track IDs."""
         cb = NexArtAttestationCallback(thread_id="test-thread")
         state = _base_state()
@@ -263,7 +263,7 @@ class TestCallbackHandler:
 
         assert cb.step_count == 0
 
-    def test_parent_step_ids_resolve(self):
+    def test_parent_step_ids_resolve(self):  # type: ignore[no-untyped-def]
         """Parent step IDs are correctly resolved from graph topology."""
         cb = NexArtAttestationCallback(thread_id="test-thread")
         state = _base_state()
@@ -286,7 +286,7 @@ class TestCallbackHandler:
         execution_analyst_id = cb._step_id_by_node["execution_analyst"]
         assert execution_analyst_id in evaluator_step.parent_step_ids
 
-    def test_hitl_interrupt_recorded(self):
+    def test_hitl_interrupt_recorded(self):  # type: ignore[no-untyped-def]
         """HITL interrupt produces a step with approval signals."""
         cb = NexArtAttestationCallback(thread_id="test-thread")
         state = _base_state()
@@ -320,7 +320,7 @@ class TestCallbackHandler:
 class TestLoopUnrolling:
     """Tests for bounded cycle serialization (execution_analyst → evaluator)."""
 
-    def test_single_iteration(self):
+    def test_single_iteration(self):  # type: ignore[no-untyped-def]
         """Single loop iteration produces correct parentStepIds."""
         cb = NexArtAttestationCallback(thread_id="test-thread")
         state = _base_state(loop_count=1)
@@ -333,7 +333,7 @@ class TestLoopUnrolling:
 
         assert cb.step_count == 1  # only evaluator is attestation node
 
-    def test_multi_iteration_produces_sequential_parents(self):
+    def test_multi_iteration_produces_sequential_parents(self):  # type: ignore[no-untyped-def]
         """Multiple loop iterations produce sequential parent chains."""
         cb = NexArtAttestationCallback(thread_id="test-thread")
 
@@ -351,7 +351,7 @@ class TestLoopUnrolling:
         for step in evaluator_steps:
             assert len(step.parent_step_ids) >= 1
 
-    def test_loop_breaker_at_count_3(self):
+    def test_loop_breaker_at_count_3(self):  # type: ignore[no-untyped-def]
         """After 3 iterations, the path should classify as loop_breaker."""
         cb = NexArtAttestationCallback(thread_id="test-thread")
 
@@ -379,7 +379,7 @@ class TestLoopUnrolling:
 class TestTerminalPathClassification:
     """Tests for degenerate path classification."""
 
-    def test_happy_path(self):
+    def test_happy_path(self):  # type: ignore[no-untyped-def]
         """Full traversal with governed_trader is classified as happy_path."""
         steps = [
             ProjectBundleStepEntry(node_name="nemo_guardrail"),
@@ -391,14 +391,14 @@ class TestTerminalPathClassification:
         ]
         assert _classify_terminal_path(steps) == "happy_path"
 
-    def test_nemo_block(self):
+    def test_nemo_block(self):  # type: ignore[no-untyped-def]
         """NeMo guardrail block path is classified correctly."""
         steps = [
             ProjectBundleStepEntry(node_name="nemo_guardrail"),
         ]
         assert _classify_terminal_path(steps) == "nemo_block"
 
-    def test_cbf_block(self):
+    def test_cbf_block(self):  # type: ignore[no-untyped-def]
         """Safety check BLOCKED path is classified correctly."""
         steps = [
             ProjectBundleStepEntry(node_name="nemo_guardrail"),
@@ -411,7 +411,7 @@ class TestTerminalPathClassification:
         ]
         assert _classify_terminal_path(steps) == "cbf_block"
 
-    def test_loop_breaker(self):
+    def test_loop_breaker(self):  # type: ignore[no-untyped-def]
         """Loop breaker path (evaluator → explainer, no safety_check) is classified."""
         steps = [
             ProjectBundleStepEntry(node_name="nemo_guardrail"),
@@ -429,7 +429,7 @@ class TestTerminalPathClassification:
 class TestBundleAssembly:
     """Tests for AttestationBundle creation."""
 
-    def test_bundle_serialization(self):
+    def test_bundle_serialization(self):  # type: ignore[no-untyped-def]
         """Bundle serializes to NexArt-compatible dict."""
         bundle = AttestationBundle(
             thread_id="thread-001",
@@ -446,7 +446,7 @@ class TestBundleAssembly:
         assert d["steps"][0]["nodeName"] == "evaluator"
         assert d["terminalPath"] == "happy_path"
 
-    def test_bundle_from_callback(self):
+    def test_bundle_from_callback(self):  # type: ignore[no-untyped-def]
         """Full callback flow produces a valid bundle."""
         cb = NexArtAttestationCallback(thread_id="e2e-thread")
         state = _base_state()
@@ -469,7 +469,7 @@ class TestBundleAssembly:
         assert bundle.terminal_path == "happy_path"
         assert len(bundle.steps) == 5  # guardrail, evaluator, safety, trader, explainer
 
-    def test_step_entry_serialization(self):
+    def test_step_entry_serialization(self):  # type: ignore[no-untyped-def]
         """ProjectBundleStepEntry serializes with camelCase keys."""
         step = ProjectBundleStepEntry(
             node_name="evaluator",
@@ -490,7 +490,7 @@ class TestBundleAssembly:
 class TestNexArtClient:
     """Tests for NexArtClient HTTP request construction."""
 
-    def test_headers_include_bearer_auth(self):
+    def test_headers_include_bearer_auth(self):  # type: ignore[no-untyped-def]
         """Authorization header uses Bearer scheme."""
         client = NexArtClient(
             endpoint="https://api.nexart.io",
@@ -500,14 +500,14 @@ class TestNexArtClient:
         assert headers["Authorization"] == "Bearer test-key-123"
         assert headers["Content-Type"] == "application/json"
 
-    def test_headers_without_api_key(self):
+    def test_headers_without_api_key(self):  # type: ignore[no-untyped-def]
         """Without API key, only Content-Type header is present."""
         client = NexArtClient(endpoint="https://api.nexart.io", api_key="")
         headers = client._headers()
         assert "Authorization" not in headers
 
     @pytest.mark.asyncio
-    async def test_certify_decision_builds_correct_url(self):
+    async def test_certify_decision_builds_correct_url(self):  # type: ignore[no-untyped-def]
         """certify_decision posts to /certifyDecision."""
 
         mock_response = MagicMock()

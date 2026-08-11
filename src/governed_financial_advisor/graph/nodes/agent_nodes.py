@@ -58,7 +58,7 @@ def get_market_data_from_history(state: dict[str, Any]) -> str:
     return "\n".join(market_data)
 
 
-async def data_analyst_node(state):
+async def data_analyst_node(state):  # type: ignore[no-untyped-def]
     """
     Executes the Data Analyst Subgraph.
     The Subgraph encapsulates a Thinker (DeepSeek) -> Doer (Llama 3.1) -> ToolNode (Market Data) pipeline.
@@ -83,7 +83,7 @@ async def data_analyst_node(state):
     }
 
 
-async def execution_analyst_node(state):
+async def execution_analyst_node(state):  # type: ignore[no-untyped-def]
     """
     Native LangGraph Execution Analyst (Planner).
     Uses LangChain structured output (async).
@@ -264,7 +264,7 @@ async def execution_analyst_node(state):
     return updates
 
 
-async def governed_trader_node(state):
+async def governed_trader_node(state):  # type: ignore[no-untyped-def]
     """
     Executes the Governed Trader Subgraph (Native LangGraph).
     Executes requested trades based on plan and evaluation.
@@ -289,7 +289,7 @@ async def governed_trader_node(state):
     }
 
     # Invoke natively
-    result = await governed_trader_graph.ainvoke(
+    result = await governed_trader_graph.ainvoke(  # type: ignore[call-overload]  # config dict is passed as RunnableConfig-compatible dict; LangGraph overloads require RunnableConfig type
         subgraph_state, {"recursion_limit": 10}
     )
 

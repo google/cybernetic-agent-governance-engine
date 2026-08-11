@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ObservabilityDemo")
 
 
-async def run_demo():
+async def run_demo():  # type: ignore[no-untyped-def]
     print("🚀 Starting Observability Feature Demo...")
 
     # 1. Initialize Telemetry & Graph

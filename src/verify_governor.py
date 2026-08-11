@@ -23,7 +23,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.gateway.governance.symbolic_governor import GovernanceError, SymbolicGovernor
 
 
-async def test_governor():
+async def test_governor():  # type: ignore[no-untyped-def]
     # Mock dependencies
     opa = AsyncMock()
     opa.evaluate_policy.return_value = "ALLOW"

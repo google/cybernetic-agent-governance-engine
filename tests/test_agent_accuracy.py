@@ -178,6 +178,10 @@ def query_agent(prompt: str):
     not _backend_reachable(),
     reason="Backend not available — set BACKEND_URL to a live server",
 )
+# 600s timeout: this test exercises the full agent benchmark loop which
+# requires real HTTP calls to a live backend (BACKEND_URL) and multiple
+# LLM-driven workflow steps. The file-level `pytestmark = pytest.mark.integration`
+# ensures this test is excluded from the default CI run (local or unit only).
 @pytest.mark.timeout(600)
 def test_agent_workflow_accuracy():
     """Runs the accuracy tests following the specific workflow."""

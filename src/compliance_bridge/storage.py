@@ -87,7 +87,7 @@ def _get_gcs_client() -> Any:
         return _gcs_client
 
     try:
-        from google.cloud import storage as gcs
+        from google.cloud import storage as gcs  # type: ignore[attr-defined]
     except ImportError as exc:
         raise RuntimeError(
             "[storage] google-cloud-storage is required for GCS artifact storage. "

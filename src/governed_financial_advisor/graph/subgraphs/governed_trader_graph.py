@@ -188,7 +188,7 @@ def route_approval(state: GovernedTraderState) -> str:
 
 
 @side_effect_node(kind="api_call", external_system="gateway_mcp")
-async def tool_executor_node(state: GovernedTraderState):
+async def tool_executor_node(state: GovernedTraderState):  # type: ignore[no-untyped-def]
     """
     Manually executes tools requested by the executor node.
     Bypasses langgraph.prebuilt.ToolNode.
@@ -242,7 +242,7 @@ async def tool_executor_node(state: GovernedTraderState):
     return {"messages": tool_outputs}
 
 
-async def executor_node(state: GovernedTraderState):
+async def executor_node(state: GovernedTraderState):  # type: ignore[no-untyped-def]
     """The fast reasoning executor that calls tools based on the plan."""
     tracer = get_tracer()
 
@@ -260,10 +260,10 @@ async def executor_node(state: GovernedTraderState):
                 "VLLM_FAST_API_BASE must be set — no localhost fallback in production"
             )
         llm = ChatOpenAI(
-            model=model_name,
+            model=model_name,  # type: ignore[arg-type]
             base_url=_fast_api_base,
             temperature=0.0,
-            max_tokens=4096,
+            max_tokens=4096,  # type: ignore[call-arg]
         )
 
         # Load MCP tools manually
@@ -310,7 +310,7 @@ def should_continue(state: GovernedTraderState) -> str:
     messages = state["messages"]
     last_message = messages[-1]
 
-    if last_message.tool_calls:
+    if last_message.tool_calls:  # type: ignore[attr-defined]
         return "tools"
     return END
 

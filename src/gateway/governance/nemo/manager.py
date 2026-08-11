@@ -69,7 +69,7 @@ CAGE_SEAL_ENFORCEMENT: str = os.getenv("CAGE_SEAL_ENFORCEMENT", "enforce").lower
 # ---------------------------------------------------------------------------
 
 
-def _get_analyzer_patch():
+def _get_analyzer_patch():  # type: ignore[no-untyped-def]
     """
     Replacement for nemoguardrails.library.sensitive_data_detection.actions._get_analyzer.
 
@@ -118,7 +118,7 @@ def _apply_sdd_monkeypatch() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _build_presidio_action():
+def _build_presidio_action():  # type: ignore[no-untyped-def]
     """
     Build and return a coroutine that implements NeMo's ``detect_sensitive_data``
     action contract using Microsoft Presidio + the best available spaCy model.
@@ -151,7 +151,7 @@ def _build_presidio_action():
                 "IP_ADDRESS",
             ]
 
-            def analyze(self, text, entities=None, **kwargs):
+            def analyze(self, text, entities=None, **kwargs):  # type: ignore[override, no-untyped-def]  # Presidio stubs use strict signature; **kwargs is intentional for multi-version compat
                 if text is None:
                     return []
                 if not entities:
@@ -177,9 +177,9 @@ def _build_presidio_action():
         nlp_engine = provider.create_engine()
         analyzer = _SafeAnalyzer(nlp_engine=nlp_engine, default_score_threshold=0.3)
 
-        async def detect_sensitive_data(
+        async def detect_sensitive_data(  # type: ignore[no-untyped-def]
             text: str = "",
-            entities: list = None,
+            entities: list = None,  # type: ignore[assignment]
             score_threshold: float = 0.3,
             **kwargs,
         ) -> list:
@@ -784,7 +784,7 @@ try:
     from src.governed_financial_advisor.utils.privacy import scrub_pii
 except ImportError:
 
-    def scrub_pii(text: str) -> str:
+    def scrub_pii(text: str, emit_jurisdiction_audit: bool = False) -> str:  # type: ignore[misc]  # fallback signature must match imported variant
         return text
 
 

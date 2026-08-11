@@ -49,7 +49,7 @@ class ToolExecutionRequest(BaseModel):
 
 @tools_router.post("/execute")
 @side_effect_node(kind="api_call", external_system="gateway_api")
-async def execute_tool_endpoint(
+async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
     request: ToolExecutionRequest,
     _auth: str = Depends(require_api_key),
 ):
@@ -81,7 +81,7 @@ async def execute_tool_endpoint(
         elif tool == "get_market_sentiment":
             # Reuse get_market_data for now as it includes news
             symbol = params.get("symbol")
-            output = get_market_data(symbol)  # Fallback to same tool
+            output = get_market_data(symbol)  # type: ignore[arg-type]  # Fallback to same tool
 
         elif tool in ("simulate_governance_check", "check_safety_constraints"):
             # "check_safety_constraints" kept as legacy alias — deprecated, use
@@ -89,7 +89,7 @@ async def execute_tool_endpoint(
             target_tool = params.get("target_tool")
             target_params = params.get("target_params") or {}
             # Call Symbolic Governor in sim (dry-run) mode — does NOT enforce
-            result = await symbolic_governor.verify(target_tool, target_params)
+            result = await symbolic_governor.verify(target_tool, target_params)  # type: ignore[arg-type]
             violations = (
                 result.get("violations", []) if isinstance(result, dict) else []
             )

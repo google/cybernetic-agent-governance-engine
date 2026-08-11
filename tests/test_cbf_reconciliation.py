@@ -165,10 +165,8 @@ def test_cbf_uses_reconciliation_balance_when_available() -> None:
     cbf = ControlBarrierFunction()
     cbf.tracer = None
 
-    # Seed self-reported balance
-    asyncio.get_event_loop().run_until_complete(
-        fake_redis_async.set(cbf.redis_key, str(_SAFE_BALANCE))
-    )
+    # Seed self-reported balance — use asyncio.run() for Python 3.12 compatibility
+    asyncio.run(fake_redis_async.set(cbf.redis_key, str(_SAFE_BALANCE)))
 
     mock_signer = MagicMock()
     mock_signer.verify.return_value = True
@@ -187,9 +185,7 @@ def test_cbf_uses_reconciliation_balance_when_available() -> None:
             return_value=mock_signer,
         ),
     ):
-        state = asyncio.get_event_loop().run_until_complete(
-            cbf._read_cbf_state_atomic()
-        )
+        state = asyncio.run(cbf._read_cbf_state_atomic())
 
     assert state["source"] == "reconciled", (
         f"Expected source='reconciled', got {state['source']!r}"
@@ -218,10 +214,8 @@ def test_cbf_falls_back_to_redis_when_reconciliation_absent() -> None:
     cbf = ControlBarrierFunction()
     cbf.tracer = None
 
-    # Seed self-reported balance
-    asyncio.get_event_loop().run_until_complete(
-        fake_redis_async.set(cbf.redis_key, str(_SAFE_BALANCE))
-    )
+    # Seed self-reported balance — use asyncio.run() for Python 3.12 compatibility
+    asyncio.run(fake_redis_async.set(cbf.redis_key, str(_SAFE_BALANCE)))
 
     with (
         patch(
@@ -233,9 +227,7 @@ def test_cbf_falls_back_to_redis_when_reconciliation_absent() -> None:
             return_value=None,  # reconciliation key absent / stale
         ),
     ):
-        state = asyncio.get_event_loop().run_until_complete(
-            cbf._read_cbf_state_atomic()
-        )
+        state = asyncio.run(cbf._read_cbf_state_atomic())
 
     assert state["source"] == "self_reported", (
         f"Expected source='self_reported', got {state['source']!r}"

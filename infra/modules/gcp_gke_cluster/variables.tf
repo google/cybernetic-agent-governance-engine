@@ -252,9 +252,9 @@ variable "gpu_node_pool_labels" {
 }
 
 variable "gpu_node_pool_spot" {
-  description = "Use Spot VMs for the GPU node pool"
+  description = "Use Spot VMs for the GPU node pool (false = on-demand, recommended for stable measurement runs)"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "gpu_node_locations" {

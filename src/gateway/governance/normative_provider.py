@@ -830,7 +830,7 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
     if provider_name == "nexart":
         from src.integrations.nexart import NexArtAttestationProvider
 
-        return NexArtAttestationProvider()
+        return NexArtAttestationProvider()  # type: ignore[return-value]
 
     valid = [*_PROVIDERS.keys(), "trustlayers", "nexart"]
     raise ValueError(

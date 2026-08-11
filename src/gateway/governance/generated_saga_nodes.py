@@ -53,7 +53,7 @@ _mcp_client: GatewayMCPClient | None = None
 def _get_mcp_client() -> GatewayMCPClient:
     global _mcp_client
     if _mcp_client is None:
-        _mcp_client = GatewayMCPClient()
+        _mcp_client = GatewayMCPClient()  # type: ignore[call-arg]
     return _mcp_client
 
 
@@ -85,7 +85,7 @@ def _next_sequence_id(state: AgentState) -> int:
 # [CTRL_WAL_002] execution_type: mcp_tool | mcp_tool_name: execute_trade_action
 
 
-def forward_execute_trade_node_uca_4(state: AgentState) -> dict[str, Any]:
+def forward_execute_trade_node_uca_4(state: AgentState) -> dict[str, Any]:  # type: ignore[misc]  # LangGraph generator node: yield intermediate state; return type is the node's final output type per LangGraph convention
     """WAL forward node for UCA-4 (execute_trade).
 
     Step 1: Write PENDING intent to ledger (yielded to checkpointer).

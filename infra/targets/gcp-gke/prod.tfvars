@@ -77,14 +77,15 @@ primary_node_pool_max_count     = 10
 primary_node_pool_initial_count = 3
 primary_node_pool_disk_type     = "pd-ssd" # Faster
 
-# GPU pool: Production L4 GPUs, always available
+# GPU pool: Production L4 GPUs, always available, on-demand only
 enable_gpu_node_pool        = true
 gpu_type                    = "nvidia-l4" # Better than T4
 gpu_count                   = 1
 gpu_node_pool_machine_type  = "g2-standard-8"
-gpu_node_pool_min_count     = 2 # Always-on for production
+gpu_node_pool_min_count     = 2   # Always-on for production
 gpu_node_pool_max_count     = 5
 gpu_node_pool_initial_count = 2
+gpu_node_pool_spot          = false # on-demand — production workloads must not be preempted
 
 # ─── Storage (Prod: Larger, Faster) ───────────────────────────────────────────
 storage_class = "pd-ssd"

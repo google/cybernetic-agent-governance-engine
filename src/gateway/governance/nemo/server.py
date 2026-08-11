@@ -129,11 +129,11 @@ RAILS_CONFIG_PATH = os.path.abspath(
 
 
 class NeMoService(nemo_pb2_grpc.NeMoGuardrailsServicer):
-    def __init__(self):
+    def __init__(self):  # type: ignore[no-untyped-def]
         self.rails = None
         self._load_rails()
 
-    def _load_rails(self):
+    def _load_rails(self):  # type: ignore[no-untyped-def]
         try:
             # Use create_nemo_manager to ensure actions and LLM providers are registered
             if os.path.exists(RAILS_CONFIG_PATH):
@@ -146,11 +146,11 @@ class NeMoService(nemo_pb2_grpc.NeMoGuardrailsServicer):
             logger.error(f"❌ Failed to load NeMo Guardrails: {e}")
             self.rails = None
 
-    async def Verify(self, request, context):
+    async def Verify(self, request, context):  # type: ignore[no-untyped-def]
         if not self.rails:
             context.set_code(grpc.StatusCode.UNAVAILABLE)
             context.set_details("NeMo Rails not initialized")
-            return nemo_pb2.VerifyResponse(status="ERROR")
+            return nemo_pb2.VerifyResponse(status="ERROR")  # type: ignore[attr-defined]
 
         try:
             # Generate response using NeMo (Colang flows)
@@ -160,16 +160,16 @@ class NeMoService(nemo_pb2_grpc.NeMoGuardrailsServicer):
 
             content = response.response[0]["content"] if response.response else ""
 
-            return nemo_pb2.VerifyResponse(response=content, status="SUCCESS")
+            return nemo_pb2.VerifyResponse(response=content, status="SUCCESS")  # type: ignore[attr-defined]
 
         except Exception as e:
             logger.error(f"Guardrail execution failed: {e}")
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
-            return nemo_pb2.VerifyResponse(status="ERROR")
+            return nemo_pb2.VerifyResponse(status="ERROR")  # type: ignore[attr-defined]
 
 
-async def serve():
+async def serve():  # type: ignore[no-untyped-def]
     port = os.getenv("PORT", "8000")
     # For gRPC we often use a different port or share if using multiplexing (harder in python)
     # Let's assume standard gRPC port 50052 for NeMo internal to avoid conflict with HTTP legacy if any?

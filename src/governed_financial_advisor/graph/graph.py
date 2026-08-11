@@ -106,7 +106,7 @@ def get_side_effect_topology() -> dict[str, dict]:
     }
 
 
-def create_graph(redis_url=None):
+def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
     workflow = StateGraph(AgentState)
 
     # 1. Add Nodes
@@ -123,8 +123,8 @@ def create_graph(redis_url=None):
     #   CLEAR         → safety_check
     #   HITL_REQUIRED → DeferQueue park + NodeInterrupt (→ explainer fallback)
     #   BLOCKED       → explainer
-    workflow.add_node("ftra_node", create_ftra_node())
-    workflow.add_node("safety_check", safety_check_node)  # R-11: OPA pre-trade gate
+    workflow.add_node("ftra_node", create_ftra_node())  # type: ignore[arg-type]
+    workflow.add_node("safety_check", safety_check_node)  # type: ignore[arg-type]  # R-11: OPA pre-trade gate
     workflow.add_node("governed_trader", governed_trader_node)
     workflow.add_node("explainer", explainer_node)
     # ADR 2026-03-09b: mandatory output rail — final node on every non-blocked path
@@ -135,7 +135,7 @@ def create_graph(redis_url=None):
     # START → nemo_guardrail → thinker_node (safe) | END (blocked)
     workflow.set_entry_point("nemo_guardrail")
 
-    def route_after_guardrail(state: AgentState):
+    def route_after_guardrail(state: AgentState):  # type: ignore[no-untyped-def]
         """
         Route from the NeMo guardrail gate.
 
@@ -158,7 +158,7 @@ def create_graph(redis_url=None):
     # BUG-FIX: "FINISH" is a valid Literal in AgentState but is NOT a node name.
     # Returning the string "FINISH" causes LangGraph to fail with an empty-message
     # ValueError (→ HTTP 500 {"detail":""}). Map it to the END sentinel explicitly.
-    def route_supervisor(state: AgentState):
+    def route_supervisor(state: AgentState):  # type: ignore[no-untyped-def]
         next_step = state.get("next_step", END)
         if next_step == "FINISH" or next_step is None:
             # Route through the output rail before terminating
@@ -170,7 +170,7 @@ def create_graph(redis_url=None):
     # Lifecycle: Planner -> Evaluator -> [FTRA Tier 0.5] -> [Safety Gate] -> Trader | Re-plan
     workflow.add_edge("execution_analyst", "evaluator")
 
-    def check_safety_signature(state: AgentState):
+    def check_safety_signature(state: AgentState):  # type: ignore[no-untyped-def]
         """
         STRICT LIFECYCLE GATE: Verifies that the Evaluator has provided a signature.
 
@@ -184,7 +184,7 @@ def create_graph(redis_url=None):
         parks in DeferQueue (HITL_REQUIRED).
         """
         sig = state.get("governance_signature")
-        verdict = state.get("evaluation_result", {}).get("verdict")
+        verdict = state.get("evaluation_result", {}).get("verdict")  # type: ignore[union-attr]
 
         if verdict == "APPROVED" and sig:
             return "ftra_node"  # CTRL_FTRA_001: Tier 0.5 gate before OPA
@@ -204,7 +204,7 @@ def create_graph(redis_url=None):
     #   BLOCKED       → explainer
     workflow.add_conditional_edges("ftra_node", route_after_ftra)
 
-    def route_after_safety(state: AgentState):
+    def route_after_safety(state: AgentState):  # type: ignore[no-untyped-def]
         """
         R-11: Routes after the OPA pre-trade safety gate.
 

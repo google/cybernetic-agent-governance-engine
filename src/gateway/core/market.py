@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class MarketService:
-    def __init__(self):
+    def __init__(self):  # type: ignore[no-untyped-def]
         self.api_key = os.getenv("ALPHAVANTAGE_API_KEY")
         self.base_url = "https://www.alphavantage.co/query"
 
@@ -42,7 +42,7 @@ class MarketService:
             logger.info(f"Fetching AlphaVantage sentiment for {symbol}...")
 
             async with httpx.AsyncClient() as client:
-                response = await client.get(self.base_url, params=params, timeout=10.0)
+                response = await client.get(self.base_url, params=params, timeout=10.0)  # type: ignore[arg-type]
                 response.raise_for_status()
                 data = response.json()
 

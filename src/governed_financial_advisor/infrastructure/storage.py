@@ -88,10 +88,10 @@ class GCSStorage(StorageInterface):
         self.bucket_name = bucket_name or os.environ.get("GCS_BUCKET_NAME", "")
         self._client = None
 
-    def _get_client(self):
+    def _get_client(self):  # type: ignore[no-untyped-def]
         if self._client is None:
             try:
-                from google.cloud import storage
+                from google.cloud import storage  # type: ignore[attr-defined]
 
                 self._client = storage.Client()
             except Exception as e:
@@ -101,7 +101,7 @@ class GCSStorage(StorageInterface):
                 ) from e
         return self._client
 
-    def _get_bucket(self):
+    def _get_bucket(self):  # type: ignore[no-untyped-def]
         return self._get_client().bucket(self.bucket_name)
 
     def upload(self, local_path: str, remote_path: str) -> str:

@@ -35,9 +35,17 @@ except ImportError:
 
 class TestPipelineCompilation(unittest.TestCase):
     def test_pipeline_compiles(self):
-        """Verify the KFP pipeline compiles to a valid JSON spec."""
-        output_file = "test_pipeline.json"
-        try:
+        """Verify the KFP pipeline compiles to a valid JSON spec.
+
+        Uses a pytest tmp_path-style approach via tempfile to avoid writing
+        ``test_pipeline.json`` into the CWD, which caused a race condition when
+        multiple xdist workers ran this test concurrently (both workers could
+        write/read/delete the same file path).
+        """
+        import tempfile  # noqa: PLC0415
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_file = os.path.join(tmp_dir, "test_pipeline.json")
             compiler.Compiler().compile(
                 pipeline_func=governance_pipeline, package_path=output_file
             )
@@ -51,9 +59,6 @@ class TestPipelineCompilation(unittest.TestCase):
                 self.assertEqual(
                     pipeline_spec["pipelineInfo"]["name"], "green-stack-governance-loop"
                 )
-        finally:
-            if os.path.exists(output_file):
-                os.remove(output_file)
 
 
 if __name__ == "__main__":

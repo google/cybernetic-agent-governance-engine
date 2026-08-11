@@ -69,7 +69,7 @@ Langfuse = None  # populated by _get_langfuse_class() on first use
 AsyncOpenAI = None  # populated by _get_openai_class() on first use
 
 
-def _get_langfuse_class():
+def _get_langfuse_class():  # type: ignore[no-untyped-def]
     global Langfuse
     if Langfuse is None:
         from langfuse import Langfuse as _LF
@@ -78,7 +78,7 @@ def _get_langfuse_class():
     return Langfuse
 
 
-def _get_openai_class():
+def _get_openai_class():  # type: ignore[no-untyped-def]
     global AsyncOpenAI
     if AsyncOpenAI is None:
         from openai import AsyncOpenAI as _OAI
@@ -168,7 +168,7 @@ _validate_langfuse_credentials()
 # ---------------------------------------------------------------------------
 
 
-def _make_compliance_langfuse():
+def _make_compliance_langfuse():  # type: ignore[no-untyped-def]
     import httpx
 
     return _get_langfuse_class()(
@@ -212,7 +212,7 @@ def _flush_with_timeout(
         )
 
 
-def _make_app_langfuse():
+def _make_app_langfuse():  # type: ignore[no-untyped-def]
     import httpx
 
     return _get_langfuse_class()(
@@ -712,14 +712,14 @@ async def _step5_remediation_advisor(
         ", ".join(deduped),
     )
 
-    per_control: list[dict] = await asyncio.gather(
+    per_control: list[dict] = await asyncio.gather(  # type: ignore[assignment]
         *[
             _step5_one_control(
                 control_id=cid,
                 findings=findings,
                 audit_id=audit_id,
                 vllm_base=vllm_base,
-                model_name=model_name,
+                model_name=model_name,  # type: ignore[arg-type]
                 max_tokens=max_tokens,
                 timeout_sec=timeout_sec,
             )

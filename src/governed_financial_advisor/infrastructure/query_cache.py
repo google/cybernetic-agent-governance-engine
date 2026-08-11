@@ -74,7 +74,7 @@ class QueryCache:
         r"buy|sell|trade|execute|order",
     ]
 
-    def __init__(self, redis_client=None):
+    def __init__(self, redis_client=None):  # type: ignore[no-untyped-def]
         """Initialize with optional Redis backend. Falls back to dict if Redis unavailable."""
         self.redis = redis_client
         self.local_cache = {}  # Fallback for when Redis not available
@@ -150,7 +150,7 @@ class QueryCache:
         logger.debug("QueryCache MISS: %s", query[:50])
         return None
 
-    async def set(
+    async def set(  # type: ignore[no-untyped-def]
         self, query: str, response: str, governance_context: dict | None = None
     ):
         """Cache response if query is cacheable."""
@@ -175,7 +175,7 @@ class QueryCache:
         self.local_cache[cache_key] = response
         logger.info("QueryCache SET (local): %s", query[:50])
 
-    async def clear(self):
+    async def clear(self):  # type: ignore[no-untyped-def]
         """Clear all cached queries."""
         if self.redis:
             try:
@@ -199,7 +199,7 @@ class QueryCache:
 _cache_instance: QueryCache | None = None
 
 
-async def get_query_cache(redis_client=None) -> QueryCache:
+async def get_query_cache(redis_client=None) -> QueryCache:  # type: ignore[no-untyped-def]
     """Get or create the singleton query cache instance."""
     global _cache_instance
     if _cache_instance is None:

@@ -30,7 +30,7 @@ class ContextRequest(BaseModel):
 
 
 @demo_router.get("/status")
-def get_status():
+def get_status():  # type: ignore[no-untyped-def]
     """Returns the current demo state."""
     return {
         "pipeline": demo_state.pipeline_status,
@@ -41,7 +41,7 @@ def get_status():
 
 
 @demo_router.post("/context")
-def set_context(req: ContextRequest):
+def set_context(req: ContextRequest):  # type: ignore[no-untyped-def]
     """Updates the simulated environment context."""
     demo_state.simulated_latency = req.latency
     demo_state.forced_risk_profile = req.risk_profile
@@ -49,7 +49,7 @@ def set_context(req: ContextRequest):
 
 
 @demo_router.post("/reset")
-def reset_demo():
+def reset_demo():  # type: ignore[no-untyped-def]
     """Resets the demo state."""
     demo_state.reset()
     return {"status": "reset"}

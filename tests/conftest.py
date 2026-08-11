@@ -265,9 +265,13 @@ def require_opa_reachable():
 # ── Session-scoped fixtures ───────────────────────────────────────────────────
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture()
 async def cleanup_redis_client():
-    """Reset the async Redis client between tests to prevent closed event loop errors."""
+    """Reset the async Redis client between tests to prevent closed event loop errors.
+
+    Not autouse — request this fixture explicitly in tests that open an async
+    Redis connection so it doesn't add teardown overhead to unrelated tests.
+    """
     yield
     try:
         from src.gateway.infrastructure.redis_client import redis_client

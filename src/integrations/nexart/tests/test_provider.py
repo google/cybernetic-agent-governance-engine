@@ -47,7 +47,7 @@ class TestCERCreation:
     """Tests for certifyDecision CER creation."""
 
     @pytest.mark.asyncio
-    async def test_certify_decision_returns_receipt(self):
+    async def test_certify_decision_returns_receipt(self):  # type: ignore[no-untyped-def]
         """Successful certifyDecision returns a valid CERReceipt."""
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -76,7 +76,7 @@ class TestCERCreation:
             assert cer.signer_key_id == "key-001"
 
     @pytest.mark.asyncio
-    async def test_certify_decision_fails_closed_on_error(self):
+    async def test_certify_decision_fails_closed_on_error(self):  # type: ignore[no-untyped-def]
         """Network error returns CERReceipt with error field."""
         with patch("httpx.AsyncClient") as MockClient:
             mock_instance = AsyncMock()
@@ -91,7 +91,7 @@ class TestCERCreation:
             cer = await provider.certify_decision({"test": True})
 
             assert not cer.is_valid
-            assert "Connection refused" in cer.error
+            assert "Connection refused" in cer.error  # type: ignore[operator]  # cer.error is str when is_valid=False; None only on success path
 
 
 # ---------------------------------------------------------------------------
@@ -102,13 +102,13 @@ class TestCERCreation:
 class TestJWKCache:
     """Tests for JWK cache behavior."""
 
-    def test_empty_cache_has_no_keys(self):
+    def test_empty_cache_has_no_keys(self):  # type: ignore[no-untyped-def]
         """Fresh JWK cache has no keys."""
         cache = JWKCache()
         assert not cache.has_keys
         assert cache.is_stale
 
-    def test_populated_cache_has_keys(self):
+    def test_populated_cache_has_keys(self):  # type: ignore[no-untyped-def]
         """Cache with keys reports has_keys=True."""
         cache = JWKCache(
             jwk_set={"keys": [{"kid": "key-001", "kty": "OKP", "crv": "Ed25519"}]},
@@ -117,7 +117,7 @@ class TestJWKCache:
         assert cache.has_keys
         assert not cache.is_stale
 
-    def test_staleness_at_ttl_boundary(self):
+    def test_staleness_at_ttl_boundary(self):  # type: ignore[no-untyped-def]
         """Cache becomes stale after TTL expires."""
         cache = JWKCache(
             jwk_set={"keys": [{"kid": "key-001"}]},
@@ -126,7 +126,7 @@ class TestJWKCache:
         assert cache.is_stale
 
     @pytest.mark.asyncio
-    async def test_sync_populates_cache(self):
+    async def test_sync_populates_cache(self):  # type: ignore[no-untyped-def]
         """JWK sync fetches keys and updates cache."""
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -165,7 +165,7 @@ class TestCERVerification:
     """Tests for CER verification."""
 
     @pytest.mark.asyncio
-    async def test_local_verification_with_cached_keys(self):
+    async def test_local_verification_with_cached_keys(self):  # type: ignore[no-untyped-def]
         """With cached JWKs, verify_cer uses local verification."""
         provider = NexArtAttestationProvider(endpoint="https://api.nexart.io/v1")
         provider._jwk_cache = JWKCache(
@@ -179,7 +179,7 @@ class TestCERVerification:
         assert result.valid is True
 
     @pytest.mark.asyncio
-    async def test_local_verification_rejects_invalid_hash(self):
+    async def test_local_verification_rejects_invalid_hash(self):  # type: ignore[no-untyped-def]
         """Local verification rejects hash with wrong length."""
         provider = NexArtAttestationProvider(endpoint="https://api.nexart.io/v1")
         provider._jwk_cache = JWKCache(
@@ -189,10 +189,10 @@ class TestCERVerification:
 
         result = await provider.verify_cer("too_short")
         assert result.valid is False
-        assert "length" in result.error
+        assert "length" in result.error  # type: ignore[operator]  # result.error is str when valid=False; None only on success path
 
     @pytest.mark.asyncio
-    async def test_remote_fallback_when_cache_empty(self):
+    async def test_remote_fallback_when_cache_empty(self):  # type: ignore[no-untyped-def]
         """When JWK cache is empty, falls back to remote verification."""
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -229,14 +229,14 @@ class TestCERVerification:
 class TestProviderFactory:
     """Tests for normative_provider factory registration."""
 
-    def test_nexart_provider_resolves(self):
+    def test_nexart_provider_resolves(self):  # type: ignore[no-untyped-def]
         """get_normative_provider('nexart') returns NexArtAttestationProvider."""
         from src.gateway.governance.normative_provider import get_normative_provider
 
         provider = get_normative_provider("nexart")
         assert isinstance(provider, NexArtAttestationProvider)
 
-    def test_invalid_provider_raises_with_nexart_in_list(self):
+    def test_invalid_provider_raises_with_nexart_in_list(self):  # type: ignore[no-untyped-def]
         """Invalid provider name includes 'nexart' in the error message."""
         from src.gateway.governance.normative_provider import get_normative_provider
 
@@ -252,15 +252,15 @@ class TestProviderFactory:
 class TestCERReceipt:
     """Tests for CERReceipt data contract."""
 
-    def test_valid_receipt(self):
+    def test_valid_receipt(self):  # type: ignore[no-untyped-def]
         receipt = CERReceipt(certificate_hash="abc123", receipt_url="https://...")
         assert receipt.is_valid
 
-    def test_receipt_with_error(self):
+    def test_receipt_with_error(self):  # type: ignore[no-untyped-def]
         receipt = CERReceipt(error="Connection refused")
         assert not receipt.is_valid
 
-    def test_empty_hash_is_invalid(self):
+    def test_empty_hash_is_invalid(self):  # type: ignore[no-untyped-def]
         receipt = CERReceipt(certificate_hash="")
         assert not receipt.is_valid
 
@@ -274,7 +274,7 @@ class TestProviderLifecycle:
     """Tests for provider start/stop lifecycle."""
 
     @pytest.mark.asyncio
-    async def test_start_stop_without_jwk_endpoint(self):
+    async def test_start_stop_without_jwk_endpoint(self):  # type: ignore[no-untyped-def]
         """Provider starts and stops cleanly without JWK endpoint."""
         provider = NexArtAttestationProvider(
             endpoint="https://api.nexart.io/v1",
@@ -285,7 +285,7 @@ class TestProviderLifecycle:
         await provider.stop()
         assert provider._running is False
 
-    def test_auth_headers(self):
+    def test_auth_headers(self):  # type: ignore[no-untyped-def]
         """Provider generates correct auth headers."""
         provider = NexArtAttestationProvider(
             endpoint="https://api.nexart.io/v1",

@@ -143,7 +143,7 @@ class GCPKMSProvider(BaseKMSProvider):
         if not self._kms_client or not self._key_version_name:
             return
         try:
-            version = self._kms_client.get_crypto_key_version(  # type: ignore[union-attr]
+            version = self._kms_client.get_crypto_key_version(  # type: ignore[union-attr, attr-defined]
                 name=self._key_version_name
             )
             algorithm_name = version.algorithm.name
@@ -495,7 +495,7 @@ class KMSGovernanceSigner:
                 )
 
                 digest = hashlib.sha256(plan_bytes).digest()
-                response = self._kms_client.asymmetric_sign(  # type: ignore[union-attr]
+                response = self._kms_client.asymmetric_sign(  # type: ignore[union-attr, attr-defined]
                     request=kms_service.AsymmetricSignRequest(
                         name=self._key_version_name,
                         digest=kms_service.Digest(sha256=digest),
@@ -565,7 +565,7 @@ class KMSGovernanceSigner:
             ):
                 # GCP: read-only metadata call — no signing performed.
                 # Verifies the key version exists AND is in ENABLED state.
-                version = self._provider._kms_client.get_crypto_key_version(
+                version = self._provider._kms_client.get_crypto_key_version(  # type: ignore[attr-defined]
                     name=self._key_version_name
                 )
                 if version.state.name not in ("ENABLED",):

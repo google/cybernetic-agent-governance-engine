@@ -61,21 +61,21 @@ class TradeOrder(BaseModel):
 
     @field_validator("confidence")
     @classmethod
-    def validate_confidence(cls, v):
+    def validate_confidence(cls, v):  # type: ignore[no-untyped-def]
         if not (0.0 <= v <= 1.0):
             raise ValueError("Confidence must be between 0.0 and 1.0")
         return v
 
     @field_validator("amount")
     @classmethod
-    def validate_positive(cls, v):
+    def validate_positive(cls, v):  # type: ignore[no-untyped-def]
         if v <= 0:
             raise ValueError("Amount must be positive")
         return v
 
     @field_validator("transaction_id")
     @classmethod
-    def validate_uuid(cls, v):
+    def validate_uuid(cls, v):  # type: ignore[no-untyped-def]
         # Regex for UUID v4
         uuid_regex = (
             r"^[0-9a-f]{8}-[0-9a-f]{4}-[4][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
@@ -86,7 +86,7 @@ class TradeOrder(BaseModel):
 
     @field_validator("symbol")
     @classmethod
-    def validate_symbol(cls, v):
+    def validate_symbol(cls, v):  # type: ignore[no-untyped-def]
         # Normalize to uppercase first
         v = v.upper()
         # Regex for Ticker Symbol (1-5 Uppercase letters)
@@ -96,7 +96,7 @@ class TradeOrder(BaseModel):
 
     @field_validator("trader_role")
     @classmethod
-    def validate_role(cls, v):
+    def validate_role(cls, v):  # type: ignore[no-untyped-def]
         if v is None:
             return v
         if v.lower() not in ["junior", "senior"]:

@@ -1,0 +1,81 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Regional Posture Check
+
+# Triggers on pushes to main that touch shared governance/compliance modules
+# (per AGENTS.md Architecture & Design Standards — these paths deploy to all
+# three regional postures simultaneously: US_FED, EU_ECB, APAC_MAS).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'config/compliance/**'
+      - 'config/thresholds/**'
+      - 'src/gateway/governance/**'
+      - 'src/compliance_bridge/**'
+  workflow_dispatch:
+
+# Default least-privilege permissions for every job in this workflow.
+permissions:
+  contents: read
+
+jobs:
+  regional-posture:
+    name: Regional Posture — ${{ matrix.region }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - region: US_FED
+            marker: us_fed
+            continue_on_error: false   # US_FED is a hard gate (AGENTS.md §Architecture)
+          - region: EU_ECB
+            marker: eu_ecb
+            continue_on_error: true    # Soft gate: EU_ECB open findings not yet closed
+          - region: APAC_MAS
+            marker: apac_mas
+            continue_on_error: true    # Soft gate: APAC_MAS open findings not yet closed
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Install dependencies
+        run: uv sync --all-groups --all-extras
+      - name: Run ${{ matrix.region }} posture tests
+        env:
+          CAGE_DEPLOYMENT_REGION: ${{ matrix.region }}
+          CAGE_ENV: "test"
+          OPENAI_API_KEY: "sk-dummy"
+          MODEL_REASONING: "casperhansen/deepseek-r1-distill-qwen-14b-awq"
+          MODEL_FAST: "Qwen/Qwen2.5-7B-Instruct"
+          VLLM_API_KEY: "dummy"
+          VLLM_GATEWAY_URL: "http://localhost:8081/v1"
+          REDIS_URL: "redis://localhost:6379/0"
+          OPA_URL: "http://localhost:8181/v1/data/governance/policy"
+          LANGFUSE_HOST: "http://localhost:3000"
+          LANGFUSE_PUBLIC_KEY: "pk-dummy"
+          LANGFUSE_SECRET_KEY: "sk-dummy"
+        run: |
+          uv run pytest tests/ -m "${{ matrix.marker }}" \
+            --no-cov --tb=short -q
+        continue-on-error: ${{ matrix.continue_on_error }}

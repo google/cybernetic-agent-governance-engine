@@ -1,0 +1,44 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: POAM Drift Check
+
+on:
+  schedule:
+    - cron: '0 4 * * *'   # 04:00 UTC daily
+  pull_request:
+    paths:
+      - 'docs/POAM.md'
+      - 'compliance/lula/**'
+
+# Default least-privilege permissions for every job in this workflow.
+permissions:
+  contents: read
+
+jobs:
+  poam-drift:
+    name: POAM vs Lula divergence check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Run POAM drift check
+        # Exits non-zero if any closed POAM finding has no corresponding
+        # Lula assertion file in compliance/lula/.
+        # See scripts/check_poam_lula_divergence.py for logic and NON_TESTABLE_CONTROLS.
+        run: python3 scripts/check_poam_lula_divergence.py

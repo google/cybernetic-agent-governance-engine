@@ -29,10 +29,12 @@ CRIT-1 fix note: verify_seal() (both gateway and GFA versions) now raises
 ``False``. This prevents callers from silently ignoring a failed seal check.
 """
 
+import datetime
 import os
 import time
 
 import pytest
+from freezegun import freeze_time
 
 # Set GOVERNANCE_SALT before importing modules under test
 os.environ.setdefault("GOVERNANCE_SALT", "TEST_SALT_UNIT_32_CHARACTERS_OK!")
@@ -62,13 +64,15 @@ class TestRoutingSeal:
         seal = generate_seal("execute_trade", PARAMS)
         assert gfa_verify_seal(seal, "execute_trade", PARAMS) is True
 
-    def test_expired_seal(self, monkeypatch):
+    def test_expired_seal(self):
         """A seal generated with ttl=0 should be expired immediately."""
+        now = time.time()
         seal = generate_seal("execute_trade", PARAMS, ttl_s=0)
-        # Sleep 1s to ensure it's past the expiry
-        time.sleep(1)
-        with pytest.raises(SymbolicGovernorViolation):
-            gfa_verify_seal(seal, "execute_trade", PARAMS)
+        # Advance frozen time 2 s past seal creation so expiry is definitive
+        frozen_dt = datetime.datetime.fromtimestamp(now + 2, tz=datetime.timezone.utc)
+        with freeze_time(frozen_dt):
+            with pytest.raises(SymbolicGovernorViolation):
+                gfa_verify_seal(seal, "execute_trade", PARAMS)
 
     def test_tampered_signature(self):
         """Mutating the HMAC signature component must fail verification."""

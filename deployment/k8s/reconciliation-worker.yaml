@@ -128,12 +128,14 @@ spec:
                 # --- Provider ---
                 # Set to "gcs", "s3" / "object-store", "plaid", "anchorage", or "stub".
                 # "s3" works with AWS S3, GCS S3 Interoperability API, MinIO, or Ceph.
+                # BLOCKER-06: must be "gcs" for GKE-on-GCP deployments — matches gateway.yaml.
                 - name: RECONCILIATION_PROVIDER
-                  value: "s3"
+                  value: "gcs"
 
                 # --- GCS ledger snapshot (RECONCILIATION_PROVIDER=gcs) ---
                 - name: GCS_RECONCILIATION_BUCKET
                   valueFrom:
+                    # Populate this Secret key before deploying: see deployment/scripts/setup_reconciliation_secret.sh
                     secretKeyRef:
                       name: reconciliation-worker-secrets
                       key: gcs-reconciliation-bucket

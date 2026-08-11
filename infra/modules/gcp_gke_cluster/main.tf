@@ -349,40 +349,11 @@ resource "google_container_node_pool" "gpu_nodes" {
     ignore_changes = [
       initial_node_count,
 
-      # ── Immutable / GKE-managed fields that diverge from config after creation ──
-      #
-      # node_locations: live pool was created with a single zone (us-central1-a);
-      #   dev.tfvars lists three zones. Immutable — any change forces destroy+recreate,
-      #   which would drain vllm-inference and vllm-reasoning GPU workloads.
+      # node_locations is immutable on GKE node pools — any change forces
+      # destroy+recreate, which would drain vllm-inference and vllm-reasoning
+      # GPU workloads. GKE also auto-populates node_locations from the cluster
+      # zone after creation, so the live value may differ from the config.
       node_locations,
-
-      # node_config: covers all immutable node_config sub-fields including:
-      #   - spot: live pool is on-demand (spot=false); dev.tfvars sets spot=true.
-      #     The `spot` field is immutable on GKE node pools — changing it forces
-      #     destroy+recreate. Ignoring the entire node_config block prevents this.
-      #   - labels/resource_labels: GKE auto-adds goog-gke-* and nvidia.com/gpu labels
-      #     post-creation that are not in the Terraform config.
-      #   - network_config: GKE auto-populates pod_range and enable_private_nodes
-      #     from the cluster's VPC-native config.
-      #
-      # NOTE (2026-08-03, P0 spot-preemption finding): a `terraform plan
-      # -target=module.gke.google_container_node_pool.gpu_nodes` to flip
-      # gpu_node_pool_spot to false (see dev.tfvars) revealed severe
-      # pre-existing state/config drift: it also proposed destroying and
-      # recreating `primary_nodes` (hosting the advisor/Redis/OPA pods) and
-      # showed `cluster_name` drifting from `governance-cluster-2` to
-      # `cage-gke`. This is NOT safe to apply via `terraform apply` without
-      # a dedicated drift-remediation pass first (see
-      # docs/paper/REVISION_TRACKER.md P2-8 follow-up). The GPU pool spot->
-      # on-demand migration for THIS session was instead performed
-      # out-of-band via `gcloud container node-pools create` (new on-demand
-      # pool) + workload migration + old pool deletion, bypassing Terraform
-      # entirely to avoid the primary_nodes blast radius. Terraform state
-      # for this resource is expected to show additional drift until a
-      # dedicated remediation pass reconciles it — do not `terraform apply`
-      # this module without re-running `terraform plan` and reviewing the
-      # full diff first.
-      node_config,
     ]
   }
 

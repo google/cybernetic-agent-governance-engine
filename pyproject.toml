@@ -13,6 +13,7 @@ dependencies = [
     "python-json-logger>=2.0.7",
     "cachetools>=5.5.0",
     "nest-asyncio>=1.6.0",
+    "networkx>=3.3",
     "redis>=5.0.0",
     "litellm>=1.0.0",
     # Core OTEL — shared across gateway, advisor, compliance
@@ -39,6 +40,7 @@ requires-python = ">=3.10,<3.13"
 
 [dependency-groups]
 dev = [
+    "freezegun>=1.5.0",
     "pytest>=8.3.2",
     "pytest-asyncio>=0.23.7",
     "nest-asyncio>=1.6.0",
@@ -52,6 +54,17 @@ dev = [
     "bcrypt>=5.0.0",
     # kfp: Kubeflow Pipelines SDK — required by test_pipeline_compilation.py
     "kfp>=2.0,<3.0",
+    # pytest-xdist: parallel test execution — splits the 2259-test suite across
+    # CPU cores, reducing wall-clock time proportional to core count.
+    # --dist=loadfile keeps all tests from one module on the same worker so that
+    # module-level monkeypatches and singletons are not shared across processes.
+    "pytest-xdist>=3.5.0",
+    # pytest-randomly: randomizes test order to detect hidden test-order dependencies.
+    # Run with --randomly-seed=last to reproduce a failure.
+    # NOT added to pytest.ini addopts — keep random order opt-in so CI failures
+    # don't look flaky. Use `make test-random` or pass -p randomly --randomly-seed=0.
+    "pytest-randomly>=3.15.0",
+    "bandit>=1.7.0",
     # Security: pin transitive deps to versions that fix known CVEs
     # pyasn1 0.6.3: CVE-2026-59884/59885/59886 (DoS in BER/OID/Real decode) — fixed in 0.6.4
     "pyasn1>=0.6.4",
@@ -69,6 +82,12 @@ gateway = [
     "grpcio>=1.78.0",
     "protobuf>=5.26.1,<7.0.0",
     "mcp>=0.1.0",
+    # PyJWT[crypto]: OIDC middleware (src/gateway/server/governance_middleware.py)
+    # imports `jwt` directly for JWKS-based token validation. Previously only
+    # pulled in transitively via mcp's own pyjwt[crypto] dependency — declared
+    # explicitly here so the requirement is not silently dropped if mcp's own
+    # dependency spec changes.
+    "PyJWT[crypto]>=2.9.0",
     "nemoguardrails>=0.20.0,<1.0.0",
     # pyahocorasick: O(n) Aho-Corasick automaton for the Tier-1 keyword scanner
     # (src/gateway/governance/text_filter.py). Without this, text_filter falls back
@@ -143,22 +162,6 @@ lint = [
     "types-requests>=2.32.0.20240914",
 ]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-v --tb=short"
-asyncio_mode = "auto"
-markers = [
-    "local: safe to run with no live services (CI default)",
-    "unit: pure unit test, no I/O",
-    "integration: requires live services via port-forward",
-    "gke: requires live GKE cluster",
-    "slow: long-running test (timeout >= 300s)",
-    "regression: regression guard",
-    "us_fed: US_FED region-specific test",
-    "eu_ecb: EU_ECB region-specific test",
-    "apac_mas: APAC_MAS region-specific test",
-]
-
 [tool.ruff]
 line-length = 88
 target-version = "py310"
@@ -176,7 +179,6 @@ select = [
 ]
 ignore = [
     "E501",  # line too long — not enforced project-wide
-    "C901",  # too complex — addressed per-function as needed
     # E402: module-level import not at top of file — legitimate pattern for scripts
     # that manipulate sys.path before importing project modules (upload_to_gcs.py,
     # sync_langfuse_prompts.py, manage_langfuse_prompts.py, replay_failed_scores.py,
@@ -204,6 +206,9 @@ ignore = [
     "C401",    # unnecessary-generator-set — style preference
 ]
 
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
 [tool.ruff.lint.isort]
 known-first-party = ["src"]
 
@@ -211,7 +216,7 @@ known-first-party = ["src"]
 # Strict flags disabled — pre-existing violations across 89 files present before
 # mypy job was introduced. Tracked as POAM item LINT-001 for follow-on remediation.
 disallow_untyped_calls = false
-disallow_untyped_defs = false
+disallow_untyped_defs = true
 disallow_incomplete_defs = false
 no_implicit_optional = true
 check_untyped_defs = true
@@ -224,33 +229,12 @@ follow_imports = "silent"
 ignore_missing_imports = true
 explicit_package_bases = true
 disable_error_code = [
-    "misc",
-    "no-untyped-call",
-    "no-any-return",
     # Pre-existing errors in generated proto files and untyped src modules
-    "attr-defined",
-    "arg-type",
-    "union-attr",
-    "call-arg",
-    "call-overload",
-    "unreachable",
-    "name-defined",
-    "unused-ignore",
-    "override",
-    "return-value",
-    "assignment",
-    "index",
-    "operator",
     "type-arg",
     "valid-type",
     "var-annotated",
     "dict-item",
-    "no-redef",
-    "func-returns-value",
     "type-var",
-    "has-type",
-    "redundant-cast",
-    "str-bytes-safe",
 ]
 
 exclude = [
@@ -258,6 +242,10 @@ exclude = [
     "src/gateway/protos/",
     "src/agentsight-ui/gateway_protos/",
 ]
+
+[tool.bandit]
+exclude_dirs = ["tests", "scripts", "examples"]
+skips = ["B101"]  # assert statements are acceptable in this codebase
 
 [tool.codespell]
 ignore-words-list = "rouge"

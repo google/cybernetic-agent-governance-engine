@@ -933,7 +933,7 @@ async def validate_oidc_token(token: str) -> dict[str, Any]:
         if key_kty == "EC":
             public_key = pyjwt.algorithms.ECAlgorithm.from_jwk(json.dumps(key_data))
         else:
-            public_key = pyjwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key_data))
+            public_key = pyjwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key_data))  # type: ignore[assignment]
     except Exception as exc:
         logger.warning("OIDC: could not construct public key from JWK: %s", exc)
         raise HTTPException(
@@ -954,7 +954,7 @@ async def validate_oidc_token(token: str) -> dict[str, Any]:
         decode_kwargs["issuer"] = _OIDC_ISSUER
 
     try:
-        claims = pyjwt.decode(token, public_key, **decode_kwargs)
+        claims = pyjwt.decode(token, public_key, **decode_kwargs)  # type: ignore[arg-type]
     except pyjwt.ExpiredSignatureError:
         logger.warning("OIDC: JWT expired")
         raise HTTPException(

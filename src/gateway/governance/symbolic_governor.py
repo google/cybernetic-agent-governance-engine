@@ -417,11 +417,13 @@ class SymbolicGovernor:
 
             # Fire both checks concurrently
             _t_parallel_start = time.perf_counter()
-            cbf_result, policy_resp = await asyncio.gather(
+            _gather_results = await asyncio.gather(
                 _cbf_check_with_span(),
                 _opa_check_with_span(),
                 return_exceptions=True,
             )
+            cbf_result: str | None | BaseException = _gather_results[0]
+            policy_resp = _gather_results[1]  # Any — asyncio.gather with return_exceptions=True
             _parallel_ms = round((time.perf_counter() - _t_parallel_start) * 1000, 2)
             logger.debug(
                 "⚡ CBF+OPA parallel gate completed in %.1fms (tool=%s)",
@@ -704,7 +706,7 @@ class SymbolicGovernor:
         # the fiscal reservation immediately so capacity is not held unnecessarily.
         if violations and _fiscal_token is not None:
             try:
-                await self.fiscal_limit_guard.release(_fiscal_token)
+                await self.fiscal_limit_guard.release(_fiscal_token)  # type: ignore[union-attr]
                 logger.info(
                     "🔄 Fiscal reservation released (pre-consensus violation): id=%s",
                     _fiscal_token.reservation_id,
@@ -1071,11 +1073,13 @@ class SymbolicGovernor:
 
             # Fire CBF and OPA concurrently — same as Tier 3 in the full pipeline.
             _t_parallel_start = time.perf_counter()
-            cbf_result, policy_resp = await asyncio.gather(
+            _gather_results2 = await asyncio.gather(
                 _cbf_revalidate(),
                 _opa_revalidate(),
                 return_exceptions=True,
             )
+            cbf_result: str | None | BaseException = _gather_results2[0]
+            policy_resp: Any = _gather_results2[1]
             _parallel_ms = round((time.perf_counter() - _t_parallel_start) * 1000, 2)
             logger.debug(
                 "⚡ [revalidate_post_hitl] CBF+OPA parallel re-check completed "
@@ -1212,7 +1216,7 @@ class SymbolicGovernor:
         cbf_allowed = True
         cbf_reason = "SAFE"
         try:
-            cbf_raw = await self.safety_filter.verify_action(tool_name, params)
+            cbf_raw = await self.safety_filter.verify_action(tool_name, params)  # type: ignore[misc]  # Protocol declares sync str; impl is async
             cbf_allowed = not cbf_raw.startswith("UNSAFE") and not cbf_raw.startswith(
                 "["
             )

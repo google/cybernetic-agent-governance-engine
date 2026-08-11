@@ -1,9 +1,15 @@
 # AGENTS.md — Contributor & AI-Agent Standards
 
-> **Reference architecture only.** CAGE demonstrates governance patterns for
-> AI systems; it is not deployed to production. Deployment, change-management,
-> and region-guard rules below are illustrative patterns for adopters, not
-> operational obligations for this repository.
+> **Reference architecture — deployable and live-testable.** CAGE demonstrates
+> governance patterns for AI systems. The codebase is fully deployable to a
+> real GKE cluster (dev or prod), and live GKE testing is supported and
+> expected — this is not a paper design. The "reference architecture" framing
+> means the governance, compliance, and region-guard patterns below are
+> illustrative models for adopters to adapt to their own environments, not
+> that the system is restricted to local or simulated execution. Deployment,
+> change-management, and region-guard rules below describe how to operate a
+> live instance of CAGE; they are illustrative patterns for adopters, not
+> mandatory production obligations imposed on this repository's maintainers.
 
 This file defines standards for anyone (human or AI coding agent) contributing
 to this repository. It is written in the tool-agnostic `AGENTS.md` convention
@@ -22,6 +28,7 @@ mode routing) lives under `.roo/` and simply points back here — see
 7. [Architecture & Design Standards](#architecture--design-standards)
 8. [Answering Questions About This Repository](#answering-questions-about-this-repository)
 9. [Tool-Specific Configuration](#tool-specific-configuration)
+10. [Test Execution](#test-execution)
 
 ---
 
@@ -132,6 +139,27 @@ dump the full environment, and mask any credential-shaped value before logging
   committed `.tf` files.
 - `terraform plan` must always precede `terraform apply`.
 - Never edit Terraform state directly.
+
+### Test Execution: Always Use `uv run`
+
+This project is managed with [`uv`](https://docs.astral.sh/uv/) (see `uv.lock`
+and `pyproject.toml`). All pytest invocations must be prefixed with `uv run`.
+Never invoke `pytest` or `python -m pytest` directly without the `uv run`
+prefix — doing so bypasses the project's locked, reproducible environment.
+
+Correct:
+```bash
+uv run pytest
+uv run python -m pytest --cov=src --cov-report=term-missing
+```
+
+Incorrect (do not suggest):
+```bash
+pytest
+python -m pytest
+```
+
+This applies to all agents, contributors, and CI documentation examples.
 
 ---
 
@@ -305,3 +333,41 @@ If you use a different AI coding assistant that supports a project-instructions
 file (e.g. a tool reading `CLAUDE.md`, `.cursorrules`, or
 `.github/copilot-instructions.md`), point it at this file rather than
 introducing a parallel, divergent copy of these standards.
+
+---
+
+## Test Execution
+
+### Full Integration Suite Against Live GKE
+
+The canonical way to run the full integration test suite against the live GKE dev cluster:
+
+```bash
+# 1. Establish port-forwards to live GKE dev cluster (keep running in background)
+bash scripts/port_forward_dev.sh
+
+# 2. In a separate terminal, load env and run full suite
+source .env
+export CAGE_ENV=dev
+export CAGE_DEPLOYMENT_REGION="${CAGE_DEPLOYMENT_REGION:-LOCAL}"
+export CAGE_ROUTING_SEAL_SECRET="${CAGE_ROUTING_SEAL_SECRET:-dev-only-insecure-placeholder-not-for-production-use}"
+export GOVERNANCE_SALT="${GOVERNANCE_SALT:-dev-only-insecure-placeholder-not-for-production-use}"
+export LANGFUSE_POSTURE_DRY_RUN=true
+uv run pytest tests/ --run-integration -v --tb=short
+```
+
+Key facts:
+- `scripts/port_forward_dev.sh` establishes auto-reconnecting `kubectl port-forward` tunnels: OPA (8181), Langfuse API/UI (3001/3000), vLLM fast (8001/18081), vLLM reasoning (8000/18082), Gateway (8080), backend (18080), Redis (6379), Compliance Bridge (3002).
+- Requires a valid `kubectl` context pointing to `governance-cluster-2` in `us-central1-a`.
+- `.env` at the repo root is loaded automatically by `port_forward_dev.sh` and `tests/conftest.py`.
+- Last known result (2026-08-10): **2553 passed, 51 skipped, 1 failed** in ~9m25s. The 51 skips are region/OPA-gated integration tests; the 1 failure was a test-isolation bug (cache leak in `tests/test_red_teaming.py::mock_thresholds` fixture), not a GKE connectivity issue.
+- Always use `uv run pytest`, never bare `pytest`.
+
+### Nightly CI Without Live GKE
+
+**Verdict: No new nightly workflow is needed.**
+
+- The `local`/`unit` marker subset (~90%+ of the 2553 passing tests) already runs on every push/PR via the existing `pytest-logic` job in all three region postures (`.github/workflows/ci.yml` lines 87–134). A dedicated nightly run of the same markers adds negligible incremental regression-detection value over what is already gated on `main` before merge.
+- Tests that genuinely require live GKE (live OPA policy evaluation, Langfuse SLA timing, CMEK/pod-restart checks, real backend accuracy) **cannot be replaced** by a mock-only nightly — these are the `integration`-marked corpus and the 51 skips in the full run.
+- Existing CI already covers what a nightly would target: `pytest-logic` (mock/unit, every push), `ai600-unit-tests` (red-team mock, every push), `locust-load-test` (nightly load test).
+- **Practical guidance**: treat `pytest-logic` + `ai600-unit-tests` (GKE-independent, secret-free) as the authoritative daily regression gate. Reserve the live-GKE `integration-smoke` job and manual full-suite runs (`port_forward_dev.sh` + `uv run pytest tests/ --run-integration`) for periodic live-service validation.

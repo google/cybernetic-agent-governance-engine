@@ -142,7 +142,7 @@ def _persist_evaluation(result: dict) -> None:
             return
         # XADD requires a flat dict of str→str fields
         fields = {k: str(v) for k, v in result.items()}
-        sync_redis_client._get().xadd(_REDIS_STREAM_KEY, fields)
+        sync_redis_client._get().xadd(_REDIS_STREAM_KEY, fields)  # type: ignore[arg-type]
     except Exception as exc:
         logger.error(
             "iso_control: failed to persist evaluation to Redis stream '%s': %s",

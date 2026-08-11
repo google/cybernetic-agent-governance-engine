@@ -116,7 +116,7 @@ class EvaluatorAuditor:
                         OTLPSpanExporter as OTLPHttpSpanExporter,
                     )
                 except ImportError:
-                    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+                    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # type: ignore[attr-defined,no-redef]  # fallback import for older OTLP package versions
                         OTLPHttpSpanExporter,
                     )
 
@@ -145,7 +145,7 @@ class EvaluatorAuditor:
 
                 provider = TracerProvider(resource=resource, sampler=ALWAYS_ON)
                 provider.add_span_processor(BatchSpanProcessor(exporter))
-                self._compliance_tracer = provider.get_tracer(
+                self._compliance_tracer = provider.get_tracer(  # type: ignore[assignment]
                     "CAGE.EvaluatorAuditor.Compliance"
                 )
                 logger.info(
@@ -162,7 +162,7 @@ class EvaluatorAuditor:
             try:
                 import opentelemetry.trace as trace_api
 
-                self._compliance_tracer = trace_api.get_tracer(
+                self._compliance_tracer = trace_api.get_tracer(  # type: ignore[assignment]
                     "CAGE.EvaluatorAuditor.Default"
                 )
             except Exception:

@@ -29,7 +29,7 @@ def propose_trade(order: dict) -> str:
     # Handle dict input
     if isinstance(order, dict):
         try:
-            order = TradeOrder(**order)
+            order = TradeOrder(**order)  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Failed to parse TradeOrder dict: {e}")
             # Fallback to dict access if conversion fails (unlikely if Pydantic)
@@ -40,7 +40,7 @@ def propose_trade(order: dict) -> str:
             return f"PROPOSAL LOGGED: {symbol} {amount} {currency}. Transaction ID: {tid}. Waiting for Verifier."
 
     # Simply log it locally. No governance needed for thinking.
-    return f"PROPOSAL LOGGED: {order.symbol} {order.amount} {order.currency}. Transaction ID: {order.transaction_id}. Waiting for Verifier."
+    return f"PROPOSAL LOGGED: {order.symbol} {order.amount} {order.currency}. Transaction ID: {order.transaction_id}. Waiting for Verifier."  # type: ignore[attr-defined]
 
 
 @side_effect_node(kind="api_call", external_system="gateway_mcp")

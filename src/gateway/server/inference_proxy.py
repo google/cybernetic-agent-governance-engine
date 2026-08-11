@@ -61,7 +61,7 @@ from src.governed_financial_advisor.utils.privacy import scrub_pii
 _symbolic_governor = None
 
 
-def _get_symbolic_governor():
+def _get_symbolic_governor():  # type: ignore[no-untyped-def]
     """Return the SymbolicGovernor singleton, or None if unavailable."""
     global _symbolic_governor
     if _symbolic_governor is None:
@@ -461,7 +461,7 @@ async def chat_completions(
                 for c in collected_chunks:
                     yield c
 
-            return StreamingResponse(
+            return StreamingResponse(  # type: ignore[return-value]
                 _replay_chunks(),
                 media_type="text/event-stream",
                 headers={

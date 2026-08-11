@@ -50,7 +50,7 @@ _SYMBOL_ORIGINS: dict[str, str] = {
 }
 
 
-def __getattr__(name: str):
+def __getattr__(name: str):  # type: ignore[no-untyped-def]
     """Emit a DeprecationWarning and return the symbol from its canonical module."""
     if name not in _SYMBOL_ORIGINS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -38,7 +38,7 @@ from cachetools import TTLCache
 Langfuse = None  # populated by _get_langfuse_class() on first use
 
 
-def _get_langfuse_class():
+def _get_langfuse_class():  # type: ignore[no-untyped-def]
     global Langfuse
     if Langfuse is None:
         from langfuse import Langfuse as _LF
@@ -101,7 +101,7 @@ _LANGFUSE_API_TIMEOUT_S: float = float(os.environ.get("LANGFUSE_API_TIMEOUT_S", 
 _LANGFUSE_CONCURRENCY = asyncio.Semaphore(6)
 
 
-def _make_app_langfuse():
+def _make_app_langfuse():  # type: ignore[no-untyped-def]
     import httpx
     from langfuse.api import LangfuseAPI
 
@@ -121,7 +121,7 @@ def _make_app_langfuse():
 
 _DEPLOYMENT_START_UTC: datetime = (
     datetime(
-        *[
+        *[  # type: ignore[arg-type, misc]  # datetime() tzinfo passed via both splat args and kwarg; false positive from env string parse
             int(x)
             for x in (
                 os.environ.get(

@@ -231,14 +231,14 @@ def get_redis_quota_snapshot(
         import redis as _redis_lib  # type: ignore[import-untyped]
 
         client = _redis_lib.from_url(
-            _url,
+            _url,  # type: ignore[arg-type]
             db=_REDIS_QUOTA_DB,
             socket_connect_timeout=1,
             socket_timeout=1,
             decode_responses=True,
         )
         raw = client.get(key)
-        tokens_used = int(raw) if raw is not None else 0
+        tokens_used = int(raw) if raw is not None else 0  # type: ignore[arg-type]
         remaining = token_budget - tokens_used
 
         quota_snapshot = {

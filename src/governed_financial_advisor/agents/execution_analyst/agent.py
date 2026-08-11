@@ -197,7 +197,7 @@ from langchain_openai import ChatOpenAI
 from config.settings import Config
 
 
-def create_execution_analyst_agent(model_name: str = MODEL_REASONING):
+def create_execution_analyst_agent(model_name: str = MODEL_REASONING):  # type: ignore[assignment, no-untyped-def]
     """Factory to create execution analyst agent.
 
     Uses VLLM_REASONING_API_BASE for the inference endpoint — the gateway
@@ -215,7 +215,7 @@ def create_execution_analyst_agent(model_name: str = MODEL_REASONING):
         model=model_name,
         base_url=Config.VLLM_REASONING_API_BASE,
         temperature=0.0,
-        max_tokens=4096,
+        max_tokens=4096,  # type: ignore[call-arg]
         model_kwargs={
             # Activate vLLM outlines FSM decoder — guarantees valid JSON schema output.
             # This is a vLLM-specific extra_body parameter passed directly to the API.

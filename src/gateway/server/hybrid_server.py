@@ -58,7 +58,7 @@ logger = logging.getLogger("Gateway.HybridServer")
 
 
 @asynccontextmanager
-async def _gateway_lifespan(app: FastAPI):
+async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     """Ensure tracing is initialised for every launch path (uvicorn or __main__).
 
     Also performs proactive pre-warming to completely eliminate cold-start latencies:
@@ -260,7 +260,7 @@ async def _gateway_lifespan(app: FastAPI):
 class _DebugEndpointGuard(BaseHTTPMiddleware):
     """Return 404 for /debug/* paths unless CAGE_ENV is 'dev' or 'test'."""
 
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
         if request.url.path.startswith("/debug"):
             cage_env = os.getenv("CAGE_ENV", "prod").lower()
             if cage_env not in ("dev", "test", "local"):
@@ -291,7 +291,7 @@ root_app.add_middleware(_DebugEndpointGuard)
 
 
 @root_app.get("/healthz")
-async def healthz():
+async def healthz():  # type: ignore[no-untyped-def]
     """Health check endpoint that verifies KMS connectivity.
 
     Returns 200 with kms_active=true when KMS signing is available.

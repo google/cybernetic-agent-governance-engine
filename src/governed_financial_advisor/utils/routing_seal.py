@@ -113,7 +113,7 @@ def assert_custom_salt_in_production() -> None:
 
     Call during application startup.
     """
-    env = (os.getenv("CAGE_ENV") or os.getenv("ENVIRONMENT", "production")).lower()
+    env = (os.getenv("CAGE_ENV") or os.getenv("ENVIRONMENT", "production")).lower()  # type: ignore[union-attr]
     if env in ("development", "test", "dev", "ci"):
         return
     if _USING_DEFAULT_SALT:

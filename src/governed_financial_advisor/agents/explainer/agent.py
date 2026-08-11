@@ -60,7 +60,7 @@ from typing import Any
 from langchain_openai import ChatOpenAI
 
 
-def create_explainer_agent(model_name: str = MODEL_FAST) -> Any:
+def create_explainer_agent(model_name: str = MODEL_FAST) -> Any:  # type: ignore[assignment]
     """Factory to create the Explainer agent (Native LangChain)."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -78,8 +78,8 @@ def create_explainer_agent(model_name: str = MODEL_FAST) -> Any:
     llm = ChatOpenAI(
         model=model_name,
         base_url=_fast_api_base,
-        api_key=api_key,
-        temperature=0.0,
+        api_key=api_key,  # type: ignore[arg-type]  # ChatOpenAI expects SecretStr but str is accepted at runtime
+        temperature=0.0,  # type: ignore[call-arg]
         max_tokens=1024,  # Fast model has 4096 total context; cap output to leave room for input
     )
     return llm

@@ -41,7 +41,7 @@ try:
     EVAL_MODEL = f"openai/{_model_id}"
 except Exception as e:
     logger.warning(f"Could not fetch model list from vLLM, using fallback. {e}")
-    EVAL_MODEL = os.getenv("MODEL_REASONING")
+    EVAL_MODEL = os.getenv("MODEL_REASONING")  # type: ignore[assignment]
 
 
 def evaluate_interaction(input_prompt: str, response_text: str) -> dict[str, Any]:
@@ -91,14 +91,14 @@ def evaluate_interaction(input_prompt: str, response_text: str) -> dict[str, Any
         return {}
 
 
-def main():
+def main():  # type: ignore[no-untyped-def]
     logger.info("Starting batch evaluation of recent Langfuse traces...")
 
     auth = (public_key, secret_key)
 
     # Fetch recent traces (page 1)
     try:
-        res = httpx.get(f"{host}/api/public/traces?page=1", auth=auth)
+        res = httpx.get(f"{host}/api/public/traces?page=1", auth=auth)  # type: ignore[arg-type]
         res.raise_for_status()
         recent_traces = res.json()
     except Exception as e:
@@ -120,7 +120,7 @@ def main():
         try:
             obs_res = httpx.get(
                 f"{host}/api/public/observations?traceId={trace_id}&type=GENERATION",
-                auth=auth,
+                auth=auth,  # type: ignore[arg-type]
             )
             obs_res.raise_for_status()
             obs_response = obs_res.json()

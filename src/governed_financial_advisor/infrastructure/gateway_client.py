@@ -43,8 +43,8 @@ class GatewayClient:
     def __new__(cls) -> GatewayClient:
         if cls._instance is None:
             instance = super().__new__(cls)
-            instance._http: httpx.AsyncClient | None = None
-            instance._base_url: str = os.environ.get(
+            instance._http: httpx.AsyncClient | None = None  # type: ignore[misc, has-type]  # non-self attribute assignment in __new__; type annotation on non-self attr
+            instance._base_url: str = os.environ.get(  # type: ignore[misc, has-type, attr-defined]  # non-self attribute + has-type false positive
                 "GATEWAY_URL", _GATEWAY_URL_DEFAULT
             )
             cls._instance = instance
@@ -52,9 +52,9 @@ class GatewayClient:
 
     async def _ensure_client(self) -> httpx.AsyncClient:
         """Lazily create the underlying AsyncClient."""
-        if self._http is None or self._http.is_closed:
+        if self._http is None or self._http.is_closed:  # type: ignore[has-type]  # _http type is determined by __new__; mypy cannot track non-self attribute types
             self._http = httpx.AsyncClient(
-                base_url=self._base_url,
+                base_url=self._base_url,  # type: ignore[attr-defined]
                 timeout=60.0,
             )
         return self._http
@@ -219,7 +219,7 @@ class GatewayClient:
                 response.raise_for_status()
 
         response.raise_for_status()
-        result: dict[str, Any] = response.json()
+        result: dict[str, Any] = response.json()  # type: ignore[no-redef]  # reuse name after 403 branch which may also assign result
 
         verdict = result.get("verdict", "DENIED")
         if verdict == "DENIED":

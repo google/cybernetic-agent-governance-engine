@@ -214,7 +214,7 @@ def _verify_gcs_bucket_cmek(
     """
     warnings: list[str] = []
     try:
-        from google.cloud import storage
+        from google.cloud import storage  # type: ignore[attr-defined]
 
         client = storage.Client()
         bucket = client.get_bucket(bucket_name)

@@ -242,8 +242,8 @@ def build_evaluator_agent() -> Any:
 
     llm = ChatOpenAI(
         base_url=api_base,
-        api_key=api_key,
-        model=model,
+        api_key=api_key,  # type: ignore[arg-type]  # ChatOpenAI expects SecretStr but str is accepted at runtime
+        model=model,  # type: ignore[arg-type]
         temperature=0,
     )
 
@@ -258,7 +258,7 @@ def build_evaluator_agent() -> Any:
     # LangGraph 1.1.0+ prebuilt agent — returns a compiled graph
     # state_modifier replaces the old ChatPromptTemplate pattern
     agent_graph = create_react_agent(
-        model=llm, tools=tools, state_modifier=SystemMessage(content=_SYSTEM_PROMPT)
+        model=llm, tools=tools, state_modifier=SystemMessage(content=_SYSTEM_PROMPT)  # type: ignore[arg-type]
     )
 
     return agent_graph

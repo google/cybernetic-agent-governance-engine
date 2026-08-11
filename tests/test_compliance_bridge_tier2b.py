@@ -82,7 +82,7 @@ def _make_metrics(
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def client():
     """TestClient with Langfuse patched and C-07 auth dependency overridden."""
     with patch("src.compliance_bridge.main.Langfuse") as MockLF:
@@ -596,7 +596,8 @@ class TestNotifierFactory:
         from src.compliance_bridge.notifier import MockNotifier
 
         n = MockNotifier()
-        asyncio.get_event_loop().run_until_complete(
+        # Use asyncio.run() for Python 3.12 compatibility (get_event_loop deprecated)
+        asyncio.run(
             n.send_critical_alert([_make_finding("A.9.2", "FAIL")], "count-test")
         )
         assert n.alert_count == 1

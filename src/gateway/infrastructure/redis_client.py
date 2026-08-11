@@ -135,7 +135,7 @@ try:
     class _AsyncRedisClient:
         """Thin async Redis wrapper matching the interface expected by safety.py."""
 
-        def __init__(self):
+        def __init__(self):  # type: ignore[no-untyped-def]
             self._client: aioredis.Redis | None = None
 
         def _get(self) -> aioredis.Redis:
@@ -173,11 +173,11 @@ try:
             except (ValueError, TypeError):
                 return default
 
-        def pipeline(self):
+        def pipeline(self):  # type: ignore[no-untyped-def]
             """Return a raw redis.asyncio pipeline for WATCH/MULTI/EXEC."""
             return self._get().pipeline()
 
-        def watch(self, *keys: str):
+        def watch(self, *keys: str):  # type: ignore[no-untyped-def]
             """Return a pipeline in WATCH mode for optimistic locking."""
             return self._get().pipeline()
 
@@ -283,7 +283,7 @@ try:
                 RuntimeError: If the PING command fails or raises any exception.
             """
             try:
-                result = await self._get().ping()
+                result = await self._get().ping()  # type: ignore[misc]  # redis-py ping() returns bool | Awaitable[bool] depending on connection type
                 if not result:
                     raise RuntimeError(
                         f"Redis PING returned falsy response at "

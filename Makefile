@@ -19,7 +19,14 @@ NAMESPACE ?= cage
         build-bg \
         deploy-status \
         deploy-logs \
-        deploy-kill
+        deploy-kill \
+        verify-deploy \
+        poam-drift-check \
+        test \
+        test-fast \
+        test-last-failed \
+        test-coverage \
+        test-random
 
 generate-policies:
 	@echo "Regenerating governance policies from RiskAnalystAgent outputs..."
@@ -84,9 +91,38 @@ advisor-health:
 	  kill $$PF_PID 2>/dev/null
 
 # ---------------------------------------------------------------------------
+# Deployment verification
+# ---------------------------------------------------------------------------
+
+.PHONY: verify-deploy
+verify-deploy: ## Verify GKE deployment matches latest build and all Secrets are populated
+	./scripts/verify_deploy.sh
+
+# ---------------------------------------------------------------------------
 # Testing
 # ---------------------------------------------------------------------------
 
+## Fast local test run (no coverage, parallel) — the default developer shortcut
+test-fast:
+	uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --no-cov -q
+
+## Run only tests that failed in the last run (fastest feedback loop)
+test-last-failed:
+	uv run pytest tests/ -m "local or unit" --lf --dist=loadfile -n auto -q
+
+## Full local run with coverage (mirrors CI)
+test-coverage:
+	uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --cov=src --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=75
+
+## Randomized test order (weekly, for dependency detection)
+## Reproduce a failure: uv run pytest --randomly-seed=last
+test-random:
+	uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile -p randomly --randomly-seed=0 -q
+
+## Default: fast run
+test: test-fast
+
+## Legacy alias — run local (non-infrastructure) tests verbosely
 test-integration:
 	@echo "==> Running local (non-infrastructure) tests..."
 	@uv run pytest tests/ -v --tb=short -m local
@@ -200,3 +236,11 @@ deploy-logs: scripts/deploy_bg.sh
 deploy-kill: scripts/deploy_bg.sh
 	@chmod +x scripts/deploy_bg.sh
 	@bash scripts/deploy_bg.sh --kill
+
+# ---------------------------------------------------------------------------
+# Compliance drift checks
+# ---------------------------------------------------------------------------
+
+.PHONY: poam-drift-check
+poam-drift-check: ## Check that all closed POAM findings have a corresponding Lula assertion
+	python3 scripts/check_poam_lula_divergence.py

@@ -58,6 +58,14 @@ logging.basicConfig(
 logger = logging.getLogger("RedTeam")
 
 # ---------------------------------------------------------------------------
+# Configurable timing constants
+# ---------------------------------------------------------------------------
+# OTEL_INGESTION_WAIT_S: how long to wait for OTel → Langfuse pipeline ingestion.
+# Default is 5s (safe production value). CI/dev runs can set this to 1s via:
+#   OTEL_INGESTION_WAIT_S=1 pytest tests/red_team/adversarial_red_team.py
+OTEL_INGESTION_WAIT_S: float = float(os.environ.get("OTEL_INGESTION_WAIT_S", "5"))
+
+# ---------------------------------------------------------------------------
 # Load .env from project root
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -325,8 +333,10 @@ class LangfuseTraceInspector:
             return result
 
         try:
-            # Wait for trace ingestion (OTel -> Langfuse pipeline latency)
-            time.sleep(5)
+            # Wait for trace ingestion (OTel -> Langfuse pipeline latency).
+            # Configurable via OTEL_INGESTION_WAIT_S env var (default: 5s).
+            # CI runs can set OTEL_INGESTION_WAIT_S=1 for faster execution.
+            time.sleep(OTEL_INGESTION_WAIT_S)
 
             # Query trace via REST API
             import requests as req_lib

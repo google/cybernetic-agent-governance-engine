@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class GatewayClient:
-    def __init__(self):
+    def __init__(self):  # type: ignore[no-untyped-def]
         # Mode 1: Kubernetes Inference Gateway (Unified Endpoint) - Production
         # Supports any Kubernetes-hosted vLLM/inference server (GKE, EKS, AKS, on-prem, etc.)
         if Config.VLLM_GATEWAY_URL:
@@ -55,7 +55,7 @@ class GatewayClient:
                 api_key=Config.VLLM_API_KEY or "EMPTY",
             )
 
-    def _get_route(self, mode: str):
+    def _get_route(self, mode: str):  # type: ignore[no-untyped-def]
         """
         Determines the (client, model) tuple based on the task mode.
         """
@@ -75,8 +75,8 @@ class GatewayClient:
         )
         return client, target_model
 
-    async def generate(
-        self, prompt: str, system_instruction: str = None, mode: str = "chat", **kwargs
+    async def generate(  # type: ignore[no-untyped-def]
+        self, prompt: str, system_instruction: str = None, mode: str = "chat", **kwargs  # type: ignore[assignment]
     ) -> str:
         client, model = self._get_route(mode)
 

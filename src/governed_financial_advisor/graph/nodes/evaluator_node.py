@@ -157,8 +157,8 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
     # SECURE SIGNATURE GENERATION
     sig = None
     if is_safe:
-        sig = generate_governance_signature(plan)
-        logger.info(f"✅ Evaluator: Signature Generated: {sig[:8]}...")
+        sig = generate_governance_signature(plan)  # type: ignore[arg-type]
+        logger.info(f"✅ Evaluator: Signature Generated: {sig[:8]}...")  # type: ignore[index]  # sig is str when is_safe=True; None only on rejection path
 
     verdict = "APPROVED" if is_safe else "REJECTED"
     risk_status = "REJECTED_REVISE" if not is_safe else "APPROVED"

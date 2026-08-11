@@ -134,7 +134,7 @@ def _fetch_live_risk_metrics(
         try:
             raw_dd = client.get(f"cbf:portfolio_drawdown:{account_id}")
             if raw_dd is not None:
-                metrics["drawdown"] = max(0.0, min(1.0, float(raw_dd)))
+                metrics["drawdown"] = max(0.0, min(1.0, float(raw_dd)))  # type: ignore[arg-type]
         except Exception as exc:
             logger.debug("_fetch_live_risk_metrics: drawdown read failed: %s", exc)
 
@@ -142,7 +142,7 @@ def _fetch_live_risk_metrics(
         try:
             raw_vol = client.get(f"portfolio:daily_vol:{account_id}")
             if raw_vol is not None:
-                metrics["daily_vol"] = max(0, int(float(raw_vol) * 10_000))
+                metrics["daily_vol"] = max(0, int(float(raw_vol) * 10_000))  # type: ignore[arg-type]
         except Exception as exc:
             logger.debug("_fetch_live_risk_metrics: daily_vol read failed: %s", exc)
 

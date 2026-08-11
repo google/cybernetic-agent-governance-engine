@@ -50,7 +50,7 @@ def verify_hmac_signature(state: AgentState) -> str:
         return "[HMAC: FAILED]"
 
     signer = get_governance_signer()
-    if signer.verify(plan, sig):
+    if signer.verify(plan, sig):  # type: ignore[arg-type]
         mode = "KMS" if signer.is_kms_active else "HMAC"
         return f"[{mode}: VERIFIED]"
     else:
@@ -112,15 +112,15 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
         # 1. Audit Trail Extraction
         sig_status = verify_hmac_signature(state)
         opa_results = state.get("opa_results")
-        rules = map_opa_rules(opa_results)
+        rules = map_opa_rules(opa_results)  # type: ignore[arg-type]
         execution_plan = state.get("execution_plan_output", "No plan.")
         evaluation_result = state.get("evaluation_result", {})
-        verdict = evaluation_result.get("verdict", "UNKNOWN")
+        verdict = evaluation_result.get("verdict", "UNKNOWN")  # type: ignore[union-attr]
         user_msg = (
             state["messages"][-1].content if state.get("messages") else "No context"
         )
 
-        if _is_low_risk_verdict(evaluation_result):
+        if _is_low_risk_verdict(evaluation_result):  # type: ignore[arg-type]
             # --- Single fast-LLM call: combined justification + user response ---
             # Skip the slow reasoning-model call for clean ALLOW verdicts.
             logger.info(
@@ -139,7 +139,7 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
                 f"USER MESSAGE: {user_msg}\n"
                 f"ACTION PLAN: {execution_plan}\n"
             )
-            fast_llm = create_explainer_agent(MODEL_FAST)
+            fast_llm = create_explainer_agent(MODEL_FAST)  # type: ignore[arg-type]
             final_resp = await fast_llm.ainvoke(
                 [SystemMessage(content=combined_prompt)]
             )
@@ -159,7 +159,7 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
                 "Manual justification required: No reasoning model available."
             )
             try:
-                llm = create_explainer_agent(MODEL_REASONING)
+                llm = create_explainer_agent(MODEL_REASONING)  # type: ignore[arg-type]
                 prompt = (
                     f"You are the Governance Auditor. Provide a concise 2-3 sentence 'Verdict Justification'.\n"
                     f"Context: The system reached a verdict of {verdict}.\n"
@@ -184,7 +184,7 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
             summary += f"\n#### ⚖️ Verdict Justification\n{justification}\n"
 
             # 4. Final Response Generation (Faithfulness)
-            final_llm = create_explainer_agent(MODEL_FAST)
+            final_llm = create_explainer_agent(MODEL_FAST)  # type: ignore[arg-type]
             explainer_sys = (
                 f"{get_explainer_instruction()}\n\n"
                 f"GOVERNANCE AUDIT:\n{summary}\n\n"
