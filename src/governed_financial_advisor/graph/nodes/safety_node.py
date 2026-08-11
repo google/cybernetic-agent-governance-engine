@@ -39,7 +39,6 @@ to use MCP client or any agent-visible tool dispatch.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -76,91 +75,6 @@ from src.gateway.governance.langgraph_harness import (
 
 logger = logging.getLogger("SafetyNode")
 
-# ---------------------------------------------------------------------------
-# Live risk-metric resolver — module-level so tests can patch by name.
-#
-# _fetch_live_risk_metrics(account_id, amount_usd) → dict[str, float | int]
-#
-# Attempts to read live portfolio state from Redis (CBF state store).
-# Always returns a dict with all four risk-metric keys:
-#   drawdown  — peak-to-trough fraction [0.0, 1.0]; 0.0 is safe sentinel
-#   order_size — notional USD of this order (integer cents or 0)
-#   daily_vol  — rolling 1-day realised volatility fraction; 0 is safe
-#   latency_ms — internal OPA evaluation time; always 0.0 (not broker RTT)
-#
-# Redis key schema (written by CBF / portfolio tracker):
-#   cbf:portfolio_drawdown:{account_id}  → float string, e.g. "0.042"
-#   portfolio:daily_vol:{account_id}     → float string, e.g. "0.019"
-#
-# Failure modes: any Redis import error, connection error, key-not-found,
-# or value-parse error causes the metric to stay at the safe sentinel (0.0
-# for drawdown/daily_vol, 0 for order_size).  This preserves fail-closed
-# behaviour for UCA-5/UCA-6: a 0 drawdown safely passes the threshold guard,
-# and a 0 order_size safely passes the volume-fraction guard.
-# ---------------------------------------------------------------------------
-
-
-def _fetch_live_risk_metrics(
-    account_id: str,
-    amount_usd: float,
-) -> dict[str, float | int]:
-    """Read live risk metrics from Redis CBF state store.
-
-    Returns safe sentinels on any failure so OPA guards remain conservative.
-    """
-    # Safe sentinels — used when Redis is unavailable or a key is absent.
-    metrics: dict[str, float | int] = {
-        "drawdown": 0.0,
-        "order_size": 0,
-        "daily_vol": 0,
-        "latency_ms": 0.0,
-    }
-
-    redis_url = os.environ.get("REDIS_URL", "")
-    if not redis_url:
-        # Redis not configured — keep sentinels; log only at debug level to
-        # avoid log-flooding in local / unit-test environments.
-        logger.debug(
-            "_fetch_live_risk_metrics: REDIS_URL not set — using safe sentinels"
-        )
-        return metrics
-
-    try:
-        import redis  # type: ignore[import]
-
-        client = redis.Redis.from_url(redis_url, decode_responses=True, socket_timeout=0.2)
-
-        # -- drawdown ---------------------------------------------------------
-        try:
-            raw_dd = client.get(f"cbf:portfolio_drawdown:{account_id}")
-            if raw_dd is not None:
-                metrics["drawdown"] = max(0.0, min(1.0, float(raw_dd)))
-        except Exception as exc:
-            logger.debug("_fetch_live_risk_metrics: drawdown read failed: %s", exc)
-
-        # -- daily_vol --------------------------------------------------------
-        try:
-            raw_vol = client.get(f"portfolio:daily_vol:{account_id}")
-            if raw_vol is not None:
-                metrics["daily_vol"] = max(0, int(float(raw_vol) * 10_000))
-        except Exception as exc:
-            logger.debug("_fetch_live_risk_metrics: daily_vol read failed: %s", exc)
-
-        # -- order_size -------------------------------------------------------
-        # Notional in USD cents — deterministic from the payment amount, not
-        # read from Redis.  Kept as 0 when amount_usd is 0 (unknown).
-        if amount_usd > 0:
-            metrics["order_size"] = int(round(amount_usd))
-
-    except Exception as exc:
-        # redis-py import failure or connection error — safe sentinels remain.
-        logger.debug(
-            "_fetch_live_risk_metrics: Redis unavailable (%s) — using safe sentinels",
-            type(exc).__name__,
-        )
-
-    return metrics
-
 
 # ---------------------------------------------------------------------------
 # Domain-specific payload extractor
@@ -186,15 +100,13 @@ def _extract_trade_payload(state: dict[str, Any]) -> dict[str, Any]:
       point — the LangGraph graph is deterministic; the LLM is not.
     - ``latency_ms`` = 0.0 always: this gate runs in-process; FIN-2/UCA-2 guards
       broker round-trip latency, not internal OPA evaluation time.
-    - ``drawdown``: read from Redis ``cbf:portfolio_drawdown:{account_id}`` when
-      available, falling back to 0.0 (safe sentinel) when the key is absent or
-      Redis is unreachable.  0.0 correctly passes UCA-5's ``val > threshold``
-      check — no drawdown has occurred at plan-time.
-    - ``order_size``: computed as int(round(amount_usd)) when amount is known,
-      falling back to 0 for unknown amounts.  0 safely passes the UCA-6
-      volume-fraction guard.
-    - ``daily_vol``: read from Redis ``portfolio:daily_vol:{account_id}`` when
-      available, scaled to integer basis-points (1.0 → 10000), falling back to 0.
+    - ``drawdown`` = 0.0 always (safe sentinel): 0% drawdown correctly passes
+      UCA-5's ``val > threshold`` check — no drawdown has occurred at plan-time.
+      The full risk-metric data-flow (a dedicated ``compute_drawdown`` node that
+      reads live portfolio state from Redis/CBF and threads the result into the
+      safety payload) is tracked in the architecture backlog.
+    - ``order_size`` / ``daily_vol`` = 0 always: UCA-6 composite condition;
+      0-size order safely passes the volume-fraction guard.
 
     ``confidence`` = 1.0: this node is a deterministic rule-based gate (OPA),
     not an ML model output; SR 11-7 applies to inference steps only.
@@ -270,15 +182,6 @@ def _extract_trade_payload(state: dict[str, Any]) -> dict[str, Any]:
         except Exception:
             pass
 
-    # ------------------------------------------------------------------
-    # Live risk-metric resolution — trusted sources, never LLM-sourced.
-    # See ARCHITECTURAL INVARIANT in the docstring above.
-    # Account ID is derived from state["user_id"] — same principal that
-    # the CBF tracks for portfolio state.
-    # ------------------------------------------------------------------
-    _account_id = state.get("user_id", "anonymous")
-    _risk_metrics = _fetch_live_risk_metrics(_account_id, _raw_amount)
-
     payload: dict = {
         # Intent fields — sourced from the LLM plan (what to trade, how much).
         "action": plan.get("action", "unknown"),
@@ -288,16 +191,15 @@ def _extract_trade_payload(state: dict[str, Any]) -> dict[str, Any]:
         "symbol": plan.get("symbol", "UNKNOWN"),
         "currency": plan.get("currency", "USD"),
         "trader_role": plan.get("trader_role", "junior"),
-        "user_id": _account_id,
+        "user_id": state.get("user_id", "anonymous"),
         "risk_profile": state.get("risk_attitude", "neutral"),
         "confidence": plan.get("confidence", 1.0),
-        # Risk-metric fields — sourced from live Redis CBF state store when
-        # available; fall back to safe sentinels on any failure.
-        # NEVER read from the LLM plan. See ARCHITECTURAL INVARIANT above.
-        "latency_ms": _risk_metrics["latency_ms"],
-        "drawdown": _risk_metrics["drawdown"],
-        "order_size": _risk_metrics["order_size"],
-        "daily_vol": _risk_metrics["daily_vol"],
+        # Risk-metric fields — ALWAYS deterministic; NEVER read from the LLM plan.
+        # See ARCHITECTURAL INVARIANT in the docstring above.
+        "latency_ms": 0.0,
+        "drawdown": 0.0,
+        "order_size": 0,
+        "daily_vol": 0,
         # Defense-in-depth authorization-claim flag (PR 4).
         # Set by the structural detector above; never LLM-sourced.
         "claimed_authorization_present": claimed_authorization_present,

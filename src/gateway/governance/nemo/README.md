@@ -1,11 +1,6 @@
 # NeMo Guardrails — Integration Overview
 
-> **Last updated:** 2026-08-06 (v2.1.1-post)
->
-> **2026-08-06 update:** The GFA (Governed Financial Advisor) pod's `LLMRails`
-> lifecycle was consolidated to a single singleton. See
-> [§3 GFA Pod — Singleton Consolidation](#gfa-pod--singleton-consolidation-2026-08-06)
-> below for what changed and why.
+> **Last updated:** 2026-08-05 (v2.1.1)
 
 This package (`src/gateway/governance/nemo/`) contains everything the
 Cybernetic Governance Engine needs to run NVIDIA NeMo Guardrails as a
@@ -17,13 +12,12 @@ governed inference rail inside the LangGraph pipeline.
 
 1. [Overview](#overview)
 2. [Architecture Diagram](#architecture-diagram)
-3. [GFA Pod — Singleton Consolidation (2026-08-06)](#gfa-pod--singleton-consolidation-2026-08-06)
-4. [File Reference](#file-reference)
-5. [Colang Rails](#colang-rails)
+3. [File Reference](#file-reference)
+4. [Colang Rails](#colang-rails)
    - [cbrn_rails.co — CBRN Safety Rail \[US\_FED only\]](#cbrn_railsco--cbrn-safety-rail-us_fed-only)
-6. [Which path must graph nodes use?](#which-path-must-graph-nodes-use)
-7. [Warning — do not route graph nodes through gRPC](#warning--do-not-route-graph-nodes-through-grpc)
-8. [Related documents](#related-documents)
+5. [Which path must graph nodes use?](#which-path-must-graph-nodes-use)
+6. [Warning — do not route graph nodes through gRPC](#warning--do-not-route-graph-nodes-through-grpc)
+7. [Related documents](#related-documents)
 
 ---
 
@@ -95,65 +89,6 @@ callers, but it is **not part of the graph's critical path**.
                      red-team harnesses,
                      external microservices]
 ```
-
----
-
-## GFA Pod — Singleton Consolidation (2026-08-06)
-
-> **Scope note:** This section describes the `LLMRails` lifecycle inside the
-> **Governed Financial Advisor (GFA) pod**
-> (`src/governed_financial_advisor/`), which is a *consumer* of this package
-> via `src/gateway/governance/langgraph_harness/nemo_node_factory.py`. It is
-> distinct from the gRPC sidecar (`server.py`, documented below), which runs
-> as its own separate process/pod and is unaffected by this change.
-
-**Before 2026-08-06**, the GFA pod instantiated up to **three independent
-`LLMRails` objects**, each built by its own call to `create_nemo_manager()`:
-
-1. The LangGraph guardrail nodes, via `nemo_node_factory.get_nemo_rails()`.
-2. `src/governed_financial_advisor/server.py`, via a module-level
-   `rails = load_rails()` global used by the hot-reload endpoints.
-3. `src/governed_financial_advisor/tools/api.py`, via its own
-   `_rails` singleton and `get_rails()` helper.
-
-Because each instance was constructed independently, a hot-reload issued
-against one of them (e.g. via `POST /v1/nemo/approve-refinement/{id}`) did
-**not** propagate to the other two — the graph nodes and the tools router
-could keep enforcing a stale rail configuration after an approved refinement.
-
-**As of 2026-08-06**, all three call sites share the **single**
-module-level `_nemo_rails` singleton defined in `nemo_node_factory.py`:
-
-- `get_nemo_rails()` returns the shared singleton, lazily initializing it on
-  first call (fail-closed if NeMo is unavailable).
-- `reload_nemo_rails(config_path="config/rails")` is the **canonical
-  hot-reload entry point**. It is an `async def`, guarded by an
-  `asyncio.Lock` (`_get_reload_lock()`), and atomically replaces the
-  module-level singleton with a freshly built `LLMRails` instance. Both
-  `POST /v1/nemo/propose-refinement` → `approve-refinement/{id}` and the
-  legacy `NEMO_AUTO_APPLY_ENABLED=true` dev/test path in `server.py` call
-  `reload_nemo_rails()` — there is no code path left that builds a
-  second, un-synchronized `LLMRails` instance inside the GFA pod.
-- `tools/api.py` no longer defines `_rails` / `get_rails()`; it imports
-  `get_nemo_rails()` from `nemo_node_factory.py` directly.
-- `server.py` no longer declares a module-level `rails` global or any
-  `global rails` statements; it imports `reload_nemo_rails()` from the
-  harness on demand inside the two hot-reload endpoints.
-
-**Net result:** one `LLMRails` instance per GFA pod (down from three). A
-single approved refinement propagates to every consumer simultaneously.
-
-**Related quarantine / CI notes:**
-
-- [`infra/modules/nemo_guardrails/main.tf`](../../../../infra/modules/nemo_guardrails/main.tf)
-  carries a `HISTORICAL-ONLY — DO NOT APPLY` banner. It defines an inline
-  Colang configuration that predates and diverges from the canonical
-  `config/rails/` source and must never be `terraform apply`'d — see
-  [`AGENTS.md`](../../../../AGENTS.md#deployment-rules).
-- The `.github/workflows/ci.yml` `nemo-freshness-check` job diffs
-  `config/rails/actions.py` against the embedded snapshot in
-  `deployment/k8s/nemo-rails-configmap.yaml`, failing the build if the
-  ConfigMap drifts from the canonical action source.
 
 ---
 
@@ -289,33 +224,6 @@ result = await verify_input(rails, text)
 masked = await verify_and_mask_output(rails, text)
 ```
 
-> **GFA pod note (2026-08-06):** the code sketch above shows the low-level
-> `manager.py` contract. Inside the **GFA pod**, callers should not call
-> `create_nemo_manager()` directly — they must go through the harness
-> singleton accessors in
-> [`nemo_node_factory.py`](../../langgraph_harness/nemo_node_factory.py)
-> instead, so that the same `LLMRails` instance is shared across every
-> consumer in the pod:
->
-> ```python
-> from src.gateway.governance.langgraph_harness.nemo_node_factory import (
->     get_nemo_rails,      # returns the shared singleton (lazy-init)
->     reload_nemo_rails,   # canonical hot-reload entry point (async, lock-guarded)
-> )
->
-> rails = get_nemo_rails()
-> is_safe, reason, deterministic = await validate_with_nemo(user_input, rails)
->
-> # After an approved refinement:
-> await reload_nemo_rails(config_path="config/rails")
-> ```
->
-> This is exactly what `create_nemo_guardrail_node()` /
-> `create_nemo_output_rail_node()` do internally, and what
-> `src/governed_financial_advisor/tools/api.py` and
-> `src/governed_financial_advisor/server.py`'s hot-reload endpoints now call
-> — see [§3 GFA Pod — Singleton Consolidation](#gfa-pod--singleton-consolidation-2026-08-06).
-
 **Never** open a gRPC channel to `server.py` from inside a graph node:
 
 ```python
@@ -357,5 +265,3 @@ sidecar would introduce four problems:
 - [`docs/LATENCY_STRATEGY.md`](../../../../docs/architecture/LATENCY_STRATEGY.md) — latency strategy and budget
 - [`src/gateway/governance/nemo/server.py`](server.py) — module docstring with full sidecar rationale
 - [`src/gateway/governance/nemo/manager.py`](manager.py) — module docstring and comment block above `create_nemo_manager()`
-- [`src/gateway/governance/langgraph_harness/nemo_node_factory.py`](../../langgraph_harness/nemo_node_factory.py) — GFA pod singleton (`_nemo_rails`), `get_nemo_rails()`, and the canonical `reload_nemo_rails()` hot-reload entry point (see [§3](#gfa-pod--singleton-consolidation-2026-08-06))
-- [`infra/modules/nemo_guardrails/main.tf`](../../../../infra/modules/nemo_guardrails/main.tf) — **HISTORICAL-ONLY, DO NOT APPLY**; quarantined inline Colang config predating `config/rails/`

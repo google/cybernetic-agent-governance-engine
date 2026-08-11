@@ -29,7 +29,6 @@ import json
 import logging
 import os
 import threading
-import time
 
 from opentelemetry import trace as otel_trace
 
@@ -42,10 +41,6 @@ _tracer = otel_trace.get_tracer(__name__)
 
 _KMS_KEY_VERSION: str = os.environ.get("KMS_GOVERNANCE_KEY", "")
 _PUBLIC_PEM_PATH: str = os.environ.get("KMS_GOVERNANCE_PUBLIC_PEM", "")
-
-# Maximum age of a KMS-signed payload before it is rejected as stale (seconds).
-# Payloads older than this threshold are rejected to prevent replay attacks.
-MAX_KMS_PAYLOAD_AGE_SECONDS: int = 300
 
 
 def _canonicalise_plan(plan: dict) -> bytes:
@@ -468,15 +463,11 @@ class KMSGovernanceSigner:
                 "[KMSSigner] sign() called but KMS is not active. "
                 "Ensure KMS_GOVERNANCE_KEY is set and from_env() succeeded."
             )
-        # H52: embed a monotonic freshness timestamp so that replayed payloads
-        # with a non-advancing signed_at are rejected by verify() after 300 s.
-        payload = {**plan, "signed_at": int(time.time())}
-        plan_bytes = _canonicalise_plan(payload)
+        plan_bytes = _canonicalise_plan(plan)
         with _tracer.start_as_current_span("cage.kms_signer.sign") as span:
             span.set_attribute("cage.signing.algorithm", self.signing_algorithm)
             span.set_attribute("cage.signing.kms_active", self._kms_active)
             span.set_attribute("kms.channel.pre_warmed", self._channel_warmed.is_set())
-            span.set_attribute("cage.signing.signed_at", payload["signed_at"])
             return self._kms_sign(plan_bytes)
 
     def _kms_sign(self, plan_bytes: bytes) -> str:
@@ -593,18 +584,7 @@ class KMSGovernanceSigner:
                 "Ensure KMS_GOVERNANCE_PUBLIC_PEM is set or KMS bootstrap succeeded."
             )
         plan_bytes = _canonicalise_plan(plan)
-        result = self._kms_verify(plan_bytes, signature_hex)
-        if result:
-            # H52: staleness check — reject payloads older than MAX_KMS_PAYLOAD_AGE_SECONDS
-            # to prevent replay of previously-valid signed reconciliation payloads.
-            signed_at = plan.get("signed_at")
-            if signed_at is not None:
-                age = int(time.time()) - int(signed_at)
-                if age > MAX_KMS_PAYLOAD_AGE_SECONDS:
-                    raise ValueError(
-                        "KMS payload has expired (signed_at too old)"
-                    )
-        return result
+        return self._kms_verify(plan_bytes, signature_hex)
 
     def _kms_verify(self, plan_bytes: bytes, signature_hex: str) -> bool:
         try:

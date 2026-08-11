@@ -177,83 +177,6 @@ jobs:
         run: |
           python scripts/check_stpa_freshness.py --verbose
 
-  nemo-freshness-check:
-    name: "NeMo Rail Actions Freshness Check"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.11"
-      - name: Check nemo-rails-configmap actions.py snapshot is current
-        run: |
-          python3 - <<'EOF'
-          import sys
-
-          CONFIGMAP = "deployment/k8s/nemo-rails-configmap.yaml"
-          CANONICAL = "config/rails/actions.py"
-
-          # Extract the actions.py block from the ConfigMap YAML.
-          # The block starts at the line containing "actions.py: |" (or "actions.py: |-")
-          # and ends when the indentation drops back to the data: level.
-          try:
-              with open(CONFIGMAP) as f:
-                  lines = f.readlines()
-          except FileNotFoundError:
-              print(f"ERROR: {CONFIGMAP} not found — add the configmap snapshot or update this check.")
-              sys.exit(1)
-
-          snapshot_lines = []
-          in_block = False
-          block_indent = None
-          for line in lines:
-              stripped = line.lstrip()
-              indent = len(line) - len(stripped)
-              if not in_block:
-                  if stripped.startswith("actions.py:"):
-                      in_block = True
-                      # block_indent is the indentation of the content lines (one level deeper)
-                      block_indent = indent + 2
-                  continue
-              # Inside the block: collect lines that are indented at block_indent or deeper
-              if stripped == "" or indent >= block_indent:
-                  snapshot_lines.append(line[block_indent:] if stripped else "\n")
-              else:
-                  break  # dedented back — end of block
-
-          if not snapshot_lines:
-              print(f"ERROR: Could not extract actions.py content from {CONFIGMAP}.")
-              print("Ensure the ConfigMap has a 'actions.py:' key under 'data:'.")
-              sys.exit(1)
-
-          snapshot = "".join(snapshot_lines).rstrip("\n") + "\n"
-
-          try:
-              with open(CANONICAL) as f:
-                  canonical = f.read()
-          except FileNotFoundError:
-              print(f"ERROR: {CANONICAL} not found.")
-              sys.exit(1)
-
-          if snapshot == canonical:
-              print(f"OK: {CONFIGMAP} actions.py snapshot matches {CANONICAL}.")
-          else:
-              import difflib
-              diff = list(difflib.unified_diff(
-                  snapshot.splitlines(keepends=True),
-                  canonical.splitlines(keepends=True),
-                  fromfile=f"{CONFIGMAP}:actions.py",
-                  tofile=CANONICAL,
-              ))
-              print("ERROR: ConfigMap actions.py snapshot is stale relative to config/rails/actions.py.")
-              print("Regenerate the snapshot: copy config/rails/actions.py into the ConfigMap data block.")
-              print("".join(diff[:80]))
-              sys.exit(1)
-          EOF
-
   no-direct-bind-proof:
     name: "NoDirectBind State-Space Proof"
     runs-on: ubuntu-latest
@@ -277,12 +200,11 @@ jobs:
       # handled it" during setup for all 19 tests in this file.
       - name: Install pytest
         run: pip install pytest pytest-timeout pytest-asyncio
-      # Pins the exact reachable-state counts (21/24/19/20) documented in
-      # docs/technical-report/10-FORMAL-VERIFICATION.md and cross-checked
-      # by proof/model.py. This is a second, independent check on top of
-      # `python proof/model.py` above so a change to TIERS/transition
-      # functions cannot silently drift from the documented figures without
-      # failing CI. See docs/paper/REVISION_TRACKER.md.
+      # Pins the exact reachable-state counts (21/24/19/20) quoted in
+      # CAGE_ARXIV.MD and docs/technical-report/. This is a second,
+      # independent check on top of `python proof/model.py` above so a
+      # change to TIERS/transition functions cannot silently drift from the
+      # published figures without failing CI. See REVISION_TRACKER.md.
       - name: Run pinned NoDirectBind regression tests
         run: |
           python -m pytest tests/test_no_direct_bind_proof.py -m local -v

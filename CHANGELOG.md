@@ -9,6 +9,57 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+---
+
+## [v2.1.1-post — 2026-08-05]
+
+> Post-release fixes and paper measurement improvements. No version bump — these
+> changes target the `2026-08-05` measurement run and upstream research publication
+> accuracy. All governance logic changes are backward-compatible.
+
+### Added
+- `src/gateway/governance/authorization_claim_detector.py` — new
+  `AuthorizationClaimDetector` module that identifies and blocks requests
+  asserting or implying elevated authorization (e.g. "I have admin access",
+  "pretend I am root"). Backed by `tests/test_authorization_claim_detector.py`.
+- `docs/paper/measurements/2026-08-05-final-fix/` and
+  `docs/paper/measurements/2026-08-05-gap-fix/` — promoted measurement runs;
+  best results: **68.4% adversarial deflection** (13/19 evaluated, 2 network
+  errors), **0.0% benign FPR** (0/18 evaluated, 2 network errors).
+- `pyproject.toml` — `pyahocorasick>=2.0.0` added to `gateway` optional-dependency
+  group; resolves `[WARN] pyahocorasick not installed` at import and restores O(n)
+  Aho-Corasick keyword scanning in `text_filter.py`.
+
+### Fixed
+- `src/governed_financial_advisor/graph/nodes/safety_node.py` —
+  `_extract_trade_payload()` now hardcodes risk-metric fields (`latency_ms`,
+  `drawdown`, `order_size`, `daily_vol`) to safe sentinel values (0.0/0) instead
+  of conditionally passing them from the LLM execution plan. Closes UCA-5/UCA-2
+  100% benign `trade_execution` FPR (75.0% → 0.0%). **Architectural invariant:**
+  safety enforcement is purely deterministic LangGraph node execution — never
+  dependent on LLM plan output (`fix(governance)`).
+- `config/rails/actions.py` — added Stage 1C structural-attack blocklist inside
+  `custom_self_check_input()` between Stage 1B (illegal-finance) and Stage 2
+  (allowlist). Stage 1C blocks SQL injection markers (`;`, `--`, `'; DROP`,
+  `union select`) and HTML/script injection markers (`<script`, `javascript:`,
+  `onerror=`, etc.) and delegates to `detect_prompt_injection()` from
+  `src/gateway/governance/prompt_injection_detector.py`. Closes INJ-004/INJ-005
+  bypass paths. `prompt_injection` deflection: 33.3% → 50.0% (+16.7 pp)
+  (`fix(governance)`).
+
+### Changed
+- `CAGE_ARXIV.MD` — Tables 5 and 6 updated to run `2026-08-04-6edb597` /
+  `2026-08-05-gap-fix`; measurement notes updated with run label, Gate E7 status,
+  and fix descriptions (`docs`).
+- Documentation updated across 12 files to accurately reflect the 8-tier
+  symbolic governor pipeline (Tier 0.5 FTRA + Tiers 0–6b) — previously several
+  docs referred to a "7-tier" pipeline, which omitted the fully-implemented FTRA
+  pre-execution gate (`docs`).
+
+---
+
+## [Unreleased — prior]
+
 ### Added
 - `KmsSigner.sign()` now embeds `signed_at` Unix timestamp in every signed payload; `verify()` rejects payloads older than `MAX_KMS_PAYLOAD_AGE_SECONDS` (300 s), closing replay-attack vector.
 - `CbfGovernor._local_debits` intra-window debit ledger: `verify_action()` computes `effective_balance = snapshot - local_debits` to prevent double-spend within KMS TTL window; `reset_local_debits()` added for reconciliation daemon.

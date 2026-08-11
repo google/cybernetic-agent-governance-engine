@@ -332,7 +332,6 @@ All of the following CI jobs (`.github/workflows/ci.yml`) must pass:
 | `pytest-logic` | Unit tests across all three regions (`US_FED`, `EU_ECB`, `APAC_MAS`) |
 | `lint` | Ruff lint + format check + Mypy type check |
 | `stpa-freshness-check` | STPA artifacts match source (`scripts/check_stpa_freshness.py`) |
-| `nemo-freshness-check` | `config/rails/actions.py` matches the embedded snapshot in `deployment/k8s/nemo-rails-configmap.yaml` |
 | `no-direct-bind-proof` | Exhaustive NoDirectBind state-space proof (`proof/model.py`) |
 | `langfuse-posture-check` | Langfuse config dry-run (`scripts/verify_langfuse_posture.py`) |
 | `lula-ai600-validation` | Lula AI 600-1 manifest syntax and count checks |

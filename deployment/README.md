@@ -38,16 +38,6 @@ CAGE is deployed as a set of Kubernetes workloads across two namespaces:
 | Reasoning inference | `vllm-reasoning` | 8000 | Proxied into `governance-stack` via `vllm-services.yaml` ExternalName |
 
 > **Note:** NeMo Guardrails also runs as an in-process module embedded inside the gateway. The standalone `nemo-service` Deployment handles requests that require an isolated NeMo process.
->
-> **Note (2026-08-06):** Inside the Governed Financial Advisor pod, the
-> in-process `LLMRails` lifecycle was consolidated to a single module-level
-> singleton (`nemo_node_factory.py`), replacing a prior pattern where the
-> LangGraph guardrail nodes, `tools/api.py`, and `server.py` each built and
-> held their own independent `LLMRails` instance. Hot-reloads issued via
-> `POST /v1/nemo/approve-refinement/{id}` now propagate to every in-process
-> consumer atomically. This does not affect the standalone `nemo-service`
-> Deployment, which remains a separate process/pod. See
-> [`src/gateway/governance/nemo/README.md`](../src/gateway/governance/nemo/README.md#gfa-pod--singleton-consolidation-2026-08-06).
 
 ---
 
@@ -220,7 +210,6 @@ gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml
 | `lula-cron.yaml` | Scheduled Lula compliance scan CronJob |
 | `lula-rbac.yaml` | RBAC for Lula scanner |
 | `security-scan-cronjob.yaml` | Security scan CronJob (Trivy) |
-| `reconciliation-worker.yaml` | CronJob (`*/5 * * * *`) + Secret template + CiliumNetworkPolicy. Runs `ExternalLedgerReconciler` against an object-store-backed WORM ledger snapshot; writes KMS-signed balances to Redis. Provider selectable via `RECONCILIATION_PROVIDER` (`gcs`, `s3`/`object-store`, `plaid`, `anchorage`, `stub`); default `s3`. |
 | `sbom-cronjob.yaml` | SBOM generation CronJob |
 | `oscal-artifact-secrets.yaml` | OSCAL artifact secret template |
 | `service-account.yaml` | `financial-advisor-sa` ServiceAccount |

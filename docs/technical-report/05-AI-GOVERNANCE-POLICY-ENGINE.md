@@ -182,8 +182,6 @@ Concurrent modifications trigger an `asyncio.CancelledError` on `EXEC`, caught a
 
 To prevent Time-Of-Check to Time-Of-Use (TOCTOU) exploits and drift under volatile market conditions, the Redis `WATCH/MULTI/EXEC` transaction utilizes the **fresh execution price** fetched by the `post_hitl_revalidate_node` immediately prior to committing the trade, rather than relying on the stale quoted price recorded during pre-HITL evaluation. This ensures that $h(x) \geq 0$ is validated against the actual, real-time capital exposure at the moment of actuation.
 
-> **Implementation note (H53):** `verify_action()` computes `effective_balance = snapshot_balance - self._local_debits` where `_local_debits` accumulates approved-trade costs since the last snapshot refresh. Call `reset_local_debits()` on each successful reconciliation cycle to prevent drift. This closes the intra-window double-spend gap: repeated trades within the 300 s KMS snapshot TTL window are evaluated against a decremented balance rather than the static snapshot.
-
 ### Aho-Corasick Keyword Scan & Text Filter
 
 [`text_filter.py`](../../src/gateway/governance/text_filter.py) provides two complementary scan functions. (`safety.py` re-exports `ac_keyword_scan` from `text_filter.py` for backward compatibility but is deprecated.)
@@ -420,8 +418,6 @@ The `ConsensusEngine` applies a strict priority ladder over the two critic votes
 | 4 | Any critic votes `ESCALATE` | `ESCALATE` | Trade escalated to human review; `GovernanceError` raised |
 | 5 | ALL critics vote `APPROVE` | `APPROVE` | Unanimous approval — trade proceeds |
 
-> **Degraded-quorum routing (H54):** The aggregation function now explicitly handles the `ERROR + APPROVE` verdict combination: this degraded-quorum case is routed to `ESCALATE` (HITL) before the catch-all case, rather than falling through to an undefined outcome.
-
 > **Fail-Open on Total LLM Unavailability:** If both LLM critics return `ERROR` (e.g., vLLM backend down), the consensus engine defaults to `APPROVE` with the reason `"Consensus skipped — all LLM critics unavailable (fail-open)."`. This design mirrors the SLM sidecar graceful degradation (Phase 4.3) — the consensus layer is supplementary to the deterministic OPA/CBF/STPA tiers, which remain the primary enforcement gates.
 
 ### 7.4 Background Audit Queue (Phase 4.4)
@@ -504,8 +500,6 @@ Pending tokens are resolved by:
 
 The **DoWhy Causal Gatekeeper** ([`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)) serves as CAGE's final mathematical validation layer—the "Lock" on the CAGE. It utilizes **Microsoft DoWhy** causal inference and placebo simulation to confirm that the system's world-model is structurally sound before high-stakes trade actions.
 
-> **Fail-closed hardening (H55):** Redis connection errors now raise `RuntimeError("Redis unavailable: cannot compute deflection rate; failing closed")` rather than returning a zero-deflection sentinel. Absent Redis keys (cache miss on first boot) continue to return `None` safely. The previous fail-open behaviour — returning 0.0 on any Redis failure — has been removed.
-
 > **Implementation note (2026-06-03):** `generate_mock_telemetry()` was updated to include a `timestamp` column (4 columns total: `trade_amount`, `risk_score`, `market_volatility`, `timestamp`). The freshness check in `causal_safety_check()` requires this column to validate that telemetry data is not stale. The fail-closed behavior is preserved — genuinely stale telemetry still blocks. The fix ensures synthetic/mock data passes the freshness check without bypassing the production guard.
 
 ### 8.1 Dual-Lifecycle Validation
@@ -519,18 +513,14 @@ The gatekeeper enforces two complementary validation phases:
 
 To prevent race conditions where multiple parallel agent execution threads concurrently read the same daily OPA limit and execute trades that in aggregate exceed the limit ("race to the rail"), CAGE v2.0.0 introduces the **FiscalLimitGuard** (`src/gateway/governance/fiscal_limit_guard.py`).
 *   **Redis Atomic Transactions:** Uses Redis `WATCH/MULTI/EXEC` optimistic locking. If another thread updates the cap during OPA validation, the current pipeline commits are rejected, retrying with exponential backoff and jitter.
-*   **Headroom Pre-Reservation (Step 3):** Headroom is reserved in Redis *after* concurrent CBF+OPA (Steps 2+4), closing the saga-atomicity gap (distributed-transaction atomicity failure, not a concurrency race). Default daily cap: **$500,000 USD** (`FISCAL_DAILY_CAP_USD` env var). Cap stored in **cents** for integer precision. Fail-closed: if Redis is unavailable, the trade is blocked.
+*   **Headroom Pre-Reservation (Step 3):** Headroom is reserved in Redis *after* concurrent CBF+OPA (Steps 2+4), closing the TOCTOU race. Default daily cap: **$500,000 USD** (`FISCAL_DAILY_CAP_USD` env var). Cap stored in **cents** for integer precision. Fail-closed: if Redis is unavailable, the trade is blocked.
 *   **Release & Expiry:** Unused limits are dynamically returned to Redis via `release(token)` by the Saga engine on transaction rollback, while a **300s TTL** reclaims limits from crashed nodes.
-
-> **Saga compensation (H56):** `FiscalLimitGuard.rollback_state(amount: float, audit_id: str)` is a Saga compensation stub that reverses the Redis debit when a downstream tier fails after Tier 3a commitment. It logs `[SAGA-ROLLBACK]`, performs an atomic Redis increment, and re-raises on Redis failure. Call sites are the responsibility of the orchestrating pipeline (tracked in §7.3 of the CAGE paper).
 
 ---
 
 ## 9. Governance Signing: Multi-Cloud KMS HSM (Primary) + HMAC-SHA256 (Routing Seal)
 
 CAGE promotes **multi-cloud KMS HSM-backed asymmetric signing** as the primary governance signing mechanism. The active provider is selected via the `CAGE_KMS_PROVIDER` environment variable. HMAC-SHA256 is retained only for the routing seal when KMS is inactive (dev/CI).
-
-> **Security hardening (H52):** `KmsSigner.sign()` embeds `"signed_at": int(time.time())` in every signed payload. `KmsSigner.verify()` raises `ValueError` if `now - signed_at > 300 s` (`MAX_KMS_PAYLOAD_AGE_SECONDS`). This closes the replay-attack vector where a compromised agent with Redis write access could reset the 300 s TTL indefinitely by overwriting a stale-but-signed payload.
 
 ### Cloud KMS HSM Signing (Primary — Production)
 
@@ -756,8 +746,6 @@ The following governance-related risk acceptances are documented in [`compliance
 | RA-004 | Single OPA node deployment with 5-failure circuit breaker               | Circuit breaker defaults to DENY-on-open, preserving fail-closed posture even during OPA availability events                     |
 
 ---
-
-> **Verification gap:** Tier 0.5 (FTRA) executes before `_run_checks()` and is not included in the 21-state BFS automaton. The automaton therefore does not verify that FTRA cannot be bypassed via direct controller calls. Closing this gap requires either integrating FTRA into the state tuple or enforcing the FTRA check at the controller boundary.
 
 ## 14b. FTRA Commencement Reachability Gate (v2.1.0) **[All Regions]**
 
@@ -1004,8 +992,6 @@ Each [`ProvenanceRecord`](../../src/gateway/governance/provenance_chain.py) cont
 | `parent_hash` | `str \| None` | SHA-256 of the previous record's full dict (sorted keys); `None` for the first record |
 
 **Hash computation:** [`compute_hash(data)`](../../src/gateway/governance/provenance_chain.py) serialises the dict with `json.dumps(sort_keys=True)` before SHA-256 hashing — deterministic regardless of insertion order. Non-serialisable values are coerced to strings.
-
-> **Serialisation note (H57):** `compute_hash()` uses `json.dumps(…, separators=(',', ':'), sort_keys=True)`. This matches the formal specification. Earlier versions omitted `separators`, producing non-spec-compliant hash values.
 
 **Chain integrity verification:** [`verify_chain_integrity(records)`](../../src/gateway/governance/provenance_chain.py) checks that each record's `parent_hash` matches the `chain_hash()` of the preceding record. The first record must have `parent_hash=None`. Returns `False` on any broken link.
 
