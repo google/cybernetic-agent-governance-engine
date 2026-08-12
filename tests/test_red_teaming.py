@@ -35,20 +35,29 @@ logging.basicConfig(level=logging.INFO)
 
 
 @pytest.fixture
-def mock_thresholds():
+def mock_thresholds(monkeypatch: pytest.MonkeyPatch):
     """
     Fixture to mock the threshold loading mechanism.
+
+    Uses ``monkeypatch`` (function-scoped by default) for both the
+    ``load_and_validate_thresholds`` patch and the module-level cache
+    globals (``_safety_params_cache`` / ``_last_check_time``) so that
+    pytest guarantees automatic restoration after every test — including
+    on test failure/exception — regardless of test execution order. This
+    replaces the previous manual dict/float reset, which only restored
+    state on the happy path and relied on running tests in a specific
+    order to "self-heal" from a prior leak.
     """
-    with mock.patch(
-        "src.governed_financial_advisor.governance.nemo_actions.load_and_validate_thresholds"
-    ) as mock_load:
-        # Also reset cache to ensure clean state for each test
-        nemo_actions._safety_params_cache = {}
-        nemo_actions._last_check_time = 0.0
-        yield mock_load
-        # Teardown: reset cache to prevent stale state leaking into subsequent tests
-        nemo_actions._safety_params_cache = {}
-        nemo_actions._last_check_time = 0.0
+    mock_load = mock.MagicMock()
+    monkeypatch.setattr(
+        "src.governed_financial_advisor.governance.nemo_actions.load_and_validate_thresholds",
+        mock_load,
+    )
+    # monkeypatch.setattr automatically restores the original values of
+    # these module globals after the test, even if the test raises.
+    monkeypatch.setattr(nemo_actions, "_safety_params_cache", {})
+    monkeypatch.setattr(nemo_actions, "_last_check_time", 0.0)
+    yield mock_load
 
 
 def _get_mock_thresholds(drawdown_limit: float) -> GovernanceThresholds:
