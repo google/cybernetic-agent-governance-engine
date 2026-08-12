@@ -35,6 +35,10 @@ resource "kubernetes_deployment" "vllm" {
   spec {
     replicas = var.replicas
 
+    strategy {
+      type = "Recreate"
+    }
+
     selector {
       match_labels = {
         app = var.deployment_name
