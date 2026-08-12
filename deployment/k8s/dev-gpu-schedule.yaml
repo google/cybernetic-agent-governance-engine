@@ -1,0 +1,327 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# ============================================================================
+# dev-gpu-schedule.yaml — Nightly GPU Scale-to-Zero for CAGE Dev Cluster
+# ============================================================================
+#
+# Replaces the complex Redis-based vllm-idle-scaler.yaml with two simple
+# time-based CronJobs:
+#
+#   1. vllm-nightly-scaledown  — scales vllm-fast and vllm-reasoning to 0
+#      replicas at 8 PM UTC Mon–Fri. The GKE cluster autoscaler removes the
+#      GPU node ~10 min after the last GPU pod is evicted (gpu_node_pool_min_count=0).
+#
+#   2. vllm-morning-scaleup   — scales both Deployments back to 1 replica at
+#      8 AM UTC Mon–Fri for the start of the working day.
+#
+# For ad-hoc scale operations, use the developer helper:
+#   scripts/dev_gpu_toggle.sh [up|down]
+#
+# Design principles
+# -----------------
+#   • No Redis, no ConfigMaps, no custom metric scraping — pure kubectl scale.
+#   • No initContainers — single-container jobs.
+#   • ServiceAccount (dev-gpu-scheduler-sa) with ClusterRole scoped to
+#     get/patch on deployments — least-privilege, no cluster-admin.
+#   • readOnlyRootFilesystem=true with an emptyDir /tmp mount (bitnami/kubectl
+#     may write to /tmp at startup).
+#
+# Namespace: governance-stack
+# Deployment names targeted:
+#   • vllm-fast      (fast inference model, formerly vllm-inference)
+#   • vllm-reasoning (reasoning model)
+# ============================================================================
+
+---
+# ============================================================================
+# ServiceAccount: dev-gpu-scheduler-sa
+# ============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dev-gpu-scheduler-sa
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/name: dev-gpu-scheduler
+    app.kubernetes.io/component: dev-cost-optimization
+    cage.io/purpose: cost-optimisation
+
+---
+# ============================================================================
+# ClusterRole: dev-gpu-scheduler-role
+# Grants get + patch on deployments cluster-wide so the CronJob can target
+# deployments in governance-stack without a namespace-scoped Role.
+# Scoped verbs: get (read replica count), patch (kubectl scale uses PATCH on
+# the deployments/scale subresource).
+# ============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dev-gpu-scheduler-role
+  labels:
+    app.kubernetes.io/name: dev-gpu-scheduler
+    app.kubernetes.io/component: dev-cost-optimization
+    cage.io/purpose: cost-optimisation
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "update", "patch"]
+
+---
+# ============================================================================
+# ClusterRoleBinding: dev-gpu-scheduler-rolebinding
+# ============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dev-gpu-scheduler-rolebinding
+  labels:
+    app.kubernetes.io/name: dev-gpu-scheduler
+    app.kubernetes.io/component: dev-cost-optimization
+    cage.io/purpose: cost-optimisation
+subjects:
+  - kind: ServiceAccount
+    name: dev-gpu-scheduler-sa
+    namespace: governance-stack
+roleRef:
+  kind: ClusterRole
+  name: dev-gpu-scheduler-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ============================================================================
+# CronJob: vllm-nightly-scaledown
+# Schedule: 8:00 PM UTC, Mon–Fri
+#
+# Scales vllm-fast and vllm-reasoning to 0 replicas. The GKE cluster
+# autoscaler handles GPU node removal automatically once no GPU pods
+# are scheduled (gpu_node_pool_min_count=0 in dev.tfvars).
+# ============================================================================
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vllm-nightly-scaledown
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/name: dev-gpu-scheduler
+    app.kubernetes.io/component: dev-cost-optimization
+    cage.io/purpose: cost-optimisation
+  annotations:
+    cage.io/description: >
+      Scales vllm-fast and vllm-reasoning Deployments to 0 replicas at 8 PM
+      UTC Mon–Fri to eliminate overnight GPU node costs. GKE cluster autoscaler
+      removes the GPU node ~10 min after the last GPU pod is evicted.
+spec:
+  schedule: "0 20 * * 1-5"     # 8:00 PM UTC, Monday–Friday
+  concurrencyPolicy: Forbid     # Skip run if previous is still active
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: dev-gpu-scheduler
+            app.kubernetes.io/component: dev-cost-optimization
+            cage.io/cronjob: vllm-nightly-scaledown
+        spec:
+          serviceAccountName: dev-gpu-scheduler-sa
+          restartPolicy: Never
+
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534    # nobody
+            runAsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+
+          containers:
+            - name: scaledown
+              # bitnami/kubectl bundles kubectl + bash.
+              # NOTE: Bitnami free-tier Docker Hub images only publish :latest
+              # (verified 2026-08-11); pin to a digest for reproducibility.
+              image: bitnami/kubectl:latest
+
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+                runAsNonRoot: true
+                runAsUser: 65534
+                seccompProfile:
+                  type: RuntimeDefault
+
+              env:
+                - name: VLLM_NAMESPACE
+                  value: "governance-stack"
+                - name: DEPLOY_FAST
+                  value: "vllm-fast"
+                - name: DEPLOY_REASONING
+                  value: "vllm-reasoning"
+
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -euo pipefail
+                  echo "=== vLLM Nightly Scale-Down — $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+
+                  echo "Scaling ${DEPLOY_FAST} to 0 replicas..."
+                  kubectl scale deployment "${DEPLOY_FAST}" \
+                    -n "${VLLM_NAMESPACE}" \
+                    --replicas=0
+                  echo "  ✅ ${DEPLOY_FAST} → 0"
+
+                  echo "Scaling ${DEPLOY_REASONING} to 0 replicas..."
+                  kubectl scale deployment "${DEPLOY_REASONING}" \
+                    -n "${VLLM_NAMESPACE}" \
+                    --replicas=0
+                  echo "  ✅ ${DEPLOY_REASONING} → 0"
+
+                  echo "Scale-down complete. GPU node drain will follow in ~10 min."
+
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "128Mi"
+
+              volumeMounts:
+                # readOnlyRootFilesystem=true requires a writable /tmp for
+                # bitnami/kubectl internal use.
+                - name: tmp-dir
+                  mountPath: /tmp
+
+          volumes:
+            - name: tmp-dir
+              emptyDir:
+                sizeLimit: "32Mi"
+
+---
+# ============================================================================
+# CronJob: vllm-morning-scaleup
+# Schedule: 8:00 AM UTC, Mon–Fri
+#
+# Scales vllm-fast and vllm-reasoning back to 1 replica at the start of the
+# working day. GKE provisions a GPU node automatically; allow ~5–10 min for
+# node provisioning + model weight loading before inference is available.
+# ============================================================================
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vllm-morning-scaleup
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/name: dev-gpu-scheduler
+    app.kubernetes.io/component: dev-cost-optimization
+    cage.io/purpose: cost-optimisation
+  annotations:
+    cage.io/description: >
+      Scales vllm-fast and vllm-reasoning Deployments to 1 replica at 8 AM
+      UTC Mon–Fri. GKE provisions a GPU node automatically; allow ~5–10 min
+      for node provisioning + model weight loading.
+spec:
+  schedule: "0 8 * * 1-5"      # 8:00 AM UTC, Monday–Friday
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: dev-gpu-scheduler
+            app.kubernetes.io/component: dev-cost-optimization
+            cage.io/cronjob: vllm-morning-scaleup
+        spec:
+          serviceAccountName: dev-gpu-scheduler-sa
+          restartPolicy: Never
+
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+
+          containers:
+            - name: scaleup
+              image: bitnami/kubectl:latest
+
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+                runAsNonRoot: true
+                runAsUser: 65534
+                seccompProfile:
+                  type: RuntimeDefault
+
+              env:
+                - name: VLLM_NAMESPACE
+                  value: "governance-stack"
+                - name: DEPLOY_FAST
+                  value: "vllm-fast"
+                - name: DEPLOY_REASONING
+                  value: "vllm-reasoning"
+
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -euo pipefail
+                  echo "=== vLLM Morning Scale-Up — $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+
+                  echo "Scaling ${DEPLOY_FAST} to 1 replica..."
+                  kubectl scale deployment "${DEPLOY_FAST}" \
+                    -n "${VLLM_NAMESPACE}" \
+                    --replicas=1
+                  echo "  ✅ ${DEPLOY_FAST} → 1"
+
+                  echo "Scaling ${DEPLOY_REASONING} to 1 replica..."
+                  kubectl scale deployment "${DEPLOY_REASONING}" \
+                    -n "${VLLM_NAMESPACE}" \
+                    --replicas=1
+                  echo "  ✅ ${DEPLOY_REASONING} → 1"
+
+                  echo "Scale-up complete. Allow ~5-10 min for GPU node provision + model load."
+
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "128Mi"
+
+              volumeMounts:
+                - name: tmp-dir
+                  mountPath: /tmp
+
+          volumes:
+            - name: tmp-dir
+              emptyDir:
+                sizeLimit: "32Mi"
