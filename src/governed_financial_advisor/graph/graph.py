@@ -67,6 +67,7 @@ from .nodes.agent_nodes import (
     execution_analyst_node,
     governed_trader_node,
 )
+from .nodes.defer_node import defer_node
 from .nodes.evaluator_node import evaluator_node
 from .nodes.explainer_node import explainer_node
 from .nodes.guardrail_node import nemo_guardrail_node, nemo_output_rail_node
@@ -125,6 +126,8 @@ def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
     #   BLOCKED       → explainer
     workflow.add_node("ftra_node", create_ftra_node())  # type: ignore[arg-type]
     workflow.add_node("safety_check", safety_check_node)  # type: ignore[arg-type]  # R-11: OPA pre-trade gate
+    # CAGE-REM-004: DeferQueue 4-state confidence router node
+    workflow.add_node("defer_node", defer_node)
     workflow.add_node("governed_trader", governed_trader_node)
     workflow.add_node("explainer", explainer_node)
     # ADR 2026-03-09b: mandatory output rail — final node on every non-blocked path
@@ -206,20 +209,24 @@ def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
 
     def route_after_safety(state: AgentState):  # type: ignore[no-untyped-def]
         """
-        R-11: Routes after the OPA pre-trade safety gate.
+        R-11 / CAGE-REM-004: Routes after the OPA pre-trade safety gate.
 
         APPROVED / SKIPPED → proceed to governed_trader (trade is safe)
+        DEFERRED / ESCALATED / MANUAL_REVIEW → defer_node (park in DeferQueue)
         BLOCKED            → route to explainer (trade denied, explain to user)
-        ESCALATED          → route to explainer (human review needed, explain)
         """
         status = state.get("safety_status")
         if status in ("APPROVED", "SKIPPED"):
             return "governed_trader"
-        # BLOCKED or ESCALATED — surface to explainer so the user gets a clear
-        # explanation of why the trade was prevented.
+        elif status in ("DEFERRED", "ESCALATED", "MANUAL_REVIEW"):
+            return "defer_node"
+        # BLOCKED or rejected — surface to explainer
         return "explainer"
 
     workflow.add_conditional_edges("safety_check", route_after_safety)
+
+    # Connect defer_node to explainer to report deferral reason
+    workflow.add_edge("defer_node", "explainer")
 
     # ADR 2026-03-09b: every non-blocked terminal path routes through the
     # mandatory output rail before END.  The blocked guardrail path (above)

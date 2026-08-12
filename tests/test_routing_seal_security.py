@@ -425,3 +425,71 @@ def test_gfa_verify_seal_rejects_malformed_seal():
         gfa_verify("only-two-parts", "execute_trade", {})
     with pytest.raises(GFASymbolicGovernorViolation):
         gfa_verify("", "execute_trade", {})
+
+
+@pytest.mark.asyncio
+async def test_gateway_verify_and_consume_seal_prevents_replay():
+    """verify_and_consume_seal() burns the seal in Redis; a second attempt raises SymbolicGovernorViolation."""
+    import fakeredis.aioredis as fakeredis
+
+    from src.gateway.governance.routing_seal import (
+        SymbolicGovernorViolation,
+        generate_seal,
+        verify_and_consume_seal,
+    )
+
+    redis = fakeredis.FakeRedis()
+    params = {"symbol": "AAPL", "amount": 100.0}
+    seal = generate_seal("execute_trade", params)
+
+    # First consumption succeeds
+    assert (
+        await verify_and_consume_seal(
+            seal, "execute_trade", params, redis_client=redis
+        )
+        is True
+    )
+
+    # Second consumption within TTL must fail with replay violation
+    with pytest.raises(SymbolicGovernorViolation) as exc_info:
+        await verify_and_consume_seal(
+            seal, "execute_trade", params, redis_client=redis
+        )
+
+    assert "already consumed" in str(exc_info.value) or "Replay" in str(
+        exc_info.value
+    )
+
+
+@pytest.mark.asyncio
+async def test_gfa_verify_and_consume_seal_prevents_replay():
+    """GFA verify_and_consume_seal() burns the seal in Redis and rejects replays."""
+    import fakeredis.aioredis as fakeredis
+
+    from src.gateway.governance.routing_seal import generate_seal
+    from src.governed_financial_advisor.utils.routing_seal import (
+        SymbolicGovernorViolation as GFASymbolicGovernorViolation,
+        verify_and_consume_seal as gfa_verify_and_consume,
+    )
+
+    redis = fakeredis.FakeRedis()
+    params = {"symbol": "GOOGL", "amount": 250.0}
+    seal = generate_seal("execute_trade", params)
+
+    # First consumption succeeds
+    assert (
+        await gfa_verify_and_consume(
+            seal, "execute_trade", params, redis_client=redis
+        )
+        is True
+    )
+
+    # Replay attempt fails
+    with pytest.raises(GFASymbolicGovernorViolation) as exc_info:
+        await gfa_verify_and_consume(
+            seal, "execute_trade", params, redis_client=redis
+        )
+
+    assert "already consumed" in str(exc_info.value) or "Replay" in str(
+        exc_info.value
+    )

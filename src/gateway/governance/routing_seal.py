@@ -284,6 +284,74 @@ def verify_seal(seal: str, action: str, params: dict) -> bool:
         raise SymbolicGovernorViolation(reason, action) from exc
 
 
+async def verify_and_consume_seal(
+    seal: str,
+    action: str,
+    params: dict,
+    redis_client: Any = None,
+) -> bool:
+    """Verify a routing seal AND atomically burn it in Redis to prevent replay.
+
+    CAGE-SEC-008 / Terry Snyder & Miracle Owolabi remediation:
+    Enforces atomic single-use seal semantics. Even within the 30-second TTL
+    window, a seal can only be executed once. Subsequent attempts with the
+    same seal are rejected with 'SEAL_REPLAY_DETECTED'.
+
+    Args:
+        seal:         Routing seal string.
+        action:       Tool/action name.
+        params:       Execution parameters.
+        redis_client: Optional async or sync Redis client. If omitted, attempts
+                      to load ambient Redis client.
+
+    Returns:
+        True on successful verification and atomic single-use consumption.
+
+    Raises:
+        SymbolicGovernorViolation: If verification fails or if the seal was
+            already consumed (replay attack detected).
+    """
+    # 1. First verify cryptographic validity & TTL
+    verify_seal(seal, action, params)
+
+    # 2. If redis client is provided or available, enforce single-use consumption
+    parts = seal.split(".", 2)
+    expire_hex, _action_slug, sig = parts
+    expire_ts = int(expire_hex, 16)
+    ttl = max(int(expire_ts - time.time()), 1)
+
+    if redis_client is None:
+        try:
+            from src.gateway.infrastructure.redis_client import get_redis_client
+
+            redis_client = get_redis_client().client
+        except Exception:
+            redis_client = None
+
+    if redis_client is not None:
+        burn_key = f"cage:seal:consumed:{sig}"
+        try:
+            res = redis_client.set(burn_key, "1", nx=True, ex=ttl)
+            if inspect.isawaitable(res):
+                res = await res
+
+            if not res:
+                reason = "routing seal already consumed (Replay Attack Detected)"
+                logger.error(
+                    "🔒 [CAGE-SEC-008] Routing seal REPLAY REJECTED: action=%s sig=%s",
+                    action,
+                    sig[:16],
+                )
+                raise SymbolicGovernorViolation(reason, action)
+            logger.debug("🔥 Routing seal consumed atomically: key=%s", burn_key)
+        except SymbolicGovernorViolation:
+            raise
+        except Exception as exc:
+            logger.warning("⚠️ Failed to burn routing seal in Redis: %s", exc)
+
+    return True
+
+
 def require_cleared_seal(
     seal: str,
     action: str,

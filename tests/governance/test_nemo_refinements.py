@@ -128,6 +128,12 @@ class TestNeMoMainFlowInvokesSelfCheck(unittest.TestCase):
                     ]
                 )
 
+            def _call(self, prompt, stop=None, run_manager=None, **kwargs):
+                return f"Echo: {prompt}"
+
+            async def _acall(self, prompt, stop=None, run_manager=None, **kwargs):
+                return f"Echo: {prompt}"
+
             @property
             def _llm_type(self):
                 return "mock"

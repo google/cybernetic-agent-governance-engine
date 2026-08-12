@@ -131,6 +131,9 @@ if (
     )
 
 
+from src.gateway.governance.contracts import RefusalReceipt
+
+
 class GovernanceError(Exception):
     """Raised when a symbolic rule is violated.
 
@@ -140,11 +143,18 @@ class GovernanceError(Exception):
         payload: Optional structured dict emitted to OTel / SIEM consumers.
                  Contains ``control_id``, ``primary_framework``,
                  ``legacy_citation``, etc. sourced from control_mappings.json.
+        receipt: Optional immutable RefusalReceipt proof object.
     """
 
-    def __init__(self, message: str, payload: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        payload: dict[str, Any] | None = None,
+        receipt: RefusalReceipt | None = None,
+    ) -> None:
         super().__init__(message)
         self.payload: dict[str, Any] = payload or {}
+        self.receipt: RefusalReceipt | None = receipt
 
 
 # ---------------------------------------------------------------------------
@@ -930,7 +940,29 @@ class SymbolicGovernor:
                     # CRIT-5 fix: read pending_payload from the result dict, not
                     # from self — eliminates the data race on the singleton.
                     payload = result.get("pending_payload")
-                    raise GovernanceError(violations[0], payload=payload)
+                    violation_msg = violations[0]
+                    thread_id = str(
+                        params.get("transaction_id", "")
+                        or params.get("thread_id", "")
+                        or "unknown_thread"
+                    )
+                    receipt = RefusalReceipt(
+                        thread_id=thread_id,
+                        action=tool_name,
+                        violated_tier="SYMBOLIC_GOVERNOR",
+                        violated_rule=violation_msg,
+                        standing_at_refusal={
+                            "symbol": params.get("symbol"),
+                            "amount": params.get("amount"),
+                            "currency": params.get("currency"),
+                            "confidence": params.get("confidence"),
+                        },
+                    )
+                    span.set_attribute("cage.refusal_proof_hash", receipt.proof_hash)
+                    span.set_attribute("cage.verdict", "BLOCKED")
+                    raise GovernanceError(
+                        violation_msg, payload=payload, receipt=receipt
+                    )
 
                 # Gap 2 fix: issue routing seal AFTER all checks pass.
                 # The seal is the cryptographic attestation that resolvedAllow=TRUE.
