@@ -49,6 +49,29 @@ try:
 except ImportError:
     pass  # python-dotenv not installed — rely on shell env only
 
+# Sanitize cluster-internal Kubernetes DNS URLs that cannot be resolved outside GKE
+_cluster_internal_replacements = {
+    "BACKEND_URL": "http://localhost:18080",
+    "GATEWAY_URL": "http://localhost:8080",
+    "LANGFUSE_HOST": "http://localhost:3001",
+    "LANGFUSE_BASEURL": "http://localhost:3001",
+    "COMPLIANCE_BRIDGE_URL": "http://localhost:3002",
+    "OPA_URL": "http://localhost:8181/v1/data/trade/governance",
+    "REDIS_URL": "redis://localhost:6379",
+    "VLLM_SERVICE_URL": "http://localhost:8001",
+    "VLLM_REASONING_API_BASE": "http://localhost:8000/v1",
+}
+for _k, _default_url in _cluster_internal_replacements.items():
+    _v = os.environ.get(_k)
+    if (
+        not _v
+        or ".svc.cluster.local" in _v
+        or "http://opa:8181" in _v
+        or "<YOUR_" in _v
+        or _v.startswith("<")
+    ):
+        os.environ[_k] = _default_url
+
 # ── Suppress OTLP BatchSpanProcessor retry noise in test runs ─────────────────
 # Set OTEL_TRACES_EXPORTER=none at module-import time (before any test module
 # is collected) so that:
@@ -105,7 +128,7 @@ for _ns in _OTLP_LOGGER_NAMESPACES:
 
 def pytest_configure(config: pytest.Config) -> None:
     """Set environment variable defaults that tests expect."""
-    _setdefault("BACKEND_URL", "http://localhost:8081")
+    _setdefault("BACKEND_URL", "http://localhost:18080")
     _setdefault("GATEWAY_URL", "http://localhost:8080")
     _setdefault("LANGFUSE_HOST", "http://localhost:3001")
     _setdefault("VLLM_REASONING_API_BASE", "http://localhost:8000/v1")
@@ -134,7 +157,7 @@ def pytest_configure(config: pytest.Config) -> None:
         "EU_ECB": "http://localhost:8181/v1/data/eu_ecb/governance",
         "APAC_MAS": "http://localhost:8181/v1/data/apac_mas/governance",
     }
-    os.environ.setdefault(
+    _setdefault(
         "OPA_URL",
         os.environ.get(
             "OPA_URL_TEST_OVERRIDE",
@@ -151,9 +174,15 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def _setdefault(key: str, value: str) -> None:
-    """Set an env var only when it is not already present or is a placeholder."""
+    """Set an env var only when it is not already present or is a placeholder or cluster-internal."""
     current = os.environ.get(key)
-    if not current or "<YOUR_" in current or current.startswith("<"):
+    if (
+        not current
+        or "<YOUR_" in current
+        or current.startswith("<")
+        or ".svc.cluster.local" in current
+        or "http://opa:8181" in current
+    ):
         os.environ[key] = value
 
 
