@@ -56,18 +56,18 @@ start_pf() {
   local remote_port="$4"
   local log_path="$LOG_DIR/${name}.log"
 
-  echo "[port-forward] Starting $name ($svc ${local_port}→${remote_port}) with auto-reconnect..."
-  (
+  nohup bash -c "
     while true; do
-      kubectl port-forward -n "$NS" "svc/$svc" "${local_port}:${remote_port}" \
+      kubectl port-forward -n '$NS' 'svc/$svc' '${local_port}:${remote_port}' \
         --pod-running-timeout=5m \
-        >>"$log_path" 2>&1 || true
-      echo "$(date -u '+%H:%M:%S')  ⚠️  port-forward $svc (${local_port}:${remote_port}) dropped — restarting in 2s…" \
-        | tee -a "$log_path" >&2
+        >>'$log_path' 2>&1 || true
+      echo \"\$(date -u '+%H:%M:%S')  ⚠️  port-forward $svc (${local_port}:${remote_port}) dropped — restarting in 2s…\" \
+        | tee -a '$log_path' >&2
       sleep 2
     done
-  ) &
+  " >/dev/null 2>&1 &
   local loop_pid=$!
+  disown "${loop_pid}" 2>/dev/null || true
   echo "${loop_pid}" >> "${PF_PIDS_FILE}"
   echo "[port-forward]   $name loop pid: ${loop_pid}"
 }

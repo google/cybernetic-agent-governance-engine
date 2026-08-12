@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -300,10 +300,9 @@ class TestApplyRefinement:
 
     def test_successful_reload(self, client):
         """R-LOOP-4: successful reload must return {status: applied, reload: true}."""
-        new_rails = MagicMock(name="new_rails_singleton")
         with patch(
-            "src.governed_financial_advisor.server.load_rails",
-            return_value=new_rails,
+            "src.gateway.governance.langgraph_harness.nemo_node_factory.reload_nemo_rails",
+            new_callable=AsyncMock,
         ):
             resp = client.post(
                 "/v1/nemo/apply-refinement",
@@ -321,9 +320,9 @@ class TestApplyRefinement:
         assert body["source"] == "kfp-governance-loop"
 
     def test_reload_failure_returns_500(self, client):
-        """R-LOOP-5: if load_rails() raises, the endpoint must return 500."""
+        """R-LOOP-5: if reload_nemo_rails() raises, the endpoint must return 500."""
         with patch(
-            "src.governed_financial_advisor.server.load_rails",
+            "src.gateway.governance.langgraph_harness.nemo_node_factory.reload_nemo_rails",
             side_effect=RuntimeError("Colang parse error"),
         ):
             resp = client.post(
@@ -339,9 +338,9 @@ class TestApplyRefinement:
 
     def test_minimum_required_fields(self, client):
         """Source field is optional; omitting it must not cause a 422."""
-        new_rails = MagicMock()
         with patch(
-            "src.governed_financial_advisor.server.load_rails", return_value=new_rails
+            "src.gateway.governance.langgraph_harness.nemo_node_factory.reload_nemo_rails",
+            new_callable=AsyncMock,
         ):
             resp = client.post(
                 "/v1/nemo/apply-refinement",

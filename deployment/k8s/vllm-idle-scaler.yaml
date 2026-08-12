@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# DEPRECATED: This file is superseded by dev-gpu-schedule.yaml (2026-08-12).
+# The Redis-based idle-detection approach has been replaced with a simpler
+# nightly schedule. Remove this file once dev-gpu-schedule.yaml is validated.
+
 # ============================================================================
 # vLLM Idle-Detection Scale-to-Zero — CAGE Cost Optimisation
 # ============================================================================

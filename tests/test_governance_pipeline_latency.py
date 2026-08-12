@@ -31,6 +31,7 @@ Latency budgets are defined as module-level constants for easy tuning.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import statistics
 import time
@@ -172,7 +173,20 @@ def _format_report(
 
 
 def _nemo_input_patches(safe: bool = True):
-    """Return a list of patch context managers for the NeMo input rail."""
+    """Return a list of patch context managers for the NeMo input rail.
+
+    Includes a patch that disables the real Presidio/spaCy PII analyzer
+    (``_presidio_analyzer``).  Without this, ``nemo_guardrail_node`` runs a
+    genuine spaCy NLP inference pass on every invocation (see
+    ``nemo_node_factory.py`` lines ~439-450), which is CPU-bound and takes
+    tens-to-hundreds of milliseconds depending on machine load. That real
+    inference call is what these tests are meant to exclude -- the intent
+    is to measure the NeMo guardrail node's own orchestration overhead, not
+    third-party NLP library latency. Leaving Presidio unmocked made the p95
+    latency assertion flaky under CPU contention (e.g. concurrent
+    pytest-xdist workers), which was previously misdiagnosed as a
+    test-order/random-seed dependency.
+    """
     return [
         patch(
             "src.gateway.governance.langgraph_harness.nemo_node_factory.get_nemo_rails",
@@ -186,6 +200,10 @@ def _nemo_input_patches(safe: bool = True):
         patch(
             "src.gateway.governance.langgraph_harness.nemo_node_factory._get_symbolic_governor",
             return_value=None,
+        ),
+        patch(
+            "src.gateway.governance.langgraph_harness.nemo_node_factory._presidio_analyzer",
+            None,
         ),
     ]
 
@@ -244,8 +262,9 @@ class TestTier1NemoInputGuardrailLatency:
         node = create_nemo_guardrail_node(NemoNodeConfig())
         state = _input_state()
 
-        patches = _nemo_input_patches(safe=True)
-        with patches[0], patches[1], patches[2]:
+        with contextlib.ExitStack() as stack:
+            for p in _nemo_input_patches(safe=True):
+                stack.enter_context(p)
             t_start = time.perf_counter()
             result = await node(state)
             t_end = time.perf_counter()
@@ -415,8 +434,9 @@ class TestPipelineCumulativeLatency:
         tier1_node = create_nemo_guardrail_node(NemoNodeConfig())
         input_state = _input_state()
 
-        nemo_in_patches = _nemo_input_patches(safe=True)
-        with nemo_in_patches[0], nemo_in_patches[1], nemo_in_patches[2]:
+        with contextlib.ExitStack() as stack:
+            for p in _nemo_input_patches(safe=True):
+                stack.enter_context(p)
             t1_start = time.perf_counter()
             await tier1_node(input_state)
             t1_end = time.perf_counter()
@@ -500,8 +520,9 @@ class TestLatencyReportPrinted:
 
         # --- Tier 1 ---
         tier1_node = create_nemo_guardrail_node(NemoNodeConfig())
-        nemo_in_patches = _nemo_input_patches(safe=True)
-        with nemo_in_patches[0], nemo_in_patches[1], nemo_in_patches[2]:
+        with contextlib.ExitStack() as stack:
+            for p in _nemo_input_patches(safe=True):
+                stack.enter_context(p)
             t1_start = time.perf_counter()
             await tier1_node(_input_state())
             t1_end = time.perf_counter()
@@ -571,8 +592,9 @@ class TestTier1LatencyP95:
         state = _input_state()
         elapsed_samples: list[float] = []
 
-        patches = _nemo_input_patches(safe=True)
-        with patches[0], patches[1], patches[2]:
+        with contextlib.ExitStack() as stack:
+            for p in _nemo_input_patches(safe=True):
+                stack.enter_context(p)
             for _ in range(n_runs):
                 t_start = time.perf_counter()
                 await node(state)
