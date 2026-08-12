@@ -330,6 +330,71 @@ class TestPostHitlRevalidateNode:
         govern_mock.assert_called_once()
         assert result.get("post_hitl_safety_status") == "APPROVED"
 
+    @pytest.mark.asyncio
+    async def test_replay_under_identical_standing_succeeds(self):
+        """Terry Snyder Seam Protocol: Replay under identical standing succeeds deterministically."""
+        from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+            post_hitl_revalidate_node,
+        )
+
+        state = _base_state(
+            rehydration_result={
+                "status": "OK",
+                "ticker": "AAPL",
+                "fresh_price": 150.0,
+                "stale_price": 150.0,
+                "drift_pct": 0.0,  # Zero drift — identical standing
+            },
+            approval_decision={
+                "approved": True,
+                "reviewer": "terry@example.com",
+                "rationale": "Identical standing test",
+                "max_slippage_pct": 2.0,
+            },
+        )
+
+        with patch(
+            "src.gateway.governance.singletons.symbolic_governor.revalidate_post_hitl",
+            new_callable=AsyncMock,
+        ):
+            result = await post_hitl_revalidate_node(state)
+
+        assert result.get("post_hitl_safety_status") == "APPROVED"
+
+    @pytest.mark.asyncio
+    async def test_replay_under_mutated_standing_fails(self):
+        """Terry Snyder Seam Protocol: Replay under mutated standing fails-closed with drift/governance error."""
+        from src.gateway.governance.symbolic_governor import GovernanceError
+        from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+            post_hitl_revalidate_node,
+        )
+
+        state = _base_state(
+            rehydration_result={
+                "status": "OK",
+                "ticker": "AAPL",
+                "fresh_price": 150.0,
+                "stale_price": 150.0,
+                "drift_pct": 0.0,
+            },
+            approval_decision={
+                "approved": True,
+                "reviewer": "terry@example.com",
+                "rationale": "Mutated standing test",
+                "max_slippage_pct": 2.0,
+            },
+        )
+
+        with patch(
+            "src.gateway.governance.singletons.symbolic_governor.revalidate_post_hitl",
+            side_effect=GovernanceError("Substrate Policy Drift Detected"),
+        ):
+            result = await post_hitl_revalidate_node(state)
+
+        assert result.get("post_hitl_safety_status") == "BLOCKED"
+        rehydration = result.get("rehydration_result", {})
+        assert "Policy Drift" in rehydration.get("block_reason", "")
+
 
 # ---------------------------------------------------------------------------
 # 3. drift_blocked_node — fail-closed terminal

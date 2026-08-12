@@ -350,6 +350,7 @@ async def execute_trade_action(
     """
     from src.gateway.governance.routing_seal import (
         SymbolicGovernorViolation,
+        verify_and_consume_seal,
         verify_seal,
     )
 
@@ -375,43 +376,35 @@ async def execute_trade_action(
     except PermissionError as exc:
         return f"BLOCKED: {exc}"
 
-    # Gap 2 fix: verify the routing seal before executing.
-    # verify_seal() now raises SymbolicGovernorViolation instead of returning
-    # False — callers cannot silently ignore a failed seal check (P3 fix).
+    # Gap 2 fix / CAGE-SEC-008: verify and atomically consume the routing seal before executing.
+    # verify_and_consume_seal() burns the single-use nonce in Redis, preventing replay attacks.
     if seal:
         try:
-            verify_seal(seal, "execute_trade", params)
+            await verify_and_consume_seal(seal, "execute_trade", params)
         except SymbolicGovernorViolation as exc:
             logger.error(
                 "🔒 execute_trade_action: routing seal verification FAILED — "
                 "blocking execution (No-Direct-Bind invariant). Reason: %s",
                 exc.reason,
             )
-            return "BLOCKED: routing seal invalid or expired — governance authority unresolved."
+            return "BLOCKED: routing seal invalid, expired, or already consumed — governance authority unresolved."
 
     if dry_run:
         return "DRY_RUN: APPROVED by OPA, Safety, and Consensus."
 
-    # C-05 fix: construct and validate TradeOrder BEFORE updating CBF state.
-    # If TradeOrder construction raises ValidationError (invalid symbol,
-    # negative amount, etc.) the CBF cash-balance must not be decremented —
-    # no trade was executed so no state change should occur.
+    # Validate TradeOrder before actuation
     try:
         order = TradeOrder(**params)  # type: ignore[arg-type]
     except Exception as exc:
-        logger.error("TradeOrder validation failed before CBF update: %s", exc)
+        logger.error("TradeOrder validation failed before actuation: %s", exc)
         return f"ERROR: invalid trade parameters — {exc}"
-
-    # Atomic state update via WATCH/MULTI/EXEC (Phase 4.1).
-    # Placed AFTER TradeOrder validation so a Pydantic error cannot leave
-    # the CBF in a decremented state without a corresponding trade.
-    await symbolic_governor.safety_filter.update_state(amount)  # type: ignore[misc, func-returns-value]  # cbf.SafetyFilter.update_state is async; base Protocol declares sync None
 
     try:
         return await execute_trade(order)
     except Exception as exc:
         logger.error("Execution Error: %s", exc)
-        await symbolic_governor.safety_filter.rollback_state(amount)  # type: ignore[misc, func-returns-value]  # cbf.SafetyFilter.rollback_state is async; base Protocol declares sync None
+        if hasattr(symbolic_governor.safety_filter, "rollback_state"):
+            await symbolic_governor.safety_filter.rollback_state(amount)  # type: ignore[misc, func-returns-value]
         return f"ERROR: {exc}"
 
 

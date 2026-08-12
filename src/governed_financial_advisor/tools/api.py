@@ -32,6 +32,7 @@ from src.governed_financial_advisor.infrastructure.redis_client import redis_cli
 from src.governed_financial_advisor.tools.market_data_tool import get_market_data
 from src.governed_financial_advisor.utils.routing_seal import (
     SymbolicGovernorViolation,
+    verify_and_consume_seal,
     verify_seal,
 )
 
@@ -207,18 +208,18 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
                     "cage.gateway_verdict", gov_result.get("verdict", "")
                 )
 
-                # ── Verify routing seal before actuation ─────────────────────
-                # verify_seal() raises SymbolicGovernorViolation on any failure —
-                # no need to check the return value. This is the defense-in-depth
-                # check (P3 fix); the wrapped actuation is never reached if the
-                # seal is invalid.
+                # ── Verify and atomically consume routing seal before actuation ──
+                # verify_and_consume_seal() burns the seal in Redis (CAGE-SEC-008),
+                # preventing replay attacks within the 30-second TTL window.
                 try:
-                    verify_seal(seal, "execute_trade", params)
+                    await verify_and_consume_seal(
+                        seal, "execute_trade", params, redis_client=redis_client
+                    )
                 except SymbolicGovernorViolation as exc:
                     root_span.set_attribute("cage.seal_valid", False)
                     root_span.set_status(Status(StatusCode.ERROR))
                     raise PermissionError(
-                        "Routing seal invalid or expired — trade blocked "
+                        "Routing seal invalid, expired, or already consumed — trade blocked "
                         f"(defense-in-depth): {exc.reason}"
                     ) from exc
 

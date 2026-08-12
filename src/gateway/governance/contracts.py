@@ -18,7 +18,43 @@ This module defines the interfaces that the Gateway expects for governance compo
 decoupling the Gateway from the specific application implementations.
 """
 
+from dataclasses import dataclass, field
+import hashlib
+import json
+import time
 from typing import Any, Protocol
+
+
+@dataclass(frozen=True)
+class RefusalReceipt:
+    """Immutable audit-grade proof emitted whenever an action is blocked or denied.
+
+    CAGE-SEC-009 / Terry Snyder seam review protocol:
+    Standardizes denial evidence into a cryptographic proof recording the
+    exact violated invariant, authority tier, and standing context.
+    """
+
+    thread_id: str
+    action: str
+    violated_tier: str  # e.g., "CBF", "OPA", "NEURAL_CONFIDENCE", "FISCAL", "NEMO"
+    violated_rule: str
+    standing_at_refusal: dict[str, Any] = field(default_factory=dict)
+    timestamp: float = field(default_factory=time.time)
+    proof_hash: str = field(default="")
+
+    def __post_init__(self) -> None:
+        if not self.proof_hash:
+            payload = {
+                "thread_id": self.thread_id,
+                "action": self.action,
+                "violated_tier": self.violated_tier,
+                "violated_rule": self.violated_rule,
+                "timestamp": self.timestamp,
+            }
+            canon = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            object.__setattr__(
+                self, "proof_hash", hashlib.sha256(canon.encode()).hexdigest()
+            )
 
 
 class SafetyFilter(Protocol):
