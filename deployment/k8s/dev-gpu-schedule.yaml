@@ -16,7 +16,7 @@
 # dev-gpu-schedule.yaml — Nightly GPU Scale-to-Zero for CAGE Dev Cluster
 # ============================================================================
 #
-# Replaces the complex Redis-based vllm-idle-scaler.yaml with two simple
+# Provides scheduled nightly GPU scale-to-zero with two simple
 # time-based CronJobs:
 #
 #   1. vllm-nightly-scaledown  — scales vllm-fast and vllm-reasoning to 0
@@ -184,17 +184,15 @@ spec:
                   set -euo pipefail
                   echo "=== vLLM Nightly Scale-Down — $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 
-                  echo "Scaling ${DEPLOY_FAST} to 0 replicas..."
-                  kubectl scale deployment "${DEPLOY_FAST}" \
-                    -n "${VLLM_NAMESPACE}" \
-                    --replicas=0
-                  echo "  ✅ ${DEPLOY_FAST} → 0"
-
-                  echo "Scaling ${DEPLOY_REASONING} to 0 replicas..."
-                  kubectl scale deployment "${DEPLOY_REASONING}" \
-                    -n "${VLLM_NAMESPACE}" \
-                    --replicas=0
-                  echo "  ✅ ${DEPLOY_REASONING} → 0"
+                  for dep in "${DEPLOY_FAST}" "vllm-inference" "${DEPLOY_REASONING}"; do
+                    if kubectl get deployment "${dep}" -n "${VLLM_NAMESPACE}" >/dev/null 2>&1; then
+                      echo "Scaling ${dep} to 0 replicas..."
+                      kubectl scale deployment "${dep}" \
+                        -n "${VLLM_NAMESPACE}" \
+                        --replicas=0
+                      echo "  ✅ ${dep} → 0"
+                    fi
+                  done
 
                   echo "Scale-down complete. GPU node drain will follow in ~10 min."
 
@@ -295,17 +293,15 @@ spec:
                   set -euo pipefail
                   echo "=== vLLM Morning Scale-Up — $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 
-                  echo "Scaling ${DEPLOY_FAST} to 1 replica..."
-                  kubectl scale deployment "${DEPLOY_FAST}" \
-                    -n "${VLLM_NAMESPACE}" \
-                    --replicas=1
-                  echo "  ✅ ${DEPLOY_FAST} → 1"
-
-                  echo "Scaling ${DEPLOY_REASONING} to 1 replica..."
-                  kubectl scale deployment "${DEPLOY_REASONING}" \
-                    -n "${VLLM_NAMESPACE}" \
-                    --replicas=1
-                  echo "  ✅ ${DEPLOY_REASONING} → 1"
+                  for dep in "${DEPLOY_FAST}" "vllm-inference" "${DEPLOY_REASONING}"; do
+                    if kubectl get deployment "${dep}" -n "${VLLM_NAMESPACE}" >/dev/null 2>&1; then
+                      echo "Scaling ${dep} to 1 replica..."
+                      kubectl scale deployment "${dep}" \
+                        -n "${VLLM_NAMESPACE}" \
+                        --replicas=1
+                      echo "  ✅ ${dep} → 1"
+                    fi
+                  done
 
                   echo "Scale-up complete. Allow ~5-10 min for GPU node provision + model load."
 

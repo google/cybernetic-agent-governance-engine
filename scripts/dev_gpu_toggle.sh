@@ -59,13 +59,13 @@ case "${CMD}" in
   up)
     REPLICAS=1
     echo "=== GPU Scale-Up — $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
-    echo "Scaling ${DEPLOY_FAST} to ${REPLICAS} replica..."
-    kubectl scale deployment "${DEPLOY_FAST}" -n "${NAMESPACE}" --replicas="${REPLICAS}"
-    echo "  ✅ ${DEPLOY_FAST} → ${REPLICAS}"
-
-    echo "Scaling ${DEPLOY_REASONING} to ${REPLICAS} replica..."
-    kubectl scale deployment "${DEPLOY_REASONING}" -n "${NAMESPACE}" --replicas="${REPLICAS}"
-    echo "  ✅ ${DEPLOY_REASONING} → ${REPLICAS}"
+    for dep in "${DEPLOY_FAST}" "vllm-inference" "${DEPLOY_REASONING}"; do
+      if kubectl get deployment "${dep}" -n "${NAMESPACE}" >/dev/null 2>&1; then
+        echo "Scaling ${dep} to ${REPLICAS} replica..."
+        kubectl scale deployment "${dep}" -n "${NAMESPACE}" --replicas="${REPLICAS}"
+        echo "  ✅ ${dep} → ${REPLICAS}"
+      fi
+    done
 
     echo ""
     echo "Scale-up complete. Allow ~5–10 min for GPU node provision + model weight loading."
@@ -74,13 +74,13 @@ case "${CMD}" in
   down)
     REPLICAS=0
     echo "=== GPU Scale-Down — $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
-    echo "Scaling ${DEPLOY_FAST} to ${REPLICAS} replicas..."
-    kubectl scale deployment "${DEPLOY_FAST}" -n "${NAMESPACE}" --replicas="${REPLICAS}"
-    echo "  ✅ ${DEPLOY_FAST} → ${REPLICAS}"
-
-    echo "Scaling ${DEPLOY_REASONING} to ${REPLICAS} replicas..."
-    kubectl scale deployment "${DEPLOY_REASONING}" -n "${NAMESPACE}" --replicas="${REPLICAS}"
-    echo "  ✅ ${DEPLOY_REASONING} → ${REPLICAS}"
+    for dep in "${DEPLOY_FAST}" "vllm-inference" "${DEPLOY_REASONING}"; do
+      if kubectl get deployment "${dep}" -n "${NAMESPACE}" >/dev/null 2>&1; then
+        echo "Scaling ${dep} to ${REPLICAS} replicas..."
+        kubectl scale deployment "${dep}" -n "${NAMESPACE}" --replicas="${REPLICAS}"
+        echo "  ✅ ${dep} → ${REPLICAS}"
+      fi
+    done
 
     echo ""
     echo "Scale-down complete. GPU node drain will follow in ~10 min."
