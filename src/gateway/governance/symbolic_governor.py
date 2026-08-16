@@ -192,9 +192,9 @@ class GovernanceError(Exception):
 # EV-1 Migration: These thresholds are now sourced from config/governance_thresholds.json
 # with environment variable overrides supported. See schemas/thresholds.py for details.
 from src.gateway.governance.schemas.thresholds import (
+    get_agent_confidence_threshold,
     get_fria_zone_allow,
     get_fria_zone_defer,
-    get_agent_confidence_threshold,
 )
 
 # These module-level constants delegate to the config-based accessor functions,
@@ -239,7 +239,7 @@ def _classify_violation(
     stpa_violation_count: int,
     confidence: float,
     context: dict[str, Any] | None = None,
-) -> tuple["GovernanceDecision", dict[str, Any]]:
+) -> tuple[GovernanceDecision, dict[str, Any]]:
     """Classify violations into DENY, DEFER, NARROW, PAUSE, or REQUIRE_APPROVAL decisions.
 
     This helper implements the five-way classification required by §2.1 of the
@@ -799,7 +799,7 @@ class SymbolicGovernor:
         tool_input: dict[str, Any],
         *,
         detect_bypass: bool = True,
-    ) -> "FtraBoundaryResult":
+    ) -> FtraBoundaryResult:
         """Enforce FTRA validation at the HTTP/controller boundary.
 
         Risk R-03 mitigation: This check runs at the controller boundary
@@ -2400,7 +2400,9 @@ class SymbolicGovernor:
                 #
                 # Phase 2.1 (R-06 mitigation): Uses generate_seal_with_evidence()
                 # which blocks on evidence commit when EVIDENCE_CHAIN_BLOCKING=true.
-                from src.gateway.governance.routing_seal import generate_seal_with_evidence
+                from src.gateway.governance.routing_seal import (
+                    generate_seal_with_evidence,
+                )
 
                 with tracer.start_as_current_span("cage.routing_seal") as seal_span:
                     seal = await generate_seal_with_evidence(action, params)

@@ -7,9 +7,9 @@ and the get_agw_adapter() singleton factory — all without live OIDC/network.
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Dataclass tests
@@ -208,7 +208,10 @@ class TestAgwAdapterProcess:
     @pytest.mark.asyncio
     async def test_process_returns_adapter_result(self):
         """process() returns an AgwAdapterResult with success=True."""
-        from src.gateway.governance.ingress.agw_adapter import AgwAdapter, AgwAdapterResult
+        from src.gateway.governance.ingress.agw_adapter import (
+            AgwAdapter,
+            AgwAdapterResult,
+        )
 
         adapter = AgwAdapter()
         raw = {
@@ -253,7 +256,10 @@ class TestGetAgwAdapter:
         import src.gateway.governance.ingress.agw_adapter as mod
         mod._agw_adapter = None  # reset singleton
 
-        from src.gateway.governance.ingress.agw_adapter import AgwAdapter, get_agw_adapter
+        from src.gateway.governance.ingress.agw_adapter import (
+            AgwAdapter,
+            get_agw_adapter,
+        )
         result = get_agw_adapter()
 
         assert isinstance(result, AgwAdapter)

@@ -277,8 +277,9 @@ class TestSymbolicGovernorNarrow:
         returns a NARROW verdict. Since _classify_violation determines when
         NARROW is appropriate, we mock validate_action to return a NARROW result.
         """
+        from unittest.mock import MagicMock, patch
+
         from src.gateway.governance.decisions import GovernanceDecision
-        from unittest.mock import patch, MagicMock
         
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
         
@@ -322,8 +323,9 @@ class TestSymbolicGovernorNarrow:
         This test verifies the narrowing constraint is correctly applied
         when the amount exceeds the configured maximum.
         """
-        from src.gateway.governance.decisions import GovernanceDecision
         from unittest.mock import patch
+
+        from src.gateway.governance.decisions import GovernanceDecision
         
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
         
@@ -364,8 +366,9 @@ class TestSymbolicGovernorNarrow:
         This test verifies that unauthorized scopes are removed from the
         narrowed_params when scope restrictions are applied.
         """
-        from src.gateway.governance.decisions import GovernanceDecision
         from unittest.mock import patch
+
+        from src.gateway.governance.decisions import GovernanceDecision
         
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
         
@@ -423,8 +426,9 @@ class TestSymbolicGovernorPause:
         This test verifies the expected response structure when the governor
         returns a PAUSE verdict with a pause token for resumption tracking.
         """
-        from src.gateway.governance.decisions import GovernanceDecision
         from unittest.mock import patch
+
+        from src.gateway.governance.decisions import GovernanceDecision
         
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
         
@@ -468,8 +472,9 @@ class TestSymbolicGovernorPause:
         This test verifies the classification_meta includes circuit breaker
         information that the HTTP layer uses to construct the resume endpoint.
         """
-        from src.gateway.governance.decisions import GovernanceDecision
         from unittest.mock import patch
+
+        from src.gateway.governance.decisions import GovernanceDecision
         
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
         

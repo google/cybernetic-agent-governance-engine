@@ -685,8 +685,10 @@ class TestCreateFtraNode:
         registry_path = self._registry_path(tmp_path, {"check_price": "READ_ONLY"})
 
         # Custom extractors that read from non-GFA keys
-        custom_plan_extractor = lambda s: s.get("my_custom_plan")
-        custom_confidence_extractor = lambda s: s.get("my_custom_confidence", 0.5)
+        def custom_plan_extractor(s):
+            return s.get("my_custom_plan")
+        def custom_confidence_extractor(s):
+            return s.get("my_custom_confidence", 0.5)
 
         config = FtraNodeConfig(
             registry_path=registry_path,
@@ -1350,8 +1352,8 @@ class TestTelemetry:
         This test is skipped if prometheus_client is not available.
         """
         from src.gateway.governance.ftra.node_factory import (
-            FTRA_PARSE_FAILURES,
             _PROM_AVAILABLE,
+            FTRA_PARSE_FAILURES,
             create_ftra_node,
         )
 
@@ -1606,7 +1608,7 @@ class TestFtraIntegration:
             # (for READ_ONLY and REVERSIBLE actions, the node should return CLEAR)
             if not expected_hitl:
                 state = {
-                    "execution_plan_output": self._plan_dict([(f"s1", action_name)]),
+                    "execution_plan_output": self._plan_dict([("s1", action_name)]),
                     "evaluation_result": {"confidence": 0.95},
                 }
                 result = node(state)
@@ -1731,7 +1733,7 @@ class TestFtraIntegration:
         mock_tracer.start_as_current_span.return_value.__exit__ = lambda *args: None
 
         with patch("opentelemetry.trace.get_tracer", return_value=mock_tracer):
-            result = node(state)
+            node(state)
 
         # Verify all expected attributes are set
         set_attr_calls = {

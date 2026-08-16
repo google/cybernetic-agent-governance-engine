@@ -489,8 +489,6 @@ class TestFailoverNoDoubleSpend:
         executed concurrently. With fencing enabled, trades that see a
         regressed epoch should be rejected, preventing double-spend.
         """
-        initial_balance = redis_state.balance
-        initial_epoch = redis_state.fence_epoch
 
         # Execute some trades to advance epoch
         for i in range(5):
@@ -538,7 +536,6 @@ class TestFailoverNoDoubleSpend:
         for i in range(5):
             await cbf_with_fencing.execute_trade(amount=1000.0, trade_id=i)
 
-        balance_before = redis_state.balance
         epoch_before = redis_state.fence_epoch
         cbf_with_fencing._last_seen_epoch = epoch_before
 
@@ -632,7 +629,6 @@ class TestFailoverWithoutFencing:
         for i in range(5):
             await cbf_without_fencing.execute_trade(amount=1000.0, trade_id=i)
 
-        balance_before_chaos = redis_state.balance
 
         async def concurrent_unsafe_trade(trade_id: int) -> TradeOutcome:
             """Execute unsafe trade without proper locking."""
@@ -964,7 +960,7 @@ class TestRealCBFIntegration:
         """
         from src.gateway.governance.cbf import ControlBarrierFunction
 
-        mock, _ = mock_redis_client
+        _mock, _ = mock_redis_client
 
         cbf = ControlBarrierFunction()
         cbf._last_seen_epoch = 100

@@ -224,7 +224,9 @@ class ApprovalResumeRequest(BaseModel):
             )
         return value
 
-    from pydantic import model_validator  # type: ignore[misc]  # class-scoped import: pydantic model_validator must be imported inside class body for Pydantic v2 validator registration
+    from pydantic import (
+        model_validator,  # type: ignore[misc]  # class-scoped import: pydantic model_validator must be imported inside class body for Pydantic v2 validator registration
+    )
 
     @model_validator(mode="after")  # type: ignore[misc]
     def _check_rationale_not_empty(self) -> "ApprovalResumeRequest":

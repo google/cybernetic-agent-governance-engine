@@ -28,7 +28,6 @@ import pytest
 
 from src.gateway.governance.defer_queue import DeferQueue, DeferToken
 
-
 # ---------------------------------------------------------------------------
 # fakeredis fixture — reused from test_defer_queue.py pattern
 # ---------------------------------------------------------------------------

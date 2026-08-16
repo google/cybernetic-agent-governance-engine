@@ -143,7 +143,7 @@ def route_after_ftra(state: dict[str, Any]) -> str:
 
 
 def create_ftra_node(
-    config: "FtraNodeConfig | None" = None,
+    config: FtraNodeConfig | None = None,
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
     """Return a LangGraph node function that performs FTRA analysis.
 
@@ -598,7 +598,7 @@ def _detect_truncation(raw: str) -> bool:
     return False
 
 
-def _parse_plan_with_result(raw: Any) -> "ParseResult":
+def _parse_plan_with_result(raw: Any) -> ParseResult:
     """Parse raw execution_plan_output into an ExecutionPlan with structured result.
 
     Returns a ParseResult with failure classification for defensive parsing.

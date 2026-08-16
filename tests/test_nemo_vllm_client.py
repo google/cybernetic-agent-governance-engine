@@ -9,8 +9,9 @@ All tests are hermetic:
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # Warm the real parent-package cache (src.gateway.governance, .nemo, etc.)
 # *before* any test stubs sys.modules["opentelemetry"] with a bare MagicMock.
@@ -230,9 +231,9 @@ class TestVLLMLLMAcall:
     async def test_acall_delegates_to_agenerate(self):
         """_acall delegates to _agenerate and returns the generated content."""
         import sys
-        from langchain_core.messages import HumanMessage
-        from langchain_core.outputs import ChatResult, ChatGeneration
-        from langchain_core.messages import AIMessage
+
+        from langchain_core.messages import AIMessage, HumanMessage
+        from langchain_core.outputs import ChatGeneration, ChatResult
 
         with patch.dict("sys.modules", _minimal_stubs()):
             sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
@@ -265,38 +266,44 @@ class TestTimeoutConstants:
 
     def test_nemo_timeout_default_is_45(self):
         """NEMO_VLLM_TIMEOUT_SECONDS defaults to 45.0."""
-        import sys
         import os
+        import sys
         env = {k: v for k, v in os.environ.items() if k != "NEMO_VLLM_TIMEOUT_SECONDS"}
 
         with patch.dict("sys.modules", _minimal_stubs()):
             with patch.dict(os.environ, env, clear=True):
                 sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
-                from src.gateway.governance.nemo.vllm_client import NEMO_VLLM_TIMEOUT_SECONDS
+                from src.gateway.governance.nemo.vllm_client import (
+                    NEMO_VLLM_TIMEOUT_SECONDS,
+                )
 
         assert NEMO_VLLM_TIMEOUT_SECONDS == 45.0
 
     def test_advisor_timeout_default_is_90(self):
         """ADVISOR_VLLM_TIMEOUT_SECONDS defaults to 90.0."""
-        import sys
         import os
+        import sys
         env = {k: v for k, v in os.environ.items() if k != "ADVISOR_VLLM_TIMEOUT_SECONDS"}
 
         with patch.dict("sys.modules", _minimal_stubs()):
             with patch.dict(os.environ, env, clear=True):
                 sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
-                from src.gateway.governance.nemo.vllm_client import ADVISOR_VLLM_TIMEOUT_SECONDS
+                from src.gateway.governance.nemo.vllm_client import (
+                    ADVISOR_VLLM_TIMEOUT_SECONDS,
+                )
 
         assert ADVISOR_VLLM_TIMEOUT_SECONDS == 90.0
 
     def test_nemo_timeout_respects_env_override(self):
         """NEMO_VLLM_TIMEOUT_SECONDS can be overridden by environment variable."""
-        import sys
         import os
+        import sys
 
         with patch.dict("sys.modules", _minimal_stubs()):
             with patch.dict(os.environ, {"NEMO_VLLM_TIMEOUT_SECONDS": "30"}):
                 sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
-                from src.gateway.governance.nemo.vllm_client import NEMO_VLLM_TIMEOUT_SECONDS
+                from src.gateway.governance.nemo.vllm_client import (
+                    NEMO_VLLM_TIMEOUT_SECONDS,
+                )
 
         assert NEMO_VLLM_TIMEOUT_SECONDS == 30.0

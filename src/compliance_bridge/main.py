@@ -163,7 +163,10 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # EVIDENCE_CHAIN_BLOCKING=true but EVIDENCE_STREAM_ENABLED=false.
     # This invalid configuration would cause all seal issuances to fail.
     # ------------------------------------------------------------------
-    from .evidence_stream import ConfigurationError, validate_evidence_stream_preconditions
+    from .evidence_stream import (
+        ConfigurationError,
+        validate_evidence_stream_preconditions,
+    )
 
     try:
         validate_evidence_stream_preconditions()
@@ -1144,7 +1147,9 @@ async def defer_inject(
         try:
             from src.gateway.governance.defer_queue import DeferQueue
         except ImportError:
-            from gateway.governance.defer_queue import DeferQueue  # type: ignore[no-redef]  # fallback import path for alternate sys.path configurations
+            from gateway.governance.defer_queue import (
+                DeferQueue,  # type: ignore[no-redef]  # fallback import path for alternate sys.path configurations
+            )
     except (ImportError, RuntimeError) as exc:
         logger.warning("[defer/inject] DeferQueue import failed: %s", exc)
         raise HTTPException(
@@ -1234,7 +1239,9 @@ async def defer_escalate(
         try:
             from src.gateway.governance.defer_queue import DeferQueue
         except ImportError:
-            from gateway.governance.defer_queue import DeferQueue  # type: ignore[no-redef]  # fallback import path for alternate sys.path configurations
+            from gateway.governance.defer_queue import (
+                DeferQueue,  # type: ignore[no-redef]  # fallback import path for alternate sys.path configurations
+            )
     except (ImportError, RuntimeError) as exc:
         logger.warning("[defer/escalate] DeferQueue import failed: %s", exc)
         raise HTTPException(

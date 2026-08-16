@@ -63,6 +63,7 @@ def _classify_violation_wrapper(
     """
     # Import inside function to pick up monkeypatched env vars
     import importlib
+
     import src.gateway.governance.symbolic_governor as sg
     
     # Reload module-level flags
@@ -115,7 +116,7 @@ class TestClassifyViolationDeny:
         """Context cbf_violation flag triggers DENY path."""
         violations = ["Policy threshold exceeded"]
         ctx = {"cbf_violation": True}
-        decision, meta = _classify_violation_wrapper(violations, 0, 0.99, ctx)
+        _decision, meta = _classify_violation_wrapper(violations, 0, 0.99, ctx)
         
         # CBF_CONSTRAINT_CTX is added to violation types when context flag is set
         assert "CBF_CONSTRAINT_CTX" in meta["violation_types"]
@@ -414,7 +415,7 @@ class TestClassifyViolationPause:
         ]
         
         # Has both pausable and soft violations — should NOT be PAUSE
-        decision, meta = _classify_violation_wrapper(violations, 0, 0.50)
+        decision, _meta = _classify_violation_wrapper(violations, 0, 0.50)
         
         # PAUSE only triggers when there are NO soft or narrowable violations
         assert decision != GovernanceDecision.PAUSE
@@ -431,7 +432,7 @@ class TestClassifyViolationMetadata:
     def test_classification_metadata_populated(self):
         """All required metadata fields are populated."""
         violations = ["UCA-7: STPA violation"]
-        decision, meta = _classify_violation_wrapper(violations, 1, 0.99)
+        _decision, meta = _classify_violation_wrapper(violations, 1, 0.99)
         
         # Required fields
         assert "classification_reason" in meta
@@ -452,7 +453,7 @@ class TestClassifyViolationMetadata:
     def test_classification_reason_is_human_readable(self):
         """Classification reason provides meaningful context."""
         violations = ["Safety Violation (RBC/CBF): cash barrier violated"]
-        decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
+        _decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
         
         reason = meta["classification_reason"]
         assert len(reason) > 10
@@ -464,7 +465,7 @@ class TestClassifyViolationMetadata:
             "UCA-7: STPA safety violation",
             "UCA-8: Another STPA violation",
         ]
-        decision, meta = _classify_violation_wrapper(violations, 2, 0.99)
+        _decision, meta = _classify_violation_wrapper(violations, 2, 0.99)
         
         # violation_types should be a set-like list (no duplicates)
         assert len(meta["violation_types"]) == len(set(meta["violation_types"]))
@@ -474,7 +475,7 @@ class TestClassifyViolationMetadata:
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
         violations = ["Rate limit exceeded"]
         
-        decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
+        _decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
         
         assert "pausable_violations" in meta
         assert len(meta["pausable_violations"]) > 0
@@ -485,7 +486,7 @@ class TestClassifyViolationMetadata:
         violations = ["Amount exceeds limit"]
         ctx = {"params": {"amount": 150000}, "threshold_config": {"max_amount": 100000}}
         
-        decision, meta = _classify_violation_wrapper(violations, 0, 0.99, ctx)
+        _decision, meta = _classify_violation_wrapper(violations, 0, 0.99, ctx)
         
         assert "narrowable_violations" in meta
         assert len(meta["narrowable_violations"]) > 0
@@ -514,7 +515,7 @@ class TestClassifyViolationEdgeCases:
         violations = ["Confidence Violation: marginal"]
         
         # 0.70 is not < 0.70, so not confidence-starved
-        decision, meta = _classify_violation_wrapper(violations, 0, 0.70)
+        decision, _meta = _classify_violation_wrapper(violations, 0, 0.70)
         
         # Should be REQUIRE_APPROVAL (soft violation above threshold), not DEFER
         assert decision == GovernanceDecision.REQUIRE_APPROVAL
@@ -526,7 +527,7 @@ class TestClassifyViolationEdgeCases:
         violations = ["Confidence Violation: marginal"]
         
         # 0.699 is < 0.70, so confidence-starved
-        decision, meta = _classify_violation_wrapper(violations, 0, 0.699)
+        decision, _meta = _classify_violation_wrapper(violations, 0, 0.699)
         
         assert decision == GovernanceDecision.DEFER
 
@@ -572,7 +573,7 @@ class TestClassifyViolationEdgeCases:
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
         violations = ["Too many requests: slow down"]
         
-        decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
+        decision, _meta = _classify_violation_wrapper(violations, 0, 0.99)
         
         assert decision == GovernanceDecision.PAUSE
 

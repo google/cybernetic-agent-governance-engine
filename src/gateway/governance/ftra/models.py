@@ -313,7 +313,7 @@ class FtraBoundaryResult:
         *,
         in_registry: bool = True,
         bypassed_ftra_node: bool = False,
-    ) -> "FtraBoundaryResult":
+    ) -> FtraBoundaryResult:
         """Factory method to create FtraBoundaryResult from a TerminalClassification.
 
         Args:

@@ -27,7 +27,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # 1. _is_disabled() reads the EVIDENCE_SLA_DISABLED env var
 # ---------------------------------------------------------------------------
@@ -182,7 +181,7 @@ async def test_fire_sla_alerts_sends_critical_alert() -> None:
         await _fire_sla_alerts(["ISO-42001-4.1"])
 
     mock_notifier.send_critical_alert.assert_awaited_once()
-    findings, audit_id = mock_notifier.send_critical_alert.call_args.args
+    findings, _audit_id = mock_notifier.send_critical_alert.call_args.args
     assert len(findings) == 1
     assert findings[0].control_id == "ISO-42001-4.1"
     assert findings[0].result == "FAIL"

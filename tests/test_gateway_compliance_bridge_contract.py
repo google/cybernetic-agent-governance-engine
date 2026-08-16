@@ -50,7 +50,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Stub heavy optional dependencies so ``compliance_bridge.main`` can be
 # imported in a bare Python environment without Redis, Langfuse, etc.

@@ -191,9 +191,8 @@ class TestStep4CriticalAlert:
     @pytest.mark.asyncio
     async def test_no_alert_when_all_pass(self):
         """No alert is sent when all findings pass."""
-        from src.compliance_bridge.types import CRITICAL_CONTROLS
-
         from src.compliance_bridge.audit_workflow import _step4_alert_on_critical_fail
+        from src.compliance_bridge.types import CRITICAL_CONTROLS
 
         # Create passing findings for each critical control
         findings = [
@@ -217,9 +216,8 @@ class TestStep4CriticalAlert:
     @pytest.mark.asyncio
     async def test_alert_sent_on_critical_fail(self):
         """Alert is sent when a CRITICAL_CONTROLS finding has result=FAIL."""
-        from src.compliance_bridge.types import CRITICAL_CONTROLS
-
         from src.compliance_bridge.audit_workflow import _step4_alert_on_critical_fail
+        from src.compliance_bridge.types import CRITICAL_CONTROLS
 
         critical_control = next(iter(CRITICAL_CONTROLS))
         findings = [self._make_finding(critical_control, "FAIL")]
@@ -240,9 +238,8 @@ class TestStep4CriticalAlert:
     @pytest.mark.asyncio
     async def test_alert_sent_on_critical_error(self):
         """Alert is sent when a CRITICAL_CONTROLS finding has result=ERROR."""
-        from src.compliance_bridge.types import CRITICAL_CONTROLS
-
         from src.compliance_bridge.audit_workflow import _step4_alert_on_critical_fail
+        from src.compliance_bridge.types import CRITICAL_CONTROLS
 
         critical_control = next(iter(CRITICAL_CONTROLS))
         findings = [self._make_finding(critical_control, "ERROR")]
@@ -254,7 +251,7 @@ class TestStep4CriticalAlert:
             "src.compliance_bridge.audit_workflow.create_notifier",
             return_value=mock_notifier,
         ):
-            alerted, targets = await _step4_alert_on_critical_fail(findings, "audit-001")
+            alerted, _targets = await _step4_alert_on_critical_fail(findings, "audit-001")
 
         assert alerted is True
 
@@ -273,7 +270,7 @@ class TestStep4CriticalAlert:
             "src.compliance_bridge.audit_workflow.create_notifier",
             return_value=mock_notifier,
         ):
-            alerted, targets = await _step4_alert_on_critical_fail(findings, "audit-001")
+            alerted, _targets = await _step4_alert_on_critical_fail(findings, "audit-001")
 
         assert alerted is False
         mock_notifier.send_critical_alert.assert_not_called()

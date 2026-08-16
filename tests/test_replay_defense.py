@@ -26,7 +26,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # ReconciliationResult dataclass tests
 # ---------------------------------------------------------------------------
@@ -135,7 +134,7 @@ class TestSequenceInSignedPayload:
             "src.gateway.governance.kms_signer.get_governance_signer",
             return_value=mock_signer,
         ):
-            result = reconciler.reconcile()
+            reconciler.reconcile()
 
         # Verify signer.sign was called with sequence in payload
         assert mock_signer.sign.called
@@ -267,7 +266,7 @@ class TestCBFSequenceValidation:
 
         # When replay defense is disabled, the CBF should accept the payload
         # without calling _validate_sequence
-        cbf = ControlBarrierFunction()
+        ControlBarrierFunction()
 
         # The key test: with replay defense disabled or sequence=0,
         # we should not reject the payload

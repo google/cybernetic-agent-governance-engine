@@ -78,10 +78,10 @@ CAUSAL_CACHE_TTL_SECONDS: int = int(os.getenv("CAUSAL_CACHE_TTL_SECONDS", "60"))
 # with environment variable overrides supported. See schemas/thresholds.py.
 # ---------------------------------------------------------------------------
 from src.gateway.governance.schemas.thresholds import (
+    get_causal_min_samples,
     get_causal_p_value_threshold,
     get_causal_placebo_effect_magnitude,
     get_causal_risk_boundary,
-    get_causal_min_samples,
 )
 
 # These three constants define the three conditions that trigger a CAUSAL LOCK

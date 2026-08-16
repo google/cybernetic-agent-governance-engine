@@ -8,9 +8,9 @@ dependencies are mocked at import time.
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Minimal stub patches so the module can be imported in CI
@@ -246,6 +246,7 @@ class TestGetHttpClient:
     def test_returns_async_client(self):
         """_get_http_client() returns an httpx.AsyncClient instance."""
         import sys
+
         import httpx
 
         with patch.dict("sys.modules", _make_import_patches()):

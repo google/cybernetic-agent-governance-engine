@@ -632,7 +632,7 @@ class TestWaitCommandSupport:
                 return_value=[1, b"COMMITTED", b"99000.0", 10]
             )
 
-            success, msg = await cbf_instance.atomic_verify_and_commit(
+            success, _msg = await cbf_instance.atomic_verify_and_commit(
                 "execute_trade", {"amount": 1000.0}
             )
 

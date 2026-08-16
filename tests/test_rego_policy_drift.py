@@ -18,8 +18,9 @@ Assertions:
 
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 # ---------------------------------------------------------------------------
 # Resolve paths relative to repo root (works from any CWD)

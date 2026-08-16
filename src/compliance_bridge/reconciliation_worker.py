@@ -746,10 +746,12 @@ class GcsLedgerProvider:
                 "GcsLedgerProvider requires GCS_RECONCILIATION_BUCKET to be set."
             )
 
-    def fetch_balance(self, account_id: str) -> "ReconciliationResult":  # type: ignore[override]
+    def fetch_balance(self, account_id: str) -> ReconciliationResult:  # type: ignore[override]
         """Download the balance snapshot from GCS and return a ReconciliationResult."""
         try:
-            from google.cloud import storage  # type: ignore[import-untyped, attr-defined]
+            from google.cloud import (
+                storage,  # type: ignore[import-untyped, attr-defined]
+            )
         except ImportError as exc:
             raise RuntimeError(
                 "google-cloud-storage is required for GcsLedgerProvider. "
@@ -866,7 +868,7 @@ class ObjectStoreLedgerProvider:
 
         return boto3.client("s3", **kwargs)
 
-    def fetch_balance(self, account_id: str) -> "ReconciliationResult":  # type: ignore[override]
+    def fetch_balance(self, account_id: str) -> ReconciliationResult:  # type: ignore[override]
         """Download the balance snapshot from S3-compatible storage."""
         import datetime
         import json as _json

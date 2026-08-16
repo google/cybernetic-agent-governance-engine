@@ -9,9 +9,9 @@ All tests are hermetic:
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Stub the proto and grpc imports so server.py can be imported without them
@@ -215,8 +215,8 @@ class TestServeFunction:
 
     def test_serve_is_coroutine(self):
         """serve() is a coroutine function (not a regular function)."""
-        import sys
         import asyncio
+        import sys
         stubs = _nemo_server_stubs()
 
         with patch.dict("sys.modules", stubs):

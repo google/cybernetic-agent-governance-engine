@@ -18,10 +18,10 @@ This module defines the interfaces that the Gateway expects for governance compo
 decoupling the Gateway from the specific application implementations.
 """
 
-from dataclasses import dataclass, field
 import hashlib
 import json
 import time
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 

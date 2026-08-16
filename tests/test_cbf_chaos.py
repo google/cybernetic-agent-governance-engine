@@ -256,7 +256,7 @@ def test_cbf_redis_reconnects_after_transient_failure():
 def test_cbf_noscript_error_triggers_reload_and_retry():
     """CBF _evalsha_with_noscript_retry handles NOSCRIPT by reloading the script."""
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=False)
-    cbf, mock_redis_module = _make_cbf(fake_redis)
+    cbf, _mock_redis_module = _make_cbf(fake_redis)
 
     # Prime a fake SHA
     cbf._lua_sha = "fakeshadeadbeef"

@@ -38,7 +38,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Tests: adapter.py — data contracts and helper functions
 # ---------------------------------------------------------------------------
@@ -120,7 +119,10 @@ class TestAttestationBundle:
 
     def test_bundle_to_dict_structure(self) -> None:
         """AttestationBundle.to_dict() must contain all required NexArt API keys."""
-        from src.integrations.nexart.adapter import AttestationBundle, ProjectBundleStepEntry
+        from src.integrations.nexart.adapter import (
+            AttestationBundle,
+            ProjectBundleStepEntry,
+        )
 
         step = ProjectBundleStepEntry(node_name="evaluator")
         bundle = AttestationBundle(
@@ -141,7 +143,10 @@ class TestAttestationBundle:
 
     def test_bundle_to_dict_serializes_steps(self) -> None:
         """AttestationBundle.to_dict() must serialize nested steps."""
-        from src.integrations.nexart.adapter import AttestationBundle, ProjectBundleStepEntry
+        from src.integrations.nexart.adapter import (
+            AttestationBundle,
+            ProjectBundleStepEntry,
+        )
 
         step1 = ProjectBundleStepEntry(node_name="nemo_guardrail")
         step2 = ProjectBundleStepEntry(node_name="evaluator")

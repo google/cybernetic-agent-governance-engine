@@ -203,7 +203,7 @@ class TestExternalLedgerReconcilerHappyPath:
     def test_reconcile_writes_verified_balance_to_redis(self):
         """After reconcile(), the verified balance key exists in Redis."""
         # Arrange
-        mod = _get_module()
+        _get_module()
         r = _make_fakeredis()
         reconciler = self._make_reconciler(r)
 
@@ -225,7 +225,7 @@ class TestExternalLedgerReconcilerHappyPath:
 
     def test_reconcile_sets_redis_ttl_on_write(self):
         """After reconcile(), the Redis key has a TTL set."""
-        mod = _get_module()
+        _get_module()
         r = _make_fakeredis()
         reconciler = self._make_reconciler(r, ttl=120)
 
@@ -241,7 +241,7 @@ class TestExternalLedgerReconcilerHappyPath:
 
     def test_reconcile_writes_verified_at_and_provider_keys(self):
         """reconcile() writes the verified_at and provider metadata keys."""
-        mod = _get_module()
+        _get_module()
         r = _make_fakeredis()
         reconciler = self._make_reconciler(r)
 
@@ -256,7 +256,7 @@ class TestExternalLedgerReconcilerHappyPath:
 
     def test_reconcile_kms_signs_balance_when_signer_available(self):
         """When KMS signer is available, it is called with the balance payload."""
-        mod = _get_module()
+        _get_module()
         r = _make_fakeredis()
         reconciler = self._make_reconciler(r)
 

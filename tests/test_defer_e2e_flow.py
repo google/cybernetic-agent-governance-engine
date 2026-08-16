@@ -173,8 +173,8 @@ class TestDeferE2EFlow:
         """When CAGE_DEFER_ENABLED=false, soft violations fall back to DENY."""
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "false")
         
-        from src.gateway.server.agent_gateway_adapter import handle_check_request
         import src.gateway.server.agent_gateway_adapter as adapter_module
+        from src.gateway.server.agent_gateway_adapter import handle_check_request
         
         # Force the module flag to be False
         original_defer_enabled = adapter_module._DEFER_ENABLED
@@ -449,8 +449,8 @@ class TestNarrowE2EFlow:
         """Test the complete NARROW flow: request → classification → HTTP response."""
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
         
-        from src.gateway.server.agent_gateway_adapter import handle_check_request
         import src.gateway.server.agent_gateway_adapter as adapter_module
+        from src.gateway.server.agent_gateway_adapter import handle_check_request
         
         original_narrow_enabled = adapter_module._NARROW_ENABLED
         adapter_module._NARROW_ENABLED = True
@@ -503,8 +503,8 @@ class TestNarrowE2EFlow:
         """NARROW must preserve action semantics — only clamp, not transform."""
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
         
-        from src.gateway.server.agent_gateway_adapter import handle_check_request
         import src.gateway.server.agent_gateway_adapter as adapter_module
+        from src.gateway.server.agent_gateway_adapter import handle_check_request
         
         original_narrow_enabled = adapter_module._NARROW_ENABLED
         adapter_module._NARROW_ENABLED = True
@@ -575,8 +575,8 @@ class TestPauseE2EFlow:
         """Test the complete PAUSE flow: request → classification → HTTP response."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
         
-        from src.gateway.server.agent_gateway_adapter import handle_check_request
         import src.gateway.server.agent_gateway_adapter as adapter_module
+        from src.gateway.server.agent_gateway_adapter import handle_check_request
         
         original_pause_enabled = adapter_module._PAUSE_ENABLED
         adapter_module._PAUSE_ENABLED = True
@@ -638,8 +638,8 @@ class TestPauseE2EFlow:
         """PAUSE response includes Retry-After header for client polling."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
         
-        from src.gateway.server.agent_gateway_adapter import handle_check_request
         import src.gateway.server.agent_gateway_adapter as adapter_module
+        from src.gateway.server.agent_gateway_adapter import handle_check_request
         
         original_pause_enabled = adapter_module._PAUSE_ENABLED
         adapter_module._PAUSE_ENABLED = True

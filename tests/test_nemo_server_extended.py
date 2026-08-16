@@ -33,7 +33,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Shared stub factory (mirrors test_nemo_server.py for hermetic isolation)
 # ---------------------------------------------------------------------------

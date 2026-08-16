@@ -43,7 +43,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Concrete Protocol implementations for runtime testing
 # (structural duck-typing — no inheritance required per PEP 544)
@@ -505,8 +504,9 @@ class TestComplianceMetricsModel:
 
     def test_compliance_metrics_safety_rate_bounds(self) -> None:
         """ComplianceMetrics must reject safety_rate outside [0.0, 1.0]."""
-        from src.compliance_bridge.types import ComplianceMetrics
         from pydantic import ValidationError
+
+        from src.compliance_bridge.types import ComplianceMetrics
 
         with pytest.raises(ValidationError):
             ComplianceMetrics(
@@ -546,8 +546,9 @@ class TestOscalFindingModel:
 
     def test_oscal_finding_is_frozen(self) -> None:
         """OscalFinding must be frozen (immutable) after construction."""
-        from src.compliance_bridge.types import OscalFinding
         from pydantic import ValidationError
+
+        from src.compliance_bridge.types import OscalFinding
 
         f = OscalFinding(
             control_id="A.9.2",

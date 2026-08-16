@@ -194,8 +194,6 @@ import json as _json
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 
-from config.settings import Config
-
 
 def create_execution_analyst_agent(model_name: str = Config.MODEL_REASONING):  # type: ignore[assignment, no-untyped-def]
     """Factory to create execution analyst agent.

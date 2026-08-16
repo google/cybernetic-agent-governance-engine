@@ -228,7 +228,7 @@ class EvidenceRecord:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "EvidenceRecord":
+    def from_dict(cls, data: dict[str, Any]) -> EvidenceRecord:
         """Deserialize from dict, auto-detecting schema version."""
         # Parse timestamp if it's a string
         timestamp = data.get("timestamp")

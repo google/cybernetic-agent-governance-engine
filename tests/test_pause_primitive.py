@@ -42,14 +42,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.gateway.governance.pause_primitive import (
+    _EXPIRY_ZSET,
+    _KEY_PREFIX,
     PauseManager,
     PauseReason,
     PauseState,
     PauseStatus,
     ResumeResult,
     build_resume_endpoint,
-    _KEY_PREFIX,
-    _EXPIRY_ZSET,
 )
 
 pytestmark = pytest.mark.unit
@@ -100,7 +100,7 @@ def mock_redis():
                 count += 1
         return count
     
-    async def zrangebyscore(name: str, min_score: float | str, max_score: float | str, 
+    async def zrangebyscore(name: str, min_score: float | str, max_score: float | str,
                             start: int = 0, num: int = 100):
         results = []
         for member, score in zset_storage.items():
@@ -164,11 +164,11 @@ def mock_redis():
                             storage[key][k] = v if isinstance(v, str) else str(v)
                     results.append(1)
                 elif cmd[0] == "zadd":
-                    name, mapping = cmd[1], cmd[2]
+                    _name, mapping = cmd[1], cmd[2]
                     zset_storage.update(mapping)
                     results.append(len(mapping))
                 elif cmd[0] == "zrem":
-                    name, members = cmd[1], cmd[2]
+                    _name, members = cmd[1], cmd[2]
                     count = 0
                     for m in members:
                         if m in zset_storage:
@@ -639,7 +639,7 @@ class TestResumeEndpoint:
                 "src.gateway.infrastructure.redis_client.redis_client",
                 MagicMock(),
             ):
-                status, body = await handle_resume_request(
+                status, _body = await handle_resume_request(
                     "token-with-context",
                     resume_context=resume_context,
                 )

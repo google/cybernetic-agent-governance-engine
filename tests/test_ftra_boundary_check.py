@@ -37,7 +37,6 @@ from src.gateway.governance.ftra.models import (
     TerminalClassification,
 )
 
-
 # ---------------------------------------------------------------------------
 # FtraBoundaryResult Unit Tests
 # ---------------------------------------------------------------------------
@@ -148,7 +147,7 @@ def symbolic_governor(
     mock_opa_client: MagicMock,
     mock_safety_filter: MagicMock,
     mock_consensus_engine: MagicMock,
-) -> "SymbolicGovernor":
+) -> SymbolicGovernor:
     """Create a SymbolicGovernor instance with mocked dependencies."""
     from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
@@ -168,7 +167,7 @@ class TestBoundaryCheckDisabledByDefault:
     @pytest.mark.asyncio
     async def test_boundary_check_disabled_by_default(
         self,
-        symbolic_governor: "SymbolicGovernor",
+        symbolic_governor: SymbolicGovernor,
     ) -> None:
         """Verify boundary check is skipped when CAGE_FTRA_BOUNDARY_ENABLED is not set.
 
@@ -204,7 +203,7 @@ class TestBoundaryCheckDisabledByDefault:
     @pytest.mark.asyncio
     async def test_boundary_check_enabled_when_flag_true(
         self,
-        symbolic_governor: "SymbolicGovernor",
+        symbolic_governor: SymbolicGovernor,
     ) -> None:
         """Verify boundary check runs when CAGE_FTRA_BOUNDARY_ENABLED=true."""
         with patch.dict(os.environ, {"CAGE_FTRA_BOUNDARY_ENABLED": "true"}):
@@ -242,7 +241,7 @@ class TestBoundaryCheckClassifiesDirectHttpBypass:
     @pytest.mark.asyncio
     async def test_boundary_check_classifies_direct_http_bypass(
         self,
-        symbolic_governor: "SymbolicGovernor",
+        symbolic_governor: SymbolicGovernor,
     ) -> None:
         """Verify boundary check catches actions that would bypass in-graph ftra_node.
 
@@ -279,7 +278,7 @@ class TestBoundaryCheckClassifiesDirectHttpBypass:
     @pytest.mark.asyncio
     async def test_boundary_check_allows_read_only_actions(
         self,
-        symbolic_governor: "SymbolicGovernor",
+        symbolic_governor: SymbolicGovernor,
     ) -> None:
         """Verify READ_ONLY actions pass through without HITL requirement."""
         with patch.dict(os.environ, {"CAGE_FTRA_BOUNDARY_ENABLED": "true"}):
@@ -311,7 +310,7 @@ class TestBoundaryCheckClassifiesDirectHttpBypass:
     @pytest.mark.asyncio
     async def test_boundary_check_fails_closed_for_unknown_action(
         self,
-        symbolic_governor: "SymbolicGovernor",
+        symbolic_governor: SymbolicGovernor,
     ) -> None:
         """Verify unknown actions fail closed to IRREVERSIBLE_TERMINAL."""
         with patch.dict(os.environ, {"CAGE_FTRA_BOUNDARY_ENABLED": "true"}):
@@ -411,7 +410,7 @@ class TestPrometheusMetrics:
     @pytest.mark.asyncio
     async def test_prometheus_counter_increments_on_hitl_required(
         self,
-        symbolic_governor: "SymbolicGovernor",
+        symbolic_governor: SymbolicGovernor,
     ) -> None:
         """Verify Prometheus counter increments for hitl_required result."""
         # Skip if prometheus_client not installed

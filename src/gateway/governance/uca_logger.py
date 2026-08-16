@@ -377,7 +377,9 @@ class UCALogger:
             return
 
         try:
-            from src.compliance_bridge.storage import WORMStorage  # type: ignore[attr-defined]
+            from src.compliance_bridge.storage import (
+                WORMStorage,  # type: ignore[attr-defined]
+            )
 
             region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
             await WORMStorage.write(
