@@ -104,8 +104,11 @@ _REDIS_KEY_SEQUENCE_LAST_ACCEPTED = "reconciliation:sequence:last_accepted"
 # ---------------------------------------------------------------------------
 # When enabled, CBF validates fence epoch hasn't regressed after failover.
 # This detects stale reads from replicas that haven't caught up to primary.
+# DEFAULT CHANGED (peer review Fix A2): Enabled by default to provide failover
+# protection out-of-box. Operators can disable with CAGE_REDIS_SYNCHRONOUS_REPLICATION=false.
+# Cross-region impact: US_FED, EU_ECB, APAC_MAS all benefit from failover safety.
 _FENCE_EPOCH_ENABLED: bool = os.environ.get(
-    "CAGE_REDIS_SYNCHRONOUS_REPLICATION", "false"
+    "CAGE_REDIS_SYNCHRONOUS_REPLICATION", "true"
 ).lower() in ("true", "1", "yes")
 
 # Redis key for fence epoch counter (never TTL'd)
@@ -117,7 +120,10 @@ _REDIS_KEY_FENCE_EPOCH = "safety:fence_epoch"
 # When CAGE_REDIS_WAIT_REPLICAS > 0, CBF will call Redis WAIT after fence
 # epoch increment to ensure the epoch is replicated before returning.
 # https://redis.io/commands/wait/
-_WAIT_REPLICAS: int = int(os.environ.get("CAGE_REDIS_WAIT_REPLICAS", "0"))
+# DEFAULT CHANGED (peer review Fix A1): Enabled by default (1 replica) to ensure
+# durability before returning success to caller. Set CAGE_REDIS_WAIT_REPLICAS=0 to disable.
+# Cross-region impact: US_FED, EU_ECB, APAC_MAS all benefit from replication guarantee.
+_WAIT_REPLICAS: int = int(os.environ.get("CAGE_REDIS_WAIT_REPLICAS", "1"))
 _WAIT_TIMEOUT_MS: int = int(os.environ.get("CAGE_REDIS_WAIT_TIMEOUT_MS", "1000"))
 
 # Sentinel awareness (Phase 4.3 stretch goal)

@@ -309,10 +309,14 @@ _GCS_BUCKET: str = os.environ.get("EVIDENCE_STREAM_GCS_BUCKET", "")
 _KMS_SIGN: bool = os.environ.get("EVIDENCE_STREAM_KMS_SIGN", "false").lower() == "true"
 
 # EVIDENCE_CHAIN_BLOCKING: When "true", seal issuance blocks until evidence commit
-# succeeds. When "false" (default), current fire-and-forget behavior is preserved.
+# succeeds. When "false", fire-and-forget behavior is used (lower latency, weaker guarantee).
 # This flag mitigates risk R-06 (evidence-of-execution claims overclaimed).
+# DEFAULT CHANGED (peer review Fix B): Enabled by default to ensure evidence durability
+# before execution proceeds. This guarantees audit trail integrity at the cost of ~5ms latency.
+# Operators can disable with EVIDENCE_CHAIN_BLOCKING=false if latency is critical.
+# Cross-region impact: US_FED, EU_ECB, APAC_MAS all require evidence durability for compliance.
 _EVIDENCE_CHAIN_BLOCKING: bool = (
-    os.environ.get("EVIDENCE_CHAIN_BLOCKING", "false").lower() == "true"
+    os.environ.get("EVIDENCE_CHAIN_BLOCKING", "true").lower() == "true"
 )
 
 # Default timeout for blocking evidence commits (seconds)
