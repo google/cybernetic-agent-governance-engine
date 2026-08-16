@@ -844,23 +844,17 @@ async def trigger_refinement(req: RefinementTriggerRequest):  # type: ignore[no-
 # ---------------------------------------------------------------------------
 # NeMo Refinement Proposal/Approval Flow (Priority 2 — Evidentiary Independence)
 #
-# CRITICAL CHANGE: The NeMo hot-reload is no longer autonomous.
+# The NeMo hot-reload requires human approval.
 #
-# Previous flow (recursive self-authentication):
-#   Langfuse webhook → KFP → POST /v1/nemo/apply-refinement → instant reload
-#   The system modified its own governance rules based on its own telemetry.
-#
-# New flow (human-gated):
+# Flow:
 #   Langfuse webhook → KFP → POST /v1/nemo/propose-refinement → STAGED
 #   Human risk officer → POST /v1/nemo/approve-refinement/{id} → APPLIED
 #
-# ENV: Set NEMO_AUTO_APPLY_ENABLED=true to restore legacy auto-apply
-#      (dev/test only — MUST be false in production).
+# This eliminates the recursive self-authentication loop where the system's
+# telemetry could autonomously modify its own governance rules.
+#
+# v3.0.0 Breaking Change: NEMO_AUTO_APPLY_ENABLED has been removed.
 # ---------------------------------------------------------------------------
-
-_NEMO_AUTO_APPLY: bool = (
-    os.environ.get("NEMO_AUTO_APPLY_ENABLED", "false").lower() == "true"
-)
 
 # In-memory proposal store (production: replace with Redis or DB)
 _refinement_proposals: dict[str, dict] = {}
@@ -1037,85 +1031,54 @@ async def list_pending_nemo_proposals():  # type: ignore[no-untyped-def]
 
 @app.post("/v1/nemo/apply-refinement")
 async def apply_nemo_refinement(req: NeMoApplyRefinementRequest):  # type: ignore[no-untyped-def]
-    """GATED: NeMo hot-reload now routes through the proposal/approval flow.
+    """NeMo hot-reload routes through the proposal/approval flow.
 
-    In production (NEMO_AUTO_APPLY_ENABLED=false, default):
-      Stages a proposal and returns ``{"status": "pending_approval"}``.
-      The caller must then approve via POST /v1/nemo/approve-refinement/{id}.
+    v3.0.0 Breaking Change: Auto-apply has been removed. This endpoint now
+    always stages a proposal and returns ``{"status": "pending_approval"}``.
+    The caller must then approve via POST /v1/nemo/approve-refinement/{id}.
 
-    In dev/test (NEMO_AUTO_APPLY_ENABLED=true):
-      Preserves legacy auto-apply behaviour with an audit WARNING.
+    This eliminates the recursive self-authentication loop where the system's
+    telemetry could autonomously modify its own governance rules.
 
-    This gating eliminates the recursive self-authentication loop where
-    the system's telemetry autonomously modified its own governance rules.
+    Satisfies:
+      - EU AI Act Article 14 (human oversight of high-risk AI systems)
+      - ISO 42001 A.7.2 (accountability — reviewer identity attributed)
     """
-    if not _NEMO_AUTO_APPLY:
-        # Production: route through proposal flow
-        logger.info(
-            "[NeMo/Refinement] Auto-apply DISABLED — routing to proposal flow. "
-            "control_id=%s source=%s",
-            req.control_id,
-            req.source,
-        )
-        # Delegate to the propose endpoint
-        import uuid as _uuid
+    import uuid as _uuid
 
-        proposal_id = str(_uuid.uuid4())
-        proposal = {
-            "proposal_id": proposal_id,
-            "control_id": req.control_id,
-            "verdict": req.verdict,
-            "source": req.source,
-            "staged_at": datetime.now(timezone.utc).isoformat(),
-            "status": "staged",
-            "reviewer": None,
-            "rationale": None,
-        }
-        _refinement_proposals[proposal_id] = proposal
-
-        return {
-            "status": "pending_approval",
-            "proposal_id": proposal_id,
-            "control_id": req.control_id,
-            "message": (
-                "Auto-apply is disabled in production. A risk officer must "
-                f"approve via POST /v1/nemo/approve-refinement/{proposal_id}"
-            ),
-        }
-
-    # Dev/test: legacy auto-apply with audit warning
-    logger.warning(
-        "⚠️ [NeMo/Refinement] NEMO_AUTO_APPLY_ENABLED=true — applying "
-        "refinement WITHOUT human approval. This is NOT acceptable in "
-        "production (recursive self-authentication vulnerability)."
+    logger.info(
+        "[NeMo/Refinement] Routing to proposal flow. control_id=%s source=%s",
+        req.control_id,
+        req.source,
     )
+
+    proposal_id = str(_uuid.uuid4())
+    proposal = {
+        "proposal_id": proposal_id,
+        "control_id": req.control_id,
+        "verdict": req.verdict,
+        "source": req.source,
+        "staged_at": datetime.now(timezone.utc).isoformat(),
+        "status": "staged",
+        "reviewer": None,
+        "rationale": None,
+    }
+    _refinement_proposals[proposal_id] = proposal
 
     current_span = trace.get_current_span()
     if current_span and current_span.is_recording():
         current_span.set_attribute("ai.refinement.apply.control_id", req.control_id)
         current_span.set_attribute("ai.refinement.apply.source", req.source)
-        current_span.set_attribute("ai.refinement.apply.verdict", req.verdict[:120])
-        current_span.set_attribute("ai.refinement.auto_apply", True)
-
-    try:
-        from src.gateway.governance.langgraph_harness.nemo_node_factory import (
-            reload_nemo_rails,
-        )
-
-        await reload_nemo_rails()
-        logger.info("[NeMo/Refinement] NeMo rails singleton reloaded (auto-apply).")
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"NeMo rails reload failed: {exc}",
-        ) from exc
+        current_span.set_attribute("ai.refinement.proposal_id", proposal_id)
 
     return {
-        "status": "applied",
+        "status": "pending_approval",
+        "proposal_id": proposal_id,
         "control_id": req.control_id,
-        "source": req.source,
-        "reload": True,
-        "auto_apply_warning": "Applied without human approval (dev/test mode).",
+        "message": (
+            "Refinement proposal staged. A risk officer must "
+            f"approve via POST /v1/nemo/approve-refinement/{proposal_id}"
+        ),
     }
 
 
