@@ -767,15 +767,31 @@ class GcsLedgerProvider:
         raw = blob.download_as_text()
         data = _json.loads(raw)
 
-        return ReconciliationResult(  # type: ignore[call-arg]
-            balance=float(data.get("balance", 0.0)),
-            currency=data.get("currency", "USD"),
-            provider="gcs",
-            fetched_at=datetime.datetime.fromisoformat(
-                data.get("fetched_at", datetime.datetime.now(datetime.timezone.utc).isoformat())
-            ),
-            kms_signature=data.get("kms_signature"),
-            account_id=account_id,
+        # Map the GCS snapshot schema to ReconciliationResult fields:
+        #   - "balance" or "balances.{account_id}" -> balance_usd
+        #   - "timestamp" -> verified_at (converted to Unix float)
+        #   - "kms_signature" -> signature (if present)
+        balances = data.get("balances", {})
+        balance_value = balances.get(account_id, balances.get("default_account", 0.0))
+        if not balance_value and "balance" in data:
+            balance_value = data["balance"]
+
+        # Parse timestamp if present, otherwise use current time
+        verified_at = time.time()
+        if "timestamp" in data:
+            ts_str = data["timestamp"]
+            try:
+                dt = datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                verified_at = dt.timestamp()
+            except (ValueError, AttributeError):
+                pass  # Use current time as fallback
+
+        return ReconciliationResult(
+            source="gcs",
+            balance_usd=float(balance_value),
+            verified_at=verified_at,
+            signature=data.get("kms_signature", ""),
+            raw_response=data,
         )
 
 
@@ -878,18 +894,28 @@ class ObjectStoreLedgerProvider:
         raw = response["Body"].read().decode("utf-8")
         data = _json.loads(raw)
 
-        return ReconciliationResult(  # type: ignore[call-arg]
-            balance=float(data.get("balance", 0.0)),
-            currency=data.get("currency", "USD"),
-            provider="s3",
-            fetched_at=datetime.datetime.fromisoformat(
-                data.get(
-                    "fetched_at",
-                    datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                )
-            ),
-            kms_signature=data.get("kms_signature"),
-            account_id=account_id,
+        # Map the S3 snapshot schema to ReconciliationResult fields
+        balances = data.get("balances", {})
+        balance_value = balances.get(account_id, balances.get("default_account", 0.0))
+        if not balance_value and "balance" in data:
+            balance_value = data["balance"]
+
+        # Parse timestamp if present, otherwise use current time
+        verified_at = time.time()
+        if "timestamp" in data:
+            ts_str = data["timestamp"]
+            try:
+                dt = datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                verified_at = dt.timestamp()
+            except (ValueError, AttributeError):
+                pass
+
+        return ReconciliationResult(
+            source="s3",
+            balance_usd=float(balance_value),
+            verified_at=verified_at,
+            signature=data.get("kms_signature", ""),
+            raw_response=data,
         )
 
 
