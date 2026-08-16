@@ -8,6 +8,23 @@
 # Original copyright notice preserved per Apache 2.0 Section 4(b):
 # Copyright (c) LalaSkye contributors
 # Licensed under the Apache License, Version 2.0
+#
+# ---------------------------------------------------------------------------
+# Model Scope & Distributed Extensions (peer review Fix C)
+# ---------------------------------------------------------------------------
+# This model covers SINGLE-REQUEST concurrency within the governance pipeline
+# (21 reachable states). It proves the No-Direct-Bind invariant holds for all
+# interleavings of the concurrent CBF/OPA tier evaluations within one request.
+#
+# For MULTI-AGENT cross-Redis contention (distributed locking, split-brain
+# scenarios, cross-shard coordination), see: proof/distributed_cbf_model.py
+#
+# The actuator seal check (routing_seal.verify_seal()) is a verified
+# precondition in the routing_seal module. See: src/gateway/governance/routing_seal.py
+# The seal verification is not modeled here because it is a distinct trust
+# boundary — the actuator independently verifies the seal was issued by the
+# governance pipeline, providing defense-in-depth.
+# ---------------------------------------------------------------------------
 
 """
 CAGE No-Direct-Bind Proof — Exhaustive State-Space Enumerator
