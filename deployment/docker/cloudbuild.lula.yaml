@@ -12,12 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# IMAGE_REGISTRY can be overridden via kustomize or helm values (default: us-central1-docker.pkg.dev)
-# This file already uses Artifact Registry (us-central1-docker.pkg.dev) rather than gcr.io for the
-# output image. To use a different registry (e.g., ECR, ACR, Docker Hub), replace the image reference:
-#   us-central1-docker.pkg.dev/${_GCP_PROJECT_ID}/governance-stack/lula:0.9.5
-# with your registry prefix and repository path.
-# Set _GCP_PROJECT_ID via --substitutions or GCP trigger substitution variable.
 steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:

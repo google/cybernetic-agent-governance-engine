@@ -106,7 +106,7 @@ class TestFenceEpochIncrements:
                 pipeline_mock.__aexit__ = AsyncMock(return_value=None)
                 mock_redis_client.pipeline = MagicMock(return_value=pipeline_mock)
 
-                await cbf_instance.update_state(1000.0)
+                await cbf_instance._update_state_unsafe(1000.0)
 
                 # Verify incr was called for fence epoch
                 pipeline_mock.incr.assert_called_once()
@@ -283,10 +283,14 @@ class TestFenceEpochRegressionDetection:
 
 
 class TestFenceEpochDisabledByDefault:
-    """Tests that fence epoch validation is disabled by default."""
+    """Tests that fence epoch validation default and toggle behavior."""
 
     def test_fence_epoch_flag_disabled_by_default(self):
-        """R-05: CAGE_REDIS_SYNCHRONOUS_REPLICATION must be disabled by default."""
+        """R-05: CAGE_REDIS_SYNCHRONOUS_REPLICATION is enabled by default (Fix A2).
+        
+        DEFAULT CHANGED (peer review Fix A2): Enabled by default to provide failover
+        protection out-of-box. Operators can disable with CAGE_REDIS_SYNCHRONOUS_REPLICATION=false.
+        """
         # Save original and test with clean environment
         original_env = os.environ.get("CAGE_REDIS_SYNCHRONOUS_REPLICATION")
         try:
@@ -300,16 +304,17 @@ class TestFenceEpochDisabledByDefault:
 
             importlib.reload(cbf_module)
 
-            assert cbf_module._FENCE_EPOCH_ENABLED is False
+            # Fix A2: Default is now True for failover safety
+            assert cbf_module._FENCE_EPOCH_ENABLED is True
         finally:
             if original_env is not None:
                 os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"] = original_env
 
-    def test_fence_epoch_flag_enabled_when_set(self):
-        """R-05: CAGE_REDIS_SYNCHRONOUS_REPLICATION enables epoch validation."""
+    def test_fence_epoch_flag_disabled_when_set_to_false(self):
+        """R-05: CAGE_REDIS_SYNCHRONOUS_REPLICATION=false disables epoch validation."""
         original_env = os.environ.get("CAGE_REDIS_SYNCHRONOUS_REPLICATION")
         try:
-            os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"] = "true"
+            os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"] = "false"
 
             import importlib
 
@@ -317,7 +322,7 @@ class TestFenceEpochDisabledByDefault:
 
             importlib.reload(cbf_module)
 
-            assert cbf_module._FENCE_EPOCH_ENABLED is True
+            assert cbf_module._FENCE_EPOCH_ENABLED is False
         finally:
             if original_env is not None:
                 os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"] = original_env
@@ -576,7 +581,7 @@ class TestWaitCommandSupport:
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
-                await cbf_instance.update_state(1000.0)
+                await cbf_instance._update_state_unsafe(1000.0)
 
             # Verify _sync_to_replicas was called
             mock_sync.assert_called_once()
@@ -700,8 +705,12 @@ class TestWaitTelemetry:
 class TestWaitEnvironmentVariables:
     """Tests for Phase 4.3 WAIT environment variable configuration."""
 
-    def test_wait_replicas_defaults_to_zero(self):
-        """Phase 4.3: CAGE_REDIS_WAIT_REPLICAS defaults to 0 (disabled)."""
+    def test_wait_replicas_defaults_to_one(self):
+        """Phase 4.3: CAGE_REDIS_WAIT_REPLICAS defaults to 1 (enabled, Fix A1).
+        
+        DEFAULT CHANGED (peer review Fix A1): Enabled by default (1 replica) to ensure
+        durability before returning success to caller. Set CAGE_REDIS_WAIT_REPLICAS=0 to disable.
+        """
         original_env = os.environ.get("CAGE_REDIS_WAIT_REPLICAS")
         try:
             if "CAGE_REDIS_WAIT_REPLICAS" in os.environ:
@@ -713,7 +722,8 @@ class TestWaitEnvironmentVariables:
 
             importlib.reload(cbf_module)
 
-            assert cbf_module._WAIT_REPLICAS == 0
+            # Fix A1: Default is now 1 for durability
+            assert cbf_module._WAIT_REPLICAS == 1
         finally:
             if original_env is not None:
                 os.environ["CAGE_REDIS_WAIT_REPLICAS"] = original_env

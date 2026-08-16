@@ -105,7 +105,7 @@ The following documents contain the primary mathematical formalism for the CAGE 
 |---|---|---|
 | [technical-report/10-FORMAL-VERIFICATION.md](technical-report/10-FORMAL-VERIFICATION.md) | CBF safe-set definition, routing seal HMAC proof, provenance chain integrity, fiscal limit invariant | [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py), [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) |
 | [governance/CAUSAL_AND_CBF_GOVERNANCE.md](governance/CAUSAL_AND_CBF_GOVERNANCE.md) | Discrete-time CBF condition `h(S(t+1)) ≥ (1−γ)·h(S(t))`, causal SCM, confabulation scoring, consensus protocol | [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py), [`src/gateway/governance/causal_gatekeeper.py`](../src/gateway/governance/causal_gatekeeper.py) |
-| [governance/GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | 7-tier symbolic governor pipeline, STPA UCAs (FIN-1, FIN-2, UCA-5, UCA-6), mathematical invariants | [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/ontology.py`](../src/gateway/governance/ontology.py) |
+| [governance/GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | 8-tier symbolic governor pipeline (FTRA + 7 in-pipeline tiers), STPA UCAs (FIN-1, FIN-2, UCA-5, UCA-6), mathematical invariants | [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/ontology.py`](../src/gateway/governance/ontology.py) |
 | [governance/NEURO_SYMBOLIC_GOVERNANCE.md](governance/NEURO_SYMBOLIC_GOVERNANCE.md) | Formal safety properties, FRIA zone thresholds (`FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70`), regional compliance invariants | [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py) |
 | [architecture/GATEWAY_ARCHITECTURE.md](architecture/GATEWAY_ARCHITECTURE.md) | CBF layer integration, routing seal enforcement, governance pipeline data-flow | [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py), [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) |
 
@@ -125,7 +125,7 @@ The following documents contain the primary mathematical formalism for the CAGE 
 
 | File | Description |
 |---|---|
-| [GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | CAGE governance framework overview — **7-tier pipeline, STPA UCAs, mathematical invariants** |
+| [GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | CAGE governance framework overview — **8-tier pipeline (FTRA + 7 in-pipeline tiers), STPA UCAs, mathematical invariants** |
 | [AGENTIC_SCOPE_STATEMENT.md](governance/AGENTIC_SCOPE_STATEMENT.md) | Agentic system scope statement |
 | [HUMAN_OVERSIGHT_SCOPE.md](governance/HUMAN_OVERSIGHT_SCOPE.md) | Human oversight scope definition |
 | [CAUSAL_AND_CBF_GOVERNANCE.md](governance/CAUSAL_AND_CBF_GOVERNANCE.md) | Causal & CBF governance — **CBF condition, causal SCM, confabulation, consensus** |

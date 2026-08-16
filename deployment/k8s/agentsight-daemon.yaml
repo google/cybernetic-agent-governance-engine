@@ -11,23 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# NOTE: This DaemonSet requires a namespace with PSA label privileged.
-# DEP-06: Deploy to agentsight namespace, NOT governance-stack.
-# The previous namespace was incorrect per the comment in this file itself.
-# governance-stack uses PSA level "restricted" which blocks privileged containers.
-# agentsight namespace must have PSA label "privileged" applied separately.
-#
-# EU_ECB / APAC_MAS data minimisation note (DEP-06):
-# This DaemonSet uses hostPID=true, hostNetwork=true, and privileged=true for
-# eBPF-based SSL/TLS interception. For EU_ECB deployments, this capability
-# raises GDPR Art. 32 data minimisation concerns: SSL interception captures
-# all pod-level network traffic including potentially personal data.
-# Before deploying to EU_ECB or APAC_MAS, a DPIA (GDPR Art. 35) or equivalent
-# privacy impact assessment must confirm that SSL interception is necessary and
-# proportionate. The "no legal force" sentinel (clinerules §12.4) applies to
-# SR 26-2 references — EU_ECB and APAC_MAS deployments must not cite SR 26-2
-# as the legal basis for this capability.
 
 ---
 apiVersion: v1

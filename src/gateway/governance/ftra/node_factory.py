@@ -144,6 +144,9 @@ def route_after_ftra(state: dict[str, Any]) -> str:
 
 def create_ftra_node(
     config: FtraNodeConfig | None = None,
+    *,
+    registry_path: str | Path | None = None,
+    plan_key: str | None = None,
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
     """Return a LangGraph node function that performs FTRA analysis.
 
@@ -151,6 +154,8 @@ def create_ftra_node(
         config: Optional :class:`FtraNodeConfig` providing extractor functions
             and configuration.  When ``None``, uses default config (matching
             GFA's ``AgentState`` schema).
+        registry_path: **Deprecated**. Pass via ``FtraNodeConfig.registry_path``.
+        plan_key: **Deprecated**. Pass via ``FtraNodeConfig.plan_key``.
 
     Returns:
         An async-compatible node function ``ftra_node(state) -> state_patch``.
@@ -176,6 +181,25 @@ def create_ftra_node(
     from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
     from src.gateway.governance.ftra.graph_analyzer import PlanGraphAnalyzer
     from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
+
+    # Handle deprecated keyword arguments
+    if registry_path is not None or plan_key is not None:
+        warnings.warn(
+            "Passing registry_path/plan_key directly to create_ftra_node() is deprecated. "
+            "Use FtraNodeConfig instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if config is not None:
+            raise ValueError(
+                "Cannot specify both 'config' and deprecated keyword arguments "
+                "(registry_path, plan_key). Use FtraNodeConfig exclusively."
+            )
+        # Build config from deprecated kwargs
+        config = FtraNodeConfig(
+            registry_path=registry_path or _DEFAULT_REGISTRY_PATH,
+            plan_key=plan_key or "execution_plan_output",
+        )
 
     # Determine config source for telemetry
     if config is not None:

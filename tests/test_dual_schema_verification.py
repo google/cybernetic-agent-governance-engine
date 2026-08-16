@@ -13,16 +13,18 @@
 # limitations under the License.
 
 """
-Tests for dual-schema evidence verification (v1.0 → v1.1 migration).
+Tests for evidence verification (v1.1 schema only).
 
-Phase 2.3: Validates schema migration support per Risk R-10 (backward incompatibility).
-The dual-schema verifier must handle both v1.0 and v1.1 records seamlessly,
-ensuring chain continuity during and after migration.
+v3.0.0 Breaking Change: Schema v1.0 support has been removed.
+This test module validates v1.1 schema verification and the migration
+helper functions. Tests that previously verified v1.0 behavior have been
+updated to verify that v1.0 records return appropriate deprecation errors.
 
 Test Coverage:
-    - test_dual_schema_verify_record_handles_1_0_and_1_1
+    - test_v1_1_verification_works_correctly
+    - test_v1_0_records_return_deprecation_error
+    - test_migration_helpers_work_correctly
     - test_cutover_boundary_prev_hash_seeded_from_last_record_not_genesis
-    - test_heterogeneous_schema_chain_verifies_end_to_end
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ from src.compliance_bridge.evidence_stream import (
     EvidenceRecord,
     VerifyResult,
     _detect_schema_version,
-    _link_hash_versioned,
+    _link_hash_v1_1,
     _sha256,
     get_last_v1_0_hash,
     migrate_record_1_0_to_1_1,
@@ -173,29 +175,19 @@ class TestVerifyResult:
         assert result.error is None
 
 
-class TestDualSchemaVerifyRecord:
-    """Tests for the dual-schema verify_record() function."""
+class TestVerifyRecord:
+    """Tests for the verify_record() function (v1.1 only after v3.0.0)."""
 
-    def test_dual_schema_verify_record_handles_1_0_and_1_1(self) -> None:
-        """verify_record() must correctly verify both v1.0 and v1.1 records.
+    def test_v1_0_records_return_deprecation_error(self) -> None:
+        """verify_record() must return deprecation error for v1.0 records.
 
-        This is a key requirement for Risk R-10 (backward incompatibility):
-        the system must be able to verify existing v1.0 records in Redis
-        while also supporting new v1.1 records.
+        v3.0.0 Breaking Change: Schema v1.0 is no longer supported.
+        v1.0 records should return a VerifyResult with valid=False and
+        an error message indicating the schema is deprecated.
         """
         genesis_hash = _sha256("EVIDENCE_STREAM_GENESIS")
 
-        # Create a v1.0 record
-        v1_0_payload = {"type": "AUDIT_FINDING", "details": "test"}
-        v1_0_payload_json = json.dumps(v1_0_payload, sort_keys=True, default=str)
-        v1_0_hash = _link_hash_versioned(
-            prev_hash=genesis_hash,
-            sequence=0,
-            event_type="AUDIT_FINDING",
-            control_id="A.5.3",
-            payload_json=v1_0_payload_json,
-            schema_version="1.0",
-        )
+        # Create a v1.0 record (no schema_version field)
         v1_0_record = {
             "evidence_id": "evt-001",
             "decision": "AUDIT_FINDING",
@@ -204,48 +196,53 @@ class TestDualSchemaVerifyRecord:
             "tool_name": "test_tool",
             "control_id": "A.5.3",
             "prev_hash": genesis_hash,
-            "record_hash": v1_0_hash,
-            "payload": v1_0_payload,
+            "record_hash": "some_hash_value",
+            "payload": {"type": "AUDIT_FINDING"},
             "sequence": 0,
             # No schema_version field (v1.0 indicator)
         }
 
-        # Verify v1.0 record
-        result_1_0 = verify_record(v1_0_record, genesis_hash)
-        assert result_1_0.valid, f"v1.0 verification failed: {result_1_0.error}"
-        assert result_1_0.schema_version == "1.0"
+        # Verify v1.0 record - should return deprecation error
+        result = verify_record(v1_0_record, genesis_hash)
+        assert not result.valid
+        assert result.schema_version == "1.0"
+        assert "deprecated" in result.error.lower()
+        assert "v1.0" in result.error.lower()
 
-        # Create a v1.1 record chained from the v1.0 record
+    def test_v1_1_record_verifies_correctly(self) -> None:
+        """verify_record() must correctly verify v1.1 records."""
+        genesis_hash = _sha256("EVIDENCE_STREAM_GENESIS")
+
+        # Create a v1.1 record
         v1_1_payload = {"type": "GOVERNANCE_DECISION", "decision": "DEFER"}
         v1_1_payload_json = json.dumps(v1_1_payload, sort_keys=True, default=str)
-        v1_1_hash = _link_hash_versioned(
-            prev_hash=v1_0_hash,
-            sequence=1,
+        v1_1_hash = _link_hash_v1_1(
+            prev_hash=genesis_hash,
+            sequence=0,
             event_type="GOVERNANCE_DECISION",
             control_id="A.5.3",
             payload_json=v1_1_payload_json,
-            schema_version="1.1",
             classification_reason="Requires expert review",
         )
         v1_1_record = {
-            "evidence_id": "evt-002",
+            "evidence_id": "evt-001",
             "decision": "GOVERNANCE_DECISION",
             "event_type": "GOVERNANCE_DECISION",
             "timestamp": "2026-01-01T00:01:00+00:00",
             "tool_name": "test_tool",
             "control_id": "A.5.3",
-            "prev_hash": v1_0_hash,
+            "prev_hash": genesis_hash,
             "record_hash": v1_1_hash,
             "payload": v1_1_payload,
-            "sequence": 1,
+            "sequence": 0,
             "schema_version": "1.1",
             "classification_reason": "Requires expert review",
         }
 
         # Verify v1.1 record
-        result_1_1 = verify_record(v1_1_record, v1_0_hash)
-        assert result_1_1.valid, f"v1.1 verification failed: {result_1_1.error}"
-        assert result_1_1.schema_version == "1.1"
+        result = verify_record(v1_1_record, genesis_hash)
+        assert result.valid, f"v1.1 verification failed: {result.error}"
+        assert result.schema_version == "1.1"
 
     def test_verify_record_detects_tampered_hash(self) -> None:
         """verify_record() must detect when record_hash has been tampered with."""
@@ -253,13 +250,12 @@ class TestDualSchemaVerifyRecord:
         payload = {"type": "TEST"}
         payload_json = json.dumps(payload, sort_keys=True, default=str)
 
-        correct_hash = _link_hash_versioned(
+        correct_hash = _link_hash_v1_1(
             prev_hash=genesis_hash,
             sequence=0,
             event_type="TEST",
             control_id="A.5.3",
             payload_json=payload_json,
-            schema_version="1.1",
         )
 
         tampered_record = {
@@ -288,13 +284,12 @@ class TestDualSchemaVerifyRecord:
         payload_json = json.dumps(payload, sort_keys=True, default=str)
 
         # Hash computed with wrong prev_hash
-        record_hash = _link_hash_versioned(
+        record_hash = _link_hash_v1_1(
             prev_hash=wrong_prev_hash,
             sequence=0,
             event_type="TEST",
             control_id="A.5.3",
             payload_json=payload_json,
-            schema_version="1.1",
         )
 
         record = {
@@ -319,6 +314,7 @@ class TestDualSchemaVerifyRecord:
             "prev_hash": "abc",
             "payload": {},
             "sequence": 0,
+            "schema_version": "1.1",
         }
         result = verify_record(record, "abc")
         assert not result.valid
@@ -330,13 +326,12 @@ class TestDualSchemaVerifyRecord:
         payload = {"type": "TEST"}
         payload_json = json.dumps(payload, sort_keys=True, default=str)
 
-        record_hash = _link_hash_versioned(
+        record_hash = _link_hash_v1_1(
             prev_hash=genesis_hash,
             sequence=0,
             event_type="ALLOW",
             control_id="A.5.3",
             payload_json=payload_json,
-            schema_version="1.1",
         )
 
         record = EvidenceRecord(
@@ -356,68 +351,40 @@ class TestDualSchemaVerifyRecord:
 
 
 class TestCutoverBoundary:
-    """Tests for schema cutover boundary handling."""
+    """Tests for schema cutover boundary handling.
 
-    def test_cutover_boundary_prev_hash_seeded_from_last_record_not_genesis(self) -> None:
-        """On cutover, prev_hash MUST be seeded from last v1.0 record, NOT genesis.
+    Note: These tests validate the migration helpers work correctly,
+    but v1.0 verification is no longer supported (v3.0.0 breaking change).
+    """
 
-        Per specs §4.1: Chain continuity requires the first v1.1 record to
-        chain from the last v1.0 record's hash, not from a genesis sentinel.
+    def test_cutover_v1_1_record_chains_from_arbitrary_prev_hash(self) -> None:
+        """v1.1 records can chain from any prev_hash value.
+
+        In a migration scenario, the first v1.1 record would chain from
+        the last v1.0 record's hash. Since v1.0 hashes can no longer be
+        computed or verified, this test validates that v1.1 records
+        chain correctly from an arbitrary prev_hash.
         """
-        genesis_hash = _sha256("EVIDENCE_STREAM_GENESIS")
+        # Simulate a "last v1.0 hash" - in practice this would come from
+        # an existing chain, but we can't compute new v1.0 hashes
+        legacy_hash = _sha256("some_v1_0_record_hash")
 
-        # Create a chain of v1.0 records
-        v1_0_records = []
-        prev_hash = genesis_hash
-
-        for i in range(3):
-            payload = {"type": "AUDIT", "seq": i}
-            payload_json = json.dumps(payload, sort_keys=True, default=str)
-            record_hash = _link_hash_versioned(
-                prev_hash=prev_hash,
-                sequence=i,
-                event_type="AUDIT",
-                control_id="A.5.3",
-                payload_json=payload_json,
-                schema_version="1.0",
-            )
-            record = {
-                "evidence_id": f"evt-{i}",
-                "event_type": "AUDIT",
-                "control_id": "A.5.3",
-                "prev_hash": prev_hash,
-                "record_hash": record_hash,
-                "payload": payload,
-                "sequence": i,
-                # No schema_version (v1.0)
-            }
-            v1_0_records.append(record)
-            prev_hash = record_hash
-
-        # Get the last v1.0 hash using the helper function
-        last_v1_0_hash = get_last_v1_0_hash(v1_0_records)
-
-        # This MUST equal the last record's hash, NOT genesis
-        assert last_v1_0_hash != genesis_hash
-        assert last_v1_0_hash == v1_0_records[-1]["record_hash"]
-
-        # Create the first v1.1 record, chained from last v1.0
+        # Create the first v1.1 record, chained from the legacy hash
         v1_1_payload = {"type": "DEFER", "reason": "cutover"}
         v1_1_payload_json = json.dumps(v1_1_payload, sort_keys=True, default=str)
-        v1_1_hash = _link_hash_versioned(
-            prev_hash=last_v1_0_hash,  # Seeded from last v1.0, NOT genesis
+        v1_1_hash = _link_hash_v1_1(
+            prev_hash=legacy_hash,
             sequence=3,
             event_type="DEFER",
             control_id="A.5.3",
             payload_json=v1_1_payload_json,
-            schema_version="1.1",
             classification_reason="Schema cutover test",
         )
         v1_1_record = {
             "evidence_id": "evt-3",
             "event_type": "DEFER",
             "control_id": "A.5.3",
-            "prev_hash": last_v1_0_hash,
+            "prev_hash": legacy_hash,
             "record_hash": v1_1_hash,
             "payload": v1_1_payload,
             "sequence": 3,
@@ -425,8 +392,8 @@ class TestCutoverBoundary:
             "classification_reason": "Schema cutover test",
         }
 
-        # Verify the v1.1 record chains correctly from the last v1.0 record
-        result = verify_record(v1_1_record, last_v1_0_hash)
+        # Verify the v1.1 record chains correctly
+        result = verify_record(v1_1_record, legacy_hash)
         assert result.valid, f"Cutover verification failed: {result.error}"
 
     def test_get_last_v1_0_hash_returns_genesis_when_no_v1_0_records(self) -> None:
@@ -443,105 +410,63 @@ class TestCutoverBoundary:
         ]
         assert get_last_v1_0_hash(v1_1_records) == genesis_hash
 
+    def test_get_last_v1_0_hash_finds_legacy_records(self) -> None:
+        """get_last_v1_0_hash() should find the last v1.0 record in a mixed list."""
+        # Mixed records with v1.0 records (simulated - hashes are arbitrary)
+        mixed_records = [
+            {"record_hash": "hash0"},  # No schema_version = v1.0
+            {"record_hash": "hash1"},  # No schema_version = v1.0
+            {"schema_version": "1.1", "record_hash": "hash2"},
+            {"schema_version": "1.1", "record_hash": "hash3"},
+        ]
+        # Should return the last v1.0 record's hash (hash1)
+        assert get_last_v1_0_hash(mixed_records) == "hash1"
 
-class TestHeterogeneousSchemaChain:
-    """Tests for chains containing mixed v1.0 and v1.1 records."""
 
-    def test_heterogeneous_schema_chain_verifies_end_to_end(self) -> None:
-        """A chain with mixed v1.0 and v1.1 records must verify completely.
+class TestV1_1OnlyChain:
+    """Tests for v1.1-only chains (post v3.0.0 breaking change)."""
 
-        This tests the full migration scenario:
-        1. Genesis → v1.0 records (legacy)
-        2. v1.0 → v1.1 cutover (migration point)
-        3. v1.1 records (new schema)
+    def test_v1_1_chain_verifies_end_to_end(self) -> None:
+        """A chain of v1.1 records must verify completely.
 
-        Each link in the chain must verify correctly regardless of schema version.
+        v3.0.0 Breaking Change: Only v1.1 records are supported.
+        This tests a pure v1.1 chain scenario.
         """
         genesis_hash = _sha256("EVIDENCE_STREAM_GENESIS")
         all_records = []
         prev_hash = genesis_hash
 
-        # Phase 1: Create v1.0 records (legacy)
-        for i in range(2):
-            payload = {"type": "LEGACY", "index": i}
+        # Create a chain of v1.1 records
+        for i in range(4):
+            payload = {"type": "GOVERNANCE_DECISION", "index": i}
             payload_json = json.dumps(payload, sort_keys=True, default=str)
-            record_hash = _link_hash_versioned(
+
+            # Include different v1.1 fields for variety
+            v1_1_kwargs: dict = {}
+            if i == 0:
+                v1_1_kwargs["classification_reason"] = "Initial decision"
+            elif i == 1:
+                v1_1_kwargs["narrowing_applied"] = {"max_tokens": 500}
+            elif i == 2:
+                v1_1_kwargs["pause_token"] = f"pause-{i}"
+            # i == 3: no extra fields
+
+            record_hash = _link_hash_v1_1(
                 prev_hash=prev_hash,
                 sequence=i,
-                event_type="LEGACY",
+                event_type="GOVERNANCE_DECISION",
                 control_id="A.5.3",
                 payload_json=payload_json,
-                schema_version="1.0",
+                **v1_1_kwargs,
             )
             record = {
-                "evidence_id": f"v1.0-{i}",
-                "event_type": "LEGACY",
+                "evidence_id": f"v1.1-{i}",
+                "event_type": "GOVERNANCE_DECISION",
                 "control_id": "A.5.3",
                 "prev_hash": prev_hash,
                 "record_hash": record_hash,
                 "payload": payload,
                 "sequence": i,
-                # No schema_version field (v1.0)
-            }
-            all_records.append(record)
-            prev_hash = record_hash
-
-        # Phase 2: Cutover to v1.1 (migration point)
-        cutover_payload = {"type": "CUTOVER", "migration": True}
-        cutover_payload_json = json.dumps(cutover_payload, sort_keys=True, default=str)
-        cutover_hash = _link_hash_versioned(
-            prev_hash=prev_hash,
-            sequence=2,
-            event_type="CUTOVER",
-            control_id="A.5.3",
-            payload_json=cutover_payload_json,
-            schema_version="1.1",
-            classification_reason="Schema migration cutover",
-        )
-        cutover_record = {
-            "evidence_id": "v1.1-cutover",
-            "event_type": "CUTOVER",
-            "control_id": "A.5.3",
-            "prev_hash": prev_hash,
-            "record_hash": cutover_hash,
-            "payload": cutover_payload,
-            "sequence": 2,
-            "schema_version": "1.1",
-            "classification_reason": "Schema migration cutover",
-        }
-        all_records.append(cutover_record)
-        prev_hash = cutover_hash
-
-        # Phase 3: Create v1.1 records (new schema)
-        for i in range(2):
-            seq = 3 + i
-            payload = {"type": "NEW_SCHEMA", "index": i}
-            payload_json = json.dumps(payload, sort_keys=True, default=str)
-
-            # Include different v1.1 fields for variety
-            v1_1_kwargs = {}
-            if i == 0:
-                v1_1_kwargs["narrowing_applied"] = {"max_tokens": 500}
-            else:
-                v1_1_kwargs["pause_token"] = f"pause-{i}"
-
-            record_hash = _link_hash_versioned(
-                prev_hash=prev_hash,
-                sequence=seq,
-                event_type="NEW_SCHEMA",
-                control_id="A.5.3",
-                payload_json=payload_json,
-                schema_version="1.1",
-                **v1_1_kwargs,
-            )
-            record = {
-                "evidence_id": f"v1.1-{i}",
-                "event_type": "NEW_SCHEMA",
-                "control_id": "A.5.3",
-                "prev_hash": prev_hash,
-                "record_hash": record_hash,
-                "payload": payload,
-                "sequence": seq,
                 "schema_version": "1.1",
                 **v1_1_kwargs,
             }
@@ -558,10 +483,9 @@ class TestHeterogeneousSchemaChain:
             )
             verification_prev_hash = record["record_hash"]
 
-        # Confirm we verified a mixed chain
+        # Confirm all records are v1.1
         versions = [_detect_schema_version(r) for r in all_records]
-        assert "1.0" in versions, "Chain should contain v1.0 records"
-        assert "1.1" in versions, "Chain should contain v1.1 records"
+        assert all(v == "1.1" for v in versions), "All records should be v1.1"
 
 
 class TestMigrateRecord:
@@ -683,22 +607,8 @@ class TestDetectSchemaVersion:
         assert _detect_schema_version(record) == "1.1"
 
 
-class TestLinkHashVersioned:
-    """Tests for the _link_hash_versioned() function."""
-
-    def test_v1_0_hash_is_deterministic(self) -> None:
-        """v1.0 hash computation must be deterministic."""
-        params = {
-            "prev_hash": "genesis",
-            "sequence": 0,
-            "event_type": "TEST",
-            "control_id": "A.5.3",
-            "payload_json": '{"test": true}',
-            "schema_version": "1.0",
-        }
-        hash1 = _link_hash_versioned(**params)
-        hash2 = _link_hash_versioned(**params)
-        assert hash1 == hash2
+class TestLinkHashV1_1:
+    """Tests for the _link_hash_v1_1() function (v1.1 only after v3.0.0)."""
 
     def test_v1_1_hash_is_deterministic(self) -> None:
         """v1.1 hash computation must be deterministic."""
@@ -708,25 +618,11 @@ class TestLinkHashVersioned:
             "event_type": "TEST",
             "control_id": "A.5.3",
             "payload_json": '{"test": true}',
-            "schema_version": "1.1",
             "classification_reason": "test reason",
         }
-        hash1 = _link_hash_versioned(**params)
-        hash2 = _link_hash_versioned(**params)
+        hash1 = _link_hash_v1_1(**params)
+        hash2 = _link_hash_v1_1(**params)
         assert hash1 == hash2
-
-    def test_v1_0_and_v1_1_hashes_differ(self) -> None:
-        """Same content with different schema versions must produce different hashes."""
-        common_params = {
-            "prev_hash": "genesis",
-            "sequence": 0,
-            "event_type": "TEST",
-            "control_id": "A.5.3",
-            "payload_json": '{"test": true}',
-        }
-        hash_1_0 = _link_hash_versioned(**common_params, schema_version="1.0")
-        hash_1_1 = _link_hash_versioned(**common_params, schema_version="1.1")
-        assert hash_1_0 != hash_1_1
 
     def test_v1_1_fields_affect_hash(self) -> None:
         """v1.1 metadata fields must be included in hash computation."""
@@ -736,18 +632,34 @@ class TestLinkHashVersioned:
             "event_type": "TEST",
             "control_id": "A.5.3",
             "payload_json": '{"test": true}',
-            "schema_version": "1.1",
         }
 
-        hash_base = _link_hash_versioned(**base_params)
-        hash_with_reason = _link_hash_versioned(
+        hash_base = _link_hash_v1_1(**base_params)
+        hash_with_reason = _link_hash_v1_1(
             **base_params, classification_reason="reason"
         )
-        hash_with_narrowing = _link_hash_versioned(
+        hash_with_narrowing = _link_hash_v1_1(
             **base_params, narrowing_applied={"k": "v"}
         )
-        hash_with_pause = _link_hash_versioned(**base_params, pause_token="token")
+        hash_with_pause = _link_hash_v1_1(**base_params, pause_token="token")
 
         # All hashes should be different
         all_hashes = [hash_base, hash_with_reason, hash_with_narrowing, hash_with_pause]
         assert len(set(all_hashes)) == 4, "All v1.1 field combinations should produce unique hashes"
+
+    def test_hash_includes_schema_identifier(self) -> None:
+        """Hash computation includes the v1.1 schema identifier."""
+        # Two hashes with identical data should be the same
+        params = {
+            "prev_hash": "test_prev",
+            "sequence": 5,
+            "event_type": "ALLOW",
+            "control_id": "A.5.3",
+            "payload_json": '{"action": "test"}',
+        }
+        hash1 = _link_hash_v1_1(**params)
+        hash2 = _link_hash_v1_1(**params)
+        assert hash1 == hash2
+        # Hash should be 64 hex characters (SHA-256)
+        assert len(hash1) == 64
+        assert all(c in "0123456789abcdef" for c in hash1)

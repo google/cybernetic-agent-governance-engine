@@ -166,6 +166,10 @@ def test_cbf_watch_error_exhausts_retries():
         def rpush(self, key, value):
             pass
 
+        def incr(self, key):
+            """Fence epoch increment for Phase 4.3."""
+            pass
+
         async def execute(self):
             nonlocal call_count
             call_count += 1
@@ -180,7 +184,7 @@ def test_cbf_watch_error_exhausts_retries():
         with pytest.raises((RuntimeError, _WatchError)):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
-                asyncio.run(cbf.update_state(cost=1000.0))
+                asyncio.run(cbf._update_state_unsafe(cost=1000.0))
 
     # Verify we retried (did not loop once and give up immediately)
     assert call_count >= 1
@@ -225,6 +229,10 @@ def test_cbf_redis_reconnects_after_transient_failure():
         def rpush(self, key, value):
             pass
 
+        def incr(self, key):
+            """Fence epoch increment for Phase 4.3."""
+            pass
+
         async def execute(self):
             nonlocal attempt_count
             attempt_count += 1
@@ -241,8 +249,8 @@ def test_cbf_redis_reconnects_after_transient_failure():
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             with pytest.raises(ConnectionError):
-                # First attempt raises; we confirm update_state tries at least once
-                asyncio.run(cbf.update_state(cost=100.0))
+                # First attempt raises; we confirm _update_state_unsafe tries at least once
+                asyncio.run(cbf._update_state_unsafe(cost=100.0))
 
     assert attempt_count >= 1  # At least one attempt was made
 

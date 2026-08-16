@@ -13,28 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# =============================================================================
-# dev_gpu_toggle.sh — Developer helper to manually scale vLLM GPU Deployments
-# =============================================================================
-#
-# Usage:
-#   ./scripts/dev_gpu_toggle.sh up    # Scale vllm-fast and vllm-reasoning to 1
-#   ./scripts/dev_gpu_toggle.sh down  # Scale vllm-fast and vllm-reasoning to 0
-#
-# Targets:
-#   Namespace:  governance-stack
-#   Deployments: vllm-fast, vllm-reasoning
-#
-# Notes:
-#   • "up"   triggers GKE GPU node provisioning; allow ~5–10 min for node
-#             provision + model weight loading before inference is available.
-#   • "down" triggers GPU node drain ~10 min after both pods are evicted
-#             (gpu_node_pool_min_count=0 in dev.tfvars).
-#   • Requires a valid kubectl context pointing at the dev cluster.
-#     Run: gcloud container clusters get-credentials governance-cluster-2 \
-#              --zone us-central1-a --project <YOUR_PROJECT>
-# =============================================================================
-
 set -euo pipefail
 
 NAMESPACE="governance-stack"

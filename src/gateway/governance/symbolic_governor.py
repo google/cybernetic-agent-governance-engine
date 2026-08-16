@@ -218,16 +218,6 @@ CAGE_NARROW_ENABLED: bool = os.getenv("CAGE_NARROW_ENABLED", "false").lower() ==
 # When disabled, PAUSE candidates fall back to DENY.
 CAGE_PAUSE_ENABLED: bool = os.getenv("CAGE_PAUSE_ENABLED", "false").lower() == "true"
 
-# Feature flag for FTRA boundary check — enforces FTRA validation at the HTTP/controller
-# boundary (validate_action, ext_authz) to catch direct HTTP bypasses of the in-graph
-# ftra_node. Default is disabled (false — opt-in) for zero latency impact on existing
-# deployments. When enabled, runs before all other checks in _run_checks().
-# Risk R-03 mitigation: ensures irreversibility classification happens at controller
-# boundary, not just within LangGraph where ftra_node operates.
-CAGE_FTRA_BOUNDARY_ENABLED: bool = (
-    os.getenv("CAGE_FTRA_BOUNDARY_ENABLED", "false").lower() == "true"
-)
-
 
 # ---------------------------------------------------------------------------
 # Violation Classification (§2.1 CAGE Implementation Specs)
@@ -777,7 +767,7 @@ class SymbolicGovernor:
         """Return the IrreversibilityClassifier instance, lazily initialized.
 
         This ensures we only pay the import cost and registry loading cost
-        when CAGE_FTRA_BOUNDARY_ENABLED=true. The classifier is shared with
+        on first invocation (lazy initialization). The classifier is shared with
         the in-graph ftra_node via the same terminal_registry.json.
 
         Returns:
@@ -977,63 +967,43 @@ class SymbolicGovernor:
         # FTRA boundary check metadata (Phase 3.3)
         _ftra_boundary_result: Any | None = None
 
-        # -1. FTRA Boundary Check (Phase 3.3: Controller-Boundary Enforcement)
-        # Runs BEFORE all other checks when CAGE_FTRA_BOUNDARY_ENABLED=true.
-        # Risk R-03 mitigation: Catches direct HTTP access to /validate-action or
-        # ext_authz that would bypass the in-graph ftra_node.
-        # When disabled (default), this check is skipped entirely — zero latency impact.
-        if CAGE_FTRA_BOUNDARY_ENABLED:
-            with tracer.start_as_current_span("cage.ftra_boundary_gate") as ftra_gate_span:
-                ftra_gate_span.set_attribute(
-                    "langfuse.observation.name", "ftra_boundary_gate"
-                )
-                ftra_gate_span.set_attribute("governance.stage", "ftra_boundary")
-                ftra_gate_span.set_attribute("cage.ftra.boundary_enabled", True)
-                _t_ftra = time.perf_counter()
+        # -1. FTRA Boundary Check (Pre-Pipeline Boundary Gate)
+        # Runs BEFORE all other checks. Risk R-03 mitigation: Catches direct HTTP
+        # access to /validate-action or ext_authz that would bypass the in-graph ftra_node.
+        # This check is MANDATORY — there is no flag to disable it.
+        with tracer.start_as_current_span("cage.ftra_boundary_gate") as ftra_gate_span:
+            ftra_gate_span.set_attribute(
+                "langfuse.observation.name", "ftra_boundary_gate"
+            )
+            ftra_gate_span.set_attribute("governance.stage", "ftra_boundary")
+            _t_ftra = time.perf_counter()
 
-                _ftra_boundary_result = await self._ftra_boundary_check(
-                    tool_name=tool_name,
-                    tool_input=params,
-                    detect_bypass=True,
+            _ftra_boundary_result = await self._ftra_boundary_check(
+                tool_name=tool_name,
+                tool_input=params,
+                detect_bypass=True,
+            )
+
+            # Add FTRA violations to the violations list
+            violations.extend(_ftra_boundary_result.violations)
+
+            # If FTRA requires HITL, log at WARN level for audit
+            if _ftra_boundary_result.requires_hitl:
+                logger.warning(
+                    "⚠️ FTRA Boundary Gate: Action '%s' requires HITL review "
+                    "(classification=%s, bypassed_ftra_node=%s)",
+                    tool_name,
+                    _ftra_boundary_result.classification,
+                    _ftra_boundary_result.bypassed_ftra_node,
                 )
 
-                # Add FTRA violations to the violations list
-                violations.extend(_ftra_boundary_result.violations)
-
-                # If FTRA requires HITL, log at WARN level for audit
-                if _ftra_boundary_result.requires_hitl:
-                    logger.warning(
-                        "⚠️ FTRA Boundary Gate: Action '%s' requires HITL review "
-                        "(classification=%s, bypassed_ftra_node=%s)",
-                        tool_name,
-                        _ftra_boundary_result.classification,
-                        _ftra_boundary_result.bypassed_ftra_node,
-                    )
-                    # Route through _classify_violation() which will return
-                    # DEFER or REQUIRE_APPROVAL based on confidence/context
-                    # The violation string format triggers the HITL path in
-                    # _classify_violation() via "HITL" substring detection
-
-                ftra_gate_span.set_attribute(
-                    "governance.stage.latency_ms",
-                    round((time.perf_counter() - _t_ftra) * 1000, 2),
-                )
-                ftra_gate_span.set_attribute(
-                    "cage.ftra.requires_hitl", _ftra_boundary_result.requires_hitl
-                )
-        else:
-            # Prometheus counter for skipped checks
-            try:
-                from prometheus_client import Counter
-
-                _ftra_boundary_counter = Counter(
-                    "cage_ftra_boundary_checks_total",
-                    "Total FTRA boundary checks performed",
-                    ["result"],
-                )
-                _ftra_boundary_counter.labels(result="skipped").inc()
-            except ImportError:
-                pass  # prometheus_client not installed — skip metrics
+            ftra_gate_span.set_attribute(
+                "governance.stage.latency_ms",
+                round((time.perf_counter() - _t_ftra) * 1000, 2),
+            )
+            ftra_gate_span.set_attribute(
+                "cage.ftra.requires_hitl", _ftra_boundary_result.requires_hitl
+            )
 
         # 0. STAMP/STPA: Unsafe Control Actions
         with tracer.start_as_current_span("cage.stpa_check") as stpa_span:
@@ -1796,7 +1766,7 @@ class SymbolicGovernor:
           Tier 6: DoWhy causal gatekeeper — causal structure is plan-static
           Tier 6b: FRIA — pre-market document obligation, not per-resume check
 
-        This avoids paying the full 7-tier cost (including multi-model consensus
+        This avoids paying the full 8-tier cost (including FTRA pre-pipeline gate, multi-model consensus
         and DoWhy causal computation) for a targeted post-approval recheck.
 
         Args:
@@ -2115,7 +2085,7 @@ class SymbolicGovernor:
         """Validate a structured tool execution payload — Unified Gateway path.
 
         This is the **Single Choke Point** for all tool execution.  Runs the
-        complete 7-tier governance pipeline via ``_run_checks()`` — STPA,
+        complete 8-tier governance pipeline (FTRA + 7 in-pipeline tiers) via ``_run_checks()`` — STPA,
         Confidence, CBF, OPA, Fiscal Limit Pre-Reservation, Consensus, Causal,
         and FRIA — before issuing the routing seal.
 
@@ -2180,7 +2150,7 @@ class SymbolicGovernor:
                             f"but active runtime baseline has evolved to hash '{active_hash}'."
                         )
 
-                # ── Full 7-tier governance pipeline ──────────────────────────
+                # ── Full 8-tier governance pipeline (FTRA + 7 in-pipeline tiers) ──
                 # _run_checks() executes: STPA → Confidence → CBF+OPA (parallel)
                 # → Fiscal Limit Pre-Reservation → Consensus → Causal → FRIA.
                 # The routing seal is issued ONLY after all tiers pass — a seal
@@ -2268,10 +2238,18 @@ class SymbolicGovernor:
 
                     # ── DEFER path (new — §2.1 CAGE Implementation Specs) ──────
                     if decision == GovernanceDecision.DEFER:
-                        # Generate defer_token UUID for tracking and resumption
-                        import uuid
-
-                        defer_token = str(uuid.uuid4())
+                        # Park the deferred context in DeferQueue for later retrieval
+                        # via GET /v1/defer/pending or resolution via POST /v1/defer/{id}/escalate
+                        # Note: _classify_ctx contains the context built from params and result
+                        defer_token = await _park_defer_context(
+                            action=action,
+                            params=params,
+                            metadata=_classify_ctx,
+                            thread_id=params.get("thread_id"),
+                            confidence=_confidence,
+                            classification_meta=classification_meta,
+                            violations=violations,
+                        )
 
                         span.set_attribute("cage.verdict", GovernanceDecision.DEFER)
                         span.set_attribute("cage.defer_token", defer_token)
@@ -2521,3 +2499,106 @@ def assert_safe_operational_state() -> None:
                     }
                 )
             )
+
+
+# ---------------------------------------------------------------------------
+# DeferQueue integration for DEFER path
+# ---------------------------------------------------------------------------
+
+
+async def _park_defer_context(
+    action: str,
+    params: dict[str, Any] | None,
+    metadata: dict[str, Any] | None,
+    thread_id: str | None,
+    confidence: float,
+    classification_meta: dict[str, Any],
+    violations: list[str],
+) -> str:
+    """Park deferred action context in DeferQueue db=1 and return the defer_id.
+
+    Connects to Redis db=1 via REDIS_URL (matching the deployment contract
+    documented in defer_queue.py — the DEFER token store is isolated from the
+    LangGraph checkpointer at db=0) and parks the token through the existing
+    DeferQueue infrastructure. Falls back to a local, unpersisted UUID token
+    if Redis is unavailable — the DEFER verdict is still returned, but external
+    HITL API resolution (GET /v1/defer/pending, POST /v1/defer/{id}/escalate)
+    will not find this token in that fallback case, since it was never written
+    to Redis.
+
+    Args:
+        action:              The action type being deferred.
+        params:              The action parameters (sanitized).
+        metadata:            Request metadata including thread_id.
+        thread_id:           LangGraph thread ID for audit trail correlation.
+        confidence:          Model confidence score [0, 1] at decision time.
+        classification_meta: Classification metadata from _classify_violation().
+        violations:          List of violation strings from OPA/STPA.
+
+    Returns:
+        The defer_id (UUID string) — either from DeferQueue.park() or a local
+        fallback UUID if Redis is unavailable.
+    """
+    import uuid
+
+    from src.gateway.governance.defer_queue import DeferQueue, DeferReason, DeferToken
+
+    # Generate a stable thread_id if not provided
+    effective_thread_id = thread_id or str(uuid.uuid4())
+
+    # Build the OPA input snapshot for later replay/escalation
+    opa_input_snapshot = {
+        "action": action,
+        "params": params or {},
+        "metadata": metadata or {},
+        "violations": violations,
+        "classification_reason": classification_meta.get("classification_reason", ""),
+    }
+
+    # Map classification reason to DeferReason enum
+    reason_str = classification_meta.get("classification_reason", "")
+    if "confidence" in reason_str.lower():
+        defer_reason = DeferReason.CONFIDENCE_BELOW_THRESHOLD
+    elif "context" in reason_str.lower() or "missing" in reason_str.lower():
+        defer_reason = DeferReason.INSUFFICIENT_CONTEXT
+    elif "ambiguous" in reason_str.lower():
+        defer_reason = DeferReason.AMBIGUOUS_SEMANTIC_DISTANCE
+    elif "data" in reason_str.lower() and "starvation" in reason_str.lower():
+        defer_reason = DeferReason.DATA_STARVATION
+    else:
+        defer_reason = DeferReason.CONFIDENCE_BELOW_THRESHOLD
+
+    token = DeferToken(
+        thread_id=effective_thread_id,
+        defer_reason=defer_reason,
+        opa_input_snapshot=opa_input_snapshot,
+        confidence_score=confidence,
+        aarm_vector="AARM-V7",  # Context Window Overflow / Data Starvation
+    )
+
+    async def _park() -> str:
+        import redis.asyncio as aioredis
+
+        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+        client = aioredis.from_url(redis_url, db=1, decode_responses=True)
+        try:
+            queue = DeferQueue(client)
+            return await queue.park(token)
+        finally:
+            await client.aclose()
+
+    try:
+        return await _park()
+    except Exception as exc:
+        # Redis unavailable — fall back to local UUID
+        # The DEFER verdict still holds, but the token is NOT persisted
+        # and cannot be retrieved via GET /v1/defer/pending
+        logger.warning(
+            "DeferQueue park failed (%s) — using local defer_id only "
+            "(token NOT persisted to Redis; HITL API will not find it). "
+            "action=%s thread_id=%s",
+            exc,
+            action,
+            effective_thread_id,
+        )
+        return token.defer_id

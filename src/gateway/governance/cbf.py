@@ -12,35 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ---------------------------------------------------------------------------
-# Formal State-Transition Safety Model — Discrete-Time CBF
-# ---------------------------------------------------------------------------
-# CAGE enforces financial state transitions using a discrete-time Control
-# Barrier Function (CBF), ensuring the admissibility envelope E is never
-# violated at the storage layer.
-#
-# State-transition model:
-#   S(t+1) = f(S(t), I(t), R, E)   subject to   f(S(t), I(t), R) ∈ E
-#
-# Where:
-#   S(t)  = current system state = {cash_balance: float}
-#   I(t)  = agent input = {action: str, amount: float, ...}
-#   R     = compiled domain rules (OPA Rego ASTs, NeMo Colang rails, STPA UCAs)
-#   E     = admissibility envelope = {s ∈ S : h(s) >= 0}
-#
-# Safety function (barrier certificate):
-#   h(S(t)) = cash_balance(t) - min_cash_balance   [h >= 0 iff state is safe]
-#
-# Discrete-time CBF condition (Ames et al., IEEE TAC 2017):
-#   h(S(t+1)) >= (1 - g) * h(S(t))   for all t, where g in (0,1)
-#
-# Enforcement layers:
-#   verify_action():            Evaluates h(S(t+1)) >= (1-g)*h(S(t)) -- read-only
-#   update_state():             Commits S(t) → S(t+1) — WATCH/MULTI/EXEC
-#   atomic_verify_and_commit(): Evaluates AND commits atomically via Lua,
-#                               eliminating the TOCTOU window between phases.
-# ---------------------------------------------------------------------------
-
 """
 Stateful Redis-backed financial invariant enforcer.
 

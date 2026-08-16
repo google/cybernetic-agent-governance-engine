@@ -185,11 +185,11 @@ This is a theorem, not a test result. A test demonstrates that the gate works on
 
 The CAGE governance pipeline is modelled as a deterministic state machine and verified exhaustively using a breadth-first search (BFS) enumerator implemented in [`proof/model.py`. The proof requires no external dependencies beyond the Python standard library.
 
-**Scope of the model.** The tuple covers `SymbolicGovernor._run_checks()` — Tiers 0 through 6b (8 tiers: `stpa`, `confidence`, `cbf`, `opa`, `fiscal`, `consensus`, `causal`, `fria`), with the CBF and OPA tiers evaluated concurrently, giving 8 tuple positions. Tier 0.5 (FTRA) is deliberately outside the tuple: it is a pre-execution gate that runs at the LangGraph graph level, before `_run_checks()` is invoked, and operates on a whole `ExecutionPlan` rather than a single tool call. Its verdict (`CLEAR` | `HITL_REQUIRED` | `BLOCKED`) is recorded separately in the LangGraph state — see [`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py).
+**Scope of the model.** The tuple covers `SymbolicGovernor._run_checks()` — Tiers 0 through 6b (8 tiers: `stpa`, `confidence`, `cbf`, `opa`, `fiscal`, `consensus`, `causal`, `fria`), with the CBF and OPA tiers evaluated concurrently, giving 8 tuple positions. FTRA (the **Pre-Pipeline Boundary Gate**) is deliberately outside the tuple: it is a gateway precondition that runs at the LangGraph graph level, before `_run_checks()` is invoked, and operates on a whole `ExecutionPlan` rather than a single tool call. FTRA is NOT a peer of Tiers 0–6b — those sequential tiers operate per tool call within `_run_checks()`, whereas FTRA operates on the entire execution graph before per-tool-call checks begin. Its verdict (`CLEAR` | `HITL_REQUIRED` | `BLOCKED`) is recorded separately in the LangGraph state — see [`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py).
 
 > **Scope limitation:** The current BFS proof covers the governance state machine (21-state tuple). It does not model the full implementation including the LangGraph harness, Redis state, and the FTRA boundary. A TLA+/Alloy extension to the full implementation is tracked as future work.
 
-> **FTRA exclusion note:** Tier 0.5 (FTRA) is not included in the 21-state BFS state tuple. The automaton provides an under-approximation: HITL-resumption paths are pruned (mapping `ESCALATE`/`ERROR` to terminal `FAIL`), leaving manually-approved trade resumptions outside the verified envelope.
+> **FTRA exclusion note:** FTRA (the Pre-Pipeline Boundary Gate) is not included in the 21-state BFS state tuple. The automaton provides an under-approximation: HITL-resumption paths are pruned (mapping `ESCALATE`/`ERROR` to terminal `FAIL`), leaving manually-approved trade resumptions outside the verified envelope.
 
 **State machine definition:**
 
@@ -246,14 +246,14 @@ Prior to v2.0.0-rc.2, the `SymbolicGovernor` exposed two code paths into `_run_c
 
 | Path | Seal issued? | Satisfies NoDirectBind? |
 | ---- | ------------ | ----------------------- |
-| `validate_action()` | ✅ Yes — after all 7 tiers pass | ✅ Yes |
+| `validate_action()` | ✅ Yes — after all 8 tiers pass | ✅ Yes |
 | `govern()` (pre-fix) | ❌ No — returned `None` | ❌ No — direct-bind shortcut |
 
 A caller that caught `GovernanceError` from the old `govern()` path and proceeded to execution would reach `EXECUTED` without a resolved seal — a direct-bind violation identical to the ungated counterexample above.
 
 **Remediation (v2.0.0-rc.2):**
 
-[`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) now issues a routing seal on approval and returns it as a `str`. The seal is generated via [`routing_seal.generate_seal()`](../../src/gateway/governance/routing_seal.py) inside a `cage.routing_seal` OTel span, after `_run_checks()` has completed all 7 tiers. [`governance_middleware.enforce_governance()`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers. [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) calls `verify_seal()` before executing the trade — a missing or invalid seal produces an immediate `BLOCKED` response.
+[`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) now issues a routing seal on approval and returns it as a `str`. The seal is generated via [`routing_seal.generate_seal()`](../../src/gateway/governance/routing_seal.py) inside a `cage.routing_seal` OTel span, after `_run_checks()` has completed all 8 tiers (FTRA + 7 in-pipeline tiers). [`governance_middleware.enforce_governance()`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers. [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) calls `verify_seal()` before executing the trade — a missing or invalid seal produces an immediate `BLOCKED` response.
 
 Both `govern()` and `validate_action()` now satisfy the invariant. There is no longer any code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`.
 

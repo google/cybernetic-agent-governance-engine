@@ -59,7 +59,7 @@ committed code.
 | Substrate property | CAGE implementation | File |
 |---|---|---|
 | Zero-TOCTOU database commit gate | `atomic_verify_and_commit()` collapses CBF check and state commit into a single Redis Lua script — no Python round-trip between check and write | [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py) |
-| Cryptographic routing seal | HMAC-SHA256 seal issued after full 7-tier pipeline approval; downstream actuators cannot execute without verifying the seal | [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
+| Cryptographic routing seal | HMAC-SHA256 seal issued after full 8-tier pipeline approval (FTRA + 7 in-pipeline tiers); downstream actuators cannot execute without verifying the seal | [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py) |
 | Fail-closed startup assertion | `RuntimeError` at module import time if `CBF_FAIL_OPEN=true` in production — the container fails to start rather than degrading to an unguarded state | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
 | DEFER state machine | 4-state machine (PARK → HYDRATE → REPLAY) prevents binary forced decisions on incomplete context; parked in Redis `db=1` with 4-hour TTL | [`src/gateway/governance/defer_queue.py`](../../src/gateway/governance/defer_queue.py) |
 | Human-gated HITL interrupt | LangGraph `interrupt_before=["governed_trader"]` pauses execution; resumes only on explicit `POST /v1/approvals/{thread_id}/resume` with reviewer identity and rationale | [`src/governed_financial_advisor/graph/graph.py`](../../src/governed_financial_advisor/graph/graph.py) |

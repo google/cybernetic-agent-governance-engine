@@ -12,16 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# DEP-13: EU_ECB compliance gate workflow.
-# Runs EU AI Act, GDPR Art. 44, and DORA Art. 10 compliance checks.
-# This workflow is SCOPED TO EU_ECB ONLY — it must not gate US_FED or APAC_MAS releases.
-#
-# Jurisdictional Hierarchy:
-#   Universal: ISO 42001 (ci.yml)
-#   EU_ECB:    EU AI Act / GDPR / DORA (this workflow)
-#   US_FED:    NIST SP 800-53 / AI 600-1 / FedRAMP (security-scan.yml + ci.yml)
-#   APAC_MAS:  MAS FEAT / Notice 655 / TRM (apac-mas-compliance.yml)
-
 name: "EU_ECB Compliance Gate — EU AI Act / GDPR / DORA"
 
 on:

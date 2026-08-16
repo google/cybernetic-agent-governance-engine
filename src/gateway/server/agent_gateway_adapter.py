@@ -40,7 +40,7 @@ Architecture
                                                       │
                                                       ▼
                                               symbolic_governor.validate_action()
-                                              (full 7-tier CAGE pipeline)
+                                              (full 8-tier CAGE pipeline: FTRA + 7 in-pipeline tiers)
                                                       │
                                   ┌───────────────────┼──────────────────────┐
                                   ▼           ▼        ▼                     ▼
@@ -582,7 +582,7 @@ async def handle_check_request(
     if caller_principal:
         params = {**params, "_caller_principal": caller_principal}
 
-    # ── Run the full CAGE 7-tier governance pipeline ──────────────────────────
+    # ── Run the full CAGE 8-tier governance pipeline (FTRA + 7 in-pipeline tiers) ──
     with tracer.start_as_current_span("cage.ext_authz.check") as span:
         span.set_attribute("cage.tool_name", tool_name)
         span.set_attribute("cage.caller_principal", caller_principal)

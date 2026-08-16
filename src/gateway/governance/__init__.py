@@ -12,27 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ---------------------------------------------------------------------------
-# Lazy-import shim for heavy optional submodules.
-#
-# Importing src.gateway.governance used to eagerly pull in:
-#   • symbolic_governor   → langgraph_harness → nemo.manager → presidio/torch (~6s)
-#   • langgraph_harness   → nemo_node_factory → presidio/spacy/langchain_core (~6s)
-#   • causal_gatekeeper   → dowhy → sklearn/transformers (~1.3s)
-#
-# Because 71 test files import from this package, the eager import cost was
-# paid unconditionally at collection time — even for tests that only need
-# lightweight siblings like contracts.py or safety.py.
-#
-# This __getattr__ shim defers each heavy submodule until its name is first
-# accessed, reducing pytest --collect-only from ~11 s to ~1-2 s for test
-# files that don't actually exercise the NeMo / DoWhy tiers.
-#
-# Production code that uses `from src.gateway.governance import SymbolicGovernor`
-# or `from src.gateway.governance import causal_gatekeeper` is unaffected —
-# the import still happens, just on first access rather than package import.
-# ---------------------------------------------------------------------------
-
 from __future__ import annotations
 
 import importlib

@@ -12,25 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ============================================================================
-# NetworkPolicies for lula-audit CronJob
-#
-# The governance-stack namespace has default-deny-egress and default-deny-ingress
-# policies. These two policies open the minimum required paths for the lula-audit
-# CronJob pods (app=lula) to reach the compliance-bridge Service.
-#
-# Root cause of ipBlock requirement:
-#   Standard Kubernetes NetworkPolicy egress `podSelector` matches direct
-#   pod-to-pod traffic only. When traffic is sent to a Service ClusterIP,
-#   kube-proxy performs DNAT before the NetworkPolicy egress evaluation, so
-#   the destination appears as the ClusterIP address (10.96.0.0/12 range),
-#   not the backing pod IP. An ipBlock covering the Service CIDR is required
-#   to permit this traffic.
-#
-# GKE cage-dev Service CIDR: 10.96.0.0/12 (covers 10.96.0.0–10.111.255.255)
-# compliance-bridge ClusterIP: 10.104.13.240
-# ============================================================================
-
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

@@ -57,13 +57,30 @@ def mock_consensus_engine():
 
 @pytest.fixture
 def symbolic_governor(mock_opa_client, mock_safety_filter, mock_consensus_engine):
+    from src.gateway.governance.ftra.models import FtraBoundaryResult
+
     stpa_validator = GeneratedSTPAValidator()  # Use real validator with default ontology
-    return SymbolicGovernor(
+    governor = SymbolicGovernor(
         opa_client=mock_opa_client,
         safety_filter=mock_safety_filter,
         consensus_engine=mock_consensus_engine,
         stpa_validator=stpa_validator,
     )
+
+    # Mock FTRA boundary check to return a safe result (no HITL required).
+    # This allows tests to focus on STPA violations without being
+    # blocked by the IrreversibilityClassifier.
+    safe_ftra_result = FtraBoundaryResult(
+        requires_hitl=False,
+        irreversibility_score=0.0,
+        classification="READ_ONLY",
+        terminal_match=None,
+        violations=[],
+        bypassed_ftra_node=False,
+    )
+    governor._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
+
+    return governor
 
 
 @pytest.mark.asyncio

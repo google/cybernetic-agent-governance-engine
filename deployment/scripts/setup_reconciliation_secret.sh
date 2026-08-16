@@ -13,44 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# setup_reconciliation_secret.sh — Populate reconciliation-worker-secrets
-#
-# This script is the activation runbook for POAM-2026-038. Run it once after
-# deploying the reconciliation-worker CronJob manifest to populate the required
-# secrets that enable the reconciliation worker to:
-#   1. Read ledger snapshots from GCS
-#   2. Sign balance records with Cloud KMS
-#   3. Write verified balances to Redis
-#
-# Prerequisites:
-#   - kubectl configured with access to the target cluster
-#   - GCS bucket created with ledger snapshot at reconciliation/latest.json
-#   - Cloud KMS key created for HMAC signing
-#   - Service account has roles/storage.objectViewer on the bucket
-#   - Service account has roles/cloudkms.signerVerifier on the KMS key
-#
-# Usage:
-#   # Minimal (GCS provider with KMS signing):
-#   GCS_BUCKET=my-reconciliation-bucket \
-#   KMS_KEY=projects/my-project/locations/us-central1/keyRings/governance/cryptoKeys/balance-signer \
-#     ./deployment/scripts/setup_reconciliation_secret.sh
-#
-#   # Full options:
-#   GCS_BUCKET=my-reconciliation-bucket \
-#   GCS_OBJECT=reconciliation/latest.json \
-#   KMS_KEY=projects/my-project/locations/us-central1/keyRings/governance/cryptoKeys/balance-signer \
-#   NAMESPACE=governance-stack \
-#     ./deployment/scripts/setup_reconciliation_secret.sh
-#
-# Environment Variables:
-#   GCS_BUCKET (required) - GCS bucket name containing ledger snapshots
-#   KMS_KEY    (required) - Full Cloud KMS key resource name for balance signing
-#   GCS_OBJECT (optional) - Object key in bucket (default: reconciliation/latest.json)
-#   NAMESPACE  (optional) - Kubernetes namespace (default: governance-stack)
-#
-# POAM Reference: POAM-2026-038
-# See also: deployment/k8s/reconciliation-worker.yaml
-#
 set -euo pipefail
 
 # Color output for better visibility

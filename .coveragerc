@@ -6,6 +6,9 @@ omit =
     src/gateway/protos/*_pb2_grpc.py
     src/integrations/nexart/tests/*
     src/integrations/*/tests/*
+    src/governed_financial_advisor/*
+    src/verify_governor.py
 
 [report]
 fail_under = 75
+

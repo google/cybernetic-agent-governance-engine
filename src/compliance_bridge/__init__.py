@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 def __getattr__(name: str):  # type: ignore[no-untyped-def]
     """Lazy sub-module resolver for the compliance_bridge package.
 

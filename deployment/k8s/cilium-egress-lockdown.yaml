@@ -12,36 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# =============================================================================
-# CAGE Zero-Trust Network (Z3N) — Cilium Layer-7 Egress Lockdown
-# =============================================================================
-#
-# NIST SP 800-53 Controls: SC-7, AC-4, SI-3
-# ISO 42001: A.6.2 (AI System Lifecycle), A.8.4 (AI System Operation)
-#
-# These CiliumNetworkPolicy resources extend the existing L3/L4 NetworkPolicies
-# in network-policy.yaml and network-policy-hardening.yaml with Layer-7
-# FQDN-aware filtering. Standard Kubernetes NetworkPolicies cannot enforce
-# egress by hostname — a pod could resolve api.openai.com and then freely
-# connect to any IP on port 443. Cilium's DNS proxy intercepts all UDP/53
-# responses and binds the resulting IPs to the allow-list in real time.
-#
-# Prerequisites:
-#   Cilium CNI installed with L7 policy enforcement enabled:
-#   cilium install --set l7Proxy=true --set kubeProxyReplacement=strict
-#   cilium status --wait
-#
-# Verification:
-#   cilium policy get                    # list active policies
-#   cilium monitor --type l7            # watch L7 policy decisions
-#   kubectl exec -n governance-stack <gateway-pod> -- \
-#     curl -sv https://api.openai.com/v1/models   # should succeed
-#   kubectl exec -n governance-stack <gateway-pod> -- \
-#     curl -sv https://malicious.example.com       # should fail (RST)
-#
-# POAM references: POAM-007 (IA-3), POAM-011 (SC-8)
-# =============================================================================
-
 ---
 # =============================================================================
 # Policy 1: Gateway Egress — Strict FQDN allowlist for external LLM APIs

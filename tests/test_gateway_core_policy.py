@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Unit tests for src/gateway/core/policy.py.
 
 All tests are marked pytest.mark.local — no live OPA, Redis, or network

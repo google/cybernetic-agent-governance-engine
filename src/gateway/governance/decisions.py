@@ -122,7 +122,7 @@ class GovernanceDecision(str, Enum):
     Feature flag: CAGE_PAUSE_ENABLED (default: false — opt-in).
     When disabled, PAUSE candidates fall back to DENY.
 
-    ISO 42001 mapping: A.8.4 (AI System Operation Controls)
+    Control mapping: CTRL_PAUSE_001 (see config/control_mappings.json)
     """
 
     NARROW = "NARROW"
@@ -145,7 +145,7 @@ class GovernanceDecision(str, Enum):
     Feature flag: CAGE_NARROW_ENABLED (default: false — opt-in).
     When disabled, NARROW candidates fall back to DEFER or DENY.
 
-    ISO 42001 mapping: A.8.4 (AI System Operation Controls)
+    Control mapping: CTRL_NARROW_001 (see config/control_mappings.json)
     """
 
     REQUIRE_APPROVAL = "REQUIRE_APPROVAL"

@@ -76,10 +76,16 @@ def test_safety_filter_protocol_has_verify_action():
 
 
 def test_safety_filter_protocol_has_update_state():
-    """SafetyFilter protocol must define update_state method."""
-    from src.gateway.governance.contracts import SafetyFilter
+    """SafetyFilter protocol must define _update_state_unsafe method.
+    
+    v3.0.0 breaking change: The public update_state() method was renamed to
+    _update_state_unsafe() to mark it as internal and encourage use of the
+    atomic_verify_and_commit() method instead.
+    """
+    from src.gateway.governance.cbf import ControlBarrierFunction
 
-    assert hasattr(SafetyFilter, "update_state")
+    # The protocol doesn't define this internal method, but the implementation does
+    assert hasattr(ControlBarrierFunction, "_update_state_unsafe")
 
 
 def test_safety_filter_protocol_has_rollback_state():

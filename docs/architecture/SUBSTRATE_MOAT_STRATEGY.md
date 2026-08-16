@@ -245,7 +245,7 @@ The following capabilities are **fully implemented** in v2.0.0 and constitute ge
 
 5. **Multi-Jurisdiction Compliance Registry** — [`ControlRegistry`](../../src/gateway/governance/constants.py:177) with `US_FED`, `EU_ECB`, and `APAC_MAS` profiles, gated on `CAGE_DEPLOYMENT_REGION`, provides a single substrate that satisfies SR 26-2, EU AI Act, DORA, GDPR, and MAS FEAT simultaneously. The registry is domain-agnostic: the same `CTRL_*` enum members and JSON profile mechanism extend to any regulated vertical (pharmaceutical GxP, critical infrastructure, autonomous systems). Neither competitor has a comparable multi-jurisdiction enforcement substrate.
 
-6. **Cryptographic Routing Seal** — [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) issues a short-lived HMAC-SHA256 seal after full 7-tier pipeline approval. Downstream actuators cannot execute by ignoring the governance response — the seal must be verified before execution. This is a cryptographic enforcement contract that neither competitor implements.
+6. **Cryptographic Routing Seal** — [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) issues a short-lived HMAC-SHA256 seal after full 8-tier pipeline (FTRA + 7 in-pipeline tiers) approval. Downstream actuators cannot execute by ignoring the governance response — the seal must be verified before execution. This is a cryptographic enforcement contract that neither competitor implements.
 
 ### 5.2 Where CAGE Is Vulnerable
 
@@ -333,7 +333,7 @@ AGW integrates with: Agent Registry (approved agent/tool catalog), Agent Identit
 | **Policy Primitives** | **Compiled AST Invariants:** STPA UCAs compiled to OPA Rego AST + math-backed CBF. Deterministic, immutable at runtime. | **Delegated Authorization:** IAM policies, Semantic Governance Policies, Model Armor, and Service Extensions. Policies are declarative and evaluated per-request by external GCP services. |
 | **State & Mutability Guard** | **Deterministic Lockbox:** Redis WATCH/MULTI/EXEC + Lua atomic check+commit. Zero TOCTOU window at the write point. | **Pre-execution Network Gate:** IAP validates agent identity and IAM permissions before the request reaches the agent runtime. No database-tier state guard — relies on application-tier enforcement downstream. |
 | **Latency & Performance** | **Asymmetric 4-State DEFER Router:** High-confidence paths bypass blocking gates via async routines. CBF+OPA run concurrently. | **Synchronous Network Interception:** Every request passes through IAP + optional Model Armor + optional Semantic Governance Policy evaluation. Latency scales with the number of delegated authorization services chained. |
-| **Identity Model** | **HMAC Routing Seal:** Short-lived cryptographic token issued after full 7-tier pipeline approval. Verifiable by any downstream actuator. | **SPIFFE ID + mTLS + DPoP:** Cryptographic agent identity enforced at the network layer. Context-Aware Access (CAA) provides end-to-end authentication. Stronger identity primitive than CAGE's HMAC seal. |
+| **Identity Model** | **HMAC Routing Seal:** Short-lived cryptographic token issued after full 8-tier pipeline approval (FTRA + 7 in-pipeline tiers). Verifiable by any downstream actuator. | **SPIFFE ID + mTLS + DPoP:** Cryptographic agent identity enforced at the network layer. Context-Aware Access (CAA) provides end-to-end authentication. Stronger identity primitive than CAGE's HMAC seal. |
 | **Multi-Jurisdiction** | **Regional Compliance Registry:** US_FED / EU_ECB / APAC_MAS profiles with jurisdiction-specific regulatory citations. `CAGE_DEPLOYMENT_REGION` guard on all shared modules. | **Regional Scope:** AGW is regional in scope (per-project, per-region). No built-in multi-jurisdiction compliance registry — regulatory mapping is the operator's responsibility. |
 | **Protocol Support** | **MCP + gRPC + HTTP:** Hybrid server supports MCP tool calls, gRPC streaming, and HTTP REST. | **All HTTP-based traffic:** MCP, A2A, REST, gRPC. MCP-specific attribute parsing for fine-grained tool-level authorization policies. |
 
@@ -387,7 +387,7 @@ For GCP-native deployments, enterprise customers will ask why they need CAGE whe
 The correct positioning is not CAGE vs. AGW, but **CAGE + AGW as a defense-in-depth stack**:
 
 ```
-[Client] → [AGW: mTLS + IAP + Model Armor] → [CAGE Gateway: 7-tier pipeline] → [Redis: atomic CBF] → [Tool Execution]
+[Client] → [AGW: mTLS + IAP + Model Armor] → [CAGE Gateway: 8-tier pipeline] → [Redis: atomic CBF] → [Tool Execution]
 ```
 
 AGW handles: identity authentication, network-layer prompt injection, tool-level IAM authorization.

@@ -168,7 +168,7 @@ This is the **Single Choke Point** for all tool-level governance decisions — t
 }
 ```
 
-**Governance tiers executed** (via [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/symbolic_governor.py)) — full 7-tier pipeline via `_run_checks()`:
+**Governance tiers executed** (via [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/symbolic_governor.py)) — full 8-tier pipeline (FTRA + 7 in-pipeline tiers) via `_run_checks()`:
 
 - **Tier 0 — STPA/STAMP UCA validation:** Runs for all tool names when `stpa_validator` is injected. Checks unsafe control actions (UCA-1 through UCA-6) against `governance_thresholds.json`.
 - **Tier 1 — Agent confidence threshold pre-check:** `execute_trade` only. Fast-fails if `confidence < AGENT_CONFIDENCE_THRESHOLD` (default 0.95, env-overridable). Skips CBF/OPA round-trips when confidence is obviously below threshold.
@@ -278,7 +278,7 @@ UCA Logger → GCS WORM bucket (region-gated path)
 
 ## Governance Pipeline
 
-The 7-tier symbolic governance pipeline is implemented in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) and executed by `SymbolicGovernor._run_checks()` for every `execute_trade` action. Tiers execute in strict sequential order except Tiers 2/4, which run concurrently.
+The 8-tier symbolic governance pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers) is implemented in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) and executed by `SymbolicGovernor._run_checks()` for every `execute_trade` action. Tiers execute in strict sequential order except Tiers 2/4, which run concurrently.
 
 | Tier | Name | Key Invariant / Threshold |
 |------|------|--------------------------|
@@ -465,7 +465,7 @@ The AGW absorption layer bridges the Agent Gateway Protocol into the CAGE govern
 
 ### FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`)
 
-The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)** is a Tier 0.5 gate — inserted between the `evaluator` and `safety_check` LangGraph nodes — that analyzes a multi-step `ExecutionPlan` *before any step executes* to determine whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable, and if so, whether the plan's confidence score is high enough to warrant only human review rather than an outright block.
+The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)** is a **Pre-Pipeline Boundary Gate** — inserted between the `evaluator` and `safety_check` LangGraph nodes — that analyzes a multi-step `ExecutionPlan` *before any step executes* to determine whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable, and if so, whether the plan's confidence score is high enough to warrant only human review rather than an outright block. FTRA is NOT a peer of Tiers 0–6b; it is a **gateway precondition** that operates on the **whole execution graph** before the per-tool-call checks in `_run_checks()` begin.
 
 | File | Purpose |
 |------|---------|

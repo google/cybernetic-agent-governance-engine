@@ -13,7 +13,7 @@ The BFS state-space enumerator from `no-direct-bind` was adapted into
 `proof/model.py` in this repository.
 
 **Modifications made:**
-- Extended for the CAGE 7-tier governance architecture
+- Extended for the CAGE 8-tier governance architecture (FTRA + 7 in-pipeline tiers)
 - Added Gap 2/3/4 sub-proofs specific to CAGE's symbolic governor pipeline
 - No original source files from `no-direct-bind` are copied into this repository;
   only the algorithmic approach was adapted

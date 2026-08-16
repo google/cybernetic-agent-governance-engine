@@ -94,9 +94,9 @@ The following components are essential infrastructure but are **not** numbered g
 
 > **Source:** [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
 
-The `SymbolicGovernor._run_checks()` method implements a strict **7-tier sequential pipeline** (Tiers 2 and 4 execute concurrently). Every tool execution request must pass all applicable tiers before a routing seal is issued. This table uses the same numbering as the Step 0–6 table in §2 above — both describe the identical pipeline.
+The `SymbolicGovernor._run_checks()` method implements a strict **8-tier governance pipeline** (FTRA pre-pipeline boundary gate at Tier 0.5 plus 7 in-pipeline tiers; Tiers 2 and 4 execute concurrently). Every tool execution request must pass all applicable tiers before a routing seal is issued. This table uses the same numbering as the Step 0–6 table in §2 above — both describe the in-pipeline tiers.
 
-### 7-Tier Pipeline
+### 8-Tier Pipeline
 
 | Tier | Name | Key Invariant / Action | Source Module |
 |------|------|------------------------|---------------|
@@ -383,9 +383,9 @@ For detailed deployment instructions, see **[deployment/README.md](../../README.
 
 ### FTRA Commencement Reachability Gate
 
-The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)** (`src/gateway/governance/ftra/`) is a Tier 0.5 LangGraph node — inserted between `evaluator` and `safety_check` — that analyzes a proposed multi-step `ExecutionPlan` *before any step runs* to determine whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable from step 0, and routes accordingly based on Evaluator confidence.
+The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)** (`src/gateway/governance/ftra/`) is a **Pre-Pipeline Boundary Gate** — a dedicated LangGraph node inserted between `evaluator` and `safety_check` — that analyzes a proposed multi-step `ExecutionPlan` *before any step runs* to determine whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable from step 0, and routes accordingly based on Evaluator confidence. Unlike Tiers 0–6b, which operate per tool call within `_run_checks()`, FTRA is a **gateway precondition** that operates on the **whole execution graph** before per-tool-call checks begin.
 
-> **Note:** Tier 0.5 (FTRA) executes before `_run_checks()` and is **not** included in the 21-state BFS automaton; this is a documented verification gap.
+> **Note:** FTRA (the Pre-Pipeline Boundary Gate) executes before `_run_checks()` and is **not** included in the 21-state BFS automaton; this is a documented verification gap.
 
 - **`ftra/classifier.py`** — `IrreversibilityClassifier` classifies each plan-step action name (via `config/ftra/terminal_registry.json`) as `IRREVERSIBLE_TERMINAL`, `REVERSIBLE`, or `READ_ONLY`; fail-closed for unregistered actions
 - **`ftra/graph_analyzer.py`** — `PlanGraphAnalyzer` builds a NetworkX `DiGraph` over `ExecutionPlan.steps` and runs DFS from step 0 to compute the reachable terminals and critical path

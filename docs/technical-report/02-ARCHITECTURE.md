@@ -55,7 +55,7 @@ flowchart TD
     InfProxy -->|deepseek model route| vLLM_R[vLLM Reasoning\nDeepSeek-R1-Distill-Llama-8B]
     InfProxy -->|default model route| vLLM_F[vLLM Fast\nQwen/Qwen2.5-1.5B-Instruct]
 
-    GovApp --> SymGov[SymbolicGovernor\n7-tier pipeline]
+    GovApp --> SymGov[SymbolicGovernor\n8-tier pipeline]
     SymGov --> OPA[OPA Rego Engine\ntrade.governance]
     SymGov --> NeMo[NeMo Guardrails\nColang Rails]
     SymGov --> CBF[ControlBarrierFunction\nRedis WATCH/MULTI/EXEC]
@@ -72,7 +72,7 @@ flowchart TD
 
 The runtime lifecycle consists of a primary check path and an execution-time revalidation feedback loop:
 1. **Pre-Execution FTRA Gate**: Before any LLM inference, the FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`) verifies that the compiled LangGraph graph contains a reachable path to a `HUMAN_APPROVED` terminal node. Graphs that fail this structural check are rejected before any agent runs.
-2. **Pre-Trade Checking**: The user's request traverses the multi-agent planning layers, culminating in the `SymbolicGovernor` executing its 7-tier pipeline (STPA, confidence, CBF + OPA concurrent, Fiscal Limit Pre-Reservation, Consensus, and Causal Gatekeeper, plus the adaptive Tier 6b FRIA gate; the legacy SLM tier slot has been fully retired).
+2. **Pre-Trade Checking**: The user's request traverses the multi-agent planning layers, culminating in the `SymbolicGovernor` executing its 8-tier pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers: STPA, confidence, CBF + OPA concurrent, Fiscal Limit Pre-Reservation, Consensus, and Causal Gatekeeper, plus the adaptive Tier 6b FRIA gate; the legacy SLM tier slot has been fully retired).
 3. **HITL Interruption**: If the trade passes the pre-trade check but requires human verification, execution is suspended and state is persisted in Redis.
 4. **Execution-Time Feedback Loop**: Once the human reviewer submits approval via `/resume`, the `governed_trader` subgraph re-hydration node retrieves a fresh pricing sample and loops back to the `SymbolicGovernor` to re-run only the deterministic, continuous tiers (Tier 2 Control Barrier Function, and Tier 4 OPA Policy Engine).
 5. **Final Actuation**: If both revalidation checks pass successfully, the transaction is committed via the trade execution actuator; otherwise, it is blocked, and a compensator rollback is initiated.

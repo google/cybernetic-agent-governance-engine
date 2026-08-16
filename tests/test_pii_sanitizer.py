@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# tests/test_pii_sanitizer.py
-# Unit tests for PIISanitizer redaction pipeline.
-# Marker: @pytest.mark.local — CI-gated, no external dependencies.
-# Run: uv run pytest tests/test_pii_sanitizer.py -m local -v
-
 import pytest
 
 from src.gateway.governance.pii_sanitizer import PIISanitizer, _get_pii_sanitizer

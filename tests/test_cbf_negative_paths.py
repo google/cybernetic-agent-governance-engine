@@ -552,6 +552,9 @@ async def test_update_state_retries_on_watch_error():
         def set(self, key, val):
             pass
 
+        def incr(self, key):
+            pass
+
         def rpush(self, key, val):
             pass
 
@@ -565,7 +568,7 @@ async def test_update_state_retries_on_watch_error():
     with patch("src.gateway.governance.cbf.redis_client", mock_redis_mod):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
-            await cbf.update_state(100.0)
+            await cbf._update_state_unsafe(100.0)
 
     assert attempt_count == 2  # one retry needed
 
@@ -602,6 +605,9 @@ async def test_update_state_raises_after_max_retries_exhausted():
         def set(self, key, val):
             pass
 
+        def incr(self, key):
+            pass
+
         async def execute(self):
             raise FakeWatchError("WatchError always")
 
@@ -612,7 +618,7 @@ async def test_update_state_raises_after_max_retries_exhausted():
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             with pytest.raises(RuntimeError, match="retries"):
-                await cbf.update_state(100.0)
+                await cbf._update_state_unsafe(100.0)
 
 
 @pytest.mark.asyncio
@@ -628,7 +634,7 @@ async def test_update_state_raises_when_redis_none():
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             with pytest.raises(RuntimeError, match="Redis client unavailable"):
-                await cbf.update_state(100.0)
+                await cbf._update_state_unsafe(100.0)
 
 
 # ---------------------------------------------------------------------------
@@ -665,8 +671,11 @@ async def test_rollback_state_restores_balance():
         def set(self, key, val):
             restored_values.append(val)
 
-        async def execute(self):
+        def incr(self, key):
             pass
+
+        async def execute(self):
+            return [None, 1]  # [set result, incr result]
 
     mock_redis_mod = MagicMock()
     mock_redis_mod.pipeline = MagicMock(return_value=RecordingPipe())
@@ -718,6 +727,9 @@ async def test_rollback_state_raises_after_max_retries():
             pass
 
         def set(self, key, val):
+            pass
+
+        def incr(self, key):
             pass
 
         async def execute(self):

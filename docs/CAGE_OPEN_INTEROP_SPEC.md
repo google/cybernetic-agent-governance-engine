@@ -675,7 +675,7 @@ actuation. Requires `X-API-Key` and `X-CAGE-Routing-Seal` headers.
 | `trigger_safety_intervention` | Lock system | None |
 | `verify_content_safety` | AI safety guardrails content check | None |
 | `evaluate_policy` | Policy evaluation engine assessment | None |
-| `execute_trade` | Governed trade execution | Full 7-tier pipeline via Gateway Service |
+| `execute_trade` | Governed trade execution | Full 8-tier pipeline (FTRA + 7 in-pipeline tiers) via Gateway Service |
 
 **Response 200 OK:**
 ```json
@@ -802,8 +802,8 @@ Unary RPC. Execute a named tool via gRPC with governance enforcement.
 
 ### 7.3 `rpc Check(CheckRequest) returns (CheckResponse)` — Agent Gateway Adapter (Envoy ext_authz gRPC)
 
-Cloud-agnostic Envoy `ext_authz` gRPC service. Enforces the full CAGE 7-tier
-governance pipeline at the network layer before requests reach the application
+Cloud-agnostic Envoy `ext_authz` gRPC service. Enforces the full CAGE 8-tier
+governance pipeline (FTRA + 7 in-pipeline tiers) at the network layer before requests reach the application
 container. Compatible with any Envoy-based proxy (Istio, Contour, Emissary)
 and also functions as a **GCP Agent Gateway Service Extension** with zero code
 changes.

@@ -1,3 +1,17 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Unit tests for src/gateway/server/mcp_tool_server.py.
 
@@ -223,3 +237,87 @@ class TestModuleConstants:
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
             assert mod._RATE_LIMIT_WINDOW_SECONDS == 60
+
+
+@pytest.mark.local
+class TestMCPToolServerFunctions:
+    """Tests for MCP tools defined in mcp_tool_server.py."""
+
+    @pytest.mark.asyncio
+    async def test_simulate_governance_check(self):
+        import sys
+        with patch.dict("sys.modules", _mcp_import_stubs()):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            res = await mod.simulate_governance_check("buy", {"amount": 100})
+            assert res["status"] == "APPROVED"
+            assert res["message"] == "No violations detected."
+
+    @pytest.mark.asyncio
+    async def test_evaluate_policy_internal_allow(self):
+        import sys
+        stubs = _mcp_import_stubs()
+        stubs["src.gateway.governance.singletons"].opa_client.evaluate_policy = AsyncMock(return_value="ALLOW")
+        with patch.dict("sys.modules", stubs):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            res = await mod._evaluate_policy_internal("execute_trade", 500)
+            assert "APPROVED" in res
+
+    @pytest.mark.asyncio
+    async def test_evaluate_policy_internal_manual_review(self):
+        import sys
+        stubs = _mcp_import_stubs()
+        stubs["src.gateway.governance.singletons"].opa_client.evaluate_policy = AsyncMock(return_value="MANUAL_REVIEW")
+        with patch.dict("sys.modules", stubs):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            res = await mod._evaluate_policy_internal("execute_trade", 500)
+            assert "MANUAL_REVIEW" in res
+
+    @pytest.mark.asyncio
+    async def test_evaluate_policy_internal_denied(self):
+        import sys
+        stubs = _mcp_import_stubs()
+        stubs["src.gateway.governance.singletons"].opa_client.evaluate_policy = AsyncMock(return_value="DENY")
+        with patch.dict("sys.modules", stubs):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            res = await mod._evaluate_policy_internal("execute_trade", 500)
+            assert "DENIED" in res
+
+    @pytest.mark.asyncio
+    async def test_trigger_safety_intervention(self):
+        import sys
+        with patch.dict("sys.modules", _mcp_import_stubs()):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            res = await mod.trigger_safety_intervention("Test intervention")
+            assert "INTERVENTION_ACK" in res
+
+    @pytest.mark.asyncio
+    async def test_check_market_status(self):
+        import sys
+        with patch.dict("sys.modules", _mcp_import_stubs()):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            res = await mod.check_market_status("AAPL")
+            assert "AAPL" in res
+
+    @pytest.mark.asyncio
+    async def test_verify_content_safety(self):
+        import sys
+        with patch.dict("sys.modules", _mcp_import_stubs()):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            mod.app.state.nemo_rails = MagicMock()
+            res = await mod.verify_content_safety("Hello safe world")
+            assert res == "SAFE"
+

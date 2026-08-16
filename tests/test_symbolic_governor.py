@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -21,8 +21,63 @@ from src.gateway.governance import GovernanceError, SymbolicGovernor
 pytestmark = pytest.mark.unit
 
 
+# ---------------------------------------------------------------------------
+# Helper fixture: Mock FTRA boundary check to return safe result
+# ---------------------------------------------------------------------------
+# The FTRA boundary check runs BEFORE all other governance checks and will
+# fail for any action classified as IRREVERSIBLE_TERMINAL in terminal_registry.json.
+# For tests that need to verify OTHER governance paths (confidence, OPA, CBF, etc.),
+# we mock the FTRA boundary check to return a safe result.
+
+def _create_safe_ftra_result():
+    """Create a safe FtraBoundaryResult for testing."""
+    from src.gateway.governance.ftra.models import FtraBoundaryResult
+    return FtraBoundaryResult(
+        requires_hitl=False,
+        irreversibility_score=0.0,
+        classification="READ_ONLY",
+        terminal_match="test_action",
+        violations=[],
+        bypassed_ftra_node=False,
+    )
+
+
+def _create_mock_evidence_commit_result():
+    """Create a mock EvidenceCommitResult for testing."""
+    from dataclasses import dataclass
+    from typing import Any
+    
+    @dataclass
+    class MockEvidenceCommitResult:
+        success: bool = True
+        chain_hash: str = "mock-chain-hash-1234567890abcdef"
+        record_id: str = "mock-record-id-1234"
+        schema_version: str = "1.1"
+        latency_ms: float = 5.0
+        error: str | None = None
+    
+    return MockEvidenceCommitResult()
+
+
+@pytest.fixture
+def mock_ftra_safe():
+    """Fixture that mocks FTRA boundary check to return safe result."""
+    with patch(
+        "src.gateway.governance.symbolic_governor.SymbolicGovernor._ftra_boundary_check",
+        new_callable=AsyncMock,
+        return_value=_create_safe_ftra_result(),
+    ) as mock_ftra:
+        # Also mock the evidence chain for tests that reach ALLOW path
+        with patch(
+            "src.gateway.governance.routing_seal.generate_seal_with_evidence",
+            new_callable=AsyncMock,
+            return_value="mock-routing-seal-" + "a" * 32,
+        ) as mock_seal:
+            yield mock_ftra
+
+
 @pytest.mark.asyncio
-async def test_symbolic_governor_confidence_pass():
+async def test_symbolic_governor_confidence_pass(mock_ftra_safe):
     opa_client = AsyncMock()
     opa_client.evaluate_policy.return_value = "ALLOW"
 
@@ -43,7 +98,7 @@ async def test_symbolic_governor_confidence_pass():
 
 
 @pytest.mark.asyncio
-async def test_symbolic_governor_confidence_fail():
+async def test_symbolic_governor_confidence_fail(mock_ftra_safe):
     opa_client = AsyncMock()
     safety_filter = AsyncMock()
     safety_filter.verify_action.return_value = "SAFE"
@@ -63,7 +118,7 @@ async def test_symbolic_governor_confidence_fail():
 
 
 @pytest.mark.asyncio
-async def test_symbolic_governor_opa_fail():
+async def test_symbolic_governor_opa_fail(mock_ftra_safe):
     opa_client = AsyncMock()
     opa_client.evaluate_policy.return_value = "DENY"
 
@@ -85,7 +140,7 @@ async def test_symbolic_governor_opa_fail():
 
 
 @pytest.mark.asyncio
-async def test_violation_payload_contains_legacy_citation():
+async def test_violation_payload_contains_legacy_citation(mock_ftra_safe):
     """Structured payload preserves legacy_citation for SIEM backward-compatibility.
 
     The GovernanceError message itself must NOT contain 'SR 26-2' (framework
@@ -118,7 +173,7 @@ async def test_violation_payload_contains_legacy_citation():
 
 
 @pytest.mark.asyncio
-async def test_symbolic_governor_cbf_fail():
+async def test_symbolic_governor_cbf_fail(mock_ftra_safe):
     opa_client = AsyncMock()
     opa_client.evaluate_policy.return_value = "ALLOW"
 
@@ -142,7 +197,7 @@ async def test_symbolic_governor_cbf_fail():
 
 
 @pytest.mark.asyncio
-async def test_symbolic_governor_consensus_fail():
+async def test_symbolic_governor_consensus_fail(mock_ftra_safe):
     opa_client = AsyncMock()
     opa_client.evaluate_policy.return_value = "ALLOW"
 
@@ -181,7 +236,7 @@ class TestSymbolicGovernorDefer:
 
     @pytest.mark.asyncio
     async def test_validate_action_returns_defer_verdict_not_governance_error(
-        self, monkeypatch
+        self, monkeypatch, mock_ftra_safe
     ):
         """DEFER violations should return a DEFER verdict, not raise GovernanceError.
         
@@ -218,7 +273,7 @@ class TestSymbolicGovernorDefer:
         assert "defer_token" in result or "defer_id" in result
 
     @pytest.mark.asyncio
-    async def test_defer_includes_defer_token(self, monkeypatch):
+    async def test_defer_includes_defer_token(self, monkeypatch, mock_ftra_safe):
         """DEFER verdict includes a defer_token UUID for tracking."""
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
         monkeypatch.setenv("FRIA_ZONE_DEFER", "0.70")
@@ -525,7 +580,7 @@ class TestValidateActionDecisionRouting:
     """
 
     @pytest.mark.asyncio
-    async def test_allow_decision_returns_seal(self):
+    async def test_allow_decision_returns_seal(self, mock_ftra_safe):
         """ALLOW verdict returns a routing seal."""
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "ALLOW"
@@ -549,7 +604,7 @@ class TestValidateActionDecisionRouting:
         assert result["violations"] == []
 
     @pytest.mark.asyncio
-    async def test_deny_decision_raises_governance_error(self):
+    async def test_deny_decision_raises_governance_error(self, mock_ftra_safe):
         """DENY verdict raises GovernanceError with violation details."""
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "DENY"
@@ -570,7 +625,7 @@ class TestValidateActionDecisionRouting:
         assert "CTRL_OPA_005" in str(excinfo.value) or "OPA" in str(excinfo.value)
 
     @pytest.mark.asyncio
-    async def test_require_approval_decision_returns_verdict(self):
+    async def test_require_approval_decision_returns_verdict(self, mock_ftra_safe):
         """REQUIRE_APPROVAL verdict returns result dict (not exception)."""
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "MANUAL_REVIEW"

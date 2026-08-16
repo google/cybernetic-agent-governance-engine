@@ -12,38 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ============================================================================
-# dev-gpu-schedule.yaml — Nightly GPU Scale-to-Zero for CAGE Dev Cluster
-# ============================================================================
-#
-# Provides scheduled nightly GPU scale-to-zero with two simple
-# time-based CronJobs:
-#
-#   1. vllm-nightly-scaledown  — scales vllm-fast and vllm-reasoning to 0
-#      replicas at 8 PM UTC Mon–Fri. The GKE cluster autoscaler removes the
-#      GPU node ~10 min after the last GPU pod is evicted (gpu_node_pool_min_count=0).
-#
-#   2. vllm-morning-scaleup   — scales both Deployments back to 1 replica at
-#      8 AM UTC Mon–Fri for the start of the working day.
-#
-# For ad-hoc scale operations, use the developer helper:
-#   scripts/dev_gpu_toggle.sh [up|down]
-#
-# Design principles
-# -----------------
-#   • No Redis, no ConfigMaps, no custom metric scraping — pure kubectl scale.
-#   • No initContainers — single-container jobs.
-#   • ServiceAccount (dev-gpu-scheduler-sa) with ClusterRole scoped to
-#     get/patch on deployments — least-privilege, no cluster-admin.
-#   • readOnlyRootFilesystem=true with an emptyDir /tmp mount (bitnami/kubectl
-#     may write to /tmp at startup).
-#
-# Namespace: governance-stack
-# Deployment names targeted:
-#   • vllm-fast      (fast inference model, formerly vllm-inference)
-#   • vllm-reasoning (reasoning model)
-# ============================================================================
-
 ---
 # ============================================================================
 # ServiceAccount: dev-gpu-scheduler-sa

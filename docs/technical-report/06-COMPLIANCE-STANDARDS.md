@@ -143,7 +143,7 @@ Phase 3  Weeks 16–52  →  +77%  Architectural uplift
 | Clause                     | Title                    | CAGE Implementation                            |
 | -------------------------- | ------------------------ | ---------------------------------------------- |
 | 6 — Planning               | Risk-based AI planning   | `execution_analyst` risk-based plan generation |
-| 8 — Operation              | Runtime AI controls      | `symbolic_governor` 7-tier symbolic governor pipeline (Tiers 0–6 + Tier 6b adaptive FRIA gate): STPA UCA validation → agentic confidence → CBF → SLM (deprecated) → OPA → consensus → causal gatekeeper → FRIA |
+| 8 — Operation              | Runtime AI controls      | `symbolic_governor` 8-tier governance pipeline (FTRA + Tiers 0–6 + Tier 6b adaptive FRIA gate): STPA UCA validation → agentic confidence → CBF → SLM (deprecated) → OPA → consensus → causal gatekeeper → FRIA |
 | 9 — Performance Evaluation | Monitoring & measurement | `EvaluatorAuditor` (`src/governed_financial_advisor/agents/evaluator/`) + Lula 6h CronJob |
 | 10 — Improvement           | Continual improvement    | HITL interrupt + POAM tracking                 |
 

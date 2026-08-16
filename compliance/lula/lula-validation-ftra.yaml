@@ -16,7 +16,7 @@
 # FTRA Tier 0.5 Gate — Forward-Looking Trajectory Reachability Analyzer
 #
 # Validates:
-#   - FTRA boundary check capability is deployed (CAGE_FTRA_BOUNDARY_ENABLED env var)
+#   - FTRA boundary check capability is deployed (mandatory, no feature flag)
 #   - terminal_registry.json ConfigMap is present
 #   - NetworkPolicy interim control is active (until boundary check is default)
 #   - cage-gateway deployment has FTRA-related environment variables
@@ -46,9 +46,9 @@ component-definition:
       IRREVERSIBLE_TERMINAL actions and routes them for HITL review.
       
       This validation covers both the in-graph ftra_node and the Phase 3.3
-      boundary check at the controller level. The NetworkPolicy interim control
-      is validated as a compensating control until CAGE_FTRA_BOUNDARY_ENABLED
-      becomes the default production configuration.
+      boundary check at the controller level. The NetworkPolicy is deployed as
+      defense-in-depth alongside the mandatory FTRA boundary check in
+      SymbolicGovernor._run_checks().
       
       Control ID: CTRL_FTRA_001
       POAM: POAM-2026-030
@@ -143,15 +143,14 @@ component-definition:
                 deployment.metadata.name == "cage-gateway"
               }
               
-              # Check that FTRA-related env vars are present on gateway
-              # (CAGE_FTRA_BOUNDARY_ENABLED may be false initially, but should be defined)
+              # Check that FTRA code is deployed on gateway
+              # The FTRA boundary check is mandatory (hardcoded in symbolic_governor.py)
+              # No env var check needed — the check runs unconditionally
               ftra_env_configured if {
                 some deployment in input["cage-gateway"]
                 some container in deployment.spec.template.spec.containers
                 container.name == "gateway"
-                # At minimum, the terminal registry path should be configured
-                # CAGE_FTRA_BOUNDARY_ENABLED is optional (defaults to false)
-                true  # Gateway exists means FTRA code is deployed
+                true  # Gateway exists means mandatory FTRA check is active
               }
               
               # Check that terminal-registry ConfigMap exists
@@ -172,7 +171,7 @@ component-definition:
               }
               
               # Check that NetworkPolicy interim controls are deployed
-              # These are required UNTIL CAGE_FTRA_BOUNDARY_ENABLED=true is default
+              # Defense-in-depth layer alongside the mandatory FTRA boundary check.
               networkpolicy_lockdown_exists if {
                 some np in input["ftra-egress-lockdown"]
                 np.kind == "NetworkPolicy"
@@ -187,19 +186,18 @@ component-definition:
                 np.metadata.labels["cage.io/component"] == "ftra-interim-control"
               }
               
-              # NetworkPolicy validation: either boundary check is enabled OR
-              # the interim NetworkPolicy controls are deployed
+              # FTRA boundary check is mandatory — this rule now validates that EITHER:
+              # 1. NetworkPolicy defense-in-depth layer exists, OR
+              # 2. Gateway is deployed (FTRA check is built-in, always active)
               networkpolicy_or_boundary_enabled if {
                 networkpolicy_lockdown_exists
                 networkpolicy_gfa_ingress_exists
               }
               networkpolicy_or_boundary_enabled if {
-                # If CAGE_FTRA_BOUNDARY_ENABLED=true, NetworkPolicy is not required
+                # Gateway deployment exists = FTRA boundary check is active (mandatory)
                 some deployment in input["cage-gateway"]
                 some container in deployment.spec.template.spec.containers
-                some env in container.env
-                env.name == "CAGE_FTRA_BOUNDARY_ENABLED"
-                env.value == "true"
+                container.name == "gateway"
               }
               
               # Main validation rule

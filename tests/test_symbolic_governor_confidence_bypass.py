@@ -65,6 +65,8 @@ def _make_governor(
         A fully wired SymbolicGovernor ready for ``_run_checks()``/``govern()``
         without hitting live Redis, OPA, or consensus network endpoints.
     """
+    from src.gateway.governance.ftra.models import FtraBoundaryResult
+
     # --- CBF mock ---
     mock_cbf = AsyncMock()
     mock_cbf.atomic_verify_and_commit.return_value = (cbf_committed, cbf_reason)
@@ -88,6 +90,20 @@ def _make_governor(
         consensus_engine=mock_consensus,
         stpa_validator=mock_stpa,
     )
+
+    # Mock FTRA boundary check to return a safe result (no HITL required).
+    # This allows tests to focus on confidence bypass behavior without being
+    # blocked by the IrreversibilityClassifier.
+    safe_ftra_result = FtraBoundaryResult(
+        requires_hitl=False,
+        irreversibility_score=0.0,
+        classification="READ_ONLY",
+        terminal_match=None,
+        violations=[],
+        bypassed_ftra_node=False,
+    )
+    governor._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
+
     return governor
 
 
@@ -239,6 +255,8 @@ async def test_high_confidence_valid_trade_is_approved() -> None:
     trade that all other tiers approve — confidence=1.0 is the expected value
     when an agent is genuinely highly confident in a valid within-limits trade.
     """
+    from unittest.mock import patch
+
     governor = _make_governor(
         cbf_committed=True,
         cbf_reason="COMMITTED",
@@ -254,7 +272,12 @@ async def test_high_confidence_valid_trade_is_approved() -> None:
     }
 
     # govern() returns a routing seal (non-empty string) on approval.
-    seal = await governor.govern("execute_trade", params)
+    # Mock generate_seal_with_evidence to avoid Redis dependency.
+    with patch(
+        "src.gateway.governance.routing_seal.generate_seal_with_evidence",
+        new=AsyncMock(return_value="mock-seal-token"),
+    ):
+        seal = await governor.govern("execute_trade", params)
     assert isinstance(seal, str) and len(seal) > 0, (
         f"Expected a routing seal for an approved trade; got: {seal!r}"
     )

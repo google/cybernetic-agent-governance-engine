@@ -81,7 +81,7 @@ All four gaps have been remediated and machine-verified. The system is now hard-
 
 ### Gap 2 — Cryptographic Attestation Enforced on All Execution Paths
 
-**Finding:** The `SymbolicGovernor.govern()` method ran the full 7-tier governance pipeline but returned `None` on approval, providing no cryptographic attestation that authority had been resolved. A caller that caught `GovernanceError` on denial could proceed to execution without a routing seal — a direct-bind shortcut identical to the ungated counterexample in the formal proof.
+**Finding:** The `SymbolicGovernor.govern()` method ran the full 8-tier governance pipeline (FTRA + 7 in-pipeline tiers) but returned `None` on approval, providing no cryptographic attestation that authority had been resolved. A caller that caught `GovernanceError` on denial could proceed to execution without a routing seal — a direct-bind shortcut identical to the ungated counterexample in the formal proof.
 
 **Remediation:**
 
@@ -93,7 +93,7 @@ Both `govern()` and `validate_action()` now satisfy the `NoDirectBind` invariant
 
 ### Gap 3 — `CBF_FAIL_OPEN` Hard-Gated in Production
 
-**Finding:** Setting `CBF_FAIL_OPEN=true` silently removed the Control Barrier Function (Tier 2) from the governance gate. The condition was logged at `CRITICAL` level but did not prevent the service from starting or processing requests. This constituted a documented, operator-accessible direct-bind shortcut that degraded the 7-tier gate to a 6-tier gate without any deployment-time enforcement.
+**Finding:** Setting `CBF_FAIL_OPEN=true` silently removed the Control Barrier Function (Tier 2) from the governance gate. The condition was logged at `CRITICAL` level but did not prevent the service from starting or processing requests. This constituted a documented, operator-accessible direct-bind shortcut that degraded the 8-tier gate to a 7-tier gate without any deployment-time enforcement.
 
 **Remediation:**
 
@@ -205,7 +205,7 @@ This change eliminates the split-brain attack surface where an operator could se
 
 ### Background
 
-The causal gatekeeper (Tier 6 of the 7-tier governance pipeline) validates that the system's world-model is trustworthy before permitting high-stakes trade execution. It requires live telemetry — sourced from Langfuse governance spans — to run its DoWhy placebo refutation.
+The causal gatekeeper (Tier 6 of the 8-tier governance pipeline) validates that the system's world-model is trustworthy before permitting high-stakes trade execution. It requires live telemetry — sourced from Langfuse governance spans — to run its DoWhy placebo refutation.
 
 Prior to this hardening, if `causal_safety_check()` was called with `current_telemetry=None` (i.e., no live telemetry was provided), the function silently fell back to **synthetic mock data** generated with a fixed `np.random.seed(42)`. This fallback had two critical security properties:
 

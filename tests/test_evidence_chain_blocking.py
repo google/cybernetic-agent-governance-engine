@@ -34,8 +34,13 @@ import pytest
 class TestEvidenceChainBlockingGate:
     """Tests for the EVIDENCE_CHAIN_BLOCKING gate behavior."""
 
-    def test_default_blocking_mode_is_false(self):
-        """Verify default EVIDENCE_CHAIN_BLOCKING is false for backward compatibility."""
+    def test_default_blocking_mode_is_true(self):
+        """Verify default EVIDENCE_CHAIN_BLOCKING is true (peer review Fix B).
+
+        DEFAULT CHANGED (peer review Fix B): Enabled by default to ensure
+        evidence durability before execution proceeds. This guarantees audit
+        trail integrity at the cost of ~5ms latency.
+        """
         with patch.dict("os.environ", {}, clear=False):
             # Force reimport to pick up env var
             import importlib
@@ -44,7 +49,19 @@ class TestEvidenceChainBlockingGate:
 
             importlib.reload(es)
 
-            # Default should be false
+            # Default should be true (peer review Fix B)
+            assert es._EVIDENCE_CHAIN_BLOCKING is True
+            assert es.is_evidence_chain_blocking() is True
+
+    def test_blocking_mode_disabled_when_env_false(self):
+        """Verify EVIDENCE_CHAIN_BLOCKING=false disables blocking mode."""
+        with patch.dict("os.environ", {"EVIDENCE_CHAIN_BLOCKING": "false"}, clear=False):
+            import importlib
+
+            import src.compliance_bridge.evidence_stream as es
+
+            importlib.reload(es)
+
             assert es._EVIDENCE_CHAIN_BLOCKING is False
             assert es.is_evidence_chain_blocking() is False
 

@@ -627,7 +627,7 @@ async def validate_action_endpoint(
         ``cage.tool_execute`` root span, producing a unified Langfuse trace
         tree across the service boundary.
 
-    Governance tiers executed (full 7-tier pipeline via _run_checks()):
+    Governance tiers executed (full 8-tier pipeline — FTRA pre-gate + 7 in-pipeline tiers via _run_checks()):
         - Tier 0: STPA/STAMP Unsafe Control Action validation
         - Tier 1: Agent confidence threshold pre-check (fast-fail)
         - Tier 2: Control Barrier Function (CBF) — mathematical safety bounds

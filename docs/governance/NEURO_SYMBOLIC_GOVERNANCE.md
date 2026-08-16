@@ -137,7 +137,7 @@ The 10-node LangGraph StateGraph governs the full execution lifecycle:
 | 1 | `nemo_input_rail` | NeMo Guardrails input screening |
 | 2 | `stpa_validator` | STPA UCA policy check |
 | 3 | `causal_gatekeeper` | DoWhy SCM intervention simulation |
-| 4 | `symbolic_governor` | 7-tier symbolic check pipeline (Tiers 0–6b) |
+| 4 | `symbolic_governor` | 8-tier symbolic check pipeline (FTRA + Tiers 0–6b) |
 | 5 | `consensus_node` | Multi-model consensus (≥$10k trades) |
 | 6 | `hitl_gate` | Human-in-the-loop interrupt |
 | 7 | `post_hitl_rehydrate` | TOCTOU remediation — state rehydration |
@@ -149,7 +149,7 @@ The 10-node LangGraph StateGraph governs the full execution lifecycle:
 
 1.  **Plan:** Agent generates a plan.
 2.  **Evaluate:** Graph routes to the **Evaluator** node.
-3.  **Governance Check:** Evaluator calls `check_safety_constraints` (OPA, CBF, STPA) in the Gateway via the 7-tier `SymbolicGovernor._run_checks()` pipeline (Tiers 0–6b: STPA → Confidence/OPA concurrent with CBF → POAM-TIER2-001 structural corroboration → Fiscal Limit Pre-Reservation → Consensus → Causal → FRIA).
+3.  **Governance Check:** Evaluator calls `check_safety_constraints` (OPA, CBF, STPA) in the Gateway via the 8-tier governance pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers via `SymbolicGovernor._run_checks()`: Tiers 0–6b: STPA → Confidence/OPA concurrent with CBF → POAM-TIER2-001 structural corroboration → Fiscal Limit Pre-Reservation → Consensus → Causal → FRIA).
 4.  **Context Accumulation (AARM-V1):** The SHA-256 hash-chained context accumulator (`src/compliance_bridge/context_accumulator.py`) appends each governance decision to the immutable chain, preventing context poisoning.
 5.  **Causal Validation:** DoWhy Causal Gatekeeper validates world-model integrity via 50-simulation placebo refutation (p<0.05). Fails closed if no live telemetry in production.
 6.  **Sign:** If safe, Evaluator generates a **Cloud KMS HSM-backed asymmetric signature** (primary) and appends it to the shared state. HMAC-SHA256 is used only in dev/CI when KMS is unavailable.
@@ -314,7 +314,7 @@ Parameters (from `config/governance_thresholds.json`): γ = 0.5, `min_cash_balan
 
 > **Source:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)
 
-> **BFS proof scope:** The current BFS proof covers the governance state machine only; a TLA+/Alloy model of the full implementation (including LangGraph harness, Redis state, and FTRA boundary) is tracked as future work. Note: Tier 0.5 (FTRA) executes before `_run_checks()` and is **not** included in the 21-state BFS automaton; this is a documented verification gap.
+> **BFS proof scope:** The current BFS proof covers the governance state machine only; a TLA+/Alloy model of the full implementation (including LangGraph harness, Redis state, and FTRA boundary) is tracked as future work. Note: FTRA (the Pre-Pipeline Boundary Gate) executes before `_run_checks()` and is **not** included in the 21-state BFS automaton; this is a documented verification gap. FTRA operates on the whole execution graph before per-tool-call checks begin, and is NOT a peer of Tiers 0–6b — it is a gateway precondition.
 
 ### NoDirectBind Invariant — Formal Statement
 

@@ -12,27 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ============================================================================
-# Redis Stack StatefulSet — CAGE v2.0.0 LangGraph Checkpoint Store
-# ============================================================================
-#
-# Standalone redis/redis-stack-server Deployment used for fresh-state
-# caching (LangGraph checkpoints, evidence stream).
-#
-# PodSecurity "restricted:latest" compliance:
-#   1. allowPrivilegeEscalation=false  — container securityContext
-#   2. capabilities.drop=["ALL"]       — container securityContext
-#   3. runAsNonRoot=true               — pod + container securityContext
-#   4. seccompProfile.type=RuntimeDefault — pod + container securityContext
-#
-# Redis Stack Server runs as UID 999 (redis) when launched as non-root.
-# The image supports non-root operation; runAsUser/runAsGroup are set
-# explicitly to UID 999 to satisfy the restricted policy.
-#
-# Related:
-#   - deployment/k8s/redis-config.yaml (cage-redis-config ConfigMap)
-#   - deployment/k8s/redis-credentials-secret.yaml (redis-credentials Secret)
-# ============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
