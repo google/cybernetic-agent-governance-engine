@@ -181,8 +181,8 @@ Three purpose-distinct HTTP clients exist. They are **not aliases** — each tar
 - **OTel-traced** — every `get`/`set`/`delete` creates a span with `redis.key` attribute
 - **Fail-fast** — raises `ConnectionError` on connect failure (no silent memory fallback)
 - **Kubernetes-aware** — strips `tcp://host:port` prefix from `REDIS_PORT` env var (GKE auto-injection)
-- **Test-compatible** — `RedisClient = AsyncRedisClient` alias at line 164 preserves existing test imports
-- Global singleton `redis_client` exported at line 168 (the P0 import target from `safety.py:141`)
+- **v3.0.0:** The `RedisClient = AsyncRedisClient` alias was removed. Use `AsyncRedisClient` directly.
+- Global singleton `redis_client` exported from [`cbf.py`](../src/gateway/governance/cbf.py) (the P0 import target)
 
 ### NeMo Telemetry Exporter (`telemetry/nemo_exporter.py`)
 

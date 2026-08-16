@@ -37,7 +37,7 @@ h(x) = cash_balance - min_cash_balance
 
 where `min_cash_balance = 1000.0` (sourced from `THRESHOLDS.cbf.min_cash_balance` in `config/governance_thresholds.json`).
 
-Note: [`safety.py`](../../src/gateway/governance/safety.py) is a **deprecated backward-compatibility shim** that re-exports `ControlBarrierFunction` from `cbf.py` via `__getattr__` lazy re-export. New code must reference `cbf.py` directly.
+**v3.0.0:** The deprecated `safety.py` shim was removed. Import `ControlBarrierFunction` directly from [`cbf.py`](../../src/gateway/governance/cbf.py).
 
 The enforcement boundary:
 
@@ -244,7 +244,7 @@ All external provider interactions fall into three categories, each with a disti
 | **Attestation Logging**   | None (async fire-and-forget)              | CAGE → Provider           | Background; no acknowledgment wait                  |
 | **External Validation**   | **Adaptive** (confidence-dependent)       | CAGE ↔ Provider           | Async at ≥0.95; sync gate at [0.70, 0.95); deny <0.70 |
 
-**Critical constraint:** No external provider call may appear on the synchronous hot path between a user request entering the SymbolicGovernor pipeline and the governed response being returned. The CBF check ([`safety.py`](../../src/gateway/governance/safety.py) L192-199) executes in sub-microseconds. The full 7-tier SymbolicGovernor pipeline includes the OPA query (~10-50ms); the legacy SLM sidecar tier slot has been fully retired (`slm_available=false` permanent sentinel, 0ms overhead). Introducing a synchronous external HTTP call would trade model non-determinism for network non-determinism — violating the architectural guarantee that local enforcement is deterministic and bounded.
+**Critical constraint:** No external provider call may appear on the synchronous hot path between a user request entering the SymbolicGovernor pipeline and the governed response being returned. The CBF check ([`cbf.py`](../../src/gateway/governance/cbf.py)) executes in sub-microseconds (**v3.0.0:** `safety.py` removed). The full 7-tier SymbolicGovernor pipeline includes the OPA query (~10-50ms); the legacy SLM sidecar tier slot has been fully retired (`slm_available=false` permanent sentinel, 0ms overhead). Introducing a synchronous external HTTP call would trade model non-determinism for network non-determinism — violating the architectural guarantee that local enforcement is deterministic and bounded.
 
 #### 2.5.2 Reference Handshake: 3-Endpoint External Provider
 

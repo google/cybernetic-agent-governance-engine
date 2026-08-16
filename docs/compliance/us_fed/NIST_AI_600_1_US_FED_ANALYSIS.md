@@ -240,7 +240,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 
 **Current Coverage:**
 - NeMo Guardrails Colang flows (`config/rails/main_logic.co`) enforce domain restriction to financial topics
-- Tier-1 Aho-Corasick keyword scan (`ac_keyword_scan` in [`src/gateway/governance/safety.py`](../../../src/gateway/governance/safety.py)) blocks 14 forbidden prompt patterns
+- Tier-1 Aho-Corasick keyword scan (`ac_keyword_scan` in [`src/gateway/governance/text_filter.py`](../../../src/gateway/governance/text_filter.py)) blocks 14 forbidden prompt patterns (**v3.0.0:** `safety.py` removed; import from `text_filter.py`)
 - OPA `trade.governance` policy enforces domain-specific RBAC
 
 **Gaps:**
@@ -261,7 +261,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 **CAGE Applicability:** **Critical** — CAGE's financial advisor generates trade recommendations based on LLM outputs. A hallucinated market price, fabricated portfolio position, or invented regulatory constraint could cause irreversible financial harm.
 
 **Current Coverage:**
-- [`src/gateway/governance/stpa_validator.py`](../../../src/gateway/governance/stpa_validator.py) validates trade parameters against deterministic constraints (drawdown ≤ 5%, order size ≤ 1% daily volume) — catches hallucinated extreme values
+- [`src/gateway/governance/generated_stpa_validator.py`](../../../src/gateway/governance/generated_stpa_validator.py) validates trade parameters against deterministic constraints (drawdown ≤ 5%, order size ≤ 1% daily volume) — catches hallucinated extreme values (**v3.0.0:** deprecated `stpa_validator.py` shim removed)
 - [`src/gateway/governance/consensus.py`](../../../src/gateway/governance/consensus.py) — `ConsensusEngine` runs parallel LLM critic calls; disagreement between critics can surface confabulation
 - [`src/gateway/governance/causal_gatekeeper.py`](../../../src/gateway/governance/causal_gatekeeper.py) — causal inference gate prevents spurious correlations from driving decisions
 - `config/governance_thresholds.json` — `min_trade_confidence: 0.95` threshold rejects low-confidence outputs
@@ -898,7 +898,7 @@ The following POAM items are derived from the AI 600-1 gap analysis. They are nu
 | # | File | Change | Controls | Est. Hours |
 |---|------|--------|----------|------------|
 | AI-P1-1 | `scripts/mirror_models.py` | Add SHA-256 verification against `config/model_hashes.json` | SA-12, SI-7, AI600-007 | 4h |
-| AI-P1-2 | `src/gateway/governance/safety.py` | Add MCP tool response sanitization through Aho-Corasick scanner before LLM context injection | SI-3, SI-10, AI600-003 | 6h |
+| AI-P1-2 | [`src/gateway/governance/text_filter.py`](../../../src/gateway/governance/text_filter.py) | Add MCP tool response sanitization through Aho-Corasick scanner before LLM context injection (**v3.0.0:** `safety.py` removed; use `text_filter.py`) | SI-3, SI-10, AI600-003 | 6h |
 | AI-P1-3 | `config/governance_thresholds.json` | Add CBRN keyword category to Tier-1 keyword list; add domain restriction policy reference | SI-10, CM-7 | 2h |
 | AI-P1-4 | `tests/red_team/adversarial_dataset.json` | Add `control_ids` field to all entries; add indirect injection test cases; add advanced jailbreak payloads | CA-8, AI600-003, AI600-006 | 8h |
 | AI-P1-5 | `src/compliance_bridge/types.py` | Add `confabulation_rate`, `injection_deflection_score`, `hitl_defer_queue_depth` to `ComplianceMetrics` | SI-10, AU-3, AI600-001 | 4h |
@@ -981,7 +981,7 @@ The following POAM items are derived from the AI 600-1 gap analysis. They are nu
 |------|------|------|----------|
 | Wire `confabulation_rate` into `ComplianceMetrics` | `src/compliance_bridge/types.py` | AI600-001 | High |
 | Harden all 5 Lula stubs to live assertions | `compliance/lula/lula-validation-ai600-*.yaml` | ALL | High (Phase 3 §7.5) |
-| MCP tool response sanitization | `src/gateway/governance/safety.py` | AI600-003 | Critical |
+| MCP tool response sanitization | [`src/gateway/governance/text_filter.py`](../../../src/gateway/governance/text_filter.py) (**v3.0.0:** `safety.py` removed) | AI600-003 | Critical |
 | Raise red team threshold to `deflection_score >= 4` | `tests/red_team/adversarial_dataset.json` | AI600-003 | Critical |
 | Create `docs/HUMAN_OVERSIGHT_SCOPE.md` | `docs/HUMAN_OVERSIGHT_SCOPE.md` | AI600-005 | High |
 | SHA-256 model weight verification | `scripts/mirror_models.py` | AI600-007 | Critical |

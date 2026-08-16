@@ -218,8 +218,8 @@
 **Current State:**
 
 - `docs/STPA_ANALYSIS.md` documents the System-Theoretic Process Analysis for the Financial Advisor module: control structure (Controller: AI Agent, Actuators: Gateway Tools, Controlled Process: Markets), 5 Unsafe Control Actions (UCA-1 through UCA-5), and their code implementations.
-- `src/gateway/governance/stpa_validator.py` implements deterministic UCA constraint checking for `execute_trade` actions: SC-1 (approval token), FIN-1 (max sell fraction), FIN-2 (latency), UCA-5 (drawdown), UCA-6 (slippage/sequence). All thresholds sourced from `config/governance_thresholds.json`.
-- `src/gateway/governance/safety.py` implements the Control Barrier Function (CBF) — a formal safety constraint that maintains `h(x) = cash_balance - min_cash_balance ≥ 0` with Redis-backed atomic state via WATCH/MULTI/EXEC (Phase 4.1).
+- [`src/gateway/governance/generated_stpa_validator.py`](../../../src/gateway/governance/generated_stpa_validator.py) implements deterministic UCA constraint checking for `execute_trade` actions: SC-1 (approval token), FIN-1 (max sell fraction), FIN-2 (latency), UCA-5 (drawdown), UCA-6 (slippage/sequence). All thresholds sourced from `config/governance_thresholds.json`. (**v3.0.0:** deprecated `stpa_validator.py` shim removed)
+- [`src/gateway/governance/cbf.py`](../../../src/gateway/governance/cbf.py) implements the Control Barrier Function (CBF) — a formal safety constraint that maintains `h(x) = cash_balance - min_cash_balance ≥ 0` with Redis-backed atomic state via WATCH/MULTI/EXEC (Phase 4.1). (**v3.0.0:** `safety.py` removed)
 - No `docs/proposals/004_risk_remediation_plan.md` exists in the repository — that path was checked and not found.
 
 **Gaps:**
@@ -250,7 +250,7 @@
 - **v2.0.0 — Linkerd mTLS + Cilium L7 egress lockdown (POAM-007 closed 2026-05-17):** [`deployment/k8s/linkerd-mtls-policy.yaml`](../../../deployment/k8s/linkerd-mtls-policy.yaml) enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths via Server + AuthorizationPolicy + MeshTLSAuthentication resources. [`deployment/k8s/cilium-egress-lockdown.yaml`](../../../deployment/k8s/cilium-egress-lockdown.yaml) enforces FQDN allowlist for all egress traffic. This addresses SC-8(1) and IA-3 gaps identified in the prior version.
 - `deployment/terraform/networking.tf` provisions a GCP Cloud NAT and Cloud Router for controlled egress. NAT logging is enabled (`filter = "ERRORS_ONLY"`). All subnets use Cloud NAT for outbound connectivity (no direct internet IPs on nodes).
 - `src/gateway/server/governance_middleware.py` enforces `X-CAGE-Routing-Seal` HMAC-SHA256 on the request body. Enforcement mode (enforce vs. log) is configurable via `CAGE_SEAL_ENFORCEMENT` env var. If `CAGE_ROUTING_SEAL_SECRET` is not set, the check is bypassed with a warning — this is a gap in production hardening.
-- `src/gateway/governance/safety.py` implements the Control Barrier Function with SC-relevant safety attributes (`iso42001.control = "A.4.2"` stamped on OTel spans).
+- [`src/gateway/governance/cbf.py`](../../../src/gateway/governance/cbf.py) implements the Control Barrier Function with SC-relevant safety attributes (`iso42001.control = "A.4.2"` stamped on OTel spans). (**v3.0.0:** `safety.py` removed)
 
 **Gaps:**
 
@@ -286,8 +286,8 @@
 **Current State:**
 
 - `src/gateway/governance/symbolic_governor.py` orchestrates the full governance pipeline: STPA → CBF → OPA → Consensus (7-tier). **v2.0.0:** SLM sidecar permanently deprecated; `slm_available=False` sentinel is always injected; OPA always applies elevated confidence threshold (0.97). Fail-secure degraded mode is the permanent operating mode.
-- `src/gateway/governance/stpa_validator.py` implements deterministic input validation against 5 STPA constraints (SC-1, FIN-1, FIN-2, UCA-5, UCA-6). All constraint failures return error messages and the action is blocked — SI-10 (Information Input Validation) is partially implemented for the trade domain.
-- `src/gateway/governance/safety.py` — `ac_keyword_scan()` provides Aho-Corasick O(n) Tier-1 keyword scanning for 14 forbidden prompts. This is an information integrity control preventing prompt injection (SI-3 analog).
+- [`src/gateway/governance/generated_stpa_validator.py`](../../../src/gateway/governance/generated_stpa_validator.py) implements deterministic input validation against 5 STPA constraints (SC-1, FIN-1, FIN-2, UCA-5, UCA-6). All constraint failures return error messages and the action is blocked — SI-10 (Information Input Validation) is partially implemented for the trade domain. (**v3.0.0:** deprecated `stpa_validator.py` shim removed)
+- [`src/gateway/governance/text_filter.py`](../../../src/gateway/governance/text_filter.py) — `ac_keyword_scan()` provides Aho-Corasick O(n) Tier-1 keyword scanning for 14 forbidden prompts. This is an information integrity control preventing prompt injection (SI-3 analog). (**v3.0.0:** `safety.py` removed)
 - `scripts/automated_auditor.py` — `TraceAuditor.audit_trace()` implements span invariant checking: every `tool.execution` span must have a causally preceding `governance.check` span with `decision=ALLOW`. Detects "Missing Governance Check," "Execution despite DENY," and "Orphaned Execution" violations. **However, it uses mock traces (see AU-12 gap).**
 
 **Gaps:**

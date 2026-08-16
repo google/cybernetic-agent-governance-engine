@@ -73,9 +73,9 @@ GovernanceError ← Tier 6: Causal Gatekeeper (DoWhy Placebo Refutation)
 
 | Tier | Name                                    | Class / Function                                                                                    | Threshold Source                                                   | Fail Behavior                                 | Active Regions |
 | ---- | --------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------- | --- |
-| 0    | STPA UCA Validation                     | `GeneratedSTPAValidator.validate()` in [`src/gateway/governance/generated_stpa_validator.py`](../../src/gateway/governance/generated_stpa_validator.py) (imported as `STPAValidator` by `symbolic_governor.py`; `stpa_validator.py` is a deprecated shim) | `governance_thresholds.json` `stpa.*`                              | `GovernanceError`                             | *All Regions* |
+| 0    | STPA UCA Validation                     | `GeneratedSTPAValidator.validate()` in [`src/gateway/governance/generated_stpa_validator.py`](../../src/gateway/governance/generated_stpa_validator.py) (**v3.0.0:** deprecated `stpa_validator.py` shim removed) | `governance_thresholds.json` `stpa.*`                              | `GovernanceError`                             | *All Regions* |
 | 1    | Agentic Confidence Check                | inline logic in `src/gateway/governance/symbolic_governor.py`                                                              | Region-specific thresholds (`Confidence: 0.95` or `0.97` for EU)   | `GovernanceError`                             | *All Regions* |
-| 2    | Control Barrier Function                | `ControlBarrierFunction` in [`cbf.py`](../../src/gateway/governance/cbf.py) (`safety.py` is a deprecated shim that re-exports from `cbf.py`); concurrent with Tier 4 | Region-specific thresholds (`Drawdown: 5%` or `4%` for EU)         | `GovernanceError`                             | `US_FED`, `APAC_MAS` |
+| 2    | Control Barrier Function                | `ControlBarrierFunction` in [`cbf.py`](../../src/gateway/governance/cbf.py) (**v3.0.0:** `safety.py` removed) | Region-specific thresholds (`Drawdown: 5%` or `4%` for EU)         | `GovernanceError`                             | `US_FED`, `APAC_MAS` |
 | 3    | Fiscal Limit Pre-Reservation             | `FiscalLimitGuard.reserve()` in [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) — atomic Redis `WATCH`/`MULTI`/`EXEC`                            | `FISCAL_DAILY_CAP_USD` (default $500,000); 300s reservation TTL                                                         | `GovernanceError`; reservation released on downstream failure | *All Regions* |
 | 4    | OPA Policy Evaluation                   | `OPAClient` in [`core/policy.py`](../../src/gateway/core/policy.py) + `CircuitBreaker`; concurrent with Tier 2              | `trade.governance` Rego package                                    | `GovernanceError`; DENY on circuit open       | *All Regions* |
 | 5    | Multi-Agent Consensus                   | `ConsensusEngine` in [`consensus.py:71`](../../src/gateway/governance/consensus.py)                 | Region-specific thresholds (`Consensus: $10k` / `$7.5k` / `$5k`)   | `GovernanceError`                             | *All Regions* |
@@ -131,7 +131,7 @@ Full analysis: [`docs/STPA_ANALYSIS.md`](../security/STPA_ANALYSIS.md).
 
 [`GeneratedSTPAValidator`](../../src/gateway/governance/generated_stpa_validator.py) enforces **9 Unsafe Control Actions (UCAs)** derived from STAMP hazard analysis of the CAGE financial control loop (UCA-1 through UCA-9, compiled by `stpa_compiler.py`). Each UCA maps to a threshold in `governance_thresholds.json`. The STPA check runs synchronously as Step 0 (`cage.stpa_check` OTel span), always first.
 
-`symbolic_governor.py` imports `GeneratedSTPAValidator` directly from `generated_stpa_validator.py` (bypassing the deprecated `stpa_validator.py` shim). `stpa_validator.py` is now a backward-compatibility shim that re-exports `GeneratedSTPAValidator` as `STPAValidator` and emits a `DeprecationWarning` on import — it will be removed in the next major version.
+**v3.0.0:** `symbolic_governor.py` imports `GeneratedSTPAValidator` directly from `generated_stpa_validator.py`. The deprecated `stpa_validator.py` shim was removed.
 
 > **Implementation note (2026-06-03):** A `validate()` method was added to `GeneratedSTPAValidator` that delegates to `validate_generated()`, resolving an `AttributeError` when `symbolic_governor.py` called `.validate()` on the generated class. The `validate()` method is the canonical entry-point; `validate_generated()` contains the per-UCA check logic. Both methods are present in `generated_stpa_validator.py`.
 
@@ -150,7 +150,7 @@ Full analysis: [`docs/STPA_ANALYSIS.md`](../security/STPA_ANALYSIS.md).
 
 ## 4. Control Barrier Function — Tier 2
 
-[`ControlBarrierFunction`](../../src/gateway/governance/cbf.py) enforces the core financial safety invariant using control theory formalism. (`safety.py` is a deprecated backward-compatibility shim that re-exports `ControlBarrierFunction` and `safety_filter` from `cbf.py`; import directly from `cbf.py` in new code.)
+[`ControlBarrierFunction`](../../src/gateway/governance/cbf.py) enforces the core financial safety invariant using control theory formalism. **v3.0.0:** The deprecated `safety.py` shim was removed — import `ControlBarrierFunction` and `safety_filter` directly from `cbf.py`.
 
 **Safety invariant:**
 
@@ -186,7 +186,7 @@ To prevent Time-Of-Check to Time-Of-Use (TOCTOU) exploits and drift under volati
 
 ### Aho-Corasick Keyword Scan & Text Filter
 
-[`text_filter.py`](../../src/gateway/governance/text_filter.py) provides two complementary scan functions. (`safety.py` re-exports `ac_keyword_scan` from `text_filter.py` for backward compatibility but is deprecated.)
+[`text_filter.py`](../../src/gateway/governance/text_filter.py) provides two complementary scan functions. **v3.0.0:** The deprecated `safety.py` shim was removed — import `ac_keyword_scan` directly from `text_filter.py`.
 
 #### `ac_keyword_scan()` — Universal Tier-1 Keyword Scanner (All Regions)
 

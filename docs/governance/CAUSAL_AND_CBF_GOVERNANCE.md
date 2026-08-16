@@ -113,7 +113,7 @@ When `CAUSAL_GATEKEEPER_STRICT_MODE=true`, missing trace_id fields cause immedia
 
 The CBF layer (`src/gateway/governance/cbf.py`) provides a discrete-time, mathematically rigorous enforcement of safety limits (like budget caps and drawdown constraints), guaranteeing the agent cannot enter an unsafe state.
 
-> **Note on `safety.py`:** `src/gateway/governance/safety.py` is a **deprecated backward-compatibility shim only**. It re-exports `ControlBarrierFunction` and `safety_filter` from `cbf.py`, and `ac_keyword_scan` from `text_filter.py`. All imports should use the canonical paths directly. This shim will be removed in the next major version.
+> **v3.0.0:** The deprecated `safety.py` shim was removed. Import `ControlBarrierFunction` and `safety_filter` directly from [`cbf.py`](../../src/gateway/governance/cbf.py), and `ac_keyword_scan` from [`text_filter.py`](../../src/gateway/governance/text_filter.py).
 
 ### Purpose
 To provide deterministic, hard boundary guarantees on continuous state variables, ensuring that subsequent states resulting from an agent's actions remain within the defined "safe set."
@@ -186,7 +186,7 @@ return {1, "COMMITTED", tostring(next_cash)}
 
 The script is loaded via `SCRIPT LOAD` / `EVALSHA` with automatic NOSCRIPT retry on SHA eviction. KMS signature verification must occur in Python before calling this method — Redis Lua has no cryptographic FFI.
 
-`atomic_verify_and_commit()` is the **preferred** path. `update_state()` is deprecated (emits `DeprecationWarning`) because it does not atomically re-verify the CBF safety condition before committing.
+`atomic_verify_and_commit()` is the **required** path. **v3.0.0:** `update_state()` was renamed to `_update_state_unsafe()` and is now internal-only; it does not atomically re-verify the CBF safety condition before committing. Use `atomic_verify_and_commit()` instead.
 
 **Retry policy:** `_MAX_RETRIES = 5` for both WATCH/MULTI/EXEC and Lua paths. On exhaustion, `RuntimeError` is raised and the trade is blocked (fail-closed).
 

@@ -211,7 +211,7 @@ The evidence chain is written to `examples/evidence/evidence_chain_<date>.ndjson
 
 ### 1. OTel Span Emitter
 
-Emits real OpenTelemetry spans with the same Langfuse attribute schema used by the live gateway (`symbolic_governor.py`, `stpa_validator.py`). When `LANGFUSE_HOST` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` are set, spans flow directly into Langfuse Cloud. Without credentials the `LoggingSpanExporter` fallback captures them locally.
+Emits real OpenTelemetry spans with the same Langfuse attribute schema used by the live gateway (`symbolic_governor.py`, `generated_stpa_validator.py`). When `LANGFUSE_HOST` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` are set, spans flow directly into Langfuse Cloud. Without credentials the `LoggingSpanExporter` fallback captures them locally.
 
 Span attributes mirror the live system exactly:
 

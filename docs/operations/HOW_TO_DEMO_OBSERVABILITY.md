@@ -101,7 +101,7 @@ python3 src/governed_financial_advisor/demo/demo_observability.py
 - **Outcome:** 💸 Cash reserve depleted → Control Barrier Function (CBF)
   triggers bankruptcy protocol
 - **What it demonstrates:** The CBF safety layer
-  (`src/gateway/governance/safety.py`). Emits `event.bankruptcy=True` and
+  ([`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)). Emits `event.bankruptcy=True` and
   `safety.bankruptcy_deficit` telemetry.
 
 ---
