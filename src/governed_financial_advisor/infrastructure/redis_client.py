@@ -26,7 +26,6 @@ from src.governed_financial_advisor.utils.telemetry import get_tracer
 
 __all__ = [
     "AsyncRedisClient",
-    "RedisClient",
     "TransactionAbortedError",
     "redis_client",
 ]
