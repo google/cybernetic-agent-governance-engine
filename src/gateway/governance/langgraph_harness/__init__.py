@@ -45,23 +45,33 @@ from src.gateway.governance.langgraph_harness.opa_node_factory import (
     create_opa_safety_router,
 )
 from src.gateway.governance.langgraph_harness.types import (
+    ConfidenceExtractor,
+    FtraNodeConfig,
     MessageExtractor,
     NemoNodeConfig,
     OpaNodeConfig,
     PayloadExtractor,
+    PlanExtractor,
     StateDict,
     ThreadIdExtractor,
+    default_confidence_extractor,
+    default_plan_extractor,
 )
 
 __all__ = [
+    "ConfidenceExtractor",
+    "FtraNodeConfig",
     "MessageExtractor",
     "NemoNodeConfig",
     "OpaNodeConfig",
     "PayloadExtractor",
+    "PlanExtractor",
     "StateDict",
     "ThreadIdExtractor",
     "create_nemo_guardrail_node",
     "create_nemo_output_rail_node",
     "create_opa_safety_node",
     "create_opa_safety_router",
+    "default_confidence_extractor",
+    "default_plan_extractor",
 ]

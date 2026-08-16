@@ -358,3 +358,41 @@ Benign FPR: **25.0% (5/20)** — unchanged total. Category breakdown:
 - Adversarial deflection: **76.2% (16/21 evaluated, 0 network errors)**
 - Benign FPR: **25.0% (5/20 evaluated, 0 network errors)**
 - CAGE_ARXIV.MD Section 6.6 updated accordingly.
+
+---
+
+## Phase 0.2: Reconciliation Worker Documentation Corrections (2026-08-15)
+
+This correction pass addresses 4 stale claims in `tmp/CAGE_ARXIV.md` §7.2 and §7.3
+identified in [`CAGE_IMPLEMENTATION_SPECS.md` §2.8](../../plans/CAGE_IMPLEMENTATION_SPECS.md#28-cage_arxivmd-stale-claims-correction-documentation-spec).
+
+### Background
+
+The reconciliation worker code (`src/compliance_bridge/reconciliation_worker.py`) was
+complete but not operationally active (POAM-2026-038). The paper contained claims that
+the Kubernetes manifest didn't exist and that the `RECONCILIATION_PROVIDER=gcs` setting
+didn't match any registered provider — both claims became stale after code updates.
+
+### Stale claims corrected
+
+| # | Stale claim | Location | Correction |
+|---|---|---|---|
+| R1 | *"there is no Kubernetes manifest for it"* | §7.2 (line 520) | `deployment/k8s/reconciliation-worker.yaml` exists (383 lines: CronJob + Secret template + CiliumNetworkPolicy) |
+| R2 | *"`RECONCILIATION_PROVIDER=gcs` setting does not match any key in the daemon's own provider registry"* | §7.2 (line 520) | `GcsLedgerProvider` is registered under `"gcs"` at `reconciliation_worker.py:1151-1152` |
+| R3 | *"Deploy the reconciliation daemon: Author a Kubernetes Deployment or CronJob manifest"* | §7.3 (line 547) | Manifest exists; reframed to: secret population only (POAM-2026-038) |
+| R4 | *"Fix the RECONCILIATION_PROVIDER mismatch"* | §7.3 (line 548) | Removed — already fixed (GcsLedgerProvider registered) |
+
+### Evidence trail
+
+| Item | Evidence |
+|---|---|
+| CronJob manifest exists | [`deployment/k8s/reconciliation-worker.yaml`](../../deployment/k8s/reconciliation-worker.yaml) — 383 lines including CiliumNetworkPolicy and Secret template |
+| GcsLedgerProvider registered | [`reconciliation_worker.py:1151-1152`](../../src/compliance_bridge/reconciliation_worker.py:1151): `"gcs": GcsLedgerProvider` in provider registry |
+| POAM-2026-038 tracking | [`docs/POAM.md`](../POAM.md) — secret population tracking |
+| Correction procedure | `scripts/_patch_paper.py` replacement blocks applied 2026-08-15 |
+
+### Files modified
+
+- `tmp/CAGE_ARXIV.md` — §7.2 and §7.3 reconciliation worker claims corrected
+- `scripts/_patch_paper.py` — 3 replacement blocks added (Phase 0.2 section)
+- `docs/paper/REVISION_TRACKER.md` — this section added

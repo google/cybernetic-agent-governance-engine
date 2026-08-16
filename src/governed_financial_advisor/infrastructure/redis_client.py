@@ -26,7 +26,6 @@ from src.governed_financial_advisor.utils.telemetry import get_tracer
 
 __all__ = [
     "AsyncRedisClient",
-    "RedisClient",
     "TransactionAbortedError",
     "redis_client",
 ]
@@ -263,9 +262,6 @@ class AsyncRedisClient:
                 logger.error(f"Async Redis DELETE Error: {e}")
                 raise
 
-
-# Alias for backwards-compatibility with tests that import RedisClient
-RedisClient = AsyncRedisClient
 
 # Global Instance Interface
 redis_client = AsyncRedisClient()

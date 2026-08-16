@@ -13,9 +13,9 @@ from __future__ import annotations
 import asyncio
 import collections
 import time
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Stub patches — minimum surface to allow import
@@ -208,8 +208,8 @@ class TestModuleConstants:
 
     def test_env_override_rate_limit_max_calls(self):
         """MCP_RATE_LIMIT_MAX_CALLS env var overrides the default."""
-        import sys
         import os
+        import sys
         with patch.dict("sys.modules", _mcp_import_stubs()):
             with patch.dict(os.environ, {"MCP_RATE_LIMIT_MAX_CALLS": "120"}):
                 sys.modules.pop("src.gateway.server.mcp_tool_server", None)

@@ -37,9 +37,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 
-from .types import CONTROL_META, OscalFinding
+from .types import OscalFinding, get_control_meta
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,10 @@ def _create_dataset_item_sync(  # type: ignore[no-untyped-def]
     """Synchronous Langfuse SDK call — run via asyncio.to_thread()."""
     dataset_name = _dataset_name(control_id)
 
+    # Region-aware control metadata lookup
+    _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
+    _control_meta = get_control_meta(_region)
+
     # Ensure dataset exists (upsert semantics — Langfuse will not error if it exists)
     try:
         langfuse.create_dataset(
@@ -66,13 +71,13 @@ def _create_dataset_item_sync(  # type: ignore[no-untyped-def]
             description=(
                 f"Automated compliance failure dataset for ISO 42001 control {control_id}. "
                 f"Items are created by the CAGE audit pipeline on every FAIL finding. "
-                f"ISO clause: {CONTROL_META.get(control_id, {}).get('iso_clause', control_id)}"
+                f"ISO clause: {_control_meta.get(control_id, {}).get('iso_clause', control_id)}"
             ),
             metadata={
                 "control_id": control_id,
-                "iso_clause": CONTROL_META.get(control_id, {}).get("iso_clause", ""),
+                "iso_clause": _control_meta.get(control_id, {}).get("iso_clause", ""),
                 "frameworks": list(
-                    CONTROL_META.get(control_id, {}).get("frameworks", {}).keys()
+                    _control_meta.get(control_id, {}).get("frameworks", {}).keys()
                 ),
                 "created_by": "cage-compliance-bridge",
             },
@@ -101,8 +106,8 @@ def _create_dataset_item_sync(  # type: ignore[no-untyped-def]
         metadata={
             "audit_id": audit_id,
             "control_id": control_id,
-            "iso_clause": CONTROL_META.get(control_id, {}).get("iso_clause", ""),
-            "framework_refs": CONTROL_META.get(control_id, {}).get("frameworks", {}),
+            "iso_clause": _control_meta.get(control_id, {}).get("iso_clause", ""),
+            "framework_refs": _control_meta.get(control_id, {}).get("frameworks", {}),
             "finding_id": finding.finding_id,
             "safety_rate": finding.safety_rate,
             "generated_utc": datetime.now(tz=timezone.utc).isoformat(),

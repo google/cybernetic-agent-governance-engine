@@ -49,13 +49,13 @@ def _make_sink(**kwargs):
     """Return an EvidenceStreamSink instance with sensible test defaults."""
     from src.compliance_bridge.evidence_stream import EvidenceStreamSink
 
-    defaults = dict(
-        redis_url="redis://localhost:6379",
-        redis_db=1,
-        stream_key="cage:evidence:test",
-        max_len=1000,
-        kms_sign=False,
-    )
+    defaults = {
+        "redis_url": "redis://localhost:6379",
+        "redis_db": 1,
+        "stream_key": "cage:evidence:test",
+        "max_len": 1000,
+        "kms_sign": False,
+    }
     defaults.update(kwargs)
     return EvidenceStreamSink(**defaults)
 
@@ -134,7 +134,7 @@ class TestEvidenceStreamSinkProperties:
 
     def test_chain_root_is_genesis_hash(self):
         """Initial chain_root must equal the hash of the genesis string."""
-        from src.compliance_bridge.evidence_stream import _sha256, EvidenceStreamSink
+        from src.compliance_bridge.evidence_stream import EvidenceStreamSink, _sha256
 
         sink = _make_sink()
         expected = _sha256("EVIDENCE_STREAM_GENESIS")
@@ -239,8 +239,6 @@ class TestIngestHashChain:
         sink = _make_sink()
         sink._redis = _make_redis_mock()
 
-        hashes = []
-        original_xadd = sink._redis.xadd
 
         captured_entries = []
 

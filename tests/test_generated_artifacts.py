@@ -74,7 +74,7 @@ def _import_saga_nodes() -> types.ModuleType:
     stub_modules["src.governed_financial_advisor.graph.state"].AgentState = dict
     stub_modules["src.governed_financial_advisor.graph.state"].LedgerEntry = dict
 
-    mcp_stub = MagicMock()
+    MagicMock()
     stub_modules["src.governed_financial_advisor.infrastructure.mcp_client"].GatewayMCPClient = MagicMock
 
     for name, stub in stub_modules.items():

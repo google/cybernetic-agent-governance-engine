@@ -27,7 +27,7 @@ sys.path.append(os.getcwd())
 
 from src.governed_financial_advisor.agents.evaluator.agent import (
     check_market_status,
-    check_safety_constraints,
+    simulate_governance_check,
     verify_policy_opa,
 )
 
@@ -45,15 +45,15 @@ async def test_evaluator_tools():
     assert res is not None, "check_market_status returned None"
     logger.info(f"✅ Market Status Result: {res[:50]}...")
 
-    # 2. Check Safety Constraints
-    logger.info("2. Testing check_safety_constraints...")
-    res = await check_safety_constraints(
+    # 2. Simulate Governance Check
+    logger.info("2. Testing simulate_governance_check...")
+    res = await simulate_governance_check(
         target_tool="execute_trade",
         target_params={"symbol": "AAPL", "amount": 10},
         risk_profile="Low",
     )
-    assert res is not None, "check_safety_constraints returned None"
-    logger.info(f"✅ Safety Constraint Result: {res}")
+    assert res is not None, "simulate_governance_check returned None"
+    logger.info(f"✅ Governance Check Result: {res}")
 
     # 3. Verify Policy
     logger.info("3. Testing verify_policy_opa...")

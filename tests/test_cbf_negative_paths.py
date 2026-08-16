@@ -45,7 +45,7 @@ _MIN_CASH = 10_000.0
 _GAMMA = 0.9
 
 
-def _make_cbf(fake_redis: fakeredis.aioredis.FakeRedis) -> "ControlBarrierFunction":
+def _make_cbf(fake_redis: fakeredis.aioredis.FakeRedis) -> ControlBarrierFunction:
     """Return a CBF wired to *fake_redis* with deterministic thresholds."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 

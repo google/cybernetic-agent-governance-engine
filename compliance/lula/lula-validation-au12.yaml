@@ -15,54 +15,198 @@
 # lula-validation-au12.yaml
 # NIST SP 800-53 Rev 5 — AU-12: Audit Record Generation
 #
-# Asserts that the Langfuse web deployment is running and ready in the cluster.
-# Langfuse is the primary audit record sink: all governance decision spans are
-# shipped directly to Langfuse via its native OTLP endpoint
-# (langfuse-web:3000/api/public/otel/v1/traces).
+# Validates two auditing modes supported by CAGE:
 #
-# OTel spans tagged with iso42001.control, iso42001.verdict, user, and timestamp
-# fields provide the evidence for AU-12 compliance.
+# 1. DECISION-TIME AUDIT (fire-and-forget, default):
+#    Asserts that Langfuse web deployment is running and ready. All governance
+#    decision spans are shipped asynchronously to Langfuse via its native OTLP
+#    endpoint (langfuse-web:3000/api/public/otel/v1/traces). OTel spans tagged
+#    with iso42001.control, iso42001.verdict, user, and timestamp fields provide
+#    the evidence for AU-12 compliance.
 #
-# Domain: kubernetes → Langfuse Web Deployment
+# 2. EVIDENCE-OF-EXECUTION AUDIT (blocking, EVIDENCE_CHAIN_BLOCKING=true):
+#    Asserts that the gateway deployment is configured with the EVIDENCE_CHAIN_BLOCKING
+#    environment variable capability. When enabled, the provenance chain ensures
+#    evidence commit before routing seal issuance, providing stronger non-repudiation.
+#    The evidence chain includes hash-linked records for time-correlated audit trails
+#    per AU-12(1) enhancement requirements.
+#
+# Both modes are compliant AU-12 implementations with different consistency/availability
+# trade-offs:
+#   - Decision-time: Higher availability, async evidence persistence
+#   - Evidence-of-execution: Stronger non-repudiation, seal tied to evidence
+#
+# Domain: kubernetes → Langfuse Web Deployment + Gateway Deployment
 # Provider: opa (inline Rego)
 #
 # References:
 #   - deployment/k8s/langfuse-web.yaml — Langfuse deployment manifest
-#   - deployment/k8s/generated/gateway-deployment.yaml — OTLP endpoint config
+#   - deployment/k8s/generated/gateway-deployment.yaml — OTLP endpoint + EVIDENCE_CHAIN_BLOCKING config
 #   - src/gateway/server/governance_middleware.py — span emission source
+#   - src/gateway/governance/provenance_chain.py — evidence chain blocking implementation
+#   - src/gateway/governance/routing_seal.py — seal generation tied to evidence
 
 component-definition:
   uuid: cf25a83a-cdbb-5eb4-a4dd-8a3812a4a76e
   metadata:
-    title: CAGE Validation — AU12
-    last-modified: '2026-07-01T13:18:54Z'
-    version: 1.0.0
+    title: CAGE Validation — AU12 (Dual Auditing Modes)
+    last-modified: '2026-08-15T16:50:00Z'
+    version: 2.0.0
     oscal-version: 1.1.2
-    remarks: 'Auto-converted from standalone lula validation format.
+    remarks: |
+      Auto-converted from standalone lula validation format.
 
       Region: US_FED. Posture: nist-sp800-53.
 
-      Notes: NIST SP 800-53 Rev 5 AU-12: Audit Record Generation. Verifies that Langfuse (the native OTLP audit record sink) is live and ready. Services ship traces directly to langfuse-web:3000/api/public/otel/v1/traces using OTEL_EXPORTER_OTLP_ENDPOINT — no intermediate OTel Collector is deployed. Each governance decision span includes the required AU-12 fields: iso42001.control, iso42001.verdict, user, and timestamp. Evidence: OTel spans from src/gateway/server/governance_middleware.py and LangGraph governance nodes ingested directly by Langfuse. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — AU-12 monitoring cadence.'
+      Notes: NIST SP 800-53 Rev 5 AU-12: Audit Record Generation with AU-12(1)
+      System-Wide/Time-Correlated Audit Trail enhancement support.
+
+      CAGE provides two compliant auditing modes:
+
+      1. DECISION-TIME AUDIT (default): Records governance decisions asynchronously
+         via OTel spans to Langfuse. Prioritizes availability — routing seal issued
+         immediately after governance decision without waiting for audit persistence.
+         Decision-time != evidence-of-execution.
+
+      2. EVIDENCE-OF-EXECUTION AUDIT (EVIDENCE_CHAIN_BLOCKING=true): Ensures evidence
+         commit before seal issuance. The provenance chain (provenance_chain.py) must
+         successfully persist the evidence record before the routing seal is computed.
+         Provides stronger non-repudiation: seal cryptographically tied to evidence.
+         Supports dual-schema verification (v1.0/v1.1) for forward compatibility.
+         Hash-linked evidence chain satisfies AU-12(1) time-correlation requirements.
+
+      Key distinction: Decision-time records WHAT was decided; evidence-of-execution
+      proves THAT the decision was recorded BEFORE action (seal issuance).
+
+      Validation checks:
+        - Langfuse deployment ready (decision-time audit sink operational)
+        - Gateway deployment has EVIDENCE_CHAIN_BLOCKING env var capability
+
+      Evidence: OTel spans from governance_middleware.py, provenance_chain.py evidence
+      records, and hash-linked audit trail. See: compliance/continuous-monitoring/ISCM_STRATEGY.md
   components:
   - uuid: ce18ebc3-50f2-550a-9fbc-503d5114c06f
     type: software
     title: CAGE Cybernetic Governance Engine
-    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    description: |
+      The Cybernetic AI Governance Engine (CAGE) — AI governance gateway with dual
+      auditing modes for AU-12 compliance. Supports both decision-time (async) and
+      evidence-of-execution (blocking) audit record generation.
     control-implementations:
     - uuid: 257ab77e-1020-5595-a07b-a8ae59511c0d
       source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
-      description: 'Control implementation for AU12. Region: US_FED. Posture: nist-sp800-53.'
+      description: |
+        Control implementation for AU-12 with AU-12(1) enhancement.
+        Region: US_FED. Posture: nist-sp800-53.
+
+        Two auditing modes documented:
+        - Decision-time audit: async OTel spans to Langfuse (availability-optimized)
+        - Evidence-of-execution audit: blocking provenance chain commit (non-repudiation-optimized)
       implemented-requirements:
       - uuid: 4405db85-a4ec-513f-bc34-161e9935bf04
-        control-id: au12
-        description: Automated lula validation for AU12.
+        control-id: au-12
+        description: |
+          Automated lula validation for AU-12. Verifies:
+          1. Langfuse audit sink is operational (decision-time mode)
+          2. Gateway has EVIDENCE_CHAIN_BLOCKING capability (evidence-of-execution mode)
         links:
         - href: '#610ee241-76a3-5f1f-b41d-613019559b15'
           rel: lula
+          text: Langfuse audit sink validation
+        - href: '#7a2b3c4d-5e6f-4a8b-9c0d-1e2f3a4b5c6d'
+          rel: lula
+          text: Evidence chain blocking capability validation
+      - uuid: 8b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e
+        control-id: au-12.1
+        description: |
+          AU-12(1) System-Wide/Time-Correlated Audit Trail enhancement.
+          The evidence chain in provenance_chain.py provides hash-linked audit records
+          that enable time-correlated analysis across system components. Each evidence
+          record includes: timestamp_utc, request_id, previous_hash (chain link),
+          and schema_version for dual-schema verification (v1.0/v1.1).
+        links:
+        - href: '#7a2b3c4d-5e6f-4a8b-9c0d-1e2f3a4b5c6d'
+          rel: lula
+          text: Hash-linked evidence chain validation
   back-matter:
     resources:
     - uuid: 610ee241-76a3-5f1f-b41d-613019559b15
-      title: Lula Validation — AU12
+      title: Lula Validation — AU-12 Decision-Time Audit (Langfuse Sink)
       rlinks:
       - href: lula.dev
-      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: langfuse-web-deployment\n      resource: deployments\n      namespace: governance-stack\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# AU-12: Audit Record Generation\\n# Verifies the Langfuse web deployment is present and has at least 1\\n# ready replica, confirming the audit record sink is operational.\\n# Required audit fields emitted per span: iso42001.control, iso42001.verdict,\\n# user, timestamp — enforced by governance_middleware.py and LangGraph nodes.\\nvalidate if {\\n  input[\\\"langfuse-web-deployment\\\"].status.readyReplicas >= 1\\n}\\n\"\n"
+      description: |
+        domain:
+          type: kubernetes
+          kubernetes-spec:
+            resources:
+            - name: langfuse-web-deployment
+              resource: deployments
+              namespace: governance-stack
+        provider:
+          type: opa
+          opa-spec:
+            rego: |
+              package lula
+
+              import future.keywords.if
+
+              # AU-12: Audit Record Generation — Decision-Time Mode
+              # Verifies the Langfuse web deployment is present and has at least 1
+              # ready replica, confirming the async audit record sink is operational.
+              # Required audit fields emitted per span: iso42001.control, iso42001.verdict,
+              # user, timestamp — enforced by governance_middleware.py and LangGraph nodes.
+              #
+              # Decision-time audit provides availability-optimized audit record generation.
+              # Routing seals are issued immediately; audit persistence is async.
+              validate if {
+                input["langfuse-web-deployment"].status.readyReplicas >= 1
+              }
+
+    - uuid: 7a2b3c4d-5e6f-4a8b-9c0d-1e2f3a4b5c6d
+      title: Lula Validation — AU-12 Evidence-of-Execution Audit (Blocking Mode)
+      rlinks:
+      - href: lula.dev
+      description: |
+        domain:
+          type: kubernetes
+          kubernetes-spec:
+            resources:
+            - name: cage-gateway-deployment
+              resource: deployments
+              namespace: governance-stack
+        provider:
+          type: opa
+          opa-spec:
+            rego: |
+              package lula
+
+              import future.keywords.if
+              import future.keywords.in
+
+              # AU-12: Audit Record Generation — Evidence-of-Execution Mode
+              # Verifies the gateway deployment supports EVIDENCE_CHAIN_BLOCKING capability.
+              # When EVIDENCE_CHAIN_BLOCKING=true, the provenance chain ensures evidence
+              # commit before routing seal issuance, providing stronger non-repudiation.
+              #
+              # This validation confirms the capability EXISTS in the deployment spec.
+              # Actual enforcement depends on runtime EVIDENCE_CHAIN_BLOCKING value.
+              #
+              # Key guarantee: No routing seal can be issued without a committed evidence record.
+              # The evidence chain provides hash-linked correlation for AU-12(1) time-correlation.
+              #
+              # Two auditing modes are BOTH compliant AU-12 implementations:
+              #   - Decision-time (EVIDENCE_CHAIN_BLOCKING=false): availability over consistency
+              #   - Evidence-of-execution (EVIDENCE_CHAIN_BLOCKING=true): consistency over availability
+
+              # Check that EVIDENCE_CHAIN_BLOCKING env var is defined in container spec
+              evidence_chain_blocking_defined if {
+                some container in input["cage-gateway-deployment"].spec.template.spec.containers
+                some env in container.env
+                env.name == "EVIDENCE_CHAIN_BLOCKING"
+              }
+
+              # Validate: gateway deployment is ready AND has evidence chain blocking capability
+              validate if {
+                input["cage-gateway-deployment"].status.readyReplicas >= 1
+                evidence_chain_blocking_defined
+              }

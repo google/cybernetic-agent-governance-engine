@@ -18,7 +18,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from config.settings import MODEL_REASONING
+from config.settings import Config
 
 
 # Define the Pydantic schema for the execution plan
@@ -194,10 +194,8 @@ import json as _json
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 
-from config.settings import Config
 
-
-def create_execution_analyst_agent(model_name: str = MODEL_REASONING):  # type: ignore[assignment, no-untyped-def]
+def create_execution_analyst_agent(model_name: str = Config.MODEL_REASONING):  # type: ignore[assignment, no-untyped-def]
     """Factory to create execution analyst agent.
 
     Uses VLLM_REASONING_API_BASE for the inference endpoint — the gateway

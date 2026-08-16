@@ -36,16 +36,24 @@ from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
 from src.gateway.governance.ftra.graph_analyzer import PlanGraphAnalyzer
 from src.gateway.governance.ftra.models import (
     FTRAVerdict,
+    ParseFailureClass,
+    ParseResult,
     ReachabilityResult,
     TerminalClassification,
 )
-from src.gateway.governance.ftra.node_factory import create_ftra_node
+from src.gateway.governance.ftra.node_factory import (
+    create_ftra_node,
+    sanitize_llm_output,
+)
 
 __all__ = [
     "FTRAVerdict",
     "IrreversibilityClassifier",
+    "ParseFailureClass",
+    "ParseResult",
     "PlanGraphAnalyzer",
     "ReachabilityResult",
     "TerminalClassification",
     "create_ftra_node",
+    "sanitize_llm_output",
 ]

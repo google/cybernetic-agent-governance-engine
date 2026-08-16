@@ -26,7 +26,7 @@ sys.path.append(os.getcwd())
 pytestmark = pytest.mark.red_team
 from unittest.mock import AsyncMock, MagicMock
 
-from src.gateway.governance.stpa_validator import STPAValidator
+from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator
 from src.gateway.governance.symbolic_governor import GovernanceError, SymbolicGovernor
 from src.governed_financial_advisor.agents.evaluator.red_agent import (
     RedAgent,  # Updated import
@@ -57,7 +57,7 @@ def mock_consensus_engine():
 
 @pytest.fixture
 def symbolic_governor(mock_opa_client, mock_safety_filter, mock_consensus_engine):
-    stpa_validator = STPAValidator()  # Use real validator with default ontology
+    stpa_validator = GeneratedSTPAValidator()  # Use real validator with default ontology
     return SymbolicGovernor(
         opa_client=mock_opa_client,
         safety_filter=mock_safety_filter,

@@ -345,8 +345,9 @@ class TestCausalSafetyCheckNoDoWhy:
 
     def test_production_env_without_telemetry_returns_false(self):
         """In production (CAGE_ENV=production), missing telemetry → fail-closed."""
-        from src.gateway.governance.causal_gatekeeper import causal_safety_check
         import os
+
+        from src.gateway.governance.causal_gatekeeper import causal_safety_check
 
         original = os.environ.get("CAGE_ENV")
         try:

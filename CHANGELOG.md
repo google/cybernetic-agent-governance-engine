@@ -9,6 +9,51 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+---
+
+## [3.0.0] - 2026-08-15
+
+### Breaking Changes
+- Removed `stpa_validator.py` shim module — use `GeneratedSTPAValidator` directly
+- Removed `safety.py` re-export shim — import from `text_filter` and `cbf` directly
+- Removed `GovernanceClient`, `RedisClient`, `HybridClient` aliases
+- Removed `check_safety_constraints` legacy tool alias — use `simulate_governance_check`
+- Removed `create_ftra_node()` deprecated params (`registry_path`, `plan_key`)
+- Removed `CONTROL_META`, `EVIDENCE_SLA_SECONDS`, `ISO_CONTROL_MAP` aliases — use region-aware accessors
+- Removed `config/settings.py` module-level aliases — use `Config.X` class attributes
+- Migrated threshold env vars to `config/governance_thresholds.json` (env vars still work as overrides)
+- (CR-1) Removed Evidence Stream v1.0 schema support — v1.1 is now the only supported schema
+- (CR-2) Removed NeMo auto-apply path (`NEMO_AUTO_APPLY_ENABLED`) — all refinements require human approval
+- (CR-3) Renamed `update_state()` → `_update_state_unsafe()` — use `atomic_verify_and_commit()` instead
+
+### Added
+- `config/governance_thresholds.json` v2.0.0 schema with FRIA, confidence, and causal thresholds
+- Threshold accessor functions in `src/gateway/governance/schemas/thresholds.py`
+- Region-aware control metadata accessors (`get_control_meta()`, `get_sla_seconds()`, `get_iso_control_map()`)
+
+### Changed
+- `FtraNodeConfig` is now required for `create_ftra_node()` (no fallback extractors)
+- Threshold values loaded from config file with env var overrides
+- `SafetyBoundaryProtocol` no longer exposes `update_state()` method
+
+### Migration
+See [MIGRATION_GUIDE_v3.md](docs/MIGRATION_GUIDE_v3.md) for detailed upgrade instructions.
+
+---
+
+## [2.1.2] - 2026-08-13
+
+### Fixed
+- feat(governance): atomic nonce burn via `verify_and_consume_seal()` Redis SETNX (POAM-2026-043)
+- feat(governance): dynamic standing re-check in `revalidate_post_hitl()` (POAM-2026-044)
+- feat(governance): `RefusalReceipt` parameter binding extended to `validate_action()` and `revalidate_post_hitl()` paths
+- fix(governance): `defer_node.py` field-name mismatch and non-existent `enqueue()` call corrected; DeferQueue now persists tokens to Redis db=1 (POAM-2026-045)
+- test(governance): `tests/test_defer_node.py` added covering durable park and failure propagation
+
+---
+
+## [Unreleased — pre-2.1.2]
+
 ### Added
 - `KmsSigner.sign()` now embeds `signed_at` Unix timestamp in every signed payload; `verify()` rejects payloads older than `MAX_KMS_PAYLOAD_AGE_SECONDS` (300 s), closing replay-attack vector.
 - `CbfGovernor._local_debits` intra-window debit ledger: `verify_action()` computes `effective_balance = snapshot - local_debits` to prevent double-spend within KMS TTL window; `reset_local_debits()` added for reconciliation daemon.

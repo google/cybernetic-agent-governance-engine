@@ -131,24 +131,26 @@ class TestMultiFrameworkRegistry:
         assert SUPPORTED_FRAMEWORKS == sorted(SUPPORTED_FRAMEWORKS)
 
     def test_control_meta_has_frameworks_field(self):
-        from src.compliance_bridge.types import CONTROL_META
+        from src.compliance_bridge.types import get_control_meta
 
-        for cid, meta in CONTROL_META.items():
+        # Use region-aware accessor for universal controls
+        control_meta = get_control_meta("LOCAL")
+        for cid, meta in control_meta.items():
             assert "frameworks" in meta, (
-                f"{cid} missing 'frameworks' key in CONTROL_META"
+                f"{cid} missing 'frameworks' key in control metadata"
             )
             assert isinstance(meta["frameworks"], dict)
 
     def test_evidence_sla_seconds_defined(self):
-        from src.compliance_bridge.types import EVIDENCE_SLA_SECONDS
+        from src.compliance_bridge.types import CRITICAL_CONTROLS, get_sla_seconds
 
-        assert isinstance(EVIDENCE_SLA_SECONDS, dict)
+        # Use region-aware accessor for universal SLA targets
+        sla_seconds = get_sla_seconds("LOCAL")
+        assert isinstance(sla_seconds, dict)
         # Critical controls must have an SLA
-        from src.compliance_bridge.types import CRITICAL_CONTROLS
-
         for cid in CRITICAL_CONTROLS:
-            assert cid in EVIDENCE_SLA_SECONDS, (
-                f"Critical control {cid!r} must have an EVIDENCE_SLA_SECONDS entry"
+            assert cid in sla_seconds, (
+                f"Critical control {cid!r} must have an SLA entry"
             )
 
     # GET /v1/controls?framework= endpoint tests

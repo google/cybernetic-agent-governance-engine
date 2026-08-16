@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 
 pytestmark = pytest.mark.unit
-from src.governed_financial_advisor.infrastructure.redis_client import RedisClient
+from src.governed_financial_advisor.infrastructure.redis_client import AsyncRedisClient
 
 
 class TestRedisConfig(unittest.TestCase):
@@ -33,7 +33,7 @@ class TestRedisConfig(unittest.TestCase):
     )
     def test_k8s_port_collision(self):
         """Test that K8s service port collision (tcp:// string) is ignored."""
-        client = RedisClient()
+        client = AsyncRedisClient()
         self.assertEqual(client.redis_port, 6379)
         self.assertEqual(client.redis_host, "localhost")
 
@@ -47,14 +47,14 @@ class TestRedisConfig(unittest.TestCase):
         # But if REDIS_URL is present, I also parse it.
         # Let's verify what happens.
         # My code uses os.getenv("REDIS_HOST", default_host) where default_host comes from URL.
-        client = RedisClient()
+        client = AsyncRedisClient()
         self.assertEqual(client.redis_port, 1234)
         self.assertEqual(client.redis_host, "myredis")
 
     @patch.dict(os.environ, {"REDIS_PORT": "9999"})
     def test_normal_port(self):
         """Test that normal integer port works."""
-        client = RedisClient()
+        client = AsyncRedisClient()
         self.assertEqual(client.redis_port, 9999)
 
 

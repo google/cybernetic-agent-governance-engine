@@ -38,7 +38,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Minimal stub for langfuse / cachetools so the module imports cleanly
 # ---------------------------------------------------------------------------
@@ -115,10 +114,9 @@ class TestGraceStatus:
             if "src.compliance_bridge.metrics" in sys.modules:
                 del sys.modules["src.compliance_bridge.metrics"]
 
-            from src.compliance_bridge.metrics import _get_grace_status
-
             # Patch the module-level _DEPLOYMENT_START to now
             import src.compliance_bridge.metrics as metrics_mod
+            from src.compliance_bridge.metrics import _get_grace_status
 
             original_start = metrics_mod._DEPLOYMENT_START
             metrics_mod._DEPLOYMENT_START = now
@@ -404,8 +402,9 @@ class TestGetComplianceMetrics:
     @pytest.mark.asyncio
     async def test_cache_hit_updates_evidence_age(self) -> None:
         """get_compliance_metrics() cache hit must update evidence_age_seconds."""
-        from src.compliance_bridge.types import ComplianceMetrics
         from datetime import timedelta
+
+        from src.compliance_bridge.types import ComplianceMetrics
 
         # Set last_event to 60 seconds ago
         last_event = datetime.now(tz=timezone.utc) - timedelta(seconds=60)

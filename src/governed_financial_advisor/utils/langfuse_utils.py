@@ -30,11 +30,17 @@ from typing import Any, Literal
 import httpx
 import opentelemetry.trace
 
-from src.compliance_bridge.types import ISO_CONTROL_MAP
+from src.compliance_bridge.types import get_iso_control_map
 
 logger = logging.getLogger(__name__)
 
-# ISO_CONTROL_MAP imported from src.compliance_bridge.types
+# Use region-aware get_iso_control_map(region) from src.compliance_bridge.types
+
+
+def _get_iso_control_map() -> dict[str, str]:
+    """Return the ISO control map for the current deployment region."""
+    _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
+    return get_iso_control_map(_region)
 
 IsoOutcome = Literal["PASSED", "BLOCKED", "ESCALATED", "SKIPPED"]
 
@@ -226,7 +232,7 @@ class SagaCallbackHandler:
         status = latest.get("status", "PENDING")
         idempotency_key = latest.get("idempotency_key", "")
         outcome: IsoOutcome = _STATUS_TO_OUTCOME.get(status, "ESCALATED")
-        control_id = ISO_CONTROL_MAP.get("saga_rollback", "A.8.4")
+        control_id = _get_iso_control_map().get("saga_rollback", "A.8.4")
 
         trace_with_iso_control(
             name=f"saga_node.{node_name}",
@@ -261,7 +267,7 @@ class SagaCallbackHandler:
         if not any(node_name.startswith(p) for p in _SAGA_NODE_PREFIXES):
             return
 
-        control_id = ISO_CONTROL_MAP.get("saga_rollback", "A.8.4")
+        control_id = _get_iso_control_map().get("saga_rollback", "A.8.4")
         trace_with_iso_control(
             name=f"saga_node.{node_name}.error",
             control_id=control_id,

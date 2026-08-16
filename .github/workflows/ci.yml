@@ -551,3 +551,36 @@ jobs:
           test -f docs/governance/AGENTIC_SCOPE_STATEMENT.md || \
             (echo "ERROR: docs/governance/AGENTIC_SCOPE_STATEMENT.md missing" && exit 1)
           echo "Agentic scope statement present — OK"
+
+  distributed-cbf-proof:
+    name: "Distributed CBF Formal Verification"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Install dependencies
+        run: uv sync --all-groups --all-extras
+      - name: Run Distributed CBF Proof
+        # The proof module verifies safety properties SP-1 through SP-4 for
+        # N ∈ {2, 3, 4} concurrent agents using BFS state-space enumeration.
+        # Exit code 0 on success, 1 on safety violation detection.
+        run: |
+          uv run python -m proof.distributed_cbf_model
+        env:
+          PYTHONPATH: .
+      - name: Run Distributed CBF Tests
+        # Pinned state counts verify the model hasn't drifted from documented
+        # figures. If state space changes, update EXPECTED_STATE_COUNTS in
+        # proof/distributed_cbf_model.py and document in REVISION_TRACKER.md.
+        run: |
+          uv run pytest proof/distributed_cbf_model.py -v --tb=short

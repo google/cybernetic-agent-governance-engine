@@ -18,10 +18,10 @@ This module defines the interfaces that the Gateway expects for governance compo
 decoupling the Gateway from the specific application implementations.
 """
 
-from dataclasses import dataclass, field
 import hashlib
 import json
 import time
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 
@@ -84,7 +84,7 @@ class SafetyFilter(Protocol):
         """Collapse CBF check and state commit into one atomic Redis Lua hop.
 
         Eliminates the TOCTOU window between ``verify_action()`` (read-only)
-        and ``update_state()`` (write) by executing both as a single Lua script
+        and the state commit (write) by executing both as a single Lua script
         inside Redis.
 
         Args:
@@ -98,11 +98,6 @@ class SafetyFilter(Protocol):
         """
         ...
 
-    def update_state(self, cost: float) -> None:
-        """
-        Updates the safety state (e.g. deducts cash).
-        """
-        ...
 
     def rollback_state(self, cost: float) -> None:
         """

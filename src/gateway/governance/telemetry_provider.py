@@ -58,11 +58,16 @@ import pandas as pd
 
 logger = logging.getLogger("Gateway.Governance.TelemetryProvider")
 
+# EV-4 Migration: MIN_SAMPLES is now sourced from config/governance_thresholds.json
+# with environment variable overrides supported (CAUSAL_MIN_SAMPLES or legacy
+# CAUSAL_MIN_LIVE_SAMPLES). See schemas/thresholds.py for details.
+from src.gateway.governance.schemas.thresholds import get_causal_min_samples
+
 # Minimum number of live Langfuse samples required before trusting the
 # LangfuseTelemetryProvider over the MockTelemetryProvider fallback.
 # CTRL_TEL_003 implication: below this threshold, the world-model cannot be
 # considered representative of live market conditions.
-MIN_SAMPLES: int = int(os.environ.get("CAUSAL_MIN_LIVE_SAMPLES", "50"))
+MIN_SAMPLES: int = get_causal_min_samples()
 
 
 # ---------------------------------------------------------------------------

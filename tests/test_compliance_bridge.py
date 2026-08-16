@@ -472,9 +472,11 @@ class TestTypesConstants:
             assert c in SUPPORTED_CONTROLS
 
     def test_iso_control_map_values_are_supported(self):
-        from src.compliance_bridge.types import ISO_CONTROL_MAP, SUPPORTED_CONTROLS
+        from src.compliance_bridge.types import SUPPORTED_CONTROLS, get_iso_control_map
 
-        for event_name, control_id in ISO_CONTROL_MAP.items():
+        # Use region-aware accessor for universal controls
+        iso_control_map = get_iso_control_map("LOCAL")
+        for event_name, control_id in iso_control_map.items():
             assert control_id in SUPPORTED_CONTROLS, (
-                f"ISO_CONTROL_MAP[{event_name!r}]={control_id!r} not in SUPPORTED_CONTROLS"
+                f"ISO control map [{event_name!r}]={control_id!r} not in SUPPORTED_CONTROLS"
             )

@@ -24,7 +24,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers — build minimal AgentState dicts for tests
 # ---------------------------------------------------------------------------
@@ -96,7 +95,6 @@ def _import_module():
 # Import once at module level — GatewayMCPClient is already lazily initialised
 # so we can patch _get_mcp_client instead of intercepting the import.
 import src.gateway.governance.generated_saga_nodes as saga  # noqa: E402
-
 
 # ===========================================================================
 # TestDeriveIdempotencyKey
@@ -297,7 +295,6 @@ class TestForwardExecuteTradeNodeUCA4:
         mock_client = MagicMock()
         mock_client.call_tool = AsyncMock(return_value={"transaction_id": "x"})
 
-        captured_args: dict = {}
 
         def fake_run_until_complete(coro):  # type: ignore[override]
             # We cannot await the coro in sync context, capture the mock return

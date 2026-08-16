@@ -29,14 +29,12 @@ import pytest
 # ---------------------------------------------------------------------------
 # Import the module under test
 # ---------------------------------------------------------------------------
-
 import src.gateway.core.policy as policy_mod
 from src.gateway.core.policy import (
     CircuitBreaker,
     OPAClient,
     _opa_cache_key,
 )
-
 
 # ===========================================================================
 # TestOpaCacheEnabled
@@ -397,7 +395,7 @@ class TestOPAClientGetClient:
 
     def test_recreates_client_when_closed(self) -> None:
         client = self._make_client()
-        c1 = client._get_client()
+        client._get_client()
         # Simulate closed client
         mock_closed = MagicMock()
         mock_closed.is_closed = True

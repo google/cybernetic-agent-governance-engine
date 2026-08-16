@@ -56,7 +56,7 @@ from datetime import datetime, timezone
 from typing import cast
 
 from .aarm_mapper import AARM_THREAT_VECTORS
-from .types import CONTROL_META, FRAMEWORK_CONTROLS, OscalFinding, OscalResult
+from .types import FRAMEWORK_CONTROLS, OscalFinding, OscalResult, get_control_meta
 
 # ---------------------------------------------------------------------------
 # GCP Adaptation: Agent Registry audit reference for AC-3 evidence
@@ -185,10 +185,13 @@ def build_oscal_assessment_results(
                 }
             )
 
+        # Region-aware control metadata lookup
+        _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
+        _control_meta = get_control_meta(_region)
         entry: dict = {
             "uuid": f.finding_id,
             "title": (
-                CONTROL_META.get(f.control_id, {}).get("name", f.control_id)
+                _control_meta.get(f.control_id, {}).get("name", f.control_id)
                 + f" — {f.result}"
             ),
             "target": {

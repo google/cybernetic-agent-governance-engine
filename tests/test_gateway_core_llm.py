@@ -9,11 +9,10 @@ time via patch() and MagicMock/AsyncMock.
 from __future__ import annotations
 
 import sys
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-
 
 # ---------------------------------------------------------------------------
 # Helpers

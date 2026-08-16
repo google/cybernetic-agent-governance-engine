@@ -706,6 +706,8 @@ def create_nemo_output_rail_node(config: NemoNodeConfig | None = None) -> Callab
             try:
                 from langchain_core.messages import (
                     AIMessage as _LCAIMessage,
+                )
+                from langchain_core.messages import (
                     BaseMessage as _LCBaseMessage,
                 )
 

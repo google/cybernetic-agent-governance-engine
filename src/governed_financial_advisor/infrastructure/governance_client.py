@@ -318,6 +318,3 @@ class StructuredLLMClient:
     async def close(self) -> None:
         """Close the shared async client pool (call on application shutdown)."""
         await close_async_client()
-
-
-GovernanceClient = StructuredLLMClient  # Deprecated alias

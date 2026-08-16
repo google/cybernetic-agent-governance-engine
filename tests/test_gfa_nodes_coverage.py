@@ -43,7 +43,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Heavy-dependency stub fixtures
 # ---------------------------------------------------------------------------

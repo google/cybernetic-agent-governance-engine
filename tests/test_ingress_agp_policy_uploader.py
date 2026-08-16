@@ -8,10 +8,10 @@ The _get_credentials() function and requests library are mocked.
 from __future__ import annotations
 
 import os
-import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Constants from the module under test (copy for assertions)
@@ -37,7 +37,9 @@ class TestValidatePolicyText:
 
     def test_empty_text_raises_value_error(self):
         """Empty (or whitespace-only) policy text raises ValueError."""
-        from src.gateway.governance.ingress.agp_policy_uploader import _validate_policy_text
+        from src.gateway.governance.ingress.agp_policy_uploader import (
+            _validate_policy_text,
+        )
 
         with pytest.raises(ValueError, match="empty"):
             _validate_policy_text("")
@@ -47,27 +49,35 @@ class TestValidatePolicyText:
 
     def test_text_over_budget_raises_value_error(self):
         """Policy text exceeding _AGP_CHAR_BUDGET raises ValueError."""
-        from src.gateway.governance.ingress.agp_policy_uploader import _validate_policy_text
+        from src.gateway.governance.ingress.agp_policy_uploader import (
+            _validate_policy_text,
+        )
 
         with pytest.raises(ValueError, match="budget"):
             _validate_policy_text("X" * (_AGP_CHAR_BUDGET + 1))
 
     def test_text_with_truncated_sentinel_raises_value_error(self):
         """Policy text containing '# TRUNCATED' raises ValueError."""
-        from src.gateway.governance.ingress.agp_policy_uploader import _validate_policy_text
+        from src.gateway.governance.ingress.agp_policy_uploader import (
+            _validate_policy_text,
+        )
 
         with pytest.raises(ValueError, match="TRUNCATED"):
             _validate_policy_text("Some policy\n# TRUNCATED\nmore text")
 
     def test_valid_text_does_not_raise(self):
         """Valid policy text (non-empty, within budget, no sentinel) passes."""
-        from src.gateway.governance.ingress.agp_policy_uploader import _validate_policy_text
+        from src.gateway.governance.ingress.agp_policy_uploader import (
+            _validate_policy_text,
+        )
 
         _validate_policy_text("A valid policy statement about governance rules.")
 
     def test_text_at_exact_budget_is_valid(self):
         """Policy text of exactly _AGP_CHAR_BUDGET characters is accepted."""
-        from src.gateway.governance.ingress.agp_policy_uploader import _validate_policy_text
+        from src.gateway.governance.ingress.agp_policy_uploader import (
+            _validate_policy_text,
+        )
 
         _validate_policy_text("A" * _AGP_CHAR_BUDGET)
 
@@ -216,7 +226,9 @@ class TestGetCredentials:
         sys.modules["google.auth.transport.requests"] = MagicMock()
 
         try:
-            from src.gateway.governance.ingress.agp_policy_uploader import _get_credentials
+            from src.gateway.governance.ingress.agp_policy_uploader import (
+                _get_credentials,
+            )
             with pytest.raises(RuntimeError, match="credentials"):
                 _get_credentials()
         finally:

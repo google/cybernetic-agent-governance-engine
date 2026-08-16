@@ -134,15 +134,43 @@ class TestBuildProvenanceRecord:
                 decision="APPROVE",  # not a valid decision
             )
 
-    def test_valid_decisions_are_allow_block_escalate_require_approval_defer(self):
-        """VALID_DECISIONS contains exactly ALLOW, BLOCK, ESCALATE, REQUIRE_APPROVAL, DEFER."""
-        assert VALID_DECISIONS == frozenset(
-            {"ALLOW", "BLOCK", "ESCALATE", "REQUIRE_APPROVAL", "DEFER"}
-        )
+    def test_valid_decisions_includes_all_canonical_and_legacy_values(self):
+        """VALID_DECISIONS contains all canonical and legacy decision values.
+
+        Canonical gateway-boundary decisions (GovernanceDecision enum):
+          ALLOW, DENY, DEFER, NARROW, PAUSE, REQUIRE_APPROVAL
+
+        Legacy execution-phase values (backward compat):
+          BLOCK, ESCALATE
+        """
+        assert VALID_DECISIONS == frozenset({
+            # Canonical gateway-boundary decisions
+            "ALLOW",
+            "DENY",
+            "DEFER",
+            "NARROW",
+            "PAUSE",
+            "REQUIRE_APPROVAL",
+            # Legacy execution-phase values
+            "BLOCK",
+            "ESCALATE",
+        })
 
     def test_all_valid_decisions_accepted(self):
         """build_provenance_record accepts all valid decision values."""
-        for decision in ["ALLOW", "BLOCK", "ESCALATE", "REQUIRE_APPROVAL", "DEFER"]:
+        all_decisions = [
+            # Canonical gateway-boundary decisions
+            "ALLOW",
+            "DENY",
+            "DEFER",
+            "NARROW",
+            "PAUSE",
+            "REQUIRE_APPROVAL",
+            # Legacy execution-phase values
+            "BLOCK",
+            "ESCALATE",
+        ]
+        for decision in all_decisions:
             record = build_provenance_record(
                 trace_id="trace-006",
                 node_id="test_node",

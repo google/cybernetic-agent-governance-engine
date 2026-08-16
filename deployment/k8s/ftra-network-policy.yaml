@@ -1,0 +1,167 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# ============================================================================
+# FTRA Network Policy — Interim Compensating Control
+# ============================================================================
+#
+# Purpose:
+#   This NetworkPolicy provides defense-in-depth for risks R-02 (Trust Boundary
+#   Mutation) and R-03 (Trust Boundary Bypass) until CAGE_FTRA_BOUNDARY_ENABLED
+#   is enabled by default in production.
+#
+# Risk Context:
+#   R-02: ftra_node fires within GFA's LangGraph, but the classification happens
+#         BEFORE execution — a compromised host agent could mutate the plan
+#         post-classification but pre-execution.
+#   R-03: ftra_node only fires if the host agent wires it into its own LangGraph.
+#         Direct HTTP access to /validate-action or ext_authz bypasses it entirely.
+#
+# Interim Control:
+#   This policy restricts ingress to the cage-gateway pod to only allow traffic
+#   from pods that have passed through a governance-validated path. The label
+#   `governance-validated: "true"` must be set by the orchestrator or ingress
+#   controller after verifying that the request has been properly governed.
+#
+# Removal Criteria:
+#   This policy can be removed once CAGE_FTRA_BOUNDARY_ENABLED=true is the
+#   default production configuration, as the FTRA boundary check at the
+#   controller level will then provide the equivalent protection.
+#
+# NIST SP 800-53: SC-7 (Boundary Protection), AC-4 (Information Flow Enforcement)
+# ISO 42001: A.2.5 (AI System Boundary Controls)
+#
+# Reference: docs/operations/FTRA_COMPENSATING_CONTROLS.md
+# POAM: POAM-2026-030 (FTRA Tier 0.5)
+# ============================================================================
+
+---
+# Policy: FTRA Egress Lockdown
+# Restricts ingress to cage-gateway to only governance-validated sources.
+# This is an INTERIM control — see header comment for removal criteria.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ftra-egress-lockdown
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: ftra-interim-control
+    cage.io/control-type: compensating
+    cage.io/poam: POAM-2026-030
+  annotations:
+    cage.io/description: "Interim compensating control for R-02/R-03: Trust-Boundary Bypass"
+    cage.io/removal-criteria: "Remove when CAGE_FTRA_BOUNDARY_ENABLED=true is default"
+    cage.io/reference: "docs/operations/FTRA_COMPENSATING_CONTROLS.md"
+spec:
+  # Target the cage-gateway pod
+  podSelector:
+    matchLabels:
+      app: cage-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    # Only allow traffic from pods with governance-validated label
+    # This label must be applied by the orchestrator/ingress after
+    # confirming the request path includes FTRA validation.
+    - from:
+        - podSelector:
+            matchLabels:
+              governance-validated: "true"
+      ports:
+        - protocol: TCP
+          port: 8080
+
+---
+# Policy: FTRA Gateway Ingress from Validated GFA
+# Allows the governed-financial-advisor pod (which has in-graph ftra_node)
+# to reach the gateway. GFA is trusted because it includes the ftra_node
+# in its LangGraph workflow.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ftra-allow-gfa-ingress
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: ftra-interim-control
+    cage.io/control-type: compensating
+    cage.io/poam: POAM-2026-030
+  annotations:
+    cage.io/description: "Allow GFA pod (with in-graph ftra_node) to reach gateway"
+    cage.io/reference: "docs/operations/FTRA_COMPENSATING_CONTROLS.md"
+spec:
+  podSelector:
+    matchLabels:
+      app: cage-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    # GFA pod includes ftra_node in its graph — trusted source
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: governance-stack
+          podSelector:
+            matchLabels:
+              app: governed-financial-advisor
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Compliance bridge is also trusted (governance infrastructure)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: governance-stack
+          podSelector:
+            matchLabels:
+              app: compliance-bridge
+      ports:
+        - protocol: TCP
+          port: 8080
+
+---
+# Policy: FTRA Ingress Controller Passthrough
+# Allows ingress controller to reach gateway for external API access.
+# External requests via ingress are subject to FTRA boundary check
+# when CAGE_FTRA_BOUNDARY_ENABLED=true.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ftra-allow-ingress-controller
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: ftra-interim-control
+    cage.io/control-type: compensating
+    cage.io/poam: POAM-2026-030
+  annotations:
+    cage.io/description: "Allow ingress controller to reach gateway (subject to FTRA boundary check)"
+    cage.io/reference: "docs/operations/FTRA_COMPENSATING_CONTROLS.md"
+spec:
+  podSelector:
+    matchLabels:
+      app: cage-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    # Kubernetes Ingress Controller (nginx-ingress)
+    # External traffic is subject to FTRA boundary check at controller level
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080

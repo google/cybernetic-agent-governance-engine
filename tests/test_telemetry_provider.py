@@ -36,9 +36,9 @@ import pandas as pd
 import pytest
 
 from src.gateway.governance.telemetry_provider import (
+    MIN_SAMPLES,
     BaseTelemetryProvider,
     LangfuseTelemetryProvider,
-    MIN_SAMPLES,
     MockTelemetryProvider,
 )
 
@@ -321,7 +321,7 @@ class TestLangfuseTelemetryProviderGetLatestData:
         """Traces missing any of the three fields must be dropped."""
         good_traces = [_make_trace() for _ in range(MIN_SAMPLES + 5)]
         bad_trace = _make_trace(include_all=False)
-        all_traces = [bad_trace] + good_traces
+        all_traces = [bad_trace, *good_traces]
 
         provider = self._make_provider_with_traces(all_traces)
         df = provider.get_latest_data(n_samples=len(all_traces))
@@ -407,6 +407,7 @@ class TestMinSamplesConstant:
             env.pop("CAUSAL_MIN_LIVE_SAMPLES", None)
             with patch.dict(os.environ, env, clear=True):
                 import importlib
+
                 import src.gateway.governance.telemetry_provider as tp_mod
                 importlib.reload(tp_mod)
                 assert tp_mod.MIN_SAMPLES == 50

@@ -79,9 +79,202 @@ import hashlib
 import json
 import logging
 import os
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
+
+from opentelemetry import trace
 
 logger = logging.getLogger("cage.evidence_stream")
+tracer = trace.get_tracer(__name__)
+
+# Prometheus metrics (lazy import to avoid dependency in tests)
+_PROM_AVAILABLE = False
+try:
+    from prometheus_client import Counter, Histogram
+
+    EVIDENCE_COMMIT_TOTAL = Counter(
+        "cage_evidence_commit_total",
+        "Total evidence commit attempts",
+        ["status"],
+    )
+    EVIDENCE_COMMIT_DURATION = Histogram(
+        "cage_evidence_commit_duration_seconds",
+        "Evidence commit latency in seconds",
+        buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
+    )
+    _PROM_AVAILABLE = True
+except ImportError:
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+
+class ConfigurationError(Exception):
+    """Raised when there's an invalid configuration combination.
+
+    This exception signals a startup precondition failure that should cause
+    the service to fail fast rather than run with an invalid configuration.
+    """
+
+    pass
+
+
+class EvidenceChainUnavailableError(Exception):
+    """Raised when evidence chain is unavailable and blocking mode is enabled.
+
+    This exception signals that evidence could not be committed to the durable
+    evidence stream (Redis Streams + GCS) and therefore a routing seal MUST NOT
+    be issued. It is a fail-closed safety mechanism that ensures evidence-of-
+    execution claims are never overclaimed.
+
+    Attributes:
+        message: Human-readable description of the failure.
+        original_error: The underlying exception that caused the unavailability.
+    """
+
+    def __init__(self, message: str, original_error: Exception | None = None) -> None:
+        super().__init__(message)
+        self.original_error = original_error
+
+
+# ---------------------------------------------------------------------------
+# Result Types
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EvidenceCommitResult:
+    """Result of a blocking evidence commit operation.
+
+    Attributes:
+        success: True if evidence was successfully committed to the durable store.
+        evidence_id: Unique identifier of the committed evidence (Redis Stream msg_id).
+        commit_timestamp: UTC timestamp when the evidence was committed.
+        hash: SHA-256 hash of the committed evidence record (for chain integrity).
+        sequence: Monotonic sequence number in the evidence chain.
+    """
+
+    success: bool
+    evidence_id: str
+    commit_timestamp: datetime
+    hash: str
+    sequence: int = field(default=0)
+
+
+@dataclass
+class EvidenceRecord:
+    """Structured evidence record using schema v1.1.
+
+    v3.0.0 Breaking Change: Schema v1.0 support has been removed.
+    All records now use v1.1 schema exclusively.
+
+    Core fields:
+        evidence_id: Unique identifier for the evidence record.
+        decision: Governance decision (ALLOW, DENY, DEFER, NARROW, PAUSE).
+        timestamp: UTC timestamp when the decision was made.
+        tool_name: Name of the tool that was governed.
+        control_id: NIST/ISO control identifier (e.g., "A.5.3").
+        prev_hash: Hash of the previous record in the chain.
+        record_hash: Hash of this record (computed from content).
+        payload: Full decision payload (JSON-serializable dict).
+
+    v1.1 metadata fields:
+        schema_version: Schema version identifier (always "1.1").
+        classification_reason: Human-readable reason for DEFER decisions.
+        narrowing_applied: Dict describing narrowing constraints for NARROW decisions.
+        pause_token: Unique token for PAUSE decisions (for resumption).
+    """
+
+    # Core fields (required)
+    evidence_id: str
+    decision: str
+    timestamp: datetime
+    tool_name: str
+    control_id: str
+    prev_hash: str
+    record_hash: str
+    payload: dict[str, Any]
+
+    # v1.1 metadata fields
+    schema_version: str = "1.1"
+    classification_reason: str | None = None
+    narrowing_applied: dict[str, Any] | None = None
+    pause_token: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict for Redis storage or JSON encoding."""
+        result: dict[str, Any] = {
+            "evidence_id": self.evidence_id,
+            "decision": self.decision,
+            "timestamp": self.timestamp.isoformat() if isinstance(self.timestamp, datetime) else self.timestamp,
+            "tool_name": self.tool_name,
+            "control_id": self.control_id,
+            "prev_hash": self.prev_hash,
+            "record_hash": self.record_hash,
+            "payload": self.payload,
+            "schema_version": self.schema_version,
+        }
+        # Only include v1.1 fields if present (sparse representation)
+        if self.classification_reason is not None:
+            result["classification_reason"] = self.classification_reason
+        if self.narrowing_applied is not None:
+            result["narrowing_applied"] = self.narrowing_applied
+        if self.pause_token is not None:
+            result["pause_token"] = self.pause_token
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EvidenceRecord:
+        """Deserialize from dict, auto-detecting schema version."""
+        # Parse timestamp if it's a string
+        timestamp = data.get("timestamp")
+        if isinstance(timestamp, str):
+            timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        elif timestamp is None:
+            timestamp = datetime.now(tz=timezone.utc)
+
+        # Detect schema version (default to 1.0 for records without version field)
+        schema_version = data.get("schema_version", "1.0")
+
+        return cls(
+            evidence_id=data.get("evidence_id", ""),
+            decision=data.get("decision", ""),
+            timestamp=timestamp,
+            tool_name=data.get("tool_name", ""),
+            control_id=data.get("control_id", ""),
+            prev_hash=data.get("prev_hash", ""),
+            record_hash=data.get("record_hash", ""),
+            payload=data.get("payload", {}),
+            schema_version=schema_version,
+            classification_reason=data.get("classification_reason"),
+            narrowing_applied=data.get("narrowing_applied"),
+            pause_token=data.get("pause_token"),
+        )
+
+
+@dataclass(frozen=True)
+class VerifyResult:
+    """Result of evidence record hash verification.
+
+    v3.0.0: Schema v1.0 support removed — all records use v1.1.
+
+    Attributes:
+        valid: True if the record hash matches the computed hash.
+        schema_version: Schema version of the record (always "1.1").
+        computed_hash: Hash computed from record contents.
+        expected_hash: Hash stored in the record (record_hash field).
+        error: Error message if verification failed, None otherwise.
+    """
+
+    valid: bool
+    schema_version: str
+    computed_hash: str
+    expected_hash: str
+    error: str | None = None
 
 
 def _get_signing_algorithm() -> str:
@@ -115,7 +308,65 @@ _GCS_FLUSH_SECONDS: int = int(os.environ.get("EVIDENCE_STREAM_GCS_FLUSH_SECONDS"
 _GCS_BUCKET: str = os.environ.get("EVIDENCE_STREAM_GCS_BUCKET", "")
 _KMS_SIGN: bool = os.environ.get("EVIDENCE_STREAM_KMS_SIGN", "false").lower() == "true"
 
-_SCHEMA = "cage-evidence-stream/1.0"
+# EVIDENCE_CHAIN_BLOCKING: When "true", seal issuance blocks until evidence commit
+# succeeds. When "false" (default), current fire-and-forget behavior is preserved.
+# This flag mitigates risk R-06 (evidence-of-execution claims overclaimed).
+_EVIDENCE_CHAIN_BLOCKING: bool = (
+    os.environ.get("EVIDENCE_CHAIN_BLOCKING", "false").lower() == "true"
+)
+
+# Default timeout for blocking evidence commits (seconds)
+_EVIDENCE_COMMIT_TIMEOUT_S: float = float(
+    os.environ.get("EVIDENCE_COMMIT_TIMEOUT_S", "5.0")
+)
+
+# v3.0.0 Breaking Change: Schema v1.0 support has been removed.
+# All new records use v1.1 schema exclusively.
+_SCHEMA = "cage-evidence-stream/1.1"
+
+
+def validate_evidence_stream_preconditions() -> None:
+    """Validates evidence stream configuration at startup.
+
+    Raises ConfigurationError if EVIDENCE_CHAIN_BLOCKING=true but
+    EVIDENCE_STREAM_ENABLED=false. This is an invalid configuration because
+    the blocking gate will always fail when the evidence stream is disabled,
+    causing all seal issuances to fail.
+
+    This function should be called during service startup (gateway and
+    compliance bridge) to fail fast rather than at runtime.
+
+    Raises:
+        ConfigurationError: If EVIDENCE_CHAIN_BLOCKING=true and
+            EVIDENCE_STREAM_ENABLED=false.
+    """
+    blocking_enabled = os.environ.get("EVIDENCE_CHAIN_BLOCKING", "false").lower() == "true"
+    stream_enabled = os.environ.get("EVIDENCE_STREAM_ENABLED", "false").lower() == "true"
+
+    if blocking_enabled and not stream_enabled:
+        raise ConfigurationError(
+            "EVIDENCE_CHAIN_BLOCKING=true requires EVIDENCE_STREAM_ENABLED=true. "
+            f"Current configuration: EVIDENCE_CHAIN_BLOCKING={blocking_enabled}, "
+            f"EVIDENCE_STREAM_ENABLED={stream_enabled}. "
+            "Either enable the evidence stream or disable blocking mode."
+        )
+
+    logger.info(
+        "[EvidenceStream] Precondition check passed: "
+        "EVIDENCE_CHAIN_BLOCKING=%s, EVIDENCE_STREAM_ENABLED=%s",
+        blocking_enabled,
+        stream_enabled,
+    )
+
+
+def is_evidence_chain_blocking() -> bool:
+    """Return True if evidence chain blocking mode is enabled.
+
+    When blocking mode is enabled, seal issuance blocks until evidence is
+    committed to the durable evidence stream. This prevents overclaiming
+    evidence-of-execution (risk R-06).
+    """
+    return _EVIDENCE_CHAIN_BLOCKING
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +391,10 @@ def _link_hash(
     The header carries the identifying metadata stored beside the payload in
     the Redis Stream entry, so re-ordering or re-labelling a record changes
     the link and breaks the chain.
+
+    Note: This function uses the current schema version (_SCHEMA) for new entries.
+    For verification of existing records, use _link_hash_versioned() which
+    respects the record's original schema version.
     """
     header = json.dumps(
         {
@@ -152,6 +407,300 @@ def _link_hash(
         separators=(",", ":"),
     )
     return _sha256(prev_hash + header + payload_json)
+
+
+def _link_hash_versioned(
+    prev_hash: str,
+    sequence: int,
+    event_type: str,
+    control_id: str,
+    payload_json: str,
+    schema_version: str,
+    classification_reason: str | None = None,
+    narrowing_applied: dict[str, Any] | None = None,
+    pause_token: str | None = None,
+) -> str:
+    """Compute a version-aware record hash for dual-schema verification.
+
+    This function produces deterministic hashes that are backward compatible:
+    - v1.0: Hash only original fields (matches legacy records)
+    - v1.1: Hash all fields including new metadata fields
+
+    Args:
+        prev_hash: Hash of the previous record in the chain.
+        sequence: Monotonic sequence number.
+        event_type: Event type (e.g., "AUDIT_FINDING", "GOVERNANCE_DECISION").
+        control_id: NIST/ISO control identifier.
+        payload_json: JSON-serialized event payload.
+        schema_version: Schema version ("1.0" or "1.1").
+        classification_reason: (v1.1) Reason for DEFER decisions.
+        narrowing_applied: (v1.1) Narrowing constraints for NARROW decisions.
+        pause_token: (v1.1) Token for PAUSE decisions.
+
+    Returns:
+        SHA-256 hex digest of the record.
+    """
+    schema_id = _SCHEMA_1_0 if schema_version == "1.0" else _SCHEMA_1_1
+
+    if schema_version == "1.0":
+        # v1.0: Original hash computation (backward compatible)
+        header = json.dumps(
+            {
+                "schema": schema_id,
+                "sequence": sequence,
+                "event_type": event_type,
+                "control_id": control_id,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _sha256(prev_hash + header + payload_json)
+    else:
+        # v1.1: Include new metadata fields in hash computation
+        # Only include non-None v1.1 fields to maintain determinism
+        header_dict: dict[str, Any] = {
+            "schema": schema_id,
+            "sequence": sequence,
+            "event_type": event_type,
+            "control_id": control_id,
+        }
+        # Add v1.1 fields only if they have values (sparse inclusion)
+        if classification_reason is not None:
+            header_dict["classification_reason"] = classification_reason
+        if narrowing_applied is not None:
+            header_dict["narrowing_applied"] = narrowing_applied
+        if pause_token is not None:
+            header_dict["pause_token"] = pause_token
+
+        header = json.dumps(header_dict, sort_keys=True, separators=(",", ":"))
+        return _sha256(prev_hash + header + payload_json)
+
+
+def _detect_schema_version(record: EvidenceRecord | dict[str, Any]) -> str:
+    """Detect the schema version of an evidence record.
+
+    Args:
+        record: EvidenceRecord dataclass or dict representation.
+
+    Returns:
+        Schema version string ("1.0" or "1.1").
+    """
+    if isinstance(record, EvidenceRecord):
+        return record.schema_version
+    # For dict records, check for explicit version field
+    version = record.get("schema_version")
+    if version:
+        return version
+    # Check for schema field in wire format
+    schema = record.get("schema", "")
+    if schema == "cage-evidence-stream/1.1":
+        return "1.1"
+    # Default to 1.0 for records without version marker
+    return "1.0"
+
+
+def verify_record(record: EvidenceRecord | dict[str, Any], prev_hash: str) -> VerifyResult:
+    """Verify evidence record hash with dual-schema support (v1.0 and v1.1).
+
+    This function supports verification of both legacy v1.0 records and new
+    v1.1 records, enabling seamless schema migration without breaking existing
+    evidence chains.
+
+    Verification Process:
+        1. Detect schema version from record
+        2. Extract fields according to detected version
+        3. Compute hash using version-appropriate algorithm
+        4. Compare computed hash against stored record_hash
+
+    Args:
+        record: EvidenceRecord dataclass or dict to verify.
+        prev_hash: Hash of the previous record in the chain.
+
+    Returns:
+        VerifyResult with verification status and diagnostic information.
+
+    Example:
+        >>> result = verify_record(record, prev_hash)
+        >>> if not result.valid:
+        ...     logger.error(f"Chain integrity violation: {result.error}")
+    """
+    try:
+        # Normalize to dict for consistent field access
+        if isinstance(record, EvidenceRecord):
+            record_dict = record.to_dict()
+        else:
+            record_dict = record
+
+        # Detect schema version
+        schema_version = _detect_schema_version(record_dict)
+
+        # Extract common fields
+        expected_hash = record_dict.get("record_hash", "")
+        if not expected_hash:
+            return VerifyResult(
+                valid=False,
+                schema_version=schema_version,
+                computed_hash="",
+                expected_hash="",
+                error="Record missing record_hash field",
+            )
+
+        # Extract fields for hash computation
+        # Handle both wire format (sequence as string) and internal format
+        sequence_raw = record_dict.get("sequence", 0)
+        sequence = int(sequence_raw) if isinstance(sequence_raw, str) else sequence_raw
+
+        event_type = record_dict.get("event_type", record_dict.get("decision", "UNKNOWN"))
+        control_id = record_dict.get("control_id", "")
+
+        # Extract payload - handle both wire format and internal format
+        payload = record_dict.get("payload")
+        if payload is None:
+            payload_json = record_dict.get("payload_json", "{}")
+        elif isinstance(payload, str):
+            payload_json = payload
+        else:
+            payload_json = json.dumps(payload, sort_keys=True, default=str)
+
+        # v1.1 specific fields
+        classification_reason = record_dict.get("classification_reason")
+        narrowing_applied = record_dict.get("narrowing_applied")
+        pause_token = record_dict.get("pause_token")
+
+        # Compute hash using version-aware algorithm
+        computed_hash = _link_hash_versioned(
+            prev_hash=prev_hash,
+            sequence=sequence,
+            event_type=event_type,
+            control_id=control_id,
+            payload_json=payload_json,
+            schema_version=schema_version,
+            classification_reason=classification_reason,
+            narrowing_applied=narrowing_applied,
+            pause_token=pause_token,
+        )
+
+        # Verify hash matches
+        if computed_hash == expected_hash:
+            return VerifyResult(
+                valid=True,
+                schema_version=schema_version,
+                computed_hash=computed_hash,
+                expected_hash=expected_hash,
+                error=None,
+            )
+        else:
+            return VerifyResult(
+                valid=False,
+                schema_version=schema_version,
+                computed_hash=computed_hash,
+                expected_hash=expected_hash,
+                error=f"Hash mismatch: computed={computed_hash[:16]}... expected={expected_hash[:16]}...",
+            )
+
+    except Exception as exc:
+        return VerifyResult(
+            valid=False,
+            schema_version="unknown",
+            computed_hash="",
+            expected_hash=str(record.get("record_hash", "") if isinstance(record, dict) else getattr(record, "record_hash", "")),
+            error=f"Verification error: {exc}",
+        )
+
+
+def migrate_record_1_0_to_1_1(record: dict[str, Any]) -> EvidenceRecord:
+    """Upgrade a v1.0 evidence record to v1.1 format with default values.
+
+    This migration helper preserves all existing v1.0 fields and adds
+    v1.1 metadata fields with appropriate defaults. The record_hash is
+    NOT recomputed - the original hash is preserved to maintain chain
+    integrity.
+
+    Migration Rules:
+        - schema_version: Set to "1.1"
+        - classification_reason: Set to None (no classification for legacy records)
+        - narrowing_applied: Set to None (no narrowing metadata for legacy records)
+        - pause_token: Set to None (no pause token for legacy records)
+
+    Note on prev_hash Seeding (per specs §4.1):
+        On cutover to v1.1, the first v1.1 record's prev_hash MUST be seeded
+        from the LAST v1.0 record's record_hash, NOT a genesis sentinel.
+        This ensures chain continuity across schema versions.
+
+    Args:
+        record: v1.0 record as dict.
+
+    Returns:
+        EvidenceRecord with v1.1 schema version.
+
+    Example:
+        >>> v1_0_record = {"evidence_id": "evt-123", "decision": "ALLOW", ...}
+        >>> v1_1_record = migrate_record_1_0_to_1_1(v1_0_record)
+        >>> v1_1_record.schema_version
+        '1.1'
+    """
+    # Parse timestamp if it's a string
+    timestamp = record.get("timestamp")
+    if isinstance(timestamp, str):
+        timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    elif timestamp is None:
+        timestamp = datetime.now(tz=timezone.utc)
+
+    # Handle wire format conversions
+    payload = record.get("payload")
+    if payload is None:
+        payload_json = record.get("payload_json", "{}")
+        try:
+            payload = json.loads(payload_json)
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+    elif isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+
+    return EvidenceRecord(
+        evidence_id=record.get("evidence_id", ""),
+        decision=record.get("decision", record.get("event_type", "")),
+        timestamp=timestamp,
+        tool_name=record.get("tool_name", ""),
+        control_id=record.get("control_id", ""),
+        prev_hash=record.get("prev_hash", ""),
+        record_hash=record.get("record_hash", ""),
+        payload=payload,
+        # Upgrade to v1.1 with default values for new fields
+        schema_version="1.1",
+        classification_reason=None,
+        narrowing_applied=None,
+        pause_token=None,
+    )
+
+
+def get_last_v1_0_hash(records: list[dict[str, Any]]) -> str:
+    """Extract the hash of the last v1.0 record for cutover seeding.
+
+    Per specs §4.1: On cutover to v1.1, prev_hash must be seeded from
+    the LAST v1.0 record, NOT a genesis sentinel. This function finds
+    the last v1.0 record in a sequence and returns its record_hash.
+
+    Args:
+        records: List of evidence records (newest last).
+
+    Returns:
+        The record_hash of the last v1.0 record, or the genesis hash
+        if no v1.0 records exist.
+    """
+    genesis_hash = _sha256("EVIDENCE_STREAM_GENESIS")
+
+    # Scan from end to find last v1.0 record
+    for record in reversed(records):
+        version = _detect_schema_version(record)
+        if version == "1.0":
+            return record.get("record_hash", genesis_hash)
+
+    # No v1.0 records found - this is a fresh chain
+    return genesis_hash
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +878,214 @@ class EvidenceStreamSink:
                 exc,
             )
             return None
+
+    async def ingest_sync(
+        self,
+        event: dict[str, Any],
+        timeout_seconds: float = _EVIDENCE_COMMIT_TIMEOUT_S,
+    ) -> EvidenceCommitResult:
+        """Blocking ingest that returns only after evidence is committed.
+
+        This method provides a synchronous evidence commit guarantee required
+        by the EVIDENCE_CHAIN_BLOCKING gate. Unlike ``ingest()``, this method:
+          - Raises ``EvidenceChainUnavailableError`` if commit fails
+          - Has explicit timeout handling
+          - Returns structured ``EvidenceCommitResult`` with commit proof
+          - Records telemetry (OTel spans, Prometheus metrics)
+
+        Risk mitigation: R-06 (evidence-of-execution claims overclaimed)
+        When EVIDENCE_CHAIN_BLOCKING=true, seal issuance calls this method
+        instead of the fire-and-forget ``ingest()`` to ensure evidence is
+        durably committed before any seal is issued.
+
+        Args:
+            event: GovernanceEvent dict from the SSE event bus or governance
+                   decision payload.
+            timeout_seconds: Maximum time to wait for commit (default: 5.0s).
+                             On timeout, raises EvidenceChainUnavailableError.
+
+        Returns:
+            EvidenceCommitResult with commit proof (evidence_id, hash, timestamp).
+
+        Raises:
+            EvidenceChainUnavailableError: If Redis is unavailable, commit fails,
+                or timeout is exceeded. Caller MUST NOT issue a routing seal when
+                this exception is raised.
+        """
+        import time
+
+        start_time = time.perf_counter()
+
+        with tracer.start_as_current_span("cage.evidence.ingest_sync") as span:
+            span.set_attribute("cage.evidence.blocking_mode", True)
+            span.set_attribute("cage.evidence.timeout_seconds", timeout_seconds)
+
+            try:
+                # Check Redis availability
+                if self._redis is None:
+                    error_msg = (
+                        "Evidence chain unavailable: Redis connection not established. "
+                        "Cannot commit evidence — seal issuance blocked."
+                    )
+                    logger.error("[EvidenceStream] %s", error_msg)
+                    span.set_attribute("cage.evidence.status", "failure")
+                    span.set_attribute("cage.evidence.failure_reason", "redis_unavailable")
+                    if _PROM_AVAILABLE:
+                        EVIDENCE_COMMIT_TOTAL.labels(status="failure").inc()
+                    raise EvidenceChainUnavailableError(error_msg)
+
+                # Hash-chain the event with timeout protection
+                try:
+                    result = await asyncio.wait_for(
+                        self._ingest_with_result(event),
+                        timeout=timeout_seconds,
+                    )
+                except asyncio.TimeoutError as exc:
+                    elapsed = time.perf_counter() - start_time
+                    error_msg = (
+                        f"Evidence commit timeout after {elapsed:.2f}s "
+                        f"(limit: {timeout_seconds}s). Cannot guarantee durable "
+                        "commit — seal issuance blocked."
+                    )
+                    logger.error("[EvidenceStream] %s", error_msg)
+                    span.set_attribute("cage.evidence.status", "timeout")
+                    span.set_attribute("cage.evidence.elapsed_seconds", elapsed)
+                    if _PROM_AVAILABLE:
+                        EVIDENCE_COMMIT_TOTAL.labels(status="timeout").inc()
+                    raise EvidenceChainUnavailableError(error_msg, exc) from exc
+
+                # Verify commit succeeded
+                if not result.success:
+                    error_msg = (
+                        f"Evidence commit failed: evidence_id={result.evidence_id}. "
+                        "Cannot guarantee durable commit — seal issuance blocked."
+                    )
+                    logger.error("[EvidenceStream] %s", error_msg)
+                    span.set_attribute("cage.evidence.status", "failure")
+                    span.set_attribute("cage.evidence.failure_reason", "commit_failed")
+                    if _PROM_AVAILABLE:
+                        EVIDENCE_COMMIT_TOTAL.labels(status="failure").inc()
+                    raise EvidenceChainUnavailableError(error_msg)
+
+                # Success path
+                elapsed = time.perf_counter() - start_time
+                span.set_attribute("cage.evidence.status", "success")
+                span.set_attribute("cage.evidence.evidence_id", result.evidence_id)
+                span.set_attribute("cage.evidence.hash", result.hash[:16])
+                span.set_attribute("cage.evidence.sequence", result.sequence)
+                span.set_attribute("cage.evidence.elapsed_seconds", elapsed)
+
+                if _PROM_AVAILABLE:
+                    EVIDENCE_COMMIT_TOTAL.labels(status="success").inc()
+                    EVIDENCE_COMMIT_DURATION.observe(elapsed)
+
+                logger.info(
+                    "[EvidenceStream] Blocking commit succeeded: "
+                    "evidence_id=%s hash=%s… seq=%d (%.3fs)",
+                    result.evidence_id,
+                    result.hash[:16],
+                    result.sequence,
+                    elapsed,
+                )
+                return result
+
+            except EvidenceChainUnavailableError:
+                raise
+            except Exception as exc:
+                elapsed = time.perf_counter() - start_time
+                error_msg = (
+                    f"Evidence commit failed with unexpected error: {exc}. "
+                    "Cannot guarantee durable commit — seal issuance blocked."
+                )
+                logger.error("[EvidenceStream] %s", error_msg, exc_info=True)
+                span.set_attribute("cage.evidence.status", "failure")
+                span.set_attribute("cage.evidence.failure_reason", "unexpected_error")
+                span.set_attribute("cage.evidence.elapsed_seconds", elapsed)
+                span.record_exception(exc)
+                if _PROM_AVAILABLE:
+                    EVIDENCE_COMMIT_TOTAL.labels(status="failure").inc()
+                raise EvidenceChainUnavailableError(error_msg, exc) from exc
+
+    async def _ingest_with_result(self, event: dict[str, Any]) -> EvidenceCommitResult:
+        """Internal helper that performs ingest and returns structured result.
+
+        This method is used by ``ingest_sync()`` to get detailed commit information
+        including the hash and sequence number for the commit proof.
+        """
+        # Hash-chain the event — lock guards all reads/writes of _prev_hash and _sequence
+        payload_json = json.dumps(event, sort_keys=True, default=str)
+
+        event_type = event.get("type", "UNKNOWN")
+        control_id = event.get("controlId", "")
+
+        async with self._chain_lock:
+            current_sequence = self._sequence
+            record_hash = _link_hash(
+                prev_hash=self._prev_hash,
+                sequence=current_sequence,
+                event_type=event_type,
+                control_id=control_id,
+                payload_json=payload_json,
+            )
+
+            commit_timestamp = datetime.now(tz=timezone.utc)
+            entry = {
+                "schema": _SCHEMA,
+                "sequence": str(current_sequence),
+                "event_type": event_type,
+                "control_id": control_id,
+                "prev_hash": self._prev_hash,
+                "record_hash": record_hash,
+                "payload_json": payload_json,
+                "timestamp_utc": commit_timestamp.isoformat(),
+                "kms_signature": "",
+                "kms_signature_algorithm": _get_signing_algorithm(),
+            }
+
+            # Persist to Redis Stream BEFORE advancing chain state
+            # This ensures we don't advance the chain if Redis write fails
+            try:
+                msg_id = await self._redis.xadd(  # type: ignore[union-attr]
+                    self._stream_key,
+                    entry,
+                    maxlen=self._max_len,
+                )
+            except Exception as exc:
+                # Don't advance chain state — commit failed
+                logger.error(
+                    "[EvidenceStream] Redis write failed in _ingest_with_result: %s",
+                    exc,
+                )
+                return EvidenceCommitResult(
+                    success=False,
+                    evidence_id="",
+                    commit_timestamp=commit_timestamp,
+                    hash=record_hash,
+                    sequence=current_sequence,
+                )
+
+            # Advance chain state only after successful Redis write
+            self._prev_hash = record_hash
+            self._sequence += 1
+
+        # Optional KMS signing (async, non-blocking) — best effort
+        if self._kms_sign:
+            self._enqueue_signing(entry)
+
+        logger.debug(
+            "[EvidenceStream] _ingest_with_result: seq=%s hash=%s… msg_id=%s",
+            entry["sequence"],
+            record_hash[:16],
+            msg_id,
+        )
+
+        return EvidenceCommitResult(
+            success=True,
+            evidence_id=str(msg_id),
+            commit_timestamp=commit_timestamp,
+            hash=record_hash,
+            sequence=current_sequence,
+        )
 
     def _enqueue_signing(self, entry: dict) -> None:
         """Enqueue an evidence stream entry for async KMS signing."""

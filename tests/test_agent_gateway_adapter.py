@@ -506,3 +506,651 @@ class TestGovernanceDecisionConformance:
                     "decisions must map to distinct external states."
                 )
                 seen_verdicts.add(verdict_in_body)
+
+
+# ---------------------------------------------------------------------------
+# TestDeferHTTPResponse — DEFER HTTP layer tests (Phase 1.6)
+# ---------------------------------------------------------------------------
+
+
+class TestDeferHTTPResponse:
+    """Tests for DEFER decision HTTP response handling.
+    
+    DEFER decisions return HTTP 202 Accepted with a defer_token for
+    later resumption via the data-hydration path.
+    """
+
+    @pytest.mark.asyncio
+    async def test_defer_returns_202_accepted(self):
+        """DEFER verdict → HTTP 202 Accepted."""
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "amount": 100, "confidence": 0.50},
+            }
+        )
+        mock_result = {
+            "verdict": GovernanceDecision.DEFER,
+            "violations": ["Confidence below threshold"],
+            "seal": "",
+            "thread_id": "",
+            "defer_id": "defer-abc-123",
+            "defer_token": "defer-abc-123",
+            "missing_input_reason": "confidence_below_threshold",
+            "deferrable": True,
+            "classification_meta": {
+                "classification_reason": "Low confidence triggers DEFER",
+            },
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=mock_result)
+        import src.gateway.governance.singletons as _singletons
+
+        with patch.object(_singletons, "symbolic_governor", mock_gov):
+            resp = await handle_check_request(body)
+
+        assert "denied_response" in resp
+        assert resp["denied_response"]["status"]["code"] == 202
+
+    @pytest.mark.asyncio
+    async def test_defer_response_includes_defer_token(self):
+        """DEFER response body includes defer_token for tracking."""
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "confidence": 0.50},
+            }
+        )
+        mock_result = {
+            "verdict": GovernanceDecision.DEFER,
+            "violations": [],
+            "seal": "",
+            "thread_id": "",
+            "defer_id": "defer-xyz-789",
+            "defer_token": "defer-xyz-789",
+            "missing_input_reason": "confidence_below_threshold",
+            "deferrable": True,
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=mock_result)
+        import src.gateway.governance.singletons as _singletons
+
+        with patch.object(_singletons, "symbolic_governor", mock_gov):
+            resp = await handle_check_request(body)
+
+        body_parsed = json.loads(resp["denied_response"]["body"])
+        assert body_parsed.get("defer_token") == "defer-xyz-789"
+        # Also check legacy field for backward compatibility
+        assert body_parsed.get("defer_id") == "defer-xyz-789"
+
+    @pytest.mark.asyncio
+    async def test_defer_disabled_returns_403(self, monkeypatch):
+        """When CAGE_DEFER_ENABLED=false, DEFER fallback returns HTTP 403.
+        
+        This test patches the module-level feature flag to simulate
+        disabled DEFER functionality.
+        """
+        monkeypatch.setenv("CAGE_DEFER_ENABLED", "false")
+        
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "confidence": 0.50},
+            }
+        )
+        mock_result = {
+            "verdict": GovernanceDecision.DEFER,
+            "violations": ["Confidence below threshold"],
+            "seal": "",
+            "thread_id": "",
+            "defer_id": "defer-test",
+            "defer_token": "defer-test",
+            "missing_input_reason": "confidence_below_threshold",
+            "deferrable": True,
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=mock_result)
+        import src.gateway.governance.singletons as _singletons
+        import src.gateway.server.agent_gateway_adapter as adapter_module
+
+        # Patch the module-level _DEFER_ENABLED flag
+        original_defer_enabled = adapter_module._DEFER_ENABLED
+        adapter_module._DEFER_ENABLED = False
+        
+        try:
+            with patch.object(_singletons, "symbolic_governor", mock_gov):
+                resp = await handle_check_request(body)
+        finally:
+            adapter_module._DEFER_ENABLED = original_defer_enabled
+
+        assert "denied_response" in resp
+        assert resp["denied_response"]["status"]["code"] == 403
+        body_parsed = json.loads(resp["denied_response"]["body"])
+        assert body_parsed.get("fallback_from") == "DEFER"
+
+    @pytest.mark.asyncio
+    async def test_defer_response_includes_retry_after_seconds(self):
+        """DEFER response includes retry_after_seconds hint."""
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "confidence": 0.50},
+            }
+        )
+        mock_result = {
+            "verdict": GovernanceDecision.DEFER,
+            "violations": [],
+            "seal": "",
+            "thread_id": "",
+            "defer_id": "defer-test",
+            "defer_token": "defer-test",
+            "missing_input_reason": "confidence_below_threshold",
+            "deferrable": True,
+            "retry_after_seconds": 300,
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=mock_result)
+        import src.gateway.governance.singletons as _singletons
+
+        with patch.object(_singletons, "symbolic_governor", mock_gov):
+            resp = await handle_check_request(body)
+
+        body_parsed = json.loads(resp["denied_response"]["body"])
+        assert body_parsed.get("retry_after_seconds") == 300
+
+
+# ---------------------------------------------------------------------------
+# TestNarrowHTTPResponse — NARROW HTTP layer tests (Phase 1.6)
+# ---------------------------------------------------------------------------
+
+
+class TestNarrowHTTPResponse:
+    """Tests for NARROW decision HTTP response handling.
+    
+    NARROW decisions return HTTP 200 OK with X-Governance-Narrowed header
+    and include both original and narrowed parameters in the response body.
+    """
+
+    @pytest.mark.asyncio
+    async def test_narrow_returns_200_ok(self, monkeypatch):
+        """NARROW verdict → HTTP 200 OK."""
+        monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
+        
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "amount": 150000},
+            }
+        )
+        mock_result = {
+            "verdict": GovernanceDecision.NARROW,
+            "violations": ["Amount exceeds limit"],
+            "seal": "narrow-seal-abc123",
+            "thread_id": "",
+            "original_params": {"symbol": "AAPL", "amount": 150000},
+            "narrowed_params": {"symbol": "AAPL", "amount": 100000},
+            "constraints_applied": ["amount clamped: 150000 → 100000"],
+            "narrowing_reason": "Amount exceeds max_allowed",
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=mock_result)
+        import src.gateway.governance.singletons as _singletons
+        import src.gateway.server.agent_gateway_adapter as adapter_module
+
+        original_narrow_enabled = adapter_module._NARROW_ENABLED
+        adapter_module._NARROW_ENABLED = True
+
+        try:
+            with patch.object(_singletons, "symbolic_governor", mock_gov):
+                resp = await handle_check_request(body)
+        finally:
+            adapter_module._NARROW_ENABLED = original_narrow_enabled
+
+        assert "ok_response" in resp
+
+    @pytest.mark.asyncio
+    async def test_narrow_response_includes_x_governance_narrowed_header(
+        self, monkeypatch
+    ):
+        """NARROW response includes X-Governance-Narrowed: true header."""
+        monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
+        
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "amount": 150000},
+            }
+        )
+        mock_result = {
+            "verdict": GovernanceDecision.NARROW,
+            "violations": ["Amount exceeds limit"],
+            "seal": "narrow-seal-abc123",
+            "thread_id": "",
+            "original_params": {"symbol": "AAPL", "amount": 150000},
+            "narrowed_params": {"symbol": "AAPL", "amount": 100000},
+            "constraints_applied": ["amount clamped: 150000 → 100000"],
+            "narrowing_reason": "Amount exceeds max_allowed",
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=mock_result)
+        import src.gateway.governance.singletons as _singletons
+        import src.gateway.server.agent_gateway_adapter as adapter_module
+
+        original_narrow_enabled = adapter_module._NARROW_ENABLED
+        adapter_module._NARROW_ENABLED = True
+
+        try:
+            with patch.object(_singletons, "symbolic_governor", mock_gov):
+                resp = await handle_check_request(body)
+        finally:
+            adapter_module._NARROW_ENABLED = original_narrow_enabled
+
+        # Check for X-Governance-Narrowed header
+        headers = resp.get("ok_response", {}).get("headers", [])
+        narrow_header = next(
+            (h for h in headers if h["header"]["key"] == "X-Governance-Narrowed"),
+            None,
+        )
+        assert narrow_header is not None
+        assert narrow_header["header"]["value"] == "true"
+
+    @pytest.mark.asyncio
+    async def test_narrow_disabled_falls_back_appropriately(self, monkeypatch):
+        """When CAGE_NARROW_ENABLED=false, NARROW fallback returns HTTP 403."""
+        monkeypatch.setenv("CAGE_NARROW_ENABLED", "false")
+        
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "amount": 150000},
+            }
+        )
+        mock_result = {
+            "verdict": GovernanceDecision.NARROW,
+            "violations": ["Amount exceeds limit"],
+            "seal": "",
+            "thread_id": "",
+            "original_params": {"symbol": "AAPL", "amount": 150000},
+            "narrowed_params": {"symbol": "AAPL", "amount": 100000},
+            "constraints_applied": ["amount clamped"],
+            "narrowing_reason": "Amount exceeds max_allowed",
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=mock_result)
+        import src.gateway.governance.singletons as _singletons
+        import src.gateway.server.agent_gateway_adapter as adapter_module
+
+        original_narrow_enabled = adapter_module._NARROW_ENABLED
+        adapter_module._NARROW_ENABLED = False
+
+        try:
+            with patch.object(_singletons, "symbolic_governor", mock_gov):
+                resp = await handle_check_request(body)
+        finally:
+            adapter_module._NARROW_ENABLED = original_narrow_enabled
+
+        assert "denied_response" in resp
+        assert resp["denied_response"]["status"]["code"] == 403
+        body_parsed = json.loads(resp["denied_response"]["body"])
+        assert body_parsed.get("fallback_from") == "NARROW"
+
+    @pytest.mark.asyncio
+    async def test_narrow_response_includes_original_and_narrowed_params(
+        self, monkeypatch
+    ):
+        """NARROW response body includes both original_params and narrowed_params."""
+        monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
+        
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "amount": 200000},
+            }
+        )
+        mock_result = {
+            "verdict": GovernanceDecision.NARROW,
+            "violations": ["Amount exceeds limit"],
+            "seal": "narrow-seal-xyz",
+            "thread_id": "",
+            "original_params": {"symbol": "AAPL", "amount": 200000},
+            "narrowed_params": {"symbol": "AAPL", "amount": 100000},
+            "constraints_applied": ["amount clamped: 200000 → 100000"],
+            "narrowing_reason": "Amount exceeds max_allowed",
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=mock_result)
+        import src.gateway.governance.singletons as _singletons
+        import src.gateway.server.agent_gateway_adapter as adapter_module
+
+        original_narrow_enabled = adapter_module._NARROW_ENABLED
+        adapter_module._NARROW_ENABLED = True
+
+        try:
+            with patch.object(_singletons, "symbolic_governor", mock_gov):
+                resp = await handle_check_request(body)
+        finally:
+            adapter_module._NARROW_ENABLED = original_narrow_enabled
+
+        # Parse the response body
+        ok_resp = resp.get("ok_response", {})
+        response_body = ok_resp.get("body", "{}")
+        body_parsed = json.loads(response_body)
+        
+        assert body_parsed.get("original_params", {}).get("amount") == 200000
+        assert body_parsed.get("narrowed_params", {}).get("amount") == 100000
+        assert len(body_parsed.get("constraints_applied", [])) > 0
+
+
+# ---------------------------------------------------------------------------
+# TestPauseHTTPResponse — PAUSE HTTP layer tests (Phase 1.6)
+# ---------------------------------------------------------------------------
+
+
+class TestPauseHTTPResponse:
+    """Tests for PAUSE decision HTTP response handling.
+    
+    PAUSE decisions return HTTP 503 Service Unavailable with Retry-After
+    header and include pause_token and resume_endpoint in the response body.
+    """
+
+    @pytest.mark.asyncio
+    async def test_pause_returns_503_service_unavailable(self, monkeypatch):
+        """PAUSE verdict → HTTP 503 Service Unavailable."""
+        monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
+        
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "amount": 100},
+            }
+        )
+        mock_result = {
+            "verdict": GovernanceDecision.PAUSE,
+            "violations": ["Rate limit exceeded"],
+            "seal": "",
+            "thread_id": "",
+            "classification_meta": {
+                "pause_reason": "RATE_LIMITED",
+                "estimated_wait_seconds": 60,
+            },
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=mock_result)
+        import src.gateway.governance.singletons as _singletons
+        import src.gateway.server.agent_gateway_adapter as adapter_module
+        from src.gateway.governance.pause_primitive import PauseManager
+
+        original_pause_enabled = adapter_module._PAUSE_ENABLED
+        adapter_module._PAUSE_ENABLED = True
+
+        # Mock the PauseManager to avoid Redis dependency
+        mock_pause_manager = MagicMock()
+        mock_pause_manager.pause_request = AsyncMock(return_value="pause-token-abc123")
+
+        try:
+            with patch.object(_singletons, "symbolic_governor", mock_gov):
+                with patch(
+                    "src.gateway.governance.pause_primitive.PauseManager",
+                    return_value=mock_pause_manager,
+                ):
+                    with patch(
+                        "src.gateway.infrastructure.redis_client.redis_client",
+                        MagicMock(),
+                    ):
+                        resp = await handle_check_request(body)
+        finally:
+            adapter_module._PAUSE_ENABLED = original_pause_enabled
+
+        assert "denied_response" in resp
+        assert resp["denied_response"]["status"]["code"] == 503
+
+    @pytest.mark.asyncio
+    async def test_pause_response_includes_retry_after_header(self, monkeypatch):
+        """PAUSE response includes Retry-After header."""
+        monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
+        
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "amount": 100},
+            }
+        )
+        mock_result = {
+            "verdict": GovernanceDecision.PAUSE,
+            "violations": ["Rate limit exceeded"],
+            "seal": "",
+            "thread_id": "",
+            "classification_meta": {
+                "pause_reason": "RATE_LIMITED",
+                "estimated_wait_seconds": 120,
+            },
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=mock_result)
+        import src.gateway.governance.singletons as _singletons
+        import src.gateway.server.agent_gateway_adapter as adapter_module
+
+        original_pause_enabled = adapter_module._PAUSE_ENABLED
+        adapter_module._PAUSE_ENABLED = True
+
+        mock_pause_manager = MagicMock()
+        mock_pause_manager.pause_request = AsyncMock(return_value="pause-token-xyz")
+
+        try:
+            with patch.object(_singletons, "symbolic_governor", mock_gov):
+                with patch(
+                    "src.gateway.governance.pause_primitive.PauseManager",
+                    return_value=mock_pause_manager,
+                ):
+                    with patch(
+                        "src.gateway.infrastructure.redis_client.redis_client",
+                        MagicMock(),
+                    ):
+                        resp = await handle_check_request(body)
+        finally:
+            adapter_module._PAUSE_ENABLED = original_pause_enabled
+
+        # Check for Retry-After header
+        headers = resp.get("denied_response", {}).get("headers", [])
+        retry_header = next(
+            (h for h in headers if h["header"]["key"] == "Retry-After"),
+            None,
+        )
+        assert retry_header is not None
+        # Retry-After should be a number (seconds)
+        assert retry_header["header"]["value"].isdigit() or retry_header["header"]["value"] == "120"
+
+    @pytest.mark.asyncio
+    async def test_pause_response_includes_resume_endpoint(self, monkeypatch):
+        """PAUSE response body includes resume_endpoint for client action."""
+        monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
+        
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "amount": 100},
+            }
+        )
+        mock_result = {
+            "verdict": GovernanceDecision.PAUSE,
+            "violations": ["Circuit breaker open"],
+            "seal": "",
+            "thread_id": "",
+            "classification_meta": {
+                "pause_reason": "CIRCUIT_OPEN",
+                "estimated_wait_seconds": 30,
+            },
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=mock_result)
+        import src.gateway.governance.singletons as _singletons
+        import src.gateway.server.agent_gateway_adapter as adapter_module
+
+        original_pause_enabled = adapter_module._PAUSE_ENABLED
+        adapter_module._PAUSE_ENABLED = True
+
+        mock_pause_manager = MagicMock()
+        mock_pause_manager.pause_request = AsyncMock(return_value="pause-token-resume")
+
+        try:
+            with patch.object(_singletons, "symbolic_governor", mock_gov):
+                with patch(
+                    "src.gateway.governance.pause_primitive.PauseManager",
+                    return_value=mock_pause_manager,
+                ):
+                    with patch(
+                        "src.gateway.infrastructure.redis_client.redis_client",
+                        MagicMock(),
+                    ):
+                        resp = await handle_check_request(body)
+        finally:
+            adapter_module._PAUSE_ENABLED = original_pause_enabled
+
+        body_parsed = json.loads(resp["denied_response"]["body"])
+        assert "resume_endpoint" in body_parsed
+        assert "/v1/pause/" in body_parsed["resume_endpoint"]
+        assert "/resume" in body_parsed["resume_endpoint"]
+
+    @pytest.mark.asyncio
+    async def test_pause_disabled_falls_back_to_deny(self, monkeypatch):
+        """When CAGE_PAUSE_ENABLED=false, PAUSE fallback returns HTTP 403."""
+        monkeypatch.setenv("CAGE_PAUSE_ENABLED", "false")
+        
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "amount": 100},
+            }
+        )
+        mock_result = {
+            "verdict": GovernanceDecision.PAUSE,
+            "violations": ["Rate limit exceeded"],
+            "seal": "",
+            "thread_id": "",
+            "classification_meta": {
+                "pause_reason": "RATE_LIMITED",
+                "estimated_wait_seconds": 60,
+            },
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=mock_result)
+        import src.gateway.governance.singletons as _singletons
+        import src.gateway.server.agent_gateway_adapter as adapter_module
+
+        original_pause_enabled = adapter_module._PAUSE_ENABLED
+        adapter_module._PAUSE_ENABLED = False
+
+        try:
+            with patch.object(_singletons, "symbolic_governor", mock_gov):
+                resp = await handle_check_request(body)
+        finally:
+            adapter_module._PAUSE_ENABLED = original_pause_enabled
+
+        assert "denied_response" in resp
+        assert resp["denied_response"]["status"]["code"] == 403
+        body_parsed = json.loads(resp["denied_response"]["body"])
+        assert body_parsed.get("fallback_from") == "PAUSE"
+
+    @pytest.mark.asyncio
+    async def test_pause_response_includes_pause_token(self, monkeypatch):
+        """PAUSE response body includes pause_token for resumption."""
+        monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
+        
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "amount": 100},
+            }
+        )
+        mock_result = {
+            "verdict": GovernanceDecision.PAUSE,
+            "violations": ["Resource unavailable"],
+            "seal": "",
+            "thread_id": "",
+            "classification_meta": {
+                "pause_reason": "RESOURCE_UNAVAILABLE",
+                "estimated_wait_seconds": 180,
+            },
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=mock_result)
+        import src.gateway.governance.singletons as _singletons
+        import src.gateway.server.agent_gateway_adapter as adapter_module
+
+        original_pause_enabled = adapter_module._PAUSE_ENABLED
+        adapter_module._PAUSE_ENABLED = True
+
+        mock_pause_manager = MagicMock()
+        mock_pause_manager.pause_request = AsyncMock(return_value="pause-uuid-12345678")
+
+        try:
+            with patch.object(_singletons, "symbolic_governor", mock_gov):
+                with patch(
+                    "src.gateway.governance.pause_primitive.PauseManager",
+                    return_value=mock_pause_manager,
+                ):
+                    with patch(
+                        "src.gateway.infrastructure.redis_client.redis_client",
+                        MagicMock(),
+                    ):
+                        resp = await handle_check_request(body)
+        finally:
+            adapter_module._PAUSE_ENABLED = original_pause_enabled
+
+        body_parsed = json.loads(resp["denied_response"]["body"])
+        assert body_parsed.get("pause_token") == "pause-uuid-12345678"
+
+    @pytest.mark.asyncio
+    async def test_pause_redis_error_falls_back_to_deny(self, monkeypatch):
+        """When Redis is unavailable for PAUSE, fallback to HTTP 403 DENY."""
+        monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
+        
+        body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL", "amount": 100},
+            }
+        )
+        mock_result = {
+            "verdict": GovernanceDecision.PAUSE,
+            "violations": ["Rate limit exceeded"],
+            "seal": "",
+            "thread_id": "",
+            "classification_meta": {
+                "pause_reason": "RATE_LIMITED",
+                "estimated_wait_seconds": 60,
+            },
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=mock_result)
+        import src.gateway.governance.singletons as _singletons
+        import src.gateway.server.agent_gateway_adapter as adapter_module
+
+        original_pause_enabled = adapter_module._PAUSE_ENABLED
+        adapter_module._PAUSE_ENABLED = True
+
+        # Mock PauseManager to raise an exception (Redis unavailable)
+        mock_pause_manager = MagicMock()
+        mock_pause_manager.pause_request = AsyncMock(
+            side_effect=ConnectionError("Redis connection refused")
+        )
+
+        try:
+            with patch.object(_singletons, "symbolic_governor", mock_gov):
+                with patch(
+                    "src.gateway.governance.pause_primitive.PauseManager",
+                    return_value=mock_pause_manager,
+                ):
+                    with patch(
+                        "src.gateway.infrastructure.redis_client.redis_client",
+                        MagicMock(),
+                    ):
+                        resp = await handle_check_request(body)
+        finally:
+            adapter_module._PAUSE_ENABLED = original_pause_enabled
+
+        # Should fall back to DENY when Redis is unavailable
+        assert "denied_response" in resp
+        assert resp["denied_response"]["status"]["code"] == 403
+        body_parsed = json.loads(resp["denied_response"]["body"])
+        assert body_parsed.get("error") == "pause_storage_error"

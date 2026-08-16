@@ -14,7 +14,7 @@
 
 """Explainer Agent (System 3 Monitoring) - Faithfulness & Reporting"""
 
-from config.settings import MODEL_FAST
+from config.settings import Config
 
 EXPLAINER_FALLBACK_PROMPT = """You are the **Explainer Agent**, the final node in the CAGE governance pipeline.
 Your role is to verify **Faithfulness** and translate technical execution results into a user-friendly response.
@@ -60,7 +60,7 @@ from typing import Any
 from langchain_openai import ChatOpenAI
 
 
-def create_explainer_agent(model_name: str = MODEL_FAST) -> Any:  # type: ignore[assignment]
+def create_explainer_agent(model_name: str = Config.MODEL_FAST) -> Any:  # type: ignore[assignment]
     """Factory to create the Explainer agent (Native LangChain)."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:

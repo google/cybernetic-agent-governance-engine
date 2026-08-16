@@ -17,7 +17,7 @@ from typing import Any
 
 from langchain_core.messages import SystemMessage
 
-from config.settings import MODEL_FAST, MODEL_REASONING
+from config.settings import Config
 from src.gateway.governance.kms_signer import get_governance_signer
 from src.governed_financial_advisor.agents.explainer.agent import (
     create_explainer_agent,
@@ -139,7 +139,7 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
                 f"USER MESSAGE: {user_msg}\n"
                 f"ACTION PLAN: {execution_plan}\n"
             )
-            fast_llm = create_explainer_agent(MODEL_FAST)  # type: ignore[arg-type]
+            fast_llm = create_explainer_agent(Config.MODEL_FAST)  # type: ignore[arg-type]
             final_resp = await fast_llm.ainvoke(
                 [SystemMessage(content=combined_prompt)]
             )
@@ -154,12 +154,12 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
                 verdict,
             )
 
-            # 2. Semantic Justification (using MODEL_REASONING)
+            # 2. Semantic Justification (using Config.MODEL_REASONING)
             justification = (
                 "Manual justification required: No reasoning model available."
             )
             try:
-                llm = create_explainer_agent(MODEL_REASONING)  # type: ignore[arg-type]
+                llm = create_explainer_agent(Config.MODEL_REASONING)  # type: ignore[arg-type]
                 prompt = (
                     f"You are the Governance Auditor. Provide a concise 2-3 sentence 'Verdict Justification'.\n"
                     f"Context: The system reached a verdict of {verdict}.\n"
@@ -184,7 +184,7 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
             summary += f"\n#### ⚖️ Verdict Justification\n{justification}\n"
 
             # 4. Final Response Generation (Faithfulness)
-            final_llm = create_explainer_agent(MODEL_FAST)  # type: ignore[arg-type]
+            final_llm = create_explainer_agent(Config.MODEL_FAST)  # type: ignore[arg-type]
             explainer_sys = (
                 f"{get_explainer_instruction()}\n\n"
                 f"GOVERNANCE AUDIT:\n{summary}\n\n"

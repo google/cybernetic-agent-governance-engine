@@ -67,6 +67,7 @@ Environment variables
   RECONCILIATION_PROVIDER                — provider name (default: "stub")
   REDIS_URL                              — Redis connection string
   KMS_GOVERNANCE_KEY                     — Cloud KMS key for signing reconciled balances
+  CAGE_RECONCILIATION_REPLAY_DEFENSE     — feature flag for monotonic sequence (default: "false")
 """
 
 from __future__ import annotations
@@ -89,6 +90,15 @@ POLL_INTERVAL_SECONDS: int = int(
 )
 TTL_SECONDS: int = int(os.environ.get("RECONCILIATION_TTL_SECONDS", "300"))
 PROVIDER: str = os.environ.get("RECONCILIATION_PROVIDER", "stub")
+
+# ---------------------------------------------------------------------------
+# Feature flag: Replay defense (R-04 mitigation, §2.10)
+# ---------------------------------------------------------------------------
+# Stage 0 (write-side): When enabled, workers stamp monotonic sequence on payloads.
+# Stage 1 (read-side): When enabled, CBF enforces sequence validation.
+REPLAY_DEFENSE_ENABLED: bool = os.environ.get(
+    "CAGE_RECONCILIATION_REPLAY_DEFENSE", "false"
+).lower() in ("true", "1", "yes")
 
 # ---------------------------------------------------------------------------
 # Production guard (BLOCKER-06)
@@ -121,6 +131,9 @@ _REDIS_KEY_VERIFIED_BALANCE = "reconciliation:verified_balance"
 _REDIS_KEY_VERIFIED_AT = "reconciliation:verified_at"
 _REDIS_KEY_PROVIDER = "reconciliation:provider"
 _REDIS_KEY_SIGNATURE = "reconciliation:signature"
+# §2.10 Replay defense: monotonic sequence source of truth (never TTL'd)
+_REDIS_KEY_SEQUENCE_LATEST = "reconciliation:sequence:latest"
+_REDIS_KEY_SEQUENCE_LAST_ACCEPTED = "reconciliation:sequence:last_accepted"
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +155,8 @@ class ReconciliationResult:
         ttl_seconds:     Time-to-live for this balance in Redis.
         raw_response:    Optional raw provider response for forensic audit.
         error:           Error message if reconciliation failed; None on success.
+        sequence:        Monotonic sequence number for replay defense (§2.10).
+                         Zero means sequence validation is disabled or not yet stamped.
     """
 
     source: str
@@ -151,6 +166,7 @@ class ReconciliationResult:
     ttl_seconds: int = TTL_SECONDS
     raw_response: dict | None = None
     error: str | None = None
+    sequence: int = 0  # §2.10.1: Monotonic sequence number for R-04 replay defense
 
     @property
     def is_valid(self) -> bool:
@@ -170,6 +186,7 @@ class ReconciliationResult:
                 "balance_usd": self.balance_usd,
                 "verified_at": self.verified_at,
                 "signature": self.signature,
+                "sequence": self.sequence,  # §2.10: included in signed payload
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -184,6 +201,7 @@ class ReconciliationResult:
             balance_usd=data["balance_usd"],
             verified_at=data["verified_at"],
             signature=data.get("signature", ""),
+            sequence=data.get("sequence", 0),  # §2.10: backward-compatible default
         )
 
 
@@ -728,10 +746,12 @@ class GcsLedgerProvider:
                 "GcsLedgerProvider requires GCS_RECONCILIATION_BUCKET to be set."
             )
 
-    def fetch_balance(self, account_id: str) -> "ReconciliationResult":  # type: ignore[override]
+    def fetch_balance(self, account_id: str) -> ReconciliationResult:  # type: ignore[override]
         """Download the balance snapshot from GCS and return a ReconciliationResult."""
         try:
-            from google.cloud import storage  # type: ignore[import-untyped, attr-defined]
+            from google.cloud import (
+                storage,  # type: ignore[import-untyped, attr-defined]
+            )
         except ImportError as exc:
             raise RuntimeError(
                 "google-cloud-storage is required for GcsLedgerProvider. "
@@ -848,7 +868,7 @@ class ObjectStoreLedgerProvider:
 
         return boto3.client("s3", **kwargs)
 
-    def fetch_balance(self, account_id: str) -> "ReconciliationResult":  # type: ignore[override]
+    def fetch_balance(self, account_id: str) -> ReconciliationResult:  # type: ignore[override]
         """Download the balance snapshot from S3-compatible storage."""
         import datetime
         import json as _json
@@ -1002,10 +1022,34 @@ class ExternalLedgerReconciler:
 
             _set_span_attr("reconciliation.balance_usd", result.balance_usd)
 
-            # ── 2. Cloud KMS signing (Priority 1 integration) ─────────────
+            # ── 2. Monotonic sequence number (§2.10 R-04 replay defense) ───
+            # Read current sequence, increment, and include in signed payload.
+            # The sequence is stored separately and never TTL'd — it must
+            # survive independently of the 300s balance TTL.
+            new_sequence: int = 0
+            if REPLAY_DEFENSE_ENABLED:
+                try:
+                    new_sequence = self._redis.incr(_REDIS_KEY_SEQUENCE_LATEST)  # type: ignore[attr-defined]
+                    result.sequence = new_sequence
+                    logger.info(
+                        "[R-04] Replay defense: stamped sequence=%d on reconciliation payload.",
+                        new_sequence,
+                    )
+                except Exception as seq_exc:
+                    logger.error(
+                        "[R-04] Failed to increment sequence counter: %s — "
+                        "payload will have sequence=0 (replay defense ineffective).",
+                        seq_exc,
+                    )
+
+            _set_span_attr("cage.reconciliation.sequence", new_sequence)
+
+            # ── 3. Cloud KMS signing (Priority 1 integration) ─────────────
             # Sign the reconciled balance payload so the CBF can verify that
             # the balance was written by an authorised reconciliation worker,
             # not by the execution system itself.
+            # §2.10: sequence is included in signed payload — replay cannot
+            # bump sequence without invalidating the signature.
             t_sign_start = time.monotonic()
             try:
                 from src.gateway.governance.kms_signer import get_governance_signer
@@ -1015,6 +1059,7 @@ class ExternalLedgerReconciler:
                     "source": result.source,
                     "balance_usd": result.balance_usd,
                     "verified_at": result.verified_at,
+                    "sequence": result.sequence,  # §2.10: in signed payload
                 }
                 result.signature = signer.sign(payload_dict)
 
@@ -1038,7 +1083,9 @@ class ExternalLedgerReconciler:
                 _set_span_attr("reconciliation.kms_sign_ms", round(kms_sign_ms, 1))
                 _set_span_attr("reconciliation.signed", bool(result.signature))
 
-            # ── 3. Write to Redis ──────────────────────────────────────────
+            # ── 4. Write to Redis ──────────────────────────────────────────
+            # Note: sequence key (_REDIS_KEY_SEQUENCE_LATEST) is written via
+            # INCR above, NOT in this pipeline, because it must never expire.
             t_redis_start = time.monotonic()
             try:
                 pipe = self._redis.pipeline()  # type: ignore[attr-defined]
@@ -1067,13 +1114,14 @@ class ExternalLedgerReconciler:
 
                 logger.info(
                     "✅ Reconciliation SUCCESS: provider=%s balance=%.2f "
-                    "verified_at=%.0f ttl=%ds signed=%s "
+                    "verified_at=%.0f ttl=%ds signed=%s sequence=%d "
                     "fetch_ms=%.1f kms_ms=%.1f",
                     result.source,
                     result.balance_usd,
                     result.verified_at,
                     self._ttl,
                     bool(result.signature),
+                    result.sequence,
                     fetch_ms,
                     kms_sign_ms,
                 )

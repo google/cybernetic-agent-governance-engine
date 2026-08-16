@@ -93,7 +93,7 @@ JUDGE_MODEL = os.environ.get(
 # ── Rate-limit throttle ───────────────────────────────────────────────────────
 # Minimum sleep between backend calls to avoid overwhelming the API.
 # Override with LANGFUSE_EVAL_RATE_LIMIT_S env var (e.g. set to "0.1" in CI
-# for faster integration runs while production red-team keeps the full 0.3–0.8s).
+# for faster integration runs while production red-team keeps the full 0.3-0.8s).
 _RATE_LIMIT_S: float = float(os.environ.get("LANGFUSE_EVAL_RATE_LIMIT_S", "0.3"))
 
 

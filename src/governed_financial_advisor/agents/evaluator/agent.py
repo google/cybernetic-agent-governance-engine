@@ -189,10 +189,6 @@ async def simulate_governance_check(
         return {"status": "ERROR", "message": str(e), "violations": ["System Error"]}
 
 
-# Backward-compatible alias — remove once all callers are updated
-check_safety_constraints = simulate_governance_check
-
-
 # --- NEW: SAFETY INTERVENTION TOOL (Module 5) ---
 async def safety_intervention(reason: str) -> str:
     """

@@ -1,6 +1,7 @@
 {
   "_comment": "CAGE Governance Thresholds — single source of truth. Loaded and Pydantic-validated at gateway startup. All modules MUST reference the loaded singleton; never inline literals.",
-  "_schema_version": "1.0.0",
+  "_schema_version": "2.0.0",
+  "_env_override_comment": "All thresholds support env var overrides for runtime tuning. Env var names follow the pattern: uppercase path with underscores (e.g., fria.zone_allow -> FRIA_ZONE_ALLOW).",
   "cbf": {
     "min_cash_balance": 1000.0,
     "gamma": 0.5
@@ -19,9 +20,29 @@
     "max_latency_ms": 200.0,
     "_comment": "FIN-2: maximum permissible round-trip latency for a trade action."
   },
+  "fria": {
+    "zone_allow": 0.95,
+    "_comment": "FRIA (Frontier Risk Impact Assessment) confidence threshold for automatic approval.",
+    "zone_defer": 0.70,
+    "_comment": "FRIA confidence threshold below which action is deferred to HITL."
+  },
   "confidence": {
     "min_trade_confidence": 0.95,
-    "_comment": "[CTRL_AGT_001] Minimum agentic model confidence required to execute a trade. See config/control_mappings.json for the active regulatory framework mapping (primary: ISO 42001 §A.5.2; legacy citation: SR 26-2 §IV.B)."
+    "_comment": "[CTRL_AGT_001] Minimum agentic model confidence required to execute a trade. See config/control_mappings.json for the active regulatory framework mapping (primary: ISO 42001 §A.5.2; legacy citation: SR 26-2 §IV.B).",
+    "agent_threshold": 0.95,
+    "_comment_agent": "[EV-2] Agent confidence threshold — consolidated from AGENT_CONFIDENCE_THRESHOLD env var.",
+    "min_score": 0.95,
+    "_comment_min_score": "[EV-5] Minimum confidence threshold for confabulation scorer — below this value, requests are blocked due to confabulation risk. Consolidated from CONFIDENCE_MIN_SCORE env var. Production deployments may override via secretKeyRef."
+  },
+  "causal": {
+    "p_value_threshold": 0.05,
+    "_comment_pvalue": "Standard frequentist significance level for causal lock decisions. Consistent with SR 26-2 MRM back-testing requirements (CTRL_TEL_003).",
+    "placebo_effect_magnitude": 0.2,
+    "_comment_placebo": "If absolute placebo refuter new_effect exceeds this, estimated causal effect is unreliable. 0.2 corresponds to Cohen's d ≈ 0.2 (medium effect).",
+    "risk_boundary": 0.95,
+    "_comment_risk": "If (0.5 + estimated_marginal_effect) exceeds this, trade is predicted to push risk above safety boundary. Leaves 5% safety margin.",
+    "min_samples": 50,
+    "_comment_samples": "[EV-4] Consolidated from CAUSAL_MIN_SAMPLES and CAUSAL_MIN_LIVE_SAMPLES. Minimum telemetry samples required for causal model training."
   },
   "consensus": {
     "threshold_usd": 10000.0,

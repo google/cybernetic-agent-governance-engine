@@ -102,13 +102,15 @@ def test_get_constraints_for_action_unknown_action():
 
 
 def test_iso_control_map_has_required_keys():
-    """ISO_CONTROL_MAP must contain the four documented governance control categories."""
+    """get_control_map('LOCAL') must contain the four documented governance control categories."""
     from src.gateway.governance.ontology import TradingKnowledgeGraph
 
-    assert "SOCIAL_IMPACT" in TradingKnowledgeGraph.ISO_CONTROL_MAP
-    assert "LOGGING_AUDIT" in TradingKnowledgeGraph.ISO_CONTROL_MAP
-    assert "DATA_PRIVACY" in TradingKnowledgeGraph.ISO_CONTROL_MAP
-    assert "FISCAL_CONTROLS" in TradingKnowledgeGraph.ISO_CONTROL_MAP
+    # Use region-aware accessor for universal controls
+    control_map = TradingKnowledgeGraph.get_control_map("LOCAL")
+    assert "SOCIAL_IMPACT" in control_map
+    assert "LOGGING_AUDIT" in control_map
+    assert "DATA_PRIVACY" in control_map
+    assert "FISCAL_CONTROLS" in control_map
 
 
 def test_add_uca_registers_new_uca():

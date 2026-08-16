@@ -28,7 +28,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # 1. run_lula_scheduler() exits immediately when disabled
 # ---------------------------------------------------------------------------

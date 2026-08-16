@@ -34,9 +34,8 @@ import os
 import time
 from unittest.mock import patch
 
-from freezegun import freeze_time
-
 import pytest
+from freezegun import freeze_time
 
 pytestmark = pytest.mark.unit
 
@@ -469,6 +468,8 @@ async def test_gfa_verify_and_consume_seal_prevents_replay():
     from src.gateway.governance.routing_seal import generate_seal
     from src.governed_financial_advisor.utils.routing_seal import (
         SymbolicGovernorViolation as GFASymbolicGovernorViolation,
+    )
+    from src.governed_financial_advisor.utils.routing_seal import (
         verify_and_consume_seal as gfa_verify_and_consume,
     )
 

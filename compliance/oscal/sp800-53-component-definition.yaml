@@ -89,17 +89,47 @@ component-definition:
               control-id: au-12
               description: |
                 Audit record generation is implemented via OpenTelemetry spans in
-                src/gateway/infrastructure/telemetry.py. Every governance decision
-                emits an OTel span containing ISO 42001 6-attribute evidence stamps:
-                control_id, decision_outcome, timestamp_utc, request_id, user_role,
-                and enforcement_tier. Spans are exported to Langfuse for long-term
-                retention and compliance reporting. The compliance-bridge aggregates
-                spans into OSCAL Assessment Results via audit_workflow.py.
+                src/gateway/infrastructure/telemetry.py and the provenance chain in
+                src/gateway/governance/provenance_chain.py. CAGE provides two distinct
+                auditing modes to support different consistency/availability trade-offs:
+
+                1. DECISION-TIME AUDIT (fire-and-forget, default mode):
+                   Records governance decisions asynchronously via OTel spans. Every
+                   governance decision emits a span containing ISO 42001 6-attribute
+                   evidence stamps: control_id, decision_outcome, timestamp_utc,
+                   request_id, user_role, and enforcement_tier. This mode prioritizes
+                   availability — the routing seal is issued immediately after the
+                   governance decision, without waiting for audit record persistence.
+                   Spans are exported to Langfuse asynchronously for retention.
+
+                2. EVIDENCE-OF-EXECUTION AUDIT (blocking mode, EVIDENCE_CHAIN_BLOCKING=true):
+                   Ensures evidence commit before seal issuance, providing stronger
+                   non-repudiation guarantees. When enabled via the EVIDENCE_CHAIN_BLOCKING
+                   environment variable, the provenance chain (provenance_chain.py) must
+                   successfully persist the evidence record to the backing store before
+                   the routing seal is computed and returned. This mode ties the
+                   cryptographic seal directly to a committed evidence record, ensuring
+                   that no seal can exist without a corresponding audit trail entry.
+                   The evidence record includes a hash-linked chain for time-correlation.
+
+                Key distinction: Decision-time audit records WHAT was decided; evidence-
+                of-execution audit proves THAT the decision was recorded before action.
+                The blocking mode satisfies AU-12(1) system-wide/time-correlated audit
+                trail requirements through hash-linked evidence chain correlation.
+
+                Dual-schema verification (v1.0/v1.1) in the provenance chain ensures
+                forward compatibility while maintaining audit record integrity across
+                schema migrations. The compliance-bridge aggregates spans into OSCAL
+                Assessment Results via audit_workflow.py.
               props:
                 - name: implementation-status
                   value: implemented
                 - name: control-origination
                   value: system-specific
+                - name: evidence-chain-blocking
+                  value: "configurable via EVIDENCE_CHAIN_BLOCKING env var"
+                - name: au-12-1-enhancement
+                  value: "hash-linked evidence chain provides time-correlated audit trail"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AU-12"
                   rel: reference

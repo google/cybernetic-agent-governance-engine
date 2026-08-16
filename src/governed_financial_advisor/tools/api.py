@@ -84,9 +84,7 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
             symbol = params.get("symbol")
             output = get_market_data(symbol)  # type: ignore[arg-type]  # Fallback to same tool
 
-        elif tool in ("simulate_governance_check", "check_safety_constraints"):
-            # "check_safety_constraints" kept as legacy alias — deprecated, use
-            # "simulate_governance_check" for new callers.
+        elif tool == "simulate_governance_check":
             target_tool = params.get("target_tool")
             target_params = params.get("target_params") or {}
             # Call Symbolic Governor in sim (dry-run) mode — does NOT enforce
