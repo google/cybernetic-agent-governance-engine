@@ -198,7 +198,7 @@ Emitted every time the evidence chain is read via `PlaygroundTelemetry.read_evid
 
 ## OTel Span Attribute Alignment
 
-The following OTel span attributes are emitted alongside every evidence record, using the same naming convention as `symbolic_governor.py` and `stpa_validator.py`:
+The following OTel span attributes are emitted alongside every evidence record, using the same naming convention as `symbolic_governor.py` and `generated_stpa_validator.py`:
 
 | OTel Attribute | Value | Notes |
 |----------------|-------|-------|

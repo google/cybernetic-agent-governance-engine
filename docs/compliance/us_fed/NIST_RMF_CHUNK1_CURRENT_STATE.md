@@ -67,10 +67,10 @@ The gateway implements a **multi-tier, neuro-symbolic governance pipeline** that
 
 | Artifact                            | Location                                                                                         | Role                                                                  |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| `ControlBarrierFunction`            | [`src/gateway/governance/safety.py`                       | Redis-backed CBF with WATCH/MULTI/EXEC                                |
-| `ac_keyword_scan`                   | `src/gateway/governance/safety.py`                        | Aho-Corasick Tier-1 prompt-injection scan                             |
+| `ControlBarrierFunction`            | [`src/gateway/governance/cbf.py`](../../../src/gateway/governance/cbf.py) (**v3.0.0:** `safety.py` removed) | Redis-backed CBF with WATCH/MULTI/EXEC                                |
+| `ac_keyword_scan`                   | [`src/gateway/governance/text_filter.py`](../../../src/gateway/governance/text_filter.py) (**v3.0.0:** `safety.py` removed) | Aho-Corasick Tier-1 prompt-injection scan                             |
 | `SymbolicGovernor`                  | `src/gateway/governance/symbolic_governor.py`  | Orchestrates all 5 governance tiers                                   |
-| `STPAValidator`                     | `src/gateway/governance/stpa_validator.py`        | Deterministic STPA UCA constraint checks                              |
+| `GeneratedSTPAValidator`            | [`src/gateway/governance/generated_stpa_validator.py`](../../../src/gateway/governance/generated_stpa_validator.py) (**v3.0.0:** `stpa_validator.py` removed) | Deterministic STPA UCA constraint checks                              |
 | `TradingKnowledgeGraph`             | `src/gateway/governance/ontology.py`                    | UCA/constraint ontology (6 UCAs, 3 constraints)                       |
 | `stamp_iso_control`                 | `src/gateway/governance/iso_control.py`              | ISO 42001 OTel evidence stamping                                      |
 | `ConsensusEngine`                   | `src/gateway/governance/consensus.py`                  | Multi-agent LLM critic consensus                                      |
@@ -239,7 +239,7 @@ Two deprecated stub packages exist for historical tracking: `finance` and `finan
 
 **AgentSight UI** (`src/agentsight-ui/`): React/Vite frontend with eBPF kernel observability. Phase 1 deployed: `KernelDashboard.tsx` displays real-time governance events from the SSE event bus. eBPF daemon (`deployment/agentsight/agentsight-config.yaml`) targets `python3` processes, intercepting SSL/TLS via OpenSSL uprobes and monitoring syscalls (`execve`, `openat`, `connect`, `socket`, `bind`). Exporter configured as `type: "remote"` targeting `http://agentsight-dashboard:8080` (POAM-021 closed 2026-05-27).
 
-**Gateway telemetry** (`src/gateway/infrastructure/telemetry.py`): Factory function `get_tracer(name)` wrapping `opentelemetry.trace.get_tracer`. Gracefully degrades to a no-op stub when `opentelemetry-api` is absent. Used by safety.py and other gateway modules.
+**Gateway telemetry** (`src/gateway/infrastructure/telemetry.py`): Factory function `get_tracer(name)` wrapping `opentelemetry.trace.get_tracer`. Gracefully degrades to a no-op stub when `opentelemetry-api` is absent. Used by `cbf.py` and other gateway modules (**v3.0.0:** `safety.py` removed).
 
 **MCP distributed tracing** (`src/gateway/observability/mcp_tracing.py`): `patch_mcp_tools(mcp_server)` monkey-patches `ToolManager.call_tool` to:
 

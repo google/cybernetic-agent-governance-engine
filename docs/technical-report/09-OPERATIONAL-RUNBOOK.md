@@ -867,7 +867,7 @@ The following source files were confirmed present and operational during the 202
 | `src/gateway/governance/defer_queue.py` | DEFER state machine (Redis db=1) |
 | `src/gateway/governance/iso_control.py` | ISO 42001 control stamping (`stamp_iso_control()`) |
 | `src/gateway/governance/normative_provider.py` | External normative provider + adaptive FRIA gate |
-| `src/gateway/governance/stpa_validator.py` | STPA validator (alongside generated version) |
+| ~~`src/gateway/governance/stpa_validator.py`~~ | **v3.0.0:** Removed (deprecated shim); use `generated_stpa_validator.py` |
 | `src/gateway/governance/telemetry_provider.py` | Telemetry provider for causal gatekeeper |
 | `src/gateway/governance/schemas/thresholds.py` | `GovernanceThresholds` Pydantic model |
 | `src/gateway/slm/mock_slm.py` | Mock SLM for testing (legacy SLM tier slot fully retired) |

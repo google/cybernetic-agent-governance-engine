@@ -180,7 +180,7 @@ OPA evaluates the **post-reservation** balance — it is responsible for policy 
 | `config/stpa_control_structure.yaml` | Single source of truth for all UCA definitions, conditions, and enforcement targets |
 | `src/gateway/governance/stpa_compiler.py` | Compiler CLI; ingests YAML; emits OPA/NeMo/Python/LangGraph artifacts |
 | `src/gateway/governance/generated_stpa_validator.py` | **Primary** auto-generated Python validator — `GeneratedSTPAValidator` with `validate()` entry-point and `_check_uca_*()` per-UCA methods (do not edit; re-run compiler to regenerate) |
-| `src/gateway/governance/stpa_validator.py` | **Deprecated shim** — re-exports `GeneratedSTPAValidator` as `STPAValidator`; emits `DeprecationWarning` on import; will be removed in the next major version. `symbolic_governor.py` now imports `GeneratedSTPAValidator` directly. |
+| ~~`src/gateway/governance/stpa_validator.py`~~ | **v3.0.0:** Removed (deprecated shim). Import `GeneratedSTPAValidator` directly from `generated_stpa_validator.py`. |
 | `config/opa/generated_stpa_policy.rego` | Auto-generated OPA Rego rules (do not edit) |
 | `config/rails/generated_stpa_rails.co` | Auto-generated NeMo Colang rails (do not edit) |
 | `src/gateway/governance/generated_saga_nodes.py` | Auto-generated LangGraph Saga nodes (do not edit) |

@@ -47,7 +47,7 @@
 | `src/gateway/governance/symbolic_governor.py` | 876 | Governance orchestration |
 | `src/gateway/governance/provenance_chain.py` | 225 | Hash chain (pure computation) |
 | `src/gateway/governance/routing_seal.py` | 327 | HMAC seal (pure computation) |
-| `src/gateway/governance/safety.py` | 72 | Deprecated shim |
+| ~~`src/gateway/governance/safety.py`~~ | — | **v3.0.0:** Removed (deprecated shim) |
 | `src/gateway/infrastructure/telemetry.py` | 45 | OTel tracer factory |
 | `src/gateway/infrastructure/redis_client.py` | 271 | Redis client |
 | `src/gateway/tracing_setup.py` | 271 | OTel/OTLP setup |
@@ -443,7 +443,7 @@ These locations perform pure computation or local filesystem operations with no 
 |----|------|-------|--------|
 | N/A-01 | [`src/gateway/governance/provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | 110–127 | SHA-256 hash chain computation only; no storage writes |
 | N/A-02 | [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py) | 162–181 | HMAC seal generation/verification; no storage writes |
-| N/A-03 | [`src/gateway/governance/safety.py`](../../src/gateway/governance/safety.py) | 1–72 | Deprecated shim; no storage writes |
+| ~~N/A-03~~ | ~~`src/gateway/governance/safety.py`~~ | — | **v3.0.0:** Removed (deprecated shim) |
 | N/A-04 | [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) | 110–823 | Governance orchestration; delegates all storage to other modules |
 | N/A-05 | [`src/gateway/infrastructure/telemetry.py`](../../src/gateway/infrastructure/telemetry.py) | 28–45 | OTel tracer factory (`get_tracer()`); no storage writes |
 | N/A-06 | [`src/compliance_bridge/context_accumulator.py`](../../src/compliance_bridge/context_accumulator.py) | 1–366 | SHA-256 hash chain computation; serialization delegated to `audit_workflow.py` |
@@ -621,7 +621,7 @@ env { name = "CAGE_DEPLOYMENT_REGION";   value = var.cage_deployment_region }
 | GAP-14 | `infra/modules/gateway/main.tf` | 86–219 | Terraform env injection | **MEDIUM** | ❌ GAP |
 | N/A-01 | `src/gateway/governance/provenance_chain.py` | 110–127 | Pure computation | — | ➖ N/A |
 | N/A-02 | `src/gateway/governance/routing_seal.py` | 162–181 | Pure computation | — | ➖ N/A |
-| N/A-03 | `src/gateway/governance/safety.py` | 1–72 | Deprecated shim | — | ➖ N/A |
+| ~~N/A-03~~ | ~~`src/gateway/governance/safety.py`~~ | — | **v3.0.0:** Removed | — | ➖ N/A |
 | N/A-04 | `src/gateway/governance/symbolic_governor.py` | 110–823 | Orchestration only | — | ➖ N/A |
 | N/A-05 | `src/gateway/infrastructure/telemetry.py` | 28–45 | Tracer factory | — | ➖ N/A |
 | N/A-06 | `src/compliance_bridge/context_accumulator.py` | 1–366 | Pure computation | — | ➖ N/A |

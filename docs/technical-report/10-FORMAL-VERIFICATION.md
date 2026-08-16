@@ -351,7 +351,7 @@ if h_next < required or h_next < 0:
 
 The CBF state is shared across stateless Cloud Run instances via Redis. To eliminate the TOCTOU window between the barrier check and the state commit, CAGE provides two enforcement layers:
 
-**Layer 1 — WATCH/MULTI/EXEC optimistic locking** (`update_state()`, `rollback_state()`):
+**Layer 1 — WATCH/MULTI/EXEC optimistic locking** (`_update_state_unsafe()`, `rollback_state()`) (**v3.0.0:** `update_state()` renamed to `_update_state_unsafe()`; use `atomic_verify_and_commit()` instead):
 
 1. `WATCH safety:current_cash` — marks the key for observation
 2. Read current balance; compute `h(S(t+1))`
