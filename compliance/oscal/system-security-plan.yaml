@@ -873,34 +873,96 @@ system-security-plan:
           state: implemented
     - uuid: g7000004-0000-4000-8000-000000000004
       control-id: au-12
-      description: 'Audit record generation is implemented by scripts/automated_auditor.py,
-        which runs on a scheduled basis (cron) to aggregate OTel spans from Langfuse
-        into structured audit records. Each audit record includes: event type, timestamp,
-        user/service identity, resource accessed, governance outcome, and control
-        identifier. Audit records are exported to GCS buckets for long-term retention
-        per SEC Rule 17a-4. The Compliance Bridge Service triggers Slack/PagerDuty
-        alerts when safety_rate thresholds are breached.
+      description: |
+        Audit record generation is implemented through two distinct auditing modes,
+        each providing different consistency/availability trade-offs:
 
-        '
+        1. DECISION-TIME AUDIT (fire-and-forget, default mode):
+           Implemented via OpenTelemetry spans in src/gateway/infrastructure/telemetry.py
+           and scripts/automated_auditor.py. Governance decisions emit OTel spans
+           asynchronously to Langfuse containing ISO 42001 6-attribute evidence stamps:
+           control_id, decision_outcome, timestamp_utc, request_id, user_role, and
+           enforcement_tier. Routing seals are issued immediately after the governance
+           decision without waiting for audit record persistence. This mode prioritizes
+           availability — audit persistence is decoupled from seal issuance.
+
+        2. EVIDENCE-OF-EXECUTION AUDIT (blocking mode, EVIDENCE_CHAIN_BLOCKING=true):
+           Implemented via the provenance chain in src/gateway/governance/provenance_chain.py.
+           When the EVIDENCE_CHAIN_BLOCKING environment variable is set to true, the
+           provenance chain MUST successfully persist the evidence record to the backing
+           store BEFORE the routing seal is computed and returned. This creates a
+           cryptographic dependency: no seal can exist without a corresponding committed
+           evidence record. The evidence chain includes hash-linked records providing
+           time-correlation across audit entries.
+
+        KEY DISTINCTION:
+        - Decision-time audit records WHAT was decided (the governance outcome)
+        - Evidence-of-execution audit proves THAT the decision was recorded BEFORE
+          action (seal issuance), providing stronger non-repudiation guarantees
+
+        The blocking mode satisfies AU-12(1) system-wide/time-correlated audit trail
+        requirements through the hash-linked evidence chain. Each evidence record
+        includes a previous_hash field linking to the prior entry, enabling forensic
+        reconstruction of the complete audit trail sequence.
+
+        Dual-schema verification (v1.0/v1.1) in the provenance chain ensures forward
+        compatibility while maintaining audit record integrity across schema migrations.
+        Both modes are compliant AU-12 implementations — the choice depends on whether
+        the deployment prioritizes availability (decision-time) or non-repudiation
+        (evidence-of-execution).
+
+        Audit records are exported to GCS buckets for long-term retention per SEC
+        Rule 17a-4. The Compliance Bridge Service triggers Slack/PagerDuty alerts
+        when safety_rate thresholds are breached.
       props:
       - name: implementation-status
         value: implemented
+      - name: evidence-chain-blocking
+        value: configurable via EVIDENCE_CHAIN_BLOCKING environment variable
+      - name: auditing-modes
+        value: decision-time (async), evidence-of-execution (blocking)
+      - name: au-12-1-enhancement
+        value: hash-linked evidence chain provides time-correlated audit trail
       responsible-roles:
       - role-id: compliance-engineer
       by-components:
       - component-uuid: e5000004-0000-4000-8000-000000000004
         uuid: h8000004-0000-4000-8000-000000000005
-        description: 'Compliance Bridge Service (src/compliance_bridge/audit_workflow.py)
-          aggregates OTel spans and generates OSCAL assessment result records. scripts/automated_auditor.py
-          performs scheduled audit trail generation. Lula validation: compliance/lula/lula-validation-au12.yaml.
+        description: |
+          Compliance Bridge Service (src/compliance_bridge/audit_workflow.py) aggregates
+          OTel spans and generates OSCAL assessment result records.
+          scripts/automated_auditor.py performs scheduled audit trail generation.
 
-          '
+          Decision-time audit: OTel spans emitted to Langfuse asynchronously.
+          Evidence-of-execution audit: provenance_chain.py ensures commit before seal.
+
+          Lula validation: compliance/lula/lula-validation-au12.yaml validates both modes.
         implementation-status:
           state: implemented
         links:
         - href: ../../compliance/lula/lula-validation-au12.yaml
           rel: reference
-          text: Lula automated validation for AU-12
+          text: Lula automated validation for AU-12 (dual auditing modes)
+      - component-uuid: e5000001-0000-4000-8000-000000000001
+        uuid: h8000004-0000-4000-8000-000000000006
+        description: |
+          CAGE Gateway implements the provenance chain (src/gateway/governance/provenance_chain.py)
+          providing evidence-of-execution audit capability. When EVIDENCE_CHAIN_BLOCKING=true,
+          the routing seal (src/gateway/governance/routing_seal.py) is not issued until
+          the evidence record is successfully committed. This ties the cryptographic seal
+          directly to the persisted audit record, ensuring non-repudiation.
+
+          The gateway also supports dual-schema verification (v1.0/v1.1) for evidence
+          records, enabling forward-compatible schema migration without audit trail gaps.
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../src/gateway/governance/provenance_chain.py
+          rel: reference
+          text: Provenance chain implementation (evidence-of-execution)
+        - href: ../../src/gateway/governance/routing_seal.py
+          rel: reference
+          text: Routing seal tied to evidence chain
     - uuid: g7000005-0000-4000-8000-000000000005
       control-id: cm-6
       description: 'Configuration settings are managed via a Pydantic validation singleton

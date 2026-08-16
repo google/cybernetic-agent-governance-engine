@@ -19,7 +19,7 @@ from typing import Any
 from opentelemetry import trace
 
 from src.governed_financial_advisor.agents.evaluator.agent import (
-    check_safety_constraints,
+    simulate_governance_check,
 )
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 from src.governed_financial_advisor.graph.state import AgentState
@@ -144,7 +144,7 @@ async def evaluator_node(state: AgentState) -> dict[str, Any]:
     with tracer.start_as_current_span("evaluator.safety_check") as span:
         raw_risk = state.get("risk_attitude")
         risk_profile = raw_risk.capitalize() if raw_risk else "Moderate"
-        safety_resp = await check_safety_constraints(
+        safety_resp = await simulate_governance_check(
             target_tool, target_params, risk_profile
         )
 

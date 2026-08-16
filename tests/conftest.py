@@ -196,6 +196,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run tests marked with @pytest.mark.integration (require live services).",
     )
+    parser.addoption(
+        "--run-chaos",
+        action="store_true",
+        default=False,
+        help="Run chaos tests (Redis failover scenarios). Skipped by default.",
+    )
 
 
 # ── Auto-skip integration tests unless opted in ───────────────────────────────
@@ -204,9 +210,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """Auto-skip @pytest.mark.integration tests unless --run-integration is set."""
-    if config.getoption("--run-integration"):
-        return  # opt-in: run everything
+    """Auto-skip @pytest.mark.integration and @pytest.mark.chaos tests unless opted in."""
+    run_integration = config.getoption("--run-integration")
+    run_chaos = config.getoption("--run-chaos")
 
     skip_integration = pytest.mark.skip(
         reason=(
@@ -214,9 +220,18 @@ def pytest_collection_modifyitems(
             "Pass --run-integration to enable."
         )
     )
+    skip_chaos = pytest.mark.skip(
+        reason=(
+            "Chaos test — Redis failover scenarios. "
+            "Pass --run-chaos to enable."
+        )
+    )
+
     for item in items:
-        if "integration" in item.keywords:
+        if "integration" in item.keywords and not run_integration:
             item.add_marker(skip_integration)
+        if "chaos" in item.keywords and not run_chaos:
+            item.add_marker(skip_chaos)
 
 
 # ── OPA reachability fixtures ────────────────────────────────────────────────

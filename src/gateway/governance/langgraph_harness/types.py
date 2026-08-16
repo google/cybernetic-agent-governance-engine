@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, TypeAlias
 
 # ---------------------------------------------------------------------------
@@ -42,6 +43,12 @@ MessageExtractor: TypeAlias = Callable[[StateDict], str]
 
 #: Callable that extracts a thread/trace identifier for compliance scoring.
 ThreadIdExtractor: TypeAlias = Callable[[StateDict], str]
+
+#: Callable that extracts an execution plan (dict/list/None) from agent state.
+PlanExtractor: TypeAlias = Callable[[StateDict], dict[str, Any] | list[Any] | None]
+
+#: Callable that extracts a confidence score (float) from agent state.
+ConfidenceExtractor: TypeAlias = Callable[[StateDict], float]
 
 
 # ---------------------------------------------------------------------------
@@ -121,3 +128,116 @@ class NemoNodeConfig:
     output_rail_applied_key: str = "output_rail_applied"
     output_blocked_sentinel: str = "[OUTPUT BLOCKED: guardrail error]"
     pass_through_state: bool = True
+
+
+# ---------------------------------------------------------------------------
+# FTRA node configuration (Tier 0.5 Forward-Looking Trajectory Reachability)
+# ---------------------------------------------------------------------------
+
+
+def default_plan_extractor(state: StateDict) -> dict[str, Any] | list[Any] | None:
+    """Default extractor for GFA AgentState schema.
+
+    Attempts ``state["execution_plan_output"]`` first (GFA's canonical field),
+    then ``state["plan"]`` as a fallback for simpler integrations.
+
+    Returns:
+        The raw plan dict/list, or ``None`` if neither key is present.
+    """
+    return state.get("execution_plan_output") or state.get("plan")
+
+
+def default_confidence_extractor(state: StateDict) -> float:
+    """Default extractor returning evaluation confidence or default 0.5.
+
+    Reads ``state["evaluation_result"]["confidence"]`` (GFA's canonical path).
+    Falls back to 0.5 (neutral confidence) if unavailable.
+
+    Returns:
+        Confidence score in [0.0, 1.0].
+    """
+    eval_result = state.get("evaluation_result", {})
+    if isinstance(eval_result, dict):
+        return float(eval_result.get("confidence", 0.5))
+    return 0.5
+
+
+@dataclasses.dataclass(frozen=True)
+class FtraNodeConfig:
+    """Configuration for :func:`create_ftra_node`.
+
+    This dataclass decouples the FTRA Tier 0.5 gate from the GFA ``AgentState``
+    schema by allowing consuming agents to provide custom extractor callables.
+    Mitigates R-07 (Schema/Version Coupling) from the risk matrix.
+
+    Args:
+        plan_extractor: Callable that extracts the execution plan (dict/list)
+            from agent state.  When ``None``, uses :func:`default_plan_extractor`.
+        confidence_extractor: Callable that extracts the evaluator confidence
+            score (float) from agent state.  When ``None``, uses
+            :func:`default_confidence_extractor`.
+        plan_key: State key fallback for plan extraction if ``plan_extractor``
+            is not provided.  Defaults to ``"execution_plan_output"``.
+        confidence_key: State key fallback for confidence extraction.  Used
+            when ``confidence_extractor`` is not provided and the default
+            extractor cannot find ``evaluation_result.confidence``.
+        evaluation_result_key: State key where evaluation result dict is
+            stored.  Used by the default confidence extractor.
+        registry_path: Path to the terminal registry JSON file.  Defaults to
+            ``config/ftra/terminal_registry.json``.
+        validate_plan_schema: Whether to validate the extracted plan against
+            a JSON Schema before analysis.  Defaults to ``True``.
+        plan_schema: Optional JSON Schema dict for plan validation.  When
+            ``None`` and ``validate_plan_schema`` is ``True``, the factory
+            uses the built-in ExecutionPlan Pydantic validation.
+        span_attributes: Extra OTel span attributes to set on every analysis.
+            Keys and values must be strings.
+    """
+
+    # Extractor functions — signature: (state: dict) -> Any
+    plan_extractor: PlanExtractor | None = None
+    confidence_extractor: ConfidenceExtractor | None = None
+
+    # State key overrides (fallbacks if extractors not provided)
+    plan_key: str = "execution_plan_output"
+    confidence_key: str = "confidence_score"
+    evaluation_result_key: str = "evaluation_result"
+
+    # Registry path override
+    registry_path: str | Path = "config/ftra/terminal_registry.json"
+
+    # Optional validation
+    validate_plan_schema: bool = True
+    plan_schema: dict[str, Any] | None = None  # JSON Schema for plan validation
+
+    # OTel span attributes
+    span_attributes: dict[str, str] = dataclasses.field(default_factory=dict)
+
+    def get_plan_extractor(self) -> PlanExtractor:
+        """Return the plan extractor, using default if not configured."""
+        if self.plan_extractor is not None:
+            return self.plan_extractor
+        # Build extractor using configured plan_key
+        plan_key = self.plan_key
+
+        def _key_based_extractor(state: StateDict) -> dict[str, Any] | list[Any] | None:
+            return state.get(plan_key) or state.get("plan")
+
+        return _key_based_extractor
+
+    def get_confidence_extractor(self) -> ConfidenceExtractor:
+        """Return the confidence extractor, using default if not configured."""
+        if self.confidence_extractor is not None:
+            return self.confidence_extractor
+        # Build extractor using configured keys
+        eval_key = self.evaluation_result_key
+        conf_key = self.confidence_key
+
+        def _key_based_extractor(state: StateDict) -> float:
+            eval_result = state.get(eval_key, {})
+            if isinstance(eval_result, dict):
+                return float(eval_result.get("confidence", 0.5))
+            # Fallback to direct confidence_key lookup
+            return float(state.get(conf_key, 0.5))
+
+        return _key_based_extractor

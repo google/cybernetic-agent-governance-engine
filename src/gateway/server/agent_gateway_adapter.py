@@ -110,6 +110,179 @@ _DEFAULT_GRPC_PORT: int = int(os.getenv("AGENT_GW_GRPC_PORT", "50051"))
 # gated on this value per shared-module region guard obligations.
 _DEPLOYMENT_REGION: str = os.getenv("CAGE_DEPLOYMENT_REGION", "US_FED")
 
+# Phase 1.2: CAGE_DEFER_ENABLED feature flag for backward compatibility.
+# When False, DEFER decisions fall back to DENY (403) for gradual rollout safety.
+_DEFER_ENABLED: bool = os.getenv("CAGE_DEFER_ENABLED", "true").lower() == "true"
+
+# Phase 1.3: CAGE_NARROW_ENABLED feature flag for partial-authority execution.
+# When False, NARROW decisions fall back to DEFER or DENY for gradual rollout safety.
+# Default is False (opt-in).
+_NARROW_ENABLED: bool = os.getenv("CAGE_NARROW_ENABLED", "false").lower() == "true"
+
+# Phase 1.4: CAGE_PAUSE_ENABLED feature flag for resumable suspension.
+# When False, PAUSE decisions fall back to DENY for gradual rollout safety.
+# Default is False (opt-in).
+_PAUSE_ENABLED: bool = os.getenv("CAGE_PAUSE_ENABLED", "false").lower() == "true"
+
+# ---------------------------------------------------------------------------
+# Prometheus metrics (Phase 1.2/1.3: DEFER and NARROW telemetry)
+# ---------------------------------------------------------------------------
+
+# Lazy-initialized Prometheus counters for defer and narrow decisions.
+# Using a module-level dict to avoid import-time side effects if prometheus_client
+# is not installed.
+_METRICS: dict = {}
+
+
+def _get_defer_counter():
+    """Get or create the Prometheus counter for defer decisions.
+
+    Returns:
+        prometheus_client.Counter or None if prometheus_client is not available.
+    """
+    if "defer_counter" not in _METRICS:
+        try:
+            from prometheus_client import Counter
+
+            _METRICS["defer_counter"] = Counter(
+                "cage_governance_defer_total",
+                "Total number of DEFER governance decisions",
+                ["tool_name", "defer_reason"],
+            )
+        except ImportError:
+            logger.debug(
+                "prometheus_client not installed — defer counter disabled"
+            )
+            _METRICS["defer_counter"] = None
+    return _METRICS["defer_counter"]
+
+
+def _get_narrow_counter():
+    """Get or create the Prometheus counter for narrow decisions.
+
+    Returns:
+        prometheus_client.Counter or None if prometheus_client is not available.
+    """
+    if "narrow_counter" not in _METRICS:
+        try:
+            from prometheus_client import Counter
+
+            _METRICS["narrow_counter"] = Counter(
+                "cage_governance_narrow_total",
+                "Total number of NARROW governance decisions",
+                ["tool_name", "constraint_type"],
+            )
+        except ImportError:
+            logger.debug(
+                "prometheus_client not installed — narrow counter disabled"
+            )
+            _METRICS["narrow_counter"] = None
+    return _METRICS["narrow_counter"]
+
+
+def _increment_defer_counter(tool_name: str, defer_reason: str) -> None:
+    """Increment the Prometheus counter for DEFER decisions.
+
+    Args:
+        tool_name: The tool/action that was deferred.
+        defer_reason: The reason code for the deferral.
+    """
+    counter = _get_defer_counter()
+    if counter is not None:
+        try:
+            counter.labels(tool_name=tool_name, defer_reason=defer_reason).inc()
+        except Exception as exc:
+            logger.debug("Failed to increment defer counter: %s", exc)
+
+
+def _increment_narrow_counter(tool_name: str, constraint_type: str) -> None:
+    """Increment the Prometheus counter for NARROW decisions.
+
+    Args:
+        tool_name: The tool/action that was narrowed.
+        constraint_type: The type of constraint applied (e.g., "amount", "scope").
+    """
+    counter = _get_narrow_counter()
+    if counter is not None:
+        try:
+            counter.labels(tool_name=tool_name, constraint_type=constraint_type).inc()
+        except Exception as exc:
+            logger.debug("Failed to increment narrow counter: %s", exc)
+
+
+def _get_pause_counter():
+    """Get or create the Prometheus counter for pause decisions.
+
+    Returns:
+        prometheus_client.Counter or None if prometheus_client is not available.
+    """
+    if "pause_counter" not in _METRICS:
+        try:
+            from prometheus_client import Counter
+
+            _METRICS["pause_counter"] = Counter(
+                "cage_governance_pause_total",
+                "Total number of PAUSE governance decisions",
+                ["tool_name", "pause_reason"],
+            )
+        except ImportError:
+            logger.debug(
+                "prometheus_client not installed — pause counter disabled"
+            )
+            _METRICS["pause_counter"] = None
+    return _METRICS["pause_counter"]
+
+
+def _get_active_pauses_gauge():
+    """Get or create the Prometheus gauge for active pauses.
+
+    Returns:
+        prometheus_client.Gauge or None if prometheus_client is not available.
+    """
+    if "active_pauses_gauge" not in _METRICS:
+        try:
+            from prometheus_client import Gauge
+
+            _METRICS["active_pauses_gauge"] = Gauge(
+                "cage_governance_active_pauses",
+                "Current number of active paused requests",
+            )
+        except ImportError:
+            logger.debug(
+                "prometheus_client not installed — active pauses gauge disabled"
+            )
+            _METRICS["active_pauses_gauge"] = None
+    return _METRICS["active_pauses_gauge"]
+
+
+def _increment_pause_counter(tool_name: str, pause_reason: str) -> None:
+    """Increment the Prometheus counter for PAUSE decisions.
+
+    Args:
+        tool_name: The tool/action that was paused.
+        pause_reason: The reason for the pause (RATE_LIMITED, CIRCUIT_OPEN, etc.).
+    """
+    counter = _get_pause_counter()
+    if counter is not None:
+        try:
+            counter.labels(tool_name=tool_name, pause_reason=pause_reason).inc()
+        except Exception as exc:
+            logger.debug("Failed to increment pause counter: %s", exc)
+
+
+def _set_active_pauses_gauge(count: int) -> None:
+    """Set the Prometheus gauge for active pauses.
+
+    Args:
+        count: The current number of active paused requests.
+    """
+    gauge = _get_active_pauses_gauge()
+    if gauge is not None:
+        try:
+            gauge.set(count)
+        except Exception as exc:
+            logger.debug("Failed to set active pauses gauge: %s", exc)
+
 
 # ---------------------------------------------------------------------------
 # JSON-RPC 2.0 body parser (SI-10 — Information Input Validation)
@@ -242,6 +415,108 @@ def _build_denied_response(
     }
 
 
+def _build_narrow_response(
+    routing_seal: str,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """Build an OkHttpResponse dict for NARROW decisions.
+
+    NARROW decisions return HTTP 200 OK (action is allowed but with modified
+    parameters). The response includes:
+      - x-cage-routing-seal header (attests to narrowed params)
+      - X-Governance-Narrowed: true header (signals param modification)
+      - JSON body with original_params and narrowed_params
+
+    Args:
+        routing_seal: HMAC-SHA256 routing seal for the narrowed parameters.
+        body:         JSON-serialisable response body dict containing original
+                      and narrowed parameters.
+
+    Returns:
+        Dict representation of OkHttpResponse with NARROW-specific headers.
+    """
+    return {
+        "ok_response": {
+            "headers": [
+                {
+                    "header": {
+                        "key": "x-cage-routing-seal",
+                        "value": routing_seal,
+                    },
+                    "append": False,
+                },
+                {
+                    "header": {
+                        "key": "X-Governance-Narrowed",
+                        "value": "true",
+                    },
+                    "append": False,
+                },
+                {
+                    "header": {
+                        "key": "content-type",
+                        "value": "application/json",
+                    },
+                    "append": False,
+                },
+            ],
+            # Include response body for NARROW (unlike plain ALLOW)
+            "body": json.dumps(body),
+        }
+    }
+
+
+def _build_pause_response(
+    retry_after_seconds: int,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a DeniedHttpResponse dict for PAUSE decisions.
+
+    PAUSE decisions return HTTP 503 Service Unavailable with a Retry-After
+    header. The response includes:
+      - HTTP 503 Service Unavailable status
+      - Retry-After header (seconds until client should retry)
+      - JSON body with pause_token, resume_endpoint, expires_at
+
+    Args:
+        retry_after_seconds: Seconds until client should retry.
+        body:                JSON-serialisable response body dict containing
+                             pause_token, resume_endpoint, expires_at, etc.
+
+    Returns:
+        Dict representation of DeniedHttpResponse with PAUSE-specific headers.
+    """
+    return {
+        "denied_response": {
+            "status": {"code": 503},
+            "headers": [
+                {
+                    "header": {
+                        "key": "content-type",
+                        "value": "application/json",
+                    },
+                    "append": False,
+                },
+                {
+                    "header": {
+                        "key": "Retry-After",
+                        "value": str(retry_after_seconds),
+                    },
+                    "append": False,
+                },
+                {
+                    "header": {
+                        "key": "X-Cage-Paused",
+                        "value": "true",
+                    },
+                    "append": False,
+                },
+            ],
+            "body": json.dumps(body),
+        }
+    }
+
+
 # ---------------------------------------------------------------------------
 # Core Check handler — pure Python, no gRPC dependency at import time
 # ---------------------------------------------------------------------------
@@ -261,6 +536,13 @@ async def handle_check_request(
       - Body > 64KB          → DeniedHttpResponse(403) fail-closed
       - ALLOW                → OkHttpResponse + x-cage-routing-seal header
       - DENY                 → DeniedHttpResponse(403) + violation JSON
+      - NARROW               → OkHttpResponse(200) + x-cage-routing-seal + X-Governance-Narrowed
+                               Action allowed with constrained parameters. Client proceeds with
+                               narrowed_params. Feature flag: CAGE_NARROW_ENABLED (default: false)
+      - PAUSE                → DeniedHttpResponse(503) + Retry-After header + {verdict: PAUSE,
+                               pause_token, resume_endpoint, expires_at}
+                               Client must call POST /v1/pause/{pause_token}/resume to unblock.
+                               Feature flag: CAGE_PAUSE_ENABLED (default: false)
       - REQUIRE_APPROVAL     → DeniedHttpResponse(202) + {verdict: REQUIRE_APPROVAL, thread_id}
                                Client must poll GET /v1/approvals/pending (human sign-off path)
       - DEFER                → DeniedHttpResponse(202) + {verdict: DEFER, defer_id, missing_input_reason}
@@ -384,27 +666,321 @@ async def handle_check_request(
             )
 
         if verdict == GovernanceDecision.DEFER:
+            # Extract Phase 1.2 DEFER response fields from validate_action result
+            defer_token: str = result.get("defer_token", defer_id or "")
+            classification_reason: str = result.get("classification_meta", {}).get(
+                "classification_reason", missing_input_reason
+            )
+            deferrable: bool = result.get("deferrable", True)
+            violations_list: list[str] = result.get("violations", violations)
+            retry_after: int = result.get("retry_after_seconds", 300)
+            defer_reason_code: str = result.get("defer_reason", "CONFIDENCE_BELOW_THRESHOLD")
+
+            # Phase 1.2 Backward Compatibility: When CAGE_DEFER_ENABLED=false,
+            # DEFER falls back to DENY (403) for gradual rollout safety.
+            if not _DEFER_ENABLED:
+                logger.warning(
+                    "AgentGatewayAdapter: DEFER->DENY fallback (CAGE_DEFER_ENABLED=false) "
+                    "tool='%s' caller='%s' defer_reason='%s'",
+                    tool_name,
+                    caller_principal,
+                    defer_reason_code,
+                )
+                _emit_audit_event(
+                    event_type="DEFER_FALLBACK",
+                    tool_name=tool_name,
+                    verdict="DENIED",
+                    detail=f"DEFER->DENY fallback: {classification_reason}",
+                )
+                return _build_denied_response(
+                    403,
+                    {
+                        "verdict": GovernanceDecision.DENY,
+                        "violations": violations_list,
+                        "tool_name": tool_name,
+                        "fallback_from": "DEFER",
+                        "classification_reason": classification_reason,
+                    },
+                )
+
             logger.info(
-                "AgentGatewayAdapter: DEFER tool='%s' caller='%s' defer_id='%s'",
+                "AgentGatewayAdapter: DEFER tool='%s' caller='%s' defer_token='%s' "
+                "reason='%s'",
                 tool_name,
                 caller_principal,
-                defer_id,
+                defer_token,
+                defer_reason_code,
             )
+
+            # Emit Prometheus counter for defer decisions
+            _increment_defer_counter(tool_name, defer_reason_code)
+
             # Context is missing or below the Confidence-Starvation Boundary.
             # Route to the DeferQueue data-hydration loop — NOT human triage.
             # The MCP client must poll GET /v1/defer/pending for the outcome.
+            #
+            # Phase 1.2 Response body schema (§2.1 CAGE Implementation Specs):
+            #   - decision: "DEFER"
+            #   - classification_reason: Human-readable explanation
+            #   - deferrable: true (violations are soft/deferrable)
+            #   - violations: list of soft violations
+            #   - defer_token: UUID v4 for resume capability
+            #   - retry_after_seconds: Suggested retry interval
             return _build_denied_response(
                 202,
                 {
+                    "decision": GovernanceDecision.DEFER,
+                    "classification_reason": classification_reason,
+                    "deferrable": deferrable,
+                    "violations": violations_list,
+                    "defer_token": defer_token,
+                    "retry_after_seconds": retry_after,
+                    # Legacy fields for backward compatibility
                     "verdict": GovernanceDecision.DEFER,
-                    "defer_id": defer_id,
-                    "missing_input_reason": missing_input_reason,
+                    "defer_id": defer_token,
+                    "missing_input_reason": missing_input_reason or classification_reason,
                     "message": (
                         "Request deferred pending context hydration. "
                         "Poll GET /v1/defer/pending for the outcome."
                     ),
                 },
             )
+
+        # ── NARROW path (Phase 1.3 — partial-authority/clamped execution) ────
+        if verdict == GovernanceDecision.NARROW:
+            # Extract Phase 1.3 NARROW response fields from validate_action result
+            original_params_narrow: dict = result.get("original_params", params)
+            narrowed_params: dict = result.get("narrowed_params", params)
+            constraints_applied: list[str] = result.get("constraints_applied", [])
+            narrowing_reason: str = result.get("narrowing_reason", "")
+            seal_narrow: str = result.get("seal", "")
+
+            # Phase 1.3 Backward Compatibility: When CAGE_NARROW_ENABLED=false,
+            # NARROW falls back to DEFER or DENY for gradual rollout safety.
+            # Note: This check is redundant with symbolic_governor's check, but
+            # provides defense-in-depth at the HTTP layer.
+            if not _NARROW_ENABLED:
+                logger.warning(
+                    "AgentGatewayAdapter: NARROW->DENY fallback (CAGE_NARROW_ENABLED=false) "
+                    "tool='%s' caller='%s' constraints='%s'",
+                    tool_name,
+                    caller_principal,
+                    constraints_applied,
+                )
+                _emit_audit_event(
+                    event_type="NARROW_FALLBACK",
+                    tool_name=tool_name,
+                    verdict="DENIED",
+                    detail=f"NARROW->DENY fallback: {narrowing_reason}",
+                )
+                return _build_denied_response(
+                    403,
+                    {
+                        "verdict": GovernanceDecision.DENY,
+                        "violations": violations,
+                        "tool_name": tool_name,
+                        "fallback_from": "NARROW",
+                        "narrowing_reason": narrowing_reason,
+                    },
+                )
+
+            logger.info(
+                "AgentGatewayAdapter: NARROW tool='%s' caller='%s' constraints=%s "
+                "reason='%s'",
+                tool_name,
+                caller_principal,
+                constraints_applied,
+                narrowing_reason,
+            )
+
+            # OTel span attribute for NARROW telemetry
+            span.set_attribute("cage.governance.narrowed", True)
+
+            # Emit Prometheus counter for narrow decisions
+            # Emit one counter per constraint type applied
+            for constraint in constraints_applied:
+                # Extract constraint type from constraint string (e.g., "amount clamped: ...")
+                constraint_type = constraint.split()[0] if constraint else "unknown"
+                _increment_narrow_counter(tool_name, constraint_type)
+
+            _emit_audit_event(
+                event_type="NARROW",
+                tool_name=tool_name,
+                verdict="NARROW",
+                detail=f"constraints={constraints_applied}; reason={narrowing_reason}",
+            )
+
+            # HTTP 200 OK — action is allowed but with narrowed parameters
+            # Response includes X-Governance-Narrowed: true header
+            #
+            # Phase 1.3 Response body schema:
+            #   - decision: "NARROW"
+            #   - original_params: Original parameters as submitted
+            #   - narrowed_params: Constrained parameters that will be executed
+            #   - narrowing_reason: Human-readable explanation
+            #   - constraints_applied: List of applied constraints
+            #   - execution_allowed: true (action proceeds with narrowed params)
+            return _build_narrow_response(
+                seal_narrow,
+                {
+                    "decision": GovernanceDecision.NARROW,
+                    "original_params": original_params_narrow,
+                    "narrowed_params": narrowed_params,
+                    "narrowing_reason": narrowing_reason,
+                    "constraints_applied": constraints_applied,
+                    "execution_allowed": True,
+                    # Canonical verdict field for consistency
+                    "verdict": GovernanceDecision.NARROW,
+                    "tool_name": tool_name,
+                },
+            )
+
+        # ── PAUSE path (Phase 1.4 — resumable suspension) ─────────────────────
+        if verdict == GovernanceDecision.PAUSE:
+            from datetime import datetime, timezone
+
+            from src.gateway.governance.pause_primitive import (
+                PauseManager,
+                build_resume_endpoint,
+            )
+            from src.gateway.infrastructure.redis_client import redis_client
+
+            # Extract Phase 1.4 PAUSE response fields from validate_action result
+            pause_reason: str = result.get(
+                "classification_meta", {}
+            ).get("pause_reason", "RATE_LIMITED")
+            estimated_wait: int = result.get(
+                "classification_meta", {}
+            ).get("estimated_wait_seconds", 60)
+            request_id: str = params.get("request_id", params.get("thread_id", ""))
+
+            # Phase 1.4 Backward Compatibility: When CAGE_PAUSE_ENABLED=false,
+            # PAUSE falls back to DENY for gradual rollout safety.
+            # Note: This check is redundant with symbolic_governor's check, but
+            # provides defense-in-depth at the HTTP layer.
+            if not _PAUSE_ENABLED:
+                logger.warning(
+                    "AgentGatewayAdapter: PAUSE->DENY fallback (CAGE_PAUSE_ENABLED=false) "
+                    "tool='%s' caller='%s' reason='%s'",
+                    tool_name,
+                    caller_principal,
+                    pause_reason,
+                )
+                _emit_audit_event(
+                    event_type="PAUSE_FALLBACK",
+                    tool_name=tool_name,
+                    verdict="DENIED",
+                    detail=f"PAUSE->DENY fallback: {pause_reason}",
+                )
+                return _build_denied_response(
+                    403,
+                    {
+                        "verdict": GovernanceDecision.DENY,
+                        "violations": violations,
+                        "tool_name": tool_name,
+                        "fallback_from": "PAUSE",
+                        "pause_reason": pause_reason,
+                    },
+                )
+
+            # Store the pause state in Redis
+            try:
+                pause_manager = PauseManager(redis_client)
+                pause_token = await pause_manager.pause_request(
+                    request_id=request_id or f"{tool_name}_{caller_principal}",
+                    reason=pause_reason,
+                    ttl_seconds=3600,  # 1 hour default
+                    original_request=params,
+                    estimated_wait_secs=estimated_wait,
+                )
+
+                # Calculate expires_at
+                expires_at = datetime.now(tz=timezone.utc)
+                expires_at = datetime.fromtimestamp(
+                    expires_at.timestamp() + 3600, tz=timezone.utc
+                )
+                resume_endpoint = build_resume_endpoint(pause_token)
+
+                logger.info(
+                    "AgentGatewayAdapter: PAUSE tool='%s' caller='%s' pause_token='%s' "
+                    "reason='%s' expires_at='%s'",
+                    tool_name,
+                    caller_principal,
+                    pause_token,
+                    pause_reason,
+                    expires_at.isoformat(),
+                )
+
+                # OTel span attributes for PAUSE telemetry
+                span.set_attribute("cage.governance.paused", True)
+                span.set_attribute("cage.pause_token", pause_token)
+                span.set_attribute("cage.pause_reason", pause_reason)
+
+                # Emit Prometheus counter for pause decisions
+                _increment_pause_counter(tool_name, pause_reason)
+
+                _emit_audit_event(
+                    event_type="PAUSE",
+                    tool_name=tool_name,
+                    verdict="PAUSE",
+                    detail=f"pause_token={pause_token}; reason={pause_reason}; "
+                    f"expires_at={expires_at.isoformat()}",
+                )
+
+                # HTTP 503 Service Unavailable — action is paused pending resume
+                # Response includes Retry-After header
+                #
+                # Phase 1.4 Response body schema:
+                #   - decision: "PAUSE"
+                #   - pause_token: UUID for resuming via POST /v1/pause/{token}/resume
+                #   - pause_reason: Reason code (RATE_LIMITED, CIRCUIT_OPEN, etc.)
+                #   - resume_endpoint: URL path to resume
+                #   - expires_at: ISO-8601 UTC timestamp when pause expires
+                #   - estimated_wait_seconds: Optional hint for client polling
+                return _build_pause_response(
+                    estimated_wait,
+                    {
+                        "decision": GovernanceDecision.PAUSE,
+                        "pause_token": pause_token,
+                        "pause_reason": pause_reason,
+                        "resume_endpoint": resume_endpoint,
+                        "expires_at": expires_at.isoformat(),
+                        "estimated_wait_seconds": estimated_wait,
+                        "retry_after_seconds": estimated_wait,
+                        # Canonical verdict field for consistency
+                        "verdict": GovernanceDecision.PAUSE,
+                        "tool_name": tool_name,
+                        "message": (
+                            f"Request paused: {pause_reason}. "
+                            f"Call POST {resume_endpoint} to resume, "
+                            f"or retry after {estimated_wait} seconds."
+                        ),
+                    },
+                )
+            except Exception as pause_exc:
+                # If Redis is unavailable, fall back to DENY
+                logger.error(
+                    "AgentGatewayAdapter: PAUSE Redis storage failed for tool='%s': %s "
+                    "— falling back to DENY",
+                    tool_name,
+                    pause_exc,
+                )
+                _emit_audit_event(
+                    event_type="PAUSE_ERROR",
+                    tool_name=tool_name,
+                    verdict="DENIED",
+                    detail=f"PAUSE Redis error: {pause_exc}",
+                )
+                return _build_denied_response(
+                    403,
+                    {
+                        "verdict": GovernanceDecision.DENY,
+                        "violations": violations,
+                        "tool_name": tool_name,
+                        "fallback_from": "PAUSE",
+                        "error": "pause_storage_error",
+                    },
+                )
 
         # DENY (default fallback)
         logger.warning(
@@ -665,3 +1241,222 @@ class _DictNamespace:
         if isinstance(val, dict):
             return _DictNamespace(val)
         return val or ""
+
+
+# ---------------------------------------------------------------------------
+# Resume endpoint handler — POST /v1/pause/{pause_token}/resume
+# ---------------------------------------------------------------------------
+
+
+async def handle_resume_request(
+    pause_token: str,
+    resume_context: dict[str, Any] | None = None,
+) -> tuple[int, dict[str, Any]]:
+    """Handle a resume request for a paused action.
+
+    This is the HTTP handler for POST /v1/pause/{pause_token}/resume.
+    Resume is idempotent: calling resume on an already-resumed token
+    returns 200 OK (ALREADY_RESUMED) without side effects.
+
+    Args:
+        pause_token:    The pause_token UUID from the original PAUSE response.
+        resume_context: Optional context data to attach to the resumed request.
+
+    Returns:
+        Tuple of (http_status_code, response_body_dict):
+            - 200 OK: Resume successful (RESUMED or ALREADY_RESUMED)
+            - 404 Not Found: pause_token invalid or not found
+            - 410 Gone: pause_token expired (must retry original request)
+            - 500 Internal Server Error: Redis unavailable
+
+    OTel Span Attributes:
+        - cage.pause_token: The pause token being resumed
+        - cage.resume_result: RESUMED | ALREADY_RESUMED | EXPIRED | NOT_FOUND
+    """
+    from src.gateway.governance.pause_primitive import (
+        PauseManager,
+        ResumeResult,
+    )
+    from src.gateway.infrastructure.redis_client import redis_client
+
+    with tracer.start_as_current_span("cage.pause.resume") as span:
+        span.set_attribute("cage.pause_token", pause_token)
+
+        try:
+            pause_manager = PauseManager(redis_client)
+            result = await pause_manager.resume_request(
+                pause_token=pause_token,
+                resume_context=resume_context,
+            )
+
+            span.set_attribute("cage.resume_result", result.value)
+
+            if result == ResumeResult.RESUMED:
+                logger.info(
+                    "AgentGatewayAdapter: Resume successful pause_token='%s'",
+                    pause_token,
+                )
+                _emit_audit_event(
+                    event_type="RESUME",
+                    tool_name="pause_resume",
+                    verdict="RESUMED",
+                    detail=f"pause_token={pause_token}",
+                )
+                return 200, {
+                    "status": "RESUMED",
+                    "pause_token": pause_token,
+                    "message": "Request successfully resumed",
+                }
+
+            if result == ResumeResult.ALREADY_RESUMED:
+                logger.info(
+                    "AgentGatewayAdapter: Resume idempotent (already resumed) pause_token='%s'",
+                    pause_token,
+                )
+                _emit_audit_event(
+                    event_type="RESUME_IDEMPOTENT",
+                    tool_name="pause_resume",
+                    verdict="ALREADY_RESUMED",
+                    detail=f"pause_token={pause_token}",
+                )
+                return 200, {
+                    "status": "ALREADY_RESUMED",
+                    "pause_token": pause_token,
+                    "message": "Request was already resumed (idempotent success)",
+                }
+
+            if result == ResumeResult.EXPIRED:
+                logger.warning(
+                    "AgentGatewayAdapter: Resume failed (expired) pause_token='%s'",
+                    pause_token,
+                )
+                _emit_audit_event(
+                    event_type="RESUME_EXPIRED",
+                    tool_name="pause_resume",
+                    verdict="EXPIRED",
+                    detail=f"pause_token={pause_token}",
+                )
+                return 410, {
+                    "status": "EXPIRED",
+                    "pause_token": pause_token,
+                    "error": "pause_expired",
+                    "message": "Pause expired — retry the original request",
+                }
+
+            if result == ResumeResult.NOT_FOUND:
+                logger.warning(
+                    "AgentGatewayAdapter: Resume failed (not found) pause_token='%s'",
+                    pause_token,
+                )
+                _emit_audit_event(
+                    event_type="RESUME_NOT_FOUND",
+                    tool_name="pause_resume",
+                    verdict="NOT_FOUND",
+                    detail=f"pause_token={pause_token}",
+                )
+                return 404, {
+                    "status": "NOT_FOUND",
+                    "pause_token": pause_token,
+                    "error": "pause_not_found",
+                    "message": "Pause token not found or already expired",
+                }
+
+            # Unexpected result
+            logger.error(
+                "AgentGatewayAdapter: Unexpected resume result=%s pause_token='%s'",
+                result,
+                pause_token,
+            )
+            return 500, {
+                "status": "ERROR",
+                "pause_token": pause_token,
+                "error": "unexpected_result",
+                "message": f"Unexpected resume result: {result}",
+            }
+
+        except Exception as exc:
+            logger.error(
+                "AgentGatewayAdapter: Resume failed with exception pause_token='%s': %s",
+                pause_token,
+                exc,
+                exc_info=True,
+            )
+            span.record_exception(exc)
+            _emit_audit_event(
+                event_type="RESUME_ERROR",
+                tool_name="pause_resume",
+                verdict="ERROR",
+                detail=f"pause_token={pause_token}; error={exc}",
+            )
+            return 500, {
+                "status": "ERROR",
+                "pause_token": pause_token,
+                "error": "internal_error",
+                "message": "Resume failed due to internal error",
+            }
+
+
+async def handle_get_pause_state(
+    pause_token: str,
+) -> tuple[int, dict[str, Any]]:
+    """Handle a GET request to retrieve pause state.
+
+    This is the HTTP handler for GET /v1/pause/{pause_token}.
+    Returns the current state of a paused request.
+
+    Args:
+        pause_token: The pause_token UUID.
+
+    Returns:
+        Tuple of (http_status_code, response_body_dict):
+            - 200 OK: Pause state found
+            - 404 Not Found: pause_token invalid or not found
+            - 500 Internal Server Error: Redis unavailable
+    """
+    from src.gateway.governance.pause_primitive import PauseManager
+    from src.gateway.infrastructure.redis_client import redis_client
+
+    with tracer.start_as_current_span("cage.pause.get_state") as span:
+        span.set_attribute("cage.pause_token", pause_token)
+
+        try:
+            pause_manager = PauseManager(redis_client)
+            state = await pause_manager.get_pause_state(pause_token)
+
+            if state is None:
+                span.set_attribute("cage.pause_found", False)
+                return 404, {
+                    "status": "NOT_FOUND",
+                    "pause_token": pause_token,
+                    "error": "pause_not_found",
+                    "message": "Pause token not found or already expired",
+                }
+
+            span.set_attribute("cage.pause_found", True)
+            span.set_attribute("cage.pause_status", state.status.value)
+
+            return 200, {
+                "pause_token": state.pause_token,
+                "request_id": state.request_id,
+                "pause_reason": state.pause_reason.value,
+                "status": state.status.value,
+                "paused_at_utc": state.paused_at_utc,
+                "expires_at_utc": state.expires_at_utc,
+                "resumed_at_utc": state.resumed_at_utc,
+                "estimated_wait_secs": state.estimated_wait_secs,
+            }
+
+        except Exception as exc:
+            logger.error(
+                "AgentGatewayAdapter: Get pause state failed pause_token='%s': %s",
+                pause_token,
+                exc,
+                exc_info=True,
+            )
+            span.record_exception(exc)
+            return 500, {
+                "status": "ERROR",
+                "pause_token": pause_token,
+                "error": "internal_error",
+                "message": "Failed to retrieve pause state",
+            }

@@ -141,6 +141,26 @@ class ConfidenceThresholds(BaseModel):
             "See config/control_mappings.json for the active regulatory framework mapping."
         ),
     )
+    # EV-2: Consolidated from AGENT_CONFIDENCE_THRESHOLD env var
+    agent_threshold: float = Field(
+        default=0.95,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "[EV-2] Agent confidence threshold for Tier-2 corroboration. "
+            "Env override: AGENT_CONFIDENCE_THRESHOLD"
+        ),
+    )
+    # EV-5: Consolidated from CONFIDENCE_MIN_SCORE env var
+    min_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "[EV-5] Minimum confabulation score floor. Production deployments "
+            "should set via secretKeyRef. Env override: CONFIDENCE_MIN_SCORE"
+        ),
+    )
 
 
 class ConsensusThresholds(BaseModel):
@@ -150,18 +170,112 @@ class ConsensusThresholds(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# EV-1: FRIA (Frontier Risk Impact Assessment) Thresholds
+# ---------------------------------------------------------------------------
+
+
+class FriaThresholds(BaseModel):
+    """FRIA zone thresholds for automatic approval vs. deferral to HITL.
+
+    Env overrides: FRIA_ZONE_ALLOW, FRIA_ZONE_DEFER
+    """
+
+    zone_allow: float = Field(
+        default=0.95,
+        ge=0.0,
+        le=1.0,
+        description="Confidence >= this threshold => automatic approval.",
+    )
+    zone_defer: float = Field(
+        default=0.70,
+        ge=0.0,
+        le=1.0,
+        description="Confidence < this threshold => defer to HITL.",
+    )
+
+    @field_validator("zone_defer")
+    @classmethod
+    def defer_less_than_allow(cls, v: float, info) -> float:
+        """Ensure zone_defer < zone_allow for coherent zone semantics."""
+        # Note: zone_allow may not be in info.data yet during construction
+        # so we validate at model level in GovernanceThresholds instead
+        return v
+
+
+# ---------------------------------------------------------------------------
+# EV-3, EV-4: Causal Lock Thresholds
+# ---------------------------------------------------------------------------
+
+
+class CausalThresholds(BaseModel):
+    """Causal gatekeeper thresholds for DoWhy causal lock decisions.
+
+    Env overrides: CAUSAL_LOCK_P_VALUE_THRESHOLD, CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE,
+                   CAUSAL_LOCK_RISK_BOUNDARY, CAUSAL_MIN_SAMPLES
+    """
+
+    p_value_threshold: float = Field(
+        default=0.05,
+        gt=0.0,
+        lt=1.0,
+        description=(
+            "Standard frequentist significance level for causal lock. "
+            "Env override: CAUSAL_LOCK_P_VALUE_THRESHOLD"
+        ),
+    )
+    placebo_effect_magnitude: float = Field(
+        default=0.2,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "Max placebo refuter effect magnitude before effect is unreliable. "
+            "Env override: CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE"
+        ),
+    )
+    risk_boundary: float = Field(
+        default=0.95,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "Risk score ceiling with safety margin. "
+            "Env override: CAUSAL_LOCK_RISK_BOUNDARY"
+        ),
+    )
+    min_samples: int = Field(
+        default=50,
+        gt=0,
+        description=(
+            "[EV-4] Minimum telemetry samples for causal model training. "
+            "Consolidated from CAUSAL_MIN_SAMPLES / CAUSAL_MIN_LIVE_SAMPLES"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Root model
 # ---------------------------------------------------------------------------
 
 
 class GovernanceThresholds(BaseModel):
-    """Root schema for config/governance_thresholds.json."""
+    """Root schema for config/governance_thresholds.json.
+
+    Schema Version 2.0.0: Adds fria and causal threshold sections to consolidate
+    environment variables (EV-1 through EV-5) into configuration-driven defaults
+    with optional env var overrides for runtime tuning.
+    """
 
     cbf: CbfThresholds
     drawdown: DrawdownThresholds
     stpa: StpaThresholds
     confidence: ConfidenceThresholds
     consensus: ConsensusThresholds
+
+    # EV-1: FRIA thresholds (zone_allow, zone_defer)
+    fria: FriaThresholds = Field(default_factory=FriaThresholds)
+
+    # EV-3, EV-4: Causal gatekeeper thresholds
+    causal: CausalThresholds = Field(default_factory=CausalThresholds)
+
     tier1_keywords: list[str] = Field(default_factory=list)
 
     # AI 600-1 §2.6 CBRN keyword list (US_FED only)
@@ -198,13 +312,87 @@ class GovernanceThresholds(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Environment Variable Override Map (EV-1 through EV-5)
+#
+# These mappings allow runtime tuning of thresholds via environment variables
+# while keeping config/governance_thresholds.json as the single source of truth
+# for default values. Env vars take precedence when set.
+# ---------------------------------------------------------------------------
+
+_ENV_OVERRIDES: dict[str, tuple[str, type]] = {
+    # EV-1: FRIA thresholds
+    "FRIA_ZONE_ALLOW": ("fria.zone_allow", float),
+    "FRIA_ZONE_DEFER": ("fria.zone_defer", float),
+    # EV-2: Agent confidence threshold
+    "AGENT_CONFIDENCE_THRESHOLD": ("confidence.agent_threshold", float),
+    # EV-3: Causal lock thresholds
+    "CAUSAL_LOCK_P_VALUE_THRESHOLD": ("causal.p_value_threshold", float),
+    "CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE": ("causal.placebo_effect_magnitude", float),
+    "CAUSAL_LOCK_RISK_BOUNDARY": ("causal.risk_boundary", float),
+    # EV-4: Causal min samples (consolidated)
+    "CAUSAL_MIN_SAMPLES": ("causal.min_samples", int),
+    "CAUSAL_MIN_LIVE_SAMPLES": ("causal.min_samples", int),  # Alias for compatibility
+    # EV-5: Confidence min score
+    "CONFIDENCE_MIN_SCORE": ("confidence.min_score", float),
+}
+
+
+def _apply_env_overrides(raw: dict) -> dict:
+    """Apply environment variable overrides to the raw config dict.
+
+    This function mutates the input dict by applying any env var overrides
+    found in _ENV_OVERRIDES. The env var value takes precedence over the
+    config file value when set.
+
+    Args:
+        raw: The raw config dict loaded from JSON.
+
+    Returns:
+        The mutated dict with env var overrides applied.
+    """
+    overrides_applied = []
+
+    for env_var, (path, type_fn) in _ENV_OVERRIDES.items():
+        env_value = os.environ.get(env_var)
+        if env_value is not None:
+            try:
+                parsed_value = type_fn(env_value)
+                # Navigate the nested dict path (e.g., "fria.zone_allow")
+                parts = path.split(".")
+                target = raw
+                for part in parts[:-1]:
+                    if part not in target:
+                        target[part] = {}
+                    target = target[part]
+                target[parts[-1]] = parsed_value
+                overrides_applied.append(f"{env_var}={parsed_value}")
+            except (ValueError, TypeError) as exc:
+                logger.warning(
+                    "Invalid env var override %s=%r: %s — using config default",
+                    env_var,
+                    env_value,
+                    exc,
+                )
+
+    if overrides_applied:
+        logger.info("Applied env var overrides: %s", ", ".join(overrides_applied))
+
+    return raw
+
+
+# ---------------------------------------------------------------------------
 # Loader
 # ---------------------------------------------------------------------------
 
 
 @lru_cache(maxsize=1)
 def load_and_validate_thresholds(path: str = _ENV_CONFIG_PATH) -> GovernanceThresholds:
-    """Load and validate governance_thresholds.json.
+    """Load and validate governance_thresholds.json with env var overrides.
+
+    Loads the base configuration from the JSON file, then applies any
+    environment variable overrides from _ENV_OVERRIDES. This allows runtime
+    tuning while keeping the config file as the single source of truth for
+    default values.
 
     Aborts the Python process immediately (``sys.exit(1)``) if the JSON is
     missing, malformed, or fails Pydantic validation.  This guarantees
@@ -230,6 +418,9 @@ def load_and_validate_thresholds(path: str = _ENV_CONFIG_PATH) -> GovernanceThre
         logger.critical("❌ governance_thresholds.json is not valid JSON: %s", exc)
         sys.exit(1)
 
+    # Apply environment variable overrides (EV-1 through EV-5)
+    raw = _apply_env_overrides(raw)
+
     try:
         thresholds = GovernanceThresholds(**raw)
     except Exception as exc:  # pydantic.ValidationError
@@ -240,12 +431,99 @@ def load_and_validate_thresholds(path: str = _ENV_CONFIG_PATH) -> GovernanceThre
         sys.exit(1)
 
     logger.info(
-        "✅ Governance thresholds validated: drawdown=%.0f%%, confidence=%.2f, consensus_usd=%.0f",
+        "✅ Governance thresholds validated: drawdown=%.0f%%, confidence=%.2f, "
+        "consensus_usd=%.0f, fria_allow=%.2f, causal_min_samples=%d",
         thresholds.drawdown.limit * 100,
         thresholds.confidence.min_trade_confidence,
         thresholds.consensus.threshold_usd,
+        thresholds.fria.zone_allow,
+        thresholds.causal.min_samples,
     )
     return thresholds
+
+
+# ---------------------------------------------------------------------------
+# Accessor Functions for Consuming Modules
+#
+# These functions provide a clean API for modules to access thresholds with
+# built-in environment variable override support. They should be used instead
+# of directly accessing os.environ.get() for the threshold values.
+# ---------------------------------------------------------------------------
+
+
+def get_fria_zone_allow() -> float:
+    """Get FRIA zone_allow threshold (config default with env override).
+
+    Returns:
+        The zone_allow threshold (>= this value => automatic approval).
+    """
+    return THRESHOLDS.fria.zone_allow
+
+
+def get_fria_zone_defer() -> float:
+    """Get FRIA zone_defer threshold (config default with env override).
+
+    Returns:
+        The zone_defer threshold (< this value => defer to HITL).
+    """
+    return THRESHOLDS.fria.zone_defer
+
+
+def get_agent_confidence_threshold() -> float:
+    """Get agent confidence threshold (config default with env override).
+
+    Returns:
+        The agent confidence threshold for Tier-2 corroboration.
+    """
+    return THRESHOLDS.confidence.agent_threshold
+
+
+def get_confidence_min_score() -> float:
+    """Get confidence minimum score (config default with env override).
+
+    Returns:
+        The minimum confabulation score floor.
+    """
+    return THRESHOLDS.confidence.min_score
+
+
+def get_causal_p_value_threshold() -> float:
+    """Get causal lock p-value threshold (config default with env override).
+
+    Returns:
+        The p-value significance level for causal lock decisions.
+    """
+    return THRESHOLDS.causal.p_value_threshold
+
+
+def get_causal_placebo_effect_magnitude() -> float:
+    """Get causal lock placebo effect magnitude (config default with env override).
+
+    Returns:
+        The maximum placebo refuter effect magnitude.
+    """
+    return THRESHOLDS.causal.placebo_effect_magnitude
+
+
+def get_causal_risk_boundary() -> float:
+    """Get causal lock risk boundary (config default with env override).
+
+    Returns:
+        The risk score ceiling with safety margin.
+    """
+    return THRESHOLDS.causal.risk_boundary
+
+
+def get_causal_min_samples() -> int:
+    """Get causal minimum samples (config default with env override).
+
+    This consolidates CAUSAL_MIN_SAMPLES and CAUSAL_MIN_LIVE_SAMPLES into
+    a single source of truth.
+
+    Returns:
+        The minimum telemetry samples required for causal model training.
+    """
+    return THRESHOLDS.causal.min_samples
 
 
 # ---------------------------------------------------------------------------

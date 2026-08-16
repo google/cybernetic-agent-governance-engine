@@ -13,27 +13,31 @@
 # limitations under the License.
 
 """
-types.py — Canonical ISO 42001 control metadata and Pydantic models (CAGE v2.0.0+).
+types.py — Canonical ISO 42001 control metadata and Pydantic models (CAGE v3.0.0+).
 
 Ported from src/langfuse-bridge/src/types.ts.
 
 This module is the single authoritative source of truth for:
-  - _UNIVERSAL_CONTROLS      — ISO 42001 controls applicable to ALL regions
-  - _JURISDICTIONAL_CONTROLS — region-keyed dict of framework-specific controls
-  - get_control_meta(region) — accessor returning universal + jurisdictional controls
-  - CONTROL_META             — DEPRECATED alias; use get_control_meta(region) instead.
-                               Retained for backward-compat; contains universal controls only.
-  - ISO_CONTROL_MAP          — governance event name → control ID
-  - SUPPORTED_CONTROLS       — ordered list of universal control IDs
-  - CRITICAL_CONTROLS        — controls requiring immediate alerting on FAIL
-  - FRAMEWORK_CONTROLS       — framework name → list of control IDs  (Tier 2.1)
-  - SUPPORTED_FRAMEWORKS     — sorted list of supported framework short-names
-  - _UNIVERSAL_SLA           — per-control max-stale evidence window (ISO 42001 only)
-  - _JURISDICTIONAL_SLA      — region-keyed SLA overrides for jurisdictional controls
-  - get_sla_seconds(region)  — accessor returning universal + jurisdictional SLA dict
-  - EVIDENCE_SLA_SECONDS     — DEPRECATED alias; use get_sla_seconds(region) instead.
-  - OscalFinding             — Pydantic model for OSCAL assessment findings
-  - ComplianceMetrics        — Pydantic model for /v1/metrics response
+  - _UNIVERSAL_CONTROLS       — ISO 42001 controls applicable to ALL regions
+  - _JURISDICTIONAL_CONTROLS  — region-keyed dict of framework-specific controls
+  - get_control_meta(region)  — accessor returning universal + jurisdictional controls
+  - _UNIVERSAL_CONTROL_MAP    — governance event name → control ID (universal)
+  - _JURISDICTIONAL_CONTROL_MAP — region-keyed event → control mappings
+  - get_iso_control_map(region) — accessor returning universal + jurisdictional map
+  - SUPPORTED_CONTROLS        — ordered list of universal control IDs
+  - CRITICAL_CONTROLS         — controls requiring immediate alerting on FAIL
+  - FRAMEWORK_CONTROLS        — framework name → list of control IDs  (Tier 2.1)
+  - SUPPORTED_FRAMEWORKS      — sorted list of supported framework short-names
+  - _UNIVERSAL_SLA            — per-control max-stale evidence window (ISO 42001 only)
+  - _JURISDICTIONAL_SLA       — region-keyed SLA overrides for jurisdictional controls
+  - get_sla_seconds(region)   — accessor returning universal + jurisdictional SLA dict
+  - OscalFinding              — Pydantic model for OSCAL assessment findings
+  - ComplianceMetrics         — Pydantic model for /v1/metrics response
+
+v3.0.0 Breaking Changes:
+  - CONTROL_META alias removed — use get_control_meta(region)
+  - EVIDENCE_SLA_SECONDS alias removed — use get_sla_seconds(region)
+  - ISO_CONTROL_MAP alias removed — use get_iso_control_map(region)
 
 FINDING-01 (CRITICAL): CONTROL_META was a flat dict mixing ISO 42001 (universal)
 with NIST SP 800-53 / FedRAMP (US_FED only) and EU AI Act (EU_ECB only) controls.
@@ -48,9 +52,9 @@ get_sla_seconds(CAGE_DEPLOYMENT_REGION) via its _active_sla_seconds() helper,
 resolved fresh on every poll cycle. See FINDING-05 in
 docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md.
 
-src/governed_financial_advisor/utils/langfuse_utils.py imports ISO_CONTROL_MAP
-from here (single source of truth). src/gateway/governance/ontology.py keeps
-a separate short-form alias map — see TradingKnowledgeGraph.ISO_CONTROL_MAP.
+src/governed_financial_advisor/utils/langfuse_utils.py uses get_iso_control_map()
+from here (single source of truth). src/gateway/governance/ontology.py provides
+its own TradingKnowledgeGraph.get_control_map(region) for short-form event mapping.
 """
 
 from __future__ import annotations
@@ -329,17 +333,6 @@ def get_control_meta(region: str) -> dict[str, dict]:
 
 
 # ---------------------------------------------------------------------------
-# CONTROL_META — DEPRECATED backward-compat alias.
-#
-# Contains universal (ISO 42001) controls only.  Existing callers that iterate
-# CONTROL_META will no longer see NIST or EU AI Act controls — this is the
-# correct behaviour for a region-agnostic context.  New code must call
-# get_control_meta(region) with the active CAGE_DEPLOYMENT_REGION.
-# ---------------------------------------------------------------------------
-
-CONTROL_META: dict[str, dict] = _UNIVERSAL_CONTROLS
-
-# ---------------------------------------------------------------------------
 # SUPPORTED_CONTROLS — ordered list of ALL known control IDs.
 #
 # Includes universal ISO 42001 controls AND all jurisdictional controls
@@ -437,15 +430,6 @@ def get_sla_seconds(region: str) -> dict[str, int]:
 
 
 # ---------------------------------------------------------------------------
-# EVIDENCE_SLA_SECONDS — DEPRECATED backward-compat alias.
-#
-# Contains universal (ISO 42001 + CAGE-internal) SLA targets only.
-# New code must call get_sla_seconds(region) with the active CAGE_DEPLOYMENT_REGION.
-# ---------------------------------------------------------------------------
-
-EVIDENCE_SLA_SECONDS: dict[str, int] = _UNIVERSAL_SLA
-
-# ---------------------------------------------------------------------------
 # ISO_CONTROL_MAP — governance event name → control ID (universal / ISO 42001)
 #
 # This is the canonical, single source of truth for the entire codebase.
@@ -507,6 +491,3 @@ def get_iso_control_map(region: str) -> dict[str, str]:
     }
 
 
-# Backward-compat alias — universal (ISO 42001 / CAGE-internal) controls only.
-# New code must call get_iso_control_map(region) with the active CAGE_DEPLOYMENT_REGION.
-ISO_CONTROL_MAP: dict[str, str] = _UNIVERSAL_CONTROL_MAP

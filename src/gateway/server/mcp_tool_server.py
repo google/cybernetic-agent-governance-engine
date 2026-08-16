@@ -480,7 +480,6 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
 
     tool_map: dict[str, Any] = {
         "simulate_governance_check": simulate_governance_check,
-        "check_safety_constraints": simulate_governance_check,  # legacy alias — deprecated
         "trigger_safety_intervention": trigger_safety_intervention,
         "check_market_status": check_market_status,
         "get_market_sentiment": get_market_sentiment,

@@ -32,10 +32,10 @@ import pytest
 import yaml
 
 from src.compliance_bridge.types import (
-    CONTROL_META,
     CRITICAL_CONTROLS,
-    ISO_CONTROL_MAP,
     SUPPORTED_CONTROLS,
+    get_control_meta,
+    get_iso_control_map,
 )
 from src.gateway.governance.oscal_ssp_exporter import (
     _STPA_COMPONENT_UUID,
@@ -494,54 +494,58 @@ class TestCLI:
 
 class TestControlMeta:
     def test_stpa_controls_registered(self) -> None:
-        assert "A.8.4" in CONTROL_META, (
-            "A.8.4 (AI System Operation) must be in CONTROL_META"
+        # Use region-aware accessor for universal controls
+        control_meta = get_control_meta("LOCAL")
+        assert "A.8.4" in control_meta, (
+            "A.8.4 (AI System Operation) must be in control metadata"
         )
-        assert "A.6.2" in CONTROL_META, "A.6.2 (AI Lifecycle) must be in CONTROL_META"
-        # SA-11 is a US_FED-only (NIST SP 800-53) control — not in the universal
-        # CONTROL_META alias.  Use get_control_meta("US_FED") to verify it exists.
-        from src.compliance_bridge.types import get_control_meta
-
+        assert "A.6.2" in control_meta, "A.6.2 (AI Lifecycle) must be in control metadata"
+        # SA-11 is a US_FED-only (NIST SP 800-53) control — not in universal controls.
+        # Use get_control_meta("US_FED") to verify it exists.
         us_fed_meta = get_control_meta("US_FED")
         assert "SA-11" in us_fed_meta, (
             "SA-11 (STPA Compiler) must be in US_FED control meta"
         )
 
     def test_all_controls_have_score_name(self) -> None:
-        for ctrl, meta in CONTROL_META.items():
+        # Use region-aware accessor for universal controls
+        control_meta = get_control_meta("LOCAL")
+        for ctrl, meta in control_meta.items():
             assert "scoreName" in meta, f"{ctrl} missing scoreName"
             assert meta["scoreName"].endswith(".passed"), (
                 f"{ctrl} scoreName should end with .passed"
             )
 
     def test_stpa_validation_in_iso_map(self) -> None:
-        assert "stpa_validation" in ISO_CONTROL_MAP
-        assert ISO_CONTROL_MAP["stpa_validation"] == "A.8.4"
+        # Use region-aware accessor for universal controls
+        iso_control_map = get_iso_control_map("LOCAL")
+        assert "stpa_validation" in iso_control_map
+        assert iso_control_map["stpa_validation"] == "A.8.4"
 
     def test_stpa_compile_in_iso_map(self) -> None:
         # stpa_compile → SA-11 is a US_FED-only (NIST SP 800-53 SA-11) mapping.
-        # It is no longer in the universal ISO_CONTROL_MAP; use
-        # get_iso_control_map("US_FED") to obtain the region-merged view.
-        from src.compliance_bridge.types import get_iso_control_map
-
+        # Use get_iso_control_map("US_FED") to obtain the region-merged view.
         us_fed_map = get_iso_control_map("US_FED")
         assert "stpa_compile" in us_fed_map
         assert us_fed_map["stpa_compile"] == "SA-11"
 
     def test_causal_gatekeeper_in_iso_map(self) -> None:
-        assert "causal_gatekeeper" in ISO_CONTROL_MAP
-        assert ISO_CONTROL_MAP["causal_gatekeeper"] == "A.6.2"
+        # Use region-aware accessor for universal controls
+        iso_control_map = get_iso_control_map("LOCAL")
+        assert "causal_gatekeeper" in iso_control_map
+        assert iso_control_map["causal_gatekeeper"] == "A.6.2"
 
     def test_a84_is_critical(self) -> None:
         assert "A.8.4" in CRITICAL_CONTROLS, "STPA operation controls must be critical"
 
     def test_supported_controls_matches_control_meta(self) -> None:
         # SUPPORTED_CONTROLS now includes universal + all jurisdictional controls.
-        # CONTROL_META is a backward-compat alias for universal controls only.
-        # Verify that all CONTROL_META keys are present in SUPPORTED_CONTROLS
+        # get_control_meta("LOCAL") returns universal controls only.
+        # Verify that all universal control keys are present in SUPPORTED_CONTROLS
         # (superset relationship, not strict equality).
-        assert set(CONTROL_META.keys()).issubset(set(SUPPORTED_CONTROLS)), (
-            "CONTROL_META contains control IDs not present in SUPPORTED_CONTROLS"
+        control_meta = get_control_meta("LOCAL")
+        assert set(control_meta.keys()).issubset(set(SUPPORTED_CONTROLS)), (
+            "Universal control metadata contains control IDs not present in SUPPORTED_CONTROLS"
         )
 
 

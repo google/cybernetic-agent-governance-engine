@@ -40,7 +40,6 @@ from pydantic import BaseModel
 # Reset the module-level singleton between tests to ensure isolation.
 import src.governed_financial_advisor.infrastructure.governance_client as _gc_module
 from src.governed_financial_advisor.infrastructure.governance_client import (
-    GovernanceClient,
     StructuredLLMClient,
     _get_async_client,
     close_async_client,
@@ -73,9 +72,9 @@ async def reset_singleton():
 
 
 @pytest.fixture
-def client() -> GovernanceClient:
-    """Return a GovernanceClient pointed at a fake base URL."""
-    return GovernanceClient(
+def client() -> StructuredLLMClient:
+    """Return a StructuredLLMClient pointed at a fake base URL."""
+    return StructuredLLMClient(
         base_url="http://fake-vllm:8000",
         api_key="EMPTY",
         model_name="test-model",
@@ -246,8 +245,3 @@ class TestGovernanceClientPooling:
         # Both are valid clients; they must NOT be the same object (first was closed)
         assert not second.is_closed
         assert first is not second
-
-
-def test_governance_client_alias():
-    """GovernanceClient is a deprecated alias for StructuredLLMClient."""
-    assert GovernanceClient is StructuredLLMClient

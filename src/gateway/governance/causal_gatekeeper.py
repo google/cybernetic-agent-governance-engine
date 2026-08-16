@@ -74,7 +74,16 @@ CAUSAL_CACHE_TTL_SECONDS: int = int(os.getenv("CAUSAL_CACHE_TTL_SECONDS", "60"))
 
 # ---------------------------------------------------------------------------
 # Causal lock thresholds — Phase 2 (CTRL_TEL_003) and Phase 1 risk boundary
+# EV-3, EV-4 Migration: Thresholds are now sourced from config/governance_thresholds.json
+# with environment variable overrides supported. See schemas/thresholds.py.
 # ---------------------------------------------------------------------------
+from src.gateway.governance.schemas.thresholds import (
+    get_causal_p_value_threshold,
+    get_causal_placebo_effect_magnitude,
+    get_causal_risk_boundary,
+    get_causal_min_samples,
+)
+
 # These three constants define the three conditions that trigger a CAUSAL LOCK
 # (i.e. causal_safety_check() returns False, blocking the trade).
 #
@@ -84,9 +93,7 @@ CAUSAL_CACHE_TTL_SECONDS: int = int(os.getenv("CAUSAL_CACHE_TTL_SECONDS", "60"))
 #   level.  The world-model's causal assumptions cannot be trusted.
 #   Rationale: standard frequentist significance level; consistent with
 #   SR 26-2 MRM back-testing requirements (CTRL_TEL_003).
-CAUSAL_LOCK_P_VALUE_THRESHOLD: float = float(
-    os.getenv("CAUSAL_LOCK_P_VALUE_THRESHOLD", "0.05")
-)
+CAUSAL_LOCK_P_VALUE_THRESHOLD: float = get_causal_p_value_threshold()
 
 # CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE (Phase 2 — placebo refutation):
 #   If the absolute value of the placebo refuter's new_effect exceeds this
@@ -95,9 +102,7 @@ CAUSAL_LOCK_P_VALUE_THRESHOLD: float = float(
 #   effect that is not statistically significant due to high variance.
 #   Rationale: 0.2 corresponds to a "medium" effect size (Cohen's d ≈ 0.2)
 #   in the normalised risk_score space [0, 1].
-CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE: float = float(
-    os.getenv("CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE", "0.2")
-)
+CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE: float = get_causal_placebo_effect_magnitude()
 
 # CAUSAL_LOCK_RISK_BOUNDARY (Phase 1 — marginal risk boundary):
 #   If (0.5 + estimated_marginal_effect) exceeds this threshold, the proposed
@@ -107,7 +112,7 @@ CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE: float = float(
 #   multiplied by the trade amount.
 #   Rationale: 0.95 leaves a 5% safety margin below the maximum risk score
 #   of 1.0, consistent with the CBF g=0.5 decay factor.
-CAUSAL_LOCK_RISK_BOUNDARY: float = float(os.getenv("CAUSAL_LOCK_RISK_BOUNDARY", "0.95"))
+CAUSAL_LOCK_RISK_BOUNDARY: float = get_causal_risk_boundary()
 
 # NOTE: Timestamp-based ordering is a best-effort approximation. For production,
 # use span parentId relationships via OpenTelemetry context propagation.
@@ -637,12 +642,12 @@ def causal_safety_check(
 
             # Minimum sample guard — fail closed when there is insufficient
             # telemetry to fit a linear regression reliably.  This mirrors the
-            # MIN_SAMPLES = 50 guard in telemetry_provider.py and prevents a
+            # MIN_SAMPLES guard in telemetry_provider.py and prevents a
             # cold-start or sparse-data path from producing a meaningless
             # estimate that could incorrectly approve or reject a trade.
-            _MIN_CAUSAL_SAMPLES = int(
-                os.getenv("CAUSAL_MIN_SAMPLES", "50")
-            )
+            # EV-4 Migration: Use config-based threshold (consolidated from
+            # CAUSAL_MIN_SAMPLES and CAUSAL_MIN_LIVE_SAMPLES)
+            _MIN_CAUSAL_SAMPLES = get_causal_min_samples()
             n_samples = len(current_telemetry)
             if n_samples < _MIN_CAUSAL_SAMPLES:
                 mrm_span.set_attribute("causal.samples_available", n_samples)
@@ -650,8 +655,8 @@ def causal_safety_check(
                 mrm_span.set_attribute("causal.result", "insufficient_data_fail_closed")
                 logger.warning(
                     "CausalGatekeeper: insufficient telemetry (%d < %d samples) — "
-                    "failing closed (action BLOCKED). Set CAUSAL_MIN_SAMPLES env var "
-                    "to adjust the threshold.",
+                    "failing closed (action BLOCKED). Adjust causal.min_samples in "
+                    "config/governance_thresholds.json or set CAUSAL_MIN_SAMPLES env var.",
                     n_samples,
                     _MIN_CAUSAL_SAMPLES,
                 )

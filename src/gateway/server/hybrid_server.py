@@ -71,6 +71,23 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     setup_tracing()
     logger.info("✅ Gateway tracing initialised via lifespan hook")
 
+    # ── Evidence Stream Precondition Check (R-06) ──────────────────────────────
+    # Fail fast if EVIDENCE_CHAIN_BLOCKING=true but EVIDENCE_STREAM_ENABLED=false.
+    # This invalid configuration would cause all seal issuances to fail at runtime.
+    from src.compliance_bridge.evidence_stream import (
+        ConfigurationError,
+        validate_evidence_stream_preconditions,
+    )
+
+    try:
+        validate_evidence_stream_preconditions()
+    except ConfigurationError as cfg_err:
+        logger.critical(
+            "🚨 STARTUP FAILURE: Evidence stream precondition check failed: %s",
+            cfg_err,
+        )
+        raise
+
     # ── Pre-warm and share NeMo Rails ──────────────────────────────────────
     from src.gateway.governance.nemo.manager import initialize_rails
 

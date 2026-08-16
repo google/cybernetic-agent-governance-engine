@@ -72,7 +72,6 @@ from .oscal_exporter import build_oscal_assessment_results, findings_from_metric
 from .sla_monitor import run_sla_monitor
 from .sse_events import event_bus
 from .types import (
-    CONTROL_META,
     CRITICAL_CONTROLS,
     SUPPORTED_CONTROLS,
     ComplianceMetrics,
@@ -158,6 +157,22 @@ def _get_app_langfuse() -> Any:
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     logger.info("🔄 compliance-bridge starting up…")
+
+    # ------------------------------------------------------------------
+    # Evidence Stream Precondition Check (R-06): Fail fast if
+    # EVIDENCE_CHAIN_BLOCKING=true but EVIDENCE_STREAM_ENABLED=false.
+    # This invalid configuration would cause all seal issuances to fail.
+    # ------------------------------------------------------------------
+    from .evidence_stream import ConfigurationError, validate_evidence_stream_preconditions
+
+    try:
+        validate_evidence_stream_preconditions()
+    except ConfigurationError as cfg_err:
+        logger.critical(
+            "🚨 STARTUP FAILURE: Evidence stream precondition check failed: %s",
+            cfg_err,
+        )
+        raise RuntimeError(str(cfg_err)) from cfg_err
 
     # ------------------------------------------------------------------
     # POAM-012 / NIST SC-12: Fail fast if CAGE_ROUTING_SEAL_SECRET is
@@ -1366,10 +1381,12 @@ def safe_map_trace(t: Any) -> dict:
     elif result == "FAIL" and control_id in CRITICAL_CONTROLS:
         event_type = "GOVERNANCE_VIOLATION"
 
-    # Get control name
+    # Get control name (region-aware lookup)
+    _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
+    _control_meta = get_control_meta(_region)
     control_name = control_id
-    if control_id in CONTROL_META:
-        control_name = CONTROL_META[control_id].get("name", control_id)
+    if control_id in _control_meta:
+        control_name = _control_meta[control_id].get("name", control_id)
 
     timestamp_str = ""
     if t.timestamp:

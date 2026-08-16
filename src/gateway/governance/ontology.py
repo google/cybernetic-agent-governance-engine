@@ -228,9 +228,8 @@ class TradingKnowledgeGraph:
         "ACCOUNT_MGMT": "AC-2",  # Account Management
     }
 
-    # Backward-compat alias — universal controls only.
-    # New code must call get_control_map(region) instead.
-    ISO_CONTROL_MAP: ClassVar[dict[str, str]] = _UNIVERSAL_CONTROL_MAP
+    # NOTE: The deprecated ISO_CONTROL_MAP alias has been removed.
+    # Use get_control_map(region) instead.
 
     @classmethod
     def get_control_map(cls, region: str) -> dict[str, str]:

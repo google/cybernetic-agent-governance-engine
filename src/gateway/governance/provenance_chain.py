@@ -56,14 +56,33 @@ logger = logging.getLogger("Gateway.Governance.ProvenanceChain")
 
 #: Canonical decision values accepted by build_provenance_record().
 #:
-#: Execution-phase statuses (ALLOW, BLOCK, ESCALATE) are retained for
-#: LangGraph node provenance records.  The canonical gateway-boundary
-#: decisions (REQUIRE_APPROVAL, DEFER) are added so that all four
-#: GovernanceDecision values can be recorded in the audit chain without
-#: raising ValueError.
+#: This set includes:
+#:   - Canonical gateway-boundary decisions (GovernanceDecision enum):
+#:     ALLOW, DENY, DEFER, NARROW, PAUSE, REQUIRE_APPROVAL
+#:   - Execution-phase statuses (LangGraph node provenance records):
+#:     BLOCK, ESCALATE (retained for backward compatibility)
+#:
+#: The six canonical decisions (from src/gateway/governance/decisions.py):
+#:   - ALLOW: Action approved, routing seal issued
+#:   - DENY: Action blocked, no seal issued
+#:   - DEFER: Action cannot be evaluated, missing trusted context
+#:   - NARROW: Action allowed with constrained/clamped parameters
+#:   - PAUSE: Action temporarily suspended awaiting external resume signal
+#:   - REQUIRE_APPROVAL: Action requires human sign-off before execution
 #:
 #: See src/gateway/governance/decisions.py for the full canonical vocabulary.
-VALID_DECISIONS = frozenset({"ALLOW", "BLOCK", "ESCALATE", "REQUIRE_APPROVAL", "DEFER"})
+VALID_DECISIONS = frozenset({
+    # Canonical gateway-boundary decisions (GovernanceDecision enum)
+    "ALLOW",
+    "DENY",
+    "DEFER",
+    "NARROW",
+    "PAUSE",
+    "REQUIRE_APPROVAL",
+    # Execution-phase statuses (LangGraph nodes, backward compat)
+    "BLOCK",
+    "ESCALATE",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +99,10 @@ class ProvenanceRecord:
         node_id:      LangGraph node name (e.g. "opa_node", "causal_gatekeeper").
         input_hash:   SHA-256 hex digest of the node's input data.
         output_hash:  SHA-256 hex digest of the node's output data.
-        decision:     Governance decision: "ALLOW" | "BLOCK" | "ESCALATE".
+        decision:     Governance decision. Canonical values:
+                      "ALLOW" | "DENY" | "DEFER" | "NARROW" | "PAUSE" | "REQUIRE_APPROVAL".
+                      Legacy execution-phase values also accepted:
+                      "BLOCK" | "ESCALATE" (for backward compatibility).
         parent_hash:  SHA-256 hex digest of the previous record in the chain,
                       or None for the first record.
     """
@@ -158,14 +180,17 @@ def build_provenance_record(
         node_id:     LangGraph node name (e.g. "opa_node").
         input_data:  The node's input dict (will be hashed, not stored).
         output_data: The node's output dict (will be hashed, not stored).
-        decision:    Governance decision: "ALLOW" | "BLOCK" | "ESCALATE".
+        decision:    Governance decision. Canonical values:
+                     "ALLOW" | "DENY" | "DEFER" | "NARROW" | "PAUSE" | "REQUIRE_APPROVAL".
+                     Legacy execution-phase values also accepted:
+                     "BLOCK" | "ESCALATE" (for backward compatibility).
         parent_hash: Hash of the previous record in the chain, or None.
 
     Returns:
         A ``ProvenanceRecord`` with computed input/output hashes.
 
     Raises:
-        ValueError: If ``decision`` is not one of ALLOW | BLOCK | ESCALATE.
+        ValueError: If ``decision`` is not a valid decision from VALID_DECISIONS.
     """
     if decision not in VALID_DECISIONS:
         raise ValueError(

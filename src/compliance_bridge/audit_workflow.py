@@ -93,7 +93,7 @@ from .notifier import create_notifier
 from .oscal_parser import parse_oscal_yaml
 from .sse_events import event_bus
 from .storage import put_oscal_artifact
-from .types import CONTROL_META, CRITICAL_CONTROLS, OscalFinding
+from .types import CRITICAL_CONTROLS, OscalFinding, get_control_meta
 
 logger = logging.getLogger(__name__)
 
@@ -510,7 +510,10 @@ async def _step5_one_control(
             "trace_ids_sampled": [],
         }
 
-    control_name = CONTROL_META.get(control_id, {}).get("name", control_id)
+    # Region-aware control metadata lookup
+    _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
+    _control_meta = get_control_meta(_region)
+    control_name = _control_meta.get(control_id, {}).get("name", control_id)
     failing_traces = await _fetch_failing_traces(control_id, 10)
     trace_ids_sampled = [t["id"] for t in failing_traces]
     prompt = _build_remediation_prompt(finding, control_name, failing_traces)

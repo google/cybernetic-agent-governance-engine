@@ -264,8 +264,5 @@ class AsyncRedisClient:
                 raise
 
 
-# Alias for backwards-compatibility with tests that import RedisClient
-RedisClient = AsyncRedisClient
-
 # Global Instance Interface
 redis_client = AsyncRedisClient()

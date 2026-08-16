@@ -61,9 +61,14 @@ import logging
 import os
 import time
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Any, TypeVar
 
+from opentelemetry import trace
+
 from src.gateway.governance.constants import GovernanceControl
+
+tracer = trace.get_tracer(__name__)
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +201,126 @@ def generate_seal(action: str, params: dict, ttl_s: int = _TTL_S) -> str:
     seal = f"{expire_hex}.{action_slug}.{sig}"
     logger.debug("🔏 Routing seal issued: action=%s expire=%s", action, expire_ts)
     return seal
+
+
+async def generate_seal_with_evidence(
+    action: str,
+    params: dict,
+    ttl_s: int = _TTL_S,
+    evidence_timeout_s: float = 5.0,
+) -> str:
+    """Generate a routing seal with evidence chain blocking gate (R-06 mitigation).
+
+    This async function provides the EVIDENCE_CHAIN_BLOCKING gate that ensures
+    evidence is durably committed before a routing seal is issued. When blocking
+    mode is enabled (EVIDENCE_CHAIN_BLOCKING=true), this function:
+
+      1. Commits the governance decision as evidence to the durable store
+      2. Blocks until commit is confirmed or timeout
+      3. Only then generates and returns the routing seal
+      4. If evidence commit fails, raises EvidenceChainUnavailableError (no seal)
+
+    When blocking mode is disabled (EVIDENCE_CHAIN_BLOCKING=false, the default),
+    this function falls back to fire-and-forget behavior: evidence is ingested
+    asynchronously without blocking, and the seal is issued immediately. This
+    preserves backward compatibility and avoids latency impact when the gate
+    is not enabled.
+
+    Risk mitigation: R-06 (evidence-of-execution claims overclaimed)
+    This gate ensures that every routing seal corresponds to evidence that is
+    durably committed to the evidence stream. Without this gate, a seal could
+    be issued for a governance decision that was never recorded, allowing
+    evidence-of-execution claims to be overclaimed.
+
+    Args:
+        action:  Tool / policy action name (e.g. ``"execute_trade"``).
+        params:  Execution plan parameters dict.
+        ttl_s:   Seal lifetime in seconds (default: ``GOVERNANCE_SEAL_TTL_S``).
+        evidence_timeout_s: Timeout for evidence commit in blocking mode (default: 5s).
+
+    Returns:
+        A dot-separated seal string: ``<expire_ts_hex>.<action_slug>.<hmac_hex>``
+
+    Raises:
+        EvidenceChainUnavailableError: If EVIDENCE_CHAIN_BLOCKING=true and evidence
+            commit fails or times out. Caller MUST NOT proceed with execution when
+            this exception is raised — the seal is not issued.
+    """
+    from src.compliance_bridge.evidence_stream import (
+        EvidenceChainUnavailableError,
+        get_evidence_sink,
+        is_evidence_chain_blocking,
+    )
+
+    with tracer.start_as_current_span("cage.routing_seal.generate_with_evidence") as span:
+        blocking_mode = is_evidence_chain_blocking()
+        span.set_attribute("cage.evidence.blocking_mode", blocking_mode)
+        span.set_attribute("cage.seal.action", action)
+
+        # Build evidence payload from governance decision
+        evidence_event = {
+            "type": "GOVERNANCE_DECISION",
+            "controlId": _SCOPE_CONTROL.value,
+            "action": action,
+            "params_hash": hashlib.sha256(
+                json.dumps(params, sort_keys=True, default=str).encode()
+            ).hexdigest()[:16],
+            "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
+            "seal_ttl_s": ttl_s,
+        }
+
+        sink = get_evidence_sink()
+
+        if blocking_mode:
+            # EVIDENCE_CHAIN_BLOCKING=true: Block until evidence is committed
+            logger.info(
+                "🔏 [EVIDENCE_CHAIN_BLOCKING] Committing evidence before seal issuance: action=%s",
+                action,
+            )
+            span.set_attribute("cage.evidence.mode", "blocking")
+
+            try:
+                commit_result = await sink.ingest_sync(
+                    evidence_event,
+                    timeout_seconds=evidence_timeout_s,
+                )
+                span.set_attribute("cage.evidence.evidence_id", commit_result.evidence_id)
+                span.set_attribute("cage.evidence.hash", commit_result.hash[:16])
+                span.set_attribute("cage.evidence.sequence", commit_result.sequence)
+                logger.info(
+                    "✅ Evidence committed — proceeding with seal issuance: "
+                    "evidence_id=%s hash=%s…",
+                    commit_result.evidence_id,
+                    commit_result.hash[:16],
+                )
+            except EvidenceChainUnavailableError:
+                # Re-raise without modification — caller must handle
+                logger.error(
+                    "⛔ [EVIDENCE_CHAIN_BLOCKING] Evidence commit failed — "
+                    "seal NOT issued: action=%s",
+                    action,
+                )
+                span.set_attribute("cage.seal.issued", False)
+                span.set_attribute("cage.evidence.status", "failed")
+                raise
+        else:
+            # EVIDENCE_CHAIN_BLOCKING=false (default): Fire-and-forget
+            span.set_attribute("cage.evidence.mode", "fire_and_forget")
+            if sink.is_running:
+                # Best-effort async ingest — do not block on result
+                try:
+                    await sink.ingest(evidence_event)
+                except Exception as exc:
+                    # Log but do not block seal issuance
+                    logger.warning(
+                        "⚠️ Fire-and-forget evidence ingest failed (non-blocking): %s",
+                        exc,
+                    )
+
+        # Generate and return the seal
+        seal = generate_seal(action, params, ttl_s)
+        span.set_attribute("cage.seal.issued", True)
+        return seal
 
 
 def verify_seal(seal: str, action: str, params: dict) -> bool:

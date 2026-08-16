@@ -30,14 +30,14 @@ from typing import Any
 logger = logging.getLogger("EvaluatorAuditor")
 
 # ---------------------------------------------------------------------------
-# STPAValidator — lazy import to avoid circular / heavyweight dependencies.
-# R-09: SC-1 check delegates to STPAValidator to maintain a single source
+# GeneratedSTPAValidator — lazy import to avoid circular / heavyweight dependencies.
+# R-09: SC-1 check delegates to GeneratedSTPAValidator to maintain a single source
 # of truth. Falls back to inline check if the import fails.
 # ---------------------------------------------------------------------------
 try:
-    from src.gateway.governance.stpa_validator import STPAValidator
+    from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator
 
-    _stpa_validator = STPAValidator()
+    _stpa_validator = GeneratedSTPAValidator()
     _USE_STPA = True
 except ImportError:
     _USE_STPA = False

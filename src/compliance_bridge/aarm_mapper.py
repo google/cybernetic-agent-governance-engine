@@ -270,7 +270,7 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
         ],
         notes=(
             "Evidence SLA Monitor enforces per-control staleness thresholds "
-            "(EVIDENCE_SLA_SECONDS in types.py). Lula validation gates reject "
+            "(get_sla_seconds(region) in types.py). Lula validation gates reject "
             "evidence_age_seconds > 172800 (48h). Causal Gatekeeper uses "
             "live Langfuse telemetry with explicit evidence_age tracking."
         ),

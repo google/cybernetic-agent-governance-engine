@@ -56,10 +56,9 @@ async def defer_node(state: AgentState) -> dict[str, Any]:
 
     token = DeferToken(
         thread_id=thread_id,
-        action=action,
         confidence_score=confidence,
-        reason=reason,
-        opa_input=plan,
+        defer_reason=reason,
+        opa_input_snapshot=plan,
     )
 
     try:
@@ -68,7 +67,7 @@ async def defer_node(state: AgentState) -> dict[str, Any]:
         )
 
         queue = DeferQueue(redis_client=redis_client)
-        await queue.enqueue(token)
+        await queue.park(token)
         logger.info(
             "⏸️ [DeferNode] Action '%s' parked in DeferQueue: id=%s confidence=%.2f",
             action,
@@ -76,10 +75,11 @@ async def defer_node(state: AgentState) -> dict[str, Any]:
             confidence,
         )
     except Exception as exc:
-        logger.warning(
-            "⚠️ [DeferNode] Failed to persist to Redis DeferQueue (falling back to state park): %s",
+        logger.error(
+            "🚨 [DeferNode] Failed to persist to Redis DeferQueue — durable park FAILED: %s",
             exc,
         )
+        raise
 
     explanation = (
         f"Transaction for {plan.get('symbol', 'asset')} requires human review "

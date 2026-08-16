@@ -3,7 +3,7 @@
 
 > **AI governance for regulated financial services — built-in, not bolted on.**
 
-![v2.1.1](https://img.shields.io/badge/version-2.1.1-brightgreen) ![1670 Tests Passing](https://img.shields.io/badge/tests-1670%20passing-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 8](https://img.shields.io/badge/POAM%20Closed-8-brightgreen)
+![v3.0.0](https://img.shields.io/badge/version-3.0.0-brightgreen) ![1670 Tests Passing](https://img.shields.io/badge/tests-1670%20passing-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 8](https://img.shields.io/badge/POAM%20Closed-8-brightgreen)
 
 **Universal (all regions):** ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue)
 

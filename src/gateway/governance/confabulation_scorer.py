@@ -46,26 +46,16 @@ from dataclasses import dataclass
 logger = logging.getLogger("Gateway.Governance.ConfabulationScorer")
 
 # ---------------------------------------------------------------------------
-# Threshold — sourced from environment; never hardcoded as a fallback value.
-# The env var is set via secretKeyRef from advisor-secrets in production.
-# In dev/CI, set CONFIDENCE_MIN_SCORE=0.95 in .env.example.
+# EV-5 Migration: Threshold is now sourced from config/governance_thresholds.json
+# with environment variable override (CONFIDENCE_MIN_SCORE) supported.
+# See schemas/thresholds.py for details.
+#
+# The env var override is still supported for production deployments that set
+# CONFIDENCE_MIN_SCORE via secretKeyRef from advisor-secrets.
 # ---------------------------------------------------------------------------
-_raw_threshold = os.environ.get("CONFIDENCE_MIN_SCORE")
-if _raw_threshold is None:
-    logger.warning(
-        "CONFIDENCE_MIN_SCORE env var not set — using governance_thresholds.json value. "
-        "Set CONFIDENCE_MIN_SCORE in advisor-secrets for production deployments."
-    )
-    # Fall back to the validated threshold singleton (never a hardcoded literal)
-    try:
-        from src.gateway.governance.schemas.thresholds import THRESHOLDS
+from src.gateway.governance.schemas.thresholds import get_confidence_min_score
 
-        CONFIDENCE_THRESHOLD: float = THRESHOLDS.confidence.min_trade_confidence
-    except Exception:
-        # Last-resort: fail-safe value that matches the governance threshold
-        CONFIDENCE_THRESHOLD = 0.95
-else:
-    CONFIDENCE_THRESHOLD = float(_raw_threshold)
+CONFIDENCE_THRESHOLD: float = get_confidence_min_score()
 
 
 # ---------------------------------------------------------------------------

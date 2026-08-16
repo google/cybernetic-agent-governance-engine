@@ -90,45 +90,56 @@ def client():
 
 
 class TestIsoControlMapSingleSource:
-    """Verify that the canonical ISO_CONTROL_MAP lives only in types.py."""
+    """Verify that the canonical ISO control map accessor lives in types.py."""
 
-    def test_types_exports_iso_control_map(self):
-        from src.compliance_bridge.types import ISO_CONTROL_MAP
+    def test_types_exports_iso_control_map_accessor(self):
+        from src.compliance_bridge.types import get_iso_control_map
 
-        assert isinstance(ISO_CONTROL_MAP, dict)
-        assert len(ISO_CONTROL_MAP) >= 9, "Expected at least 9 entries"
+        # Use region-aware accessor for universal controls
+        iso_control_map = get_iso_control_map("LOCAL")
+        assert isinstance(iso_control_map, dict)
+        assert len(iso_control_map) >= 9, "Expected at least 9 entries"
 
-    def test_langfuse_utils_imports_from_types(self):
-        """langfuse_utils must re-export the canonical map, not define its own."""
-        from src.compliance_bridge.types import ISO_CONTROL_MAP as canonical
+    def test_langfuse_utils_uses_region_aware_accessor(self):
+        """langfuse_utils must use the region-aware accessor, not a deprecated alias."""
+        import os
+
+        from src.compliance_bridge.types import get_iso_control_map
         from src.governed_financial_advisor.utils.langfuse_utils import (
-            ISO_CONTROL_MAP as lf_map,
+            _get_iso_control_map,
         )
 
-        # Must be the exact same object (imported, not copied)
-        assert lf_map is canonical, (
-            "langfuse_utils.ISO_CONTROL_MAP is not the same object as "
-            "src.compliance_bridge.types.ISO_CONTROL_MAP — dual-maintenance detected!"
+        # Both should return equivalent maps for the current region
+        # _get_iso_control_map reads from CAGE_DEPLOYMENT_REGION env var
+        current_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
+        canonical = get_iso_control_map(current_region)
+        lf_map = _get_iso_control_map()
+        assert canonical == lf_map, (
+            "langfuse_utils._get_iso_control_map() returns different values "
+            f"from src.compliance_bridge.types.get_iso_control_map({current_region!r})"
         )
 
     def test_all_map_values_are_supported_controls(self):
-        from src.compliance_bridge.types import ISO_CONTROL_MAP, SUPPORTED_CONTROLS
+        from src.compliance_bridge.types import SUPPORTED_CONTROLS, get_iso_control_map
 
-        for event, control_id in ISO_CONTROL_MAP.items():
+        # Use region-aware accessor for universal controls
+        iso_control_map = get_iso_control_map("LOCAL")
+        for event, control_id in iso_control_map.items():
             assert control_id in SUPPORTED_CONTROLS, (
-                f"ISO_CONTROL_MAP[{event!r}]={control_id!r} is not in SUPPORTED_CONTROLS"
+                f"ISO control map [{event!r}]={control_id!r} is not in SUPPORTED_CONTROLS"
             )
 
     def test_canonical_map_includes_causal_gatekeeper(self):
-        from src.compliance_bridge.types import ISO_CONTROL_MAP
+        from src.compliance_bridge.types import get_iso_control_map
 
-        assert "causal_gatekeeper" in ISO_CONTROL_MAP
-        assert ISO_CONTROL_MAP["causal_gatekeeper"] == "A.6.2"
+        # Use region-aware accessor for universal controls
+        iso_control_map = get_iso_control_map("LOCAL")
+        assert "causal_gatekeeper" in iso_control_map
+        assert iso_control_map["causal_gatekeeper"] == "A.6.2"
 
     def test_canonical_map_includes_network_controls(self):
         # linkerd_mtls and cilium_l7_egress are US_FED-only (NIST SC-8 / SC-7).
-        # They are no longer in the universal ISO_CONTROL_MAP; use
-        # get_iso_control_map("US_FED") to obtain the region-merged view.
+        # Use get_iso_control_map("US_FED") to obtain the region-merged view.
         from src.compliance_bridge.types import get_iso_control_map
 
         us_fed_map = get_iso_control_map("US_FED")
