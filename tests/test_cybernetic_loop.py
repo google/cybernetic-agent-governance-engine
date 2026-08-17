@@ -64,6 +64,7 @@ def _get_server_app():
         import src.governed_financial_advisor.server as srv
 
         importlib.reload(srv)
+        srv._last_refinement_triggered_at = 0.0
         return srv.app
 
 
