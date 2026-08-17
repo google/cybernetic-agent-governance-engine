@@ -146,3 +146,6 @@ class TestRoutingSealGatewayMirrorParity:
         tampered = seal[:-4] + "XXXX"
         with pytest.raises(SymbolicGovernorViolation):
             gfa_verify_seal(tampered, "execute_trade", PARAMS)
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

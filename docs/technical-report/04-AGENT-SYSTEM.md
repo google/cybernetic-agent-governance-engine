@@ -2,11 +2,11 @@
 
 | Field                | Value                                                                             |
 | -------------------- | --------------------------------------------------------------------------------- |
-| **Document Version** | 2.0                                                                               |
-| **Date**             | 2026-06-03                                                                        |
+| **Document Version** | 3.0                                                                               |
+| **Date**             | 2026-08-16                                                                        |
 | **Classification**   | INTERNAL                                                                          |
 | **Document Series**  | CAGE Technical Report                                                             |
-| **Status**           | ACTIVE — v2.1.0 stable (GO — 2026-06-08; GKE deployment verified 2026-06-03; **844 passing, 0 failed, 24 skipped** at time of v2.0.0 GKE cycle) |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,741 passed, 0 failed, 182 skipped; 75.12% coverage) |
 | **Reference**        | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/` |
 
 ---
@@ -316,10 +316,10 @@ The fallback `MemorySaver` is strictly for development and degraded-mode operati
 
 `src/governed_financial_advisor/agents/evaluator/agent.py` is the most architecturally complex agent in the pipeline. It uses LangChain's `create_tool_calling_agent` bound to `Qwen/Qwen2.5-1.5B-Instruct` (via `VLLM_FAST_API_BASE`) and dispatches five async MCP tools:
 
-| MCP Tool                   | Purpose                                                             |
-| -------------------------- | ------------------------------------------------------------------- |
-| `check_safety_constraints` | Validates execution plan against NeMo Guardrails safety constraints |
-| `evaluate_policy`          | Evaluates plan against OPA Rego `trade.governance` policy           |
+| MCP Tool                     | Purpose                                                             |
+| ---------------------------- | ------------------------------------------------------------------- |
+| `simulate_governance_check`  | Validates execution plan against NeMo Guardrails safety constraints |
+| `evaluate_policy`            | Evaluates plan against OPA Rego `trade.governance` policy           |
 | `check_market_status`      | Confirms market is open and ticker is tradeable                     |
 | `get_market_sentiment`     | Retrieves sentiment signal for the target ticker                    |
 | `verify_content_safety`    | PII and content moderation scan on plan text                        |
@@ -430,7 +430,7 @@ All tools are implemented as LangChain-compatible callables and are registered e
 
 ## 13. Agent Governance Integration
 
-This section documents how agents interact with the 7-tier symbolic governor pipeline. All agent tool calls are mediated by [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py).
+This section documents how agents interact with the 8-tier symbolic governor pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers). All agent tool calls are mediated by [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py).
 
 ### 13.1 NoDirectBind Invariant
 
@@ -439,7 +439,7 @@ The **NoDirectBind invariant** is the foundational structural guarantee of the a
 - Every tool call an agent may issue must pass through `POST /governance/validate-action`, which invokes `SymbolicGovernor._run_checks()`.
 - **No code path exists** from agent intent to trade execution that bypasses this choke point. Direct binding from an agent to an actuator (e.g., calling `execute_trade` without a valid routing seal) is structurally prohibited — the `GovernanceMiddleware` rejects any request that does not carry a valid `X-CAGE-Routing-Seal` header, verified via `verify_seal()`.
 
-This invariant ensures that even if an agent is compromised or produces a malformed output, it cannot actuate a trade without traversing the full 7-tier pipeline.
+This invariant ensures that even if an agent is compromised or produces a malformed output, it cannot actuate a trade without traversing the full 8-tier pipeline (FTRA + 7 in-pipeline tiers).
 
 ### 13.2 How Agents Traverse the 8-Tier Pipeline
 

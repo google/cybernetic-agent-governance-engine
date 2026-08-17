@@ -375,3 +375,6 @@ class TestRecordApproval:
                 valid, _ = tel.verify_chain()
 
             assert valid is False
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

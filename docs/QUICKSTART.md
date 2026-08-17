@@ -37,7 +37,7 @@ docker compose up -d
 ```
 
 This starts:
-- **Gateway** (`localhost:8080`) — Governance enforcement proxy with 7-tier SymbolicGovernor, FTRA reachability gate, and Phase A/B ingress adapters
+- **Gateway** (`localhost:8080`) — Governance enforcement proxy with 8-tier governance pipeline (FTRA pre-pipeline boundary gate + 7 in-pipeline tiers via SymbolicGovernor), and Phase A/B ingress adapters
 - **Compliance Bridge** (`localhost:8081`) — OSCAL/compliance automation; CBF reconciliation worker; AARM 11-vector conformance engine
 - **AgentSight UI** (`localhost:5173`) — React/TypeScript real-time governance dashboard (`KernelDashboard` with slippage slider, price drift badges, HITL TTL countdown)
 - **Governed Financial Advisor** (`localhost:8000`) — Full multi-agent LangGraph reference implementation with NeMo Guardrails and OPA policy enforcement

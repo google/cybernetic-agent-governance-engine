@@ -671,3 +671,6 @@ class TestApprovalResumeRequestSchema:
         assert req.rationale == "Exceeds mandate."
         assert req.comment == "Escalated to PM."
         assert req.approved is False
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

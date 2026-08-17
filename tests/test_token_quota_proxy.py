@@ -35,6 +35,7 @@ from src.gateway.governance.token_quota_proxy import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_proxy(
     step_quota: int = 5,
     token_quota: int = 1000,
@@ -42,7 +43,9 @@ def _make_proxy(
 ) -> tuple[TokenQuotaProxy, AsyncMock]:
     """Return a proxy wired to an AsyncMock Redis client."""
     redis = AsyncMock()
-    redis.script_load = AsyncMock(side_effect=["sha_check_xx", "sha_rollback_xx", "sha_reconcile_xx"])
+    redis.script_load = AsyncMock(
+        side_effect=["sha_check_xx", "sha_rollback_xx", "sha_reconcile_xx"]
+    )
     proxy = TokenQuotaProxy(
         redis_client=redis,
         step_quota_max=step_quota,
@@ -55,6 +58,7 @@ def _make_proxy(
 # ---------------------------------------------------------------------------
 # 1. QuotaExceededError carries structured attributes
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 def test_quota_exceeded_error_attributes() -> None:
@@ -78,6 +82,7 @@ def test_quota_exceeded_error_attributes() -> None:
 # 2. _session_key builds the correct namespaced key
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 def test_session_key_format() -> None:
     """_session_key returns quota:session:<agent_id>:<suffix>."""
@@ -89,6 +94,7 @@ def test_session_key_format() -> None:
 # ---------------------------------------------------------------------------
 # 3. check_and_increment returns ALLOWED result on success
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 @pytest.mark.asyncio
@@ -111,6 +117,7 @@ async def test_check_and_increment_allowed() -> None:
 # 4. check_and_increment raises QuotaExceededError when Lua returns blocked
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 @pytest.mark.asyncio
 async def test_check_and_increment_blocked_returns_not_allowed() -> None:
@@ -127,6 +134,7 @@ async def test_check_and_increment_blocked_returns_not_allowed() -> None:
 # ---------------------------------------------------------------------------
 # 5. check_and_increment fails CLOSED when Redis evalsha raises
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 @pytest.mark.asyncio
@@ -145,6 +153,7 @@ async def test_check_and_increment_redis_error_raises_quota_exceeded() -> None:
 # ---------------------------------------------------------------------------
 # 6. rollback_step decrements counters via Lua script
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 @pytest.mark.asyncio
@@ -167,6 +176,7 @@ async def test_rollback_step_calls_evalsha() -> None:
 # ---------------------------------------------------------------------------
 # 7. get_session_state returns zero-filled dict on Redis mget error
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 @pytest.mark.asyncio

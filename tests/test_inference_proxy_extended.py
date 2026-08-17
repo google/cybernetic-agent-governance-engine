@@ -434,9 +434,7 @@ async def test_upstream_connection_error_returns_500(proxy_deps):
     quota_proxy = proxy_deps["quota_proxy"]
 
     bad_client = _make_http_client_mock()
-    bad_client.post = AsyncMock(
-        side_effect=httpx.ConnectError("connection refused")
-    )
+    bad_client.post = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
     mod._get_http_client = lambda: bad_client
 
     async with httpx.AsyncClient(
@@ -545,9 +543,7 @@ async def test_streaming_request_returns_event_stream(proxy_deps):
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.post(
-            "/v1/chat/completions", json=_chat_body(stream=True)
-        )
+        resp = await client.post("/v1/chat/completions", json=_chat_body(stream=True))
 
     assert resp.status_code == 200
     assert "text/event-stream" in resp.headers.get("content-type", "")
@@ -580,9 +576,7 @@ async def test_streaming_upstream_4xx_yields_error_event(proxy_deps):
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.post(
-            "/v1/chat/completions", json=_chat_body(stream=True)
-        )
+        resp = await client.post("/v1/chat/completions", json=_chat_body(stream=True))
 
     assert resp.status_code == 200  # streaming path always 200
     body_bytes = resp.content

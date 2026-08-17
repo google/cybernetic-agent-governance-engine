@@ -1,3 +1,17 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Unit tests for src/gateway/governance/ingress/agp_policy_uploader.py.
 
@@ -23,6 +37,7 @@ _AGP_CHAR_BUDGET = 5_000
 # Helper: build a just-right policy text
 # ---------------------------------------------------------------------------
 
+
 def _policy_text(chars: int = 100) -> str:
     return "A" * chars
 
@@ -30,6 +45,7 @@ def _policy_text(chars: int = 100) -> str:
 # ---------------------------------------------------------------------------
 # Tests: _validate_policy_text
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 class TestValidatePolicyText:
@@ -86,6 +102,7 @@ class TestValidatePolicyText:
 # Tests: upload_agp_policy — dry_run mode (no network)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 class TestUploadAgpPolicyDryRun:
     """Tests for upload_agp_policy() in dry_run=True mode."""
@@ -122,7 +139,9 @@ class TestUploadAgpPolicyDryRun:
         """dry_run=True raises RuntimeError when no project can be resolved."""
         from src.gateway.governance.ingress.agp_policy_uploader import upload_agp_policy
 
-        env_without_project = {k: v for k, v in os.environ.items() if k != "GOOGLE_CLOUD_PROJECT"}
+        env_without_project = {
+            k: v for k, v in os.environ.items() if k != "GOOGLE_CLOUD_PROJECT"
+        }
         with patch.dict(os.environ, env_without_project, clear=True):
             with pytest.raises(RuntimeError, match="project"):
                 upload_agp_policy(policy_text="Valid.", dry_run=True)
@@ -167,6 +186,7 @@ class TestUploadAgpPolicyDryRun:
 # Tests: upload_agp_policy — reads from file
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 class TestUploadAgpPolicyFromFile:
     """Tests for upload_agp_policy() reading policy text from a file path."""
@@ -203,6 +223,7 @@ class TestUploadAgpPolicyFromFile:
 # Tests: _get_credentials
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 class TestGetCredentials:
     """Tests for _get_credentials() — GCP ADC wrapper."""
@@ -211,7 +232,9 @@ class TestGetCredentials:
         """RuntimeError is raised when google.auth is not installed."""
         from src.gateway.governance.ingress.agp_policy_uploader import _get_credentials
 
-        with patch.dict("sys.modules", {"google.auth": None, "google.auth.transport.requests": None}):
+        with patch.dict(
+            "sys.modules", {"google.auth": None, "google.auth.transport.requests": None}
+        ):
             with pytest.raises((RuntimeError, ImportError)):
                 _get_credentials()
 
@@ -221,6 +244,7 @@ class TestGetCredentials:
         mock_google_auth.default.side_effect = Exception("no credentials")
 
         import sys
+
         original = sys.modules.get("google.auth")
         sys.modules["google.auth"] = mock_google_auth
         sys.modules["google.auth.transport.requests"] = MagicMock()
@@ -229,6 +253,7 @@ class TestGetCredentials:
             from src.gateway.governance.ingress.agp_policy_uploader import (
                 _get_credentials,
             )
+
             with pytest.raises(RuntimeError, match="credentials"):
                 _get_credentials()
         finally:

@@ -32,6 +32,7 @@ import pytest
 # 1. run_lula_scheduler() exits immediately when disabled
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 @pytest.mark.asyncio
 async def test_run_lula_scheduler_exits_when_disabled() -> None:
@@ -47,6 +48,7 @@ async def test_run_lula_scheduler_exits_when_disabled() -> None:
 # 2. _run_lula_cycle() returns "skipped" when component file does not exist
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 @pytest.mark.asyncio
 async def test_run_lula_cycle_skips_when_component_missing(tmp_path: Path) -> None:
@@ -54,7 +56,9 @@ async def test_run_lula_cycle_skips_when_component_missing(tmp_path: Path) -> No
     from src.compliance_bridge.lula_scheduler import _run_lula_cycle
 
     nonexistent = str(tmp_path / "nonexistent-component.yaml")
-    with patch("src.compliance_bridge.lula_scheduler._component_path", return_value=nonexistent):
+    with patch(
+        "src.compliance_bridge.lula_scheduler._component_path", return_value=nonexistent
+    ):
         result = await _run_lula_cycle()
 
     assert result["status"] == "skipped"
@@ -66,6 +70,7 @@ async def test_run_lula_cycle_skips_when_component_missing(tmp_path: Path) -> No
 # 3. _run_lula_validate() returns False when lula binary is not found
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 @pytest.mark.asyncio
 async def test_run_lula_validate_returns_false_when_binary_missing() -> None:
@@ -76,7 +81,9 @@ async def test_run_lula_validate_returns_false_when_binary_missing() -> None:
         "asyncio.create_subprocess_exec",
         side_effect=FileNotFoundError("lula not found"),
     ):
-        result = await _run_lula_validate("/fake/component.yaml", "/tmp/results.yaml", 30)
+        result = await _run_lula_validate(
+            "/fake/component.yaml", "/tmp/results.yaml", 30
+        )
 
     assert result is False
 
@@ -85,9 +92,12 @@ async def test_run_lula_validate_returns_false_when_binary_missing() -> None:
 # 4. _post_results_to_bridge() returns False when results file is missing
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 @pytest.mark.asyncio
-async def test_post_results_to_bridge_returns_false_when_file_missing(tmp_path: Path) -> None:
+async def test_post_results_to_bridge_returns_false_when_file_missing(
+    tmp_path: Path,
+) -> None:
     """_post_results_to_bridge() returns False when the results YAML does not exist."""
     from src.compliance_bridge.lula_scheduler import _post_results_to_bridge
 
@@ -100,9 +110,12 @@ async def test_post_results_to_bridge_returns_false_when_file_missing(tmp_path: 
 # 5. _run_lula_cycle() returns "failed" when lula validate fails
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 @pytest.mark.asyncio
-async def test_run_lula_cycle_returns_failed_when_validate_fails(tmp_path: Path) -> None:
+async def test_run_lula_cycle_returns_failed_when_validate_fails(
+    tmp_path: Path,
+) -> None:
     """_run_lula_cycle returns status='failed' when _run_lula_validate returns False."""
     from src.compliance_bridge.lula_scheduler import _run_lula_cycle
 

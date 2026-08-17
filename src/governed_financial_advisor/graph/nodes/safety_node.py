@@ -128,7 +128,9 @@ def _fetch_live_risk_metrics(
     try:
         import redis  # type: ignore[import]
 
-        client = redis.Redis.from_url(redis_url, decode_responses=True, socket_timeout=0.2)
+        client = redis.Redis.from_url(
+            redis_url, decode_responses=True, socket_timeout=0.2
+        )
 
         # -- drawdown ---------------------------------------------------------
         try:

@@ -299,3 +299,6 @@ def test_pending_record_defaults():
     )
     assert record.callback is None
     assert record.enqueued_at > 0
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

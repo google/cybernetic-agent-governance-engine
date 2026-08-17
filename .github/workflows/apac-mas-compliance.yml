@@ -12,16 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# DEP-13: APAC_MAS compliance gate workflow.
-# Runs MAS FEAT, MAS Notice 655, and MAS TRM §4.2 compliance checks.
-# This workflow is SCOPED TO APAC_MAS ONLY — it must not gate US_FED or EU_ECB releases.
-#
-# Jurisdictional Hierarchy:
-#   Universal: ISO 42001 (ci.yml)
-#   EU_ECB:    EU AI Act / GDPR / DORA (eu-ecb-compliance.yml)
-#   US_FED:    NIST SP 800-53 / AI 600-1 / FedRAMP (security-scan.yml + ci.yml)
-#   APAC_MAS:  MAS FEAT / Notice 655 / TRM (this workflow)
-
 name: "APAC_MAS Compliance Gate — MAS FEAT / Notice 655 / TRM"
 
 on:

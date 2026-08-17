@@ -175,3 +175,6 @@ class TestPiiAuditLogJurisdictionalRetentionAuthority:
             region="EU_ECB",
         )
         assert "GDPR" in record["retention_authority"]
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

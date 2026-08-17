@@ -36,7 +36,7 @@ Every agent tool call passes through the adapter before reaching the
 application container:
 
 1. Parse the JSON-RPC 2.0 body to extract `(tool_name, params)`
-2. Run the full CAGE 7-tier governance pipeline via `validate_action()`
+2. Run the full CAGE 8-tier governance pipeline (FTRA + 7 in-pipeline tiers) via `validate_action()`
 3. Return `OkHttpResponse` + `x-cage-routing-seal` header on `APPROVED`
 4. Return `DeniedHttpResponse(403)` + violation JSON on `DENIED`
 5. Return `DeniedHttpResponse(202)` + `{verdict: DEFERRED, thread_id}` on `MANUAL_REVIEW`
@@ -56,7 +56,7 @@ application container:
 │  [Envoy sidecar / Ingress]  ──ext_authz gRPC──▶  [CAGE :50051]         │
 │         │                                              │                │
 │         │                                    validate_action()          │
-│         │                                    (7-tier pipeline)          │
+│         │                                    (8-tier pipeline)          │
 │         │                                              │                │
 │         │                              ┌───────────────┼───────────┐   │
 │         │                              ▼               ▼           ▼   │
@@ -101,7 +101,7 @@ application container:
 │  [GCP Agent Gateway (AGW)]  ──ext_authz gRPC──▶  [CAGE :50051]         │
 │         │                    (Service Extension)        │               │
 │         │                                     validate_action()         │
-│         │                                     (7-tier pipeline)         │
+│         │                                     (8-tier pipeline)         │
 │         │                                              │                │
 │         │                              ┌───────────────┼───────────┐   │
 │         │                              ▼               ▼           ▼   │

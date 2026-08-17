@@ -287,6 +287,34 @@
                 "null"
             ],
             "description": "DeferQueue ID assigned when FTRA parks the plan for HITL review (ftra_status=DEFERRED). Null otherwise."
+        },
+        "narrow_status": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "NARROW primitive status. One of: NARROWED, NOT_NARROWED, or null (not yet evaluated). Set when SymbolicGovernor applies NARROW decision."
+        },
+        "narrowed_params": {
+            "type": [
+                "object",
+                "null"
+            ],
+            "description": "Parameter clamping details when narrow_status=NARROWED. Contains original/clamped values and limit applied, e.g.: {original_amount: 50000, narrowed_amount: 25000, limit_applied: 'daily_limit'}."
+        },
+        "pause_reason": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Human-readable justification when PAUSE primitive is active, e.g.: 'HITL review required for high-value transaction'."
+        },
+        "pause_resume_token": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "UUID for resuming suspended execution via DeferQueue when PAUSE primitive is active."
         }
     }
 }

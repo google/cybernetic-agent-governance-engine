@@ -63,15 +63,15 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def mock_redis():
     """Create a mock async Redis client for unit tests.
-    
+
     This mock simulates Redis hash and sorted set operations used by PauseManager.
     """
     mock = AsyncMock()
-    
+
     # In-memory storage for the mock
     storage: dict[str, dict[str, str]] = {}
     zset_storage: dict[str, float] = {}
-    
+
     async def hset(key: str, mapping: dict[str, Any] | None = None, **kwargs):
         if key not in storage:
             storage[key] = {}
@@ -79,19 +79,19 @@ def mock_redis():
             for k, v in mapping.items():
                 storage[key][k] = v if isinstance(v, str) else str(v)
         return 1
-    
+
     async def hget(key: str, field: str):
         if key in storage and field in storage[key]:
             return storage[key][field]
         return None
-    
+
     async def expire(key: str, seconds: int):
         return True
-    
+
     async def zadd(name: str, mapping: dict[str, float]):
         zset_storage.update(mapping)
         return len(mapping)
-    
+
     async def zrem(name: str, *members: str):
         count = 0
         for m in members:
@@ -99,9 +99,14 @@ def mock_redis():
                 del zset_storage[m]
                 count += 1
         return count
-    
-    async def zrangebyscore(name: str, min_score: float | str, max_score: float | str,
-                            start: int = 0, num: int = 100):
+
+    async def zrangebyscore(
+        name: str,
+        min_score: float | str,
+        max_score: float | str,
+        start: int = 0,
+        num: int = 100,
+    ):
         results = []
         for member, score in zset_storage.items():
             if isinstance(min_score, str) and min_score == "-inf":
@@ -114,8 +119,8 @@ def mock_redis():
                 max_val = float(max_score)
             if min_val <= score <= max_val:
                 results.append(member)
-        return results[start:start + num]
-    
+        return results[start : start + num]
+
     async def zcount(name: str, min_score: float | str, max_score: float | str):
         count = 0
         for score in zset_storage.values():
@@ -130,28 +135,28 @@ def mock_redis():
             if min_val <= score <= max_val:
                 count += 1
         return count
-    
+
     # Transaction pipeline mock
     class MockPipeline:
         def __init__(self):
             self.commands = []
-        
+
         def hset(self, key, mapping=None, **kwargs):
             self.commands.append(("hset", key, mapping))
             return self
-        
+
         def expire(self, key, seconds):
             self.commands.append(("expire", key, seconds))
             return self
-        
+
         def zadd(self, name, mapping):
             self.commands.append(("zadd", name, mapping))
             return self
-        
+
         def zrem(self, name, *members):
             self.commands.append(("zrem", name, members))
             return self
-        
+
         async def execute(self):
             results = []
             for cmd in self.commands:
@@ -178,16 +183,16 @@ def mock_redis():
                 elif cmd[0] == "expire":
                     results.append(True)
             return results
-        
+
         async def __aenter__(self):
             return self
-        
+
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
-    
+
     def pipeline(transaction=True):
         return MockPipeline()
-    
+
     mock.hset = hset
     mock.hget = hget
     mock.expire = expire
@@ -198,7 +203,7 @@ def mock_redis():
     mock.pipeline = pipeline
     mock._storage = storage
     mock._zset_storage = zset_storage
-    
+
     return mock
 
 
@@ -225,11 +230,11 @@ class TestPauseManager:
             ttl_seconds=3600,
             original_request={"symbol": "AAPL", "amount": 100},
         )
-        
+
         # Verify a token was returned
         assert pause_token
         assert len(pause_token) == 36  # UUID format
-        
+
         # Verify data was stored in Redis
         key = f"{_KEY_PREFIX}{pause_token}"
         assert key in mock_redis._storage
@@ -245,7 +250,7 @@ class TestPauseManager:
             reason="RATE_LIMITED",
             ttl_seconds=3600,
         )
-        
+
         # Validate UUID format
         parsed_uuid = uuid.UUID(pause_token, version=4)
         assert str(parsed_uuid) == pause_token
@@ -256,18 +261,18 @@ class TestPauseManager:
     ):
         """pause_request() stores original_request in the pause state."""
         original_request = {"symbol": "GOOG", "amount": 500, "confidence": 0.99}
-        
+
         pause_token = await pause_manager.pause_request(
             request_id="req-789",
             reason=PauseReason.CIRCUIT_OPEN,
             original_request=original_request,
         )
-        
+
         # Retrieve and verify
         key = f"{_KEY_PREFIX}{pause_token}"
         state_json = mock_redis._storage[key]["state"]
         state = PauseState.model_validate_json(state_json)
-        
+
         assert state.original_request == original_request
 
     @pytest.mark.asyncio
@@ -278,11 +283,11 @@ class TestPauseManager:
             reason=PauseReason.COORDINATION_WAIT,
             thread_id="thread-abc-123",
         )
-        
+
         key = f"{_KEY_PREFIX}{pause_token}"
         state_json = mock_redis._storage[key]["state"]
         state = PauseState.model_validate_json(state_json)
-        
+
         assert state.thread_id == "thread-abc-123"
 
     @pytest.mark.asyncio
@@ -293,11 +298,11 @@ class TestPauseManager:
             reason=PauseReason.RATE_LIMITED,
             estimated_wait_secs=120,
         )
-        
+
         key = f"{_KEY_PREFIX}{pause_token}"
         state_json = mock_redis._storage[key]["state"]
         state = PauseState.model_validate_json(state_json)
-        
+
         assert state.estimated_wait_secs == 120
 
     @pytest.mark.asyncio
@@ -308,7 +313,7 @@ class TestPauseManager:
             reason=PauseReason.RESOURCE_UNAVAILABLE,
             ttl_seconds=1800,  # 30 minutes
         )
-        
+
         # Token should be in the zset
         assert pause_token in mock_redis._zset_storage
 
@@ -320,17 +325,17 @@ class TestPauseManager:
             request_id="req-resume",
             reason=PauseReason.RATE_LIMITED,
         )
-        
+
         # Resume it
         result = await pause_manager.resume_request(pause_token)
-        
+
         assert result == ResumeResult.RESUMED
-        
+
         # Verify state was updated
         key = f"{_KEY_PREFIX}{pause_token}"
         state_json = mock_redis._storage[key]["state"]
         state = PauseState.model_validate_json(state_json)
-        
+
         assert state.status == PauseStatus.RESUMED
         assert state.resumed_at_utc is not None
 
@@ -341,11 +346,11 @@ class TestPauseManager:
             request_id="req-idempotent",
             reason=PauseReason.CIRCUIT_OPEN,
         )
-        
+
         # First resume
         result1 = await pause_manager.resume_request(pause_token)
         assert result1 == ResumeResult.RESUMED
-        
+
         # Second resume (idempotent)
         result2 = await pause_manager.resume_request(pause_token)
         assert result2 == ResumeResult.ALREADY_RESUMED
@@ -357,17 +362,17 @@ class TestPauseManager:
             request_id="req-context",
             reason=PauseReason.MANUAL_GATE,
         )
-        
+
         resume_context = {"approved_by": "admin@example.com", "note": "Approved"}
         result = await pause_manager.resume_request(pause_token, resume_context)
-        
+
         assert result == ResumeResult.RESUMED
-        
+
         # Verify context was stored
         key = f"{_KEY_PREFIX}{pause_token}"
         state_json = mock_redis._storage[key]["state"]
         state = PauseState.model_validate_json(state_json)
-        
+
         assert state.resume_context == resume_context
 
     @pytest.mark.asyncio
@@ -384,9 +389,9 @@ class TestPauseManager:
             reason=PauseReason.RATE_LIMITED,
             original_request={"test": "data"},
         )
-        
+
         state = await pause_manager.get_pause_state(pause_token)
-        
+
         assert state is not None
         assert state.pause_token == pause_token
         assert state.request_id == "req-get-state"
@@ -401,15 +406,15 @@ class TestPauseManager:
             request_id="req-expire",
             reason=PauseReason.CIRCUIT_OPEN,
         )
-        
+
         # Explicitly expire
         await pause_manager.expire_pause(pause_token)
-        
+
         # Verify state is EXPIRED
         key = f"{_KEY_PREFIX}{pause_token}"
         state_json = mock_redis._storage[key]["state"]
         state = PauseState.model_validate_json(state_json)
-        
+
         assert state.status == PauseStatus.EXPIRED
 
     @pytest.mark.asyncio
@@ -421,13 +426,13 @@ class TestPauseManager:
             request_id="req-expire-zset",
             reason=PauseReason.RATE_LIMITED,
         )
-        
+
         # Token should be in zset initially
         assert pause_token in mock_redis._zset_storage
-        
+
         # Expire it
         await pause_manager.expire_pause(pause_token)
-        
+
         # Token should be removed from zset
         assert pause_token not in mock_redis._zset_storage
 
@@ -448,12 +453,12 @@ class TestPauseManager:
             reason=PauseReason.RATE_LIMITED,
             ttl_seconds=1,  # 1 second
         )
-        
+
         # Manually set the expires_at to the past
         key = f"{_KEY_PREFIX}{pause_token}"
         state_json = mock_redis._storage[key]["state"]
         state = PauseState.model_validate_json(state_json)
-        
+
         # Set expiry to 1 second ago
         expired_time = datetime.now(tz=timezone.utc)
         expired_time = datetime.fromtimestamp(
@@ -461,7 +466,7 @@ class TestPauseManager:
         )
         state.expires_at_utc = expired_time.isoformat()
         mock_redis._storage[key]["state"] = state.model_dump_json()
-        
+
         # Try to resume
         result = await pause_manager.resume_request(pause_token)
         assert result == ResumeResult.EXPIRED
@@ -495,13 +500,13 @@ class TestPauseManagerListing:
             request_id="req-list-2",
             reason=PauseReason.CIRCUIT_OPEN,
         )
-        
+
         # Resume one
         await pause_manager.resume_request(token1)
-        
+
         # List active pauses
         active = await pause_manager.list_active_pauses()
-        
+
         # Only token2 should be active
         active_tokens = [p.pause_token for p in active]
         assert token2 in active_tokens
@@ -519,14 +524,12 @@ class TestPauseManagerListing:
             request_id="req-count-2",
             reason=PauseReason.CIRCUIT_OPEN,
         )
-        
+
         count = await pause_manager.get_active_pause_count()
         assert count == 2
 
     @pytest.mark.asyncio
-    async def test_expire_stale_sweeps_expired_pauses(
-        self, pause_manager, mock_redis
-    ):
+    async def test_expire_stale_sweeps_expired_pauses(self, pause_manager, mock_redis):
         """expire_stale() marks past-TTL pauses as EXPIRED."""
         # Create a pause
         pause_token = await pause_manager.pause_request(
@@ -534,15 +537,15 @@ class TestPauseManagerListing:
             reason=PauseReason.RATE_LIMITED,
             ttl_seconds=1,
         )
-        
+
         # Manually set the expiry score to the past
         mock_redis._zset_storage[pause_token] = time.time() - 100
-        
+
         # Run sweep
         count = await pause_manager.expire_stale()
-        
+
         assert count == 1
-        
+
         # Token should be expired
         state = await pause_manager.get_pause_state(pause_token)
         assert state.status == PauseStatus.EXPIRED
@@ -560,10 +563,10 @@ class TestResumeEndpoint:
     async def test_resume_returns_200_on_success(self):
         """resume endpoint returns HTTP 200 on successful resume."""
         from src.gateway.server.agent_gateway_adapter import handle_resume_request
-        
+
         mock_manager = MagicMock()
         mock_manager.resume_request = AsyncMock(return_value=ResumeResult.RESUMED)
-        
+
         with patch(
             "src.gateway.governance.pause_primitive.PauseManager",
             return_value=mock_manager,
@@ -573,7 +576,7 @@ class TestResumeEndpoint:
                 MagicMock(),
             ):
                 status, body = await handle_resume_request("test-token-123")
-        
+
         assert status == 200
         assert body["status"] == "RESUMED"
 
@@ -581,10 +584,10 @@ class TestResumeEndpoint:
     async def test_resume_returns_404_for_unknown_token(self):
         """resume endpoint returns HTTP 404 for unknown tokens."""
         from src.gateway.server.agent_gateway_adapter import handle_resume_request
-        
+
         mock_manager = MagicMock()
         mock_manager.resume_request = AsyncMock(return_value=ResumeResult.NOT_FOUND)
-        
+
         with patch(
             "src.gateway.governance.pause_primitive.PauseManager",
             return_value=mock_manager,
@@ -594,7 +597,7 @@ class TestResumeEndpoint:
                 MagicMock(),
             ):
                 status, body = await handle_resume_request("unknown-token")
-        
+
         assert status == 404
         assert body["status"] == "NOT_FOUND"
         assert "error" in body
@@ -603,10 +606,10 @@ class TestResumeEndpoint:
     async def test_resume_returns_410_for_expired(self):
         """resume endpoint returns HTTP 410 Gone for expired tokens."""
         from src.gateway.server.agent_gateway_adapter import handle_resume_request
-        
+
         mock_manager = MagicMock()
         mock_manager.resume_request = AsyncMock(return_value=ResumeResult.EXPIRED)
-        
+
         with patch(
             "src.gateway.governance.pause_primitive.PauseManager",
             return_value=mock_manager,
@@ -616,7 +619,7 @@ class TestResumeEndpoint:
                 MagicMock(),
             ):
                 status, body = await handle_resume_request("expired-token")
-        
+
         assert status == 410
         assert body["status"] == "EXPIRED"
         assert "retry" in body["message"].lower()
@@ -625,12 +628,12 @@ class TestResumeEndpoint:
     async def test_resume_with_context_stores_context(self):
         """resume endpoint passes context to PauseManager."""
         from src.gateway.server.agent_gateway_adapter import handle_resume_request
-        
+
         mock_manager = MagicMock()
         mock_manager.resume_request = AsyncMock(return_value=ResumeResult.RESUMED)
-        
+
         resume_context = {"approved_by": "admin", "reason": "Manual approval"}
-        
+
         with patch(
             "src.gateway.governance.pause_primitive.PauseManager",
             return_value=mock_manager,
@@ -643,7 +646,7 @@ class TestResumeEndpoint:
                     "token-with-context",
                     resume_context=resume_context,
                 )
-        
+
         assert status == 200
         # Verify context was passed to resume_request
         mock_manager.resume_request.assert_called_once_with(
@@ -655,12 +658,12 @@ class TestResumeEndpoint:
     async def test_resume_idempotent_returns_200(self):
         """resume endpoint returns HTTP 200 for already-resumed tokens."""
         from src.gateway.server.agent_gateway_adapter import handle_resume_request
-        
+
         mock_manager = MagicMock()
         mock_manager.resume_request = AsyncMock(
             return_value=ResumeResult.ALREADY_RESUMED
         )
-        
+
         with patch(
             "src.gateway.governance.pause_primitive.PauseManager",
             return_value=mock_manager,
@@ -670,7 +673,7 @@ class TestResumeEndpoint:
                 MagicMock(),
             ):
                 status, body = await handle_resume_request("already-resumed-token")
-        
+
         assert status == 200
         assert body["status"] == "ALREADY_RESUMED"
 
@@ -678,12 +681,12 @@ class TestResumeEndpoint:
     async def test_resume_redis_error_returns_500(self):
         """resume endpoint returns HTTP 500 on Redis errors."""
         from src.gateway.server.agent_gateway_adapter import handle_resume_request
-        
+
         mock_manager = MagicMock()
         mock_manager.resume_request = AsyncMock(
             side_effect=ConnectionError("Redis unavailable")
         )
-        
+
         with patch(
             "src.gateway.governance.pause_primitive.PauseManager",
             return_value=mock_manager,
@@ -693,7 +696,7 @@ class TestResumeEndpoint:
                 MagicMock(),
             ):
                 status, body = await handle_resume_request("error-token")
-        
+
         assert status == 500
         assert body["status"] == "ERROR"
 
@@ -715,10 +718,10 @@ class TestPauseState:
     def test_pause_state_computes_expires_at(self):
         """PauseState computes expires_at_utc from paused_at + ttl_seconds."""
         state = PauseState(ttl_seconds=3600)  # 1 hour
-        
+
         paused_at = datetime.fromisoformat(state.paused_at_utc)
         expires_at = datetime.fromisoformat(state.expires_at_utc)
-        
+
         delta = (expires_at - paused_at).total_seconds()
         assert abs(delta - 3600) < 1  # Within 1 second tolerance
 
@@ -734,29 +737,31 @@ class TestPauseState:
             pause_reason=PauseReason.RATE_LIMITED,
             original_request={"key": "value"},
         )
-        
+
         json_str = state.model_dump_json()
         parsed = json.loads(json_str)
-        
+
         assert parsed["request_id"] == "req-serialize"
         assert parsed["pause_reason"] == "RATE_LIMITED"
         assert parsed["original_request"] == {"key": "value"}
 
     def test_pause_state_deserializes_from_json(self):
         """PauseState can be deserialized from JSON."""
-        json_str = json.dumps({
-            "pause_token": "test-token-123",
-            "request_id": "req-deserialize",
-            "pause_reason": "CIRCUIT_OPEN",
-            "status": "PAUSED",
-            "original_request": {"symbol": "AAPL"},
-            "paused_at_utc": "2026-08-15T12:00:00+00:00",
-            "expires_at_utc": "2026-08-15T13:00:00+00:00",
-            "ttl_seconds": 3600,
-        })
-        
+        json_str = json.dumps(
+            {
+                "pause_token": "test-token-123",
+                "request_id": "req-deserialize",
+                "pause_reason": "CIRCUIT_OPEN",
+                "status": "PAUSED",
+                "original_request": {"symbol": "AAPL"},
+                "paused_at_utc": "2026-08-15T12:00:00+00:00",
+                "expires_at_utc": "2026-08-15T13:00:00+00:00",
+                "ttl_seconds": 3600,
+            }
+        )
+
         state = PauseState.model_validate_json(json_str)
-        
+
         assert state.pause_token == "test-token-123"
         assert state.request_id == "req-deserialize"
         assert state.pause_reason == PauseReason.CIRCUIT_OPEN

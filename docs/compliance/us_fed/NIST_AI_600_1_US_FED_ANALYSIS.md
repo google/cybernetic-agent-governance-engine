@@ -108,7 +108,7 @@ An ATO package that satisfies **only AI 600-1** would be rejected because:
 
 NIST AI 600-1 (July 2024) is the Generative AI Profile of the NIST AI Risk Management Framework (AI RMF 1.0). It identifies **12 unique risk categories** specific to generative and agentic AI systems and maps them to the four AI RMF core functions: **GOVERN, MAP, MEASURE, MANAGE**. For US federal deployments (`CAGE_DEPLOYMENT_REGION=US_FED`), AI 600-1 is now a de facto companion to NIST SP 800-53 Rev. 5 for any system deploying large language models (LLMs) or agentic AI pipelines.
 
-CAGE v2.0.0 is an **agentic AI governance platform** that deploys a 7-tier neuro-symbolic governance pipeline over a multi-agent LangGraph StateGraph. It processes LLM-generated financial advisory outputs, executes trades via MCP tool calls, and operates a multi-agent consensus engine with "Risk Manager" and "Compliance Officer" personas. This makes CAGE a **dual-role system** under AI 600-1: it is simultaneously a **GenAI deployer** (it deploys vLLM inference for the governed financial advisor) and a **GenAI governance operator** (it enforces policy over those outputs). Both roles carry distinct AI 600-1 obligations.
+CAGE v2.0.0 is an **agentic AI governance platform** that deploys an 8-tier governance pipeline (FTRA + 7 in-pipeline tiers) over a multi-agent LangGraph StateGraph. It processes LLM-generated financial advisory outputs, executes trades via MCP tool calls, and operates a multi-agent consensus engine with "Risk Manager" and "Compliance Officer" personas. This makes CAGE a **dual-role system** under AI 600-1: it is simultaneously a **GenAI deployer** (it deploys vLLM inference for the governed financial advisor) and a **GenAI governance operator** (it enforces policy over those outputs). Both roles carry distinct AI 600-1 obligations.
 
 ### Key Findings
 
@@ -175,7 +175,7 @@ Before mapping AI 600-1 risks, this section inventories all CAGE components that
 | **vLLM Llama-3.1 (fast inference)** | GenAI model (advisory) | Medium — generates financial recommendations | NeMo Guardrails + OPA policy enforcement |
 | **ConsensusEngine** (Risk Manager + Compliance Officer personas) | Multi-agent consensus | Medium — parallel LLM critic calls | Results queued for background audit; threshold USD 10k |
 | **NeMo Guardrails** (Colang 2.x flows) | AI safety layer | Low — deterministic rule enforcement | Colang flows are human-authored |
-| **SymbolicGovernor** (7-tier pipeline) | AI governance orchestrator | Low — deterministic policy enforcement | All tiers are deterministic except Tier 5 (consensus) |
+| **SymbolicGovernor** (8-tier pipeline: FTRA + 7 in-pipeline tiers) | AI governance orchestrator | Low — deterministic policy enforcement | All tiers are deterministic except Tier 5 (consensus) |
 | **CausalGatekeeper** | Causal inference gate | Low — statistical causal model | Deterministic causal graph |
 | **ExternalNormativeProvider** (TrustLayers) | External AI validator | Low — stub mode currently | Adaptive FRIA gating (tri-state) |
 | **EvaluatorAuditor** | AI output auditor | Low — rule-based scoring | Human review required for LLM advisory outputs |

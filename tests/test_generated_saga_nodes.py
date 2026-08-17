@@ -16,6 +16,7 @@
 All tests are marked pytest.mark.local and use only mocks — no live Redis,
 OPA, or MCP connections required.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -250,9 +251,7 @@ class TestForwardExecuteTradeNodeUCA4:
 
     def test_completed_entry_has_idempotency_key_set(self) -> None:
         state = _make_state(transactions=[])
-        _, returned = self._run_forward(
-            state, mcp_result={"transaction_id": "tx-123"}
-        )
+        _, returned = self._run_forward(state, mcp_result={"transaction_id": "tx-123"})
 
         entry = returned["completed_transactions"][0]
         expected_key = saga._derive_idempotency_key("tx-123", "reverse_trade")
@@ -294,7 +293,6 @@ class TestForwardExecuteTradeNodeUCA4:
         state = _make_state(transactions=[])
         mock_client = MagicMock()
         mock_client.call_tool = AsyncMock(return_value={"transaction_id": "x"})
-
 
         def fake_run_until_complete(coro):  # type: ignore[override]
             # We cannot await the coro in sync context, capture the mock return

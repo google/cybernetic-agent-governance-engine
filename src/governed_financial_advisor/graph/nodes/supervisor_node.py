@@ -375,7 +375,8 @@ def doer_node(state):  # type: ignore[no-untyped-def]
         )
 
         with genai_span(
-            name="final_response_generation", model=os.getenv("MODEL_FAST")  # type: ignore[arg-type]
+            name="final_response_generation",
+            model=os.getenv("MODEL_FAST"),  # type: ignore[arg-type]
         ):
             final_response = _get_fast_llm().invoke(
                 [final_gen_system_prompt, final_gen_human_prompt]

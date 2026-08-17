@@ -30,6 +30,7 @@ Environment variables:
                      ssl_cert_reqs=None is used to allow self-signed certs in dev.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -169,9 +170,20 @@ try:
 
         def __init__(self):  # type: ignore[no-untyped-def]
             self._client: aioredis.Redis | None = None
+            self._loop: asyncio.AbstractEventLoop | None = None
 
         def _get(self) -> aioredis.Redis:
-            if self._client is None:
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                current_loop = None
+
+            if (
+                self._client is None
+                or (self._loop is not None and self._loop != current_loop)
+                or (self._loop is not None and self._loop.is_closed())
+            ):
+                self._loop = current_loop
                 self._client = aioredis.Redis(
                     host=_REDIS_HOST,
                     port=_REDIS_PORT,

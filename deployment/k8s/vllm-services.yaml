@@ -12,15 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ── Cross-namespace ExternalName Services ────────────────────────────────────
-# vLLM Deployments run in the vllm-inference namespace (PSA: baseline) to allow
-# GPU/root access. These ExternalName Services in governance-stack proxy requests
-# to the real Services in vllm-inference, so existing env vars in financial-advisor
-# and gateway (e.g. vllm-service.governance-stack.svc.cluster.local) need no changes.
-#
-# Real ClusterIP Services (with pod selectors) live in vllm-inference namespace:
-#   deployment/k8s/vllm-cross-namespace-services.yaml
-# ─────────────────────────────────────────────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:

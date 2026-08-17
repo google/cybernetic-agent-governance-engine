@@ -18,7 +18,7 @@ Routes governance decisions that exceed the consensus threshold or fall below
 the confidence threshold to a human reviewer via the DeferQueue.
 
 POAM: AI600-004
-Controls: ConsensusEngine (threshold USD 10,000), HITL escalation path
+Controls: ConsensusGate (threshold USD 10,000), HITL escalation path
 SR 26-2 §3.2: HITL SLA — escalations must be resolved within 4 hours (US_FED
 only). EU_ECB and APAC_MAS deployments apply their own regional SLA — see
 get_hitl_sla_hours() below and docs/governance/HUMAN_OVERSIGHT_SCOPE.md.
@@ -117,7 +117,7 @@ class EscalationReason(Enum):
     """
 
     CONSENSUS_THRESHOLD = "consensus_threshold_exceeded"
-    """ConsensusEngine: amount_usd > CONSENSUS_THRESHOLD_USD (default USD 10,000)."""
+    """ConsensusGate: amount_usd > CONSENSUS_THRESHOLD_USD (default USD 10,000)."""
 
     CONFIDENCE_LOW = "confidence_below_threshold"
     """Confabulation scorer: confidence < CONFIDENCE_MIN_SCORE (default 0.95)."""
@@ -129,7 +129,7 @@ class EscalationReason(Enum):
     """Explicit manual review request from OPA policy (MANUAL_REVIEW decision)."""
 
     GOVERNANCE_CONFIDENCE_LOW = "governance_layer_confidence_below_threshold"
-    """Recursive governance risk: ConsensusEngine's own LLM call has low confidence."""
+    """Recursive governance risk: ConsensusGate's own LLM call has low confidence."""
 
 
 # ---------------------------------------------------------------------------

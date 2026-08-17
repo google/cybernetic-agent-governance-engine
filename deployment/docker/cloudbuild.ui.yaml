@@ -12,15 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Substitutions:
-#   _SHORT_SHA — short git SHA for image tagging.
-#                Defaults to "latest" for CLI submissions without --substitutions.
-#                Override via: --substitutions=_SHORT_SHA=$(git rev-parse --short HEAD)
-#
-# IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
-# To push to a different registry (e.g., ECR, ACR, Docker Hub), replace gcr.io/$PROJECT_ID
-# with your registry prefix. Example for Artifact Registry:
-#   us-central1-docker.pkg.dev/$PROJECT_ID/governance-stack
 substitutions:
   _SHORT_SHA: "latest"
 

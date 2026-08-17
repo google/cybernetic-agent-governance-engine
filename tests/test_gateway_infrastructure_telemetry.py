@@ -1,3 +1,17 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Unit tests for src/gateway/infrastructure/telemetry.py — get_tracer().
 
@@ -25,7 +39,10 @@ class TestGetTracerWithOpenTelemetry:
         mock_otel = MagicMock()
         mock_otel.get_tracer.return_value = mock_tracer
 
-        with patch.dict("sys.modules", {"opentelemetry": MagicMock(), "opentelemetry.trace": mock_otel}):
+        with patch.dict(
+            "sys.modules",
+            {"opentelemetry": MagicMock(), "opentelemetry.trace": mock_otel},
+        ):
             # Remove cached module so reimport picks up mock
             sys.modules.pop("src.gateway.infrastructure.telemetry", None)
             from src.gateway.infrastructure.telemetry import get_tracer
@@ -38,13 +55,19 @@ class TestGetTracerWithOpenTelemetry:
         """get_tracer(name) passes the name to the OTel tracer provider."""
         captured_names: list[str] = []
         mock_otel = MagicMock()
-        mock_otel.get_tracer.side_effect = lambda name: captured_names.append(name) or MagicMock()
+        mock_otel.get_tracer.side_effect = lambda name: (
+            captured_names.append(name) or MagicMock()
+        )
 
         mock_otel_pkg = MagicMock()
         mock_otel_pkg.trace = mock_otel
-        with patch.dict("sys.modules", {"opentelemetry": mock_otel_pkg, "opentelemetry.trace": mock_otel}):
+        with patch.dict(
+            "sys.modules",
+            {"opentelemetry": mock_otel_pkg, "opentelemetry.trace": mock_otel},
+        ):
             sys.modules.pop("src.gateway.infrastructure.telemetry", None)
             from src.gateway.infrastructure.telemetry import get_tracer
+
             get_tracer("my.instrumentation.scope")
 
         assert "my.instrumentation.scope" in captured_names
@@ -53,13 +76,19 @@ class TestGetTracerWithOpenTelemetry:
         """Default instrumentation scope is 'src.gateway'."""
         captured_names: list[str] = []
         mock_otel = MagicMock()
-        mock_otel.get_tracer.side_effect = lambda name: captured_names.append(name) or MagicMock()
+        mock_otel.get_tracer.side_effect = lambda name: (
+            captured_names.append(name) or MagicMock()
+        )
 
         mock_otel_pkg = MagicMock()
         mock_otel_pkg.trace = mock_otel
-        with patch.dict("sys.modules", {"opentelemetry": mock_otel_pkg, "opentelemetry.trace": mock_otel}):
+        with patch.dict(
+            "sys.modules",
+            {"opentelemetry": mock_otel_pkg, "opentelemetry.trace": mock_otel},
+        ):
             sys.modules.pop("src.gateway.infrastructure.telemetry", None)
             from src.gateway.infrastructure.telemetry import get_tracer
+
             get_tracer()  # use default
 
         assert "src.gateway" in captured_names
@@ -69,7 +98,10 @@ class TestGetTracerWithOpenTelemetry:
         mock_otel = MagicMock()
         mock_otel.get_tracer.return_value = MagicMock()
 
-        with patch.dict("sys.modules", {"opentelemetry": MagicMock(), "opentelemetry.trace": mock_otel}):
+        with patch.dict(
+            "sys.modules",
+            {"opentelemetry": MagicMock(), "opentelemetry.trace": mock_otel},
+        ):
             sys.modules.pop("src.gateway.infrastructure.telemetry", None)
             from src.gateway.infrastructure.telemetry import get_tracer
 
@@ -89,10 +121,13 @@ class TestGetTracerWithoutOpenTelemetry:
     def test_get_tracer_returns_none_when_otel_missing(self):
         """get_tracer() returns None when opentelemetry cannot be imported."""
         # Simulate ImportError by making the module appear absent
-        with patch.dict("sys.modules", {"opentelemetry": None, "opentelemetry.trace": None}):
+        with patch.dict(
+            "sys.modules", {"opentelemetry": None, "opentelemetry.trace": None}
+        ):
             sys.modules.pop("src.gateway.infrastructure.telemetry", None)
             try:
                 from src.gateway.infrastructure.telemetry import get_tracer
+
                 result = get_tracer("no.otel")
                 # Stub returns None per fallback branch
                 assert result is None

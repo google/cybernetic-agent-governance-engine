@@ -12,18 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# iam.tf — Least-privilege IAM service accounts for CAGE (POAM-002 / AC-6)
-#
-# This file implements the principle of least privilege for all CAGE GCP
-# service accounts, replacing any overly broad roles/editor or project-level
-# bindings with purpose-specific, resource-scoped custom role bindings.
-#
-# POAM-002: IAM Terraform bindings use overly broad roles.
-# Remediation: purpose-specific custom IAM roles scoped per service.
-#
-# REVIEW REQUIRED: Run `terraform plan` to validate before applying.
-# These resource definitions require a real GCP project to plan against.
-
 locals {
   # Service account IDs
   sa_gateway          = "cage-gateway"

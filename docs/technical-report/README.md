@@ -3,15 +3,15 @@
 | Field              | Value                  |
 | ------------------ | ---------------------- |
 | **Classification** | PUBLIC                 |
-| **Date**           | 2026-06-03             |
-| **Version**        | 0.1.0                  |
-| **Status**         | Complete (10 documents) — v2.1.0 stable current; v2.0.0 GO tag 2026-06-08; GKE deployment verified 2026-06-03 |
+| **Date**           | 2026-08-16             |
+| **Version**        | 3.0.0                  |
+| **Status**         | Complete (10 documents) — v3.0.0 stable (GKE deployment verified; 2,741 passed, 0 failed, 182 skipped; 75.12% coverage) |
 
 ---
 
 ## Introduction
 
-The Cybernetic Governance Engine (CAGE) is a production-grade, multi-agent AI governance framework designed for regulated financial advising, deployed on Google Kubernetes Engine (GKE). CAGE v2.1.0 implements **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks — via Cloud KMS HSM-backed signing, human-gated NeMo refinement, heterogeneous multi-model consensus, and externally reconciled Control Barrier Function balances (Anchorage Digital gRPC ledger provider — **FUTURE STATE / POAM-023**, target 2026-09-08; current CBF balances are Redis-backed). This technical report series documents the full system across **ten** specialized documents, covering its architecture, technology stack, agent pipeline design, neuro-symbolic governance engine, regulatory compliance posture, security controls, deployment infrastructure, an operational runbook capturing verified recovery procedures and integration test results, and a formal verification proof. Together, the documents provide a complete engineering and compliance record for security assessors, architects, compliance officers, operations teams, and AI/ML engineers evaluating or operating the system.
+The Cybernetic Governance Engine (CAGE) is a production-grade, multi-agent AI governance framework designed for regulated financial advising, deployed on Google Kubernetes Engine (GKE). CAGE v3.0.0 implements **evidentiary independence** — the system cannot manufacture the conditions necessary to satisfy its own governance checks — via Cloud KMS HSM-backed signing, strictly human-gated NeMo refinement, heterogeneous multi-model consensus, Lua-atomic Control Barrier Functions (`atomic_verify_and_commit()`), canonical 1.1 evidence stream hashing, and externally reconciled Control Barrier Function balances (POAM-023 / POAM-2026-038 closed; GCS WORM ledger + Cloud KMS signing with 300s TTL in Redis). This technical report series documents the full system across **ten** specialized documents, covering its architecture, technology stack, agent pipeline design, neuro-symbolic governance engine, regulatory compliance posture, security controls, deployment infrastructure, an operational runbook capturing verified recovery procedures and integration test results, and a formal verification proof. Together, the documents provide a complete engineering and compliance record for security assessors, architects, compliance officers, operations teams, and AI/ML engineers evaluating or operating the system.
 
 ---
 
@@ -36,7 +36,7 @@ The Cybernetic Governance Engine (CAGE) is a production-grade, multi-agent AI go
 
 | Fact                           | Value                                     |
 | ------------------------------ | ----------------------------------------- |
-| CAGE Version                   | 0.1.0                                     |
+| CAGE Version                   | 3.0.0                                     |
 | NIST RMF Overall Readiness     | 24%                                       |
 | System Risk Level              | HIGH (no ATO)                             |
 | Compliance Frameworks          | 19 (NIST, ISO, SEC, FINRA, GLBA, SR 26-2, EU AI Act, DORA, GDPR, EBA, MAS FEAT, MAS TRM, CSA AARM) |

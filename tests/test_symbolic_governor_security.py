@@ -42,6 +42,7 @@ pytestmark = pytest.mark.unit
 
 def _make_governor(fiscal_limit_guard=None):
     """Construct a SymbolicGovernor with all dependencies mocked."""
+    from src.gateway.governance.ftra.models import FtraBoundaryResult
     from src.gateway.governance.symbolic_governor import SymbolicGovernor
 
     opa_client = AsyncMock()
@@ -57,7 +58,7 @@ def _make_governor(fiscal_limit_guard=None):
     consensus_engine = AsyncMock()
     consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
 
-    return SymbolicGovernor(
+    governor = SymbolicGovernor(
         opa_client=opa_client,
         safety_filter=safety_filter,
         consensus_engine=consensus_engine,
@@ -65,6 +66,22 @@ def _make_governor(fiscal_limit_guard=None):
         telemetry_provider=None,
         fiscal_limit_guard=fiscal_limit_guard,
     )
+
+    # Mock FTRA boundary check to return a safe result (no HITL required).
+    # This allows tests to pass through the FTRA boundary gate without being
+    # blocked by the IrreversibilityClassifier classifying "execute_trade" as
+    # IRREVERSIBLE_TERMINAL.
+    safe_ftra_result = FtraBoundaryResult(
+        requires_hitl=False,
+        irreversibility_score=0.0,
+        classification="READ_ONLY",
+        terminal_match=None,
+        violations=[],
+        bypassed_ftra_node=False,
+    )
+    governor._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
+
+    return governor
 
 
 # ---------------------------------------------------------------------------
@@ -395,9 +412,15 @@ async def test_fiscal_limit_guard_reserve_is_awaited():
         "amount": 5000.0,
         "symbol": "AAPL",
         "agent_id": "test-agent",
+        "ftra_status": "CLEAR",  # Indicates FTRA gate already processed in-graph
     }
 
-    await governor.govern("execute_trade", params)
+    # Mock generate_seal_with_evidence to avoid Redis dependency
+    with patch(
+        "src.gateway.governance.routing_seal.generate_seal_with_evidence",
+        new=AsyncMock(return_value="mock-seal-token"),
+    ):
+        await governor.govern("execute_trade", params)
 
     # Verify reserve() was actually awaited (AsyncMock tracks await calls)
     mock_guard.reserve.assert_awaited_once()
@@ -433,11 +456,18 @@ async def test_fiscal_limit_guard_reserve_called_with_correct_args():
         "amount": 10000.0,
         "symbol": "TSLA",
         "agent_id": "trading-agent",
+        "ftra_status": "CLEAR",  # Indicates FTRA gate already processed in-graph
     }
 
-    with patch(
-        "src.gateway.governance.causal_gatekeeper.causal_safety_check",
-        return_value=True,
+    with (
+        patch(
+            "src.gateway.governance.causal_gatekeeper.causal_safety_check",
+            return_value=True,
+        ),
+        patch(
+            "src.gateway.governance.routing_seal.generate_seal_with_evidence",
+            new=AsyncMock(return_value="mock-seal-token"),
+        ),
     ):
         await governor.govern("execute_trade", params)
 
@@ -478,6 +508,7 @@ async def test_fiscal_limit_guard_release_is_awaited_on_rejection():
         "amount": 999_999.0,
         "symbol": "AAPL",
         "agent_id": "test-agent",
+        "ftra_status": "CLEAR",  # Indicates FTRA gate already processed in-graph
     }
 
     with pytest.raises(GovernanceError, match="Fiscal Limit Pre-Reservation REJECTED"):
@@ -495,6 +526,7 @@ async def test_fiscal_limit_guard_release_awaited_on_post_reservation_violation(
     import time
 
     from src.gateway.governance.fiscal_limit_guard import ReservationToken
+    from src.gateway.governance.ftra.models import FtraBoundaryResult
     from src.gateway.governance.symbolic_governor import (
         GovernanceError,
         SymbolicGovernor,
@@ -537,11 +569,23 @@ async def test_fiscal_limit_guard_release_awaited_on_post_reservation_violation(
         fiscal_limit_guard=mock_guard,
     )
 
+    # Mock FTRA boundary check to return a safe result
+    safe_ftra_result = FtraBoundaryResult(
+        requires_hitl=False,
+        irreversibility_score=0.0,
+        classification="READ_ONLY",
+        terminal_match=None,
+        violations=[],
+        bypassed_ftra_node=False,
+    )
+    governor._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
+
     params = {
         "confidence": 0.99,
         "amount": 5000.0,
         "symbol": "AAPL",
         "agent_id": "test-agent",
+        "ftra_status": "CLEAR",  # Indicates FTRA gate already processed in-graph
     }
 
     with pytest.raises(GovernanceError, match="Consensus Rejection"):
@@ -562,10 +606,16 @@ async def test_fiscal_limit_guard_skipped_when_none():
         "confidence": 0.99,
         "amount": 5000.0,
         "symbol": "AAPL",
+        "ftra_status": "CLEAR",  # Indicates FTRA gate already processed in-graph
     }
 
-    # Should not raise — fiscal guard is optional
-    await governor.govern("execute_trade", params)
+    # Mock generate_seal_with_evidence to avoid Redis dependency
+    with patch(
+        "src.gateway.governance.routing_seal.generate_seal_with_evidence",
+        new=AsyncMock(return_value="mock-seal-token"),
+    ):
+        # Should not raise — fiscal guard is optional
+        await governor.govern("execute_trade", params)
 
 
 @pytest.mark.asyncio
@@ -579,7 +629,12 @@ async def test_fiscal_limit_guard_skipped_for_non_trade_actions():
 
     params = {"confidence": 0.99, "amount": 5000.0}
 
-    # Non-trade action — fiscal guard should not be invoked
-    await governor.govern("market_analysis", params)
+    # Mock generate_seal_with_evidence to avoid Redis dependency
+    with patch(
+        "src.gateway.governance.routing_seal.generate_seal_with_evidence",
+        new=AsyncMock(return_value="mock-seal-token"),
+    ):
+        # Non-trade action — fiscal guard should not be invoked
+        await governor.govern("market_analysis", params)
 
     mock_guard.reserve.assert_not_awaited()

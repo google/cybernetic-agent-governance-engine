@@ -315,3 +315,6 @@ class TestOIDCValidationMiddleware:
             m for m in responses_sent if m.get("type") == "http.response.start"
         )
         assert status_msg["status"] == 401
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

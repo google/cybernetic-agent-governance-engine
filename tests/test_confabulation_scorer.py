@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import pytest
 
 """Tests for confabulation scorer — AI 600-1 §2.1 (CTRL_AGT_001).
 
@@ -150,3 +151,6 @@ class TestIsConfabulationBlocked:
     def test_perfect_confidence_is_not_blocked(self):
         """Perfect confidence (1.0) is never blocked."""
         assert is_confabulation_blocked(1.0) is False
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

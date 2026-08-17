@@ -377,12 +377,16 @@ class UCALogger:
             return
 
         try:
-            from src.compliance_bridge.storage import (
-                WORMStorage,  # type: ignore[attr-defined]
-            )
+            from src.compliance_bridge import storage
+
+            worm_cls: Any = getattr(storage, "WORMStorage", None)
+            if worm_cls is None:
+                raise ImportError(
+                    "WORMStorage class not defined in compliance_bridge.storage"
+                )
 
             region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
-            await WORMStorage.write(
+            await worm_cls.write(
                 bucket=bucket, path=path, content=content, region=region
             )
         except ImportError:

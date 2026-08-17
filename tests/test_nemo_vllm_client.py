@@ -1,3 +1,17 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Unit tests for src/gateway/governance/nemo/vllm_client.py — VLLMLLM and helpers.
 
@@ -34,6 +48,7 @@ except ImportError:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _minimal_stubs():
     """Return sys.modules patches for heavy optional deps."""
     mock_trace = MagicMock()
@@ -58,12 +73,14 @@ def _minimal_stubs():
         "opentelemetry.trace.StatusCode": MagicMock(),
         "src.governed_financial_advisor.infrastructure.config_manager": MagicMock(
             config_manager=MagicMock(
-                get=MagicMock(side_effect=lambda k, d=None: {
-                    "GUARDRAILS_MODEL_NAME": "test-model",
-                    "MODEL_FAST": "fast-model",
-                    "VLLM_BASE_URL": "http://vllm:8000/v1",
-                    "VLLM_API_KEY": "test-key",
-                }.get(k, d))
+                get=MagicMock(
+                    side_effect=lambda k, d=None: {
+                        "GUARDRAILS_MODEL_NAME": "test-model",
+                        "MODEL_FAST": "fast-model",
+                        "VLLM_BASE_URL": "http://vllm:8000/v1",
+                        "VLLM_API_KEY": "test-key",
+                    }.get(k, d)
+                )
             )
         ),
     }
@@ -86,6 +103,7 @@ def _make_litellm_response(content: str = "mock output"):
 # Tests: _truncate helper
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 class TestTruncateHelper:
     """Tests for the _truncate() utility function."""
@@ -93,6 +111,7 @@ class TestTruncateHelper:
     def test_short_string_returned_unchanged(self):
         """Strings within the budget are returned as-is."""
         import sys
+
         with patch.dict("sys.modules", _minimal_stubs()):
             sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
             from src.gateway.governance.nemo.vllm_client import _truncate
@@ -103,6 +122,7 @@ class TestTruncateHelper:
     def test_long_string_is_truncated_with_suffix(self):
         """Strings exceeding max_chars are cut and suffixed with [TRUNCATED]."""
         import sys
+
         with patch.dict("sys.modules", _minimal_stubs()):
             sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
             from src.gateway.governance.nemo.vllm_client import _truncate
@@ -117,6 +137,7 @@ class TestTruncateHelper:
     def test_exact_length_not_truncated(self):
         """Strings of exactly max_chars are not truncated."""
         import sys
+
         with patch.dict("sys.modules", _minimal_stubs()):
             sys.modules.pop("src.gateway.governance.nemo.vllm_client", None)
             from src.gateway.governance.nemo.vllm_client import _truncate
@@ -130,6 +151,7 @@ class TestTruncateHelper:
 # ---------------------------------------------------------------------------
 # Tests: VLLMLLM initialization
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 class TestVLLMLLMInit:
@@ -146,15 +168,20 @@ class TestVLLMLLMInit:
         api_base from the constructor call so pydantic uses that falsy default.
         """
         import sys
+
         stubs = _minimal_stubs()
-        stubs["src.governed_financial_advisor.infrastructure.config_manager"] = MagicMock(
-            config_manager=MagicMock(
-                get=MagicMock(side_effect=lambda k, d=None: {
-                    "GUARDRAILS_MODEL_NAME": "model",
-                    "MODEL_FAST": "fast",
-                    "VLLM_BASE_URL": "",  # ← missing/empty
-                    "VLLM_API_KEY": "key",
-                }.get(k, d))
+        stubs["src.governed_financial_advisor.infrastructure.config_manager"] = (
+            MagicMock(
+                config_manager=MagicMock(
+                    get=MagicMock(
+                        side_effect=lambda k, d=None: {
+                            "GUARDRAILS_MODEL_NAME": "model",
+                            "MODEL_FAST": "fast",
+                            "VLLM_BASE_URL": "",  # ← missing/empty
+                            "VLLM_API_KEY": "key",
+                        }.get(k, d)
+                    )
+                )
             )
         )
 
@@ -204,6 +231,7 @@ class TestVLLMLLMInit:
 # ---------------------------------------------------------------------------
 # Tests: VLLMLLM._acall
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 class TestVLLMLLMAcall:
@@ -260,6 +288,7 @@ class TestVLLMLLMAcall:
 # Tests: timeout constants
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 class TestTimeoutConstants:
     """Tests for the per-rail timeout constants."""
@@ -268,6 +297,7 @@ class TestTimeoutConstants:
         """NEMO_VLLM_TIMEOUT_SECONDS defaults to 45.0."""
         import os
         import sys
+
         env = {k: v for k, v in os.environ.items() if k != "NEMO_VLLM_TIMEOUT_SECONDS"}
 
         with patch.dict("sys.modules", _minimal_stubs()):
@@ -283,7 +313,10 @@ class TestTimeoutConstants:
         """ADVISOR_VLLM_TIMEOUT_SECONDS defaults to 90.0."""
         import os
         import sys
-        env = {k: v for k, v in os.environ.items() if k != "ADVISOR_VLLM_TIMEOUT_SECONDS"}
+
+        env = {
+            k: v for k, v in os.environ.items() if k != "ADVISOR_VLLM_TIMEOUT_SECONDS"
+        }
 
         with patch.dict("sys.modules", _minimal_stubs()):
             with patch.dict(os.environ, env, clear=True):

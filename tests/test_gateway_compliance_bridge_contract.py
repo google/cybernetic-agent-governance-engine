@@ -198,7 +198,9 @@ class TestHealthEndpointSchema:
             "langfuse_app_configured",
             "oscal_storage_configured",
         ):
-            assert isinstance(body[key], bool), f"{key!r} must be bool, got {type(body[key])}"
+            assert isinstance(body[key], bool), (
+                f"{key!r} must be bool, got {type(body[key])}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +213,14 @@ class TestControlsEndpointSchema:
     """``GET /v1/controls`` must return the documented response shape."""
 
     _TOP_LEVEL_KEYS = {"controls", "total", "framework_filter", "deployment_region"}
-    _CONTROL_ITEM_KEYS = {"control_id", "name", "iso_clause", "score_name", "critical", "frameworks"}
+    _CONTROL_ITEM_KEYS = {
+        "control_id",
+        "name",
+        "iso_clause",
+        "score_name",
+        "critical",
+        "frameworks",
+    }
 
     def test_controls_returns_200(self, client: TestClient) -> None:
         response = client.get("/v1/controls")
@@ -339,7 +348,9 @@ class TestAuditIngestAsyncSchema:
         )
         assert isinstance(response.json()["audit_id"], str)
 
-    def test_background_ingest_explicit_audit_id_echoed(self, client: TestClient) -> None:
+    def test_background_ingest_explicit_audit_id_echoed(
+        self, client: TestClient
+    ) -> None:
         """When the caller provides an audit_id it must appear verbatim in the response."""
         response = client.post(
             "/v1/audit/ingest?background=true",
@@ -436,7 +447,9 @@ class TestSafetyFilterProtocol:
             "update_state",
             "rollback_state",
         ):
-            assert hasattr(sf, method_name), f"SafetyFilter missing method: {method_name!r}"
+            assert hasattr(sf, method_name), (
+                f"SafetyFilter missing method: {method_name!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -472,13 +485,17 @@ class TestConsensusProviderProtocol:
     async def test_check_consensus_has_status_key(self) -> None:
         cp = self._make_concrete()
         result = await cp.check_consensus("buy", 100.0, "AAPL")
-        assert "status" in result, "ConsensusProvider.check_consensus must return a 'status' key"
+        assert "status" in result, (
+            "ConsensusProvider.check_consensus must return a 'status' key"
+        )
 
     @pytest.mark.asyncio
     async def test_check_consensus_has_reason_key(self) -> None:
         cp = self._make_concrete()
         result = await cp.check_consensus("buy", 100.0, "AAPL")
-        assert "reason" in result, "ConsensusProvider.check_consensus must return a 'reason' key"
+        assert "reason" in result, (
+            "ConsensusProvider.check_consensus must return a 'reason' key"
+        )
 
     @pytest.mark.asyncio
     async def test_check_consensus_status_is_string(self) -> None:
@@ -488,4 +505,6 @@ class TestConsensusProviderProtocol:
 
     def test_check_consensus_method_present(self) -> None:
         cp = self._make_concrete()
-        assert hasattr(cp, "check_consensus"), "ConsensusProvider must expose 'check_consensus'"
+        assert hasattr(cp, "check_consensus"), (
+            "ConsensusProvider must expose 'check_consensus'"
+        )

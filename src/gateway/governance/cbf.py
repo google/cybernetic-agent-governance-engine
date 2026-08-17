@@ -12,35 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ---------------------------------------------------------------------------
-# Formal State-Transition Safety Model — Discrete-Time CBF
-# ---------------------------------------------------------------------------
-# CAGE enforces financial state transitions using a discrete-time Control
-# Barrier Function (CBF), ensuring the admissibility envelope E is never
-# violated at the storage layer.
-#
-# State-transition model:
-#   S(t+1) = f(S(t), I(t), R, E)   subject to   f(S(t), I(t), R) ∈ E
-#
-# Where:
-#   S(t)  = current system state = {cash_balance: float}
-#   I(t)  = agent input = {action: str, amount: float, ...}
-#   R     = compiled domain rules (OPA Rego ASTs, NeMo Colang rails, STPA UCAs)
-#   E     = admissibility envelope = {s ∈ S : h(s) >= 0}
-#
-# Safety function (barrier certificate):
-#   h(S(t)) = cash_balance(t) - min_cash_balance   [h >= 0 iff state is safe]
-#
-# Discrete-time CBF condition (Ames et al., IEEE TAC 2017):
-#   h(S(t+1)) >= (1 - g) * h(S(t))   for all t, where g in (0,1)
-#
-# Enforcement layers:
-#   verify_action():            Evaluates h(S(t+1)) >= (1-g)*h(S(t)) -- read-only
-#   update_state():             Commits S(t) → S(t+1) — WATCH/MULTI/EXEC
-#   atomic_verify_and_commit(): Evaluates AND commits atomically via Lua,
-#                               eliminating the TOCTOU window between phases.
-# ---------------------------------------------------------------------------
-
 """
 Stateful Redis-backed financial invariant enforcer.
 
@@ -457,7 +428,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             return False
 
     async def _validate_sequence(
-        self, incoming_sequence: int, source: str, sync_redis: object
+        self, incoming_sequence: int, source: str, sync_redis: Any
     ) -> tuple[bool, str]:
         """Validate incoming sequence is strictly greater than last accepted.
 
@@ -477,7 +448,8 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         try:
             # Read last accepted sequence
             last_accepted_raw = await asyncio.to_thread(
-                sync_redis.get, _REDIS_KEY_SEQUENCE_LAST_ACCEPTED  # type: ignore[attr-defined]
+                sync_redis.get,
+                _REDIS_KEY_SEQUENCE_LAST_ACCEPTED,  # type: ignore[attr-defined]
             )
             last_accepted = int(last_accepted_raw) if last_accepted_raw else 0
 
@@ -489,7 +461,9 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
             # Update last_accepted atomically
             await asyncio.to_thread(
-                sync_redis.set, _REDIS_KEY_SEQUENCE_LAST_ACCEPTED, str(incoming_sequence)  # type: ignore[attr-defined]
+                sync_redis.set,
+                _REDIS_KEY_SEQUENCE_LAST_ACCEPTED,
+                str(incoming_sequence),  # type: ignore[attr-defined]
             )
             logger.debug(
                 "[R-04] Sequence validated: incoming=%d > last_accepted=%d, updated",
@@ -565,8 +539,13 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                         if sig_valid:
                             # ── §2.10 R-04 Replay defense: sequence validation ────
                             if _REPLAY_DEFENSE_ENABLED and verified.sequence > 0:
-                                sequence_valid, seq_reason = await self._validate_sequence(
-                                    verified.sequence, verified.source, sync_redis_client
+                                (
+                                    sequence_valid,
+                                    seq_reason,
+                                ) = await self._validate_sequence(
+                                    verified.sequence,
+                                    verified.source,
+                                    sync_redis_client,
                                 )
                                 if not sequence_valid:
                                     # Replay detected — fall through to self-reported
@@ -590,7 +569,9 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                     )
                                     # Increment Prometheus counter for replay rejection
                                     if _REPLAY_REJECTED_COUNTER is not None:
-                                        _REPLAY_REJECTED_COUNTER.labels(source=verified.source).inc()
+                                        _REPLAY_REJECTED_COUNTER.labels(
+                                            source=verified.source
+                                        ).inc()
                                     # Fall through to self-reported balance below
                                 else:
                                     # Sequence valid — update last_accepted and proceed
@@ -867,7 +848,12 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         h_next = self.get_h(next_cash)
         required_h_next = (1.0 - self.gamma) * h_t
 
-        logger.info("🛡️ CBF Check | Cash: %.2f (effective=%.2f) → %.2f", current_cash, effective_balance, next_cash)
+        logger.info(
+            "🛡️ CBF Check | Cash: %.2f (effective=%.2f) → %.2f",
+            current_cash,
+            effective_balance,
+            next_cash,
+        )
 
         result = "SAFE"
         if h_next < required_h_next or h_next < 0:
@@ -971,7 +957,9 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
                     # Phase 4.3: WAIT for replication if configured
                     wait_result = await self._sync_to_replicas()
-                    wait_suffix = " (WAIT OK)" if _WAIT_REPLICAS > 0 and wait_result else ""
+                    wait_suffix = (
+                        " (WAIT OK)" if _WAIT_REPLICAS > 0 and wait_result else ""
+                    )
                     if _WAIT_REPLICAS > 0 and not wait_result:
                         wait_suffix = " (WAIT timeout)"
 
@@ -1067,7 +1055,9 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
                     # Phase 4.3: WAIT for replication if configured
                     wait_result = await self._sync_to_replicas()
-                    wait_suffix = " (WAIT OK)" if _WAIT_REPLICAS > 0 and wait_result else ""
+                    wait_suffix = (
+                        " (WAIT OK)" if _WAIT_REPLICAS > 0 and wait_result else ""
+                    )
                     if _WAIT_REPLICAS > 0 and not wait_result:
                         wait_suffix = " (WAIT timeout)"
 
@@ -1274,7 +1264,9 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             )
             return (True, "COMMITTED")
         else:
-            logger.info("⛔ CBF atomic check+commit: UNSAFE — %s (epoch=%d)", message, new_epoch)
+            logger.info(
+                "⛔ CBF atomic check+commit: UNSAFE — %s (epoch=%d)", message, new_epoch
+            )
             return (False, message)
 
 

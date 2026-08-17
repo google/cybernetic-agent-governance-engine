@@ -97,27 +97,26 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 
 ---
 
-## Mathematical Formalism — Quick Reference
+## Mathematical Formalism Reference Index
 
-The following documents contain the primary mathematical formalism for the CAGE governance kernel. All formalism is derived from and cross-referenced to the source implementations listed below.
-
-| Document | Formalism Covered | Primary Source |
+| Document | Mathematical Formalism | Source Code Reference |
 |---|---|---|
-| [technical-report/10-FORMAL-VERIFICATION.md](technical-report/10-FORMAL-VERIFICATION.md) | CBF safe-set definition, routing seal HMAC proof, provenance chain integrity, fiscal limit invariant | [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py), [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) |
+| [technical-report/10-FORMAL-VERIFICATION.md](technical-report/10-FORMAL-VERIFICATION.md) | CBF safe-set definition, routing seal asymmetric proof, provenance chain integrity, fiscal limit invariant | [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py), [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) |
 | [governance/CAUSAL_AND_CBF_GOVERNANCE.md](governance/CAUSAL_AND_CBF_GOVERNANCE.md) | Discrete-time CBF condition `h(S(t+1)) ≥ (1−γ)·h(S(t))`, causal SCM, confabulation scoring, consensus protocol | [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py), [`src/gateway/governance/causal_gatekeeper.py`](../src/gateway/governance/causal_gatekeeper.py) |
-| [governance/GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | 7-tier symbolic governor pipeline, STPA UCAs (FIN-1, FIN-2, UCA-5, UCA-6), mathematical invariants | [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/ontology.py`](../src/gateway/governance/ontology.py) |
-| [governance/NEURO_SYMBOLIC_GOVERNANCE.md](governance/NEURO_SYMBOLIC_GOVERNANCE.md) | Formal safety properties, FRIA zone thresholds (`FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70`), regional compliance invariants | [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py) |
+| [governance/GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | 8-tier symbolic governor pipeline (FTRA + 7 in-pipeline tiers), STPA UCAs (FIN-1, FIN-2, UCA-5, UCA-6), mathematical invariants | [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/ontology.py`](../src/gateway/governance/ontology.py) |
+| [governance/NEURO_SYMBOLIC_GOVERNANCE.md](governance/NEURO_SYMBOLIC_GOVERNANCE.md) | Formal safety properties, FRIA zone thresholds (`get_fria_zone_allow()=0.95`, `get_fria_zone_defer()=0.70`), regional compliance invariants | [`src/gateway/governance/symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py) |
 | [architecture/GATEWAY_ARCHITECTURE.md](architecture/GATEWAY_ARCHITECTURE.md) | CBF layer integration, routing seal enforcement, governance pipeline data-flow | [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py), [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) |
 
-### Key Named Constants (source: [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py))
+### Key Named Constants & Thresholds (source: [`config/thresholds/`](../config/thresholds/), [`src/gateway/governance/schemas/thresholds.py`](../src/gateway/governance/schemas/thresholds.py))
 
-| Constant | Value | Role |
+| Accessor Function | Default Baseline | Role |
 |---|---|---|
-| `CAUSAL_LOCK_P_VALUE_THRESHOLD` | `0.05` | Significance threshold for PlaceboTreatmentRefuter (Tier 6) |
-| `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` | `0.2` | Maximum tolerated placebo effect magnitude |
-| `CAUSAL_LOCK_RISK_BOUNDARY` | `0.95` | Risk boundary above which causal lock is enforced |
-| `FRIA_ZONE_ALLOW` | `0.95` | Confidence floor for autonomous approval (Tier 6b) |
-| `FRIA_ZONE_DEFER` | `0.70` | Confidence floor for deferred human review (Tier 6b) |
+| `get_causal_lock_p_value_threshold()` | `0.05` | Significance threshold for PlaceboTreatmentRefuter (Tier 6) |
+| `get_causal_lock_placebo_effect_magnitude()` | `0.2` | Maximum tolerated placebo effect magnitude |
+| `get_causal_lock_risk_boundary()` | `0.95` | Risk boundary above which causal lock is enforced |
+| `get_fria_zone_allow()` | `0.95` | Confidence floor for autonomous approval (Tier 6b) |
+| `get_fria_zone_defer()` | `0.70` | Confidence floor for deferred human review (Tier 6b) |
+| `get_agent_confidence_threshold()` | `0.95` | Fast-fail confidence threshold (Tier 1) |
 
 ---
 
@@ -125,7 +124,7 @@ The following documents contain the primary mathematical formalism for the CAGE 
 
 | File | Description |
 |---|---|
-| [GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | CAGE governance framework overview — **7-tier pipeline, STPA UCAs, mathematical invariants** |
+| [GOVERNANCE_OVERVIEW.md](governance/GOVERNANCE_OVERVIEW.md) | CAGE governance framework overview — **8-tier pipeline (FTRA + 7 in-pipeline tiers), STPA UCAs, mathematical invariants** |
 | [AGENTIC_SCOPE_STATEMENT.md](governance/AGENTIC_SCOPE_STATEMENT.md) | Agentic system scope statement |
 | [HUMAN_OVERSIGHT_SCOPE.md](governance/HUMAN_OVERSIGHT_SCOPE.md) | Human oversight scope definition |
 | [CAUSAL_AND_CBF_GOVERNANCE.md](governance/CAUSAL_AND_CBF_GOVERNANCE.md) | Causal & CBF governance — **CBF condition, causal SCM, confabulation, consensus** |

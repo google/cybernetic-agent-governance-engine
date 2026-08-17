@@ -499,7 +499,9 @@ class TestControlMeta:
         assert "A.8.4" in control_meta, (
             "A.8.4 (AI System Operation) must be in control metadata"
         )
-        assert "A.6.2" in control_meta, "A.6.2 (AI Lifecycle) must be in control metadata"
+        assert "A.6.2" in control_meta, (
+            "A.6.2 (AI Lifecycle) must be in control metadata"
+        )
         # SA-11 is a US_FED-only (NIST SP 800-53) control — not in universal controls.
         # Use get_control_meta("US_FED") to verify it exists.
         us_fed_meta = get_control_meta("US_FED")
@@ -579,3 +581,6 @@ class TestUcaMappings:
         nist_mappings = FrameworkRouter.get("NIST").uca_mappings
         for ctrl in set(c for ucas in nist_mappings.values() for c in ucas):
             assert ctrl in nist_mappings or True  # just ensure no KeyError in iteration
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

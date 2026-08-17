@@ -105,7 +105,9 @@ async def execute_trade(order: TradeOrder) -> str:
     def _do_post():  # type: ignore[no-untyped-def]
         import requests
 
-        resp = requests.post(f"{base_url}/v2/orders", json=payload, headers=headers)
+        resp = requests.post(
+            f"{base_url}/v2/orders", json=payload, headers=headers, timeout=10.0
+        )
         resp.raise_for_status()
         return resp.json()
 

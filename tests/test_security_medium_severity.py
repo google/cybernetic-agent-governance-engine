@@ -877,3 +877,6 @@ class TestM24NonRootDockerfile:
             "Compliance bridge Dockerfile must have a USER directive"
         )
         assert "USER root" not in content
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

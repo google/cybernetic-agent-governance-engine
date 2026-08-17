@@ -155,13 +155,13 @@ Canonical four-state vocabulary — see [`src/gateway/governance/decisions.py`](
 
 ### 2.3 Governance Pipeline Tiers
 
-Before `validate_action()` is invoked, requests are screened by pre-pipeline layers (Aho-Corasick / prompt-injection detection and NeMo Guardrails, including Presidio PII masking). `validate_action()` itself then runs the 7-tier `SymbolicGovernor._run_checks()` pipeline, with Tiers 2 and 4 executing concurrently:
+Before `validate_action()` is invoked, requests are screened by pre-pipeline layers (Aho-Corasick / prompt-injection detection and NeMo Guardrails, including Presidio PII masking). `validate_action()` itself then runs the 8-tier governance pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers via `SymbolicGovernor._run_checks()`), with Tiers 2 and 4 executing concurrently:
 
 | Stage | Name | Implementation |
 |---|---|---|
 | *(pre-pipeline)* | Aho-Corasick / Prompt Injection Detection | [`prompt_injection_detector.py`](../src/gateway/governance/prompt_injection_detector.py), [`text_filter.py`](../src/gateway/governance/text_filter.py) |
 | *(pre-pipeline)* | NeMo Guardrails (incl. Presidio PII masking) | [`nemo/manager.py`](../src/gateway/governance/nemo/manager.py) |
-| **Tier 0.5** | **FTRA — Forward-Looking Trajectory Reachability Analyzer** | **[`ftra/node_factory.py`](../src/gateway/governance/ftra/node_factory.py), [`ftra/graph_analyzer.py`](../src/gateway/governance/ftra/graph_analyzer.py), [`ftra/classifier.py`](../src/gateway/governance/ftra/classifier.py)** |
+| **Pre-Pipeline Boundary Gate** | **FTRA — Forward-Looking Trajectory Reachability Analyzer** (operates on the whole execution graph before per-tool-call checks begin; NOT a peer of Tiers 0–6b) | **[`ftra/node_factory.py`](../src/gateway/governance/ftra/node_factory.py), [`ftra/graph_analyzer.py`](../src/gateway/governance/ftra/graph_analyzer.py), [`ftra/classifier.py`](../src/gateway/governance/ftra/classifier.py)** |
 | Tier 0 | STPA/STAMP UCA validation | [`generated_stpa_validator.py`](../src/gateway/governance/generated_stpa_validator.py) |
 | Tier 1 | Agent confidence pre-check | [`symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) |
 | Tier 2 / 4 | CBF + OPA (concurrent) | [`cbf.py`](../src/gateway/governance/cbf.py), OPA `system_authz.rego` |
@@ -172,7 +172,7 @@ Before `validate_action()` is invoked, requests are screened by pre-pipeline lay
 
 > PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules invoked outside `_run_checks()` — PII sanitization runs on audit records inside `uca_logger.py`, and confabulation scoring is a Langfuse observability metric.
 
-> **Tier 0.5 — FTRA BFS-exclusion caveat:** Tier 0.5 (FTRA) is **not** included in the 21-state BFS automaton used for NoDirectBind reachability verification. This is a documented under-approximation; the BFS covers the governance state machine only. Gap closure requires integrating FTRA into the state tuple or enforcing it at the controller boundary. TLA+/Alloy full-implementation modelling is future work.
+> **Pre-Pipeline Boundary Gate — FTRA BFS-exclusion caveat:** FTRA (the Pre-Pipeline Boundary Gate) is **not** included in the 21-state BFS automaton used for NoDirectBind reachability verification. This is a documented under-approximation; the BFS covers the governance state machine only. Gap closure requires integrating FTRA into the state tuple or enforcing it at the controller boundary. TLA+/Alloy full-implementation modelling is future work.
 
 > **Tier 2/4 — CBF effective-balance note:** The CBF (`cbf.py`) now tracks `_local_debits` intra-window. `verify_action()` computes `effective_balance = snapshot_balance - self._local_debits` for all threshold checks; `reset_local_debits()` is called by the reconciliation daemon on each KMS snapshot refresh. Redis access for Tier 4 is **read-write** (`WATCH/MULTI/EXEC`).
 
@@ -230,7 +230,7 @@ The following may change without a major version bump:
 
 - AGP Semantic Policy output format (`config/agp/generated_semantic_policy.txt`)
 - Webhook payload schema (additive changes only; no field removals without notice)
-- Internal tier ordering within the 7-tier pipeline
+- Internal tier ordering within the 8-tier pipeline (FTRA + 7 in-pipeline tiers)
 
 ### 4.3 Version Pinning
 

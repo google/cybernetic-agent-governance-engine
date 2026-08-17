@@ -56,7 +56,7 @@ class TestDeferE2EFlow:
     @pytest.mark.asyncio
     async def test_full_defer_flow_from_request_to_response(self, monkeypatch):
         """Test the complete DEFER flow: request → classification → HTTP response.
-        
+
         This test validates that:
         1. A low-confidence request triggers DEFER classification
         2. validate_action() returns a DEFER verdict (not exception)
@@ -65,19 +65,21 @@ class TestDeferE2EFlow:
         """
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
         monkeypatch.setenv("FRIA_ZONE_DEFER", "0.70")
-        
+
         from src.gateway.server.agent_gateway_adapter import handle_check_request
-        
+
         # Prepare a request with low confidence (below FRIA_ZONE_DEFER)
-        request_body = json.dumps({
-            "method": "execute_trade",
-            "params": {
-                "symbol": "AAPL",
-                "amount": 100,
-                "confidence": 0.50,  # Below 0.70 threshold
-            },
-        })
-        
+        request_body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {
+                    "symbol": "AAPL",
+                    "amount": 100,
+                    "confidence": 0.50,  # Below 0.70 threshold
+                },
+            }
+        )
+
         # Mock the governance pipeline to return DEFER
         mock_result = {
             "verdict": GovernanceDecision.DEFER,
@@ -94,19 +96,19 @@ class TestDeferE2EFlow:
             },
             "retry_after_seconds": 300,
         }
-        
+
         mock_gov = MagicMock()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        
+
         import src.gateway.governance.singletons as _singletons
-        
+
         with patch.object(_singletons, "symbolic_governor", mock_gov):
             response = await handle_check_request(request_body)
-        
+
         # Validate HTTP response structure
         assert "denied_response" in response
         assert response["denied_response"]["status"]["code"] == 202
-        
+
         # Validate response body
         body = json.loads(response["denied_response"]["body"])
         assert body["verdict"] == GovernanceDecision.DEFER
@@ -114,7 +116,7 @@ class TestDeferE2EFlow:
         assert body["defer_token"] == "defer-e2e-test-123"
         assert "missing_input_reason" in body
         assert body["deferrable"] is True
-        
+
         # Validate message guides client to polling endpoint
         assert "GET /v1/defer/pending" in body.get("message", "")
 
@@ -123,25 +125,27 @@ class TestDeferE2EFlow:
         self, monkeypatch
     ):
         """Regression guard: DENY rate must not change for hard violations.
-        
+
         The DEFER primitive must ONLY apply to soft/deferrable violations.
         Hard violations (STPA, CBF, OPA DENY) must still result in DENY,
         regardless of CAGE_DEFER_ENABLED setting.
         """
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
-        
+
         from src.gateway.server.agent_gateway_adapter import handle_check_request
-        
+
         # Prepare a request that should trigger DENY (not DEFER)
-        request_body = json.dumps({
-            "method": "execute_trade",
-            "params": {
-                "symbol": "AAPL",
-                "amount": 100,
-                "confidence": 0.50,  # Low confidence, but hard violation takes priority
-            },
-        })
-        
+        request_body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {
+                    "symbol": "AAPL",
+                    "amount": 100,
+                    "confidence": 0.50,  # Low confidence, but hard violation takes priority
+                },
+            }
+        )
+
         # Mock validate_action to return DENY (hard violation)
         mock_result = {
             "verdict": GovernanceDecision.DENY,
@@ -149,19 +153,19 @@ class TestDeferE2EFlow:
             "seal": "",
             "thread_id": "",
         }
-        
+
         mock_gov = MagicMock()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        
+
         import src.gateway.governance.singletons as _singletons
-        
+
         with patch.object(_singletons, "symbolic_governor", mock_gov):
             response = await handle_check_request(request_body)
-        
+
         # MUST be 403 DENY, not 202 DEFER
         assert "denied_response" in response
         assert response["denied_response"]["status"]["code"] == 403
-        
+
         body = json.loads(response["denied_response"]["body"])
         assert body["verdict"] == GovernanceDecision.DENY
         assert "UCA-7" in str(body["violations"])
@@ -172,23 +176,25 @@ class TestDeferE2EFlow:
     ):
         """When CAGE_DEFER_ENABLED=false, soft violations fall back to DENY."""
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "false")
-        
+
         import src.gateway.server.agent_gateway_adapter as adapter_module
         from src.gateway.server.agent_gateway_adapter import handle_check_request
-        
+
         # Force the module flag to be False
         original_defer_enabled = adapter_module._DEFER_ENABLED
         adapter_module._DEFER_ENABLED = False
-        
-        request_body = json.dumps({
-            "method": "execute_trade",
-            "params": {
-                "symbol": "AAPL",
-                "amount": 100,
-                "confidence": 0.50,
-            },
-        })
-        
+
+        request_body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {
+                    "symbol": "AAPL",
+                    "amount": 100,
+                    "confidence": 0.50,
+                },
+            }
+        )
+
         # Even though this would be a DEFER candidate, the flag is disabled
         mock_result = {
             "verdict": GovernanceDecision.DEFER,
@@ -200,22 +206,22 @@ class TestDeferE2EFlow:
             "missing_input_reason": "confidence_below_threshold",
             "deferrable": True,
         }
-        
+
         mock_gov = MagicMock()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        
+
         import src.gateway.governance.singletons as _singletons
-        
+
         try:
             with patch.object(_singletons, "symbolic_governor", mock_gov):
                 response = await handle_check_request(request_body)
         finally:
             adapter_module._DEFER_ENABLED = original_defer_enabled
-        
+
         # Should be 403 DENY due to DEFER being disabled
         assert "denied_response" in response
         assert response["denied_response"]["status"]["code"] == 403
-        
+
         body = json.loads(response["denied_response"]["body"])
         assert body["verdict"] == GovernanceDecision.DENY
         assert body.get("fallback_from") == "DEFER"
@@ -227,18 +233,20 @@ class TestDeferE2EFlow:
         """Soft violations with high confidence → REQUIRE_APPROVAL, not DEFER."""
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
         monkeypatch.setenv("FRIA_ZONE_DEFER", "0.70")
-        
+
         from src.gateway.server.agent_gateway_adapter import handle_check_request
-        
-        request_body = json.dumps({
-            "method": "execute_trade",
-            "params": {
-                "symbol": "AAPL",
-                "amount": 100,
-                "confidence": 0.85,  # Above FRIA_ZONE_DEFER but soft violation
-            },
-        })
-        
+
+        request_body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {
+                    "symbol": "AAPL",
+                    "amount": 100,
+                    "confidence": 0.85,  # Above FRIA_ZONE_DEFER but soft violation
+                },
+            }
+        )
+
         # Mock validate_action to return REQUIRE_APPROVAL
         mock_result = {
             "verdict": GovernanceDecision.REQUIRE_APPROVAL,
@@ -246,19 +254,19 @@ class TestDeferE2EFlow:
             "seal": "",
             "thread_id": "thread-approval-123",
         }
-        
+
         mock_gov = MagicMock()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        
+
         import src.gateway.governance.singletons as _singletons
-        
+
         with patch.object(_singletons, "symbolic_governor", mock_gov):
             response = await handle_check_request(request_body)
-        
+
         # Should be 202 REQUIRE_APPROVAL
         assert "denied_response" in response
         assert response["denied_response"]["status"]["code"] == 202
-        
+
         body = json.loads(response["denied_response"]["body"])
         assert body["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
         assert body["thread_id"] == "thread-approval-123"
@@ -275,7 +283,7 @@ class TestDeferResponseModel:
     def test_defer_response_default_values(self):
         """DeferResponse has correct default values."""
         resp = DeferResponse()
-        
+
         assert resp.decision == "DEFER"
         assert resp.deferrable is True
         assert resp.retry_after_seconds == 300
@@ -291,9 +299,9 @@ class TestDeferResponseModel:
             violations=["Confidence below threshold"],
             missing_input_reason="confidence_starved",
         )
-        
+
         body = resp.to_http_body()
-        
+
         assert body["decision"] == "DEFER"
         assert body["classification_reason"] == "Low confidence"
         assert body["defer_token"] == "test-token-abc"
@@ -307,10 +315,10 @@ class TestDeferResponseModel:
             defer_token="serialize-test",
             classification_reason="Test serialization",
         )
-        
+
         json_str = resp.model_dump_json()
         parsed = json.loads(json_str)
-        
+
         assert parsed["defer_token"] == "serialize-test"
         assert parsed["classification_reason"] == "Test serialization"
 
@@ -326,7 +334,7 @@ class TestNarrowResponseModel:
     def test_narrow_response_default_values(self):
         """NarrowResponse has correct default values."""
         resp = NarrowResponse()
-        
+
         assert resp.decision == "NARROW"
         assert resp.execution_allowed is True
         assert resp.original_params == {}
@@ -342,9 +350,9 @@ class TestNarrowResponseModel:
             narrowing_reason="Amount clamped to max_allowed",
             constraints_applied=["amount clamped: 150000 → 100000"],
         )
-        
+
         body = resp.to_http_body()
-        
+
         assert body["decision"] == "NARROW"
         assert body["original_params"]["amount"] == 150000
         assert body["narrowed_params"]["amount"] == 100000
@@ -364,14 +372,14 @@ class TestPauseResponseModel:
     def test_pause_response_required_fields(self):
         """PauseResponse requires pause_token, pause_reason, etc."""
         from datetime import datetime, timezone
-        
+
         resp = PauseResponse(
             pause_token="test-pause-token",
             pause_reason="RATE_LIMITED",
             resume_endpoint="/v1/pause/test-pause-token/resume",
             expires_at=datetime.now(tz=timezone.utc),
         )
-        
+
         assert resp.decision == "PAUSE"
         assert resp.pause_token == "test-pause-token"
         assert resp.pause_reason == "RATE_LIMITED"
@@ -380,9 +388,9 @@ class TestPauseResponseModel:
     def test_pause_response_to_http_body(self):
         """PauseResponse.to_http_body() produces correct structure."""
         from datetime import datetime, timezone
-        
+
         expires = datetime(2026, 8, 15, 14, 0, 0, tzinfo=timezone.utc)
-        
+
         resp = PauseResponse(
             pause_token="pause-http-test",
             pause_reason="CIRCUIT_OPEN",
@@ -391,9 +399,9 @@ class TestPauseResponseModel:
             estimated_wait_seconds=60,
             retry_after_seconds=30,
         )
-        
+
         body = resp.to_http_body()
-        
+
         assert body["decision"] == "PAUSE"
         assert body["pause_token"] == "pause-http-test"
         assert body["pause_reason"] == "CIRCUIT_OPEN"
@@ -448,22 +456,24 @@ class TestNarrowE2EFlow:
     async def test_narrow_flow_from_request_to_response(self, monkeypatch):
         """Test the complete NARROW flow: request → classification → HTTP response."""
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
-        
+
         import src.gateway.server.agent_gateway_adapter as adapter_module
         from src.gateway.server.agent_gateway_adapter import handle_check_request
-        
+
         original_narrow_enabled = adapter_module._NARROW_ENABLED
         adapter_module._NARROW_ENABLED = True
-        
-        request_body = json.dumps({
-            "method": "execute_trade",
-            "params": {
-                "symbol": "AAPL",
-                "amount": 200000,  # Exceeds threshold
-                "confidence": 0.99,
-            },
-        })
-        
+
+        request_body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {
+                    "symbol": "AAPL",
+                    "amount": 200000,  # Exceeds threshold
+                    "confidence": 0.99,
+                },
+            }
+        )
+
         mock_result = {
             "verdict": GovernanceDecision.NARROW,
             "violations": ["Amount exceeds limit"],
@@ -474,21 +484,21 @@ class TestNarrowE2EFlow:
             "constraints_applied": ["amount clamped: 200000 → 100000"],
             "narrowing_reason": "Amount exceeds max_allowed",
         }
-        
+
         mock_gov = MagicMock()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        
+
         import src.gateway.governance.singletons as _singletons
-        
+
         try:
             with patch.object(_singletons, "symbolic_governor", mock_gov):
                 response = await handle_check_request(request_body)
         finally:
             adapter_module._NARROW_ENABLED = original_narrow_enabled
-        
+
         # Should be OK response (200) with narrowed params
         assert "ok_response" in response
-        
+
         # Verify headers
         headers = response["ok_response"]["headers"]
         narrow_header = next(
@@ -502,22 +512,24 @@ class TestNarrowE2EFlow:
     async def test_narrow_preserves_action_semantics(self, monkeypatch):
         """NARROW must preserve action semantics — only clamp, not transform."""
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
-        
+
         import src.gateway.server.agent_gateway_adapter as adapter_module
         from src.gateway.server.agent_gateway_adapter import handle_check_request
-        
+
         original_narrow_enabled = adapter_module._NARROW_ENABLED
         adapter_module._NARROW_ENABLED = True
-        
-        request_body = json.dumps({
-            "method": "execute_trade",
-            "params": {
-                "symbol": "GOOG",
-                "amount": 500000,
-                "scope": ["read", "write", "delete"],
-            },
-        })
-        
+
+        request_body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {
+                    "symbol": "GOOG",
+                    "amount": 500000,
+                    "scope": ["read", "write", "delete"],
+                },
+            }
+        )
+
         mock_result = {
             "verdict": GovernanceDecision.NARROW,
             "violations": ["Amount exceeds limit", "Scope exceeds allowed"],
@@ -538,22 +550,22 @@ class TestNarrowE2EFlow:
             ],
             "narrowing_reason": "Multiple constraints applied",
         }
-        
+
         mock_gov = MagicMock()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        
+
         import src.gateway.governance.singletons as _singletons
-        
+
         try:
             with patch.object(_singletons, "symbolic_governor", mock_gov):
                 response = await handle_check_request(request_body)
         finally:
             adapter_module._NARROW_ENABLED = original_narrow_enabled
-        
+
         # Parse response body
         ok_resp = response.get("ok_response", {})
         body = json.loads(ok_resp.get("body", "{}"))
-        
+
         # Symbol should be unchanged (semantics preserved)
         assert body["narrowed_params"]["symbol"] == "GOOG"
         # Amount should be clamped
@@ -574,22 +586,24 @@ class TestPauseE2EFlow:
     async def test_pause_flow_from_request_to_response(self, monkeypatch):
         """Test the complete PAUSE flow: request → classification → HTTP response."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
-        
+
         import src.gateway.server.agent_gateway_adapter as adapter_module
         from src.gateway.server.agent_gateway_adapter import handle_check_request
-        
+
         original_pause_enabled = adapter_module._PAUSE_ENABLED
         adapter_module._PAUSE_ENABLED = True
-        
-        request_body = json.dumps({
-            "method": "execute_trade",
-            "params": {
-                "symbol": "AAPL",
-                "amount": 100,
-                "confidence": 0.99,
-            },
-        })
-        
+
+        request_body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {
+                    "symbol": "AAPL",
+                    "amount": 100,
+                    "confidence": 0.99,
+                },
+            }
+        )
+
         mock_result = {
             "verdict": GovernanceDecision.PAUSE,
             "violations": ["Rate limit exceeded"],
@@ -600,15 +614,15 @@ class TestPauseE2EFlow:
                 "estimated_wait_seconds": 60,
             },
         }
-        
+
         mock_gov = MagicMock()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        
+
         mock_pause_manager = MagicMock()
         mock_pause_manager.pause_request = AsyncMock(return_value="pause-e2e-token")
-        
+
         import src.gateway.governance.singletons as _singletons
-        
+
         try:
             with patch.object(_singletons, "symbolic_governor", mock_gov):
                 with patch(
@@ -622,11 +636,11 @@ class TestPauseE2EFlow:
                         response = await handle_check_request(request_body)
         finally:
             adapter_module._PAUSE_ENABLED = original_pause_enabled
-        
+
         # Should be 503 Service Unavailable
         assert "denied_response" in response
         assert response["denied_response"]["status"]["code"] == 503
-        
+
         # Verify body
         body = json.loads(response["denied_response"]["body"])
         assert body["verdict"] == GovernanceDecision.PAUSE
@@ -637,18 +651,20 @@ class TestPauseE2EFlow:
     async def test_pause_includes_retry_after_header(self, monkeypatch):
         """PAUSE response includes Retry-After header for client polling."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
-        
+
         import src.gateway.server.agent_gateway_adapter as adapter_module
         from src.gateway.server.agent_gateway_adapter import handle_check_request
-        
+
         original_pause_enabled = adapter_module._PAUSE_ENABLED
         adapter_module._PAUSE_ENABLED = True
-        
-        request_body = json.dumps({
-            "method": "execute_trade",
-            "params": {"symbol": "AAPL"},
-        })
-        
+
+        request_body = json.dumps(
+            {
+                "method": "execute_trade",
+                "params": {"symbol": "AAPL"},
+            }
+        )
+
         mock_result = {
             "verdict": GovernanceDecision.PAUSE,
             "violations": ["Circuit breaker open"],
@@ -658,15 +674,15 @@ class TestPauseE2EFlow:
                 "estimated_wait_seconds": 30,
             },
         }
-        
+
         mock_gov = MagicMock()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
-        
+
         mock_pause_manager = MagicMock()
         mock_pause_manager.pause_request = AsyncMock(return_value="pause-retry-token")
-        
+
         import src.gateway.governance.singletons as _singletons
-        
+
         try:
             with patch.object(_singletons, "symbolic_governor", mock_gov):
                 with patch(
@@ -680,7 +696,7 @@ class TestPauseE2EFlow:
                         response = await handle_check_request(request_body)
         finally:
             adapter_module._PAUSE_ENABLED = original_pause_enabled
-        
+
         # Verify Retry-After header
         headers = response["denied_response"]["headers"]
         retry_header = next(

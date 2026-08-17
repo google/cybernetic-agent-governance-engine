@@ -43,6 +43,7 @@ logger = logging.getLogger("ToolsRouter")
 
 tools_router = APIRouter(prefix="/tools", tags=["tools"])
 
+
 class ToolExecutionRequest(BaseModel):
     tool_name: str
     params: dict[str, Any]

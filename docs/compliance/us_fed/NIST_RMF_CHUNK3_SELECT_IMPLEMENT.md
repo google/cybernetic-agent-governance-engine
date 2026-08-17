@@ -285,7 +285,7 @@
 
 **Current State:**
 
-- `src/gateway/governance/symbolic_governor.py` orchestrates the full governance pipeline: STPA → CBF → OPA → Consensus (7-tier). **v2.0.0:** SLM sidecar permanently deprecated; `slm_available=False` sentinel is always injected; OPA always applies elevated confidence threshold (0.97). Fail-secure degraded mode is the permanent operating mode.
+- `src/gateway/governance/symbolic_governor.py` orchestrates the full governance pipeline: STPA → CBF → OPA → Consensus (8-tier: FTRA + 7 in-pipeline tiers). **v2.0.0:** SLM sidecar permanently deprecated; `slm_available=False` sentinel is always injected; OPA always applies elevated confidence threshold (0.97). Fail-secure degraded mode is the permanent operating mode.
 - [`src/gateway/governance/generated_stpa_validator.py`](../../../src/gateway/governance/generated_stpa_validator.py) implements deterministic input validation against 5 STPA constraints (SC-1, FIN-1, FIN-2, UCA-5, UCA-6). All constraint failures return error messages and the action is blocked — SI-10 (Information Input Validation) is partially implemented for the trade domain. (**v3.0.0:** deprecated `stpa_validator.py` shim removed)
 - [`src/gateway/governance/text_filter.py`](../../../src/gateway/governance/text_filter.py) — `ac_keyword_scan()` provides Aho-Corasick O(n) Tier-1 keyword scanning for 14 forbidden prompts. This is an information integrity control preventing prompt injection (SI-3 analog). (**v3.0.0:** `safety.py` removed)
 - `scripts/automated_auditor.py` — `TraceAuditor.audit_trace()` implements span invariant checking: every `tool.execution` span must have a causally preceding `governance.check` span with `decision=ALLOW`. Detects "Missing Governance Check," "Execution despite DENY," and "Orphaned Execution" violations. **However, it uses mock traces (see AU-12 gap).**
@@ -405,7 +405,7 @@
 
 **Justification:**
 
-The cybernetic-governance-engine demonstrates sophisticated domain-specific controls that far exceed typical AI systems — the 7-tier governance pipeline (STPA → Aho-Corasick → CBF → [SLM — DEPRECATED] → OPA → Consensus → CausalGatekeeper), NeMo Guardrails, Lula continuous compliance automation, and KMS-sealed verdicts are enterprise-grade capabilities. However, scored against the NIST SP 800-53 Rev 5 **HIGH** baseline, the system has significant structural gaps across every control family reviewed.
+The cybernetic-governance-engine demonstrates sophisticated domain-specific controls that far exceed typical AI systems — the 8-tier governance pipeline (FTRA → STPA → Aho-Corasick → CBF → [SLM — DEPRECATED] → OPA → Consensus → CausalGatekeeper), NeMo Guardrails, Lula continuous compliance automation, and KMS-sealed verdicts are enterprise-grade capabilities. However, scored against the NIST SP 800-53 Rev 5 **HIGH** baseline, the system has significant structural gaps across every control family reviewed.
 
 **Strengths driving the score up (from baseline of 0):**
 

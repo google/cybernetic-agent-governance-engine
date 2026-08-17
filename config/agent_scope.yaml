@@ -12,39 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# =============================================================================
-# SR 26-2 Agent Scope Declaration
-# =============================================================================
-#
-# This file is the AUTHORITATIVE machine-readable declaration of the permitted
-# action scope for the CAGE Financial Advisor agentic system, as required by
-# the Federal Reserve's SR 26-2 (April 17, 2026) guidance on Model Risk
-# Management for Generative and Agentic AI Systems.
-#
-# SR 26-2 Context:
-#   SR 26-2 explicitly states that generative and agentic AI are outside the
-#   prescriptive scope of traditional MRM (SR 11-7) and instructs institutions
-#   to apply their own rigorous internal risk frameworks to manage agentic
-#   exposure.  This file IS that framework's scope declaration for CAGE.
-#
-# Integration:
-#   - Parsed by OPA finance_policy.rego as a data document (data.agent_scope)
-#   - Referenced by OSCAL SSP as the authoritative scope boundary artifact
-#   - Validated by Lula CronJob on every 6h compliance scan
-#   - Displayed on the AgentSight Kernel Dashboard (compliance bridge SSE events)
-#
-# Governance:
-#   Changes to this file MUST be:
-#   1. Reviewed and approved by the ISSO before merging
-#   2. Tracked in compliance/risk_acceptance/THRESHOLD_TRACEABILITY_MATRIX.md
-#   3. Trigger an OSCAL audit finding re-evaluation via lula-cron
-#
-# Do NOT hand-edit generated policy files; all scope changes start HERE.
-# =============================================================================
-
-# ---------------------------------------------------------------------------
-# Agent Identity
-# ---------------------------------------------------------------------------
 agent:
   id: "governed_financial_advisor_v1"
   display_name: "CAGE Financial Advisor"

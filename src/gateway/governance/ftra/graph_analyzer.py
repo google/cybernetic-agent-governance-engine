@@ -56,6 +56,7 @@ from src.gateway.governance.ftra.models import (
     ReachabilityResult,
     TerminalClassification,
 )
+from src.gateway.governance.schemas.thresholds import get_fria_zone_defer
 
 if TYPE_CHECKING:
     from src.governed_financial_advisor.agents.execution_analyst.agent import (
@@ -64,14 +65,6 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger("Gateway.Governance.FTRA.GraphAnalyzer")
-
-# ---------------------------------------------------------------------------
-# Threshold constants
-# ---------------------------------------------------------------------------
-
-#: Evaluator confidence score below which a plan with reachable
-#: IRREVERSIBLE_TERMINAL nodes is BLOCKED outright rather than HITL_REQUIRED.
-FRIA_ZONE_DEFER: float = 0.70
 
 # ---------------------------------------------------------------------------
 # PlanGraphAnalyzer
@@ -119,9 +112,10 @@ class PlanGraphAnalyzer:
                 getattr(plan, "plan_id", "<unknown>"),
                 exc,
             )
+            fria_zone_defer = get_fria_zone_defer()
             verdict = (
                 FTRAVerdict.HITL_REQUIRED
-                if confidence >= FRIA_ZONE_DEFER
+                if confidence >= fria_zone_defer
                 else FTRAVerdict.BLOCKED
             )
             return ReachabilityResult(
@@ -246,8 +240,9 @@ class PlanGraphAnalyzer:
         # ----------------------------------------------------------------
         # Determine verdict
         # ----------------------------------------------------------------
+        fria_zone_defer = get_fria_zone_defer()
         if worst_case == TerminalClassification.IRREVERSIBLE_TERMINAL:
-            if confidence >= FRIA_ZONE_DEFER:
+            if confidence >= fria_zone_defer:
                 verdict = FTRAVerdict.HITL_REQUIRED
             else:
                 verdict = FTRAVerdict.BLOCKED

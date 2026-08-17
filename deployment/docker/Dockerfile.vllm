@@ -12,20 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ── vLLM Streamer Image ────────────────────────────────────────────────────────
-# Extends the official vLLM OpenAI-compatible server with:
-#   - RunAI model streamer for GCS tensor streaming (gcs_filesystem load format)
-#   - google-cloud-storage SDK for ADC / Workload Identity authentication
-#
-# The GCS streamer allows vLLM to load model weights directly from a GCS bucket
-# without downloading them to local disk first, enabling faster cold starts on
-# GKE nodes with limited ephemeral storage.
-#
-# Usage (via Terraform vllm_inference module):
-#   model_path = "gs://your-bucket/models--Qwen--Qwen2.5-7B-Instruct/..."
-#   vllm_load_format = "gcs_filesystem"
-# ──────────────────────────────────────────────────────────────────────────────
-
 FROM vllm/vllm-openai:latest
 
 # Optional: Hugging Face Hub token for gated model downloads.

@@ -98,7 +98,6 @@ class SafetyFilter(Protocol):
         """
         ...
 
-
     def rollback_state(self, cost: float) -> None:
         """
         Rolls back the safety state (e.g. restores cash) after a failure.

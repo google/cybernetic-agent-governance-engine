@@ -192,6 +192,7 @@ def test_evidence_rel_semantics():
 # ---------------------------------------------------------------------------
 # Test 6: Document is valid JSON (round-trip)
 # ---------------------------------------------------------------------------
+import pytest
 
 
 def test_document_round_trips_with_cer_links():
@@ -218,3 +219,6 @@ def test_document_round_trips_with_cer_links():
         ]
         == "evidence"
     )
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

@@ -24,7 +24,7 @@ AAIF spec reference: Linux Foundation AAIF working group.
 
 AAIF governed run loop specs use the ``governedRunLoop`` top-level key and
 describe agent execution stages with governance hooks at each stage. This
-adapter maps those constructs to CAGE's 7-tier governance pipeline stages
+adapter maps those constructs to CAGE's 8-tier governance pipeline stages (FTRA pre-gate + 7 in-pipeline tiers)
 and UCA model.
 
 AAIF stage → CAGE pipeline tier mapping

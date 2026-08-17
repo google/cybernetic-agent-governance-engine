@@ -159,6 +159,7 @@ class TestGraceStatus:
         """_parse_deployment_start() must return a recent datetime when env var is unset."""
         with patch.dict("os.environ", {}, clear=False):
             import os
+
             os.environ.pop("DEPLOYMENT_START_UTC", None)
 
             from src.compliance_bridge.metrics import _parse_deployment_start
@@ -167,9 +168,7 @@ class TestGraceStatus:
             assert isinstance(result, datetime), (
                 "_parse_deployment_start must return a datetime"
             )
-            age_seconds = abs(
-                (datetime.now(tz=timezone.utc) - result).total_seconds()
-            )
+            age_seconds = abs((datetime.now(tz=timezone.utc) - result).total_seconds())
             assert age_seconds < 5, (
                 "Fallback deployment start must be close to now (within 5s)"
             )
@@ -270,7 +269,9 @@ class TestFetchFromLangfuseSync:
         ]
         result = self._run_fetch(traces=traces)
         expected_rate = 3 / 4  # 0.75
-        assert result.safety_rate is not None, "safety_rate must not be None with traces"
+        assert result.safety_rate is not None, (
+            "safety_rate must not be None with traces"
+        )
         assert abs(result.safety_rate - expected_rate) < 0.001, (
             f"Expected safety_rate≈0.75, got {result.safety_rate}"
         )

@@ -1,10 +1,10 @@
-# Gateway Architecture: Sovereign Edition — v2.1.0
+# Gateway Architecture: Sovereign Edition — v3.0.0
 
 ## Overview
 
 The Gateway acts as the central orchestrator and compliance enforcement point for the AI financial advisor. It implements a **Kubernetes Inference Gateway** architecture, abstracting a "Split-Brain" topology that routes tasks between a high-capacity Reasoning Model (`DeepSeek-R1-Distill-Llama-8B`) and a low-latency Governance Model (`Meta-Llama-3.1-8B-Instruct`). Both models are hosted on cost-optimized **Spot/preemptible GPU nodes** (NVIDIA L4). (GKE is the reference deployment; other Kubernetes distributions are supported)
 
-**Version:** v2.1.0
+**Version:** v3.0.0
 **Universal Compliance Baseline:** ISO/IEC 42001:2023 · CSA AARM v1.0 *(all deployment regions)*
 **Jurisdiction-Specific Addenda:** SR 26-2 / NIST AI 600-1 / NIST SP 800-53 *(US_FED only)* · EU AI Act / GDPR / DORA *(EU_ECB only)* · MAS FEAT / MAS Notice 655 *(APAC_MAS only)*
 
@@ -168,7 +168,7 @@ This is the **Single Choke Point** for all tool-level governance decisions — t
 }
 ```
 
-**Governance tiers executed** (via [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/symbolic_governor.py)) — full 7-tier pipeline via `_run_checks()`:
+**Governance tiers executed** (via [`SymbolicGovernor.validate_action()`](../../src/gateway/governance/symbolic_governor.py)) — full 8-tier pipeline (FTRA + 7 in-pipeline tiers) via `_run_checks()`:
 
 - **Tier 0 — STPA/STAMP UCA validation:** Runs for all tool names when `stpa_validator` is injected. Checks unsafe control actions (UCA-1 through UCA-6) against `governance_thresholds.json`.
 - **Tier 1 — Agent confidence threshold pre-check:** `execute_trade` only. Fast-fails if `confidence < AGENT_CONFIDENCE_THRESHOLD` (default 0.95, env-overridable). Skips CBF/OPA round-trips when confidence is obviously below threshold.
@@ -239,7 +239,7 @@ The following modules were added as part of the NIST AI 600-1 implementation (`C
 | [`hitl_escalator.py`](../../src/gateway/governance/hitl_escalator.py) | §2.5 — Human-AI Configuration | Human-in-the-Loop escalation for high-risk decisions. Produces structured `EscalationRecord` objects written to the DeferQueue (Redis db=1, noeviction). Escalation reasons: `CONSENSUS_THRESHOLD` (amount > $10k), `CONFIDENCE_LOW` (confidence < 0.95), `CAUSAL_BLOCK` (DoWhy refutation failed), `MANUAL_REVIEW` (OPA policy decision), `GOVERNANCE_CONFIDENCE_LOW` (recursive governance risk). SR 26-2 §3.2 SLA: 4-hour resolution window. | AI600-004 |
 | [`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py) | §2.3 — Prompt Injection | Detects structural prompt injection patterns in incoming requests. Complements the Aho-Corasick Tier-1 keyword scanner (`text_filter.py`) with 14 structural regex patterns targeting instruction overrides, persona hijacking, ChatML injection, jailbreak attempts, and role-play bypasses. Stage 2.5 applies semantic similarity via `all-MiniLM-L6-v2` at threshold 0.82. Returns on first match (fail-fast). Violations logged to UCA Logger. | AI600-003 |
 | [`provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | §2.7 — Information Integrity | Builds a cryptographic SHA-256 hash chain linking each LangGraph governance node's input and output, creating an immutable audit trail of governance decisions. Each `ProvenanceRecord` carries `input_hash`, `output_hash`, `decision` (one of `ALLOW`, `BLOCK`, `ESCALATE`, `REQUIRE_APPROVAL`, `DEFER`), and `parent_hash` for chain linkage. In production, records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`. `verify_chain_integrity()` validates the full chain on demand. | AI600-005 |
-| [`text_filter.py`](../../src/gateway/governance/text_filter.py) | §2.6 — CBRN / Hazardous Content | Stateless O(n) Tier-1 keyword scanner using a lazy-initialised Aho-Corasick automaton (`pyahocorasick`). Falls back to O(n×m) `any()` loop when the optional dependency is absent. Keyword list sourced exclusively from `config/governance_thresholds.json` (`tier1_keywords` and `tier1_keywords_cbrn` arrays; `tier1_keywords_cbrn_enabled: true`). Includes a separate `ac_cbrn_keyword_scan()` function for CBRN-specific multi-word phrase detection. **US_FED only** for CBRN enforcement; general keyword scan is active in all regions. Note: `src/gateway/governance/safety.py` is a **deprecated backward-compatibility shim** that re-exports `ac_keyword_scan` and `ControlBarrierFunction` — do not reference it as the authoritative implementation. | — |
+| [`text_filter.py`](../../src/gateway/governance/text_filter.py) | §2.6 — CBRN / Hazardous Content | Stateless O(n) Tier-1 keyword scanner using a lazy-initialised Aho-Corasick automaton (`pyahocorasick`). Falls back to O(n×m) `any()` loop when the optional dependency is absent. Keyword list sourced exclusively from `config/governance_thresholds.json` (`tier1_keywords` and `tier1_keywords_cbrn` arrays; `tier1_keywords_cbrn_enabled: true`). Includes a separate `ac_cbrn_keyword_scan()` function for CBRN-specific multi-word phrase detection. **US_FED only** for CBRN enforcement; general keyword scan is active in all regions. *(Note: The legacy shim `src/gateway/governance/safety.py` was removed in v3.0.0; import `ac_keyword_scan` from `text_filter.py` and `ControlBarrierFunction` from `cbf.py` directly).* | — |
 | [`pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py) | §2.2 — Data Privacy | Pre-ledger PII sanitization pipeline (ISO 42001 Annex A.6). Applies 7 compiled regex patterns sequentially: SSN (IRS-valid ranges), credit card (Visa/MC/Amex/Discover/JCB/Diners), IBAN, SWIFT/BIC, email, phone (US/international), and API keys/Bearer tokens. Thread-safe singleton (`PIISanitizer`). `sanitize_dict()` recursively sanitizes nested dicts before WORM persistence. `pii_audit_log()` produces structured audit records (FISMA AU-11, 90-day retention). Active in **all regions**. | — |
 
 ### Module Integration in the Governance Pipeline
@@ -278,7 +278,7 @@ UCA Logger → GCS WORM bucket (region-gated path)
 
 ## Governance Pipeline
 
-The 7-tier symbolic governance pipeline is implemented in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) and executed by `SymbolicGovernor._run_checks()` for every `execute_trade` action. Tiers execute in strict sequential order except Tiers 2/4, which run concurrently.
+The 8-tier symbolic governance pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers) is implemented in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) and executed by `SymbolicGovernor._run_checks()` for every `execute_trade` action. Tiers execute in strict sequential order except Tiers 2/4, which run concurrently.
 
 | Tier | Name | Key Invariant / Threshold |
 |------|------|--------------------------|
@@ -465,7 +465,7 @@ The AGW absorption layer bridges the Agent Gateway Protocol into the CAGE govern
 
 ### FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`)
 
-The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)** is a Tier 0.5 gate — inserted between the `evaluator` and `safety_check` LangGraph nodes — that analyzes a multi-step `ExecutionPlan` *before any step executes* to determine whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable, and if so, whether the plan's confidence score is high enough to warrant only human review rather than an outright block.
+The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)** is a **Pre-Pipeline Boundary Gate** — inserted between the `evaluator` and `safety_check` LangGraph nodes — that analyzes a multi-step `ExecutionPlan` *before any step executes* to determine whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable, and if so, whether the plan's confidence score is high enough to warrant only human review rather than an outright block. FTRA is NOT a peer of Tiers 0–6b; it is a **gateway precondition** that operates on the **whole execution graph** before the per-tool-call checks in `_run_checks()` begin.
 
 | File | Purpose |
 |------|---------|

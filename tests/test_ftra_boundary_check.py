@@ -21,14 +21,13 @@ it entirely. These tests verify that the FTRA boundary check closes this gap.
 
 Test Requirements:
 - test_boundary_check_classifies_direct_http_bypass
-- test_boundary_check_disabled_by_default
+- test_boundary_check_runs_unconditionally
 - test_boundary_check_routes_to_classify_violation
 """
 
 from __future__ import annotations
 
-import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -136,9 +135,7 @@ def mock_safety_filter() -> MagicMock:
 def mock_consensus_engine() -> MagicMock:
     """Create a mock consensus engine that approves."""
     engine = MagicMock()
-    engine.check_consensus = AsyncMock(
-        return_value={"status": "ACCEPT", "reason": ""}
-    )
+    engine.check_consensus = AsyncMock(return_value={"status": "ACCEPT", "reason": ""})
     return engine
 
 
@@ -161,78 +158,27 @@ def symbolic_governor(
     )
 
 
-class TestBoundaryCheckDisabledByDefault:
-    """Test that FTRA boundary check is disabled by default."""
+@pytest.mark.asyncio
+async def test_boundary_check_runs_unconditionally(
+    symbolic_governor: SymbolicGovernor,
+) -> None:
+    """Verify FTRA boundary check always runs (no longer gated by feature flag).
 
-    @pytest.mark.asyncio
-    async def test_boundary_check_disabled_by_default(
-        self,
-        symbolic_governor: SymbolicGovernor,
-    ) -> None:
-        """Verify boundary check is skipped when CAGE_FTRA_BOUNDARY_ENABLED is not set.
+    The boundary check is now unconditional — it runs for every action to
+    ensure irreversible actions are caught regardless of entry point.
+    """
+    # Run checks for an irreversible action
+    result = await symbolic_governor._run_checks(
+        tool_name="execute_trade",
+        params={"amount": 100, "symbol": "AAPL", "confidence": 0.99},
+        sim_mode=False,
+    )
 
-        This test ensures there is zero latency impact on existing deployments
-        that do not opt into the boundary check feature.
-        """
-        # Ensure flag is disabled (default state)
-        with patch.dict(os.environ, {"CAGE_FTRA_BOUNDARY_ENABLED": "false"}):
-            # Reimport to pick up the env change
-            import importlib
-
-            import src.gateway.governance.symbolic_governor as sg_module
-
-            importlib.reload(sg_module)
-
-            # Create fresh governor with reloaded module
-            governor = sg_module.SymbolicGovernor(
-                opa_client=symbolic_governor.opa_client,
-                safety_filter=symbolic_governor.safety_filter,
-                consensus_engine=symbolic_governor.consensus_engine,
-            )
-
-            # Run checks for an irreversible action
-            result = await governor._run_checks(
-                tool_name="execute_trade",
-                params={"amount": 100, "symbol": "AAPL", "confidence": 0.99},
-                sim_mode=False,
-            )
-
-            # FTRA boundary result should be None (check was skipped)
-            assert result.get("ftra_boundary_result") is None
-
-    @pytest.mark.asyncio
-    async def test_boundary_check_enabled_when_flag_true(
-        self,
-        symbolic_governor: SymbolicGovernor,
-    ) -> None:
-        """Verify boundary check runs when CAGE_FTRA_BOUNDARY_ENABLED=true."""
-        with patch.dict(os.environ, {"CAGE_FTRA_BOUNDARY_ENABLED": "true"}):
-            # Reimport to pick up the env change
-            import importlib
-
-            import src.gateway.governance.symbolic_governor as sg_module
-
-            importlib.reload(sg_module)
-
-            # Create fresh governor with reloaded module
-            governor = sg_module.SymbolicGovernor(
-                opa_client=symbolic_governor.opa_client,
-                safety_filter=symbolic_governor.safety_filter,
-                consensus_engine=symbolic_governor.consensus_engine,
-            )
-
-            # Run checks for an irreversible action
-            result = await governor._run_checks(
-                tool_name="execute_trade",
-                params={"amount": 100, "symbol": "AAPL", "confidence": 0.99},
-                sim_mode=False,
-            )
-
-            # FTRA boundary result should be present
-            ftra_result = result.get("ftra_boundary_result")
-            assert ftra_result is not None
-            assert ftra_result.classification == "IRREVERSIBLE_TERMINAL"
-            assert ftra_result.requires_hitl is True
+    # FTRA boundary result should be present
+    ftra_result = result.get("ftra_boundary_result")
+    assert ftra_result is not None
+    assert ftra_result.classification == "IRREVERSIBLE_TERMINAL"
+    assert ftra_result.requires_hitl is True
 
 
 class TestBoundaryCheckClassifiesDirectHttpBypass:
@@ -249,31 +195,18 @@ class TestBoundaryCheckClassifiesDirectHttpBypass:
         execute_trade comes in via /validate-action or ext_authz, the boundary
         check should classify it as IRREVERSIBLE_TERMINAL and require HITL.
         """
-        with patch.dict(os.environ, {"CAGE_FTRA_BOUNDARY_ENABLED": "true"}):
-            import importlib
+        # Test execute_trade — should be caught as IRREVERSIBLE_TERMINAL
+        result = await symbolic_governor._ftra_boundary_check(
+            tool_name="execute_trade",
+            tool_input={"amount": 50000, "symbol": "TSLA"},
+            detect_bypass=True,
+        )
 
-            import src.gateway.governance.symbolic_governor as sg_module
-
-            importlib.reload(sg_module)
-
-            governor = sg_module.SymbolicGovernor(
-                opa_client=symbolic_governor.opa_client,
-                safety_filter=symbolic_governor.safety_filter,
-                consensus_engine=symbolic_governor.consensus_engine,
-            )
-
-            # Test execute_trade — should be caught as IRREVERSIBLE_TERMINAL
-            result = await governor._ftra_boundary_check(
-                tool_name="execute_trade",
-                tool_input={"amount": 50000, "symbol": "TSLA"},
-                detect_bypass=True,
-            )
-
-            assert result.requires_hitl is True
-            assert result.classification == "IRREVERSIBLE_TERMINAL"
-            assert result.bypassed_ftra_node is True
-            assert len(result.violations) > 0
-            assert "Human-in-the-loop review required" in result.violations[0]
+        assert result.requires_hitl is True
+        assert result.classification == "IRREVERSIBLE_TERMINAL"
+        assert result.bypassed_ftra_node is True
+        assert len(result.violations) > 0
+        assert "Human-in-the-loop review required" in result.violations[0]
 
     @pytest.mark.asyncio
     async def test_boundary_check_allows_read_only_actions(
@@ -281,31 +214,18 @@ class TestBoundaryCheckClassifiesDirectHttpBypass:
         symbolic_governor: SymbolicGovernor,
     ) -> None:
         """Verify READ_ONLY actions pass through without HITL requirement."""
-        with patch.dict(os.environ, {"CAGE_FTRA_BOUNDARY_ENABLED": "true"}):
-            import importlib
+        # Test prompt_injection_check — should be READ_ONLY
+        result = await symbolic_governor._ftra_boundary_check(
+            tool_name="prompt_injection_check",
+            tool_input={"prompt": "test prompt"},
+            detect_bypass=True,
+        )
 
-            import src.gateway.governance.symbolic_governor as sg_module
-
-            importlib.reload(sg_module)
-
-            governor = sg_module.SymbolicGovernor(
-                opa_client=symbolic_governor.opa_client,
-                safety_filter=symbolic_governor.safety_filter,
-                consensus_engine=symbolic_governor.consensus_engine,
-            )
-
-            # Test prompt_injection_check — should be READ_ONLY
-            result = await governor._ftra_boundary_check(
-                tool_name="prompt_injection_check",
-                tool_input={"prompt": "test prompt"},
-                detect_bypass=True,
-            )
-
-            assert result.requires_hitl is False
-            assert result.classification == "READ_ONLY"
-            assert result.bypassed_ftra_node is False
-            assert len(result.violations) == 0
-            assert result.is_safe is True
+        assert result.requires_hitl is False
+        assert result.classification == "READ_ONLY"
+        assert result.bypassed_ftra_node is False
+        assert len(result.violations) == 0
+        assert result.is_safe is True
 
     @pytest.mark.asyncio
     async def test_boundary_check_fails_closed_for_unknown_action(
@@ -313,29 +233,16 @@ class TestBoundaryCheckClassifiesDirectHttpBypass:
         symbolic_governor: SymbolicGovernor,
     ) -> None:
         """Verify unknown actions fail closed to IRREVERSIBLE_TERMINAL."""
-        with patch.dict(os.environ, {"CAGE_FTRA_BOUNDARY_ENABLED": "true"}):
-            import importlib
+        # Test unknown action — should fail closed
+        result = await symbolic_governor._ftra_boundary_check(
+            tool_name="unknown_dangerous_action",
+            tool_input={},
+            detect_bypass=True,
+        )
 
-            import src.gateway.governance.symbolic_governor as sg_module
-
-            importlib.reload(sg_module)
-
-            governor = sg_module.SymbolicGovernor(
-                opa_client=symbolic_governor.opa_client,
-                safety_filter=symbolic_governor.safety_filter,
-                consensus_engine=symbolic_governor.consensus_engine,
-            )
-
-            # Test unknown action — should fail closed
-            result = await governor._ftra_boundary_check(
-                tool_name="unknown_dangerous_action",
-                tool_input={},
-                detect_bypass=True,
-            )
-
-            assert result.requires_hitl is True
-            assert result.classification == "IRREVERSIBLE_TERMINAL"
-            assert result.terminal_match is None  # Not in registry
+        assert result.requires_hitl is True
+        assert result.classification == "IRREVERSIBLE_TERMINAL"
+        assert result.terminal_match is None  # Not in registry
 
 
 class TestBoundaryCheckRoutesToClassifyViolation:
@@ -416,29 +323,16 @@ class TestPrometheusMetrics:
         # Skip if prometheus_client not installed
         pytest.importorskip("prometheus_client")
 
-        with patch.dict(os.environ, {"CAGE_FTRA_BOUNDARY_ENABLED": "true"}):
-            import importlib
+        # The Counter will be created and incremented during the check
+        # We just verify no exceptions are raised
+        result = await symbolic_governor._ftra_boundary_check(
+            tool_name="execute_trade",
+            tool_input={},
+            detect_bypass=True,
+        )
 
-            import src.gateway.governance.symbolic_governor as sg_module
-
-            importlib.reload(sg_module)
-
-            governor = sg_module.SymbolicGovernor(
-                opa_client=symbolic_governor.opa_client,
-                safety_filter=symbolic_governor.safety_filter,
-                consensus_engine=symbolic_governor.consensus_engine,
-            )
-
-            # The Counter will be created and incremented during the check
-            # We just verify no exceptions are raised
-            result = await governor._ftra_boundary_check(
-                tool_name="execute_trade",
-                tool_input={},
-                detect_bypass=True,
-            )
-
-            assert result.requires_hitl is True
-            # Counter increment happens without exception — test passes
+        assert result.requires_hitl is True
+        # Counter increment happens without exception — test passes
 
 
 class TestClassifierStandaloneInstantiation:
@@ -477,3 +371,6 @@ class TestClassifierStandaloneInstantiation:
         assert classifier.is_irreversible("execute_trade") is True
         assert classifier.is_irreversible("write_db") is True
         assert classifier.is_irreversible("prompt_injection_check") is False
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

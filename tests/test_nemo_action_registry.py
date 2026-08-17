@@ -220,3 +220,6 @@ class TestColangDefinitionsSync:
 
         names = {n for n, _ in get_all_actions()}
         assert "InvokeVllmFallbackAction" in names
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

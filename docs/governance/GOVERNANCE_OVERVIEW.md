@@ -1,6 +1,6 @@
 # Cybernetic Governance of Agentic AI
 
-**Last Updated:** 2026-08-05 | **System Version:** v2.1.0
+**Last Updated:** 2026-08-16 | **System Version:** v3.0.0
 
 > **Jurisdiction separation principle:** **ISO/IEC 42001:2023** is the **sole universal governance baseline** — every control, pipeline step, and audit artifact in this document applies to all deployment regions (`US_FED`, `EU_ECB`, `APAC_MAS`). All other regulatory frameworks are **additive, jurisdiction-specific layers** activated exclusively by the `CAGE_DEPLOYMENT_REGION` environment variable:
 > - **US_FED only:** SR 26-2 (Federal Reserve), NIST AI 600-1, NIST SP 800-53, NIST AI RMF
@@ -9,9 +9,13 @@
 >
 > Controls marked *(All Regions)* are ISO 42001 obligations. Controls marked with a specific region are additive obligations for that jurisdiction only.
 
-> **Release Note:** This document reflects the current v2.1.0 stable release. Key changes since the initial baseline: Token Quota Proxy (`CTRL_TQP_007`) active; PII Sanitizer active; UCA Logger active; SLM sidecar permanently deprecated (`slm_available=false`); OPA confidence threshold 0.95 unconditional (OPA is sole enforcer; Python check removed per POAM-TIER2-001 partial mitigation retained); vLLM reasoning model (`DeepSeek-R1-Distill-Llama-8B`) deployed; `outlines` library removed (CVE-2025-69872). `safety.py` is now a deprecated shim only — canonical CBF implementation is `cbf.py`. See `CHANGELOG.md` for the full v2.0.0/v2.1.0 addition list.
-
-> **v2.1.0 Additions:** FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`); Phase A ingress adapters (AAIF, ACS, OSCAL, Lula, AGP policy uploader, policy translator); Phase B AGW absorption (`agw_adapter.py`); CAGE-003 Agent Registry Integration (SPIFFE trust-domain); NeMo Guardrails full integration (`src/gateway/governance/nemo/`); LangGraph harness (`nemo_node_factory.py`, `opa_node_factory.py`); NIST AI 600-1 compliance gates phases 0–3; three-region Lula manifests (EU_ECB, APAC_MAS, US_FED); AARM 11-vector threat ledger (`aarm_mapper.py`); CBF external reconciliation worker (POAM-023 closed 2026-07-27; reconciliation_worker reads `reconciliation:verified_balance` from Redis and KMS-signs it; CBF falls back to self-reported `safety:current_cash` with CRITICAL audit log when reconciled balance is unavailable). See [`docs/architecture/GATEWAY_ARCHITECTURE.md`](../architecture/GATEWAY_ARCHITECTURE.md) §v2.1.0 Additions for full detail.
+> **Release Note (v3.0.0):** This document reflects the v3.0.0 stable release. Key changes in v3.0.0:
+> - **Lua-Atomic CBF Check & Commit (CR-3):** `ControlBarrierFunction.atomic_verify_and_commit()` collapses barrier checks and balance commits into a single atomic Redis Lua execution, eliminating TOCTOU race conditions.
+> - **Strictly Human-Gated NeMo Refinement (CR-2):** Autonomous auto-apply branch removed; all refinements require human review via `POST /v1/nemo/propose-refinement` and `POST /v1/nemo/approve-refinement/{proposal_id}`.
+> - **Evidence Stream Schema Consolidation (CR-1):** Canonical `1.1` schema enforcing 6-field `record_hash` cryptographic binding.
+> - **Centralized Threshold Governance:** Numeric thresholds centralized under `config/thresholds/<REGION>_BASELINE.json` accessed via typed accessor functions.
+> - **Operational External Reconciliation (POAM-023 / POAM-2026-038 CLOSED):** GCS WORM ledger + Cloud KMS signing + 300s TTL in Redis.
+> - **PAUSE & NARROW Primitives:** Resumable pause tokens with fence-epoch protection and bounded partial-authority execution.
 
 This document describes the **Cybernetic Governance** framework that transforms the Financial Advisor agent from a probabilistic LLM application into a deterministic, engineering-controlled system. For the full architectural detail, see [`ARCHITECTURE.md`](../architecture/ARCHITECTURE.md).
 
@@ -48,13 +52,13 @@ The `SymbolicGovernor` in `src/gateway/governance/symbolic_governor.py` is the c
 | Step | Name | Implementation | Notes |
 |------|------|---------------|-------|
 | **0** | STPA UCA Constraint Check | `GeneratedSTPAValidator.validate()` (`generated_stpa_validator.py`) | Aho-Corasick keyword scan + ontology-defined UCA checks. Captures violation count for Tier 2 structural corroboration (POAM-TIER2-001). |
-| **1** | Agentic Confidence Gate | Local pre-check in `symbolic_governor.py` + OPA `system_authz.rego` | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95; OPA enforces SLM-degraded 0.97 sentinel). A structural corroboration heuristic (POAM-TIER2-001) runs after CBF+OPA results are available to flag high self-reported confidence contradicted by structural evidence. |
-| **2** | Control Barrier Function | `ControlBarrierFunction.atomic_verify_and_commit()` (`cbf.py`) | Redis-backed cash balance invariant. Uses Lua atomic check+commit. Reads KMS-signed reconciled balance (POAM-023) when available. CBF tracks `_local_debits` locally; `effective_balance = snapshot_balance - _local_debits` is used for all checks to prevent intra-window double-spend. Runs **concurrently** with Tier 4 (OPA) via `asyncio.gather`. |
-| **3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` (`fiscal_limit_guard.py`) | Atomically reserves the requested USD amount against the daily cap in Redis (WATCH/MULTI/EXEC, read-write) **before** the consensus gate, closing the saga-atomicity gap (distributed-transaction atomicity failure, not a concurrency race). `rollback_state()` Saga compensation method reverses the Redis debit if a downstream tier fails after Tier 3a commitment. Released on any subsequent failure. |
+| **1** | Agentic Confidence Gate | Local pre-check in `symbolic_governor.py` + OPA `system_authz.rego` | Fast-fail local check against `get_agent_confidence_threshold()` (default 0.95; OPA enforces SLM-degraded 0.97 sentinel). A structural corroboration heuristic (POAM-TIER2-001) runs after CBF+OPA results are available to flag high self-reported confidence contradicted by structural evidence. |
+| **2** | Control Barrier Function | `ControlBarrierFunction.atomic_verify_and_commit()` (`cbf.py`) | Redis-backed cash balance invariant. Uses Lua atomic check+commit. Reads KMS-signed reconciled balance (POAM-023 / POAM-2026-038) when available. CBF tracks `_local_debits` locally; `effective_balance = snapshot_balance - _local_debits` is used for all checks to prevent intra-window double-spend. Runs **concurrently** with Tier 4 (OPA) via `asyncio.gather`. |
+| **3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` (`fiscal_limit_guard.py`) | Atomically reserves the requested USD amount against the daily cap in Redis (WATCH/MULTI/EXEC, read-write) **before** the consensus gate, closing the saga-atomicity gap (distributed-transaction atomicity failure, not a concurrency race). `rollback_state()` Saga compensation reverses the Redis debit if a downstream tier fails after Tier 3a commitment. Released on any subsequent failure. |
 | **4** | OPA Policy Evaluation | `OPAClient.evaluate_policy()` | Runs **concurrently** with Tier 2 (CBF) via `asyncio.gather` — combined latency is `max(CBF_ms, OPA_ms)` |
 | **5** | Multi-Agent Consensus | `consensus_engine.check_consensus()` (`consensus.py`) | For trades exceeding $10,000 USD: two concurrent LLM critics ("Risk Manager" and "Compliance Officer") must reach unanimity. 30-second per-critic timeout. Any dissent or error escalates. Degraded-quorum routing: `ERROR + APPROVE → ESCALATE` (HITL) is explicitly handled. |
-| **6** | DoWhy Causal Gatekeeper | `causal_safety_check()` (`causal_gatekeeper.py`) | Constructs a `CausalModel` (market_volatility → trade_amount → risk_score), estimates causal effect via backdoor linear regression, then applies a **Placebo Treatment Refuter** (50 simulations, p < 0.05). Dispatched via `asyncio.to_thread`. Fail-safe: blocks on any exception or missing live telemetry in production. Redis connection errors are now fail-closed (raise `RuntimeError`); absent keys return `None` (first-boot safe). |
-| **6b** | FRIA Normative Boundary + Attestation | `enforce_fria_boundary()` + OTel stamp (`normative_provider.py`) | **Merged step:** adaptive FRIA enforcement (ALLOW/DEFER/DENY based on consensus score) combined with EU AI Act Art. 29a OTel attestation. Runs only when `CAGE_NORMATIVE_PROVIDER != "static"` for enforcement; attestation stamp always applied for EU_ECB deployments. |
+| **6** | DoWhy Causal Gatekeeper | `causal_safety_check()` (`causal_gatekeeper.py`) | Constructs a `CausalModel` (market_volatility → trade_amount → risk_score), estimates causal effect via backdoor linear regression, then applies a **Placebo Treatment Refuter** (50 simulations, p < 0.05). Dispatched via `asyncio.to_thread`. Fail-safe: blocks on any exception or missing live telemetry in production. Redis connection errors are fail-closed (raise `RuntimeError`); absent keys return `None` (first-boot safe). |
+| **6b** | FRIA Normative Boundary + Attestation | `enforce_fria_boundary()` + OTel stamp (`normative_provider.py`) | **Merged step:** adaptive FRIA enforcement (ALLOW/DEFER/DENY based on consensus score against `get_fria_zone_allow()` and `get_fria_zone_defer()`) combined with EU AI Act Art. 29a OTel attestation. Runs only when `CAGE_NORMATIVE_PROVIDER != "static"` for enforcement; attestation stamp always applied for EU_ECB deployments. |
 
 **Routing Seal timing:** The KMS-backed routing seal (`generate_seal()` in `routing_seal.py`) is issued **only after all 7 pipeline tiers complete successfully**. Previously `validate_action()` issued the seal after only CBF + OPA (Tiers 2/4), implying full governance approval that was never actually granted. That gap is now closed.
 
@@ -94,9 +98,9 @@ The following components are essential infrastructure but are **not** numbered g
 
 > **Source:** [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
 
-The `SymbolicGovernor._run_checks()` method implements a strict **7-tier sequential pipeline** (Tiers 2 and 4 execute concurrently). Every tool execution request must pass all applicable tiers before a routing seal is issued. This table uses the same numbering as the Step 0–6 table in §2 above — both describe the identical pipeline.
+The `SymbolicGovernor._run_checks()` method implements a strict **8-tier governance pipeline** (FTRA pre-pipeline boundary gate at Tier 0.5 plus 7 in-pipeline tiers; Tiers 2 and 4 execute concurrently). Every tool execution request must pass all applicable tiers before a routing seal is issued. This table uses the same numbering as the Step 0–6 table in §2 above — both describe the in-pipeline tiers.
 
-### 7-Tier Pipeline
+### 8-Tier Pipeline
 
 | Tier | Name | Key Invariant / Action | Source Module |
 |------|------|------------------------|---------------|
@@ -383,9 +387,9 @@ For detailed deployment instructions, see **[deployment/README.md](../../README.
 
 ### FTRA Commencement Reachability Gate
 
-The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)** (`src/gateway/governance/ftra/`) is a Tier 0.5 LangGraph node — inserted between `evaluator` and `safety_check` — that analyzes a proposed multi-step `ExecutionPlan` *before any step runs* to determine whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable from step 0, and routes accordingly based on Evaluator confidence.
+The **Forward-Looking Trajectory Reachability Analyzer (FTRA, `CTRL_FTRA_001`)** (`src/gateway/governance/ftra/`) is a **Pre-Pipeline Boundary Gate** — a dedicated LangGraph node inserted between `evaluator` and `safety_check` — that analyzes a proposed multi-step `ExecutionPlan` *before any step runs* to determine whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable from step 0, and routes accordingly based on Evaluator confidence. Unlike Tiers 0–6b, which operate per tool call within `_run_checks()`, FTRA is a **gateway precondition** that operates on the **whole execution graph** before per-tool-call checks begin.
 
-> **Note:** Tier 0.5 (FTRA) executes before `_run_checks()` and is **not** included in the 21-state BFS automaton; this is a documented verification gap.
+> **Note:** FTRA (the Pre-Pipeline Boundary Gate) executes before `_run_checks()` and is **not** included in the 21-state BFS automaton; this is a documented verification gap.
 
 - **`ftra/classifier.py`** — `IrreversibilityClassifier` classifies each plan-step action name (via `config/ftra/terminal_registry.json`) as `IRREVERSIBLE_TERMINAL`, `REVERSIBLE`, or `READ_ONLY`; fail-closed for unregistered actions
 - **`ftra/graph_analyzer.py`** — `PlanGraphAnalyzer` builds a NetworkX `DiGraph` over `ExecutionPlan.steps` and runs DFS from step 0 to compute the reachable terminals and critical path

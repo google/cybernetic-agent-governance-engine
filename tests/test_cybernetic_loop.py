@@ -21,14 +21,15 @@ Guards the three-node signal path:
     → POST /v1/webhooks/langfuse          (event filter + threshold gate)
     → _submit_kfp_run()                   (KFP dry-run in CI)
     → KFP: trigger_nemo_refinement()      (calls /v1/nemo/apply-refinement)
-    → POST /v1/nemo/apply-refinement      (hot-reloads NeMo rails singleton)
+    → POST /v1/nemo/apply-refinement      (stages proposal for human approval)
+    → POST /v1/nemo/approve-refinement/{id} (human approves → reload rails)
 
 Regression risks guarded:
 - R-LOOP-1: KFP component must NOT call /v1/refinement/trigger (infinite loop).
 - R-LOOP-2: Langfuse webhook must not act on non-score events.
 - R-LOOP-3: Langfuse webhook must not act when safety_rate >= threshold.
-- R-LOOP-4: apply-refinement must reload the global rails singleton.
-- R-LOOP-5: apply-refinement must return 500 (not 200) on reload failure.
+- R-LOOP-4: apply-refinement must ALWAYS return pending_approval (v3.0.0+).
+- R-LOOP-5: (removed) auto-apply branch eliminated in CR-2/EV-4.
 """
 
 from __future__ import annotations
@@ -63,6 +64,7 @@ def _get_server_app():
         import src.governed_financial_advisor.server as srv
 
         importlib.reload(srv)
+        srv._last_refinement_triggered_at = -1e9
         return srv.app
 
 
@@ -146,9 +148,9 @@ class TestLangfuseWebhook:
     def reset_cooldown(self):
         import src.governed_financial_advisor.server as srv
 
-        srv._last_refinement_triggered_at = 0.0
+        srv._last_refinement_triggered_at = -1e9
         yield
-        srv._last_refinement_triggered_at = 0.0
+        srv._last_refinement_triggered_at = -1e9
 
     @pytest.fixture
     def client(self):
@@ -264,12 +266,17 @@ class TestLangfuseWebhook:
 
 
 # ---------------------------------------------------------------------------
-# R-LOOP-4 / R-LOOP-5: POST /v1/nemo/apply-refinement
+# R-LOOP-4 / R-LOOP-5: POST /v1/nemo/apply-refinement — human-in-the-loop only
 # ---------------------------------------------------------------------------
 
 
-class TestApplyRefinement:
-    """POST /v1/nemo/apply-refinement must reload the rails singleton."""
+class TestApplyRefinementProposalFlow:
+    """POST /v1/nemo/apply-refinement must always return pending_approval (v3.0.0+).
+
+    The legacy auto-apply branch was removed in CR-2/EV-4 to eliminate the
+    recursive self-authentication loop. All refinement requests now require
+    explicit human approval via POST /v1/nemo/approve-refinement/{proposal_id}.
+    """
 
     @pytest.fixture
     def client(self):
@@ -291,67 +298,64 @@ class TestApplyRefinement:
 
             return TestClient(srv.app, raise_server_exceptions=False)
 
-    @pytest.fixture(autouse=True)
-    def enable_auto_apply(self, monkeypatch):
-        """Enable legacy auto-apply for these tests (they test reload mechanics)."""
-        import src.governed_financial_advisor.server as srv
-
-        monkeypatch.setattr(srv, "_NEMO_AUTO_APPLY", True)
-
-    def test_successful_reload(self, client):
-        """R-LOOP-4: successful reload must return {status: applied, reload: true}."""
-        with patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.reload_nemo_rails",
-            new_callable=AsyncMock,
-        ):
-            resp = client.post(
-                "/v1/nemo/apply-refinement",
-                json={
-                    "control_id": "A.5.2",
-                    "verdict": "FAIL: safety_rate=0.80 < threshold=0.95",
-                    "source": "kfp-governance-loop",
-                },
-            )
+    def test_always_returns_pending_approval(self, client):
+        """R-LOOP-4: apply-refinement must return {status: pending_approval} unconditionally."""
+        resp = client.post(
+            "/v1/nemo/apply-refinement",
+            json={
+                "control_id": "A.5.2",
+                "verdict": "FAIL: safety_rate=0.80 < threshold=0.95",
+                "source": "kfp-governance-loop",
+            },
+        )
         assert resp.status_code == 200
         body = resp.json()
-        assert body["status"] == "applied"
-        assert body["reload"] is True
+        assert body["status"] == "pending_approval"
+        assert "proposal_id" in body
         assert body["control_id"] == "A.5.2"
-        assert body["source"] == "kfp-governance-loop"
 
-    def test_reload_failure_returns_500(self, client):
-        """R-LOOP-5: if reload_nemo_rails() raises, the endpoint must return 500."""
-        with patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.reload_nemo_rails",
-            side_effect=RuntimeError("Colang parse error"),
-        ):
-            resp = client.post(
-                "/v1/nemo/apply-refinement",
-                json={
-                    "control_id": "A.5.2",
-                    "verdict": "FAIL: safety_rate=0.50",
-                    "source": "test",
-                },
-            )
-        assert resp.status_code == 500
-        assert "reload failed" in resp.json()["detail"].lower()
+    def test_pending_approval_ignores_env_var(self, client, monkeypatch):
+        """R-LOOP-4: NEMO_AUTO_APPLY env var must have no effect (flag removed)."""
+        monkeypatch.setenv("NEMO_AUTO_APPLY", "true")
+        resp = client.post(
+            "/v1/nemo/apply-refinement",
+            json={
+                "control_id": "A.5.2",
+                "verdict": "FAIL: safety_rate=0.80",
+                "source": "test",
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # Must still be pending_approval — auto-apply is permanently disabled
+        assert body["status"] == "pending_approval"
 
     def test_minimum_required_fields(self, client):
         """Source field is optional; omitting it must not cause a 422."""
-        with patch(
-            "src.gateway.governance.langgraph_harness.nemo_node_factory.reload_nemo_rails",
-            new_callable=AsyncMock,
-        ):
-            resp = client.post(
-                "/v1/nemo/apply-refinement",
-                json={"control_id": "A.9.2", "verdict": "FAIL"},
-            )
+        resp = client.post(
+            "/v1/nemo/apply-refinement",
+            json={"control_id": "A.9.2", "verdict": "FAIL"},
+        )
         assert resp.status_code == 200
+        assert resp.json()["status"] == "pending_approval"
 
     def test_missing_required_fields_returns_422(self, client):
         """control_id and verdict are mandatory; omitting them must return 422."""
         resp = client.post("/v1/nemo/apply-refinement", json={"source": "test"})
         assert resp.status_code == 422
+
+    def test_proposal_id_is_uuid(self, client):
+        """Proposal ID must be a valid UUID for traceability."""
+        import uuid
+
+        resp = client.post(
+            "/v1/nemo/apply-refinement",
+            json={"control_id": "A.5.2", "verdict": "FAIL"},
+        )
+        assert resp.status_code == 200
+        proposal_id = resp.json()["proposal_id"]
+        # Should not raise ValueError if valid UUID
+        uuid.UUID(proposal_id)
 
 
 # ---------------------------------------------------------------------------
@@ -375,9 +379,9 @@ class TestWebhookCooldown:
         """Reset the module-level cooldown clock before every test."""
         import src.governed_financial_advisor.server as srv
 
-        srv._last_refinement_triggered_at = 0.0
+        srv._last_refinement_triggered_at = -1e9
         yield
-        srv._last_refinement_triggered_at = 0.0
+        srv._last_refinement_triggered_at = -1e9
 
     @pytest.fixture
     def client(self):
@@ -506,9 +510,9 @@ class TestWebhookMinSamples:
     def reset_cooldown(self):
         import src.governed_financial_advisor.server as srv
 
-        srv._last_refinement_triggered_at = 0.0
+        srv._last_refinement_triggered_at = -1e9
         yield
-        srv._last_refinement_triggered_at = 0.0
+        srv._last_refinement_triggered_at = -1e9
 
     @pytest.fixture
     def client(self):
@@ -610,3 +614,6 @@ class TestWebhookMinSamples:
                 },
             )
         assert captured and "n=42" in captured[0]
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

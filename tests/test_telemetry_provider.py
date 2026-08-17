@@ -76,6 +76,7 @@ class TestBaseTelemetryProvider:
 
     def test_concrete_subclass_must_implement_get_latest_data(self):
         """Concrete subclass that omits get_latest_data must still raise TypeError."""
+
         class Incomplete(BaseTelemetryProvider):
             pass
 
@@ -129,9 +130,7 @@ class TestMockTelemetryProvider:
     def test_risk_score_in_range(self):
         provider = MockTelemetryProvider(seed=0)
         df = provider.get_latest_data(n_samples=200)
-        assert df["risk_score"].between(0.0, 1.0).all(), (
-            "risk_score must be in [0, 1]"
-        )
+        assert df["risk_score"].between(0.0, 1.0).all(), "risk_score must be in [0, 1]"
 
     def test_trade_amount_positive(self):
         provider = MockTelemetryProvider(seed=0)
@@ -214,8 +213,11 @@ class TestLangfuseTelemetryProviderFromEnv:
 
     def test_from_env_without_credentials_returns_instance(self):
         """Missing credentials should produce a provider using MockTelemetryProvider."""
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")}
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
+        }
         with patch.dict(os.environ, env, clear=True):
             provider = LangfuseTelemetryProvider.from_env()
         assert isinstance(provider, LangfuseTelemetryProvider)
@@ -223,7 +225,8 @@ class TestLangfuseTelemetryProviderFromEnv:
     def test_from_env_without_credentials_uses_mock_fallback(self):
         """When credentials are absent, the client should be None."""
         clean_env = {
-            k: v for k, v in os.environ.items()
+            k: v
+            for k, v in os.environ.items()
             if k not in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
         }
         with patch.dict(os.environ, clean_env, clear=True):
@@ -232,15 +235,21 @@ class TestLangfuseTelemetryProviderFromEnv:
 
     def test_from_env_import_error_returns_mock_fallback(self):
         """If langfuse is not installed, from_env() must return a fallback provider."""
-        with patch.dict(os.environ, {"LANGFUSE_PUBLIC_KEY": "pk-test", "LANGFUSE_SECRET_KEY": "sk-test"}):
-            with patch("builtins.__import__", side_effect=_selective_import_error("langfuse")):
+        with patch.dict(
+            os.environ,
+            {"LANGFUSE_PUBLIC_KEY": "pk-test", "LANGFUSE_SECRET_KEY": "sk-test"},
+        ):
+            with patch(
+                "builtins.__import__", side_effect=_selective_import_error("langfuse")
+            ):
                 provider = LangfuseTelemetryProvider.from_env()
         assert isinstance(provider, LangfuseTelemetryProvider)
         assert provider._client is None
 
     def test_from_env_fallback_data_is_valid(self):
         clean_env = {
-            k: v for k, v in os.environ.items()
+            k: v
+            for k, v in os.environ.items()
             if k not in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
         }
         with patch.dict(os.environ, clean_env, clear=True):
@@ -255,12 +264,17 @@ class TestLangfuseTelemetryProviderFromEnv:
         mock_client = MagicMock()
         mock_langfuse_cls.return_value = mock_client
 
-        with patch.dict(os.environ, {
-            "LANGFUSE_PUBLIC_KEY": "pk-test-1234",
-            "LANGFUSE_SECRET_KEY": "sk-test-5678",
-            "LANGFUSE_HOST": "https://test.langfuse.example",
-        }):
-            with patch.dict("sys.modules", {"langfuse": MagicMock(Langfuse=mock_langfuse_cls)}):
+        with patch.dict(
+            os.environ,
+            {
+                "LANGFUSE_PUBLIC_KEY": "pk-test-1234",
+                "LANGFUSE_SECRET_KEY": "sk-test-5678",
+                "LANGFUSE_HOST": "https://test.langfuse.example",
+            },
+        ):
+            with patch.dict(
+                "sys.modules", {"langfuse": MagicMock(Langfuse=mock_langfuse_cls)}
+            ):
                 provider = LangfuseTelemetryProvider.from_env()
 
         assert provider._client is not None
@@ -281,13 +295,13 @@ class TestLangfuseTelemetryProviderGetLatestData:
         mock_response.data = traces
         mock_client.fetch_traces.return_value = mock_response
         fallback = MockTelemetryProvider(seed=42)
-        return LangfuseTelemetryProvider(
-            langfuse_client=mock_client, fallback=fallback
-        )
+        return LangfuseTelemetryProvider(langfuse_client=mock_client, fallback=fallback)
 
     def test_sufficient_live_samples_returns_live_dataframe(self):
         n = MIN_SAMPLES + 10
-        traces = [_make_trace(market_vol=0.3, amount=4000.0, risk=0.35) for _ in range(n)]
+        traces = [
+            _make_trace(market_vol=0.3, amount=4000.0, risk=0.35) for _ in range(n)
+        ]
         provider = self._make_provider_with_traces(traces)
         df = provider.get_latest_data(n_samples=n)
         assert isinstance(df, pd.DataFrame)
@@ -296,7 +310,9 @@ class TestLangfuseTelemetryProviderGetLatestData:
 
     def test_sufficient_live_samples_values_match_traces(self):
         n = MIN_SAMPLES + 5
-        traces = [_make_trace(market_vol=0.2, amount=3000.0, risk=0.25) for _ in range(n)]
+        traces = [
+            _make_trace(market_vol=0.2, amount=3000.0, risk=0.25) for _ in range(n)
+        ]
         provider = self._make_provider_with_traces(traces)
         df = provider.get_latest_data(n_samples=n)
         assert all(abs(v - 0.2) < 1e-9 for v in df["market_volatility"])
@@ -409,6 +425,7 @@ class TestMinSamplesConstant:
                 import importlib
 
                 import src.gateway.governance.telemetry_provider as tp_mod
+
                 importlib.reload(tp_mod)
                 assert tp_mod.MIN_SAMPLES == 50
 
@@ -420,7 +437,9 @@ class TestMinSamplesConstant:
 
 def _selective_import_error(blocked_module: str):
     """Return a builtins.__import__ side-effect that raises ImportError for blocked_module."""
-    original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
+    original_import = (
+        __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
+    )
 
     def _import(name, *args, **kwargs):
         if name == blocked_module or name.startswith(blocked_module + "."):
@@ -428,3 +447,6 @@ def _selective_import_error(blocked_module: str):
         return original_import(name, *args, **kwargs)
 
     return _import
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

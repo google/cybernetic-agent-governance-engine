@@ -2,18 +2,18 @@
 
 | Field                | Value                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **Document Version** | 2.0                                                                                                           |
-| **Date**             | 2026-06-03                                                                                                    |
+| **Document Version** | 3.0                                                                                                           |
+| **Date**             | 2026-08-16                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | ACTIVE — v2.1.0 stable (GO — 2026-06-08; GKE deployment verified 2026-06-03)                                |
-| **Reference**        | [`compliance/boundary/AUTHORIZATION_BOUNDARY.md`](../../compliance/boundary/AUTHORIZATION_BOUNDARY.md) (no `ROLES_AND_RESPONSIBILITIES.md` or `banking_regs.md` exist in this repository — see note in §3 below) |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,741 passed, 0 failed, 182 skipped; 75.12% coverage)        |
+| **Reference**        | [`compliance/boundary/AUTHORIZATION_BOUNDARY.md`](../../compliance/boundary/AUTHORIZATION_BOUNDARY.md) |
 
 ---
 
 ## 1. System Identity
 
-The **Cybernetic Agent Governance Engine (CAGE)** v2.1.0 is a production-grade, multi-agent AI governance framework purpose-built for regulated financial advising. CAGE runs on Google Kubernetes Engine (GKE) and is designed from the ground up to satisfy the overlapping — and often conflicting — compliance obligations facing AI systems deployed in financial services contexts.
+The **Cybernetic Agent Governance Engine (CAGE)** v3.0.0 is a production-grade, multi-agent AI governance framework purpose-built for regulated financial advising. CAGE runs on Google Kubernetes Engine (GKE) and is designed from the ground up to satisfy the overlapping — and often conflicting — compliance obligations facing AI systems deployed in financial services contexts.
 
 ### 1.1 Core Problem Solved
 
@@ -67,9 +67,9 @@ CAGE follows the NIST SP 800-37 Rev. 2 role taxonomy. The table below summarizes
 
 CAGE provides eight integrated capabilities that together constitute a full-stack governed AI financial advisor:
 
-1. **Autonomous AI Financial Advising** — The Governed Financial Advisor (`src/governed_financial_advisor/`) is the primary multi-agent reference implementation. It comprises specialist sub-agents (market data analyst, risk analyst, execution analyst, explainer, evaluator, supervisor) orchestrated by a LangGraph `StateGraph` (`src/governed_financial_advisor/graph/graph.py`). Agent orchestration is governed end-to-end via the 7-tier SymbolicGovernor pipeline; no agent action bypasses the policy engine. The FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`) enforces that every graph instance contains a reachable HITL approval path before any LLM inference begins.
+1. **Autonomous AI Financial Advising** — The Governed Financial Advisor (`src/governed_financial_advisor/`) is the primary multi-agent reference implementation. It comprises specialist sub-agents (market data analyst, risk analyst, execution analyst, explainer, evaluator, supervisor) orchestrated by a LangGraph `StateGraph` (`src/governed_financial_advisor/graph/graph.py`). Agent orchestration is governed end-to-end via the 8-tier governance pipeline (FTRA + 7 in-pipeline tiers); no agent action bypasses the policy engine. The FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`) enforces that every graph instance contains a reachable HITL approval path before any LLM inference begins.
 
-2. **Real-Time Neuro-Symbolic Governance** — A 7-tier policy enforcement architecture (tiers 0–6, plus adaptive Tier 6b FRIA gate) applied at inference time. Each tier (STPA/UCA validation, agentic confidence check, Control Barrier Function, OPA Rego authorization, multi-agent consensus, causal gatekeeper, and external normative validation) intercepts every request before and after the LLM call. The SLM sidecar (formerly Tier 3) has been deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. Governance is synchronous — not advisory.
+2. **Real-Time Neuro-Symbolic Governance** — An 8-tier policy enforcement architecture (FTRA pre-pipeline boundary gate at Tier 0.5, plus 7 in-pipeline tiers 0–6, plus adaptive Tier 6b FRIA gate) applied at inference time. Each tier (STPA/UCA validation, agentic confidence check, Control Barrier Function, OPA Rego authorization, multi-agent consensus, causal gatekeeper, and external normative validation) intercepts every request before and after the LLM call. The SLM sidecar (formerly Tier 3) has been deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. Governance is synchronous — not advisory.
 
 3. **Human-in-the-Loop Trade Approval** — High-risk trade recommendations are routed to a mandatory HITL approval node before execution. The approval workflow is logged with full provenance and linked to the originating inference trace.
 
@@ -87,7 +87,7 @@ CAGE provides eight integrated capabilities that together constitute a full-stac
 
 ## 5. Current Compliance Posture (NIST RMF Readiness)
 
-CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v2.0.0 stable release was tagged on 2026-06-08 (GO — branch `rc-v2.0.0`, tag `v2.0.0`; current release is v2.1.0). Both application images were built via Cloud Build and deployed to GKE cluster `<your-kubectl-context>`, namespace `governance-stack`, on 2026-06-03. The full test suite now reports **844 passed, 0 failed, 24 skipped** (2026-06-03 GKE cycle).
+CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v3.0.0 stable release was tagged on 2026-08-15. Both application images were built via Cloud Build and deployed to GKE cluster `governance-cluster-2`, namespace `governance-stack`. The test suite reports **2,741 passed, 0 failed, 182 skipped** with **75.12% statement coverage**.
 
 ### 5.1 Control Family Readiness
 

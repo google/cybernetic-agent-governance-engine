@@ -58,20 +58,20 @@ def _classify_violation_wrapper(
     context: dict[str, Any] | None = None,
 ) -> tuple[GovernanceDecision, dict[str, Any]]:
     """Wrapper to import and call _classify_violation with fresh module state.
-    
+
     This ensures feature flag changes are picked up correctly.
     """
     # Import inside function to pick up monkeypatched env vars
     import importlib
 
     import src.gateway.governance.symbolic_governor as sg
-    
+
     # Reload module-level flags
     sg.CAGE_DEFER_ENABLED = os.getenv("CAGE_DEFER_ENABLED", "true").lower() == "true"
     sg.CAGE_NARROW_ENABLED = os.getenv("CAGE_NARROW_ENABLED", "false").lower() == "true"
     sg.CAGE_PAUSE_ENABLED = os.getenv("CAGE_PAUSE_ENABLED", "false").lower() == "true"
     sg.FRIA_ZONE_DEFER = float(os.getenv("FRIA_ZONE_DEFER", "0.70"))
-    
+
     return sg._classify_violation(violations, stpa_violation_count, confidence, context)
 
 
@@ -87,7 +87,7 @@ class TestClassifyViolationDeny:
         """STPA safety violations MUST always result in DENY."""
         violations = ["UCA-7: Unsafe Control Action detected"]
         decision, meta = _classify_violation_wrapper(violations, 1, 0.99)
-        
+
         assert decision == GovernanceDecision.DENY
         assert "STPA_SAFETY" in meta["violation_types"]
         assert not meta["deferrable"]
@@ -97,7 +97,7 @@ class TestClassifyViolationDeny:
         """Even without explicit STPA string, stpa_violation_count > 0 → DENY."""
         violations = ["Generic policy error"]
         decision, meta = _classify_violation_wrapper(violations, 2, 0.99)
-        
+
         assert decision == GovernanceDecision.DENY
         assert "STPA" in meta["classification_reason"]
         assert not meta["deferrable"]
@@ -106,7 +106,7 @@ class TestClassifyViolationDeny:
         """CBF cash barrier violations MUST always result in DENY."""
         violations = ["Safety Violation (RBC/CBF): cash barrier exceeded"]
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
-        
+
         assert decision == GovernanceDecision.DENY
         assert "CBF_CONSTRAINT" in meta["violation_types"]
         assert not meta["deferrable"]
@@ -117,7 +117,7 @@ class TestClassifyViolationDeny:
         violations = ["Policy threshold exceeded"]
         ctx = {"cbf_violation": True}
         _decision, meta = _classify_violation_wrapper(violations, 0, 0.99, ctx)
-        
+
         # CBF_CONSTRAINT_CTX is added to violation types when context flag is set
         assert "CBF_CONSTRAINT_CTX" in meta["violation_types"]
 
@@ -125,7 +125,7 @@ class TestClassifyViolationDeny:
         """Explicit OPA DENY violation MUST result in DENY."""
         violations = ["[CTRL_OPA_005] OPA Denied Action"]
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
-        
+
         assert decision == GovernanceDecision.DENY
         assert "OPA_DENY" in meta["violation_types"]
         assert not meta["deferrable"]
@@ -134,7 +134,7 @@ class TestClassifyViolationDeny:
         """Fiscal Limit Pre-Reservation REJECTED is a hard violation."""
         violations = ["Fiscal Limit Pre-Reservation REJECTED: amount exceeds daily cap"]
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
-        
+
         assert decision == GovernanceDecision.DENY
         assert "CBF_CONSTRAINT" in meta["violation_types"]
 
@@ -142,7 +142,7 @@ class TestClassifyViolationDeny:
         """Unknown violation types default to DENY for safety."""
         violations = ["Some unknown violation type xyz123"]
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
-        
+
         assert decision == GovernanceDecision.DENY
         assert "UNKNOWN_HARD" in meta["violation_types"]
 
@@ -159,9 +159,9 @@ class TestClassifyViolationDefer:
         """Low confidence + soft violations → DEFER (when enabled)."""
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
         violations = ["Confidence Violation: score 0.55 < threshold 0.95"]
-        
+
         decision, meta = _classify_violation_wrapper(violations, 0, 0.55)
-        
+
         assert decision == GovernanceDecision.DEFER
         assert "CONFIDENCE_STARVATION" in meta["violation_types"]
         assert meta["deferrable"]
@@ -172,9 +172,9 @@ class TestClassifyViolationDefer:
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
         monkeypatch.setenv("FRIA_ZONE_DEFER", "0.70")
         violations = ["Confidence Violation: below threshold"]
-        
+
         decision, meta = _classify_violation_wrapper(violations, 0, 0.65)
-        
+
         assert decision == GovernanceDecision.DEFER
         assert meta["deferrable"]
 
@@ -182,9 +182,9 @@ class TestClassifyViolationDefer:
         """When CAGE_DEFER_ENABLED=false, DEFER candidates fall back to DENY."""
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "false")
         violations = ["Confidence Violation: score 0.55 < threshold 0.95"]
-        
+
         decision, meta = _classify_violation_wrapper(violations, 0, 0.55)
-        
+
         assert decision == GovernanceDecision.DENY
         assert "CAGE_DEFER_ENABLED=false" in meta["classification_reason"]
         # deferrable is still True (violations are deferrable, but feature is disabled)
@@ -197,9 +197,9 @@ class TestClassifyViolationDefer:
             "Confidence Violation: below threshold",
             "POAM-TIER2-001: Structural override required",
         ]
-        
+
         decision, meta = _classify_violation_wrapper(violations, 0, 0.50)
-        
+
         assert decision == GovernanceDecision.DEFER
         assert "CONFIDENCE_STARVATION" in meta["violation_types"]
         assert "TIER2_STRUCTURAL" in meta["violation_types"]
@@ -217,7 +217,7 @@ class TestClassifyViolationRequireApproval:
         """OPA MANUAL_REVIEW violation → REQUIRE_APPROVAL."""
         violations = ["[CTRL_OPA_001] Manual Review Required"]
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
-        
+
         assert decision == GovernanceDecision.REQUIRE_APPROVAL
         assert "REQUIRE_APPROVAL" in meta["violation_types"]
         assert not meta["deferrable"]
@@ -227,7 +227,7 @@ class TestClassifyViolationRequireApproval:
         violations = ["Confidence Violation: threshold edge case"]
         # Confidence is above FRIA_ZONE_DEFER (0.70) but has soft violations
         decision, meta = _classify_violation_wrapper(violations, 0, 0.85)
-        
+
         assert decision == GovernanceDecision.REQUIRE_APPROVAL
         assert "above confidence threshold" in meta["classification_reason"]
 
@@ -238,7 +238,7 @@ class TestClassifyViolationRequireApproval:
             "UCA-7: STPA safety violation",
         ]
         decision, meta = _classify_violation_wrapper(violations, 1, 0.99)
-        
+
         assert decision == GovernanceDecision.DENY
         assert not meta["deferrable"]
 
@@ -259,9 +259,9 @@ class TestClassifyViolationNarrow:
             "params": {"amount": 150000, "symbol": "AAPL"},
             "threshold_config": {"max_amount": 100000},
         }
-        
+
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99, ctx)
-        
+
         assert decision == GovernanceDecision.NARROW
         assert "AMOUNT_THRESHOLD_EXCEEDED" in meta["violation_types"]
         assert "narrowed_params" in meta
@@ -276,9 +276,9 @@ class TestClassifyViolationNarrow:
             "params": {"scope": ["read", "write", "delete"]},
             "threshold_config": {"allowed_scopes": ["read", "write"]},
         }
-        
+
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99, ctx)
-        
+
         assert decision == GovernanceDecision.NARROW
         assert "SCOPE_EXCEEDED" in meta["violation_types"]
         assert meta["narrowed_params"]["scope"] == ["read", "write"]
@@ -291,9 +291,9 @@ class TestClassifyViolationNarrow:
             "params": {"date_range_days": 365},
             "threshold_config": {"max_date_range_days": 90},
         }
-        
+
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99, ctx)
-        
+
         assert decision == GovernanceDecision.NARROW
         assert "DATE_RANGE_EXCEEDED" in meta["violation_types"]
         assert meta["narrowed_params"]["date_range_days"] == 90
@@ -303,10 +303,10 @@ class TestClassifyViolationNarrow:
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "false")
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
         violations = ["Amount exceeds limit"]
-        
+
         # Confidence below threshold to trigger DEFER fallback
         decision, meta = _classify_violation_wrapper(violations, 0, 0.50)
-        
+
         assert decision == GovernanceDecision.DEFER
         assert "CAGE_NARROW_ENABLED=false" in meta["classification_reason"]
 
@@ -315,10 +315,10 @@ class TestClassifyViolationNarrow:
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "false")
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
         violations = ["Amount exceeds limit"]
-        
+
         # High confidence means no DEFER fallback
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
-        
+
         assert decision == GovernanceDecision.DENY
         assert "CAGE_NARROW_ENABLED=false" in meta["classification_reason"]
 
@@ -330,9 +330,9 @@ class TestClassifyViolationNarrow:
             "params": {"amount": 250000.50},
             "threshold_config": {"max_amount": 100000.0},
         }
-        
+
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99, ctx)
-        
+
         assert decision == GovernanceDecision.NARROW
         assert meta["narrowed_params"]["amount"] == 100000.0
         assert any("clamped" in c.lower() for c in meta["constraints_applied"])
@@ -345,9 +345,9 @@ class TestClassifyViolationNarrow:
             "params": {"scope": ["read", "write", "admin", "delete"]},
             "threshold_config": {"allowed_scopes": ["read", "write"]},
         }
-        
+
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99, ctx)
-        
+
         assert decision == GovernanceDecision.NARROW
         assert set(meta["narrowed_params"]["scope"]) == {"read", "write"}
 
@@ -364,9 +364,9 @@ class TestClassifyViolationPause:
         """Rate limit violations → PAUSE (when enabled)."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
         violations = ["Rate limit exceeded: too many requests"]
-        
+
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
-        
+
         assert decision == GovernanceDecision.PAUSE
         assert "RATE_LIMITED" in meta["violation_types"]
         assert meta.get("pausable")
@@ -377,9 +377,9 @@ class TestClassifyViolationPause:
         """Circuit breaker open violations → PAUSE (when enabled)."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
         violations = ["Circuit breaker is open: service unavailable"]
-        
+
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
-        
+
         assert decision == GovernanceDecision.PAUSE
         assert "CIRCUIT_OPEN" in meta["violation_types"]
         assert meta["pause_reason"] == "CIRCUIT_OPEN"
@@ -388,9 +388,9 @@ class TestClassifyViolationPause:
         """Resource unavailable violations → PAUSE (when enabled)."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
         violations = ["Quota exhausted: capacity exceeded"]
-        
+
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
-        
+
         assert decision == GovernanceDecision.PAUSE
         assert "RESOURCE_UNAVAILABLE" in meta["violation_types"]
         assert meta["pause_reason"] == "RESOURCE_UNAVAILABLE"
@@ -399,9 +399,9 @@ class TestClassifyViolationPause:
         """When CAGE_PAUSE_ENABLED=false, PAUSE candidates fall back to DENY."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "false")
         violations = ["Rate limit exceeded"]
-        
+
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
-        
+
         assert decision == GovernanceDecision.DENY
         assert "CAGE_PAUSE_ENABLED=false" in meta["classification_reason"]
 
@@ -413,10 +413,10 @@ class TestClassifyViolationPause:
             "Rate limit exceeded",
             "Confidence Violation: below threshold",
         ]
-        
+
         # Has both pausable and soft violations — should NOT be PAUSE
         decision, _meta = _classify_violation_wrapper(violations, 0, 0.50)
-        
+
         # PAUSE only triggers when there are NO soft or narrowable violations
         assert decision != GovernanceDecision.PAUSE
 
@@ -433,7 +433,7 @@ class TestClassifyViolationMetadata:
         """All required metadata fields are populated."""
         violations = ["UCA-7: STPA violation"]
         _decision, meta = _classify_violation_wrapper(violations, 1, 0.99)
-        
+
         # Required fields
         assert "classification_reason" in meta
         assert "violation_types" in meta
@@ -441,7 +441,7 @@ class TestClassifyViolationMetadata:
         assert "hard_violations" in meta
         assert "soft_violations" in meta
         assert "narrowable_violations" in meta
-        
+
         # Values are correct type
         assert isinstance(meta["classification_reason"], str)
         assert isinstance(meta["violation_types"], list)
@@ -454,7 +454,7 @@ class TestClassifyViolationMetadata:
         """Classification reason provides meaningful context."""
         violations = ["Safety Violation (RBC/CBF): cash barrier violated"]
         _decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
-        
+
         reason = meta["classification_reason"]
         assert len(reason) > 10
         assert "violation" in reason.lower() or "cbf" in reason.lower()
@@ -466,7 +466,7 @@ class TestClassifyViolationMetadata:
             "UCA-8: Another STPA violation",
         ]
         _decision, meta = _classify_violation_wrapper(violations, 2, 0.99)
-        
+
         # violation_types should be a set-like list (no duplicates)
         assert len(meta["violation_types"]) == len(set(meta["violation_types"]))
 
@@ -474,9 +474,9 @@ class TestClassifyViolationMetadata:
         """Pausable violations are tracked in metadata."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
         violations = ["Rate limit exceeded"]
-        
+
         _decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
-        
+
         assert "pausable_violations" in meta
         assert len(meta["pausable_violations"]) > 0
 
@@ -485,9 +485,9 @@ class TestClassifyViolationMetadata:
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
         violations = ["Amount exceeds limit"]
         ctx = {"params": {"amount": 150000}, "threshold_config": {"max_amount": 100000}}
-        
+
         _decision, meta = _classify_violation_wrapper(violations, 0, 0.99, ctx)
-        
+
         assert "narrowable_violations" in meta
         assert len(meta["narrowable_violations"]) > 0
 
@@ -503,7 +503,7 @@ class TestClassifyViolationEdgeCases:
     def test_empty_violations_returns_deny(self):
         """Empty violations list defaults to DENY (should not reach here normally)."""
         decision, meta = _classify_violation_wrapper([], 0, 0.99)
-        
+
         # With no violations, classification falls through to fallback DENY
         assert decision == GovernanceDecision.DENY
         assert "unclassified" in meta["classification_reason"].lower()
@@ -513,10 +513,10 @@ class TestClassifyViolationEdgeCases:
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
         monkeypatch.setenv("FRIA_ZONE_DEFER", "0.70")
         violations = ["Confidence Violation: marginal"]
-        
+
         # 0.70 is not < 0.70, so not confidence-starved
         decision, _meta = _classify_violation_wrapper(violations, 0, 0.70)
-        
+
         # Should be REQUIRE_APPROVAL (soft violation above threshold), not DEFER
         assert decision == GovernanceDecision.REQUIRE_APPROVAL
 
@@ -525,10 +525,10 @@ class TestClassifyViolationEdgeCases:
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
         monkeypatch.setenv("FRIA_ZONE_DEFER", "0.70")
         violations = ["Confidence Violation: marginal"]
-        
+
         # 0.699 is < 0.70, so confidence-starved
         decision, _meta = _classify_violation_wrapper(violations, 0, 0.699)
-        
+
         assert decision == GovernanceDecision.DEFER
 
     def test_multiple_hard_violation_types(self):
@@ -539,7 +539,7 @@ class TestClassifyViolationEdgeCases:
             "[CTRL_OPA_005] OPA Denied Action",
         ]
         decision, meta = _classify_violation_wrapper(violations, 1, 0.99)
-        
+
         assert decision == GovernanceDecision.DENY
         assert "STPA_SAFETY" in meta["violation_types"]
         assert "CBF_CONSTRAINT" in meta["violation_types"]
@@ -553,7 +553,7 @@ class TestClassifyViolationEdgeCases:
             "Confidence Violation: below threshold",  # Soft
         ]
         decision, meta = _classify_violation_wrapper(violations, 1, 0.50)
-        
+
         assert decision == GovernanceDecision.DENY
         assert len(meta["hard_violations"]) == 1
         assert len(meta["soft_violations"]) == 1
@@ -562,9 +562,9 @@ class TestClassifyViolationEdgeCases:
         """'throttled' variant of rate limit triggers PAUSE."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
         violations = ["Request throttled: wait before retry"]
-        
+
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
-        
+
         assert decision == GovernanceDecision.PAUSE
         assert "RATE_LIMITED" in meta["violation_types"]
 
@@ -572,17 +572,17 @@ class TestClassifyViolationEdgeCases:
         """'too many requests' triggers PAUSE."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
         violations = ["Too many requests: slow down"]
-        
+
         decision, _meta = _classify_violation_wrapper(violations, 0, 0.99)
-        
+
         assert decision == GovernanceDecision.PAUSE
 
     def test_temporarily_unavailable_triggers_pause(self, monkeypatch):
         """'temporarily unavailable' triggers PAUSE."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
         violations = ["Service temporarily unavailable"]
-        
+
         decision, meta = _classify_violation_wrapper(violations, 0, 0.99)
-        
+
         assert decision == GovernanceDecision.PAUSE
         assert "RESOURCE_UNAVAILABLE" in meta["violation_types"]

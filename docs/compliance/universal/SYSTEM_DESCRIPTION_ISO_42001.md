@@ -23,7 +23,7 @@ The transition to Agentic AI represents a shift from deterministic software to p
 
 ## 3. CAGE Architecture & VSM Mapping
 
-**v2.0.0 System State (GO: 2026-06-08):** CAGE implements a **7-tier SymbolicGovernor** (Tiers 0–6, plus Tier 6b adaptive FRIA gate: STPA → Agentic Confidence → CBF + OPA [concurrent] → Fiscal Limit Pre-Reservation → Consensus → CausalGatekeeper → FRIA) with a 10-node LangGraph StateGraph. The legacy SLM sidecar has been fully retired with a permanent `slm_available=False` sentinel; OPA Policy Evaluation runs concurrently with the CBF check. NeMo Guardrails (including the Aho-Corasick keyword scan) runs as a pre-pipeline screening layer, integrated into the gateway process (not a standalone sidecar). Sensitive data detection covers **15 PII entity types** via Presidio/spaCy. Implemented v2.0.0 controls include: **Token Quota Proxy** (`token_quota_proxy.py`), **PII Sanitizer** (`pii_sanitizer.py`), and **UCA Logger** (`uca_logger.py`). All controls are ISO 42001 obligations active in every region; SR 26-2 MRM scope (CBF + DoWhy Phase 1) applies **US_FED only**.
+**v2.0.0 System State (GO: 2026-06-08):** CAGE implements an **8-tier governance pipeline** (FTRA pre-pipeline boundary gate at Tier 0.5 plus 7 in-pipeline tiers: Tiers 0–6, plus Tier 6b adaptive FRIA gate: STPA → Agentic Confidence → CBF + OPA [concurrent] → Fiscal Limit Pre-Reservation → Consensus → CausalGatekeeper → FRIA) with a 10-node LangGraph StateGraph. The legacy SLM sidecar has been fully retired with a permanent `slm_available=False` sentinel; OPA Policy Evaluation runs concurrently with the CBF check. NeMo Guardrails (including the Aho-Corasick keyword scan) runs as a pre-pipeline screening layer, integrated into the gateway process (not a standalone sidecar). Sensitive data detection covers **15 PII entity types** via Presidio/spaCy. Implemented v2.0.0 controls include: **Token Quota Proxy** (`token_quota_proxy.py`), **PII Sanitizer** (`pii_sanitizer.py`), and **UCA Logger** (`uca_logger.py`). All controls are ISO 42001 obligations active in every region; SR 26-2 MRM scope (CBF + DoWhy Phase 1) applies **US_FED only**.
 
 > **FUTURE STATE — AnchorageGrpcLedgerProvider (POAM-023, target 2026-09-08):** External CBF ledger reconciliation via `AnchorageGrpcLedgerProvider` is **not yet implemented**. The Control Barrier Function currently uses Redis-only state. gRPC-based external ledger integration is tracked as POAM-023.
 
@@ -66,9 +66,9 @@ The **Evaluator** performs a "Dry Run":
 
 The **Explainer** ensures the output is grounded in reality, addressing the "Black Box" problem and "Post-Hoc Rationalization".
 
-### 4.4. 7-Tier Symbolic Governor Pipeline
+### 4.4. 8-Tier Governance Pipeline
 
-The [`SymbolicGovernor`](../../../src/gateway/governance/symbolic_governor.py) implements a 7-tier pipeline (`_run_checks()`) that every `execute_trade` action must traverse before a routing seal is issued. Each tier is a distinct safety layer with formal properties; Tiers 2 and 4 execute concurrently:
+The [`SymbolicGovernor`](../../../src/gateway/governance/symbolic_governor.py) implements an 8-tier pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers via `_run_checks()`) that every `execute_trade` action must traverse before a routing seal is issued. Each tier is a distinct safety layer with formal properties; Tiers 2 and 4 execute concurrently:
 
 | Tier | Name | Mechanism | Formal Property |
 | :--- | :--- | :-------- | :-------------- |
@@ -187,4 +187,4 @@ All UCA violations are recorded as 16-field compliance records, signed with KMS 
 
 ## 7. Conclusion
 
-By implementing CAGE, we move from "Rule-Based Guardrails" to **"Agentic Governance"**. The Evaluator Agent acts as a cybernetic regulator, ensuring that the system remains viable and compliant within the high-stakes environment of Corporate Finance. The 7-tier `SymbolicGovernor` pipeline, grounded in Control Barrier Function theory and causal inference, provides mathematically verifiable safety guarantees that satisfy ISO/IEC 42001:2023 Annex A obligations across all deployment regions.
+By implementing CAGE, we move from "Rule-Based Guardrails" to **"Agentic Governance"**. The Evaluator Agent acts as a cybernetic regulator, ensuring that the system remains viable and compliant within the high-stakes environment of Corporate Finance. The 8-tier governance pipeline (FTRA + 7 in-pipeline tiers), grounded in Control Barrier Function theory and causal inference, provides mathematically verifiable safety guarantees that satisfy ISO/IEC 42001:2023 Annex A obligations across all deployment regions.

@@ -67,7 +67,9 @@ def _make_hybrid_stubs() -> dict:
     return {
         # Sub-apps
         "src.gateway.server.mcp_tool_server": MagicMock(app=mock_mcp_app),
-        "src.gateway.server.inference_proxy": MagicMock(inference_app=mock_inference_app),
+        "src.gateway.server.inference_proxy": MagicMock(
+            inference_app=mock_inference_app
+        ),
         "src.gateway.server.governance_middleware": MagicMock(
             governance_app=mock_governance_app,
             enforce_governance=AsyncMock(return_value=MagicMock()),
@@ -278,10 +280,12 @@ async def test_healthz_returns_200_kms_active_in_dev(monkeypatch):
     sys.modules.pop("src.gateway.server.hybrid_server", None)
     with patch.dict("sys.modules", stubs):
         from src.gateway.server.hybrid_server import healthz
+
         result = await healthz()
 
     assert result.status_code == 200
     import json
+
     body = json.loads(result.body)
     assert body["status"] == "healthy"
 
@@ -301,9 +305,11 @@ async def test_healthz_returns_200_kms_active_in_prod(monkeypatch):
     sys.modules.pop("src.gateway.server.hybrid_server", None)
     with patch.dict("sys.modules", stubs):
         from src.gateway.server.hybrid_server import healthz
+
         result = await healthz()
 
     import json
+
     assert result.status_code == 200
     body = json.loads(result.body)
     assert body["kms_active"] is True
@@ -324,9 +330,11 @@ async def test_healthz_returns_503_kms_inactive_in_prod(monkeypatch):
     sys.modules.pop("src.gateway.server.hybrid_server", None)
     with patch.dict("sys.modules", stubs):
         from src.gateway.server.hybrid_server import healthz
+
         result = await healthz()
 
     import json
+
     assert result.status_code == 503
     body = json.loads(result.body)
     assert body["status"] == "unhealthy"
@@ -346,9 +354,11 @@ async def test_healthz_returns_503_on_kms_exception_in_prod(monkeypatch):
     sys.modules.pop("src.gateway.server.hybrid_server", None)
     with patch.dict("sys.modules", stubs):
         from src.gateway.server.hybrid_server import healthz
+
         result = await healthz()
 
     import json
+
     assert result.status_code == 503
     body = json.loads(result.body)
     assert body["status"] == "unhealthy"
@@ -367,9 +377,11 @@ async def test_healthz_returns_200_on_kms_exception_in_dev(monkeypatch):
     sys.modules.pop("src.gateway.server.hybrid_server", None)
     with patch.dict("sys.modules", stubs):
         from src.gateway.server.hybrid_server import healthz
+
         result = await healthz()
 
     import json
+
     assert result.status_code == 200
     body = json.loads(result.body)
     assert body["kms_active"] is False
@@ -390,8 +402,12 @@ async def test_lifespan_raises_when_seal_enforcement_is_log_in_prod(monkeypatch)
     monkeypatch.setenv("CAGE_NORMATIVE_PROVIDER", "static")
 
     stubs = _make_hybrid_stubs()
-    stubs["src.gateway.governance.kms_signer"].assert_kms_active_in_production = MagicMock()
-    stubs["src.gateway.governance.routing_seal"].assert_custom_salt_in_production = MagicMock()
+    stubs[
+        "src.gateway.governance.kms_signer"
+    ].assert_kms_active_in_production = MagicMock()
+    stubs[
+        "src.gateway.governance.routing_seal"
+    ].assert_custom_salt_in_production = MagicMock()
 
     sys.modules.pop("src.gateway.server.hybrid_server", None)
 
@@ -401,7 +417,9 @@ async def test_lifespan_raises_when_seal_enforcement_is_log_in_prod(monkeypatch)
         app_mock = MagicMock()
         app_mock.state = MagicMock()
 
-        with pytest.raises(RuntimeError, match="CAGE_SEAL_ENFORCEMENT=log is prohibited"):
+        with pytest.raises(
+            RuntimeError, match="CAGE_SEAL_ENFORCEMENT=log is prohibited"
+        ):
             async with _gateway_lifespan(app_mock):
                 pass
 
@@ -415,8 +433,12 @@ async def test_lifespan_raises_when_stub_ledger_in_prod(monkeypatch):
     monkeypatch.setenv("CAGE_NORMATIVE_PROVIDER", "static")
 
     stubs = _make_hybrid_stubs()
-    stubs["src.gateway.governance.kms_signer"].assert_kms_active_in_production = MagicMock()
-    stubs["src.gateway.governance.routing_seal"].assert_custom_salt_in_production = MagicMock()
+    stubs[
+        "src.gateway.governance.kms_signer"
+    ].assert_kms_active_in_production = MagicMock()
+    stubs[
+        "src.gateway.governance.routing_seal"
+    ].assert_custom_salt_in_production = MagicMock()
 
     sys.modules.pop("src.gateway.server.hybrid_server", None)
 
@@ -426,7 +448,9 @@ async def test_lifespan_raises_when_stub_ledger_in_prod(monkeypatch):
         app_mock = MagicMock()
         app_mock.state = MagicMock()
 
-        with pytest.raises(RuntimeError, match="RECONCILIATION_PROVIDER=stub is not allowed"):
+        with pytest.raises(
+            RuntimeError, match="RECONCILIATION_PROVIDER=stub is not allowed"
+        ):
             async with _gateway_lifespan(app_mock):
                 pass
 
@@ -440,7 +464,9 @@ async def test_lifespan_raises_when_kms_not_active_in_prod(monkeypatch):
     monkeypatch.setenv("CAGE_NORMATIVE_PROVIDER", "static")
 
     stubs = _make_hybrid_stubs()
-    stubs["src.gateway.governance.kms_signer"].assert_kms_active_in_production = MagicMock(
+    stubs[
+        "src.gateway.governance.kms_signer"
+    ].assert_kms_active_in_production = MagicMock(
         side_effect=RuntimeError("KMS not configured for production")
     )
 

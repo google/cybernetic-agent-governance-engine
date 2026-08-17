@@ -166,6 +166,10 @@ def test_cbf_watch_error_exhausts_retries():
         def rpush(self, key, value):
             pass
 
+        def incr(self, key):
+            """Fence epoch increment for Phase 4.3."""
+            pass
+
         async def execute(self):
             nonlocal call_count
             call_count += 1
@@ -180,7 +184,7 @@ def test_cbf_watch_error_exhausts_retries():
         with pytest.raises((RuntimeError, _WatchError)):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
-                asyncio.run(cbf.update_state(cost=1000.0))
+                asyncio.run(cbf._update_state_unsafe(cost=1000.0))
 
     # Verify we retried (did not loop once and give up immediately)
     assert call_count >= 1
@@ -225,6 +229,10 @@ def test_cbf_redis_reconnects_after_transient_failure():
         def rpush(self, key, value):
             pass
 
+        def incr(self, key):
+            """Fence epoch increment for Phase 4.3."""
+            pass
+
         async def execute(self):
             nonlocal attempt_count
             attempt_count += 1
@@ -241,8 +249,8 @@ def test_cbf_redis_reconnects_after_transient_failure():
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             with pytest.raises(ConnectionError):
-                # First attempt raises; we confirm update_state tries at least once
-                asyncio.run(cbf.update_state(cost=100.0))
+                # First attempt raises; we confirm _update_state_unsafe tries at least once
+                asyncio.run(cbf._update_state_unsafe(cost=100.0))
 
     assert attempt_count >= 1  # At least one attempt was made
 
@@ -284,9 +292,14 @@ def test_cbf_noscript_error_triggers_reload_and_retry():
         # Mimic production: on NOSCRIPT, reload the script then evalsha with new SHA.
         await fake_redis.script_load(cbf.LUA_ATOMIC_CBF)
         return await fake_redis.evalsha(
-            "newsha123", 2,
-            "safety:current_cash", "audit:state_ledger",
-            "1000.0", str(_MIN_CASH), str(_GAMMA), "",
+            "newsha123",
+            2,
+            "safety:current_cash",
+            "audit:state_ledger",
+            "1000.0",
+            str(_MIN_CASH),
+            str(_GAMMA),
+            "",
         )
 
     async def _run():
@@ -295,9 +308,14 @@ def test_cbf_noscript_error_triggers_reload_and_retry():
             keys=["safety:current_cash", "audit:state_ledger"],
             argv=["1000.0", str(_MIN_CASH), str(_GAMMA), ""],
             run_evalsha_fn=lambda: fake_redis.evalsha(
-                "fakeshadeadbeef", 2,
-                "safety:current_cash", "audit:state_ledger",
-                "1000.0", str(_MIN_CASH), str(_GAMMA), "",
+                "fakeshadeadbeef",
+                2,
+                "safety:current_cash",
+                "audit:state_ledger",
+                "1000.0",
+                str(_MIN_CASH),
+                str(_GAMMA),
+                "",
             ),
             load_and_run_fn=_load_and_run_fn,
         )
@@ -366,7 +384,9 @@ def test_cbf_atomic_guarantee_under_concurrent_write():
 
     # At least one call must have completed without error
     ok_results = [r for r in results if r[0] == "ok"]
-    assert len(ok_results) >= 1, f"Expected at least one successful commit, got: {results}"
+    assert len(ok_results) >= 1, (
+        f"Expected at least one successful commit, got: {results}"
+    )
 
     # Final balance must be internally consistent (not a fractional state)
     raw = asyncio.run(fake_redis_lua.get("safety:current_cash"))

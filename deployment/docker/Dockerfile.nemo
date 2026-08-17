@@ -12,15 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ── NeMo Guardrails service ────────────────────────────────────────────────────
-# Builds the nemo-guardrails image used by deployment/k8s/nemo.yaml.
-# Uses the official NVIDIA NeMo Guardrails base and installs the gateway
-# extras (grpcio, protobuf, nemoguardrails) via uv.
-#
-# Build context: repo root (so pyproject.toml and uv.lock are reachable).
-# Image pushed to: gcr.io/${PROJECT_ID}/nemo-guardrails:latest
-# ──────────────────────────────────────────────────────────────────────────────
-
 FROM python:3.12-slim
 
 WORKDIR /app

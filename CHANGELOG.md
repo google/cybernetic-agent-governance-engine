@@ -9,6 +9,29 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `src/gateway/governance/pause_primitive.py`, `src/gateway/server/hybrid_server.py` — PAUSE primitive and resume endpoint: new `POST /v1/pause/{pause_token}/resume` and `GET /v1/pause/{pause_token}` endpoints for resumable execution suspension (`feat(governance)`)
+- `src/gateway/governance/decisions.py`, `src/gateway/governance/symbolic_governor.py` — NARROW primitive: new `NARROW` governance decision for partial-authority execution with clamped scope (gated by `CAGE_NARROW_ENABLED`) (`feat(governance)`)
+- `src/gateway/governance/symbolic_governor.py:_classify_violation()` — DEFER classification helper: five-way classification (DENY/DEFER/NARROW/PAUSE/REQUIRE_APPROVAL) with DeferQueue integration (`feat(governance)`)
+- `src/governed_financial_advisor/graph/state.py` — AgentState NARROW/PAUSE fields: added `narrow_status`, `narrowed_params`, `pause_resume_token`, `pause_reason` fields (`feat(governance)`)
+- `src/gateway/governance/symbolic_governor.py:_park_defer_context()` — DeferQueue integration: DEFER tokens now persisted via DeferQueue for client polling (`feat(governance)`)
+- `src/gateway/governance/cbf.py` — Redis fence epoch: `safety:fence_epoch` monotonic counter for failover safety (gated by `CAGE_REDIS_SYNCHRONOUS_REPLICATION`, default true) (`feat(governance)`)
+- `src/gateway/governance/cbf.py`, `src/compliance_bridge/reconciliation_worker.py` — Reconciliation replay defense: monotonic sequence numbers prevent payload replay attacks (gated by `CAGE_RECONCILIATION_REPLAY_DEFENSE`) (`feat(governance)`)
+
+### Changed
+
+- `src/compliance_bridge/evidence_stream.py` — Evidence chain blocking default: `EVIDENCE_CHAIN_BLOCKING` now defaults to `"true"` (peer review Fix B) (`fix(compliance)`)
+- `src/gateway/governance/symbolic_governor.py:_ftra_boundary_check()` — FTRA boundary check mandatory: now runs unconditionally (flag `CAGE_FTRA_BOUNDARY_ENABLED` removed per POAM-2026-030-B) (`fix(governance)`)
+
+### Removed
+
+- `src/compliance_bridge/evidence_stream.py` — Evidence chain v1.0 schema support: removed deprecated `_SCHEMA_1_0`/`_SCHEMA_1_1` constants; only v1.1 supported (CR-1 from 3.0.0) (`refactor(compliance)`)
+
+### Fixed
+
+- POAM-2026-038 closure — Reconciliation worker secrets populated, CronJob operational — 2026-08-16 (`fix(compliance)`)
+
 ---
 
 ## [3.0.0] - 2026-08-15

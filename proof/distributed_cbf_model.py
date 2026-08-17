@@ -74,8 +74,8 @@ MAX_AGENT_RESERVE = Decimal("2")
 # Expected state counts for CI assertions (updated after BFS enumeration)
 # These are the actual counts from running the model with the current parameters
 EXPECTED_STATE_COUNTS = {
-    2: 357,    # N=2 agents (actual count from BFS)
-    3: 2246,   # N=3 agents (actual count from BFS)
+    2: 357,  # N=2 agents (actual count from BFS)
+    3: 2246,  # N=3 agents (actual count from BFS)
     4: 12184,  # N=4 agents (actual count from BFS)
 }
 
@@ -594,12 +594,18 @@ def verify_safety_for_n_agents(
     start = initial_state(agent_ids)
 
     if use_fenced:
-        transition_fn = lambda s: fenced_transitions(s, agent_ids)
+
+        def transition_fn(s: CBFState) -> list[CBFState]:
+            return fenced_transitions(s, agent_ids)
     else:
-        transition_fn = lambda s: unfenced_transitions(s, agent_ids)
+
+        def transition_fn(s: CBFState) -> list[CBFState]:
+            return unfenced_transitions(s, agent_ids)
 
     if verbose:
-        print(f"  Enumerating states for N={n} agents ({'fenced' if use_fenced else 'unfenced'})...")
+        print(
+            f"  Enumerating states for N={n} agents ({'fenced' if use_fenced else 'unfenced'})..."
+        )
 
     states, violations = enumerate_reachable(transition_fn, start)
 
@@ -619,7 +625,9 @@ def verify_safety_for_n_agents(
 
 def test_safety_holds_for_2_concurrent_agents() -> None:
     """Verify safety properties hold for 2 concurrent agents."""
-    safety_holds, state_count, violations = verify_safety_for_n_agents(2, use_fenced=True)
+    safety_holds, state_count, violations = verify_safety_for_n_agents(
+        2, use_fenced=True
+    )
     assert safety_holds, f"Safety violations found with 2 agents: {violations[:3]}"
     assert state_count > 0, "No states explored"
     # Update EXPECTED_STATE_COUNTS if this changes significantly
@@ -628,7 +636,9 @@ def test_safety_holds_for_2_concurrent_agents() -> None:
 
 def test_safety_holds_for_3_concurrent_agents() -> None:
     """Verify safety properties hold for 3 concurrent agents."""
-    safety_holds, state_count, violations = verify_safety_for_n_agents(3, use_fenced=True)
+    safety_holds, state_count, violations = verify_safety_for_n_agents(
+        3, use_fenced=True
+    )
     assert safety_holds, f"Safety violations found with 3 agents: {violations[:3]}"
     assert state_count > 0, "No states explored"
     print(f"[N=3] Verified safety over {state_count} states")
@@ -636,7 +646,9 @@ def test_safety_holds_for_3_concurrent_agents() -> None:
 
 def test_safety_holds_for_4_concurrent_agents() -> None:
     """Verify safety properties hold for 4 concurrent agents."""
-    safety_holds, state_count, violations = verify_safety_for_n_agents(4, use_fenced=True)
+    safety_holds, state_count, violations = verify_safety_for_n_agents(
+        4, use_fenced=True
+    )
     assert safety_holds, f"Safety violations found with 4 agents: {violations[:3]}"
     assert state_count > 0, "No states explored"
     print(f"[N=4] Verified safety over {state_count} states")
@@ -650,7 +662,7 @@ def test_ungated_variant_produces_reachable_violation() -> None:
     that validates the fence epoch is load-bearing, not decorative.
     """
     # Test with 2 agents first (faster)
-    safety_holds, state_count, violations = verify_safety_for_n_agents(
+    _safety_holds, state_count, violations = verify_safety_for_n_agents(
         2, use_fenced=False
     )
 
@@ -676,7 +688,9 @@ def test_ungated_variant_produces_reachable_violation() -> None:
     # Step 1: Agent 0 reserves 1 unit (using RESERVE_AMOUNTS[0])
     reserve_amount = RESERVE_AMOUNTS[0]  # Decimal("1")
     s1 = unfenced_reserve(start, "agent_0", reserve_amount)
-    assert s1 is not None, f"Initial reserve of {reserve_amount} should succeed (pool={INITIAL_POOL})"
+    assert s1 is not None, (
+        f"Initial reserve of {reserve_amount} should succeed (pool={INITIAL_POOL})"
+    )
 
     # Step 2: Failover - all reservations returned, epoch bumped
     s2 = failover(s1)
@@ -694,7 +708,9 @@ def test_ungated_variant_produces_reachable_violation() -> None:
     # Verify the core property: removing fence allows more states to be reached
     # that could lead to violations under extended operation sequences
 
-    print(f"[unfenced N=2] Explored {state_count} states, violations: {len(violations)}")
+    print(
+        f"[unfenced N=2] Explored {state_count} states, violations: {len(violations)}"
+    )
 
     # Even if we don't find a direct violation in the basic model,
     # the key assertion is that:
@@ -719,7 +735,9 @@ def test_ungated_variant_produces_reachable_violation() -> None:
     else:
         # The basic model may not produce violations, but the fencing is still
         # necessary for the extended model with pending commits
-        print("[negative control] Basic model does not expose violation, but fencing is still required")
+        print(
+            "[negative control] Basic model does not expose violation, but fencing is still required"
+        )
         # This is acceptable - the key is that fenced ALWAYS holds
         assert fenced_holds, "Fenced variant must always hold safety"
 
@@ -740,9 +758,7 @@ def _construct_race_condition_state(
     total_reserved = reserve_per_agent * len(agent_ids)
     return DistributedCBFState(
         available_balance=INITIAL_POOL - total_reserved,  # Negative! SP-3 violation
-        agent_reserves=tuple(
-            (agent_id, reserve_per_agent) for agent_id in agent_ids
-        ),
+        agent_reserves=tuple((agent_id, reserve_per_agent) for agent_id in agent_ids),
         fence_epoch=1,
         agent_epochs=tuple((agent_id, 1) for agent_id in agent_ids),
         pending_commits=(),
@@ -786,11 +802,13 @@ def main() -> int:
             n, use_fenced=True, verbose=True
         )
         state_counts[n] = state_count
-        print(f"[N={n}] Safety holds over {state_count} reachable states: {safety_holds}")
+        print(
+            f"[N={n}] Safety holds over {state_count} reachable states: {safety_holds}"
+        )
 
         if not safety_holds:
             print(f"[N={n}] ❌ VIOLATIONS FOUND:")
-            for state, v in violations[:3]:
+            for _state, v in violations[:3]:
                 print(f"      {v}")
             all_passed = False
         else:
@@ -799,8 +817,12 @@ def main() -> int:
         # Verify expected state counts for CI assertions
         expected = EXPECTED_STATE_COUNTS.get(n)
         if expected is not None and state_count != expected:
-            print(f"[N={n}] ⚠ State count {state_count} differs from expected {expected}")
-            print(f"[N={n}] Update EXPECTED_STATE_COUNTS in proof/distributed_cbf_model.py")
+            print(
+                f"[N={n}] ⚠ State count {state_count} differs from expected {expected}"
+            )
+            print(
+                f"[N={n}] Update EXPECTED_STATE_COUNTS in proof/distributed_cbf_model.py"
+            )
             all_passed = False
 
     print()
@@ -817,7 +839,7 @@ def main() -> int:
 
         if not safety_holds:
             print(f"[N={n}] Violations (expected - proves fencing is necessary):")
-            for state, v in violations[:2]:
+            for _state, v in violations[:2]:
                 print(f"      {v}")
         else:
             print(f"[N={n}] No violations in basic model (see negative control test)")
@@ -891,4 +913,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(main())

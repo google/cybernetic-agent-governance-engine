@@ -215,3 +215,6 @@ class TestACSToControlStructurePatch:
         patch = acs_to_control_structure_patch(spec)
         assert patch["system"]["name"] == "My ACS System"
         assert patch["system"]["version"] == "2.0.0"
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

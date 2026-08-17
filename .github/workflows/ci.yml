@@ -86,8 +86,7 @@ jobs:
 
   pytest-logic:
     name: "Pytest Logic Tests (${{ matrix.region }})"
-    # 4-core runner: doubles xdist worker count from 2→4, ~40% faster test execution
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -299,7 +298,7 @@ jobs:
       # published figures without failing CI. See REVISION_TRACKER.md.
       - name: Run pinned NoDirectBind regression tests
         run: |
-          python -m pytest tests/test_no_direct_bind_proof.py -m local -v
+          python -m pytest tests/test_no_direct_bind_proof.py -m local -v -o addopts=""
 
   langfuse-posture-check:
     name: "Langfuse Posture Dry-Run Check"
@@ -423,12 +422,23 @@ jobs:
       - name: Run integration smoke tests
         env:
           CAGE_DEPLOYMENT_REGION: US_FED
-        run: uv run pytest tests/ -m integration --timeout=30 -x -q --ignore=tests/load --ignore=tests/red_team
+          CAGE_ENV: "ci"
+          LANGFUSE_POSTURE_DRY_RUN: "true"
+          OPENAI_API_KEY: "sk-dummy"
+          MODEL_REASONING: "casperhansen/deepseek-r1-distill-qwen-14b-awq"
+          MODEL_FAST: "Qwen/Qwen2.5-7B-Instruct"
+          VLLM_API_KEY: "dummy"
+          VLLM_GATEWAY_URL: "http://localhost:8081/v1"
+          REDIS_URL: "redis://localhost:6379/0"
+          OPA_URL: "http://localhost:8181/v1/data/governance/policy"
+          LANGFUSE_HOST: "http://localhost:3000"
+          LANGFUSE_PUBLIC_KEY: "pk-dummy"
+          LANGFUSE_SECRET_KEY: "sk-dummy"
+        run: uv run pytest tests/ -m integration --timeout=30 -x -q --ignore=tests/load --ignore=tests/red_team --no-cov
 
   ai600-unit-tests:
     name: "AI 600-1 Unit Tests"
-    # 4-core runner: doubles xdist worker count from 2→4, ~40% faster test execution
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     needs: [license-check]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -457,9 +467,13 @@ jobs:
           LANGFUSE_HOST: "http://localhost:3000"
           LANGFUSE_PUBLIC_KEY: "pk-dummy"
           LANGFUSE_SECRET_KEY: "sk-dummy"
+          CAGE_DEPLOYMENT_REGION: "APAC_MAS"
+          GOOGLE_CLOUD_LOCATION: "asia-southeast1"
+          CAGE_ROUTING_SEAL_SECRET: "dev-only-insecure-placeholder-not-for-production-use"
+          GOVERNANCE_SALT: "dev-only-insecure-placeholder-not-for-production-use"
         run: |
-          uv run pytest tests/red_team/ -m "red_team and not integration" -v
-          uv run pytest tests/ -m apac_mas -v
+          uv run pytest tests/red_team/ -m "red_team and not integration" -v --no-cov
+          uv run pytest tests/ -m apac_mas -v --no-cov
 
   locust-load-test:
     name: "Nightly Load Test (Locust)"
@@ -583,4 +597,4 @@ jobs:
         # figures. If state space changes, update EXPECTED_STATE_COUNTS in
         # proof/distributed_cbf_model.py and document in REVISION_TRACKER.md.
         run: |
-          uv run pytest proof/distributed_cbf_model.py -v --tb=short
+          uv run pytest proof/distributed_cbf_model.py -v --tb=short -o addopts=""

@@ -12,41 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# DEPRECATED: This StatefulSet conflicts with the Bitnami Helm-managed redis-node StatefulSet.
-# The active Redis cluster is redis-node (3/3 Running, Sentinel mode).
-# DO NOT apply this file to the governance-stack namespace.
-# This file is retained for reference only.
-# To remove the conflicting StatefulSet from the cluster:
-#   kubectl delete statefulset redis -n governance-stack
-#
-# Historical note — original migration context (2026-06-02):
-#   - StatefulSet: redis-master (1/1 Running) — legacy name, must be migrated
-#   - Services: redis (ClusterIP), redis-headless (None), redis-master (ClusterIP)
-#   - All application manifests reference redis.governance-stack.svc.cluster.local
-#     (financial-advisor.yaml, gateway.yaml, compliance-bridge.yaml) — the 'redis'
-#     Service name is already correct; only the StatefulSet name needs migration.
-#   - cage-redis-config ConfigMap: exists (created 2026-05-31)
-#
-# ============================================================================
-# Redis StatefulSet — CAGE v0.1.0 Evidence State Store
-# ============================================================================
-#
-# Dual-purpose Redis instance:
-#   db 0 — LangGraph checkpoint store (existing)
-#   db 1 — Evidence stream + deferred gating tokens (new, noeviction)
-#
-# Key invariants:
-#   1. requests == limits → Guaranteed QoS class (prevents kubelet OOM-kill)
-#   2. ConfigMap mount injects redis.conf with noeviction policy
-#   3. redis-stack-server image retained for RedisJSON compatibility
-#      (used by LangGraph checkpointer and evidence_stream.py)
-#   4. AOF persistence on PVC for write durability
-#
-# Related:
-#   - deployment/k8s/redis-config.yaml (ConfigMap)
-#   - src/compliance_bridge/evidence_stream.py (db=1 consumer)
-#   - src/gateway/governance/normative_provider.py (adaptive gating)
-# ============================================================================
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

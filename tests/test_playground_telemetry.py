@@ -367,3 +367,6 @@ class TestComplianceFields:
         record = json.loads(tmp_evidence_dir["chain"].read_text().strip())
         assert "A.8.4" in record["iso_controls"]
         assert "A.6.2" in record["iso_controls"]
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

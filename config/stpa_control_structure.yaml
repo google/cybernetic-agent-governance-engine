@@ -12,26 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# =============================================================================
-# STPA Control Structure — Declarative Safety Configuration
-# =============================================================================
-#
-# This file is the SINGLE SOURCE OF TRUTH for the system's STAMP/STPA hazard
-# model.  The `stpa_compiler` CLI reads this file and generates:
-#
-#   1. OPA Rego policies  → config/opa/generated_stpa_policy.rego
-#   2. NeMo Colang rails  → config/rails/generated_stpa_rails.co
-#   3. Python validator   → src/gateway/governance/generated_stpa_validator.py
-#
-# DO NOT hand-edit the generated files; edit THIS file and re-run the compiler:
-#   python -m src.gateway.governance.stpa_compiler compile
-#
-# See docs/STPA_ANALYSIS.md for the STPA methodology background.
-# =============================================================================
-
-# ---------------------------------------------------------------------------
-# System Metadata
-# ---------------------------------------------------------------------------
 system:
   name: "CAGE Financial Advisor"
   version: "1.1.0"

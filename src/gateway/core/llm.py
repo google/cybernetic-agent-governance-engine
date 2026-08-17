@@ -76,7 +76,11 @@ class GatewayClient:
         return client, target_model
 
     async def generate(  # type: ignore[no-untyped-def]
-        self, prompt: str, system_instruction: str = None, mode: str = "chat", **kwargs  # type: ignore[assignment]
+        self,
+        prompt: str,
+        system_instruction: str | None = None,
+        mode: str = "chat",
+        **kwargs,  # type: ignore[assignment]
     ) -> str:
         client, model = self._get_route(mode)
 

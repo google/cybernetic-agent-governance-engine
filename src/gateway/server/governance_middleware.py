@@ -120,7 +120,7 @@ def _is_dev_environment() -> bool:
 _HMAC_MIN_LENGTH = 32  # HMAC-SHA256 security minimum (256-bit key)
 
 if not _CAGE_SEAL_SECRET:
-    if _ENVIRONMENT not in ("development", "test"):
+    if _IS_PRODUCTION:
         raise RuntimeError(
             "CAGE_ROUTING_SEAL_SECRET must be set in non-development environments (POAM-012). "
             "Generate a cryptographically random secret of at least 32 characters and export it "
@@ -627,7 +627,7 @@ async def validate_action_endpoint(
         ``cage.tool_execute`` root span, producing a unified Langfuse trace
         tree across the service boundary.
 
-    Governance tiers executed (full 7-tier pipeline via _run_checks()):
+    Governance tiers executed (full 8-tier pipeline — FTRA pre-gate + 7 in-pipeline tiers via _run_checks()):
         - Tier 0: STPA/STAMP Unsafe Control Action validation
         - Tier 1: Agent confidence threshold pre-check (fast-fail)
         - Tier 2: Control Barrier Function (CBF) — mathematical safety bounds

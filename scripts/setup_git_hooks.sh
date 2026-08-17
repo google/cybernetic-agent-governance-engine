@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# setup_git_hooks.sh — Install local git commit template and hooks
+
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"

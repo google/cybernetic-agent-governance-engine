@@ -26,7 +26,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from langgraph.types import Command
 from opentelemetry import trace
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 try:
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -186,7 +186,6 @@ if (
 # Graph is now in app.state.graph
 
 
-
 class QueryRequest(BaseModel):
     prompt: str
     user_id: str = "default_user"
@@ -224,11 +223,7 @@ class ApprovalResumeRequest(BaseModel):
             )
         return value
 
-    from pydantic import (
-        model_validator,  # type: ignore[misc]  # class-scoped import: pydantic model_validator must be imported inside class body for Pydantic v2 validator registration
-    )
-
-    @model_validator(mode="after")  # type: ignore[misc]
+    @model_validator(mode="after")
     def _check_rationale_not_empty(self) -> "ApprovalResumeRequest":
         self._validate_rationale(self.rationale)
         return self
@@ -1035,9 +1030,9 @@ async def list_pending_nemo_proposals():  # type: ignore[no-untyped-def]
 async def apply_nemo_refinement(req: NeMoApplyRefinementRequest):  # type: ignore[no-untyped-def]
     """NeMo hot-reload routes through the proposal/approval flow.
 
-    v3.0.0 Breaking Change: Auto-apply has been removed. This endpoint now
-    always stages a proposal and returns ``{"status": "pending_approval"}``.
-    The caller must then approve via POST /v1/nemo/approve-refinement/{id}.
+    v3.0.0 Breaking Change: This endpoint always stages a proposal and
+    returns ``{"status": "pending_approval"}``. The caller must then approve
+    via POST /v1/nemo/approve-refinement/{id}.
 
     This eliminates the recursive self-authentication loop where the system's
     telemetry could autonomously modify its own governance rules.
@@ -1116,10 +1111,11 @@ _REFINEMENT_COOLDOWN_SECONDS: float = float(
 _REFINEMENT_MIN_SAMPLES: int = int(os.environ.get("REFINEMENT_MIN_SAMPLES", "10"))
 
 # Module-level monotonic timestamp of the last accepted KFP trigger.
-# Initialised to 0.0 so the very first qualifying event always fires.
+# Initialised to -1e9 so the very first qualifying event always fires
+# even on newly-booted systems where time.monotonic() < cooldown.
 # asyncio is single-threaded: the check + update is atomic at the Python
 # coroutine boundary — no lock needed.
-_last_refinement_triggered_at: float = 0.0
+_last_refinement_triggered_at: float = -1e9
 
 
 @app.post("/v1/webhooks/langfuse")

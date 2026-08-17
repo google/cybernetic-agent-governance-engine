@@ -88,9 +88,7 @@ class TestFenceEpochIncrements:
         """R-05: Fence epoch must increment on update_state() call."""
         import warnings
 
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ):
+        with patch("src.gateway.governance.cbf.redis_client", mock_redis_client):
             # update_state is deprecated but still used
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
@@ -101,12 +99,14 @@ class TestFenceEpochIncrements:
                 pipeline_mock.multi = MagicMock()
                 pipeline_mock.set = MagicMock()
                 pipeline_mock.incr = MagicMock()
-                pipeline_mock.execute = AsyncMock(return_value=[True, 5])  # [set_result, new_epoch]
+                pipeline_mock.execute = AsyncMock(
+                    return_value=[True, 5]
+                )  # [set_result, new_epoch]
                 pipeline_mock.__aenter__ = AsyncMock(return_value=pipeline_mock)
                 pipeline_mock.__aexit__ = AsyncMock(return_value=None)
                 mock_redis_client.pipeline = MagicMock(return_value=pipeline_mock)
 
-                await cbf_instance.update_state(1000.0)
+                await cbf_instance._update_state_unsafe(1000.0)
 
                 # Verify incr was called for fence epoch
                 pipeline_mock.incr.assert_called_once()
@@ -118,9 +118,7 @@ class TestFenceEpochIncrements:
         self, cbf_instance, mock_redis_client
     ):
         """R-05: Fence epoch must increment on rollback_state() call."""
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ):
+        with patch("src.gateway.governance.cbf.redis_client", mock_redis_client):
             # Mock the pipeline
             pipeline_mock = MagicMock()
             pipeline_mock.watch = AsyncMock()
@@ -145,9 +143,7 @@ class TestFenceEpochIncrements:
         self, cbf_instance, mock_redis_client
     ):
         """R-05: Fence epoch must increment on atomic_verify_and_commit() call."""
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ):
+        with patch("src.gateway.governance.cbf.redis_client", mock_redis_client):
             # Mock evalsha to return committed result with epoch
             mock_redis_client.script_load = AsyncMock(return_value="sha123")
             mock_redis_client.evalsha = AsyncMock(
@@ -173,9 +169,7 @@ class TestFenceEpochRegressionDetection:
     """Tests that epoch regression is detected and rejected (fail-closed)."""
 
     @pytest.mark.asyncio
-    async def test_fence_epoch_regression_detected_and_rejected(
-        self, cbf_instance
-    ):
+    async def test_fence_epoch_regression_detected_and_rejected(self, cbf_instance):
         """R-05: Epoch regression must be detected and rejected."""
         # Set last seen epoch higher than current
         cbf_instance._last_seen_epoch = 100
@@ -215,10 +209,9 @@ class TestFenceEpochRegressionDetection:
         self, cbf_instance, mock_redis_client
     ):
         """R-05: When epoch regresses, _read_cbf_state_atomic returns None balance."""
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ), patch(
-            "src.gateway.governance.cbf._FENCE_EPOCH_ENABLED", True
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_client),
+            patch("src.gateway.governance.cbf._FENCE_EPOCH_ENABLED", True),
         ):
             # Set last seen epoch higher
             cbf_instance._last_seen_epoch = 100
@@ -250,10 +243,9 @@ class TestFenceEpochRegressionDetection:
         self, cbf_instance, mock_redis_client
     ):
         """R-05: verify_action must reject when epoch has regressed."""
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ), patch(
-            "src.gateway.governance.cbf._FENCE_EPOCH_ENABLED", True
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_client),
+            patch("src.gateway.governance.cbf._FENCE_EPOCH_ENABLED", True),
         ):
             cbf_instance._last_seen_epoch = 100
 
@@ -283,10 +275,14 @@ class TestFenceEpochRegressionDetection:
 
 
 class TestFenceEpochDisabledByDefault:
-    """Tests that fence epoch validation is disabled by default."""
+    """Tests that fence epoch validation default and toggle behavior."""
 
     def test_fence_epoch_flag_disabled_by_default(self):
-        """R-05: CAGE_REDIS_SYNCHRONOUS_REPLICATION must be disabled by default."""
+        """R-05: CAGE_REDIS_SYNCHRONOUS_REPLICATION is enabled by default (Fix A2).
+
+        DEFAULT CHANGED (peer review Fix A2): Enabled by default to provide failover
+        protection out-of-box. Operators can disable with CAGE_REDIS_SYNCHRONOUS_REPLICATION=false.
+        """
         # Save original and test with clean environment
         original_env = os.environ.get("CAGE_REDIS_SYNCHRONOUS_REPLICATION")
         try:
@@ -300,16 +296,17 @@ class TestFenceEpochDisabledByDefault:
 
             importlib.reload(cbf_module)
 
-            assert cbf_module._FENCE_EPOCH_ENABLED is False
+            # Fix A2: Default is now True for failover safety
+            assert cbf_module._FENCE_EPOCH_ENABLED is True
         finally:
             if original_env is not None:
                 os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"] = original_env
 
-    def test_fence_epoch_flag_enabled_when_set(self):
-        """R-05: CAGE_REDIS_SYNCHRONOUS_REPLICATION enables epoch validation."""
+    def test_fence_epoch_flag_disabled_when_set_to_false(self):
+        """R-05: CAGE_REDIS_SYNCHRONOUS_REPLICATION=false disables epoch validation."""
         original_env = os.environ.get("CAGE_REDIS_SYNCHRONOUS_REPLICATION")
         try:
-            os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"] = "true"
+            os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"] = "false"
 
             import importlib
 
@@ -317,7 +314,7 @@ class TestFenceEpochDisabledByDefault:
 
             importlib.reload(cbf_module)
 
-            assert cbf_module._FENCE_EPOCH_ENABLED is True
+            assert cbf_module._FENCE_EPOCH_ENABLED is False
         finally:
             if original_env is not None:
                 os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"] = original_env
@@ -329,10 +326,9 @@ class TestFenceEpochDisabledByDefault:
         self, cbf_instance, mock_redis_client
     ):
         """R-05: When disabled, epoch is tracked but not validated."""
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ), patch(
-            "src.gateway.governance.cbf._FENCE_EPOCH_ENABLED", False
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_client),
+            patch("src.gateway.governance.cbf._FENCE_EPOCH_ENABLED", False),
         ):
             cbf_instance._last_seen_epoch = 100
 
@@ -368,9 +364,7 @@ class TestFenceEpochTelemetry:
     """Tests for Prometheus counter and gauge telemetry."""
 
     @pytest.mark.asyncio
-    async def test_epoch_regression_increments_prometheus_counter(
-        self, cbf_instance
-    ):
+    async def test_epoch_regression_increments_prometheus_counter(self, cbf_instance):
         """R-05: Epoch regression must increment Prometheus counter."""
         cbf_instance._last_seen_epoch = 100
 
@@ -421,7 +415,10 @@ class TestLuaScriptFenceEpoch:
         # The Lua script returns 4 values: status_code, message, new_balance_str, new_epoch
         assert "new_epoch" in cbf_instance.LUA_ATOMIC_CBF
         # Check that return statement includes epoch
-        assert "return {1," in cbf_instance.LUA_ATOMIC_CBF or "return {0," in cbf_instance.LUA_ATOMIC_CBF
+        assert (
+            "return {1," in cbf_instance.LUA_ATOMIC_CBF
+            or "return {0," in cbf_instance.LUA_ATOMIC_CBF
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -435,32 +432,33 @@ class TestWaitCommandSupport:
     @pytest.mark.asyncio
     async def test_wait_disabled_by_default(self, cbf_instance, mock_redis_client):
         """Phase 4.3: WAIT is disabled when CAGE_REDIS_WAIT_REPLICAS=0 (default)."""
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ), patch(
-            "src.gateway.governance.cbf._WAIT_REPLICAS", 0
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_client),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 0),
         ):
             # _sync_to_replicas should return True immediately (no-op)
             result = await cbf_instance._sync_to_replicas()
 
             assert result is True
             # Verify WAIT was not called
-            mock_redis_client.get_raw_client().execute_command.assert_not_called() if hasattr(mock_redis_client.get_raw_client(), 'execute_command') else None
+            mock_redis_client.get_raw_client().execute_command.assert_not_called() if hasattr(
+                mock_redis_client.get_raw_client(), "execute_command"
+            ) else None
 
     @pytest.mark.asyncio
     async def test_wait_command_called_when_replicas_configured(
         self, cbf_instance, mock_redis_client
     ):
         """Phase 4.3: WAIT command is called when CAGE_REDIS_WAIT_REPLICAS > 0."""
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ), patch(
-            "src.gateway.governance.cbf._WAIT_REPLICAS", 2
-        ), patch(
-            "src.gateway.governance.cbf._WAIT_TIMEOUT_MS", 1000
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_client),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 2),
+            patch("src.gateway.governance.cbf._WAIT_TIMEOUT_MS", 1000),
         ):
             # Mock execute_command to return successful replication count
-            mock_redis_client.get_raw_client().execute_command = AsyncMock(return_value=2)
+            mock_redis_client.get_raw_client().execute_command = AsyncMock(
+                return_value=2
+            )
 
             result = await cbf_instance._sync_to_replicas()
 
@@ -472,17 +470,16 @@ class TestWaitCommandSupport:
     @pytest.mark.asyncio
     async def test_wait_timeout_logs_warning(self, cbf_instance, mock_redis_client):
         """Phase 4.3: WAIT timeout logs warning and returns False."""
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ), patch(
-            "src.gateway.governance.cbf._WAIT_REPLICAS", 2
-        ), patch(
-            "src.gateway.governance.cbf._WAIT_TIMEOUT_MS", 100
-        ), patch(
-            "src.gateway.governance.cbf.logger"
-        ) as mock_logger:
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_client),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 2),
+            patch("src.gateway.governance.cbf._WAIT_TIMEOUT_MS", 100),
+            patch("src.gateway.governance.cbf.logger") as mock_logger,
+        ):
             # Mock execute_command to return fewer replicas than requested (timeout)
-            mock_redis_client.get_raw_client().execute_command = AsyncMock(return_value=1)
+            mock_redis_client.get_raw_client().execute_command = AsyncMock(
+                return_value=1
+            )
 
             result = await cbf_instance._sync_to_replicas()
 
@@ -497,17 +494,19 @@ class TestWaitCommandSupport:
         self, cbf_instance, mock_redis_client
     ):
         """Phase 4.3: _sync_to_replicas accepts override parameters."""
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ), patch(
-            "src.gateway.governance.cbf._WAIT_REPLICAS", 1
-        ), patch(
-            "src.gateway.governance.cbf._WAIT_TIMEOUT_MS", 500
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_client),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 1),
+            patch("src.gateway.governance.cbf._WAIT_TIMEOUT_MS", 500),
         ):
-            mock_redis_client.get_raw_client().execute_command = AsyncMock(return_value=3)
+            mock_redis_client.get_raw_client().execute_command = AsyncMock(
+                return_value=3
+            )
 
             # Override with different values
-            result = await cbf_instance._sync_to_replicas(num_replicas=3, timeout_ms=2000)
+            result = await cbf_instance._sync_to_replicas(
+                num_replicas=3, timeout_ms=2000
+            )
 
             assert result is True
             mock_redis_client.get_raw_client().execute_command.assert_called_once_with(
@@ -519,10 +518,9 @@ class TestWaitCommandSupport:
         self, cbf_instance, mock_redis_client
     ):
         """Phase 4.3: WAIT handles Redis errors gracefully."""
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ), patch(
-            "src.gateway.governance.cbf._WAIT_REPLICAS", 1
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_client),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 1),
         ):
             # Mock execute_command to raise an exception
             mock_redis_client.get_raw_client().execute_command = AsyncMock(
@@ -538,9 +536,7 @@ class TestWaitCommandSupport:
         self, cbf_instance, mock_redis_client
     ):
         """Phase 4.3: WAIT returns True immediately when num_replicas=0."""
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ):
+        with patch("src.gateway.governance.cbf.redis_client", mock_redis_client):
             # Even with env var set, override to 0 should skip WAIT
             result = await cbf_instance._sync_to_replicas(num_replicas=0)
 
@@ -553,13 +549,13 @@ class TestWaitCommandSupport:
         """Phase 4.3: update_state calls _sync_to_replicas when configured."""
         import warnings
 
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ), patch(
-            "src.gateway.governance.cbf._WAIT_REPLICAS", 1
-        ), patch.object(
-            cbf_instance, "_sync_to_replicas", new_callable=AsyncMock
-        ) as mock_sync:
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_client),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 1),
+            patch.object(
+                cbf_instance, "_sync_to_replicas", new_callable=AsyncMock
+            ) as mock_sync,
+        ):
             mock_sync.return_value = True
 
             # Setup pipeline mock
@@ -576,7 +572,7 @@ class TestWaitCommandSupport:
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
-                await cbf_instance.update_state(1000.0)
+                await cbf_instance._update_state_unsafe(1000.0)
 
             # Verify _sync_to_replicas was called
             mock_sync.assert_called_once()
@@ -586,13 +582,13 @@ class TestWaitCommandSupport:
         self, cbf_instance, mock_redis_client
     ):
         """Phase 4.3: rollback_state calls _sync_to_replicas when configured."""
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ), patch(
-            "src.gateway.governance.cbf._WAIT_REPLICAS", 1
-        ), patch.object(
-            cbf_instance, "_sync_to_replicas", new_callable=AsyncMock
-        ) as mock_sync:
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_client),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 1),
+            patch.object(
+                cbf_instance, "_sync_to_replicas", new_callable=AsyncMock
+            ) as mock_sync,
+        ):
             mock_sync.return_value = True
 
             # Setup pipeline mock
@@ -617,13 +613,13 @@ class TestWaitCommandSupport:
         self, cbf_instance, mock_redis_client
     ):
         """Phase 4.3: atomic_verify_and_commit calls _sync_to_replicas when configured."""
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ), patch(
-            "src.gateway.governance.cbf._WAIT_REPLICAS", 1
-        ), patch.object(
-            cbf_instance, "_sync_to_replicas", new_callable=AsyncMock
-        ) as mock_sync:
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_client),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 1),
+            patch.object(
+                cbf_instance, "_sync_to_replicas", new_callable=AsyncMock
+            ) as mock_sync,
+        ):
             mock_sync.return_value = True
 
             # Mock evalsha to return committed result
@@ -654,15 +650,17 @@ class TestWaitTelemetry:
         self, cbf_instance, mock_redis_client
     ):
         """Phase 4.3: WAIT latency is recorded in Prometheus histogram."""
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ), patch(
-            "src.gateway.governance.cbf._WAIT_REPLICAS", 1
-        ), patch(
-            "src.gateway.governance.cbf._WAIT_LATENCY_HISTOGRAM"
-        ) as mock_histogram:
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_client),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 1),
+            patch(
+                "src.gateway.governance.cbf._WAIT_LATENCY_HISTOGRAM"
+            ) as mock_histogram,
+        ):
             mock_histogram.observe = MagicMock()
-            mock_redis_client.get_raw_client().execute_command = AsyncMock(return_value=1)
+            mock_redis_client.get_raw_client().execute_command = AsyncMock(
+                return_value=1
+            )
 
             await cbf_instance._sync_to_replicas()
 
@@ -676,16 +674,16 @@ class TestWaitTelemetry:
         self, cbf_instance, mock_redis_client
     ):
         """Phase 4.3: WAIT timeout increments Prometheus counter."""
-        with patch(
-            "src.gateway.governance.cbf.redis_client", mock_redis_client
-        ), patch(
-            "src.gateway.governance.cbf._WAIT_REPLICAS", 2
-        ), patch(
-            "src.gateway.governance.cbf._WAIT_TIMEOUT_COUNTER"
-        ) as mock_counter:
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_client),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 2),
+            patch("src.gateway.governance.cbf._WAIT_TIMEOUT_COUNTER") as mock_counter,
+        ):
             mock_counter.inc = MagicMock()
             # Return fewer replicas than requested (timeout scenario)
-            mock_redis_client.get_raw_client().execute_command = AsyncMock(return_value=1)
+            mock_redis_client.get_raw_client().execute_command = AsyncMock(
+                return_value=1
+            )
 
             await cbf_instance._sync_to_replicas()
 
@@ -700,8 +698,12 @@ class TestWaitTelemetry:
 class TestWaitEnvironmentVariables:
     """Tests for Phase 4.3 WAIT environment variable configuration."""
 
-    def test_wait_replicas_defaults_to_zero(self):
-        """Phase 4.3: CAGE_REDIS_WAIT_REPLICAS defaults to 0 (disabled)."""
+    def test_wait_replicas_defaults_to_one(self):
+        """Phase 4.3: CAGE_REDIS_WAIT_REPLICAS defaults to 1 (enabled, Fix A1).
+
+        DEFAULT CHANGED (peer review Fix A1): Enabled by default (1 replica) to ensure
+        durability before returning success to caller. Set CAGE_REDIS_WAIT_REPLICAS=0 to disable.
+        """
         original_env = os.environ.get("CAGE_REDIS_WAIT_REPLICAS")
         try:
             if "CAGE_REDIS_WAIT_REPLICAS" in os.environ:
@@ -713,7 +715,8 @@ class TestWaitEnvironmentVariables:
 
             importlib.reload(cbf_module)
 
-            assert cbf_module._WAIT_REPLICAS == 0
+            # Fix A1: Default is now 1 for durability
+            assert cbf_module._WAIT_REPLICAS == 1
         finally:
             if original_env is not None:
                 os.environ["CAGE_REDIS_WAIT_REPLICAS"] = original_env

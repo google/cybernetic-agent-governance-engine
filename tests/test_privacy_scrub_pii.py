@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Marker: @pytest.mark.local — CI-gated, no external dependencies.
-# Run: uv run pytest tests/test_privacy_scrub_pii.py -m local -v
-
 import time
 
 import pytest

@@ -44,6 +44,18 @@
     "min_samples": 50,
     "_comment_samples": "[EV-4] Consolidated from CAUSAL_MIN_SAMPLES and CAUSAL_MIN_LIVE_SAMPLES. Minimum telemetry samples required for causal model training."
   },
+  "telemetry": {
+    "max_staleness_seconds": 300,
+    "_comment_staleness": "[EV-6] Maximum age of telemetry observation (seconds) before data is treated as stale and causal gatekeeper fails closed. Env override: TELEMETRY_MAX_STALENESS_SECONDS.",
+    "cache_ttl_seconds": 60,
+    "_comment_cache": "[EV-6] TTL for Redis-backed causal result cache (seconds). Set to 0 to disable caching. Env override: CAUSAL_CACHE_TTL_SECONDS."
+  },
+  "kms_batch": {
+    "max_size": 10,
+    "_comment_max_size": "[EV-5] Maximum records per KMS batch signing operation. Env override: KMS_BATCH_MAX_SIZE.",
+    "enabled": false,
+    "_comment_enabled": "[EV-5] KMS batch signing disabled by default for safety. Enable explicitly in production. Env override: KMS_BATCH_ENABLED."
+  },
   "consensus": {
     "threshold_usd": 10000.0,
     "_comment": "Trades above this USD amount trigger the multi-agent consensus check."

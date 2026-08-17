@@ -53,7 +53,7 @@ from src.gateway.core.llm import GatewayClient
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.governed_financial_advisor.utils.telemetry import genai_span
 
-logger = logging.getLogger("ConsensusEngine")
+logger = logging.getLogger("ConsensusGate")
 tracer = trace.get_tracer("src.governance.consensus")
 
 # ---------------------------------------------------------------------------
@@ -200,7 +200,7 @@ class ConsensusModelRegistry:
         )
 
 
-class ConsensusEngine:
+class ConsensusGate:
     """
     Implements a 'Critic' check for high-stakes decisions using separate LLM calls.
 
@@ -509,4 +509,7 @@ class ConsensusEngine:
             return result
 
 
-consensus_engine = ConsensusEngine()
+consensus_engine = ConsensusGate()
+
+# Backward-compatibility alias for external consumers
+ConsensusEngine = ConsensusGate

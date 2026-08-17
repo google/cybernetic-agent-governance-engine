@@ -132,5 +132,3 @@ def validate_required_settings():
     _settings_logger.info(
         "Settings validated: all required environment variables are set."
     )
-
-

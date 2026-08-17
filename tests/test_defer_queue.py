@@ -289,3 +289,6 @@ def test_defer_token_serialization_round_trip():
     assert restored.thread_id == token.thread_id
     assert restored.defer_reason == token.defer_reason
     assert restored.confidence_score == token.confidence_score
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

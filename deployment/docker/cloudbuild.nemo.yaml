@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# IMAGE_REGISTRY can be overridden via kustomize or helm values (default: gcr.io)
-# To push to a different registry (e.g., ECR, ACR, Docker Hub), replace gcr.io/${_GCP_PROJECT_ID}
-# with your registry prefix and update the _IMAGE_REGISTRY substitution accordingly.
-# Example for Artifact Registry: us-central1-docker.pkg.dev/${_GCP_PROJECT_ID}/governance-stack
 steps:
   - name: "gcr.io/cloud-builders/docker"
     args:

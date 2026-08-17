@@ -111,8 +111,8 @@ class TestSha256Helpers:
         """Changing sequence must produce a different record_hash (tamper detection)."""
         from src.compliance_bridge.evidence_stream import _link_hash
 
-        h1 = _link_hash("prev", 0, "AUDIT_FINDING", "A.5.3", '{}')
-        h2 = _link_hash("prev", 1, "AUDIT_FINDING", "A.5.3", '{}')
+        h1 = _link_hash("prev", 0, "AUDIT_FINDING", "A.5.3", "{}")
+        h2 = _link_hash("prev", 1, "AUDIT_FINDING", "A.5.3", "{}")
         assert h1 != h2
 
     def test_link_hash_changes_on_payload_change(self):
@@ -238,7 +238,6 @@ class TestIngestHashChain:
         """Each ingested event must produce a distinct record_hash (chain advances)."""
         sink = _make_sink()
         sink._redis = _make_redis_mock()
-
 
         captured_entries = []
 

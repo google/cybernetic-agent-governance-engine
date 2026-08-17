@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ─── Stage 1: Builder — compile lula from source ──────────────────────────────
 FROM golang:1.22-alpine AS builder
 
 ARG LULA_VERSION=0.9.5

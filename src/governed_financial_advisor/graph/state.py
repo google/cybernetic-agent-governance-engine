@@ -147,3 +147,20 @@ class AgentState(TypedDict):
     ftra_status: str | None  # default None
     ftra_result: dict[str, Any] | None  # default None
     ftra_defer_id: str | None  # default None
+
+    # NARROW Primitive — Parameter Clamping (CAGE_IMPLEMENTATION_SPECS §4.3)
+    # Set by governance nodes when SymbolicGovernor applies NARROW decision.
+    # narrow_status:   "NARROWED" | "NOT_NARROWED" | None (not yet evaluated)
+    # narrowed_params: Dict with original/clamped values and limit applied, e.g.:
+    #                  {"original_amount": 50000, "narrowed_amount": 25000,
+    #                   "limit_applied": "daily_limit"}
+    narrow_status: str | None  # default None
+    narrowed_params: dict[str, Any] | None  # default None
+
+    # PAUSE Primitive — Execution Suspension (CAGE_IMPLEMENTATION_SPECS §4.3)
+    # Set when governance requires HITL review before proceeding.
+    # pause_resume_token: UUID for resuming suspended execution via DeferQueue.
+    # pause_reason:       Human-readable justification for the pause, e.g.:
+    #                     "HITL review required for high-value transaction"
+    pause_resume_token: str | None  # default None
+    pause_reason: str | None  # default None

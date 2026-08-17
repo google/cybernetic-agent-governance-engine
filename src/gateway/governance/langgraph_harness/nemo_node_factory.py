@@ -173,6 +173,7 @@ def _ensure_presidio_engines() -> None:
             _presidio_init_exc,
         )
 
+
 # ---------------------------------------------------------------------------
 # SymbolicGovernor singleton — imported lazily to avoid circular imports.
 # Used to call pre_check() before NeMo rails so actions receive pre-computed

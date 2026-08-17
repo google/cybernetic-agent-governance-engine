@@ -261,7 +261,9 @@ class TestCheckDrawdownLimitAction:
 
     @pytest.mark.asyncio
     async def test_blocked_when_cbf_denies(self):
-        ctx = _make_context(pre_check=_clean_cbf(allowed=False, reason="drawdown limit exceeded"))
+        ctx = _make_context(
+            pre_check=_clean_cbf(allowed=False, reason="drawdown limit exceeded")
+        )
         result = await CheckDrawdownLimitAction(context=ctx)
         assert result is False
 
@@ -441,21 +443,33 @@ class TestInvokeVllmFallbackAction:
         mock_span_ctx.__enter__ = MagicMock(return_value=None)
         mock_span_ctx.__exit__ = MagicMock(return_value=False)
 
-        with patch(
-            "src.gateway.governance.nemo.actions.genai_span",
-            return_value=mock_span_ctx,
-        ) if False else _null_patch():
-            # Patch the genai_span import inside the function
-            with patch(
-                "src.governed_financial_advisor.utils.telemetry.genai_span",
+        with (
+            patch(
+                "src.gateway.governance.nemo.actions.genai_span",
                 return_value=mock_span_ctx,
-            ) if False else _null_patch():
+            )
+            if False
+            else _null_patch()
+        ):
+            # Patch the genai_span import inside the function
+            with (
+                patch(
+                    "src.governed_financial_advisor.utils.telemetry.genai_span",
+                    return_value=mock_span_ctx,
+                )
+                if False
+                else _null_patch()
+            ):
                 pass
 
         # Direct invocation — empty content path
-        with patch(
-            "src.gateway.governance.nemo.actions.InvokeVllmFallbackAction.__module__",
-        ) if False else _null_patch():
+        with (
+            patch(
+                "src.gateway.governance.nemo.actions.InvokeVllmFallbackAction.__module__",
+            )
+            if False
+            else _null_patch()
+        ):
             pass
 
         # We patch the internal imports used by InvokeVllmFallbackAction
@@ -555,8 +569,12 @@ def _mock_genai_span_ctx():
 
 class _null_patch:
     """A no-op context manager for conditional patching."""
+
     def __enter__(self):
         return self
 
     def __exit__(self, *args):
         pass
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

@@ -25,19 +25,25 @@ from src.integrations.veritas import VeritasNormativeProvider
 
 @pytest.mark.asyncio
 async def test_veritas_provider_lifecycle():
-    provider = VeritasNormativeProvider(endpoint="https://veritas.example.com", api_key="secret-key")
+    provider = VeritasNormativeProvider(
+        endpoint="https://veritas.example.com", api_key="secret-key"
+    )
 
     baseline = await provider.fetch_legal_baseline("US_FED")
     assert baseline["region"] == "US_FED"
     assert baseline["provider"] == "VERITAS_OS"
     assert "VERITAS_DECISION_MANDATE_V1" in baseline["active_rules"]
 
-    fria = await provider.validate_external_fria("thread-123", {"action": "execute_trade", "amount": 5000})
+    fria = await provider.validate_external_fria(
+        "thread-123", {"action": "execute_trade", "amount": 5000}
+    )
     assert fria["verdict"] == "APPROVED"
     assert fria["provider"] == "VERITAS_OS"
     assert fria["thread_id"] == "thread-123"
 
-    evidence_ok = await provider.submit_evidence_chain("thread-123", {"event": "trade_executed"})
+    evidence_ok = await provider.submit_evidence_chain(
+        "thread-123", {"event": "trade_executed"}
+    )
     assert evidence_ok is True
 
 
@@ -52,3 +58,6 @@ def test_veritas_bind_receipt_ingestion():
     digest = provider.ingest_bind_receipt(receipt)
     assert isinstance(digest, str)
     assert len(digest) == 64
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

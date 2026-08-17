@@ -321,3 +321,6 @@ def test_different_audit_id_produces_different_genesis():
     acc1 = ContextAccumulator(audit_id="genesis-diff-001")
     acc2 = ContextAccumulator(audit_id="genesis-diff-002")
     assert acc1.chain_root() != acc2.chain_root()
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

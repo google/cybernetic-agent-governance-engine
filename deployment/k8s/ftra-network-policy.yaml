@@ -12,40 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ============================================================================
-# FTRA Network Policy — Interim Compensating Control
-# ============================================================================
-#
-# Purpose:
-#   This NetworkPolicy provides defense-in-depth for risks R-02 (Trust Boundary
-#   Mutation) and R-03 (Trust Boundary Bypass) until CAGE_FTRA_BOUNDARY_ENABLED
-#   is enabled by default in production.
-#
-# Risk Context:
-#   R-02: ftra_node fires within GFA's LangGraph, but the classification happens
-#         BEFORE execution — a compromised host agent could mutate the plan
-#         post-classification but pre-execution.
-#   R-03: ftra_node only fires if the host agent wires it into its own LangGraph.
-#         Direct HTTP access to /validate-action or ext_authz bypasses it entirely.
-#
-# Interim Control:
-#   This policy restricts ingress to the cage-gateway pod to only allow traffic
-#   from pods that have passed through a governance-validated path. The label
-#   `governance-validated: "true"` must be set by the orchestrator or ingress
-#   controller after verifying that the request has been properly governed.
-#
-# Removal Criteria:
-#   This policy can be removed once CAGE_FTRA_BOUNDARY_ENABLED=true is the
-#   default production configuration, as the FTRA boundary check at the
-#   controller level will then provide the equivalent protection.
-#
-# NIST SP 800-53: SC-7 (Boundary Protection), AC-4 (Information Flow Enforcement)
-# ISO 42001: A.2.5 (AI System Boundary Controls)
-#
-# Reference: docs/operations/FTRA_COMPENSATING_CONTROLS.md
-# POAM: POAM-2026-030 (FTRA Tier 0.5)
-# ============================================================================
-
 ---
 # Policy: FTRA Egress Lockdown
 # Restricts ingress to cage-gateway to only governance-validated sources.

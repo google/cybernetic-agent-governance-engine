@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 # Configuration
 COMPLIANCE_BRIDGE_URL = os.environ.get("COMPLIANCE_BRIDGE_URL", "http://localhost:3001")
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture(autouse=True)
 def skip_if_unreachable():

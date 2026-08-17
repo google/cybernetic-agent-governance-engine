@@ -1,8 +1,8 @@
 ---
 title: "AI Governance & Policy Engine"
 document: "05-AI-GOVERNANCE-POLICY-ENGINE"
-version: "2.4"
-date: "2026-06-15"
+version: "3.0"
+date: "2026-08-16"
 classification: "INTERNAL"
 project: "Cybernetic Governance Engine (CAGE)"
 ---
@@ -11,7 +11,7 @@ project: "Cybernetic Governance Engine (CAGE)"
 
 ## Overview
 
-> **v2.1.0**: FTRA Commencement Reachability Gate added at Tier 0 (pre-execution structural check). NIST AI 600-1 Compliance Gates phases 0–3 are all fully implemented (confabulation scorer, HITL escalator, prompt injection detector, provenance chain, CBRN NeMo rail). CBF External Reconciliation Worker (`src/compliance_bridge/reconciliation_worker.py`) closed POAM-023.
+> **v3.0.0**: Lua-atomic CBF check-and-commit (`ControlBarrierFunction.atomic_verify_and_commit()`), strictly human-gated NeMo refinement (`POST /v1/nemo/propose-refinement` and `POST /v1/nemo/approve-refinement/{proposal_id}`), canonical 1.1 evidence stream schema with 6-field `record_hash` binding, centralized threshold configuration under `config/thresholds/<REGION>_BASELINE.json`, and operational external balance reconciliation worker (POAM-023 / POAM-2026-038 closed).
 
 
 The AI Governance & Policy Engine is the most complex and safety-critical component of the Cybernetic Governance Engine (CAGE). It enforces a layered, **neuro-symbolic hybrid governance** model over every agent action, combining deterministic symbolic constraints with LLM-based semantic judgment. No action reaches execution unless it passes all governance tiers. All governance is **fail-closed**: any tier failure raises `GovernanceError` and blocks the action.
@@ -115,7 +115,7 @@ flowchart TD
 
 ### Execution-Time Revalidation
 
-A critical architecture shift in CAGE v2.0 separates pre-check reasoning from execution-time commitment. While the full 7-tier `SymbolicGovernor` pipeline is executed pre-HITL to evaluate the broad intent and strategy, only a subset of deterministic tiers reliant on continuous environmental variables are re-evaluated immediately prior to execution.
+A critical architecture shift in CAGE v2.0 separates pre-check reasoning from execution-time commitment. While the full 8-tier governance pipeline (FTRA + 7 in-pipeline tiers via `SymbolicGovernor`) is executed pre-HITL to evaluate the broad intent and strategy, only a subset of deterministic tiers reliant on continuous environmental variables are re-evaluated immediately prior to execution.
 
 Specifically, the `post_hitl_revalidate_node` runs the transaction through:
 - **Tier 2 (Control Barrier Function)**: Ensures that the cash balance boundary remains satisfied under live, fresh pricing.
@@ -757,11 +757,11 @@ The following governance-related risk acceptances are documented in [`compliance
 
 ---
 
-> **Verification gap:** Tier 0.5 (FTRA) executes before `_run_checks()` and is not included in the 21-state BFS automaton. The automaton therefore does not verify that FTRA cannot be bypassed via direct controller calls. Closing this gap requires either integrating FTRA into the state tuple or enforcing the FTRA check at the controller boundary.
+> **Verification gap:** FTRA (the Pre-Pipeline Boundary Gate) executes before `_run_checks()` and is not included in the 21-state BFS automaton. The automaton therefore does not verify that FTRA cannot be bypassed via direct controller calls. Closing this gap requires either integrating FTRA into the state tuple or enforcing the FTRA check at the controller boundary.
 
 ## 14b. FTRA Commencement Reachability Gate (v2.1.0) **[All Regions]**
 
-The **Forward-Looking Trajectory Reachability Analyzer** (FTRA, `CTRL_FTRA_001`, `src/gateway/governance/ftra/`) is a **Tier 0.5 pre-execution gate**, inserted between the `evaluator` and `safety_check` LangGraph nodes, that analyzes the multi-step `ExecutionPlan` produced by the Execution Analyst *before any step runs*. It determines whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable from step 0 and, if so, routes the plan to human review or blocks it outright based on Evaluator confidence.
+The **Forward-Looking Trajectory Reachability Analyzer** (FTRA, `CTRL_FTRA_001`, `src/gateway/governance/ftra/`) is a **Pre-Pipeline Boundary Gate**, inserted between the `evaluator` and `safety_check` LangGraph nodes, that analyzes the multi-step `ExecutionPlan` produced by the Execution Analyst *before any step runs*. It determines whether an irreversible terminal action (e.g. `execute_trade`, `write_db`) is reachable from step 0 and, if so, routes the plan to human review or blocks it outright based on Evaluator confidence. FTRA is NOT a peer of Tiers 0–6b — it operates on the **whole execution graph** before per-tool-call checks begin.
 
 ### Implementation
 
@@ -774,7 +774,7 @@ The **Forward-Looking Trajectory Reachability Analyzer** (FTRA, `CTRL_FTRA_001`,
 
 **Verdict routing:** `CLEAR` → proceed to the `safety_check` OPA gate. `HITL_REQUIRED` (irreversible terminal reachable, confidence ≥ `FRIA_ZONE_DEFER` = 0.70) → park in DeferQueue `db=1` pending human clearance. `BLOCKED` (irreversible terminal reachable, confidence < 0.70) → route to `explainer`; plan halted outright. All construction/traversal errors fail closed to `HITL_REQUIRED`/`BLOCKED`, mirroring the OPA `default stpa_allow = false` pattern.
 
-> **Removed scaffold:** `src/gateway/governance/ftra_reachability.py` was a standalone, unwired `FtraReachabilityGate` scaffold committed alongside this package in the same commit. It was never imported by `SymbolicGovernor` or any production code path — the actual Tier 0.5 gate has always been `ftra/node_factory.py`. The scaffold and its dedicated test module were removed.
+> **Removed scaffold:** `src/gateway/governance/ftra_reachability.py` was a standalone, unwired `FtraReachabilityGate` scaffold committed alongside this package in the same commit. It was never imported by `SymbolicGovernor` or any production code path — the actual Pre-Pipeline Boundary Gate has always been `ftra/node_factory.py`. The scaffold and its dedicated test module were removed.
 
 ### Compliance Mapping
 
@@ -1066,9 +1066,9 @@ The following table summarises all NIST AI 600-1 governance modules, their POAM 
 
 ## 16. Mathematical Policy Invariants
 
-This section formalises the key mathematical invariants enforced by the 7-tier symbolic governor pipeline. All constants are sourced from [`config/governance_thresholds.json`](../../config/governance_thresholds.json) and the named constants in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py).
+This section formalises the key mathematical invariants enforced by the 8-tier governance pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers). All constants are sourced from [`config/governance_thresholds.json`](../../config/governance_thresholds.json) and the named constants in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py).
 
-### 16.1 7-Tier Pipeline — Formal Summary
+### 16.1 8-Tier Pipeline — Formal Summary
 
 The [`SymbolicGovernor._run_checks()`](../../src/gateway/governance/symbolic_governor.py) pipeline executes the following tiers in strict sequential order. Each tier is fail-closed: a violation at tier *k* raises `GovernanceError` and prevents tiers *k+1 … 6* from executing.
 
@@ -1193,7 +1193,7 @@ The STPA freshness check ([`scripts/check_stpa_freshness.py`](../../scripts/chec
 
 ## Summary
 
-The CAGE AI Governance & Policy Engine enforces a **neuro-symbolic, defense-in-depth** governance model across a 7-tier sequential pipeline (Tiers 0–6, plus the adaptive Tier 6b FRIA gate; Tiers 2 and 4 execute concurrently). Every trade request must survive STPA semantic safety checks, confidence thresholds, a Redis-atomic Control Barrier Function, a Fiscal Limit Pre-Reservation, OPA Rego role-based authorization, multi-agent LLM consensus voting (two concurrent critic personas with a strict priority ladder), DoWhy causal gatekeeping, and adaptive external normative validation before execution is approved. All active tiers are fail-closed; the EU_ECB region additionally stamps a FRIA attestation as part of Tier 6b rather than as a separate numbered step.
+The CAGE AI Governance & Policy Engine enforces a **neuro-symbolic, defense-in-depth** governance model across an 8-tier governance pipeline (FTRA pre-pipeline boundary gate at Tier 0.5, plus 7 in-pipeline tiers: Tiers 0–6 with the adaptive Tier 6b FRIA gate; Tiers 2 and 4 execute concurrently). Every trade request must survive STPA semantic safety checks, confidence thresholds, a Redis-atomic Control Barrier Function, a Fiscal Limit Pre-Reservation, OPA Rego role-based authorization, multi-agent LLM consensus voting (two concurrent critic personas with a strict priority ladder), DoWhy causal gatekeeping, and adaptive external normative validation before execution is approved. All active tiers are fail-closed; the EU_ECB region additionally stamps a FRIA attestation as part of Tier 6b rather than as a separate numbered step.
 
 The **universal baseline** (ISO/IEC 42001:2023 + CSA AARM) applies to all regions. The **NIST AI 600-1 governance modules** (§15) are US_FED-only additive controls: confabulation scoring (§2.1), PII audit logging (§2.2), prompt injection detection (§2.3), CBRN keyword scanning (§2.6), HITL escalation (§2.5), and cryptographic provenance chaining (§2.7). The **PII Sanitizer** (§13) is a universal pre-ledger pipeline implementing ISO 42001 A.6 across all regions. The **Text Filter** (§4) provides universal Aho-Corasick keyword scanning with a US_FED-only CBRN extension gated by `tier1_keywords_cbrn_enabled`.
 

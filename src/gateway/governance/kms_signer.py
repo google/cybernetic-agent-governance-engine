@@ -601,9 +601,7 @@ class KMSGovernanceSigner:
             if signed_at is not None:
                 age = int(time.time()) - int(signed_at)
                 if age > MAX_KMS_PAYLOAD_AGE_SECONDS:
-                    raise ValueError(
-                        "KMS payload has expired (signed_at too old)"
-                    )
+                    raise ValueError("KMS payload has expired (signed_at too old)")
         return result
 
     def _kms_verify(self, plan_bytes: bytes, signature_hex: str) -> bool:

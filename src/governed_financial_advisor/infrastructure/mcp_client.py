@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import os
 from typing import Any
 
 from mcp import ClientSession
@@ -26,8 +27,10 @@ class GatewayMCPClient:
     Client for interacting with the Gateway's MCP Server via SSE.
     """
 
-    def __init__(self, sse_url: str):
-        self.sse_url = sse_url
+    def __init__(self, sse_url: str = "http://localhost:8080/mcp/sse"):
+        self.sse_url = sse_url or os.getenv(
+            "GATEWAY_MCP_URL", "http://localhost:8080/mcp/sse"
+        )
         self.session: ClientSession | None = None
         self._exit_stack = None
 
