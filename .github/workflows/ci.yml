@@ -422,7 +422,19 @@ jobs:
       - name: Run integration smoke tests
         env:
           CAGE_DEPLOYMENT_REGION: US_FED
-        run: uv run pytest tests/ -m integration --timeout=30 -x -q --ignore=tests/load --ignore=tests/red_team
+          CAGE_ENV: "ci"
+          LANGFUSE_POSTURE_DRY_RUN: "true"
+          OPENAI_API_KEY: "sk-dummy"
+          MODEL_REASONING: "casperhansen/deepseek-r1-distill-qwen-14b-awq"
+          MODEL_FAST: "Qwen/Qwen2.5-7B-Instruct"
+          VLLM_API_KEY: "dummy"
+          VLLM_GATEWAY_URL: "http://localhost:8081/v1"
+          REDIS_URL: "redis://localhost:6379/0"
+          OPA_URL: "http://localhost:8181/v1/data/governance/policy"
+          LANGFUSE_HOST: "http://localhost:3000"
+          LANGFUSE_PUBLIC_KEY: "pk-dummy"
+          LANGFUSE_SECRET_KEY: "sk-dummy"
+        run: uv run pytest tests/ -m integration --timeout=30 -x -q --ignore=tests/load --ignore=tests/red_team --no-cov
 
   ai600-unit-tests:
     name: "AI 600-1 Unit Tests"
