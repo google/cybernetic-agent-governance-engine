@@ -162,8 +162,8 @@ Three purpose-distinct HTTP clients exist. They are **not aliases** — each tar
 **When to use each:**
 
 - Use `GatewayClient` for conversational LLM calls that go through the full NeMo/OPA gateway
-- Use `GovernanceClient` for schema-critical structured outputs (risk reports, UCA analysis) where FSM-constrained generation is required
-- Use `GatewayMCPClient` to invoke gateway tools (`execute_trade_action`, `evaluate_policy`, `check_safety_constraints`, etc.)
+- Use `StructuredLLMClient` for schema-critical structured outputs (risk reports, UCA analysis) where FSM-constrained generation is required
+- Use `GatewayMCPClient` to invoke gateway tools (`execute_trade_action`, `evaluate_policy`, `simulate_governance_check`, etc.)
 
 ### Configuration Hierarchy
 
@@ -209,7 +209,7 @@ A typical governed trade advisory request flows as follows:
 6. **Supervisor routing** → `route_supervisor()` reads `next_step`; maps `"FINISH"` → LangGraph `END` sentinel
 7. **Data Analyst path** (if market data requested) → `data_analyst_graph` subgraph: thinker→doer→execute_tool→reporter; every MCP call traverses 7-layer gateway governance
 8. **Execution Analyst node** → Llama structured plan generation (Pydantic output); market context injected; `loop_count` incremented unconditionally
-9. **Evaluator node** → `check_safety_constraints()` calls OPA `evaluate_policy` via MCP; HMAC-SHA256 `governance_signature` generated on `APPROVED`
+9. **Evaluator node** → `simulate_governance_check()` calls OPA `evaluate_policy` via MCP; HMAC-SHA256 `governance_signature` generated on `APPROVED`
 10. **Signature gate** (`check_safety_signature`) → if `APPROVED + sig`: proceed to `safety_check_node`; if `loop_count >= 3`: escape to `explainer` (recursion guard); else: loop back to `execution_analyst`
 11. **Safety Check node** _(NEW Rev8 — R-11 FIXED)_ → calls OPA policy gate directly; `route_safety()` routes: `APPROVED/SKIPPED → governed_trader`, `BLOCKED/ESCALATED → explainer` without executing trade
 12. **LangGraph interrupt** (`interrupt_before=["governed_trader"]`) → graph pauses; checkpoint saved to Redis; approval required if trade > $10k or risk_score > 0.7
@@ -339,7 +339,7 @@ GKE Cluster (governance-stack namespace)
 | Approval API                 | `server.py POST /v1/approvals/{thread_id}/resume`                      | `graph/nodes/approval_node.py`                                                                            |
 | Data analyst subgraph        | `graph/subgraphs/data_analyst_graph.py`                                | 4-node: thinker→doer→execute_tool→reporter                                                                |
 | Governed trader subgraph     | `graph/subgraphs/governed_trader_graph.py`                             | 4-node: approval→executor→tools→rejection                                                                 |
-| Evaluator (HMAC + OPA)       | `graph/nodes/evaluator_node.py`                                        | `agents/evaluator/agent.py::check_safety_constraints()`                                                   |
+| Evaluator (HMAC + OPA)       | `graph/nodes/evaluator_node.py`                                        | `agents/evaluator/agent.py::simulate_governance_check()`                                                   |
 | Gateway server               | `src/gateway/server/hybrid_server.py`                                  | `/agent/query`, `/api/chat`, MCP tools                                                                    |
 | Governance pipeline          | `src/gateway/governance/symbolic_governor.py`                          | OPA + CBF + STPA + Consensus + FRIA; emits structured `GovernanceControl` violation payloads via `ControlRegistry` (`config/compliance/{REGION}_BASELINE.json` or fallback `config/control_mappings.json`) |
 | OSCAL SSP exporter           | `src/gateway/governance/oscal_ssp_exporter.py`                        | `FrameworkRouter` loads `config/oscal/framework_mappings/*.json` at runtime; `--framework` CLI flag selects NIST, ISO42001, EU_AI_ACT, or MAS_FEAT cross-walk |

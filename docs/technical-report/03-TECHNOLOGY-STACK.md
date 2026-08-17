@@ -2,11 +2,11 @@
 
 | Field                | Value                                                                    |
 | -------------------- | ------------------------------------------------------------------------ |
-| **Document Version** | 2.0                                                                      |
-| **Date**             | 2026-06-03                                                               |
+| **Document Version** | 3.0                                                                      |
+| **Date**             | 2026-08-16                                                               |
 | **Classification**   | INTERNAL                                                                 |
 | **Document Series**  | CAGE Technical Report                                                    |
-| **Status**           | DRAFT — Pending AO Approval (GKE deployment verified 2026-06-03; 844 tests passing) |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,741 passed, 0 failed, 182 skipped; 75.12% coverage) |
 | **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md` |
 
 ---

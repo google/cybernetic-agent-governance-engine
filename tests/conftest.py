@@ -40,6 +40,10 @@ import os
 
 import pytest
 
+# Disable fork safety crashes on macOS (Obj-C runtime abort in xdist workers)
+os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 # ── Load .env early (before any test module is imported) ─────────────────────
 # override=False means existing shell env vars always win.
 try:

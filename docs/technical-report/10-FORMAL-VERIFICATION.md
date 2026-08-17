@@ -1,14 +1,14 @@
-# Formal Verification and Completeness Proof (CAGE v2.1.0)
+# Formal Verification and Completeness Proof (CAGE v3.0.0)
 
 | Field              | Value                     |
 | ------------------ | ------------------------- |
 | **Classification** | INTERNAL                  |
-| **Date**           | 2026-06-03                |
-| **Version**        | 2.1                       |
-| **Status**         | Current — v2.1.0 stable; v2.0.0 GO tag 2026-06-08; GKE deployment verified 2026-06-03; **844 passing, 0 failed, 24 skipped** (`test_results/run_20260603T103414.txt`, as of v2.0.0 GKE cycle); NoDirectBind invariant machine-verified over 21 reachable states |
+| **Date**           | 2026-08-16                |
+| **Version**        | 3.0                       |
+| **Status**         | Current — v3.0.0 stable; GKE deployment verified; **2,741 passing, 0 failed, 182 skipped** (75.12% statement coverage); NoDirectBind invariant machine-verified over 21 reachable states |
 | **Series**         | CAGE Technical Report — Document 10 / 10 |
 
-As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v2.1.0 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
+As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v3.0.0 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
 
 Below is the formal state-space and structural analysis of the system, including the resolution of previously identified unbounded states through the v2.0.0 architectural enhancements.
 

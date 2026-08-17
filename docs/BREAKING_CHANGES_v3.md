@@ -62,7 +62,7 @@ behavior change in `v3.0.0`.
 | `CONTROL_META` (module-level dict alias) | [`src/compliance_bridge/types.py:340`](../src/compliance_bridge/types.py:340) | `get_control_meta(region)` | Replace `from src.compliance_bridge.types import CONTROL_META` + direct iteration with `from src.compliance_bridge.types import get_control_meta` and call `get_control_meta(CAGE_DEPLOYMENT_REGION)`. **Behavior note:** `CONTROL_META` contained universal (ISO 42001) controls only — `get_control_meta(region)` returns universal + jurisdictional controls merged for the given region. Passing `"universal"` (or any unrecognized region string) reproduces the old universal-only subset. |
 | `EVIDENCE_SLA_SECONDS` (module-level dict alias) | [`src/compliance_bridge/types.py:446`](../src/compliance_bridge/types.py:446) | `get_sla_seconds(region)` | Replace direct dict access with `get_sla_seconds(region)`. Same universal-only → region-merged behavior note as `CONTROL_META` applies. |
 | `ISO_CONTROL_MAP` (module-level dict alias — **two distinct symbols**) | [`src/compliance_bridge/types.py:512`](../src/compliance_bridge/types.py:512) **and** [`src/gateway/governance/ontology.py:197-234`](../src/gateway/governance/ontology.py:197) (`TradingKnowledgeGraph.ISO_CONTROL_MAP` class attribute) | `get_iso_control_map(region)` (types.py); `get_control_map(region)` (ontology.py) | These are **two unrelated symbols with the same name in two different modules** — migrate each independently. `src/compliance_bridge/types.py` callers use `get_iso_control_map(region)`; `TradingKnowledgeGraph` callers use `get_control_map(region)`. |
-| `update_state()` — no signature change, but internal-use-only in v3.0.0 | [`src/gateway/governance/cbf.py:907-998`](../src/gateway/governance/cbf.py:907) | `atomic_verify_and_commit()` (same module) | `update_state()` is **not deleted** in v3.0.0 (see [CR-3 rationale](../docs/MAJOR_VERSION_CLEANUP_PLAN.md) §2.3) — it is retained as an internal primitive. New code must call `atomic_verify_and_commit()`, which performs the CBF safety check and the state commit atomically, closing the TOCTOU window documented in `update_state()`'s own deprecation warning (MED-5). If the CR-3 rename decision (`update_state()` → `_update_state_unsafe()`) is adopted during implementation, direct external calls to `update_state()` will break — track this uncertainty in your upgrade testing. |
+| `update_state()` (public API) | [`src/gateway/governance/cbf.py:907-998`](../src/gateway/governance/cbf.py:907) | `atomic_verify_and_commit()` (same module) | **Completed (CR-3)**: `update_state()` was renamed to `_update_state_unsafe()` (internal-only) to eliminate TOCTOU race conditions. External callers must call `atomic_verify_and_commit()`, which performs the CBF safety check and state commit atomically within a single Redis Lua execution. |
 
 ### Removed Endpoints
 
@@ -144,11 +144,11 @@ corresponding module is migrated; use the config file instead.
   refinement changes must go through the `propose-refinement` →
   `approve-refinement` flow. This closes the "recursive self-authentication"
   loop flagged in [`server.py:849-851`](../src/governed_financial_advisor/server.py:849).
-- **`CBF.update_state()` may become internal-only** (pending the CR-3
-  decision). If your integration calls `update_state()` directly instead of
-  `atomic_verify_and_commit()`, it may need to migrate to the atomic wrapper
-  to avoid a `TypeError`/`AttributeError` after the rename, or to close the
-  MED-5 TOCTOU window regardless of whether the rename ships.
+- **`CBF.update_state()` is renamed to `_update_state_unsafe()` (CR-3).**
+  All external callers must call `atomic_verify_and_commit()`. Direct calls to
+  `update_state()` will raise `AttributeError`. Calling `atomic_verify_and_commit()`
+  closes the MED-5 TOCTOU window by executing the barrier check and balance deduction
+  atomically within Redis.
 - **Threshold overrides via environment variable stop taking effect** for
   every variable listed under [Removed Environment Variables](#removed-environment-variables).
   Any CI/CD pipeline, Helm chart, or Terraform variable that injects these as

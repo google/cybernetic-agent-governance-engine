@@ -298,6 +298,7 @@ class OPAClient:
         # file descriptors under load.  The client is lazily initialised on first use
         # and closed via close() during application shutdown.
         self._http_client: httpx.AsyncClient | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
         parsed = urllib.parse.urlparse(self.url)
         if parsed.scheme == "http+unix":
@@ -331,7 +332,18 @@ class OPAClient:
         request.  The pooled client reuses TCP connections (keep-alive) and
         avoids file-descriptor exhaustion under load.
         """
-        if self._http_client is None or self._http_client.is_closed:
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if (
+            self._http_client is None
+            or self._http_client.is_closed
+            or (self._loop is not None and self._loop != current_loop)
+            or (self._loop is not None and self._loop.is_closed())
+        ):
+            self._loop = current_loop
             if self._uds_socket_path:
                 transport = httpx.AsyncHTTPTransport(uds=self._uds_socket_path)
             else:

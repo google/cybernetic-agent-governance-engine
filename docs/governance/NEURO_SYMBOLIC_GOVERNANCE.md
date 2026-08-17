@@ -1,4 +1,4 @@
-# Neuro-Symbolic Governance Architecture — v2.1.0
+# Neuro-Symbolic Governance Architecture — v3.0.0
 
 ## Overview
 
@@ -149,7 +149,7 @@ The 10-node LangGraph StateGraph governs the full execution lifecycle:
 
 1.  **Plan:** Agent generates a plan.
 2.  **Evaluate:** Graph routes to the **Evaluator** node.
-3.  **Governance Check:** Evaluator calls `check_safety_constraints` (OPA, CBF, STPA) in the Gateway via the 8-tier governance pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers via `SymbolicGovernor._run_checks()`: Tiers 0–6b: STPA → Confidence/OPA concurrent with CBF → POAM-TIER2-001 structural corroboration → Fiscal Limit Pre-Reservation → Consensus → Causal → FRIA).
+3.  **Governance Check:** Evaluator calls `simulate_governance_check` (OPA, CBF, STPA) in the Gateway via the 8-tier governance pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers via `SymbolicGovernor._run_checks()`: Tiers 0–6b: STPA → Confidence/OPA concurrent with CBF → POAM-TIER2-001 structural corroboration → Fiscal Limit Pre-Reservation → Consensus → Causal → FRIA).
 4.  **Context Accumulation (AARM-V1):** The SHA-256 hash-chained context accumulator (`src/compliance_bridge/context_accumulator.py`) appends each governance decision to the immutable chain, preventing context poisoning.
 5.  **Causal Validation:** DoWhy Causal Gatekeeper validates world-model integrity via 50-simulation placebo refutation (p<0.05). Fails closed if no live telemetry in production.
 6.  **Sign:** If safe, Evaluator generates a **Cloud KMS HSM-backed asymmetric signature** (primary) and appends it to the shared state. HMAC-SHA256 is used only in dev/CI when KMS is unavailable.

@@ -1,8 +1,8 @@
 ---
 title: "Cybernetic Governance Engine (CAGE) — Operational Runbook"
 document: "09-OPERATIONAL-RUNBOOK"
-version: "2.0"
-date: "2026-06-03"
+version: "3.0"
+date: "2026-08-16"
 classification: "INTERNAL"
 ---
 
@@ -10,11 +10,11 @@ classification: "INTERNAL"
 
 | Field              | Value                                     |
 | ------------------ | ----------------------------------------- |
-| **Version**        | 2.0                                       |
-| **Date**           | 2026-06-03                                |
+| **Version**        | 3.0                                       |
+| **Date**           | 2026-08-16                                |
 | **Classification** | INTERNAL                                  |
 | **Series**         | CAGE Technical Report — Document 9 / 10  |
-| **Status**         | Updated — v2.1.0 current; v2.0.0-rc.2 promoted 2026-06-03; GKE deployment + full test cycle completed 2026-06-03 |
+| **Status**         | Updated — v3.0.0 stable; GKE deployment verified |
 
 ---
 

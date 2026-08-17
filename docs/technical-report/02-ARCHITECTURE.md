@@ -2,11 +2,11 @@
 
 | Field                | Value                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **Document Version** | 2.0                                                                                                           |
-| **Date**             | 2026-06-03                                                                                                    |
+| **Document Version** | 3.0                                                                                                           |
+| **Date**             | 2026-08-16                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | ACTIVE — v2.1.0 stable (GO — 2026-06-08; GKE deployment verified 2026-06-03)                                |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,741 passed, 0 failed, 182 skipped; 75.12% coverage)        |
 | **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md`, `docs/NEURO_SYMBOLIC_GOVERNANCE.md` |
 
 ---
@@ -546,7 +546,7 @@ The `deployment/agentsight/` DaemonSet deploys a kernel-level BPF program target
 
 The system that gives CAGE its name — a **cybernetic** (self-correcting) governance engine — is the closed-loop feedback path from Langfuse telemetry scores through Kubeflow Pipelines back to live NeMo Guardrails hot-reload.
 
-> **v2.0.0 Note:** The NeMo refinement step in this loop requires human approval before executing remediation actions. Specifically, the KFP pipeline's Step 3 calls `POST /v1/nemo/apply-refinement`, which applies a hot-reload of the NeMo rails configuration — but the *propose-refinement* → *human approval* → *apply-refinement* sequence is enforced for any model-initiated refinement (AARM-V8 neutralization). Fully autonomous correction without human approval in the low-latency path is planned for v2.1.0 (POAM-031).
+> **v3.0.0 Note (CR-2):** The NeMo refinement step in this loop strictly requires human approval before executing remediation actions. The propose-refinement → human approval (`POST /v1/nemo/approve-refinement/{proposal_id}`) → apply-refinement sequence is enforced for all refinement operations, completely eliminating the unattended auto-apply code branch to neutralize AARM-V8 recursive self-authentication.
 
 > **Naming note:** The KFP pipeline is registered as `green-stack-governance-loop` and the pipeline file is `green_stack_pipeline.py`. "Green-Stack Pipeline" is the original implementation name; "Cybernetic Governance Loop" is the architectural concept it implements. They refer to the same system — the same code, the same endpoints, the same trigger flow. This document uses the canonical term **Cybernetic Governance Loop**.
 

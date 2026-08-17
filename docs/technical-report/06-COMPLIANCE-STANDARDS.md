@@ -1,14 +1,13 @@
 # 06 — Compliance & Regulatory Standards
 
-> **v2.1.0 additions**: Three-region compliance matrix with separate Lula manifests per jurisdiction (EU_ECB, APAC_MAS, US_FED) and a pytest parametrize matrix covering all three. NIST AI 600-1 Compliance Gates phases 0–3 all implemented. AARM Profile Mapper (`src/compliance_bridge/aarm_mapper.py`) with 11-vector threat ledger. Evidence Chain Metadata Binding (`src/compliance_bridge/evidence_stream.py`). CBF External Reconciliation Worker (`src/compliance_bridge/reconciliation_worker.py`) — POAM-023 closed. Region-Aware K8s Templates (`deployment/k8s/*.yaml.tpl`). Langfuse Native OTLP (standalone OTel Collector deprecated 2026-05-31).
-
+> **v3.0.0 additions**: Canonical 1.1 evidence stream schema with 6-field `record_hash` cryptographic binding, centralized threshold configuration under `config/thresholds/<REGION>_BASELINE.json`, operational external balance reconciliation worker (POAM-023 / POAM-2026-038 closed), and strictly human-gated NeMo policy refinement.
 
 ---
 
 | Field              | Value      |
 | ------------------ | ---------- |
-| **Version**        | 2.2        |
-| **Date**           | 2026-06-03 |
+| **Version**        | 3.0        |
+| **Date**           | 2026-08-16 |
 | **Classification** | INTERNAL   |
 | **Document**       | CAGE-TR-06 |
 

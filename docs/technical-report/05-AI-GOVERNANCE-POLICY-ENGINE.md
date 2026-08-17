@@ -1,8 +1,8 @@
 ---
 title: "AI Governance & Policy Engine"
 document: "05-AI-GOVERNANCE-POLICY-ENGINE"
-version: "2.4"
-date: "2026-06-15"
+version: "3.0"
+date: "2026-08-16"
 classification: "INTERNAL"
 project: "Cybernetic Governance Engine (CAGE)"
 ---
@@ -11,7 +11,7 @@ project: "Cybernetic Governance Engine (CAGE)"
 
 ## Overview
 
-> **v2.1.0**: FTRA Commencement Reachability Gate added as a Pre-Pipeline Boundary Gate (whole-graph reachability check before per-tool-call checks begin). NIST AI 600-1 Compliance Gates phases 0–3 are all fully implemented (confabulation scorer, HITL escalator, prompt injection detector, provenance chain, CBRN NeMo rail). CBF External Reconciliation Worker (`src/compliance_bridge/reconciliation_worker.py`) closed POAM-023.
+> **v3.0.0**: Lua-atomic CBF check-and-commit (`ControlBarrierFunction.atomic_verify_and_commit()`), strictly human-gated NeMo refinement (`POST /v1/nemo/propose-refinement` and `POST /v1/nemo/approve-refinement/{proposal_id}`), canonical 1.1 evidence stream schema with 6-field `record_hash` binding, centralized threshold configuration under `config/thresholds/<REGION>_BASELINE.json`, and operational external balance reconciliation worker (POAM-023 / POAM-2026-038 closed).
 
 
 The AI Governance & Policy Engine is the most complex and safety-critical component of the Cybernetic Governance Engine (CAGE). It enforces a layered, **neuro-symbolic hybrid governance** model over every agent action, combining deterministic symbolic constraints with LLM-based semantic judgment. No action reaches execution unless it passes all governance tiers. All governance is **fail-closed**: any tier failure raises `GovernanceError` and blocks the action.

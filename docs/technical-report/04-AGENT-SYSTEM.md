@@ -2,11 +2,11 @@
 
 | Field                | Value                                                                             |
 | -------------------- | --------------------------------------------------------------------------------- |
-| **Document Version** | 2.0                                                                               |
-| **Date**             | 2026-06-03                                                                        |
+| **Document Version** | 3.0                                                                               |
+| **Date**             | 2026-08-16                                                                        |
 | **Classification**   | INTERNAL                                                                          |
 | **Document Series**  | CAGE Technical Report                                                             |
-| **Status**           | ACTIVE — v2.1.0 stable (GO — 2026-06-08; GKE deployment verified 2026-06-03; **844 passing, 0 failed, 24 skipped** at time of v2.0.0 GKE cycle) |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,741 passed, 0 failed, 182 skipped; 75.12% coverage) |
 | **Reference**        | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/` |
 
 ---
@@ -316,10 +316,10 @@ The fallback `MemorySaver` is strictly for development and degraded-mode operati
 
 `src/governed_financial_advisor/agents/evaluator/agent.py` is the most architecturally complex agent in the pipeline. It uses LangChain's `create_tool_calling_agent` bound to `Qwen/Qwen2.5-1.5B-Instruct` (via `VLLM_FAST_API_BASE`) and dispatches five async MCP tools:
 
-| MCP Tool                   | Purpose                                                             |
-| -------------------------- | ------------------------------------------------------------------- |
-| `check_safety_constraints` | Validates execution plan against NeMo Guardrails safety constraints |
-| `evaluate_policy`          | Evaluates plan against OPA Rego `trade.governance` policy           |
+| MCP Tool                     | Purpose                                                             |
+| ---------------------------- | ------------------------------------------------------------------- |
+| `simulate_governance_check`  | Validates execution plan against NeMo Guardrails safety constraints |
+| `evaluate_policy`            | Evaluates plan against OPA Rego `trade.governance` policy           |
 | `check_market_status`      | Confirms market is open and ticker is tradeable                     |
 | `get_market_sentiment`     | Retrieves sentiment signal for the target ticker                    |
 | `verify_content_safety`    | PII and content moderation scan on plan text                        |

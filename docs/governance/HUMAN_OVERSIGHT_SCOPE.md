@@ -1,7 +1,7 @@
-# Human Oversight Scope — CAGE v2.1.0
+# Human Oversight Scope — CAGE v3.0.0
 
 **Document:** AI600-005 / NIST AI 600-1 §2.5 / ISO 42001 §A.8.4
-**Date:** 2026-06-23
+**Date:** 2026-08-16
 **Status:** Active
 **POAM:** AI600-005
 
@@ -27,10 +27,11 @@ CAGE automatically escalates governance decisions to human review when any of th
 |---|---|---|
 | **Consensus threshold exceeded** | `hitl_escalator.py` `should_escalate_for_consensus()` | Trade amount > $10,000 USD (`consensus.threshold_usd` in `governance_thresholds.json`) |
 | **Model confidence low** | `hitl_escalator.py` `should_escalate_for_confidence()` | Confidence < 0.95 (CTRL_AGT_001) |
-| **CausalGatekeeper block** | `causal_gatekeeper.py` `causal_safety_check()` | World-model p-value < `CAUSAL_LOCK_P_VALUE_THRESHOLD` (0.05) or marginal risk boundary exceeded |
+| **CausalGatekeeper block** | `causal_gatekeeper.py` `causal_safety_check()` | World-model p-value < `get_causal_lock_p_value_threshold()` (0.05) or marginal risk boundary exceeded |
 | **OPA MANUAL_REVIEW decision** | `src/governed_financial_advisor/governance/policy/trade_governance.rego` | OPA policy (package `trade.governance`) returns `"MANUAL_REVIEW"` |
 | **Governance confidence low** | `consensus.py` `ConsensusEngine` | ConsensusEngine self-reported confidence < threshold |
 | **POAM-TIER2-001 structural flag** | `symbolic_governor.py` `_run_checks()` Tier 2 | Structural corroboration heuristic: STPA violation count ≥ 1 AND OPA margin < threshold; overrides the model-supplied confidence signal |
+| **NeMo Policy Refinement Proposal (CR-2)** | `src/governed_financial_advisor/server.py` | `POST /v1/nemo/approve-refinement/{proposal_id}` requires human risk officer sign-off with rationale |
 
 ---
 

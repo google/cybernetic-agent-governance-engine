@@ -2,18 +2,18 @@
 
 | Field                | Value                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **Document Version** | 2.0                                                                                                           |
-| **Date**             | 2026-06-03                                                                                                    |
+| **Document Version** | 3.0                                                                                                           |
+| **Date**             | 2026-08-16                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | ACTIVE — v2.1.0 stable (GO — 2026-06-08; GKE deployment verified 2026-06-03)                                |
-| **Reference**        | [`compliance/boundary/AUTHORIZATION_BOUNDARY.md`](../../compliance/boundary/AUTHORIZATION_BOUNDARY.md) (no `ROLES_AND_RESPONSIBILITIES.md` or `banking_regs.md` exist in this repository — see note in §3 below) |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,741 passed, 0 failed, 182 skipped; 75.12% coverage)        |
+| **Reference**        | [`compliance/boundary/AUTHORIZATION_BOUNDARY.md`](../../compliance/boundary/AUTHORIZATION_BOUNDARY.md) |
 
 ---
 
 ## 1. System Identity
 
-The **Cybernetic Agent Governance Engine (CAGE)** v2.1.0 is a production-grade, multi-agent AI governance framework purpose-built for regulated financial advising. CAGE runs on Google Kubernetes Engine (GKE) and is designed from the ground up to satisfy the overlapping — and often conflicting — compliance obligations facing AI systems deployed in financial services contexts.
+The **Cybernetic Agent Governance Engine (CAGE)** v3.0.0 is a production-grade, multi-agent AI governance framework purpose-built for regulated financial advising. CAGE runs on Google Kubernetes Engine (GKE) and is designed from the ground up to satisfy the overlapping — and often conflicting — compliance obligations facing AI systems deployed in financial services contexts.
 
 ### 1.1 Core Problem Solved
 
@@ -87,7 +87,7 @@ CAGE provides eight integrated capabilities that together constitute a full-stac
 
 ## 5. Current Compliance Posture (NIST RMF Readiness)
 
-CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v2.0.0 stable release was tagged on 2026-06-08 (GO — branch `rc-v2.0.0`, tag `v2.0.0`; current release is v2.1.0). Both application images were built via Cloud Build and deployed to GKE cluster `<your-kubectl-context>`, namespace `governance-stack`, on 2026-06-03. The full test suite now reports **844 passed, 0 failed, 24 skipped** (2026-06-03 GKE cycle).
+CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v3.0.0 stable release was tagged on 2026-08-15. Both application images were built via Cloud Build and deployed to GKE cluster `governance-cluster-2`, namespace `governance-stack`. The test suite reports **2,741 passed, 0 failed, 182 skipped** with **75.12% statement coverage**.
 
 ### 5.1 Control Family Readiness
 

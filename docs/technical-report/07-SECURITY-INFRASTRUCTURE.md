@@ -2,8 +2,8 @@
 
 | Field              | Value                                           |
 | ------------------ | ----------------------------------------------- |
-| **Version**        | 2.2                                             |
-| **Date**           | 2026-06-15                                      |
+| **Version**        | 3.0                                             |
+| **Date**           | 2026-08-16                                      |
 | **Classification** | INTERNAL                                        |
 | **Document**       | CAGE Technical Report — Security Infrastructure |
 
