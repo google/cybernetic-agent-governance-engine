@@ -210,15 +210,18 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
     # ------------------------------------------------------------------
     # C-08: Start KMS batch signer for evidence chain signing.
-    # The signer is disabled by default (KMS_BATCH_ENABLED=false) and
-    # must be explicitly enabled in production via env var.
+    # The signer is disabled by default (kms_batch.enabled=false in
+    # config/governance_thresholds.json) and must be explicitly enabled
+    # in production via env var KMS_BATCH_ENABLED or config override.
     # assert_kms_active_in_production() enforces KMS mode in prod.
     # ------------------------------------------------------------------
-    from .kms_batch_signer import _ENABLED as _KMS_ENABLED
+    from src.gateway.governance.schemas.thresholds import get_kms_batch_enabled
+
     from .kms_batch_signer import get_batch_signer as _get_batch_signer
 
     _batch_signer = _get_batch_signer()
-    if _KMS_ENABLED:
+    _kms_enabled = get_kms_batch_enabled()
+    if _kms_enabled:
         await _batch_signer.start()
         logger.info("✅ KMS batch signer started")
         _env_for_kms = os.environ.get(

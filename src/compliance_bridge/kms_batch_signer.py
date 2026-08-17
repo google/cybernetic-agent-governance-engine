@@ -48,8 +48,12 @@ outside the balance-fetch critical path.
 Environment variables
 ---------------------
   KMS_BATCH_FLUSH_INTERVAL_MS  — flush interval in ms (default: 500)
-  KMS_BATCH_MAX_SIZE           — max records per batch (default: 32)
-  KMS_BATCH_ENABLED            — "true" to enable batch signing (default: "false")
+  KMS_BATCH_MAX_SIZE           — max records per batch (default: 10, via centralized config)
+  KMS_BATCH_ENABLED            — "true" to enable batch signing (default: "false", via centralized config)
+
+Note: KMS_BATCH_MAX_SIZE and KMS_BATCH_ENABLED are managed via the centralized
+threshold config (src/gateway/governance/schemas/thresholds.py) with env var
+override support. See EV-5 migration in config/governance_thresholds.json.
 """
 
 from __future__ import annotations
@@ -64,6 +68,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.gateway.governance.schemas.thresholds import (
+    get_kms_batch_enabled,
+    get_kms_batch_max_size,
+)
+
 logger = logging.getLogger("cage.kms_batch_signer")
 
 # ---------------------------------------------------------------------------
@@ -71,8 +80,6 @@ logger = logging.getLogger("cage.kms_batch_signer")
 # ---------------------------------------------------------------------------
 
 _FLUSH_INTERVAL_MS: int = int(os.environ.get("KMS_BATCH_FLUSH_INTERVAL_MS", "500"))
-_MAX_BATCH_SIZE: int = int(os.environ.get("KMS_BATCH_MAX_SIZE", "32"))
-_ENABLED: bool = os.environ.get("KMS_BATCH_ENABLED", "true").lower() == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -124,8 +131,11 @@ class AsyncBatchSigner:
     def __init__(
         self,
         flush_interval_ms: int = _FLUSH_INTERVAL_MS,
-        max_batch_size: int = _MAX_BATCH_SIZE,
+        max_batch_size: int | None = None,
     ) -> None:
+        # Use centralized config for max_batch_size if not explicitly provided
+        if max_batch_size is None:
+            max_batch_size = get_kms_batch_max_size()
         self._queue: collections.deque[PendingSignatureRecord] = collections.deque()
         self._flush_interval = flush_interval_ms / 1000.0  # convert to seconds
         self._max_batch_size = max_batch_size

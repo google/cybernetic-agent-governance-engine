@@ -152,18 +152,18 @@ class TestTelemetryFreshness:
         assert result is True
 
     def test_stale_telemetry_returns_false(self):
-        """Telemetry older than TELEMETRY_MAX_STALENESS_SECONDS → False."""
+        """Telemetry older than telemetry.max_staleness_seconds → False."""
         from src.gateway.governance import causal_gatekeeper
 
-        original = causal_gatekeeper.TELEMETRY_MAX_STALENESS_SECONDS
-        try:
-            causal_gatekeeper.TELEMETRY_MAX_STALENESS_SECONDS = 10
-            now = time.time()
-            df = pd.DataFrame({"timestamp": [now - 3600, now - 1800]})
+        now = time.time()
+        df = pd.DataFrame({"timestamp": [now - 3600, now - 1800]})
+        # Patch the accessor to return 10 seconds (much less than 1800s age)
+        with patch(
+            "src.gateway.governance.causal_gatekeeper.get_telemetry_max_staleness_seconds",
+            return_value=10,
+        ):
             result = causal_gatekeeper._check_telemetry_freshness(df, self._make_span())
-            assert result is False
-        finally:
-            causal_gatekeeper.TELEMETRY_MAX_STALENESS_SECONDS = original
+        assert result is False
 
     def test_no_timestamp_column_returns_false(self):
         """DataFrame without any timestamp column → False (fail-closed)."""
@@ -266,54 +266,51 @@ class TestCausalCacheHelpers:
         assert result is None
 
     def test_cache_set_sync_noop_when_ttl_zero(self):
-        """_causal_cache_set_sync is a no-op when CAUSAL_CACHE_TTL_SECONDS=0."""
+        """_causal_cache_set_sync is a no-op when telemetry.cache_ttl_seconds=0."""
         from src.gateway.governance import causal_gatekeeper
 
-        original = causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS
-        try:
-            causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS = 0
-            mock_redis = MagicMock()
+        mock_redis = MagicMock()
+        with patch(
+            "src.gateway.governance.causal_gatekeeper.get_causal_cache_ttl_seconds",
+            return_value=0,
+        ):
             with patch(
                 "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
             ):
                 causal_gatekeeper._causal_cache_set_sync("k", True, "reason")
-            mock_redis.setex.assert_not_called()
-        finally:
-            causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS = original
+        mock_redis.setex.assert_not_called()
 
     def test_cache_set_sync_writes_when_redis_available(self):
         """_causal_cache_set_sync calls setex when sync_redis_client is available."""
         from src.gateway.governance import causal_gatekeeper
 
-        original = causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS
-        try:
-            causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS = 60
-            mock_redis = MagicMock()
+        mock_redis = MagicMock()
+        with patch(
+            "src.gateway.governance.causal_gatekeeper.get_causal_cache_ttl_seconds",
+            return_value=60,
+        ):
             with patch(
                 "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
             ):
                 causal_gatekeeper._causal_cache_set_sync("my-key", True, "passed")
-            mock_redis.setex.assert_called_once()
-            call_args = mock_redis.setex.call_args
-            assert call_args[0][0] == "my-key"
-            assert call_args[0][1] == 60
-        finally:
-            causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS = original
+        mock_redis.setex.assert_called_once()
+        call_args = mock_redis.setex.call_args
+        assert call_args[0][0] == "my-key"
+        assert call_args[0][1] == 60
 
     def test_cache_set_sync_noop_when_redis_unavailable(self):
         """_causal_cache_set_sync is a no-op when sync_redis_client is None."""
         from src.gateway.governance import causal_gatekeeper
 
-        original = causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS
-        try:
-            causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS = 60
+        with patch(
+            "src.gateway.governance.causal_gatekeeper.get_causal_cache_ttl_seconds",
+            return_value=60,
+        ):
             with patch(
                 "src.gateway.infrastructure.redis_client.sync_redis_client", None
             ):
                 # Should not raise
                 causal_gatekeeper._causal_cache_set_sync("k", False, "no-redis")
-        finally:
-            causal_gatekeeper.CAUSAL_CACHE_TTL_SECONDS = original
 
 
 class TestCausalSafetyCheckNoDoWhy:

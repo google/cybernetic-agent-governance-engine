@@ -1033,14 +1033,11 @@ async def list_pending_nemo_proposals():  # type: ignore[no-untyped-def]
 
 @app.post("/v1/nemo/apply-refinement")
 async def apply_nemo_refinement(req: NeMoApplyRefinementRequest):  # type: ignore[no-untyped-def]
-    """NeMo hot-reload routes through the proposal/approval flow by default.
+    """NeMo hot-reload routes through the proposal/approval flow.
 
-    v3.0.0 Breaking Change: Auto-apply is disabled by default. This endpoint
-    stages a proposal and returns ``{"status": "pending_approval"}``.
-    The caller must then approve via POST /v1/nemo/approve-refinement/{id}.
-
-    Legacy auto-apply mode can be re-enabled for testing via the
-    ``_NEMO_AUTO_APPLY`` module flag or ``NEMO_AUTO_APPLY=true`` env var.
+    v3.0.0 Breaking Change: This endpoint always stages a proposal and
+    returns ``{"status": "pending_approval"}``. The caller must then approve
+    via POST /v1/nemo/approve-refinement/{id}.
 
     This eliminates the recursive self-authentication loop where the system's
     telemetry could autonomously modify its own governance rules.
@@ -1051,38 +1048,6 @@ async def apply_nemo_refinement(req: NeMoApplyRefinementRequest):  # type: ignor
     """
     import uuid as _uuid
 
-    # Legacy auto-apply mode (for backward compatibility and testing)
-    if _NEMO_AUTO_APPLY:
-        logger.info(
-            "[NeMo/Refinement] Legacy auto-apply mode active. control_id=%s source=%s",
-            req.control_id,
-            req.source,
-        )
-        try:
-            from src.gateway.governance.langgraph_harness.nemo_node_factory import (
-                reload_nemo_rails,
-            )
-
-            await reload_nemo_rails()
-            current_span = trace.get_current_span()
-            if current_span and current_span.is_recording():
-                current_span.set_attribute("ai.refinement.apply.control_id", req.control_id)
-                current_span.set_attribute("ai.refinement.apply.source", req.source)
-                current_span.set_attribute("ai.refinement.auto_applied", True)
-
-            return {
-                "status": "applied",
-                "reload": True,
-                "control_id": req.control_id,
-                "source": req.source,
-            }
-        except Exception as exc:
-            logger.exception("[NeMo/Refinement] Reload failed: %s", exc)
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=500, detail=f"Reload failed: {exc}") from exc
-
-    # Default: proposal/approval flow
     logger.info(
         "[NeMo/Refinement] Routing to proposal flow. control_id=%s source=%s",
         req.control_id,
@@ -1149,13 +1114,6 @@ _REFINEMENT_COOLDOWN_SECONDS: float = float(
     os.environ.get("REFINEMENT_COOLDOWN_SECONDS", "300")
 )
 _REFINEMENT_MIN_SAMPLES: int = int(os.environ.get("REFINEMENT_MIN_SAMPLES", "10"))
-
-# Legacy auto-apply mode: when True, /v1/nemo/apply-refinement reloads the
-# NeMo rails singleton directly. When False (default), refinement requests
-# are queued for manual approval via the /v1/nemo/propose-refinement flow.
-# This flag exists for backward compatibility with the original cybernetic
-# loop implementation and for test fixtures that verify reload mechanics.
-_NEMO_AUTO_APPLY: bool = os.environ.get("NEMO_AUTO_APPLY", "false").lower() == "true"
 
 # Module-level monotonic timestamp of the last accepted KFP trigger.
 # Initialised to 0.0 so the very first qualifying event always fires.

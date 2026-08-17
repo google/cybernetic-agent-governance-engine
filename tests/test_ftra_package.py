@@ -269,15 +269,59 @@ class TestPlanGraphAnalyzer:
         assert result.verdict == FTRAVerdict.BLOCKED
 
     def test_confidence_exactly_at_threshold_is_hitl_not_blocked(self, tmp_path):
-        """FRIA_ZONE_DEFER boundary is inclusive: confidence == 0.70 -> HITL_REQUIRED."""
-        from src.gateway.governance.ftra.graph_analyzer import FRIA_ZONE_DEFER
+        """FRIA_ZONE_DEFER boundary is inclusive: confidence == threshold -> HITL_REQUIRED."""
+        from src.gateway.governance.ftra.models import FTRAVerdict
+        from src.gateway.governance.schemas.thresholds import get_fria_zone_defer
+
+        fria_zone_defer = get_fria_zone_defer()
+        analyzer = self._analyzer(tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"})
+        plan = _make_plan([("s1", "execute_trade")])
+        result = analyzer.analyze(plan, confidence=fria_zone_defer)
+
+        assert result.verdict == FTRAVerdict.HITL_REQUIRED
+
+    def test_graph_analyzer_uses_config_based_fria_zone_defer(self, tmp_path):
+        """EV-1 regression: graph_analyzer must use get_fria_zone_defer() from config.
+
+        This test verifies that PlanGraphAnalyzer uses the centralized config
+        accessor instead of a hardcoded FRIA_ZONE_DEFER constant. By mocking
+        the accessor to return a custom threshold, we confirm the analyzer
+        respects the config-based value.
+        """
         from src.gateway.governance.ftra.models import FTRAVerdict
 
         analyzer = self._analyzer(tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"})
         plan = _make_plan([("s1", "execute_trade")])
-        result = analyzer.analyze(plan, confidence=FRIA_ZONE_DEFER)
 
-        assert result.verdict == FTRAVerdict.HITL_REQUIRED
+        # Test case 1: Mock threshold at 0.50 — confidence 0.55 should be HITL_REQUIRED
+        with patch(
+            "src.gateway.governance.ftra.graph_analyzer.get_fria_zone_defer",
+            return_value=0.50,
+        ):
+            result = analyzer.analyze(plan, confidence=0.55)
+            assert result.verdict == FTRAVerdict.HITL_REQUIRED, (
+                "With threshold=0.50 and confidence=0.55, expected HITL_REQUIRED"
+            )
+
+        # Test case 2: Mock threshold at 0.90 — confidence 0.55 should be BLOCKED
+        with patch(
+            "src.gateway.governance.ftra.graph_analyzer.get_fria_zone_defer",
+            return_value=0.90,
+        ):
+            result = analyzer.analyze(plan, confidence=0.55)
+            assert result.verdict == FTRAVerdict.BLOCKED, (
+                "With threshold=0.90 and confidence=0.55, expected BLOCKED"
+            )
+
+        # Test case 3: Verify boundary behavior — confidence == threshold should be HITL_REQUIRED
+        with patch(
+            "src.gateway.governance.ftra.graph_analyzer.get_fria_zone_defer",
+            return_value=0.75,
+        ):
+            result = analyzer.analyze(plan, confidence=0.75)
+            assert result.verdict == FTRAVerdict.HITL_REQUIRED, (
+                "With threshold=0.75 and confidence=0.75, expected HITL_REQUIRED (boundary inclusive)"
+            )
 
     def test_unregistered_action_in_plan_fails_closed(self, tmp_path):
         """A plan step whose action is absent from the registry must be treated

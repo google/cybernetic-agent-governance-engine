@@ -60,28 +60,22 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("src.gateway.governance.causal_gatekeeper")
 
 # ---------------------------------------------------------------------------
-# Configurable thresholds (read once at module load; override via env vars)
+# Configurable thresholds — EV-6 Migration
+# Telemetry thresholds are now sourced from config/governance_thresholds.json
+# with environment variable overrides supported. See schemas/thresholds.py.
 # ---------------------------------------------------------------------------
-# Maximum age of the most-recent telemetry observation before the gatekeeper
-# treats the data as stale and fails closed.  Default: 300 seconds (5 min).
-TELEMETRY_MAX_STALENESS_SECONDS: int = int(
-    os.getenv("TELEMETRY_MAX_STALENESS_SECONDS", "300")
-)
-
-# TTL for the Redis-backed causal result cache keyed on (action_type, market_regime).
-# Default: 60 seconds.  Set to 0 to disable caching.
-CAUSAL_CACHE_TTL_SECONDS: int = int(os.getenv("CAUSAL_CACHE_TTL_SECONDS", "60"))
-
 # ---------------------------------------------------------------------------
 # Causal lock thresholds — Phase 2 (CTRL_TEL_003) and Phase 1 risk boundary
-# EV-3, EV-4 Migration: Thresholds are now sourced from config/governance_thresholds.json
+# EV-3, EV-4, EV-6 Migration: Thresholds are now sourced from config/governance_thresholds.json
 # with environment variable overrides supported. See schemas/thresholds.py.
 # ---------------------------------------------------------------------------
 from src.gateway.governance.schemas.thresholds import (
+    get_causal_cache_ttl_seconds,
     get_causal_min_samples,
     get_causal_p_value_threshold,
     get_causal_placebo_effect_magnitude,
     get_causal_risk_boundary,
+    get_telemetry_max_staleness_seconds,
 )
 
 # These three constants define the three conditions that trigger a CAUSAL LOCK
@@ -253,14 +247,15 @@ def _check_telemetry_freshness(  # type: ignore[no-untyped-def]
 
         now_utc = datetime.now(tz=timezone.utc)
         age_seconds = int((now_utc - most_recent).total_seconds())
+        max_staleness = get_telemetry_max_staleness_seconds()
 
-        if age_seconds > TELEMETRY_MAX_STALENESS_SECONDS:
+        if age_seconds > max_staleness:
             logger.warning(
                 "Telemetry freshness check: most-recent observation is %ds old "
                 "(threshold=%ds) — failing closed (stale telemetry cannot be "
                 "trusted for causal inference).",
                 age_seconds,
-                TELEMETRY_MAX_STALENESS_SECONDS,
+                max_staleness,
             )
             span.set_attribute("causal.telemetry_stale", True)
             span.set_attribute("causal.telemetry_age_seconds", age_seconds)
@@ -308,8 +303,9 @@ async def _causal_cache_get(cache_key: str) -> dict | None:
 
 
 async def _causal_cache_set(cache_key: str, result: bool, reason: str) -> None:
-    """Write a causal result to Redis with CAUSAL_CACHE_TTL_SECONDS TTL."""
-    if CAUSAL_CACHE_TTL_SECONDS <= 0:
+    """Write a causal result to Redis with telemetry.cache_ttl_seconds TTL."""
+    cache_ttl = get_causal_cache_ttl_seconds()
+    if cache_ttl <= 0:
         return
     try:
         from src.gateway.infrastructure.redis_client import (
@@ -319,7 +315,7 @@ async def _causal_cache_set(cache_key: str, result: bool, reason: str) -> None:
         if redis_client is None:
             return
         payload = json.dumps({"result": result, "reason": reason})
-        await redis_client.setex(cache_key, CAUSAL_CACHE_TTL_SECONDS, payload)
+        await redis_client.setex(cache_key, cache_ttl, payload)
     except Exception as exc:
         logger.warning(
             "Causal cache SET failed (key=%s): %s — proceeding without cache.",
@@ -387,11 +383,12 @@ def _causal_cache_get_sync(cache_key: str) -> dict | None:
 
 
 def _causal_cache_set_sync(cache_key: str, result: bool, reason: str) -> None:
-    """Write a causal result to Redis with CAUSAL_CACHE_TTL_SECONDS TTL.
+    """Write a causal result to Redis with telemetry.cache_ttl_seconds TTL.
 
     Thread-safe: uses the synchronous ``sync_redis_client`` (blocking I/O).
     """
-    if CAUSAL_CACHE_TTL_SECONDS <= 0:
+    cache_ttl = get_causal_cache_ttl_seconds()
+    if cache_ttl <= 0:
         return
     try:
         from src.gateway.infrastructure.redis_client import (
@@ -401,7 +398,7 @@ def _causal_cache_set_sync(cache_key: str, result: bool, reason: str) -> None:
         if sync_redis_client is None:
             return
         payload = json.dumps({"result": result, "reason": reason})
-        sync_redis_client.setex(cache_key, CAUSAL_CACHE_TTL_SECONDS, payload)
+        sync_redis_client.setex(cache_key, cache_ttl, payload)
     except Exception as exc:
         logger.warning(
             "Causal cache SET (sync) failed (key=%s): %s — proceeding without cache.",
