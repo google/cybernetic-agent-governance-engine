@@ -125,7 +125,7 @@ This prevents PII from appearing in the audit log. The log records the *decision
 
 ### Governance Tier Index
 
-The governance pipeline is a **7-tier symbolic governor (Tiers 0–6)**. The SLM semantic similarity sidecar (formerly referenced as Tier 3) has been **deprecated** — `slm_available=false` is a permanent sentinel; it is not part of the active pipeline.
+The governance pipeline is an **8-tier symbolic governor** (FTRA pre-pipeline boundary gate at Tier 0.5 plus 7 in-pipeline tiers: Tiers 0–6). The SLM semantic similarity sidecar (formerly referenced as Tier 3) has been **deprecated** — `slm_available=false` is a permanent sentinel; it is not part of the active pipeline.
 
 | Tier | Gate | Control | Source |
 |------|------|---------|--------|

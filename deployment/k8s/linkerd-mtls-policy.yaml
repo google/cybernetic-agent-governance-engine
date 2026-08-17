@@ -12,36 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# =============================================================================
-# CAGE Zero-Trust Network (Z3N) — Linkerd mTLS Fine-Grained Authorization
-# =============================================================================
-#
-# NIST SP 800-53 Controls: SC-8, SC-23, IA-3
-# ISO 42001: A.7.5 (Cryptographic Controls), A.8.4 (AI System Operation)
-#
-# Closes POAM-007 (IA-3 — intra-cluster mTLS via service identity)
-# Closes POAM-011 (SC-8 — transmission confidentiality enforcement)
-#
-# Prerequisites:
-#   1. Linkerd control plane installed: linkerd install --crds | kubectl apply -f -
-#      linkerd install | kubectl apply -f -
-#   2. Namespace annotated for Linkerd proxy injection:
-#      kubectl annotate namespace governance-stack \
-#        linkerd.io/inject=enabled --overwrite
-#   3. Workload pods restarted after annotation to acquire proxies:
-#      kubectl rollout restart deployment -n governance-stack
-#
-# SPIFFE identity format:
-#   <serviceaccount>.<namespace>.serviceaccount.identity.linkerd.cluster.local
-#
-# Verification:
-#   linkerd viz edges deployment -n governance-stack   # shows mTLS edge status
-#   linkerd identity -n governance-stack               # shows active certificates
-#   linkerd viz authz deployment/opa-service -n governance-stack
-#
-# POAM references: POAM-007 (IA-3), POAM-011 (SC-8)
-# =============================================================================
-
 ---
 # -----------------------------------------------------------------------------
 # ServiceAccount: cage-gateway-sa

@@ -261,7 +261,10 @@ check_atomic_execution = CheckAtomicExecutionAction
 
 
 async def InvokeVllmFallbackAction(  # type: ignore[no-untyped-def]
-    context: dict = {}, events: list = [], content: str = None, **kwargs  # type: ignore[assignment]
+    context: dict | None = None,
+    events: list | None = None,
+    content: str | None = None,
+    **kwargs,  # type: ignore[assignment]
 ) -> str:
     """
     Action to call vLLM directly for fallback responses.

@@ -12,39 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# deploy_bg.sh — Background deployment wrapper
-#
-# PURPOSE
-#   Launches deploy_all.sh (or build_images.sh) fully detached from the
-#   calling terminal so that tool-level timeout restrictions (e.g. the
-#   Roo/VS Code execute_command 35-minute cap) never block a deployment.
-#
-#   The child process is double-forked via `nohup … &` and its PID is
-#   written to /tmp/cage-deploy.pid so progress can be checked at any time.
-#   All stdout/stderr is appended to a timestamped log file under /tmp/.
-#
-# USAGE
-#   # Deploy to GKE dev (background)
-#   ./scripts/deploy_bg.sh --target gcp-gke --env dev --auto-approve
-#
-#   # Deploy to GKE prod US_FED (background)
-#   CAGE_DEPLOYMENT_REGION=US_FED \
-#     ./scripts/deploy_bg.sh --target gcp-gke --env prod \
-#       --var-file=infra/targets/gcp-gke/prod.tfvars --auto-approve
-#
-#   # Build images only (background)
-#   ./scripts/deploy_bg.sh --build-only
-#
-#   # Check whether a background deployment is still running
-#   ./scripts/deploy_bg.sh --status
-#
-#   # Tail the most recent deployment log
-#   ./scripts/deploy_bg.sh --logs
-#
-# EXIT CODES
-#   0  — background process launched successfully (or status/logs shown)
-#   1  — usage error or missing prerequisite
 
 set -euo pipefail
 

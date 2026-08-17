@@ -252,7 +252,9 @@ async def generate_seal_with_evidence(
         is_evidence_chain_blocking,
     )
 
-    with tracer.start_as_current_span("cage.routing_seal.generate_with_evidence") as span:
+    with tracer.start_as_current_span(
+        "cage.routing_seal.generate_with_evidence"
+    ) as span:
         blocking_mode = is_evidence_chain_blocking()
         span.set_attribute("cage.evidence.blocking_mode", blocking_mode)
         span.set_attribute("cage.seal.action", action)
@@ -284,7 +286,9 @@ async def generate_seal_with_evidence(
                     evidence_event,
                     timeout_seconds=evidence_timeout_s,
                 )
-                span.set_attribute("cage.evidence.evidence_id", commit_result.evidence_id)
+                span.set_attribute(
+                    "cage.evidence.evidence_id", commit_result.evidence_id
+                )
                 span.set_attribute("cage.evidence.hash", commit_result.hash[:16])
                 span.set_attribute("cage.evidence.sequence", commit_result.sequence)
                 logger.info(
@@ -449,7 +453,8 @@ async def verify_and_consume_seal(
         try:
             from src.gateway.infrastructure.redis_client import get_redis_client
 
-            redis_client = get_redis_client().client
+            sync_rc = get_redis_client()
+            redis_client = getattr(sync_rc, "_client", None) or sync_rc._get()
         except Exception:
             redis_client = None
 

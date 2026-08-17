@@ -178,3 +178,6 @@ class TestLulaToOPABundlePatch:
     def test_lula_policy_name_in_result(self):
         result = lula_to_opa_bundle_patch(_MINIMAL_LULA_MANIFEST)
         assert result["lula_policy_name"] == "lula_ac3_validation"
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

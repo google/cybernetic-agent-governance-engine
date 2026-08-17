@@ -69,7 +69,7 @@ class TestC01TradeSide:
 
         captured_payload: dict = {}
 
-        def _fake_post(url, json=None, headers=None):
+        def _fake_post(url, json=None, headers=None, **kwargs):
             captured_payload.update(json or {})
             mock_resp = MagicMock()
             mock_resp.json.return_value = {"id": "order-sell-001"}
@@ -116,7 +116,7 @@ class TestC01TradeSide:
 
         captured_payload: dict = {}
 
-        def _fake_post(url, json=None, headers=None):
+        def _fake_post(url, json=None, headers=None, **kwargs):
             captured_payload.update(json or {})
             mock_resp = MagicMock()
             mock_resp.json.return_value = {"id": "order-buy-001"}

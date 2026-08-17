@@ -515,7 +515,7 @@ class TestGovernanceDecisionConformance:
 
 class TestDeferHTTPResponse:
     """Tests for DEFER decision HTTP response handling.
-    
+
     DEFER decisions return HTTP 202 Accepted with a defer_token for
     later resumption via the data-hydration path.
     """
@@ -586,12 +586,12 @@ class TestDeferHTTPResponse:
     @pytest.mark.asyncio
     async def test_defer_disabled_returns_403(self, monkeypatch):
         """When CAGE_DEFER_ENABLED=false, DEFER fallback returns HTTP 403.
-        
+
         This test patches the module-level feature flag to simulate
         disabled DEFER functionality.
         """
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "false")
-        
+
         body = json.dumps(
             {
                 "method": "execute_trade",
@@ -616,7 +616,7 @@ class TestDeferHTTPResponse:
         # Patch the module-level _DEFER_ENABLED flag
         original_defer_enabled = adapter_module._DEFER_ENABLED
         adapter_module._DEFER_ENABLED = False
-        
+
         try:
             with patch.object(_singletons, "symbolic_governor", mock_gov):
                 resp = await handle_check_request(body)
@@ -666,7 +666,7 @@ class TestDeferHTTPResponse:
 
 class TestNarrowHTTPResponse:
     """Tests for NARROW decision HTTP response handling.
-    
+
     NARROW decisions return HTTP 200 OK with X-Governance-Narrowed header
     and include both original and narrowed parameters in the response body.
     """
@@ -675,7 +675,7 @@ class TestNarrowHTTPResponse:
     async def test_narrow_returns_200_ok(self, monkeypatch):
         """NARROW verdict → HTTP 200 OK."""
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
-        
+
         body = json.dumps(
             {
                 "method": "execute_trade",
@@ -714,7 +714,7 @@ class TestNarrowHTTPResponse:
     ):
         """NARROW response includes X-Governance-Narrowed: true header."""
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
-        
+
         body = json.dumps(
             {
                 "method": "execute_trade",
@@ -758,7 +758,7 @@ class TestNarrowHTTPResponse:
     async def test_narrow_disabled_falls_back_appropriately(self, monkeypatch):
         """When CAGE_NARROW_ENABLED=false, NARROW fallback returns HTTP 403."""
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "false")
-        
+
         body = json.dumps(
             {
                 "method": "execute_trade",
@@ -800,7 +800,7 @@ class TestNarrowHTTPResponse:
     ):
         """NARROW response body includes both original_params and narrowed_params."""
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
-        
+
         body = json.dumps(
             {
                 "method": "execute_trade",
@@ -835,7 +835,7 @@ class TestNarrowHTTPResponse:
         ok_resp = resp.get("ok_response", {})
         response_body = ok_resp.get("body", "{}")
         body_parsed = json.loads(response_body)
-        
+
         assert body_parsed.get("original_params", {}).get("amount") == 200000
         assert body_parsed.get("narrowed_params", {}).get("amount") == 100000
         assert len(body_parsed.get("constraints_applied", [])) > 0
@@ -848,7 +848,7 @@ class TestNarrowHTTPResponse:
 
 class TestPauseHTTPResponse:
     """Tests for PAUSE decision HTTP response handling.
-    
+
     PAUSE decisions return HTTP 503 Service Unavailable with Retry-After
     header and include pause_token and resume_endpoint in the response body.
     """
@@ -857,7 +857,7 @@ class TestPauseHTTPResponse:
     async def test_pause_returns_503_service_unavailable(self, monkeypatch):
         """PAUSE verdict → HTTP 503 Service Unavailable."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
-        
+
         body = json.dumps(
             {
                 "method": "execute_trade",
@@ -908,7 +908,7 @@ class TestPauseHTTPResponse:
     async def test_pause_response_includes_retry_after_header(self, monkeypatch):
         """PAUSE response includes Retry-After header."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
-        
+
         body = json.dumps(
             {
                 "method": "execute_trade",
@@ -958,13 +958,16 @@ class TestPauseHTTPResponse:
         )
         assert retry_header is not None
         # Retry-After should be a number (seconds)
-        assert retry_header["header"]["value"].isdigit() or retry_header["header"]["value"] == "120"
+        assert (
+            retry_header["header"]["value"].isdigit()
+            or retry_header["header"]["value"] == "120"
+        )
 
     @pytest.mark.asyncio
     async def test_pause_response_includes_resume_endpoint(self, monkeypatch):
         """PAUSE response body includes resume_endpoint for client action."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
-        
+
         body = json.dumps(
             {
                 "method": "execute_trade",
@@ -1015,7 +1018,7 @@ class TestPauseHTTPResponse:
     async def test_pause_disabled_falls_back_to_deny(self, monkeypatch):
         """When CAGE_PAUSE_ENABLED=false, PAUSE fallback returns HTTP 403."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "false")
-        
+
         body = json.dumps(
             {
                 "method": "execute_trade",
@@ -1055,7 +1058,7 @@ class TestPauseHTTPResponse:
     async def test_pause_response_includes_pause_token(self, monkeypatch):
         """PAUSE response body includes pause_token for resumption."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
-        
+
         body = json.dumps(
             {
                 "method": "execute_trade",
@@ -1104,7 +1107,7 @@ class TestPauseHTTPResponse:
     async def test_pause_redis_error_falls_back_to_deny(self, monkeypatch):
         """When Redis is unavailable for PAUSE, fallback to HTTP 403 DENY."""
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
-        
+
         body = json.dumps(
             {
                 "method": "execute_trade",
@@ -1154,3 +1157,6 @@ class TestPauseHTTPResponse:
         assert resp["denied_response"]["status"]["code"] == 403
         body_parsed = json.loads(resp["denied_response"]["body"])
         assert body_parsed.get("error") == "pause_storage_error"
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

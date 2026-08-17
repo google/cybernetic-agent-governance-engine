@@ -183,6 +183,7 @@ class TestValidateWithNemo:
     async def test_safe_input_returns_true(self):
         """A clean input where NeMo emits no bot response → (True, '', False)."""
         mock_rails = AsyncMock()
+        mock_rails.is_transparent_fallback = False
         # NeMo returns an empty response list — rails passed through cleanly
         mock_rails.generate_async.return_value = {"response": []}
 
@@ -238,6 +239,7 @@ class TestVerifyInput:
     @pytest.mark.asyncio
     async def test_clean_input_safe(self):
         mock_rails = AsyncMock()
+        mock_rails.is_transparent_fallback = False
         mock_rails.generate_async.return_value = {"response": []}
 
         with patch(
@@ -271,3 +273,6 @@ class TestVerifyInput:
 
         assert isinstance(result, SafetyResult)
         assert result.is_safe is False
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

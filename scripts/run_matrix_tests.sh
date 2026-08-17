@@ -12,23 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# run_matrix_tests.sh — CAGE 2×3 compliance matrix orchestrator
-#
-# Usage:
-#   ./scripts/run_matrix_tests.sh [dev|prod] [US_FED|EU_ECB|APAC_MAS]
-#
-# Runs the full compliance gate suite for the given environment and region:
-#   Phase 0 — Universal ISO 42001 gates (always run, all regions)
-#   Phase 1 — Regional posture gates (region-specific)
-#
-# Exit codes:
-#   0  — all gates passed
-#   1  — parameter validation failure
-#   2  — Phase 0 (universal) gate failure
-#   3  — Phase 1 (regional) gate failure
-#
-# Source of truth for gate requirements: docs/RELEASE_PLAN.md §5.1–§5.4
 
 set -euo pipefail
 

@@ -1,3 +1,17 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Rego policy drift detection tests (Gap 3).
 
@@ -37,6 +51,7 @@ _STPA_POLICY = _OPA_DIR / "generated_stpa_policy.rego"
 # ---------------------------------------------------------------------------
 # Tests: trade_policy.rego
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 class TestTradePolicyRego:
@@ -80,6 +95,7 @@ class TestTradePolicyRego:
 # Tests: agent_catalog.rego
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 class TestAgentCatalogRego:
     """Drift-detection tests for config/opa/agent_catalog.rego."""
@@ -98,9 +114,7 @@ class TestAgentCatalogRego:
     def test_contains_allow_rule(self):
         """agent_catalog.rego contains at least one 'allow' rule."""
         content = _AGENT_CATALOG.read_text(encoding="utf-8")
-        assert "allow" in content, (
-            "agent_catalog.rego must contain an 'allow' rule"
-        )
+        assert "allow" in content, "agent_catalog.rego must contain an 'allow' rule"
 
     def test_contains_violation_rule(self):
         """agent_catalog.rego contains a 'violation' rule for denial reasons."""
@@ -150,6 +164,7 @@ class TestAgentCatalogRego:
 # ---------------------------------------------------------------------------
 # Tests: generated_stpa_policy.rego
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 class TestGeneratedStpaPolicyRego:
@@ -212,16 +227,17 @@ class TestGeneratedStpaPolicyRego:
 # Tests: cross-policy consistency
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 class TestCrossPolicyConsistency:
     """Cross-file consistency checks that no single policy can satisfy alone."""
 
     def test_all_three_rego_files_exist(self):
         """All three OPA policy files co-exist in config/opa/."""
-        missing = [p for p in [_TRADE_POLICY, _AGENT_CATALOG, _STPA_POLICY] if not p.exists()]
-        assert not missing, (
-            f"Missing OPA policy files: {[str(m) for m in missing]}"
-        )
+        missing = [
+            p for p in [_TRADE_POLICY, _AGENT_CATALOG, _STPA_POLICY] if not p.exists()
+        ]
+        assert not missing, f"Missing OPA policy files: {[str(m) for m in missing]}"
 
     def test_opa_directory_is_not_empty(self):
         """config/opa/ contains at least 3 .rego files."""

@@ -768,3 +768,6 @@ class TestGenerateRegistryManifest:
         manifest = json.loads(out_file.read_text())
         assert "tool_authorizations" in manifest
         assert "_schema_version" in manifest
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

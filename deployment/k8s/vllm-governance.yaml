@@ -1,25 +1,3 @@
-# =============================================================================
-# vllm-governance — NOT CURRENTLY DEPLOYED (orphaned/aspirational)
-# =============================================================================
-# This manifest defines a dedicated "fast/governance" vLLM inference backend
-# intended for use with the GKE Inference Gateway (deployment/k8s/inference-gateway/).
-#
-# WHY IT IS NOT DEPLOYED:
-#   - No live consumers: gateway.yaml routes VLLM_FAST_API_BASE → vllm-service
-#     (which selects vllm-inference), not this service.
-#   - Same model as vllm-inference (Qwen/Qwen2.5-7B-Instruct); only difference
-#     is guided-decoding backend (outlines vs xgrammar).
-#   - Requires a 3rd NVIDIA L4 GPU (cluster has 2, both allocated to
-#     vllm-inference and vllm-reasoning).
-#
-# WHEN TO DEPLOY:
-#   - Activate the GKE Inference Gateway by setting VLLM_GATEWAY_URL in gateway.yaml
-#   - Apply deployment/k8s/inference-gateway/ manifests
-#   - Ensure a 3rd GPU is available (quota increase or GPU time-slicing)
-#
-# See deployment/k8s/GPU_QUOTA_NOTES.md for GPU quota details.
-# =============================================================================
-
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,11 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# NOTE: This manifest contains GKE-specific node selectors for GPU and spot instance scheduling.
-# For other Kubernetes distributions, replace the GKE-specific nodeSelector labels with the
-# platform-equivalent labels documented inline. The GPU resource requests (nvidia.com/gpu)
-# are standard Kubernetes and work on any cluster with the NVIDIA device plugin installed.
 
 apiVersion: apps/v1
 kind: Deployment

@@ -27,7 +27,8 @@ Tests run against fakeredis (no live Redis required) and exercise:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+import os
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -38,6 +39,8 @@ pytest.importorskip(
 import fakeredis.aioredis  # type: ignore[import]
 
 from src.gateway.governance.fiscal_limit_guard import FiscalLimitGuard
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -350,6 +353,7 @@ def test_window_key_format(
     assert key.startswith("fiscal:daily_limit:")
     # Should contain a date string like 2026-08-09
     import re
+
     assert re.search(r"\d{4}-\d{2}-\d{2}$", key)
 
 
@@ -364,7 +368,9 @@ async def test_write_reservation_key_success(
 ) -> None:
     """_write_reservation_key() stores a sentinel key with TTL."""
     guard = FiscalLimitGuard(redis_client=redis_client, reservation_ttl=60)
-    await guard._write_reservation_key("res-uuid", 5_000_00, "fiscal:daily_limit:2026-08-09")
+    await guard._write_reservation_key(
+        "res-uuid", 5_000_00, "fiscal:daily_limit:2026-08-09"
+    )
 
     key = "fiscal:reservation:res-uuid"
     val = await redis_client.get(key)
@@ -378,7 +384,9 @@ async def test_delete_reservation_key_removes_key(
 ) -> None:
     """_delete_reservation_key() removes the sentinel key."""
     guard = FiscalLimitGuard(redis_client=redis_client, reservation_ttl=60)
-    await guard._write_reservation_key("del-uuid", 100_00, "fiscal:daily_limit:2026-08-09")
+    await guard._write_reservation_key(
+        "del-uuid", 100_00, "fiscal:daily_limit:2026-08-09"
+    )
 
     key = "fiscal:reservation:del-uuid"
     assert await redis_client.get(key) is not None
@@ -396,7 +404,9 @@ async def test_write_reservation_key_failure_is_logged(
     # Patch redis.set to raise an error
     with patch.object(redis_client, "set", side_effect=ConnectionError("no redis")):
         # Must not raise
-        await guard._write_reservation_key("fail-uuid", 1000, "fiscal:daily_limit:2026-08-09")
+        await guard._write_reservation_key(
+            "fail-uuid", 1000, "fiscal:daily_limit:2026-08-09"
+        )
 
 
 @pytest.mark.asyncio
@@ -451,3 +461,42 @@ async def test_negative_infinity_raises_value_error(guard: FiscalLimitGuard) -> 
     """reserve() with -float('inf') raises ValueError."""
     with pytest.raises(ValueError, match="finite positive number"):
         await guard.reserve(agent_id="agent", amount_usd=float("-inf"))
+
+
+@pytest.mark.local
+def test_fiscal_guard_from_env():
+    with patch.dict(
+        os.environ,
+        {"REDIS_URL": "redis://localhost:6379/0", "FISCAL_DAILY_CAP_USD": "250000"},
+    ):
+        with patch("redis.asyncio.from_url") as mock_from_url:
+            mock_client = MagicMock()
+            mock_from_url.return_value = mock_client
+            g = FiscalLimitGuard.from_env()
+            assert g._daily_cap_usd == 250000.0
+
+
+@pytest.mark.local
+def test_sync_increment_and_decrement():
+    mock_pipe = MagicMock()
+    mock_pipe.get.return_value = "1000"
+    mock_pipe.execute.return_value = [2000]
+
+    mock_sync_redis = MagicMock()
+    mock_sync_redis.pipeline.return_value = mock_pipe
+
+    guard = FiscalLimitGuard(redis_client=mock_sync_redis, daily_cap_usd=1000.0)
+
+    # Test increment success
+    res = guard._sync_atomic_increment("key", 1000, 50000)
+    assert res == 2000
+
+    # Test increment exceed cap
+    mock_pipe.get.return_value = "60000"
+    res_exceed = guard._sync_atomic_increment("key", 1000, 50000)
+    assert res_exceed == -1
+
+    # Test decrement
+    mock_pipe.get.return_value = "3000"
+    res_dec = guard._sync_atomic_decrement("key", 1000)
+    assert res_dec == 2000

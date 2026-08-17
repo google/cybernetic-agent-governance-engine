@@ -254,7 +254,9 @@ def build_evaluator_agent() -> Any:
     # LangGraph 1.1.0+ prebuilt agent — returns a compiled graph
     # state_modifier replaces the old ChatPromptTemplate pattern
     agent_graph = create_react_agent(
-        model=llm, tools=tools, state_modifier=SystemMessage(content=_SYSTEM_PROMPT)  # type: ignore[arg-type]
+        model=llm,
+        tools=tools,  # type: ignore[arg-type]
+        state_modifier=SystemMessage(content=_SYSTEM_PROMPT),  # type: ignore[arg-type]
     )
 
     return agent_graph

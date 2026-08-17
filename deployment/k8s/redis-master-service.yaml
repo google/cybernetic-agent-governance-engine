@@ -12,49 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ============================================================================
-# redis-master — ClusterIP Service pinned to the Sentinel primary pod
-# ============================================================================
-#
-# Problem solved:
-#   svc/redis selects ALL redis-node pods (primary + replicas) and
-#   load-balances across them.  When a port-forward or in-cluster client
-#   lands on a replica, every write command (SET, INCRBY, DEL) fails with:
-#     redis.exceptions.ReadOnlyError: You can't write against a read only replica.
-#
-# Solution:
-#   This Service uses the `statefulset.kubernetes.io/pod-name` label —
-#   automatically applied by Kubernetes to every StatefulSet pod — to pin
-#   traffic to a single named pod (the current Sentinel primary).
-#
-# Sentinel failover note:
-#   The Bitnami Redis Sentinel chart does NOT add a dynamic role label to pods
-#   after a failover.  If Sentinel elects a new primary, this Service selector
-#   must be updated to match the new primary pod name:
-#
-#     # 1. Find the current primary via Sentinel:
-#     kubectl exec -n governance-stack redis-node-0 -c sentinel -- \
-#       redis-cli -p 26379 -a "$(kubectl get secret redis -n governance-stack \
-#         -o jsonpath='{.data.redis-password}' | base64 -d)" \
-#       SENTINEL masters | grep -A1 '^ip$'
-#
-#     # 2. Map the IP to a pod name:
-#     kubectl get pods -n governance-stack -o wide | grep redis-node
-#
-#     # 3. Patch the selector:
-#     kubectl patch svc redis-master -n governance-stack \
-#       -p '{"spec":{"selector":{"statefulset.kubernetes.io/pod-name":"redis-node-X"}}}'
-#
-# Current primary (as of 2026-06-15): redis-node-1
-#   Verified via: kubectl exec redis-node-0 -c sentinel -- redis-cli -p 26379 SENTINEL masters
-#   Primary IP reported: redis-node-1.redis-headless.governance-stack.svc.cluster.local
-#
-# Related:
-#   - deployment/k8s/redis-statefulset.yaml  (deprecated legacy StatefulSet, reference only)
-#   - scripts/setup_test_env.sh              (port-forwards svc/redis-master → localhost:6379)
-#   - src/gateway/governance/fiscal_limit_guard.py  (INCRBY daily fiscal counter)
-#   - src/gateway/infrastructure/redis_client.py
-# ============================================================================
 apiVersion: v1
 kind: Service
 metadata:

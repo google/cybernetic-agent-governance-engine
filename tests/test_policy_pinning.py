@@ -48,15 +48,34 @@ def mock_dependencies():
 @pytest.mark.asyncio
 async def test_symbolic_governor_version_matching(registry, mock_dependencies):
     """SymbolicGovernor validate_action should succeed when policy_version_id matches active_hash."""
+    from src.gateway.governance.ftra.models import FtraBoundaryResult
+
     opa_client, safety_filter, consensus_engine = mock_dependencies
     gov = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
+
+    # Mock FTRA boundary check to return a safe result
+    safe_ftra_result = FtraBoundaryResult(
+        requires_hitl=False,
+        irreversibility_score=0.0,
+        classification="READ_ONLY",
+        terminal_match=None,
+        violations=[],
+        bypassed_ftra_node=False,
+    )
+    gov._ftra_boundary_check = AsyncMock(return_value=safe_ftra_result)
 
     ControlRegistry.reconfigure("US_FED")
     active_hash = registry.active_hash
     assert active_hash != ""  # Should be populated from baseline loading
 
-    # Mock _run_checks to return no violations
-    with patch.object(gov, "_run_checks", new_callable=AsyncMock) as mock_run:
+    # Mock _run_checks to return no violations, and generate_seal_with_evidence to avoid Redis
+    with (
+        patch.object(gov, "_run_checks", new_callable=AsyncMock) as mock_run,
+        patch(
+            "src.gateway.governance.routing_seal.generate_seal_with_evidence",
+            new=AsyncMock(return_value="mock-seal-token"),
+        ),
+    ):
         mock_run.return_value = {"violations": []}
 
         # 1. Matching version

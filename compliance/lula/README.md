@@ -22,6 +22,7 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 | [`lula-validation-aarm-vectors.yaml`](lula-validation-aarm-vectors.yaml) | CSA AARM v1.0 | CSA AARM | ALL | 🔶 Stub | CSA AARM v1.0 11-vector threat coverage validation |
 | [`lula-validation-tqp007.yaml`](lula-validation-tqp007.yaml)             | A.8.4         | ISO 42001 | ALL | ✅ Active | TokenQuotaProxy fail-closed (CTRL_TQP_007) — asserts tqp_running, tqp_has_redis_url, tqp_fail_closed |
 | [`lula-validation-iso001-token-quota.yaml`](lula-validation-iso001-token-quota.yaml) | A.4 | ISO 42001 | ALL | ✅ Active | Token Quota OPA Injection (ISO-001) — asserts advisor_running, advisor_has_redis_url, advisor_has_quota_markers |
+| [`lula-validation-ftra.yaml`](lula-validation-ftra.yaml)                 | CTRL_FTRA_001 | ISO 42001 / NIST | ALL | ✅ Active | FTRA Tier 0.5 Gate — Forward-Looking Trajectory Reachability Analyzer boundary check |
 
 ### US_FED Controls (NIST SP 800-53 / NIST AI 600-1 — US_FED only)
 

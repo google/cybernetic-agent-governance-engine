@@ -12,22 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ============================================================================
-# Redis Configuration — CAGE v0.1.0 Evidence State Store
-# ============================================================================
-#
-# This ConfigMap configures Redis for dual-purpose operation:
-#   db 0 — LangGraph checkpoint store (existing, volatile caching)
-#   db 1 — Evidence stream state store (noeviction, high-assurance)
-#
-# The noeviction policy is CRITICAL for the Adaptive Gating Engine:
-# When a transaction's consensus score falls into the ambiguity band
-# (0.70 ≤ Score < 0.95), the deferred transaction token is parked in db=1.
-# Under memory pressure, Redis will fail-closed and refuse new writes
-# rather than silently evicting frozen execution states.
-#
-# Related code: src/compliance_bridge/evidence_stream.py (EVIDENCE_STREAM_REDIS_DB=1)
-# ============================================================================
 apiVersion: v1
 kind: ConfigMap
 metadata:

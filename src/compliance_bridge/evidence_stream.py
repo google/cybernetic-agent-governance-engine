@@ -210,7 +210,9 @@ class EvidenceRecord:
         result: dict[str, Any] = {
             "evidence_id": self.evidence_id,
             "decision": self.decision,
-            "timestamp": self.timestamp.isoformat() if isinstance(self.timestamp, datetime) else self.timestamp,
+            "timestamp": self.timestamp.isoformat()
+            if isinstance(self.timestamp, datetime)
+            else self.timestamp,
             "tool_name": self.tool_name,
             "control_id": self.control_id,
             "prev_hash": self.prev_hash,
@@ -344,8 +346,12 @@ def validate_evidence_stream_preconditions() -> None:
         ConfigurationError: If EVIDENCE_CHAIN_BLOCKING=true and
             EVIDENCE_STREAM_ENABLED=false.
     """
-    blocking_enabled = os.environ.get("EVIDENCE_CHAIN_BLOCKING", "false").lower() == "true"
-    stream_enabled = os.environ.get("EVIDENCE_STREAM_ENABLED", "false").lower() == "true"
+    blocking_enabled = (
+        os.environ.get("EVIDENCE_CHAIN_BLOCKING", "false").lower() == "true"
+    )
+    stream_enabled = (
+        os.environ.get("EVIDENCE_STREAM_ENABLED", "false").lower() == "true"
+    )
 
     if blocking_enabled and not stream_enabled:
         raise ConfigurationError(
@@ -413,22 +419,21 @@ def _link_hash(
     return _sha256(prev_hash + header + payload_json)
 
 
-def _link_hash_versioned(
+def _link_hash_v1_1(
     prev_hash: str,
     sequence: int,
     event_type: str,
     control_id: str,
     payload_json: str,
-    schema_version: str,
     classification_reason: str | None = None,
     narrowing_applied: dict[str, Any] | None = None,
     pause_token: str | None = None,
 ) -> str:
-    """Compute a version-aware record hash for dual-schema verification.
+    """Compute a v1.1 record hash for evidence verification.
 
-    This function produces deterministic hashes that are backward compatible:
-    - v1.0: Hash only original fields (matches legacy records)
-    - v1.1: Hash all fields including new metadata fields
+    v3.0.0 Breaking Change: Schema v1.0 support has been removed.
+    This function only supports v1.1 schema. For legacy v1.0 records,
+    use migrate_record_1_0_to_1_1() to upgrade them first.
 
     Args:
         prev_hash: Hash of the previous record in the chain.
@@ -436,48 +441,31 @@ def _link_hash_versioned(
         event_type: Event type (e.g., "AUDIT_FINDING", "GOVERNANCE_DECISION").
         control_id: NIST/ISO control identifier.
         payload_json: JSON-serialized event payload.
-        schema_version: Schema version ("1.0" or "1.1").
-        classification_reason: (v1.1) Reason for DEFER decisions.
-        narrowing_applied: (v1.1) Narrowing constraints for NARROW decisions.
-        pause_token: (v1.1) Token for PAUSE decisions.
+        classification_reason: Reason for DEFER decisions.
+        narrowing_applied: Narrowing constraints for NARROW decisions.
+        pause_token: Token for PAUSE decisions.
 
     Returns:
         SHA-256 hex digest of the record.
     """
-    schema_id = _SCHEMA_1_0 if schema_version == "1.0" else _SCHEMA_1_1
+    # v1.1: Include metadata fields in hash computation
+    # Only include non-None fields to maintain determinism
+    header_dict: dict[str, Any] = {
+        "schema": _SCHEMA,
+        "sequence": sequence,
+        "event_type": event_type,
+        "control_id": control_id,
+    }
+    # Add v1.1 fields only if they have values (sparse inclusion)
+    if classification_reason is not None:
+        header_dict["classification_reason"] = classification_reason
+    if narrowing_applied is not None:
+        header_dict["narrowing_applied"] = narrowing_applied
+    if pause_token is not None:
+        header_dict["pause_token"] = pause_token
 
-    if schema_version == "1.0":
-        # v1.0: Original hash computation (backward compatible)
-        header = json.dumps(
-            {
-                "schema": schema_id,
-                "sequence": sequence,
-                "event_type": event_type,
-                "control_id": control_id,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        return _sha256(prev_hash + header + payload_json)
-    else:
-        # v1.1: Include new metadata fields in hash computation
-        # Only include non-None v1.1 fields to maintain determinism
-        header_dict: dict[str, Any] = {
-            "schema": schema_id,
-            "sequence": sequence,
-            "event_type": event_type,
-            "control_id": control_id,
-        }
-        # Add v1.1 fields only if they have values (sparse inclusion)
-        if classification_reason is not None:
-            header_dict["classification_reason"] = classification_reason
-        if narrowing_applied is not None:
-            header_dict["narrowing_applied"] = narrowing_applied
-        if pause_token is not None:
-            header_dict["pause_token"] = pause_token
-
-        header = json.dumps(header_dict, sort_keys=True, separators=(",", ":"))
-        return _sha256(prev_hash + header + payload_json)
+    header = json.dumps(header_dict, sort_keys=True, separators=(",", ":"))
+    return _sha256(prev_hash + header + payload_json)
 
 
 def _detect_schema_version(record: EvidenceRecord | dict[str, Any]) -> str:
@@ -503,17 +491,21 @@ def _detect_schema_version(record: EvidenceRecord | dict[str, Any]) -> str:
     return "1.0"
 
 
-def verify_record(record: EvidenceRecord | dict[str, Any], prev_hash: str) -> VerifyResult:
-    """Verify evidence record hash with dual-schema support (v1.0 and v1.1).
+def verify_record(
+    record: EvidenceRecord | dict[str, Any], prev_hash: str
+) -> VerifyResult:
+    """Verify evidence record hash (v1.1 schema only).
 
-    This function supports verification of both legacy v1.0 records and new
-    v1.1 records, enabling seamless schema migration without breaking existing
-    evidence chains.
+    v3.0.0 Breaking Change: Schema v1.0 support has been removed.
+    This function only verifies v1.1 records. Legacy v1.0 records will
+    return a VerifyResult with valid=False and an error message indicating
+    the schema is unsupported. Use migrate_record_1_0_to_1_1() to upgrade
+    legacy records before verification.
 
     Verification Process:
         1. Detect schema version from record
-        2. Extract fields according to detected version
-        3. Compute hash using version-appropriate algorithm
+        2. Return error if v1.0 (deprecated)
+        3. Extract fields and compute hash using v1.1 algorithm
         4. Compare computed hash against stored record_hash
 
     Args:
@@ -538,6 +530,17 @@ def verify_record(record: EvidenceRecord | dict[str, Any], prev_hash: str) -> Ve
         # Detect schema version
         schema_version = _detect_schema_version(record_dict)
 
+        # v3.0.0: Schema v1.0 is no longer supported
+        if schema_version == "1.0":
+            return VerifyResult(
+                valid=False,
+                schema_version=schema_version,
+                computed_hash="",
+                expected_hash=record_dict.get("record_hash", ""),
+                error="Schema v1.0 is deprecated (v3.0.0 breaking change). "
+                "Use migrate_record_1_0_to_1_1() to upgrade legacy records.",
+            )
+
         # Extract common fields
         expected_hash = record_dict.get("record_hash", "")
         if not expected_hash:
@@ -554,7 +557,9 @@ def verify_record(record: EvidenceRecord | dict[str, Any], prev_hash: str) -> Ve
         sequence_raw = record_dict.get("sequence", 0)
         sequence = int(sequence_raw) if isinstance(sequence_raw, str) else sequence_raw
 
-        event_type = record_dict.get("event_type", record_dict.get("decision", "UNKNOWN"))
+        event_type = record_dict.get(
+            "event_type", record_dict.get("decision", "UNKNOWN")
+        )
         control_id = record_dict.get("control_id", "")
 
         # Extract payload - handle both wire format and internal format
@@ -571,14 +576,13 @@ def verify_record(record: EvidenceRecord | dict[str, Any], prev_hash: str) -> Ve
         narrowing_applied = record_dict.get("narrowing_applied")
         pause_token = record_dict.get("pause_token")
 
-        # Compute hash using version-aware algorithm
-        computed_hash = _link_hash_versioned(
+        # Compute hash using v1.1 algorithm
+        computed_hash = _link_hash_v1_1(
             prev_hash=prev_hash,
             sequence=sequence,
             event_type=event_type,
             control_id=control_id,
             payload_json=payload_json,
-            schema_version=schema_version,
             classification_reason=classification_reason,
             narrowing_applied=narrowing_applied,
             pause_token=pause_token,
@@ -607,7 +611,11 @@ def verify_record(record: EvidenceRecord | dict[str, Any], prev_hash: str) -> Ve
             valid=False,
             schema_version="unknown",
             computed_hash="",
-            expected_hash=str(record.get("record_hash", "") if isinstance(record, dict) else getattr(record, "record_hash", "")),
+            expected_hash=str(
+                record.get("record_hash", "")
+                if isinstance(record, dict)
+                else getattr(record, "record_hash", "")
+            ),
             error=f"Verification error: {exc}",
         )
 
@@ -933,7 +941,9 @@ class EvidenceStreamSink:
                     )
                     logger.error("[EvidenceStream] %s", error_msg)
                     span.set_attribute("cage.evidence.status", "failure")
-                    span.set_attribute("cage.evidence.failure_reason", "redis_unavailable")
+                    span.set_attribute(
+                        "cage.evidence.failure_reason", "redis_unavailable"
+                    )
                     if _PROM_AVAILABLE:
                         EVIDENCE_COMMIT_TOTAL.labels(status="failure").inc()
                     raise EvidenceChainUnavailableError(error_msg)
@@ -1048,8 +1058,20 @@ class EvidenceStreamSink:
 
             # Persist to Redis Stream BEFORE advancing chain state
             # This ensures we don't advance the chain if Redis write fails
+            if self._redis is None:
+                logger.error(
+                    "[EvidenceStream] Redis not connected in _ingest_with_result"
+                )
+                return EvidenceCommitResult(
+                    success=False,
+                    evidence_id="",
+                    commit_timestamp=commit_timestamp,
+                    hash=record_hash,
+                    sequence=current_sequence,
+                )
+
             try:
-                msg_id = await self._redis.xadd(  # type: ignore[union-attr]
+                msg_id = await self._redis.xadd(
                     self._stream_key,
                     entry,
                     maxlen=self._max_len,

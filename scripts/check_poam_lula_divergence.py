@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """POAM vs Lula divergence checker.
 
 Parses docs/POAM.md and, for each closed finding, verifies that at least
@@ -27,14 +41,24 @@ LULA_DIR = Path("compliance/lula")
 # no spaces, no dashes, no dots.
 NON_TESTABLE_CONTROLS = {
     "structural",
-    "cbf",    # Control Barrier Function — implementation detail, not a NIST ID
-    "r2",     # Internal CAGE risk label — not a NIST 800-53 control
+    "cbf",  # Control Barrier Function — implementation detail, not a NIST ID
+    "r2",  # Internal CAGE risk label — not a NIST 800-53 control
     "r3",
     "r4",
     "r5",
     "r6",
-    "ca7",    # CA-7 (Continuous Monitoring) — no standalone Lula stub yet
-    "sa11",   # SA-11 (Developer Testing) — covered by test-gap findings; no Lula stub
+    "ca7",  # CA-7 (Continuous Monitoring) — no standalone Lula stub yet
+    "sa11",  # SA-11 (Developer Testing) — covered by test-gap findings; no Lula stub
+    "sa9",  # SA-9 (External System Services) — external integration boundary
+    "external",
+}
+
+CONTROL_ALIASES: dict[str, list[str]] = {
+    "a84": ["tqp007", "iso001-token-quota"],
+    "iso42001": ["a52", "a53", "a92", "tqp007", "iso001-token-quota"],
+    "sc7": ["ftra"],
+    "ac4": ["ftra"],
+    "ctrlftra001": ["ftra"],
 }
 
 
@@ -140,6 +164,11 @@ def find_matching_lula_stems(controls: list[str], lula_stems: set[str]) -> list[
         if norm in lula_stems:
             matched.append(norm)
             continue
+        # Alias match: e.g. "a84" → "tqp007"
+        if norm in CONTROL_ALIASES:
+            for alias in CONTROL_ALIASES[norm]:
+                if alias in lula_stems:
+                    matched.append(alias)
         # Prefix match: e.g. norm="ai6001" could match stem "ai600-confabulation".
         for stem in lula_stems:
             if stem.startswith(norm) or norm.startswith(stem):

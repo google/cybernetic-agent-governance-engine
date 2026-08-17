@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Build a name→callable dict for count / duplicate assertions
+import pytest
+
 from src.governed_financial_advisor.governance.nemo_action_registry import (
     get_all_actions,
 )
@@ -22,7 +25,6 @@ from src.governed_financial_advisor.governance.nemo_actions import (
     check_drawdown_limit as _gfa_check_drawdown_limit,
 )
 
-# Build a name→callable dict for count / duplicate assertions
 _FULL_REGISTRY: dict = dict(get_all_actions())
 
 
@@ -62,3 +64,6 @@ def test_check_drawdown_limit_action_fail_closed_on_missing_data():
     # Invalid (non-numeric) value → fail-closed
     result = _gfa_check_drawdown_limit({"drawdown_pct": "not_a_number"})
     assert result is False, "Non-numeric drawdown_pct must fail-closed to False"
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

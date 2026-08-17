@@ -255,3 +255,6 @@ def test_overall_posture_labels(posture, description):
     assert report.overall_posture == posture, (
         f"Expected {posture} ({description}), got {report.overall_posture}"
     )
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

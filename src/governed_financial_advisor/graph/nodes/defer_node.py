@@ -42,10 +42,11 @@ async def defer_node(state: AgentState) -> dict[str, Any]:
     CAGE-REM-004 / Miracle Owolabi remediation:
     Reconnects the 4-state DeferQueue to the governed financial advisor.
     """
-    thread_id = state.get("thread_id") or "anonymous_thread"
-    plan = state.get("execution_plan_output") or {}
+    thread_id = str(state.get("thread_id") or "anonymous_thread")
+    plan_raw = state.get("execution_plan_output")
+    plan: dict[str, Any] = plan_raw if isinstance(plan_raw, dict) else {}
     confidence = float(plan.get("confidence", 0.0) or 0.0)
-    action = plan.get("action", "execute_trade")
+    action = str(plan.get("action", "execute_trade"))
 
     # Determine deferral reason based on confidence tier
     reason = (

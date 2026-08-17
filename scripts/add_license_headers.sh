@@ -12,13 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# add_license_headers.sh — Prepends Apache 2.0 license headers to all files
-# missing them. Idempotent: skips files that already contain "Apache License".
-#
-# Usage:
-#   ./scripts/add_license_headers.sh          # apply headers
-#   ./scripts/add_license_headers.sh --check  # exit 1 if any file missing header (CI mode)
 
 set -euo pipefail
 

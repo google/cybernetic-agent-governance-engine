@@ -75,7 +75,9 @@ def _import_saga_nodes() -> types.ModuleType:
     stub_modules["src.governed_financial_advisor.graph.state"].LedgerEntry = dict
 
     MagicMock()
-    stub_modules["src.governed_financial_advisor.infrastructure.mcp_client"].GatewayMCPClient = MagicMock
+    stub_modules[
+        "src.governed_financial_advisor.infrastructure.mcp_client"
+    ].GatewayMCPClient = MagicMock
 
     for name, stub in stub_modules.items():
         if name not in sys.modules:
@@ -107,7 +109,9 @@ def _import_stpa_validator() -> types.ModuleType:
             sys.modules[name] = stub
 
     stub_modules["src.gateway.governance.schemas"].thresholds = schemas_stub
-    stub_modules["src.gateway.governance.schemas"].thresholds.THRESHOLDS = thresholds_stub
+    stub_modules[
+        "src.gateway.governance.schemas"
+    ].thresholds.THRESHOLDS = thresholds_stub
 
     if _STPA_MODULE in sys.modules:
         del sys.modules[_STPA_MODULE]
@@ -298,9 +302,7 @@ class TestGeneratedSTPAValidator:
             },
         )
         uca8_violations = [v for v in violations if "UCA-8" in v]
-        assert len(uca8_violations) >= 1, (
-            "UCA-8 must trigger when risk_assessed=False"
-        )
+        assert len(uca8_violations) >= 1, "UCA-8 must trigger when risk_assessed=False"
 
     def test_uca_9_triggers_for_compliance_bypass(self) -> None:
         """UCA-9 must fire when compliance_checked=False."""
@@ -327,8 +329,8 @@ class TestGeneratedSTPAValidator:
             {
                 "risk_assessed": True,
                 "compliance_checked": True,
-                "drawdown": 0.1,        # well below threshold of 4.5
-                "latency_ms": 50.0,     # well below max_latency_ms=200
+                "drawdown": 0.1,  # well below threshold of 4.5
+                "latency_ms": 50.0,  # well below max_latency_ms=200
                 "approval_token": "tok",
                 "order_size": 0,
                 "daily_vol": 0,
@@ -361,8 +363,7 @@ class TestGeneratedPolicyArtifacts:
     def test_generated_stpa_rego_exists(self) -> None:
         """config/opa/generated_stpa_policy.rego must exist."""
         assert _REGO_POLICY.exists(), (
-            f"{_REGO_POLICY} not found. "
-            "generated_stpa_policy.rego must be present."
+            f"{_REGO_POLICY} not found. generated_stpa_policy.rego must be present."
         )
 
     def test_generated_stpa_rego_contains_package_declaration(self) -> None:
@@ -413,8 +414,7 @@ class TestGeneratedPolicyArtifacts:
     def test_generated_stpa_rails_exists(self) -> None:
         """config/rails/generated_stpa_rails.co must exist."""
         assert _STPA_RAILS.exists(), (
-            f"{_STPA_RAILS} not found. "
-            "generated_stpa_rails.co must be present."
+            f"{_STPA_RAILS} not found. generated_stpa_rails.co must be present."
         )
 
     def test_generated_stpa_rails_is_nonempty(self) -> None:
@@ -422,6 +422,4 @@ class TestGeneratedPolicyArtifacts:
         if not _STPA_RAILS.exists():
             pytest.skip(f"{_STPA_RAILS} not found")
         content = _STPA_RAILS.read_text()
-        assert len(content.strip()) >= 1, (
-            "generated_stpa_rails.co must not be empty"
-        )
+        assert len(content.strip()) >= 1, "generated_stpa_rails.co must not be empty"

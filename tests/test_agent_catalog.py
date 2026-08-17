@@ -306,3 +306,6 @@ class TestRealCatalogPolicy:
         )
         assert allow is False
         assert "not in the approved agent catalog" in violations[0]
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

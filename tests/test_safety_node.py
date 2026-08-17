@@ -384,6 +384,16 @@ class TestSafetyNodeIntegration:
     @pytest.mark.timeout(120)
     async def test_junior_trade_above_5k_blocked_by_opa(self, minimal_trade_state):
         """Junior trader with $90k trade must be blocked by live OPA policy (R-12)."""
+        from src.gateway.governance.ftra.models import FtraBoundaryResult
+
+        safe_ftra = FtraBoundaryResult(
+            requires_hitl=False,
+            irreversibility_score=0.0,
+            classification="READ_ONLY",
+            terminal_match="execute_trade",
+            violations=[],
+            bypassed_ftra_node=False,
+        )
         state = {
             **minimal_trade_state,
             "execution_plan_output": {
@@ -394,9 +404,15 @@ class TestSafetyNodeIntegration:
                 "trader_role": "junior",
             },
         }
-        with patch(
-            "src.gateway.governance.causal_gatekeeper.causal_safety_check",
-            return_value=True,
+        with (
+            patch(
+                "src.gateway.governance.causal_gatekeeper.causal_safety_check",
+                return_value=True,
+            ),
+            patch(
+                "src.gateway.governance.symbolic_governor.SymbolicGovernor._ftra_boundary_check",
+                new=AsyncMock(return_value=safe_ftra),
+            ),
         ):
             update = await safety_check_node(state)
         # $90k by junior trader must be BLOCKED or ESCALATED — never APPROVED
@@ -416,6 +432,16 @@ class TestSafetyNodeIntegration:
         for human review.  A BLOCKED outcome (outright denial) is the only failure
         mode this integration test guards against.
         """
+        from src.gateway.governance.ftra.models import FtraBoundaryResult
+
+        safe_ftra = FtraBoundaryResult(
+            requires_hitl=False,
+            irreversibility_score=0.0,
+            classification="READ_ONLY",
+            terminal_match="execute_trade",
+            violations=[],
+            bypassed_ftra_node=False,
+        )
         state = {
             **minimal_trade_state,
             "execution_plan_output": {
@@ -431,9 +457,15 @@ class TestSafetyNodeIntegration:
                 "drawdown": 0.0,
             },
         }
-        with patch(
-            "src.gateway.governance.causal_gatekeeper.causal_safety_check",
-            return_value=True,
+        with (
+            patch(
+                "src.gateway.governance.causal_gatekeeper.causal_safety_check",
+                return_value=True,
+            ),
+            patch(
+                "src.gateway.governance.symbolic_governor.SymbolicGovernor._ftra_boundary_check",
+                new=AsyncMock(return_value=safe_ftra),
+            ),
         ):
             update = await safety_check_node(state)
         # APPROVED: SLM available, OPA + consensus passed.

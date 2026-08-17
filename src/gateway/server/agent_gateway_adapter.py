@@ -40,7 +40,7 @@ Architecture
                                                       │
                                                       ▼
                                               symbolic_governor.validate_action()
-                                              (full 7-tier CAGE pipeline)
+                                              (full 8-tier CAGE pipeline: FTRA + 7 in-pipeline tiers)
                                                       │
                                   ┌───────────────────┼──────────────────────┐
                                   ▼           ▼        ▼                     ▼
@@ -134,7 +134,7 @@ _PAUSE_ENABLED: bool = os.getenv("CAGE_PAUSE_ENABLED", "false").lower() == "true
 _METRICS: dict = {}
 
 
-def _get_defer_counter():
+def _get_defer_counter() -> Any:
     """Get or create the Prometheus counter for defer decisions.
 
     Returns:
@@ -150,14 +150,12 @@ def _get_defer_counter():
                 ["tool_name", "defer_reason"],
             )
         except ImportError:
-            logger.debug(
-                "prometheus_client not installed — defer counter disabled"
-            )
+            logger.debug("prometheus_client not installed — defer counter disabled")
             _METRICS["defer_counter"] = None
     return _METRICS["defer_counter"]
 
 
-def _get_narrow_counter():
+def _get_narrow_counter() -> Any:
     """Get or create the Prometheus counter for narrow decisions.
 
     Returns:
@@ -173,9 +171,7 @@ def _get_narrow_counter():
                 ["tool_name", "constraint_type"],
             )
         except ImportError:
-            logger.debug(
-                "prometheus_client not installed — narrow counter disabled"
-            )
+            logger.debug("prometheus_client not installed — narrow counter disabled")
             _METRICS["narrow_counter"] = None
     return _METRICS["narrow_counter"]
 
@@ -210,7 +206,7 @@ def _increment_narrow_counter(tool_name: str, constraint_type: str) -> None:
             logger.debug("Failed to increment narrow counter: %s", exc)
 
 
-def _get_pause_counter():
+def _get_pause_counter() -> Any:
     """Get or create the Prometheus counter for pause decisions.
 
     Returns:
@@ -226,14 +222,12 @@ def _get_pause_counter():
                 ["tool_name", "pause_reason"],
             )
         except ImportError:
-            logger.debug(
-                "prometheus_client not installed — pause counter disabled"
-            )
+            logger.debug("prometheus_client not installed — pause counter disabled")
             _METRICS["pause_counter"] = None
     return _METRICS["pause_counter"]
 
 
-def _get_active_pauses_gauge():
+def _get_active_pauses_gauge() -> Any:
     """Get or create the Prometheus gauge for active pauses.
 
     Returns:
@@ -582,7 +576,7 @@ async def handle_check_request(
     if caller_principal:
         params = {**params, "_caller_principal": caller_principal}
 
-    # ── Run the full CAGE 7-tier governance pipeline ──────────────────────────
+    # ── Run the full CAGE 8-tier governance pipeline (FTRA + 7 in-pipeline tiers) ──
     with tracer.start_as_current_span("cage.ext_authz.check") as span:
         span.set_attribute("cage.tool_name", tool_name)
         span.set_attribute("cage.caller_principal", caller_principal)
@@ -674,7 +668,9 @@ async def handle_check_request(
             deferrable: bool = result.get("deferrable", True)
             violations_list: list[str] = result.get("violations", violations)
             retry_after: int = result.get("retry_after_seconds", 300)
-            defer_reason_code: str = result.get("defer_reason", "CONFIDENCE_BELOW_THRESHOLD")
+            defer_reason_code: str = result.get(
+                "defer_reason", "CONFIDENCE_BELOW_THRESHOLD"
+            )
 
             # Phase 1.2 Backward Compatibility: When CAGE_DEFER_ENABLED=false,
             # DEFER falls back to DENY (403) for gradual rollout safety.
@@ -738,7 +734,8 @@ async def handle_check_request(
                     # Legacy fields for backward compatibility
                     "verdict": GovernanceDecision.DEFER,
                     "defer_id": defer_token,
-                    "missing_input_reason": missing_input_reason or classification_reason,
+                    "missing_input_reason": missing_input_reason
+                    or classification_reason,
                     "message": (
                         "Request deferred pending context hydration. "
                         "Poll GET /v1/defer/pending for the outcome."
@@ -846,12 +843,12 @@ async def handle_check_request(
             from src.gateway.infrastructure.redis_client import redis_client
 
             # Extract Phase 1.4 PAUSE response fields from validate_action result
-            pause_reason: str = result.get(
-                "classification_meta", {}
-            ).get("pause_reason", "RATE_LIMITED")
-            estimated_wait: int = result.get(
-                "classification_meta", {}
-            ).get("estimated_wait_seconds", 60)
+            pause_reason: str = result.get("classification_meta", {}).get(
+                "pause_reason", "RATE_LIMITED"
+            )
+            estimated_wait: int = result.get("classification_meta", {}).get(
+                "estimated_wait_seconds", 60
+            )
             request_id: str = params.get("request_id", params.get("thread_id", ""))
 
             # Phase 1.4 Backward Compatibility: When CAGE_PAUSE_ENABLED=false,

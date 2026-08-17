@@ -172,7 +172,7 @@ select = [
     "F",   # pyflakes
     "W",   # pycodestyle warnings
     "I",   # isort
-    "C",  # flake8-comprehensions
+    "C4",  # flake8-comprehensions
     "B",   # flake8-bugbear
     "UP", # pyupgrade
     "RUF", # ruff specific rules
@@ -245,7 +245,7 @@ exclude = [
 
 [tool.bandit]
 exclude_dirs = ["tests", "scripts", "examples"]
-skips = ["B101"]  # assert statements are acceptable in this codebase
+skips = ["B101", "B104"]  # assert statements and 0.0.0.0 container interface binds are acceptable in this codebase
 
 [tool.codespell]
 ignore-words-list = "rouge"

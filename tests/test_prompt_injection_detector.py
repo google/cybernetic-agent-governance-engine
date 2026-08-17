@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import pytest
 
 """Tests for prompt injection detector — AI 600-1 §2.3 (Data Poisoning).
 
@@ -845,3 +846,6 @@ class TestINJRegressionPayloads:
         assert result.pattern_matched == "structural_attack_patterns", (
             f"Expected pattern_matched='structural_attack_patterns'; got {result.pattern_matched!r}"
         )
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

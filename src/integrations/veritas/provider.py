@@ -66,7 +66,9 @@ class VeritasNormativeProvider:
 
     async def fetch_legal_baseline(self, region: str) -> dict[str, Any]:
         """Fetch jurisdictional normative baseline from VERITAS."""
-        logger.info("[VeritasNormativeProvider] Fetching baseline for region=%s", region)
+        logger.info(
+            "[VeritasNormativeProvider] Fetching baseline for region=%s", region
+        )
         return {
             "region": region,
             "provider": "VERITAS_OS",

@@ -106,15 +106,15 @@ class TestRoutingSealRejectsInvalidSeal:
 
 
 # ---------------------------------------------------------------------------
-# §4.1 Task 3b — ConsensusEngine escalates when amount_usd > 10000
+# §4.1 Task 3b — ConsensusGate escalates when amount_usd > 10000
 # ---------------------------------------------------------------------------
 
 
-class TestConsensusEngineThreshold:
-    """ConsensusEngine must escalate when amount_usd > USD 10,000."""
+class TestConsensusGateThreshold:
+    """ConsensusGate must escalate when amount_usd > USD 10,000."""
 
     def test_threshold_loaded_from_singleton(self):
-        """ConsensusEngine threshold matches governance_thresholds.json."""
+        """ConsensusGate threshold matches governance_thresholds.json."""
         from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
         assert THRESHOLDS.consensus.threshold_usd == 10000.0
@@ -200,3 +200,6 @@ class TestCausalGatekeeperAuthorizedActionSpace:
             "agentic_scope_statement description must reference the scope statement "
             "document path (docs/AGENTIC_SCOPE_STATEMENT.md) for traceability."
         )
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

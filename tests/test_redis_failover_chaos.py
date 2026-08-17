@@ -411,9 +411,9 @@ class TestFenceEpochIncrements:
         # Each trade should show epoch increment
         for i, trade in enumerate(trades):
             expected_epoch = initial_epoch + i + 1
-            assert (
-                trade.epoch_after == expected_epoch
-            ), f"Trade {i} should have epoch {expected_epoch}, got {trade.epoch_after}"
+            assert trade.epoch_after == expected_epoch, (
+                f"Trade {i} should have epoch {expected_epoch}, got {trade.epoch_after}"
+            )
 
     @pytest.mark.asyncio
     async def test_fence_epoch_not_incremented_on_rejected_trade(
@@ -461,9 +461,9 @@ class TestFenceEpochIncrements:
 
         # Verify strict monotonicity
         for i in range(1, len(epochs_observed)):
-            assert (
-                epochs_observed[i] == epochs_observed[i - 1] + 1
-            ), f"Epoch at index {i} should be {epochs_observed[i-1] + 1}, got {epochs_observed[i]}"
+            assert epochs_observed[i] == epochs_observed[i - 1] + 1, (
+                f"Epoch at index {i} should be {epochs_observed[i - 1] + 1}, got {epochs_observed[i]}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -502,7 +502,9 @@ class TestFailoverNoDoubleSpend:
         async def concurrent_trade(trade_id: int) -> TradeOutcome:
             """Execute trade, potentially during simulated failover."""
             amount = random.uniform(100.0, 500.0)
-            return await cbf_with_fencing.execute_trade(amount=amount, trade_id=trade_id)
+            return await cbf_with_fencing.execute_trade(
+                amount=amount, trade_id=trade_id
+            )
 
         # Simulate failover: stale replica promoted with old epoch
         with simulate_failover(redis_state, stale_epoch=epoch_before_failover - 3):
@@ -542,7 +544,9 @@ class TestFailoverNoDoubleSpend:
         # Simulate failover and recovery
         with simulate_failover(redis_state, stale_epoch=epoch_before - 2):
             # Trades during failover are rejected
-            outcome_during = await cbf_with_fencing.execute_trade(amount=500.0, trade_id=100)
+            outcome_during = await cbf_with_fencing.execute_trade(
+                amount=500.0, trade_id=100
+            )
             assert outcome_during.success is False
 
         # After recovery, the stale_epoch is cleared, so we see real epoch
@@ -575,7 +579,9 @@ class TestFailoverNoDoubleSpend:
 
         async def random_trade(trade_id: int) -> TradeOutcome:
             amount = random.uniform(500.0, 2000.0)
-            return await cbf_with_fencing.execute_trade(amount=amount, trade_id=trade_id)
+            return await cbf_with_fencing.execute_trade(
+                amount=amount, trade_id=trade_id
+            )
 
         # Execute many concurrent trades
         tasks = [random_trade(i) for i in range(50)]
@@ -585,7 +591,9 @@ class TestFailoverNoDoubleSpend:
         total_traded = sum(o.amount for o in outcomes if o.success)
 
         # Total traded must not exceed available
-        assert total_traded <= max_available + 0.01, (  # Small epsilon for float precision
+        assert (
+            total_traded <= max_available + 0.01
+        ), (  # Small epsilon for float precision
             f"Total traded ({total_traded}) exceeds available ({max_available})"
         )
 
@@ -629,7 +637,6 @@ class TestFailoverWithoutFencing:
         for i in range(5):
             await cbf_without_fencing.execute_trade(amount=1000.0, trade_id=i)
 
-
         async def concurrent_unsafe_trade(trade_id: int) -> TradeOutcome:
             """Execute unsafe trade without proper locking."""
             amount = 1000.0
@@ -656,7 +663,9 @@ class TestFailoverWithoutFencing:
         total_withdrawn = initial_balance - final_balance
 
         # Log the outcome for diagnostic purposes
-        print(f"\n[Negative Control] Initial: {initial_balance}, Final: {final_balance}")
+        print(
+            f"\n[Negative Control] Initial: {initial_balance}, Final: {final_balance}"
+        )
         print(f"[Negative Control] Successful trades: {len(successful)}")
         print(f"[Negative Control] Total withdrawn: {total_withdrawn}")
 
@@ -985,8 +994,9 @@ class TestRealCBFIntegration:
 
         mock, _ = mock_redis_client
 
-        with patch("src.gateway.governance.cbf.redis_client", mock), patch(
-            "src.gateway.governance.cbf._WAIT_REPLICAS", 0
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 0),
         ):
             cbf = ControlBarrierFunction()
             result = await cbf._sync_to_replicas()
@@ -1006,9 +1016,11 @@ class TestRealCBFIntegration:
         # Mock WAIT to return fewer replicas than requested (timeout)
         mock.get_raw_client().execute_command = AsyncMock(return_value=1)
 
-        with patch("src.gateway.governance.cbf.redis_client", mock), patch(
-            "src.gateway.governance.cbf._WAIT_REPLICAS", 3
-        ), patch("src.gateway.governance.cbf._WAIT_TIMEOUT_MS", 100):
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 3),
+            patch("src.gateway.governance.cbf._WAIT_TIMEOUT_MS", 100),
+        ):
             cbf = ControlBarrierFunction()
             result = await cbf._sync_to_replicas()
 

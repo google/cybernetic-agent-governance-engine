@@ -238,8 +238,16 @@ def _opa_patches():
             mock_gov,
         ),
         patch(
-            "src.gateway.governance.langgraph_harness.opa_node_factory.symbolic_governor",
-            mock_gov,
+            "src.gateway.governance.langgraph_harness.opa_node_factory.stamp_iso_control",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "src.governed_financial_advisor.graph.nodes.safety_node.stamp_iso_control",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "src.gateway.governance.iso_control.stamp_iso_control",
+            new_callable=AsyncMock,
         ),
     ]
 

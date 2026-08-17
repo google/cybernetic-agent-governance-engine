@@ -12,24 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ── Real ClusterIP Services in vllm-inference namespace ──────────────────────
-# These Services have pod selectors and route traffic to the actual vLLM pods.
-# They live in vllm-inference (PSA: baseline) alongside the Deployments.
-#
-# Consumers in governance-stack reach these via ExternalName proxy Services
-# defined in deployment/k8s/vllm-services.yaml:
-#   vllm-service.governance-stack  → vllm-service.vllm-inference.svc.cluster.local
-#   vllm-reasoning.governance-stack → vllm-reasoning.vllm-inference.svc.cluster.local
-#
-# Apply order:
-#   1. kubectl apply -f deployment/k8s/vllm-namespace.yaml
-#   2. kubectl apply -f deployment/k8s/vllm-cross-namespace-services.yaml
-#   3. kubectl apply -f deployment/k8s/vllm-services.yaml          (ExternalName proxies)
-#   4. kubectl apply -f deployment/k8s/vllm-inference-spot.yaml
-#   5. kubectl apply -f deployment/k8s/vllm-reasoning.yaml.tpl     (after template render)
-#   6. kubectl apply -f deployment/k8s/vllm-pdb.yaml
-#   7. kubectl apply -f deployment/k8s/vllm-reasoning-pdb.yaml
-# ─────────────────────────────────────────────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:

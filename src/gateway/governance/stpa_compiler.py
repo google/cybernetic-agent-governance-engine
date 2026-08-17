@@ -768,6 +768,7 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
             "import datetime",
             "import hashlib",
             "import logging",
+            "from collections.abc import Generator",
             "from typing import Any",
         ]
         if needs_mcp_imports
@@ -775,6 +776,7 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
             "import datetime",
             "import hashlib",
             "import logging",
+            "from collections.abc import Generator",
             "from typing import Any",
         ]
     )
@@ -891,7 +893,7 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
             f"# [CTRL_WAL_002] execution_type: {saga.execution_type}"
             + (f" | mcp_tool_name: {saga.mcp_tool_name}" if saga.mcp_tool_name else ""),
             "",
-            f"def {fwd_fn}(state: AgentState) -> dict[str, Any]:",
+            f"def {fwd_fn}(state: AgentState) -> Generator[dict[str, Any], None, dict[str, Any]]:",
             f'    """WAL forward node for {uca_id} ({saga.forward_action}).',
             "    ",
             "    Step 1: Write PENDING intent to ledger (yielded to checkpointer).",

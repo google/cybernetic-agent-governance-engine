@@ -99,9 +99,7 @@ class TestProjectBundleStepEntry:
         from src.integrations.nexart.adapter import ProjectBundleStepEntry
 
         entry = ProjectBundleStepEntry(node_name="nemo_guardrail")
-        assert entry.parent_step_ids == [], (
-            "parent_step_ids must default to empty list"
-        )
+        assert entry.parent_step_ids == [], "parent_step_ids must default to empty list"
 
 
 @pytest.mark.local
@@ -405,7 +403,9 @@ class TestProviderDataContracts:
             signer_key_id="kid-1",
             signed_at="2026-01-01T00:00:00+00:00",
         )
-        assert receipt.is_valid is True, "CERReceipt must be valid when hash and no error"
+        assert receipt.is_valid is True, (
+            "CERReceipt must be valid when hash and no error"
+        )
 
     def test_cer_receipt_is_invalid_when_error_set(self) -> None:
         """CERReceipt.is_valid must be False when error is set."""
@@ -419,7 +419,9 @@ class TestProviderDataContracts:
         from src.integrations.nexart.provider import CERReceipt
 
         receipt = CERReceipt(certificate_hash="")
-        assert receipt.is_valid is False, "CERReceipt must be invalid when hash is empty"
+        assert receipt.is_valid is False, (
+            "CERReceipt must be invalid when hash is empty"
+        )
 
     def test_jwk_cache_is_stale_when_never_synced(self) -> None:
         """JWKCache.is_stale must be True when last_synced=0."""
@@ -486,9 +488,7 @@ class TestNexArtAttestationProvider:
         )
 
         result = provider._verify_local("short-hash")
-        assert result.valid is False, (
-            "Verification must fail for wrong hash length"
-        )
+        assert result.valid is False, "Verification must fail for wrong hash length"
         assert result.error is not None, "Error message must be set"
 
     def test_verify_local_returns_valid_for_correct_hash_length(self) -> None:
@@ -525,9 +525,7 @@ class TestNexArtAttestationProvider:
 
             receipt = await provider.certify_decision({"signals": {}})
 
-        assert receipt.is_valid is False, (
-            "Receipt must be invalid on HTTP failure"
-        )
+        assert receipt.is_valid is False, "Receipt must be invalid on HTTP failure"
         assert receipt.error is not None, "Error field must be set on HTTP failure"
 
     @pytest.mark.asyncio

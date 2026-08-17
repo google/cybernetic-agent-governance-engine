@@ -1,3 +1,17 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Unit tests for src/gateway/server/mcp_tool_server.py.
 
@@ -20,6 +34,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # Stub patches — minimum surface to allow import
 # ---------------------------------------------------------------------------
+
 
 def _mcp_import_stubs():
     """Return sys.modules patches that make the mcp_tool_server importable."""
@@ -48,7 +63,9 @@ def _mcp_import_stubs():
             opa_client=MagicMock(close=AsyncMock()),
             symbolic_governor=MagicMock(
                 verify=AsyncMock(return_value={"violations": []}),
-                safety_filter=MagicMock(update_state=AsyncMock(), rollback_state=AsyncMock()),
+                safety_filter=MagicMock(
+                    update_state=AsyncMock(), rollback_state=AsyncMock()
+                ),
             ),
         ),
         "src.gateway.observability.mcp_tracing": MagicMock(patch_mcp_tools=MagicMock()),
@@ -84,6 +101,7 @@ def _mcp_import_stubs():
 # Tests: _check_rate_limit (pure async logic — no app server required)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 class TestCheckRateLimit:
     """Tests for the sliding-window rate limiter."""
@@ -92,9 +110,11 @@ class TestCheckRateLimit:
     async def test_first_call_always_allowed(self):
         """First call from a new IP address is always allowed."""
         import sys
+
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
+
             mod._rate_limit_buckets = {}
 
             result = await mod._check_rate_limit("192.168.1.1")
@@ -105,9 +125,11 @@ class TestCheckRateLimit:
     async def test_calls_within_limit_are_allowed(self):
         """Calls within the configured window+max are all allowed."""
         import sys
+
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
+
             mod._rate_limit_buckets = {}
             # Set low limit for test
             original_max = mod._RATE_LIMIT_MAX_CALLS
@@ -126,9 +148,11 @@ class TestCheckRateLimit:
     async def test_call_exceeding_limit_is_rejected(self):
         """The (max+1)-th call within the window is rejected."""
         import sys
+
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
+
             mod._rate_limit_buckets = {}
             original_max = mod._RATE_LIMIT_MAX_CALLS
             mod._RATE_LIMIT_MAX_CALLS = 3
@@ -145,15 +169,19 @@ class TestCheckRateLimit:
     async def test_different_ips_are_isolated(self):
         """Rate limit buckets are per-IP — different clients don't share quotas."""
         import sys
+
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
+
             mod._rate_limit_buckets = {}
             original_max = mod._RATE_LIMIT_MAX_CALLS
             mod._RATE_LIMIT_MAX_CALLS = 1
 
             r1 = await mod._check_rate_limit("1.1.1.1")  # first for this IP → allowed
-            r2 = await mod._check_rate_limit("2.2.2.2")  # first for different IP → allowed
+            r2 = await mod._check_rate_limit(
+                "2.2.2.2"
+            )  # first for different IP → allowed
             r3 = await mod._check_rate_limit("1.1.1.1")  # second for 1.1.1.1 → rejected
 
             mod._RATE_LIMIT_MAX_CALLS = original_max
@@ -166,9 +194,11 @@ class TestCheckRateLimit:
     async def test_expired_timestamps_evicted(self):
         """Old timestamps outside the window are evicted, freeing quota."""
         import sys
+
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
+
             mod._rate_limit_buckets = {}
             original_max = mod._RATE_LIMIT_MAX_CALLS
             original_window = mod._RATE_LIMIT_WINDOW_SECONDS
@@ -193,6 +223,7 @@ class TestCheckRateLimit:
 # Tests: module-level constants
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 class TestModuleConstants:
     """Tests that rate-limit env-var overrides are respected."""
@@ -200,9 +231,11 @@ class TestModuleConstants:
     def test_default_rate_limit_max_calls(self):
         """Default MCP_RATE_LIMIT_MAX_CALLS is 60."""
         import sys
+
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
+
             # Test the default (no env override)
             assert mod._RATE_LIMIT_MAX_CALLS == 60
 
@@ -210,16 +243,116 @@ class TestModuleConstants:
         """MCP_RATE_LIMIT_MAX_CALLS env var overrides the default."""
         import os
         import sys
+
         with patch.dict("sys.modules", _mcp_import_stubs()):
             with patch.dict(os.environ, {"MCP_RATE_LIMIT_MAX_CALLS": "120"}):
                 sys.modules.pop("src.gateway.server.mcp_tool_server", None)
                 import src.gateway.server.mcp_tool_server as mod
+
                 assert mod._RATE_LIMIT_MAX_CALLS == 120
 
     def test_default_rate_limit_window(self):
         """Default MCP_RATE_LIMIT_WINDOW_SECONDS is 60."""
         import sys
+
         with patch.dict("sys.modules", _mcp_import_stubs()):
             sys.modules.pop("src.gateway.server.mcp_tool_server", None)
             import src.gateway.server.mcp_tool_server as mod
+
             assert mod._RATE_LIMIT_WINDOW_SECONDS == 60
+
+
+@pytest.mark.local
+class TestMCPToolServerFunctions:
+    """Tests for MCP tools defined in mcp_tool_server.py."""
+
+    @pytest.mark.asyncio
+    async def test_simulate_governance_check(self):
+        import sys
+
+        with patch.dict("sys.modules", _mcp_import_stubs()):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            res = await mod.simulate_governance_check("buy", {"amount": 100})
+            assert res["status"] == "APPROVED"
+            assert res["message"] == "No violations detected."
+
+    @pytest.mark.asyncio
+    async def test_evaluate_policy_internal_allow(self):
+        import sys
+
+        stubs = _mcp_import_stubs()
+        stubs[
+            "src.gateway.governance.singletons"
+        ].opa_client.evaluate_policy = AsyncMock(return_value="ALLOW")
+        with patch.dict("sys.modules", stubs):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            res = await mod._evaluate_policy_internal("execute_trade", 500)
+            assert "APPROVED" in res
+
+    @pytest.mark.asyncio
+    async def test_evaluate_policy_internal_manual_review(self):
+        import sys
+
+        stubs = _mcp_import_stubs()
+        stubs[
+            "src.gateway.governance.singletons"
+        ].opa_client.evaluate_policy = AsyncMock(return_value="MANUAL_REVIEW")
+        with patch.dict("sys.modules", stubs):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            res = await mod._evaluate_policy_internal("execute_trade", 500)
+            assert "MANUAL_REVIEW" in res
+
+    @pytest.mark.asyncio
+    async def test_evaluate_policy_internal_denied(self):
+        import sys
+
+        stubs = _mcp_import_stubs()
+        stubs[
+            "src.gateway.governance.singletons"
+        ].opa_client.evaluate_policy = AsyncMock(return_value="DENY")
+        with patch.dict("sys.modules", stubs):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            res = await mod._evaluate_policy_internal("execute_trade", 500)
+            assert "DENIED" in res
+
+    @pytest.mark.asyncio
+    async def test_trigger_safety_intervention(self):
+        import sys
+
+        with patch.dict("sys.modules", _mcp_import_stubs()):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            res = await mod.trigger_safety_intervention("Test intervention")
+            assert "INTERVENTION_ACK" in res
+
+    @pytest.mark.asyncio
+    async def test_check_market_status(self):
+        import sys
+
+        with patch.dict("sys.modules", _mcp_import_stubs()):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            res = await mod.check_market_status("AAPL")
+            assert "AAPL" in res
+
+    @pytest.mark.asyncio
+    async def test_verify_content_safety(self):
+        import sys
+
+        with patch.dict("sys.modules", _mcp_import_stubs()):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            mod.app.state.nemo_rails = MagicMock()
+            res = await mod.verify_content_safety("Hello safe world")
+            assert res == "SAFE"

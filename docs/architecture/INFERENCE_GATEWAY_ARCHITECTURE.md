@@ -17,7 +17,7 @@ Currently, the `GatewayService` routes traffic through the **Inference Gateway**
 
 > **Update 2026-05-31:** The OTel Collector sidecar has been **deprecated**. All telemetry now flows via direct Langfuse OTLP ingestion at `http://langfuse-web:3000/api/public/otel/v1/traces`. Remove any `OTEL_EXPORTER_OTLP_ENDPOINT` references pointing to a collector.
 
-> **Update 2026-06-01:** The SLM (Small Language Model) semantic similarity sidecar has been **deprecated**. A permanent `slm_available=False` sentinel is hardcoded in `SymbolicGovernor`. The legacy SLM tier slot has been fully retired from the 7-tier governance pipeline (Tiers 0–6, plus Tier 6b adaptive FRIA gate); the confidence threshold (Tier 1) is permanently elevated to 0.97 for `EU_ECB` to compensate.
+> **Update 2026-06-01:** The SLM (Small Language Model) semantic similarity sidecar has been **deprecated**. A permanent `slm_available=False` sentinel is hardcoded in `SymbolicGovernor`. The legacy SLM tier slot has been fully retired from the 8-tier governance pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers: Tiers 0–6, plus Tier 6b adaptive FRIA gate); the confidence threshold (Tier 1) is permanently elevated to 0.97 for `EU_ECB` to compensate.
 
 ---
 

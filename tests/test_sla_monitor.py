@@ -31,6 +31,7 @@ import pytest
 # 1. _is_disabled() reads the EVIDENCE_SLA_DISABLED env var
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 def test_is_disabled_when_env_set_to_1() -> None:
     """_is_disabled() returns True when EVIDENCE_SLA_DISABLED=1."""
@@ -54,6 +55,7 @@ def test_is_disabled_returns_false_by_default() -> None:
 # 2. _poll_interval() reads EVIDENCE_SLA_POLL_INTERVAL_SECONDS
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 def test_poll_interval_reads_env_var() -> None:
     """_poll_interval() returns the integer value of EVIDENCE_SLA_POLL_INTERVAL_SECONDS."""
@@ -68,7 +70,9 @@ def test_poll_interval_default() -> None:
     """_poll_interval() returns 300 when env var is absent."""
     from src.compliance_bridge.sla_monitor import _poll_interval
 
-    env = {k: v for k, v in os.environ.items() if k != "EVIDENCE_SLA_POLL_INTERVAL_SECONDS"}
+    env = {
+        k: v for k, v in os.environ.items() if k != "EVIDENCE_SLA_POLL_INTERVAL_SECONDS"
+    }
     with patch.dict(os.environ, env, clear=True):
         assert _poll_interval() == 300
 
@@ -76,6 +80,7 @@ def test_poll_interval_default() -> None:
 # ---------------------------------------------------------------------------
 # 3. _check_sla_once() skips controls while startup grace is active
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 @pytest.mark.asyncio
@@ -106,6 +111,7 @@ async def test_check_sla_once_skips_during_grace() -> None:
 # 4. _check_sla_once() detects a breach when evidence age exceeds the SLA
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 @pytest.mark.asyncio
 async def test_check_sla_once_detects_breach() -> None:
@@ -135,6 +141,7 @@ async def test_check_sla_once_detects_breach() -> None:
 # 5. _fire_sla_alerts() does nothing when breached list is empty
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 @pytest.mark.asyncio
 async def test_fire_sla_alerts_noop_when_empty() -> None:
@@ -149,6 +156,7 @@ async def test_fire_sla_alerts_noop_when_empty() -> None:
 # ---------------------------------------------------------------------------
 # 6. _fire_sla_alerts() sends a critical alert for each breached control
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 @pytest.mark.asyncio
@@ -190,6 +198,7 @@ async def test_fire_sla_alerts_sends_critical_alert() -> None:
 # ---------------------------------------------------------------------------
 # 7. run_sla_monitor() exits immediately when disabled
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 @pytest.mark.asyncio

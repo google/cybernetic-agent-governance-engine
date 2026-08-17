@@ -41,7 +41,9 @@ class TestResolvePiiRetention:
             ("APAC_MAS", "MAS Notice 655", None),
         ],
     )
-    def test_known_regions(self, monkeypatch, region, expected_authority_fragment, expected_days):
+    def test_known_regions(
+        self, monkeypatch, region, expected_authority_fragment, expected_days
+    ):
         """_resolve_pii_retention returns the correct authority citation for each known region."""
         monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", region)
         days, authority = _resolve_pii_retention()
@@ -112,3 +114,6 @@ class TestGovernanceThresholdsPiiFieldsRegionAware:
         thresholds = GovernanceThresholds(**kwargs)
         assert thresholds.pii_audit_retention_days == 365
         assert thresholds.pii_audit_retention_authority == "Custom Override Citation"
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

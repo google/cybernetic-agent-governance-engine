@@ -286,3 +286,6 @@ class TestOSCALToControlStructurePatch:
     def test_patch_has_oscal_version(self):
         patch = oscal_to_control_structure_patch(_MINIMAL_OSCAL_DOC)
         assert patch["_oscal_version"] == "1.1.2"
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

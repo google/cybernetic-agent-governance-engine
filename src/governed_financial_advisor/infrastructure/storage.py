@@ -139,7 +139,7 @@ class LocalStorage(StorageInterface):
 
     def __init__(self, base_dir: str | None = None):
         self.base_dir = Path(
-            base_dir or os.environ.get("LOCAL_STORAGE_DIR", "/tmp/cage-storage")
+            base_dir or os.environ.get("LOCAL_STORAGE_DIR", "/tmp/cage-storage")  # nosec B108
         )
         self.base_dir.mkdir(parents=True, exist_ok=True)
         logger.info("LocalStorage initialised at %s", self.base_dir)

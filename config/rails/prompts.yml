@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# WARNING: This is a fallback file. Production prompts are managed dynamically in Langfuse.
-# Modifications here will ONLY take effect if the Langfuse API is unreachable.
-
 prompts:
   - task: self_check_input
     content: |

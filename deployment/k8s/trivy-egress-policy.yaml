@@ -12,25 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# =============================================================================
-# CAGE Zero-Trust Network (Z3N) — Trivy Security Scanner Egress Policy
-# =============================================================================
-#
-# NIST SP 800-53 Controls: SC-7, AC-4, SI-3, RA-5
-# ISO 42001: A.6.2 (AI System Lifecycle), A.8.4 (AI System Operation)
-#
-# This CiliumNetworkPolicy allows the Trivy security scanner CronJob
-# (app: security-scanner) to pull vulnerability database updates from:
-#   - ghcr.io (GitHub Container Registry) — primary Trivy DB source
-#   - pkg.dev (Google Artifact Registry) — GCR fallback mirror
-#
-# Without this policy, the default-deny-external-egress policy in
-# cilium-egress-lockdown.yaml blocks all outbound HTTPS from the scanner,
-# causing the Trivy DB download to fail with a connection timeout.
-#
-# POAM references: POAM-007 (IA-3), POAM-011 (SC-8)
-# =============================================================================
-
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy

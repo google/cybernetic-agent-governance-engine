@@ -1,17 +1,3 @@
-# =============================================================================
-# HISTORICAL-ONLY — DO NOT APPLY
-# =============================================================================
-# This Terraform module defines an inline NeMo Guardrails Colang configuration
-# that diverges from the canonical rail source at config/rails/.  It predates
-# the config/rails/ canonical directory and is retained only for reference.
-#
-# Per AGENTS.md §"Deployment Rules": active IaC lives under infra/targets/;
-# deployment/terraform/ and non-targets/ modules are historical reference only.
-#
-# DO NOT: run `terraform plan` or `terraform apply` targeting this module.
-# DO NOT: copy Colang content from this file — use config/rails/ instead.
-# =============================================================================
-
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

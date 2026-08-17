@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
-# archive_paper_evidence.sh — Stage 1 of the two-stage measurement workflow.
+# Copyright 2026 Google LLC
 #
-# Copies /tmp/cage_*_metrics.{json,txt} into a timestamped provenance
-# directory under docs/paper/measurements/ and writes PROVENANCE.md from
-# the template.  Does NOT touch CAGE_ARXIV.MD or scripts/_patch_paper.py.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-# Usage:
-#   bash scripts/archive_paper_evidence.sh
+#     https://www.apache.org/licenses/LICENSE-2.0
 #
-# After running this script, open the generated PROVENANCE.md and complete
-# Step E (human evaluation gate) before proceeding to Step F (paper patch).
-# See docs/paper/MEASUREMENT_RUNBOOK.md for the full procedure.
-#
-# Requirements: git, sha256sum (macOS: shasum -a 256), date, sed.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 set -euo pipefail
 

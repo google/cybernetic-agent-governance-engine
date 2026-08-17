@@ -12,34 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Standard nginx ingress — compatible with any Kubernetes cluster (GKE, EKS, AKS, OpenShift, vanilla k8s).
-# Requires: nginx ingress controller (https://kubernetes.github.io/ingress-nginx/)
-# For TLS: use cert-manager (https://cert-manager.io/) or provide a pre-existing Secret named 'cage-tls'.
-# For GKE-specific GCE L7 load balancer + ManagedCertificate, see deployment/k8s/gcp/ingress-gke.yaml
-#
-# POAM-011 / SC-8: TLS termination for the gateway service.
-#
-# This Ingress terminates TLS at the nginx ingress controller using either:
-#   a) cert-manager with a ClusterIssuer (recommended for automated renewal), or
-#   b) a manually provisioned Secret named 'cage-tls' in the governance-stack namespace.
-#
-# TLS certificate provisioning (cert-manager):
-#   Annotate with cert-manager.io/cluster-issuer: "letsencrypt-prod" and ensure
-#   cert-manager is installed: https://cert-manager.io/docs/installation/
-#   The certificate is provisioned automatically once DNS resolves.
-#
-# Prerequisites:
-#   - nginx ingress controller installed (https://kubernetes.github.io/ingress-nginx/)
-#   - TLS Secret 'cage-tls' exists in governance-stack namespace, OR cert-manager is configured
-#   - DNS record gateway.laah.altostrat.com must resolve to the nginx ingress LoadBalancer IP
-#
-# To obtain the ingress IP after apply:
-#   kubectl get ingress gateway-ingress -n governance-stack \
-#     -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
-#
-# NIST SP 800-53: SC-8 (Transmission Confidentiality and Integrity)
-# NIST SP 800-52 Rev. 2: TLS 1.2 minimum for federal information systems
-# GDPR Art. 32: Security of processing — encryption in transit
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

@@ -419,3 +419,6 @@ class TestRegionGuard:
                     secret="test-secret",
                 )
             )
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# tests/test_uca_logger.py
-# Unit tests for UCALogger ISO 42001 Clause 6.1 compliance records.
-# Marker: @pytest.mark.local — CI-gated, no external dependencies.
-# Run: uv run pytest tests/test_uca_logger.py -m local -v
-
 import os
 import re
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -229,3 +224,113 @@ async def test_worm_path_format(uca_logger):
             r"^uca-records/\d{4}-\d{2}-\d{2}/UCA-[0-9a-f-]+\.yaml$",
             worm_path,
         ), f"WORM path format invalid: {worm_path}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.local
+async def test_log_prompt_injection(uca_logger):
+    with patch.object(
+        uca_logger,
+        "_persist_uca_record",
+        return_value="uca-records/2026-08-16/UCA-123.yaml",
+    ):
+        path = await uca_logger.log_prompt_injection(
+            agent_id="test-agent",
+            block_reason="direct_injection",
+            injected_content="ignore previous instructions",
+        )
+        assert path == "uca-records/2026-08-16/UCA-123.yaml"
+
+
+@pytest.mark.asyncio
+@pytest.mark.local
+async def test_log_prompt_injection_failure(uca_logger):
+    with patch.object(
+        uca_logger, "_build_uca_record", side_effect=RuntimeError("build failed")
+    ):
+        path = await uca_logger.log_prompt_injection(
+            agent_id="test-agent",
+            block_reason="direct_injection",
+            injected_content="ignore previous instructions",
+        )
+        assert path == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.local
+async def test_log_pii_sanitization(uca_logger):
+    with patch.object(
+        uca_logger,
+        "_persist_uca_record",
+        return_value="uca-records/2026-08-16/UCA-pii.yaml",
+    ):
+        path = await uca_logger.log_pii_sanitization(
+            agent_id="test-agent",
+            tool_name="transfer_funds",
+            original_args="ssn: 123-45-6789",
+            sanitized_args="ssn: [REDACTED_SSN]",
+        )
+        assert path == "uca-records/2026-08-16/UCA-pii.yaml"
+
+
+@pytest.mark.asyncio
+@pytest.mark.local
+async def test_log_pii_sanitization_failure(uca_logger):
+    with patch.object(
+        uca_logger, "_build_uca_record", side_effect=RuntimeError("build failed")
+    ):
+        path = await uca_logger.log_pii_sanitization(
+            agent_id="test-agent",
+            tool_name="transfer_funds",
+            original_args="ssn: 123-45-6789",
+            sanitized_args="ssn: [REDACTED_SSN]",
+        )
+        assert path == ""
+
+
+@pytest.mark.local
+def test_uca_logger_from_env_and_singleton():
+    from src.gateway.governance.uca_logger import UCALogger, _get_uca_logger
+
+    with patch.dict(os.environ, {"CAGE_ENV": "test"}, clear=False):
+        logger_instance = UCALogger.from_env()
+        assert logger_instance._test_mode is True
+
+        singleton_logger = _get_uca_logger()
+        assert singleton_logger is not None
+
+
+@pytest.mark.local
+def test_get_worm_bucket_regional_routing(uca_logger):
+    with patch.dict(
+        os.environ,
+        {
+            "CAGE_DEPLOYMENT_REGION": "EU_ECB",
+            "OSCAL_S3_BUCKET_EU_ECB": "eu-worm-bucket",
+        },
+        clear=False,
+    ):
+        bucket = uca_logger._get_worm_bucket()
+        assert bucket == "eu-worm-bucket"
+
+    with patch.dict(
+        os.environ,
+        {
+            "CAGE_DEPLOYMENT_REGION": "APAC_MAS",
+            "OSCAL_S3_BUCKET_APAC_MAS": "apac-worm-bucket",
+        },
+        clear=False,
+    ):
+        bucket = uca_logger._get_worm_bucket()
+        assert bucket == "apac-worm-bucket"
+
+    with patch.dict(
+        os.environ,
+        {
+            "CAGE_DEPLOYMENT_REGION": "US_FED",
+            "OSCAL_S3_BUCKET_US_FED": "us-worm-bucket",
+        },
+        clear=False,
+    ):
+        bucket = uca_logger._get_worm_bucket()
+        assert bucket == "us-worm-bucket"

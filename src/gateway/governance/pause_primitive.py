@@ -262,7 +262,9 @@ class PauseManager:
         state = PauseState(
             request_id=request_id,
             thread_id=thread_id,
-            pause_reason=PauseReason(reason_str) if reason_str in [r.value for r in PauseReason] else PauseReason.RATE_LIMITED,
+            pause_reason=PauseReason(reason_str)
+            if reason_str in [r.value for r in PauseReason]
+            else PauseReason.RATE_LIMITED,
             original_request=original_request or {},
             ttl_seconds=ttl_seconds,
             estimated_wait_secs=estimated_wait_secs,
@@ -346,7 +348,10 @@ class PauseManager:
             state.status = PauseStatus.EXPIRED
             try:
                 async with self._redis.pipeline(transaction=True) as pipe:
-                    pipe.hset(key, mapping={"state": state.model_dump_json(), "status": "EXPIRED"})
+                    pipe.hset(
+                        key,
+                        mapping={"state": state.model_dump_json(), "status": "EXPIRED"},
+                    )
                     pipe.zrem(_EXPIRY_ZSET, pause_token)
                     await pipe.execute()
             except Exception as exc:
@@ -374,7 +379,11 @@ class PauseManager:
                     mapping={
                         "state": state.model_dump_json(),
                         "status": "RESUMED",
-                        **({"resume_context": json.dumps(resume_context)} if resume_context else {}),
+                        **(
+                            {"resume_context": json.dumps(resume_context)}
+                            if resume_context
+                            else {}
+                        ),
                     },
                 )
                 pipe.zrem(_EXPIRY_ZSET, pause_token)
@@ -445,7 +454,9 @@ class PauseManager:
 
         try:
             async with self._redis.pipeline(transaction=True) as pipe:
-                pipe.hset(key, mapping={"state": state.model_dump_json(), "status": "EXPIRED"})
+                pipe.hset(
+                    key, mapping={"state": state.model_dump_json(), "status": "EXPIRED"}
+                )
                 pipe.zrem(_EXPIRY_ZSET, pause_token)
                 await pipe.execute()
         except Exception as exc:

@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# D-06: PSA-compliant Trivy security-scan CronJob
-# Runs weekly (Sunday 03:00 UTC) to scan the CAGE gateway image for CVEs.
-# Complies with RA-5 (Vulnerability Scanning) control.
 apiVersion: batch/v1
 kind: CronJob
 metadata:

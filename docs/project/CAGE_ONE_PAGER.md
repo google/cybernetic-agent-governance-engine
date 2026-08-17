@@ -10,7 +10,7 @@ Any operator deploying high-reliability agentic AI faces a fundamental audit gap
 
 The cost of inaction is concrete: a single unchecked `execute_trade_action` call can bypass drawdown limits, leak PII in the response payload, and produce no evidence of the policy evaluation that should have blocked it. Automated red-team exercises against naive gateway implementations routinely achieve **100% adversarial success rates** on RBAC-002 (excessive permissions) and PII-004 (data leakage) attack classes.
 
-**CAGE v2.1.1** is an open-source, Python-first governance runtime that wraps every LLM call and tool invocation in a deterministic, **8-tier policy enforcement pipeline** — without sacrificing production latency. The architecture is bifurcated: application logic (a LangGraph `StateGraph` multi-agent pipeline) is fully decoupled from the cloud provider, while a dedicated **Inference Gateway** (`src/gateway/`) handles all model traffic through a split-brain topology routing to two specialized vLLM pools (DeepSeek-R1 for reasoning; Llama 3.1 for structured governance output). The governance stack executes on every request: Aho-Corasick keyword scan → NeMo Guardrails (Colang 2.x + in-process Presidio PII) → **FTRA pre-execution reachability gate** (Tier 0.5, `src/gateway/governance/ftra/`) → STPA hazard validator (Tier 0) → agent confidence pre-check (Tier 1) → Control Barrier Function + OPA policy engine (concurrent, Tiers 2/4) → Fiscal Limit Pre-Reservation (Tier 3) → multi-agent consensus (Tier 5) → causal gatekeeper (Tier 6) → adaptive FRIA gate (Tier 6b). The legacy SLM sidecar has been fully deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. All compliance mapping is performed by the Python OSCAL exporter (`src/compliance_bridge/oscal_ssp_exporter.py`), achieving sub-millisecond audit-trail generation.
+**CAGE v2.1.1** is an open-source, Python-first governance runtime that wraps every LLM call and tool invocation in a deterministic, **8-tier policy enforcement pipeline** — without sacrificing production latency. The architecture is bifurcated: application logic (a LangGraph `StateGraph` multi-agent pipeline) is fully decoupled from the cloud provider, while a dedicated **Inference Gateway** (`src/gateway/`) handles all model traffic through a split-brain topology routing to two specialized vLLM pools (DeepSeek-R1 for reasoning; Llama 3.1 for structured governance output). The governance stack executes on every request: Aho-Corasick keyword scan → NeMo Guardrails (Colang 2.x + in-process Presidio PII) → **FTRA Pre-Pipeline Boundary Gate** (`src/gateway/governance/ftra/`, whole-graph reachability check before per-tool-call checks begin) → STPA hazard validator (Tier 0) → agent confidence pre-check (Tier 1) → Control Barrier Function + OPA policy engine (concurrent, Tiers 2/4) → Fiscal Limit Pre-Reservation (Tier 3) → multi-agent consensus (Tier 5) → causal gatekeeper (Tier 6) → adaptive FRIA gate (Tier 6b). The legacy SLM sidecar has been fully deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. All compliance mapping is performed by the Python OSCAL exporter (`src/compliance_bridge/oscal_ssp_exporter.py`), achieving sub-millisecond audit-trail generation.
 
 
 **CAGE introduces evidentiary independence** (v2.0.0) — the system cannot manufacture the conditions necessary to satisfy its own governance checks:
@@ -39,11 +39,16 @@ h(S(t+1)) ≥ (1−γ)·h(S(t))     where h(x) = cash_balance − min_cash_balan
 
 This discrete-time CBF condition ([`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)) guarantees that the system state never leaves the safe set `S = {x ∈ ℝⁿ : h(x) ≥ 0}`. Any proposed action that would violate the condition is denied before execution. State reads are atomic (Redis `WATCH/MULTI/EXEC`, `_MAX_RETRIES=5`). In the financial reference deployment `h(x) = cash_balance − min_cash_balance`; in other high-reliability deployments the same invariant structure applies to any continuous resource variable (API call budget, actuator torque envelope, drug-dosage ceiling, etc.).
 
-### 7-Tier Symbolic Governor Pipeline
+### Pre-Pipeline Boundary Gate
+
+| Gate | Control | Key Invariant |
+|------|---------|---------------|
+| **FTRA** | Forward-Looking Trajectory Reachability Analyzer | `create_ftra_node()` / `PlanGraphAnalyzer` / `IrreversibilityClassifier` — pre-execution graph reachability; CLEAR / HITL_REQUIRED / BLOCKED **before any tool call**. Operates on the **whole execution graph** — NOT a peer of Tiers 0–6b. |
+
+### Tiers 0–6b — Per-Tool-Call Checks (`_run_checks()`)
 
 | Tier | Control | Key Invariant |
 |------|---------|---------------|
-| 0.5 | FTRA — Forward-Looking Trajectory Reachability Analyzer | `create_ftra_node()` / `PlanGraphAnalyzer` / `IrreversibilityClassifier` — pre-execution graph reachability; CLEAR / HITL_REQUIRED / BLOCKED before any tool call |
 | 0 | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` checks Unsafe Control Actions |
 | 1 | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) |
 | 2 | Control Barrier Function | Redis-backed cash balance invariant; concurrent with Tier 4 via `asyncio.gather` |

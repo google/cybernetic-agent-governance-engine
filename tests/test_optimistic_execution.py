@@ -47,6 +47,7 @@ def slow_executor_setup():
     # concurrency/race behaviour the test relies on (a task yielding the event loop)
     # without burning real seconds.
     with patch("requests.post") as mock_post:
+
         async def delayed_response(*args, **kwargs):
             await asyncio.sleep(0.001)  # yield to event loop; was asyncio.sleep(0.5)
             return MagicMock(json=lambda: {"id": "123"}, raise_for_status=lambda: None)

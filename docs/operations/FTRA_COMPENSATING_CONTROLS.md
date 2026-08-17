@@ -1,19 +1,43 @@
 # FTRA Compensating Controls
 
-> **Status**: INTERIM — This document describes compensating controls that are
-> deployed until `CAGE_FTRA_BOUNDARY_ENABLED=true` becomes the default
-> production configuration.
+> **Status**: PERMANENT — The FTRA boundary check is now **mandatory** and
+> unconditional (no feature flag). This document is retained for: (1) historical
+> record of the interim compensating-control period, and (2) ongoing
+> documentation for the NetworkPolicy defense-in-depth layer (R-02 mitigation).
+
+## Document Purpose
+
+As of 2026-08-16, the `CAGE_FTRA_BOUNDARY_ENABLED` feature flag has been
+**removed** from the codebase. The FTRA boundary check now runs unconditionally
+in [`SymbolicGovernor._run_checks()`](../../src/gateway/governance/symbolic_governor.py)
+(lines 970–999) for every governance request — there is no way to disable it.
+
+This document now serves two purposes:
+
+1. **Historical Record**: Documents the interim compensating-control period
+   (when the boundary check was behind a feature flag and NetworkPolicy was
+   the primary mitigation for R-03).
+
+2. **NetworkPolicy Defense-in-Depth**: The NetworkPolicy controls described
+   below remain in place as a defense-in-depth layer against R-02 (Trust
+   Boundary Mutation). They are no longer strictly required for R-03 mitigation
+   but provide additional protection.
 
 ## Overview
 
-The Forward-Looking Trajectory Reachability Analyzer (FTRA) is a Tier 0.5
-governance gate that performs commencement-time reachability analysis on
-execution plans. It identifies plans that can reach IRREVERSIBLE_TERMINAL
+The Forward-Looking Trajectory Reachability Analyzer (FTRA) is a **Pre-Pipeline
+Boundary Gate** that performs commencement-time reachability analysis on
+execution plans. Unlike Tiers 0–6b (which operate per tool call within
+`_run_checks()`), FTRA operates on the **whole execution graph** before
+per-tool-call checks begin — it is a **gateway precondition**, not a peer of the
+numbered tiers. FTRA identifies plans that can reach IRREVERSIBLE_TERMINAL
 actions (e.g., `execute_trade`, `delete_account`) and routes them for
 Human-In-The-Loop (HITL) review.
 
-This document describes interim compensating controls deployed to mitigate
-risks R-02 and R-03 until the FTRA boundary check is enabled by default.
+The FTRA boundary check runs unconditionally at the HTTP/controller boundary
+(`validate_action`, `ext_authz`) to catch any direct HTTP access that would
+bypass the in-graph `ftra_node`. This fully mitigates Risk R-03 at the
+controller level.
 
 ## Risk Context
 
@@ -27,6 +51,9 @@ mutate the plan post-classification but pre-execution.
 replaced with an IRREVERSIBLE_TERMINAL action before execution, bypassing
 the HITL escalation path.
 
+**Mitigation Status**: Partially mitigated by NetworkPolicy (defense-in-depth).
+Full mitigation requires execution-time re-validation (future enhancement).
+
 ### R-03: Trust Boundary Bypass
 
 **Description**: `ftra_node` only fires if the host agent wires it into its
@@ -37,14 +64,20 @@ it entirely.
 actions that skip FTRA classification entirely, allowing IRREVERSIBLE_TERMINAL
 actions to execute without HITL review.
 
-## Compensating Controls
+**Mitigation Status**: ✅ **FULLY MITIGATED** (2026-08-16). The FTRA boundary
+check now runs unconditionally in `SymbolicGovernor._run_checks()` for every
+request. Direct HTTP access to `/validate-action` or ext_authz is now subject
+to the same FTRA classification as in-graph requests. See POAM-2026-030-B.
 
-### 1. NetworkPolicy (Interim)
+## Controls
+
+### 1. NetworkPolicy (Defense-in-Depth)
 
 **File**: [`deployment/k8s/ftra-network-policy.yaml`](../../deployment/k8s/ftra-network-policy.yaml)
 
 **Purpose**: Restricts ingress to the `cage-gateway` pod to only allow traffic
-from governance-validated sources.
+from governance-validated sources. This provides defense-in-depth against R-02
+(post-classification plan mutation).
 
 **Policies**:
 
@@ -80,11 +113,9 @@ kubectl exec -it deploy/governed-financial-advisor -n governance-stack -- \
 # Expected: 200 (GFA is allowed)
 ```
 
-### 2. FTRA Boundary Check (Phase 3.3)
+### 2. FTRA Boundary Check (Mandatory)
 
-**Environment Variable**: `CAGE_FTRA_BOUNDARY_ENABLED`
-
-**Default**: `false` (interim — will be `true` when this control is production-ready)
+**Status**: ✅ **MANDATORY** — No feature flag; runs unconditionally.
 
 **Purpose**: Performs FTRA classification at the HTTP/controller boundary
 (validate_action, ext_authz) rather than relying solely on the in-graph
@@ -92,24 +123,13 @@ ftra_node. This catches direct HTTP bypasses of the in-graph node.
 
 **How It Works**:
 
-1. When enabled, `SymbolicGovernor._ftra_boundary_check()` runs BEFORE all
-   other governance checks.
+1. `SymbolicGovernor._ftra_boundary_check()` runs BEFORE all other governance
+   checks in `_run_checks()` (lines 970–999).
 2. Uses the same `IrreversibilityClassifier` and `terminal_registry.json` as
    the in-graph `ftra_node`.
 3. If an action is classified as `IRREVERSIBLE_TERMINAL`, the boundary check
    adds a violation that routes to HITL.
-
-**Activation**:
-
-```bash
-# Enable FTRA boundary check (per-deployment)
-export CAGE_FTRA_BOUNDARY_ENABLED=true
-
-# Or in Kubernetes deployment manifest:
-# env:
-#   - name: CAGE_FTRA_BOUNDARY_ENABLED
-#     value: "true"
-```
+4. The check is hardcoded — there is no environment variable to disable it.
 
 **Telemetry**:
 
@@ -127,47 +147,41 @@ When the boundary check fires, the following OTel attributes are emitted:
 ```
 cage_ftra_boundary_checks_total{result="hitl_required"}
 cage_ftra_boundary_checks_total{result="passed"}
-cage_ftra_boundary_checks_total{result="skipped"}
 cage_ftra_boundary_checks_total{result="error"}
 ```
 
-## Removal Criteria
+## NetworkPolicy Removal Criteria
 
-The NetworkPolicy compensating control can be removed once ALL of the following
-conditions are met:
+The NetworkPolicy defense-in-depth control can be removed once ALL of the
+following conditions are met:
 
-1. **CAGE_FTRA_BOUNDARY_ENABLED=true is the default** in production configuration.
-2. **Lula validation passes** (`compliance/lula/lula-validation-ftra.yaml`).
-3. **POAM-2026-030 is closed** with evidence of boundary check operation.
-4. **At least 30 days of production telemetry** shows the boundary check is
+1. **Lula validation passes** (`compliance/lula/lula-validation-ftra.yaml`).
+2. **At least 30 days of production telemetry** shows the boundary check is
    catching bypass attempts (or confirms none exist).
+3. **Risk R-02 is fully mitigated** by an alternative control (e.g.,
+   execution-time re-validation).
 
 ### Removal Procedure
 
 ```bash
-# 1. Verify FTRA boundary check is enabled
-kubectl exec -it deploy/cage-gateway -n governance-stack -- \
-  printenv CAGE_FTRA_BOUNDARY_ENABLED
-# Expected: true
-
-# 2. Verify Lula validation passes
+# 1. Verify Lula validation passes
 lula validate -f compliance/lula/lula-validation-ftra.yaml
 
-# 3. Review telemetry for bypass attempts
+# 2. Review telemetry for bypass attempts
 # (Query Langfuse or Prometheus for cage.ftra.bypassed_ftra_node=true events)
 
-# 4. Remove the NetworkPolicy
+# 3. Remove the NetworkPolicy
 kubectl delete -f deployment/k8s/ftra-network-policy.yaml
 
-# 5. Update this document to mark controls as REMOVED
-# 6. Close POAM-2026-030
+# 4. Update this document to mark NetworkPolicy as REMOVED
 ```
 
 ## POAM Reference
 
 | POAM ID | Title | Status |
 |---------|-------|--------|
-| POAM-2026-030 | FTRA Tier 0.5 Gate Implementation | OPEN |
+| POAM-2026-030 | FTRA Pre-Pipeline Boundary Gate Implementation (test coverage) | CLOSED |
+| POAM-2026-030-B | FTRA Boundary Check Mandatory (flag removal) | CLOSED |
 
 ## Compliance Mappings
 
@@ -184,3 +198,4 @@ kubectl delete -f deployment/k8s/ftra-network-policy.yaml
 - [`src/gateway/governance/ftra/`](../../src/gateway/governance/ftra/) — FTRA implementation
 - [`plans/CAGE_RISK_MATRIX.md`](../../plans/CAGE_RISK_MATRIX.md) — Risk R-02 and R-03 details
 - [`compliance/lula/lula-validation-ftra.yaml`](../../compliance/lula/lula-validation-ftra.yaml) — Lula validation
+- [`docs/POAM.md`](../POAM.md) — POAM-2026-030-B closure record

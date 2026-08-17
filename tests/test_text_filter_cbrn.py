@@ -274,3 +274,6 @@ class TestCBRNKeywordCoverage:
         loaded = set(THRESHOLDS.tier1_keywords_cbrn)
         missing = [t for t in self.EXPECTED_TERMS if t not in loaded]
         assert not missing, f"Missing CBRN terms from tier1_keywords_cbrn: {missing}"
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

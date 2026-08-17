@@ -489,5 +489,3 @@ def get_iso_control_map(region: str) -> dict[str, str]:
         **_UNIVERSAL_CONTROL_MAP,
         **_JURISDICTIONAL_CONTROL_MAP.get(region, {}),
     }
-
-

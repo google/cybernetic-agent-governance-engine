@@ -30,6 +30,7 @@ import logging
 import os
 import sys
 from functools import lru_cache
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -195,7 +196,7 @@ class FriaThresholds(BaseModel):
 
     @field_validator("zone_defer")
     @classmethod
-    def defer_less_than_allow(cls, v: float, info) -> float:
+    def defer_less_than_allow(cls, v: float, info: Any) -> float:
         """Ensure zone_defer < zone_allow for coherent zone semantics."""
         # Note: zone_allow may not be in info.data yet during construction
         # so we validate at model level in GovernanceThresholds instead
@@ -252,6 +253,69 @@ class CausalThresholds(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# EV-5: KMS Batch Signer Thresholds
+# ---------------------------------------------------------------------------
+
+
+class KmsBatchThresholds(BaseModel):
+    """KMS batch signer configuration thresholds.
+
+    The batch signer is disabled by default for safety; enable explicitly in
+    production via env var or config.
+
+    Env overrides: KMS_BATCH_MAX_SIZE, KMS_BATCH_ENABLED
+    """
+
+    max_size: int = Field(
+        default=10,
+        gt=0,
+        description=(
+            "[EV-5] Maximum records per KMS batch signing operation. "
+            "Env override: KMS_BATCH_MAX_SIZE"
+        ),
+    )
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "[EV-5] Whether KMS batch signing is enabled. Disabled by default "
+            "for safety; production deployments must enable explicitly. "
+            "Env override: KMS_BATCH_ENABLED"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# EV-6: Telemetry Thresholds
+# ---------------------------------------------------------------------------
+
+
+class TelemetryThresholds(BaseModel):
+    """Telemetry configuration thresholds for causal gatekeeper.
+
+    Env overrides: TELEMETRY_MAX_STALENESS_SECONDS, CAUSAL_CACHE_TTL_SECONDS
+    """
+
+    max_staleness_seconds: int = Field(
+        default=300,
+        gt=0,
+        description=(
+            "[EV-6] Maximum age of telemetry observation before data is "
+            "treated as stale and gatekeeper fails closed. Default: 300s (5 min). "
+            "Env override: TELEMETRY_MAX_STALENESS_SECONDS"
+        ),
+    )
+    cache_ttl_seconds: int = Field(
+        default=60,
+        ge=0,
+        description=(
+            "[EV-6] TTL for Redis-backed causal result cache keyed on "
+            "(action_type, market_regime). Set to 0 to disable caching. "
+            "Default: 60s. Env override: CAUSAL_CACHE_TTL_SECONDS"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Root model
 # ---------------------------------------------------------------------------
 
@@ -259,9 +323,9 @@ class CausalThresholds(BaseModel):
 class GovernanceThresholds(BaseModel):
     """Root schema for config/governance_thresholds.json.
 
-    Schema Version 2.0.0: Adds fria and causal threshold sections to consolidate
-    environment variables (EV-1 through EV-5) into configuration-driven defaults
-    with optional env var overrides for runtime tuning.
+    Schema Version 2.1.0: Adds telemetry threshold section (EV-6) to consolidate
+    TELEMETRY_MAX_STALENESS_SECONDS and CAUSAL_CACHE_TTL_SECONDS into
+    configuration-driven defaults with optional env var overrides.
     """
 
     cbf: CbfThresholds
@@ -275,6 +339,12 @@ class GovernanceThresholds(BaseModel):
 
     # EV-3, EV-4: Causal gatekeeper thresholds
     causal: CausalThresholds = Field(default_factory=CausalThresholds)
+
+    # EV-5: KMS batch signer settings
+    kms_batch: KmsBatchThresholds = Field(default_factory=KmsBatchThresholds)
+
+    # EV-6: Telemetry thresholds (max_staleness_seconds, cache_ttl_seconds)
+    telemetry: TelemetryThresholds = Field(default_factory=TelemetryThresholds)
 
     tier1_keywords: list[str] = Field(default_factory=list)
 
@@ -312,12 +382,18 @@ class GovernanceThresholds(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Environment Variable Override Map (EV-1 through EV-5)
+# Environment Variable Override Map (EV-1 through EV-6)
 #
 # These mappings allow runtime tuning of thresholds via environment variables
 # while keeping config/governance_thresholds.json as the single source of truth
 # for default values. Env vars take precedence when set.
 # ---------------------------------------------------------------------------
+
+
+def _parse_bool(value: str) -> bool:
+    """Parse a string to boolean, handling common truthy/falsy values."""
+    return value.lower() in ("true", "1", "yes", "on")
+
 
 _ENV_OVERRIDES: dict[str, tuple[str, type]] = {
     # EV-1: FRIA thresholds
@@ -334,6 +410,12 @@ _ENV_OVERRIDES: dict[str, tuple[str, type]] = {
     "CAUSAL_MIN_LIVE_SAMPLES": ("causal.min_samples", int),  # Alias for compatibility
     # EV-5: Confidence min score
     "CONFIDENCE_MIN_SCORE": ("confidence.min_score", float),
+    # EV-5: KMS batch signer settings
+    "KMS_BATCH_MAX_SIZE": ("kms_batch.max_size", int),
+    "KMS_BATCH_ENABLED": ("kms_batch.enabled", _parse_bool),
+    # EV-6: Telemetry thresholds
+    "TELEMETRY_MAX_STALENESS_SECONDS": ("telemetry.max_staleness_seconds", int),
+    "CAUSAL_CACHE_TTL_SECONDS": ("telemetry.cache_ttl_seconds", int),
 }
 
 
@@ -418,7 +500,7 @@ def load_and_validate_thresholds(path: str = _ENV_CONFIG_PATH) -> GovernanceThre
         logger.critical("❌ governance_thresholds.json is not valid JSON: %s", exc)
         sys.exit(1)
 
-    # Apply environment variable overrides (EV-1 through EV-5)
+    # Apply environment variable overrides (EV-1 through EV-6)
     raw = _apply_env_overrides(raw)
 
     try:
@@ -524,6 +606,45 @@ def get_causal_min_samples() -> int:
         The minimum telemetry samples required for causal model training.
     """
     return THRESHOLDS.causal.min_samples
+
+
+def get_kms_batch_max_size() -> int:
+    """Get KMS batch max size (config default with env override).
+
+    Returns:
+        The maximum number of records per KMS batch signing operation.
+    """
+    return THRESHOLDS.kms_batch.max_size
+
+
+def get_kms_batch_enabled() -> bool:
+    """Get KMS batch enabled flag (config default with env override).
+
+    Disabled by default for safety; production deployments must enable explicitly.
+
+    Returns:
+        True if KMS batch signing is enabled, False otherwise.
+    """
+    return THRESHOLDS.kms_batch.enabled
+
+
+def get_telemetry_max_staleness_seconds() -> int:
+    """Get telemetry max staleness seconds (config default with env override).
+
+    Returns:
+        Maximum age of telemetry observation (seconds) before data is treated
+        as stale and the causal gatekeeper fails closed.
+    """
+    return THRESHOLDS.telemetry.max_staleness_seconds
+
+
+def get_causal_cache_ttl_seconds() -> int:
+    """Get causal cache TTL seconds (config default with env override).
+
+    Returns:
+        TTL for Redis-backed causal result cache. Set to 0 to disable caching.
+    """
+    return THRESHOLDS.telemetry.cache_ttl_seconds
 
 
 # ---------------------------------------------------------------------------

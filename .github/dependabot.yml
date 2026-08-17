@@ -12,27 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Dependabot configuration for CAGE
-#
-# Tracks GitHub Actions version updates weekly so that Node 20 → Node 24
-# runtime migrations (GitHub deprecation: effective 2026-09-16) are surfaced
-# automatically as PRs rather than discovered at CI failure time.
-#
-# Scope:
-#   github-actions — all uses: ... references in .github/workflows/*.yml
-#
-# Actions currently in use (as of 2026-07-07):
-#   actions/checkout@v4
-#   actions/setup-python@v5
-#   actions/setup-node@v4
-#   actions/upload-artifact@v4
-#   actions/dependency-review-action@v4
-#   astral-sh/setup-uv@v5
-#   google-github-actions/auth@v2
-#   github/codeql-action/upload-sarif@v3
-#   aquasecurity/trivy-action@0.31.0   ← was @master; pinned 2026-07-07
-#   gitleaks/gitleaks-action@v2
-
 version: 2
 updates:
   - package-ecosystem: "github-actions"

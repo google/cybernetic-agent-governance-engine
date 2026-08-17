@@ -12,23 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ── lula2-pr-compliance.yml ────────────────────────────────────────────────────
-# Lula2 PR Compliance Impact Crawler
-#
-# Uses the lula2 npm package to analyze pull requests for compliance-impacting
-# file changes and post a summary comment on the PR.
-#
-# NOTE: The lula2 npm package is a separate tool from the Lula Go CLI.
-#   Lula Go CLI (defenseunicorns/lula) = runs `lula validate` against Kubernetes
-#   lula2 npm package                  = PR impact analysis / GitOps tracking
-#
-# This workflow is ADDITIVE — it does not replace Lula runtime validation.
-# Lula live validation is performed by compliance-matrix.yml post-cluster-provisioning.
-#
-# Trigger: pull_request targeting main
-# Output:  PR comment summarising compliance-impacting file changes
-# ──────────────────────────────────────────────────────────────────────────────
-
 name: Lula2 PR Compliance Crawler
 
 on:

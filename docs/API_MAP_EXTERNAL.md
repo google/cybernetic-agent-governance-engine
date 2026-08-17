@@ -848,7 +848,7 @@ and verifies the routing seal before actuation.
 | `trigger_safety_intervention` | Lock system | None |
 | `verify_content_safety` | NeMo content check | None |
 | `evaluate_policy` | OPA Rego evaluation | None |
-| `execute_trade` | Governed trade execution | Full 7-tier pipeline via Gateway |
+| `execute_trade` | Governed trade execution | Full 8-tier pipeline (FTRA + 7 in-pipeline tiers) via Gateway |
 
 **Response 200 OK:**
 ```json

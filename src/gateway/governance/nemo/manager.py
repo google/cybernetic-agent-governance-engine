@@ -536,7 +536,7 @@ async def validate_with_nemo(
         # generate_async entirely and stamp Langfuse with DEGRADED_FAIL_OPEN.
         # This provides full audit visibility into every request processed while
         # NeMo's semantic layer was offline (ISO 42001 A.5.2 / STPA UCA-1).
-        if getattr(rails, "is_transparent_fallback", False):
+        if getattr(rails, "is_transparent_fallback", False) is True:
             span.set_attribute("langfuse.observation.type", "span")
             span.set_attribute(
                 "langfuse.observation.name", "nemo_guardrails_validation"
