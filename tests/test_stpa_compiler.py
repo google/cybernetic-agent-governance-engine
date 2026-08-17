@@ -191,6 +191,89 @@ class TestSchemaValidation:
 
 
 # ---------------------------------------------------------------------------
+# Generated-code injection guards
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGeneratedCodeInjection:
+    """Control-structure string fields are compiled into the generated Python
+    validator / saga nodes (imported at runtime) and the Rego / Colang policies.
+    Fields carrying a quote, brace, or newline could break out of a generated
+    literal or comment and inject code, so the schema rejects them at parse.
+    """
+
+    def test_threshold_ref_bare_code_injection_rejected(self) -> None:
+        # threshold_ref lands in bare code (`threshold = THRESHOLDS.<ref>`); a
+        # newline injects arbitrary statements into the generated validator.
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        cond = raw["unsafe_control_actions"][0]["condition"]
+        cond["operator"] = "greater_than"
+        cond["threshold_ref"] = "drawdown\n    __import__('os').system('id')  #"
+        with pytest.raises(Exception, match="threshold_ref"):
+            ControlStructureModel(**raw)
+
+    def test_param_non_identifier_rejected(self) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["unsafe_control_actions"][0]["condition"]["param"] = 'x") or exec("1'
+        with pytest.raises(Exception, match="condition.param"):
+            ControlStructureModel(**raw)
+
+    def test_description_fstring_injection_rejected(self) -> None:
+        # description is baked into a generated f-string; a brace is evaluated.
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["unsafe_control_actions"][0]["description"] = "{__import__('os').getpid()}"
+        with pytest.raises(Exception, match="uca.description"):
+            ControlStructureModel(**raw)
+
+    def test_uca_action_non_identifier_rejected(self) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["unsafe_control_actions"][0]["action"] = 'do_thing"\n    import os  #'
+        with pytest.raises(Exception, match="uca.action"):
+            ControlStructureModel(**raw)
+
+    def test_system_name_newline_rejected(self) -> None:
+        # name/version reach the `# System: ...` header of every artifact.
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["system"]["name"] = "X\n_PWNED = 1"
+        with pytest.raises(Exception, match="system field"):
+            ControlStructureModel(**raw)
+
+    def test_opa_rule_message_quote_rejected(self) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["unsafe_control_actions"][0]["opa_rule"]["message"] = 'a" ; allow := true #'
+        with pytest.raises(Exception, match="opa_rule.message"):
+            ControlStructureModel(**raw)
+
+    def test_nemo_flow_name_non_identifier_rejected(self) -> None:
+        raw = yaml.safe_load(_NEMO_YAML)
+        raw["unsafe_control_actions"][0]["nemo_rail"]["flow_name"] = "bad name"
+        with pytest.raises(Exception, match="nemo_rail.flow_name"):
+            ControlStructureModel(**raw)
+
+    def test_saga_action_non_identifier_rejected(self) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        uca = raw["unsafe_control_actions"][0]
+        uca["enforcement"] = ["langgraph"]
+        uca.pop("opa_rule", None)
+        uca["langgraph_saga"] = {
+            "forward_action": "execute_trade\n    import os  #",
+            "compensating_action": "reverse_trade",
+        }
+        with pytest.raises(Exception, match="langgraph_saga action"):
+            ControlStructureModel(**raw)
+
+    def test_valid_fields_still_generate_clean_python(self) -> None:
+        # Positive control: legitimate values compile and the generated Python
+        # holds no injected import.
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        cs = ControlStructureModel(**raw)
+        gen = generate_python(cs)
+        assert "GeneratedSTPAValidator" in gen
+        assert "__import__" not in gen
+
+
+# ---------------------------------------------------------------------------
 # OPA generation tests
 # ---------------------------------------------------------------------------
 
