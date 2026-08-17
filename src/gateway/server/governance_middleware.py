@@ -120,7 +120,7 @@ def _is_dev_environment() -> bool:
 _HMAC_MIN_LENGTH = 32  # HMAC-SHA256 security minimum (256-bit key)
 
 if not _CAGE_SEAL_SECRET:
-    if _ENVIRONMENT not in ("development", "test"):
+    if _IS_PRODUCTION:
         raise RuntimeError(
             "CAGE_ROUTING_SEAL_SECRET must be set in non-development environments (POAM-012). "
             "Generate a cryptographically random secret of at least 32 characters and export it "

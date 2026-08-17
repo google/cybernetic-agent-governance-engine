@@ -128,6 +128,8 @@ jobs:
           LANGFUSE_HOST: "http://localhost:3000"
           LANGFUSE_PUBLIC_KEY: "pk-dummy"
           LANGFUSE_SECRET_KEY: "sk-dummy"
+          CAGE_ROUTING_SEAL_SECRET: "dev-only-insecure-placeholder-not-for-production-use"
+          GOVERNANCE_SALT: "dev-only-insecure-placeholder-not-for-production-use"
         run: uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile -v ${{ matrix.cov_branch_flag }} --cov=src --cov-fail-under=75
       - name: Run Bandit SAST (medium+ severity)
         run: uv run bandit -r src/ -c pyproject.toml -ll
@@ -455,6 +457,10 @@ jobs:
           LANGFUSE_HOST: "http://localhost:3000"
           LANGFUSE_PUBLIC_KEY: "pk-dummy"
           LANGFUSE_SECRET_KEY: "sk-dummy"
+          CAGE_DEPLOYMENT_REGION: "APAC_MAS"
+          GOOGLE_CLOUD_LOCATION: "asia-southeast1"
+          CAGE_ROUTING_SEAL_SECRET: "dev-only-insecure-placeholder-not-for-production-use"
+          GOVERNANCE_SALT: "dev-only-insecure-placeholder-not-for-production-use"
         run: |
           uv run pytest tests/red_team/ -m "red_team and not integration" -v --no-cov
           uv run pytest tests/ -m apac_mas -v --no-cov
