@@ -77,7 +77,7 @@ def test_safety_filter_protocol_has_verify_action():
 
 def test_safety_filter_protocol_has_update_state():
     """SafetyFilter protocol must define _update_state_unsafe method.
-    
+
     v3.0.0 breaking change: The public update_state() method was renamed to
     _update_state_unsafe() to mark it as internal and encourage use of the
     atomic_verify_and_commit() method instead.

@@ -35,10 +35,13 @@ LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY", os.environ.get("PK",
 LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", os.environ.get("SK", ""))
 
 # Module-level skip: entire file is skipped when credentials are absent
-pytestmark = pytest.mark.skipif(
-    not LANGFUSE_PUBLIC_KEY or not LANGFUSE_SECRET_KEY,
-    reason="Langfuse credentials (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY) are missing. Skipping smoke tests.",
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        not LANGFUSE_PUBLIC_KEY or not LANGFUSE_SECRET_KEY,
+        reason="Langfuse credentials (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY) are missing. Skipping smoke tests.",
+    ),
+]
 
 
 # Skip tests if credentials are not provided or host is unreachable

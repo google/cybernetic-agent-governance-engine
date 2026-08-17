@@ -29,6 +29,7 @@ import pytest
 # Dataclass tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 class TestAgwRequestDataclass:
     """Tests for the AgwRequest dataclass."""
@@ -118,6 +119,7 @@ class TestAgwAdapterResultDataclass:
 # AgwAdapter.translate_request tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 class TestAgwAdapterTranslateRequest:
     """Tests for AgwAdapter.translate_request()."""
@@ -184,6 +186,7 @@ class TestAgwAdapterTranslateRequest:
 # AgwAdapter.validate_oidc_token tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 class TestAgwAdapterValidateOidcToken:
     """Tests for AgwAdapter.validate_oidc_token()."""
@@ -193,6 +196,7 @@ class TestAgwAdapterValidateOidcToken:
         """Returns (False, {}) when AGW_OIDC_ISSUER is not configured."""
         with patch("src.gateway.governance.ingress.agw_adapter.AGW_OIDC_ISSUER", ""):
             from src.gateway.governance.ingress.agw_adapter import AgwAdapter
+
             adapter = AgwAdapter()
             is_valid, claims = await adapter.validate_oidc_token("any-token")
 
@@ -202,8 +206,12 @@ class TestAgwAdapterValidateOidcToken:
     @pytest.mark.asyncio
     async def test_with_issuer_stub_returns_false(self):
         """Current stub implementation returns fail-closed (False, {}) even with issuer set."""
-        with patch("src.gateway.governance.ingress.agw_adapter.AGW_OIDC_ISSUER", "https://issuer.example.com"):
+        with patch(
+            "src.gateway.governance.ingress.agw_adapter.AGW_OIDC_ISSUER",
+            "https://issuer.example.com",
+        ):
             from src.gateway.governance.ingress.agw_adapter import AgwAdapter
+
             adapter = AgwAdapter()
             is_valid, claims = await adapter.validate_oidc_token("eyJ...")
 
@@ -214,6 +222,7 @@ class TestAgwAdapterValidateOidcToken:
 # ---------------------------------------------------------------------------
 # AgwAdapter.process tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 class TestAgwAdapterProcess:
@@ -261,6 +270,7 @@ class TestAgwAdapterProcess:
 # Singleton factory
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 class TestGetAgwAdapter:
     """Tests for get_agw_adapter() lazy singleton."""
@@ -268,12 +278,14 @@ class TestGetAgwAdapter:
     def test_returns_agw_adapter_instance(self):
         """get_agw_adapter() returns an AgwAdapter."""
         import src.gateway.governance.ingress.agw_adapter as mod
+
         mod._agw_adapter = None  # reset singleton
 
         from src.gateway.governance.ingress.agw_adapter import (
             AgwAdapter,
             get_agw_adapter,
         )
+
         result = get_agw_adapter()
 
         assert isinstance(result, AgwAdapter)
@@ -281,9 +293,11 @@ class TestGetAgwAdapter:
     def test_returns_same_instance_on_second_call(self):
         """get_agw_adapter() is a singleton — same object on repeated calls."""
         import src.gateway.governance.ingress.agw_adapter as mod
+
         mod._agw_adapter = None  # reset
 
         from src.gateway.governance.ingress.agw_adapter import get_agw_adapter
+
         a1 = get_agw_adapter()
         a2 = get_agw_adapter()
 

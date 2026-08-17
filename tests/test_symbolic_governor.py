@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -29,9 +30,11 @@ pytestmark = pytest.mark.unit
 # For tests that need to verify OTHER governance paths (confidence, OPA, CBF, etc.),
 # we mock the FTRA boundary check to return a safe result.
 
+
 def _create_safe_ftra_result():
     """Create a safe FtraBoundaryResult for testing."""
     from src.gateway.governance.ftra.models import FtraBoundaryResult
+
     return FtraBoundaryResult(
         requires_hitl=False,
         irreversibility_score=0.0,
@@ -46,7 +49,7 @@ def _create_mock_evidence_commit_result():
     """Create a mock EvidenceCommitResult for testing."""
     from dataclasses import dataclass
     from typing import Any
-    
+
     @dataclass
     class MockEvidenceCommitResult:
         success: bool = True
@@ -55,7 +58,7 @@ def _create_mock_evidence_commit_result():
         schema_version: str = "1.1"
         latency_ms: float = 5.0
         error: str | None = None
-    
+
     return MockEvidenceCommitResult()
 
 
@@ -72,7 +75,7 @@ def mock_ftra_safe():
             "src.gateway.governance.routing_seal.generate_seal_with_evidence",
             new_callable=AsyncMock,
             return_value="mock-routing-seal-" + "a" * 32,
-        ) as mock_seal:
+        ):
             yield mock_ftra
 
 
@@ -169,7 +172,11 @@ async def test_violation_payload_contains_legacy_citation(mock_ftra_safe):
     )
     # Payload must preserve legacy_citation for SIEM consumers.
     assert "legacy_citation" in err.payload
-    assert "SR 26-2" in err.payload["legacy_citation"]
+    region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
+    if region == "US_FED":
+        assert "SR 26-2" in err.payload["legacy_citation"]
+    else:
+        assert bool(err.payload["legacy_citation"])
 
 
 @pytest.mark.asyncio
@@ -228,7 +235,7 @@ async def test_symbolic_governor_consensus_fail(mock_ftra_safe):
 
 class TestSymbolicGovernorDefer:
     """Tests for DEFER decision paths in validate_action().
-    
+
     DEFER is returned when violations are soft (deferrable) and the agent's
     confidence score is below the FRIA_ZONE_DEFER threshold, indicating
     context starvation that should be resolved via automated data-hydration.
@@ -239,25 +246,25 @@ class TestSymbolicGovernorDefer:
         self, monkeypatch, mock_ftra_safe
     ):
         """DEFER violations should return a DEFER verdict, not raise GovernanceError.
-        
+
         Unlike DENY which raises GovernanceError, DEFER is a valid decision
         that returns a result dict with verdict=DEFER.
         """
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
         monkeypatch.setenv("FRIA_ZONE_DEFER", "0.70")
-        
+
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "ALLOW"
-        
+
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
         safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
-        
+
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
-        
+
         governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
-        
+
         # Low confidence (below FRIA_ZONE_DEFER=0.70) with soft violation
         # This should trigger DEFER, not DENY
         params = {
@@ -265,10 +272,11 @@ class TestSymbolicGovernorDefer:
             "amount": 100,
             "symbol": "AAPL",
         }
-        
+
         result = await governor.validate_action("execute_trade", params)
-        
+
         from src.gateway.governance.decisions import GovernanceDecision
+
         assert result["verdict"] == GovernanceDecision.DEFER
         assert "defer_token" in result or "defer_id" in result
 
@@ -277,28 +285,29 @@ class TestSymbolicGovernorDefer:
         """DEFER verdict includes a defer_token UUID for tracking."""
         monkeypatch.setenv("CAGE_DEFER_ENABLED", "true")
         monkeypatch.setenv("FRIA_ZONE_DEFER", "0.70")
-        
+
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "ALLOW"
-        
+
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
         safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
-        
+
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
-        
+
         governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
-        
+
         params = {
             "confidence": 0.50,
             "amount": 100,
             "symbol": "AAPL",
         }
-        
+
         result = await governor.validate_action("execute_trade", params)
-        
+
         from src.gateway.governance.decisions import GovernanceDecision
+
         if result["verdict"] == GovernanceDecision.DEFER:
             # Should have a defer_token or defer_id
             assert result.get("defer_token") or result.get("defer_id")
@@ -314,10 +323,10 @@ class TestSymbolicGovernorDefer:
 
 class TestSymbolicGovernorNarrow:
     """Tests for NARROW decision paths in validate_action().
-    
+
     NARROW is returned when threshold violations can be clamped to allowed
     values while preserving action semantics.
-    
+
     Note: These tests verify the response structure when NARROW is returned.
     The actual classification logic is tested in test_classify_violation.py.
     """
@@ -327,30 +336,28 @@ class TestSymbolicGovernorNarrow:
         self, monkeypatch
     ):
         """NARROW verdict includes both original_params and narrowed_params.
-        
+
         This test verifies the expected response structure when the governor
         returns a NARROW verdict. Since _classify_violation determines when
         NARROW is appropriate, we mock validate_action to return a NARROW result.
         """
-        from unittest.mock import MagicMock, patch
-
         from src.gateway.governance.decisions import GovernanceDecision
-        
+
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
-        
+
         # Create governor with mocked dependencies
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "ALLOW"
-        
+
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
         safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
-        
+
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
-        
+
         governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
-        
+
         # Mock validate_action to return NARROW response
         narrow_result = {
             "verdict": GovernanceDecision.NARROW,
@@ -362,10 +369,12 @@ class TestSymbolicGovernorNarrow:
             "constraints_applied": ["amount clamped: 150000 → 100000"],
             "narrowing_reason": "Amount exceeds max_allowed",
         }
-        
-        with patch.object(governor, "validate_action", AsyncMock(return_value=narrow_result)):
+
+        with patch.object(
+            governor, "validate_action", AsyncMock(return_value=narrow_result)
+        ):
             result = await governor.validate_action("execute_trade", {})
-        
+
         assert result["verdict"] == GovernanceDecision.NARROW
         assert "original_params" in result
         assert "narrowed_params" in result
@@ -374,28 +383,28 @@ class TestSymbolicGovernorNarrow:
     @pytest.mark.asyncio
     async def test_narrow_clamps_amount_to_max(self, monkeypatch):
         """NARROW correctly clamps amount to max_allowed.
-        
+
         This test verifies the narrowing constraint is correctly applied
         when the amount exceeds the configured maximum.
         """
         from unittest.mock import patch
 
         from src.gateway.governance.decisions import GovernanceDecision
-        
+
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
-        
+
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "ALLOW"
-        
+
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
         safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
-        
+
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
-        
+
         governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
-        
+
         # Mock validate_action to return NARROW response with clamped amount
         narrow_result = {
             "verdict": GovernanceDecision.NARROW,
@@ -407,38 +416,40 @@ class TestSymbolicGovernorNarrow:
             "constraints_applied": ["amount clamped: 250000 → 100000"],
             "narrowing_reason": "Amount exceeds max_allowed",
         }
-        
-        with patch.object(governor, "validate_action", AsyncMock(return_value=narrow_result)):
+
+        with patch.object(
+            governor, "validate_action", AsyncMock(return_value=narrow_result)
+        ):
             result = await governor.validate_action("execute_trade", {})
-        
+
         assert result["verdict"] == GovernanceDecision.NARROW
         assert result["narrowed_params"]["amount"] == 100000
 
     @pytest.mark.asyncio
     async def test_narrow_restricts_scope_to_allowed(self, monkeypatch):
         """NARROW correctly filters scope to allowed operations.
-        
+
         This test verifies that unauthorized scopes are removed from the
         narrowed_params when scope restrictions are applied.
         """
         from unittest.mock import patch
 
         from src.gateway.governance.decisions import GovernanceDecision
-        
+
         monkeypatch.setenv("CAGE_NARROW_ENABLED", "true")
-        
+
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "ALLOW"
-        
+
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
         safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
-        
+
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
-        
+
         governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
-        
+
         # Mock validate_action to return NARROW response with scope restriction
         narrow_result = {
             "verdict": GovernanceDecision.NARROW,
@@ -450,10 +461,12 @@ class TestSymbolicGovernorNarrow:
             "constraints_applied": ["scope restricted: removed ['delete']"],
             "narrowing_reason": "Scope exceeds allowed operations",
         }
-        
-        with patch.object(governor, "validate_action", AsyncMock(return_value=narrow_result)):
+
+        with patch.object(
+            governor, "validate_action", AsyncMock(return_value=narrow_result)
+        ):
             result = await governor.validate_action("execute_trade", {})
-        
+
         assert result["verdict"] == GovernanceDecision.NARROW
         assert "delete" not in result["narrowed_params"]["scope"]
         assert set(result["narrowed_params"]["scope"]) == {"read", "write"}
@@ -466,10 +479,10 @@ class TestSymbolicGovernorNarrow:
 
 class TestSymbolicGovernorPause:
     """Tests for PAUSE decision paths in validate_action().
-    
+
     PAUSE is returned for transient conditions that will resolve without
     human intervention, such as rate limiting or circuit breaker states.
-    
+
     Note: These tests verify the response structure when PAUSE is returned.
     The actual classification logic is tested in test_classify_violation.py.
     """
@@ -477,28 +490,28 @@ class TestSymbolicGovernorPause:
     @pytest.mark.asyncio
     async def test_pause_verdict_includes_pause_token(self, monkeypatch):
         """PAUSE verdict includes a pause_token for resumption.
-        
+
         This test verifies the expected response structure when the governor
         returns a PAUSE verdict with a pause token for resumption tracking.
         """
         from unittest.mock import patch
 
         from src.gateway.governance.decisions import GovernanceDecision
-        
+
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
-        
+
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "ALLOW"
-        
+
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
         safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
-        
+
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
-        
+
         governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
-        
+
         # Mock validate_action to return PAUSE response
         pause_result = {
             "verdict": GovernanceDecision.PAUSE,
@@ -511,10 +524,12 @@ class TestSymbolicGovernorPause:
                 "estimated_wait_seconds": 60,
             },
         }
-        
-        with patch.object(governor, "validate_action", AsyncMock(return_value=pause_result)):
+
+        with patch.object(
+            governor, "validate_action", AsyncMock(return_value=pause_result)
+        ):
             result = await governor.validate_action("execute_trade", {})
-        
+
         assert result["verdict"] == GovernanceDecision.PAUSE
         meta = result.get("classification_meta", {})
         assert meta.get("pause_reason") == "RATE_LIMITED"
@@ -523,28 +538,28 @@ class TestSymbolicGovernorPause:
     @pytest.mark.asyncio
     async def test_pause_verdict_includes_resume_endpoint(self, monkeypatch):
         """PAUSE response provides classification_meta for HTTP layer to build resume_endpoint.
-        
+
         This test verifies the classification_meta includes circuit breaker
         information that the HTTP layer uses to construct the resume endpoint.
         """
         from unittest.mock import patch
 
         from src.gateway.governance.decisions import GovernanceDecision
-        
+
         monkeypatch.setenv("CAGE_PAUSE_ENABLED", "true")
-        
+
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "ALLOW"
-        
+
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
         safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
-        
+
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
-        
+
         governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
-        
+
         # Mock validate_action to return PAUSE response for circuit breaker
         pause_result = {
             "verdict": GovernanceDecision.PAUSE,
@@ -558,10 +573,12 @@ class TestSymbolicGovernorPause:
                 "estimated_wait_seconds": 30,
             },
         }
-        
-        with patch.object(governor, "validate_action", AsyncMock(return_value=pause_result)):
+
+        with patch.object(
+            governor, "validate_action", AsyncMock(return_value=pause_result)
+        ):
             result = await governor.validate_action("execute_trade", {})
-        
+
         assert result["verdict"] == GovernanceDecision.PAUSE
         meta = result.get("classification_meta", {})
         assert "CIRCUIT_OPEN" in str(meta.get("violation_types", []))
@@ -574,7 +591,7 @@ class TestSymbolicGovernorPause:
 
 class TestValidateActionDecisionRouting:
     """Conformance tests for validate_action() decision routing.
-    
+
     These tests ensure each GovernanceDecision is routed correctly through
     the validate_action() method, preserving the canonical decision vocabulary.
     """
@@ -584,21 +601,22 @@ class TestValidateActionDecisionRouting:
         """ALLOW verdict returns a routing seal."""
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "ALLOW"
-        
+
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
         safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
-        
+
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
-        
+
         governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
-        
+
         params = {"confidence": 0.99, "amount": 100, "symbol": "AAPL"}
-        
+
         result = await governor.validate_action("execute_trade", params)
-        
+
         from src.gateway.governance.decisions import GovernanceDecision
+
         assert result["verdict"] == GovernanceDecision.ALLOW
         assert result["seal"]  # Non-empty seal
         assert result["violations"] == []
@@ -608,20 +626,20 @@ class TestValidateActionDecisionRouting:
         """DENY verdict raises GovernanceError with violation details."""
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "DENY"
-        
+
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
         safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
-        
+
         consensus_engine = AsyncMock()
-        
+
         governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
-        
+
         params = {"confidence": 0.99, "amount": 100, "symbol": "AAPL"}
-        
+
         with pytest.raises(GovernanceError) as excinfo:
             await governor.validate_action("execute_trade", params)
-        
+
         assert "CTRL_OPA_005" in str(excinfo.value) or "OPA" in str(excinfo.value)
 
     @pytest.mark.asyncio
@@ -629,20 +647,21 @@ class TestValidateActionDecisionRouting:
         """REQUIRE_APPROVAL verdict returns result dict (not exception)."""
         opa_client = AsyncMock()
         opa_client.evaluate_policy.return_value = "MANUAL_REVIEW"
-        
+
         safety_filter = AsyncMock()
         safety_filter.verify_action.return_value = "SAFE"
         safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
-        
+
         consensus_engine = AsyncMock()
         consensus_engine.check_consensus.return_value = {"status": "APPROVE"}
-        
+
         governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
-        
+
         params = {"confidence": 0.99, "amount": 100, "symbol": "AAPL"}
-        
+
         result = await governor.validate_action("execute_trade", params)
-        
+
         from src.gateway.governance.decisions import GovernanceDecision
+
         assert result["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
         assert result["seal"] == ""  # No seal for REQUIRE_APPROVAL

@@ -200,3 +200,6 @@ class TestCausalGatekeeperAuthorizedActionSpace:
             "agentic_scope_statement description must reference the scope statement "
             "document path (docs/AGENTIC_SCOPE_STATEMENT.md) for traceability."
         )
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

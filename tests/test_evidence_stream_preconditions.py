@@ -96,10 +96,16 @@ class TestValidateEvidenceStreamPreconditions:
 
             error_msg = str(exc_info.value)
             # Verify error message contains both env var values
-            assert "EVIDENCE_CHAIN_BLOCKING=true" in error_msg or "EVIDENCE_CHAIN_BLOCKING=True" in error_msg
+            assert (
+                "EVIDENCE_CHAIN_BLOCKING=true" in error_msg
+                or "EVIDENCE_CHAIN_BLOCKING=True" in error_msg
+            )
             assert "EVIDENCE_STREAM_ENABLED" in error_msg
             # Verify error message explains the fix
-            assert "enable the evidence stream" in error_msg.lower() or "disable blocking mode" in error_msg.lower()
+            assert (
+                "enable the evidence stream" in error_msg.lower()
+                or "disable blocking mode" in error_msg.lower()
+            )
 
     def test_validation_raises_with_clear_error_message(self) -> None:
         """Error message should clearly explain the invalid configuration and fix."""
@@ -116,13 +122,17 @@ class TestValidateEvidenceStreamPreconditions:
 
             error_msg = str(exc_info.value)
             # Should mention the required fix
-            assert "EVIDENCE_STREAM_ENABLED=true" in error_msg or "enable the evidence stream" in error_msg.lower()
+            assert (
+                "EVIDENCE_STREAM_ENABLED=true" in error_msg
+                or "enable the evidence stream" in error_msg.lower()
+            )
 
     def test_validation_handles_missing_env_vars(self) -> None:
         """When env vars are not set, defaults to false for both (passes)."""
         # Remove env vars if they exist
         env_copy = {
-            k: v for k, v in os.environ.items()
+            k: v
+            for k, v in os.environ.items()
             if k not in ("EVIDENCE_CHAIN_BLOCKING", "EVIDENCE_STREAM_ENABLED")
         }
         with mock.patch.dict(os.environ, env_copy, clear=True):
@@ -186,6 +196,12 @@ class TestConfigurationErrorException:
         from src.compliance_bridge.evidence_stream import EvidenceChainUnavailableError
 
         assert evidence_stream.ConfigurationError is not EvidenceChainUnavailableError
-        assert not issubclass(evidence_stream.ConfigurationError, EvidenceChainUnavailableError)
-        assert not issubclass(EvidenceChainUnavailableError, evidence_stream.ConfigurationError)
+        assert not issubclass(
+            evidence_stream.ConfigurationError, EvidenceChainUnavailableError
+        )
+        assert not issubclass(
+            EvidenceChainUnavailableError, evidence_stream.ConfigurationError
+        )
 
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

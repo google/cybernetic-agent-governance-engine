@@ -37,6 +37,8 @@ from opentelemetry.trace import Status, StatusCode
 from src.gateway.core.policy import OPAClient
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 from src.gateway.governance.contracts import ConsensusProvider, SafetyFilter
+from src.gateway.governance.decisions import GovernanceDecision
+from src.gateway.governance.ftra.models import FtraBoundaryResult
 
 # Import directly from generated_stpa_validator, bypassing the deprecated stpa_validator shim.
 from src.gateway.governance.generated_stpa_validator import (
@@ -316,7 +318,9 @@ def _classify_violation(
     for v in violations:
         # Hard violation indicators
         is_stpa = "STPA" in v or "UCA-" in v or "Unsafe Control Action" in v.lower()
-        is_cbf = "CBF" in v or "Safety Violation (RBC" in v or "cash barrier" in v.lower()
+        is_cbf = (
+            "CBF" in v or "Safety Violation (RBC" in v or "cash barrier" in v.lower()
+        )
         is_fiscal_reject = "Fiscal Limit Pre-Reservation REJECTED" in v
         is_opa_deny = "OPA Denied Action" in v
 
@@ -366,8 +370,7 @@ def _classify_violation(
         # These violations indicate the action was caught at the controller boundary
         # and requires Human-In-The-Loop review before execution.
         is_ftra_boundary_hitl = (
-            "FTRA Boundary Check" in v
-            and "Human-in-the-loop review required" in v
+            "FTRA Boundary Check" in v and "Human-in-the-loop review required" in v
         )
 
         if is_stpa:
@@ -470,7 +473,10 @@ def _classify_violation(
         reasons = []
         if stpa_violation_count > 0:
             reasons.append(f"{stpa_violation_count} STPA safety violation(s)")
-        if "CBF_CONSTRAINT" in violation_types or "CBF_CONSTRAINT_CTX" in violation_types:
+        if (
+            "CBF_CONSTRAINT" in violation_types
+            or "CBF_CONSTRAINT_CTX" in violation_types
+        ):
             reasons.append("CBF cash barrier violation")
         if "OPA_DENY" in violation_types:
             reasons.append("OPA explicit DENY")
@@ -490,7 +496,11 @@ def _classify_violation(
     # Priority 3: Pausable violations → PAUSE candidate (transient conditions)
     # PAUSE takes priority over NARROW because transient conditions should be
     # paused and retried, not narrowed.
-    if has_pausable_violations and not has_soft_violations and not has_narrowable_violations:
+    if (
+        has_pausable_violations
+        and not has_soft_violations
+        and not has_narrowable_violations
+    ):
         # Check feature flag — if disabled, fall back to DENY
         if not CAGE_PAUSE_ENABLED:
             return GovernanceDecision.DENY, {
@@ -857,9 +867,7 @@ class SymbolicGovernor:
                 )
 
                 # Record telemetry
-                span.set_attribute(
-                    "cage.ftra.classification", result.classification
-                )
+                span.set_attribute("cage.ftra.classification", result.classification)
                 span.set_attribute(
                     "cage.ftra.irreversibility_score", result.irreversibility_score
                 )
@@ -1186,7 +1194,9 @@ class SymbolicGovernor:
                 return_exceptions=True,
             )
             cbf_result: str | None | BaseException = _gather_results[0]
-            policy_resp = _gather_results[1]  # Any — asyncio.gather with return_exceptions=True
+            policy_resp = _gather_results[
+                1
+            ]  # Any — asyncio.gather with return_exceptions=True
             _parallel_ms = round((time.perf_counter() - _t_parallel_start) * 1000, 2)
             logger.debug(
                 "⚡ CBF+OPA parallel gate completed in %.1fms (tool=%s)",
@@ -2181,7 +2191,8 @@ class SymbolicGovernor:
                     # Build classification context (includes params for NARROW)
                     _classify_ctx: dict[str, Any] = {
                         "cbf_violation": any(
-                            "CBF" in v or "cash barrier" in v.lower() for v in violations
+                            "CBF" in v or "cash barrier" in v.lower()
+                            for v in violations
                         ),
                         "opa_decision": result.get("opa_decision"),
                         "policy_ambiguous": result.get("policy_ambiguous", False),
@@ -2291,16 +2302,28 @@ class SymbolicGovernor:
                         )
 
                         # Extract narrowed parameters from classification metadata
-                        original_params = classification_meta.get("original_params", params)
-                        narrowed_params = classification_meta.get("narrowed_params", params)
-                        constraints_applied = classification_meta.get("constraints_applied", [])
-                        narrowing_reason = classification_meta.get("narrowing_reason", "")
+                        original_params = classification_meta.get(
+                            "original_params", params
+                        )
+                        narrowed_params = classification_meta.get(
+                            "narrowed_params", params
+                        )
+                        constraints_applied = classification_meta.get(
+                            "constraints_applied", []
+                        )
+                        narrowing_reason = classification_meta.get(
+                            "narrowing_reason", ""
+                        )
 
                         # Issue routing seal for the NARROWED parameters
                         # The seal attests to the narrowed params, not the original
                         # Phase 2.1 (R-06 mitigation): Uses generate_seal_with_evidence()
-                        with tracer.start_as_current_span("cage.routing_seal") as seal_span:
-                            seal = await generate_seal_with_evidence(action, narrowed_params)
+                        with tracer.start_as_current_span(
+                            "cage.routing_seal"
+                        ) as seal_span:
+                            seal = await generate_seal_with_evidence(
+                                action, narrowed_params
+                            )
                             seal_span.set_attribute("cage.seal_issued", True)
                             seal_span.set_attribute("cage.seal_path", "narrow")
 

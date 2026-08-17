@@ -45,6 +45,7 @@ def __getattr__(name: str) -> object:  # noqa: N807
     if name in ("GovernanceError", "SymbolicGovernor"):
         try:
             from .symbolic_governor import GovernanceError, SymbolicGovernor
+
             globals()["GovernanceError"] = GovernanceError
             globals()["SymbolicGovernor"] = SymbolicGovernor
         except ImportError:

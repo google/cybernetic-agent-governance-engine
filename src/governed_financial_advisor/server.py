@@ -26,7 +26,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from langgraph.types import Command
 from opentelemetry import trace
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 try:
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -186,7 +186,6 @@ if (
 # Graph is now in app.state.graph
 
 
-
 class QueryRequest(BaseModel):
     prompt: str
     user_id: str = "default_user"
@@ -224,11 +223,7 @@ class ApprovalResumeRequest(BaseModel):
             )
         return value
 
-    from pydantic import (
-        model_validator,  # type: ignore[misc]  # class-scoped import: pydantic model_validator must be imported inside class body for Pydantic v2 validator registration
-    )
-
-    @model_validator(mode="after")  # type: ignore[misc]
+    @model_validator(mode="after")
     def _check_rationale_not_empty(self) -> "ApprovalResumeRequest":
         self._validate_rationale(self.rationale)
         return self

@@ -125,9 +125,7 @@ class TestUSFEDDataResidency:
         data = _load_json(_US_FED_THRESHOLDS)
         assert "cbf" in data, "US_FED_BASELINE.json must contain a 'cbf' section"
         cbf = data["cbf"]
-        assert "min_cash_balance" in cbf, (
-            "cbf section must contain 'min_cash_balance'"
-        )
+        assert "min_cash_balance" in cbf, "cbf section must contain 'min_cash_balance'"
         assert isinstance(cbf["min_cash_balance"], (int, float)), (
             "cbf.min_cash_balance must be numeric"
         )
@@ -143,17 +141,13 @@ class TestUSFEDDataResidency:
         assert "uca5_drawdown_threshold_pct" in stpa, (
             "stpa section must contain 'uca5_drawdown_threshold_pct'"
         )
-        assert "max_latency_ms" in stpa, (
-            "stpa section must contain 'max_latency_ms'"
-        )
+        assert "max_latency_ms" in stpa, "stpa section must contain 'max_latency_ms'"
         # UCA-5 drawdown threshold must be a positive percentage
         assert stpa["uca5_drawdown_threshold_pct"] > 0, (
             "stpa.uca5_drawdown_threshold_pct must be positive"
         )
         # Latency threshold must be positive
-        assert stpa["max_latency_ms"] > 0, (
-            "stpa.max_latency_ms must be positive"
-        )
+        assert stpa["max_latency_ms"] > 0, "stpa.max_latency_ms must be positive"
 
     def test_us_fed_thresholds_consensus_section(self) -> None:
         """US_FED_BASELINE.json must have a consensus section with threshold_usd."""
@@ -241,10 +235,10 @@ class TestUSFEDDataResidency:
 
     def test_thresholds_directory_contains_us_fed_baseline(self) -> None:
         """config/thresholds/ must include US_FED_BASELINE.json."""
-        assert _THRESHOLDS_DIR.exists(), (
-            f"{_THRESHOLDS_DIR} directory does not exist"
-        )
-        baseline_files = [f.name for f in _THRESHOLDS_DIR.iterdir() if f.suffix == ".json"]
+        assert _THRESHOLDS_DIR.exists(), f"{_THRESHOLDS_DIR} directory does not exist"
+        baseline_files = [
+            f.name for f in _THRESHOLDS_DIR.iterdir() if f.suffix == ".json"
+        ]
         assert "US_FED_BASELINE.json" in baseline_files, (
             f"config/thresholds/ must contain US_FED_BASELINE.json. "
             f"Found: {baseline_files}"
@@ -252,11 +246,13 @@ class TestUSFEDDataResidency:
 
     def test_thresholds_directory_has_all_three_regions(self) -> None:
         """config/thresholds/ must contain baseline files for all three regions."""
-        assert _THRESHOLDS_DIR.exists(), (
-            f"{_THRESHOLDS_DIR} directory does not exist"
-        )
+        assert _THRESHOLDS_DIR.exists(), f"{_THRESHOLDS_DIR} directory does not exist"
         json_files = {f.name for f in _THRESHOLDS_DIR.iterdir() if f.suffix == ".json"}
-        for expected in ("US_FED_BASELINE.json", "EU_ECB_BASELINE.json", "APAC_MAS_BASELINE.json"):
+        for expected in (
+            "US_FED_BASELINE.json",
+            "EU_ECB_BASELINE.json",
+            "APAC_MAS_BASELINE.json",
+        ):
             assert expected in json_files, (
                 f"config/thresholds/ must contain {expected}. Found: {json_files}"
             )

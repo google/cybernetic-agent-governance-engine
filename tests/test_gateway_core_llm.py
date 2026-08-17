@@ -32,6 +32,7 @@ import pytest_asyncio
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_mock_response(content: str = "Hello from mock"):
     """Build a minimal OpenAI-compatible chat completion response."""
     msg = MagicMock()
@@ -59,7 +60,10 @@ _PATCHES = {
         MODEL_FAST="fast-model",
     ),
     "src.governed_financial_advisor.utils.telemetry.genai_span": MagicMock(
-        return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
+        return_value=MagicMock(
+            __enter__=MagicMock(return_value=MagicMock()),
+            __exit__=MagicMock(return_value=False),
+        )
     ),
     "src.governed_financial_advisor.utils.telemetry.record_completion": MagicMock(),
     "src.governed_financial_advisor.utils.telemetry.record_usage": MagicMock(),
@@ -75,9 +79,17 @@ class TestGatewayClientInit:
         with (
             patch("openai.AsyncOpenAI", MagicMock()),
             patch("config.settings.Config") as mock_cfg,
-            patch("src.governed_financial_advisor.utils.telemetry.genai_span", MagicMock()),
-            patch("src.governed_financial_advisor.utils.telemetry.record_completion", MagicMock()),
-            patch("src.governed_financial_advisor.utils.telemetry.record_usage", MagicMock()),
+            patch(
+                "src.governed_financial_advisor.utils.telemetry.genai_span", MagicMock()
+            ),
+            patch(
+                "src.governed_financial_advisor.utils.telemetry.record_completion",
+                MagicMock(),
+            ),
+            patch(
+                "src.governed_financial_advisor.utils.telemetry.record_usage",
+                MagicMock(),
+            ),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
         ):
             mock_cfg.VLLM_GATEWAY_URL = "http://gw:8000/v1"
@@ -89,6 +101,7 @@ class TestGatewayClientInit:
 
             sys.modules.pop("src.gateway.core.llm", None)
             from src.gateway.core.llm import GatewayClient
+
             client = GatewayClient()
 
             assert client.mode == "gateway"
@@ -99,9 +112,17 @@ class TestGatewayClientInit:
         with (
             patch("openai.AsyncOpenAI", MagicMock()),
             patch("config.settings.Config") as mock_cfg,
-            patch("src.governed_financial_advisor.utils.telemetry.genai_span", MagicMock()),
-            patch("src.governed_financial_advisor.utils.telemetry.record_completion", MagicMock()),
-            patch("src.governed_financial_advisor.utils.telemetry.record_usage", MagicMock()),
+            patch(
+                "src.governed_financial_advisor.utils.telemetry.genai_span", MagicMock()
+            ),
+            patch(
+                "src.governed_financial_advisor.utils.telemetry.record_completion",
+                MagicMock(),
+            ),
+            patch(
+                "src.governed_financial_advisor.utils.telemetry.record_usage",
+                MagicMock(),
+            ),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
         ):
             mock_cfg.VLLM_GATEWAY_URL = ""
@@ -113,6 +134,7 @@ class TestGatewayClientInit:
 
             sys.modules.pop("src.gateway.core.llm", None)
             from src.gateway.core.llm import GatewayClient
+
             client = GatewayClient()
 
             assert client.mode == "local"
@@ -129,9 +151,17 @@ class TestGatewayClientRouting:
         with (
             patch("openai.AsyncOpenAI", MagicMock()),
             patch("config.settings.Config") as mock_cfg,
-            patch("src.governed_financial_advisor.utils.telemetry.genai_span", MagicMock()),
-            patch("src.governed_financial_advisor.utils.telemetry.record_completion", MagicMock()),
-            patch("src.governed_financial_advisor.utils.telemetry.record_usage", MagicMock()),
+            patch(
+                "src.governed_financial_advisor.utils.telemetry.genai_span", MagicMock()
+            ),
+            patch(
+                "src.governed_financial_advisor.utils.telemetry.record_completion",
+                MagicMock(),
+            ),
+            patch(
+                "src.governed_financial_advisor.utils.telemetry.record_usage",
+                MagicMock(),
+            ),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
         ):
             mock_cfg.VLLM_GATEWAY_URL = "http://gw:8000/v1"
@@ -141,6 +171,7 @@ class TestGatewayClientRouting:
 
             sys.modules.pop("src.gateway.core.llm", None)
             from src.gateway.core.llm import GatewayClient
+
             client = GatewayClient()
             return client
 
@@ -184,7 +215,9 @@ class TestGatewayClientGenerate:
         with (
             patch("openai.AsyncOpenAI", mock_openai),
             patch("config.settings.Config") as mock_cfg,
-            patch("src.governed_financial_advisor.utils.telemetry.genai_span") as mock_span_ctx,
+            patch(
+                "src.governed_financial_advisor.utils.telemetry.genai_span"
+            ) as mock_span_ctx,
             patch("src.governed_financial_advisor.utils.telemetry.record_completion"),
             patch("src.governed_financial_advisor.utils.telemetry.record_usage"),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
@@ -201,6 +234,7 @@ class TestGatewayClientGenerate:
 
             sys.modules.pop("src.gateway.core.llm", None)
             from src.gateway.core.llm import GatewayClient
+
             client = GatewayClient()
             return client, mock_create, mock_span_ctx
 
@@ -210,7 +244,9 @@ class TestGatewayClientGenerate:
         with (
             patch("openai.AsyncOpenAI") as mock_openai_cls,
             patch("config.settings.Config") as mock_cfg,
-            patch("src.governed_financial_advisor.utils.telemetry.genai_span") as mock_span_ctx,
+            patch(
+                "src.governed_financial_advisor.utils.telemetry.genai_span"
+            ) as mock_span_ctx,
             patch("src.governed_financial_advisor.utils.telemetry.record_completion"),
             patch("src.governed_financial_advisor.utils.telemetry.record_usage"),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
@@ -232,6 +268,7 @@ class TestGatewayClientGenerate:
 
             sys.modules.pop("src.gateway.core.llm", None)
             from src.gateway.core.llm import GatewayClient
+
             client = GatewayClient()
             result = await client.generate("Hello", mode="chat")
 
@@ -244,7 +281,9 @@ class TestGatewayClientGenerate:
         with (
             patch("openai.AsyncOpenAI") as mock_openai_cls,
             patch("config.settings.Config") as mock_cfg,
-            patch("src.governed_financial_advisor.utils.telemetry.genai_span") as mock_span_ctx,
+            patch(
+                "src.governed_financial_advisor.utils.telemetry.genai_span"
+            ) as mock_span_ctx,
             patch("src.governed_financial_advisor.utils.telemetry.record_completion"),
             patch("src.governed_financial_advisor.utils.telemetry.record_usage"),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
@@ -266,11 +305,16 @@ class TestGatewayClientGenerate:
 
             sys.modules.pop("src.gateway.core.llm", None)
             from src.gateway.core.llm import GatewayClient
+
             client = GatewayClient()
-            await client.generate("Question", system_instruction="Be concise.", mode="chat")
+            await client.generate(
+                "Question", system_instruction="Be concise.", mode="chat"
+            )
 
             call_kwargs = mock_create.call_args
-            messages = call_kwargs[1]["messages"] if call_kwargs[1] else call_kwargs[0][1]
+            messages = (
+                call_kwargs[1]["messages"] if call_kwargs[1] else call_kwargs[0][1]
+            )
             system_msgs = [m for m in messages if m["role"] == "system"]
             assert len(system_msgs) == 1
             assert system_msgs[0]["content"] == "Be concise."
@@ -281,7 +325,9 @@ class TestGatewayClientGenerate:
         with (
             patch("openai.AsyncOpenAI") as mock_openai_cls,
             patch("config.settings.Config") as mock_cfg,
-            patch("src.governed_financial_advisor.utils.telemetry.genai_span") as mock_span_ctx,
+            patch(
+                "src.governed_financial_advisor.utils.telemetry.genai_span"
+            ) as mock_span_ctx,
             patch("src.governed_financial_advisor.utils.telemetry.record_completion"),
             patch("src.governed_financial_advisor.utils.telemetry.record_usage"),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
@@ -303,6 +349,7 @@ class TestGatewayClientGenerate:
 
             sys.modules.pop("src.gateway.core.llm", None)
             from src.gateway.core.llm import GatewayClient
+
             client = GatewayClient()
 
             with pytest.raises(ConnectionError, match="vLLM down"):
@@ -314,7 +361,9 @@ class TestGatewayClientGenerate:
         with (
             patch("openai.AsyncOpenAI") as mock_openai_cls,
             patch("config.settings.Config") as mock_cfg,
-            patch("src.governed_financial_advisor.utils.telemetry.genai_span") as mock_span_ctx,
+            patch(
+                "src.governed_financial_advisor.utils.telemetry.genai_span"
+            ) as mock_span_ctx,
             patch("src.governed_financial_advisor.utils.telemetry.record_completion"),
             patch("src.governed_financial_advisor.utils.telemetry.record_usage"),
             patch("opentelemetry.trace.get_current_span", MagicMock()),
@@ -337,6 +386,7 @@ class TestGatewayClientGenerate:
 
             sys.modules.pop("src.gateway.core.llm", None)
             from src.gateway.core.llm import GatewayClient
+
             client = GatewayClient()
             result = await client.generate("Think step by step.", mode="reasoning")
 

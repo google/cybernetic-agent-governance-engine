@@ -648,3 +648,6 @@ class TestDataContracts:
         assert result.path == "ASYNC_ATTESTATION"
         assert result.consensus_score == 0.98
         assert result.validation is None
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

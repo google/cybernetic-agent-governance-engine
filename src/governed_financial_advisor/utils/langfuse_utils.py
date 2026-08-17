@@ -42,6 +42,7 @@ def _get_iso_control_map() -> dict[str, str]:
     _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
     return get_iso_control_map(_region)
 
+
 IsoOutcome = Literal["PASSED", "BLOCKED", "ESCALATED", "SKIPPED"]
 
 # ---------------------------------------------------------------------------

@@ -411,3 +411,6 @@ class TestH12PolicySchemaValidation:
             loader = PolicyLoader(bucket_name="test-bucket")
             with pytest.raises(PolicySchemaError):
                 loader.load_stamp_hazards(blob_name)
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

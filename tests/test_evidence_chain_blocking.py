@@ -55,7 +55,9 @@ class TestEvidenceChainBlockingGate:
 
     def test_blocking_mode_disabled_when_env_false(self):
         """Verify EVIDENCE_CHAIN_BLOCKING=false disables blocking mode."""
-        with patch.dict("os.environ", {"EVIDENCE_CHAIN_BLOCKING": "false"}, clear=False):
+        with patch.dict(
+            "os.environ", {"EVIDENCE_CHAIN_BLOCKING": "false"}, clear=False
+        ):
             import importlib
 
             import src.compliance_bridge.evidence_stream as es
@@ -243,7 +245,9 @@ class TestGenerateSealWithEvidence:
     @pytest.mark.asyncio
     async def test_fire_and_forget_mode_returns_seal_immediately(self):
         """Verify fire-and-forget mode returns seal without blocking."""
-        with patch.dict("os.environ", {"EVIDENCE_CHAIN_BLOCKING": "false"}, clear=False):
+        with patch.dict(
+            "os.environ", {"EVIDENCE_CHAIN_BLOCKING": "false"}, clear=False
+        ):
             import importlib
 
             import src.compliance_bridge.evidence_stream as es
@@ -336,3 +340,6 @@ class TestGenerateSealWithEvidence:
                 assert len(seal) > 0
                 # Blocking ingest_sync should be called
                 mock_sink.ingest_sync.assert_called_once()
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

@@ -56,17 +56,19 @@ def _make_cbf(fake_redis: fakeredis.aioredis.FakeRedis) -> ControlBarrierFunctio
 
     mock_redis_module = MagicMock()
     mock_redis_module.get_raw_client = MagicMock(return_value=fake_redis)
-    mock_redis_module.get = AsyncMock(
-        side_effect=lambda key: fake_redis.get(key)
-    )
+    mock_redis_module.get = AsyncMock(side_effect=lambda key: fake_redis.get(key))
     mock_redis_module.get_float = AsyncMock(
-        side_effect=lambda key, default: asyncio.get_event_loop().run_until_complete(
-            _async_get_float(fake_redis, key, default)
-        )
-        if False
-        else None  # never used; real calls go through get_raw_client
+        side_effect=lambda key, default: (
+            asyncio.get_event_loop().run_until_complete(
+                _async_get_float(fake_redis, key, default)
+            )
+            if False
+            else None
+        )  # never used; real calls go through get_raw_client
     )
-    mock_redis_module.set = AsyncMock(side_effect=lambda key, val: fake_redis.set(key, val))
+    mock_redis_module.set = AsyncMock(
+        side_effect=lambda key, val: fake_redis.set(key, val)
+    )
     mock_redis_module.pipeline = fake_redis.pipeline
 
     return cbf, mock_redis_module
@@ -79,7 +81,9 @@ async def _async_get_float(
     return float(raw) if raw is not None else default
 
 
-async def _seed_balance(fake_redis: fakeredis.aioredis.FakeRedis, balance: float) -> None:
+async def _seed_balance(
+    fake_redis: fakeredis.aioredis.FakeRedis, balance: float
+) -> None:
     await fake_redis.set("safety:current_cash", str(balance))
 
 
@@ -429,7 +433,8 @@ async def test_verify_action_drawdown_violation_returns_unsafe():
         ),
     ):
         result = await cbf.verify_action(
-            "execute_trade", {"amount": 100.0, "drawdown_pct": 10.0}  # 10% > 5% limit
+            "execute_trade",
+            {"amount": 100.0, "drawdown_pct": 10.0},  # 10% > 5% limit
         )
 
     assert "UNSAFE" in result
@@ -794,7 +799,9 @@ async def test_evalsha_with_noscript_retry_reraises_non_noscript_error():
     cbf.tracer = None
 
     async def _run_evalsha():
-        raise RuntimeError("WRONGTYPE Operation against a key holding the wrong kind of value")
+        raise RuntimeError(
+            "WRONGTYPE Operation against a key holding the wrong kind of value"
+        )
 
     mock_client = MagicMock()
     mock_client.script_load = AsyncMock(return_value="sha")
@@ -817,9 +824,7 @@ def test_parse_lua_result_committed_with_bytes():
     cbf = ControlBarrierFunction()
     cbf.tracer = None
 
-    committed, msg = cbf._parse_lua_result(
-        [1, b"COMMITTED", b"49000.0"], None
-    )
+    committed, msg = cbf._parse_lua_result([1, b"COMMITTED", b"49000.0"], None)
 
     assert committed is True
     assert msg == "COMMITTED"
@@ -866,8 +871,8 @@ def test_reset_local_debits_clears_accumulator():
     "balance, min_cash, expected_h",
     [
         (50_000.0, 10_000.0, 40_000.0),
-        (10_000.0, 10_000.0, 0.0),   # exactly at floor → h=0 (safe boundary)
-        (9_999.0, 10_000.0, -1.0),   # below floor → h<0 (unsafe)
+        (10_000.0, 10_000.0, 0.0),  # exactly at floor → h=0 (safe boundary)
+        (9_999.0, 10_000.0, -1.0),  # below floor → h<0 (unsafe)
     ],
 )
 def test_get_h_returns_correct_barrier_value(balance, min_cash, expected_h):

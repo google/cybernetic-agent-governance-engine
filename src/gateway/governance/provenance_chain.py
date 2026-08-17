@@ -71,18 +71,20 @@ logger = logging.getLogger("Gateway.Governance.ProvenanceChain")
 #:   - REQUIRE_APPROVAL: Action requires human sign-off before execution
 #:
 #: See src/gateway/governance/decisions.py for the full canonical vocabulary.
-VALID_DECISIONS = frozenset({
-    # Canonical gateway-boundary decisions (GovernanceDecision enum)
-    "ALLOW",
-    "DENY",
-    "DEFER",
-    "NARROW",
-    "PAUSE",
-    "REQUIRE_APPROVAL",
-    # Execution-phase statuses (LangGraph nodes, backward compat)
-    "BLOCK",
-    "ESCALATE",
-})
+VALID_DECISIONS = frozenset(
+    {
+        # Canonical gateway-boundary decisions (GovernanceDecision enum)
+        "ALLOW",
+        "DENY",
+        "DEFER",
+        "NARROW",
+        "PAUSE",
+        "REQUIRE_APPROVAL",
+        # Execution-phase statuses (LangGraph nodes, backward compat)
+        "BLOCK",
+        "ESCALATE",
+    }
+)
 
 
 # ---------------------------------------------------------------------------

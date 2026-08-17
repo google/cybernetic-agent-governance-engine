@@ -82,9 +82,7 @@ class TestAgentNodeHelpers:
         )
 
         result = get_valid_last_message({"messages": []})
-        assert result == "", (
-            f"Expected empty string for empty messages, got {result!r}"
-        )
+        assert result == "", f"Expected empty string for empty messages, got {result!r}"
 
     def test_get_valid_last_message_no_messages_key(self) -> None:
         """get_valid_last_message must handle missing messages key."""
@@ -130,9 +128,7 @@ class TestAgentNodeHelpers:
         )
 
         result = get_market_data_from_history({"messages": []})
-        assert result == "", (
-            f"Expected empty string with no messages, got {result!r}"
-        )
+        assert result == "", f"Expected empty string with no messages, got {result!r}"
 
     def test_get_market_data_from_history_finds_analysis_keyword(self) -> None:
         """get_market_data_from_history must find messages containing 'ANALYSIS'."""
@@ -374,7 +370,10 @@ class TestExplainerNodeHelpers:
             verify_hmac_signature,
         )
 
-        state: dict[str, Any] = {"governance_signature": "sig", "execution_plan_output": None}
+        state: dict[str, Any] = {
+            "governance_signature": "sig",
+            "execution_plan_output": None,
+        }
         result = verify_hmac_signature(state)
         assert "[HMAC: UNSIGNED]" in result, (
             f"Expected UNSIGNED when no plan, got {result!r}"
@@ -452,7 +451,9 @@ class TestDataAnalystGraph:
         )
 
         msg = MagicMock()
-        msg.tool_calls = [{"name": "get_market_data", "args": {"ticker": "AAPL"}, "id": "tc-1"}]
+        msg.tool_calls = [
+            {"name": "get_market_data", "args": {"ticker": "AAPL"}, "id": "tc-1"}
+        ]
         state = {"messages": [msg], "reasoning_output": "Check AAPL"}
         result = doer_router(state)
         assert result == "execute_tool", (

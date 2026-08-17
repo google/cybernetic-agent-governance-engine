@@ -448,3 +448,6 @@ class TestCLI:
         assert ret == 0
         captured = capsys.readouterr()
         assert "UCA-5" in captured.out or "uca_5" in captured.out
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

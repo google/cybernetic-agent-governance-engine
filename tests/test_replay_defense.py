@@ -128,11 +128,15 @@ class TestSequenceInSignedPayload:
             account_id="test_account",
         )
 
-        with patch(
-            "src.compliance_bridge.reconciliation_worker.REPLAY_DEFENSE_ENABLED", True
-        ), patch(
-            "src.gateway.governance.kms_signer.get_governance_signer",
-            return_value=mock_signer,
+        with (
+            patch(
+                "src.compliance_bridge.reconciliation_worker.REPLAY_DEFENSE_ENABLED",
+                True,
+            ),
+            patch(
+                "src.gateway.governance.kms_signer.get_governance_signer",
+                return_value=mock_signer,
+            ),
         ):
             reconciler.reconcile()
 
@@ -376,7 +380,9 @@ class TestReplayDefenseTelemetry:
             mock_sync_redis = MagicMock()
             mock_sync_redis.get.return_value = b"10"
 
-            is_valid, _ = await cbf._validate_sequence(5, "test_source", mock_sync_redis)
+            is_valid, _ = await cbf._validate_sequence(
+                5, "test_source", mock_sync_redis
+            )
 
             # Note: The counter is incremented in _read_cbf_state_atomic,
             # not in _validate_sequence. This test verifies _validate_sequence
@@ -418,3 +424,6 @@ class TestReplayDefenseTelemetry:
         assert result.sequence == 77
         # Verify INCR was called on the sequence key
         mock_redis.incr.assert_called_once_with("reconciliation:sequence:latest")
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

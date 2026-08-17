@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import pytest
 
 """
 CI drift detection: verify AgentState TypedDict fields are all present
@@ -105,3 +106,6 @@ def test_required_fields_exist_in_agent_state():
         f"AgentState field: {sorted(missing_from_state)}. "
         f"Either remove them from the schema's required array or add them to AgentState."
     )
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

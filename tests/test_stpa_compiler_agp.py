@@ -316,3 +316,6 @@ class TestCompileControlStructureAGP:
         result = compile_control_structure(cs, ["all"])
         # 'all' expands to opa/nemo/python/langgraph — agp is separate
         assert result.agp_content == ""
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

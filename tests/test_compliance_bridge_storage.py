@@ -44,7 +44,9 @@ def test_get_bucket():
         assert storage._get_bucket() == "my-bucket"
 
     with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(RuntimeError, match="Missing required env var: OSCAL_S3_BUCKET"):
+        with pytest.raises(
+            RuntimeError, match="Missing required env var: OSCAL_S3_BUCKET"
+        ):
             storage._get_bucket()
 
 
@@ -99,8 +101,10 @@ def test_s3_operations():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_put_oscal_artifact_idempotent():
-    with patch.dict(os.environ, {"OSCAL_S3_BUCKET": "test-bucket"}, clear=False), \
-         patch.object(storage, "artifact_exists", return_value=True):
+    with (
+        patch.dict(os.environ, {"OSCAL_S3_BUCKET": "test-bucket"}, clear=False),
+        patch.object(storage, "artifact_exists", return_value=True),
+    ):
         ts = datetime(2026, 8, 16, 12, 0, 0, tzinfo=timezone.utc)
         key = await storage.put_oscal_artifact("audit-123", "dummy-yaml", timestamp=ts)
         assert key == "oscal-artifacts/2026-08-16/audit-123.yaml"
@@ -110,9 +114,13 @@ async def test_put_oscal_artifact_idempotent():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_put_oscal_artifact_upload_when_missing():
-    with patch.dict(os.environ, {"OSCAL_S3_BUCKET": "test-bucket"}, clear=False), \
-         patch.object(storage, "artifact_exists", return_value=False), \
-         patch.object(storage, "upload_artifact", return_value="gs://test-bucket/key") as mock_upload:
+    with (
+        patch.dict(os.environ, {"OSCAL_S3_BUCKET": "test-bucket"}, clear=False),
+        patch.object(storage, "artifact_exists", return_value=False),
+        patch.object(
+            storage, "upload_artifact", return_value="gs://test-bucket/key"
+        ) as mock_upload,
+    ):
         ts = datetime(2026, 8, 16, 12, 0, 0, tzinfo=timezone.utc)
         key = await storage.put_oscal_artifact("audit-123", "dummy-yaml", timestamp=ts)
         assert key == "oscal-artifacts/2026-08-16/audit-123.yaml"

@@ -619,7 +619,7 @@ class PlaidLedgerProvider:
 
         t0 = time.monotonic()
         try:
-            with _urllib_request.urlopen(req, timeout=30) as resp:
+            with _urllib_request.urlopen(req, timeout=30) as resp:  # nosec B310
                 raw_body = resp.read().decode("utf-8")
         except Exception as http_exc:
             raise RuntimeError(
@@ -749,9 +749,7 @@ class GcsLedgerProvider:
     def fetch_balance(self, account_id: str) -> ReconciliationResult:  # type: ignore[override]
         """Download the balance snapshot from GCS and return a ReconciliationResult."""
         try:
-            from google.cloud import (
-                storage,  # type: ignore[import-untyped, attr-defined]
-            )
+            import google.cloud.storage as gcs_storage  # type: ignore[import-not-found,import-untyped]
         except ImportError as exc:
             raise RuntimeError(
                 "google-cloud-storage is required for GcsLedgerProvider. "
@@ -761,7 +759,7 @@ class GcsLedgerProvider:
         import datetime
         import json as _json
 
-        client = storage.Client()
+        client = gcs_storage.Client()
         bucket = client.bucket(self._bucket)
         blob = bucket.blob(self._object)
         raw = blob.download_as_text()

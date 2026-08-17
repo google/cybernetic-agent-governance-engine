@@ -70,6 +70,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.gateway.governance.ftra.models import ParseFailureClass, ParseResult
+
 if TYPE_CHECKING:
     from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
@@ -109,6 +111,7 @@ def _increment_parse_failure_counter(failure_class: str) -> None:
     """Increment the parse failure counter if prometheus_client is available."""
     if _PROM_AVAILABLE and FTRA_PARSE_FAILURES is not None:
         FTRA_PARSE_FAILURES.labels(failure_class=failure_class).inc()
+
 
 # ---------------------------------------------------------------------------
 # route_after_ftra — conditional edge function
@@ -217,7 +220,10 @@ def create_ftra_node(
     confidence_extractor = effective_config.get_confidence_extractor()
 
     # Build analyzer with configured registry path
-    classifier = IrreversibilityClassifier(registry_path=effective_config.registry_path)
+    reg_path = (
+        Path(effective_config.registry_path) if effective_config.registry_path else None
+    )
+    classifier = IrreversibilityClassifier(registry_path=reg_path)
     analyzer = PlanGraphAnalyzer(classifier=classifier)
 
     # Capture span attributes from config
@@ -303,7 +309,7 @@ def _run_ftra(
     """
     from opentelemetry import trace
 
-    from src.gateway.governance.ftra.models import FTRAVerdict, ParseFailureClass
+    from src.gateway.governance.ftra.models import FTRAVerdict
     from src.governed_financial_advisor.agents.execution_analyst.agent import (
         ExecutionPlan,
     )
@@ -319,7 +325,9 @@ def _run_ftra(
         logger.warning(
             "FTRA node: plan extractor returned None — failing closed (BLOCKED)."
         )
-        _increment_parse_failure_counter(ParseFailureClass.SCHEMA_VALIDATION_ERROR.value)
+        _increment_parse_failure_counter(
+            ParseFailureClass.SCHEMA_VALIDATION_ERROR.value
+        )
         return {
             "ftra_status": "BLOCKED",
             "ftra_result": {
@@ -351,8 +359,12 @@ def _run_ftra(
     with tracer.start_as_current_span("cage.ftra_analysis") as span:
         span.set_attribute("cage.ftra.ctrl_id", _CTRL_FTRA_001)
         span.set_attribute("cage.ftra.config_source", config_source)
-        span.set_attribute("cage.ftra.parse_failure_class", parse_result.failure_class.value)
-        span.set_attribute("cage.ftra.sanitization_applied", parse_result.sanitization_applied)
+        span.set_attribute(
+            "cage.ftra.parse_failure_class", parse_result.failure_class.value
+        )
+        span.set_attribute(
+            "cage.ftra.sanitization_applied", parse_result.sanitization_applied
+        )
         span.set_attribute("cage.ftra.confidence_at_analysis", confidence)
 
         # Add extra span attributes from config
@@ -609,11 +621,11 @@ def _detect_truncation(raw: str) -> bool:
 
     # Check for trailing incomplete patterns
     truncation_patterns = [
-        r',\s*$',           # Trailing comma
-        r'"\s*:\s*$',       # Key without value
-        r':\s*"[^"]*$',     # Unclosed string value
-        r'\[\s*$',          # Empty array start
-        r'{\s*$',           # Empty object start
+        r",\s*$",  # Trailing comma
+        r'"\s*:\s*$',  # Key without value
+        r':\s*"[^"]*$',  # Unclosed string value
+        r"\[\s*$",  # Empty array start
+        r"{\s*$",  # Empty object start
     ]
     for pattern in truncation_patterns:
         if re.search(pattern, raw):
@@ -633,7 +645,7 @@ def _parse_plan_with_result(raw: Any) -> ParseResult:
         - A dict (from JSON-decoded state)
         - A JSON string (with optional markdown fences)
     """
-    from src.gateway.governance.ftra.models import ParseFailureClass, ParseResult
+    from src.gateway.governance.ftra.models import ParseResult
     from src.governed_financial_advisor.agents.execution_analyst.agent import (
         ExecutionPlan,
     )
@@ -682,7 +694,9 @@ def _parse_plan_with_result(raw: Any) -> ParseResult:
                 sanitization_applied=False,
             )
         except Exception as exc:
-            _increment_parse_failure_counter(ParseFailureClass.SCHEMA_VALIDATION_ERROR.value)
+            _increment_parse_failure_counter(
+                ParseFailureClass.SCHEMA_VALIDATION_ERROR.value
+            )
             return ParseResult(
                 plan=None,
                 failure_class=ParseFailureClass.SCHEMA_VALIDATION_ERROR,
@@ -719,7 +733,8 @@ def _parse_plan_with_result(raw: Any) -> ParseResult:
                     failure_class=failure_class,
                     raw_input=raw,
                     sanitized_input=sanitized_input if sanitization_applied else None,
-                    error_message="Plan has zero steps" + (" (possibly truncated)" if is_truncated else ""),
+                    error_message="Plan has zero steps"
+                    + (" (possibly truncated)" if is_truncated else ""),
                     sanitization_applied=sanitization_applied,
                 )
 
@@ -740,7 +755,11 @@ def _parse_plan_with_result(raw: Any) -> ParseResult:
             _increment_parse_failure_counter(ParseFailureClass.JSON_DECODE_ERROR.value)
 
             # Distinguish truncated from malformed
-            failure_class = ParseFailureClass.TRUNCATED_PLAN if is_truncated else ParseFailureClass.JSON_DECODE_ERROR
+            failure_class = (
+                ParseFailureClass.TRUNCATED_PLAN
+                if is_truncated
+                else ParseFailureClass.JSON_DECODE_ERROR
+            )
 
             return ParseResult(
                 plan=None,
@@ -753,7 +772,9 @@ def _parse_plan_with_result(raw: Any) -> ParseResult:
 
         except Exception as exc:
             # Pydantic validation error (valid JSON, invalid schema)
-            _increment_parse_failure_counter(ParseFailureClass.SCHEMA_VALIDATION_ERROR.value)
+            _increment_parse_failure_counter(
+                ParseFailureClass.SCHEMA_VALIDATION_ERROR.value
+            )
             return ParseResult(
                 plan=None,
                 failure_class=ParseFailureClass.SCHEMA_VALIDATION_ERROR,
@@ -786,7 +807,6 @@ def _parse_plan(raw: Any) -> Any | None:
         - A dict (from JSON-decoded state)
         - A JSON string
     """
-    from src.gateway.governance.ftra.models import ParseFailureClass
     from src.governed_financial_advisor.agents.execution_analyst.agent import (
         ExecutionPlan,
     )
@@ -809,11 +829,15 @@ def _parse_plan(raw: Any) -> Any | None:
         if result.plan is not None:
             logger.warning("FTRA: plan appears truncated but partially parsed")
             return ExecutionPlan.model_validate(result.plan)
-        logger.warning("FTRA: plan is truncated and could not be parsed: %s", result.error_message)
+        logger.warning(
+            "FTRA: plan is truncated and could not be parsed: %s", result.error_message
+        )
         return None
     else:
         # Hard failure
-        logger.warning("FTRA: %s — %s", result.failure_class.value, result.error_message)
+        logger.warning(
+            "FTRA: %s — %s", result.failure_class.value, result.error_message
+        )
         return None
 
 

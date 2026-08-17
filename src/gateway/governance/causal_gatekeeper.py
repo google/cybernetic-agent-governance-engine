@@ -648,7 +648,9 @@ def causal_safety_check(
             n_samples = len(current_telemetry)
             if n_samples < _MIN_CAUSAL_SAMPLES:
                 mrm_span.set_attribute("causal.samples_available", n_samples)
-                mrm_span.set_attribute("causal.min_samples_required", _MIN_CAUSAL_SAMPLES)
+                mrm_span.set_attribute(
+                    "causal.min_samples_required", _MIN_CAUSAL_SAMPLES
+                )
                 mrm_span.set_attribute("causal.result", "insufficient_data_fail_closed")
                 logger.warning(
                     "CausalGatekeeper: insufficient telemetry (%d < %d samples) — "

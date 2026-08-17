@@ -613,3 +613,6 @@ class TestWebhookMinSamples:
                 },
             )
         assert captured and "n=42" in captured[0]
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

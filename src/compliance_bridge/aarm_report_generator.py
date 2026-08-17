@@ -89,7 +89,9 @@ def _build_narrative_prompt(result: AARMVectorResult) -> str:
         f"  - {f}" for f in (vector_meta.implementation_files if vector_meta else [])
     )
     _vec_or_result = AARM_THREAT_VECTORS.get(result.vector_id, result)
-    _description: str = _vec_or_result.description if hasattr(_vec_or_result, "description") else ""  # type: ignore[union-attr]
+    _description: str = (
+        _vec_or_result.description if hasattr(_vec_or_result, "description") else ""
+    )  # type: ignore[union-attr]
     return f"""You are a cybersecurity engineer writing the AARM Conformance Report Card
 for the Cybernetic Governance Engine (CAGE).
 

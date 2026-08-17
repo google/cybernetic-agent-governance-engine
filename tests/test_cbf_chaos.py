@@ -292,9 +292,14 @@ def test_cbf_noscript_error_triggers_reload_and_retry():
         # Mimic production: on NOSCRIPT, reload the script then evalsha with new SHA.
         await fake_redis.script_load(cbf.LUA_ATOMIC_CBF)
         return await fake_redis.evalsha(
-            "newsha123", 2,
-            "safety:current_cash", "audit:state_ledger",
-            "1000.0", str(_MIN_CASH), str(_GAMMA), "",
+            "newsha123",
+            2,
+            "safety:current_cash",
+            "audit:state_ledger",
+            "1000.0",
+            str(_MIN_CASH),
+            str(_GAMMA),
+            "",
         )
 
     async def _run():
@@ -303,9 +308,14 @@ def test_cbf_noscript_error_triggers_reload_and_retry():
             keys=["safety:current_cash", "audit:state_ledger"],
             argv=["1000.0", str(_MIN_CASH), str(_GAMMA), ""],
             run_evalsha_fn=lambda: fake_redis.evalsha(
-                "fakeshadeadbeef", 2,
-                "safety:current_cash", "audit:state_ledger",
-                "1000.0", str(_MIN_CASH), str(_GAMMA), "",
+                "fakeshadeadbeef",
+                2,
+                "safety:current_cash",
+                "audit:state_ledger",
+                "1000.0",
+                str(_MIN_CASH),
+                str(_GAMMA),
+                "",
             ),
             load_and_run_fn=_load_and_run_fn,
         )
@@ -374,7 +384,9 @@ def test_cbf_atomic_guarantee_under_concurrent_write():
 
     # At least one call must have completed without error
     ok_results = [r for r in results if r[0] == "ok"]
-    assert len(ok_results) >= 1, f"Expected at least one successful commit, got: {results}"
+    assert len(ok_results) >= 1, (
+        f"Expected at least one successful commit, got: {results}"
+    )
 
     # Final balance must be internally consistent (not a fractional state)
     raw = asyncio.run(fake_redis_lua.get("safety:current_cash"))

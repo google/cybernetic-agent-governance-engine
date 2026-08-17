@@ -143,18 +143,20 @@ class TestBuildProvenanceRecord:
         Legacy execution-phase values (backward compat):
           BLOCK, ESCALATE
         """
-        assert VALID_DECISIONS == frozenset({
-            # Canonical gateway-boundary decisions
-            "ALLOW",
-            "DENY",
-            "DEFER",
-            "NARROW",
-            "PAUSE",
-            "REQUIRE_APPROVAL",
-            # Legacy execution-phase values
-            "BLOCK",
-            "ESCALATE",
-        })
+        assert VALID_DECISIONS == frozenset(
+            {
+                # Canonical gateway-boundary decisions
+                "ALLOW",
+                "DENY",
+                "DEFER",
+                "NARROW",
+                "PAUSE",
+                "REQUIRE_APPROVAL",
+                # Legacy execution-phase values
+                "BLOCK",
+                "ESCALATE",
+            }
+        )
 
     def test_all_valid_decisions_accepted(self):
         """build_provenance_record accepts all valid decision values."""
@@ -311,3 +313,6 @@ class TestLinkHashDeterminism:
         # Also verify the known format: 64-character lowercase hex (SHA-256).
         assert len(hash1) == 64
         assert all(c in "0123456789abcdef" for c in hash1)
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

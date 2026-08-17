@@ -225,10 +225,7 @@ def pytest_collection_modifyitems(
         )
     )
     skip_chaos = pytest.mark.skip(
-        reason=(
-            "Chaos test — Redis failover scenarios. "
-            "Pass --run-chaos to enable."
-        )
+        reason=("Chaos test — Redis failover scenarios. Pass --run-chaos to enable.")
     )
 
     for item in items:

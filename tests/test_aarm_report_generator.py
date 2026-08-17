@@ -58,7 +58,9 @@ def _all_pass_findings() -> list[OscalFinding]:
 
 @pytest.fixture
 def sample_report() -> AARMConformanceReport:
-    return build_aarm_conformance_report(_all_pass_findings(), audit_id="audit-test-123")
+    return build_aarm_conformance_report(
+        _all_pass_findings(), audit_id="audit-test-123"
+    )
 
 
 @pytest.fixture
@@ -87,17 +89,23 @@ def test_build_narrative_prompt(sample_vector_result: AARMVectorResult) -> None:
 @pytest.mark.local
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_generate_aarm_narrative_success(sample_vector_result: AARMVectorResult) -> None:
+async def test_generate_aarm_narrative_success(
+    sample_vector_result: AARMVectorResult,
+) -> None:
     mock_choice = MagicMock()
-    mock_choice.message.content = "Generated narrative prose explaining security controls."
+    mock_choice.message.content = (
+        "Generated narrative prose explaining security controls."
+    )
     mock_completion = MagicMock()
     mock_completion.choices = [mock_choice]
 
     mock_client = MagicMock()
     mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
 
-    with patch.dict(os.environ, {"VLLM_API_KEY": "test-key"}, clear=False), \
-         patch("openai.AsyncOpenAI", return_value=mock_client):
+    with (
+        patch.dict(os.environ, {"VLLM_API_KEY": "test-key"}, clear=False),
+        patch("openai.AsyncOpenAI", return_value=mock_client),
+    ):
         result = await generate_aarm_narrative(
             sample_vector_result,
             vllm_base="http://localhost:8000/v1",
@@ -109,7 +117,9 @@ async def test_generate_aarm_narrative_success(sample_vector_result: AARMVectorR
 @pytest.mark.local
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_generate_aarm_narrative_missing_key_fallback(sample_vector_result: AARMVectorResult) -> None:
+async def test_generate_aarm_narrative_missing_key_fallback(
+    sample_vector_result: AARMVectorResult,
+) -> None:
     with patch.dict(os.environ, {"VLLM_API_KEY": ""}, clear=False):
         result = await generate_aarm_narrative(
             sample_vector_result,
@@ -123,12 +133,16 @@ async def test_generate_aarm_narrative_missing_key_fallback(sample_vector_result
 @pytest.mark.local
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_generate_aarm_narrative_timeout_fallback(sample_vector_result: AARMVectorResult) -> None:
+async def test_generate_aarm_narrative_timeout_fallback(
+    sample_vector_result: AARMVectorResult,
+) -> None:
     mock_client = MagicMock()
     mock_client.chat.completions.create = AsyncMock(side_effect=asyncio.TimeoutError())
 
-    with patch.dict(os.environ, {"VLLM_API_KEY": "test-key"}, clear=False), \
-         patch("openai.AsyncOpenAI", return_value=mock_client):
+    with (
+        patch.dict(os.environ, {"VLLM_API_KEY": "test-key"}, clear=False),
+        patch("openai.AsyncOpenAI", return_value=mock_client),
+    ):
         result = await generate_aarm_narrative(
             sample_vector_result,
             vllm_base="http://localhost:8000/v1",
@@ -141,7 +155,9 @@ async def test_generate_aarm_narrative_timeout_fallback(sample_vector_result: AA
 @pytest.mark.local
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_enrich_report_with_narratives_no_vllm_base(sample_report: AARMConformanceReport) -> None:
+async def test_enrich_report_with_narratives_no_vllm_base(
+    sample_report: AARMConformanceReport,
+) -> None:
     with patch.dict(os.environ, {"VLLM_BASE_URL": ""}, clear=False):
         narratives = await enrich_report_with_narratives(sample_report)
         assert len(narratives) == 11
@@ -152,9 +168,18 @@ async def test_enrich_report_with_narratives_no_vllm_base(sample_report: AARMCon
 @pytest.mark.local
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_enrich_report_with_narratives_with_vllm(sample_report: AARMConformanceReport) -> None:
-    with patch.dict(os.environ, {"VLLM_BASE_URL": "http://localhost:8000/v1"}, clear=False), \
-         patch("src.compliance_bridge.aarm_report_generator.generate_aarm_narrative", new=AsyncMock(return_value="Narrative prose")):
+async def test_enrich_report_with_narratives_with_vllm(
+    sample_report: AARMConformanceReport,
+) -> None:
+    with (
+        patch.dict(
+            os.environ, {"VLLM_BASE_URL": "http://localhost:8000/v1"}, clear=False
+        ),
+        patch(
+            "src.compliance_bridge.aarm_report_generator.generate_aarm_narrative",
+            new=AsyncMock(return_value="Narrative prose"),
+        ),
+    ):
         narratives = await enrich_report_with_narratives(sample_report)
         assert len(narratives) == 11
         assert narratives[sample_report.vectors[0].vector_id] == "Narrative prose"

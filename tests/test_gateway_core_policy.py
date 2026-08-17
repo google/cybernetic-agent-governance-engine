@@ -17,6 +17,7 @@
 All tests are marked pytest.mark.local — no live OPA, Redis, or network
 connections required.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -131,9 +132,7 @@ class TestReadOpaCache:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("OPA_CACHE_ENABLED", "true")
-        with patch(
-            "src.gateway.infrastructure.redis_client.redis_client", None
-        ):
+        with patch("src.gateway.infrastructure.redis_client.redis_client", None):
             result = await policy_mod._read_opa_cache("some-key")
             assert result is None
 
@@ -144,9 +143,7 @@ class TestReadOpaCache:
         monkeypatch.setenv("OPA_CACHE_ENABLED", "true")
         mock_redis = AsyncMock()
         mock_redis.get = AsyncMock(return_value=b"ALLOW")
-        with patch(
-            "src.gateway.core.policy.redis_client", mock_redis, create=True
-        ):
+        with patch("src.gateway.core.policy.redis_client", mock_redis, create=True):
             # Patch the import inside the function
             with patch.dict(
                 "sys.modules",
@@ -169,7 +166,9 @@ class TestReadOpaCache:
             "sys.modules",
             {
                 "src.gateway.infrastructure.redis_client": MagicMock(
-                    redis_client=MagicMock(get=AsyncMock(side_effect=RuntimeError("boom")))
+                    redis_client=MagicMock(
+                        get=AsyncMock(side_effect=RuntimeError("boom"))
+                    )
                 )
             },
         ):
@@ -194,7 +193,11 @@ class TestWriteOpaCache:
         mock_redis = AsyncMock()
         with patch.dict(
             "sys.modules",
-            {"src.gateway.infrastructure.redis_client": MagicMock(redis_client=mock_redis)},
+            {
+                "src.gateway.infrastructure.redis_client": MagicMock(
+                    redis_client=mock_redis
+                )
+            },
         ):
             await policy_mod._write_opa_cache("k", "ALLOW")
             mock_redis.setex.assert_not_called()
@@ -208,10 +211,16 @@ class TestWriteOpaCache:
         mock_redis.setex = AsyncMock()
         with patch.dict(
             "sys.modules",
-            {"src.gateway.infrastructure.redis_client": MagicMock(redis_client=mock_redis)},
+            {
+                "src.gateway.infrastructure.redis_client": MagicMock(
+                    redis_client=mock_redis
+                )
+            },
         ):
             await policy_mod._write_opa_cache("k", "ALLOW")
-            mock_redis.setex.assert_awaited_once_with("k", policy_mod._OPA_CACHE_TTL_SECONDS, "ALLOW")
+            mock_redis.setex.assert_awaited_once_with(
+                "k", policy_mod._OPA_CACHE_TTL_SECONDS, "ALLOW"
+            )
 
     @pytest.mark.asyncio
     async def test_silently_ignores_exception(
@@ -222,7 +231,11 @@ class TestWriteOpaCache:
         mock_redis.setex = AsyncMock(side_effect=ConnectionError("redis down"))
         with patch.dict(
             "sys.modules",
-            {"src.gateway.infrastructure.redis_client": MagicMock(redis_client=mock_redis)},
+            {
+                "src.gateway.infrastructure.redis_client": MagicMock(
+                    redis_client=mock_redis
+                )
+            },
         ):
             # Must not raise
             await policy_mod._write_opa_cache("k", "ALLOW")
@@ -577,7 +590,9 @@ class TestOPAClientEvaluatePolicy:
         monkeypatch.setenv("OPA_CACHE_ENABLED", "true")
         client = self._make_opa_client()
 
-        with patch.object(policy_mod, "_read_opa_cache", return_value="ALLOW") as mock_cache:
+        with patch.object(
+            policy_mod, "_read_opa_cache", return_value="ALLOW"
+        ) as mock_cache:
             result = await client.evaluate_policy({"action": "trade"})
             assert result == "ALLOW"
             mock_cache.assert_awaited_once()
@@ -599,7 +614,9 @@ class TestOPAClientEvaluatePolicy:
 
         with (
             patch.object(client, "_get_client", return_value=mock_http),
-            patch.object(policy_mod, "_write_opa_cache", return_value=None) as mock_write,
+            patch.object(
+                policy_mod, "_write_opa_cache", return_value=None
+            ) as mock_write,
             patch.object(policy_mod, "_read_opa_cache", return_value=None),
         ):
             result = await client.evaluate_policy({"action": "trade"})

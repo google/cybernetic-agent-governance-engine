@@ -645,7 +645,9 @@ class TestLinkHashV1_1:
 
         # All hashes should be different
         all_hashes = [hash_base, hash_with_reason, hash_with_narrowing, hash_with_pause]
-        assert len(set(all_hashes)) == 4, "All v1.1 field combinations should produce unique hashes"
+        assert len(set(all_hashes)) == 4, (
+            "All v1.1 field combinations should produce unique hashes"
+        )
 
     def test_hash_includes_schema_identifier(self) -> None:
         """Hash computation includes the v1.1 schema identifier."""
@@ -663,3 +665,6 @@ class TestLinkHashV1_1:
         # Hash should be 64 hex characters (SHA-256)
         assert len(hash1) == 64
         assert all(c in "0123456789abcdef" for c in hash1)
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

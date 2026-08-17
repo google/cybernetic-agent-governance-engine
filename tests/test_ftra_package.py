@@ -546,7 +546,10 @@ class TestCreateFtraNode:
         assert result["ftra_status"] == "BLOCKED"
         # Error message indicates plan extraction failed (extractor returned None)
         assert "plan" in result["ftra_result"]["error"].lower()
-        assert "None" in result["ftra_result"]["error"] or "missing" in result["ftra_result"]["error"]
+        assert (
+            "None" in result["ftra_result"]["error"]
+            or "missing" in result["ftra_result"]["error"]
+        )
 
     def test_malformed_execution_plan_defers_for_review(self, tmp_path):
         """Malformed plan should DEFER for human review, not auto-BLOCK.
@@ -731,6 +734,7 @@ class TestCreateFtraNode:
         # Custom extractors that read from non-GFA keys
         def custom_plan_extractor(s):
             return s.get("my_custom_plan")
+
         def custom_confidence_extractor(s):
             return s.get("my_custom_confidence", 0.5)
 
@@ -869,9 +873,9 @@ class TestSanitizeLlmOutput:
         """Markdown code fences with ```json should be stripped."""
         from src.gateway.governance.ftra.node_factory import sanitize_llm_output
 
-        raw = '''```json
+        raw = """```json
 {"plan_id": "test", "steps": []}
-```'''
+```"""
         sanitized, was_modified = sanitize_llm_output(raw)
 
         assert was_modified is True
@@ -882,9 +886,9 @@ class TestSanitizeLlmOutput:
         """Markdown code fences without language tag should be stripped."""
         from src.gateway.governance.ftra.node_factory import sanitize_llm_output
 
-        raw = '''```
+        raw = """```
 {"plan_id": "test"}
-```'''
+```"""
         sanitized, was_modified = sanitize_llm_output(raw)
 
         assert was_modified is True
@@ -955,7 +959,9 @@ class TestParseResultAndFailureClasses:
 
         assert ParseFailureClass.SUCCESS.value == "SUCCESS"
         assert ParseFailureClass.JSON_DECODE_ERROR.value == "JSON_DECODE_ERROR"
-        assert ParseFailureClass.SCHEMA_VALIDATION_ERROR.value == "SCHEMA_VALIDATION_ERROR"
+        assert (
+            ParseFailureClass.SCHEMA_VALIDATION_ERROR.value == "SCHEMA_VALIDATION_ERROR"
+        )
         assert ParseFailureClass.EMPTY_STEPS.value == "EMPTY_STEPS"
         assert ParseFailureClass.TRUNCATED_PLAN.value == "TRUNCATED_PLAN"
         assert ParseFailureClass.TOKENIZER_ARTIFACT.value == "TOKENIZER_ARTIFACT"
@@ -1182,7 +1188,7 @@ class TestBugFtraJson001:
 
     def _plan_json_with_fences(self):
         """Return a valid plan wrapped in markdown code fences."""
-        return '''```json
+        return """```json
 {
     "plan_id": "fenced-plan-1",
     "strategy_name": "Test Strategy",
@@ -1197,7 +1203,7 @@ class TestBugFtraJson001:
         }
     ]
 }
-```'''
+```"""
 
     def test_markdown_fences_sanitized_and_parsed(self, tmp_path):
         """Markdown code fences should be sanitized and plan should parse.
@@ -1357,7 +1363,7 @@ class TestTelemetry:
         node = create_ftra_node(registry_path=registry_path)
 
         # Plan with markdown fences (will be sanitized)
-        fenced_plan = '''```json
+        fenced_plan = """```json
 {
     "plan_id": "test-1",
     "strategy_name": "Test",
@@ -1365,7 +1371,7 @@ class TestTelemetry:
     "risk_factors": [],
     "steps": [{"id": "s1", "action": "check_price", "description": "d", "parameters": {}}]
 }
-```'''
+```"""
 
         state = {
             "execution_plan_output": fenced_plan,
@@ -1388,7 +1394,9 @@ class TestTelemetry:
             for call in mock_span.set_attribute.call_args_list
         }
         assert set_attr_calls.get("cage.ftra.sanitization_applied") is True
-        assert set_attr_calls.get("cage.ftra.parse_failure_class") == "TOKENIZER_ARTIFACT"
+        assert (
+            set_attr_calls.get("cage.ftra.parse_failure_class") == "TOKENIZER_ARTIFACT"
+        )
 
     def test_prometheus_counter_incremented_on_parse_failure(self, tmp_path):
         """Prometheus counter cage_ftra_parse_failures_total should be incremented.
@@ -1488,15 +1496,19 @@ class TestFtraIntegration:
 
         # Plan with terminal delete action + high confidence → HITL_REQUIRED
         state = {
-            "execution_plan_output": self._plan_dict([
-                ("s1", "check_balance"),
-                ("s2", "delete_account"),  # Terminal action
-            ]),
+            "execution_plan_output": self._plan_dict(
+                [
+                    ("s1", "check_balance"),
+                    ("s2", "delete_account"),  # Terminal action
+                ]
+            ),
             "evaluation_result": {"confidence": 0.85},
         }
 
         # Mock Redis to avoid actual HITL parking (just test classification)
-        with patch("redis.asyncio.from_url", side_effect=ConnectionError("redis unavailable")):
+        with patch(
+            "redis.asyncio.from_url", side_effect=ConnectionError("redis unavailable")
+        ):
             with pytest.raises(Exception):  # NodeInterrupt expected
                 node(state)
 
@@ -1520,11 +1532,13 @@ class TestFtraIntegration:
 
         # Plan with only reversible/read-only actions
         state = {
-            "execution_plan_output": self._plan_dict([
-                ("s1", "check_balance"),
-                ("s2", "update_preferences"),
-                ("s3", "view_portfolio"),
-            ]),
+            "execution_plan_output": self._plan_dict(
+                [
+                    ("s1", "check_balance"),
+                    ("s2", "update_preferences"),
+                    ("s3", "view_portfolio"),
+                ]
+            ),
             "evaluation_result": {"confidence": 0.95},
         }
         result = node(state)
@@ -1624,7 +1638,11 @@ class TestFtraIntegration:
             ("execute_trade", TerminalClassification.IRREVERSIBLE_TERMINAL, True),
             ("check_price", TerminalClassification.READ_ONLY, False),
             ("update_watchlist", TerminalClassification.REVERSIBLE, False),
-            ("unknown_action", TerminalClassification.IRREVERSIBLE_TERMINAL, True),  # Fail-closed
+            (
+                "unknown_action",
+                TerminalClassification.IRREVERSIBLE_TERMINAL,
+                True,
+            ),  # Fail-closed
         ]
 
         for action_name, expected_class, expected_hitl in test_cases:
@@ -1740,12 +1758,14 @@ class TestFtraIntegration:
 
         # Plan with mixed actions: mostly safe but one terminal
         state = {
-            "execution_plan_output": self._plan_dict([
-                ("s1", "check_balance"),      # READ_ONLY
-                ("s2", "analyze_market"),     # READ_ONLY
-                ("s3", "update_preferences"), # REVERSIBLE
-                ("s4", "execute_trade"),      # IRREVERSIBLE_TERMINAL ← worst case
-            ]),
+            "execution_plan_output": self._plan_dict(
+                [
+                    ("s1", "check_balance"),  # READ_ONLY
+                    ("s2", "analyze_market"),  # READ_ONLY
+                    ("s3", "update_preferences"),  # REVERSIBLE
+                    ("s4", "execute_trade"),  # IRREVERSIBLE_TERMINAL ← worst case
+                ]
+            ),
             "evaluation_result": {"confidence": 0.30},  # Low confidence → BLOCKED
         }
         result = node(state)
@@ -1753,7 +1773,10 @@ class TestFtraIntegration:
         # Should be BLOCKED due to low confidence + reachable terminal
         assert result["ftra_status"] == "BLOCKED"
         assert result["ftra_result"]["verdict"] == "BLOCKED"
-        assert result["ftra_result"]["worst_case_classification"] == "IRREVERSIBLE_TERMINAL"
+        assert (
+            result["ftra_result"]["worst_case_classification"]
+            == "IRREVERSIBLE_TERMINAL"
+        )
         assert "s4" in result["ftra_result"]["reachable_terminals"]
 
     def test_ftra_telemetry_attributes_complete(self, tmp_path):

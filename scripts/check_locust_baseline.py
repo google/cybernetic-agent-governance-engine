@@ -40,7 +40,6 @@ import csv
 import os
 import sys
 
-
 # Default p95 SLO in milliseconds (2 seconds).
 _DEFAULT_P95_MS = 2000
 

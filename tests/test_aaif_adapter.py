@@ -199,3 +199,6 @@ class TestAAIFToControlStructurePatch:
     def test_patch_has_unsafe_control_actions(self):
         patch = aaif_to_control_structure_patch(_MINIMAL_AAIF_SPEC)
         assert "unsafe_control_actions" in patch
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

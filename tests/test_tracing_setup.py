@@ -25,8 +25,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.gateway.tracing_setup import (
-    _OTLPErrorFilter,
     _install_otlp_error_filter,
+    _OTLPErrorFilter,
     _resolve_otlp_endpoint_and_headers,
     setup_tracing,
 )
@@ -129,7 +129,9 @@ def test_setup_tracing_already_configured():
     mock_provider = MagicMock()
     mock_provider._active_span_processor = MagicMock()
 
-    with patch("src.gateway.tracing_setup._TRACES_EXPORTER", "otlp"), \
-         patch("opentelemetry.trace.get_tracer_provider", return_value=mock_provider), \
-         patch("src.gateway.tracing_setup._OPENLLMETRY_ENABLED", False):
+    with (
+        patch("src.gateway.tracing_setup._TRACES_EXPORTER", "otlp"),
+        patch("opentelemetry.trace.get_tracer_provider", return_value=mock_provider),
+        patch("src.gateway.tracing_setup._OPENLLMETRY_ENABLED", False),
+    ):
         setup_tracing()

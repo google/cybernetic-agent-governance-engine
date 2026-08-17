@@ -368,3 +368,6 @@ class TestPatternCoverage:
         assert expected.issubset(names), (
             f"Missing pattern coverage for: {expected - names}"
         )
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

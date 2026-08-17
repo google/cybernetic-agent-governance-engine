@@ -229,7 +229,11 @@ async def test_worm_path_format(uca_logger):
 @pytest.mark.asyncio
 @pytest.mark.local
 async def test_log_prompt_injection(uca_logger):
-    with patch.object(uca_logger, "_persist_uca_record", return_value="uca-records/2026-08-16/UCA-123.yaml"):
+    with patch.object(
+        uca_logger,
+        "_persist_uca_record",
+        return_value="uca-records/2026-08-16/UCA-123.yaml",
+    ):
         path = await uca_logger.log_prompt_injection(
             agent_id="test-agent",
             block_reason="direct_injection",
@@ -241,7 +245,9 @@ async def test_log_prompt_injection(uca_logger):
 @pytest.mark.asyncio
 @pytest.mark.local
 async def test_log_prompt_injection_failure(uca_logger):
-    with patch.object(uca_logger, "_build_uca_record", side_effect=RuntimeError("build failed")):
+    with patch.object(
+        uca_logger, "_build_uca_record", side_effect=RuntimeError("build failed")
+    ):
         path = await uca_logger.log_prompt_injection(
             agent_id="test-agent",
             block_reason="direct_injection",
@@ -253,7 +259,11 @@ async def test_log_prompt_injection_failure(uca_logger):
 @pytest.mark.asyncio
 @pytest.mark.local
 async def test_log_pii_sanitization(uca_logger):
-    with patch.object(uca_logger, "_persist_uca_record", return_value="uca-records/2026-08-16/UCA-pii.yaml"):
+    with patch.object(
+        uca_logger,
+        "_persist_uca_record",
+        return_value="uca-records/2026-08-16/UCA-pii.yaml",
+    ):
         path = await uca_logger.log_pii_sanitization(
             agent_id="test-agent",
             tool_name="transfer_funds",
@@ -266,7 +276,9 @@ async def test_log_pii_sanitization(uca_logger):
 @pytest.mark.asyncio
 @pytest.mark.local
 async def test_log_pii_sanitization_failure(uca_logger):
-    with patch.object(uca_logger, "_build_uca_record", side_effect=RuntimeError("build failed")):
+    with patch.object(
+        uca_logger, "_build_uca_record", side_effect=RuntimeError("build failed")
+    ):
         path = await uca_logger.log_pii_sanitization(
             agent_id="test-agent",
             tool_name="transfer_funds",
@@ -322,4 +334,3 @@ def test_get_worm_bucket_regional_routing(uca_logger):
     ):
         bucket = uca_logger._get_worm_bucket()
         assert bucket == "us-worm-bucket"
-

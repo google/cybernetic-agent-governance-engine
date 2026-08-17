@@ -321,9 +321,11 @@ class TestRecursiveGovernanceRiskDocumented:
     def test_scope_statement_mentions_consensus_gate(self):
         """Scope statement must reference ConsensusGate in governance risk context."""
         content = SCOPE_STATEMENT_PATH.read_text(encoding="utf-8")
-        assert "ConsensusGate" in content or "ConsensusEngine" in content or "consensus" in content.lower(), (
-            "docs/AGENTIC_SCOPE_STATEMENT.md does not reference ConsensusGate"
-        )
+        assert (
+            "ConsensusGate" in content
+            or "ConsensusEngine" in content
+            or "consensus" in content.lower()
+        ), "docs/AGENTIC_SCOPE_STATEMENT.md does not reference ConsensusGate"
 
     def test_scope_statement_mentions_ai600_section(self):
         """Scope statement must reference AI 600-1 §2.1 or §2.5."""
@@ -337,3 +339,6 @@ class TestRecursiveGovernanceRiskDocumented:
         assert has_ref, (
             "docs/AGENTIC_SCOPE_STATEMENT.md does not reference AI 600-1 §2.1/§2.5"
         )
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

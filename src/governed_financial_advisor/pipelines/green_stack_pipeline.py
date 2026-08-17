@@ -61,7 +61,7 @@ def fetch_compliance_metrics(
     import urllib.request
 
     url = f"{compliance_bridge_url}/v1/metrics/{control_id}"
-    with urllib.request.urlopen(url, timeout=30) as resp:
+    with urllib.request.urlopen(url, timeout=30) as resp:  # nosec B310
         return json.loads(resp.read())
 
 
@@ -132,7 +132,7 @@ def trigger_nemo_refinement(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:  # nosec B310
             body = resp.read().decode()
             return f"PROPOSAL_STAGED: HTTP {resp.status} — {body[:200]}"
     except Exception as exc:

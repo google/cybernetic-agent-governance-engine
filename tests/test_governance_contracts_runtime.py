@@ -121,7 +121,9 @@ class _ConcreteCausalGatekeeper:
 class _ConcreteReservationToken:
     """Minimal ReservationToken for FiscalGuard testing."""
 
-    def __init__(self, agent_id: str, amount_usd: float, rejected: bool = False) -> None:
+    def __init__(
+        self, agent_id: str, amount_usd: float, rejected: bool = False
+    ) -> None:
         self.agent_id = agent_id
         self.amount_usd = amount_usd
         self.rejected = rejected
@@ -161,9 +163,7 @@ class TestSafetyFilterRuntimeBehavior:
         """verify_action must return 'SAFE' when amount is within balance."""
         sf = _ConcreteSafetyFilter(cash_balance=5_000.0)
         result = sf.verify_action("execute_trade", {"amount": 1_000.0})
-        assert result == "SAFE", (
-            f"Expected 'SAFE' for in-budget trade, got {result!r}"
-        )
+        assert result == "SAFE", f"Expected 'SAFE' for in-budget trade, got {result!r}"
 
     def test_verify_action_returns_unsafe_over_balance(self) -> None:
         """verify_action must return a string starting with 'UNSAFE' when over budget."""
@@ -226,7 +226,9 @@ class TestSafetyFilterRuntimeBehavior:
         sf = _ConcreteSafetyFilter()
         # Protocol structural check: all required methods present and callable
         assert callable(sf.verify_action), "verify_action must be callable"
-        assert callable(sf.atomic_verify_and_commit), "atomic_verify_and_commit must be callable"
+        assert callable(sf.atomic_verify_and_commit), (
+            "atomic_verify_and_commit must be callable"
+        )
         assert callable(sf.update_state), "update_state must be callable"
         assert callable(sf.rollback_state), "rollback_state must be callable"
 
@@ -345,17 +347,13 @@ class TestCausalGatekeeperRuntimeBehavior:
         """causal_safety_check() must return True for small amounts."""
         cg = _ConcreteCausalGatekeeper()
         result = cg.causal_safety_check({"amount": 1_000.0})
-        assert result is True, (
-            f"Expected True for safe amount, got {result}"
-        )
+        assert result is True, f"Expected True for safe amount, got {result}"
 
     def test_causal_safety_check_unsafe_for_large_amount(self) -> None:
         """causal_safety_check() must return False for amounts exceeding safety boundary."""
         cg = _ConcreteCausalGatekeeper()
         result = cg.causal_safety_check({"amount": 100_000.0})
-        assert result is False, (
-            f"Expected False for unsafe amount, got {result}"
-        )
+        assert result is False, f"Expected False for unsafe amount, got {result}"
 
     def test_causal_safety_check_accepts_telemetry_arg(self) -> None:
         """causal_safety_check() must accept an optional current_telemetry argument."""
@@ -584,9 +582,7 @@ class TestOscalFindingModel:
                 result=result,  # type: ignore[arg-type]
                 finding_id=f"finding-{result}",
             )
-            assert f.result == result, (
-                f"OscalFinding must accept result={result!r}"
-            )
+            assert f.result == result, f"OscalFinding must accept result={result!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -644,7 +640,9 @@ class TestControlMetaAccessors:
 
         for region in ("US_FED", "EU_ECB", "APAC_MAS"):
             meta = get_control_meta(region)
-            assert isinstance(meta, dict), f"get_control_meta({region!r}) must return dict"
+            assert isinstance(meta, dict), (
+                f"get_control_meta({region!r}) must return dict"
+            )
             for ctrl_id, ctrl_meta in meta.items():
                 assert isinstance(ctrl_meta, dict), (
                     f"Control {ctrl_id!r} in region {region!r} must have dict metadata"
@@ -658,9 +656,7 @@ class TestControlMetaAccessors:
         assert "SC-8" in sla, "US_FED SLA must include SC-8"
         assert "SC-7" in sla, "US_FED SLA must include SC-7"
         # These are daily infrastructure checks — 86400s
-        assert sla["SC-8"] == 86_400, (
-            f"Expected SC-8 SLA=86400s, got {sla['SC-8']}"
-        )
+        assert sla["SC-8"] == 86_400, f"Expected SC-8 SLA=86400s, got {sla['SC-8']}"
 
     def test_get_sla_seconds_eu_ecb_excludes_nist_slas(self) -> None:
         """get_sla_seconds('EU_ECB') must NOT include US_FED-only NIST SLAs."""

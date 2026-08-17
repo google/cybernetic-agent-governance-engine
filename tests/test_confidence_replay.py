@@ -514,3 +514,6 @@ async def test_token_remains_parked_if_hydration_insufficient(
     assert still_parked.confidence_score == 0.65, (
         "Original confidence_score on the stored token must be unchanged."
     )
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

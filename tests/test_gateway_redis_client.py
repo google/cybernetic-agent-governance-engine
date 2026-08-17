@@ -74,7 +74,9 @@ async def test_async_redis_client_ping_ready(fake_async_redis):
     await client_wrapper.ping_ready()
 
     # Ping failure
-    with patch.object(fake_async_redis, "ping", side_effect=RuntimeError("connection dropped")):
+    with patch.object(
+        fake_async_redis, "ping", side_effect=RuntimeError("connection dropped")
+    ):
         with pytest.raises(RuntimeError):
             await client_wrapper.ping_ready()
 

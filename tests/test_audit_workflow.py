@@ -207,7 +207,9 @@ class TestStep4CriticalAlert:
             "src.compliance_bridge.audit_workflow.create_notifier",
             return_value=mock_notifier,
         ):
-            alerted, targets = await _step4_alert_on_critical_fail(findings, "audit-001")
+            alerted, targets = await _step4_alert_on_critical_fail(
+                findings, "audit-001"
+            )
 
         assert alerted is False
         assert targets == []
@@ -229,7 +231,9 @@ class TestStep4CriticalAlert:
             "src.compliance_bridge.audit_workflow.create_notifier",
             return_value=mock_notifier,
         ):
-            alerted, targets = await _step4_alert_on_critical_fail(findings, "audit-001")
+            alerted, targets = await _step4_alert_on_critical_fail(
+                findings, "audit-001"
+            )
 
         assert alerted is True
         assert critical_control in targets
@@ -251,7 +255,9 @@ class TestStep4CriticalAlert:
             "src.compliance_bridge.audit_workflow.create_notifier",
             return_value=mock_notifier,
         ):
-            alerted, _targets = await _step4_alert_on_critical_fail(findings, "audit-001")
+            alerted, _targets = await _step4_alert_on_critical_fail(
+                findings, "audit-001"
+            )
 
         assert alerted is True
 
@@ -270,7 +276,9 @@ class TestStep4CriticalAlert:
             "src.compliance_bridge.audit_workflow.create_notifier",
             return_value=mock_notifier,
         ):
-            alerted, _targets = await _step4_alert_on_critical_fail(findings, "audit-001")
+            alerted, _targets = await _step4_alert_on_critical_fail(
+                findings, "audit-001"
+            )
 
         assert alerted is False
         mock_notifier.send_critical_alert.assert_not_called()

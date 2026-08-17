@@ -1391,8 +1391,6 @@ def _fmt_benign_table(benign: dict[str, Any]) -> str:
 # Requires a running LLM endpoint; adds significant wall-clock time.
 
 
-
-
 def measure_ungoverned_baseline(
     adversarial_dataset: dict[str, Any],
     benign_dataset: dict[str, Any],

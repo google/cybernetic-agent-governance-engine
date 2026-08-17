@@ -30,6 +30,7 @@ import logging
 import os
 import sys
 from functools import lru_cache
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -195,7 +196,7 @@ class FriaThresholds(BaseModel):
 
     @field_validator("zone_defer")
     @classmethod
-    def defer_less_than_allow(cls, v: float, info) -> float:
+    def defer_less_than_allow(cls, v: float, info: Any) -> float:
         """Ensure zone_defer < zone_allow for coherent zone semantics."""
         # Note: zone_allow may not be in info.data yet during construction
         # so we validate at model level in GovernanceThresholds instead

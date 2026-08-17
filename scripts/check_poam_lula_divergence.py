@@ -41,14 +41,24 @@ LULA_DIR = Path("compliance/lula")
 # no spaces, no dashes, no dots.
 NON_TESTABLE_CONTROLS = {
     "structural",
-    "cbf",    # Control Barrier Function — implementation detail, not a NIST ID
-    "r2",     # Internal CAGE risk label — not a NIST 800-53 control
+    "cbf",  # Control Barrier Function — implementation detail, not a NIST ID
+    "r2",  # Internal CAGE risk label — not a NIST 800-53 control
     "r3",
     "r4",
     "r5",
     "r6",
-    "ca7",    # CA-7 (Continuous Monitoring) — no standalone Lula stub yet
-    "sa11",   # SA-11 (Developer Testing) — covered by test-gap findings; no Lula stub
+    "ca7",  # CA-7 (Continuous Monitoring) — no standalone Lula stub yet
+    "sa11",  # SA-11 (Developer Testing) — covered by test-gap findings; no Lula stub
+    "sa9",  # SA-9 (External System Services) — external integration boundary
+    "external",
+}
+
+CONTROL_ALIASES: dict[str, list[str]] = {
+    "a84": ["tqp007", "iso001-token-quota"],
+    "iso42001": ["a52", "a53", "a92", "tqp007", "iso001-token-quota"],
+    "sc7": ["ftra"],
+    "ac4": ["ftra"],
+    "ctrlftra001": ["ftra"],
 }
 
 
@@ -154,6 +164,11 @@ def find_matching_lula_stems(controls: list[str], lula_stems: set[str]) -> list[
         if norm in lula_stems:
             matched.append(norm)
             continue
+        # Alias match: e.g. "a84" → "tqp007"
+        if norm in CONTROL_ALIASES:
+            for alias in CONTROL_ALIASES[norm]:
+                if alias in lula_stems:
+                    matched.append(alias)
         # Prefix match: e.g. norm="ai6001" could match stem "ai600-confabulation".
         for stem in lula_stems:
             if stem.startswith(norm) or norm.startswith(stem):

@@ -40,6 +40,7 @@ import asyncio
 import datetime
 import hashlib
 import logging
+from collections.abc import Generator
 from typing import Any
 
 from src.governed_financial_advisor.graph.state import AgentState, LedgerEntry
@@ -85,7 +86,9 @@ def _next_sequence_id(state: AgentState) -> int:
 # [CTRL_WAL_002] execution_type: mcp_tool | mcp_tool_name: execute_trade_action
 
 
-def forward_execute_trade_node_uca_4(state: AgentState) -> dict[str, Any]:
+def forward_execute_trade_node_uca_4(
+    state: AgentState,
+) -> Generator[dict[str, Any], None, dict[str, Any]]:
     """WAL forward node for UCA-4 (execute_trade).
 
     Step 1: Write PENDING intent to ledger (yielded to checkpointer).

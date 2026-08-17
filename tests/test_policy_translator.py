@@ -210,3 +210,6 @@ class TestTranslatePolicy:
             assert bundle.format_detected == fmt, (
                 f"Expected {fmt}, got {bundle.format_detected}"
             )
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

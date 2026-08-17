@@ -443,21 +443,15 @@ async def test_gateway_verify_and_consume_seal_prevents_replay():
 
     # First consumption succeeds
     assert (
-        await verify_and_consume_seal(
-            seal, "execute_trade", params, redis_client=redis
-        )
+        await verify_and_consume_seal(seal, "execute_trade", params, redis_client=redis)
         is True
     )
 
     # Second consumption within TTL must fail with replay violation
     with pytest.raises(SymbolicGovernorViolation) as exc_info:
-        await verify_and_consume_seal(
-            seal, "execute_trade", params, redis_client=redis
-        )
+        await verify_and_consume_seal(seal, "execute_trade", params, redis_client=redis)
 
-    assert "already consumed" in str(exc_info.value) or "Replay" in str(
-        exc_info.value
-    )
+    assert "already consumed" in str(exc_info.value) or "Replay" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -479,18 +473,12 @@ async def test_gfa_verify_and_consume_seal_prevents_replay():
 
     # First consumption succeeds
     assert (
-        await gfa_verify_and_consume(
-            seal, "execute_trade", params, redis_client=redis
-        )
+        await gfa_verify_and_consume(seal, "execute_trade", params, redis_client=redis)
         is True
     )
 
     # Replay attempt fails
     with pytest.raises(GFASymbolicGovernorViolation) as exc_info:
-        await gfa_verify_and_consume(
-            seal, "execute_trade", params, redis_client=redis
-        )
+        await gfa_verify_and_consume(seal, "execute_trade", params, redis_client=redis)
 
-    assert "already consumed" in str(exc_info.value) or "Replay" in str(
-        exc_info.value
-    )
+    assert "already consumed" in str(exc_info.value) or "Replay" in str(exc_info.value)

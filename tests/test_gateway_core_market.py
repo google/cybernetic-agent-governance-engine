@@ -29,6 +29,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _mock_httpx_response(json_data: dict, status_code: int = 200):
     """Build a minimal httpx.Response-like mock."""
     resp = MagicMock()
@@ -42,6 +43,7 @@ def _mock_httpx_response(json_data: dict, status_code: int = 200):
 # Tests: MarketService.get_sentiment (async)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 class TestMarketServiceGetSentiment:
     """Unit tests for MarketService.get_sentiment()."""
@@ -52,8 +54,10 @@ class TestMarketServiceGetSentiment:
         with patch.dict("os.environ", {}, clear=True):
             # Ensure env var absent
             import os
+
             os.environ.pop("ALPHAVANTAGE_API_KEY", None)
             from src.gateway.core.market import MarketService
+
             svc = MarketService()
             svc.api_key = None  # force absence
             result = await svc.get_sentiment("AAPL")
@@ -87,6 +91,7 @@ class TestMarketServiceGetSentiment:
 
         with patch("httpx.AsyncClient", return_value=mock_async_client):
             from src.gateway.core.market import MarketService
+
             svc = MarketService()
             svc.api_key = "test-key"
             result = await svc.get_sentiment("TSLA")
@@ -111,6 +116,7 @@ class TestMarketServiceGetSentiment:
 
         with patch("httpx.AsyncClient", return_value=mock_async_client):
             from src.gateway.core.market import MarketService
+
             svc = MarketService()
             svc.api_key = "key"
             result = await svc.get_sentiment("MSFT")
@@ -129,6 +135,7 @@ class TestMarketServiceGetSentiment:
 
         with patch("httpx.AsyncClient", return_value=mock_async_client):
             from src.gateway.core.market import MarketService
+
             svc = MarketService()
             svc.api_key = "key"
             result = await svc.get_sentiment("AMZN")
@@ -145,6 +152,7 @@ class TestMarketServiceGetSentiment:
 
         with patch("httpx.AsyncClient", return_value=mock_async_client):
             from src.gateway.core.market import MarketService
+
             svc = MarketService()
             svc.api_key = "key"
             result = await svc.get_sentiment("NVDA")
@@ -157,6 +165,7 @@ class TestMarketServiceGetSentiment:
 # Tests: MarketService.check_status (sync)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 class TestMarketServiceCheckStatus:
     """Unit tests for MarketService.check_status() (synchronous)."""
@@ -164,6 +173,7 @@ class TestMarketServiceCheckStatus:
     def test_no_api_key_returns_error_string(self):
         """Returns error message if ALPHAVANTAGE_API_KEY is not set."""
         from src.gateway.core.market import MarketService
+
         svc = MarketService()
         svc.api_key = None
         result = svc.check_status("AAPL")
@@ -187,6 +197,7 @@ class TestMarketServiceCheckStatus:
 
         with patch("httpx.Client", return_value=mock_sync_client):
             from src.gateway.core.market import MarketService
+
             svc = MarketService()
             svc.api_key = "key"
             result = svc.check_status("AAPL")
@@ -208,6 +219,7 @@ class TestMarketServiceCheckStatus:
 
         with patch("httpx.Client", return_value=mock_sync_client):
             from src.gateway.core.market import MarketService
+
             svc = MarketService()
             svc.api_key = "key"
             result = svc.check_status("TSLA")
@@ -226,6 +238,7 @@ class TestMarketServiceCheckStatus:
 
         with patch("httpx.Client", return_value=mock_sync_client):
             from src.gateway.core.market import MarketService
+
             svc = MarketService()
             svc.api_key = "key"
             result = svc.check_status("XYZ")
@@ -241,6 +254,7 @@ class TestMarketServiceCheckStatus:
 
         with patch("httpx.Client", return_value=mock_sync_client):
             from src.gateway.core.market import MarketService
+
             svc = MarketService()
             svc.api_key = "key"
             result = svc.check_status("ERR")
@@ -252,8 +266,10 @@ class TestMarketServiceCheckStatus:
 # Module-level singleton
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 def test_market_service_module_singleton():
     """market_service module-level singleton is a MarketService instance."""
     from src.gateway.core.market import MarketService, market_service
+
     assert isinstance(market_service, MarketService)

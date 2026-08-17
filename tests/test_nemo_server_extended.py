@@ -37,6 +37,7 @@ import pytest
 # Shared stub factory (mirrors test_nemo_server.py for hermetic isolation)
 # ---------------------------------------------------------------------------
 
+
 def _stubs(rails_obj: object = None) -> dict:
     mock_pb2 = MagicMock()
     mock_pb2.VerifyResponse = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
@@ -66,16 +67,19 @@ def _stubs(rails_obj: object = None) -> dict:
 def _fresh_service(stubs: dict, exists: bool = True) -> object:
     """Import and instantiate NeMoService with a fresh module cache entry."""
     import sys
+
     with patch.dict("sys.modules", stubs):
         sys.modules.pop("src.gateway.governance.nemo.server", None)
         with patch("os.path.exists", return_value=exists):
             from src.gateway.governance.nemo.server import NeMoService
+
             return NeMoService()
 
 
 # ---------------------------------------------------------------------------
 # 1. Verify() — empty response list yields empty content string
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 @pytest.mark.asyncio
@@ -89,6 +93,7 @@ async def test_verify_empty_response_list_yields_empty_content() -> None:
     svc = _fresh_service(stubs, exists=True)
 
     import sys
+
     with patch.dict("sys.modules", stubs):
         mock_context = MagicMock()
         mock_request = MagicMock(input="empty response test")
@@ -102,6 +107,7 @@ async def test_verify_empty_response_list_yields_empty_content() -> None:
 # ---------------------------------------------------------------------------
 # 2. Verify() — grpc error code is INTERNAL when generate_async raises
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.local
 @pytest.mark.asyncio
@@ -126,6 +132,7 @@ async def test_verify_sets_internal_code_on_exception() -> None:
 # 3. Verify() — UNAVAILABLE code set when rails is None
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 @pytest.mark.asyncio
 async def test_verify_sets_unavailable_code_when_rails_none() -> None:
@@ -146,11 +153,13 @@ async def test_verify_sets_unavailable_code_when_rails_none() -> None:
 # 4. serve() reads PORT environment variable
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 @pytest.mark.asyncio
 async def test_serve_reads_port_env_variable() -> None:
     """serve() uses the PORT environment variable when set."""
     import sys
+
     stubs = _stubs()
 
     with patch.dict("sys.modules", stubs):
@@ -174,11 +183,13 @@ async def test_serve_reads_port_env_variable() -> None:
 # 5. serve() registers NeMoService with the gRPC server
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 @pytest.mark.asyncio
 async def test_serve_registers_nemo_service() -> None:
     """serve() calls add_NeMoGuardrailsServicer_to_server to register NeMoService."""
     import sys
+
     stubs = _stubs()
 
     with patch.dict("sys.modules", stubs):
@@ -199,11 +210,13 @@ async def test_serve_registers_nemo_service() -> None:
 # 6. serve() calls server.start() and server.wait_for_termination()
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 @pytest.mark.asyncio
 async def test_serve_calls_start_and_wait_for_termination() -> None:
     """serve() awaits server.start() and server.wait_for_termination()."""
     import sys
+
     stubs = _stubs()
 
     with patch.dict("sys.modules", stubs):
@@ -225,10 +238,12 @@ async def test_serve_calls_start_and_wait_for_termination() -> None:
 # 7. RAILS_CONFIG_PATH is an absolute path
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.local
 def test_rails_config_path_is_absolute() -> None:
     """RAILS_CONFIG_PATH must be an absolute filesystem path."""
     import sys
+
     stubs = _stubs()
 
     with patch.dict("sys.modules", stubs):

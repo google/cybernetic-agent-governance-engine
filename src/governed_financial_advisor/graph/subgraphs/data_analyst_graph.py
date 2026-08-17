@@ -178,7 +178,7 @@ async def analyst_doer_node(state: DataAnalystState):  # type: ignore[no-untyped
     reasoning = state["reasoning_output"]
 
     with tracer.start_as_current_span("DataAnalyst: Doer") as span:
-        model_name = os.getenv("MODEL_FAST")
+        model_name = os.getenv("MODEL_FAST", "default-fast-model")
         span.set_attribute("langfuse.observation.model.name", model_name)
         span.set_attribute("langfuse.trace.metadata.current_node", "data_analyst_doer")
         span.set_attribute("langfuse.trace.metadata.mcp_server", "gateway_mcp")
@@ -190,7 +190,10 @@ async def analyst_doer_node(state: DataAnalystState):  # type: ignore[no-untyped
                 "VLLM_FAST_API_BASE must be set — no localhost fallback in production"
             )
         fast_llm = ChatOpenAI(
-            model=model_name, base_url=_fast_base, temperature=0.0, max_tokens=512  # type: ignore[arg-type, call-arg]
+            model=model_name,
+            base_url=_fast_base,
+            temperature=0.0,
+            max_tokens=512,  # type: ignore[arg-type, call-arg]
         )
 
         from langchain_core.messages import HumanMessage

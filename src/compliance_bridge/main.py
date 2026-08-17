@@ -1126,6 +1126,23 @@ class DeferResolveRequest(BaseModel):
     note: str | None = None
 
 
+def _get_defer_queue_cls() -> Any:
+    """Helper to dynamically import DeferQueue across different sys.path layouts."""
+    try:
+        from src.gateway.governance.defer_queue import DeferQueue as dq1
+
+        return dq1
+    except ImportError:
+        try:
+            from gateway.governance.defer_queue import (
+                DeferQueue as dq2,  # type: ignore[import-not-found]
+            )
+
+            return dq2
+        except ImportError as exc:
+            raise ImportError(f"DeferQueue could not be imported: {exc}") from exc
+
+
 @app.post(
     "/v1/defer/{defer_id}/inject",
     tags=["governance"],
@@ -1142,17 +1159,10 @@ async def defer_inject(
     """
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
-    # Import DeferQueue — isolate ImportError / RuntimeError (e.g. missing
-    # optional gateway deps like 'dowhy') from the token-not-found 404 path.
     try:
         import redis.asyncio as aioredis
 
-        try:
-            from src.gateway.governance.defer_queue import DeferQueue
-        except ImportError:
-            from gateway.governance.defer_queue import (
-                DeferQueue,  # type: ignore[no-redef]  # fallback import path for alternate sys.path configurations
-            )
+        defer_queue_cls = _get_defer_queue_cls()
     except (ImportError, RuntimeError) as exc:
         logger.warning("[defer/inject] DeferQueue import failed: %s", exc)
         raise HTTPException(
@@ -1162,7 +1172,7 @@ async def defer_inject(
 
     try:
         client = aioredis.from_url(redis_url, db=1, decode_responses=True)
-        queue = DeferQueue(client)
+        queue = defer_queue_cls(client)
         resolved = await queue.resolve(
             defer_id, "INJECTED", injection_data=body.injection_data
         )
@@ -1234,17 +1244,10 @@ async def defer_escalate(
     """
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
-    # Import DeferQueue — isolate ImportError / RuntimeError (e.g. missing
-    # optional gateway deps like 'dowhy') from the token-not-found 404 path.
     try:
         import redis.asyncio as aioredis
 
-        try:
-            from src.gateway.governance.defer_queue import DeferQueue
-        except ImportError:
-            from gateway.governance.defer_queue import (
-                DeferQueue,  # type: ignore[no-redef]  # fallback import path for alternate sys.path configurations
-            )
+        defer_queue_cls = _get_defer_queue_cls()
     except (ImportError, RuntimeError) as exc:
         logger.warning("[defer/escalate] DeferQueue import failed: %s", exc)
         raise HTTPException(
@@ -1254,7 +1257,7 @@ async def defer_escalate(
 
     try:
         client = aioredis.from_url(redis_url, db=1, decode_responses=True)
-        queue = DeferQueue(client)
+        queue = defer_queue_cls(client)
         resolved = await queue.resolve(defer_id, "ESCALATED")
         await client.aclose()
         if resolved is None:

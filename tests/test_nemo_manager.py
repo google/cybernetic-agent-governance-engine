@@ -271,3 +271,6 @@ class TestVerifyInput:
 
         assert isinstance(result, SafetyResult)
         assert result.is_safe is False
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

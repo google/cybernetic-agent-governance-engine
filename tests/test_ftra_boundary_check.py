@@ -135,9 +135,7 @@ def mock_safety_filter() -> MagicMock:
 def mock_consensus_engine() -> MagicMock:
     """Create a mock consensus engine that approves."""
     engine = MagicMock()
-    engine.check_consensus = AsyncMock(
-        return_value={"status": "ACCEPT", "reason": ""}
-    )
+    engine.check_consensus = AsyncMock(return_value={"status": "ACCEPT", "reason": ""})
     return engine
 
 
@@ -373,3 +371,6 @@ class TestClassifierStandaloneInstantiation:
         assert classifier.is_irreversible("execute_trade") is True
         assert classifier.is_irreversible("write_db") is True
         assert classifier.is_irreversible("prompt_injection_check") is False
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

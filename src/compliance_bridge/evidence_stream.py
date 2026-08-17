@@ -210,7 +210,9 @@ class EvidenceRecord:
         result: dict[str, Any] = {
             "evidence_id": self.evidence_id,
             "decision": self.decision,
-            "timestamp": self.timestamp.isoformat() if isinstance(self.timestamp, datetime) else self.timestamp,
+            "timestamp": self.timestamp.isoformat()
+            if isinstance(self.timestamp, datetime)
+            else self.timestamp,
             "tool_name": self.tool_name,
             "control_id": self.control_id,
             "prev_hash": self.prev_hash,
@@ -344,8 +346,12 @@ def validate_evidence_stream_preconditions() -> None:
         ConfigurationError: If EVIDENCE_CHAIN_BLOCKING=true and
             EVIDENCE_STREAM_ENABLED=false.
     """
-    blocking_enabled = os.environ.get("EVIDENCE_CHAIN_BLOCKING", "false").lower() == "true"
-    stream_enabled = os.environ.get("EVIDENCE_STREAM_ENABLED", "false").lower() == "true"
+    blocking_enabled = (
+        os.environ.get("EVIDENCE_CHAIN_BLOCKING", "false").lower() == "true"
+    )
+    stream_enabled = (
+        os.environ.get("EVIDENCE_STREAM_ENABLED", "false").lower() == "true"
+    )
 
     if blocking_enabled and not stream_enabled:
         raise ConfigurationError(
@@ -485,7 +491,9 @@ def _detect_schema_version(record: EvidenceRecord | dict[str, Any]) -> str:
     return "1.0"
 
 
-def verify_record(record: EvidenceRecord | dict[str, Any], prev_hash: str) -> VerifyResult:
+def verify_record(
+    record: EvidenceRecord | dict[str, Any], prev_hash: str
+) -> VerifyResult:
     """Verify evidence record hash (v1.1 schema only).
 
     v3.0.0 Breaking Change: Schema v1.0 support has been removed.
@@ -530,7 +538,7 @@ def verify_record(record: EvidenceRecord | dict[str, Any], prev_hash: str) -> Ve
                 computed_hash="",
                 expected_hash=record_dict.get("record_hash", ""),
                 error="Schema v1.0 is deprecated (v3.0.0 breaking change). "
-                      "Use migrate_record_1_0_to_1_1() to upgrade legacy records.",
+                "Use migrate_record_1_0_to_1_1() to upgrade legacy records.",
             )
 
         # Extract common fields
@@ -549,7 +557,9 @@ def verify_record(record: EvidenceRecord | dict[str, Any], prev_hash: str) -> Ve
         sequence_raw = record_dict.get("sequence", 0)
         sequence = int(sequence_raw) if isinstance(sequence_raw, str) else sequence_raw
 
-        event_type = record_dict.get("event_type", record_dict.get("decision", "UNKNOWN"))
+        event_type = record_dict.get(
+            "event_type", record_dict.get("decision", "UNKNOWN")
+        )
         control_id = record_dict.get("control_id", "")
 
         # Extract payload - handle both wire format and internal format
@@ -601,7 +611,11 @@ def verify_record(record: EvidenceRecord | dict[str, Any], prev_hash: str) -> Ve
             valid=False,
             schema_version="unknown",
             computed_hash="",
-            expected_hash=str(record.get("record_hash", "") if isinstance(record, dict) else getattr(record, "record_hash", "")),
+            expected_hash=str(
+                record.get("record_hash", "")
+                if isinstance(record, dict)
+                else getattr(record, "record_hash", "")
+            ),
             error=f"Verification error: {exc}",
         )
 
@@ -927,7 +941,9 @@ class EvidenceStreamSink:
                     )
                     logger.error("[EvidenceStream] %s", error_msg)
                     span.set_attribute("cage.evidence.status", "failure")
-                    span.set_attribute("cage.evidence.failure_reason", "redis_unavailable")
+                    span.set_attribute(
+                        "cage.evidence.failure_reason", "redis_unavailable"
+                    )
                     if _PROM_AVAILABLE:
                         EVIDENCE_COMMIT_TOTAL.labels(status="failure").inc()
                     raise EvidenceChainUnavailableError(error_msg)
@@ -1042,8 +1058,20 @@ class EvidenceStreamSink:
 
             # Persist to Redis Stream BEFORE advancing chain state
             # This ensures we don't advance the chain if Redis write fails
+            if self._redis is None:
+                logger.error(
+                    "[EvidenceStream] Redis not connected in _ingest_with_result"
+                )
+                return EvidenceCommitResult(
+                    success=False,
+                    evidence_id="",
+                    commit_timestamp=commit_timestamp,
+                    hash=record_hash,
+                    sequence=current_sequence,
+                )
+
             try:
-                msg_id = await self._redis.xadd(  # type: ignore[union-attr]
+                msg_id = await self._redis.xadd(
                     self._stream_key,
                     entry,
                     maxlen=self._max_len,

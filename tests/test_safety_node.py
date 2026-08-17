@@ -477,4 +477,3 @@ class TestSafetyNodeIntegration:
             f"got {update['safety_status']!r}. "
             f"Full update: {update}"
         )
-

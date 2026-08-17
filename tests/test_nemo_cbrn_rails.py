@@ -223,3 +223,6 @@ class TestCBRNRailComplianceAnnotations:
         assert "AI 600-1" in rail_content, (
             "Missing AI 600-1 regulatory reference in rail file"
         )
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]

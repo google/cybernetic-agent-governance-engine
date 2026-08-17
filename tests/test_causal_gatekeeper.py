@@ -208,9 +208,7 @@ class TestCausalCacheHelpers:
         """_causal_cache_get_sync raises RuntimeError when sync_redis_client is None."""
         from src.gateway.governance import causal_gatekeeper
 
-        with patch(
-            "src.gateway.infrastructure.redis_client.sync_redis_client", None
-        ):
+        with patch("src.gateway.infrastructure.redis_client.sync_redis_client", None):
             with pytest.raises(RuntimeError, match="Redis unavailable"):
                 causal_gatekeeper._causal_cache_get_sync("test-key")
 
@@ -223,6 +221,7 @@ class TestCausalCacheHelpers:
             "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
         ):
             from src.gateway.governance import causal_gatekeeper
+
             result = causal_gatekeeper._causal_cache_get_sync("missing-key")
         assert result is None
 
@@ -238,6 +237,7 @@ class TestCausalCacheHelpers:
             "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
         ):
             from src.gateway.governance import causal_gatekeeper
+
             result = causal_gatekeeper._causal_cache_get_sync("hit-key")
         assert result == {"result": True, "reason": "all_checks_passed"}
 
@@ -250,6 +250,7 @@ class TestCausalCacheHelpers:
             "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
         ):
             from src.gateway.governance import causal_gatekeeper
+
             with pytest.raises(RuntimeError, match="Redis unavailable"):
                 causal_gatekeeper._causal_cache_get_sync("error-key")
 
@@ -262,6 +263,7 @@ class TestCausalCacheHelpers:
             "src.gateway.infrastructure.redis_client.sync_redis_client", mock_redis
         ):
             from src.gateway.governance import causal_gatekeeper
+
             result = causal_gatekeeper._causal_cache_get_sync("bad-json-key")
         assert result is None
 
@@ -320,24 +322,28 @@ class TestCausalSafetyCheckNoDoWhy:
         """amount <= 0 returns True immediately — no dowhy needed."""
         from src.gateway.governance.causal_gatekeeper import causal_safety_check
 
-        df = pd.DataFrame({
-            "market_volatility": [0.5],
-            "trade_amount": [1000.0],
-            "risk_score": [0.5],
-            "timestamp": [time.time() - 10],
-        })
+        df = pd.DataFrame(
+            {
+                "market_volatility": [0.5],
+                "trade_amount": [1000.0],
+                "risk_score": [0.5],
+                "timestamp": [time.time() - 10],
+            }
+        )
         assert causal_safety_check({"amount": 0}, df) is True
 
     def test_negative_amount_returns_true_without_dowhy(self):
         """Negative amount returns True immediately — no dowhy needed."""
         from src.gateway.governance.causal_gatekeeper import causal_safety_check
 
-        df = pd.DataFrame({
-            "market_volatility": [0.3],
-            "trade_amount": [500.0],
-            "risk_score": [0.3],
-            "timestamp": [time.time() - 5],
-        })
+        df = pd.DataFrame(
+            {
+                "market_volatility": [0.3],
+                "trade_amount": [500.0],
+                "risk_score": [0.3],
+                "timestamp": [time.time() - 5],
+            }
+        )
         assert causal_safety_check({"amount": -1}, df) is True
 
     def test_production_env_without_telemetry_returns_false(self):
@@ -365,12 +371,14 @@ class TestCausalSafetyCheckNoDoWhy:
         original_available = causal_gatekeeper._DOWHY_AVAILABLE
         try:
             causal_gatekeeper._DOWHY_AVAILABLE = False
-            df = pd.DataFrame({
-                "market_volatility": [0.5],
-                "trade_amount": [1000.0],
-                "risk_score": [0.5],
-                "timestamp": [time.time() - 10],
-            })
+            df = pd.DataFrame(
+                {
+                    "market_volatility": [0.5],
+                    "trade_amount": [1000.0],
+                    "risk_score": [0.5],
+                    "timestamp": [time.time() - 10],
+                }
+            )
             with patch(
                 "src.gateway.governance.causal_gatekeeper._causal_cache_get_sync",
                 return_value=None,
@@ -387,6 +395,7 @@ class TestCausalSafetyCheckNoDoWhy:
 
 try:
     import dowhy as _dowhy_mod  # noqa: F401
+
     _DOWHY_INSTALLED = True
 except ImportError:
     _DOWHY_INSTALLED = False
