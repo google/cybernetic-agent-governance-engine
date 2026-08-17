@@ -3,7 +3,7 @@
 
 > **AI governance for regulated financial services — built-in, not bolted on.**
 
-![v3.0.0](https://img.shields.io/badge/version-3.0.0-brightgreen) ![1670 Tests Passing](https://img.shields.io/badge/tests-1670%20passing-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 8](https://img.shields.io/badge/POAM%20Closed-8-brightgreen)
+![v3.0.0](https://img.shields.io/badge/version-3.0.0-brightgreen) ![2741 Tests Passing](https://img.shields.io/badge/tests-2741%20passing-brightgreen) ![Coverage 75.12%](https://img.shields.io/badge/coverage-75.12%25-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 8](https://img.shields.io/badge/POAM%20Closed-8-brightgreen)
 
 **Universal (all regions):** ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue)
 
@@ -11,36 +11,20 @@
 
 ---
 
-## What's New in v2.1.1
+## What's New in v3.0.0
 
-> **Release date:** 2026-07-30 — Patch release: jurisdiction-aware compliance
-> fixes (FINDING-05/07/08/09), two production HITL bug fixes surfaced by new
-> FTRA test coverage, and a documentation completeness audit. No new features.
-> See [CHANGELOG.md](CHANGELOG.md#v211--2026-07-30) for full details.
+> **Release date:** 2026-08-15 — Major Version Release: Architectural cleanup, formal safety consolidations, and governed threshold centralization.
+> See [CHANGELOG.md](CHANGELOG.md#300---2026-08-15) and [docs/BREAKING_CHANGES_v3.md](docs/BREAKING_CHANGES_v3.md) for migration guides.
 
-## What's New in v2.1.0
-
-> **Release date:** 2026-07-27
-
-### New Capabilities
+### Major Capabilities & Enhancements
 
 | Capability | Location | Description |
 |---|---|---|
-| **FTRA Commencement Reachability Gate** | `src/gateway/governance/ftra/` | Forward-Looking Trajectory Reachability Analyzer (Tier 0.5) — builds a NetworkX directed graph from `ExecutionPlan.steps`, classifies terminal steps via `IrreversibilityClassifier`, and issues `CLEAR` / `HITL_REQUIRED` / `BLOCKED` before any tool call executes. Implemented by `create_ftra_node()`, `PlanGraphAnalyzer`, `IrreversibilityClassifier`. Two production defects fixed in v2.1.1 (POAM-2026-033): `DeferQueue` instantiation and `NodeInterrupt` re-raise |
-| **Phase A Ingress Adapters** | `src/gateway/governance/ingress/` | AAIF, ACS, OSCAL, Lula, and AGP policy-uploader adapters; policy translation layer |
-| **Phase B AGW Absorption** | `src/gateway/governance/ingress/agw_adapter.py` + `src/gateway/server/agent_gateway_adapter.py` | Agent Gateway Protocol bridge with OPA policy enforcement |
-| **CAGE-003 Agent Registry Integration** | `src/gateway/governance/ingress/agent_registry_adapter.py` | SPIFFE trust-domain agent catalog integration |
-| **CBF External Reconciliation Worker** | `src/compliance_bridge/reconciliation_worker.py` | Implements POAM-023; external CBF state reconciliation (closes POAM-023) |
-| **NIST AI 600-1 Compliance Gates (phases 0–3)** | `compliance/lula/lula-validation-ai600-*.yaml` | CBRN, confabulation, data privacy, and prompt injection Lula validation manifests |
-| **Three-Region Compliance Matrix** | `compliance/lula/`, `compliance/oscal/` | Separate Lula manifests, pytest matrix, and region-aware K8s templates for EU_ECB, APAC_MAS, US_FED |
-| **AgentSight UI** | `src/agentsight-ui/` | React/TypeScript real-time governance dashboard with `KernelDashboard` |
-| **Governed Financial Advisor** | `src/governed_financial_advisor/` | Full multi-agent reference implementation with LangGraph, NeMo Guardrails, OPA policy enforcement |
-| **NeMo Guardrails Integration** | `src/gateway/governance/nemo/` | Actions, manager, server, vLLM client; CBRN rails (`config/rails/cbrn_rails.co`) |
-| **LangGraph Harness** | `src/gateway/governance/langgraph_harness/` | Composable `NemoNodeFactory` and `OpaNodeFactory` governance nodes for LangGraph pipelines |
-| **AARM Profile Mapper** | `src/compliance_bridge/aarm_mapper.py` + `aarm_report_generator.py` | 11-vector threat ledger mapping with live conformance report endpoint |
-| **Evidence Chain Metadata Binding** | `src/compliance_bridge/evidence_stream.py` | Binds metadata to evidence chain entries |
-| **Region-Aware K8s Templates** | `deployment/k8s/*.yaml.tpl` | `CAGE_DEPLOYMENT_REGION` guards in all Kubernetes deployment templates |
-| **Langfuse Native OTLP** | `src/gateway/tracing_setup.py` | Replaced standalone OTel Collector with Langfuse native OTLP integration |
+| **Lua-Atomic CBF Check & Commit (CR-3)** | `src/gateway/governance/cbf.py` | Eliminates TOCTOU concurrency windows by consolidating barrier check and balance deduction into atomic Redis Lua execution (`atomic_verify_and_commit()`). |
+| **Human-Gated NeMo Refinement (CR-2 / EV-4)** | `src/governed_financial_advisor/server.py` | Removed unattended auto-apply bypass branch (`NEMO_AUTO_APPLY_ENABLED`). All incoming policy changes are staged via `/v1/nemo/propose-refinement` for explicit human approval. |
+| **Centralized Threshold Governance (EV-1–EV-6)** | `config/thresholds/*.json` | Replaced scattered `os.getenv` reads with typed, schema-validated configuration lookups (`get_fria_zone_defer()`, `get_telemetry_max_staleness_seconds()`). |
+| **Dual vLLM Architecture** | `deployment/k8s/`, `infra/targets/gcp-gke/` | Distinct `vllm-inference` (`Qwen2.5-7B-Instruct` with Hermes tool-calling) and `vllm-reasoning` (`DeepSeek-R1-Distill-Llama-8B` for pure chain-of-thought analysis). |
+| **Typed Node Configs & Clean Imports (SR-1–SR-7)** | `src/gateway/governance/` | Removed legacy shims (`stpa_validator.py`, `safety.py`), migrated to typed `FtraNodeConfig`, and standardized on `StructuredLLMClient` & `AsyncRedisClient`. |
 
 ---
 
@@ -48,12 +32,12 @@
 
 | Suite | Result | Date |
 |---|---|---|
-| Unit (`pytest tests/`) | ✅ 1,509 passed / 0 failed / 161 skipped | 2026-07-30 |
-| Integration (`pytest tests/ --run-integration`) | ✅ 1,622 passed / 0 failed / 48 skipped | 2026-07-30 |
-| Total | ✅ 1,670 collected, 0 failed | 2026-07-30 |
+| Unit & Logic Suite (`pytest tests/`) | ✅ 2,741 passed / 0 failed / 182 skipped | 2026-08-16 |
+| Code Coverage (`pytest --cov=src`) | ✅ **75.12% statements covered** (9,704/12,641 stmts) | 2026-08-16 |
+| Total Tests Collected | ✅ 2,923 tests, 0 failed | 2026-08-16 |
 
 Tests run against a live GKE cluster (`governance-cluster-2`, project `laah-cybernetics`). See [infra/DEPLOYMENT_GUIDE.md](infra/DEPLOYMENT_GUIDE.md) for cluster setup instructions.
-Skipped tests: the 48 integration skips are region-specific tests (`eu_ecb`, `apac_mas`) that require `CAGE_DEPLOYMENT_REGION` set to a non-US_FED value — expected behaviour for a US_FED cluster posture.
+Skipped tests: 182 tests are region-specific integration gates (`eu_ecb`, `apac_mas`) and OPA mock isolation tests.
 
 ---
 

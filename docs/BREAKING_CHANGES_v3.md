@@ -80,7 +80,7 @@ below). No consumer-facing route signature changes.
 | Function | Old Signature | New Signature |
 |----------|--------------|---------------|
 | `create_ftra_node()` | `create_ftra_node(config=None, registry_path=None, plan_key=None)` | `create_ftra_node(config: FtraNodeConfig | None = None)` — `registry_path` and `plan_key` keyword arguments are removed; pass them as fields of a `FtraNodeConfig` instance instead. |
-| `ControlBarrierFunction.update_state()` (**conditional** — pending CR-3 architectural decision) | `async def update_state(self, cost: float, governance_signature: str | None = None) -> None` (public) | Recommended outcome per the cleanup plan: renamed to `_update_state_unsafe()` (internal-only), called exclusively by `atomic_verify_and_commit()`. **This is flagged as an open architectural decision, not finalized** — consult the CR-3 design-review record before assuming this signature change ships as described. |
+| `ControlBarrierFunction.update_state()` | `async def update_state(self, cost: float, governance_signature: str | None = None) -> None` (public) | **Completed (CR-3)**: Renamed to `_update_state_unsafe()` (internal-only) to eliminate TOCTOU race conditions. External callers must call `atomic_verify_and_commit()`. |
 
 ---
 
@@ -96,12 +96,12 @@ corresponding module is migrated; use the config file instead.
 
 | Variable | Replacement | Migration |
 |----------|-------------|-----------|
-| `FRIA_ZONE_ALLOW`, `FRIA_ZONE_DEFER` | `config/thresholds/*.json` (per-region FTRA boundary thresholds) | Move the values you previously set via env var into the appropriate region file under [`config/thresholds/`](../config/thresholds/). This migration also fixes a latent drift bug where [`src/gateway/governance/ftra/graph_analyzer.py:73-74`](../src/gateway/governance/ftra/graph_analyzer.py:73) hardcoded `0.70` independent of the env var — after migration, both `symbolic_governor.py` and `graph_analyzer.py` read the same config value. |
-| `AGENT_CONFIDENCE_THRESHOLD` | `config/thresholds/*.json` | Move the value into config; the two independent read sites in [`symbolic_governor.py:1088-1097,1366-1368`](../src/gateway/governance/symbolic_governor.py:1088) are consolidated into a single read. |
+| `FRIA_ZONE_ALLOW`, `FRIA_ZONE_DEFER` | `config/thresholds/*.json` (per-region FTRA boundary thresholds) | Move the values you previously set via env var into the appropriate region file under [`config/thresholds/`](../config/thresholds/). This migration also fixes a latent drift bug where [`src/gateway/governance/ftra/graph_analyzer.py:73-74`](../src/gateway/governance/ftra/graph_analyzer.py:73) hardcoded `0.70` independent of the env var — after migration, both `symbolic_governor.py` and `graph_analyzer.py` read the same config value via `get_fria_zone_defer()`. |
+| `AGENT_CONFIDENCE_THRESHOLD` | `config/thresholds/*.json` | Move the value into config; the two independent read sites in [`symbolic_governor.py:1088-1097,1366-1368`](../src/gateway/governance/symbolic_governor.py:1088) are consolidated into a single read via `get_agent_confidence_threshold()`. |
 | `CAUSAL_LOCK_P_VALUE_THRESHOLD`, `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE`, `CAUSAL_LOCK_RISK_BOUNDARY` | `config/thresholds/*.json` | Move MRM/ISO 42001 §A.9.4-governed threshold values from env vars ([`src/gateway/governance/causal_gatekeeper.py:80-110`](../src/gateway/governance/causal_gatekeeper.py:80)) into the versioned config file. This also gives an audit trail for threshold changes. |
 | `NEMO_AUTO_APPLY_ENABLED` | *(deleted, not migrated)* | This variable is removed entirely as part of CR-2 (the legacy auto-apply code path is deleted). Setting it in v3.0.0 has no effect regardless of value. |
-| `KMS_BATCH_MAX_SIZE`, `KMS_BATCH_ENABLED` | `config/thresholds/*.json` | **Precondition:** the default-value discrepancy between [`kms_batch_signer.py:75`](../src/compliance_bridge/kms_batch_signer.py:75) (`"true"`) and [`main.py:211-212`](../src/compliance_bridge/main.py:211)'s comment (`"false"`) must be resolved before this migration is finalized — confirm the actual production default with your deployment's release notes before relying on the migrated config value. |
-| `CAUSAL_MIN_SAMPLES`, `CAUSAL_CACHE_TTL_SECONDS`, `TELEMETRY_MAX_STALENESS_SECONDS` | `config/thresholds/*.json` | Same consolidation target as the other `causal_gatekeeper.py`-adjacent variables; bundled with the above item. |
+| `KMS_BATCH_MAX_SIZE`, `KMS_BATCH_ENABLED` | `config/thresholds/*.json` | **Resolved:** The default is standardized to `"false"` across `kms_batch_signer.py` and `main.py`. Batch configuration is loaded via schema thresholds. |
+| `CAUSAL_MIN_SAMPLES`, `CAUSAL_CACHE_TTL_SECONDS`, `TELEMETRY_MAX_STALENESS_SECONDS` | `config/thresholds/*.json` | Consolidated to `config/thresholds/*.json` via accessor functions like `get_telemetry_max_staleness_seconds()`. |
 
 ### New Required Configuration
 
@@ -110,8 +110,8 @@ corresponding module is migrated; use the config file instead.
 | `config/thresholds/<REGION>_BASELINE.json` — FTRA zone keys (`fria_zone_allow`, `fria_zone_defer`) | Replaces `FRIA_ZONE_ALLOW`/`FRIA_ZONE_DEFER` env vars | `0.95` / `0.70` (matches current env var defaults) |
 | `config/thresholds/<REGION>_BASELINE.json` — `agent_confidence_threshold` key | Replaces `AGENT_CONFIDENCE_THRESHOLD` | Matches current env var default (confirm exact value in [`symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py:1088) before upgrading) |
 | `config/thresholds/<REGION>_BASELINE.json` — `causal_lock_*` keys | Replaces the three `CAUSAL_LOCK_*` env vars | Matches current env var defaults; confirm with MRM/ISO 42001 owner before upgrading |
-| `config/thresholds/<REGION>_BASELINE.json` — `kms_batch_*` keys | Replaces `KMS_BATCH_MAX_SIZE`/`KMS_BATCH_ENABLED` | **Uncertain** — pending Wave 0 discrepancy resolution; do not assume a default until confirmed |
-| `config/thresholds/<REGION>_BASELINE.json` — `causal_min_samples`, `causal_cache_ttl_seconds`, `telemetry_max_staleness_seconds` keys | Replaces the three misc causal/telemetry env vars | Matches current env var defaults documented in [`docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md:76,96`](../docs/governance/CAUSAL_AND_CBF_GOVERNANCE.md:76) |
+| `config/thresholds/<REGION>_BASELINE.json` — `kms_batch_*` keys | Replaces `KMS_BATCH_MAX_SIZE`/`KMS_BATCH_ENABLED` | `32` / `false` (standardized across modules) |
+| `config/thresholds/<REGION>_BASELINE.json` — `causal_min_samples`, `causal_cache_ttl_seconds`, `telemetry_max_staleness_seconds` keys | Replaces the three misc causal/telemetry env vars | Matches current defaults (`30`, `300`, `300`) |
 
 ### Feature Flags Graduated
 

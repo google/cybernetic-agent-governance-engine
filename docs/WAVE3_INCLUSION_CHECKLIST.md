@@ -91,51 +91,38 @@ into the main `v3.0.0` release scope rather than deferring to `v3.1.0`/`v4.0.0`.
 
 ### Prerequisites
 
-- [ ] Verify no production evidence chains exist (reference impl only) —
+- [x] Verify no production evidence chains exist (reference impl only) —
       confirm via: (a) no live GKE deployment has ever had
       `EVIDENCE_STREAM_ENABLED=true` set outside of dev/test namespaces, per
       [`config/thresholds/`](../config/thresholds/) / `deployment/k8s/` manifest
       review; (b) grep `compliance/` and `docs/POAM.md` for any reference to
       a real evidence-chain export or audit query having been run
-- [ ] Document v1.1 as the canonical schema going forward — update the
+- [x] Document v1.1 as the canonical schema going forward — update the
       module docstring at
       [`evidence_stream.py:15-73`](../src/compliance_bridge/evidence_stream.py:15)
-      (currently silent on which schema is canonical) to state v1.1 is the
-      only supported live-write schema
-- [ ] Confirm the genesis-hash/cutover-seeding logic
+      to state v1.1 is the only supported live-write schema
+- [x] Confirm the genesis-hash/cutover-seeding logic
       ([`get_last_v1_0_hash()`](../src/compliance_bridge/evidence_stream.py:683))
-      is not required once no v1.0 records can exist — determine whether to
-      delete it outright or retain as a no-op safeguard for any adopter who
-      *did* persist v1.0 records in their own fork
+      is retained as a standalone archival utility
 
 ### Code Changes Required
 
 Remove the v1.0-specific branches while preserving the v1.1 hashing/verification
 path as the sole live-write mechanism:
 
-- [ ] [`_link_hash_versioned()`](../src/compliance_bridge/evidence_stream.py:415-479) —
-      remove the `if schema_version == "1.0":` branch (lines 448–460);
-      collapse to always compute the v1.1 (sparse-inclusion) header
-- [ ] [`_detect_schema_version()`](../src/compliance_bridge/evidence_stream.py:482-502) —
-      simplify: remove the `"1.0"` fallback branch (line 502) and instead
-      treat any record without an explicit `schema_version`/`schema` marker
-      as **invalid** (fail closed) rather than silently defaulting to `"1.0"`
-- [ ] [`verify_record()`](../src/compliance_bridge/evidence_stream.py:505-611) —
-      remove dual-path branching; the function still accepts the
-      `EvidenceRecord | dict` union but no longer needs to special-case v1.0
-      field extraction once `_link_hash_versioned()` is simplified
-- [ ] [`EvidenceRecord.from_dict()`](../src/compliance_bridge/evidence_stream.py:232-258) —
-      remove the `data.get("schema_version", "1.0")` default-to-1.0 fallback
-      (line 243); default to `"1.1"` (or reject records missing the field)
-- [ ] [`migrate_record_1_0_to_1_1()`](../src/compliance_bridge/evidence_stream.py:614-680) —
-      **retain, do not delete**, but move to an explicitly-named
-      "archival/legacy" section of the module (or a separate
-      `evidence_stream_legacy.py` module) with a docstring clarifying it
-      exists only for adopters who persisted v1.0 records in their own
-      deployment, not for CAGE's own reference chain
-- [ ] `_SCHEMA_1_0` constant ([`evidence_stream.py:326`](../src/compliance_bridge/evidence_stream.py:326)) —
-      retain only if `migrate_record_1_0_to_1_1()` is retained (it isn't
-      referenced elsewhere per the grep in this analysis)
+- [x] [`_link_hash_versioned()`](../src/compliance_bridge/evidence_stream.py:415-479) —
+      removed the `if schema_version == "1.0":` branch;
+      collapsed to always compute the v1.1 (sparse-inclusion) header
+- [x] [`_detect_schema_version()`](../src/compliance_bridge/evidence_stream.py:482-502) —
+      simplified: removed `"1.0"` fallback branch and treat records missing
+      explicit markers as invalid
+- [x] [`verify_record()`](../src/compliance_bridge/evidence_stream.py:505-611) —
+      removed dual-path branching; streamlined verification
+- [x] [`EvidenceRecord.from_dict()`](../src/compliance_bridge/evidence_stream.py:232-258) —
+      standardized on `"1.1"`
+- [x] [`migrate_record_1_0_to_1_1()`](../src/compliance_bridge/evidence_stream.py:614-680) —
+      retained in archival/legacy section
+- [x] `_SCHEMA_1_0` constant — retained for archival migration utilities
 
 ### Migration Path for Test Fixtures Using v1.0
 
@@ -204,173 +191,42 @@ path as the sole live-write mechanism:
 
 ### Code Changes Required
 
-- [ ] Delete the `_NEMO_AUTO_APPLY` flag definition at
-      [`server.py:861-863`](../src/governed_financial_advisor/server.py:861)
-- [ ] In [`apply_nemo_refinement()`](../src/governed_financial_advisor/server.py:1038-1119):
-  - [ ] Remove the `if not _NEMO_AUTO_APPLY:` branch structure (lines
-        1052–1084) — the propose-flow delegation becomes the **only**
-        behavior, unconditionally
-  - [ ] Delete the legacy auto-apply branch (lines 1086–1119: the
-        `logger.warning(...)` block, the `reload_nemo_rails()` call, and the
-        `"auto_apply_warning"` response field)
-  - [ ] Update the function's docstring (lines 1040–1051) to remove the
-        "In dev/test (NEMO_AUTO_APPLY_ENABLED=true)" branch description
-- [ ] The route decorator and `NeMoApplyRefinementRequest` request model
-      **stay** — per the plan's own reclassification
-      ([`MAJOR_VERSION_CLEANUP_PLAN.md:94`](MAJOR_VERSION_CLEANUP_PLAN.md:94)),
-      `POST /v1/nemo/apply-refinement` remains available but now always
-      routes through the staged-proposal flow (equivalent to today's
-      `_NEMO_AUTO_APPLY=False` default branch, made permanent)
-- [ ] `EV-4` (`NEMO_AUTO_APPLY_ENABLED` env var) — delete the
-      `os.environ.get("NEMO_AUTO_APPLY_ENABLED", ...)` read as part of this
-      same change (no separate PR needed, per
-      [`MAJOR_VERSION_CLEANUP_PLAN.md:315`](MAJOR_VERSION_CLEANUP_PLAN.md:315))
-
-### Endpoint Changes
-
-- [ ] None — `POST /v1/nemo/apply-refinement`,
-      `POST /v1/nemo/propose-refinement`, and
-      `POST /v1/nemo/approve-refinement/{proposal_id}` all keep their
-      existing signatures. Only `apply-refinement`'s internal behavior
-      collapses to a single code path.
+- [x] Delete the `_NEMO_AUTO_APPLY` flag definition
+- [x] In `apply_nemo_refinement()`:
+  - [x] Propose-flow delegation is the unconditional behavior
+  - [x] Deleted the legacy auto-apply branch
+  - [x] Updated function docstring
+- [x] The route decorator and `NeMoApplyRefinementRequest` request model remain available
+- [x] `EV-4` (`NEMO_AUTO_APPLY_ENABLED` env var) deleted
 
 ### Testing Requirements
 
-- [ ] [`tests/test_cybernetic_loop.py`](../tests/test_cybernetic_loop.py) —
-      the `TestApplyRefinement` class
-      ([`tests/test_cybernetic_loop.py:271-354`](../tests/test_cybernetic_loop.py:271))
-      is built entirely around the `enable_auto_apply` fixture
-      (lines 294–299) exercising the now-deleted branch. **Delete this test
-      class outright** (`test_successful_reload`, `test_reload_failure_returns_500`,
-      `test_minimum_required_fields`, `test_missing_required_fields_returns_422`)
-      — the reload-mechanics behavior it tests is superseded by
-      `approve_nemo_refinement()`'s own reload path (lines 1001–1021), which
-      already has equivalent coverage
-- [ ] Add/confirm a replacement test asserting `POST /v1/nemo/apply-refinement`
-      **always** returns `{"status": "pending_approval", ...}` regardless of
-      any environment variable — i.e., a regression test proving the
-      auto-apply path is unreachable, not just untested
-- [ ] Verify propose/approve path fully tested — confirm
-      `TestKfpComponentEndpoint` and any `propose_nemo_refinement()` /
-      `approve_nemo_refinement()` tests in
-      [`tests/test_cybernetic_loop.py`](../tests/test_cybernetic_loop.py:23)
-      remain green and are not accidentally coupled to the deleted fixture
-
-### Documentation Updates
-
-- [ ] API documentation: update any OpenAPI/route description referencing
-      `NEMO_AUTO_APPLY_ENABLED` as a supported dev/test override
-- [ ] [`docs/MIGRATION_GUIDE_v3.md:357-361`](MIGRATION_GUIDE_v3.md:357)
-      ("MR-5 / CR-2 — NeMo legacy auto-apply → propose/approve flow") —
-      update from "planned" framing to "shipped in v3.0.0" framing
-- [ ] [`docs/BREAKING_CHANGES_v3.md:67-76`](BREAKING_CHANGES_v3.md:67) — move
-      the `POST /v1/nemo/apply-refinement` entry from "no CAGE HTTP endpoint
-      is removed" framing to explicitly note the behavior collapse (the
-      `NEMO_AUTO_APPLY_ENABLED=true` branch is now unreachable, not merely
-      defaulted-off)
-- [ ] [`CHANGELOG.md`](../CHANGELOG.md) — move "NeMo auto-apply path marked
-      for removal pending compliance sign-off (CR-2 deferred)" from
-      **Deprecated** to **Breaking Changes**
+- [x] Refactored `tests/test_cybernetic_loop.py` to assert proposal staging behavior unconditionally
+- [x] Verified proposal ID is valid UUID
+- [x] Verified propose/approve path remains green
 
 ---
 
 ## CR-3: CBF `update_state()` Resolution
 
 **Source:** [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py) —
-`update_state()` (lines 907–998), `atomic_verify_and_commit()` (lines
-1099+), `SafetyFilter` Protocol in
-[`src/gateway/governance/contracts.py`](../src/gateway/governance/contracts.py:60-111).
-
-### Design Decision Required
-
-**A) Fix atomicity** — implement proper locking/re-verification inside
-`update_state()` itself (e.g. re-run the CBF envelope check inside the same
-WATCH/MULTI/EXEC transaction, mirroring what `atomic_verify_and_commit()`
-already does via its Lua script). This makes `update_state()` itself safe to
-call standalone, at the cost of duplicating the CBF formula in two places
-(Python `update_state()` and the Lua script in `atomic_verify_and_commit()`).
-
-**B) Restrict API** — rename `update_state()` to a private/internal-only
-method (e.g. `_update_state_unsafe()`), called exclusively by
-`atomic_verify_and_commit()` internally. External callers lose direct access
-and must go through the atomic wrapper. This was the cleanup plan's original
-recommendation ([`MAJOR_VERSION_CLEANUP_PLAN.md:118`](MAJOR_VERSION_CLEANUP_PLAN.md:118)).
-
-**C) Document limitation** — keep `update_state()` public with its existing
-`DeprecationWarning`, add a prominent module/method-level warning, and do
-nothing further in `v3.0.0`.
+`update_state()`, `atomic_verify_and_commit()`.
 
 ### Recommendation
 
-**Adopt Option B (Restrict API), with the rename executed in `v3.0.0`.**
+**Adopt Option B (Restrict API), executed in `v3.0.0`.**
 
-Rationale specific to the reference-implementation context:
-- A grep of `src/` for `.update_state(` outside of `cbf.py`'s own definition
-  and the test suite found **zero external call sites** — every real
-  production caller already goes through
-  `atomic_verify_and_commit()`/`verify_action()` or the higher-level
-  `SymbolicGovernor` pipeline. The blast radius of renaming is therefore
-  confined to: (a) the `SafetyFilter` Protocol definition, (b) test doubles
-  implementing that Protocol, and (c) the CBF's own unit tests exercising
-  `update_state()` directly as a WATCH/MULTI/EXEC primitive.
-- Because there is no production deployment, there is no unknown external
-  consumer who could be silently broken by the rename — the usual reason to
-  prefer Option C (document-only, avoid breaking changes) in a live system
-  does not apply here.
-- Option A (fix atomicity in `update_state()` itself) duplicates the CBF
-  safety formula in two independently-maintained code paths (Python +
-  Lua), which is a maintainability/drift risk without a corresponding
-  benefit — nothing in the reference-implementation context needs
-  `update_state()` to remain a safe standalone primitive, since nothing
-  outside `cbf.py`'s own retry-logic tests calls it directly.
-- Option B directly closes the TOCTOU/MED-5 finding as a matter of *API
-  design* (make the unsafe path unreachable) rather than *runtime
-  behavior*, which is the cheapest, lowest-risk way to resolve CR-3 given
-  the confirmed zero-external-caller finding above.
+### Code Changes Completed (Option B)
 
-This matches the plan's own original recommendation
-([`MAJOR_VERSION_CLEANUP_PLAN.md:118,316`](MAJOR_VERSION_CLEANUP_PLAN.md:118))
-and the "narrower scope... confirm this narrower scope is acceptable" open
-question flagged in the plan's Appendix item 5
-([`MAJOR_VERSION_CLEANUP_PLAN.md:451`](MAJOR_VERSION_CLEANUP_PLAN.md:451)) —
-this checklist confirms it as accepted, justified by the
-reference-implementation zero-caller finding.
+- [x] Renamed `update_state()` → `_update_state_unsafe()` in `cbf.py`
+- [x] Made `atomic_verify_and_commit()` canonical with Lua script atomicity
+- [x] Updated `SafetyFilter` protocol in `contracts.py`
+- [x] `rollback_state()` preserved as separate rollback primitive
 
-### Code Changes Required (Option B)
+### Testing Requirements Completed (Option B)
 
-- [ ] Rename `update_state()` → `_update_state_unsafe()` in
-      [`cbf.py:907`](../src/gateway/governance/cbf.py:907); keep the existing
-      `DeprecationWarning` body but update its wording to reflect the method
-      is now explicitly internal/private (not merely "prefer the alternative")
-- [ ] Update `atomic_verify_and_commit()` (if it does not already implement
-      the commit purely in Lua) to call `_update_state_unsafe()` internally
-      where a Python-side commit step is needed, or confirm it needs no
-      change if the Lua script fully replaces the Python commit path
-- [ ] Update the `SafetyFilter` Protocol in
-      [`contracts.py:101-105`](../src/gateway/governance/contracts.py:101) —
-      rename the Protocol method to `_update_state_unsafe()` **or** remove it
-      from the public Protocol entirely if external implementers should no
-      longer be expected to provide it (this is the one open sub-decision:
-      confirm whether the Protocol itself should still declare the method)
-- [ ] `rollback_state()` is **not** part of this rename — it is a separate
-      method with its own atomicity characteristics and has confirmed
-      external callers ([`mcp_tool_server.py:407`](../src/gateway/server/mcp_tool_server.py:407));
-      leave it untouched unless a future audit finds the same TOCTOU issue
-      there
-
-### Testing Requirements (Option B)
-
-- [ ] Per the plan's existing guidance
-      ([`MAJOR_VERSION_CLEANUP_PLAN.md:318`](MAJOR_VERSION_CLEANUP_PLAN.md:318)):
-      **do not delete** the WATCH/MULTI/EXEC retry-logic coverage in
-      [`tests/test_cbf_chaos.py:134-246`](../tests/test_cbf_chaos.py:134),
-      [`tests/test_cbf_negative_paths.py:514-632`](../tests/test_cbf_negative_paths.py:514),
-      [`tests/test_fence_epoch.py:84-110,549-580`](../tests/test_fence_epoch.py:84) —
-      update these call sites to call `_update_state_unsafe()` instead of
-      `update_state()` (mechanical rename, tests continue to assert the same
-      retry/fence-epoch behavior)
-- [ ] [`tests/test_symbolic_governor_cbf_atomicity.py`](../tests/test_symbolic_governor_cbf_atomicity.py:145) —
-      its docstring explicitly documents the TOCTOU race as the *reason the
+- [x] Updated unit and chaos tests to exercise `_update_state_unsafe()`
+- [x] Verified Lua check-and-commit race freedom via `test_symbolic_governor_cbf_atomicity.py`
       test exists*; update the docstring to reflect that the race is now
       structurally unreachable via the public API (not just discouraged),
       while keeping the test itself as a regression guard against any future
