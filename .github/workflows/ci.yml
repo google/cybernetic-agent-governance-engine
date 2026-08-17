@@ -299,7 +299,7 @@ jobs:
       # published figures without failing CI. See REVISION_TRACKER.md.
       - name: Run pinned NoDirectBind regression tests
         run: |
-          python -m pytest tests/test_no_direct_bind_proof.py -m local -v
+          python -m pytest tests/test_no_direct_bind_proof.py -m local -v -o addopts=""
 
   langfuse-posture-check:
     name: "Langfuse Posture Dry-Run Check"
@@ -583,4 +583,4 @@ jobs:
         # figures. If state space changes, update EXPECTED_STATE_COUNTS in
         # proof/distributed_cbf_model.py and document in REVISION_TRACKER.md.
         run: |
-          uv run pytest proof/distributed_cbf_model.py -v --tb=short
+          uv run pytest proof/distributed_cbf_model.py -v --tb=short -o addopts=""
