@@ -1111,10 +1111,11 @@ _REFINEMENT_COOLDOWN_SECONDS: float = float(
 _REFINEMENT_MIN_SAMPLES: int = int(os.environ.get("REFINEMENT_MIN_SAMPLES", "10"))
 
 # Module-level monotonic timestamp of the last accepted KFP trigger.
-# Initialised to 0.0 so the very first qualifying event always fires.
+# Initialised to -1e9 so the very first qualifying event always fires
+# even on newly-booted systems where time.monotonic() < cooldown.
 # asyncio is single-threaded: the check + update is atomic at the Python
 # coroutine boundary — no lock needed.
-_last_refinement_triggered_at: float = 0.0
+_last_refinement_triggered_at: float = -1e9
 
 
 @app.post("/v1/webhooks/langfuse")

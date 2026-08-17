@@ -64,7 +64,7 @@ def _get_server_app():
         import src.governed_financial_advisor.server as srv
 
         importlib.reload(srv)
-        srv._last_refinement_triggered_at = 0.0
+        srv._last_refinement_triggered_at = -1e9
         return srv.app
 
 
@@ -148,9 +148,9 @@ class TestLangfuseWebhook:
     def reset_cooldown(self):
         import src.governed_financial_advisor.server as srv
 
-        srv._last_refinement_triggered_at = 0.0
+        srv._last_refinement_triggered_at = -1e9
         yield
-        srv._last_refinement_triggered_at = 0.0
+        srv._last_refinement_triggered_at = -1e9
 
     @pytest.fixture
     def client(self):
@@ -379,9 +379,9 @@ class TestWebhookCooldown:
         """Reset the module-level cooldown clock before every test."""
         import src.governed_financial_advisor.server as srv
 
-        srv._last_refinement_triggered_at = 0.0
+        srv._last_refinement_triggered_at = -1e9
         yield
-        srv._last_refinement_triggered_at = 0.0
+        srv._last_refinement_triggered_at = -1e9
 
     @pytest.fixture
     def client(self):
@@ -510,9 +510,9 @@ class TestWebhookMinSamples:
     def reset_cooldown(self):
         import src.governed_financial_advisor.server as srv
 
-        srv._last_refinement_triggered_at = 0.0
+        srv._last_refinement_triggered_at = -1e9
         yield
-        srv._last_refinement_triggered_at = 0.0
+        srv._last_refinement_triggered_at = -1e9
 
     @pytest.fixture
     def client(self):
