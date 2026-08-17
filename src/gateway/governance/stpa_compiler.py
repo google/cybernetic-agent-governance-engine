@@ -51,6 +51,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import logging
+import re
 import sys
 import textwrap
 from dataclasses import dataclass, field
@@ -58,7 +59,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 logger = logging.getLogger("stpa_compiler")
 
@@ -93,6 +94,48 @@ UcaType = Literal["not_provided", "unsafe_action", "wrong_timing", "stopped_too_
 EnforcementTarget = Literal["opa", "nemo", "python", "langgraph", "ftra", "all"]
 OpaDecision = Literal["DENY", "GOVERNANCE_VIOLATION", "MANUAL_REVIEW", "ALLOW"]
 
+# ---------------------------------------------------------------------------
+# Input hardening for fields that reach the code generators.
+#
+# generate_python() and generate_langgraph() interpolate control-structure
+# string fields directly into Python source that write_artifacts() writes to
+# generated_stpa_validator.py / generated_saga_nodes.py, which singletons.py,
+# symbolic_governor.py and auditor.py import at process start; generate_opa()
+# and generate_nemo() do the same for Rego / Colang.  A field that carries a
+# quote, brace, or newline can break out of a generated string literal,
+# f-string, or comment and inject executable code into the compiled artifact.
+# Identifier-typed fields (action names, param keys, threshold paths) are held
+# to identifier grammars; free-text fields (descriptions, messages) may not
+# carry the characters that escape a generated literal.  Both are enforced here
+# at parse time so no generator has to remember to escape.
+# ---------------------------------------------------------------------------
+
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+_ACTION_RE = re.compile(r"^(?:\*|[A-Za-z_][A-Za-z0-9_.-]*)$")
+_DOTTED_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+_TEXT_FORBIDDEN = ('"', "\\", "{", "}", "\n", "\r")
+
+
+def _require_pattern(value: str, pattern: re.Pattern[str], field: str) -> str:
+    if not pattern.match(value):
+        raise ValueError(
+            f"{field} must match {pattern.pattern!r}; got {value!r} — this value is "
+            "compiled into generated enforcement code and may not contain other characters"
+        )
+    return value
+
+
+def _reject_source_breaking(value: str, field: str) -> str:
+    for ch in _TEXT_FORBIDDEN:
+        if ch in value:
+            raise ValueError(
+                f"{field} may not contain {ch!r} — it is interpolated into generated "
+                "enforcement code (string literals, f-strings, and comments)"
+            )
+    return value
+
+
 # FTRA terminal classification — used by the Forward-Looking Trajectory Reachability Analyzer.
 # Fail-closed: any action not present in the compiled registry is treated as
 # IRREVERSIBLE_TERMINAL by IrreversibilityClassifier at runtime.
@@ -116,15 +159,53 @@ class ConditionModel(BaseModel):
     semantic_pattern: str | None = None
     composite: str | None = None  # free-form expression for complex conditions
 
+    @field_validator("param")
+    @classmethod
+    def _v_param(cls, v: str | None) -> str | None:
+        return v if v is None else _require_pattern(v, _IDENT_RE, "condition.param")
+
+    @field_validator("threshold_ref")
+    @classmethod
+    def _v_threshold_ref(cls, v: str | None) -> str | None:
+        return (
+            v
+            if v is None
+            else _require_pattern(v, _DOTTED_IDENT_RE, "condition.threshold_ref")
+        )
+
+    @field_validator("semantic_pattern", "composite")
+    @classmethod
+    def _v_free_text(cls, v: str | None, info: ValidationInfo) -> str | None:
+        return (
+            v
+            if v is None
+            else _reject_source_breaking(v, f"condition.{info.field_name}")
+        )
+
 
 class OpaRuleModel(BaseModel):
     decision: OpaDecision = "DENY"
     message: str
 
+    @field_validator("message")
+    @classmethod
+    def _v_message(cls, v: str) -> str:
+        return _reject_source_breaking(v, "opa_rule.message")
+
 
 class NemoRailModel(BaseModel):
     flow_name: str
     message: str
+
+    @field_validator("flow_name")
+    @classmethod
+    def _v_flow_name(cls, v: str) -> str:
+        return _require_pattern(v, _IDENT_RE, "nemo_rail.flow_name")
+
+    @field_validator("message")
+    @classmethod
+    def _v_message(cls, v: str) -> str:
+        return _reject_source_breaking(v, "nemo_rail.message")
 
 
 class ParameterMappingModel(BaseModel):
@@ -140,6 +221,11 @@ class ParameterMappingModel(BaseModel):
 
     forward_key: str  # e.g. "transaction_id" from the forward action's context_data
     compensating_key: str  # e.g. "target_tx_id" expected by the compensating API call
+
+    @field_validator("forward_key", "compensating_key")
+    @classmethod
+    def _v_key(cls, v: str) -> str:
+        return _require_pattern(v, _IDENT_RE, "parameter_mapping key")
 
     @classmethod
     def from_yaml_dict(cls, raw: dict[str, str]) -> list[ParameterMappingModel]:
@@ -179,6 +265,20 @@ class SagaModel(BaseModel):
     execution_type: ExecutionType = "local"
     mcp_tool_name: str | None = None
 
+    @field_validator("forward_action", "compensating_action")
+    @classmethod
+    def _v_saga_action(cls, v: str) -> str:
+        return _require_pattern(v, _IDENT_RE, "langgraph_saga action")
+
+    @field_validator("mcp_tool_name")
+    @classmethod
+    def _v_mcp_tool_name(cls, v: str | None) -> str | None:
+        return (
+            v
+            if v is None
+            else _require_pattern(v, _IDENT_RE, "langgraph_saga.mcp_tool_name")
+        )
+
     @model_validator(mode="before")
     @classmethod
     def _parse_parameter_mapping(cls, data: Any) -> Any:
@@ -211,6 +311,21 @@ class UCAModel(BaseModel):
     # FTRA: commencement-time worst-case reachability classification.
     # Fail-closed: IrreversibilityClassifier treats absent entries as IRREVERSIBLE_TERMINAL.
     terminal_classification: TerminalClassification | None = None
+
+    @field_validator("id")
+    @classmethod
+    def _v_id(cls, v: str) -> str:
+        return _require_pattern(v, _ID_RE, "uca.id")
+
+    @field_validator("action")
+    @classmethod
+    def _v_action(cls, v: str) -> str:
+        return _require_pattern(v, _ACTION_RE, "uca.action")
+
+    @field_validator("description")
+    @classmethod
+    def _v_description(cls, v: str) -> str:
+        return _reject_source_breaking(v, "uca.description")
 
     @model_validator(mode="after")
     def _validate_enforcement_deps(self) -> UCAModel:
@@ -258,6 +373,13 @@ class SystemModel(BaseModel):
     controller: str
     controlled_process: str
     sensors: list[str] = Field(default_factory=list)
+
+    @field_validator("name", "version")
+    @classmethod
+    def _v_banner_field(cls, v: str) -> str:
+        # name and version are interpolated into the `# System: ...` header
+        # comment of every generated artifact, including the Python ones.
+        return _reject_source_breaking(v, "system field")
 
 
 class ControlStructureModel(BaseModel):
