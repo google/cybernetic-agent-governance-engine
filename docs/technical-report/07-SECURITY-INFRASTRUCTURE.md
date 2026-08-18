@@ -621,30 +621,32 @@ All third-party compliance and attestation provider adapters are isolated under 
 
 **FIPS 140-2/3 Assessment**: HMAC-SHA256 is a FIPS-approved algorithm. Intra-cluster mTLS is now enforced via Linkerd (FIND-011 resolved), satisfying FIPS transport requirements for all service-to-service communication within the `governance-stack` namespace.
 
-### 9.0 Cryptographic Integrity — Routing Seal and Provenance Chain
+### 9.0 Cryptographic Integrity — Routing Seal v2 and Provenance Chain
 
-#### HMAC-SHA256 Routing Seal
+#### HMAC-SHA256 Routing Seal v2 (Evidence Binding)
 
 **Source:** [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py)
 
-Every governance approval is sealed with an HMAC-SHA256 routing seal before execution is permitted. The seal format is:
+Every governance approval is sealed with an HMAC-SHA256 routing seal before execution is permitted. The v2 seal format binds the durable evidence record directly into the cryptographic payload:
 
 ```
-<expire_ts_hex>.<action_slug>.<hmac_hex>
+<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>
 ```
 
 | Field | Description |
 | ----- | ----------- |
 | `expire_ts_hex` | Hex-encoded Unix timestamp of seal expiry |
 | `action_slug` | URL-safe slug identifying the governed action |
-| `hmac_hex` | HMAC-SHA256 hex digest over `expire_ts_hex.action_slug` |
+| `record_hash_hex` | Hex-encoded SHA-256 hash of the durable evidence record |
+| `hmac_hex` | HMAC-SHA256 hex digest over `expire_ts_hex.action_slug.record_hash_hex` |
 
 | Parameter | Value | Security Property |
 | --------- | ----- | ----------------- |
 | TTL | **30 seconds** | Prevents replay attacks; seal expires 30s after issuance |
 | Algorithm | HMAC-SHA256 | FIPS-approved; constant-time `hmac.compare_digest` prevents timing side-channels |
-| Secret | `CAGE_ROUTING_SEAL_SECRET` | Kubernetes `Secret` object; ≥ 64 characters enforced in production |
-| Enforcement | [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py) | Missing or invalid seal → HTTP 401 (fail-closed) |
+| Secret | `CAGE_ROUTING_SEAL_SECRET` | Kubernetes `Secret` object; custom non-default secret enforced in production |
+| Evidence Binding | `record_hash` folded into HMAC | Actuators enforce `CAGE_REQUIRE_EVIDENCE_BINDING=true` in production |
+| Enforcement | [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py) | Missing, expired, or un-bound seal → HTTP 401 / `SymbolicGovernorViolation` (fail-closed) |
 
 The routing seal satisfies the `NoDirectBind` formal invariant: there is no code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`. This was machine-verified over the full reachable state space in `proof/model.py` (see §3a, Gap 2).
 

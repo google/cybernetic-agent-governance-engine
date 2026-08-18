@@ -6,7 +6,7 @@
 | **Date**             | 2026-08-16                                                                        |
 | **Classification**   | INTERNAL                                                                          |
 | **Document Series**  | CAGE Technical Report                                                             |
-| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,741 passed, 0 failed, 182 skipped; 75.12% coverage) |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,817 passed, 0 failed, 67 skipped; 75.40% coverage) |
 | **Reference**        | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/` |
 
 ---
@@ -456,7 +456,7 @@ SymbolicGovernor._run_checks()
   Tier 0: STPA/STAMP UCA validation — GeneratedSTPAValidator.validate()
   Tier 1: Agent confidence pre-check — fast-fail against AGENT_CONFIDENCE_THRESHOLD
   Tiers 2/4: asyncio.gather(cbf_check, opa_check)
-           ├─ CBF (Tier 2): h(S(t+1)) ≥ (1−γ)·h(S(t)) verified against Redis balance
+           ├─ CBF (Tier 2): h(S(t+1)) ≥ (1−γ)·h(S(t)) via Lua atomic check+commit + replica WAIT
            └─ OPA (Tier 4): trade.governance Rego policy evaluated
   Tier 3: Fiscal Limit Pre-Reservation — FiscalLimitGuard.reserve() (Redis WATCH/MULTI/EXEC)
   Tier 5: Consensus — required if amount ≥ $10,000 USD (_CRITIC_TIMEOUT_S=10.0 per critic)
@@ -464,10 +464,10 @@ SymbolicGovernor._run_checks()
   Tier 6b: FRIA zone classification — ALLOW / DEFER / DENY
         │
         ▼
-Routing seal issued: <expire_ts_hex>.<action_slug>.<hmac_hex>
+Routing seal v2 issued: <expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>
         │
         ▼
-Actuator verifies seal via hmac.compare_digest() before firing
+Actuator verifies seal and evidence binding before firing
 ```
 
 > PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules, not sequential tiers of `_run_checks()`. PII sanitization runs inside `uca_logger.py` immediately before a UCA audit record is written to the WORM ledger; confabulation scoring is a standalone Langfuse observability metric.

@@ -60,7 +60,15 @@ The `SymbolicGovernor` in `src/gateway/governance/symbolic_governor.py` is the c
 | **6** | DoWhy Causal Gatekeeper | `causal_safety_check()` (`causal_gatekeeper.py`) | Constructs a `CausalModel` (market_volatility → trade_amount → risk_score), estimates causal effect via backdoor linear regression, then applies a **Placebo Treatment Refuter** (50 simulations, p < 0.05). Dispatched via `asyncio.to_thread`. Fail-safe: blocks on any exception or missing live telemetry in production. Redis connection errors are fail-closed (raise `RuntimeError`); absent keys return `None` (first-boot safe). |
 | **6b** | FRIA Normative Boundary + Attestation | `enforce_fria_boundary()` + OTel stamp (`normative_provider.py`) | **Merged step:** adaptive FRIA enforcement (ALLOW/DEFER/DENY based on consensus score against `get_fria_zone_allow()` and `get_fria_zone_defer()`) combined with EU AI Act Art. 29a OTel attestation. Runs only when `CAGE_NORMATIVE_PROVIDER != "static"` for enforcement; attestation stamp always applied for EU_ECB deployments. |
 
-**Routing Seal timing:** The KMS-backed routing seal (`generate_seal()` in `routing_seal.py`) is issued **only after all 7 pipeline tiers complete successfully**. Previously `validate_action()` issued the seal after only CBF + OPA (Tiers 2/4), implying full governance approval that was never actually granted. That gap is now closed.
+**Routing Seal v2 timing & evidence binding:** The KMS-backed routing seal (`generate_seal_with_evidence()` in `routing_seal.py`) is issued **only after all pipeline tiers complete successfully**. The seal utilizes a 4-tuple format `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` where the SHA-256 `record_hash` of the durable evidence item is folded directly into the HMAC input. In production (`CAGE_REQUIRE_EVIDENCE_BINDING=true`), actuators strictly reject un-bound or tampered seals.
+
+**6 Governance Runtime Decision Primitives (`SymbolicGovernor.validate_action()`):**
+1. `ALLOW` — all checks passed; issues cryptographic routing seal v2.
+2. `DENY` — hard safety invariant violated; returns `SymbolicGovernorViolation` without seal.
+3. `REQUIRE_APPROVAL` — triggers HITL approval workflow; state checkpointed to Redis.
+4. `DEFER` — low confidence or incomplete data; context parked in `DeferQueue` (`db=1`, `noeviction`) for asynchronous data injection.
+5. `NARROW` — policy violation with partial-authority option; clamps execution parameters to safe bounds.
+6. `PAUSE` — system or market transient overload; issues `pause_token` via `PausePrimitiveManager` with retry metadata.
 
 **HITL (Human-in-the-Loop):** Handled by `defer_queue.py`, triggered by pipeline decisions (e.g., `MANUAL_REVIEW` from OPA or confidence starvation). LangGraph's `interrupt_before=["governed_trader"]` enforces a physical pause before every trade execution; after human approval, `revalidate_post_hitl()` re-runs only the state-sensitive tiers (CBF+OPA, Tiers 2/4) before proceeding.
 
@@ -70,6 +78,7 @@ The `SymbolicGovernor` in `src/gateway/governance/symbolic_governor.py` is the c
 - KMS readiness probe fails (`KMSGovernanceSigner.validate_ready()`)
 - Redis readiness probe fails
 - `RECONCILIATION_PROVIDER=stub` with `CAGE_ENV=production` (CAGE-SEC-007)
+- Default `GOVERNANCE_SALT` is detected in production (`assert_custom_salt_in_production()`)
 
 #### Supporting Infrastructure (Not Pipeline Steps)
 
@@ -79,7 +88,8 @@ The following components are essential infrastructure but are **not** numbered g
 |-----------|------|-------|
 | **Redis Session Persistence** | Stateful sessions on stateless compute | `AsyncRedisSaver` checkpoints graph state after each node transition; `MemorySaver` fallback emits OTel alert. |
 | **Pydantic Schema Validation** | Structural integrity at the request boundary | Strict Pydantic v2 models validate every tool call before it reaches the pipeline. UUID v4, ticker regex `^[A-Z]{1,5}$`, and `trader_role` enforced here. |
-| **KMS Routing Seal** | Cryptographic authorization between agent nodes | Issued after full pipeline approval (see above). GCP KMS asymmetric signing (primary); HMAC-SHA256 fallback for dev/CI only. Implementation: `src/gateway/governance/kms_signer.py` |
+| **KMS Routing Seal v2** | Cryptographic authorization between agent nodes | Issued after full pipeline approval (see above). GCP KMS asymmetric signing (primary); HMAC-SHA256 fallback with `record_hash` binding for dev/CI. Implementation: `src/gateway/governance/routing_seal.py` |
+| **Synchronous Replication Barrier** | Distributed multi-agent state consistency | Redis `WAIT` synchronization in `cbf.py` with automatic fail-closed rollback (`rollback_state()`) on replica lag timeout in production. |
 
 **OPA RBAC thresholds** (enforced in Tier 4):
 

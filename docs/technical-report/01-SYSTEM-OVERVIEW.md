@@ -6,7 +6,7 @@
 | **Date**             | 2026-08-16                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,741 passed, 0 failed, 182 skipped; 75.12% coverage)        |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,817 passed, 0 failed, 67 skipped; 75.40% coverage)        |
 | **Reference**        | [`compliance/boundary/AUTHORIZATION_BOUNDARY.md`](../../compliance/boundary/AUTHORIZATION_BOUNDARY.md) |
 
 ---
@@ -62,14 +62,14 @@ CAGE follows the NIST SP 800-37 Rev. 2 role taxonomy. The table below summarizes
 
 ## 4. Primary Capabilities
 
-> **v2.1.0 additions** (since v2.0.0): FTRA Commencement Reachability Gate, Phase A/B Ingress Adapters, CAGE-003 Agent Registry (SPIFFE), CBF External Reconciliation Worker (POAM-023 closed), NIST AI 600-1 Compliance Gates (phases 0–3 all implemented), Three-Region Compliance Matrix with separate Lula manifests, AgentSight UI (React/TypeScript), Governed Financial Advisor multi-agent reference implementation, NeMo Guardrails Integration, LangGraph Harness, AARM Profile Mapper, Evidence Chain Metadata Binding, Region-Aware K8s Templates, Langfuse Native OTLP.
+> **v3.0.0 additions:** Full first-class runtime execution for 6 governance primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`), HMAC Routing Seal v2 (`<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>`) with SHA-256 evidence record hash binding, Lua-atomic Control Barrier Functions (`atomic_verify_and_commit()`) with synchronous replica `WAIT` verification and fail-closed state rollback, monotonic fence epoch (`safety:fence_epoch`), evidence stream blocking precondition checks, and 39/44-state formal reachability models.
 
 
 CAGE provides eight integrated capabilities that together constitute a full-stack governed AI financial advisor:
 
 1. **Autonomous AI Financial Advising** — The Governed Financial Advisor (`src/governed_financial_advisor/`) is the primary multi-agent reference implementation. It comprises specialist sub-agents (market data analyst, risk analyst, execution analyst, explainer, evaluator, supervisor) orchestrated by a LangGraph `StateGraph` (`src/governed_financial_advisor/graph/graph.py`). Agent orchestration is governed end-to-end via the 8-tier governance pipeline (FTRA + 7 in-pipeline tiers); no agent action bypasses the policy engine. The FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`) enforces that every graph instance contains a reachable HITL approval path before any LLM inference begins.
 
-2. **Real-Time Neuro-Symbolic Governance** — An 8-tier policy enforcement architecture (FTRA pre-pipeline boundary gate at Tier 0.5, plus 7 in-pipeline tiers 0–6, plus adaptive Tier 6b FRIA gate) applied at inference time. Each tier (STPA/UCA validation, agentic confidence check, Control Barrier Function, OPA Rego authorization, multi-agent consensus, causal gatekeeper, and external normative validation) intercepts every request before and after the LLM call. The SLM sidecar (formerly Tier 3) has been deprecated and replaced by a permanent `slm_available=false` sentinel to optimize latency. Governance is synchronous — not advisory.
+2. **Real-Time Neuro-Symbolic Governance & 6 Decision Primitives** — An 8-tier policy enforcement architecture (FTRA pre-pipeline boundary gate at Tier 0.5, plus 7 in-pipeline tiers 0–6, plus adaptive Tier 6b FRIA gate) applied at inference time. Evaluates actions against 6 first-class runtime primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`). Each tier (STPA/UCA validation, agentic confidence check, Control Barrier Function with synchronous `WAIT` replication barrier and fail-closed rollback, OPA Rego authorization, multi-agent consensus, causal gatekeeper, and external normative validation) intercepts every request before and after the LLM call. The SLM sidecar has been deprecated and replaced by a permanent `slm_available=false` sentinel. Governance is synchronous — not advisory.
 
 3. **Human-in-the-Loop Trade Approval** — High-risk trade recommendations are routed to a mandatory HITL approval node before execution. The approval workflow is logged with full provenance and linked to the originating inference trace.
 
@@ -87,7 +87,7 @@ CAGE provides eight integrated capabilities that together constitute a full-stac
 
 ## 5. Current Compliance Posture (NIST RMF Readiness)
 
-CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v3.0.0 stable release was tagged on 2026-08-15. Both application images were built via Cloud Build and deployed to GKE cluster `governance-cluster-2`, namespace `governance-stack`. The test suite reports **2,741 passed, 0 failed, 182 skipped** with **75.12% statement coverage**.
+CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v3.0.0 stable release was tagged on 2026-08-15. Both application images were built via Cloud Build and deployed to GKE cluster `governance-cluster-2`, namespace `governance-stack`. The test suite reports **2,817 passed, 0 failed, 67 skipped** with **75.40% statement coverage** across all three regional compliance postures.
 
 ### 5.1 Control Family Readiness
 

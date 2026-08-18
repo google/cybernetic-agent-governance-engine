@@ -49,7 +49,8 @@ def _make_cbf(fake_redis: fakeredis.aioredis.FakeRedis) -> ControlBarrierFunctio
     """Return a CBF wired to *fake_redis* with deterministic thresholds."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    # B3a: Use skip_epoch_seed=True to avoid Redis seeding in tests
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.min_cash_balance = _MIN_CASH
     cbf.gamma = _GAMMA
     cbf.tracer = None  # suppress OTel span creation
@@ -100,7 +101,8 @@ async def test_read_cbf_state_uses_reconciled_balance_when_kms_valid():
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    # B3a: Use skip_epoch_seed=True to avoid Redis seeding in tests
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.min_cash_balance = _MIN_CASH
     cbf.gamma = _GAMMA
     cbf.tracer = None
@@ -149,7 +151,7 @@ async def test_read_cbf_state_falls_back_when_kms_sig_invalid():
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.min_cash_balance = _MIN_CASH
     cbf.gamma = _GAMMA
     cbf.tracer = None
@@ -197,7 +199,7 @@ async def test_read_cbf_state_falls_back_when_kms_verify_raises():
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.min_cash_balance = _MIN_CASH
     cbf.gamma = _GAMMA
     cbf.tracer = None
@@ -244,7 +246,7 @@ async def test_read_cbf_state_accepts_unsigned_balance_in_dev_mode():
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.min_cash_balance = _MIN_CASH
     cbf.gamma = _GAMMA
     cbf.tracer = None
@@ -286,7 +288,7 @@ async def test_read_cbf_state_rejects_unsigned_balance_in_production():
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.min_cash_balance = _MIN_CASH
     cbf.gamma = _GAMMA
     cbf.tracer = None
@@ -327,7 +329,7 @@ async def test_read_cbf_state_falls_back_when_reconciliation_raises():
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.min_cash_balance = _MIN_CASH
     cbf.gamma = _GAMMA
     cbf.tracer = None
@@ -358,7 +360,7 @@ async def test_read_cbf_state_raises_when_redis_unavailable():
     """_read_cbf_state_atomic raises RuntimeError when redis_client is None."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
 
     with patch("src.gateway.governance.cbf.redis_client", None):
@@ -379,7 +381,7 @@ async def test_verify_action_non_trade_action_is_always_safe():
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.min_cash_balance = 0.0
     cbf.gamma = 0.9
     cbf.tracer = None
@@ -412,7 +414,7 @@ async def test_verify_action_drawdown_violation_returns_unsafe():
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.min_cash_balance = 0.0
     cbf.gamma = 0.9
     cbf.tracer = None
@@ -457,7 +459,7 @@ async def test_verify_action_trade_at_exact_floor_is_safe():
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.min_cash_balance = _MIN_CASH
     cbf.gamma = 1.0  # required_h_next = 0
     cbf.tracer = None
@@ -490,7 +492,7 @@ async def test_verify_action_trade_below_floor_returns_unsafe():
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.min_cash_balance = _MIN_CASH
     cbf.gamma = 1.0
     cbf.tracer = None
@@ -522,7 +524,7 @@ async def test_update_state_retries_on_watch_error():
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.min_cash_balance = _MIN_CASH
     cbf.gamma = _GAMMA
     cbf.tracer = None
@@ -585,7 +587,7 @@ async def test_update_state_raises_after_max_retries_exhausted():
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
 
     class FakeWatchError(Exception):
@@ -633,7 +635,7 @@ async def test_update_state_raises_when_redis_none():
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
 
     with patch("src.gateway.governance.cbf.redis_client", None):
         with warnings.catch_warnings():
@@ -652,7 +654,7 @@ async def test_rollback_state_restores_balance():
     """rollback_state() adds back cost to the Redis balance."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
 
     restored_values: list[str] = []
@@ -697,7 +699,7 @@ async def test_rollback_state_raises_when_redis_none():
     """rollback_state() raises RuntimeError when redis_client is None."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
 
     with patch("src.gateway.governance.cbf.redis_client", None):
         with pytest.raises(RuntimeError, match="Redis client unavailable"):
@@ -709,7 +711,7 @@ async def test_rollback_state_raises_after_max_retries():
     """rollback_state() raises RuntimeError after all WatchError retries fail."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
 
     class FakeWatchError(Exception):
@@ -758,7 +760,7 @@ async def test_evalsha_with_noscript_retry_reloads_on_noscript():
     """When evalsha raises NOSCRIPT, script is reloaded and retried once."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf._lua_sha = "some-sha"
     cbf.tracer = None
 
@@ -794,7 +796,7 @@ async def test_evalsha_with_noscript_retry_reraises_non_noscript_error():
     """Non-NOSCRIPT errors from evalsha are re-raised immediately."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf._lua_sha = "some-sha"
     cbf.tracer = None
 
@@ -821,7 +823,7 @@ def test_parse_lua_result_committed_with_bytes():
     """_parse_lua_result handles bytes in result_list[1] and result_list[2]."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
 
     committed, msg = cbf._parse_lua_result([1, b"COMMITTED", b"49000.0"], None)
@@ -834,7 +836,7 @@ def test_parse_lua_result_unsafe_with_strings():
     """_parse_lua_result handles plain strings and returns (False, reason)."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
 
     committed, msg = cbf._parse_lua_result(
@@ -854,7 +856,7 @@ def test_reset_local_debits_clears_accumulator():
     """reset_local_debits() sets _local_debits back to 0.0."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf._local_debits = 5000.0
 
     cbf.reset_local_debits()
@@ -879,7 +881,7 @@ def test_get_h_returns_correct_barrier_value(balance, min_cash, expected_h):
     """get_h(x) = x - min_cash_balance."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.min_cash_balance = min_cash
 
     assert cbf.get_h(balance) == pytest.approx(expected_h)
@@ -895,7 +897,7 @@ async def test_atomic_verify_and_commit_raises_when_redis_none():
     """atomic_verify_and_commit raises RuntimeError when redis_client is None."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
 
     with patch("src.gateway.governance.cbf.redis_client", None):
@@ -916,7 +918,7 @@ async def test_verify_action_accumulates_local_debits():
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.min_cash_balance = 0.0
     cbf.gamma = 1.0  # required_h_next = 0
     cbf.tracer = None
@@ -938,3 +940,337 @@ async def test_verify_action_accumulates_local_debits():
         result2 = await cbf.verify_action("execute_trade", {"amount": 10_000.0})
         assert result2 == "SAFE"
         assert cbf._local_debits == pytest.approx(20_000.0)
+
+
+# ---------------------------------------------------------------------------
+# B3a: Fence epoch cold-start seeding — fail-closed tests
+# ---------------------------------------------------------------------------
+
+
+class TestFenceEpochColdStartFailClosed:
+    """Tests for B3a: fail-closed behavior when Redis is unavailable at init."""
+
+    def test_cbf_raises_initialization_error_when_redis_unavailable_in_production(self):
+        """B3a: CBF must raise CBFInitializationError in production when Redis unavailable."""
+        from src.gateway.governance.cbf import (
+            CBFInitializationError,
+            ControlBarrierFunction,
+        )
+
+        with (
+            patch("src.gateway.governance.cbf.sync_redis_client", None),
+            patch("src.gateway.governance.cbf._IS_PRODUCTION", True),
+        ):
+            with pytest.raises(CBFInitializationError) as exc_info:
+                ControlBarrierFunction()
+
+        # Verify error message contains security context
+        error_msg = str(exc_info.value)
+        assert "sync Redis client unavailable" in error_msg
+        assert "Failing closed" in error_msg
+
+    def test_cbf_raises_initialization_error_on_redis_connection_error_in_production(
+        self,
+    ):
+        """B3a: Redis connection errors in production raise CBFInitializationError."""
+        from src.gateway.governance.cbf import (
+            CBFInitializationError,
+            ControlBarrierFunction,
+        )
+
+        mock_sync_redis = MagicMock()
+        mock_sync_redis.get = MagicMock(
+            side_effect=ConnectionError("Connection refused to redis:6379")
+        )
+
+        with (
+            patch("src.gateway.governance.cbf.sync_redis_client", mock_sync_redis),
+            patch("src.gateway.governance.cbf._IS_PRODUCTION", True),
+        ):
+            with pytest.raises(CBFInitializationError) as exc_info:
+                ControlBarrierFunction()
+
+        error_msg = str(exc_info.value)
+        assert "fence epoch unavailable from Redis" in error_msg
+        assert "Connection refused" in error_msg
+
+    def test_cbf_raises_initialization_error_on_redis_timeout_in_production(self):
+        """B3a: Redis timeout errors in production raise CBFInitializationError."""
+        from src.gateway.governance.cbf import (
+            CBFInitializationError,
+            ControlBarrierFunction,
+        )
+
+        mock_sync_redis = MagicMock()
+        mock_sync_redis.get = MagicMock(side_effect=TimeoutError("Redis read timeout"))
+
+        with (
+            patch("src.gateway.governance.cbf.sync_redis_client", mock_sync_redis),
+            patch("src.gateway.governance.cbf._IS_PRODUCTION", True),
+        ):
+            with pytest.raises(CBFInitializationError) as exc_info:
+                ControlBarrierFunction()
+
+        error_msg = str(exc_info.value)
+        assert "Redis read timeout" in error_msg
+
+    def test_cbf_falls_back_gracefully_in_dev_mode(self):
+        """B3a: In dev/test mode, Redis unavailability logs warning but proceeds."""
+        from src.gateway.governance.cbf import ControlBarrierFunction
+
+        mock_sync_redis = MagicMock()
+        mock_sync_redis.get = MagicMock(
+            side_effect=ConnectionError("Redis not available")
+        )
+
+        with (
+            patch("src.gateway.governance.cbf.sync_redis_client", mock_sync_redis),
+            patch("src.gateway.governance.cbf._IS_PRODUCTION", False),
+            patch("src.gateway.governance.cbf.logger") as mock_logger,
+        ):
+            cbf = ControlBarrierFunction()
+
+        # Should proceed with epoch=0
+        assert cbf._last_seen_epoch == 0
+        # Should log a warning
+        mock_logger.warning.assert_called()
+
+    def test_cbf_initialization_error_is_runtime_error_subclass(self):
+        """B3a: CBFInitializationError is a RuntimeError subclass for clean propagation."""
+        from src.gateway.governance.cbf import CBFInitializationError
+
+        assert issubclass(CBFInitializationError, RuntimeError)
+
+        exc = CBFInitializationError("test")
+        assert isinstance(exc, RuntimeError)
+        assert isinstance(exc, CBFInitializationError)
+
+    def test_cbf_skip_epoch_seed_bypasses_all_redis_calls(self):
+        """B3a: skip_epoch_seed=True completely bypasses Redis for testing."""
+        from src.gateway.governance.cbf import ControlBarrierFunction
+
+        mock_sync_redis = MagicMock()
+        mock_sync_redis.get = MagicMock()
+
+        with (
+            patch("src.gateway.governance.cbf.sync_redis_client", mock_sync_redis),
+            patch("src.gateway.governance.cbf._IS_PRODUCTION", True),
+        ):
+            cbf = ControlBarrierFunction(skip_epoch_seed=True)
+
+        # Should not have called Redis
+        mock_sync_redis.get.assert_not_called()
+        assert cbf._last_seen_epoch == 0
+
+    def test_cbf_initialization_error_preserves_original_exception(self):
+        """B3a: CBFInitializationError preserves the original exception chain."""
+        from src.gateway.governance.cbf import (
+            CBFInitializationError,
+            ControlBarrierFunction,
+        )
+
+        original_error = ConnectionError("Original network error")
+        mock_sync_redis = MagicMock()
+        mock_sync_redis.get = MagicMock(side_effect=original_error)
+
+        with (
+            patch("src.gateway.governance.cbf.sync_redis_client", mock_sync_redis),
+            patch("src.gateway.governance.cbf._IS_PRODUCTION", True),
+        ):
+            with pytest.raises(CBFInitializationError) as exc_info:
+                ControlBarrierFunction()
+
+        # Check that __cause__ is set (from the "from exc" clause)
+        assert exc_info.value.__cause__ is original_error
+
+
+# ---------------------------------------------------------------------------
+# P0 Hardening: Strict Replication (WAIT fail-closed) tests
+# ---------------------------------------------------------------------------
+
+
+class TestStrictReplicationFailClosed:
+    """P0 security hardening tests for CAGE_STRICT_REPLICATION=true behavior.
+
+    When strict replication is enabled and the Redis WAIT command times out,
+    the CBF must fail-closed by rolling back the committed state rather than
+    allowing the action to proceed with unconfirmed replication.
+    """
+
+    @pytest.mark.asyncio
+    async def test_wait_timeout_triggers_rollback_in_strict_mode(self):
+        """P0: WAIT timeout with CAGE_STRICT_REPLICATION=true triggers rollback."""
+        from src.gateway.governance.cbf import ControlBarrierFunction
+
+        fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        await _seed_balance(fake_redis, _SAFE_BALANCE)
+
+        cbf, mock_redis_module = _make_cbf(fake_redis)
+
+        # Mock _sync_to_replicas to return False (WAIT timeout)
+        cbf._sync_to_replicas = AsyncMock(return_value=False)
+
+        # Mock rollback_state to track calls
+        cbf.rollback_state = AsyncMock()
+
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_module),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 1),
+            patch("src.gateway.governance.cbf._STRICT_REPLICATION", True),
+            patch("src.gateway.governance.cbf._FENCE_EPOCH_ENABLED", True),
+        ):
+            # Small trade that would normally succeed
+            result = await cbf.atomic_verify_and_commit(
+                action_name="execute_trade",
+                payload={"amount": 1000, "asset": "AAPL"},
+                governance_signature="test-sig",
+            )
+
+        # Should fail with REPLICATION_UNCONFIRMED
+        assert result[0] is False
+        assert "REPLICATION_UNCONFIRMED" in result[1]
+        assert "Failed closed" in result[1]
+
+        # Rollback should have been called
+        cbf.rollback_state.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_wait_timeout_logs_warning_when_strict_mode_disabled(self):
+        """P0: WAIT timeout without strict mode only logs warning, does not rollback."""
+        from src.gateway.governance.cbf import ControlBarrierFunction
+
+        fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        await _seed_balance(fake_redis, _SAFE_BALANCE)
+
+        cbf, mock_redis_module = _make_cbf(fake_redis)
+
+        # Mock _sync_to_replicas to return False (WAIT timeout)
+        cbf._sync_to_replicas = AsyncMock(return_value=False)
+
+        # Mock rollback_state to track calls
+        cbf.rollback_state = AsyncMock()
+
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_module),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 1),
+            patch("src.gateway.governance.cbf._STRICT_REPLICATION", False),
+            patch("src.gateway.governance.cbf._FENCE_EPOCH_ENABLED", True),
+            patch("src.gateway.governance.cbf.logger") as mock_logger,
+        ):
+            result = await cbf.atomic_verify_and_commit(
+                action_name="execute_trade",
+                payload={"amount": 1000, "asset": "AAPL"},
+                governance_signature="test-sig",
+            )
+
+        # Should still succeed (legacy behavior)
+        assert result[0] is True
+        assert result[1] == "COMMITTED"
+
+        # Rollback should NOT have been called
+        cbf.rollback_state.assert_not_called()
+
+        # Warning should have been logged
+        mock_logger.warning.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_wait_success_does_not_trigger_rollback(self):
+        """P0: Successful WAIT does not trigger rollback even in strict mode."""
+        from src.gateway.governance.cbf import ControlBarrierFunction
+
+        fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        await _seed_balance(fake_redis, _SAFE_BALANCE)
+
+        cbf, mock_redis_module = _make_cbf(fake_redis)
+
+        # Mock _sync_to_replicas to return True (WAIT succeeded)
+        cbf._sync_to_replicas = AsyncMock(return_value=True)
+
+        # Mock rollback_state to track calls
+        cbf.rollback_state = AsyncMock()
+
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_module),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 1),
+            patch("src.gateway.governance.cbf._STRICT_REPLICATION", True),
+            patch("src.gateway.governance.cbf._FENCE_EPOCH_ENABLED", True),
+        ):
+            result = await cbf.atomic_verify_and_commit(
+                action_name="execute_trade",
+                payload={"amount": 1000, "asset": "AAPL"},
+                governance_signature="test-sig",
+            )
+
+        # Should succeed
+        assert result[0] is True
+        assert result[1] == "COMMITTED"
+
+        # Rollback should NOT have been called
+        cbf.rollback_state.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_strict_replication_requires_fence_epoch_enabled(self):
+        """P0: Strict replication rollback only triggers when fence epoch is enabled."""
+        from src.gateway.governance.cbf import ControlBarrierFunction
+
+        fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        await _seed_balance(fake_redis, _SAFE_BALANCE)
+
+        cbf, mock_redis_module = _make_cbf(fake_redis)
+
+        # Mock _sync_to_replicas to return False (WAIT timeout)
+        cbf._sync_to_replicas = AsyncMock(return_value=False)
+
+        # Mock rollback_state to track calls
+        cbf.rollback_state = AsyncMock()
+
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_module),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 1),
+            patch("src.gateway.governance.cbf._STRICT_REPLICATION", True),
+            patch("src.gateway.governance.cbf._FENCE_EPOCH_ENABLED", False),  # Disabled
+        ):
+            result = await cbf.atomic_verify_and_commit(
+                action_name="execute_trade",
+                payload={"amount": 1000, "asset": "AAPL"},
+                governance_signature="test-sig",
+            )
+
+        # Should still succeed (fence epoch disabled = no strict replication)
+        assert result[0] is True
+        assert result[1] == "COMMITTED"
+
+        # Rollback should NOT have been called
+        cbf.rollback_state.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_wait_replicas_skips_replication_check(self):
+        """P0: When CAGE_REDIS_WAIT_REPLICAS=0, no replication check occurs."""
+        from src.gateway.governance.cbf import ControlBarrierFunction
+
+        fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        await _seed_balance(fake_redis, _SAFE_BALANCE)
+
+        cbf, mock_redis_module = _make_cbf(fake_redis)
+
+        # Mock _sync_to_replicas - should never be called
+        cbf._sync_to_replicas = AsyncMock(return_value=False)
+
+        with (
+            patch("src.gateway.governance.cbf.redis_client", mock_redis_module),
+            patch("src.gateway.governance.cbf._WAIT_REPLICAS", 0),  # Disabled
+            patch("src.gateway.governance.cbf._STRICT_REPLICATION", True),
+            patch("src.gateway.governance.cbf._FENCE_EPOCH_ENABLED", True),
+        ):
+            result = await cbf.atomic_verify_and_commit(
+                action_name="execute_trade",
+                payload={"amount": 1000, "asset": "AAPL"},
+                governance_signature="test-sig",
+            )
+
+        # Should succeed
+        assert result[0] is True
+        assert result[1] == "COMMITTED"
+
+        # _sync_to_replicas should NOT have been called
+        cbf._sync_to_replicas.assert_not_called()

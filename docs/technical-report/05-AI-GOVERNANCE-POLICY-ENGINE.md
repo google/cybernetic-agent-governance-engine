@@ -11,7 +11,7 @@ project: "Cybernetic Governance Engine (CAGE)"
 
 ## Overview
 
-> **v3.0.0**: Lua-atomic CBF check-and-commit (`ControlBarrierFunction.atomic_verify_and_commit()`), strictly human-gated NeMo refinement (`POST /v1/nemo/propose-refinement` and `POST /v1/nemo/approve-refinement/{proposal_id}`), canonical 1.1 evidence stream schema with 6-field `record_hash` binding, centralized threshold configuration under `config/thresholds/<REGION>_BASELINE.json`, and operational external balance reconciliation worker (POAM-023 / POAM-2026-038 closed).
+> **v3.0.0**: 6 first-class runtime governance primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`), Lua-atomic CBF check-and-commit (`ControlBarrierFunction.atomic_verify_and_commit()`) with synchronous replica `WAIT` verification and fail-closed automatic rollback, monotonic fence epoch (`safety:fence_epoch`), strictly human-gated NeMo refinement (`POST /v1/nemo/propose-refinement` and `POST /v1/nemo/approve-refinement/{proposal_id}`), HMAC Routing Seal v2 4-tuple format binding SHA-256 evidence record hashes with fail-closed actuator verification, and operational external balance reconciliation worker (POAM-023 / POAM-2026-038 closed).
 
 
 The AI Governance & Policy Engine is the most complex and safety-critical component of the Cybernetic Governance Engine (CAGE). It enforces a layered, **neuro-symbolic hybrid governance** model over every agent action, combining deterministic symbolic constraints with LLM-based semantic judgment. No action reaches execution unless it passes all governance tiers. All governance is **fail-closed**: any tier failure raises `GovernanceError` and blocks the action.
@@ -543,11 +543,13 @@ CAGE promotes **multi-cloud KMS HSM-backed asymmetric signing** as the primary g
 - **Compliance**: Satisfies **ISO 42001 §A.7.5** (records integrity, universal); **NIST AU-10** (non-repudiation, **[US_FED only]**); **FINRA Rule 4511** (tamper-evident records, **[US_FED only]**)
 - **Production guard**: `assert_kms_active_in_production()` raises at startup if KMS is inactive in a production environment
 
-### HMAC-SHA256 Routing Seal (Fallback / Dev-CI)
+### HMAC-SHA256 Routing Seal v2 (with Evidence Binding)
 
 - Applied to **every** `/tools/execute` call as the routing integrity seal
-- HMAC-SHA256 computed over raw request body bytes
+- 4-tuple format: `<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>`
+- HMAC-SHA256 computed over `expire_ts_hex + "." + action_slug + "." + record_hash_hex` using `CAGE_ROUTING_SEAL_SECRET`
 - Secret: `CAGE_ROUTING_SEAL_SECRET` environment variable
+- In production (`CAGE_REQUIRE_EVIDENCE_BINDING=true`), actuators fail closed on un-bound or tampered seals
 - Enforced by [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py); missing or invalid seal → reject (fail-closed)
 - **FIND-010** (routing seal bypass): **RESOLVED** — POAM-012 closed
 
@@ -558,11 +560,11 @@ CAGE promotes **multi-cloud KMS HSM-backed asymmetric signing** as the primary g
 - [`check_safety_signature(state)`](../../src/governed_financial_advisor/graph/graph.py) in the `safety_node` validates the signature before the `governed_trader` node executes
 - Prevents state tampering between the evaluator and trader nodes in the LangGraph pipeline
 
-### AnchorageGrpcLedgerProvider (Externally Reconciled CBF)
+### Externally Reconciled CBF (POAM-023 / POAM-2026-038 CLOSED)
 
-> **Status (POAM-023):** The `AnchorageGrpcLedgerProvider` for externally reconciled CBF balance anchoring is referenced in the architecture but has not yet been implemented. The current implementation uses the Redis `WATCH/MULTI/EXEC` optimistic locking pattern for CBF enforcement. The "Stale Ground Truth" threat (balance staleness) is addressed by the TTL-gated staleness check in the DEFER state machine (AARM-V7) and the `post_hitl_revalidate_node` execution-time re-sampling.
+> **Status (POAM-023 / POAM-2026-038):** Closed. The `ExternalLedgerReconciler` (`src/compliance_bridge/reconciliation_worker.py`) runs as a periodic daemon fetching external balances, validating KMS signatures, and persisting verified snapshots to GCS WORM buckets and Redis with 300s TTL.
 
-When implemented, `AnchorageGrpcLedgerProvider` will provide an externally reconciled cash balance anchor via gRPC, ensuring that the CBF invariant `h(x) = cash_balance - min_cash_balance ≥ 0` is validated against an authoritative external ledger rather than a Redis-cached balance — eliminating the residual "Stale Ground Truth" risk for high-value trades.
+The Control Barrier Function checks balances via atomic Lua (`atomic_verify_and_commit()`) prioritising `reconciliation:verified_balance`, enforcing synchronous replica `WAIT` verification with fail-closed automatic rollback on replica lag timeout, and checking monotonic `safety:fence_epoch` to eliminate failover balance re-spend windows.
 
 ---
 

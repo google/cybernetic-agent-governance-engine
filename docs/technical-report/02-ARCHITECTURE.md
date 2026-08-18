@@ -6,7 +6,7 @@
 | **Date**             | 2026-08-16                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,741 passed, 0 failed, 182 skipped; 75.12% coverage)        |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,817 passed, 0 failed, 67 skipped; 75.40% coverage)        |
 | **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md`, `docs/NEURO_SYMBOLIC_GOVERNANCE.md` |
 
 ---
@@ -773,23 +773,24 @@ record_hash_n = SHA-256(parent_hash_{n-1} || sorted_key_json(record_n))
 
 **Deterministic sorted-key JSON serialization** ensures reproducibility across Python versions and runtimes. `compute_hash()` uses `json.dumps(…, separators=(',', ':'), sort_keys=True)` — matching the formal specification; earlier versions omitted `separators`. Chain construction is **O(n)** in the number of governance nodes. `verify_chain_integrity()` validates the full chain on demand. In production, records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`.
 
-### 11.7 HMAC-SHA256 Routing Seal
+### 11.7 HMAC-SHA256 Routing Seal v2 (with Evidence Binding)
 
 **Source:** [`src/gateway/governance/routing_seal.py`](../../src/gateway/governance/routing_seal.py)
 
-On governance approval, a short-lived routing seal is issued in the format:
+On governance approval, a short-lived cryptographic routing seal is issued in the 4-tuple format:
 
 ```
-<expire_ts_hex>.<action_slug>.<hmac_hex>
+<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>
 ```
 
 | Field | Description |
 |-------|-------------|
 | `expire_ts_hex` | Unix timestamp (hex) at which the seal expires |
 | `action_slug` | Normalized action identifier (e.g., `execute_trade`) |
-| `hmac_hex` | HMAC-SHA256 over `expire_ts_hex + "." + action_slug` using `CAGE_ROUTING_SEAL_SECRET` |
+| `record_hash_hex` | SHA-256 hash (hex) of the persisted compliance evidence record |
+| `hmac_hex` | HMAC-SHA256 over `expire_ts_hex + "." + action_slug + "." + record_hash_hex` using `CAGE_ROUTING_SEAL_SECRET` |
 
-**Security properties:** 30-second TTL; constant-time `hmac.compare_digest()` prevents timing-oracle attacks. Cloud KMS HSM asymmetric signing is the production primary; HMAC-SHA256 is the dev/CI fallback only.
+**Security properties:** 30-second TTL; constant-time `hmac.compare_digest()` prevents timing-oracle attacks; in production (`CAGE_REQUIRE_EVIDENCE_BINDING=true`), actuators reject un-bound or tampered seals. Cloud KMS HSM asymmetric signing is the production primary; HMAC-SHA256 is the dev/CI fallback.
 
 ---
 

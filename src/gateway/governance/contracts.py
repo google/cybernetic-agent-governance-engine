@@ -57,6 +57,51 @@ class RefusalReceipt:
             )
 
 
+@dataclass(frozen=True)
+class PauseReceipt:
+    """Immutable audit-grade proof emitted whenever an action is paused.
+
+    Similar to RefusalReceipt but for PAUSE decisions — transient conditions
+    that will resolve without human intervention or data-hydration.
+
+    PAUSE decisions are neither approved nor denied; they indicate:
+      - Rate limiting (soft, will clear with time)
+      - Circuit breaker open (external dependency unavailable)
+      - Resource temporarily unavailable (quota exhausted, capacity exceeded)
+      - Coordination wait (cross-agent synchronization)
+
+    The pause_token is stored in Redis and can be used to resume the request
+    via POST /v1/pause/{pause_token}/resume.
+
+    ISO 42001 mapping: A.8.4 (AI System Operation Controls)
+    """
+
+    thread_id: str
+    action: str
+    pause_reason: str  # e.g., "RATE_LIMITED", "CIRCUIT_OPEN", "RESOURCE_UNAVAILABLE"
+    pause_token: str
+    violations: list[str] = field(default_factory=list)
+    standing_at_pause: dict[str, Any] = field(default_factory=dict)
+    estimated_wait_seconds: int = field(default=60)
+    expires_at_utc: str = field(default="")
+    timestamp: float = field(default_factory=time.time)
+    proof_hash: str = field(default="")
+
+    def __post_init__(self) -> None:
+        if not self.proof_hash:
+            payload = {
+                "thread_id": self.thread_id,
+                "action": self.action,
+                "pause_reason": self.pause_reason,
+                "pause_token": self.pause_token,
+                "timestamp": self.timestamp,
+            }
+            canon = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            object.__setattr__(
+                self, "proof_hash", hashlib.sha256(canon.encode()).hexdigest()
+            )
+
+
 class SafetyFilter(Protocol):
     """
     Protocol for a Control Barrier Function or similar safety filter.

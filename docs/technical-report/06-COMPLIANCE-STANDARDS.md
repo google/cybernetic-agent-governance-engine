@@ -532,9 +532,9 @@ The AARM Profile Mapper translates CAGE governance decisions into the 11-vector 
 
 The AARM report generator (`src/compliance_bridge/aarm_report_generator.py`) produces AARM-format compliance reports from the 11-vector ledger for submission to regulatory reviewers.
 
-### Evidence Chain Metadata Binding (`src/compliance_bridge/evidence_stream.py`)
+### Evidence Chain Metadata Binding & Durability Preconditions (`src/compliance_bridge/evidence_stream.py`)
 
-The evidence stream module binds governance decision metadata to OSCAL evidence artifacts at the point of creation. Each evidence record includes:
+The evidence stream module binds governance decision metadata to OSCAL evidence artifacts at the point of creation, enforcing strict durability guarantees. Each evidence record includes:
 
 - `thread_id` — LangGraph thread identifier (links evidence to the originating inference trace)
 - `control_id` — NIST SP 800-53 / ISO 42001 control identifier
@@ -542,6 +542,10 @@ The evidence stream module binds governance decision metadata to OSCAL evidence 
 - `governance_signature` — KMS-signed (production) or HMAC-SHA256 (dev/CI)
 - `deployment_region` — `US_FED` | `EU_ECB` | `APAC_MAS`
 - `langfuse_trace_id` — OTLP trace ID for cross-referencing in Langfuse
+- `record_hash` — SHA-256 digest of the canonical evidence payload, folded into HMAC Routing Seal v2 `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>`
+
+**Durability Preconditions (`validate_evidence_stream_preconditions()`):**
+In production (`CAGE_ENV=production` or `CAGE_REQUIRE_BLOCKING_EVIDENCE=true`), the system halts at startup if the evidence stream is disabled or configured in non-blocking mode, ensuring no governance approval can proceed without guaranteed persistence to the WORM audit store.
 
 Evidence records are streamed to the OSCAL exporter (`src/compliance_bridge/oscal_exporter.py`) and archived to the GCS WORM bucket for 7-year retention.
 

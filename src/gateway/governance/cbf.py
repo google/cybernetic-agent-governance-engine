@@ -46,7 +46,7 @@ from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 # Threshold singleton (Phase 2.3)
 # ---------------------------------------------------------------------------
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
-from src.gateway.infrastructure.redis_client import redis_client
+from src.gateway.infrastructure.redis_client import redis_client, sync_redis_client
 from src.gateway.infrastructure.telemetry import get_tracer
 
 logger = logging.getLogger("SafetyLayer")
@@ -97,6 +97,19 @@ _REDIS_KEY_FENCE_EPOCH = "safety:fence_epoch"
 _WAIT_REPLICAS: int = int(os.environ.get("CAGE_REDIS_WAIT_REPLICAS", "1"))
 _WAIT_TIMEOUT_MS: int = int(os.environ.get("CAGE_REDIS_WAIT_TIMEOUT_MS", "1000"))
 
+# ---------------------------------------------------------------------------
+# Feature flag: Strict replication mode (P0 security hardening)
+# ---------------------------------------------------------------------------
+# When CAGE_STRICT_REPLICATION=true (default in production), a WAIT timeout
+# triggers a fail-closed rollback rather than logging-only. This prevents
+# financial actions from succeeding when async replication cannot confirm
+# the mutation reached replicas — if the primary crashes before replication
+# and Sentinel promotes a replica, that replica would be missing the mutation.
+# Cross-region impact: US_FED, EU_ECB, APAC_MAS all benefit from fail-closed safety.
+_STRICT_REPLICATION: bool = os.environ.get(
+    "CAGE_STRICT_REPLICATION", "true" if _IS_PRODUCTION else "false"
+).lower() in ("true", "1", "yes")
+
 # Sentinel awareness (Phase 4.3 stretch goal)
 # When set, connection should be Sentinel-aware for automatic failover handling.
 _REDIS_SENTINEL_MASTER_NAME: str | None = os.environ.get("REDIS_SENTINEL_MASTER_NAME")
@@ -131,12 +144,40 @@ try:
         "cage_cbf_wait_timeout_total",
         "Number of Redis WAIT commands that timed out before reaching replica count (Phase 4.3)",
     )
+    # P0 hardening: Strict replication rollback counter
+    _STRICT_REPLICATION_ROLLBACK_COUNTER = Counter(
+        "cage_cbf_strict_replication_rollback_total",
+        "Number of CBF commits rolled back due to WAIT timeout in strict replication mode (P0 hardening)",
+    )
 except ImportError:
     _REPLAY_REJECTED_COUNTER = None  # type: ignore[assignment]
     _EPOCH_REGRESSION_COUNTER = None  # type: ignore[assignment]
     _CURRENT_FENCE_EPOCH_GAUGE = None  # type: ignore[assignment]
     _WAIT_LATENCY_HISTOGRAM = None  # type: ignore[assignment]
     _WAIT_TIMEOUT_COUNTER = None  # type: ignore[assignment]
+    _STRICT_REPLICATION_ROLLBACK_COUNTER = None  # type: ignore[assignment]
+
+
+# ---------------------------------------------------------------------------
+# CBFInitializationError — Fail-closed exception for epoch seeding (B3a)
+# ---------------------------------------------------------------------------
+
+
+class CBFInitializationError(RuntimeError):
+    """Raised when CBF cannot seed its initial fence epoch from Redis.
+
+    §B3a: A newly spawned gateway instance (after restart, redeploy, or
+    autoscale) must seed its fence epoch from Redis before accepting
+    requests. If Redis is unavailable at initialization time, the CBF
+    MUST fail-closed rather than starting with epoch=0, which would
+    create a window for stale-read attacks.
+
+    This exception should propagate to the pod readiness probe, preventing
+    the instance from joining the load-balancer pool until Redis is
+    reachable and the epoch is successfully seeded.
+    """
+
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +239,19 @@ end
 return {1, "COMMITTED", tostring(next_cash), new_epoch}
 """
 
-    def __init__(self):  # type: ignore[no-untyped-def]
+    def __init__(self, skip_epoch_seed: bool = False):  # type: ignore[no-untyped-def]
+        """Initialize the ControlBarrierFunction.
+
+        Args:
+            skip_epoch_seed: If True, skip Redis epoch seeding at init time.
+                             Used only for testing; production instances must
+                             seed from Redis.
+
+        Raises:
+            CBFInitializationError: If Redis is unavailable and skip_epoch_seed
+                                    is False. This prevents the instance from
+                                    accepting requests with an unseeded epoch.
+        """
         # Thresholds from singleton — no inline literals.
         self.min_cash_balance: float = THRESHOLDS.cbf.min_cash_balance
         self.gamma: float = THRESHOLDS.cbf.gamma
@@ -208,7 +261,88 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         # Reviewer note H53: local intra-window debits subtracted from snapshot to prevent double-spend within TTL window.
         self._local_debits: float = 0.0
         # R-05 fence epoch: track last seen epoch to detect regression after failover
-        self._last_seen_epoch: int = 0
+        # B3a: Seed from Redis on startup — fail-closed if unavailable
+        self._last_seen_epoch: int = self._fetch_initial_fence_epoch_sync(
+            skip_epoch_seed
+        )
+
+    def _fetch_initial_fence_epoch_sync(self, skip_epoch_seed: bool) -> int:
+        """Fetch the current fence epoch from Redis at construction time.
+
+        §B3a: A newly spawned gateway instance must have an external anchor
+        for its fence epoch. Without this, a fresh instance would accept
+        whatever epoch it first observes as baseline, creating a window
+        for stale-read attacks after a Redis failover.
+
+        This method uses the synchronous Redis client because __init__ is
+        synchronous. The sync client is safe to call from module-load time.
+
+        Args:
+            skip_epoch_seed: If True, return 0 without contacting Redis.
+                             Used for testing only.
+
+        Returns:
+            The current fence epoch from Redis, or 0 if this is the first-ever
+            startup (no epoch key exists — we initialize it to 0 and write it).
+
+        Raises:
+            CBFInitializationError: If Redis is unavailable and skip_epoch_seed
+                                    is False.
+        """
+        if skip_epoch_seed:
+            logger.debug("B3a: Skipping epoch seed (skip_epoch_seed=True)")
+            return 0
+
+        if sync_redis_client is None:
+            # Behavior depends on environment:
+            # - Production: fail-closed (raise CBFInitializationError)
+            # - Dev/test: warn but proceed with epoch=0 (backward compatibility)
+            if _IS_PRODUCTION:
+                raise CBFInitializationError(
+                    "Cannot initialize CBF: sync Redis client unavailable. "
+                    "Fence epoch cannot be seeded from external anchor. "
+                    "Failing closed to prevent stale-read attack window."
+                )
+            else:
+                logger.warning(
+                    "B3a: sync Redis client unavailable in dev/test mode — "
+                    "proceeding with epoch=0. Set CAGE_ENV=prod to enforce "
+                    "fail-closed behavior."
+                )
+                return 0
+
+        try:
+            epoch_raw = sync_redis_client.get(_REDIS_KEY_FENCE_EPOCH)
+            if epoch_raw is None:
+                # First-ever startup — initialize epoch to 0 and write it.
+                # This is the only case where epoch=0 is acceptable.
+                sync_redis_client._get().set(_REDIS_KEY_FENCE_EPOCH, "0")
+                logger.info(
+                    "B3a: First-ever startup — initialized fence epoch to 0 in Redis"
+                )
+                return 0
+            epoch = int(epoch_raw)
+            logger.info("B3a: Seeded fence epoch from Redis: %d", epoch)
+            if _CURRENT_FENCE_EPOCH_GAUGE is not None:
+                _CURRENT_FENCE_EPOCH_GAUGE.set(epoch)
+            return epoch
+        except Exception as exc:
+            # Behavior depends on environment:
+            # - Production: fail-closed (raise CBFInitializationError)
+            # - Dev/test: warn but proceed with epoch=0 (backward compatibility)
+            if _IS_PRODUCTION:
+                raise CBFInitializationError(
+                    f"Cannot initialize CBF: fence epoch unavailable from Redis. "
+                    f"Error: {exc}. Failing closed to prevent stale-read attack window."
+                ) from exc
+            else:
+                logger.warning(
+                    "B3a: Redis unavailable in dev/test mode — proceeding with "
+                    "epoch=0. Set CAGE_ENV=prod to enforce fail-closed behavior. "
+                    "Error: %s",
+                    exc,
+                )
+                return 0
 
     async def setup(self) -> None:
         """Bootstrap Redis state if the key is absent (first run)."""
@@ -1177,11 +1311,30 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 if committed and _WAIT_REPLICAS > 0:
                     wait_result = await self._sync_to_replicas()
                     span.set_attribute("cage.cbf.wait_success", wait_result)
+                    span.set_attribute("cage.cbf.strict_replication", _STRICT_REPLICATION)
                     if not wait_result:
-                        # Log but don't fail — WAIT timeout is degraded, not failed
-                        logger.warning(
-                            "Phase 4.3: atomic_verify_and_commit completed but WAIT timed out"
-                        )
+                        # P0 hardening: Fail-closed for financial actions in production
+                        if _STRICT_REPLICATION and _FENCE_EPOCH_ENABLED:
+                            # Rollback local commit to maintain cross-replica invariance
+                            logger.error(
+                                "⛔ [STRICT_REPLICATION] WAIT timed out — rolling back commit "
+                                "to maintain cross-replica invariance: cost=%.2f",
+                                cost,
+                            )
+                            await self.rollback_state(cost)
+                            span.set_attribute("cage.cbf.strict_replication_rollback", True)
+                            if _STRICT_REPLICATION_ROLLBACK_COUNTER is not None:
+                                _STRICT_REPLICATION_ROLLBACK_COUNTER.inc()
+                            return (
+                                False,
+                                "REPLICATION_UNCONFIRMED: Redis WAIT timed out on replicas. Failed closed.",
+                            )
+                        else:
+                            # Legacy behavior: Log but don't fail
+                            logger.warning(
+                                "Phase 4.3: atomic_verify_and_commit completed but WAIT timed out "
+                                "(strict_replication=False, not rolling back)"
+                            )
 
                 return (committed, message)
         else:
@@ -1194,9 +1347,27 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             if committed and _WAIT_REPLICAS > 0:
                 wait_result = await self._sync_to_replicas()
                 if not wait_result:
-                    logger.warning(
-                        "Phase 4.3: atomic_verify_and_commit completed but WAIT timed out"
-                    )
+                    # P0 hardening: Fail-closed for financial actions in production
+                    if _STRICT_REPLICATION and _FENCE_EPOCH_ENABLED:
+                        # Rollback local commit to maintain cross-replica invariance
+                        logger.error(
+                            "⛔ [STRICT_REPLICATION] WAIT timed out — rolling back commit "
+                            "to maintain cross-replica invariance: cost=%.2f",
+                            cost,
+                        )
+                        await self.rollback_state(cost)
+                        if _STRICT_REPLICATION_ROLLBACK_COUNTER is not None:
+                            _STRICT_REPLICATION_ROLLBACK_COUNTER.inc()
+                        return (
+                            False,
+                            "REPLICATION_UNCONFIRMED: Redis WAIT timed out on replicas. Failed closed.",
+                        )
+                    else:
+                        # Legacy behavior: Log but don't fail
+                        logger.warning(
+                            "Phase 4.3: atomic_verify_and_commit completed but WAIT timed out "
+                            "(strict_replication=False, not rolling back)"
+                        )
 
             return (committed, message)
 

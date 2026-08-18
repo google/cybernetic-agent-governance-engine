@@ -162,11 +162,12 @@ def test_cbf_uses_reconciliation_balance_when_available() -> None:
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
 
-    # Seed self-reported balance — use asyncio.run() for Python 3.12 compatibility
+    # Seed self-reported balance and initial fence epoch
     asyncio.run(fake_redis_async.set(cbf.redis_key, str(_SAFE_BALANCE)))
+    asyncio.run(fake_redis_async.set("safety:fence_epoch", "0"))
 
     mock_signer = MagicMock()
     mock_signer.verify.return_value = True
@@ -211,11 +212,12 @@ def test_cbf_falls_back_to_redis_when_reconciliation_absent() -> None:
 
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
 
-    # Seed self-reported balance — use asyncio.run() for Python 3.12 compatibility
+    # Seed self-reported balance and initial fence epoch
     asyncio.run(fake_redis_async.set(cbf.redis_key, str(_SAFE_BALANCE)))
+    asyncio.run(fake_redis_async.set("safety:fence_epoch", "0"))
 
     with (
         patch(

@@ -5,7 +5,7 @@
 | **Classification** | INTERNAL                  |
 | **Date**           | 2026-08-16                |
 | **Version**        | 3.0                       |
-| **Status**         | Current — v3.0.0 stable; GKE deployment verified; **2,741 passing, 0 failed, 182 skipped** (75.12% statement coverage); NoDirectBind invariant machine-verified over 21 reachable states |
+| **Status**         | Current — v3.0.0 stable; GKE deployment verified; **2,817 passing, 0 failed, 67 skipped** (75.40% statement coverage); NoDirectBind invariant machine-verified over 39 sequential / 44 concurrent reachable states |
 | **Series**         | CAGE Technical Report — Document 10 / 10 |
 
 As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v3.0.0 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
@@ -210,8 +210,8 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
 **Proof results (run: `python3 proof/model.py`):**
 
 ```
-[gated]   Reachable states: 21
-[gated]   No-Direct-Bind holds over all 21 reachable states: True
+[gated]   Reachable states: 39
+[gated]   No-Direct-Bind holds over all 39 reachable states: True
 [gated]   EXECUTED states: 1
 [gated]     → resolvedAllow=True  seal_present=True
 
@@ -223,14 +223,18 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
 [ungated]   tier_results  = {all 8 tiers: PASS}
 
 Concurrency sub-proof (CBF ∥ OPA interleaving):
-  Reachable states: 24 (gated: 21) — superset=True
+  Reachable states: 44 (gated: 39) — superset=True
   No-Direct-Bind holds under every interleaving: True
   EXECUTED states: 1 (all with resolvedAllow=TRUE: True)
+
+NARROW/PAUSE state-space sub-proofs:
+  NARROW states: 1 → resolvedAllow=True  seal_present=True
+  PAUSE states:  1 → resolvedAllow=False  seal_present=False
 
 ✅ All assertions passed.
 ```
 
-The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE` and `seal_present = True`. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all tiers pass, because no seal was issued and no seal was verified.
+The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE` and `seal_present = True`. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all tiers pass, because no seal was issued and no seal was verified. NARROW paths issue seals on clamped parameters, while PAUSE paths terminate without a seal pending re-evaluation.
 
 ### Concurrency: Order-Independence of the CBF ∥ OPA Gate
 
@@ -517,9 +521,9 @@ The key is set with `EXPIRE window_seconds` on every write, ensuring automatic r
 | 4 | AARM 11-vector neutralization | **10/11 NEUTRALIZED** (V11 PARTIAL — POAM-022) |
 | 5 | FiscalLimitGuard race-condition proof | **PASS** |
 | 6 | KMS HSM non-repudiation proof | **PASS** |
-| 7 | NoDirectBind invariant — exhaustive state-space proof over 21 reachable states (24 under CBF∥OPA interleaving) | **PASS** |
-| 8 | CBF discrete-time invariance — `h(S(t+1)) ≥ (1−γ)·h(S(t))`, Lua atomic enforcement | **PASS** |
-| 9 | Routing seal integrity — HMAC-SHA256, 30s TTL, `hmac.compare_digest` constant-time | **PASS** |
+| 7 | NoDirectBind invariant — exhaustive state-space proof over 39 reachable states (44 under CBF∥OPA interleaving) | **PASS** |
+| 8 | CBF discrete-time invariance — `h(S(t+1)) ≥ (1−γ)·h(S(t))`, Lua atomic check+commit + replica `WAIT` barrier | **PASS** |
+| 9 | Routing seal v2 integrity — 4-tuple HMAC-SHA256 with evidence record hash binding, 30s TTL, constant-time compare | **PASS** |
 | 10 | Provenance hash chain — SHA-256, O(n) tamper detection, deterministic serialization | **PASS** |
 | 11 | FiscalLimitGuard quantitative parameters — $500k cap, 86400s window, exponential backoff | **PASS** |
 
