@@ -1070,22 +1070,30 @@ The following table summarises all NIST AI 600-1 governance modules, their POAM 
 
 This section formalises the key mathematical invariants enforced by the 8-tier governance pipeline (FTRA pre-pipeline boundary gate plus 7 in-pipeline tiers). All constants are sourced from [`config/governance_thresholds.json`](../../config/governance_thresholds.json) and the named constants in [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py).
 
-### 16.1 8-Tier Pipeline — Formal Summary
+### 16.1 Two-Phase Eight-Tier Pipeline — Formal Summary
 
-The [`SymbolicGovernor._run_checks()`](../../src/gateway/governance/symbolic_governor.py) pipeline executes the following tiers in strict sequential order. Each tier is fail-closed: a violation at tier *k* raises `GovernanceError` and prevents tiers *k+1 … 6* from executing.
+To eliminate downstream budget leakage and avoid saga-atomicity gaps, the [`SymbolicGovernor._run_checks()`](../../src/gateway/governance/symbolic_governor.py) pipeline is decoupled into two strictly ordered phases: **Phase 1 (Read-Only Validation Gates)** and **Phase 2 (Atomic State Mutations)**.
+
+#### Phase 1: Read-Only Validation Gates (No State Mutation)
+All non-mutating validation tiers execute first in strict fail-closed sequence. If any tier fails, execution halts before any balance debit or budget reservation occurs.
 
 | Tier | Name | Key Invariant / Mechanism | Fail Behavior |
 | ---- | ---- | ------------------------- | ------------- |
 | 0 | STPA UCA Validation | `trade_value ≤ position_limit`, `portfolio_concentration ≤ 0.25`, `order_size ≤ 0.1 × daily_volume` | `GovernanceError` |
 | 1 | Agentic Confidence Check | `confidence ≥ 0.95` (US_FED/APAC_MAS) or `≥ 0.97` (EU_ECB) | `GovernanceError` |
-| 2 | Control Barrier Function | `h(S(t+1)) ≥ (1−γ)·h(S(t))`, `h(x) = cash_balance − min_cash_balance`; concurrent with Tier 4 | `GovernanceError` |
-| 3 | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — atomic Redis `WATCH`/`MULTI`/`EXEC` against `FISCAL_DAILY_CAP_USD` | `GovernanceError`; reservation released on downstream failure |
-| 4 | OPA Policy Evaluation | `trade.governance` Rego package; `asyncio.gather` concurrent with CBF (Tier 2+4 concurrent) | `GovernanceError`; DENY on circuit open |
+| 2b | OPA Policy Evaluation | `trade.governance` Rego package; validates structural policies prior to state mutation | `GovernanceError`; DENY on circuit open |
 | 5 | Multi-Agent Consensus | `amount > consensus_threshold_usd` → two LLM critics via `asyncio.gather`; 30s timeout | `GovernanceError` |
-| 6 | Causal Gatekeeper | `(0.5 + estimate.value × amount) ≤ 0.95`; PlaceboTreatmentRefuter 50 sims, p < 0.05, \|eff\| > 0.2 | `GovernanceError` |
+| 6 | Causal Gatekeeper | $\beta \le 0 \implies \text{BLOCK}$; $\min(1.0, 0.5 + \beta \times \text{amount}) \le 0.95$; PlaceboTreatmentRefuter 50 sims, p < 0.05, \|eff\| > 0.2 | `GovernanceError` |
 | 6b | Adaptive FRIA Gate | Confidence-mapped: `≥ 0.95` async; `[0.70, 0.95)` sync gate; `< 0.70` deny | `GovernanceError` (DENY path) |
 
-> **Note:** Tiers 2 (CBF) and 4 (OPA) are dispatched concurrently via `asyncio.gather` within the pipeline to minimise latency while preserving fail-closed semantics — both must pass before Tier 5 executes.
+#### Phase 2: Atomic State Mutations & Pre-Reservation Gate (Executed ONLY if Phase 1 passes)
+
+| Tier | Name | Key Invariant / Mechanism | Fail Behavior |
+| ---- | ---- | ------------------------- | ------------- |
+| 2a | Control Barrier Function | `atomic_verify_and_commit()` Lua-atomic check+commit: $h(S(t+1)) \ge (1-\gamma)h(S(t))$, $h(x) = \text{cash\_balance} - \text{min\_cash\_balance}$ | `GovernanceError` |
+| 3 | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — atomic Redis `WATCH`/`MULTI`/`EXEC` against `FISCAL_DAILY_CAP_USD` | `GovernanceError`; reservation released on downstream failure |
+
+> **Zero-Budget-Leakage Guarantee:** Because Phase 2 executes only after all Phase 1 validation checks emit `ALLOW`, validation rejections (such as split consensus or causal locks) never mutate the cash ledger or consume spending headroom.
 
 ### 16.2 FRIA Zone Thresholds and Decision Semantics
 
@@ -1107,13 +1115,17 @@ risk_score = 1.0 − confidence
 
 A model response with `confidence = 0.95` yields `risk_score = 0.05` (low risk). A response with `confidence = 0.50` yields `risk_score = 0.50` (high risk). The score is submitted to Langfuse as a `confabulation_risk` evaluation metric. Execution is blocked when `confidence < CONFIDENCE_THRESHOLD` (default `0.95`).
 
-### 16.4 Causal Marginal Risk Boundary
+### 16.4 Causal Marginal Risk Boundary & Slope Guard
 
-The [`causal_safety_check()`](../../src/gateway/governance/causal_gatekeeper.py) function enforces a marginal risk boundary derived from the DoWhy linear regression estimate:
+The [`causal_safety_check()`](../../src/gateway/governance/causal_gatekeeper.py) function enforces non-positive slope fail-closed checks, statistical refutation, and bounded marginal risk scoring:
 
+1. **Non-Positive Causal Slope Guard:** If estimated treatment effect $\beta \le 0$, the gatekeeper fails closed (`causal.lock_reason = "negative_or_zero_causal_slope"`), blocking the trade due to inverse confounding or sparse telemetry.
+2. **Placebo Refuter:** Evaluates 50 placebo simulations; if `p_value < 0.05` or `|placebo_effect| > 0.2`, the gatekeeper raises `GovernanceError`.
+3. **Monotonic Bounded Risk Formulation:**
+```python
+risk_score = min(1.0, max(0.0, 0.5 + estimate.value * amount))
 ```
-(0.5 + estimate.value × amount) > CAUSAL_LOCK_RISK_BOUNDARY
-```
+If `risk_score > CAUSAL_LOCK_RISK_BOUNDARY` (default: 0.95), the trade is blocked.
 
 Where the named constants are:
 
@@ -1122,8 +1134,6 @@ Where the named constants are:
 | `CAUSAL_LOCK_RISK_BOUNDARY` | `0.95` | Maximum acceptable marginal risk score |
 | `CAUSAL_LOCK_P_VALUE_THRESHOLD` | `0.05` | PlaceboTreatmentRefuter significance threshold |
 | `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` | `0.2` | Minimum placebo effect magnitude to flag corruption |
-
-If the marginal risk score exceeds `0.95`, or if the PlaceboTreatmentRefuter detects a statistically significant placebo effect (`p_value < 0.05` or `|placebo_effect| > 0.2`), the gatekeeper raises `GovernanceError` (fail-closed).
 
 ### 16.5 Consensus Boolean Logic
 

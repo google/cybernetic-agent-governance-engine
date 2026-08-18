@@ -24,6 +24,12 @@ Causal Graph:
     market_volatility → risk_score
     trade_amount → risk_score
 
+Telemetry & Bounded Risk Formulation:
+    - Sourced from Langfuse OTel settlement spans via TelemetryProvider.
+    - If causal slope beta <= 0, the gate triggers a fail-closed lock.
+    - If beta > 0, marginal risk is computed as min(1.0, max(0.0, 0.5 + beta * amount / SCALE)).
+    - If risk exceeds CAUSAL_LOCK_RISK_BOUNDARY (0.95), the trade is blocked.
+
 If a Placebo Refuter detects a spurious effect (p < 0.05 or large placebo
 effect), the gatekeeper "locks" the cage — the trade is blocked because
 the underlying causal assumptions cannot be trusted.

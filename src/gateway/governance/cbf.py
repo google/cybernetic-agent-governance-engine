@@ -15,17 +15,18 @@
 """
 Stateful Redis-backed financial invariant enforcer.
 
-Implements a discrete-time Control Barrier Function (CBF) that uses Redis
-for state persistence so that stateless Cloud Run instances share a
-consistent cash-balance view.
+Implements a discrete-time Control Barrier Function (CBF) enforcing
+h(S(t+1)) >= (1 - gamma) * h(S(t)) >= 0 for all t >= 0, gamma in (0, 1).
+Uses Redis for state persistence so that distributed gateway instances share a
+consistent cash-balance view within a single-primary epoch.
 
 Phase 1 fix: imports now resolve against the canonical gateway-internal
 infrastructure package (``src.gateway.infrastructure.*``) instead of the
 cross-package ``src.governed_financial_advisor.*`` path.
 
-Phase 4.1 fix: ``update_state()`` and ``rollback_state()`` use Redis
-WATCH / MULTI / EXEC optimistic locking to prevent race conditions under
-concurrent trade execution in the stateless Cloud Run environment.
+In CAGE v3.0.0, ``atomic_verify_and_commit()`` executes the CBF condition
+evaluation and state deduction in a single Redis Lua script, eliminating
+TOCTOU windows between check and commit.
 """
 
 import asyncio

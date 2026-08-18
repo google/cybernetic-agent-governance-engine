@@ -50,10 +50,13 @@ Architecture:
 Redis key schema:
   fiscal:daily_limit:{window_key}  → current reserved spend (int, cents)
 
-Atomicity:
+Atomicity & Safety Invariants:
   Uses Redis optimistic locking via WATCH/MULTI/EXEC pipeline.
-  On concurrent write conflict the pipeline is retried up to _MAX_RETRIES
-  times with exponential backoff before failing closed.
+  Requires strictly positive requested amounts (amount_usd > 0).
+  On concurrent write conflict the pipeline is retried up to _MAX_RETRIES = 5
+  times with exponential backoff before failing closed. This retry count is an
+  availability/liveness bound; safety (never exceeding the daily cap C) holds
+  unconditionally for any number of concurrent agents due to transaction aborts.
 
 Usage:
   guard = FiscalLimitGuard.from_env()

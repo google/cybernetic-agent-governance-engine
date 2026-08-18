@@ -42,6 +42,13 @@ Seal lifetime is configurable via ``GOVERNANCE_SEAL_TTL_S`` (default 30s).
 The HMAC key is derived from ``GOVERNANCE_SALT`` — the same env var that is
 already present in both gateway and GFA deployments.
 
+Actuator Idempotency Contract:
+-----------------------------
+To eliminate duplicate trade execution from seal replay within the 30s TTL window,
+the downstream actuator (e.g. GFA) MUST enforce single-use consumption of the
+seal (e.g. via an atomic Redis nonce / seal-consumption cache matching the
+``seal_consumed`` state machine property).
+
 Cryptographic contract (P3 fix)
 --------------------------------
 ``verify_seal()`` now raises ``SymbolicGovernorViolation`` instead of returning

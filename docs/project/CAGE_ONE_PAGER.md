@@ -47,20 +47,20 @@ This discrete-time CBF condition ([`src/gateway/governance/cbf.py`](../../src/ga
 |------|---------|---------------|
 | **FTRA** | Forward-Looking Trajectory Reachability Analyzer | `create_ftra_node()` / `PlanGraphAnalyzer` / `IrreversibilityClassifier` — pre-execution graph reachability; CLEAR / HITL_REQUIRED / BLOCKED **before any tool call**. Operates on the **whole execution graph** — NOT a peer of Tiers 0–6b. |
 
-### Tiers 0–6b — Per-Tool-Call Checks (`_run_checks()`)
+### Two-Phase Eight-Tier Pipeline (`_run_checks()`)
 
-| Tier | Control | Key Invariant |
-|------|---------|---------------|
-| 0 | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` checks Unsafe Control Actions |
-| 1 | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) |
-| 2 | Control Barrier Function | Redis-backed cash balance invariant; Lua atomic check+commit; `WAIT` replication barrier; concurrent with Tier 4 |
-| 3 | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — atomic Redis WATCH/MULTI/EXEC before the consensus gate |
-| 4 | OPA policy engine | Declarative rule enforcement; concurrent with Tier 2 via `asyncio.gather` |
-| 5 | Consensus | High-stakes actions (≥$10k trades in the financial deployment), 30s timeout, heterogeneous multi-model quorum |
-| 6 | Causal gatekeeper | SCM + PlaceboTreatmentRefuter (50 sims, p < 0.05, \|eff\| > 0.2); marginal risk boundary: `(0.5 + estimate.value × amount) > 0.95` |
-| 6b | FRIA zones | `FRIA_ZONE_ALLOW=0.95` / `FRIA_ZONE_DEFER=0.70` / score < 0.70 → DENY |
+| Phase | Tier | Control | Key Invariant |
+|-------|------|---------|---------------|
+| **Phase 1** | 0 | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` checks Unsafe Control Actions |
+| **Phase 1** | 1 | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) |
+| **Phase 1** | 2b | OPA policy engine | Declarative rule enforcement; validates structural policy prior to mutation |
+| **Phase 1** | 5 | Consensus | High-stakes actions (≥$10k trades in the financial deployment), 30s timeout, heterogeneous multi-model quorum |
+| **Phase 1** | 6 | Causal gatekeeper | SCM $\beta \le 0$ fail-closed guard + PlaceboTreatmentRefuter (50 sims, p < 0.05, \|eff\| > 0.2); bounded risk score $\le 0.95$ |
+| **Phase 1** | 6b | FRIA zones | `FRIA_ZONE_ALLOW=0.95` / `FRIA_ZONE_DEFER=0.70` / score < 0.70 → DENY |
+| **Phase 2** | 2a | Control Barrier Function | Redis-backed cash balance invariant; Lua atomic check+commit; `WAIT` replication barrier |
+| **Phase 2** | 3 | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — atomic Redis WATCH/MULTI/EXEC against daily cap |
 
-> PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules, not sequential tiers of `_run_checks()`. PII sanitization runs inside `uca_logger.py` immediately before a UCA audit record is written to the WORM ledger; confabulation scoring is a standalone Langfuse observability metric.
+> **Zero Budget Leakage:** Phase 2 state mutations execute only after all Phase 1 validation checks emit `ALLOW`. Rejections in Phase 1 prevent any ledger mutation or spending cap consumption.
 
 Source: [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)
 
@@ -76,12 +76,12 @@ Source: [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/govern
 
 | Invariant | Formula / Mechanism |
 |-----------|---------------------|
-| NoDirectBind | Machine-verified via BFS state model (39 sequential / 44 concurrent reachable states) — 100% satisfied |
+| NoDirectBind | Machine-verified via BFS state model (57 sequential / 66 concurrent reachable states) — 100% satisfied |
 | Evidence Sufficiency | 4-tuple HMAC Routing Seal v2 `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` binds SHA-256 evidence record hash |
 | Bounded Composite Authority | Lua atomic check+commit + synchronous replica `WAIT` barrier + fail-closed automatic rollback |
 | Mediation Coverage | Whole-graph FTRA + 7 in-pipeline tiers + fail-closed actuator enforcement |
 | Confabulation risk | `risk_score = 1.0 − confidence` |
-| Causal lock | `(0.5 + estimate.value × amount) > 0.95` → DENY |
+| Causal lock | $\beta \le 0 \lor \min(1.0, 0.5 + \beta \times \text{amount}) > 0.95 \lor \text{placebo invalid} \implies \text{DENY}$ |
 | Operational budget cap | $500k/day (integer cents) in the financial reference deployment; 86,400s window, exponential backoff — threshold is domain-configurable |
 | Provenance chain | SHA-256 hash chain, O(n) construction, sorted-key JSON |
 

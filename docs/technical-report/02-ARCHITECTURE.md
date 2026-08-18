@@ -330,44 +330,56 @@ The `SymbolicGovernor` class in `src/gateway/governance/symbolic_governor.py` is
 
 ```mermaid
 flowchart TD
-    Input([Governance Request]) --> T0[Tier 0\nSTPA UCA Validation\nSTPAValidator.validate]
-    T0 --> T1["Tier 1\nSR 26-2 §IV.B Agentic Confidence\nconfidence_sufficient ≥ 0.95"]
-    T1 --> T24["Tiers 2/4\nCBF + OPA (concurrent)\nasyncio.gather"]
-    T24 --> T3[Tier 3\nFiscal Limit Pre-Reservation\nRedis WATCH/MULTI/EXEC]
-    T3 --> T5[Tier 5\nMulti-Agent Consensus\nasyncio critics]
-    T5 --> T6[Tier 6\nCausal Gatekeeper\nDoWhy PlaceboTreatmentRefuter]
-    T6 --> T6b[Tier 6b\nFRIA Adaptive Boundary]
-    T6b --> Approved([APPROVED])
+    subgraph P1["Phase 1: Read-Only Validation Gates"]
+        T0[Tier 0\nSTPA UCA Validation\nSTPAValidator.validate]
+        T1["Tier 1\nSR 26-2 §IV.B Agentic Confidence\nconfidence ≥ 0.95"]
+        T2b["Tier 2b\nOPA Rego Evaluation\ntrade.governance"]
+        T5[Tier 5\nMulti-Agent Consensus\nasyncio critics]
+        T6[Tier 6\nCausal Gatekeeper\nDoWhy β>0 + Placebo Refuter]
+        T6b[Tier 6b\nFRIA Adaptive Boundary]
+
+        T0 --> T1 --> T2b --> T5 --> T6 --> T6b
+    end
+
+    subgraph P2["Phase 2: Atomic State Mutations"]
+        T2a["Tier 2a\nControl Barrier Function\nLua atomic_verify_and_commit"]
+        T3[Tier 3\nFiscal Limit Pre-Reservation\nRedis WATCH/MULTI/EXEC]
+
+        T2a --> T3
+    end
+
+    Input([Governance Request]) --> T0
+    T6b -->|Phase 1 ALLOW| T2a
+    T3 --> Approved([APPROVED / SEAL_ISSUED])
 
     T0 -->|GovernanceError| Blocked([BLOCKED])
     T1 -->|GovernanceError| Blocked
-    T24 -->|GovernanceError| Blocked
-    T3 -->|GovernanceError| Blocked
+    T2b -->|GovernanceError| Blocked
     T5 -->|GovernanceError| Blocked
     T6 -->|GovernanceError| Blocked
     T6b -->|GovernanceError| Blocked
+    T2a -->|GovernanceError| Blocked
+    T3 -->|GovernanceError| Blocked
 ```
 
 ### 6.1 Tier Specifications
 
-| Tier | Name                     | Implementation                                                           | Key Threshold                                                                      |
-| ---- | ------------------------ | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| 0    | STPA UCA Validation      | `GeneratedSTPAValidator.validate()` in `src/gateway/governance/generated_stpa_validator.py` | Thresholds from `src/gateway/governance/safety_params.json`                        |
-| 1    | SR 26-2 §IV.B Agentic Confidence | Inline fast-fail check in `_run_checks()`                                          | `confidence ≥ AGENT_CONFIDENCE_THRESHOLD` (default 0.95)                                                     |
-| 2    | Control Barrier Function | `ControlBarrierFunction` — Redis read-write for gateway (`verify_action()` is read-only at check time; Tier 4 `FiscalLimitGuard` uses `WATCH/MULTI/EXEC` for atomic Redis commits) (concurrent with Tier 4) | `min_cash_balance=1000.0`, `gamma=0.5`                                             |
-| 3    | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — Redis `WATCH`/`MULTI`/`EXEC`             | `FISCAL_DAILY_CAP_USD` (default $500,000); 300s reservation TTL                                                                          |
-| 4    | OPA Policy               | `OPAClient` with `CircuitBreaker` (concurrent with Tier 2 via `asyncio.gather`) | 5 consecutive failures → 30s open-circuit recovery; 3000ms hard latency budget; `trade.governance` Rego bundle |
-| 5    | Multi-Agent Consensus    | `ConsensusEngine` — parallel `asyncio` critic tasks                      | `consensus.threshold_usd=10000.0`                                                  |
-| 6    | Causal Gatekeeper        | `causal_safety_check()` in `src/gateway/governance/causal_gatekeeper.py` | placebo p-value < 0.05 or placebo effect > 0.2                                      |
-| 6b   | FRIA Adaptive Boundary   | `enforce_fria_boundary()` in `symbolic_governor.py`                      | `FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70`                                       |
+| Tier | Phase | Name | Implementation | Key Threshold |
+| ---- | ----- | ---- | -------------- | ------------- |
+| 0 | Phase 1 | STPA UCA Validation | `GeneratedSTPAValidator.validate()` in `src/gateway/governance/generated_stpa_validator.py` | Thresholds from `src/gateway/governance/safety_params.json` |
+| 1 | Phase 1 | SR 26-2 §IV.B Agentic Confidence | Inline fast-fail check in `_run_checks()` | `confidence ≥ AGENT_CONFIDENCE_THRESHOLD` (default 0.95) |
+| 2b | Phase 1 | OPA Policy | `OPAClient` with `CircuitBreaker` evaluating `trade.governance` Rego bundle | 5 consecutive failures → 30s open-circuit recovery; 3000ms hard latency budget |
+| 5 | Phase 1 | Multi-Agent Consensus | `ConsensusEngine` — parallel `asyncio` critic tasks | `consensus.threshold_usd=10000.0` |
+| 6 | Phase 1 | Causal Gatekeeper | `causal_safety_check()` in `src/gateway/governance/causal_gatekeeper.py` | $\beta \le 0 \implies \text{BLOCK}$; placebo p-value < 0.05 or placebo effect > 0.2; bounded risk $\le 0.95$ |
+| 6b | Phase 1 | FRIA Adaptive Boundary | `enforce_fria_boundary()` in `symbolic_governor.py` | `FRIA_ZONE_ALLOW=0.95`, `FRIA_ZONE_DEFER=0.70` |
+| 2a | Phase 2 | Control Barrier Function | `ControlBarrierFunction.atomic_verify_and_commit()` — Lua-atomic Redis check+debit | `min_cash_balance=1000.0`, `gamma=0.5` |
+| 3 | Phase 2 | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — Redis `WATCH`/`MULTI`/`EXEC` | `FISCAL_DAILY_CAP_USD` (default $500,000); 300s reservation TTL |
 
-> The legacy SLM (semantic similarity) sidecar tier slot has been fully retired. `slm_available=false` is a permanent sentinel value injected into the OPA payload; the SLM-degraded confidence escalation (0.95 → 0.97) is now handled entirely within `system_authz.rego`.
+> **Two-Phase Decoupling & Zero Budget Leakage:** All Phase 1 validation checks execute before any state mutation occurs. If any validation tier emits a violation, the pipeline terminates in Phase 1 without modifying Redis balances or reserving daily limits, structurally eliminating downstream budget leakage.
 
-**Tier 2 (Control Barrier Function):** CBF's `verify_action()` is **read-only** — it does NOT modify Redis state at this stage. It verifies that executing the proposed trade will not violate the cash balance floor (`min_cash_balance=1000.0`). The `gamma=0.5` parameter controls the CBF decay coefficient. Tiers 2 and 4 (CBF and OPA) are fired **simultaneously** via `asyncio.gather`. The TOCTOU race is closed by Tier 3 (FiscalLimitGuard), NOT by making these sequential — this is intentional, correct design.
+**Tier 2a (Control Barrier Function):** CBF's `atomic_verify_and_commit()` executes a single Redis Lua script (`LUA_ATOMIC_CBF`) that checks $h(S(t+1)) \ge (1-\gamma)h(S(t))$ and commits the cash balance deduction in a single atomic hop, eliminating TOCTOU race conditions.
 
-> **Implementation note (H53):** `verify_action()` computes `effective_balance = snapshot_balance - self._local_debits` where `_local_debits` accumulates approved-trade costs since the last snapshot refresh. Call `reset_local_debits()` on each successful reconciliation cycle. This closes the intra-window double-spend gap: repeated trades within the 300 s KMS snapshot TTL window are evaluated against a decremented balance rather than the static snapshot.
-
-**Tier 4 (OPA Circuit Breaker):** The `CircuitBreaker` wrapping the `OPAClient` protects the governance pipeline from OPA service degradation. After 5 consecutive failures, the breaker opens for 30 seconds. During open-circuit state, all governance requests are rejected with `BLOCKED` — the system does not fall back to permissive defaults.
+**Tier 2b (OPA Circuit Breaker):** The `CircuitBreaker` wrapping the `OPAClient` protects the governance pipeline from OPA service degradation. After 5 consecutive failures, the breaker opens for 30 seconds. During open-circuit state, all governance requests are rejected with `BLOCKED` — the system does not fall back to permissive defaults.
 
 **Tier 6 (Causal Gatekeeper):** Microsoft DoWhy causal inference model validates world-model integrity. The gatekeeper checks if the estimated causal relations match empirical treatment effects via a Placebo Treatment Refuter. If a placebo treatment produces a statistically significant effect (p < 0.05 or placebo effect > 0.2), the model assumptions are deemed poisoned and the trade is blocked.
 
@@ -697,18 +709,17 @@ This condition guarantees `h(S(t)) ≥ 0` for all `t` — the cash balance never
 
 **Source:** [`src/gateway/governance/causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py)
 
-The causal gatekeeper uses a **Structural Causal Model (SCM)** with `backdoor.linear_regression` to estimate the causal effect of a proposed trade on portfolio risk. The **marginal risk boundary** that triggers a causal block:
+The causal gatekeeper uses a **Structural Causal Model (SCM)** with `backdoor.linear_regression` to estimate the causal effect of a proposed trade on portfolio risk. The gatekeeper enforces three safety checks:
 
+1. **Non-Positive Causal Slope Guard:** If estimated causal slope $\beta \le 0$, the gatekeeper fails closed (`causal.lock_reason = "negative_or_zero_causal_slope"`), blocking trades with invalid or confounding causal assumptions.
+2. **Placebo Refutation:** 50 placebo simulations are run against live telemetry.
+   - p-value < 0.05 → model assumptions violated → BLOCK
+   - |placebo effect| > 0.2 → effect size too large → BLOCK
+3. **Monotonic Bounded Risk Boundary:**
+```python
+risk_score = min(1.0, max(0.0, 0.5 + estimate.value * amount))
 ```
-(0.5 + estimate.value × amount) > 0.95
-```
-
-If this condition is met, the trade is blocked regardless of OPA or CBF results.
-
-**PlaceboTreatmentRefuter validation:** 50 simulations are run against live telemetry. A statistically significant placebo effect indicates poisoned model assumptions:
-
-- p-value < 0.05 → model assumptions violated → BLOCK
-- |placebo effect| > 0.2 → effect size too large → BLOCK
+If `risk_score > 0.95`, the trade is blocked regardless of prior tier approvals.
 
 Results are cached in Redis by `(action_type, market_regime)` with a **60-second TTL** (`CAUSAL_CACHE_TTL_SECONDS`). Cache hits skip both SCM phases entirely. Fails closed if telemetry is stale (> `TELEMETRY_MAX_STALENESS_SECONDS`, default 300s).
 

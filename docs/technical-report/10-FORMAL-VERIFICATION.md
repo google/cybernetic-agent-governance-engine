@@ -5,7 +5,7 @@
 | **Classification** | INTERNAL                  |
 | **Date**           | 2026-08-16                |
 | **Version**        | 3.0                       |
-| **Status**         | Current — v3.0.0 stable; GKE deployment verified; **2,817 passing, 0 failed, 67 skipped** (75.40% statement coverage); NoDirectBind invariant machine-verified over 39 sequential / 44 concurrent reachable states |
+| **Status**         | Current — v3.0.0 stable; GKE deployment verified; **2,817 passing, 0 failed, 67 skipped** (75.40% statement coverage); NoDirectBind invariant machine-verified over 57 sequential / 66 concurrent reachable states |
 | **Series**         | CAGE Technical Report — Document 10 / 10 |
 
 As a formally verified, deterministic governance layer, the **Cybernetic Agent Governance Engine (CAGE)** v3.0.0 architecture has been methodically evaluated against the Composite Verification Framework (CVF).
@@ -95,7 +95,7 @@ The Cloud Security Alliance Autonomous Agent Risk Management (CSA AARM v1.0) fra
 | **AARM-V3** | Confused Deputy — agent is manipulated into performing actions on behalf of an unauthorized principal | OPA RBAC (`trade.governance` package) + HMAC routing seal (`X-CAGE-Routing-Seal`) | $\forall \text{tool\_call}: \text{seal\_valid}(\text{request}) \land \text{role}(\text{caller}) \in \text{authorized\_roles}(\text{tool})$ | **NEUTRALIZED** |
 | **AARM-V4** | Cross-Agent Propagation — malicious payload propagates across agent boundaries | Linkerd mTLS SPIFFE/SVID identity + NeMo input rail on every agent boundary | $\forall \text{agent\_msg}: \text{SPIFFE\_identity\_verified} \land \text{NeMo}(\text{msg}) = \text{SAFE}$ | **NEUTRALIZED** |
 | **AARM-V5** | Prompt Injection — adversarial input hijacks agent intent | Aho-Corasick Tier-1 scan + NeMo Guardrails Tier-2 + Presidio PII scan | $\forall \text{input}: \text{AhoCorasick}(\text{input}) = \emptyset \land \text{NeMo}(\text{input}) = \text{SAFE}$ before any agent node executes | **NEUTRALIZED** |
-| **AARM-V6** | Reward Hacking — agent exploits reward signal to achieve unintended outcomes | STPA UCA Validator (Tier 0) + DoWhy Causal Gatekeeper (Tier 6) placebo refutation | $\text{placebo\_p\_value} \ge 0.05 \land \text{placebo\_effect} \le 0.2 \land \text{predicted\_risk} \le 0.95$ required for ALLOW | **NEUTRALIZED** |
+| **AARM-V6** | Reward Hacking — agent exploits reward signal to achieve unintended outcomes | STPA UCA Validator (Tier 0) + DoWhy Causal Gatekeeper (Tier 6) non-positive slope guard + placebo refutation | $\beta > 0 \land \text{placebo\_p\_value} \ge 0.05 \land \text{placebo\_effect} \le 0.2 \land \min(1.0, 0.5 + \beta \times \text{amount}) \le 0.95$ required for ALLOW | **NEUTRALIZED** |
 | **AARM-V7** | Context Window Overflow — agent proceeds on fundamentally incomplete context | DEFER State Machine (`defer_queue.py`, Redis db=1 `noeviction`) | $\text{confidence\_score} \in [0.70, 0.95) \Rightarrow \text{state} = \text{DEFERRED}$; execution blocked until `EXTERNAL_VALIDATION` injected | **NEUTRALIZED** |
 | **AARM-V8** | Temporal Deception — model engineers its own privilege escalation via time-based manipulation | Human-gated NeMo refinement (`POST /v1/nemo/propose-refinement` → human approval → `POST /v1/nemo/apply-refinement`) | $\nexists \text{path}: \text{model\_output} \xrightarrow{*} \text{apply\_refinement}$ without `reviewer\_identity \ne \emptyset \land \text{rationale} \ne \emptyset$ | **NEUTRALIZED** |
 | **AARM-V9** | Privilege Escalation — single model cannot detect its own compliance violations | Heterogeneous multi-model consensus (`ConsensusModelRegistry`: DeepSeek-R1 Risk Manager + Llama 3.1 Compliance Officer) | $\forall \text{trade} > \text{threshold}: \text{vote}(\text{DeepSeek-R1}) = \text{APPROVE} \land \text{vote}(\text{Llama-3.1}) = \text{APPROVE}$ required | **NEUTRALIZED** |
@@ -136,7 +136,7 @@ $$\forall t: S(t) = \sum_{i: \text{committed}(i, t)} r_i \le L$$
 
 **Fail-closed property:** If Redis is unavailable, `FiscalLimitGuard.reserve()` raises `ConnectionError` and the trade is blocked — the system never proceeds without the guard.
 
-**Saga integration:** `FiscalLimitGuard.release(token)` is called by the compensating node `compensate_reverse_trade_node_uca_4` on rollback, restoring the reserved headroom atomically.
+**Saga integration:** `FiscalLimitGuard.release(token)` is called by the compensating node `compensate_reverse_trade_node_uca_4` on rollback, restoring the reserved headroom atomically while validating key existence to prevent negative counter underflow across TTL boundaries.
 
 ---
 
@@ -183,37 +183,37 @@ This is a theorem, not a test result. A test demonstrates that the gate works on
 
 ### Exhaustive State-Space Proof (`proof/model.py`)
 
-The CAGE governance pipeline is modelled as a deterministic state machine and verified exhaustively using a breadth-first search (BFS) enumerator implemented in [`proof/model.py`. The proof requires no external dependencies beyond the Python standard library.
+The CAGE governance pipeline is modelled as a deterministic state machine and verified exhaustively using a breadth-first search (BFS) enumerator implemented in [`proof/model.py`](../../proof/model.py). The proof requires no external dependencies beyond the Python standard library.
 
 **Scope of the model.** The tuple covers `SymbolicGovernor._run_checks()` — Tiers 0 through 6b (8 tiers: `stpa`, `confidence`, `cbf`, `opa`, `fiscal`, `consensus`, `causal`, `fria`), with the CBF and OPA tiers evaluated concurrently, giving 8 tuple positions. FTRA (the **Pre-Pipeline Boundary Gate**) is deliberately outside the tuple: it is a gateway precondition that runs at the LangGraph graph level, before `_run_checks()` is invoked, and operates on a whole `ExecutionPlan` rather than a single tool call. FTRA is NOT a peer of Tiers 0–6b — those sequential tiers operate per tool call within `_run_checks()`, whereas FTRA operates on the entire execution graph before per-tool-call checks begin. Its verdict (`CLEAR` | `HITL_REQUIRED` | `BLOCKED`) is recorded separately in the LangGraph state — see [`src/gateway/governance/ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py).
 
-> **Scope limitation:** The current BFS proof covers the governance state machine (21-state tuple). It does not model the full implementation including the LangGraph harness, Redis state, and the FTRA boundary. A TLA+/Alloy extension to the full implementation is tracked as future work.
+> **Scope limitation:** The current BFS proof covers the governance state machine (57-state tuple). It does not model the full implementation including the LangGraph harness, Redis state, and the FTRA boundary. A TLA+/Alloy extension to the full implementation is tracked as future work.
 
-> **FTRA exclusion note:** FTRA (the Pre-Pipeline Boundary Gate) is not included in the 21-state BFS state tuple. The automaton provides an under-approximation: HITL-resumption paths are pruned (mapping `ESCALATE`/`ERROR` to terminal `FAIL`), leaving manually-approved trade resumptions outside the verified envelope.
+> **FTRA exclusion note:** FTRA (the Pre-Pipeline Boundary Gate) is not included in the 57-state BFS state tuple. The automaton provides an under-approximation: HITL-resumption paths are pruned (mapping `ESCALATE`/`ERROR` to terminal `FAIL`), leaving manually-approved trade resumptions outside the verified envelope.
 
 **State machine definition:**
 
 | Component | Definition |
 | --------- | ---------- |
 | **Tiers** | `stpa` → `confidence` → `cbf` → `opa` → `fiscal` → `consensus` → `causal` → `fria` (8 tuple positions, in order) |
-| **Phases** | `PENDING` → `CHECKING` → `SEAL_ISSUED` → `EXECUTED` \| `DENIED` |
-| **`resolvedAllow`** | `TRUE` if and only if all tiers have passed **and** a routing seal has been issued |
+| **Phases** | `PENDING` → `CHECKING` → `SEAL_ISSUED` → `EXECUTED` \| `DENIED` \| `NARROWED` \| `PAUSED` |
+| **`resolvedAllow`** | `TRUE` if and only if all tiers have passed **and** a valid routing seal has been issued |
 | **Terminal states** | `EXECUTED` (success) and `DENIED` (fail-closed) |
 
 **Transition rules (gated architecture):**
 
 - Any tier failure immediately transitions to `DENIED` — fail-closed by construction.
 - All tiers passing transitions to `SEAL_ISSUED` with `resolvedAllow = TRUE`.
-- `SEAL_ISSUED` → `EXECUTED` only after the downstream actuator calls `verify_seal()` and the seal is cryptographically valid and unexpired.
-- `SEAL_ISSUED` → `DENIED` if the seal is invalid or expired (e.g., TTL elapsed, HMAC mismatch).
+- `SEAL_ISSUED` → `EXECUTED` only after the downstream actuator calls `verify_seal()` and the seal is cryptographically valid, unconsumed, and unexpired.
+- `SEAL_ISSUED` → `DENIED` if the seal is invalid, consumed, or expired (e.g., TTL elapsed, HMAC mismatch).
 
 **Proof results (run: `python3 proof/model.py`):**
 
 ```
-[gated]   Reachable states: 39
-[gated]   No-Direct-Bind holds over all 39 reachable states: True
+[gated]   Reachable states: 57
+[gated]   No-Direct-Bind holds over all 57 reachable states: True
 [gated]   EXECUTED states: 1
-[gated]     → resolvedAllow=True  seal_present=True
+[gated]     → resolvedAllow=True  seal_present=True  seal_consumed=True
 
 [ungated] direct-bind shortcut produces a violation: True
 [ungated] Counterexample state:
@@ -223,7 +223,7 @@ The CAGE governance pipeline is modelled as a deterministic state machine and ve
 [ungated]   tier_results  = {all 8 tiers: PASS}
 
 Concurrency sub-proof (CBF ∥ OPA interleaving):
-  Reachable states: 44 (gated: 39) — superset=True
+  Reachable states: 66 (gated: 57) — superset=True
   No-Direct-Bind holds under every interleaving: True
   EXECUTED states: 1 (all with resolvedAllow=TRUE: True)
 
@@ -234,13 +234,13 @@ NARROW/PAUSE state-space sub-proofs:
 ✅ All assertions passed.
 ```
 
-The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE` and `seal_present = True`. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all tiers pass, because no seal was issued and no seal was verified. NARROW paths issue seals on clamped parameters, while PAUSE paths terminate without a seal pending re-evaluation.
+The gated architecture has exactly **one** reachable `EXECUTED` state, and in that state `resolvedAllow = TRUE`, `seal_present = True`, and `seal_consumed = True`. The ungated variant reaches `EXECUTED` with `resolvedAllow = FALSE` — a direct-bind violation — even when all tiers pass, because no seal was issued and no seal was verified. NARROW paths issue seals on clamped parameters, while PAUSE paths terminate without a seal pending re-evaluation.
 
 ### Concurrency: Order-Independence of the CBF ∥ OPA Gate
 
 `gated_transitions()` advances tiers in a fixed order, which *under-approximates* the runtime: `_run_checks()` dispatches the CBF and OPA checks together via `asyncio.gather()` ([`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py)), so either may resolve first. A sequential-only model could therefore mask an interleaving-dependent violation.
 
-`concurrent_tier_transitions()` closes this gap by allowing *any* pending tier in `CONCURRENT_TIERS = {cbf, opa}` to advance whenever the pipeline reaches the concurrent gate. This explores both orderings and every partial-resolution state (one check resolved, the other still pending). The resulting reachable set is a strict superset of the sequential one — 24 states versus 21 — and the invariant holds across all of them, with a single `EXECUTED` state carrying `resolvedAllow = TRUE`.
+`concurrent_tier_transitions()` closes this gap by allowing *any* pending tier in `CONCURRENT_TIERS = {cbf, opa}` to advance whenever the pipeline reaches the concurrent gate. This explores both orderings and every partial-resolution state (one check resolved, the other still pending). The resulting reachable set is a strict superset of the sequential one — 66 states versus 57 — and the invariant holds across all of them, with a single `EXECUTED` state carrying `resolvedAllow = TRUE`.
 
 Proving the invariant over the superset is a strictly stronger result than proving it over the canonical order alone: the seal gate holds under *every* interleaving, not merely under one scheduling.
 
@@ -255,9 +255,9 @@ Prior to v2.0.0-rc.2, the `SymbolicGovernor` exposed two code paths into `_run_c
 
 A caller that caught `GovernanceError` from the old `govern()` path and proceeded to execution would reach `EXECUTED` without a resolved seal — a direct-bind violation identical to the ungated counterexample above.
 
-**Remediation (v2.0.0-rc.2):**
+**Remediation (v2.0.0-rc.2 / v3.0.0):**
 
-[`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) now issues a routing seal on approval and returns it as a `str`. The seal is generated via [`routing_seal.generate_seal()`](../../src/gateway/governance/routing_seal.py) inside a `cage.routing_seal` OTel span, after `_run_checks()` has completed all 8 tiers (FTRA + 7 in-pipeline tiers). [`governance_middleware.enforce_governance()`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers. [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) calls `verify_seal()` before executing the trade — a missing or invalid seal produces an immediate `BLOCKED` response.
+[`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) now issues a routing seal on approval and returns it as a `str`. The seal is generated via [`routing_seal.generate_seal()`](../../src/gateway/governance/routing_seal.py) inside a `cage.routing_seal` OTel span, after `_run_checks()` has completed all 8 tiers (FTRA + 7 in-pipeline tiers). [`governance_middleware.enforce_governance()`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers. [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) calls `verify_seal()` before executing the trade — a missing, invalid, or already-consumed seal produces an immediate `BLOCKED` response.
 
 Both `govern()` and `validate_action()` now satisfy the invariant. There is no longer any code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`.
 
@@ -268,7 +268,7 @@ The proof file also verifies four additional sub-cases:
 | Sub-proof | Configuration modelled | Invariant holds? | Interpretation |
 | --------- | ---------------------- | ---------------- | -------------- |
 | Gap 1 (no routing seal on approval) | `ungated_transitions()` — seal-issuance step removed structurally | ❌ **No** — violation confirmed (19 states) | Confirms the seal gate is load-bearing, not decorative |
-| Gap 2 (pre-fix `govern()`) | All tiers pass; no seal issued; direct transition to `EXECUTED` | ❌ **No** — violation confirmed | Confirms the pre-fix path was a direct-bind shortcut |
+| Gap 2 (pre-fix `govern()` & actuator verification) | All tiers pass; no seal issued; actuator gate active vs inactive | ❌ **No** without actuator / transitions to DENIED with actuator | Proves both seal issuance and actuator verification are load-bearing |
 | Gap 3 (`CBF_FAIL_OPEN`) | CBF tier silently skipped (always PASS) | ✅ Yes (structurally) | Seal path preserved, but CBF tier absent from gate; production startup `RuntimeError` prevents this configuration |
 | Gap 4 (DoWhy absent) | Causal tier silently skipped (always PASS) | ✅ Yes (structurally) | Seal path preserved, but causal tier absent from gate; production startup `RuntimeError` prevents this configuration |
 
@@ -338,7 +338,7 @@ where `γ` is the decay rate (configured via `THRESHOLDS.cbf.gamma`). This condi
 
 **CBF Invariance Theorem:** If `h(S(0)) ≥ 0` and the discrete-time CBF condition holds at every step `t`, then `h(S(t)) ≥ 0` for all `t ≥ 0`. The system trajectory remains within the safe set `S` indefinitely.
 
-> **Conditional implication note:** The CBF safety theorem is a conditional implication — it is vacuously true when `verify_action()` does not return `SAFE`. The `S(t+1) = S(t)` rejection-branch premise holds only if `atomic_verify_and_commit()` performs no state mutation before rejection. The current implementation debits balance at Tier 3a without a compensating rollback on subsequent-tier failure; `rollback_state()` addresses this as a Saga compensation stub.
+> **Two-Phase Zero-Leakage Architecture:** In CAGE v3.0.0, the SymbolicGovernor decouples into Phase 1 (read-only validation gates) and Phase 2 (atomic state mutations). All validation checks (STPA, confidence, OPA, consensus, causal, FRIA) execute in Phase 1 before `atomic_verify_and_commit()` or `reserve()` are invoked. Any validation failure terminates the pipeline in Phase 1 with $S(t+1) = S(t)$, completely eliminating downstream budget leakage and the saga-atomicity gap.
 
 **Enforcement in code:**
 
@@ -521,7 +521,7 @@ The key is set with `EXPIRE window_seconds` on every write, ensuring automatic r
 | 4 | AARM 11-vector neutralization | **10/11 NEUTRALIZED** (V11 PARTIAL — POAM-022) |
 | 5 | FiscalLimitGuard race-condition proof | **PASS** |
 | 6 | KMS HSM non-repudiation proof | **PASS** |
-| 7 | NoDirectBind invariant — exhaustive state-space proof over 39 reachable states (44 under CBF∥OPA interleaving) | **PASS** |
+| 7 | NoDirectBind invariant — exhaustive state-space proof over 57 reachable states (66 under CBF∥OPA interleaving) | **PASS** |
 | 8 | CBF discrete-time invariance — `h(S(t+1)) ≥ (1−γ)·h(S(t))`, Lua atomic check+commit + replica `WAIT` barrier | **PASS** |
 | 9 | Routing seal v2 integrity — 4-tuple HMAC-SHA256 with evidence record hash binding, 30s TTL, constant-time compare | **PASS** |
 | 10 | Provenance hash chain — SHA-256, O(n) tamper detection, deterministic serialization | **PASS** |

@@ -136,10 +136,10 @@ Additionally, runtime exceptions during DoWhy refutation (e.g., numerical instab
 
 | Gap | Description | Status | Enforcement Point |
 | --- | ----------- | ------ | ----------------- |
-| Gap 1 | No exhaustive state-space proof | ✅ **CLOSED** | `proof/model.py` — BFS over 21 reachable states |
+| Gap 1 | No exhaustive state-space proof | ✅ **CLOSED** | `proof/model.py` — BFS over 57 reachable states (66 concurrent) |
 
-> **Scope limitation:** The current BFS proof covers the governance state machine (21-state tuple). It does not model the full implementation including the LangGraph harness, Redis state, and the FTRA boundary. A TLA+/Alloy extension to the full implementation is tracked as future work.
-| Gap 2 | `govern()` path issued no seal | ✅ **CLOSED** | [`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) + [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) |
+> **Scope limitation:** The current BFS proof covers the governance state machine (57-state tuple). It does not model the full implementation including the LangGraph harness, Redis state, and the FTRA boundary. A TLA+/Alloy extension to the full implementation is tracked as future work.
+| Gap 2 | `govern()` path issued no seal & actuator verification | ✅ **CLOSED** | [`symbolic_governor.govern()`](../../src/gateway/governance/symbolic_governor.py) + [`mcp_tool_server.execute_trade_action()`](../../src/gateway/server/mcp_tool_server.py) |
 | Gap 3 | `CBF_FAIL_OPEN=true` silently degraded gate | ✅ **CLOSED** | Module-level `RuntimeError` in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
 | Gap 4 | DoWhy absence silently removed Tier 6 | ✅ **CLOSED** | Module-level `RuntimeError` + fail-closed runtime handler in [`symbolic_governor.py`](../../src/gateway/governance/symbolic_governor.py) |
 
