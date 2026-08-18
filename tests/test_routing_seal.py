@@ -15,12 +15,21 @@
 """
 Unit tests — Routing Seal (gateway issuance + GFA verification mirror).
 
+**v2 Seal Format (B2 Enhancement):**
+The seal format now includes 4 components:
+    ``<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>``
+
+This cryptographically binds the seal to a specific evidence record in the
+compliance evidence stream. See B2 implementation for details.
+
 Covers:
-- Happy path: generate → verify succeeds
+- Happy path: generate → verify succeeds (v2 format with record_hash)
+- Evidence binding: seal is cryptographically bound to record_hash
 - Expired seal: verify raises SymbolicGovernorViolation
 - Tampered sig: verify raises SymbolicGovernorViolation
 - Action mismatch: verify raises SymbolicGovernorViolation
 - Malformed seal: verify raises SymbolicGovernorViolation
+- Record hash mismatch: verify raises SymbolicGovernorViolation
 - Canonical payload determinism: dict ordering doesn't affect HMAC
 - GFA mirror: uses same HMAC key; verify_seal produces same result as gateway
 
@@ -39,9 +48,15 @@ from freezegun import freeze_time
 # Set GOVERNANCE_SALT before importing modules under test
 os.environ.setdefault("GOVERNANCE_SALT", "TEST_SALT_UNIT_32_CHARACTERS_OK!")
 
-from src.gateway.governance.routing_seal import generate_seal
+from src.gateway.governance.routing_seal import (
+    extract_record_hash,
+    generate_seal,
+)
 from src.governed_financial_advisor.utils.routing_seal import (
     SymbolicGovernorViolation,
+)
+from src.governed_financial_advisor.utils.routing_seal import (
+    extract_record_hash as gfa_extract_record_hash,
 )
 from src.governed_financial_advisor.utils.routing_seal import (
     verify_seal as gfa_verify_seal,
@@ -55,6 +70,9 @@ PARAMS = {
     "trader_role": "junior",
 }
 
+# Test record hash for evidence binding tests
+TEST_RECORD_HASH = "abc123def456789012345678901234567890abcdef1234567890abcdef12345678"
+
 
 class TestRoutingSeal:
     """Gateway issuance + GFA verification."""
@@ -62,6 +80,35 @@ class TestRoutingSeal:
     def test_happy_path(self):
         """A freshly generated seal must verify successfully."""
         seal = generate_seal("execute_trade", PARAMS)
+        assert gfa_verify_seal(seal, "execute_trade", PARAMS) is True
+
+    def test_v2_seal_format_has_four_parts(self):
+        """v2 seals must have 4 dot-separated components."""
+        seal = generate_seal("execute_trade", PARAMS)
+        parts = seal.split(".")
+        assert len(parts) == 4, f"Expected 4 parts, got {len(parts)}: {seal}"
+        expire_hex, action_slug, record_hash, hmac_sig = parts
+        # Verify structure
+        assert len(expire_hex) > 0
+        assert action_slug == "execute-trade"
+        assert len(record_hash) > 0  # sentinel or actual hash
+        assert len(hmac_sig) == 64  # SHA-256 hex
+
+    def test_seal_with_record_hash(self):
+        """Seal generated with record_hash must include it in wire format."""
+        seal = generate_seal("execute_trade", PARAMS, record_hash=TEST_RECORD_HASH)
+        parts = seal.split(".")
+        assert len(parts) == 4
+        assert parts[2] == TEST_RECORD_HASH
+        # Verify it validates
+        assert gfa_verify_seal(seal, "execute_trade", PARAMS) is True
+
+    def test_seal_without_record_hash_uses_sentinel(self):
+        """Seal generated without record_hash uses sentinel value."""
+        seal = generate_seal("execute_trade", PARAMS, record_hash=None)
+        record_hash = extract_record_hash(seal)
+        assert record_hash == "no-evidence-binding"
+        # Verify it validates
         assert gfa_verify_seal(seal, "execute_trade", PARAMS) is True
 
     def test_expired_seal(self):
@@ -78,8 +125,18 @@ class TestRoutingSeal:
         """Mutating the HMAC signature component must fail verification."""
         seal = generate_seal("execute_trade", PARAMS)
         parts = seal.split(".")
-        # Flip last char of sig
-        parts[2] = parts[2][:-1] + ("a" if parts[2][-1] != "a" else "b")
+        # v2 format: sig is at index 3 (4th part)
+        parts[3] = parts[3][:-1] + ("a" if parts[3][-1] != "a" else "b")
+        tampered = ".".join(parts)
+        with pytest.raises(SymbolicGovernorViolation):
+            gfa_verify_seal(tampered, "execute_trade", PARAMS)
+
+    def test_tampered_record_hash(self):
+        """Mutating the record_hash component must fail HMAC verification."""
+        seal = generate_seal("execute_trade", PARAMS, record_hash=TEST_RECORD_HASH)
+        parts = seal.split(".")
+        # v2 format: record_hash is at index 2 (3rd part)
+        parts[2] = "tampered" + parts[2][8:]
         tampered = ".".join(parts)
         with pytest.raises(SymbolicGovernorViolation):
             gfa_verify_seal(tampered, "execute_trade", PARAMS)
@@ -98,9 +155,12 @@ class TestRoutingSeal:
             gfa_verify_seal(seal, "execute_trade", bad_params)
 
     def test_malformed_seal_too_few_parts(self):
-        """A seal missing a dot segment must raise SymbolicGovernorViolation."""
+        """A seal missing a dot segment must raise SymbolicGovernorViolation (v2 expects 4)."""
         with pytest.raises(SymbolicGovernorViolation):
             gfa_verify_seal("abc.def", "execute_trade", PARAMS)
+        # Also test 3 parts (old v1 format)
+        with pytest.raises(SymbolicGovernorViolation):
+            gfa_verify_seal("abc.def.ghi", "execute_trade", PARAMS)
 
     def test_malformed_seal_empty(self):
         """An empty seal string must raise SymbolicGovernorViolation."""
@@ -120,6 +180,74 @@ class TestRoutingSeal:
         seal = generate_seal("execute_trade", params_a)
         # Action slug is 'execute-trade' internally — verify must still pass
         assert gfa_verify_seal(seal, "execute_trade", params_a) is True
+
+
+class TestRecordHashBinding:
+    """B2: Tests for HMAC seal binding to evidence record hash."""
+
+    def test_extract_record_hash_returns_correct_value(self):
+        """extract_record_hash() returns the record_hash from a v2 seal."""
+        seal = generate_seal("execute_trade", PARAMS, record_hash=TEST_RECORD_HASH)
+        assert extract_record_hash(seal) == TEST_RECORD_HASH
+        assert gfa_extract_record_hash(seal) == TEST_RECORD_HASH
+
+    def test_extract_record_hash_sentinel_value(self):
+        """extract_record_hash() returns sentinel for seals without evidence binding."""
+        seal = generate_seal("execute_trade", PARAMS)  # No record_hash
+        assert extract_record_hash(seal) == "no-evidence-binding"
+
+    def test_extract_record_hash_malformed_seal(self):
+        """extract_record_hash() returns None for malformed seals."""
+        assert extract_record_hash("abc.def") is None
+        assert extract_record_hash("abc.def.ghi") is None  # v1 format
+        assert extract_record_hash("") is None
+
+    def test_expected_record_hash_match_succeeds(self):
+        """Verification succeeds when expected_record_hash matches seal's record_hash."""
+        seal = generate_seal("execute_trade", PARAMS, record_hash=TEST_RECORD_HASH)
+        # Explicit match check
+        assert gfa_verify_seal(
+            seal, "execute_trade", PARAMS, expected_record_hash=TEST_RECORD_HASH
+        ) is True
+
+    def test_expected_record_hash_mismatch_fails(self):
+        """Verification fails when expected_record_hash doesn't match seal's record_hash."""
+        seal = generate_seal("execute_trade", PARAMS, record_hash=TEST_RECORD_HASH)
+        wrong_hash = "wrong" + TEST_RECORD_HASH[5:]
+        with pytest.raises(SymbolicGovernorViolation) as exc_info:
+            gfa_verify_seal(seal, "execute_trade", PARAMS, expected_record_hash=wrong_hash)
+        assert "record_hash mismatch" in str(exc_info.value)
+
+    def test_expected_record_hash_none_skips_check(self):
+        """When expected_record_hash=None, no record_hash validation is performed."""
+        seal = generate_seal("execute_trade", PARAMS, record_hash=TEST_RECORD_HASH)
+        # Should pass without checking record_hash
+        assert gfa_verify_seal(seal, "execute_trade", PARAMS, expected_record_hash=None) is True
+
+    def test_seal_with_different_record_hashes_are_distinct(self):
+        """Seals with different record_hashes produce different HMACs."""
+        hash_a = "a" * 64
+        hash_b = "b" * 64
+        seal_a = generate_seal("execute_trade", PARAMS, record_hash=hash_a)
+        seal_b = generate_seal("execute_trade", PARAMS, record_hash=hash_b)
+        # Seals should be different
+        assert seal_a != seal_b
+        # Both should verify
+        assert gfa_verify_seal(seal_a, "execute_trade", PARAMS) is True
+        assert gfa_verify_seal(seal_b, "execute_trade", PARAMS) is True
+        # But cross-verification with expected_record_hash should fail
+        with pytest.raises(SymbolicGovernorViolation):
+            gfa_verify_seal(seal_a, "execute_trade", PARAMS, expected_record_hash=hash_b)
+
+    def test_record_hash_included_in_hmac_input(self):
+        """Changing record_hash changes the HMAC even with same action/params."""
+        seal_without = generate_seal("execute_trade", PARAMS, record_hash=None)
+        seal_with = generate_seal("execute_trade", PARAMS, record_hash=TEST_RECORD_HASH)
+        # Extract HMACs (4th component)
+        hmac_without = seal_without.split(".")[3]
+        hmac_with = seal_with.split(".")[3]
+        # HMACs must differ
+        assert hmac_without != hmac_with
 
 
 class TestRoutingSealGatewayMirrorParity:

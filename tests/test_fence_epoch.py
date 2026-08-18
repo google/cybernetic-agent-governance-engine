@@ -65,7 +65,8 @@ def cbf_instance():
     """Create a CBF instance with mocked dependencies."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    # B3a: Use skip_epoch_seed=True to avoid Redis seeding in tests
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.tracer = None
     cbf.min_cash_balance = 10000.0
     cbf.gamma = 0.1
@@ -822,3 +823,156 @@ class TestSentinelAwarenessStub:
         finally:
             if original_env is not None:
                 os.environ["REDIS_SENTINEL_MASTER_NAME"] = original_env
+
+
+# ---------------------------------------------------------------------------
+# Test: B3a Fence Epoch Cold-Start Seeding
+# ---------------------------------------------------------------------------
+
+
+class TestFenceEpochColdStartSeeding:
+    """Tests for B3a: fence epoch cold-start seeding from Redis."""
+
+    def test_cbf_seeds_epoch_from_redis_on_init(self):
+        """B3a: CBF must seed _last_seen_epoch from Redis at construction."""
+        from src.gateway.governance.cbf import ControlBarrierFunction
+
+        # Mock the sync_redis_client to return an epoch value
+        mock_sync_redis = MagicMock()
+        mock_sync_redis.get = MagicMock(return_value="42")
+
+        with patch("src.gateway.governance.cbf.sync_redis_client", mock_sync_redis):
+            cbf = ControlBarrierFunction()
+
+        # The epoch should be seeded from Redis
+        assert cbf._last_seen_epoch == 42
+        mock_sync_redis.get.assert_called_once_with("safety:fence_epoch")
+
+    def test_cbf_first_ever_startup_initializes_epoch_to_zero(self):
+        """B3a: First-ever startup (no epoch key) initializes epoch to 0 and writes it."""
+        from src.gateway.governance.cbf import ControlBarrierFunction
+
+        # Mock sync_redis_client to return None (no epoch key exists)
+        mock_sync_redis = MagicMock()
+        mock_sync_redis.get = MagicMock(return_value=None)
+        mock_raw_client = MagicMock()
+        mock_sync_redis._get = MagicMock(return_value=mock_raw_client)
+
+        with patch("src.gateway.governance.cbf.sync_redis_client", mock_sync_redis):
+            cbf = ControlBarrierFunction()
+
+        # Epoch should be 0 and written to Redis
+        assert cbf._last_seen_epoch == 0
+        mock_raw_client.set.assert_called_once_with("safety:fence_epoch", "0")
+
+    def test_cbf_skip_epoch_seed_flag_bypasses_redis(self):
+        """B3a: skip_epoch_seed=True bypasses Redis and sets epoch to 0."""
+        from src.gateway.governance.cbf import ControlBarrierFunction
+
+        # Even with sync_redis_client=None, should not raise
+        with patch("src.gateway.governance.cbf.sync_redis_client", None):
+            cbf = ControlBarrierFunction(skip_epoch_seed=True)
+
+        assert cbf._last_seen_epoch == 0
+
+    def test_cbf_raises_on_redis_unavailable_in_production(self):
+        """B3a: CBF raises CBFInitializationError if Redis unavailable in production."""
+        from src.gateway.governance.cbf import (
+            CBFInitializationError,
+            ControlBarrierFunction,
+        )
+
+        with (
+            patch("src.gateway.governance.cbf.sync_redis_client", None),
+            patch("src.gateway.governance.cbf._IS_PRODUCTION", True),
+        ):
+            with pytest.raises(CBFInitializationError) as exc_info:
+                ControlBarrierFunction()
+
+        assert "sync Redis client unavailable" in str(exc_info.value)
+        assert "Failing closed" in str(exc_info.value)
+
+    def test_cbf_warns_on_redis_unavailable_in_dev_mode(self):
+        """B3a: CBF warns but proceeds with epoch=0 if Redis unavailable in dev mode."""
+        from src.gateway.governance.cbf import ControlBarrierFunction
+
+        with (
+            patch("src.gateway.governance.cbf.sync_redis_client", None),
+            patch("src.gateway.governance.cbf._IS_PRODUCTION", False),
+            patch("src.gateway.governance.cbf.logger") as mock_logger,
+        ):
+            cbf = ControlBarrierFunction()
+
+        assert cbf._last_seen_epoch == 0
+        # Verify warning was logged
+        mock_logger.warning.assert_called()
+        warning_call = str(mock_logger.warning.call_args)
+        assert "B3a" in warning_call or "dev/test mode" in warning_call
+
+    def test_cbf_raises_on_redis_error_in_production(self):
+        """B3a: CBF raises CBFInitializationError on Redis error in production."""
+        from src.gateway.governance.cbf import (
+            CBFInitializationError,
+            ControlBarrierFunction,
+        )
+
+        mock_sync_redis = MagicMock()
+        mock_sync_redis.get = MagicMock(
+            side_effect=ConnectionError("Redis connection refused")
+        )
+
+        with (
+            patch("src.gateway.governance.cbf.sync_redis_client", mock_sync_redis),
+            patch("src.gateway.governance.cbf._IS_PRODUCTION", True),
+        ):
+            with pytest.raises(CBFInitializationError) as exc_info:
+                ControlBarrierFunction()
+
+        assert "fence epoch unavailable from Redis" in str(exc_info.value)
+        assert "Redis connection refused" in str(exc_info.value)
+
+    def test_cbf_updates_prometheus_gauge_on_successful_seed(self):
+        """B3a: Successful epoch seed updates the Prometheus gauge."""
+        from src.gateway.governance.cbf import ControlBarrierFunction
+
+        mock_sync_redis = MagicMock()
+        mock_sync_redis.get = MagicMock(return_value="100")
+
+        with (
+            patch("src.gateway.governance.cbf.sync_redis_client", mock_sync_redis),
+            patch(
+                "src.gateway.governance.cbf._CURRENT_FENCE_EPOCH_GAUGE"
+            ) as mock_gauge,
+        ):
+            mock_gauge.set = MagicMock()
+            ControlBarrierFunction()
+
+        mock_gauge.set.assert_called_once_with(100)
+
+    def test_cbf_logs_successful_seed(self):
+        """B3a: Successful epoch seed logs the seeded value."""
+        from src.gateway.governance.cbf import ControlBarrierFunction
+
+        mock_sync_redis = MagicMock()
+        mock_sync_redis.get = MagicMock(return_value="50")
+
+        with (
+            patch("src.gateway.governance.cbf.sync_redis_client", mock_sync_redis),
+            patch("src.gateway.governance.cbf.logger") as mock_logger,
+        ):
+            ControlBarrierFunction()
+
+        # Verify info log contains the epoch value
+        mock_logger.info.assert_called()
+        info_calls = [str(call) for call in mock_logger.info.call_args_list]
+        assert any("50" in call and "B3a" in call for call in info_calls)
+
+    def test_cbf_initialization_error_message_contains_security_context(self):
+        """B3a: CBFInitializationError message explains the security rationale."""
+        from src.gateway.governance.cbf import CBFInitializationError
+
+        exc = CBFInitializationError("test message")
+
+        # Verify it's a RuntimeError subclass
+        assert isinstance(exc, RuntimeError)
+        assert str(exc) == "test message"

@@ -4,9 +4,9 @@
 
 | Version | Supported |
 |---------|-----------|
-| 2.1.x   | ✅ Yes    |
-| 2.0.x   | ⚠️ Critical fixes only |
-| < 2.0.0 | ❌ No     |
+| 3.0.x   | ✅ Yes    |
+| 2.1.x   | ⚠️ Critical fixes only |
+| < 2.1.0 | ❌ No     |
 
 ## Resolved Security Advisories
 
@@ -17,6 +17,8 @@ respective releases. Documented here for transparency.
 |----------|------|-----------|-------------|--------|
 | GHSA-hfqj-24cj-693g | 9.4 Critical | `inference_proxy` | Governance bypass: crafted requests with no `role: "user"` message, or `stream: true` responses, could reach the LLM backend without passing input/output governance tiers | ✅ Fixed — input governance now applied to all message roles; output filtering applied to all response paths including streaming |
 | GHSA-v3h4-8458-5ww3 | 6.5 Medium | `governance_middleware` | Unauthenticated `POST /governance/validate-action` endpoint; undermined NIST IA-3/AC-3 control assertions | ✅ Fixed — routing seal enforcement (`enforce_routing_seal()`) now required before any processing; rate limiting added |
+| CAGE-AUDIT-B2 | 7.5 High | `routing_seal` | Evidence sufficiency gap: un-bound seals could authorize execution without verifiable cryptographic link to durable audit record | ✅ Fixed — HMAC Routing Seal v2 embeds SHA-256 `record_hash` in 4-tuple token; actuators fail closed when `CAGE_REQUIRE_EVIDENCE_BINDING=true` |
+| CAGE-AUDIT-P0 | 7.8 High | `cbf` | Replication split-brain double-spend: async Redis failover could expose stale balance | ✅ Fixed — `_sync_to_replicas()` via `WAIT` with automatic fail-closed rollback (`rollback_state()`) on replica timeout in production |
 
 > **⚠️ Reference architecture notice:** CAGE is a reference architecture and is
 > not deployed to production. These advisories are tracked for completeness and
@@ -88,32 +90,29 @@ controls are documented in:
 | Control | Implementation |
 |---------|---------------|
 | Governance signing | Cloud KMS HSM-backed asymmetric signing; HMAC-SHA256 fallback in dev/CI |
+| Routing seal v2 | 4-tuple token `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` binding SHA-256 evidence record hash |
 | Prompt injection detection | Aho-Corasick O(n) scan; 14+ patterns |
 | PII protection | Presidio; 15 entity types; input + output |
 | Human-in-the-loop | Redis-persisted checkpoint; TOCTOU remediation via `post_hitl_rehydrate` + `post_hitl_revalidate` |
-| Control Barrier Function | Redis `WATCH/MULTI/EXEC` optimistic locking (read-write); externally attested balances via Plaid Production + Cloud KMS (POAM-023 closed) |
-| Audit chain integrity | SHA-256 hash-chained NDJSON; 7-year retention |
+| Control Barrier Function | Atomic Redis Lua (`atomic_verify_and_commit()`) with synchronous replica `WAIT` barrier, monotonic `safety:fence_epoch`, and fail-closed state rollback |
+| Evidence chain integrity | SHA-256 hash-chained NDJSON & Redis Streams db=1; enforced blocking durability in production (`validate_evidence_stream_preconditions()`) |
 | mTLS | Linkerd SPIFFE/SVID; gateway↔OPA, gateway↔NeMo |
 | Egress lockdown | Cilium L7 FQDN allowlist |
 | Token quota enforcement | Per-session step-count (≤12) and token (≤100k) via Redis atomic Lua counters; fail-closed |
 
-> **Note:** CAGE v2.1.x has not received a NIST Authorization to Operate (ATO).
-> Regulated-environment deployers must conduct their own risk assessment before
-> production use. See [`docs/security/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md)
-> for the complete posture breakdown and pre-deployment checklist.
+> **Note:** CAGE v3.0.x is a reference architecture. Regulated-environment deployers
+> must conduct their own risk assessment before production use. See
+> [`docs/security/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md) for the complete
+> posture breakdown and pre-deployment checklist.
 
 ### KMS Cryptographic Signing Security
 
-> **Replay-attack closure (2026-08-06):** KMS-signed reconciliation payloads now embed a `signed_at` Unix timestamp. The verifier (`KmsSigner.verify()`) rejects any payload where `now - signed_at > 300 s` (`MAX_KMS_PAYLOAD_AGE_SECONDS`). Previously, a compromised agent with Redis write access could overwrite a validly-signed payload immediately before TTL expiry, resetting the verification window indefinitely. This vector is now closed.
+> **Replay-attack closure:** KMS-signed reconciliation payloads embed a `signed_at` Unix timestamp. The verifier (`KmsSigner.verify()`) rejects any payload where `now - signed_at > 300 s` (`MAX_KMS_PAYLOAD_AGE_SECONDS`).
 
 ### Redis / Data-Layer Security
 
-> **Causal Gatekeeper fail-closed hardening (2026-08-06):** The CausalGatekeeper's Redis fallback is now fail-closed: connection errors raise `RuntimeError("Redis unavailable: cannot compute deflection rate; failing closed")` rather than returning a zero-deflection sentinel. Absent Redis keys (cache miss on first boot) continue to return `None` safely. The previous fail-open behaviour created an attack surface: an adversary disrupting Redis connectivity during evaluation could suppress FPR reporting.
+> **Strict Replication & Fence Epoch Hardening:** In production (`CAGE_ENV=prod`), `ControlBarrierFunction` asserts synchronous replica replication (`CAGE_STRICT_REPLICATION=true`). If replica synchronization fails during `WAIT`, the local balance debit is automatically rolled back (`rollback_state(cost)`) and fails closed. Monotonic `safety:fence_epoch` counters prevent stale-replica balance replays.
 
-### FTRA Trust-Boundary and Governance Bypass
+### Evidence Stream Precondition Hardening
 
-> **FTRA trust-boundary note:** Tier 0.5 (FTRA) currently executes at the LangGraph graph level, inside the untrusted reasoning plane (Plant). An adversarial agent with direct HTTP access to the Controller could bypass this check. Hardening options include moving the FTRA check to the Controller ingress boundary or enforcing it via a cryptographic capability token. This is tracked as a security limitation.
-
-### CBF / Fiscal-Safety Security
-
-> **CBF intra-window double-spend hardening (2026-08-06):** The CBF now tracks `_local_debits` locally between reconciliation snapshots. `effective_balance = snapshot - local_debits` is used for all threshold checks, preventing repeated trades within the same 300 s snapshot window from being evaluated against the same un-decremented balance.
+> **Audit Durability Guarantee:** `validate_evidence_stream_preconditions()` halts startup in production if `EVIDENCE_CHAIN_BLOCKING=false`, ensuring no routing seal is issued without durable evidence commitment to the tamper-evident log.

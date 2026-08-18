@@ -21,8 +21,22 @@ GFA service (or any downstream actuator) MUST verify the seal before executing
 the trade.  This ensures that execution cannot proceed by simply ignoring the
 HTTP response from the governance endpoint.
 
-Seal format (URL-safe base64, no padding):
-    <timestamp_ms_hex>.<action_slug>.<hmac_hex>
+Seal format (v2 — includes evidence record hash binding):
+    <timestamp_ms_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>
+
+**BREAKING CHANGE (v2):** The seal format now includes a 4th component —
+``record_hash_hex`` — which cryptographically binds the seal to the specific
+evidence record committed to the compliance evidence stream. This ensures:
+
+  1. The seal authenticates the governor's decision at issuance time
+  2. The seal is cryptographically bound to a specific evidence record
+  3. Any audit can cryptographically verify that the seal corresponds to
+     a particular evidence record in the durable chain
+
+For backward compatibility during migration, ``generate_seal()`` accepts
+``record_hash=None`` (defaults to a sentinel value "no-evidence-binding").
+Production deployments SHOULD always use ``generate_seal_with_evidence()``
+which blocks until evidence is committed and binds the seal to the record hash.
 
 Seal lifetime is configurable via ``GOVERNANCE_SEAL_TTL_S`` (default 30s).
 The HMAC key is derived from ``GOVERNANCE_SALT`` — the same env var that is
@@ -37,9 +51,18 @@ caught.  The ``require_cleared_seal`` decorator enforces this contract at the
 call-site level: any wrapped callable is blocked from executing if the seal
 check fails.
 
+HMAC input (v2):
+    HMAC-SHA256(
+        key=GOVERNANCE_SALT,
+        message=expire_hex || "." || action_slug || "." || record_hash || "." || canonical_payload
+    )
+
 Usage:
-    # Gateway (issuance):
-    seal = generate_seal("execute_trade", params)
+    # Gateway (issuance with evidence binding — recommended):
+    seal = await generate_seal_with_evidence("execute_trade", params)
+
+    # Gateway (issuance without evidence binding — migration only):
+    seal = generate_seal("execute_trade", params, record_hash=None)
 
     # Verification — raises SymbolicGovernorViolation on failure:
     verify_seal(seal, "execute_trade", params)
@@ -80,8 +103,28 @@ _SCOPE_CONTROL = GovernanceControl.AGENTIC_SCOPE_STATEMENT
 
 F = TypeVar("F", bound=Callable[..., Any])
 
+# ---------------------------------------------------------------------------
+# Environment detection (module-level so tests can patch it)
+# ---------------------------------------------------------------------------
+_cage_env_seal = (
+    os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
+).lower()
+_IS_PRODUCTION: bool = _cage_env_seal not in ("development", "test", "dev", "ci")
+
 # Seal TTL — seals expire after this many seconds.
 _TTL_S = int(os.getenv("GOVERNANCE_SEAL_TTL_S", "30"))
+
+# ---------------------------------------------------------------------------
+# Feature flag: Evidence binding enforcement (P0 security hardening)
+# ---------------------------------------------------------------------------
+# When CAGE_REQUIRE_EVIDENCE_BINDING=true (default in production), verify_seal()
+# rejects seals with record_hash="no-evidence-binding" (or empty/none variants).
+# This ensures all financial actions are cryptographically bound to evidence
+# records in the compliance evidence stream.
+# Cross-region impact: US_FED, EU_ECB, APAC_MAS all benefit from evidence binding.
+_REQUIRE_EVIDENCE_BINDING: bool = os.environ.get(
+    "CAGE_REQUIRE_EVIDENCE_BINDING", "true" if _IS_PRODUCTION else "false"
+).lower() in ("true", "1", "yes")
 
 # HMAC key — must match between gateway (issuer) and GFA (verifier).
 # Use _require_env so that production deployments fail fast if GOVERNANCE_SALT
@@ -178,28 +221,60 @@ def _canonical_payload(action: str, params: dict) -> bytes:
     return canon.encode()
 
 
-def generate_seal(action: str, params: dict, ttl_s: int = _TTL_S) -> str:
-    """Generate a short-lived HMAC-SHA256 routing seal.
+# Sentinel value used when no evidence binding is provided (migration/testing).
+# This value is included in the HMAC input, so seals generated with and without
+# evidence binding are cryptographically distinct.
+_NO_EVIDENCE_BINDING = "no-evidence-binding"
+
+
+def generate_seal(
+    action: str,
+    params: dict,
+    ttl_s: int = _TTL_S,
+    record_hash: str | None = None,
+) -> str:
+    """Generate a short-lived HMAC-SHA256 routing seal (v2 format with evidence binding).
+
+    **BREAKING CHANGE (v2):** The seal format now includes 4 components:
+        ``<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>``
+
+    The ``record_hash`` binds the seal to a specific evidence record in the
+    compliance evidence stream. For production use, always use
+    ``generate_seal_with_evidence()`` which commits evidence and provides the
+    record_hash automatically.
 
     Args:
-        action:  Tool / policy action name (e.g. ``"execute_trade"``).
-        params:  Execution plan parameters dict.
-        ttl_s:   Seal lifetime in seconds (default: ``GOVERNANCE_SEAL_TTL_S``).
+        action:       Tool / policy action name (e.g. ``"execute_trade"``).
+        params:       Execution plan parameters dict.
+        ttl_s:        Seal lifetime in seconds (default: ``GOVERNANCE_SEAL_TTL_S``).
+        record_hash:  Evidence record hash from the evidence stream commit.
+                      If None, uses sentinel value ``"no-evidence-binding"``.
 
     Returns:
-        A dot-separated seal string: ``<expire_ts_hex>.<action_slug>.<hmac_hex>``
+        A dot-separated v2 seal string:
+            ``<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>``
     """
     expire_ts = int(time.time()) + ttl_s
     expire_hex = format(expire_ts, "x")
-    # Strip dots from action_slug to guarantee unambiguous 3-way split on "."
-    # during verify_seal (seal.split(".", 2)).  Any dots in the action name
+    # Strip dots from action_slug to guarantee unambiguous 4-way split on "."
+    # during verify_seal (seal.split(".", 3)).  Any dots in the action name
     # would shift the split boundary and cause verification to fail on a valid seal.
     action_slug = action.replace("_", "-").replace(".", "-").lower()[:32]
+
+    # Use sentinel value if no evidence binding provided
+    record_hash_hex = record_hash if record_hash else _NO_EVIDENCE_BINDING
+
     payload = _canonical_payload(action, params)
-    message = f"{expire_hex}.{action_slug}.".encode() + payload
+    # HMAC input: expire_hex.action_slug.record_hash.canonical_payload
+    message = f"{expire_hex}.{action_slug}.{record_hash_hex}.".encode() + payload
     sig = hmac.new(_HMAC_KEY, message, hashlib.sha256).hexdigest()
-    seal = f"{expire_hex}.{action_slug}.{sig}"
-    logger.debug("🔏 Routing seal issued: action=%s expire=%s", action, expire_ts)
+    seal = f"{expire_hex}.{action_slug}.{record_hash_hex}.{sig}"
+    logger.debug(
+        "🔏 Routing seal issued: action=%s expire=%s record_hash=%s",
+        action,
+        expire_ts,
+        record_hash_hex[:16] if len(record_hash_hex) > 16 else record_hash_hex,
+    )
     return seal
 
 
@@ -211,20 +286,28 @@ async def generate_seal_with_evidence(
 ) -> str:
     """Generate a routing seal with evidence chain blocking gate (R-06 mitigation).
 
+    **B2 Enhancement:** The seal is now cryptographically bound to the evidence
+    record hash via the v2 seal format. This ensures:
+
+      1. The seal authenticates the governor's decision at issuance time
+      2. The seal is cryptographically bound to a specific evidence record
+      3. Any audit can verify seal ↔ evidence correspondence
+
     This async function provides the EVIDENCE_CHAIN_BLOCKING gate that ensures
     evidence is durably committed before a routing seal is issued. When blocking
     mode is enabled (EVIDENCE_CHAIN_BLOCKING=true), this function:
 
       1. Commits the governance decision as evidence to the durable store
       2. Blocks until commit is confirmed or timeout
-      3. Only then generates and returns the routing seal
-      4. If evidence commit fails, raises EvidenceChainUnavailableError (no seal)
+      3. Binds the evidence record_hash into the HMAC seal
+      4. Only then generates and returns the routing seal
+      5. If evidence commit fails, raises EvidenceChainUnavailableError (no seal)
 
     When blocking mode is disabled (EVIDENCE_CHAIN_BLOCKING=false, the default),
     this function falls back to fire-and-forget behavior: evidence is ingested
-    asynchronously without blocking, and the seal is issued immediately. This
-    preserves backward compatibility and avoids latency impact when the gate
-    is not enabled.
+    asynchronously without blocking, and the seal is issued with sentinel
+    ``"no-evidence-binding"`` as the record_hash. This preserves backward
+    compatibility and avoids latency impact when the gate is not enabled.
 
     Risk mitigation: R-06 (evidence-of-execution claims overclaimed)
     This gate ensures that every routing seal corresponds to evidence that is
@@ -239,7 +322,8 @@ async def generate_seal_with_evidence(
         evidence_timeout_s: Timeout for evidence commit in blocking mode (default: 5s).
 
     Returns:
-        A dot-separated seal string: ``<expire_ts_hex>.<action_slug>.<hmac_hex>``
+        A dot-separated v2 seal string:
+            ``<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>``
 
     Raises:
         EvidenceChainUnavailableError: If EVIDENCE_CHAIN_BLOCKING=true and evidence
@@ -272,6 +356,7 @@ async def generate_seal_with_evidence(
         }
 
         sink = get_evidence_sink()
+        record_hash: str | None = None  # Will be set if evidence commit succeeds
 
         if blocking_mode:
             # EVIDENCE_CHAIN_BLOCKING=true: Block until evidence is committed
@@ -286,11 +371,14 @@ async def generate_seal_with_evidence(
                     evidence_event,
                     timeout_seconds=evidence_timeout_s,
                 )
+                # B2: Capture the record_hash from the committed evidence
+                record_hash = commit_result.hash
                 span.set_attribute(
                     "cage.evidence.evidence_id", commit_result.evidence_id
                 )
                 span.set_attribute("cage.evidence.hash", commit_result.hash[:16])
                 span.set_attribute("cage.evidence.sequence", commit_result.sequence)
+                span.set_attribute("cage.seal.record_hash_bound", True)
                 logger.info(
                     "✅ Evidence committed — proceeding with seal issuance: "
                     "evidence_id=%s hash=%s…",
@@ -310,6 +398,7 @@ async def generate_seal_with_evidence(
         else:
             # EVIDENCE_CHAIN_BLOCKING=false (default): Fire-and-forget
             span.set_attribute("cage.evidence.mode", "fire_and_forget")
+            span.set_attribute("cage.seal.record_hash_bound", False)
             if sink.is_running:
                 # Best-effort async ingest — do not block on result
                 try:
@@ -321,25 +410,33 @@ async def generate_seal_with_evidence(
                         exc,
                     )
 
-        # Generate and return the seal
-        seal = generate_seal(action, params, ttl_s)
+        # Generate and return the seal with evidence binding (B2)
+        seal = generate_seal(action, params, ttl_s, record_hash=record_hash)
         span.set_attribute("cage.seal.issued", True)
         return seal
 
 
-def verify_seal(seal: str, action: str, params: dict) -> bool:
-    """Verify a routing seal issued by the Hybrid Gateway.
+def verify_seal(
+    seal: str,
+    action: str,
+    params: dict,
+    expected_record_hash: str | None = None,
+) -> bool:
+    """Verify a routing seal issued by the Hybrid Gateway (v2 format).
+
+    **BREAKING CHANGE (v2):** The seal format now includes 4 components:
+        ``<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>``
 
     Returns ``True`` on success.  Raises ``SymbolicGovernorViolation`` on any
     verification failure — the exception is never swallowed so callers cannot
     silently ignore a failed check.  The ``require_cleared_seal`` decorator
     relies on this propagation contract.
 
-    Cryptographic contract:
+    Cryptographic contract (v2):
         Algorithm : HMAC-SHA256
         Key       : ``GOVERNANCE_SALT`` environment variable (≥32 bytes in
                     production; see ``assert_custom_salt_in_production()``).
-        Message   : ``<expire_hex>.<action_slug>.`` + canonical JSON payload
+        Message   : ``<expire_hex>.<action_slug>.<record_hash>.`` + canonical JSON payload
                     (``json.dumps({"action": action, **params}, sort_keys=True,
                     separators=(",", ":"))``).
         Digest    : hex-encoded lowercase SHA-256 HMAC.
@@ -349,23 +446,27 @@ def verify_seal(seal: str, action: str, params: dict) -> bool:
         seal:    Seal string as returned by :func:`generate_seal`.
         action:  Tool / policy action name — must match the issuance action.
         params:  Execution plan parameters — must match the issuance params.
+        expected_record_hash:  Optional. If provided, verify that the seal's
+                               embedded record_hash matches this value. Use
+                               this to cryptographically verify seal ↔ evidence
+                               correspondence.
 
     Returns:
         ``True`` if the seal is valid and unexpired.
 
     Raises:
         SymbolicGovernorViolation: If the seal is malformed, expired, has an
-            action mismatch, or fails HMAC verification.  Always raised on
-            failure — never swallowed — so callers cannot ignore it.
+            action mismatch, record_hash mismatch, or fails HMAC verification.
+            Always raised on failure — never swallowed — so callers cannot ignore it.
     """
     try:
-        parts = seal.split(".", 2)
-        if len(parts) != 3:
-            reason = f"malformed seal (got {len(parts)} parts, expected 3)"
+        parts = seal.split(".", 3)
+        if len(parts) != 4:
+            reason = f"malformed seal (got {len(parts)} parts, expected 4 for v2 format)"
             logger.warning("🔒 Routing seal rejected: %s", reason)
             raise SymbolicGovernorViolation(reason, action)
 
-        expire_hex, action_slug, received_sig = parts
+        expire_hex, action_slug, record_hash_hex, received_sig = parts
 
         # Check expiry
         try:
@@ -389,9 +490,37 @@ def verify_seal(seal: str, action: str, params: dict) -> bool:
             logger.warning("🔒 Routing seal rejected: %s", reason)
             raise SymbolicGovernorViolation(reason, action)
 
-        # Recompute HMAC
+        # P0 hardening: Enforce evidence presence in production
+        # When CAGE_REQUIRE_EVIDENCE_BINDING=true, seals without cryptographic
+        # evidence binding are rejected. This ensures all financial actions are
+        # bound to evidence records in the compliance evidence stream.
+        _NO_EVIDENCE_SENTINELS = ("no-evidence-binding", "", "none")
+        if _REQUIRE_EVIDENCE_BINDING and record_hash_hex.lower() in _NO_EVIDENCE_SENTINELS:
+            reason = (
+                "Evidence sufficiency violation: seal lacks a cryptographically bound "
+                f"evidence record_hash (got '{record_hash_hex}'). "
+                "Production requires CAGE_REQUIRE_EVIDENCE_BINDING=true."
+            )
+            logger.error(
+                "⛔ [EVIDENCE_BINDING] Routing seal rejected: action=%s reason=%s",
+                action,
+                reason,
+            )
+            raise SymbolicGovernorViolation(reason, action)
+
+        # B2: Optionally verify record_hash matches expected value
+        if expected_record_hash is not None:
+            if not hmac.compare_digest(record_hash_hex, expected_record_hash):
+                reason = (
+                    f"record_hash mismatch — seal not bound to expected evidence "
+                    f"(got '{record_hash_hex[:16]}…', expected '{expected_record_hash[:16]}…')"
+                )
+                logger.warning("🔒 Routing seal rejected: %s", reason)
+                raise SymbolicGovernorViolation(reason, action)
+
+        # Recompute HMAC (v2 format includes record_hash in message)
         payload = _canonical_payload(action, params)
-        message = f"{expire_hex}.{action_slug}.".encode() + payload
+        message = f"{expire_hex}.{action_slug}.{record_hash_hex}.".encode() + payload
         expected_sig = hmac.new(_HMAC_KEY, message, hashlib.sha256).hexdigest()
 
         if not hmac.compare_digest(received_sig, expected_sig):
@@ -399,7 +528,11 @@ def verify_seal(seal: str, action: str, params: dict) -> bool:
             logger.warning("🔒 Routing seal rejected: %s", reason)
             raise SymbolicGovernorViolation(reason, action)
 
-        logger.debug("✅ Routing seal verified: action=%s", action)
+        logger.debug(
+            "✅ Routing seal verified: action=%s record_hash=%s",
+            action,
+            record_hash_hex[:16] if len(record_hash_hex) > 16 else record_hash_hex,
+        )
         return True
 
     except SymbolicGovernorViolation:
@@ -413,11 +546,31 @@ def verify_seal(seal: str, action: str, params: dict) -> bool:
         raise SymbolicGovernorViolation(reason, action) from exc
 
 
+def extract_record_hash(seal: str) -> str | None:
+    """Extract the record_hash component from a v2 seal.
+
+    Useful for auditing and verification workflows that need to look up the
+    evidence record corresponding to a seal.
+
+    Args:
+        seal: A v2 seal string.
+
+    Returns:
+        The record_hash_hex component, or None if the seal is malformed.
+        Returns ``"no-evidence-binding"`` for seals generated without evidence.
+    """
+    parts = seal.split(".", 3)
+    if len(parts) != 4:
+        return None
+    return parts[2]
+
+
 async def verify_and_consume_seal(
     seal: str,
     action: str,
     params: dict,
     redis_client: Any = None,
+    expected_record_hash: str | None = None,
 ) -> bool:
     """Verify a routing seal AND atomically burn it in Redis to prevent replay.
 
@@ -427,11 +580,13 @@ async def verify_and_consume_seal(
     same seal are rejected with 'SEAL_REPLAY_DETECTED'.
 
     Args:
-        seal:         Routing seal string.
+        seal:         Routing seal string (v2 format).
         action:       Tool/action name.
         params:       Execution parameters.
         redis_client: Optional async or sync Redis client. If omitted, attempts
                       to load ambient Redis client.
+        expected_record_hash: Optional. If provided, verify that the seal's
+                              embedded record_hash matches this value.
 
     Returns:
         True on successful verification and atomic single-use consumption.
@@ -440,12 +595,13 @@ async def verify_and_consume_seal(
         SymbolicGovernorViolation: If verification fails or if the seal was
             already consumed (replay attack detected).
     """
-    # 1. First verify cryptographic validity & TTL
-    verify_seal(seal, action, params)
+    # 1. First verify cryptographic validity & TTL (and optional record_hash)
+    verify_seal(seal, action, params, expected_record_hash=expected_record_hash)
 
     # 2. If redis client is provided or available, enforce single-use consumption
-    parts = seal.split(".", 2)
-    expire_hex, _action_slug, sig = parts
+    # v2 seal format: expire_hex.action_slug.record_hash.sig
+    parts = seal.split(".", 3)
+    expire_hex, _action_slug, _record_hash, sig = parts
     expire_ts = int(expire_hex, 16)
     ttl = max(int(expire_ts - time.time()), 1)
 

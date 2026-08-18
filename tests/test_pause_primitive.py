@@ -786,3 +786,384 @@ class TestBuildResumeEndpoint:
         token = str(uuid.uuid4())
         endpoint = build_resume_endpoint(token)
         assert f"/v1/pause/{token}/resume" == endpoint
+
+
+# ---------------------------------------------------------------------------
+# TestValidateActionPauseHandler — PAUSE handler in validate_action()
+# ---------------------------------------------------------------------------
+
+
+class TestValidateActionPauseHandler:
+    """Tests for the PAUSE handler branch in SymbolicGovernor.validate_action().
+
+    These tests verify that:
+    1. PAUSE decisions are properly returned (not falling through to DENY)
+    2. PauseReceipt is created for audit trail
+    3. PAUSE metadata is included in the response
+    4. Defense-in-depth fallback to DENY when CAGE_PAUSE_ENABLED=false
+    """
+
+    @pytest.fixture
+    def mock_governor_deps(self):
+        """Create mock dependencies for SymbolicGovernor."""
+        opa_client = AsyncMock()
+        opa_client.evaluate_policy = AsyncMock(return_value="ALLOW")
+
+        safety_filter = AsyncMock()
+        safety_filter.verify_action = MagicMock(return_value="SAFE")
+        safety_filter.atomic_verify_and_commit = AsyncMock(return_value=(True, "SAFE"))
+
+        consensus_engine = AsyncMock()
+        consensus_engine.check_consensus = AsyncMock(return_value={"status": "APPROVE"})
+
+        return opa_client, safety_filter, consensus_engine
+
+    @pytest.mark.asyncio
+    async def test_pause_handler_returns_pause_verdict(
+        self, mock_redis, mock_governor_deps
+    ):
+        """validate_action() returns PAUSE verdict when _classify_violation returns PAUSE."""
+        from unittest.mock import patch
+
+        from src.gateway.governance.decisions import GovernanceDecision
+        from src.gateway.governance.symbolic_governor import SymbolicGovernor
+
+        opa_client, safety_filter, consensus_engine = mock_governor_deps
+
+        # Mock _run_checks to return a rate limit violation
+        mock_result = {
+            "violations": ["Rate limit exceeded: too many requests"],
+            "stpa_violation_count": 0,
+            "opa_decision": "ALLOW",
+            "policy_ambiguous": False,
+        }
+
+        with patch(
+            "src.gateway.governance.symbolic_governor.CAGE_PAUSE_ENABLED", True
+        ), patch(
+            "src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True
+        ), patch(
+            "src.gateway.infrastructure.redis_client.redis_client", mock_redis
+        ):
+            governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
+
+            # Patch _run_checks to return our mock result
+            with patch.object(
+                governor, "_run_checks", return_value=mock_result
+            ):
+                result = await governor.validate_action(
+                    action="test_action",
+                    params={"symbol": "AAPL", "amount": 100, "confidence": 0.9},
+                )
+
+                assert result["verdict"] == GovernanceDecision.PAUSE
+                assert result["seal"] == ""  # No seal for PAUSE
+                assert "pause_token" in result
+                assert result["pause_reason"] == "RATE_LIMITED"
+                assert "resume_endpoint" in result
+                assert "estimated_wait_seconds" in result
+
+    @pytest.mark.asyncio
+    async def test_pause_handler_creates_pause_receipt(
+        self, mock_redis, mock_governor_deps
+    ):
+        """validate_action() creates a PauseReceipt with proper audit fields."""
+        from unittest.mock import patch
+
+        from src.gateway.governance.contracts import PauseReceipt
+        from src.gateway.governance.decisions import GovernanceDecision
+        from src.gateway.governance.symbolic_governor import SymbolicGovernor
+
+        opa_client, safety_filter, consensus_engine = mock_governor_deps
+
+        mock_result = {
+            "violations": ["Circuit breaker open: service unavailable"],
+            "stpa_violation_count": 0,
+            "opa_decision": "ALLOW",
+            "policy_ambiguous": False,
+        }
+
+        with patch(
+            "src.gateway.governance.symbolic_governor.CAGE_PAUSE_ENABLED", True
+        ), patch(
+            "src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True
+        ), patch(
+            "src.gateway.infrastructure.redis_client.redis_client", mock_redis
+        ):
+            governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
+
+            with patch.object(
+                governor, "_run_checks", return_value=mock_result
+            ):
+                result = await governor.validate_action(
+                    action="test_action",
+                    params={
+                        "thread_id": "thread-123",
+                        "symbol": "GOOG",
+                        "amount": 500,
+                    },
+                )
+
+                assert result["verdict"] == GovernanceDecision.PAUSE
+                assert "pause_receipt" in result
+
+                receipt = result["pause_receipt"]
+                assert isinstance(receipt, PauseReceipt)
+                assert receipt.thread_id == "thread-123"
+                assert receipt.action == "test_action"
+                assert receipt.pause_reason == "CIRCUIT_OPEN"
+                assert receipt.proof_hash  # Should have a hash
+
+    @pytest.mark.asyncio
+    async def test_pause_handler_fallback_to_deny_when_disabled(
+        self, mock_redis, mock_governor_deps
+    ):
+        """validate_action() falls back to DENY when CAGE_PAUSE_ENABLED=false."""
+        from unittest.mock import patch
+
+        from src.gateway.governance.decisions import GovernanceDecision
+        from src.gateway.governance.symbolic_governor import (
+            GovernanceError,
+            SymbolicGovernor,
+        )
+
+        opa_client, safety_filter, consensus_engine = mock_governor_deps
+
+        mock_result = {
+            "violations": ["Rate limit exceeded: too many requests"],
+            "stpa_violation_count": 0,
+            "opa_decision": "ALLOW",
+            "policy_ambiguous": False,
+        }
+
+        # Enable in _classify_violation but disable at handler level
+        with patch(
+            "src.gateway.governance.symbolic_governor._classify_violation"
+        ) as mock_classify, patch(
+            "src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", False
+        ), patch(
+            "src.gateway.infrastructure.redis_client.redis_client", mock_redis
+        ):
+            # Mock _classify_violation to return PAUSE
+            mock_classify.return_value = (
+                GovernanceDecision.PAUSE,
+                {
+                    "classification_reason": "Rate limit exceeded",
+                    "pause_reason": "RATE_LIMITED",
+                    "estimated_wait_seconds": 60,
+                    "violation_types": ["RATE_LIMITED"],
+                    "pausable_violations": ["Rate limit exceeded"],
+                    "hard_violations": [],
+                    "soft_violations": [],
+                    "narrowable_violations": [],
+                },
+            )
+
+            governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
+
+            with patch.object(
+                governor, "_run_checks", return_value=mock_result
+            ):
+                # Should raise GovernanceError (DENY fallback)
+                with pytest.raises(GovernanceError) as exc_info:
+                    await governor.validate_action(
+                        action="test_action",
+                        params={"symbol": "AAPL", "amount": 100},
+                    )
+
+                assert "CAGE_PAUSE_ENABLED=false" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_pause_handler_includes_retry_after(
+        self, mock_redis, mock_governor_deps
+    ):
+        """validate_action() includes retry_after_seconds for HTTP Retry-After header."""
+        from unittest.mock import patch
+
+        from src.gateway.governance.decisions import GovernanceDecision
+        from src.gateway.governance.symbolic_governor import SymbolicGovernor
+
+        opa_client, safety_filter, consensus_engine = mock_governor_deps
+
+        mock_result = {
+            "violations": ["Resource unavailable: quota exhausted"],
+            "stpa_violation_count": 0,
+            "opa_decision": "ALLOW",
+            "policy_ambiguous": False,
+        }
+
+        with patch(
+            "src.gateway.governance.symbolic_governor.CAGE_PAUSE_ENABLED", True
+        ), patch(
+            "src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True
+        ), patch(
+            "src.gateway.infrastructure.redis_client.redis_client", mock_redis
+        ):
+            governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
+
+            with patch.object(
+                governor, "_run_checks", return_value=mock_result
+            ):
+                result = await governor.validate_action(
+                    action="test_action",
+                    params={"symbol": "MSFT", "amount": 200},
+                )
+
+                assert result["verdict"] == GovernanceDecision.PAUSE
+                assert "retry_after_seconds" in result
+                assert result["retry_after_seconds"] > 0
+
+    @pytest.mark.asyncio
+    async def test_pause_handler_redis_failure_falls_back_to_deny(
+        self, mock_governor_deps
+    ):
+        """validate_action() falls back to DENY when Redis is unavailable for PAUSE storage."""
+        from unittest.mock import patch
+
+        from src.gateway.governance.decisions import GovernanceDecision
+        from src.gateway.governance.symbolic_governor import (
+            GovernanceError,
+            SymbolicGovernor,
+        )
+
+        opa_client, safety_filter, consensus_engine = mock_governor_deps
+
+        mock_result = {
+            "violations": ["Rate limit exceeded: too many requests"],
+            "stpa_violation_count": 0,
+            "opa_decision": "ALLOW",
+            "policy_ambiguous": False,
+        }
+
+        # Create a mock Redis that raises an exception
+        mock_redis_broken = AsyncMock()
+        mock_redis_broken.pipeline.side_effect = ConnectionError(
+            "Redis unavailable"
+        )
+
+        with patch(
+            "src.gateway.governance.symbolic_governor._classify_violation"
+        ) as mock_classify, patch(
+            "src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True
+        ), patch(
+            "src.gateway.infrastructure.redis_client.redis_client", mock_redis_broken
+        ):
+            mock_classify.return_value = (
+                GovernanceDecision.PAUSE,
+                {
+                    "classification_reason": "Rate limit exceeded",
+                    "pause_reason": "RATE_LIMITED",
+                    "estimated_wait_seconds": 60,
+                    "violation_types": ["RATE_LIMITED"],
+                    "pausable_violations": ["Rate limit exceeded"],
+                    "hard_violations": [],
+                    "soft_violations": [],
+                    "narrowable_violations": [],
+                },
+            )
+
+            governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
+
+            with patch.object(
+                governor, "_run_checks", return_value=mock_result
+            ):
+                with pytest.raises(GovernanceError) as exc_info:
+                    await governor.validate_action(
+                        action="test_action",
+                        params={"symbol": "AAPL", "amount": 100},
+                    )
+
+                assert "PAUSE storage failed" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# TestPauseReceipt — PauseReceipt model tests
+# ---------------------------------------------------------------------------
+
+
+class TestPauseReceipt:
+    """Tests for PauseReceipt dataclass in contracts.py."""
+
+    def test_pause_receipt_generates_proof_hash(self):
+        """PauseReceipt generates a proof hash from core fields."""
+        from src.gateway.governance.contracts import PauseReceipt
+
+        receipt = PauseReceipt(
+            thread_id="thread-abc",
+            action="buy_stock",
+            pause_reason="RATE_LIMITED",
+            pause_token="pause-token-123",
+        )
+
+        assert receipt.proof_hash
+        assert len(receipt.proof_hash) == 64  # SHA-256 hex digest
+
+    def test_pause_receipt_hash_deterministic(self):
+        """PauseReceipt with same fields generates same hash."""
+        from src.gateway.governance.contracts import PauseReceipt
+
+        fixed_timestamp = 1723987200.0
+
+        receipt1 = PauseReceipt(
+            thread_id="thread-xyz",
+            action="sell_stock",
+            pause_reason="CIRCUIT_OPEN",
+            pause_token="pause-token-456",
+            timestamp=fixed_timestamp,
+        )
+
+        receipt2 = PauseReceipt(
+            thread_id="thread-xyz",
+            action="sell_stock",
+            pause_reason="CIRCUIT_OPEN",
+            pause_token="pause-token-456",
+            timestamp=fixed_timestamp,
+        )
+
+        assert receipt1.proof_hash == receipt2.proof_hash
+
+    def test_pause_receipt_stores_violations(self):
+        """PauseReceipt stores violation list."""
+        from src.gateway.governance.contracts import PauseReceipt
+
+        violations = ["Rate limit: 100 req/min exceeded", "Soft threshold warning"]
+
+        receipt = PauseReceipt(
+            thread_id="thread-viol",
+            action="query_balance",
+            pause_reason="RATE_LIMITED",
+            pause_token="pause-token-789",
+            violations=violations,
+        )
+
+        assert receipt.violations == violations
+
+    def test_pause_receipt_stores_standing_at_pause(self):
+        """PauseReceipt stores context at pause time."""
+        from src.gateway.governance.contracts import PauseReceipt
+
+        standing = {"symbol": "AAPL", "amount": 1000, "confidence": 0.95}
+
+        receipt = PauseReceipt(
+            thread_id="thread-standing",
+            action="buy_stock",
+            pause_reason="RESOURCE_UNAVAILABLE",
+            pause_token="pause-token-standing",
+            standing_at_pause=standing,
+        )
+
+        assert receipt.standing_at_pause == standing
+
+    def test_pause_receipt_immutable(self):
+        """PauseReceipt is frozen (immutable)."""
+        from src.gateway.governance.contracts import PauseReceipt
+
+        receipt = PauseReceipt(
+            thread_id="thread-immut",
+            action="test_action",
+            pause_reason="RATE_LIMITED",
+            pause_token="pause-token-immut",
+        )
+
+        with pytest.raises(Exception):  # FrozenInstanceError
+            receipt.pause_reason = "CIRCUIT_OPEN"

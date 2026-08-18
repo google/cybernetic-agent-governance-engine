@@ -3,7 +3,7 @@
 
 > **AI governance for regulated financial services — built-in, not bolted on.**
 
-![v3.0.0](https://img.shields.io/badge/version-3.0.0-brightgreen) ![2741 Tests Passing](https://img.shields.io/badge/tests-2741%20passing-brightgreen) ![Coverage 75.12%](https://img.shields.io/badge/coverage-75.12%25-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 8](https://img.shields.io/badge/POAM%20Closed-8-brightgreen)
+![v3.0.0](https://img.shields.io/badge/version-3.0.0-brightgreen) ![2817 Tests Passing](https://img.shields.io/badge/tests-2817%20passing-brightgreen) ![Coverage 75.40%](https://img.shields.io/badge/coverage-75.40%25-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 8](https://img.shields.io/badge/POAM%20Closed-8-brightgreen)
 
 **Universal (all regions):** ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue)
 
@@ -20,7 +20,11 @@
 
 | Capability | Location | Description |
 |---|---|---|
+| **6 Governance Decision Primitives** | `src/gateway/governance/symbolic_governor.py` | Full first-class runtime routing for all six decisions: `ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE` (`validate_action()`). |
+| **HMAC Routing Seal v2 (`record_hash` Binding)** | `src/gateway/governance/routing_seal.py` | Cryptographically binds the SHA-256 evidence `record_hash` into the 4-tuple seal format `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>`, enforcing fail-closed actuator checks. |
 | **Lua-Atomic CBF Check & Commit (CR-3)** | `src/gateway/governance/cbf.py` | Eliminates TOCTOU concurrency windows by consolidating barrier check and balance deduction into atomic Redis Lua execution (`atomic_verify_and_commit()`). |
+| **Synchronous Replica Barrier & Monotonic Fence Epoch** | `src/gateway/governance/cbf.py` | Synchronous `WAIT` verification with fail-closed automatic rollback on replica timeout, plus monotonic `safety:fence_epoch` seeding (`_fetch_initial_fence_epoch_sync()`). |
+| **Evidence Stream Blocking Preconditions** | `src/compliance_bridge/evidence_stream.py` | Hard startup precondition guard (`validate_evidence_stream_preconditions()`) halting in production if evidence durability blocking is bypassed. |
 | **Human-Gated NeMo Refinement (CR-2 / EV-4)** | `src/governed_financial_advisor/server.py` | Removed unattended auto-apply bypass branch (`NEMO_AUTO_APPLY_ENABLED`). All incoming policy changes are staged via `/v1/nemo/propose-refinement` for explicit human approval. |
 | **Centralized Threshold Governance (EV-1–EV-6)** | `config/thresholds/*.json` | Replaced scattered `os.getenv` reads with typed, schema-validated configuration lookups (`get_fria_zone_defer()`, `get_telemetry_max_staleness_seconds()`). |
 | **Dual vLLM Architecture** | `deployment/k8s/`, `infra/targets/gcp-gke/` | Distinct `vllm-inference` (`Qwen2.5-7B-Instruct` with Hermes tool-calling) and `vllm-reasoning` (`DeepSeek-R1-Distill-Llama-8B` for pure chain-of-thought analysis). |
@@ -30,14 +34,17 @@
 
 ## Test Status
 
-| Suite | Result | Date |
-|---|---|---|
-| Unit & Logic Suite (`pytest tests/`) | ✅ 2,741 passed / 0 failed / 182 skipped | 2026-08-16 |
-| Code Coverage (`pytest --cov=src`) | ✅ **75.12% statements covered** (9,704/12,641 stmts) | 2026-08-16 |
-| Total Tests Collected | ✅ 2,923 tests, 0 failed | 2026-08-16 |
+| Suite / Jurisdiction | Posture | Result | Date |
+|---|---|---|---|
+| **US_FED** (NIST SP 800-53 / FedRAMP) | `dev` / `test` | ✅ **2,817 passed** / 0 failed / 67 skipped (75.32% cov) | 2026-08-18 |
+| **US_FED** (NIST SP 800-53 / FedRAMP) | `prod` | ✅ **217 passed** / 0 failed / 131 skipped | 2026-08-18 |
+| **EU_ECB** (GDPR / EU AI Act) | `dev` / `test` | ✅ **2,809 passed** / 0 failed / 75 skipped (75.40% cov) | 2026-08-18 |
+| **EU_ECB** (GDPR / EU AI Act) | `prod` | ✅ **209 passed** / 0 failed / 139 skipped | 2026-08-18 |
+| **APAC_MAS** (MAS TRM / FEAT) | `dev` / `test` | ✅ **2,811 passed** / 0 failed / 73 skipped (75.30% cov) | 2026-08-18 |
+| **APAC_MAS** (MAS TRM / FEAT) | `prod` | ✅ **211 passed** / 0 failed / 137 skipped | 2026-08-18 |
 
-Tests run against a live GKE cluster (`governance-cluster-2`, project `laah-cybernetics`). See [infra/DEPLOYMENT_GUIDE.md](infra/DEPLOYMENT_GUIDE.md) for cluster setup instructions.
-Skipped tests: 182 tests are region-specific integration gates (`eu_ecb`, `apac_mas`) and OPA mock isolation tests.
+Tests pass cleanly across all three regulatory postures on macOS and Linux GKE targets (`governance-cluster-2`, project `laah-cybernetics`).
+Skipped tests represent live GKE cluster integration endpoints (evaluated via `scripts/port_forward_dev.sh` + `uv run pytest tests/ --run-integration`).
 
 ---
 
@@ -78,13 +85,15 @@ CAGE v3.0.0 provides a multi-jurisdiction, dual-layer governance architecture fo
 6.  **The LangGraph Saga Engine:** A Write-Ahead Log + LIFO rollback + idempotent compensating node pattern that provides atomic transaction guarantees for `execute_trade` actions, with ghost-state recovery and ISO 42001 telemetry on every rollback.
 7.  **The FiscalLimitGuard:** A Redis-backed atomic pre-reservation guard that prevents multi-agent "race to the rail" collisions when multiple agents simultaneously evaluate OPA fiscal limits.
 8.  **The Cryptographic Hash-Chained Context Accumulator (AARM-V1 / v1.1 Schema):** SHA-256 hash-chained, append-only log of every `OscalFinding`. Each node's `record_hash` binds `SHA-256(prev_hash ‖ content_json ‖ control_id ‖ event_type ‖ node_index ‖ audit_id)`, sealing an unalterable chain-of-custody that detects any Memory Poisoning attempt at the mutated node. Satisfies **ISO 42001 Annex A.5.3** and neutralizes **AARM-V1**.
-9.  **The DEFER & PAUSE State Machine Primitives:** Extends the OPA tri-state to six states (`ALLOW | DENY | REQUIRE_APPROVAL | DEFER | NARROW | PAUSE`). When `confidence_score < 0.70`, execution is parked in a Redis-backed `DeferQueue` (`db=1`, `noeviction`) pending automated data injection. Resumable suspensions are tracked via `PausePrimitiveManager` with epoch fencing. Satisfies **ISO 42001 Annex A.8.4** and neutralizes **AARM-V7**.
-10. **Native AARM Threat Vector Mapping (11-Vector Ledger):** Machine-readable proof that specific CAGE control points neutralize all 11 CSA AARM threat vectors. `GET /v1/aarm/conformance-report` returns a live `NEUTRALIZED | PARTIAL | EXPOSED` verdict per vector, auto-serialized to GCS/S3 on every Lula audit run.
-11. **Cloud KMS HSM-Backed Governance Signing:** Asymmetric signing via Google Cloud KMS Hardware Security Module (`src/gateway/governance/kms_signer.py`). The private key never leaves the HSM; verification uses a locally-embedded public key PEM for sub-millisecond latency. Cloud Audit Logs provide external, immutable attestation of every signing operation.
-12. **Human-Gated NeMo Refinement (CR-2):** The autonomous auto-apply branch has been eliminated. All incoming policy changes are staged via `POST /v1/nemo/propose-refinement` and require explicit human approval via `POST /v1/nemo/approve-refinement/{proposal_id}` with reviewer identity and rationale before applying.
-13. **Heterogeneous Multi-Model Consensus:** `ConsensusModelRegistry` routes each critic persona to a distinct vLLM inference backend (DeepSeek-R1 for Risk Manager, Llama 3.1 for Compliance Officer). No single model can "consent" to its own output — system invariants are no longer vulnerable to a shared semantic blind spot.
-14. **Lua-Atomic CBF Check & Commit (CR-3):** Consolidates the barrier condition evaluation and balance debiting into a single atomic Redis Lua execution (`atomic_verify_and_commit()`), eliminating TOCTOU race conditions under concurrent execution.
-15. **Externally Reconciled CBF Ground Truth (POAM-023 / POAM-2026-038 CLOSED):** The Control Barrier Function's `cash_balance` input is sourced from an independently reconciled external custody ledger via `src/compliance_bridge/reconciliation_worker.py` (GCS WORM ledger + Cloud KMS ECDSA-P256 signing with 300s TTL in Redis).
+9.  **The 6 Governance State Machine Primitives:** Full first-class runtime execution for all six governance primitives (`ALLOW | DENY | REQUIRE_APPROVAL | DEFER | NARROW | PAUSE`) in `SymbolicGovernor.validate_action()`. Execution is parked in a Redis-backed `DeferQueue` (`db=1`, `noeviction`) for `DEFER`, partially executed with bounded scope under `NARROW`, and suspended with epoch fencing via `PausePrimitiveManager` under `PAUSE`. Satisfies **ISO 42001 Annex A.8.4** and neutralizes **AARM-V7**.
+10. **HMAC Routing Seal v2 (`record_hash` Binding):** 4-tuple cryptographic routing token `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` produced only after all tiers pass. Actuators fail-closed if `record_hash` is absent or tampered when `CAGE_REQUIRE_EVIDENCE_BINDING=true`.
+11. **Native AARM Threat Vector Mapping (11-Vector Ledger):** Machine-readable proof that specific CAGE control points neutralize all 11 CSA AARM threat vectors. `GET /v1/aarm/conformance-report` returns a live `NEUTRALIZED | PARTIAL | EXPOSED` verdict per vector, auto-serialized to GCS/S3 on every Lula audit run.
+12. **Cloud KMS HSM-Backed Governance Signing:** Asymmetric signing via Google Cloud KMS Hardware Security Module (`src/gateway/governance/kms_signer.py`). The private key never leaves the HSM; verification uses a locally-embedded public key PEM for sub-millisecond latency. Cloud Audit Logs provide external, immutable attestation of every signing operation.
+13. **Human-Gated NeMo Refinement (CR-2):** The autonomous auto-apply branch has been eliminated. All incoming policy changes are staged via `POST /v1/nemo/propose-refinement` and require explicit human approval via `POST /v1/nemo/approve-refinement/{proposal_id}` with reviewer identity and rationale before applying.
+14. **Heterogeneous Multi-Model Consensus:** `ConsensusModelRegistry` routes each critic persona to a distinct vLLM inference backend (DeepSeek-R1 for Risk Manager, Llama 3.1 for Compliance Officer). No single model can "consent" to its own output — system invariants are no longer vulnerable to a shared semantic blind spot.
+15. **Lua-Atomic CBF with Strict Replica Barrier & Monotonic Fence Epoch:** Consolidates barrier check and balance debiting into atomic Redis Lua (`atomic_verify_and_commit()`), enforces synchronous `WAIT` replication with automatic fail-closed rollback on replica timeout, and prevents stale-state replay via monotonic `safety:fence_epoch`.
+16. **Externally Reconciled CBF Ground Truth (POAM-023 / POAM-2026-038 CLOSED):** Sourced from an independently reconciled external custody ledger via `src/compliance_bridge/reconciliation_worker.py` (GCS WORM ledger + Cloud KMS ECDSA-P256 signing with 300s TTL in Redis).
+17. **Mechanized Formal Model (57/66 States & Multi-Agent Distributed Proof):** Exhaustive BFS state-space exploration (`proof/model.py` and `proof/distributed_cbf_model.py`) proving the `NoDirectBind` invariant holds across all sequential and concurrent interleavings.
 
 Compliance is not documented after the fact; it is enforced at the point of inference, producing both governed outputs and a cryptographically hash-chained, tamper-evident audit evidence trail in real time.
 

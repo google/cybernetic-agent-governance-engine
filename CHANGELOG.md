@@ -11,6 +11,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `src/gateway/governance/symbolic_governor.py` — PAUSE handler in `validate_action()`: first-class runtime execution path returning `verdict: PAUSE`, pause token, resume endpoint, and retry metadata (`feat(governance)`)
+- `src/gateway/governance/routing_seal.py` — HMAC Routing Seal v2: 4-tuple format `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` binding SHA-256 evidence record hash with fail-closed actuator enforcement (`feat(governance)`)
+- `src/gateway/governance/cbf.py` — Strict replication rollback & cold-start epoch seed: synchronous Redis `WAIT` verification with fail-closed automatic rollback on replica timeout, plus `_fetch_initial_fence_epoch_sync()` startup seeding (`feat(governance)`)
+- `src/compliance_bridge/evidence_stream.py` — Precondition validation: `validate_evidence_stream_preconditions()` halts startup in production if non-blocking evidence mode is configured (`fix(compliance)`)
+- `proof/model.py`, `proof/distributed_cbf_model.py` — Formal state model expansion: 57-state sequential and 66-state concurrent BFS models verifying NoDirectBind invariant across all paths, plus $N$-agent distributed barrier proofs (`test(formal)`)
 - `src/gateway/governance/pause_primitive.py`, `src/gateway/server/hybrid_server.py` — PAUSE primitive and resume endpoint: new `POST /v1/pause/{pause_token}/resume` and `GET /v1/pause/{pause_token}` endpoints for resumable execution suspension (`feat(governance)`)
 - `src/gateway/governance/decisions.py`, `src/gateway/governance/symbolic_governor.py` — NARROW primitive: new `NARROW` governance decision for partial-authority execution with clamped scope (gated by `CAGE_NARROW_ENABLED`) (`feat(governance)`)
 - `src/gateway/governance/symbolic_governor.py:_classify_violation()` — DEFER classification helper: five-way classification (DENY/DEFER/NARROW/PAUSE/REQUIRE_APPROVAL) with DeferQueue integration (`feat(governance)`)

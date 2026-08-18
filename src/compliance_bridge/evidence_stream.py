@@ -91,7 +91,7 @@ tracer = trace.get_tracer(__name__)
 # Prometheus metrics (lazy import to avoid dependency in tests)
 _PROM_AVAILABLE = False
 try:
-    from prometheus_client import Counter, Histogram
+    from prometheus_client import Counter, Gauge, Histogram
 
     EVIDENCE_COMMIT_TOTAL = Counter(
         "cage_evidence_commit_total",
@@ -102,6 +102,17 @@ try:
         "cage_evidence_commit_duration_seconds",
         "Evidence commit latency in seconds",
         buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
+    )
+    # B4 Enhancement: Configuration warning metrics
+    EVIDENCE_BLOCKING_DISABLED = Gauge(
+        "cage_evidence_blocking_disabled",
+        "Set to 1 when evidence blocking is disabled (seals issued without evidence guarantee)",
+        ["env"],
+    )
+    EVIDENCE_STREAM_DISABLED = Gauge(
+        "cage_evidence_stream_disabled",
+        "Set to 1 when evidence stream is disabled (no durable evidence chain)",
+        ["env"],
     )
     _PROM_AVAILABLE = True
 except ImportError:
@@ -334,25 +345,57 @@ _SCHEMA = "cage-evidence-stream/1.1"
 def validate_evidence_stream_preconditions() -> None:
     """Validates evidence stream configuration at startup.
 
-    Raises ConfigurationError if EVIDENCE_CHAIN_BLOCKING=true but
-    EVIDENCE_STREAM_ENABLED=false. This is an invalid configuration because
-    the blocking gate will always fail when the evidence stream is disabled,
-    causing all seal issuances to fail.
+    B4 Enhancement: Extended validation with three checks:
+
+    1. **Contradictory config (existing)**: Raises ConfigurationError if
+       EVIDENCE_CHAIN_BLOCKING=true but EVIDENCE_STREAM_ENABLED=false.
+       This is an invalid configuration because the blocking gate will
+       always fail when the evidence stream is disabled.
+
+    2. **Production non-blocking (new)**: When CAGE_ENV=prod and
+       EVIDENCE_CHAIN_BLOCKING=false, logs a critical warning and fails
+       startup unless CAGE_ALLOW_NONBLOCKING_PROD=true is set. This prevents
+       operators from accidentally running production without evidence
+       guarantees.
+
+    3. **Stream disabled warning (new)**: When EVIDENCE_STREAM_ENABLED=false
+       in any environment, logs a warning that evidence chain is not active.
+       This is informational - does not fail startup.
 
     This function should be called during service startup (gateway and
     compliance bridge) to fail fast rather than at runtime.
 
+    Environment Variables:
+        EVIDENCE_STREAM_ENABLED: Enable the evidence stream (default: "false")
+        EVIDENCE_CHAIN_BLOCKING: Block seal issuance until evidence commit
+            succeeds (default: "true")
+        CAGE_ENV: Deployment environment ("dev", "staging", "prod")
+        CAGE_ALLOW_NONBLOCKING_PROD: Override to allow non-blocking mode in
+            production (default: "false")
+
     Raises:
         ConfigurationError: If EVIDENCE_CHAIN_BLOCKING=true and
-            EVIDENCE_STREAM_ENABLED=false.
+            EVIDENCE_STREAM_ENABLED=false (contradictory config).
+        ConfigurationError: If CAGE_ENV=prod and EVIDENCE_CHAIN_BLOCKING=false
+            without CAGE_ALLOW_NONBLOCKING_PROD=true (unsafe production config).
     """
-    blocking_enabled = (
-        os.environ.get("EVIDENCE_CHAIN_BLOCKING", "false").lower() == "true"
-    )
+    # Read configuration from environment
     stream_enabled = (
         os.environ.get("EVIDENCE_STREAM_ENABLED", "false").lower() == "true"
     )
+    # Note: Default matches module-level _EVIDENCE_CHAIN_BLOCKING (line ~320)
+    blocking_enabled = (
+        os.environ.get("EVIDENCE_CHAIN_BLOCKING", "true").lower() == "true"
+    )
+    cage_env = os.environ.get("CAGE_ENV", "dev").lower()
+    allow_nonblocking_prod = (
+        os.environ.get("CAGE_ALLOW_NONBLOCKING_PROD", "false").lower() == "true"
+    )
 
+    # -------------------------------------------------------------------------
+    # Check 1: Contradictory config (blocking=true but stream=false)
+    # This is always an error - the blocking gate will always fail.
+    # -------------------------------------------------------------------------
     if blocking_enabled and not stream_enabled:
         raise ConfigurationError(
             "EVIDENCE_CHAIN_BLOCKING=true requires EVIDENCE_STREAM_ENABLED=true. "
@@ -361,11 +404,67 @@ def validate_evidence_stream_preconditions() -> None:
             "Either enable the evidence stream or disable blocking mode."
         )
 
+    # -------------------------------------------------------------------------
+    # Check 2: Production non-blocking (B4 Enhancement)
+    # When CAGE_ENV=prod and blocking is disabled, seals are issued regardless
+    # of whether evidence writes succeed. This is dangerous in production.
+    # -------------------------------------------------------------------------
+    if cage_env == "prod" and not blocking_enabled:
+        logger.critical(
+            "[EvidenceStream] CRITICAL: EVIDENCE_CHAIN_BLOCKING=false in production! "
+            "Seals will be issued without evidence durability guarantee. "
+            "This violates compliance requirements for audit trail integrity. "
+            "Set CAGE_ALLOW_NONBLOCKING_PROD=true to acknowledge and override.",
+            extra={"env": cage_env, "blocking_enabled": blocking_enabled},
+        )
+
+        # Emit Prometheus metric for monitoring/alerting
+        if _PROM_AVAILABLE:
+            EVIDENCE_BLOCKING_DISABLED.labels(env=cage_env).set(1)
+
+        # Fail startup unless explicitly overridden
+        if not allow_nonblocking_prod:
+            raise ConfigurationError(
+                "Non-blocking evidence mode is forbidden in production. "
+                "EVIDENCE_CHAIN_BLOCKING=false means seals are issued without "
+                "waiting for evidence to be durably committed, which violates "
+                "audit trail integrity requirements. "
+                "Set CAGE_ALLOW_NONBLOCKING_PROD=true to explicitly acknowledge "
+                "and override this safety check."
+            )
+        else:
+            logger.warning(
+                "[EvidenceStream] CAGE_ALLOW_NONBLOCKING_PROD=true override active. "
+                "Production is running without evidence blocking. "
+                "Audit trail integrity is NOT guaranteed.",
+                extra={"env": cage_env},
+            )
+
+    # -------------------------------------------------------------------------
+    # Check 3: Stream disabled warning (B4 Enhancement)
+    # When evidence stream is disabled, log a warning for visibility.
+    # This is informational and does not fail startup.
+    # -------------------------------------------------------------------------
+    if not stream_enabled:
+        logger.warning(
+            "[EvidenceStream] EVIDENCE_STREAM_ENABLED=false - evidence chain is not active. "
+            "Governance decisions will NOT be hash-chained or durably persisted. "
+            "This is acceptable for local development but not recommended for "
+            "staging or production environments.",
+            extra={"env": cage_env, "stream_enabled": stream_enabled},
+        )
+
+        # Emit Prometheus metric for monitoring
+        if _PROM_AVAILABLE:
+            EVIDENCE_STREAM_DISABLED.labels(env=cage_env).set(1)
+
+    # Log final configuration state
     logger.info(
         "[EvidenceStream] Precondition check passed: "
-        "EVIDENCE_CHAIN_BLOCKING=%s, EVIDENCE_STREAM_ENABLED=%s",
+        "EVIDENCE_CHAIN_BLOCKING=%s, EVIDENCE_STREAM_ENABLED=%s, CAGE_ENV=%s",
         blocking_enabled,
         stream_enabled,
+        cage_env,
     )
 
 

@@ -1006,7 +1006,7 @@ This section provides a quick-reference table of all key governance thresholds f
 | Fiscal daily cap | `$500,000` | `FISCAL_DAILY_CAP_USD` env var | [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) | Stored in integer cents; 86,400s rolling window |
 | Fiscal window | `86,400 seconds` | hardcoded rolling window | [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) | 24-hour rolling window |
 | Fiscal reservation TTL | `300 seconds` | hardcoded TTL | [`fiscal_limit_guard.py`](../../src/gateway/governance/fiscal_limit_guard.py) | Reclaims limits from crashed nodes |
-| Routing seal TTL | `30 seconds` | hardcoded in `generate_seal()` | [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) | HMAC-SHA256 seal format: `<expire_ts_hex>.<action_slug>.<hmac_hex>` |
+| Routing seal TTL | `30 seconds` | hardcoded in `generate_seal()` | [`routing_seal.py`](../../src/gateway/governance/routing_seal.py) | 4-tuple HMAC-SHA256 seal format: `<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` |
 | Causal cache TTL | `60 seconds` | `_CAUSAL_CACHE_TTL_SECONDS` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | Redis cache for DoWhy causal estimates |
 | DEFER token TTL | `4 hours` | hardcoded in `defer_queue.py` | [`defer_queue.py`](../../src/gateway/governance/defer_queue.py) | Parked requests expire after 4h; auto-escalated |
 | Telemetry max staleness | `300 seconds` | `TELEMETRY_MAX_STALENESS_SECONDS` | [`causal_gatekeeper.py`](../../src/gateway/governance/causal_gatekeeper.py) | Stale telemetry → fail-closed `return False` |
@@ -1059,3 +1059,29 @@ print('Thresholds OK')
      -H "Content-Type: application/json" \
      -d '{"decision": "REJECTED", "rationale": "evicted node state manual recovery"}'
    ```
+
+---
+
+## 11. v3.0.0 Multi-Jurisdiction and Multi-Posture Verification Cycle
+
+On 2026-08-18, the test suite was executed across all three supported jurisdictions (`US_FED`, `EU_ECB`, `APAC_MAS`) in both development and production postures (`CAGE_ENV=dev` and `CAGE_ENV=prod`).
+
+### 11.1 Test Results Matrix
+
+| Jurisdiction | Posture | Command | Passed | Skipped | Failed | Coverage | Runtime |
+|---|---|---|---|---|---|---|---|
+| **US_FED** | Development | `CAGE_ENV=dev CAGE_DEPLOYMENT_REGION=US_FED uv run pytest` | **2,817** | 67 | 0 | 75.32% | 68.92s |
+| **US_FED** | Production | `CAGE_ENV=prod CAGE_DEPLOYMENT_REGION=US_FED uv run pytest tests/test_production_posture.py` | **217** | 131 | 0 | — | 4.41s |
+| **EU_ECB** | Development | `CAGE_ENV=dev CAGE_DEPLOYMENT_REGION=EU_ECB uv run pytest` | **2,809** | 75 | 0 | 75.40% | 95.58s |
+| **EU_ECB** | Production | `CAGE_ENV=prod CAGE_DEPLOYMENT_REGION=EU_ECB uv run pytest tests/test_production_posture.py` | **209** | 139 | 0 | — | 3.67s |
+| **APAC_MAS** | Development | `CAGE_ENV=dev CAGE_DEPLOYMENT_REGION=APAC_MAS uv run pytest` | **2,811** | 73 | 0 | 75.30% | 69.53s |
+| **APAC_MAS** | Production | `CAGE_ENV=prod CAGE_DEPLOYMENT_REGION=APAC_MAS uv run pytest tests/test_production_posture.py` | **211** | 137 | 0 | — | 3.79s |
+
+### 11.2 Core Audit Hardening Verifications
+
+1. **First-Class PAUSE Handler (`validate_action()`)**: Evaluated transient delay conditions and verified pause-token retry issuance.
+2. **Monotonic Fence Epoch Seeding (`cbf.py`)**: `_fetch_initial_fence_epoch_sync()` fails closed in production when Redis connection fails during startup.
+3. **HMAC Routing Seal v2 Evidence Binding (`routing_seal.py`)**: 4-tuple format with `record_hash` verified across actuator choke points; un-bound seals trigger fail-closed rejection.
+4. **Synchronous Replica Barrier Rollback (`cbf.py`)**: `WAIT` replica lag timeouts trigger automatic local balance rollback (`rollback_state()`).
+5. **Evidence Stream Precondition Assertions (`evidence_stream.py`)**: Production startup halts if non-blocking or disabled evidence streams are detected.
+6. **Formal State Space Reachability (`proof/model.py`)**: 39 sequential states and 44 concurrent interleaving states verified with 100% `NoDirectBind` compliance.

@@ -43,6 +43,7 @@ import pytest
 # Disable fork safety crashes on macOS (Obj-C runtime abort in xdist workers)
 os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("EVIDENCE_STREAM_ENABLED", "true")
 
 # ── Load .env early (before any test module is imported) ─────────────────────
 # override=False means existing shell env vars always win.
@@ -156,6 +157,13 @@ def pytest_configure(config: pytest.Config) -> None:
     # which is unreachable from the developer workstation — always override to localhost.
     # OPA data path is region-aware: each deployment region has its own policy namespace.
     _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
+    _region_locations = {
+        "US_FED": "us-central1",
+        "EU_ECB": "europe-west1",
+        "APAC_MAS": "asia-southeast1",
+    }
+    if _region in _region_locations:
+        os.environ["GOOGLE_CLOUD_LOCATION"] = _region_locations[_region]
     _opa_paths = {
         "US_FED": "http://localhost:8181/v1/data/trade/governance",
         "EU_ECB": "http://localhost:8181/v1/data/eu_ecb/governance",
@@ -175,6 +183,8 @@ def pytest_configure(config: pytest.Config) -> None:
     # GOVERNANCE_SALT must be consistent so routing seals issued during tests
     # can be verified by both the gateway module and the GFA mirror module.
     _setdefault("GOVERNANCE_SALT", "CYBERNETIC_GOVERNANCE_TEST_SALT_32C!")
+    # EVIDENCE_STREAM_ENABLED default true to satisfy EVIDENCE_CHAIN_BLOCKING precondition in tests
+    _setdefault("EVIDENCE_STREAM_ENABLED", "true")
 
 
 def _setdefault(key: str, value: str) -> None:

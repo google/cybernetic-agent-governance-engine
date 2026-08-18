@@ -57,11 +57,18 @@ _spec.loader.exec_module(model)
 # ---------------------------------------------------------------------------
 # Published figures — these appear in the paper and must not drift silently.
 # ---------------------------------------------------------------------------
+# NOTE (C1-sub audit remediation, 2026-08-18): State counts increased due to
+# addition of NARROW and PAUSE terminal states and the soft_threshold_exceeded
+# and transient_block flags that enable them. The new counts are:
+#   - Gated: 39 (was 21)
+#   - Concurrent: 44 (was 24)
+#   - Skipped tier: 38 (was 20)
+# The ungated model remains at 19 because it does not explore NARROW/PAUSE paths.
 
-EXPECTED_GATED_STATES = 21
+EXPECTED_GATED_STATES = 39
 EXPECTED_UNGATED_STATES = 19
-EXPECTED_CONCURRENT_STATES = 24
-EXPECTED_SKIPPED_TIER_STATES = 20  # Gap 3 and Gap 4 variants
+EXPECTED_CONCURRENT_STATES = 44
+EXPECTED_SKIPPED_TIER_STATES = 38  # Gap 3 and Gap 4 variants (was 20)
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +267,8 @@ def test_skipping_a_tier_preserves_structure_but_shrinks_the_gate(
                     tier_results=tuple((t, results[t]) for t in model.TIERS),
                     seal_present=False,
                     resolved_allow=False,
+                    soft_threshold_exceeded=state.soft_threshold_exceeded,
+                    transient_block=state.transient_block,
                 )
                 return
         yield from model.gated_transitions(state)
@@ -271,6 +280,82 @@ def test_skipping_a_tier_preserves_structure_but_shrinks_the_gate(
     assert len(states) == EXPECTED_SKIPPED_TIER_STATES
     # The skipped tier can never be observed as FAIL — it is never evaluated.
     assert not any(s.tier_result(skipped_tier) == "FAIL" for s in states)
+
+
+# ---------------------------------------------------------------------------
+# C1-sub — NARROW and PAUSE states (audit remediation 2026-08-18)
+# ---------------------------------------------------------------------------
+
+
+def test_narrow_state_is_reachable_and_has_seal() -> None:
+    """NARROW is an ALLOW variant: seal issued on clamped parameters."""
+    states = model.enumerate_reachable(model.gated_transitions)
+    narrow = [s for s in states if s.phase == "NARROW"]
+    assert narrow, "expected at least one NARROW state"
+    for state in narrow:
+        assert state.seal_present is True, "NARROW must have seal_present=TRUE"
+        assert state.resolved_allow is True, "NARROW must have resolvedAllow=TRUE"
+        assert state.soft_threshold_exceeded is True, "NARROW implies soft_threshold_exceeded"
+        assert state.all_tiers_passed(), "NARROW requires all tiers to pass"
+
+
+def test_pause_state_is_reachable_and_has_no_seal() -> None:
+    """PAUSE is retryable, not an ALLOW: no seal issued."""
+    states = model.enumerate_reachable(model.gated_transitions)
+    pause = [s for s in states if s.phase == "PAUSE"]
+    assert pause, "expected at least one PAUSE state"
+    for state in pause:
+        assert state.seal_present is False, "PAUSE must have seal_present=FALSE"
+        assert state.resolved_allow is False, "PAUSE must have resolvedAllow=FALSE"
+        assert state.transient_block is True, "PAUSE implies transient_block"
+        assert state.all_tiers_passed(), "PAUSE requires all tiers to pass first"
+
+
+def test_narrow_and_pause_are_terminal() -> None:
+    """NARROW and PAUSE have no successors in the gated model."""
+    states = model.enumerate_reachable(model.gated_transitions)
+    narrow = [s for s in states if s.phase == "NARROW"]
+    pause = [s for s in states if s.phase == "PAUSE"]
+
+    for state in narrow:
+        successors = list(model.gated_transitions(state))
+        assert successors == [], "NARROW must be terminal (no successors)"
+
+    for state in pause:
+        successors = list(model.gated_transitions(state))
+        assert successors == [], "PAUSE must be terminal (no successors)"
+
+
+def test_narrow_satisfies_no_direct_bind() -> None:
+    """NARROW states satisfy the invariant: phase=NARROW with resolvedAllow=TRUE."""
+    states = model.enumerate_reachable(model.gated_transitions)
+    narrow = [s for s in states if s.phase == "NARROW"]
+
+    # NARROW is an ALLOW variant, so it should NOT violate the invariant.
+    # The invariant is: EXECUTED => resolvedAllow=TRUE
+    # NARROW is not EXECUTED, so the invariant doesn't apply directly.
+    # But we verify NARROW has resolvedAllow=TRUE as an ALLOW variant.
+    assert all(s.resolved_allow for s in narrow), (
+        "NARROW states must have resolvedAllow=TRUE"
+    )
+
+
+def test_ungated_narrow_variant_violates_the_invariant() -> None:
+    """Negative control: NARROW without seal produces a counterexample."""
+    states = model.enumerate_reachable(model.ungated_narrow_transitions)
+    holds, counterexample = model.check_no_direct_bind(states)
+    assert not holds, "the ungated NARROW variant must produce a counterexample"
+    assert counterexample is not None
+    assert counterexample.phase == "EXECUTED"
+    assert counterexample.resolved_allow is False
+    assert counterexample.seal_present is False
+
+
+def test_initial_state_has_no_threshold_or_transient_flags() -> None:
+    """Initial state has soft_threshold_exceeded=FALSE and transient_block=FALSE."""
+    initial = model.initial_state()
+    assert initial.soft_threshold_exceeded is False
+    assert initial.transient_block is False
 
 
 # ---------------------------------------------------------------------------

@@ -2361,6 +2361,176 @@ class SymbolicGovernor:
                             "execution_allowed": True,
                         }
 
+                    # ── PAUSE path (Phase 1.4 — resumable suspension) ──────────
+                    if decision == GovernanceDecision.PAUSE:
+                        from datetime import datetime, timezone as tz
+
+                        from src.gateway.governance.contracts import PauseReceipt
+                        from src.gateway.governance.pause_primitive import (
+                            CAGE_PAUSE_ENABLED,
+                            PauseManager,
+                            build_resume_endpoint,
+                        )
+                        from src.gateway.infrastructure.redis_client import redis_client
+
+                        # Extract pause metadata from classification result
+                        pause_reason: str = classification_meta.get(
+                            "pause_reason", "RATE_LIMITED"
+                        )
+                        estimated_wait: int = classification_meta.get(
+                            "estimated_wait_seconds", 60
+                        )
+                        _va_pause_thread_id = str(
+                            params.get("transaction_id", "")
+                            or params.get("thread_id", "")
+                            or "unknown"
+                        )
+
+                        # Defense-in-depth: verify PAUSE is enabled at validate_action boundary
+                        # (This check is redundant with _classify_violation but provides a
+                        # safety net if the flag is toggled between classification and here)
+                        if not CAGE_PAUSE_ENABLED:
+                            span.set_attribute("cage.verdict", GovernanceDecision.DENY)
+                            span.set_attribute("cage.pause_fallback", True)
+                            span.set_status(Status(StatusCode.ERROR))
+                            logger.warning(
+                                "🚫 validate_action PAUSE->DENY fallback: action=%s "
+                                "reason=%s (CAGE_PAUSE_ENABLED=false)",
+                                action,
+                                pause_reason,
+                            )
+                            receipt = RefusalReceipt(
+                                thread_id=_va_pause_thread_id,
+                                action=action,
+                                violated_tier="PAUSE_FALLBACK",
+                                violated_rule=f"Transient condition: {pause_reason}",
+                                standing_at_refusal={
+                                    "symbol": params.get("symbol"),
+                                    "amount": params.get("amount"),
+                                    "confidence": params.get("confidence"),
+                                    "pause_reason": pause_reason,
+                                },
+                            )
+                            span.set_attribute(
+                                "cage.refusal_proof_hash", receipt.proof_hash
+                            )
+                            raise GovernanceError(
+                                f"Transient condition ({pause_reason}) detected; "
+                                "CAGE_PAUSE_ENABLED=false — request denied",
+                                receipt=receipt,
+                            )
+
+                        # Store the pause state in Redis via PauseManager
+                        pause_token = ""
+                        expires_at_utc = ""
+                        try:
+                            pause_manager = PauseManager(redis_client)
+                            request_id = params.get(
+                                "request_id",
+                                params.get("thread_id", f"{action}_{_va_pause_thread_id}"),
+                            )
+                            pause_token = await pause_manager.pause_request(
+                                request_id=request_id,
+                                reason=pause_reason,
+                                ttl_seconds=3600,  # 1 hour default
+                                original_request=params,
+                                thread_id=_va_pause_thread_id,
+                                estimated_wait_secs=estimated_wait,
+                            )
+                            # Fetch the state to get expires_at
+                            pause_state = await pause_manager.get_pause_state(pause_token)
+                            if pause_state:
+                                expires_at_utc = pause_state.expires_at_utc
+                        except Exception as pause_exc:
+                            # Fail-closed: if Redis is unavailable, fall back to DENY
+                            logger.error(
+                                "🚫 validate_action PAUSE->DENY (Redis unavailable): "
+                                "action=%s reason=%s error=%s",
+                                action,
+                                pause_reason,
+                                pause_exc,
+                            )
+                            span.set_attribute("cage.verdict", GovernanceDecision.DENY)
+                            span.set_attribute("cage.pause_redis_error", True)
+                            span.set_status(Status(StatusCode.ERROR))
+                            receipt = RefusalReceipt(
+                                thread_id=_va_pause_thread_id,
+                                action=action,
+                                violated_tier="PAUSE_REDIS_ERROR",
+                                violated_rule=f"Transient condition: {pause_reason}",
+                                standing_at_refusal={
+                                    "symbol": params.get("symbol"),
+                                    "amount": params.get("amount"),
+                                    "confidence": params.get("confidence"),
+                                    "pause_reason": pause_reason,
+                                    "redis_error": str(pause_exc),
+                                },
+                            )
+                            span.set_attribute(
+                                "cage.refusal_proof_hash", receipt.proof_hash
+                            )
+                            raise GovernanceError(
+                                f"Transient condition ({pause_reason}) detected; "
+                                "PAUSE storage failed — request denied",
+                                receipt=receipt,
+                            )
+
+                        # Create PauseReceipt for audit trail
+                        pause_receipt = PauseReceipt(
+                            thread_id=_va_pause_thread_id,
+                            action=action,
+                            pause_reason=pause_reason,
+                            pause_token=pause_token,
+                            violations=violations,
+                            standing_at_pause={
+                                "symbol": params.get("symbol"),
+                                "amount": params.get("amount"),
+                                "confidence": params.get("confidence"),
+                            },
+                            estimated_wait_seconds=estimated_wait,
+                            expires_at_utc=expires_at_utc,
+                        )
+
+                        # OTel telemetry
+                        span.set_attribute("cage.verdict", GovernanceDecision.PAUSE)
+                        span.set_attribute("cage.pause_token", pause_token)
+                        span.set_attribute("cage.pause_reason", pause_reason)
+                        span.set_attribute("cage.pause_estimated_wait", estimated_wait)
+                        span.set_attribute(
+                            "cage.pause_receipt_hash", pause_receipt.proof_hash
+                        )
+                        span.set_attribute(
+                            "langfuse.observation.output", GovernanceDecision.PAUSE
+                        )
+                        span.set_status(Status(StatusCode.OK))
+
+                        logger.info(
+                            "⏸️ validate_action PAUSE: action=%s reason=%s "
+                            "pause_token=%s estimated_wait=%ds (%.1fms)",
+                            action,
+                            pause_reason,
+                            pause_token,
+                            estimated_wait,
+                            latency_ms,
+                        )
+
+                        return {
+                            "verdict": GovernanceDecision.PAUSE,
+                            "violations": violations,
+                            "seal": "",  # No seal for PAUSE — action is neither approved nor denied
+                            "latency_ms": latency_ms,
+                            "classification_meta": classification_meta,
+                            # PAUSE-specific fields (Phase 1.4)
+                            "pause_token": pause_token,
+                            "pause_reason": pause_reason,
+                            "resume_endpoint": build_resume_endpoint(pause_token),
+                            "expires_at_utc": expires_at_utc,
+                            "estimated_wait_seconds": estimated_wait,
+                            "retry_after_seconds": estimated_wait,
+                            # Audit receipt
+                            "pause_receipt": pause_receipt,
+                        }
+
                     # ── DENY path (default for hard violations) ────────────────
                     # This is the fallback for all other decisions (including
                     # explicitly classified DENY). Preserves existing behavior.

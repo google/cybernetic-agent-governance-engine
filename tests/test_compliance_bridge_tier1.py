@@ -310,6 +310,7 @@ class TestCageRoutingSealGuard:
             "CMEK_CHECK_DISABLED": "1",
             "LULA_SCHEDULER_DISABLED": "1",
             "EVIDENCE_SLA_DISABLED": "1",
+            "EVIDENCE_STREAM_ENABLED": "true",
         }
         with patch("src.compliance_bridge.main.Langfuse") as MockLF:
             MockLF.return_value = MagicMock()
