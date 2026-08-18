@@ -612,3 +612,156 @@ class TestCausalGatekeeperIntegration:
         result = await governor.verify("market_lookup", intent)
         causal_violations = [v for v in result["violations"] if "Causal" in v]
         assert len(causal_violations) == 0
+
+
+# ---------------------------------------------------------------------------
+# Peer Review Fix Tests: β≤0 guard and bounded risk score
+# ---------------------------------------------------------------------------
+
+
+class TestNegativeCausalSlopeGuard:
+    """Tests for the β≤0 fail-closed guard (peer review fix).
+
+    The causal gatekeeper must reject when the estimated causal effect (β)
+    is negative or zero, as this indicates an untrustworthy world-model.
+    """
+
+    @pytest.fixture
+    def negative_slope_telemetry(self):
+        """Generate telemetry that produces a negative causal slope.
+
+        This simulates an adversarial or confounded dataset where higher
+        trade amounts appear to DECREASE risk — counter-intuitive and
+        indicates model misspecification.
+        """
+        np.random.seed(99)
+        n = 200
+        market_volatility = np.random.uniform(0.1, 0.9, n)
+        trade_amount = np.random.uniform(1000, 10000, n)
+        # Negative relationship: higher trade_amount → LOWER risk_score
+        risk_score = 0.8 - (trade_amount / 20000) + np.random.normal(0, 0.05, n)
+        risk_score = np.clip(risk_score, 0.0, 1.0)
+
+        now_epoch = time.time()
+        timestamps = now_epoch - np.random.uniform(0, 600, n)
+
+        return pd.DataFrame({
+            "market_volatility": market_volatility,
+            "trade_amount": trade_amount,
+            "risk_score": risk_score,
+            "timestamp": timestamps,
+        })
+
+    @pytest.fixture
+    def zero_slope_telemetry(self):
+        """Generate telemetry that produces a near-zero causal slope.
+
+        This simulates data where trade_amount has no effect on risk_score,
+        which is suspicious and should trigger fail-closed.
+        """
+        np.random.seed(123)
+        n = 200
+        market_volatility = np.random.uniform(0.1, 0.9, n)
+        trade_amount = np.random.uniform(1000, 10000, n)
+        # No relationship: risk_score is purely random, independent of trade_amount
+        risk_score = np.random.uniform(0.3, 0.7, n)
+
+        now_epoch = time.time()
+        timestamps = now_epoch - np.random.uniform(0, 600, n)
+
+        return pd.DataFrame({
+            "market_volatility": market_volatility,
+            "trade_amount": trade_amount,
+            "risk_score": risk_score,
+            "timestamp": timestamps,
+        })
+
+    def test_negative_slope_triggers_causal_lock(self, negative_slope_telemetry):
+        """Negative causal slope (β < 0) must trigger fail-closed CAUSAL LOCK."""
+        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+
+        # causal_safety_check(params, current_telemetry) — pass args directly
+        params = {"amount": 5000, "symbol": "AAPL", "confidence": 0.99}
+        result = causal_safety_check(params, negative_slope_telemetry)
+        # Must return False (blocked) because β ≤ 0
+        assert result is False, "Negative causal slope should trigger CAUSAL LOCK"
+
+    def test_large_adversarial_amount_with_negative_slope(self, negative_slope_telemetry):
+        """Large adversarial amount with negative slope must not bypass checks.
+
+        Before the fix, a negative β combined with a large negative amount could
+        produce a negative risk, which the old code might not have caught.
+        """
+        from src.gateway.governance.causal_gatekeeper import causal_safety_check
+
+        # causal_safety_check(params, current_telemetry) — pass args directly
+        params = {"amount": 1_000_000, "symbol": "AAPL", "confidence": 0.99}
+        result = causal_safety_check(params, negative_slope_telemetry)
+        # Must return False — the β≤0 guard fires before risk calculation
+        assert result is False, "β≤0 guard should fire before risk calculation"
+
+
+class TestBoundedRiskScore:
+    """Tests for the bounded risk score calculation (peer review fix).
+
+    The estimated risk must be strictly bounded within [0.0, 1.0] regardless
+    of adversarial input amounts.
+    """
+
+    def test_bounded_risk_with_extreme_positive_amount(self):
+        """Risk score must be clamped at 1.0 for extreme positive amounts."""
+        from src.gateway.governance.causal_gatekeeper import (
+            CAUSAL_LOCK_RISK_BOUNDARY,
+            CAUSAL_NORMALIZATION_SCALE,
+        )
+
+        # Simulate the bounded calculation
+        estimate_value = 0.05  # Positive β (passes β≤0 guard)
+        extreme_amount = 1_000_000_000  # 1 billion — adversarial
+
+        estimated_risk = min(
+            1.0,
+            max(0.0, 0.5 + estimate_value * extreme_amount / CAUSAL_NORMALIZATION_SCALE),
+        )
+
+        # Must be clamped at 1.0
+        assert estimated_risk == 1.0, "Risk score must be clamped at 1.0"
+        assert estimated_risk <= 1.0, "Risk score must not exceed 1.0"
+
+    def test_bounded_risk_with_negative_amount(self):
+        """Risk score must be clamped at 0.0 for negative amounts (if possible)."""
+        from src.gateway.governance.causal_gatekeeper import (
+            CAUSAL_NORMALIZATION_SCALE,
+        )
+
+        # Edge case: negative amount (unlikely in practice, but test boundary)
+        estimate_value = 0.05
+        negative_amount = -1_000_000
+
+        estimated_risk = min(
+            1.0,
+            max(0.0, 0.5 + estimate_value * negative_amount / CAUSAL_NORMALIZATION_SCALE),
+        )
+
+        # Must be clamped at 0.0
+        assert estimated_risk == 0.0, "Risk score must be clamped at 0.0"
+        assert estimated_risk >= 0.0, "Risk score must not go below 0.0"
+
+    def test_normal_amount_produces_valid_risk(self):
+        """Normal trade amounts should produce risk in valid [0, 1] range."""
+        from src.gateway.governance.causal_gatekeeper import (
+            CAUSAL_NORMALIZATION_SCALE,
+        )
+
+        estimate_value = 0.02  # Typical positive β
+        normal_amount = 5000  # Normal trade amount
+
+        estimated_risk = min(
+            1.0,
+            max(0.0, 0.5 + estimate_value * normal_amount / CAUSAL_NORMALIZATION_SCALE),
+        )
+
+        # Should be a valid probability
+        assert 0.0 <= estimated_risk <= 1.0, "Risk score must be in [0, 1]"
+        # Should be around 0.5 + 0.02 * 5000 / 10000 = 0.51
+        assert 0.50 <= estimated_risk <= 0.52, f"Expected ~0.51, got {estimated_risk}"

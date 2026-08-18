@@ -108,6 +108,18 @@ CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE: float = get_causal_placebo_effect_magnitud
 #   of 1.0, consistent with the CBF g=0.5 decay factor.
 CAUSAL_LOCK_RISK_BOUNDARY: float = get_causal_risk_boundary()
 
+# CAUSAL_NORMALIZATION_SCALE (Peer Review Fix — bounded risk calculation):
+#   Normalization factor for converting raw trade amounts to the [0, 1] risk
+#   scale. The estimated_risk is computed as:
+#     estimated_risk = clamp(0.5 + β * amount / NORMALIZATION_SCALE, 0.0, 1.0)
+#   This ensures risk scores are strictly bounded within [0.0, 1.0] regardless
+#   of adversarial input amounts. The default value of 10000 matches the
+#   maximum trade_amount in the synthetic telemetry generator and aligns with
+#   typical trade size thresholds in production.
+CAUSAL_NORMALIZATION_SCALE: float = float(
+    os.environ.get("CAUSAL_NORMALIZATION_SCALE", "10000.0")
+)
+
 # NOTE: Timestamp-based ordering is a best-effort approximation. For production,
 # use span parentId relationships via OpenTelemetry context propagation.
 #
@@ -683,6 +695,25 @@ def causal_safety_check(
             )
             mrm_span.set_attribute("causal.estimated_effect", float(estimate.value))
 
+            # ------------------------------------------------------------------
+            # Peer Review Fix: β≤0 fail-closed guard (negative/zero causal slope)
+            # ------------------------------------------------------------------
+            # If the estimated causal effect (β) is negative or zero, the world-model
+            # suggests that increasing trade_amount either decreases risk or has no
+            # effect. This is counter-intuitive and likely indicates a confounded
+            # or misspecified model. Fail closed to prevent adversarial bypass.
+            if estimate.value <= 0:
+                logger.warning(
+                    "[%s] CAUSAL LOCK: Estimated causal effect β=%.4f ≤ 0 — "
+                    "negative or zero slope indicates untrustworthy world-model.",
+                    GovernanceControl.TRADITIONAL_MRM_VALIDATION.value,
+                    estimate.value,
+                )
+                mrm_span.set_attribute("causal.lock_reason", "negative_or_zero_causal_slope")
+                mrm_span.set_attribute("causal.estimated_effect_blocked", float(estimate.value))
+                _causal_cache_set_sync(cache_key, False, "negative_or_zero_causal_slope")
+                return False
+
         # ------------------------------------------------------------------
         # Phase 2: Operational Simulation (CTRL_TEL_003 / ISO 42001 §A.9.4)
         # ------------------------------------------------------------------
@@ -778,12 +809,27 @@ def causal_safety_check(
         # ------------------------------------------------------------------
         # Phase 1 continued: marginal risk boundary check (MRM scope)
         # ------------------------------------------------------------------
-        estimated_marginal_effect = estimate.value * amount
+        # Peer Review Fix: Bounded risk score calculation
+        # The estimated_risk is strictly bounded within [0.0, 1.0] regardless
+        # of adversarial input amounts. This uses CAUSAL_NORMALIZATION_SCALE
+        # to normalize trade amounts before computing risk.
+        #
+        # Formula: estimated_risk = clamp(0.5 + β * amount / SCALE, 0.0, 1.0)
+        #
+        # Note: The β≤0 guard above ensures estimate.value > 0 at this point,
+        # so this bounded calculation only restricts extreme positive values.
+        estimated_risk = min(
+            1.0,
+            max(0.0, 0.5 + estimate.value * amount / CAUSAL_NORMALIZATION_SCALE),
+        )
 
-        if (0.5 + estimated_marginal_effect) > CAUSAL_LOCK_RISK_BOUNDARY:
+        if estimated_risk > CAUSAL_LOCK_RISK_BOUNDARY:
             logger.warning(
-                "[%s] CAUSAL LOCK: Proposed action predicted to exceed safety boundary.",
+                "[%s] CAUSAL LOCK: Proposed action predicted to exceed safety boundary "
+                "(estimated_risk=%.4f > boundary=%.4f).",
                 GovernanceControl.TRADITIONAL_MRM_VALIDATION.value,
+                estimated_risk,
+                CAUSAL_LOCK_RISK_BOUNDARY,
             )
             _causal_cache_set_sync(cache_key, False, "risk_boundary_exceeded")
             return False

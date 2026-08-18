@@ -1110,148 +1110,58 @@ class SymbolicGovernor:
                 round((time.perf_counter() - _t0_conf) * 1000, 2),
             )
 
+        # ======================================================================
+        # PHASE 1: READ-ONLY VALIDATION GATES
+        # ======================================================================
+        # Peer Review Fix: Pipeline reorder to prevent budget leakage.
+        #
+        # All read-only checks execute in Phase 1 BEFORE any state mutations.
+        # This ensures that if Consensus, Causal, or FRIA gates reject, no
+        # CBF balance or fiscal reservation has been committed yet.
+        #
+        # Phase 1 order:
+        #   1. OPA policy evaluation (moved from concurrent gather)
+        #   2. Tier-2 structural corroboration
+        #   3. Multi-model Consensus gate
+        #   4. DoWhy Causal Gatekeeper
+        #   5. Adaptive FRIA enforcement
+        #
+        # Phase 2 (mutations, only if Phase 1 has 0 violations):
+        #   1. CBF atomic_verify_and_commit()
+        #   2. Fiscal Limit reserve() (with CBF compensation on failure)
+        #
+        # LATENCY TRADE-OFF: This removes the asyncio.gather concurrency between
+        # CBF and OPA. The latency cost is CBF_ms (added sequentially after OPA).
+        # This is acceptable because correctness (no budget leakage) takes
+        # precedence over latency optimization.
+        # ======================================================================
+
         if tool_name == "execute_trade" and not violations:
-            # 2 + 4. CBF (Redis) and OPA policy checks run CONCURRENTLY.
-            # They have no data dependency on each other — parallelising them
-            # reduces combined latency from CBF_ms+OPA_ms to max(CBF_ms, OPA_ms).
-            _cbf_fail_open = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
-
-            # --- CBF coroutine (wrapped to capture span) ---
-            async def _cbf_check_with_span() -> str | None:
-                """Run the CBF Redis check inside a dedicated Langfuse span.
-
-                A1 (Issue #6): Uses atomic_verify_and_commit() instead of the
-                deprecated verify_action() to collapse the CBF barrier check and
-                the balance debit into a single atomic Redis Lua hop, eliminating
-                the TOCTOU window between the read-only check and the write-commit
-                phases that allowed two concurrent govern() calls to both observe
-                the same pre-trade balance and both pass (CBF Invariance Theorem
-                atomicity premise, §5.1/§5.2).
-
-                Return convention: mirrors verify_action() — returns "SAFE" on
-                commit, or the UNSAFE reason string on envelope violation, so
-                all downstream cbf_result handling remains unchanged.
-                """
-                with tracer.start_as_current_span("cage.cbf_check") as cbf_span:
-                    cbf_span.set_attribute(
-                        "langfuse.observation.name", "cbf_barrier_check"
-                    )
-                    cbf_span.set_attribute("governance.stage", "cbf")
-                    cbf_span.set_attribute("governance.cbf.atomic", True)
-                    _t = time.perf_counter()
-                    try:
-                        (
-                            committed,
-                            reason,
-                        ) = await self.safety_filter.atomic_verify_and_commit(
-                            action_name=tool_name,
-                            payload=params,
-                        )
-                        # Normalise to the str result that downstream code expects:
-                        #   committed=True  → "SAFE" (balance was debited atomically)
-                        #   committed=False → the UNSAFE reason from the Lua script
-                        result = "SAFE" if committed else reason
-                        cbf_span.set_attribute("governance.cbf.result", result[:80])
-                        cbf_span.set_attribute("governance.cbf.committed", committed)
-                        cbf_span.set_attribute(
-                            "governance.stage.latency_ms",
-                            round((time.perf_counter() - _t) * 1000, 2),
-                        )
-                        return result
-                    except Exception as exc:
-                        cbf_span.record_exception(exc)
-                        cbf_span.set_attribute("governance.cbf.result", "EXCEPTION")
-                        raise
-
-            # --- OPA coroutine (wrapped to capture span timing) ---
+            # --- Phase 1.1: OPA policy evaluation (read-only) ---
             opa_payload = params.copy()
             opa_payload["action"] = tool_name
 
-            async def _opa_check_with_span() -> Any:
-                """Run OPA policy evaluation inside a dedicated Langfuse span."""
-                with tracer.start_as_current_span("cage.opa_pre_check") as opa_span:
+            with tracer.start_as_current_span("cage.opa_pre_check") as opa_span:
+                opa_span.set_attribute(
+                    "langfuse.observation.name", "opa_policy_pre_check"
+                )
+                opa_span.set_attribute("governance.stage", "opa")
+                opa_span.set_attribute("governance.phase", "read_only")
+                _t_opa = time.perf_counter()
+                try:
+                    policy_resp = await self.opa_client.evaluate_policy(opa_payload)
                     opa_span.set_attribute(
-                        "langfuse.observation.name", "opa_policy_pre_check"
+                        "governance.stage.latency_ms",
+                        round((time.perf_counter() - _t_opa) * 1000, 2),
                     )
-                    opa_span.set_attribute("governance.stage", "opa")
-                    _t = time.perf_counter()
-                    try:
-                        resp = await self.opa_client.evaluate_policy(opa_payload)
-                        opa_span.set_attribute(
-                            "governance.stage.latency_ms",
-                            round((time.perf_counter() - _t) * 1000, 2),
-                        )
-                        return resp
-                    except Exception as exc:
-                        opa_span.record_exception(exc)
-                        raise
+                except Exception as exc:
+                    opa_span.record_exception(exc)
+                    violations.append(f"OPA Check Failed: {exc}")
+                    policy_resp = None
 
-            # Fire both checks concurrently
-            _t_parallel_start = time.perf_counter()
-            _gather_results = await asyncio.gather(
-                _cbf_check_with_span(),
-                _opa_check_with_span(),
-                return_exceptions=True,
-            )
-            cbf_result: str | None | BaseException = _gather_results[0]
-            policy_resp = _gather_results[
-                1
-            ]  # Any — asyncio.gather with return_exceptions=True
-            _parallel_ms = round((time.perf_counter() - _t_parallel_start) * 1000, 2)
-            logger.debug(
-                "⚡ CBF+OPA parallel gate completed in %.1fms (tool=%s)",
-                _parallel_ms,
-                tool_name,
-            )
-
-            # --- Evaluate CBF result ---
-            if isinstance(cbf_result, BaseException):
-                if _cbf_fail_open:
-                    logger.warning(
-                        "⚠️ CBF check unavailable (%s) — CBF_FAIL_OPEN=true, "
-                        "skipping CBF gate. ⚠️ AUDIT: Self-reported cash balance "
-                        "cannot be verified; this gap must be closed before "
-                        "production governance examination.",
-                        cbf_result,
-                    )
-                    logger.critical(
-                        json.dumps(
-                            {
-                                "event": "CBF_FAIL_OPEN_ACTIVATED",
-                                "severity": "CRITICAL",
-                                "tool": tool_name,
-                                "cbf_error": str(cbf_result),
-                                "audit_note": (
-                                    "CBF gate bypassed via CBF_FAIL_OPEN=true. "
-                                    "Cash balance cannot be independently verified for this trade."
-                                ),
-                            }
-                        )
-                    )
-                else:
-                    logger.error(
-                        "⛔ CBF check unavailable (%s) — fail-closed: blocking "
-                        "action because cash barrier cannot be independently "
-                        "verified.",
-                        cbf_result,
-                    )
-                    violations.append(
-                        "CBF Fail-Closed: Redis unavailable — cannot verify "
-                        "cash barrier. Self-reported balance has no independent "
-                        "provenance. Set CBF_FAIL_OPEN=true to override "
-                        "(audit gap)."
-                    )
-            elif isinstance(cbf_result, str) and cbf_result.startswith("UNSAFE"):
-                violations.append(f"Safety Violation (RBC/CBF): {cbf_result}")
-
-            # --- Evaluate OPA result ---
-            if isinstance(policy_resp, BaseException):
-                violations.append(f"OPA Check Failed: {policy_resp}")
-                policy_resp = None
-            else:
+            # Evaluate OPA result
+            if policy_resp is not None and not isinstance(policy_resp, BaseException):
                 if isinstance(policy_resp, dict):
-                    # OPA trade.governance policy returns {"allow": "ALLOW"/"DENY"/"MANUAL_REVIEW"}.
-                    # Fall back to "decision" key for backward compat with other policy packages.
                     policy_decision = policy_resp.get(
                         "allow", policy_resp.get("decision", "DENY")
                     )
@@ -1390,104 +1300,19 @@ class SymbolicGovernor:
                     round((time.perf_counter() - _t2_corr_t0) * 1000, 2),
                 )
 
-        # 3. Fiscal Limit Pre-Reservation (trade-specific).
-        # Atomically reserves the requested USD amount against the daily fiscal
-        # cap in Redis (WATCH/MULTI/EXEC) BEFORE the consensus gate.  This closes
-        # the TOCTOU race between the CBF balance check and actual trade execution:
-        # without this step, two concurrent agents could both pass CBF and OPA
-        # against the same remaining balance and together exceed the daily cap.
-        # The reservation is released in the finally block if any subsequent tier
-        # (consensus, causal, FRIA) raises a violation.
-        # If fiscal_limit_guard is None (e.g. in tests), this step is skipped.
+        # ======================================================================
+        # PHASE 1.2-1.4: Remaining read-only validation gates
+        # ======================================================================
+        # These gates (Consensus, Causal, FRIA) are all read-only and must
+        # complete with zero violations BEFORE any state mutations (CBF, Fiscal).
+        # This ordering prevents the budget leakage vulnerability where CBF
+        # debits balance but a later read-only gate rejects the action.
+        # ======================================================================
+
+        # Initialize _fiscal_token for later Phase 2 use
         _fiscal_token = None
-        if (
-            tool_name == "execute_trade"
-            and self.fiscal_limit_guard is not None
-            and not violations
-        ):
-            with tracer.start_as_current_span(
-                "cage.fiscal_limit_reserve"
-            ) as fiscal_span:
-                fiscal_span.set_attribute(
-                    "langfuse.observation.name", "fiscal_limit_reserve"
-                )
-                fiscal_span.set_attribute("governance.stage", "fiscal_limit")
-                _t_fiscal = time.perf_counter()
-                try:
-                    _amount = float(params.get("amount", 0.0))
-                    _agent_id = str(
-                        params.get("agent_id", params.get("user_id", "unknown-agent"))
-                    )
-                    if _amount > 0:
-                        _fiscal_token = await self.fiscal_limit_guard.reserve(
-                            agent_id=_agent_id,
-                            amount_usd=_amount,
-                        )
-                        fiscal_span.set_attribute(
-                            "governance.fiscal.reservation_id",
-                            _fiscal_token.reservation_id,
-                        )
-                        fiscal_span.set_attribute(
-                            "governance.fiscal.amount_usd", _amount
-                        )
-                        fiscal_span.set_attribute(
-                            "governance.fiscal.running_total_usd",
-                            _fiscal_token.running_total_usd,
-                        )
-                        fiscal_span.set_attribute(
-                            "governance.fiscal.cap_usd", _fiscal_token.cap_usd
-                        )
-                        if _fiscal_token.rejected:
-                            fiscal_span.set_attribute(
-                                "governance.fiscal.result", "REJECTED"
-                            )
-                            violations.append(
-                                f"Fiscal Limit Pre-Reservation REJECTED: "
-                                f"amount=${_amount:,.2f} would exceed daily cap "
-                                f"${_fiscal_token.cap_usd:,.2f} "
-                                f"(running_total=${_fiscal_token.running_total_usd:,.2f}). "
-                                f"reservation_id={_fiscal_token.reservation_id}"
-                            )
-                            _fiscal_token = (
-                                None  # Nothing to release — reservation was denied
-                            )
-                        else:
-                            fiscal_span.set_attribute(
-                                "governance.fiscal.result", "RESERVED"
-                            )
-                    else:
-                        fiscal_span.set_attribute(
-                            "governance.fiscal.result", "SKIPPED_ZERO_AMOUNT"
-                        )
-                except Exception as _fiscal_exc:
-                    fiscal_span.record_exception(_fiscal_exc)
-                    fiscal_span.set_attribute("governance.fiscal.result", "ERROR")
-                    logger.error(
-                        "⛔ FiscalLimitGuard.reserve() failed (%s) — failing closed.",
-                        _fiscal_exc,
-                    )
-                    violations.append(
-                        f"Fiscal Limit Pre-Reservation Error: {_fiscal_exc}"
-                    )
-                fiscal_span.set_attribute(
-                    "governance.stage.latency_ms",
-                    round((time.perf_counter() - _t_fiscal) * 1000, 2),
-                )
 
-        # If any tier up to this point has already produced violations, release
-        # the fiscal reservation immediately so capacity is not held unnecessarily.
-        if violations and _fiscal_token is not None:
-            try:
-                await self.fiscal_limit_guard.release(_fiscal_token)  # type: ignore[union-attr]
-                logger.info(
-                    "🔄 Fiscal reservation released (pre-consensus violation): id=%s",
-                    _fiscal_token.reservation_id,
-                )
-            except Exception as _rel_exc:
-                logger.warning("⚠️ FiscalLimitGuard.release() failed: %s", _rel_exc)
-            _fiscal_token = None
-
-        # 5. ISO 42001: Multi-agent Consensus (trade-specific, high-stakes)
+        # Phase 1.2: ISO 42001: Multi-agent Consensus (trade-specific, high-stakes)
         if tool_name == "execute_trade":
             with tracer.start_as_current_span("cage.consensus_gate") as cons_gate_span:
                 cons_gate_span.set_attribute(
@@ -1639,14 +1464,214 @@ class SymbolicGovernor:
                 fria_meta["primary_framework"],
             )
 
-        # Release fiscal reservation if any post-reservation tier (consensus,
-        # causal, FRIA) produced violations.  The reservation was held optimistically
-        # through those tiers; if they fail we must return the capacity to the pool.
-        if (
-            violations
-            and _fiscal_token is not None
-            and self.fiscal_limit_guard is not None
-        ):
+        # ======================================================================
+        # PHASE 2: ATOMIC STATE MUTATIONS (only if Phase 1 has 0 violations)
+        # ======================================================================
+        # Peer Review Fix: All read-only validation gates completed above.
+        # Phase 2 only executes if there are ZERO violations from Phase 1.
+        # This prevents budget leakage: CBF balance is only debited if all
+        # read-only checks (OPA, Consensus, Causal, FRIA) have passed.
+        #
+        # Phase 2 order:
+        #   1. CBF atomic_verify_and_commit() — debits balance atomically
+        #   2. Fiscal Limit reserve() — reserves USD against daily cap
+        #
+        # Compensation: If fiscal reservation fails after CBF succeeds, we must
+        # call cbf.rollback_state() to restore the debited balance.
+        #
+        # LATENCY TRADE-OFF: CBF now runs AFTER all read-only checks (not in
+        # parallel with OPA). This adds ~CBF_ms latency but ensures correctness.
+        # ======================================================================
+
+        _cbf_committed = False  # Track CBF state for potential rollback
+
+        if tool_name == "execute_trade" and not violations:
+            _cbf_fail_open = os.getenv("CBF_FAIL_OPEN", "false").lower() == "true"
+
+            # --- Phase 2.1: CBF atomic_verify_and_commit ---
+            with tracer.start_as_current_span("cage.cbf_atomic_commit") as cbf_span:
+                cbf_span.set_attribute(
+                    "langfuse.observation.name", "cbf_barrier_check"
+                )
+                cbf_span.set_attribute("governance.stage", "cbf")
+                cbf_span.set_attribute("governance.phase", "mutation")
+                cbf_span.set_attribute("governance.cbf.atomic", True)
+                _t_cbf = time.perf_counter()
+                try:
+                    (
+                        committed,
+                        reason,
+                    ) = await self.safety_filter.atomic_verify_and_commit(
+                        action_name=tool_name,
+                        payload=params,
+                    )
+                    _cbf_committed = committed
+                    cbf_result = "SAFE" if committed else reason
+                    cbf_span.set_attribute("governance.cbf.result", cbf_result[:80])
+                    cbf_span.set_attribute("governance.cbf.committed", committed)
+                    cbf_span.set_attribute(
+                        "governance.stage.latency_ms",
+                        round((time.perf_counter() - _t_cbf) * 1000, 2),
+                    )
+
+                    if not committed and cbf_result.startswith("UNSAFE"):
+                        violations.append(f"Safety Violation (RBC/CBF): {cbf_result}")
+
+                except Exception as cbf_exc:
+                    cbf_span.record_exception(cbf_exc)
+                    cbf_span.set_attribute("governance.cbf.result", "EXCEPTION")
+                    if _cbf_fail_open:
+                        logger.warning(
+                            "⚠️ CBF check unavailable (%s) — CBF_FAIL_OPEN=true, "
+                            "skipping CBF gate. ⚠️ AUDIT: Self-reported cash balance "
+                            "cannot be verified; this gap must be closed before "
+                            "production governance examination.",
+                            cbf_exc,
+                        )
+                        logger.critical(
+                            json.dumps(
+                                {
+                                    "event": "CBF_FAIL_OPEN_ACTIVATED",
+                                    "severity": "CRITICAL",
+                                    "tool": tool_name,
+                                    "cbf_error": str(cbf_exc),
+                                    "audit_note": (
+                                        "CBF gate bypassed via CBF_FAIL_OPEN=true. "
+                                        "Cash balance cannot be independently verified for this trade."
+                                    ),
+                                }
+                            )
+                        )
+                    else:
+                        logger.error(
+                            "⛔ CBF check unavailable (%s) — fail-closed: blocking "
+                            "action because cash barrier cannot be independently "
+                            "verified.",
+                            cbf_exc,
+                        )
+                        violations.append(
+                            "CBF Fail-Closed: Redis unavailable — cannot verify "
+                            "cash barrier. Self-reported balance has no independent "
+                            "provenance. Set CBF_FAIL_OPEN=true to override "
+                            "(audit gap)."
+                        )
+
+            # --- Phase 2.2: Fiscal Limit reserve (only if CBF passed) ---
+            if not violations and self.fiscal_limit_guard is not None:
+                with tracer.start_as_current_span(
+                    "cage.fiscal_limit_reserve"
+                ) as fiscal_span:
+                    fiscal_span.set_attribute(
+                        "langfuse.observation.name", "fiscal_limit_reserve"
+                    )
+                    fiscal_span.set_attribute("governance.stage", "fiscal_limit")
+                    fiscal_span.set_attribute("governance.phase", "mutation")
+                    _t_fiscal = time.perf_counter()
+                    try:
+                        _amount = float(params.get("amount", 0.0))
+                        _agent_id = str(
+                            params.get("agent_id", params.get("user_id", "unknown-agent"))
+                        )
+                        if _amount > 0:
+                            _fiscal_token = await self.fiscal_limit_guard.reserve(
+                                agent_id=_agent_id,
+                                amount_usd=_amount,
+                            )
+                            fiscal_span.set_attribute(
+                                "governance.fiscal.reservation_id",
+                                _fiscal_token.reservation_id,
+                            )
+                            fiscal_span.set_attribute(
+                                "governance.fiscal.amount_usd", _amount
+                            )
+                            fiscal_span.set_attribute(
+                                "governance.fiscal.running_total_usd",
+                                _fiscal_token.running_total_usd,
+                            )
+                            fiscal_span.set_attribute(
+                                "governance.fiscal.cap_usd", _fiscal_token.cap_usd
+                            )
+                            if _fiscal_token.rejected:
+                                fiscal_span.set_attribute(
+                                    "governance.fiscal.result", "REJECTED"
+                                )
+                                violations.append(
+                                    f"Fiscal Limit Pre-Reservation REJECTED: "
+                                    f"amount=${_amount:,.2f} would exceed daily cap "
+                                    f"${_fiscal_token.cap_usd:,.2f} "
+                                    f"(running_total=${_fiscal_token.running_total_usd:,.2f}). "
+                                    f"reservation_id={_fiscal_token.reservation_id}"
+                                )
+                                # Fiscal rejected AFTER CBF committed — must compensate CBF
+                                if _cbf_committed:
+                                    logger.warning(
+                                        "⚠️ Fiscal rejected after CBF commit — initiating "
+                                        "CBF rollback for budget leakage prevention."
+                                    )
+                                    try:
+                                        await self.safety_filter.rollback_state(
+                                            action_name=tool_name,
+                                            payload=params,
+                                        )
+                                        logger.info(
+                                            "✅ CBF rollback complete after fiscal rejection."
+                                        )
+                                        _cbf_committed = False
+                                    except Exception as cbf_rollback_exc:
+                                        logger.error(
+                                            "⛔ CBF rollback failed after fiscal rejection: %s. "
+                                            "BUDGET LEAKAGE POSSIBLE — requires manual reconciliation.",
+                                            cbf_rollback_exc,
+                                        )
+                                _fiscal_token = None
+                            else:
+                                fiscal_span.set_attribute(
+                                    "governance.fiscal.result", "RESERVED"
+                                )
+                        else:
+                            fiscal_span.set_attribute(
+                                "governance.fiscal.result", "SKIPPED_ZERO_AMOUNT"
+                            )
+                    except Exception as _fiscal_exc:
+                        fiscal_span.record_exception(_fiscal_exc)
+                        fiscal_span.set_attribute("governance.fiscal.result", "ERROR")
+                        logger.error(
+                            "⛔ FiscalLimitGuard.reserve() failed (%s) — failing closed.",
+                            _fiscal_exc,
+                        )
+                        violations.append(
+                            f"Fiscal Limit Pre-Reservation Error: {_fiscal_exc}"
+                        )
+                        # Fiscal error AFTER CBF committed — must compensate CBF
+                        if _cbf_committed:
+                            logger.warning(
+                                "⚠️ Fiscal error after CBF commit — initiating "
+                                "CBF rollback for budget leakage prevention."
+                            )
+                            try:
+                                await self.safety_filter.rollback_state(
+                                    action_name=tool_name,
+                                    payload=params,
+                                )
+                                logger.info(
+                                    "✅ CBF rollback complete after fiscal error."
+                                )
+                                _cbf_committed = False
+                            except Exception as cbf_rollback_exc:
+                                logger.error(
+                                    "⛔ CBF rollback failed after fiscal error: %s. "
+                                    "BUDGET LEAKAGE POSSIBLE — requires manual reconciliation.",
+                                    cbf_rollback_exc,
+                                )
+                    fiscal_span.set_attribute(
+                        "governance.stage.latency_ms",
+                        round((time.perf_counter() - _t_fiscal) * 1000, 2),
+                    )
+
+        # Release fiscal reservation if Phase 2 produced violations AFTER fiscal
+        # reservation succeeded. This should be rare since we compensate CBF above,
+        # but handles edge cases.
+        if violations and _fiscal_token is not None and self.fiscal_limit_guard is not None:
             try:
                 await self.fiscal_limit_guard.release(_fiscal_token)
                 logger.info(

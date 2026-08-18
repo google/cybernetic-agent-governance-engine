@@ -518,25 +518,100 @@ class FiscalLimitGuard:
         return token
 
     # Reviewer note H56: saga compensation for post-CBF-commit tier failures. Tracked in CAGE paper §7.3.
-    async def rollback_state(self, amount: float, audit_id: str) -> None:
+    async def rollback_state(
+        self,
+        amount: float,
+        audit_id: str,
+        *,
+        window_key: str | None = None,
+        token: ReservationToken | None = None,
+    ) -> None:
         """Compensating transaction for a failed downstream tier. Called when a tier after
         atomic_verify_and_commit() fails, to restore the debited balance. This implements
-        the Saga pattern compensation step tracked in §7.3 of the CAGE paper."""
+        the Saga pattern compensation step tracked in §7.3 of the CAGE paper.
+
+        Peer Review Fix: Cross-window expiry guard
+        -------------------------------------------
+        If window_key or token.window_key is provided, this method validates that the
+        key matches the current window before decrementing. If the key has expired or
+        belongs to a different window (e.g., rollback called after midnight), the
+        operation is treated as a no-op with a warning log — this prevents creating
+        or modifying stale window keys.
+
+        Args:
+            amount: The USD amount to roll back.
+            audit_id: The audit ID for logging.
+            window_key: Optional explicit window key (e.g., '2026-05-19'). If provided,
+                        validated against current window before rollback.
+            token: Optional ReservationToken (uses token.window_key if window_key not provided).
+        """
+        # Determine the target window key
+        target_window_key: str
+        if window_key is not None:
+            target_window_key = window_key
+        elif token is not None:
+            target_window_key = token.window_key
+        else:
+            # Legacy fallback: compute current window (backward compatible)
+            target_window_key = self._window_key()
+
+        current_window_key = self._window_key()
+
+        # Cross-window expiry guard: if target window differs from current window,
+        # treat as no-op to avoid creating/modifying stale window keys.
+        if target_window_key != current_window_key:
+            logger.warning(
+                "[SAGA-ROLLBACK] Cross-window rollback skipped: target_window=%s != "
+                "current_window=%s audit_id=%s amount=%.2f — treating as no-op to "
+                "prevent stale window key creation.",
+                target_window_key,
+                current_window_key,
+                audit_id,
+                amount,
+            )
+            return
+
+        # Check if the key exists in Redis (expired key guard)
+        try:
+            exists = await self._redis.exists(target_window_key)  # type: ignore[attr-defined]
+            if not exists:
+                logger.warning(
+                    "[SAGA-ROLLBACK] Window key expired/missing: window_key=%s audit_id=%s "
+                    "amount=%.2f — treating as no-op (nothing to decrement).",
+                    target_window_key,
+                    audit_id,
+                    amount,
+                )
+                return
+        except Exception as exc:
+            # If we can't check existence, fail closed (don't rollback blindly)
+            logger.error(
+                "[SAGA-ROLLBACK] Redis EXISTS check failed for audit_id=%s window_key=%s: %s "
+                "— failing closed, not performing rollback.",
+                audit_id,
+                target_window_key,
+                exc,
+            )
+            return
+
         logger.warning(
-            "[SAGA-ROLLBACK] Rolling back %s debit for audit_id=%s",
+            "[SAGA-ROLLBACK] Rolling back %s debit for audit_id=%s window_key=%s",
             amount,
             audit_id,
+            target_window_key,
         )
-        window_key = self._window_key()
         amount_cents = int(round(amount * 100))
         try:
-            result = await self._atomic_decrement(window_key, amount_cents)
+            result = await self._atomic_decrement(target_window_key, amount_cents)
+            # Ensure counter is floored at 0 (already handled in _atomic_decrement,
+            # but log the result for audit trail)
             logger.info(
                 "[SAGA-ROLLBACK] Rollback complete: amount=%.2f audit_id=%s "
-                "new_running_total_cents=%d",
+                "window_key=%s new_running_total_cents=%d",
                 amount,
                 audit_id,
-                result,
+                target_window_key,
+                max(0, result),
             )
         except Exception as exc:
             logger.error(

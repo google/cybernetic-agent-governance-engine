@@ -64,11 +64,20 @@ _spec.loader.exec_module(model)
 #   - Concurrent: 44 (was 24)
 #   - Skipped tier: 38 (was 20)
 # The ungated model remains at 19 because it does not explore NARROW/PAUSE paths.
+#
+# NOTE (Peer Review Fix, 2026-08-18): State counts increased again due to
+# addition of seal_consumed and seal_expired flags (Gap 2 alignment). These
+# model single-use seal consumption semantics per routing_seal.consume_seal().
+# The new counts are:
+#   - Gated: 40 (was 39)
+#   - Concurrent: 45 (was 44)
+#   - Skipped tier: 39 (was 38)
+# The ungated model remains at 19 (does not use seal consumption semantics).
 
-EXPECTED_GATED_STATES = 39
+EXPECTED_GATED_STATES = 40
 EXPECTED_UNGATED_STATES = 19
-EXPECTED_CONCURRENT_STATES = 44
-EXPECTED_SKIPPED_TIER_STATES = 38  # Gap 3 and Gap 4 variants (was 20)
+EXPECTED_CONCURRENT_STATES = 45
+EXPECTED_SKIPPED_TIER_STATES = 39  # Gap 3 and Gap 4 variants (was 38)
 
 
 # ---------------------------------------------------------------------------

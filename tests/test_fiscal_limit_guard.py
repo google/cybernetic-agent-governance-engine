@@ -500,3 +500,156 @@ def test_sync_increment_and_decrement():
     mock_pipe.get.return_value = "3000"
     res_dec = guard._sync_atomic_decrement("key", 1000)
     assert res_dec == 2000
+
+
+# ---------------------------------------------------------------------------
+# Peer Review Fix Tests: Cross-window rollback handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rollback_state_cross_window_skipped(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """Rollback to a different window (e.g., after midnight) is skipped.
+
+    This tests the cross-window expiry guard: if the target window_key
+    differs from the current window, the rollback is treated as a no-op
+    to prevent creating/modifying stale window keys.
+    """
+    guard = FiscalLimitGuard(
+        redis_client=redis_client,
+        daily_cap_usd=500_000.0,
+        reservation_ttl=300,
+    )
+
+    # Reserve in today's window
+    token = await guard.reserve(agent_id="agent-1", amount_usd=50_000.0)
+    assert not token.rejected
+
+    # Simulate rollback with a different (stale) window key
+    stale_window_key = "fiscal:daily_limit:1999-01-01"  # Obviously stale
+
+    # Call rollback_state with the stale window_key
+    # Should be a no-op (no error, no modification)
+    await guard.rollback_state(
+        amount=50_000.0,
+        audit_id="test-audit-001",
+        window_key=stale_window_key,
+    )
+
+    # Verify the current window's balance is unchanged
+    current_spend = await guard.current_spend_usd()
+    assert current_spend == 50_000.0, "Balance should be unchanged after cross-window rollback"
+
+
+@pytest.mark.asyncio
+async def test_rollback_state_expired_window_key_skipped(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """Rollback to an expired/missing window key is skipped.
+
+    If the target window_key no longer exists in Redis (TTL expired),
+    the rollback is treated as a no-op — nothing to decrement.
+    """
+    guard = FiscalLimitGuard(
+        redis_client=redis_client,
+        daily_cap_usd=500_000.0,
+        reservation_ttl=300,
+    )
+
+    # Get the current window key
+    current_window = guard._window_key()
+
+    # Ensure the key does NOT exist (simulate expired)
+    await redis_client.delete(current_window)
+
+    # Call rollback_state — should be a no-op since key doesn't exist
+    await guard.rollback_state(
+        amount=10_000.0,
+        audit_id="test-audit-002",
+        window_key=current_window,
+    )
+
+    # Verify no key was created
+    exists = await redis_client.exists(current_window)
+    assert exists == 0, "Rollback should not create an expired/missing key"
+
+
+@pytest.mark.asyncio
+async def test_rollback_state_with_token_uses_token_window_key(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """Rollback using ReservationToken.window_key correctly targets the token's window."""
+    guard = FiscalLimitGuard(
+        redis_client=redis_client,
+        daily_cap_usd=500_000.0,
+        reservation_ttl=300,
+    )
+
+    # Reserve and get token
+    token = await guard.reserve(agent_id="agent-1", amount_usd=75_000.0)
+    assert not token.rejected
+    assert token.window_key == guard._window_key()
+
+    # Call rollback_state using the token parameter
+    await guard.rollback_state(
+        amount=75_000.0,
+        audit_id="test-audit-003",
+        token=token,
+    )
+
+    # Verify balance was decremented
+    current_spend = await guard.current_spend_usd()
+    assert current_spend == 0.0, "Rollback with token should decrement balance"
+
+
+@pytest.mark.asyncio
+async def test_rollback_state_legacy_no_window_key_uses_current(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """Legacy rollback (no window_key/token) uses current window — backward compatible."""
+    guard = FiscalLimitGuard(
+        redis_client=redis_client,
+        daily_cap_usd=500_000.0,
+        reservation_ttl=300,
+    )
+
+    # Reserve
+    token = await guard.reserve(agent_id="agent-1", amount_usd=30_000.0)
+    assert not token.rejected
+
+    # Call rollback_state without window_key or token (legacy path)
+    await guard.rollback_state(
+        amount=30_000.0,
+        audit_id="test-audit-004",
+    )
+
+    # Verify balance was decremented (backward compatible)
+    current_spend = await guard.current_spend_usd()
+    assert current_spend == 0.0, "Legacy rollback should work on current window"
+
+
+@pytest.mark.asyncio
+async def test_rollback_state_counter_floors_at_zero(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """Rollback amount greater than balance floors at zero — no negative balance."""
+    guard = FiscalLimitGuard(
+        redis_client=redis_client,
+        daily_cap_usd=500_000.0,
+        reservation_ttl=300,
+    )
+
+    # Reserve a small amount
+    await guard.reserve(agent_id="agent-1", amount_usd=5_000.0)
+
+    # Rollback more than reserved (should floor at 0)
+    await guard.rollback_state(
+        amount=100_000.0,  # Way more than reserved
+        audit_id="test-audit-005",
+    )
+
+    # Verify balance is 0, not negative
+    current_spend = await guard.current_spend_usd()
+    assert current_spend == 0.0, "Balance must floor at 0, never go negative"
