@@ -1,0 +1,59 @@
+{
+  "generated_at": "2026-08-18T18:20:53Z",
+  "redis_target": "127.0.0.1:6379",
+  "kms_configured": true,
+  "plaid_credentials_configured": false,
+  "write_path": {
+    "mode": "network_rtt_proxy",
+    "iterations_requested": 20,
+    "iterations_succeeded": 20,
+    "failures": 0,
+    "plaid_fetch_ms": {
+      "p50": 69.856,
+      "p95": 92.705,
+      "p99": 92.705,
+      "mean": 71.131
+    },
+    "kms_sign_ms": {
+      "p50": 130.4,
+      "p95": 1678.0,
+      "p99": 1678.0,
+      "mean": 232.16
+    },
+    "redis_write_ms": {
+      "p50": 40.8,
+      "p95": 243.4,
+      "p99": 243.4,
+      "mean": 52.125
+    }
+  },
+  "read_overhead": {
+    "iterations": 200,
+    "self_reported_ms": {
+      "p50": 81.166,
+      "p95": 168.588,
+      "p99": 202.237,
+      "mean": 98.889
+    },
+    "reconciled_ms": {
+      "p50": 42.349,
+      "p95": 107.471,
+      "p99": 189.814,
+      "mean": 49.753
+    },
+    "delta_p50_ms": -38.817,
+    "delta_p95_ms": -61.117
+  },
+  "safety_violation": {
+    "inflated_self_reported_balance_usd": 500000.0,
+    "true_reconciled_balance_usd": 8000.0,
+    "trade_amount_usd": 10000.0,
+    "verdict_using_self_reported_balance": "SAFE",
+    "balance_source_used_1": "self_reported",
+    "verdict_using_reconciled_balance": "[CTRL_MRM_004] SR 26-2 \u00a7IV \u2013 Model Risk Management Violation: Safety Violation (RBC/CBF). h(next)=-13000.00 < threshold=-1500.00",
+    "balance_source_used_2": "reconciled",
+    "self_reported_verdict_was_safe": true,
+    "reconciled_verdict_was_unsafe": true,
+    "poam_023_validated": true
+  }
+}

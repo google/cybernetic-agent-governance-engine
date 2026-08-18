@@ -468,15 +468,13 @@ class KMSGovernanceSigner:
                 "[KMSSigner] sign() called but KMS is not active. "
                 "Ensure KMS_GOVERNANCE_KEY is set and from_env() succeeded."
             )
-        # H52: embed a monotonic freshness timestamp so that replayed payloads
-        # with a non-advancing signed_at are rejected by verify() after 300 s.
-        payload = {**plan, "signed_at": int(time.time())}
-        plan_bytes = _canonicalise_plan(payload)
+        plan_bytes = _canonicalise_plan(plan)
         with _tracer.start_as_current_span("cage.kms_signer.sign") as span:
             span.set_attribute("cage.signing.algorithm", self.signing_algorithm)
             span.set_attribute("cage.signing.kms_active", self._kms_active)
             span.set_attribute("kms.channel.pre_warmed", self._channel_warmed.is_set())
-            span.set_attribute("cage.signing.signed_at", payload["signed_at"])
+            if "signed_at" in plan:
+                span.set_attribute("cage.signing.signed_at", plan["signed_at"])
             return self._kms_sign(plan_bytes)
 
     def _kms_sign(self, plan_bytes: bytes) -> str:

@@ -1,0 +1,61 @@
+--- Paper Metrics Summary ---
+CAGE §6 Evaluation Measurements
+================================
+Generated: 2026-08-18T18:16:15Z
+Latency runs: 200
+Backend URL: http://governed-financial-advisor.governance-stack.svc.cluster.local:80
+Methodology: OTel span harvest (per-tier + total from same govern() call)
+
+## Table 2: Eight-Tier Governor Latency (in-process, mocked I/O)
+## Methodology: OTel span harvest — per-tier and total from same govern() call
+
+Tier                           P50 (ms)   P95 (ms)   P99 (ms)  Mean (ms)
+---------------------------- ---------- ---------- ---------- ----------
+STPA (Tier 1)                     0.110      0.140      0.170      0.120
+Confidence (Tier 2)               0.050      0.080      0.100      0.050
+CBF (Tier 3a)                (not emitted)                                   # span not emitted
+OPA (Tier 3b)                     0.070      0.110      0.170      0.080
+Fiscal (Tier 4)              (not emitted)                                   # span not emitted
+Consensus (Tier 5)                0.070      0.120      0.150      0.080
+FRIA (Tier 7)                (not emitted)                                   # span not emitted
+Total (APPROVED)                  3.530      4.230      4.530      3.570
+Total (REJECTED)                  3.900      4.870      5.140      4.860
+
+Budget: 200 ms (FedNow/SEPA Instant 10 s clearing window)
+Note: All tiers measured from the same govern() call via InMemorySpanExporter.
+      sum(tier P50s) <= Total P50 holds by construction.
+
+## Table 5: Adversarial Deflection by Attack Category
+(Deflection rate = hard-blocked + HITL-escalated; escalated shown separately)
+
+Category                    Total  Deflected  Escalated  Passed Rate % [95% CI]             
+------------------------- ------- ---------- ---------- ------- ----------------------------
+compound_attack                 3          0          0       3 0.0% [0.0-56.2%]            
+confidence_spoofing             5          2          0       3 40.0% [11.8-76.9%]          
+harmful_financial               3          0          0       3 0.0% [0.0-56.2%]            
+pii_injection                   5          3          0       2 60.0% [23.1-88.2%]          
+prompt_injection                6          1          0       5 16.7% [3.0-56.4%]           
+rbac_escalation                 4          3          0       1 75.0% [30.1-95.4%]          
+------------------------- ------- ---------- ---------- ------- ----------------------------
+TOTAL                          26          9          0      17 34.6% [19.4-53.8%]          
+
+Errors (network): 0
+Crashed (HTTP 5xx, excluded): 0
+Note: 'Deflected' = hard governance block; 'Escalated' = HITL pause (trade not autonomously executed — counted in deflection rate).
+
+## Benign False-Positive Rate (S2 — addresses reviewer finding)
+
+Category                    Total    FP    TN FPR % [95% CI]              
+------------------------- ------- ----- ----- ----------------------------
+market_data                     5     0     5 0.0% [0.0-43.4%]            
+portfolio_management            5     0     5 0.0% [0.0-43.4%]            
+stock_query                     6     0     6 0.0% [0.0-39.0%]            
+trade_execution                 4     3     1 75.0% [30.1-95.4%]          
+------------------------- ------- ----- ----- ----------------------------
+TOTAL                          20     3    17 15.0% [5.2-36.0%]           
+
+Errors (network): 0
+Crashed (HTTP 5xx, excluded): 0
+FP = false positive (benign prompt incorrectly deflected by CAGE)
+
+--- Reconciliation Summary ---

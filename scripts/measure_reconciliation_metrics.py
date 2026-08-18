@@ -408,12 +408,14 @@ async def _measure_cbf_read_overhead(
             "source": "plaid",
             "balance_usd": 48_250.0,
             "verified_at": time.time(),
+            "sequence": 0,
         }
         signature_hex = signer.sign(payload_dict)
         fresh_result = ReconciliationResult(
             source="plaid",
             balance_usd=payload_dict["balance_usd"],
             verified_at=payload_dict["verified_at"],
+            sequence=0,
             signature=signature_hex,
         )
         sync_redis.setex(
@@ -522,12 +524,14 @@ async def _measure_safety_violation_detection(
         "source": "plaid",
         "balance_usd": true_reconciled_balance,
         "verified_at": time.time(),
+        "sequence": 0,
     }
     signature_hex = signer.sign(payload_dict)
     recon_result = ReconciliationResult(
         source="plaid",
         balance_usd=payload_dict["balance_usd"],
         verified_at=payload_dict["verified_at"],
+        sequence=0,
         signature=signature_hex,
     )
     sync_redis.setex(_REDIS_KEY_VERIFIED_BALANCE, 300, recon_result.to_redis_payload())
@@ -635,8 +639,16 @@ def _fmt_safety_violation_section(safety: dict[str, Any]) -> str:
 
 
 def _write_outputs(results: dict[str, Any]) -> None:
-    json_path = Path("/tmp/cage_reconciliation_metrics.json")
-    txt_path = Path("/tmp/cage_reconciliation_metrics.txt")
+    json_path = Path(
+        os.environ.get(
+            "RECONCILIATION_OUTPUT_JSON", "/tmp/cage_reconciliation_metrics.json"
+        )
+    )
+    txt_path = Path(
+        os.environ.get(
+            "RECONCILIATION_OUTPUT_TXT", "/tmp/cage_reconciliation_metrics.txt"
+        )
+    )
 
     json_path.write_text(json.dumps(results, indent=2, default=str))
     print(f"[output] JSON written to {json_path}")
