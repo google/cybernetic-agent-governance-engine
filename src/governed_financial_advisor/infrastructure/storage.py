@@ -145,7 +145,17 @@ class LocalStorage(StorageInterface):
         logger.info("LocalStorage initialised at %s", self.base_dir)
 
     def _resolve(self, remote_path: str) -> Path:
-        return self.base_dir / remote_path
+        # Contain the join within base_dir. A remote_path with ".." segments
+        # (``../../etc/passwd``) or an absolute component (``/etc/passwd`` — which
+        # makes ``base_dir / remote_path`` discard base_dir entirely) would escape
+        # the storage root and let a caller read or write arbitrary filesystem
+        # locations through read_text/write_text/upload/download/exists.
+        dest = self.base_dir / remote_path
+        if not dest.resolve().is_relative_to(self.base_dir.resolve()):
+            raise ValueError(
+                f"LocalStorage: remote_path {remote_path!r} escapes the storage root"
+            )
+        return dest
 
     def upload(self, local_path: str, remote_path: str) -> str:
         import shutil

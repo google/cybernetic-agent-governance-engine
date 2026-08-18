@@ -413,4 +413,43 @@ class TestH12PolicySchemaValidation:
                 loader.load_stamp_hazards(blob_name)
 
 
+# =============================================================================
+# LocalStorage path containment: _resolve() must keep caller paths under base_dir
+# =============================================================================
+
+
+class TestLocalStoragePathContainment:
+    """LocalStorage._resolve rejects paths that escape the storage root."""
+
+    def _backend(self, tmp_path: Path):
+        from src.governed_financial_advisor.infrastructure.storage import LocalStorage
+
+        return LocalStorage(base_dir=str(tmp_path / "store"))
+
+    def test_relative_traversal_rejected(self, tmp_path):
+        backend = self._backend(tmp_path)
+        with pytest.raises(ValueError):
+            backend.write_text("../escaped.txt", "pwned")
+        assert not (tmp_path / "escaped.txt").exists()
+
+    def test_absolute_path_rejected(self, tmp_path):
+        backend = self._backend(tmp_path)
+        outside = tmp_path / "outside.txt"
+        # An absolute component makes ``base_dir / remote_path`` discard base_dir.
+        with pytest.raises(ValueError):
+            backend.write_text(str(outside), "pwned")
+        assert not outside.exists()
+
+    def test_nested_traversal_rejected(self, tmp_path):
+        backend = self._backend(tmp_path)
+        with pytest.raises(ValueError):
+            backend.read_text("a/b/../../../../etc/hostname")
+
+    def test_legitimate_nested_path_roundtrips(self, tmp_path):
+        backend = self._backend(tmp_path)
+        backend.write_text("oscal/2026/report.txt", "ok")
+        assert backend.read_text("oscal/2026/report.txt") == "ok"
+        assert backend.exists("oscal/2026/report.txt")
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.local]
