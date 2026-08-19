@@ -274,6 +274,95 @@ class TestGeneratedCodeInjection:
 
 
 # ---------------------------------------------------------------------------
+# Python validator numeric-finiteness tests
+# ---------------------------------------------------------------------------
+
+
+_NUMERIC_YAML = """\
+system:
+  name: "Numeric Test System"
+  version: "0.1"
+  description: "greater_than threshold check"
+  controller: "Agent"
+  controlled_process: "Market"
+
+hazards:
+  - id: H-1
+    description: "Stale data."
+    severity: high
+
+control_actions:
+  - name: do_trade
+    description: "Execute a trade."
+    params:
+      - name: latency_ms
+        type: number
+        required: true
+
+unsafe_control_actions:
+  - id: UCA-1
+    action: do_trade
+    uca_type: unsafe_action
+    hazard_refs: [H-1]
+    description: "Trade executed with stale data."
+    condition:
+      param: latency_ms
+      operator: greater_than
+      threshold: 100
+    enforcement: [python]
+
+safety_constraints: []
+"""
+
+
+class TestPythonGeneratedFiniteness:
+    """A ``greater_than`` check compares ``float(val) > threshold``. ``float()``
+    accepts ``NaN``/``inf``, and ``nan > threshold`` is False, so a non-finite
+    param would otherwise slip through the Tier-0 STPA gate. The generated
+    checks must fail closed on non-finite input.
+    """
+
+    @staticmethod
+    def _load_generated(source: str):  # type: ignore[no-untyped-def]
+        namespace: dict = {}
+        exec(compile(source, "<generated_stpa_validator>", "exec"), namespace)
+        return namespace["GeneratedSTPAValidator"]()
+
+    def test_generated_source_guards_non_finite(self) -> None:
+        cs = ControlStructureModel(**yaml.safe_load(_NUMERIC_YAML))
+        gen = generate_python(cs)
+        assert "import math" in gen
+        assert "math.isfinite" in gen
+
+    def test_literal_threshold_rejects_non_finite(self) -> None:
+        validator = self._load_generated(
+            generate_python(ControlStructureModel(**yaml.safe_load(_NUMERIC_YAML)))
+        )
+        # In-range value passes; over-threshold value violates (unchanged).
+        assert validator.validate("do_trade", {"latency_ms": 10}) == []
+        assert validator.validate("do_trade", {"latency_ms": 10**6})
+        # Non-finite values fail closed instead of slipping through.
+        assert validator.validate("do_trade", {"latency_ms": float("nan")})
+        assert validator.validate("do_trade", {"latency_ms": float("inf")})
+
+    def test_committed_validator_rejects_nan(self) -> None:
+        from src.gateway.governance.generated_stpa_validator import (
+            GeneratedSTPAValidator,
+        )
+
+        v = GeneratedSTPAValidator()
+        # NaN on the latency (UCA-2) and drawdown (UCA-5) gates fails closed.
+        assert v.validate(
+            "execute_trade", {"latency_ms": float("nan"), "drawdown": 0.0}
+        )
+        assert v.validate(
+            "execute_trade", {"latency_ms": 0.0, "drawdown": float("nan")}
+        )
+        # A valid in-range request stays non-violating.
+        assert v.validate("execute_trade", {"latency_ms": 1, "drawdown": 0.0}) == []
+
+
+# ---------------------------------------------------------------------------
 # OPA generation tests
 # ---------------------------------------------------------------------------
 
