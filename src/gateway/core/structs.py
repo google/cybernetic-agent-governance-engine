@@ -16,6 +16,7 @@
 Core Structures for the Gateway Service.
 """
 
+import math
 import re
 import uuid
 
@@ -62,6 +63,8 @@ class TradeOrder(BaseModel):
     @field_validator("confidence")
     @classmethod
     def validate_confidence(cls, v):  # type: ignore[no-untyped-def]
+        if not math.isfinite(v):
+            raise ValueError("Confidence must be a finite number, got non-finite value")
         if not (0.0 <= v <= 1.0):
             raise ValueError("Confidence must be between 0.0 and 1.0")
         return v
@@ -69,6 +72,8 @@ class TradeOrder(BaseModel):
     @field_validator("amount")
     @classmethod
     def validate_positive(cls, v):  # type: ignore[no-untyped-def]
+        if not math.isfinite(v):
+            raise ValueError("Amount must be a finite number, got non-finite value")
         if v <= 0:
             raise ValueError("Amount must be positive")
         return v

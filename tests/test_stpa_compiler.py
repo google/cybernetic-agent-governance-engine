@@ -533,4 +533,101 @@ class TestCLI:
         assert "UCA-5" in captured.out or "uca_5" in captured.out
 
 
+# ---------------------------------------------------------------------------
+# less_than operator finiteness tests
+# ---------------------------------------------------------------------------
+
+_LESS_THAN_LITERAL_YAML = """\
+system:
+  name: "LT Test System"
+  version: "0.1"
+  description: "less_than literal test"
+  controller: "Agent"
+  controlled_process: "Market"
+
+hazards:
+  - id: H-1
+    description: "Test hazard."
+    severity: high
+
+control_actions:
+  - name: check_signal
+    description: "Check a signal value."
+    params:
+      - name: signal_strength
+        type: float
+        required: false
+
+unsafe_control_actions:
+  - id: UCA-LT1
+    action: check_signal
+    uca_type: unsafe_action
+    hazard_refs: [H-1]
+    description: "Signal strength below minimum threshold."
+    condition:
+      param: signal_strength
+      operator: less_than
+      threshold: 0.5
+    enforcement: [python]
+
+safety_constraints: []
+"""
+
+
+class TestPythonGeneratedLessThanFiniteness:
+    """less_than with literal threshold must reject NaN/inf via math.isfinite."""
+
+    def _make_validator(self):
+        raw = yaml.safe_load(_LESS_THAN_LITERAL_YAML)
+        cs = ControlStructureModel(**raw)
+        gen = generate_python(cs)
+        ns: dict = {}
+        exec(gen, ns)  # noqa: S102
+        return ns["GeneratedSTPAValidator"]()
+
+    def test_nan_yields_violation(self) -> None:
+        v = self._make_validator()
+        result = v.validate("check_signal", {"signal_strength": float("nan")})
+        assert any("Non-finite" in msg for msg in result), (
+            f"Expected non-finite violation, got: {result}"
+        )
+
+    def test_inf_yields_violation(self) -> None:
+        v = self._make_validator()
+        result = v.validate("check_signal", {"signal_strength": float("inf")})
+        assert any("Non-finite" in msg for msg in result), (
+            f"Expected non-finite violation, got: {result}"
+        )
+
+    def test_neg_inf_yields_violation(self) -> None:
+        v = self._make_validator()
+        result = v.validate("check_signal", {"signal_strength": float("-inf")})
+        assert any("Non-finite" in msg or "UCA-LT1" in msg for msg in result), (
+            f"Expected violation, got: {result}"
+        )
+
+    def test_valid_below_threshold_triggers(self) -> None:
+        v = self._make_validator()
+        result = v.validate("check_signal", {"signal_strength": 0.1})
+        assert any("UCA-LT1" in msg for msg in result)
+
+    def test_valid_above_threshold_passes(self) -> None:
+        v = self._make_validator()
+        result = v.validate("check_signal", {"signal_strength": 0.9})
+        assert result == []
+
+    def test_none_param_returns_no_violation(self) -> None:
+        """Optional param: None means 'not provided', not a violation for literal threshold."""
+        v = self._make_validator()
+        result = v.validate("check_signal", {})
+        assert result == []
+
+    def test_import_math_in_generated_code(self) -> None:
+        """Generated Python must include `import math` for isfinite calls."""
+        raw = yaml.safe_load(_LESS_THAN_LITERAL_YAML)
+        cs = ControlStructureModel(**raw)
+        gen = generate_python(cs)
+        assert "import math" in gen
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.local]

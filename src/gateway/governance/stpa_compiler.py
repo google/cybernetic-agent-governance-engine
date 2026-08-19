@@ -748,6 +748,34 @@ def generate_python(cs: ControlStructureModel) -> str:
                 f"            if val is not None and float(val) > {cond.threshold}:",
                 f'                return "STPA Violation {uca.id}: {uca.description}"',
             ]
+        elif param and op == "less_than" and cond.threshold_ref:
+            # Map dot-path to THRESHOLDS singleton access
+            attr_path = cond.threshold_ref.replace(".", ".")
+            body_lines += [
+                f"            threshold = THRESHOLDS.{attr_path}",
+                f'            val = params.get("{param}")',
+                "            if val is None:",
+                f'                logger.warning("{uca.id}: missing param `{param}` — failing closed.")',
+                f'                return "STPA Violation {uca.id}: Missing required param `{param}`."',
+                "            f_val = float(val)",
+                "            if not math.isfinite(f_val):",
+                f'                return "STPA Violation {uca.id}: Non-finite param `{param}`."',
+                "            if f_val < threshold:",
+                "                return (",
+                f'                    f"STPA Violation {uca.id}: {uca.description} '
+                f'({{f_val:.4f}} < {{threshold}})"',
+                "                )",
+            ]
+        elif param and op == "less_than" and cond.threshold is not None:
+            body_lines += [
+                f'            val = params.get("{param}")',
+                "            if val is not None:",
+                "                f_val = float(val)",
+                "                if not math.isfinite(f_val):",
+                f'                    return "STPA Violation {uca.id}: Non-finite param `{param}`."',
+                f"                if f_val < {cond.threshold}:",
+                f'                    return "STPA Violation {uca.id}: {uca.description}"',
+            ]
         elif cond.composite:
             body_lines += [
                 f"            # Composite condition: {cond.composite}",
@@ -779,6 +807,7 @@ def generate_python(cs: ControlStructureModel) -> str:
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from src.gateway.governance.schemas.thresholds import THRESHOLDS

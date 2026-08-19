@@ -31,6 +31,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import time
 import uuid
@@ -42,7 +43,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from opentelemetry import context as otel_context
 from opentelemetry.propagate import extract as otel_extract
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.kms_signer import get_governance_signer
@@ -443,6 +444,17 @@ class ValidateActionRequest(BaseModel):
     action: str
     params: dict[str, Any]
     policy_version_id: str | None = None
+
+    @field_validator("params")
+    @classmethod
+    def _reject_non_finite_floats(cls, v: dict[str, Any]) -> dict[str, Any]:
+        for key, val in v.items():
+            if isinstance(val, float) and not math.isfinite(val):
+                raise ValueError(
+                    f"params[{key!r}] contains non-finite float {val!r} "
+                    "— NaN and Infinity are not permitted"
+                )
+        return v
 
 
 # ---------------------------------------------------------------------------
