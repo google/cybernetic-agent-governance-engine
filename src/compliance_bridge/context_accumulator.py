@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-context_accumulator.py — Cryptographic Hash-Chained Context Accumulator (CAGE v0.1.0)
+context_accumulator.py — Cryptographic Hash-Chained Context Accumulator (CAGE v1.1)
 
 AARM Conformance: Satisfies the "Context Accumulator" mandate from the Cloud Security
 Alliance (CSA) Autonomous Agent Risk Management (AARM) specification — an append-only,
@@ -22,20 +22,16 @@ that provides an unalterable chain of custody before serialization into NIST OSC
 
 Architecture:
   Each ContextAccumulatorEntry captures the SHA-256 fingerprint of the preceding entry,
-  forming a blockchain-style linked list. The genesis entry's ``prev_hash`` is seeded from
+  forming a cryptographic linked list. The genesis entry's ``prev_hash`` is seeded from
   the ``audit_id`` SHA-256, deterministically tying the chain to its audit run.
 
-  Hash function: SHA-256(prev_hash_hex || canonical_header || json.dumps(content,
-  sort_keys=True)), where canonical_header binds the node's schema, index,
-  audit_id, control_id and event_type into the link.
-
-  This matches the existing production pattern established in examples/telemetry.py
-  (``PlaygroundTelemetry``) and validated by governance_demo.py ACT 3, now promoted to
-  the core compliance pipeline.
+  Hash function (v1.1): SHA-256(prev_hash_hex || canonical_header || json.dumps(content,
+  sort_keys=True, separators=(",", ":"))), where canonical_header binds the node's schema
+  ("cage-context-accumulator/1.1"), index, audit_id, control_id and event_type into the link.
 
 Wire format (NDJSON, one JSON object per line):
   {
-    "schema":        "cage-context-accumulator/1.0",
+    "schema":        "cage-context-accumulator/1.1",
     "node_index":    0,
     "audit_id":      "<audit-run-id>",
     "control_id":    "<ISO-42001-control-id>",

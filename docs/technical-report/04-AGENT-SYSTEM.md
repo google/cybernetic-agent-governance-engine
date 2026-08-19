@@ -453,15 +453,18 @@ POST /governance/validate-action
         │
         ▼
 SymbolicGovernor._run_checks()
-  Tier 0: STPA/STAMP UCA validation — GeneratedSTPAValidator.validate()
-  Tier 1: Agent confidence pre-check — fast-fail against AGENT_CONFIDENCE_THRESHOLD
-  Tiers 2/4: asyncio.gather(cbf_check, opa_check)
-           ├─ CBF (Tier 2): h(S(t+1)) ≥ (1−γ)·h(S(t)) via Lua atomic check+commit + replica WAIT
-           └─ OPA (Tier 4): trade.governance Rego policy evaluated
-  Tier 3: Fiscal Limit Pre-Reservation — FiscalLimitGuard.reserve() (Redis WATCH/MULTI/EXEC)
-  Tier 5: Consensus — required if amount ≥ $10,000 USD (_CRITIC_TIMEOUT_S=10.0 per critic)
-  Tier 6: Causal gatekeeper — SCM + PlaceboTreatmentRefuter (60s Redis cache)
-  Tier 6b: FRIA zone classification — ALLOW / DEFER / DENY
+  [PHASE 1: READ-ONLY VALIDATION GATES]
+  • Tier 0: STPA/STAMP UCA validation — GeneratedSTPAValidator.validate()
+  • Tier 1: Agent confidence pre-check — fast-fail against AGENT_CONFIDENCE_THRESHOLD
+  • Tier 2b: OPA Rego policy evaluation — trade.governance policy checked prior to mutation
+  • Tier 5: Consensus — required if amount ≥ $10,000 USD (_CRITIC_TIMEOUT_S=10.0 per critic)
+  • Tier 6: Causal gatekeeper — SCM β>0 guard + PlaceboTreatmentRefuter (60s Redis cache)
+  • Tier 6b: FRIA zone classification — ALLOW / DEFER / DENY
+        │ (Proceeds ONLY if all Phase 1 gates emit ALLOW)
+        ▼
+  [PHASE 2: ATOMIC STATE MUTATIONS & PRE-RESERVATION GATE]
+  • Tier 2a: CBF atomic_verify_and_commit() — Lua-atomic Redis check+debit + replica WAIT
+  • Tier 3: Fiscal Limit Pre-Reservation — FiscalLimitGuard.reserve() (Redis WATCH/MULTI/EXEC)
         │
         ▼
 Routing seal v2 issued: <expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>

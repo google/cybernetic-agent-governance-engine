@@ -167,6 +167,13 @@ class State:
                         Only relevant for NARROW state transitions.
         transient_block: True if a transient condition (rate limit, circuit breaker)
                         caused the PAUSE. Only relevant for PAUSE state transitions.
+        seal_consumed:  (Peer Review Fix - Gap 2 alignment) True if the seal has been
+                        consumed by the actuator. Seals are single-use: once consumed,
+                        the same seal cannot authorize another EXECUTED transition.
+                        This models the routing_seal.consume_seal() atomic operation.
+        seal_expired:   (Peer Review Fix - Gap 2 alignment) True if the seal TTL has
+                        elapsed before consumption. Expired seals cannot authorize
+                        EXECUTED transitions; the action must re-enter CHECKING.
     """
 
     phase: str
@@ -175,6 +182,8 @@ class State:
     resolved_allow: bool
     soft_threshold_exceeded: bool = False
     transient_block: bool = False
+    seal_consumed: bool = False
+    seal_expired: bool = False
 
     def tier_result(self, tier: str) -> str:
         return dict(self.tier_results).get(tier, "PENDING")
@@ -203,6 +212,8 @@ def initial_state() -> State:
         resolved_allow=False,
         soft_threshold_exceeded=False,
         transient_block=False,
+        seal_consumed=False,
+        seal_expired=False,
     )
 
 
@@ -347,17 +358,61 @@ def gated_transitions(state: State) -> Iterator[State]:
                         )
 
     elif state.phase == "SEAL_ISSUED":
-        # Actuator verifies seal before executing
-        # Seal valid → EXECUTED
-        yield State(
-            phase="EXECUTED",
-            tier_results=state.tier_results,
-            seal_present=True,
-            resolved_allow=True,
-            soft_threshold_exceeded=False,
-            transient_block=False,
-        )
-        # Seal invalid/expired → DENIED (e.g. TTL elapsed, HMAC mismatch)
+        # ======================================================================
+        # Peer Review Fix: Gap 2 alignment — seal single-use consumption model
+        # ======================================================================
+        # The actuator verifies the seal before executing. Seals are SINGLE-USE:
+        # once consumed (seal_consumed=True), the same seal cannot authorize
+        # another EXECUTED transition. This models routing_seal.consume_seal()
+        # which atomically validates + marks the seal as consumed in Redis.
+        #
+        # Transitions from SEAL_ISSUED:
+        #   1. Seal valid AND not consumed AND not expired → consume → EXECUTED
+        #   2. Seal already consumed (replay attack) → DENIED (no re-execution)
+        #   3. Seal expired (TTL elapsed) → DENIED (must re-enter governance)
+        #   4. Seal invalid (HMAC mismatch, tampered) → DENIED
+        # ======================================================================
+
+        if not state.seal_consumed and not state.seal_expired:
+            # Path 1: Seal valid, not consumed, not expired → consume and execute
+            yield State(
+                phase="EXECUTED",
+                tier_results=state.tier_results,
+                seal_present=True,
+                resolved_allow=True,
+                soft_threshold_exceeded=False,
+                transient_block=False,
+                seal_consumed=True,  # Mark as consumed (single-use)
+                seal_expired=False,
+            )
+            # Path 3: Seal expires before consumption (non-deterministic TTL race)
+            yield State(
+                phase="DENIED",
+                tier_results=state.tier_results,
+                seal_present=False,
+                resolved_allow=False,
+                soft_threshold_exceeded=False,
+                transient_block=False,
+                seal_consumed=False,
+                seal_expired=True,  # TTL elapsed
+            )
+
+        if state.seal_consumed:
+            # Path 2: Seal already consumed → replay attack blocked → DENIED
+            # This models the atomic Redis check in consume_seal() that prevents
+            # the same seal from being used twice.
+            yield State(
+                phase="DENIED",
+                tier_results=state.tier_results,
+                seal_present=False,
+                resolved_allow=False,
+                soft_threshold_exceeded=False,
+                transient_block=False,
+                seal_consumed=True,
+                seal_expired=False,
+            )
+
+        # Path 4: Seal invalid (HMAC mismatch) — always possible
         yield State(
             phase="DENIED",
             tier_results=state.tier_results,
@@ -365,6 +420,8 @@ def gated_transitions(state: State) -> Iterator[State]:
             resolved_allow=False,
             soft_threshold_exceeded=False,
             transient_block=False,
+            seal_consumed=False,
+            seal_expired=False,
         )
 
     # EXECUTED, DENIED, NARROW, and PAUSE are terminal — no successors
@@ -894,20 +951,45 @@ def main() -> None:
 
     # Gap 2: govern() without seal — models the old path where govern() returned
     # None and callers could proceed without seal verification.
+    #
+    # Peer Review Fix: Gap 2 alignment — clarify actuator gate semantics.
+    # The actuator gate is the LAST defense: it verifies the seal before executing.
+    # Without seal issuance, the actuator has no artifact to verify, and the action
+    # could proceed without governance approval. This function models that violation.
     def no_seal_govern_transitions(state: State) -> Iterator[State]:
-        """govern() issues no seal — models the pre-fix direct-bind path."""
+        """govern() issues no seal — models the pre-fix direct-bind path.
+
+        Actuator Gate Semantics (Gap 2 alignment):
+        -------------------------------------------
+        The actuator is the component that EXECUTES the governed action (e.g., the
+        trade execution endpoint). Its sole responsibility in the seal-based
+        architecture is:
+            1. Receive the seal from the caller
+            2. Call routing_seal.consume_seal() to atomically validate + consume
+            3. Only proceed with execution if consume_seal() returns True
+
+        Without seal issuance (this function), the actuator receives no seal, and
+        if it proceeds anyway, it creates a direct-bind violation: EXECUTED state
+        is reached without resolvedAllow=TRUE.
+
+        This models the pre-fix architecture where govern() returned None on
+        approval (no seal), and the actuator had no artifact to verify.
+        """
         if state.phase == "CHECKING":
             results = dict(state.tier_results)
             pending_tiers = [t for t in TIERS if results[t] == "PENDING"]
             if not pending_tiers and not state.any_tier_failed():
                 # All tiers passed but no seal issued — direct bind to EXECUTED
+                # This is a VIOLATION: actuator cannot verify governance approval
                 yield State(
                     phase="EXECUTED",
                     tier_results=state.tier_results,
                     seal_present=False,
-                    resolved_allow=False,  # ← violation
+                    resolved_allow=False,  # ← VIOLATION: No seal → no resolution
                     soft_threshold_exceeded=False,
                     transient_block=False,
+                    seal_consumed=False,
+                    seal_expired=False,
                 )
                 return
         yield from ungated_transitions(state)

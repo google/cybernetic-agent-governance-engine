@@ -1,0 +1,36 @@
+CAGE §6.3/6.4/6.5 Reconciliation Measurements
+===============================================
+Generated: 2026-08-18T18:20:53Z
+
+## Table 3: Reconciliation Write-Path Latency (ms)
+(mode: network_rtt_proxy; 20/20 iterations succeeded)
+
+Component                         P50      P95      P99     Mean
+---------------------------- -------- -------- -------- --------
+Plaid balance fetch             69.86    92.70    92.70    71.13
+Cloud KMS asymmetricSign       130.40  1678.00  1678.00   232.16
+Redis SETEX pipeline            40.80   243.40   243.40    52.12
+
+## Table 4: CBF Read-Path Overhead (ms)
+(200 iterations)
+
+Path                                               P50      P95
+--------------------------------------------- -------- --------
+Self-reported (safety:current_cash)             81.166  168.588
+Reconciled (verified_balance + KMS verify)      42.349  107.471
+
+Delta P50/P95 overhead: -38.817 / -61.117 ms
+
+## Section 6.5: Safety Violation Detection
+
+Inflated self-reported balance: $500,000.00
+True KMS-reconciled balance:    $8,000.00
+Trade amount:                   $10,000.00
+
+Verdict using self-reported balance (source=self_reported):
+  SAFE
+
+Verdict using reconciled balance (source=reconciled):
+  [CTRL_MRM_004] SR 26-2 §IV – Model Risk Management Violation: Safety Violation (RBC/CBF). h(next)=-13000.00 < threshold=-1500.00
+
+POAM-023 threat model validated: True

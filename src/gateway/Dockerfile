@@ -52,6 +52,7 @@ RUN uv pip install --no-cache \
 # Copy Source Code
 COPY src/gateway /app/src/gateway
 COPY src/governed_financial_advisor /app/src/governed_financial_advisor
+COPY src/compliance_bridge /app/src/compliance_bridge
 COPY config /app/config
 
 # Environment Variables

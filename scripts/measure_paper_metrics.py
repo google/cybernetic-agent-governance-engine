@@ -1751,8 +1751,8 @@ def _write_outputs(
         "benign_fpr": benign,
     }
 
-    json_path = Path("/tmp/cage_paper_metrics.json")
-    txt_path = Path("/tmp/cage_paper_metrics.txt")
+    json_path = Path(os.environ.get("OUTPUT_JSON", "/tmp/cage_paper_metrics.json"))
+    txt_path = Path(os.environ.get("OUTPUT_TXT", "/tmp/cage_paper_metrics.txt"))
 
     json_path.write_text(json.dumps(combined, indent=2))
     print(f"[output] JSON written to {json_path}")

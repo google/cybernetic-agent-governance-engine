@@ -314,7 +314,7 @@ Parameters (from `config/governance_thresholds.json`): γ = 0.5, `min_cash_balan
 
 > **Source:** [`src/gateway/governance/cbf.py`](../../src/gateway/governance/cbf.py)
 
-> **BFS proof scope:** The current BFS proof covers the governance state machine only; a TLA+/Alloy model of the full implementation (including LangGraph harness, Redis state, and FTRA boundary) is tracked as future work. Note: FTRA (the Pre-Pipeline Boundary Gate) executes before `_run_checks()` and is **not** included in the 21-state BFS automaton; this is a documented verification gap. FTRA operates on the whole execution graph before per-tool-call checks begin, and is NOT a peer of Tiers 0–6b — it is a gateway precondition.
+> **BFS proof scope:** The current BFS proof covers the governance state machine only; a TLA+/Alloy model of the full implementation (including LangGraph harness, Redis state, and FTRA boundary) is tracked as future work. Note: FTRA (the Pre-Pipeline Boundary Gate) executes before `_run_checks()` and is **not** included in the 57-state BFS automaton; this is a documented verification gap. FTRA operates on the whole execution graph before per-tool-call checks begin, and is NOT a peer of Tiers 0–6b — it is a gateway precondition.
 
 ### NoDirectBind Invariant — Formal Statement
 
@@ -346,15 +346,22 @@ The threshold of 0.95 ensures that only LLM outputs with meaningful grounding co
 
 > **Source:** [`src/gateway/governance/confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py)
 
-### Causal Marginal Risk Boundary
+### Causal Marginal Risk Boundary & Non-Positive Slope Guard
 
-The causal gatekeeper enforces a safety boundary on the estimated marginal effect of `trade_amount` on `risk_score`:
+The causal gatekeeper enforces a non-positive slope guard and a safety boundary on the estimated marginal effect of `trade_amount` on `risk_score`:
 
+1. **Non-Positive Causal Slope Guard:**
 ```
-(0.5 + estimate.value × amount) > 0.95  →  LOCK (trade blocked)
+estimate.value (β) ≤ 0  →  LOCK (negative_or_zero_causal_slope)
 ```
 
-where `estimate.value` is the Average Treatment Effect (ATE) estimated via backdoor linear regression on the causal graph:
+2. **Monotonic Bounded Risk Formula:**
+```
+risk_score = min(1.0, max(0.0, 0.5 + estimate.value * amount))
+risk_score > 0.95       →  LOCK (trade blocked)
+```
+
+where `estimate.value` is the Average Treatment Effect (ATE $\beta$) estimated via backdoor linear regression on the causal graph:
 
 ```
 market_volatility → trade_amount → risk_score

@@ -62,7 +62,7 @@ CAGE follows the NIST SP 800-37 Rev. 2 role taxonomy. The table below summarizes
 
 ## 4. Primary Capabilities
 
-> **v3.0.0 additions:** Full first-class runtime execution for 6 governance primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`), HMAC Routing Seal v2 (`<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>`) with SHA-256 evidence record hash binding, Lua-atomic Control Barrier Functions (`atomic_verify_and_commit()`) with synchronous replica `WAIT` verification and fail-closed state rollback, monotonic fence epoch (`safety:fence_epoch`), evidence stream blocking precondition checks, and 39/44-state formal reachability models.
+> **v3.0.0 additions:** Full first-class runtime execution for 6 governance primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`), HMAC Routing Seal v2 (`<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>`) with SHA-256 evidence record hash binding, Lua-atomic Control Barrier Functions (`atomic_verify_and_commit()`) with synchronous replica `WAIT` verification and fail-closed state rollback, monotonic fence epoch (`safety:fence_epoch`), evidence stream blocking precondition checks, and 57/66-state formal reachability models.
 
 
 CAGE provides eight integrated capabilities that together constitute a full-stack governed AI financial advisor:
@@ -217,24 +217,28 @@ The `SymbolicGovernor` in [`src/gateway/governance/symbolic_governor.py`](../../
 
 | Tier | Name | Mathematical Invariant |
 |------|------|----------------------|
-| 0 | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` against the STPA ontology |
-| 1 | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) |
-| 2 | Control Barrier Function | `h(S(t+1)) ≥ (1−γ)·h(S(t))`; concurrent with Tier 4 via `asyncio.gather` |
-| 3 | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — atomic Redis WATCH/MULTI/EXEC |
-| 4 | OPA policy evaluation | `asyncio.gather(cbf_check, opa_check)`; concurrent with Tier 2 |
-| 5 | Consensus | Unanimous APPROVE required for trades ≥ $10,000 USD; `_CRITIC_TIMEOUT_S=10.0` per critic |
-| 6 | Causal gatekeeper | SCM backdoor adjustment; PlaceboTreatmentRefuter p < 0.05 |
-| 6b | FRIA zones | `ALLOW ≥ 0.95`, `DEFER ≥ 0.70`, `DENY < 0.70` |
+### 9.1 Two-Phase Eight-Tier Pipeline Summary
 
-> PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are standalone modules, not sequential tiers of `_run_checks()`. PII sanitization runs inside `uca_logger.py` immediately before a UCA audit record is written to the WORM ledger; confabulation scoring is a standalone Langfuse observability metric.
+| Phase | Tier | Description | Enforcement Mechanism |
+| ----- | ---- | ----------- | --------------------- |
+| **Phase 1** | 0 | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` against the STPA ontology |
+| **Phase 1** | 1 | Agent confidence pre-check | Fast-fail local check against `AGENT_CONFIDENCE_THRESHOLD` (default 0.95) |
+| **Phase 1** | 2b | OPA policy evaluation | `OPAClient` evaluation of `trade.governance` Rego policy prior to mutation |
+| **Phase 1** | 5 | Consensus | Unanimous APPROVE required for trades ≥ $10,000 USD; `_CRITIC_TIMEOUT_S=10.0` per critic |
+| **Phase 1** | 6 | Causal gatekeeper | SCM backdoor adjustment; $\beta \le 0 \implies \text{BLOCK}$; PlaceboTreatmentRefuter p < 0.05 |
+| **Phase 1** | 6b | FRIA zones | `ALLOW ≥ 0.95`, `DEFER ≥ 0.70`, `DENY < 0.70` |
+| **Phase 2** | 2a | Control Barrier Function | `ControlBarrierFunction.atomic_verify_and_commit()` — Lua-atomic Redis check+debit |
+| **Phase 2** | 3 | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` — atomic Redis WATCH/MULTI/EXEC |
+
+> **Zero Budget Leakage:** Phase 2 state mutations execute only after all Phase 1 validation tiers emit `ALLOW`. Rejections in Phase 1 prevent any ledger mutation or spending cap consumption.
 
 ### 9.2 Key Mathematical Invariants
 
-**CBF (Tier 2):** `h(S(t+1)) ≥ (1−γ)·h(S(t))` ensures cash balance never falls below `min_cash_balance`.
+**CBF (Tier 2a):** `h(S(t+1)) ≥ (1−γ)·h(S(t))` ensures cash balance never falls below `min_cash_balance`, executed via single-hop Redis Lua atomic script.
 
 **Confabulation (Langfuse metric, not a tier):** `risk_score = 1.0 − confidence` maps agent confidence directly to a risk score. A confidence of 0.95 yields `risk_score = 0.05` — the maximum tolerated confabulation risk.
 
-**Causal (Tier 6):** The marginal risk boundary `(0.5 + estimate.value × amount) > 0.95` triggers a causal block. The PlaceboTreatmentRefuter runs 50 simulations; a statistically significant placebo effect (p < 0.05 or |effect| > 0.2) indicates poisoned model assumptions.
+**Causal (Tier 6):** Enforces a non-positive slope guard ($\beta \le 0 \implies \text{BLOCK}$) and bounded marginal risk scoring: $\text{risk\_score} = \min(1.0, 0.5 + \beta \times \text{amount}) \le 0.95$. The PlaceboTreatmentRefuter runs 50 simulations; a statistically significant placebo effect (p < 0.05 or |effect| > 0.2) indicates poisoned model assumptions.
 
 **Consensus (Tier 5):** Boolean consensus logic — unanimous `APPROVE` → pass; unanimous `REJECT` → block; split vote or any `ESCALATE` → human escalation; unanimous `ERROR` → escalate (fail-closed, DoS bypass prevention).
 

@@ -1084,4 +1084,4 @@ On 2026-08-18, the test suite was executed across all three supported jurisdicti
 3. **HMAC Routing Seal v2 Evidence Binding (`routing_seal.py`)**: 4-tuple format with `record_hash` verified across actuator choke points; un-bound seals trigger fail-closed rejection.
 4. **Synchronous Replica Barrier Rollback (`cbf.py`)**: `WAIT` replica lag timeouts trigger automatic local balance rollback (`rollback_state()`).
 5. **Evidence Stream Precondition Assertions (`evidence_stream.py`)**: Production startup halts if non-blocking or disabled evidence streams are detected.
-6. **Formal State Space Reachability (`proof/model.py`)**: 39 sequential states and 44 concurrent interleaving states verified with 100% `NoDirectBind` compliance.
+6. **Formal State Space Reachability (`proof/model.py`)**: 57 sequential states and 66 concurrent interleaving states verified with 100% `NoDirectBind` compliance.

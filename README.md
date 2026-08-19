@@ -198,18 +198,21 @@ This guarantees that the cash balance never drops below the minimum threshold in
 
 Sources: [`src/gateway/governance/symbolic_governor.py`](src/gateway/governance/symbolic_governor.py), [`src/gateway/governance/ftra/`](src/gateway/governance/ftra/)
 
-Every `execute_trade` action passes through the following sequential tiers before a routing seal is issued. Tier 0.5 (FTRA) executes at the LangGraph graph level before the first node fires; Tiers 0–6b run inside `SymbolicGovernor._run_checks()`:
+Every `execute_trade` action passes through the following two-phase pipeline before a routing seal is issued. Tier 0.5 (FTRA) executes at the LangGraph graph level before the first node fires; Tiers 0–6b run inside `SymbolicGovernor._run_checks()`:
 
-| Tier | Name | Mechanism |
-|------|------|-----------|
-| **0.5** | FTRA — Forward-Looking Trajectory Reachability Analyzer | `create_ftra_node()` builds a NetworkX directed graph from the `ExecutionPlan`, classifies terminal steps with `IrreversibilityClassifier`, and issues `CLEAR` / `HITL_REQUIRED` / `BLOCKED` before any tool call executes |
-| **0** | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` checks Unsafe Control Actions defined in the STPA ontology |
-| **1** | Agent confidence pre-check | Fast-fail local check against `get_agent_confidence_threshold()` (default 0.95) before any network I/O |
-| **2 / 4** | CBF + OPA concurrent | `asyncio.gather` runs the Lua-atomic Control Barrier Function (`atomic_verify_and_commit()`, Tier 2) and OPA Rego evaluation (Tier 4) in parallel |
-| **3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` atomically pre-reserves the daily fiscal cap in Redis before the consensus gate |
-| **5** | Consensus gate | Heterogeneous multi-model consensus required for trades ≥ $10k; 30 s timeout |
-| **6** | Causal gatekeeper | SCM + `PlaceboTreatmentRefuter` (50 sims, p < 0.05, \|eff\| > 0.2) validates world-model integrity |
-| **6b** | Adaptive FRIA enforcement | `get_fria_zone_allow()` = 0.95, `get_fria_zone_defer()` = 0.70; scores below 0.70 hard-deny locally |
+| Phase | Tier | Name | Mechanism |
+|-------|------|------|-----------|
+| **Boundary** | **0.5** | FTRA — Forward-Looking Trajectory Reachability Analyzer | `create_ftra_node()` builds a NetworkX directed graph from the `ExecutionPlan`, classifies terminal steps with `IrreversibilityClassifier`, and issues `CLEAR` / `HITL_REQUIRED` / `BLOCKED` before any tool call executes |
+| **Phase 1** | **0** | STPA/STAMP UCA validation | `GeneratedSTPAValidator.validate()` checks Unsafe Control Actions defined in the STPA ontology |
+| **Phase 1** | **1** | Agent confidence pre-check | Fast-fail local check against `get_agent_confidence_threshold()` (default 0.95) before any network I/O |
+| **Phase 1** | **2b** | OPA policy evaluation | Evaluates `trade.governance` Rego policy prior to state mutation |
+| **Phase 1** | **5** | Consensus gate | Heterogeneous multi-model consensus required for trades ≥ $10k; 30 s timeout |
+| **Phase 1** | **6** | Causal gatekeeper | SCM $\beta \le 0$ fail-closed guard + `PlaceboTreatmentRefuter` (50 sims, p < 0.05, \|eff\| > 0.2) validates world-model integrity |
+| **Phase 1** | **6b** | Adaptive FRIA enforcement | `get_fria_zone_allow()` = 0.95, `get_fria_zone_defer()` = 0.70; scores below 0.70 hard-deny locally |
+| **Phase 2** | **2a** | Control Barrier Function | Lua-atomic check+commit (`atomic_verify_and_commit()`) in Redis; runs only after all Phase 1 validation tiers pass |
+| **Phase 2** | **3** | Fiscal Limit Pre-Reservation | `FiscalLimitGuard.reserve()` atomically pre-reserves daily fiscal cap in Redis |
+
+> **Zero Budget Leakage:** Phase 2 state mutations execute only after all Phase 1 validation tiers emit `ALLOW`. Rejections in Phase 1 prevent any ledger mutation or spending cap consumption.
 
 The routing seal is issued only after all tiers pass. PII sanitization (`pii_sanitizer.py`) and confabulation scoring (`confabulation_scorer.py`) are separate, standalone components — PII sanitization runs on audit records immediately before WORM persistence (inside `uca_logger.py`), and confabulation scoring is a Langfuse observability metric — neither is a sequential tier of `_run_checks()`.
 
@@ -223,17 +226,18 @@ risk_score = 1.0 − confidence
 
 Scores ≥ 0.95 pass immediately (async attestation, 0 ms overhead). Scores in [0.70, 0.95) enter the DEFER queue for synchronous blocking review. Scores < 0.70 are hard-denied without an external call.
 
-### Causal Marginal Risk Boundary
+### Causal Marginal Risk Boundary & Slope Guard
 
 Source: [`src/gateway/governance/causal_gatekeeper.py`](src/gateway/governance/causal_gatekeeper.py)
 
-A trade action is blocked when the marginal risk expression exceeds the safety boundary:
+A trade action is blocked when the causal slope is non-positive ($\beta \le 0 \implies \text{BLOCK}$) or when the bounded marginal risk expression exceeds the safety boundary:
 
 ```
-(0.5 + estimate.value × amount) > 0.95
+risk_score = min(1.0, max(0.0, 0.5 + estimate.value * amount))
+risk_score > 0.95  →  BLOCK (marginal risk exceeded)
 ```
 
-The `PlaceboTreatmentRefuter` runs 50 simulations; the causal effect is considered spurious (and the action blocked) when p ≥ 0.05 or |effect| ≤ 0.2.
+The `PlaceboTreatmentRefuter` runs 50 simulations; the causal effect is considered spurious (and the action blocked) when p < 0.05 or |effect| > 0.2.
 
 ### Routing Seal Integrity
 
