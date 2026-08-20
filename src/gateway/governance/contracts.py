@@ -26,12 +26,42 @@ from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
+class GovernanceTierFailure:
+    """Structured failure record emitted by a specific governance tier.
+
+    CAGE-SEC-009 / Terry Snyder 5-part proof chain:
+    Captures the full causal context of a governance tier failure, replacing
+    the collapsed violation string with a structured object that preserves
+    the governing state at the moment of refusal.
+
+    Fields map to Terry's 5-part chain:
+        1. attempted_movement → captured at RefusalReceipt level (action + attempted_params)
+        2. standing           → governing_state (tier-specific snapshot)
+        3. governing_condition → tier + control_id + rule_description
+        4. protected_consequence → what would have formed if allowed
+        5. non_formation      → captured at RefusalReceipt level (non_formation_proof)
+    """
+
+    tier: str  # e.g., "CBF", "OPA", "NEURAL_CONFIDENCE", "FISCAL", "NEMO", "FTRA"
+    control_id: str  # e.g., "CAGE-CTRL-001", GovernanceControl enum value
+    rule_description: str  # Human-readable description of the violated rule
+    governing_state: dict[str, Any] = field(default_factory=dict)
+    protected_consequence: str = ""  # What consequence would have formed
+
+
+@dataclass(frozen=True)
 class RefusalReceipt:
     """Immutable audit-grade proof emitted whenever an action is blocked or denied.
 
     CAGE-SEC-009 / Terry Snyder seam review protocol:
     Standardizes denial evidence into a cryptographic proof recording the
     exact violated invariant, authority tier, and standing context.
+
+    Schema v2 (5-part proof chain):
+    In addition to the original fields, captures Terry Snyder's complete
+    causal chain: attempted movement, governing standing, the condition
+    that failed, what consequence was protected from forming, and proof
+    of non-formation.
     """
 
     thread_id: str
@@ -41,16 +71,46 @@ class RefusalReceipt:
     standing_at_refusal: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
     proof_hash: str = field(default="")
+    # ── 5-part proof chain fields (Terry Snyder, schema v2) ──
+    schema_version: str = field(default="v1")
+    attempted_params: dict[str, Any] = field(default_factory=dict)
+    standing_snapshot: dict[str, Any] = field(default_factory=dict)
+    control_id: str = field(default="")
+    protected_consequence: str = field(default="")
+    non_formation_proof: str = field(default="")
+    tier_failures: tuple[GovernanceTierFailure, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if not self.proof_hash:
-            payload = {
+            payload: dict[str, Any] = {
                 "thread_id": self.thread_id,
                 "action": self.action,
                 "violated_tier": self.violated_tier,
                 "violated_rule": self.violated_rule,
+                "standing_at_refusal": self.standing_at_refusal,
                 "timestamp": self.timestamp,
             }
+            # Schema v2: include 5-part proof chain fields in the hash
+            # when populated, ensuring the cryptographic binding covers
+            # the full causal chain.
+            if self.schema_version != "v1":
+                payload["schema_version"] = self.schema_version
+                payload["attempted_params"] = self.attempted_params
+                payload["standing_snapshot"] = self.standing_snapshot
+                payload["control_id"] = self.control_id
+                payload["protected_consequence"] = self.protected_consequence
+                payload["non_formation_proof"] = self.non_formation_proof
+                # Serialize tier_failures for hashing
+                payload["tier_failures"] = [
+                    {
+                        "tier": tf.tier,
+                        "control_id": tf.control_id,
+                        "rule_description": tf.rule_description,
+                        "governing_state": tf.governing_state,
+                        "protected_consequence": tf.protected_consequence,
+                    }
+                    for tf in self.tier_failures
+                ]
             canon = json.dumps(payload, sort_keys=True, separators=(",", ":"))
             object.__setattr__(
                 self, "proof_hash", hashlib.sha256(canon.encode()).hexdigest()
@@ -94,6 +154,7 @@ class PauseReceipt:
                 "action": self.action,
                 "pause_reason": self.pause_reason,
                 "pause_token": self.pause_token,
+                "standing_at_pause": self.standing_at_pause,
                 "timestamp": self.timestamp,
             }
             canon = json.dumps(payload, sort_keys=True, separators=(",", ":"))

@@ -260,23 +260,6 @@ When modifying STPA source files:
 
 ## Architecture & Design Standards
 
-### Shared-Module Cross-Region Impact
-
-The following modules deploy simultaneously to all three regional postures
-(`US_FED`, `EU_ECB`, `APAC_MAS`):
-
-- `src/gateway/governance/`
-- `src/compliance_bridge/`
-- `config/compliance/`
-- `config/thresholds/`
-- `config/oscal/`
-
-For any change to these paths, call out in the PR description:
-1. Impact on US_FED posture (NIST SP 800-53)
-2. Impact on EU_ECB posture (GDPR / EU AI Act / DORA)
-3. Impact on APAC_MAS posture (MAS FEAT / MAS Notice 655 / MAS TRM)
-4. `CAGE_DEPLOYMENT_REGION` guard placement for any new data path
-
 ### Release Versioning
 
 - Releases follow SemVer (`MAJOR.MINOR.PATCH`).
@@ -303,10 +286,6 @@ documents rather than paraphrasing from memory:
 | POAM tracking | [`docs/POAM.md`](docs/POAM.md) |
 
 When explaining compliance posture or security controls:
-- Distinguish clearly between universal gates (ISO 42001) and regional gates
-  (US_FED / EU_ECB / APAC_MAS); regional gates block regional deployment only.
-- `CAGE_DEPLOYMENT_REGION` guards are required for any new data path in
-  shared modules (see [Architecture & Design Standards](#architecture--design-standards)).
 - CAGE is a reference architecture — clarify that region gates and deployment
   promotion rules are illustrative patterns, not operational obligations for
   this repository.

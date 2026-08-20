@@ -381,6 +381,9 @@ async def verify_and_consume_seal(
         except Exception:
             redis_client = None
 
+    if redis_client is None:
+        raise SymbolicGovernorViolation("Redis unavailable: cannot enforce atomic single-use seal consumption", action)
+
     if redis_client is not None:
         burn_key = f"cage:seal:consumed:{sig}"
         try:
@@ -400,6 +403,7 @@ async def verify_and_consume_seal(
         except SymbolicGovernorViolation:
             raise
         except Exception as exc:
-            logger.warning("⚠️ Failed to burn routing seal in Redis: %s", exc)
+            logger.error("⚠️ Failed to burn routing seal in Redis: %s", exc)
+            raise SymbolicGovernorViolation("Redis unavailable or burn failed", action) from exc
 
     return True
