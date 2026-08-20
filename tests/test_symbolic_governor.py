@@ -827,7 +827,7 @@ class TestPipelineReorderZeroBudgetLeakage:
         async def mock_cbf_commit(action_name, payload):
             return (True, "SAFE")
 
-        async def mock_cbf_rollback(action_name, payload):
+        async def mock_cbf_rollback(cost, governance_signature=None):
             nonlocal cbf_rollback_called
             cbf_rollback_called = True
 
