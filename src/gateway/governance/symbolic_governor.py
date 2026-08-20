@@ -1610,8 +1610,7 @@ class SymbolicGovernor:
                                     )
                                     try:
                                         await self.safety_filter.rollback_state(
-                                            action_name=tool_name,
-                                            payload=params,
+                                            cost=_amount
                                         )
                                         logger.info(
                                             "✅ CBF rollback complete after fiscal rejection."
@@ -1650,8 +1649,7 @@ class SymbolicGovernor:
                             )
                             try:
                                 await self.safety_filter.rollback_state(
-                                    action_name=tool_name,
-                                    payload=params,
+                                    cost=_amount
                                 )
                                 logger.info(
                                     "✅ CBF rollback complete after fiscal error."
@@ -2388,7 +2386,8 @@ class SymbolicGovernor:
 
                     # ── PAUSE path (Phase 1.4 — resumable suspension) ──────────
                     if decision == GovernanceDecision.PAUSE:
-                        from datetime import datetime, timezone as tz
+                        from datetime import datetime
+                        from datetime import timezone as tz
 
                         from src.gateway.governance.contracts import PauseReceipt
                         from src.gateway.governance.pause_primitive import (
