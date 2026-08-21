@@ -1604,19 +1604,38 @@ class SymbolicGovernor:
                     fiscal_span.set_attribute("governance.phase", "mutation")
                     _t_fiscal = time.perf_counter()
                     try:
-                        _amount = float(params.get("amount", 0.0))
+                        _amount_minor = params.get("amount_minor")
+                        if _amount_minor is not None:
+                            _amount_minor = int(_amount_minor)
+                            _amount = _amount_minor / 100.0
+                        else:
+                            _amount = float(params.get("amount", 0.0))
+                            
                         _agent_id = str(
                             params.get("agent_id", params.get("user_id", "unknown-agent"))
                         )
-                        if _amount > 0:
+                        
+                        _fiscal_token = None
+                        if _amount_minor is not None and _amount_minor > 0:
+                            _fiscal_token = await self.fiscal_limit_guard.reserve(
+                                agent_id=_agent_id,
+                                amount_minor=_amount_minor,
+                            )
+                        elif _amount > 0:
                             _fiscal_token = await self.fiscal_limit_guard.reserve(
                                 agent_id=_agent_id,
                                 amount_usd=_amount,
                             )
+                            
+                        if _fiscal_token is not None:
                             fiscal_span.set_attribute(
                                 "governance.fiscal.reservation_id",
                                 _fiscal_token.reservation_id,
                             )
+                            if _amount_minor is not None:
+                                fiscal_span.set_attribute(
+                                    "governance.fiscal.amount_minor", _amount_minor
+                                )
                             fiscal_span.set_attribute(
                                 "governance.fiscal.amount_usd", _amount
                             )

@@ -41,31 +41,61 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [3.0.0] - 2026-08-15
 
+> **Corrected release:** v3.0.0 was initially tagged 2026-08-15 with four
+> breaking changes still outstanding. Those changes were completed
+> post-tag on branch `fix/v3-breaking-changes-completion` and are now
+> reflected below: the `AGWEnvelope`/`AGWEnvelopeBuilder` removal, the
+> `sign_archytan_digest()` removal, the `create_ftra_node()` deprecated-kwargs
+> removal (kwargs fully removed, not merely deprecated), and the
+> `KMS_BATCH_ENABLED` default-value discrepancy (resolved as `"false"`). See
+> [`docs/BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md) for full detail.
+
 ### Breaking Changes
 - Removed `stpa_validator.py` shim module — use `GeneratedSTPAValidator` directly
 - Removed `safety.py` re-export shim — import from `text_filter` and `cbf` directly
 - Removed `GovernanceClient`, `RedisClient`, `HybridClient` aliases
 - Removed `check_safety_constraints` legacy tool alias — use `simulate_governance_check`
-- Removed `create_ftra_node()` deprecated params (`registry_path`, `plan_key`)
+- Removed `create_ftra_node()` deprecated params (`registry_path`, `plan_key`) — kwargs no longer accepted; pass a `FtraNodeConfig` instance instead
 - Removed `CONTROL_META`, `EVIDENCE_SLA_SECONDS`, `ISO_CONTROL_MAP` aliases — use region-aware accessors
 - Removed `config/settings.py` module-level aliases — use `Config.X` class attributes
 - Migrated threshold env vars to `config/governance_thresholds.json` (env vars still work as overrides)
 - (CR-1) Removed Evidence Stream v1.0 schema support — v1.1 is now the only supported schema
 - (CR-2) Removed NeMo auto-apply path (`NEMO_AUTO_APPLY_ENABLED`) — all refinements require human approval
 - (CR-3) Renamed `update_state()` → `_update_state_unsafe()` — use `atomic_verify_and_commit()` instead
+- Removed `AGWEnvelope`/`AGWEnvelopeBuilder` backward-compatibility aliases (`src/gateway/governance/agw_envelope.py`, entire file deleted) — use `GovernanceEnvelope`/`GovernanceEnvelopeBuilder` from `src/gateway/governance/governance_envelope.py`
+- Removed `sign_archytan_digest()` method from `KMSSigner` (`src/gateway/governance/kms_signer.py`) — use `sign()` instead
 
 ### Added
 - `config/governance_thresholds.json` v2.0.0 schema with FRIA, confidence, and causal thresholds
 - Threshold accessor functions in `src/gateway/governance/schemas/thresholds.py`
 - Region-aware control metadata accessors (`get_control_meta()`, `get_sla_seconds()`, `get_iso_control_map()`)
 
+### Removed
+- `src/gateway/governance/agw_envelope.py` (entire file) — `AGWEnvelope` and `AGWEnvelopeBuilder` backward-compatibility aliases; use `GovernanceEnvelope`/`GovernanceEnvelopeBuilder` from `src/gateway/governance/governance_envelope.py`
+- `tests/test_agw_envelope.py` — backward-compatibility test suite for the removed `AGWEnvelope`/`AGWEnvelopeBuilder` aliases; see `tests/test_governance_envelope.py` for canonical coverage
+- `sign_archytan_digest()` method from `KMSSigner` (`src/gateway/governance/kms_signer.py`) — use `sign()` instead
+- `create_ftra_node()` deprecated `registry_path`/`plan_key` keyword arguments (`src/gateway/governance/ftra/node_factory.py`) — fully removed, not just deprecated; pass a `FtraNodeConfig` instance instead
+
 ### Changed
 - `FtraNodeConfig` is now required for `create_ftra_node()` (no fallback extractors)
 - Threshold values loaded from config file with env var overrides
 - `SafetyBoundaryProtocol` no longer exposes `update_state()` method
 
+### Fixed
+- `KMS_BATCH_ENABLED` default-value discrepancy (Wave 0) resolved: confirmed default is `"false"` (disabled), matching `KmsBatchThresholds.enabled` in `src/gateway/governance/schemas/thresholds.py` and `config/governance_thresholds.json`. **Note:** the startup log comment in `src/compliance_bridge/main.py` (near line 213) still states the default is `"true"` and requires a follow-up code fix to align with the verified `"false"` default.
+
 ### Migration
 See [MIGRATION_GUIDE_v3.md](docs/MIGRATION_GUIDE_v3.md) for detailed upgrade instructions.
+
+Example migration for the `AGWEnvelope` removal:
+
+```python
+# Old (removed in v3.0.0):
+from src.gateway.governance.agw_envelope import AGWEnvelope
+
+# New (required):
+from src.gateway.governance.governance_envelope import GovernanceEnvelope
+```
 
 ---
 

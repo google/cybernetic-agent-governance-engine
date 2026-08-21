@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Archytan Governance Wrapper (AGW) Envelope Builder.
+CAGE Governance Envelope Builder.
 
 This module provides the envelope structure for wrapping governance decisions
 in a cryptographically signed, canonicalized format suitable for:
@@ -24,8 +24,8 @@ in a cryptographically signed, canonicalized format suitable for:
 
 Envelope Structure (RFC 8785 JCS-canonicalized):
     {
-        "envelope_version": "1.0",
-        "envelope_type": "agw_governance_decision",
+        "envelope_version": "2.0",
+        "envelope_type": "cage_governance_decision",
         "issued_at": "2026-08-21T12:00:00.000Z",  # ISO 8601 UTC
         "expires_at": "2026-08-21T12:00:30.000Z", # ISO 8601 UTC
         "issuer": {
@@ -54,9 +54,9 @@ Envelope Structure (RFC 8785 JCS-canonicalized):
     }
 
 Usage:
-    from src.gateway.governance.agw_envelope import AGWEnvelopeBuilder
+    from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 
-    builder = AGWEnvelopeBuilder()
+    builder = GovernanceEnvelopeBuilder()
     envelope = await builder.build(
         action="execute_trade",
         params={"symbol": "AAPL", "amount": 1000},
@@ -83,14 +83,14 @@ from typing import Any
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
-logger = logging.getLogger("Gateway.Governance.AGWEnvelope")
+logger = logging.getLogger("Gateway.Governance.GovernanceEnvelope")
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-_ENVELOPE_VERSION = "1.0"
-_ENVELOPE_TYPE = "agw_governance_decision"
+_ENVELOPE_VERSION = "2.0"
+_ENVELOPE_TYPE = "cage_governance_decision"
 
 # Instance identification (from environment or generated)
 _SERVICE_NAME = os.environ.get("CAGE_SERVICE_NAME", "cage-gateway")
@@ -104,10 +104,10 @@ _ENVELOPE_TTL_S = int(os.environ.get("CAGE_ENVELOPE_TTL_S", "300"))
 class EnvelopeType(str, Enum):
     """Envelope type identifiers for different governance artifacts."""
 
-    GOVERNANCE_DECISION = "agw_governance_decision"
-    EVIDENCE_RECORD = "agw_evidence_record"
-    POLICY_ATTESTATION = "agw_policy_attestation"
-    AUDIT_CHECKPOINT = "agw_audit_checkpoint"
+    GOVERNANCE_DECISION = "cage_governance_decision"
+    EVIDENCE_RECORD = "cage_evidence_record"
+    POLICY_ATTESTATION = "cage_policy_attestation"
+    AUDIT_CHECKPOINT = "cage_audit_checkpoint"
 
 
 @dataclass
@@ -182,8 +182,8 @@ class SignatureBlock:
 
 
 @dataclass
-class AGWEnvelope:
-    """The complete Archytan Governance Wrapper envelope."""
+class GovernanceEnvelope:
+    """The complete CAGE Governance Envelope."""
 
     envelope_version: str
     envelope_type: str
@@ -235,11 +235,11 @@ class AGWEnvelope:
         return self.compute_digest().hex()
 
 
-class AGWEnvelopeBuilder:
-    """Builder for constructing signed AGW envelopes.
+class GovernanceEnvelopeBuilder:
+    """Builder for constructing signed governance envelopes.
 
     Usage:
-        builder = AGWEnvelopeBuilder()
+        builder = GovernanceEnvelopeBuilder()
 
         # Build with automatic signing
         envelope = await builder.build(
@@ -296,7 +296,7 @@ class AGWEnvelopeBuilder:
         tiers_passed: list[str] | None = None,
         controls_satisfied: list[str] | None = None,
         envelope_type: EnvelopeType = EnvelopeType.GOVERNANCE_DECISION,
-    ) -> AGWEnvelope:
+    ) -> GovernanceEnvelope:
         """Build an unsigned envelope for external signing.
 
         Args:
@@ -310,7 +310,7 @@ class AGWEnvelopeBuilder:
             envelope_type: The type of envelope to create.
 
         Returns:
-            An unsigned AGWEnvelope ready for signing.
+            An unsigned GovernanceEnvelope ready for signing.
         """
         now = datetime.now(timezone.utc)
         expires = datetime.fromtimestamp(
@@ -333,10 +333,10 @@ class AGWEnvelopeBuilder:
             controls_satisfied=controls_satisfied or [],
         )
 
-        return AGWEnvelope(
+        return GovernanceEnvelope(
             envelope_version=_ENVELOPE_VERSION,
             envelope_type=envelope_type.value,
-            envelope_id=f"agw-{uuid.uuid4().hex}",
+            envelope_id=f"cage-{uuid.uuid4().hex}",
             issued_at=now.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
             expires_at=expires.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
             issuer=self._issuer,
@@ -348,11 +348,11 @@ class AGWEnvelopeBuilder:
 
     def attach_signature(
         self,
-        envelope: AGWEnvelope,
+        envelope: GovernanceEnvelope,
         signature_bytes: bytes,
         kid: str,
         algorithm: str = "ES256",
-    ) -> AGWEnvelope:
+    ) -> GovernanceEnvelope:
         """Attach a signature to an unsigned envelope.
 
         Args:
@@ -386,7 +386,7 @@ class AGWEnvelopeBuilder:
         tiers_passed: list[str] | None = None,
         controls_satisfied: list[str] | None = None,
         envelope_type: EnvelopeType = EnvelopeType.GOVERNANCE_DECISION,
-    ) -> AGWEnvelope:
+    ) -> GovernanceEnvelope:
         """Build a signed envelope using the KMS signer.
 
         Args:
@@ -400,7 +400,7 @@ class AGWEnvelopeBuilder:
             envelope_type: The type of envelope to create.
 
         Returns:
-            A signed AGWEnvelope.
+            A signed GovernanceEnvelope.
         """
         envelope = self.build_unsigned(
             action=action,
@@ -426,7 +426,7 @@ class AGWEnvelopeBuilder:
 
             # Use the direct digest signing method for efficiency
             digest = envelope.compute_digest()
-            sig_hex = signer.sign_archytan_digest(digest)
+            sig_hex = signer.sign_precomputed_digest(digest)
             signature_bytes = bytes.fromhex(sig_hex)
 
             # Get kid from the public key
@@ -443,12 +443,12 @@ class AGWEnvelopeBuilder:
 
     def verify(
         self,
-        envelope: AGWEnvelope | dict[str, Any],
+        envelope: GovernanceEnvelope | dict[str, Any],
     ) -> bool:
         """Verify an envelope's signature.
 
         Args:
-            envelope: The envelope to verify (AGWEnvelope or dict).
+            envelope: The envelope to verify (GovernanceEnvelope or dict).
 
         Returns:
             True if signature is valid, False otherwise.
@@ -530,8 +530,8 @@ class AGWEnvelopeBuilder:
             logger.warning("❌ Envelope signature verification failed: %s", e)
             return False
 
-    def _envelope_from_dict(self, data: dict[str, Any]) -> AGWEnvelope:
-        """Reconstruct an AGWEnvelope from a dictionary."""
+    def _envelope_from_dict(self, data: dict[str, Any]) -> GovernanceEnvelope:
+        """Reconstruct a GovernanceEnvelope from a dictionary."""
         issuer_data = data.get("issuer", {})
         issuer = IssuerMetadata(
             service=issuer_data.get("service", _SERVICE_NAME),
@@ -564,7 +564,7 @@ class AGWEnvelopeBuilder:
                 value=sig_data.get("value", ""),
             )
 
-        return AGWEnvelope(
+        return GovernanceEnvelope(
             envelope_version=data.get("envelope_version", _ENVELOPE_VERSION),
             envelope_type=data.get("envelope_type", _ENVELOPE_TYPE),
             envelope_id=data.get("envelope_id", ""),
@@ -586,7 +586,7 @@ class AGWEnvelopeBuilder:
 def create_envelope_builder(
     issuer: IssuerMetadata | None = None,
     ttl_s: int = _ENVELOPE_TTL_S,
-) -> AGWEnvelopeBuilder:
+) -> GovernanceEnvelopeBuilder:
     """Create a new envelope builder with the given configuration.
 
     Args:
@@ -594,9 +594,9 @@ def create_envelope_builder(
         ttl_s: Envelope time-to-live in seconds.
 
     Returns:
-        A configured AGWEnvelopeBuilder instance.
+        A configured GovernanceEnvelopeBuilder instance.
     """
-    return AGWEnvelopeBuilder(issuer=issuer, ttl_s=ttl_s)
+    return GovernanceEnvelopeBuilder(issuer=issuer, ttl_s=ttl_s)
 
 
 async def build_governance_envelope(
@@ -605,7 +605,7 @@ async def build_governance_envelope(
     governance_result: dict[str, Any],
     record_hash: str | None = None,
     **kwargs: Any,
-) -> AGWEnvelope:
+) -> GovernanceEnvelope:
     """Convenience function to build a signed governance envelope.
 
     Args:
@@ -616,9 +616,9 @@ async def build_governance_envelope(
         **kwargs: Additional arguments passed to build().
 
     Returns:
-        A signed AGWEnvelope.
+        A signed GovernanceEnvelope.
     """
-    builder = AGWEnvelopeBuilder()
+    builder = GovernanceEnvelopeBuilder()
     return await builder.build(
         action=action,
         params=params,
@@ -626,3 +626,5 @@ async def build_governance_envelope(
         record_hash=record_hash,
         **kwargs,
     )
+
+

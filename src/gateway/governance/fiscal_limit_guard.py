@@ -431,7 +431,8 @@ class FiscalLimitGuard:
     async def reserve(
         self,
         agent_id: str,
-        amount_usd: float,
+        amount_usd: float | None = None,
+        amount_minor: int | None = None,
     ) -> ReservationToken:
         """Atomically reserve a slice of the daily fiscal limit.
 
@@ -440,6 +441,7 @@ class FiscalLimitGuard:
         Args:
             agent_id:   Logical name of the requesting agent.
             amount_usd: USD amount to reserve (must be > 0).
+            amount_minor: Minor unit amount (e.g. cents) to reserve.
 
         Returns:
             ReservationToken — always returns; check ``token.rejected``.
@@ -453,18 +455,25 @@ class FiscalLimitGuard:
         that process the maximum leakage window is ``_reservation_ttl`` for the
         sentinel and ``_window_seconds`` for the aggregate (tracked as POAM-2026-038).
         """
-        # CRIT-2 fix: check finiteness first so float('inf') and float('nan')
-        # are rejected before the <= 0 guard.  float('inf') passed the old
-        # amount_usd <= 0 check (inf <= 0 is False) and would have caused an
-        # OverflowError inside int(round(inf * 100)) rather than a clean ValueError.
-        if not isinstance(amount_usd, (int, float)) or not math.isfinite(amount_usd):
-            raise ValueError(
-                f"reserve: amount_usd must be a finite positive number, got {amount_usd!r}"
-            )
-        if amount_usd <= 0:
-            raise ValueError(f"reserve: amount_usd must be > 0, got {amount_usd}")
+        if amount_usd is None and amount_minor is None:
+            raise ValueError("Must provide either amount_usd or amount_minor")
 
-        amount_cents = int(round(amount_usd * 100))
+        if amount_minor is not None:
+            if not isinstance(amount_minor, int):
+                raise ValueError(f"reserve: amount_minor must be an integer, got {type(amount_minor)}")
+            if amount_minor <= 0:
+                raise ValueError(f"reserve: amount_minor must be > 0, got {amount_minor}")
+            amount_cents = amount_minor
+            if amount_usd is None:
+                amount_usd = amount_minor / 100.0
+        else:
+            if not isinstance(amount_usd, (int, float)) or not math.isfinite(amount_usd):  # type: ignore[arg-type]
+                raise ValueError(
+                    f"reserve: amount_usd must be a finite positive number, got {amount_usd!r}"
+                )
+            if amount_usd <= 0:  # type: ignore[operator]
+                raise ValueError(f"reserve: amount_usd must be > 0, got {amount_usd}")
+            amount_cents = int(round(amount_usd * 100))  # type: ignore[operator]
         cap_cents = int(round(self._daily_cap_usd * 100))
         window_key = self._window_key()
         reservation_id = str(uuid.uuid4())
@@ -523,9 +532,10 @@ class FiscalLimitGuard:
     # Reviewer note H56: saga compensation for post-CBF-commit tier failures. Tracked in CAGE paper §7.3.
     async def rollback_state(
         self,
-        amount: float,
         audit_id: str,
         *,
+        amount: float | None = None,
+        amount_minor: int | None = None,
         window_key: str | None = None,
         token: ReservationToken | None = None,
     ) -> None:
@@ -542,12 +552,25 @@ class FiscalLimitGuard:
         or modifying stale window keys.
 
         Args:
-            amount: The USD amount to roll back.
             audit_id: The audit ID for logging.
+            amount: The USD amount to roll back (legacy float).
+            amount_minor: The minor unit amount (e.g. cents) to roll back (preferred).
             window_key: Optional explicit window key (e.g., '2026-05-19'). If provided,
                         validated against current window before rollback.
             token: Optional ReservationToken (uses token.window_key if window_key not provided).
         """
+        if amount is None and amount_minor is None:
+            raise ValueError("Must provide either amount or amount_minor")
+
+        if amount_minor is not None:
+            if not isinstance(amount_minor, int):
+                raise ValueError(f"rollback: amount_minor must be an integer, got {type(amount_minor)}")
+            amount_cents = amount_minor
+            if amount is None:
+                amount = amount_minor / 100.0
+        else:
+            amount_cents = int(round(amount * 100))  # type: ignore[operator]
+            
         # Determine the target window key
         target_window_key: str
         if window_key is not None:
@@ -603,7 +626,6 @@ class FiscalLimitGuard:
             audit_id,
             target_window_key,
         )
-        amount_cents = int(round(amount * 100))
         try:
             result = await self._atomic_decrement(target_window_key, amount_cents)
             # Ensure counter is floored at 0 (already handled in _atomic_decrement,

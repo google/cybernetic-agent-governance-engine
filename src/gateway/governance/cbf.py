@@ -877,10 +877,15 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         """
         if action_name != "execute_trade":
             return 0.0
-        cost = float(payload.get("amount", 0.0))
+        
+        if "amount_minor" in payload and payload["amount_minor"] is not None:
+            cost = float(payload["amount_minor"]) / 100.0
+        else:
+            cost = float(payload.get("amount", 0.0))
+            
         if not math.isfinite(cost) or cost < 0:
             raise ValueError(
-                f"invalid trade amount {payload.get('amount')!r} — "
+                f"invalid trade amount {cost!r} — "
                 "must be a finite, non-negative number"
             )
         return cost

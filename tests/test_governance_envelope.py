@@ -12,7 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for AGW Envelope Builder (Finding #10)."""
+"""Unit tests for CAGE Governance Envelope Builder (v2.0 wire format).
+
+This test module covers the de-branded GovernanceEnvelope and
+GovernanceEnvelopeBuilder classes with the v2.0 wire format:
+- envelope_version: "2.0"
+- envelope_type values: "cage_*" prefix
+- envelope_id prefix: "cage-"
+
+For backward compatibility tests with the deprecated AGW* aliases,
+see test_agw_envelope.py.
+"""
 
 import base64
 import hashlib
@@ -68,26 +78,26 @@ def sample_params():
 
 
 # ---------------------------------------------------------------------------
-# Tests for AGWEnvelope dataclass
+# Tests for GovernanceEnvelope dataclass
 # ---------------------------------------------------------------------------
 
 
-class TestAGWEnvelope:
-    """Tests for the AGWEnvelope dataclass."""
+class TestGovernanceEnvelope:
+    """Tests for the GovernanceEnvelope dataclass."""
 
     def test_envelope_to_dict(self, sample_governance_result, sample_params):
         """Test envelope serialization to dictionary."""
-        from src.gateway.governance.agw_envelope import (
-            AGWEnvelope,
+        from src.gateway.governance.governance_envelope import (
+            GovernanceEnvelope,
             GovernanceContext,
             IssuerMetadata,
             SubjectMetadata,
         )
 
-        envelope = AGWEnvelope(
-            envelope_version="1.0",
-            envelope_type="agw_governance_decision",
-            envelope_id="agw-test123",
+        envelope = GovernanceEnvelope(
+            envelope_version="2.0",
+            envelope_type="cage_governance_decision",
+            envelope_id="cage-test123",
             issued_at="2026-08-21T12:00:00.000Z",
             expires_at="2026-08-21T12:05:00.000Z",
             issuer=IssuerMetadata(
@@ -113,9 +123,9 @@ class TestAGWEnvelope:
 
         result = envelope.to_dict()
 
-        assert result["envelope_version"] == "1.0"
-        assert result["envelope_type"] == "agw_governance_decision"
-        assert result["envelope_id"] == "agw-test123"
+        assert result["envelope_version"] == "2.0"
+        assert result["envelope_type"] == "cage_governance_decision"
+        assert result["envelope_id"] == "cage-test123"
         assert result["issuer"]["service"] == "test-gateway"
         assert result["subject"]["action"] == "execute_trade"
         assert result["governance_context"]["tiers_passed"] == ["stpa", "cbf", "opa"]
@@ -124,17 +134,17 @@ class TestAGWEnvelope:
 
     def test_envelope_canonical_bytes(self, sample_governance_result):
         """Test envelope serialization to RFC 8785 canonical bytes."""
-        from src.gateway.governance.agw_envelope import (
-            AGWEnvelope,
+        from src.gateway.governance.governance_envelope import (
+            GovernanceEnvelope,
             GovernanceContext,
             IssuerMetadata,
             SubjectMetadata,
         )
 
-        envelope = AGWEnvelope(
-            envelope_version="1.0",
-            envelope_type="agw_governance_decision",
-            envelope_id="agw-test123",
+        envelope = GovernanceEnvelope(
+            envelope_version="2.0",
+            envelope_type="cage_governance_decision",
+            envelope_id="cage-test123",
             issued_at="2026-08-21T12:00:00.000Z",
             expires_at="2026-08-21T12:05:00.000Z",
             issuer=IssuerMetadata(),
@@ -148,21 +158,21 @@ class TestAGWEnvelope:
         assert isinstance(canonical, bytes)
         # Verify it's valid JSON
         parsed = json.loads(canonical)
-        assert parsed["envelope_version"] == "1.0"
+        assert parsed["envelope_version"] == "2.0"
 
     def test_envelope_digest_is_deterministic(self, sample_governance_result):
         """Test that envelope digest is deterministic."""
-        from src.gateway.governance.agw_envelope import (
-            AGWEnvelope,
+        from src.gateway.governance.governance_envelope import (
+            GovernanceEnvelope,
             GovernanceContext,
             IssuerMetadata,
             SubjectMetadata,
         )
 
-        envelope1 = AGWEnvelope(
-            envelope_version="1.0",
-            envelope_type="agw_governance_decision",
-            envelope_id="agw-test123",
+        envelope1 = GovernanceEnvelope(
+            envelope_version="2.0",
+            envelope_type="cage_governance_decision",
+            envelope_id="cage-test123",
             issued_at="2026-08-21T12:00:00.000Z",
             expires_at="2026-08-21T12:05:00.000Z",
             issuer=IssuerMetadata(service="test", instance_id="test", region="test"),
@@ -171,10 +181,10 @@ class TestAGWEnvelope:
             payload=sample_governance_result,
         )
 
-        envelope2 = AGWEnvelope(
-            envelope_version="1.0",
-            envelope_type="agw_governance_decision",
-            envelope_id="agw-test123",
+        envelope2 = GovernanceEnvelope(
+            envelope_version="2.0",
+            envelope_type="cage_governance_decision",
+            envelope_id="cage-test123",
             issued_at="2026-08-21T12:00:00.000Z",
             expires_at="2026-08-21T12:05:00.000Z",
             issuer=IssuerMetadata(service="test", instance_id="test", region="test"),
@@ -188,18 +198,18 @@ class TestAGWEnvelope:
 
 
 # ---------------------------------------------------------------------------
-# Tests for AGWEnvelopeBuilder
+# Tests for GovernanceEnvelopeBuilder
 # ---------------------------------------------------------------------------
 
 
-class TestAGWEnvelopeBuilder:
-    """Tests for the AGWEnvelopeBuilder class."""
+class TestGovernanceEnvelopeBuilder:
+    """Tests for the GovernanceEnvelopeBuilder class."""
 
     def test_build_unsigned_envelope(self, sample_governance_result, sample_params):
         """Test building an unsigned envelope."""
-        from src.gateway.governance.agw_envelope import AGWEnvelopeBuilder
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 
-        builder = AGWEnvelopeBuilder()
+        builder = GovernanceEnvelopeBuilder()
         envelope = builder.build_unsigned(
             action="execute_trade",
             params=sample_params,
@@ -210,9 +220,9 @@ class TestAGWEnvelopeBuilder:
             controls_satisfied=["CTRL_OPA_001"],
         )
 
-        assert envelope.envelope_version == "1.0"
-        assert envelope.envelope_type == "agw_governance_decision"
-        assert envelope.envelope_id.startswith("agw-")
+        assert envelope.envelope_version == "2.0"
+        assert envelope.envelope_type == "cage_governance_decision"
+        assert envelope.envelope_id.startswith("cage-")
         assert envelope.subject.action == "execute_trade"
         assert envelope.subject.action_hash.startswith("sha256:")
         assert envelope.subject.record_hash == "sha256:evidence123"
@@ -223,9 +233,9 @@ class TestAGWEnvelopeBuilder:
 
     def test_action_hash_is_deterministic(self, sample_governance_result, sample_params):
         """Test that action hash is deterministic for same inputs."""
-        from src.gateway.governance.agw_envelope import AGWEnvelopeBuilder
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 
-        builder = AGWEnvelopeBuilder()
+        builder = GovernanceEnvelopeBuilder()
 
         envelope1 = builder.build_unsigned(
             action="execute_trade",
@@ -243,9 +253,9 @@ class TestAGWEnvelopeBuilder:
 
     def test_action_hash_changes_with_params(self, sample_governance_result, sample_params):
         """Test that action hash changes when params change."""
-        from src.gateway.governance.agw_envelope import AGWEnvelopeBuilder
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 
-        builder = AGWEnvelopeBuilder()
+        builder = GovernanceEnvelopeBuilder()
 
         envelope1 = builder.build_unsigned(
             action="execute_trade",
@@ -264,9 +274,9 @@ class TestAGWEnvelopeBuilder:
 
     def test_attach_signature(self, sample_governance_result, sample_params):
         """Test attaching a signature to an envelope."""
-        from src.gateway.governance.agw_envelope import AGWEnvelopeBuilder
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 
-        builder = AGWEnvelopeBuilder()
+        builder = GovernanceEnvelopeBuilder()
         envelope = builder.build_unsigned(
             action="execute_trade",
             params=sample_params,
@@ -289,9 +299,9 @@ class TestAGWEnvelopeBuilder:
 
     def test_envelope_ttl(self, sample_governance_result, sample_params):
         """Test that envelope TTL is applied correctly."""
-        from src.gateway.governance.agw_envelope import AGWEnvelopeBuilder
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 
-        builder = AGWEnvelopeBuilder(ttl_s=60)  # 60 seconds
+        builder = GovernanceEnvelopeBuilder(ttl_s=60)  # 60 seconds
         envelope = builder.build_unsigned(
             action="execute_trade",
             params=sample_params,
@@ -308,9 +318,9 @@ class TestAGWEnvelopeBuilder:
 
     def test_envelope_from_dict(self, sample_governance_result, sample_params):
         """Test reconstructing envelope from dictionary."""
-        from src.gateway.governance.agw_envelope import AGWEnvelopeBuilder
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 
-        builder = AGWEnvelopeBuilder()
+        builder = GovernanceEnvelopeBuilder()
         original = builder.build_unsigned(
             action="execute_trade",
             params=sample_params,
@@ -339,13 +349,13 @@ class TestEnvelopeSigningVerification:
 
     def test_sign_and_verify_ec_key(self, ec_key_pair, sample_governance_result, sample_params):
         """Test signing and verifying with EC key."""
-        from src.gateway.governance.agw_envelope import AGWEnvelopeBuilder
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
         from src.gateway.governance.jwks import JWKSet, pem_to_jwk
         from cryptography.hazmat.primitives.asymmetric import utils
 
         private_key, public_key, public_pem = ec_key_pair
 
-        builder = AGWEnvelopeBuilder()
+        builder = GovernanceEnvelopeBuilder()
         envelope = builder.build_unsigned(
             action="execute_trade",
             params=sample_params,
@@ -374,13 +384,13 @@ class TestEnvelopeSigningVerification:
 
     def test_verify_fails_with_wrong_key(self, ec_key_pair, sample_governance_result, sample_params):
         """Test verification fails with wrong key."""
-        from src.gateway.governance.agw_envelope import AGWEnvelopeBuilder
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
         from src.gateway.governance.jwks import JWKSet, pem_to_jwk
         from cryptography.hazmat.primitives.asymmetric import utils
 
         private_key, public_key, public_pem = ec_key_pair
 
-        builder = AGWEnvelopeBuilder()
+        builder = GovernanceEnvelopeBuilder()
         envelope = builder.build_unsigned(
             action="execute_trade",
             params=sample_params,
@@ -413,13 +423,13 @@ class TestEnvelopeSigningVerification:
 
     def test_verify_fails_with_tampered_payload(self, ec_key_pair, sample_governance_result, sample_params):
         """Test verification fails when payload is tampered."""
-        from src.gateway.governance.agw_envelope import AGWEnvelopeBuilder
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
         from src.gateway.governance.jwks import JWKSet, pem_to_jwk
         from cryptography.hazmat.primitives.asymmetric import utils
 
         private_key, public_key, public_pem = ec_key_pair
 
-        builder = AGWEnvelopeBuilder()
+        builder = GovernanceEnvelopeBuilder()
         envelope = builder.build_unsigned(
             action="execute_trade",
             params=sample_params,
@@ -450,9 +460,9 @@ class TestEnvelopeSigningVerification:
 
     def test_verify_unsigned_envelope(self, sample_governance_result, sample_params):
         """Test verification of unsigned envelope fails."""
-        from src.gateway.governance.agw_envelope import AGWEnvelopeBuilder
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 
-        builder = AGWEnvelopeBuilder()
+        builder = GovernanceEnvelopeBuilder()
         envelope = builder.build_unsigned(
             action="execute_trade",
             params=sample_params,
@@ -474,7 +484,7 @@ class TestConvenienceFunctions:
 
     def test_create_envelope_builder(self):
         """Test create_envelope_builder factory function."""
-        from src.gateway.governance.agw_envelope import (
+        from src.gateway.governance.governance_envelope import (
             IssuerMetadata,
             create_envelope_builder,
         )
@@ -496,7 +506,7 @@ class TestConvenienceFunctions:
     @pytest.mark.asyncio
     async def test_build_governance_envelope_no_kms(self, sample_governance_result, sample_params):
         """Test build_governance_envelope without KMS."""
-        from src.gateway.governance.agw_envelope import build_governance_envelope
+        from src.gateway.governance.governance_envelope import build_governance_envelope
 
         # Mock KMS signer as inactive - patch at the source module
         mock_signer = MagicMock()
@@ -512,7 +522,7 @@ class TestConvenienceFunctions:
                 governance_result=sample_governance_result,
             )
 
-        assert envelope.envelope_type == "agw_governance_decision"
+        assert envelope.envelope_type == "cage_governance_decision"
         assert envelope.subject.action == "execute_trade"
         assert envelope.signature is None  # No signature without KMS
 
@@ -527,9 +537,9 @@ class TestEnvelopeTypes:
 
     def test_evidence_record_type(self, sample_governance_result, sample_params):
         """Test creating an evidence record envelope."""
-        from src.gateway.governance.agw_envelope import AGWEnvelopeBuilder, EnvelopeType
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder, EnvelopeType
 
-        builder = AGWEnvelopeBuilder()
+        builder = GovernanceEnvelopeBuilder()
         envelope = builder.build_unsigned(
             action="store_evidence",
             params=sample_params,
@@ -537,13 +547,13 @@ class TestEnvelopeTypes:
             envelope_type=EnvelopeType.EVIDENCE_RECORD,
         )
 
-        assert envelope.envelope_type == "agw_evidence_record"
+        assert envelope.envelope_type == "cage_evidence_record"
 
     def test_policy_attestation_type(self, sample_governance_result, sample_params):
         """Test creating a policy attestation envelope."""
-        from src.gateway.governance.agw_envelope import AGWEnvelopeBuilder, EnvelopeType
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder, EnvelopeType
 
-        builder = AGWEnvelopeBuilder()
+        builder = GovernanceEnvelopeBuilder()
         envelope = builder.build_unsigned(
             action="attest_policy",
             params=sample_params,
@@ -551,13 +561,13 @@ class TestEnvelopeTypes:
             envelope_type=EnvelopeType.POLICY_ATTESTATION,
         )
 
-        assert envelope.envelope_type == "agw_policy_attestation"
+        assert envelope.envelope_type == "cage_policy_attestation"
 
     def test_audit_checkpoint_type(self, sample_governance_result, sample_params):
         """Test creating an audit checkpoint envelope."""
-        from src.gateway.governance.agw_envelope import AGWEnvelopeBuilder, EnvelopeType
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder, EnvelopeType
 
-        builder = AGWEnvelopeBuilder()
+        builder = GovernanceEnvelopeBuilder()
         envelope = builder.build_unsigned(
             action="checkpoint",
             params=sample_params,
@@ -565,4 +575,68 @@ class TestEnvelopeTypes:
             envelope_type=EnvelopeType.AUDIT_CHECKPOINT,
         )
 
-        assert envelope.envelope_type == "agw_audit_checkpoint"
+        assert envelope.envelope_type == "cage_audit_checkpoint"
+
+
+# ---------------------------------------------------------------------------
+# Tests for v2.0 wire format changes
+# ---------------------------------------------------------------------------
+
+
+class TestWireFormatV2:
+    """Tests verifying the v2.0 wire format changes."""
+
+    def test_envelope_version_is_2_0(self, sample_governance_result, sample_params):
+        """Verify envelope_version is now 2.0."""
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
+
+        builder = GovernanceEnvelopeBuilder()
+        envelope = builder.build_unsigned(
+            action="test",
+            params=sample_params,
+            governance_result=sample_governance_result,
+        )
+
+        assert envelope.envelope_version == "2.0"
+
+    def test_envelope_type_uses_cage_prefix(self, sample_governance_result, sample_params):
+        """Verify envelope_type uses 'cage_' prefix instead of 'agw_'."""
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder, EnvelopeType
+
+        builder = GovernanceEnvelopeBuilder()
+
+        # Test all envelope types have cage_ prefix
+        for etype in EnvelopeType:
+            envelope = builder.build_unsigned(
+                action="test",
+                params=sample_params,
+                governance_result=sample_governance_result,
+                envelope_type=etype,
+            )
+            assert envelope.envelope_type.startswith("cage_"), f"Expected cage_ prefix for {etype}"
+            assert not envelope.envelope_type.startswith("agw_"), f"Should not have agw_ prefix for {etype}"
+
+    def test_envelope_id_uses_cage_prefix(self, sample_governance_result, sample_params):
+        """Verify envelope_id uses 'cage-' prefix instead of 'agw-'."""
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
+
+        builder = GovernanceEnvelopeBuilder()
+        envelope = builder.build_unsigned(
+            action="test",
+            params=sample_params,
+            governance_result=sample_governance_result,
+        )
+
+        assert envelope.envelope_id.startswith("cage-"), f"Expected cage- prefix, got {envelope.envelope_id}"
+        assert not envelope.envelope_id.startswith("agw-"), "Should not have agw- prefix"
+
+    def test_enum_values_use_cage_prefix(self):
+        """Verify EnvelopeType enum values use 'cage_' prefix."""
+        from src.gateway.governance.governance_envelope import EnvelopeType
+
+        assert EnvelopeType.GOVERNANCE_DECISION.value == "cage_governance_decision"
+        assert EnvelopeType.EVIDENCE_RECORD.value == "cage_evidence_record"
+        assert EnvelopeType.POLICY_ATTESTATION.value == "cage_policy_attestation"
+        assert EnvelopeType.AUDIT_CHECKPOINT.value == "cage_audit_checkpoint"
+
+

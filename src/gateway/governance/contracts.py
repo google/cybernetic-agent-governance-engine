@@ -111,9 +111,10 @@ class RefusalReceipt:
                     }
                     for tf in self.tier_failures
                 ]
-            canon = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+            canon = jcs_canonicalize_plan(payload)
             object.__setattr__(
-                self, "proof_hash", hashlib.sha256(canon.encode()).hexdigest()
+                self, "proof_hash", hashlib.sha256(canon).hexdigest()
             )
 
 
@@ -157,9 +158,10 @@ class PauseReceipt:
                 "standing_at_pause": self.standing_at_pause,
                 "timestamp": self.timestamp,
             }
-            canon = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+            canon = jcs_canonicalize_plan(payload)
             object.__setattr__(
-                self, "proof_hash", hashlib.sha256(canon.encode()).hexdigest()
+                self, "proof_hash", hashlib.sha256(canon).hexdigest()
             )
 
 

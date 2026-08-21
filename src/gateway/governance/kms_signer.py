@@ -613,10 +613,10 @@ class KMSGovernanceSigner:
                 digest = hash_fn(message).digest()
                 return self._provider.sign_digest(digest)
 
-    def sign_archytan_digest(self, digest: bytes) -> str:
-        """Sign a pre-computed Archytan envelope digest directly.
+    def sign_precomputed_digest(self, digest: bytes) -> str:
+        """Sign a pre-computed envelope digest directly.
         
-        Bypasses local canonicalization and hashing to minimize memory and KMS bandwidth 
+        Bypasses local canonicalization and hashing to minimize memory and KMS bandwidth
         for large plan envelopes.
         
         Args:
@@ -627,14 +627,14 @@ class KMSGovernanceSigner:
         """
         if not self._kms_active:
             raise RuntimeError(
-                "[KMSSigner] sign_archytan_digest() called but KMS is not active."
+                "[KMSSigner] sign_precomputed_digest() called but KMS is not active."
             )
         if not self._provider:
             raise RuntimeError(
-                "[KMSSigner] sign_archytan_digest() called but no provider is configured."
+                "[KMSSigner] sign_precomputed_digest() called but no provider is configured."
             )
             
-        with _tracer.start_as_current_span("cage.kms_signer.sign_archytan_digest") as span:
+        with _tracer.start_as_current_span("cage.kms_signer.sign_precomputed_digest") as span:
             span.set_attribute("cage.signing.algorithm", self.signing_algorithm)
             span.set_attribute("cage.signing.digest_len", len(digest))
             
