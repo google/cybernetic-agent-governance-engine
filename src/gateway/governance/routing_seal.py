@@ -21,48 +21,12 @@ GFA service (or any downstream actuator) MUST verify the seal before executing
 the trade.  This ensures that execution cannot proceed by simply ignoring the
 HTTP response from the governance endpoint.
 
-Seal format (v2 — includes evidence record hash binding):
-    <timestamp_ms_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>
+Seal format (v3 — asymmetric JWT with evidence binding):
+    Standard JWT signed by the Gateway KMS signer.
 
-**BREAKING CHANGE (v2):** The seal format now includes a 4th component —
-``record_hash_hex`` — which cryptographically binds the seal to the specific
-evidence record committed to the compliance evidence stream. This ensures:
-
-  1. The seal authenticates the governor's decision at issuance time
-  2. The seal is cryptographically bound to a specific evidence record
-  3. Any audit can cryptographically verify that the seal corresponds to
-     a particular evidence record in the durable chain
-
-For backward compatibility during migration, ``generate_seal()`` accepts
-``record_hash=None`` (defaults to a sentinel value "no-evidence-binding").
-Production deployments SHOULD always use ``generate_seal_with_evidence()``
-which blocks until evidence is committed and binds the seal to the record hash.
-
-Seal lifetime is configurable via ``GOVERNANCE_SEAL_TTL_S`` (default 30s).
-The HMAC key is derived from ``GOVERNANCE_SALT`` — the same env var that is
-already present in both gateway and GFA deployments.
-
-Actuator Idempotency Contract:
------------------------------
-To eliminate duplicate trade execution from seal replay within the 30s TTL window,
-the downstream actuator (e.g. GFA) MUST enforce single-use consumption of the
-seal (e.g. via an atomic Redis nonce / seal-consumption cache matching the
-``seal_consumed`` state machine property).
-
-Cryptographic contract (P3 fix)
---------------------------------
-``verify_seal()`` now raises ``SymbolicGovernorViolation`` instead of returning
-``False`` on any failure.  This makes it impossible for callers to silently
-ignore a failed verification — the exception propagates unless explicitly
-caught.  The ``require_cleared_seal`` decorator enforces this contract at the
-call-site level: any wrapped callable is blocked from executing if the seal
-check fails.
-
-HMAC input (v2):
-    HMAC-SHA256(
-        key=GOVERNANCE_SALT,
-        message=expire_hex || "." || action_slug || "." || record_hash || "." || canonical_payload
-    )
+**BREAKING CHANGE (v3):** The seal format is now a standard JWT.
+    The `record_hash` binds the seal to a specific evidence record in the
+    compliance evidence stream.
 
 Usage:
     # Gateway (issuance with evidence binding — recommended):
@@ -82,6 +46,7 @@ Usage:
 
 from __future__ import annotations
 
+import base64
 import functools
 import hashlib
 import hmac
@@ -90,13 +55,18 @@ import json
 import logging
 import os
 import time
+import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, TypeVar
 
+import jwt as pyjwt
 from opentelemetry import trace
 
 from src.gateway.governance.constants import GovernanceControl
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.kms_signer import get_governance_signer
+from src.gateway.governance.jwks import pem_to_jwk
 
 tracer = trace.get_tracer(__name__)
 
@@ -133,47 +103,15 @@ _REQUIRE_EVIDENCE_BINDING: bool = os.environ.get(
     "CAGE_REQUIRE_EVIDENCE_BINDING", "true" if _IS_PRODUCTION else "false"
 ).lower() in ("true", "1", "yes")
 
-# HMAC key — must match between gateway (issuer) and GFA (verifier).
-# Use _require_env so that production deployments fail fast if GOVERNANCE_SALT
-# is not set, rather than silently using an insecure hardcoded default.
-_DEFAULT_SALT = "default-governance-salt-change-in-production"
-
-from src.gateway.governance.constants import _require_env
-
-_GOVERNANCE_SALT = _require_env("GOVERNANCE_SALT", _DEFAULT_SALT, sensitive=True)
-_HMAC_KEY = _GOVERNANCE_SALT.encode()
-
-# True when the hardcoded default salt is active (no custom GOVERNANCE_SALT set).
-# Tests patch this flag directly to simulate default vs. custom salt scenarios.
+# ---------------------------------------------------------------------------
+# GOVERNANCE_SALT for HMAC compatibility layer
+# ---------------------------------------------------------------------------
+# In test/dev environments without KMS, we use HMAC-SHA256 seals.
+# In production with KMS, we use asymmetric JWT seals.
+_DEFAULT_SALT = "dev-only-insecure-placeholder-not-for-production-use"
+_GOVERNANCE_SALT = os.environ.get("GOVERNANCE_SALT", _DEFAULT_SALT)
 _USING_DEFAULT_SALT: bool = _GOVERNANCE_SALT == _DEFAULT_SALT
-
-
-# ---------------------------------------------------------------------------
-# P3 — SymbolicGovernorViolation exception
-# ---------------------------------------------------------------------------
-
-
-class SymbolicGovernorViolation(Exception):
-    """Raised when a routing seal verification fails.
-
-    This exception is the canonical signal that a cryptographic governance
-    contract has been violated.  It is intentionally *not* a subclass of
-    ``ValueError`` or ``PermissionError`` so that callers cannot accidentally
-    swallow it via broad ``except Exception`` handlers without re-raising.
-
-    Attributes:
-        reason: Human-readable description of the specific failure mode
-                (e.g. "expired", "HMAC mismatch", "malformed").
-        action: The action name that was being verified.
-    """
-
-    def __init__(self, reason: str, action: str = "") -> None:
-        self.reason = reason
-        self.action = action
-        super().__init__(
-            f"SymbolicGovernorViolation: routing seal rejected for action "
-            f"'{action}': {reason}"
-        )
+_HMAC_KEY = hashlib.sha256(_GOVERNANCE_SALT.encode()).digest()
 
 
 def is_default_salt() -> bool:
@@ -212,6 +150,40 @@ def assert_custom_salt_in_production() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# SymbolicGovernorViolation exception
+# ---------------------------------------------------------------------------
+
+
+class SymbolicGovernorViolation(Exception):
+    """Raised when a routing seal verification fails.
+
+    This exception is the canonical signal that a cryptographic governance
+    contract has been violated.  It is intentionally *not* a subclass of
+    ``ValueError`` or ``PermissionError`` so that callers cannot accidentally
+    swallow it via broad ``except Exception`` handlers without re-raising.
+
+    Attributes:
+        reason: Human-readable description of the specific failure mode
+                (e.g. "expired", "HMAC mismatch", "malformed").
+        action: The action name that was being verified.
+    """
+
+    def __init__(self, reason: str, action: str = "") -> None:
+        self.reason = reason
+        self.action = action
+        super().__init__(
+            f"SymbolicGovernorViolation: routing seal rejected for action "
+            f"'{action}': {reason}"
+        )
+
+
+# Sentinel value used when no evidence binding is provided (migration/testing).
+# This value is included in the HMAC input, so seals generated with and without
+# evidence binding are cryptographically distinct.
+_NO_EVIDENCE_BINDING = "no-evidence-binding"
+
+
 def _canonical_payload(action: str, params: dict) -> bytes:
     """Produce a stable, deterministic byte representation of the action payload.
 
@@ -228,61 +200,70 @@ def _canonical_payload(action: str, params: dict) -> bytes:
     return canon.encode()
 
 
-# Sentinel value used when no evidence binding is provided (migration/testing).
-# This value is included in the HMAC input, so seals generated with and without
-# evidence binding are cryptographically distinct.
-_NO_EVIDENCE_BINDING = "no-evidence-binding"
-
-
 def generate_seal(
     action: str,
     params: dict,
     ttl_s: int = _TTL_S,
     record_hash: str | None = None,
 ) -> str:
-    """Generate a short-lived HMAC-SHA256 routing seal (v2 format with evidence binding).
-
-    **BREAKING CHANGE (v2):** The seal format now includes 4 components:
-        ``<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>``
-
-    The ``record_hash`` binds the seal to a specific evidence record in the
-    compliance evidence stream. For production use, always use
-    ``generate_seal_with_evidence()`` which commits evidence and provides the
-    record_hash automatically.
-
-    Args:
-        action:       Tool / policy action name (e.g. ``"execute_trade"``).
-        params:       Execution plan parameters dict.
-        ttl_s:        Seal lifetime in seconds (default: ``GOVERNANCE_SEAL_TTL_S``).
-        record_hash:  Evidence record hash from the evidence stream commit.
-                      If None, uses sentinel value ``"no-evidence-binding"``.
-
-    Returns:
-        A dot-separated v2 seal string:
-            ``<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>``
+    """Generate a short-lived routing seal.
+    
+    In production with KMS configured, generates an asymmetric JWT seal (v3).
+    In test/dev without KMS, generates an HMAC-SHA256 seal (v2).
     """
-    expire_ts = int(time.time()) + ttl_s
-    expire_hex = format(expire_ts, "x")
-    # Strip dots from action_slug to guarantee unambiguous 4-way split on "."
-    # during verify_seal (seal.split(".", 3)).  Any dots in the action name
-    # would shift the split boundary and cause verification to fail on a valid seal.
-    action_slug = action.replace("_", "-").replace(".", "-").lower()[:32]
+    signer = get_governance_signer()
+    
+    if signer.is_kms_active:
+        # v3 JWT format with asymmetric signing
+        now = int(time.time())
+        expire_ts = now + ttl_s
+        nonce = str(uuid.uuid4())
+        record_hash_val = record_hash if record_hash else _NO_EVIDENCE_BINDING
 
-    # Use sentinel value if no evidence binding provided
-    record_hash_hex = record_hash if record_hash else _NO_EVIDENCE_BINDING
+        safe_params = {
+            k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v))
+            for k, v in params.items()
+        }
+        canon = jcs_canonicalize_plan({"action": action, **safe_params})
+        action_hash = hashlib.sha256(canon).hexdigest()
 
-    payload = _canonical_payload(action, params)
-    # HMAC input: expire_hex.action_slug.record_hash.canonical_payload
-    message = f"{expire_hex}.{action_slug}.{record_hash_hex}.".encode() + payload
-    sig = hmac.new(_HMAC_KEY, message, hashlib.sha256).hexdigest()
-    seal = f"{expire_hex}.{action_slug}.{record_hash_hex}.{sig}"
-    logger.debug(
-        "🔏 Routing seal issued: action=%s expire=%s record_hash=%s",
-        action,
-        expire_ts,
-        record_hash_hex[:16] if len(record_hash_hex) > 16 else record_hash_hex,
-    )
-    return seal
+        header = {
+            "alg": signer.signing_algorithm,
+            "typ": "JWT",
+            "kid": pem_to_jwk(signer.get_public_key_pem())["kid"]
+        }
+        payload = {
+            "action_hash": action_hash,
+            "record_hash": record_hash_val,
+            "nonce": nonce,
+            "iat": now,
+            "exp": expire_ts,
+            "iss": "cage-gateway"
+        }
+
+        b64_header = base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
+        b64_payload = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
+
+        signing_input = f"{b64_header}.{b64_payload}".encode()
+        signature = signer.sign_raw(signing_input)
+        b64_signature = base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
+
+        seal = f"{b64_header}.{b64_payload}.{b64_signature}"
+        logger.debug("🔏 JWT Routing seal issued: action=%s expire=%s nonce=%s", action, expire_ts, nonce)
+        return seal
+    else:
+        # v2 HMAC format for test/dev
+        expire_ts = int(time.time()) + ttl_s
+        expire_hex = format(expire_ts, "x")
+        action_slug = action.replace("_", "-").replace(".", "-").lower()[:32]
+        record_hash_val = record_hash if record_hash else _NO_EVIDENCE_BINDING
+        payload = _canonical_payload(action, params)
+        # Include record_hash in HMAC input for tamper detection
+        message = f"{expire_hex}.{action_slug}.{record_hash_val}.".encode() + payload
+        sig = hmac.new(_HMAC_KEY, message, hashlib.sha256).hexdigest()
+        seal = f"{expire_hex}.{action_slug}.{record_hash_val}.{sig}"
+        logger.debug("🔏 HMAC Routing seal issued: action=%s expire=%s", action, expire_ts)
+        return seal
 
 
 async def generate_seal_with_evidence(
@@ -423,129 +404,153 @@ async def generate_seal_with_evidence(
         return seal
 
 
+def _is_jwt_seal(seal: str) -> bool:
+    """Detect if a seal is in JWT format (3 parts, base64-encoded JSON header)."""
+    parts = seal.split(".")
+    if len(parts) != 3:
+        return False
+    try:
+        # Try to decode the header
+        header_b64 = parts[0] + "=" * (4 - len(parts[0]) % 4)  # Add padding
+        header_json = base64.urlsafe_b64decode(header_b64)
+        header = json.loads(header_json)
+        return "alg" in header and "typ" in header
+    except Exception:
+        return False
+
+
 def verify_seal(
     seal: str,
     action: str,
     params: dict,
     expected_record_hash: str | None = None,
 ) -> bool:
-    """Verify a routing seal issued by the Hybrid Gateway (v2 format).
-
-    **BREAKING CHANGE (v2):** The seal format now includes 4 components:
-        ``<expire_ts_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>``
-
-    Returns ``True`` on success.  Raises ``SymbolicGovernorViolation`` on any
-    verification failure — the exception is never swallowed so callers cannot
-    silently ignore a failed check.  The ``require_cleared_seal`` decorator
-    relies on this propagation contract.
-
-    Cryptographic contract (v2):
-        Algorithm : HMAC-SHA256
-        Key       : ``GOVERNANCE_SALT`` environment variable (≥32 bytes in
-                    production; see ``assert_custom_salt_in_production()``).
-        Message   : ``<expire_hex>.<action_slug>.<record_hash>.`` + canonical JSON payload
-                    (``json.dumps({"action": action, **params}, sort_keys=True,
-                    separators=(",", ":"))``).
-        Digest    : hex-encoded lowercase SHA-256 HMAC.
-        TTL       : ``GOVERNANCE_SEAL_TTL_S`` seconds (default 30).
-
-    Args:
-        seal:    Seal string as returned by :func:`generate_seal`.
-        action:  Tool / policy action name — must match the issuance action.
-        params:  Execution plan parameters — must match the issuance params.
-        expected_record_hash:  Optional. If provided, verify that the seal's
-                               embedded record_hash matches this value. Use
-                               this to cryptographically verify seal ↔ evidence
-                               correspondence.
-
-    Returns:
-        ``True`` if the seal is valid and unexpired.
-
-    Raises:
-        SymbolicGovernorViolation: If the seal is malformed, expired, has an
-            action mismatch, record_hash mismatch, or fails HMAC verification.
-            Always raised on failure — never swallowed — so callers cannot ignore it.
-    """
+    """Verify a routing seal (v3 JWT format with KMS or v2 HMAC format without)."""
     try:
-        parts = seal.split(".", 3)
-        if len(parts) != 4:
-            reason = f"malformed seal (got {len(parts)} parts, expected 4 for v2 format)"
-            logger.warning("🔒 Routing seal rejected: %s", reason)
-            raise SymbolicGovernorViolation(reason, action)
-
-        expire_hex, action_slug, record_hash_hex, received_sig = parts
-
-        # Check expiry
-        try:
-            expire_ts = int(expire_hex, 16)
-        except ValueError:
-            reason = f"non-hex expiry field: {expire_hex!r}"
-            logger.warning("🔒 Routing seal rejected: %s", reason)
-            raise SymbolicGovernorViolation(reason, action)
-
-        if time.time() > expire_ts:
-            reason = f"expired (ts={expire_ts})"
-            logger.warning("🔒 Routing seal rejected: %s", reason)
-            raise SymbolicGovernorViolation(reason, action)
-
-        # Check action slug
-        expected_slug = action.replace("_", "-").lower()[:32]
-        if action_slug != expected_slug:
-            reason = (
-                f"action mismatch (got '{action_slug}', expected '{expected_slug}')"
+        # Detect seal format from the seal itself, not from signer state
+        is_jwt = _is_jwt_seal(seal)
+        
+        if is_jwt:
+            # v3 JWT format verification with multi-key support
+            # First, try to extract kid from JWT header and look up in JWKS
+            from src.gateway.governance.jwks import (
+                extract_kid_from_jwt,
+                get_jwks,
+                get_verification_key_for_jwt,
             )
-            logger.warning("🔒 Routing seal rejected: %s", reason)
-            raise SymbolicGovernorViolation(reason, action)
-
-        # P0 hardening: Enforce evidence presence in production
-        # When CAGE_REQUIRE_EVIDENCE_BINDING=true, seals without cryptographic
-        # evidence binding are rejected. This ensures all financial actions are
-        # bound to evidence records in the compliance evidence stream.
-        _NO_EVIDENCE_SENTINELS = ("no-evidence-binding", "", "none")
-        if _REQUIRE_EVIDENCE_BINDING and record_hash_hex.lower() in _NO_EVIDENCE_SENTINELS:
-            reason = (
-                "Evidence sufficiency violation: seal lacks a cryptographically bound "
-                f"evidence record_hash (got '{record_hash_hex}'). "
-                "Production requires CAGE_REQUIRE_EVIDENCE_BINDING=true."
-            )
-            logger.error(
-                "⛔ [EVIDENCE_BINDING] Routing seal rejected: action=%s reason=%s",
-                action,
-                reason,
-            )
-            raise SymbolicGovernorViolation(reason, action)
-
-        # B2: Optionally verify record_hash matches expected value
-        if expected_record_hash is not None:
-            if not hmac.compare_digest(record_hash_hex, expected_record_hash):
-                reason = (
-                    f"record_hash mismatch — seal not bound to expected evidence "
-                    f"(got '{record_hash_hex[:16]}…', expected '{expected_record_hash[:16]}…')"
+            
+            kid = extract_kid_from_jwt(seal)
+            pem = get_verification_key_for_jwt(seal)
+            
+            if pem is None:
+                # Fallback to direct signer key (backward compatibility)
+                signer = get_governance_signer()
+                pem = signer.get_public_key_pem()
+                logger.debug(
+                    "🔑 JWKS lookup failed for kid=%s, falling back to signer key",
+                    kid,
                 )
+            
+            jwk = pem_to_jwk(pem)
+            
+            # Determine PyJWT algorithm from JWK
+            kty = jwk.get("kty", "EC")
+            if kty == "EC":
+                public_key = pyjwt.algorithms.ECAlgorithm.from_jwk(json.dumps(jwk))
+                algs = ["ES256", "ES384", "ES512", "EdDSA"]
+            elif kty == "OKP":
+                # PyJWT >= 2.0 supports EdDSA directly if cryptography is installed
+                public_key = pyjwt.algorithms.Ed25519Algorithm.from_jwk(json.dumps(jwk))
+                algs = ["EdDSA"]
+            else:
+                public_key = pyjwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
+                algs = ["RS256", "PS256"]
+
+            try:
+                claims = pyjwt.decode(seal, public_key, algorithms=algs, options={"verify_exp": True})
+            except pyjwt.ExpiredSignatureError:
+                reason = "expired"
+                logger.warning("🔒 Routing seal rejected: %s", reason)
+                raise SymbolicGovernorViolation(reason, action)
+            except pyjwt.InvalidTokenError as exc:
+                reason = f"malformed seal or invalid signature: {exc}"
                 logger.warning("🔒 Routing seal rejected: %s", reason)
                 raise SymbolicGovernorViolation(reason, action)
 
-        # Recompute HMAC (v2 format includes record_hash in message)
-        payload = _canonical_payload(action, params)
-        message = f"{expire_hex}.{action_slug}.{record_hash_hex}.".encode() + payload
-        expected_sig = hmac.new(_HMAC_KEY, message, hashlib.sha256).hexdigest()
+            # Check action hash
+            safe_params = {
+                k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v))
+                for k, v in params.items()
+            }
+            canon = jcs_canonicalize_plan({"action": action, **safe_params})
+            expected_action_hash = hashlib.sha256(canon).hexdigest()
+            
+            if claims.get("action_hash") != expected_action_hash:
+                reason = "action mismatch — action_hash does not match execution params"
+                logger.warning("🔒 Routing seal rejected: %s", reason)
+                raise SymbolicGovernorViolation(reason, action)
 
-        if not hmac.compare_digest(received_sig, expected_sig):
-            reason = "HMAC mismatch — seal may be forged or tampered"
-            logger.warning("🔒 Routing seal rejected: %s", reason)
-            raise SymbolicGovernorViolation(reason, action)
+            record_hash_val = claims.get("record_hash")
+            _NO_EVIDENCE_SENTINELS = ("no-evidence-binding", "", "none")
+            if _REQUIRE_EVIDENCE_BINDING and (not record_hash_val or str(record_hash_val).lower() in _NO_EVIDENCE_SENTINELS):
+                reason = "Evidence sufficiency violation: seal lacks a cryptographically bound evidence record_hash"
+                logger.error("⛔ [EVIDENCE_BINDING] Routing seal rejected: action=%s reason=%s", action, reason)
+                raise SymbolicGovernorViolation(reason, action)
 
-        logger.debug(
-            "✅ Routing seal verified: action=%s record_hash=%s",
-            action,
-            record_hash_hex[:16] if len(record_hash_hex) > 16 else record_hash_hex,
-        )
-        return True
+            if expected_record_hash is not None:
+                if not hmac.compare_digest(str(record_hash_val), expected_record_hash):
+                    reason = "record_hash mismatch"
+                    logger.warning("🔒 Routing seal rejected: %s", reason)
+                    raise SymbolicGovernorViolation(reason, action)
+
+            logger.debug("✅ Routing seal verified: action=%s nonce=%s", action, claims.get("nonce"))
+            return True
+        else:
+            if _IS_PRODUCTION:
+                reason = "HMAC seals are not accepted in production (downgrade attack detected)"
+                logger.error("⛔ [DOWNGRADE_ATTACK] Routing seal rejected: action=%s reason=%s", action, reason)
+                raise SymbolicGovernorViolation(reason, action)
+
+            # v2 HMAC format verification
+            parts = seal.split(".", 3)
+            if len(parts) != 4:
+                raise SymbolicGovernorViolation("malformed seal (expected 4 parts)", action)
+            
+            expire_hex, action_slug, record_hash_val, sig = parts
+            
+            # Check expiry
+            try:
+                expire_ts = int(expire_hex, 16)
+            except ValueError:
+                raise SymbolicGovernorViolation("malformed expiry timestamp", action)
+            
+            now = int(time.time())
+            if now > expire_ts:
+                raise SymbolicGovernorViolation("expired", action)
+            
+            # Verify HMAC signature
+            payload = _canonical_payload(action, params)
+            message = f"{expire_hex}.{action_slug}.{record_hash_val}.".encode() + payload
+            expected_sig = hmac.new(_HMAC_KEY, message, hashlib.sha256).hexdigest()
+            
+            if not hmac.compare_digest(sig, expected_sig):
+                raise SymbolicGovernorViolation("HMAC mismatch", action)
+            
+            # Evidence binding check
+            _NO_EVIDENCE_SENTINELS = ("no-evidence-binding", "", "none")
+            if _REQUIRE_EVIDENCE_BINDING and (not record_hash_val or str(record_hash_val).lower() in _NO_EVIDENCE_SENTINELS):
+                reason = "Evidence sufficiency violation: seal lacks a cryptographically bound evidence record_hash"
+                logger.error("⛔ [EVIDENCE_BINDING] Routing seal rejected: action=%s reason=%s", action, reason)
+                raise SymbolicGovernorViolation(reason, action)
+
+            if expected_record_hash is not None:
+                if not hmac.compare_digest(record_hash_val, expected_record_hash):
+                    raise SymbolicGovernorViolation("record_hash mismatch", action)
+            
+            logger.debug("✅ Routing seal verified (HMAC): action=%s expire=%s", action, expire_ts)
+            return True
 
     except SymbolicGovernorViolation:
-        # Re-raise — never swallow. Callers must handle the exception explicitly.
-        # CRIT-1 fix: the previous code caught SymbolicGovernorViolation and
-        # returned False, allowing callers to silently ignore a failed seal check.
         raise
     except Exception as exc:
         reason = f"unexpected verification error: {exc}"
@@ -554,22 +559,21 @@ def verify_seal(
 
 
 def extract_record_hash(seal: str) -> str | None:
-    """Extract the record_hash component from a v2 seal.
-
-    Useful for auditing and verification workflows that need to look up the
-    evidence record corresponding to a seal.
-
-    Args:
-        seal: A v2 seal string.
-
-    Returns:
-        The record_hash_hex component, or None if the seal is malformed.
-        Returns ``"no-evidence-binding"`` for seals generated without evidence.
-    """
-    parts = seal.split(".", 3)
-    if len(parts) != 4:
+    """Extract the record_hash component from a v3 JWT or v2 HMAC seal."""
+    if _is_jwt_seal(seal):
+        # JWT format: extract from claims
+        try:
+            claims = pyjwt.decode(seal, options={"verify_signature": False})
+            return claims.get("record_hash")
+        except Exception:
+            return None
+    else:
+        # HMAC format (v2): record_hash is the 3rd component
+        # v2 format requires exactly 4 parts: expire_hex.action_slug.record_hash.hmac
+        parts = seal.split(".", 3)
+        if len(parts) == 4:
+            return parts[2]
         return None
-    return parts[2]
 
 
 async def verify_and_consume_seal(
@@ -579,69 +583,83 @@ async def verify_and_consume_seal(
     redis_client: Any = None,
     expected_record_hash: str | None = None,
 ) -> bool:
-    """Verify a routing seal AND atomically burn it in Redis to prevent replay.
-
-    CAGE-SEC-008 / Terry Snyder & Miracle Owolabi remediation:
-    Enforces atomic single-use seal semantics. Even within the 30-second TTL
-    window, a seal can only be executed once. Subsequent attempts with the
-    same seal are rejected with 'SEAL_REPLAY_DETECTED'.
-
-    Args:
-        seal:         Routing seal string (v2 format).
-        action:       Tool/action name.
-        params:       Execution parameters.
-        redis_client: Optional async or sync Redis client. If omitted, attempts
-                      to load ambient Redis client.
-        expected_record_hash: Optional. If provided, verify that the seal's
-                              embedded record_hash matches this value.
-
-    Returns:
-        True on successful verification and atomic single-use consumption.
-
-    Raises:
-        SymbolicGovernorViolation: If verification fails or if the seal was
-            already consumed (replay attack detected).
+    """Verify a routing seal and burn its nonce via Redis SETNX.
+    
+    Implements replay protection per the Cryptographic Governance Evolution spec:
+    1. Verify the seal signature and claims
+    2. Extract the nonce (from JWT claims or HMAC hash)
+    3. Use Redis SETNX to atomically burn the nonce
+    4. Reject if nonce was already burned (replay attack)
+    
+    Fail-closed: If Redis is unavailable, verification fails.
     """
-    # 1. First verify cryptographic validity & TTL (and optional record_hash)
-    verify_seal(seal, action, params, expected_record_hash=expected_record_hash)
-
-    # 2. If redis client is provided or available, enforce single-use consumption
-    # v2 seal format: expire_hex.action_slug.record_hash.sig
-    parts = seal.split(".", 3)
-    expire_hex, _action_slug, _record_hash, sig = parts
-    expire_ts = int(expire_hex, 16)
-    ttl = max(int(expire_ts - time.time()), 1)
-
-    if redis_client is None:
+    # Step 1: Verify the seal (signature, expiry, payload binding)
+    verify_seal(
+        seal=seal,
+        action=action,
+        params=params,
+        expected_record_hash=expected_record_hash,
+    )
+    
+    # Step 2: Extract nonce for replay protection
+    is_jwt = _is_jwt_seal(seal)
+    if is_jwt:
+        # JWT format: extract nonce from claims
         try:
-            from src.gateway.infrastructure.redis_client import get_redis_client
-
-            sync_rc = get_redis_client()
-            redis_client = getattr(sync_rc, "_client", None) or sync_rc._get()
-        except Exception:
-            redis_client = None
-
-    if redis_client is not None:
-        burn_key = f"cage:seal:consumed:{sig}"
-        try:
-            res = redis_client.set(burn_key, "1", nx=True, ex=ttl)
-            if inspect.isawaitable(res):
-                res = await res
-
-            if not res:
-                reason = "routing seal already consumed (Replay Attack Detected)"
-                logger.error(
-                    "🔒 [CAGE-SEC-008] Routing seal REPLAY REJECTED: action=%s sig=%s",
-                    action,
-                    sig[:16],
-                )
-                raise SymbolicGovernorViolation(reason, action)
-            logger.debug("🔥 Routing seal consumed atomically: key=%s", burn_key)
-        except SymbolicGovernorViolation:
-            raise
+            claims = pyjwt.decode(seal, options={"verify_signature": False})
+            nonce = claims.get("nonce")
+            ttl = claims.get("exp", 0) - int(time.time())
         except Exception as exc:
-            logger.warning("⚠️ Failed to burn routing seal in Redis: %s", exc)
-
+            raise SymbolicGovernorViolation(f"failed to extract nonce: {exc}", action)
+    else:
+        # HMAC format: use seal hash as nonce (deterministic)
+        nonce = hashlib.sha256(seal.encode()).hexdigest()
+        # Parse expiry from first part (hex timestamp)
+        try:
+            parts = seal.split(".", 3)
+            expire_ts = int(parts[0], 16)
+            ttl = expire_ts - int(time.time())
+        except Exception:
+            ttl = _TTL_S
+    
+    if not nonce:
+        raise SymbolicGovernorViolation("seal missing nonce for replay protection", action)
+    
+    # Step 3: Burn nonce via Redis SETNX (fail-closed)
+    redis = redis_client
+    if redis is None:
+        # Try to get the default async client
+        try:
+            from src.gateway.infrastructure.redis_client import get_async_redis_client
+            redis = get_async_redis_client()
+        except Exception as exc:
+            logger.error("⛔ [REPLAY_PROTECTION] Redis unavailable — fail-closed: %s", exc)
+            raise SymbolicGovernorViolation(
+                "replay protection unavailable (Redis connection failed)", action
+            ) from exc
+    
+    # Use SETNX with TTL to burn the nonce
+    nonce_key = f"cage:seal:nonce:{nonce}"
+    ttl_s = max(ttl + 60, 60)  # Add 60s buffer, minimum 60s
+    
+    try:
+        # SETNX returns True if key was set (first use), False if exists (replay)
+        was_set = await redis.set(nonce_key, "1", nx=True, ex=ttl_s)
+        if not was_set:
+            logger.warning(
+                "🔒 [REPLAY_ATTACK] Seal nonce already consumed: action=%s nonce=%s",
+                action, nonce[:16] + "..."
+            )
+            raise SymbolicGovernorViolation("replay attack detected — seal already consumed", action)
+    except SymbolicGovernorViolation:
+        raise
+    except Exception as exc:
+        logger.error("⛔ [REPLAY_PROTECTION] Redis SETNX failed — fail-closed: %s", exc)
+        raise SymbolicGovernorViolation(
+            f"replay protection failed (Redis error): {exc}", action
+        ) from exc
+    
+    logger.debug("✅ Seal verified and consumed: action=%s nonce=%s", action, nonce[:16] + "...")
     return True
 
 

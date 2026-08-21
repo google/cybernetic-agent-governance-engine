@@ -1,11 +1,21 @@
 # CAGE v3.0.0 Breaking Changes
 
-> **Status:** Released — v3.0.0 shipped 2026-08-15. See
+> **Status:** Corrected release. v3.0.0 was initially tagged 2026-08-15 with
+> four breaking changes still outstanding (see below); those changes were
+> completed on branch `fix/v3-breaking-changes-completion` and this document
+> has been updated to reflect what was actually removed. See
 > [`CHANGELOG.md`](../CHANGELOG.md) for the full release notes. This document
 > describes the breaking changes included in this release. Item IDs (`SR-#`,
 > `MR-#`, `CR-#`, `FF-#`, `EV-#`) match
 > [`docs/MAJOR_VERSION_CLEANUP_PLAN.md`](MAJOR_VERSION_CLEANUP_PLAN.md) 1:1
 > so the two documents can be cross-referenced.
+>
+> **Post-tag corrections (this update):** `AGWEnvelope`/`AGWEnvelopeBuilder`
+> removal was missing from this document entirely; `sign_archytan_digest()`
+> removal was missing from the Removed Classes/Functions table; the
+> `KMS_BATCH_ENABLED` discrepancy flagged in the original release notes is
+> now resolved (default confirmed as `"false"`, not `"true"` — see
+> [Feature Flags Graduated](#feature-flags-graduated)).
 
 ## Overview
 
@@ -49,6 +59,7 @@ behavior change in `v3.0.0`.
 |--------|-------------|-----------|
 | [`src/gateway/governance/stpa_validator.py`](../src/gateway/governance/stpa_validator.py) (`STPAValidator` class) | [`src/gateway/governance/generated_stpa_validator.py`](../src/gateway/governance/generated_stpa_validator.py:38) (`GeneratedSTPAValidator`) | Replace `from src.gateway.governance.stpa_validator import STPAValidator` with `from src.gateway.governance.generated_stpa_validator import GeneratedSTPAValidator`; replace `.validate(action_name, params)` calls with `.validate_generated(action_name, params)`. |
 | [`src/gateway/governance/safety.py`](../src/gateway/governance/safety.py) (entire file) | [`src/gateway/governance/text_filter.py`](../src/gateway/governance/text_filter.py) (`ac_keyword_scan`); [`src/gateway/governance/cbf.py`](../src/gateway/governance/cbf.py) (`ControlBarrierFunction`, `safety_filter`) | Replace `from src.gateway.governance.safety import ac_keyword_scan` with `from src.gateway.governance.text_filter import ac_keyword_scan`; replace `from src.gateway.governance.safety import ControlBarrierFunction, safety_filter` with `from src.gateway.governance.cbf import ControlBarrierFunction, safety_filter`. |
+| `src/gateway/governance/agw_envelope.py` (entire file — `AGWEnvelope`, `AGWEnvelopeBuilder` backward-compatibility aliases) | [`src/gateway/governance/governance_envelope.py`](../src/gateway/governance/governance_envelope.py) (`GovernanceEnvelope`, `GovernanceEnvelopeBuilder`) | Replace `from src.gateway.governance.agw_envelope import AGWEnvelope` with `from src.gateway.governance.governance_envelope import GovernanceEnvelope`; replace `AGWEnvelopeBuilder` with `GovernanceEnvelopeBuilder` (same module). `tests/test_agw_envelope.py` (the backward-compatibility test suite for these aliases) is also deleted — see [`tests/test_governance_envelope.py`](../tests/test_governance_envelope.py) for the canonical coverage. **(Completed post-tag, `fix/v3-breaking-changes-completion`.)** |
 
 ### Removed Classes/Functions
 
@@ -63,6 +74,7 @@ behavior change in `v3.0.0`.
 | `EVIDENCE_SLA_SECONDS` (module-level dict alias) | [`src/compliance_bridge/types.py:446`](../src/compliance_bridge/types.py:446) | `get_sla_seconds(region)` | Replace direct dict access with `get_sla_seconds(region)`. Same universal-only → region-merged behavior note as `CONTROL_META` applies. |
 | `ISO_CONTROL_MAP` (module-level dict alias — **two distinct symbols**) | [`src/compliance_bridge/types.py:512`](../src/compliance_bridge/types.py:512) **and** [`src/gateway/governance/ontology.py:197-234`](../src/gateway/governance/ontology.py:197) (`TradingKnowledgeGraph.ISO_CONTROL_MAP` class attribute) | `get_iso_control_map(region)` (types.py); `get_control_map(region)` (ontology.py) | These are **two unrelated symbols with the same name in two different modules** — migrate each independently. `src/compliance_bridge/types.py` callers use `get_iso_control_map(region)`; `TradingKnowledgeGraph` callers use `get_control_map(region)`. |
 | `update_state()` (public API) | [`src/gateway/governance/cbf.py:907-998`](../src/gateway/governance/cbf.py:907) | `atomic_verify_and_commit()` (same module) | **Completed (CR-3)**: `update_state()` was renamed to `_update_state_unsafe()` (internal-only) to eliminate TOCTOU race conditions. External callers must call `atomic_verify_and_commit()`, which performs the CBF safety check and state commit atomically within a single Redis Lua execution. |
+| `sign_archytan_digest()` (method) | [`src/gateway/governance/kms_signer.py`](../src/gateway/governance/kms_signer.py) (`KMSSigner` class) | `sign()` (same class) | Replace `kms_signer.sign_archytan_digest(digest)` with `kms_signer.sign(payload)`; `sign()` is the canonical signing entry point and covers the same code path. **(Completed post-tag, `fix/v3-breaking-changes-completion`.)** |
 
 ### Removed Endpoints
 
@@ -118,7 +130,7 @@ corresponding module is migrated; use the config file instead.
 | Flag | New Behavior |
 |------|--------------|
 | `CAGE_DEFER_ENABLED` | **Not graduated in v3.0.0** (explicit recommendation in the cleanup plan §2.4). The flag remains, still defaulting to `"true"`. If your deployment currently sets this to `"false"` to force the DENY-fallback path, that behavior is **unchanged** in v3.0.0. This is a deliberate deviation from the "graduate stable flags" theme of this release — flagged here so consumers do not assume removal. |
-| `KMS_BATCH_ENABLED` | **Status uncertain pending Wave 0 discrepancy resolution.** [`kms_batch_signer.py:75`](../src/compliance_bridge/kms_batch_signer.py:75) currently defaults this to `"true"`; [`main.py:211-212`](../src/compliance_bridge/main.py:211)'s comment claims the production default is `"false"`. **Do not assume this flag is graduated to any particular value until the CAGE release notes for your specific `v3.0.0` build confirm the resolved default.** If graduated, the flag is hardcoded and the `KMS_BATCH_ENABLED` env var (see above) is removed. |
+| `KMS_BATCH_ENABLED` | **Resolved.** The Wave 0 discrepancy is closed: the confirmed default is `"false"` (disabled), matching [`KmsBatchThresholds.enabled`](../src/gateway/governance/schemas/thresholds.py:277) (`Field(default=False, ...)`) and [`config/governance_thresholds.json`](../config/governance_thresholds.json:56) (`"enabled": false`). The flag is **not graduated** — `KMS_BATCH_ENABLED` remains a valid env-var override of the config default via `get_kms_batch_enabled()`. **Known documentation debt (not yet code-fixed):** the startup comment at [`main.py:213`](../src/compliance_bridge/main.py:213) still incorrectly states "The signer is enabled by default (kms_batch.enabled=true..." — this comment is stale and requires a follow-up code change (out of scope for this documentation-only correction) to align with the verified `false` default. |
 
 ---
 

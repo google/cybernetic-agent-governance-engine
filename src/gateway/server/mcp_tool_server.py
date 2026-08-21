@@ -32,6 +32,7 @@ import asyncio
 import collections
 import inspect
 import logging
+import math
 import os
 import sys
 import time
@@ -42,7 +43,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 sys.path.append(".")
 
@@ -458,6 +459,17 @@ app.mount("/mcp", mcp.sse_app())
 class ToolExecutionRequest(BaseModel):
     tool_name: str
     params: dict[str, Any]
+
+    @field_validator("params")
+    @classmethod
+    def _reject_non_finite_floats(cls, v: dict[str, Any]) -> dict[str, Any]:
+        for key, val in v.items():
+            if isinstance(val, float) and not math.isfinite(val):
+                raise ValueError(
+                    f"params[{key!r}] contains non-finite float {val!r} "
+                    "— NaN and Infinity are not permitted"
+                )
+        return v
 
 
 @app.post("/tools/execute")

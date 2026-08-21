@@ -48,9 +48,13 @@ _PUBLIC_PEM_PATH: str = os.environ.get("KMS_GOVERNANCE_PUBLIC_PEM", "")
 MAX_KMS_PAYLOAD_AGE_SECONDS: int = 300
 
 
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
 def _canonicalise_plan(plan: dict) -> bytes:
-    """Produce a deterministic byte representation of a governance plan."""
-    return json.dumps(plan, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    """Produce a deterministic byte representation of a governance plan.
+    Now uses RFC 8785 JCS (JSON Canonicalization Scheme) to prevent cross-language
+    float drift during signature verification."""
+    return jcs_canonicalize_plan(plan)
 
 
 # ---------------------------------------------------------------------------
@@ -68,9 +72,19 @@ class BaseKMSProvider(abc.ABC):
         pass
 
     @abc.abstractmethod
+    def sign_raw(self, message: bytes) -> bytes:
+        """Sign a raw message directly (used for PureEdDSA / Ed25519) returning
+        signature bytes."""
+        pass
+
+    @abc.abstractmethod
     def get_public_key_pem(self) -> bytes:
         """Fetch the public key PEM from the cloud provider."""
         pass
+
+    def get_public_keys_pem(self) -> dict[str, bytes]:
+        """Fetch all active public key PEMs. Defaults to returning the single primary key."""
+        return {"default": self.get_public_key_pem()}
 
     @property
     @abc.abstractmethod
@@ -102,6 +116,11 @@ _GCP_KMS_SHA512_ALGORITHMS = frozenset(
     {
         "RSA_SIGN_PKCS1_4096_SHA512",
         "RSA_SIGN_PSS_4096_SHA512",
+    }
+)
+_GCP_KMS_ED25519_ALGORITHMS = frozenset(
+    {
+        "EC_SIGN_ED25519",
     }
 )
 
@@ -151,6 +170,8 @@ class GCPKMSProvider(BaseKMSProvider):
                 self._hash_width = "sha512"
             elif algorithm_name in _GCP_KMS_SHA384_ALGORITHMS:
                 self._hash_width = "sha384"
+            elif algorithm_name in _GCP_KMS_ED25519_ALGORITHMS:
+                self._hash_width = "raw"
             else:
                 self._hash_width = "sha256"
             logger.info(
@@ -187,9 +208,44 @@ class GCPKMSProvider(BaseKMSProvider):
         )
         return response.signature
 
+    def sign_raw(self, message: bytes) -> bytes:
+        from google.cloud.kms_v1.types import (
+            service as kms_service,  # type: ignore[import]
+        )
+
+        response = self._kms_client.asymmetric_sign(  # type: ignore[union-attr]
+            request=kms_service.AsymmetricSignRequest(
+                name=self._key_version_name,
+                data=message,
+            )
+        )
+        return response.signature
+
     def get_public_key_pem(self) -> bytes:
         response = self._kms_client.get_public_key(name=self._key_version_name)  # type: ignore[union-attr]
         return response.pem.encode("utf-8")
+
+    def get_public_keys_pem(self) -> dict[str, bytes]:
+        """Fetch all ENABLED public keys for the CryptoKey to support rotation."""
+        parts = self._key_version_name.split("/cryptoKeyVersions/")
+        if len(parts) != 2:
+            return {self._key_version_name: self.get_public_key_pem()}
+        
+        crypto_key_name = parts[0]
+        keys = {}
+        try:
+            versions = self._kms_client.list_crypto_key_versions(parent=crypto_key_name)  # type: ignore[union-attr]
+            for v in versions:
+                if v.state.name == "ENABLED":
+                    pub = self._kms_client.get_public_key(name=v.name)  # type: ignore[union-attr]
+                    keys[v.name] = pub.pem.encode("utf-8")
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Failed to list crypto key versions: %s", exc)
+            
+        if not keys:
+            keys[self._key_version_name] = self.get_public_key_pem()
+        return keys
 
 
 class AWSKMSProvider(BaseKMSProvider):
@@ -230,6 +286,9 @@ class AWSKMSProvider(BaseKMSProvider):
             SigningAlgorithm="ECDSA_SHA_256",
         )
         return response["Signature"]
+
+    def sign_raw(self, message: bytes) -> bytes:
+        raise NotImplementedError("AWS KMS does not support Ed25519 raw-message signing.")
 
     def get_public_key_pem(self) -> bytes:
         response = self._client.get_public_key(KeyId=self._key_id)
@@ -289,6 +348,9 @@ class AzureKMSProvider(BaseKMSProvider):
 
         result = self._crypto_client.sign(SignatureAlgorithm.es256, digest)
         return result.signature
+
+    def sign_raw(self, message: bytes) -> bytes:
+        raise NotImplementedError("Azure Key Vault does not support Ed25519 raw-message signing.")
 
     def get_public_key_pem(self) -> bytes:
         from cryptography.hazmat.primitives import serialization
@@ -367,16 +429,54 @@ class KMSGovernanceSigner:
             return "HMAC_SHA256_FALLBACK"
         return self._provider.provider_name if self._provider else "KMS_ASYMMETRIC"
 
+    def get_public_key_pem(self) -> bytes:
+        """Return the public key PEM for this signer.
+
+        If KMS is active and no cached PEM exists, fetches from the provider.
+        """
+        if self._public_key_pem:
+            return self._public_key_pem
+        if self._provider:
+            self._public_key_pem = self._provider.get_public_key_pem()
+            return self._public_key_pem
+        raise RuntimeError(
+            "[KMSSigner] get_public_key_pem() called but no public key is available. "
+            "Ensure KMS_GOVERNANCE_PUBLIC_PEM is set or KMS bootstrap succeeded."
+        )
+
     @classmethod
     def from_env(cls) -> KMSGovernanceSigner:
-        """Construct from environment variables based on CAGE_KMS_PROVIDER."""
+        """Construct from environment variables based on CAGE_KMS_PROVIDER.
+        
+        In test/dev environments without KMS configured, returns a fallback
+        signer that uses HMAC-SHA256 with GOVERNANCE_SALT.
+        """
         provider_name = os.environ.get("CAGE_KMS_PROVIDER", "gcp").lower()
         provider: BaseKMSProvider | None = None
         kms_client = None
         key_version = _KMS_KEY_VERSION
+        
+        # Check if we're in a non-production environment
+        env = (
+            os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
+        ).lower()
+        is_non_production = env in ("development", "test", "dev", "ci")
 
         if provider_name == "gcp":
             if not key_version:
+                if is_non_production:
+                    # Return a fallback signer for test/dev without KMS
+                    logger.info(
+                        "[KMSSigner] KMS_GOVERNANCE_KEY not set in %s environment. "
+                        "Using HMAC fallback mode.",
+                        env,
+                    )
+                    return cls(
+                        kms_client=None,
+                        key_version_name="",
+                        public_key_pem=b"",
+                        provider=None,
+                    )
                 raise RuntimeError(
                     "[KMSSigner] KMS_GOVERNANCE_KEY is not set. "
                     "Set it to the full Cloud KMS key version resource name. "
@@ -477,6 +577,70 @@ class KMSGovernanceSigner:
                 span.set_attribute("cage.signing.signed_at", plan["signed_at"])
             return self._kms_sign(plan_bytes)
 
+    def sign_raw(self, message: bytes) -> bytes:
+        """Sign raw bytes directly (for JWT signing).
+        
+        This is a thin wrapper around the provider's sign_raw/sign_digest methods.
+        Uses the provider's digest algorithm to determine the correct signing path.
+        
+        Args:
+            message: Raw bytes to sign (e.g., JWT signing input).
+            
+        Returns:
+            Raw signature bytes.
+        """
+        if not self._kms_active:
+            raise RuntimeError(
+                "[KMSSigner] sign_raw() called but KMS is not active. "
+                "Ensure KMS_GOVERNANCE_KEY is set and from_env() succeeded."
+            )
+        if not self._provider:
+            raise RuntimeError(
+                "[KMSSigner] sign_raw() called but no provider is configured."
+            )
+        with _tracer.start_as_current_span("cage.kms_signer.sign_raw") as span:
+            span.set_attribute("cage.signing.algorithm", self.signing_algorithm)
+            span.set_attribute("cage.signing.kms_active", self._kms_active)
+            span.set_attribute("kms.channel.pre_warmed", self._channel_warmed.is_set())
+            span.set_attribute("cage.signing.message_len", len(message))
+            
+            if self._provider.digest_algorithm == "raw":
+                # Ed25519 / PureEdDSA: sign the message directly
+                return self._provider.sign_raw(message)
+            else:
+                # ECDSA / RSA: hash first, then sign digest
+                hash_fn = getattr(hashlib, self._provider.digest_algorithm)
+                digest = hash_fn(message).digest()
+                return self._provider.sign_digest(digest)
+
+    def sign_precomputed_digest(self, digest: bytes) -> str:
+        """Sign a pre-computed envelope digest directly.
+        
+        Bypasses local canonicalization and hashing to minimize memory and KMS bandwidth
+        for large plan envelopes.
+        
+        Args:
+            digest: Pre-computed digest bytes matching the provider's expected digest width.
+            
+        Returns:
+            Hex-encoded signature string.
+        """
+        if not self._kms_active:
+            raise RuntimeError(
+                "[KMSSigner] sign_precomputed_digest() called but KMS is not active."
+            )
+        if not self._provider:
+            raise RuntimeError(
+                "[KMSSigner] sign_precomputed_digest() called but no provider is configured."
+            )
+            
+        with _tracer.start_as_current_span("cage.kms_signer.sign_precomputed_digest") as span:
+            span.set_attribute("cage.signing.algorithm", self.signing_algorithm)
+            span.set_attribute("cage.signing.digest_len", len(digest))
+            
+            sig_bytes = self._provider.sign_digest(digest)
+            return sig_bytes.hex()
+
     def _kms_sign(self, plan_bytes: bytes) -> str:
         try:
             if self._provider:
@@ -484,9 +648,12 @@ class KMSGovernanceSigner:
                 # (e.g. sha512 for RSA_SIGN_PKCS1_4096_SHA512) rather than
                 # hardcoding sha256, which fails with a 400 INVALID_ARGUMENT
                 # against keys provisioned with a different algorithm.
-                hash_fn = getattr(hashlib, self._provider.digest_algorithm)
-                digest = hash_fn(plan_bytes).digest()
-                sig_bytes = self._provider.sign_digest(digest)
+                if self._provider.digest_algorithm == "raw":
+                    sig_bytes = self._provider.sign_raw(plan_bytes)
+                else:
+                    hash_fn = getattr(hashlib, self._provider.digest_algorithm)
+                    digest = hash_fn(plan_bytes).digest()
+                    sig_bytes = self._provider.sign_digest(digest)
             elif self._kms_client:
                 from google.cloud.kms_v1.types import (
                     service as kms_service,  # type: ignore[import]
@@ -663,6 +830,12 @@ def get_governance_signer() -> KMSGovernanceSigner:
     if _signer is None:
         _signer = KMSGovernanceSigner.from_env()
     return _signer
+
+
+def reset_governance_signer() -> None:
+    """Reset the cached signer singleton (for test isolation)."""
+    global _signer
+    _signer = None
 
 
 def assert_kms_active_in_production() -> None:

@@ -421,13 +421,13 @@ class TestPrometheusMetricsEmission:
         from prometheus_client import REGISTRY
 
         # Get current metric value (may not exist)
-        initial_value = None
+        _initial_value = None
         try:
             for metric in REGISTRY.collect():
                 if metric.name == "cage_evidence_blocking_disabled":
                     for sample in metric.samples:
                         if sample.labels.get("env") == "prod":
-                            initial_value = sample.value
+                            _initial_value = sample.value
         except Exception:
             pass
 

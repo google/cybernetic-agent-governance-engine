@@ -502,9 +502,10 @@ class TestCreateFtraNode:
 
     def test_clear_verdict_returns_clear_status(self, tmp_path):
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(tmp_path, {"check_price": "READ_ONLY"})
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         state = {
             "execution_plan_output": self._plan_dict([("s1", "check_price")]),
@@ -518,11 +519,12 @@ class TestCreateFtraNode:
 
     def test_low_confidence_irreversible_returns_blocked_status(self, tmp_path):
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(
             tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"}
         )
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         state = {
             "execution_plan_output": self._plan_dict([("s1", "execute_trade")]),
@@ -535,10 +537,10 @@ class TestCreateFtraNode:
 
     def test_missing_execution_plan_fails_closed_to_blocked(self, tmp_path):
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(tmp_path, {})
-        with pytest.warns(DeprecationWarning):
-            node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         state = {"evaluation_result": {"confidence": 0.9}}
         result = node(state)
@@ -558,9 +560,10 @@ class TestCreateFtraNode:
         cause automatic BLOCKED verdicts, which were false positives.
         """
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(tmp_path, {})
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         state = {
             "execution_plan_output": {"not_a_valid_plan": True},
@@ -576,11 +579,12 @@ class TestCreateFtraNode:
         """Absent evaluation_result must default confidence to 0.0, which for
         an irreversible-terminal plan means BLOCKED (not HITL_REQUIRED)."""
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(
             tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"}
         )
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         state = {"execution_plan_output": self._plan_dict([("s1", "execute_trade")])}
         result = node(state)
@@ -600,11 +604,12 @@ class TestCreateFtraNode:
         from langgraph.errors import NodeInterrupt
 
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(
             tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"}
         )
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         state = {
             "execution_plan_output": self._plan_dict([("s1", "execute_trade")]),
@@ -646,11 +651,12 @@ class TestCreateFtraNode:
         from langgraph.errors import NodeInterrupt
 
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(
             tmp_path, {"execute_trade": "IRREVERSIBLE_TERMINAL"}
         )
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         state = {
             "execution_plan_output": self._plan_dict([("s1", "execute_trade")]),
@@ -675,9 +681,10 @@ class TestCreateFtraNode:
         exception type that must propagate (see TestCreateFtraNode's HITL
         tests above)."""
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(tmp_path, {})
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         # A state value that will blow up type coercion deep inside _run_ftra
         state = {
@@ -688,22 +695,17 @@ class TestCreateFtraNode:
 
         assert result["ftra_status"] == "BLOCKED"
 
-    def test_create_ftra_node_default_config_matches_legacy_behavior(self, tmp_path):
-        """FtraNodeConfig defaults must match legacy create_ftra_node() behavior.
+    def test_create_ftra_node_default_config_behavior(self, tmp_path):
+        """FtraNodeConfig defaults must work correctly.
 
-        This test ensures backward compatibility: a node created with
-        config=FtraNodeConfig() must behave identically to legacy calls.
+        This test ensures that a node created with explicit config works as expected.
         """
         from src.gateway.governance.ftra.node_factory import create_ftra_node
         from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(tmp_path, {"check_price": "READ_ONLY"})
 
-        # Legacy call (using deprecated registry_path param)
-        with pytest.warns(DeprecationWarning):
-            legacy_node = create_ftra_node(registry_path=registry_path)
-
-        # New explicit config
+        # Explicit config
         config = FtraNodeConfig(registry_path=registry_path)
         config_node = create_ftra_node(config=config)
 
@@ -712,17 +714,12 @@ class TestCreateFtraNode:
             "evaluation_result": {"confidence": 0.9},
         }
 
-        legacy_result = legacy_node(state)
         config_result = config_node(state)
 
-        # Both must produce identical output
-        assert legacy_result["ftra_status"] == config_result["ftra_status"] == "CLEAR"
-        assert legacy_result["ftra_defer_id"] == config_result["ftra_defer_id"]
-        assert (
-            legacy_result["ftra_result"]["ctrl_id"]
-            == config_result["ftra_result"]["ctrl_id"]
-            == "CTRL_FTRA_001"
-        )
+        # Must produce expected output
+        assert config_result["ftra_status"] == "CLEAR"
+        assert config_result["ftra_defer_id"] is None
+        assert config_result["ftra_result"]["ctrl_id"] == "CTRL_FTRA_001"
 
     def test_create_ftra_node_custom_extractors(self, tmp_path):
         """Custom plan/confidence extractors must override default GFA schema paths."""
@@ -779,24 +776,6 @@ class TestCreateFtraNode:
         result = node(state)
 
         assert result["ftra_status"] == "BLOCKED"
-
-    def test_deprecated_params_emit_warning(self, tmp_path):
-        """Passing registry_path or plan_key directly must emit DeprecationWarning."""
-        from src.gateway.governance.ftra.node_factory import create_ftra_node
-
-        registry_path = self._registry_path(tmp_path, {})
-
-        # registry_path param should emit warning
-        with pytest.warns(DeprecationWarning, match="deprecated"):
-            create_ftra_node(registry_path=registry_path)
-
-        # plan_key param should also emit warning
-        with pytest.warns(DeprecationWarning, match="deprecated"):
-            create_ftra_node(plan_key="custom_plan")
-
-        # Both params should emit warning
-        with pytest.warns(DeprecationWarning, match="deprecated"):
-            create_ftra_node(registry_path=registry_path, plan_key="custom_plan")
 
     def test_ftra_node_config_key_based_extractor_fallback(self, tmp_path):
         """FtraNodeConfig key-based extractors must work when custom callables not provided."""
@@ -1073,9 +1052,10 @@ class TestBugFtraSchema001:
         After fix: malformed plan → HITL_REQUIRED (DEFER for review)
         """
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(tmp_path, {"check_price": "READ_ONLY"})
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         # Malformed plan (missing required fields)
         state = {
@@ -1095,9 +1075,10 @@ class TestBugFtraSchema001:
         After fix: invalid JSON → HITL_REQUIRED (DEFER for review)
         """
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(tmp_path, {})
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         # Invalid JSON string
         state = {
@@ -1118,12 +1099,13 @@ class TestBugFtraSchema001:
         With high confidence, the LLM intentionally chose to do nothing.
         """
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
         from src.governed_financial_advisor.agents.execution_analyst.agent import (
             ExecutionPlan,
         )
 
         registry_path = self._registry_path(tmp_path, {})
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         # Empty plan (use model_construct to bypass validator)
         empty_plan = ExecutionPlan.model_construct(
@@ -1148,12 +1130,13 @@ class TestBugFtraSchema001:
     def test_empty_steps_low_confidence_returns_defer(self, tmp_path):
         """Empty plan with low confidence should DEFER for review."""
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
         from src.governed_financial_advisor.agents.execution_analyst.agent import (
             ExecutionPlan,
         )
 
         registry_path = self._registry_path(tmp_path, {})
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         # Empty plan (use model_construct to bypass validator)
         empty_plan = ExecutionPlan.model_construct(
@@ -1212,9 +1195,10 @@ class TestBugFtraJson001:
         After fix: fences stripped, plan parses successfully
         """
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(tmp_path, {"check_price": "READ_ONLY"})
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         state = {
             "execution_plan_output": self._plan_json_with_fences(),
@@ -1230,11 +1214,12 @@ class TestBugFtraJson001:
     def test_sanitization_can_be_disabled_via_env(self, tmp_path, monkeypatch):
         """FTRA_SANITIZE_TOKENIZER_ARTIFACTS=false disables sanitization."""
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         monkeypatch.setenv("FTRA_SANITIZE_TOKENIZER_ARTIFACTS", "false")
 
         registry_path = self._registry_path(tmp_path, {"check_price": "READ_ONLY"})
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         state = {
             "execution_plan_output": self._plan_json_with_fences(),
@@ -1326,9 +1311,10 @@ class TestTelemetry:
     def test_otel_span_includes_parse_failure_class(self, tmp_path):
         """OTel span should include cage.ftra.parse_failure_class attribute."""
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(tmp_path, {"check_price": "READ_ONLY"})
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         state = {
             "execution_plan_output": self._plan_dict([("s1", "check_price")]),
@@ -1358,9 +1344,10 @@ class TestTelemetry:
     def test_otel_span_includes_sanitization_applied(self, tmp_path):
         """OTel span should include cage.ftra.sanitization_applied attribute."""
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(tmp_path, {"check_price": "READ_ONLY"})
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         # Plan with markdown fences (will be sanitized)
         fenced_plan = """```json
@@ -1408,12 +1395,13 @@ class TestTelemetry:
             FTRA_PARSE_FAILURES,
             create_ftra_node,
         )
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         if not _PROM_AVAILABLE or FTRA_PARSE_FAILURES is None:
             pytest.skip("prometheus_client not available")
 
         registry_path = self._registry_path(tmp_path, {})
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         # Get initial counter value
         initial_value = FTRA_PARSE_FAILURES.labels(
@@ -1481,6 +1469,7 @@ class TestFtraIntegration:
         are correctly identified and routed to HITL or BLOCKED status.
         """
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         # Registry with terminal actions that should trigger HITL/BLOCKED
         registry_path = self._registry_path(
@@ -1492,7 +1481,7 @@ class TestFtraIntegration:
                 "check_balance": "READ_ONLY",
             },
         )
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         # Plan with terminal delete action + high confidence → HITL_REQUIRED
         state = {
@@ -1519,6 +1508,7 @@ class TestFtraIntegration:
         HITL escalation and should proceed to the next graph node.
         """
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(
             tmp_path,
@@ -1528,7 +1518,7 @@ class TestFtraIntegration:
                 "view_portfolio": "READ_ONLY",
             },
         )
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         # Plan with only reversible/read-only actions
         state = {
@@ -1616,6 +1606,7 @@ class TestFtraIntegration:
             TerminalClassification,
         )
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         # Create registry with known classifications
         registry_path = self._registry_path(
@@ -1628,7 +1619,7 @@ class TestFtraIntegration:
         )
 
         # 1. Test via in-graph ftra_node
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         # 2. Test via boundary check (using same classifier)
         classifier = IrreversibilityClassifier(registry_path=registry_path)
@@ -1744,6 +1735,7 @@ class TestFtraIntegration:
         actions should be flagged based on the worst-case classification.
         """
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(
             tmp_path,
@@ -1754,7 +1746,7 @@ class TestFtraIntegration:
                 "update_preferences": "REVERSIBLE",
             },
         )
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         # Plan with mixed actions: mostly safe but one terminal
         state = {
@@ -1785,9 +1777,10 @@ class TestFtraIntegration:
         FTRA node must emit telemetry for audit and observability.
         """
         from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(tmp_path, {"check_price": "READ_ONLY"})
-        node = create_ftra_node(registry_path=registry_path)
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
         state = {
             "execution_plan_output": self._plan_dict([("s1", "check_price")]),

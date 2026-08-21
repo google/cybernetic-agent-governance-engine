@@ -16,10 +16,11 @@
 Core Structures for the Gateway Service.
 """
 
+import math
 import re
 import uuid
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class TradeOrder(BaseModel):
@@ -31,7 +32,8 @@ class TradeOrder(BaseModel):
 
     # User-provided fields
     symbol: str = Field(..., description="Ticker symbol of the asset")
-    amount: float = Field(..., description="Amount to trade")
+    amount: float | None = Field(default=None, description="Amount to trade")
+    amount_minor: int | None = Field(default=None, description="Amount to trade in minor units (e.g. cents).")
     currency: str = Field(..., description="Currency code (e.g. USD, EUR)")
     confidence: float = Field(
         ...,
@@ -62,6 +64,8 @@ class TradeOrder(BaseModel):
     @field_validator("confidence")
     @classmethod
     def validate_confidence(cls, v):  # type: ignore[no-untyped-def]
+        if not math.isfinite(v):
+            raise ValueError("Confidence must be a finite number, got non-finite value")
         if not (0.0 <= v <= 1.0):
             raise ValueError("Confidence must be between 0.0 and 1.0")
         return v
@@ -69,9 +73,27 @@ class TradeOrder(BaseModel):
     @field_validator("amount")
     @classmethod
     def validate_positive(cls, v):  # type: ignore[no-untyped-def]
+        if v is None:
+            return v
+        if not math.isfinite(v):
+            raise ValueError("Amount must be a finite number, got non-finite value")
         if v <= 0:
             raise ValueError("Amount must be positive")
         return v
+
+    @model_validator(mode="after")
+    def validate_amounts(self):  # type: ignore[no-untyped-def]
+        if self.amount is None and self.amount_minor is None:
+            raise ValueError("Must provide either amount or amount_minor")
+        if self.amount is not None and self.amount_minor is None:
+            self.amount_minor = int(round(self.amount * 100))
+        elif self.amount_minor is not None and self.amount is None:
+            self.amount = self.amount_minor / 100.0
+            
+        if self.amount_minor is not None and self.amount_minor <= 0:
+            raise ValueError("Amount must be positive")
+            
+        return self
 
     @field_validator("transaction_id")
     @classmethod

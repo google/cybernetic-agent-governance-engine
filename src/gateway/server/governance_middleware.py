@@ -31,6 +31,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import time
 import uuid
@@ -42,7 +43,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from opentelemetry import context as otel_context
 from opentelemetry.propagate import extract as otel_extract
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.kms_signer import get_governance_signer
@@ -444,6 +445,17 @@ class ValidateActionRequest(BaseModel):
     params: dict[str, Any]
     policy_version_id: str | None = None
 
+    @field_validator("params")
+    @classmethod
+    def _reject_non_finite_floats(cls, v: dict[str, Any]) -> dict[str, Any]:
+        for key, val in v.items():
+            if isinstance(val, float) and not math.isfinite(val):
+                raise ValueError(
+                    f"params[{key!r}] contains non-finite float {val!r} "
+                    "— NaN and Infinity are not permitted"
+                )
+        return v
+
 
 # ---------------------------------------------------------------------------
 # P4 — KMS-verified governance signature check
@@ -606,6 +618,52 @@ async def get_policy_version_endpoint() -> JSONResponse:
     from src.gateway.governance.constants import ControlRegistry
 
     return JSONResponse(content={"active_hash": ControlRegistry().active_hash})
+
+
+@governance_app.get("/jwks")
+async def get_jwks_endpoint() -> JSONResponse:
+    """Return the JSON Web Key Set (JWKS) for routing seal verification.
+
+    External verifiers (GFA actuators, compliance auditors) use this endpoint
+    to fetch the public keys needed to verify JWT routing seals issued by the
+    gateway.
+
+    Key rotation is handled automatically:
+    - New keys are added when KMS keys are rotated
+    - Old keys remain available for a grace period (default: 1 hour)
+    - Expired keys are automatically removed on access
+
+    Response format (RFC 7517 JWK Set):
+        {
+            "keys": [
+                {
+                    "kty": "EC",
+                    "crv": "P-256",
+                    "x": "...",
+                    "y": "...",
+                    "kid": "...",
+                    "use": "sig",
+                    "alg": "ES256"
+                }
+            ]
+        }
+
+    Cache-Control:
+        The response includes Cache-Control headers matching the JWKS cache TTL
+        to allow external verifiers to cache the keyset appropriately.
+    """
+    from src.gateway.governance.jwks import get_jwks, _JWKS_CACHE_TTL_S
+
+    jwks = get_jwks()
+    jwks_dict = jwks.to_dict()
+
+    return JSONResponse(
+        content=jwks_dict,
+        headers={
+            "Cache-Control": f"public, max-age={_JWKS_CACHE_TTL_S}",
+            "Content-Type": "application/json",
+        },
+    )
 
 
 @governance_app.post("/validate-action")

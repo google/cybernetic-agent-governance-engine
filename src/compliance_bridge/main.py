@@ -211,8 +211,8 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # ------------------------------------------------------------------
     # C-08: Start KMS batch signer for evidence chain signing.
     # The signer is disabled by default (kms_batch.enabled=false in
-    # config/governance_thresholds.json) and must be explicitly enabled
-    # in production via env var KMS_BATCH_ENABLED or config override.
+    # config/governance_thresholds.json). Can be explicitly enabled
+    # via env var KMS_BATCH_ENABLED=true or config override.
     # assert_kms_active_in_production() enforces KMS mode in prod.
     # ------------------------------------------------------------------
     from src.gateway.governance.schemas.thresholds import get_kms_batch_enabled
