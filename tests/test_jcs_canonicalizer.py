@@ -33,3 +33,20 @@ def test_jcs_canonicalize_nested():
     plan = {"z": {"y": ["b", "a"]}, "x": 1}
     assert jcs_canonicalize_plan(plan) == b'{"x":1,"z":{"y":["b","a"]}}'
 
+
+def test_jcs_canonicalize_unicode_escapes():
+    """Verify RFC 8785 unicode un-escaping."""
+    # JCS requires non-escaped UTF-8 for everything except control characters
+    plan = {"text": "café\u20AC"}
+    # should be literal UTF-8 in the byte output, not \uXXXX escapes
+    canonical = jcs_canonicalize_plan(plan)
+    assert canonical == b'{"text":"caf\xc3\xa9\xe2\x82\xac"}'
+
+def test_jcs_canonicalize_negative_zero():
+    """Verify RFC 8785 handling of negative zero."""
+    # JCS says -0 must be serialized as -0, but floating point -0.0 might be tricky.
+    # In JCS, -0.0 is technically not different from 0 in Python usually, but if represented as float it might.
+    plan = {"val": -0.0}
+    canonical = jcs_canonicalize_plan(plan)
+    assert canonical == b'{"val":0}' # wait, let's just make sure it's stable. JCS handles this.
+

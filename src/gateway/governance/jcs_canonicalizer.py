@@ -18,7 +18,6 @@ RFC 8785 JSON Canonicalization Scheme (JCS) utility.
 
 from typing import Any
 import jcs
-
 def jcs_canonicalize_plan(plan: dict[str, Any]) -> bytes:
     """
     Produce an RFC 8785 deterministic byte representation of a payload.
