@@ -183,8 +183,22 @@ def pytest_configure(config: pytest.Config) -> None:
     # GOVERNANCE_SALT must be consistent so routing seals issued during tests
     # can be verified by both the gateway module and the GFA mirror module.
     _setdefault("GOVERNANCE_SALT", "CYBERNETIC_GOVERNANCE_TEST_SALT_32C!")
+    # CAGE_ENV must be set to "test" to enable HMAC fallback in routing_seal
+    # and kms_signer when KMS_GOVERNANCE_KEY is not configured.
+    _setdefault("CAGE_ENV", "test")
+    # Remove KMS credentials to force HMAC fallback mode
+    os.environ.pop("KMS_GOVERNANCE_KEY", None)
+    os.environ.pop("KMS_GOVERNANCE_PUBLIC_PEM", None)
     # EVIDENCE_STREAM_ENABLED default true to satisfy EVIDENCE_CHAIN_BLOCKING precondition in tests
     _setdefault("EVIDENCE_STREAM_ENABLED", "true")
+    
+    # Reset KMS signer singleton to ensure HMAC fallback mode is used
+    # This must happen AFTER setting CAGE_ENV=test and removing KMS credentials
+    try:
+        from src.gateway.governance.kms_signer import reset_governance_signer
+        reset_governance_signer()
+    except ImportError:
+        pass  # Module not yet importable during early configuration
 
 
 def _setdefault(key: str, value: str) -> None:
@@ -198,6 +212,46 @@ def _setdefault(key: str, value: str) -> None:
         or "http://opa:8181" in current
     ):
         os.environ[key] = value
+
+
+# ── KMS signer reset for HMAC fallback in tests ────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def reset_kms_signer_for_tests():
+    """Reset the KMS signer singleton before each test to ensure HMAC fallback mode.
+    
+    This fixture runs automatically for every test to ensure the signer is
+    properly initialized in test environment (HMAC fallback when KMS unavailable).
+    """
+    # Save original values
+    orig_cage_env = os.environ.get("CAGE_ENV")
+    orig_kms_key = os.environ.get("KMS_GOVERNANCE_KEY")
+    orig_kms_pem = os.environ.get("KMS_GOVERNANCE_PUBLIC_PEM")
+    
+    # Set test environment and remove KMS credentials to force HMAC fallback
+    os.environ["CAGE_ENV"] = "test"
+    os.environ.pop("KMS_GOVERNANCE_KEY", None)
+    os.environ.pop("KMS_GOVERNANCE_PUBLIC_PEM", None)
+    
+    # Reset the signer singleton
+    from src.gateway.governance.kms_signer import reset_governance_signer
+    reset_governance_signer()
+    
+    yield
+    
+    # Restore original values
+    if orig_cage_env is not None:
+        os.environ["CAGE_ENV"] = orig_cage_env
+    else:
+        os.environ.pop("CAGE_ENV", None)
+    if orig_kms_key is not None:
+        os.environ["KMS_GOVERNANCE_KEY"] = orig_kms_key
+    if orig_kms_pem is not None:
+        os.environ["KMS_GOVERNANCE_PUBLIC_PEM"] = orig_kms_pem
+    
+    # Reset again after test to ensure clean state
+    reset_governance_signer()
 
 
 # ── CLI option ────────────────────────────────────────────────────────────────

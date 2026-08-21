@@ -620,6 +620,52 @@ async def get_policy_version_endpoint() -> JSONResponse:
     return JSONResponse(content={"active_hash": ControlRegistry().active_hash})
 
 
+@governance_app.get("/jwks")
+async def get_jwks_endpoint() -> JSONResponse:
+    """Return the JSON Web Key Set (JWKS) for routing seal verification.
+
+    External verifiers (GFA actuators, compliance auditors) use this endpoint
+    to fetch the public keys needed to verify JWT routing seals issued by the
+    gateway.
+
+    Key rotation is handled automatically:
+    - New keys are added when KMS keys are rotated
+    - Old keys remain available for a grace period (default: 1 hour)
+    - Expired keys are automatically removed on access
+
+    Response format (RFC 7517 JWK Set):
+        {
+            "keys": [
+                {
+                    "kty": "EC",
+                    "crv": "P-256",
+                    "x": "...",
+                    "y": "...",
+                    "kid": "...",
+                    "use": "sig",
+                    "alg": "ES256"
+                }
+            ]
+        }
+
+    Cache-Control:
+        The response includes Cache-Control headers matching the JWKS cache TTL
+        to allow external verifiers to cache the keyset appropriately.
+    """
+    from src.gateway.governance.jwks import get_jwks, _JWKS_CACHE_TTL_S
+
+    jwks = get_jwks()
+    jwks_dict = jwks.to_dict()
+
+    return JSONResponse(
+        content=jwks_dict,
+        headers={
+            "Cache-Control": f"public, max-age={_JWKS_CACHE_TTL_S}",
+            "Content-Type": "application/json",
+        },
+    )
+
+
 @governance_app.post("/validate-action")
 async def validate_action_endpoint(
     request: Request,

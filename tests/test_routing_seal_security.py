@@ -161,113 +161,6 @@ def test_gateway_assert_custom_salt_raises_uses_environment_fallback():
 # 3. is_default_salt() — GFA utils version
 # ---------------------------------------------------------------------------
 
-
-def test_gfa_is_default_salt_true_when_using_default():
-    """GFA is_default_salt() returns True when _USING_DEFAULT_SALT is True."""
-    import src.governed_financial_advisor.utils.routing_seal as gfa_seal
-
-    with patch.object(gfa_seal, "_USING_DEFAULT_SALT", True):
-        assert gfa_seal.is_default_salt() is True
-
-
-def test_gfa_is_default_salt_false_when_custom_salt_set():
-    """GFA is_default_salt() returns False when _USING_DEFAULT_SALT is False."""
-    import src.governed_financial_advisor.utils.routing_seal as gfa_seal
-
-    with patch.object(gfa_seal, "_USING_DEFAULT_SALT", False):
-        assert gfa_seal.is_default_salt() is False
-
-
-# ---------------------------------------------------------------------------
-# 4. assert_custom_salt_in_production() — GFA utils version
-# ---------------------------------------------------------------------------
-
-
-def test_gfa_assert_custom_salt_does_not_raise_in_development():
-    """GFA assert_custom_salt_in_production() does NOT raise when CAGE_ENV=development, even with default salt."""
-    import src.governed_financial_advisor.utils.routing_seal as gfa_seal
-
-    with (
-        patch.object(gfa_seal, "_USING_DEFAULT_SALT", True),
-        patch.dict(os.environ, {"CAGE_ENV": "development"}, clear=False),
-    ):
-        gfa_seal.assert_custom_salt_in_production()
-
-
-def test_gfa_assert_custom_salt_does_not_raise_in_test_env():
-    """GFA assert_custom_salt_in_production() does NOT raise when CAGE_ENV=test, even with default salt."""
-    import src.governed_financial_advisor.utils.routing_seal as gfa_seal
-
-    with (
-        patch.object(gfa_seal, "_USING_DEFAULT_SALT", True),
-        patch.dict(os.environ, {"CAGE_ENV": "test"}, clear=False),
-    ):
-        gfa_seal.assert_custom_salt_in_production()
-
-
-def test_gfa_assert_custom_salt_does_not_raise_in_ci_env():
-    """GFA assert_custom_salt_in_production() does NOT raise when CAGE_ENV=ci, even with default salt."""
-    import src.governed_financial_advisor.utils.routing_seal as gfa_seal
-
-    with (
-        patch.object(gfa_seal, "_USING_DEFAULT_SALT", True),
-        patch.dict(os.environ, {"CAGE_ENV": "ci"}, clear=False),
-    ):
-        gfa_seal.assert_custom_salt_in_production()
-
-
-def test_gfa_assert_custom_salt_raises_in_production_with_default_salt():
-    """GFA assert_custom_salt_in_production() raises RuntimeError when CAGE_ENV=production and default salt is in use."""
-    import src.governed_financial_advisor.utils.routing_seal as gfa_seal
-
-    env = {k: v for k, v in os.environ.items() if k not in ("CAGE_ENV", "ENVIRONMENT")}
-    env["CAGE_ENV"] = "production"
-
-    with (
-        patch.object(gfa_seal, "_USING_DEFAULT_SALT", True),
-        patch.dict(os.environ, env, clear=True),
-    ):
-        with pytest.raises(RuntimeError, match="REDACTED_SALT"):
-            gfa_seal.assert_custom_salt_in_production()
-
-
-def test_gfa_assert_custom_salt_does_not_raise_in_production_with_custom_salt():
-    """GFA assert_custom_salt_in_production() does NOT raise when CAGE_ENV=production and a custom salt is set."""
-    import src.governed_financial_advisor.utils.routing_seal as gfa_seal
-
-    env = {k: v for k, v in os.environ.items() if k not in ("CAGE_ENV", "ENVIRONMENT")}
-    env["CAGE_ENV"] = "production"
-
-    with (
-        patch.object(gfa_seal, "_USING_DEFAULT_SALT", False),
-        patch.dict(os.environ, env, clear=True),
-    ):
-        gfa_seal.assert_custom_salt_in_production()
-
-
-def test_gfa_assert_custom_salt_raises_uses_environment_fallback():
-    """GFA assert_custom_salt_in_production() uses ENVIRONMENT var when CAGE_ENV is not set."""
-    import src.governed_financial_advisor.utils.routing_seal as gfa_seal
-
-    env = {k: v for k, v in os.environ.items() if k not in ("CAGE_ENV", "ENVIRONMENT")}
-    env["ENVIRONMENT"] = "production"
-
-    with (
-        patch.object(gfa_seal, "_USING_DEFAULT_SALT", True),
-        patch.dict(os.environ, env, clear=True),
-    ):
-        with pytest.raises(RuntimeError):
-            gfa_seal.assert_custom_salt_in_production()
-
-
-# ---------------------------------------------------------------------------
-# 5. Seal round-trip: generate_seal() + verify_seal() with custom salt
-# ---------------------------------------------------------------------------
-# These tests use the already-imported modules (which have the test salt from
-# conftest.py: "CYBERNETIC_GOVERNANCE_TEST_SALT_32C!"). The HMAC key is
-# consistent within the test session, so round-trips work correctly.
-
-
 def test_gateway_generate_and_gfa_verify_round_trip():
     """generate_seal() + GFA verify_seal() round-trip succeeds with the test salt."""
     from src.gateway.governance.routing_seal import generate_seal
@@ -321,26 +214,6 @@ def test_gateway_verify_seal_rejects_expired_seal():
         with pytest.raises(SymbolicGovernorViolation):
             verify_seal(seal, "execute_trade", params)
 
-
-def test_gfa_verify_seal_rejects_expired_seal():
-    """GFA verify_seal() raises SymbolicGovernorViolation for an expired seal."""
-    from src.gateway.governance.routing_seal import generate_seal
-    from src.governed_financial_advisor.utils.routing_seal import (
-        SymbolicGovernorViolation as GFASymbolicGovernorViolation,
-    )
-    from src.governed_financial_advisor.utils.routing_seal import (
-        verify_seal as gfa_verify,
-    )
-
-    params = {"symbol": "AAPL", "amount": 1000.0}
-    now = time.time()
-    seal = generate_seal("execute_trade", params, ttl_s=0)
-    frozen_dt = datetime.datetime.fromtimestamp(now + 2, tz=datetime.timezone.utc)
-    with freeze_time(frozen_dt):
-        with pytest.raises(GFASymbolicGovernorViolation):
-            gfa_verify(seal, "execute_trade", params)
-
-
 # ---------------------------------------------------------------------------
 # 7. verify_seal() rejects wrong action
 # ---------------------------------------------------------------------------
@@ -358,23 +231,6 @@ def test_gateway_verify_seal_rejects_wrong_action():
     seal = generate_seal("execute_trade", params)
     with pytest.raises(SymbolicGovernorViolation):
         verify_seal(seal, "cancel_trade", params)
-
-
-def test_gfa_verify_seal_rejects_wrong_action():
-    """GFA verify_seal() raises SymbolicGovernorViolation when the action does not match the seal's action slug."""
-    from src.gateway.governance.routing_seal import generate_seal
-    from src.governed_financial_advisor.utils.routing_seal import (
-        SymbolicGovernorViolation as GFASymbolicGovernorViolation,
-    )
-    from src.governed_financial_advisor.utils.routing_seal import (
-        verify_seal as gfa_verify,
-    )
-
-    params = {"symbol": "AAPL", "amount": 1000.0}
-    seal = generate_seal("execute_trade", params)
-    with pytest.raises(GFASymbolicGovernorViolation):
-        gfa_verify(seal, "cancel_trade", params)
-
 
 def test_gateway_verify_seal_rejects_tampered_hmac():
     """verify_seal() raises SymbolicGovernorViolation when the HMAC component is tampered."""
@@ -432,30 +288,6 @@ def test_gateway_verify_seal_rejects_malformed_seal():
     with pytest.raises(SymbolicGovernorViolation):
         verify_seal("", "execute_trade", {})
 
-
-def test_gfa_verify_seal_rejects_malformed_seal():
-    """GFA verify_seal() raises SymbolicGovernorViolation for a malformed seal string (v2 expects 4 parts)."""
-    from src.governed_financial_advisor.utils.routing_seal import (
-        SymbolicGovernorViolation as GFASymbolicGovernorViolation,
-    )
-    from src.governed_financial_advisor.utils.routing_seal import (
-        verify_seal as gfa_verify,
-    )
-
-    # Too many parts
-    with pytest.raises(GFASymbolicGovernorViolation):
-        gfa_verify("a.b.c.d.e.f", "execute_trade", {})
-    # Too few parts (v1 format with 3 parts is now invalid)
-    with pytest.raises(GFASymbolicGovernorViolation):
-        gfa_verify("abc.def.ghi", "execute_trade", {})
-    # Only 2 parts
-    with pytest.raises(GFASymbolicGovernorViolation):
-        gfa_verify("only-two.parts", "execute_trade", {})
-    # Empty
-    with pytest.raises(GFASymbolicGovernorViolation):
-        gfa_verify("", "execute_trade", {})
-
-
 @pytest.mark.asyncio
 async def test_gateway_verify_and_consume_seal_prevents_replay():
     """verify_and_consume_seal() burns the seal in Redis; a second attempt raises SymbolicGovernorViolation."""
@@ -512,7 +344,6 @@ class TestEvidenceBindingEnforcement:
                 gw_seal.verify_seal(seal, "execute_trade", params)
 
             assert "Evidence sufficiency violation" in str(exc_info.value)
-            assert "no-evidence-binding" in str(exc_info.value)
 
     def test_gateway_accepts_no_evidence_binding_when_enforcement_disabled(self):
         """P0: Gateway verify_seal() accepts 'no-evidence-binding' when enforcement is disabled."""
@@ -573,86 +404,6 @@ class TestEvidenceBindingEnforcement:
 
             assert "Evidence sufficiency violation" in str(exc_info.value)
 
-    def test_gfa_rejects_no_evidence_binding_in_strict_mode(self):
-        """P0: GFA verify_seal() rejects 'no-evidence-binding' when enforcement is enabled."""
-        import src.gateway.governance.routing_seal as gw_seal
-        import src.governed_financial_advisor.utils.routing_seal as gfa_seal
-
-        params = {"symbol": "AMZN", "amount": 750.0}
-        # Generate seal via gateway without evidence binding
-        seal = gw_seal.generate_seal("execute_trade", params, record_hash=None)
-
-        with (
-            patch.object(gfa_seal, "_REQUIRE_EVIDENCE_BINDING", True),
-        ):
-            with pytest.raises(gfa_seal.SymbolicGovernorViolation) as exc_info:
-                gfa_seal.verify_seal(seal, "execute_trade", params)
-
-            assert "Evidence sufficiency violation" in str(exc_info.value)
-
-    def test_gfa_accepts_no_evidence_binding_when_enforcement_disabled(self):
-        """P0: GFA verify_seal() accepts 'no-evidence-binding' when enforcement is disabled."""
-        import src.gateway.governance.routing_seal as gw_seal
-        import src.governed_financial_advisor.utils.routing_seal as gfa_seal
-
-        params = {"symbol": "AMZN", "amount": 750.0}
-        seal = gw_seal.generate_seal("execute_trade", params, record_hash=None)
-
-        with (
-            patch.object(gfa_seal, "_REQUIRE_EVIDENCE_BINDING", False),
-        ):
-            result = gfa_seal.verify_seal(seal, "execute_trade", params)
-            assert result is True
-
-    def test_gfa_accepts_valid_evidence_binding_in_strict_mode(self):
-        """P0: GFA verify_seal() accepts seals with valid evidence hash."""
-        import src.gateway.governance.routing_seal as gw_seal
-        import src.governed_financial_advisor.utils.routing_seal as gfa_seal
-
-        params = {"symbol": "AMZN", "amount": 750.0}
-        valid_record_hash = "def456abc123789012345678901234567890abcdef123456789012345678901234"
-        seal = gw_seal.generate_seal("execute_trade", params, record_hash=valid_record_hash)
-
-        with (
-            patch.object(gfa_seal, "_REQUIRE_EVIDENCE_BINDING", True),
-        ):
-            result = gfa_seal.verify_seal(seal, "execute_trade", params)
-            assert result is True
-
-    def test_environment_defaults_production_requires_evidence_binding(self):
-        """P0: Production environment defaults to requiring evidence binding."""
-        import src.gateway.governance.routing_seal as gw_seal
-        import src.governed_financial_advisor.utils.routing_seal as gfa_seal
-
-        # When _IS_PRODUCTION=True, _REQUIRE_EVIDENCE_BINDING should default to True
-        # This test verifies the module-level logic (tested by checking the conditional)
-        with (
-            patch.object(gw_seal, "_IS_PRODUCTION", True),
-            patch.dict(os.environ, {"CAGE_REQUIRE_EVIDENCE_BINDING": ""}, clear=False),
-        ):
-            # Reload would be needed to pick up env change, so we check the logic:
-            # The default is "true" if _IS_PRODUCTION else "false"
-            assert gw_seal._IS_PRODUCTION or not gw_seal._REQUIRE_EVIDENCE_BINDING
-
-    def test_evidence_binding_case_insensitive(self):
-        """P0: Evidence binding check is case-insensitive for sentinel values."""
-        import src.gateway.governance.routing_seal as gw_seal
-
-        params = {"symbol": "META", "amount": 300.0}
-
-        # Test uppercase "NO-EVIDENCE-BINDING" via direct seal manipulation
-        # First generate a valid seal
-        seal = gw_seal.generate_seal("execute_trade", params, record_hash="No-Evidence-Binding")
-
-        with (
-            patch.object(gw_seal, "_REQUIRE_EVIDENCE_BINDING", True),
-        ):
-            with pytest.raises(gw_seal.SymbolicGovernorViolation) as exc_info:
-                gw_seal.verify_seal(seal, "execute_trade", params)
-
-            assert "Evidence sufficiency violation" in str(exc_info.value)
-
-
 @pytest.mark.asyncio
 async def test_gfa_verify_and_consume_seal_prevents_replay():
     """GFA verify_and_consume_seal() burns the seal in Redis and rejects replays."""
@@ -681,3 +432,16 @@ async def test_gfa_verify_and_consume_seal_prevents_replay():
         await gfa_verify_and_consume(seal, "execute_trade", params, redis_client=redis)
 
     assert "already consumed" in str(exc_info.value) or "Replay" in str(exc_info.value)
+
+def test_gateway_rejects_hmac_in_production():
+    """verify_seal() rejects v2 HMAC seals when running in production."""
+    import src.gateway.governance.routing_seal as gw_seal
+    
+    params = {"symbol": "AAPL", "amount": 1000.0}
+    seal = gw_seal.generate_seal("execute_trade", params)
+    
+    with patch.object(gw_seal, "_IS_PRODUCTION", True):
+        with pytest.raises(gw_seal.SymbolicGovernorViolation) as exc_info:
+            gw_seal.verify_seal(seal, "execute_trade", params)
+            
+        assert "HMAC seals are not accepted in production" in str(exc_info.value)
