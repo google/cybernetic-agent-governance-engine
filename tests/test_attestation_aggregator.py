@@ -26,6 +26,8 @@ from src.gateway.governance.governance_envelope import (
     ExternalAttestation,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 class MockAttestationProvider(AttestationProvider):
     """Mock provider for unit testing."""

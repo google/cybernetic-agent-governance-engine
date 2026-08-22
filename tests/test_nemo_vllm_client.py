@@ -27,6 +27,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 # Warm the real parent-package cache (src.gateway.governance, .nemo, etc.)
 # *before* any test stubs sys.modules["opentelemetry"] with a bare MagicMock.
 # src.gateway.governance.__init__ does `from . import langgraph_harness`,

@@ -55,6 +55,8 @@ from src.integrations.veip import (
     VEIPPhysicsProvider,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 @pytest.fixture
 def ec_key_pair():

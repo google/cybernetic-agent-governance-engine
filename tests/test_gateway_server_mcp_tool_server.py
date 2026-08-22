@@ -31,6 +31,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 # ---------------------------------------------------------------------------
 # Stub patches — minimum surface to allow import
 # ---------------------------------------------------------------------------
