@@ -234,8 +234,7 @@ mcp-servers/infrastructure/setup.sh
 # Copy litellm_config.yaml.example → litellm_config.yaml and fill in values.
 litellm_config.yaml
 
-# Roo AI assistant — local state and cache only. The .roo/rules*/ directories
-# are tracked (see AGENTS.md at the repository root, which .roo/ points to).
+# Roo Code AI assistant — local state and cache only (rules are read from AGENTS.md)
 .roo.json
 .roo.yaml
 .roo.yml

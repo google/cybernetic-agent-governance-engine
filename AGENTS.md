@@ -13,8 +13,8 @@
 
 This file defines standards for anyone (human or AI coding agent) contributing
 to this repository. It is written in the tool-agnostic `AGENTS.md` convention
-supported by most AI coding assistants. Tool-specific configuration (e.g. Roo
-mode routing) lives under `.roo/` and simply points back here — see
+supported natively by most AI coding assistants (including Antigravity, Roo Code,
+Cursor, Cline, GitHub Copilot, and Windsurf) — see
 [Tool-Specific Configuration](#tool-specific-configuration) at the bottom.
 
 ## Table of Contents
@@ -299,19 +299,18 @@ When asked about secrets or credentials:
 
 ## Tool-Specific Configuration
 
-This file is the single source of truth for agent/contributor standards,
-following the tool-agnostic `AGENTS.md` convention. Some AI coding assistants
-additionally support mode-specific instruction routing; where used, those
-configurations point back to this file rather than duplicating its content:
+This file is the single authoritative source of truth for agent and contributor standards,
+following the open, tool-agnostic `AGENTS.md` convention. 
 
-| Tool | Location | Purpose |
+All modern AI coding assistants consume `AGENTS.md` natively at the repository root:
+
+| Assistant / Tool | Ingestion Path | Behavior |
 |---|---|---|
-| Roo Code | `.roo/rules/`, `.roo/rules-<mode>/` | Per-mode (Code/Debug/Ask/Architect) instruction routing; each file is a thin pointer into the relevant section(s) of this document. |
+| **Antigravity** | `AGENTS.md` | Ingested natively as global project instructions and behavioral rules. |
+| **Roo Code / Cline** | `AGENTS.md` | Ingested automatically into all modes (Code, Architect, Debug, Ask). |
+| **Cursor / Copilot / Windsurf** | `AGENTS.md` | Discovered natively at repository root. |
 
-If you use a different AI coding assistant that supports a project-instructions
-file (e.g. a tool reading `CLAUDE.md`, `.cursorrules`, or
-`.github/copilot-instructions.md`), point it at this file rather than
-introducing a parallel, divergent copy of these standards.
+If you use a tool that requires a legacy configuration filename (e.g. `CLAUDE.md`, `.cursorrules`, or `.github/copilot-instructions.md`), create a thin symlink or pointer pointing directly back to this file rather than maintaining a divergent copy of these standards.
 
 ---
 
