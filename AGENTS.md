@@ -145,6 +145,8 @@ dump the full environment, and mask any credential-shaped value before logging
 This project is managed with [`uv`](https://docs.astral.sh/uv/) (see `uv.lock`
 and `pyproject.toml`). All test and verification invocations must be prefixed with `uv run`.
 Never invoke `pytest`, `python`, or `python -m pytest` directly without the `uv run`
+prefix — doing so bypasses the project's locked, reproducible virtual environment.
+
 When running tests in parallel with `pytest-xdist` (`-n auto`), always launch
 the test suite with `--dist=loadfile` to ensure proper test file isolation across workers.
 
@@ -155,11 +157,17 @@ uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --tb=short
 uv run pytest tests/test_tls_enforcement.py -v
 uv run pytest --cov=src --cov-report=term-missing
 uv run python proof/model.py
+```
+
+Incorrect (do not suggest):
+```bash
 pytest
 python -m pytest
 pytest -n auto  # Missing --dist=loadfile and uv run prefix
 python proof/model.py
 ```
+
+This applies to all agents, contributors, and CI documentation examples.
 
 ---
 
@@ -330,6 +338,24 @@ Always launch the test suite with `--dist=loadfile` to ensure proper test file i
 | Scope / Purpose | Canonical Command |
 |---|---|
 | **Single test file** | `uv run pytest tests/test_tls_enforcement.py -v` |
+| **Specific test method** | `uv run pytest tests/test_tls_enforcement.py::TestTlsProtocolStandards::test_default_client_context_minimum_version -v` |
+| **Adversarial / Red-team unit tests** | `uv run pytest tests/red_team/ -m "red_team and not integration" -v` |
+| **US Federal region posture** | `CAGE_DEPLOYMENT_REGION=US_FED uv run pytest tests/ -m us_fed -v` |
+| **EU ECB region posture** | `CAGE_DEPLOYMENT_REGION=EU_ECB uv run pytest tests/ -m eu_ecb -v` |
+| **APAC MAS region posture** | `CAGE_DEPLOYMENT_REGION=APAC_MAS uv run pytest tests/ -m apac_mas -v` |
+| **No-Direct-Bind BFS model proof** | `uv run python proof/model.py && uv run pytest tests/test_no_direct_bind_proof.py -v` |
+| **Distributed CBF formal proof** | `uv run python -m proof.distributed_cbf_model && uv run pytest proof/distributed_cbf_model.py -v` |
+| **Static analysis & formatting** | `uv run ruff check . && uv run ruff format --check .` |
+| **Type checking** | `uv run mypy src/` |
+| **Bandit SAST security scan** | `uv run bandit -r src/ -c pyproject.toml -ll` |
+| **STPA artifact freshness** | `uv run python scripts/check_stpa_freshness.py --verbose` |
+| **Langfuse posture validation** | `uv run python scripts/verify_langfuse_posture.py --dry-run --posture development` |
+
+### Full Integration Suite Against Live GKE
+
+The canonical way to run the full integration test suite against the live GKE dev cluster:
+
+```bash
 # 1. Establish port-forwards to live GKE dev cluster (keep running in background)
 bash scripts/port_forward_dev.sh
 
