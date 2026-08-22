@@ -184,8 +184,11 @@ deployment/terraform/tf_output.json
 dist/
 *.egg-info/
 
-# Temporary files
+# Temporary & Local Developer Files (never commit)
 /tmp/
+tmp/
+local/
+.local/
 
 # Governance transpiler output — regenerate via PolicyTranspiler
 **/generated_actions.py
