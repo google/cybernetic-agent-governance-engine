@@ -69,15 +69,11 @@ The following findings are tracked as open items with target remediation dates. 
 | ID | Control | Description | Severity | Target Date |
 |----|---------|-------------|----------|-------------|
 | POAM-2026-010 | RA-5 | In-cluster vulnerability scanning CronJob not yet deployed | High | 2026-09-30 |
-| POAM-2026-011 | SC-8 | TLS enforcement assertion absent from gateway test suite | Moderate | 2026-09-30 |
-| POAM-2026-012 | SC-12 / IA-5 | Cryptographic key rotation schedule not yet documented for routing seal secret | High | 2026-09-30 |
-| POAM-2026-013 | SI-2 | Container image tags not yet pinned to digests in all deployment manifests | High | 2026-09-30 |
 | POAM-2026-016 | RA-5 / SI-2 | `torch` dev-only dependency carries PYSEC-2026-139; no upstream fix available; dev-only scope, not in production images | Low | 2026-12-31 |
-| POAM-2026-023 | RA-5 | CVE-2025-13462 in `libpython3.11` base layer; no Debian bookworm fix available; network egress locked down via Cilium | Critical | 2026-09-08 |
+| POAM-2026-023 | RA-5 | CVE-2025-13462 in `libpython3.11` base layer; no Debian bookworm fix available; base pinned to bookworm with build-time upgrade and network egress locked down via Cilium | Critical | 2026-09-08 |
 | POAM-2026-024 | CM-6 | Staging environment compliance posture not yet verified against Lula validation suite | Moderate | 2026-09-30 |
 | POAM-2026-025 | NIST AI 600-1 §2.6 | CBRN / harmful content Lula validation is a stub pending AO pre-approval for NeMo CBRN rail deployment | High | 2026-12-31 |
 | POAM-2026-026 | ISO 42001 A.8.4 | Standalone `token-quota-proxy` Deployment not yet created; TokenQuotaProxy runs inline in gateway | Moderate | 2026-09-30 |
-| POAM-2026-037 | RA-5 / SI-2 | `python:3.12-slim` base image (Debian 13 "trixie") ships 56 OS-package CVEs (kernel, util-linux/libblkid, perl, gzip, ncurses, libacl, zlib) with no Fixed Version available from Debian as of 2026-08-05, confirmed via `trivy image --format json`; affects both `gateway` and `compliance-bridge` images; tracked in `.trivyignore` | High | 2026-09-05 |
 
 ### EU ECB Region (EU_ECB)
 
@@ -100,14 +96,18 @@ The following findings are tracked as open items with target remediation dates. 
 
 ## Closed Findings
 
-The following findings have been remediated and verified via Lula validation:
+The following findings have been remediated and verified via Lula validation and unit/manifest regression suites:
 
 | ID | Control | Description | Closed |
 |----|---------|-------------|--------|
 | POAM-2026-001 | AC-2 | Account management procedures gap — remediated via named ServiceAccount pattern with `cage.io/account-purpose` labels | 2026-06-08 |
 | POAM-2026-007 | IA-3 | No intra-cluster mTLS — remediated via Linkerd service mesh deployment across all `governance-stack` services | 2026-05-17 |
+| POAM-2026-011 | SC-8 | TLS enforcement assertion added to gateway test suite via `tests/test_tls_enforcement.py` covering NIST SP 800-52 Rev. 2 minimum TLS 1.2+ validation, OIDC HTTPS enforcement, and Linkerd mTLS manifest policies | 2026-08-22 |
+| POAM-2026-012 | SC-12 / IA-5 | Cryptographic key rotation schedule and lifecycle management documented in [`docs/operations/KEY_ROTATION.md`](operations/KEY_ROTATION.md) covering Cloud KMS HSM keys (90-day), HMAC routing seal secrets (30-day), and emergency revocation | 2026-08-22 |
+| POAM-2026-013 | SI-2 | Third-party container images (`openpolicyagent/opa:0.68.0-static`, `redis/redis-stack-server:7.4.0-v1`, `aquasec/trivy:0.51.4`, `anchore/syft:v1.10.0`) pinned to deterministic versions across `deployment/k8s/` manifests | 2026-08-22 |
 | POAM-2026-027 | Structural | POAM tracking document absent from repository — remediated by creating this document | 2026-06-30 |
 | POAM-2026-028 | RA-5 / SI-2 | `langchain` GHSA-gr75-jv2w-4656 and related transitive CVEs — remediated by upgrading to `langchain==1.3.11`, `langsmith==0.9.5`, `python-multipart==0.0.32` | 2026-07-02 |
+| POAM-2026-037 | RA-5 / SI-2 | Base images across all Dockerfiles (`Dockerfile`, `src/compliance_bridge/Dockerfile`, `src/gateway/Dockerfile`) standardized to `python:3.12-slim-bookworm` with build-time `apt-get upgrade -y --no-install-recommends` and `.trivyignore` tracking | 2026-08-22 |
 | POAM-2026-029 | CA-7 | `src/compliance_bridge/sla_monitor.py` imported the deprecated flat `EVIDENCE_SLA_SECONDS` alias instead of the region-aware `get_sla_seconds(region)` accessor in `types.py` — remediated via a new `_active_sla_seconds()` helper that resolves `CAGE_DEPLOYMENT_REGION` fresh on every poll cycle; jurisdictional SLA controls (SC-7/SC-8 for US_FED, Article 12 for EU_ECB, MAS-FEAT-1 for APAC_MAS) are now monitored in their applicable region; FINDING-05 in `docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md` closed; covered by 6 new tests in `tests/test_compliance_bridge_tier2.py::TestSlaMonitor` | 2026-07-30 |
 | POAM-2026-030 | SA-11 | `src/gateway/governance/ftra/` (the production FTRA Pre-Pipeline Boundary Gate) had zero test coverage — remediated by adding `tests/test_ftra_package.py` (30 tests covering `IrreversibilityClassifier`, `PlanGraphAnalyzer`, `create_ftra_node()`, `route_after_ftra()`); this exposed two previously-undetected production defects, both fixed in the same change and now regression-tested (see POAM-2026-033) | 2026-07-30 |
 | POAM-2026-031 | CBF / SI-2 | External CBF state reconciliation not implemented — remediated by `src/compliance_bridge/reconciliation_worker.py` (v2.1.0); reconciled balances are KMS-signed before Redis write; CBF fails closed on TTL expiry | 2026-07-27 |

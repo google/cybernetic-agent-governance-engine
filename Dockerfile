@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
-# Set working directory
 # Set working directory
 WORKDIR /app
 ENV PYTHONPATH=/app
 
 # Install system dependencies
 # git is often needed for installing dependencies from git
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
     build-essential \
     git \
     && rm -rf /var/lib/apt/lists/*

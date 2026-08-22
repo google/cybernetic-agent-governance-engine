@@ -43,7 +43,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: redis-stack
-          image: redis/redis-stack-server:latest
+          image: redis/redis-stack-server:7.4.0-v1
           args:
             - "redis-server"
             - "/usr/local/etc/redis/redis.conf"

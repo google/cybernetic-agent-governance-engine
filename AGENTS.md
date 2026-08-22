@@ -143,23 +143,23 @@ dump the full environment, and mask any credential-shaped value before logging
 ### Test Execution: Always Use `uv run`
 
 This project is managed with [`uv`](https://docs.astral.sh/uv/) (see `uv.lock`
-and `pyproject.toml`). All pytest invocations must be prefixed with `uv run`.
-Never invoke `pytest` or `python -m pytest` directly without the `uv run`
-prefix — doing so bypasses the project's locked, reproducible environment.
+and `pyproject.toml`). All test and verification invocations must be prefixed with `uv run`.
+Never invoke `pytest`, `python`, or `python -m pytest` directly without the `uv run`
+When running tests in parallel with `pytest-xdist` (`-n auto`), always launch
+the test suite with `--dist=loadfile` to ensure proper test file isolation across workers.
 
 Correct:
 ```bash
 uv run pytest
-uv run python -m pytest --cov=src --cov-report=term-missing
-```
-
-Incorrect (do not suggest):
-```bash
+uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --tb=short
+uv run pytest tests/test_tls_enforcement.py -v
+uv run pytest --cov=src --cov-report=term-missing
+uv run python proof/model.py
 pytest
 python -m pytest
+pytest -n auto  # Missing --dist=loadfile and uv run prefix
+python proof/model.py
 ```
-
-This applies to all agents, contributors, and CI documentation examples.
 
 ---
 
@@ -316,11 +316,20 @@ If you use a tool that requires a legacy configuration filename (e.g. `CLAUDE.md
 
 ## Test Execution
 
-### Full Integration Suite Against Live GKE
+### Local and Unit Suite (Offline)
 
-The canonical way to run the full integration test suite against the live GKE dev cluster:
+The canonical way to run the full local and unit test suite across multiple workers:
 
 ```bash
+uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --tb=short
+```
+Always launch the test suite with `--dist=loadfile` to ensure proper test file isolation across workers.
+
+### Targeted Test Commands Reference
+
+| Scope / Purpose | Canonical Command |
+|---|---|
+| **Single test file** | `uv run pytest tests/test_tls_enforcement.py -v` |
 # 1. Establish port-forwards to live GKE dev cluster (keep running in background)
 bash scripts/port_forward_dev.sh
 

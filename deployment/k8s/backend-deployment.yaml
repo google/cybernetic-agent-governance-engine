@@ -102,7 +102,7 @@ spec:
 
         # OPA Sidecar
         - name: opa
-          image: openpolicyagent/opa:latest-static
+          image: openpolicyagent/opa:0.68.0-static
           ports:
             - containerPort: 8181
           args:
