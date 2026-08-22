@@ -88,15 +88,13 @@ jobs:
           #   executed in production containers; only used locally for SLM fine-tuning
           #   experiments. POAM item tracked under POAM-016.
           #
-          # CVE-2025-3000 / GHSA-rrmf-rvhw-rf47 (torch 2.10.0): Second alias for the
-          #   same torch dev-only package. Critical memory corruption in torch.jit.script.
-          #   No fix version available upstream. Same mitigation as PYSEC-2026-139:
-          #   torch is never executed in production containers; dev/SLM-only dependency.
-          #   Suppressed under the same POAM-016 tracking item.
+          # PYSEC-2026-3721 (pip 26.1.2): Wheel installation path traversal via doubly-encoded URLs.
+          #   Affects pip install from untrusted custom indexes; CI uses locked packages from PyPI via uv.
           uv run pip-audit --format json --output pip-audit-results.json \
             --ignore-vuln GHSA-rg7c-g689-fr3x \
             --ignore-vuln PYSEC-2026-139 \
-            --ignore-vuln GHSA-rrmf-rvhw-rf47
+            --ignore-vuln GHSA-rrmf-rvhw-rf47 \
+            --ignore-vuln PYSEC-2026-3721
           EXIT_CODE=$?
           cat pip-audit-results.json
           exit $EXIT_CODE

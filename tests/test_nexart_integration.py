@@ -38,6 +38,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 # ---------------------------------------------------------------------------
 # Tests: adapter.py — data contracts and helper functions
 # ---------------------------------------------------------------------------

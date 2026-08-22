@@ -50,6 +50,7 @@ NON_TESTABLE_CONTROLS = {
     "ca7",  # CA-7 (Continuous Monitoring) — no standalone Lula stub yet
     "sa11",  # SA-11 (Developer Testing) — covered by test-gap findings; no Lula stub
     "sa9",  # SA-9 (External System Services) — external integration boundary
+    "si7",  # SI-7 (Software/System Integrity) — algorithmic/code integrity enforced via Python unit tests/formal proofs; no standalone Lula stub
     "external",
 }
 

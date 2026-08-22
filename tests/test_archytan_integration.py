@@ -26,6 +26,8 @@ from src.integrations.archytan import (
     ArchytanEnvelopeMapper,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
 
 @pytest.mark.asyncio
 async def test_archytan_provider_properties_and_unconfigured_fetch():
