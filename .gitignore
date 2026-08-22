@@ -242,15 +242,6 @@ litellm_config.yaml
 .roo-cache/
 .roo-state/
 .rooignore
-
-# Antigravity (Roo subsystem) — config examples and init scripts
-.antigravity/
-antigravity.json
-antigravity.yaml
-antigravity.yml
-config/antigravity_mcp_example.json
-init_antigravity.sh
-
 # AI 600-1 §2.8 — generated SBOM artifact (not committed)
 sbom.json
 coverage.json
