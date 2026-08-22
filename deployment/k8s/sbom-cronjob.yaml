@@ -253,7 +253,7 @@ spec:
           # ----------------------------------------------------------------
           containers:
             - name: cage-sbom-scan
-              image: anchore/syft:latest
+              image: anchore/syft:v1.10.0
               # PRODUCTION NOTE: Pin this image. Example:
               # image: anchore/syft@sha256:abc123...
               command:

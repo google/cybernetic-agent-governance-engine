@@ -70,6 +70,7 @@ metadata:
     compliance.nist.gov/control: "IA-3,SC-8"
     compliance.nist.gov/standard: "SP-800-53-Rev5"
     compliance.nist.gov/last-reviewed: "2026-05-17"
+    cage.io/poam: "POAM-007,POAM-011"
 
 ---
 # -----------------------------------------------------------------------------
@@ -88,6 +89,7 @@ metadata:
     compliance.nist.gov/control: "IA-3,SC-8"
     compliance.nist.gov/standard: "SP-800-53-Rev5"
     compliance.nist.gov/last-reviewed: "2026-05-17"
+    cage.io/poam: "POAM-007,POAM-011"
 
 ---
 # =============================================================================

@@ -17,13 +17,14 @@ RFC 8785 JSON Canonicalization Scheme (JCS) utility.
 """
 
 from typing import Any
-import jcs
+
+from src.gateway.governance.vendor.jcs import canonicalize
+
 
 def jcs_canonicalize_plan(plan: dict[str, Any]) -> bytes:
-    """
-    Produce an RFC 8785 deterministic byte representation of a payload.
-    
-    This replaces ad-hoc json.dumps(sort_keys=True) which is vulnerable to 
+    """Produce an RFC 8785 deterministic byte representation of a payload.
+
+    This replaces ad-hoc json.dumps(sort_keys=True) which is vulnerable to
     floating-point canonicalization drift between different languages (e.g. Python vs Go).
     """
-    return jcs.canonicalize(plan)
+    return canonicalize(plan)

@@ -40,7 +40,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: redis
-          image: redis/redis-stack-server:latest
+          image: redis/redis-stack-server:7.4.0-v1
           # Load custom redis.conf from ConfigMap
           # Note: redis-stack-server uses /etc/redis-stack.conf by default;
           # we override with our hardened config via command args.

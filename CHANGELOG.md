@@ -11,6 +11,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `tests/test_tls_enforcement.py` — Gateway TLS enforcement test suite: unit assertions for NIST SP 800-52 Rev. 2 TLS 1.2+ protocol minimums, OIDC JWKS `verify=True` transport security, and Linkerd mTLS manifest annotations (`test(compliance)`, closes POAM-2026-011)
+- `docs/operations/KEY_ROTATION.md` — Cryptographic key management & rotation guide: documented rotation cadences for Cloud KMS HSM keys (90-day), HMAC routing seal secrets (30-day), and Linkerd mTLS certs with zero-downtime procedures and emergency revocation runbooks (`docs(operations)`, closes POAM-2026-012)
+- `deployment/k8s/` manifests — Pinned third-party container image tags: `openpolicyagent/opa:0.68.0-static`, `redis/redis-stack-server:7.4.0-v1`, and `anchore/syft:v1.10.0` across deployment manifests (`feat(infra)`, closes POAM-2026-013)
+- `AGENTS.md` — Parallel test isolation standards: added mandatory `--dist=loadfile` flag requirement and targeted test command reference matrix (`docs(tests)`)
 - `src/gateway/governance/symbolic_governor.py` — PAUSE handler in `validate_action()`: first-class runtime execution path returning `verdict: PAUSE`, pause token, resume endpoint, and retry metadata (`feat(governance)`)
 - `src/gateway/governance/routing_seal.py` — HMAC Routing Seal v2: 4-tuple format `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` binding SHA-256 evidence record hash with fail-closed actuator enforcement (`feat(governance)`)
 - `src/gateway/governance/cbf.py` — Strict replication rollback & cold-start epoch seed: synchronous Redis `WAIT` verification with fail-closed automatic rollback on replica timeout, plus `_fetch_initial_fence_epoch_sync()` startup seeding (`feat(governance)`)

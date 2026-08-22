@@ -13,8 +13,8 @@
 
 This file defines standards for anyone (human or AI coding agent) contributing
 to this repository. It is written in the tool-agnostic `AGENTS.md` convention
-supported by most AI coding assistants. Tool-specific configuration (e.g. Roo
-mode routing) lives under `.roo/` and simply points back here — see
+supported natively by most AI coding assistants (including Antigravity, Roo Code,
+Cursor, Cline, GitHub Copilot, and Windsurf) — see
 [Tool-Specific Configuration](#tool-specific-configuration) at the bottom.
 
 ## Table of Contents
@@ -26,9 +26,10 @@ mode routing) lives under `.roo/` and simply points back here — see
 5. [Debugging Standards](#debugging-standards)
 6. [Compliance Artifact Obligations](#compliance-artifact-obligations)
 7. [Architecture & Design Standards](#architecture--design-standards)
-8. [Answering Questions About This Repository](#answering-questions-about-this-repository)
-9. [Tool-Specific Configuration](#tool-specific-configuration)
-10. [Test Execution](#test-execution)
+8. [Documentation Standards](#documentation-standards)
+9. [Answering Questions About This Repository](#answering-questions-about-this-repository)
+10. [Tool-Specific Configuration](#tool-specific-configuration)
+11. [Test Execution](#test-execution)
 
 ---
 
@@ -143,20 +144,28 @@ dump the full environment, and mask any credential-shaped value before logging
 ### Test Execution: Always Use `uv run`
 
 This project is managed with [`uv`](https://docs.astral.sh/uv/) (see `uv.lock`
-and `pyproject.toml`). All pytest invocations must be prefixed with `uv run`.
-Never invoke `pytest` or `python -m pytest` directly without the `uv run`
-prefix — doing so bypasses the project's locked, reproducible environment.
+and `pyproject.toml`). All test and verification invocations must be prefixed with `uv run`.
+Never invoke `pytest`, `python`, or `python -m pytest` directly without the `uv run`
+prefix — doing so bypasses the project's locked, reproducible virtual environment.
+
+When running tests in parallel with `pytest-xdist` (`-n auto`), always launch
+the test suite with `--dist=loadfile` to ensure proper test file isolation across workers.
 
 Correct:
 ```bash
 uv run pytest
-uv run python -m pytest --cov=src --cov-report=term-missing
+uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --tb=short
+uv run pytest tests/test_tls_enforcement.py -v
+uv run pytest --cov=src --cov-report=term-missing
+uv run python proof/model.py
 ```
 
 Incorrect (do not suggest):
 ```bash
 pytest
 python -m pytest
+pytest -n auto  # Missing --dist=loadfile and uv run prefix
+python proof/model.py
 ```
 
 This applies to all agents, contributors, and CI documentation examples.
@@ -271,6 +280,16 @@ When modifying STPA source files:
 
 ---
 
+## Documentation Standards
+
+Because CAGE is an illustrative reference architecture and not a live production deployment, all repository documentation must strictly adhere to the following principles:
+
+- **No Internal Operational Tracking:** Do not add or maintain documents that track specific internal deployments, incidents, or team progress (e.g., active POAM trackers, rollback procedures for specific migrations, internal implementation status).
+- **Illustrative Patterns Only:** Documents that describe operational procedures (like key rotation, deployment rules, or compensating controls) must clearly include a "Reference Architecture Note" stating they are illustrative templates for adopters.
+- **Maintainer Independence:** Documentation should be written for an external adopter to adapt, devoid of maintainer-specific internal cloud project names, timestamps, or specific ticket tracking.
+
+---
+
 ## Answering Questions About This Repository
 
 When explaining repository concepts, reference the authoritative source
@@ -299,23 +318,49 @@ When asked about secrets or credentials:
 
 ## Tool-Specific Configuration
 
-This file is the single source of truth for agent/contributor standards,
-following the tool-agnostic `AGENTS.md` convention. Some AI coding assistants
-additionally support mode-specific instruction routing; where used, those
-configurations point back to this file rather than duplicating its content:
+This file is the single authoritative source of truth for agent and contributor standards,
+following the open, tool-agnostic `AGENTS.md` convention. 
 
-| Tool | Location | Purpose |
+All modern AI coding assistants consume `AGENTS.md` natively at the repository root:
+
+| Assistant / Tool | Ingestion Path | Behavior |
 |---|---|---|
-| Roo Code | `.roo/rules/`, `.roo/rules-<mode>/` | Per-mode (Code/Debug/Ask/Architect) instruction routing; each file is a thin pointer into the relevant section(s) of this document. |
+| **Antigravity** | `AGENTS.md` | Ingested natively as global project instructions and behavioral rules. |
+| **Roo Code / Cline** | `AGENTS.md` | Ingested automatically into all modes (Code, Architect, Debug, Ask). |
+| **Cursor / Copilot / Windsurf** | `AGENTS.md` | Discovered natively at repository root. |
 
-If you use a different AI coding assistant that supports a project-instructions
-file (e.g. a tool reading `CLAUDE.md`, `.cursorrules`, or
-`.github/copilot-instructions.md`), point it at this file rather than
-introducing a parallel, divergent copy of these standards.
+If you use a tool that requires a legacy configuration filename (e.g. `CLAUDE.md`, `.cursorrules`, or `.github/copilot-instructions.md`), create a thin symlink or pointer pointing directly back to this file rather than maintaining a divergent copy of these standards.
 
 ---
 
 ## Test Execution
+
+### Local and Unit Suite (Offline)
+
+The canonical way to run the full local and unit test suite across multiple workers:
+
+```bash
+uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --tb=short
+```
+Always launch the test suite with `--dist=loadfile` to ensure proper test file isolation across workers.
+
+### Targeted Test Commands Reference
+
+| Scope / Purpose | Canonical Command |
+|---|---|
+| **Single test file** | `uv run pytest tests/test_tls_enforcement.py -v` |
+| **Specific test method** | `uv run pytest tests/test_tls_enforcement.py::TestTlsProtocolStandards::test_default_client_context_minimum_version -v` |
+| **Adversarial / Red-team unit tests** | `uv run pytest tests/red_team/ -m "red_team and not integration" -v` |
+| **US Federal region posture** | `CAGE_DEPLOYMENT_REGION=US_FED uv run pytest tests/ -m us_fed -v` |
+| **EU ECB region posture** | `CAGE_DEPLOYMENT_REGION=EU_ECB uv run pytest tests/ -m eu_ecb -v` |
+| **APAC MAS region posture** | `CAGE_DEPLOYMENT_REGION=APAC_MAS uv run pytest tests/ -m apac_mas -v` |
+| **No-Direct-Bind BFS model proof** | `uv run python proof/model.py && uv run pytest tests/test_no_direct_bind_proof.py -v` |
+| **Distributed CBF formal proof** | `uv run python -m proof.distributed_cbf_model && uv run pytest proof/distributed_cbf_model.py -v` |
+| **Static analysis & formatting** | `uv run ruff check . && uv run ruff format --check .` |
+| **Type checking** | `uv run mypy src/` |
+| **Bandit SAST security scan** | `uv run bandit -r src/ -c pyproject.toml -ll` |
+| **STPA artifact freshness** | `uv run python scripts/check_stpa_freshness.py --verbose` |
+| **Langfuse posture validation** | `uv run python scripts/verify_langfuse_posture.py --dry-run --posture development` |
 
 ### Full Integration Suite Against Live GKE
 

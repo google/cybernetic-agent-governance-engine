@@ -7,7 +7,7 @@
 | Field              | Value      |
 | ------------------ | ---------- |
 | **Version**        | 3.0        |
-| **Date**           | 2026-08-16 |
+| **Date**           | 2026-08-22 |
 | **Classification** | INTERNAL   |
 | **Document**       | CAGE-TR-06 |
 
@@ -327,10 +327,10 @@ Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule (
 | [`compliance/lula/lula-validation-ra5.yaml`](../../compliance/lula/lula-validation-ra5.yaml)     | SP 800-53 RA-5  | Vulnerability scanning (pip-audit / Trivy CI)                                    |
 | [`compliance/lula/lula-validation-cm6.yaml`](../../compliance/lula/lula-validation-cm6.yaml)     | SP 800-53 CM-6  | Configuration settings enforcement                                               |
 | [`compliance/lula/lula-validation-ir6.yaml`](../../compliance/lula/lula-validation-ir6.yaml)     | SP 800-53 IR-6  | Incident reporting                                                               |
-| [`compliance/lula/lula-validation-ia3.yaml`](../../compliance/lula/lula-validation-ia3.yaml)     | SP 800-53 IA-3  | Device identification / Linkerd mTLS SPIFFE identity                             |
-| [`compliance/lula/lula-validation-ia5.yaml`](../../compliance/lula/lula-validation-ia5.yaml)     | SP 800-53 IA-5  | Authenticator management / KMS HSM key lifecycle                                 |
-| [`compliance/lula/lula-validation-sc8.yaml`](../../compliance/lula/lula-validation-sc8.yaml)     | SP 800-53 SC-8  | Transmission confidentiality / TLS enforcement                                   |
-| [`compliance/lula/lula-validation-si2.yaml`](../../compliance/lula/lula-validation-si2.yaml)     | SP 800-53 SI-2  | Flaw remediation / CVE patching (pip-audit CI)                                   |
+| [`compliance/lula/lula-validation-ia3.yaml`](../../compliance/lula/lula-validation-ia3.yaml)     | SP 800-53 IA-3  | Device identification / Linkerd mTLS SPIFFE identity (`POAM-007,POAM-011`)     |
+| [`compliance/lula/lula-validation-ia5.yaml`](../../compliance/lula/lula-validation-ia5.yaml)     | SP 800-53 IA-5 / SC-12 | Authenticator management / KMS HSM key lifecycle (`docs/operations/KEY_ROTATION.md`) |
+| [`compliance/lula/lula-validation-sc8.yaml`](../../compliance/lula/lula-validation-sc8.yaml)     | SP 800-53 SC-8  | Transmission confidentiality / TLS enforcement (`tests/test_tls_enforcement.py`) |
+| [`compliance/lula/lula-validation-si2.yaml`](../../compliance/lula/lula-validation-si2.yaml)     | SP 800-53 SI-2  | Flaw remediation / CVE patching (pinned images, base image upgrades)             |
 | [`compliance/lula/lula-validation-aarm-vectors.yaml`](../../compliance/lula/lula-validation-aarm-vectors.yaml) | CSA AARM v1.0 | 11-vector AI agent threat model coverage                              |
 
 ---

@@ -34,7 +34,6 @@ dependencies = [
     # pulled in transitively (e.g. via google-adk / langfuse).
     "aiohttp>=3.14.3",
     "pytest-cov>=7.1.0",
-    "jcs>=0.2.1",
 ]
 
 requires-python = ">=3.10,<3.13"
@@ -166,6 +165,9 @@ lint = [
 [tool.ruff]
 line-length = 88
 target-version = "py310"
+exclude = [
+    "src/gateway/governance/vendor",
+]
 
 [tool.ruff.lint]
 select = [
@@ -242,6 +244,7 @@ exclude = [
     ".venv",
     "src/gateway/protos/",
     "src/agentsight-ui/gateway_protos/",
+    "src/gateway/governance/vendor/",
 ]
 
 [tool.bandit]

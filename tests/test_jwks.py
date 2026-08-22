@@ -23,7 +23,6 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
 
-
 # ---------------------------------------------------------------------------
 # Test Fixtures
 # ---------------------------------------------------------------------------
@@ -184,7 +183,7 @@ class TestJWKSet:
 
         # Generate 3 different keys
         kids = []
-        for i in range(3):
+        for _i in range(3):
             private_key = ec.generate_private_key(ec.SECP256R1())
             pem = private_key.public_key().public_bytes(
                 encoding=serialization.Encoding.PEM,
@@ -292,7 +291,9 @@ class TestJWTKidExtraction:
 
         # Create a mock JWT with kid in header
         header = {"alg": "ES256", "typ": "JWT", "kid": "test-key-id"}
-        header_b64 = base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
+        header_b64 = (
+            base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
+        )
         payload_b64 = base64.urlsafe_b64encode(b'{"sub":"test"}').rstrip(b"=").decode()
         sig_b64 = base64.urlsafe_b64encode(b"signature").rstrip(b"=").decode()
         token = f"{header_b64}.{payload_b64}.{sig_b64}"
@@ -307,7 +308,9 @@ class TestJWTKidExtraction:
 
         # Create a mock JWT without kid
         header = {"alg": "ES256", "typ": "JWT"}
-        header_b64 = base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
+        header_b64 = (
+            base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
+        )
         payload_b64 = base64.urlsafe_b64encode(b'{"sub":"test"}').rstrip(b"=").decode()
         sig_b64 = base64.urlsafe_b64encode(b"signature").rstrip(b"=").decode()
         token = f"{header_b64}.{payload_b64}.{sig_b64}"
@@ -340,9 +343,9 @@ class TestVerificationKeyLookup:
         """Test key lookup with kid in JWT header."""
         from src.gateway.governance.jwks import (
             JWKSet,
-            get_verification_key_for_jwt,
-            extract_kid_from_jwt,
             _compute_kid,
+            extract_kid_from_jwt,
+            get_verification_key_for_jwt,
         )
 
         _, _, pem = ec_key_pair
@@ -353,7 +356,9 @@ class TestVerificationKeyLookup:
 
         # Create a mock JWT with this kid
         header = {"alg": "ES256", "typ": "JWT", "kid": kid}
-        header_b64 = base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
+        header_b64 = (
+            base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
+        )
         payload_b64 = base64.urlsafe_b64encode(b'{"sub":"test"}').rstrip(b"=").decode()
         sig_b64 = base64.urlsafe_b64encode(b"signature").rstrip(b"=").decode()
         token = f"{header_b64}.{payload_b64}.{sig_b64}"
@@ -379,7 +384,9 @@ class TestVerificationKeyLookup:
 
         # Create a mock JWT without kid
         header = {"alg": "ES256", "typ": "JWT"}
-        header_b64 = base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
+        header_b64 = (
+            base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
+        )
         payload_b64 = base64.urlsafe_b64encode(b'{"sub":"test"}').rstrip(b"=").decode()
         sig_b64 = base64.urlsafe_b64encode(b"signature").rstrip(b"=").decode()
         token = f"{header_b64}.{payload_b64}.{sig_b64}"
@@ -407,7 +414,9 @@ class TestVerificationKeyLookup:
 
         # Create a mock JWT without kid
         header = {"alg": "ES256", "typ": "JWT"}
-        header_b64 = base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
+        header_b64 = (
+            base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
+        )
         payload_b64 = base64.urlsafe_b64encode(b'{"sub":"test"}').rstrip(b"=").decode()
         sig_b64 = base64.urlsafe_b64encode(b"signature").rstrip(b"=").decode()
         token = f"{header_b64}.{payload_b64}.{sig_b64}"

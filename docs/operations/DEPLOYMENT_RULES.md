@@ -96,7 +96,7 @@ Options:
 ### `staging` environment
 
 The `staging` environment is defined in the Terraform schema but **not yet
-provisioned** (POAM-024, target v2.1.0, 2026-12-31). Passing `--env staging`
+provisioned**. Passing `--env staging`
 causes `deploy_all.sh` to exit with an error. Use `--env dev` or `--env prod`.
 
 ---
@@ -333,4 +333,3 @@ for audit purposes.
 - [`AGENTS.md`](../../AGENTS.md) — canonical source for deployment rules summary
 - [`docs/operations/DEPLOYMENT_DECISION_RECORD.md`](DEPLOYMENT_DECISION_RECORD.md) — ADRs
 - [`infra/QUICK_START.md`](../../infra/QUICK_START.md) — 5-minute quick start
-- [`deployment/TERRAFORM_MIGRATION.md`](../TERRAFORM_MIGRATION.md) — migration from `deployment/terraform/`

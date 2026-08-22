@@ -81,6 +81,7 @@ controls are documented in:
 
 - [`docs/security/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md) — full
   security posture, NIST RMF status, and all open POA&M items
+- [`docs/operations/KEY_ROTATION.md`](docs/operations/KEY_ROTATION.md) — cryptographic key lifecycle and rotation runbooks (SC-12 / IA-5)
 - [`docs/architecture/GATEWAY_ARCHITECTURE.md`](docs/architecture/GATEWAY_ARCHITECTURE.md)
 - [`deployment/k8s/K8S_SECURITY_HARDENING.md`](deployment/k8s/K8S_SECURITY_HARDENING.md)
 - [`COMPLIANCE.md`](COMPLIANCE.md)
@@ -89,14 +90,16 @@ controls are documented in:
 
 | Control | Implementation |
 |---------|---------------|
-| Governance signing | Cloud KMS HSM-backed asymmetric signing; HMAC-SHA256 fallback in dev/CI |
-| Routing seal v2 | 4-tuple token `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` binding SHA-256 evidence record hash |
+| Governance signing | Cloud KMS HSM-backed asymmetric signing; HMAC-SHA256 fallback in dev/CI; 90-day rotation cadence per `KEY_ROTATION.md` |
+| Routing seal v2 | 4-tuple token `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` binding SHA-256 evidence record hash; 30-day secret rotation cadence |
+| TLS & Transport Security | NIST SP 800-52 Rev. 2 minimum TLS 1.2+ validation, OIDC JWKS `verify=True` enforcement, and Linkerd mTLS manifest policies (`tests/test_tls_enforcement.py`) |
+| Base Image Hardening | Container images standardized on `python:3.12-slim-bookworm` with build-time security upgrade layers and pinned third-party tags |
 | Prompt injection detection | Aho-Corasick O(n) scan; 14+ patterns |
 | PII protection | Presidio; 15 entity types; input + output |
 | Human-in-the-loop | Redis-persisted checkpoint; TOCTOU remediation via `post_hitl_rehydrate` + `post_hitl_revalidate` |
 | Control Barrier Function | Atomic Redis Lua (`atomic_verify_and_commit()`) with synchronous replica `WAIT` barrier, monotonic `safety:fence_epoch`, and fail-closed state rollback |
 | Evidence chain integrity | SHA-256 hash-chained NDJSON & Redis Streams db=1; enforced blocking durability in production (`validate_evidence_stream_preconditions()`) |
-| mTLS | Linkerd SPIFFE/SVID; gateway↔OPA, gateway↔NeMo |
+| mTLS | Linkerd SPIFFE/SVID; gateway↔OPA, gateway↔NeMo; ServiceAccounts annotated with compliance metadata (`POAM-007,POAM-011`) |
 | Egress lockdown | Cilium L7 FQDN allowlist |
 | Token quota enforcement | Per-session step-count (≤12) and token (≤100k) via Redis atomic Lua counters; fail-closed |
 

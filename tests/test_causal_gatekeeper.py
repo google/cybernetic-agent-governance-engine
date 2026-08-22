@@ -645,12 +645,14 @@ class TestNegativeCausalSlopeGuard:
         now_epoch = time.time()
         timestamps = now_epoch - np.random.uniform(0, 600, n)
 
-        return pd.DataFrame({
-            "market_volatility": market_volatility,
-            "trade_amount": trade_amount,
-            "risk_score": risk_score,
-            "timestamp": timestamps,
-        })
+        return pd.DataFrame(
+            {
+                "market_volatility": market_volatility,
+                "trade_amount": trade_amount,
+                "risk_score": risk_score,
+                "timestamp": timestamps,
+            }
+        )
 
     @pytest.fixture
     def zero_slope_telemetry(self):
@@ -669,12 +671,14 @@ class TestNegativeCausalSlopeGuard:
         now_epoch = time.time()
         timestamps = now_epoch - np.random.uniform(0, 600, n)
 
-        return pd.DataFrame({
-            "market_volatility": market_volatility,
-            "trade_amount": trade_amount,
-            "risk_score": risk_score,
-            "timestamp": timestamps,
-        })
+        return pd.DataFrame(
+            {
+                "market_volatility": market_volatility,
+                "trade_amount": trade_amount,
+                "risk_score": risk_score,
+                "timestamp": timestamps,
+            }
+        )
 
     def test_negative_slope_triggers_causal_lock(self, negative_slope_telemetry):
         """Negative causal slope (β < 0) must trigger fail-closed CAUSAL LOCK."""
@@ -686,7 +690,9 @@ class TestNegativeCausalSlopeGuard:
         # Must return False (blocked) because β ≤ 0
         assert result is False, "Negative causal slope should trigger CAUSAL LOCK"
 
-    def test_large_adversarial_amount_with_negative_slope(self, negative_slope_telemetry):
+    def test_large_adversarial_amount_with_negative_slope(
+        self, negative_slope_telemetry
+    ):
         """Large adversarial amount with negative slope must not bypass checks.
 
         Before the fix, a negative β combined with a large negative amount could
@@ -721,7 +727,9 @@ class TestBoundedRiskScore:
 
         estimated_risk = min(
             1.0,
-            max(0.0, 0.5 + estimate_value * extreme_amount / CAUSAL_NORMALIZATION_SCALE),
+            max(
+                0.0, 0.5 + estimate_value * extreme_amount / CAUSAL_NORMALIZATION_SCALE
+            ),
         )
 
         # Must be clamped at 1.0
@@ -740,7 +748,9 @@ class TestBoundedRiskScore:
 
         estimated_risk = min(
             1.0,
-            max(0.0, 0.5 + estimate_value * negative_amount / CAUSAL_NORMALIZATION_SCALE),
+            max(
+                0.0, 0.5 + estimate_value * negative_amount / CAUSAL_NORMALIZATION_SCALE
+            ),
         )
 
         # Must be clamped at 0.0

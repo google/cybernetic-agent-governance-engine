@@ -3,7 +3,7 @@
 
 > **AI governance for regulated financial services — built-in, not bolted on.**
 
-![v3.0.0](https://img.shields.io/badge/version-3.0.0-brightgreen) ![2817 Tests Passing](https://img.shields.io/badge/tests-2817%20passing-brightgreen) ![Coverage 75.40%](https://img.shields.io/badge/coverage-75.40%25-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 8](https://img.shields.io/badge/POAM%20Closed-8-brightgreen)
+![v3.0.0](https://img.shields.io/badge/version-3.0.0-brightgreen) ![2841 Tests Passing](https://img.shields.io/badge/tests-2841%20passing-brightgreen) ![Coverage 75.40%](https://img.shields.io/badge/coverage-75.40%25-brightgreen) ![Cloud KMS HSM](https://img.shields.io/badge/Cloud%20KMS-HSM-brightgreen) ![POAM Closed 12](https://img.shields.io/badge/POAM%20Closed-12-brightgreen)
 
 **Universal (all regions):** ![ISO 42001](https://img.shields.io/badge/ISO-42001-blue)
 
@@ -36,12 +36,12 @@
 
 | Suite / Jurisdiction | Posture | Result | Date |
 |---|---|---|---|
-| **US_FED** (NIST SP 800-53 / FedRAMP) | `dev` / `test` | ✅ **2,817 passed** / 0 failed / 67 skipped (75.32% cov) | 2026-08-18 |
-| **US_FED** (NIST SP 800-53 / FedRAMP) | `prod` | ✅ **217 passed** / 0 failed / 131 skipped | 2026-08-18 |
-| **EU_ECB** (GDPR / EU AI Act) | `dev` / `test` | ✅ **2,809 passed** / 0 failed / 75 skipped (75.40% cov) | 2026-08-18 |
-| **EU_ECB** (GDPR / EU AI Act) | `prod` | ✅ **209 passed** / 0 failed / 139 skipped | 2026-08-18 |
-| **APAC_MAS** (MAS TRM / FEAT) | `dev` / `test` | ✅ **2,811 passed** / 0 failed / 73 skipped (75.30% cov) | 2026-08-18 |
-| **APAC_MAS** (MAS TRM / FEAT) | `prod` | ✅ **211 passed** / 0 failed / 137 skipped | 2026-08-18 |
+| **US_FED** (NIST SP 800-53 / FedRAMP) | `dev` / `test` | ✅ **2,841 passed** / 0 failed / 67 skipped (75.40% cov) | 2026-08-22 |
+| **US_FED** (NIST SP 800-53 / FedRAMP) | `prod` | ✅ **217 passed** / 0 failed / 131 skipped | 2026-08-22 |
+| **EU_ECB** (GDPR / EU AI Act) | `dev` / `test` | ✅ **2,833 passed** / 0 failed / 75 skipped (75.40% cov) | 2026-08-22 |
+| **EU_ECB** (GDPR / EU AI Act) | `prod` | ✅ **209 passed** / 0 failed / 139 skipped | 2026-08-22 |
+| **APAC_MAS** (MAS TRM / FEAT) | `dev` / `test` | ✅ **2,835 passed** / 0 failed / 73 skipped (75.40% cov) | 2026-08-22 |
+| **APAC_MAS** (MAS TRM / FEAT) | `prod` | ✅ **211 passed** / 0 failed / 137 skipped | 2026-08-22 |
 
 Tests pass cleanly across all three regulatory postures on macOS and Linux GKE targets (`governance-cluster-2`, project `laah-cybernetics`).
 Skipped tests represent live GKE cluster integration endpoints (evaluated via `scripts/port_forward_dev.sh` + `uv run pytest tests/ --run-integration`).
@@ -111,7 +111,7 @@ CAGE is composed of six runtime subsystems:
 | **Compliance Bridge**            | `src/compliance_bridge/`          | OSCAL audit ingest; SSE event bus; Langfuse integration; AARM Conformance Engine; DEFER Queue API |
 | **AgentSight UI**                | `src/agentsight-ui/`              | React/TypeScript operator dashboard; real-time governance and remediation events |
 | **AgentSight eBPF DaemonSet**    | `deployment/agentsight/`          | Kernel-level process telemetry via BPF uprobes                              |
-| **Vendor Integrations**          | `src/integrations/`               | Isolated third-party adapters: `trustlayers/` (normative provider), `nexart/` (CER attestation) |
+| **Vendor Integrations**          | `src/integrations/`               | Isolated third-party adapters: `trustlayers/` (normative provider), `nexart/` (CER attestation), `veip/` (Verifiable Execution Evidence Pack), `archytan/` (socket-level execution guillotine), `veritas/` (JCS canonicalization) |
 
 ```
 User ──POST /agent/query──► FastAPI Agent Server (:8000)

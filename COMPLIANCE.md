@@ -1,6 +1,6 @@
 # CAGE Compliance & Governance Posture Framework
-**CAGE Version:** v2.1.1
-**Last Evaluated:** 2026-08-05
+**CAGE Version:** v3.0.0
+**Last Evaluated:** 2026-08-22
 
 ---
 
@@ -247,18 +247,20 @@ Full STPA hazard analysis (UCAs 1–9, Saga pattern, FiscalLimitGuard): [`docs/s
     *   **KMS Batch Signing for Audit Evidence:** All OSCAL findings and AARM conformance reports are asymmetrically signed via Google Cloud KMS HSM (`src/gateway/governance/kms_signer.py`) before GCS persistence. The private key never leaves the HSM; Cloud Audit Logs provide external, immutable attestation of every signing operation. This constitutes the audit evidence chain for FedRAMP HIGH AU-9 and AU-10.
 
     *   **KMS replay-attack closure:** `KmsSigner.sign()` now embeds `"signed_at": int(time.time())` in every signed payload. `KmsSigner.verify()` raises `ValueError` if `now - signed_at > 300 s`. This closes the replay-attack vector where a compromised agent with Redis write access could reset the 300 s TTL indefinitely.
-    *   **⚠️ Gaps to Authorization:** The CAGE software runtime does not inherently possess an official **Authority to Operate (ATO)**. To close this loop, the parent organization must deploy independent assessors to complete RMF Step 5 (Assess) and Step 6 (Authorize), as well as remediate the remaining 11 open infrastructure POA&M infrastructure tickets.
-*   **Companion Documentation:** For infrastructure configurations, Linkerd policy files, and security posture tracking, see [docs/SECURITY_STATUS.md](docs/security/SECURITY_STATUS.md) and [docs/POAM.md](docs/compliance/cross-region/POAM.md).
+    *   **⚠️ Gaps to Authorization:** The CAGE software runtime does not inherently possess an official **Authority to Operate (ATO)**. To close this loop, the parent organization must deploy independent assessors to complete RMF Step 5 (Assess) and Step 6 (Authorize), as well as remediate the remaining open infrastructure POA&M tickets.
+*   **Companion Documentation:** For infrastructure configurations, Linkerd policy files, cryptographic key management, and security posture tracking, see [docs/SECURITY_STATUS.md](docs/security/SECURITY_STATUS.md), [`docs/operations/KEY_ROTATION.md`](docs/operations/KEY_ROTATION.md), and [docs/POAM.md](docs/POAM.md).
 
-### F. Lula Automated Compliance Validation (29 Manifests)
+### F. Lula Automated Compliance Validation (30 Manifests)
 *   **Status:** Partially Automated.
-*   **Mechanism:** Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule (`deployment/k8s/lula-cron.yaml`). There are **29 validation manifests** in `compliance/lula/` covering ISO 42001 (universal), NIST SP 800-53 (US_FED), NIST AI 600-1 (US_FED), EU AI Act/GDPR/DORA (EU_ECB), and MAS FEAT/Notice 655/TRM (APAC_MAS). See [`compliance/lula/README.md`](compliance/lula/README.md) for the full status table and activation instructions.
+*   **Mechanism:** Lula automates OSCAL Assessment Result generation on a 6-hour CronJob schedule (`deployment/k8s/lula-cron.yaml`). There are **30 validation manifests** in `compliance/lula/` covering ISO 42001 (universal), NIST SP 800-53 (US_FED), NIST AI 600-1 (US_FED), EU AI Act/GDPR/DORA (EU_ECB), and MAS FEAT/Notice 655/TRM (APAC_MAS). See [`compliance/lula/README.md`](compliance/lula/README.md) for the full status table and activation instructions.
 
-    **✅ Active (4):**
+    **✅ Active (6):**
     *   `lula-validation-a52.yaml` (ISO 42001 A.5.2, **ALL regions**) — Social impact assessment; NeMo Guardrails toxicity blocking ≥ 99%
     *   `lula-validation-a53.yaml` (ISO 42001 A.5.3, **ALL regions**) — Logging and monitoring; Langfuse safety rate ≥ 98%
     *   `lula-validation-a92.yaml` (ISO 42001 A.9.2, **ALL regions**) — Data transfer to suppliers; Presidio PII leak rate = 0%
     *   `lula-validation-sc4.yaml` (NIST SP 800-53 SC-4, **US_FED only**) — Fiscal limits and RBAC; OPA ConfigMap label present in `governance-stack` namespace
+    *   `lula-validation-sc8.yaml` (NIST SP 800-53 SC-8, **US_FED only**) — Transmission confidentiality / TLS enforcement verified via unit tests in `tests/test_tls_enforcement.py` and Linkerd mTLS manifest annotations
+    *   `lula-validation-ia5.yaml` (NIST SP 800-53 IA-5 / SC-12, **US_FED only**) — Authenticator management / KMS HSM key lifecycle documented in `docs/operations/KEY_ROTATION.md`
 
     **🔶 Stub (11)** — NIST SP 800-53 / CSA AARM; logic complete, requires cluster-specific configuration:
     *   `lula-validation-aarm-vectors.yaml` (CSA AARM v1.0, **ALL regions**) — 11-vector AI agent threat model coverage

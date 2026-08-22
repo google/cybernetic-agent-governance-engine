@@ -39,8 +39,7 @@ spec:
     spec:
       containers:
         - name: opa
-          image: openpolicyagent/opa:latest-static
-          args:
+          image: openpolicyagent/opa:0.68.0-static
             - "run"
             - "--server"
             - "--addr=:8181"

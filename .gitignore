@@ -184,8 +184,11 @@ deployment/terraform/tf_output.json
 dist/
 *.egg-info/
 
-# Temporary files
+# Temporary & Local Developer Files (never commit)
 /tmp/
+tmp/
+local/
+.local/
 
 # Governance transpiler output — regenerate via PolicyTranspiler
 **/generated_actions.py
@@ -234,24 +237,13 @@ mcp-servers/infrastructure/setup.sh
 # Copy litellm_config.yaml.example → litellm_config.yaml and fill in values.
 litellm_config.yaml
 
-# Roo AI assistant — local state and cache only. The .roo/rules*/ directories
-# are tracked (see AGENTS.md at the repository root, which .roo/ points to).
-.roo.json
-.roo.yaml
-.roo.yml
-.roorc
-.roo-cache/
-.roo-state/
-.rooignore
-
-# Antigravity (Roo subsystem) — config examples and init scripts
-.antigravity/
-antigravity.json
-antigravity.yaml
-antigravity.yml
-config/antigravity_mcp_example.json
-init_antigravity.sh
+# Roo Code AI assistant — local state and cache only (rules are read from AGENTS.md)
+.roo*
 
 # AI 600-1 §2.8 — generated SBOM artifact (not committed)
 sbom.json
 coverage.json
+
+# Local developer/agent instructions (uncommitted overrides)
+.agents.local.md
+.agents.md

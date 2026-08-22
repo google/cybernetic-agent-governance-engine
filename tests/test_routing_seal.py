@@ -206,23 +206,31 @@ class TestRecordHashBinding:
         """Verification succeeds when expected_record_hash matches seal's record_hash."""
         seal = generate_seal("execute_trade", PARAMS, record_hash=TEST_RECORD_HASH)
         # Explicit match check
-        assert gfa_verify_seal(
-            seal, "execute_trade", PARAMS, expected_record_hash=TEST_RECORD_HASH
-        ) is True
+        assert (
+            gfa_verify_seal(
+                seal, "execute_trade", PARAMS, expected_record_hash=TEST_RECORD_HASH
+            )
+            is True
+        )
 
     def test_expected_record_hash_mismatch_fails(self):
         """Verification fails when expected_record_hash doesn't match seal's record_hash."""
         seal = generate_seal("execute_trade", PARAMS, record_hash=TEST_RECORD_HASH)
         wrong_hash = "wrong" + TEST_RECORD_HASH[5:]
         with pytest.raises(SymbolicGovernorViolation) as exc_info:
-            gfa_verify_seal(seal, "execute_trade", PARAMS, expected_record_hash=wrong_hash)
+            gfa_verify_seal(
+                seal, "execute_trade", PARAMS, expected_record_hash=wrong_hash
+            )
         assert "record_hash mismatch" in str(exc_info.value)
 
     def test_expected_record_hash_none_skips_check(self):
         """When expected_record_hash=None, no record_hash validation is performed."""
         seal = generate_seal("execute_trade", PARAMS, record_hash=TEST_RECORD_HASH)
         # Should pass without checking record_hash
-        assert gfa_verify_seal(seal, "execute_trade", PARAMS, expected_record_hash=None) is True
+        assert (
+            gfa_verify_seal(seal, "execute_trade", PARAMS, expected_record_hash=None)
+            is True
+        )
 
     def test_seal_with_different_record_hashes_are_distinct(self):
         """Seals with different record_hashes produce different HMACs."""
@@ -237,7 +245,9 @@ class TestRecordHashBinding:
         assert gfa_verify_seal(seal_b, "execute_trade", PARAMS) is True
         # But cross-verification with expected_record_hash should fail
         with pytest.raises(SymbolicGovernorViolation):
-            gfa_verify_seal(seal_a, "execute_trade", PARAMS, expected_record_hash=hash_b)
+            gfa_verify_seal(
+                seal_a, "execute_trade", PARAMS, expected_record_hash=hash_b
+            )
 
     def test_record_hash_included_in_hmac_input(self):
         """Changing record_hash changes the HMAC even with same action/params."""

@@ -419,7 +419,6 @@ After validating the minimal stack:
 ## See Also
 
 - [Deployment Guide](DEPLOYMENT_GUIDE.md) — full deployment reference
-- [Implementation Status](IMPLEMENTATION_STATUS.md) — component reference
 - [Module Documentation](modules/) — individual module READMEs
 - [`deployment/README.md`](../deployment/README.md) — Kubernetes manifest reference
 - [`deployment/k8s/NAMESPACE-GUIDE.md`](../deployment/k8s/NAMESPACE-GUIDE.md) — namespace topology

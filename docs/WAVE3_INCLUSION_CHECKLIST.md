@@ -17,10 +17,7 @@
 
 Per [`AGENTS.md`](../AGENTS.md) (top of file) and reinforced throughout
 `docs/` (e.g. [`docs/operations/DEPLOYMENT_RULES.md:3-5`](operations/DEPLOYMENT_RULES.md:3),
-[`docs/operations/DEPLOYMENT_DECISION_RECORD.md:3-5`](operations/DEPLOYMENT_DECISION_RECORD.md:3),
-[`docs/issues/ISSUE_REGISTER_2026-08-04.md:7`](issues/ISSUE_REGISTER_2026-08-04.md:7)):
-
-> CAGE is a reference architecture demonstrating governance patterns for AI
+[`docs/operations/DEPLOYMENT_DECISION_RECORD.md:3-5`](operations/DEPLOYMENT_DECISION_RECORD.md:3),> CAGE is a reference architecture demonstrating governance patterns for AI
 > systems. **It is not deployed to production.** Deployment, change-management,
 > and region-guard rules are illustrative patterns for adopters, not
 > mandatory production obligations for this repository's maintainers.

@@ -451,7 +451,10 @@ def test_assert_kms_active_raises_uses_environment_fallback():
 
 def test_from_env_raises_when_no_kms_key_set():
     """from_env() raises RuntimeError when KMS_GOVERNANCE_KEY is not set (no HMAC fallback)."""
-    with patch("src.gateway.governance.kms_signer._KMS_KEY_VERSION", ""):
+    with (
+        patch.dict(os.environ, {"CAGE_ENV": "production", "ENVIRONMENT": "production"}),
+        patch("src.gateway.governance.kms_signer._KMS_KEY_VERSION", ""),
+    ):
         from src.gateway.governance.kms_signer import KMSGovernanceSigner
 
         with pytest.raises(RuntimeError, match="KMS_GOVERNANCE_KEY is not set"):
@@ -470,6 +473,7 @@ def test_from_env_raises_when_google_cloud_kms_not_installed():
         return original_import(name, *args, **kwargs)
 
     with (
+        patch.dict(os.environ, {"CAGE_ENV": "production", "ENVIRONMENT": "production"}),
         patch(
             "src.gateway.governance.kms_signer._KMS_KEY_VERSION",
             "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
@@ -484,7 +488,10 @@ def test_from_env_raises_when_google_cloud_kms_not_installed():
 
 def test_from_env_signing_algorithm_raises_when_no_key():
     """from_env() raises RuntimeError (not returns HMAC signer) when KMS_GOVERNANCE_KEY is absent."""
-    with patch("src.gateway.governance.kms_signer._KMS_KEY_VERSION", ""):
+    with (
+        patch.dict(os.environ, {"CAGE_ENV": "production", "ENVIRONMENT": "production"}),
+        patch("src.gateway.governance.kms_signer._KMS_KEY_VERSION", ""),
+    ):
         from src.gateway.governance.kms_signer import KMSGovernanceSigner
 
         with pytest.raises(RuntimeError, match="KMS_GOVERNANCE_KEY is not set"):

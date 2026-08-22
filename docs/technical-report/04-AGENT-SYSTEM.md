@@ -3,10 +3,10 @@
 | Field                | Value                                                                             |
 | -------------------- | --------------------------------------------------------------------------------- |
 | **Document Version** | 3.0                                                                               |
-| **Date**             | 2026-08-16                                                                        |
+| **Date**             | 2026-08-22                                                                        |
 | **Classification**   | INTERNAL                                                                          |
 | **Document Series**  | CAGE Technical Report                                                             |
-| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,817 passed, 0 failed, 67 skipped; 75.40% coverage) |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,841 passed, 0 failed, 67 skipped; 75.40% statement coverage) |
 | **Reference**        | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/` |
 
 ---

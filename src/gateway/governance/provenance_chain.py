@@ -48,6 +48,8 @@ import json
 import logging
 from dataclasses import dataclass
 
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
 logger = logging.getLogger("Gateway.Governance.ProvenanceChain")
 
 # ---------------------------------------------------------------------------
@@ -142,9 +144,10 @@ class ProvenanceRecord:
 
 
 def compute_hash(data: dict) -> str:
-    """Return the SHA-256 hex digest of the JSON-serialised dict.
+    """Return the SHA-256 hex digest of the RFC 8785 canonical JSON-serialised dict.
 
-    Keys are sorted to ensure deterministic output regardless of insertion order.
+    Uses RFC 8785 JSON Canonicalization Scheme (JCS) to guarantee cross-language
+    and cross-platform byte determinism (AI 600-1 §2.7 information integrity).
     Non-serialisable values are coerced to strings.
 
     Args:
@@ -157,9 +160,8 @@ def compute_hash(data: dict) -> str:
         k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v))
         for k, v in data.items()
     }
-    # Reviewer note H57: separators=(',',':') ensures spec-compliant compact serialisation for hash reproducibility.
-    serialised = json.dumps(safe, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(serialised.encode("utf-8")).hexdigest()
+    canonical_bytes = jcs_canonicalize_plan(safe)
+    return hashlib.sha256(canonical_bytes).hexdigest()
 
 
 # ---------------------------------------------------------------------------

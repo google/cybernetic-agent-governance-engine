@@ -715,9 +715,15 @@ def causal_safety_check(
                     GovernanceControl.TRADITIONAL_MRM_VALIDATION.value,
                     estimate.value,
                 )
-                mrm_span.set_attribute("causal.lock_reason", "negative_or_zero_causal_slope")
-                mrm_span.set_attribute("causal.estimated_effect_blocked", float(estimate.value))
-                _causal_cache_set_sync(cache_key, False, "negative_or_zero_causal_slope")
+                mrm_span.set_attribute(
+                    "causal.lock_reason", "negative_or_zero_causal_slope"
+                )
+                mrm_span.set_attribute(
+                    "causal.estimated_effect_blocked", float(estimate.value)
+                )
+                _causal_cache_set_sync(
+                    cache_key, False, "negative_or_zero_causal_slope"
+                )
                 return False
 
         # ------------------------------------------------------------------

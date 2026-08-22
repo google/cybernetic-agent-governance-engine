@@ -3,10 +3,10 @@
 | Field                | Value                                                                    |
 | -------------------- | ------------------------------------------------------------------------ |
 | **Document Version** | 3.0                                                                      |
-| **Date**             | 2026-08-16                                                               |
+| **Date**             | 2026-08-22                                                               |
 | **Classification**   | INTERNAL                                                                 |
 | **Document Series**  | CAGE Technical Report                                                    |
-| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,817 passed, 0 failed, 67 skipped; 75.40% coverage) |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,841 passed, 0 failed, 67 skipped; 75.40% statement coverage) |
 | **Reference**        | `docs/GATEWAY_ARCHITECTURE.md`, `docs/INFERENCE_GATEWAY_ARCHITECTURE.md` |
 
 ---
@@ -157,16 +157,19 @@
 
 ---
 
-## 5. Vendor Integrations (`src/integrations/`)
+## 5. Vendor & Partner Integrations (`src/integrations/`)
 
-Third-party compliance provider adapters are architecturally isolated in `src/integrations/{vendor}/` to prevent vendor SDK code from leaking into the governance kernel. Each adapter implements the `NormativeProvider` interface defined in `src/gateway/governance/normative_provider.py`.
+Third-party compliance and attestation provider adapters are architecturally isolated in `src/integrations/{vendor}/` to prevent external SDK code from leaking into the governance kernel. Each adapter implements the appropriate provider interface (`NormativeProvider`, `EvidencePackGenerator`, etc.).
 
 | Integration          | Root Path                        | Purpose                                                                                                   | Status                  |
 | -------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------- |
+| **VEIP**             | `src/integrations/veip/`         | Verifiable Execution Evidence Pack; generates RFC-3161 cryptographic evidence packages with 3 axioms (Blueprint, Key, Physics) | Implemented             |
 | **TrustLayers**      | `src/integrations/trustlayers/`  | Production normative provider; `TrustLayersProvider` implements 3-endpoint external validation API; activated via `CAGE_NORMATIVE_PROVIDER=trustlayers` | Implemented (POAM-022 In Progress — awaiting API credentials) |
 | **NexArt**           | `src/integrations/nexart/`       | CER (Compliance Evidence Record) attestation provider; `NexArtClient` + `NexArtAttestationCallback` (LangGraph callback handler) in `adapter.py`; `NexArtProvider` (NormativeProvider interface) in `provider.py` | Implemented             |
+| **Archytan**         | `src/integrations/archytan/`     | Socket-level execution guillotine and hardware enforcement integration                                    | Implemented             |
+| **Veritas**          | `src/integrations/veritas/`      | JCS (JSON Canonicalization Scheme) RFC-8785 evidence normalization adapter                               | Implemented             |
 
-> **Vendor Isolation Design:** Infrastructure invariants (Cloud KMS, Redis, OPA) remain in `src/gateway/governance/`. Vendor adapters are lazy-loaded and never imported by the governance kernel directly — they are registered via the `normative_provider` factory at startup based on `CAGE_NORMATIVE_PROVIDER` environment variable.
+> **Vendor Isolation Design:** Infrastructure invariants (Cloud KMS, Redis, OPA) remain in `src/gateway/governance/`. Vendor adapters are lazy-loaded and never imported by the governance kernel directly — they are registered via the provider factories at startup.
 
 ---
 

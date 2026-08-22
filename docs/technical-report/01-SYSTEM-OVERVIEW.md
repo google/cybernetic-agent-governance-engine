@@ -3,10 +3,10 @@
 | Field                | Value                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------- |
 | **Document Version** | 3.0                                                                                                           |
-| **Date**             | 2026-08-16                                                                                                    |
+| **Date**             | 2026-08-22                                                                                                    |
 | **Classification**   | INTERNAL                                                                                                      |
 | **Document Series**  | CAGE Technical Report                                                                                         |
-| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,817 passed, 0 failed, 67 skipped; 75.40% coverage)        |
+| **Status**           | ACTIVE — v3.0.0 stable (GKE deployment verified; 2,841 passed, 0 failed, 67 skipped; 75.40% statement coverage) |
 | **Reference**        | [`compliance/boundary/AUTHORIZATION_BOUNDARY.md`](../../compliance/boundary/AUTHORIZATION_BOUNDARY.md) |
 
 ---
@@ -62,7 +62,7 @@ CAGE follows the NIST SP 800-37 Rev. 2 role taxonomy. The table below summarizes
 
 ## 4. Primary Capabilities
 
-> **v3.0.0 additions:** Full first-class runtime execution for 6 governance primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`), HMAC Routing Seal v2 (`<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>`) with SHA-256 evidence record hash binding, Lua-atomic Control Barrier Functions (`atomic_verify_and_commit()`) with synchronous replica `WAIT` verification and fail-closed state rollback, monotonic fence epoch (`safety:fence_epoch`), evidence stream blocking precondition checks, and 57/66-state formal reachability models.
+> **v3.0.0 additions:** Full first-class runtime execution for 6 governance primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`), HMAC Routing Seal v2 (`<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>`) with SHA-256 evidence record hash binding, Lua-atomic Control Barrier Functions (`atomic_verify_and_commit()`) with synchronous replica `WAIT` verification and fail-closed state rollback, monotonic fence epoch (`safety:fence_epoch`), evidence stream blocking precondition checks, 57/66-state formal reachability models, Distributed CBF formal verification ($N \in \{2, 3, 4\}$ agents), and external attestation layers (VEIP 3-axiom, Archytan, Veritas).
 
 
 CAGE provides eight integrated capabilities that together constitute a full-stack governed AI financial advisor:
@@ -87,7 +87,7 @@ CAGE provides eight integrated capabilities that together constitute a full-stac
 
 ## 5. Current Compliance Posture (NIST RMF Readiness)
 
-CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v3.0.0 stable release was tagged on 2026-08-15. Both application images were built via Cloud Build and deployed to GKE cluster `governance-cluster-2`, namespace `governance-stack`. The test suite reports **2,817 passed, 0 failed, 67 skipped** with **75.40% statement coverage** across all three regional compliance postures.
+CAGE is in active NIST RMF implementation. As of the assessment date, the system has not been recommended for ATO. The overall risk posture is classified **HIGH**. The v3.0.0 stable release was tagged on 2026-08-15. Both application images were built via Cloud Build and deployed to GKE cluster `governance-cluster-2`, namespace `governance-stack`. The test suite reports **2,841 passed, 0 failed, 67 skipped** with **75.40% statement coverage** across all three regional compliance postures.
 
 ### 5.1 Control Family Readiness
 

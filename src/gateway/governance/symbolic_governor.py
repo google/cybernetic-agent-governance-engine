@@ -968,7 +968,7 @@ class SymbolicGovernor:
           full 10-layer pipeline breakdown.
         """
         violations: list[str] = []
-        tier_failures: list["GovernanceTierFailure"] = []
+        tier_failures: list[GovernanceTierFailure] = []
         policy_resp = None
         # CRIT-5 fix: local variable replaces self._pending_payload to eliminate
         # the data race on the singleton under concurrent async requests.
@@ -1099,18 +1099,20 @@ class SymbolicGovernor:
                         "threshold": _confidence_threshold,
                     }
                     violations.append(_conf_msg)
-                    tier_failures.append(GovernanceTierFailure(
-                        tier="NEURAL_CONFIDENCE",
-                        control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
-                        rule_description=f"confidence {_confidence:.2f} < threshold {_confidence_threshold:.2f}",
-                        governing_state={
-                            "confidence": _confidence,
-                            "threshold": _confidence_threshold,
-                            "framework": _conf_meta["primary_framework"],
-                        },
-                        protected_consequence=f"Trade execution at confidence {_confidence:.2f} "
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="NEURAL_CONFIDENCE",
+                            control_id=GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value,
+                            rule_description=f"confidence {_confidence:.2f} < threshold {_confidence_threshold:.2f}",
+                            governing_state={
+                                "confidence": _confidence,
+                                "threshold": _confidence_threshold,
+                                "framework": _conf_meta["primary_framework"],
+                            },
+                            protected_consequence=f"Trade execution at confidence {_confidence:.2f} "
                             f"(below {_confidence_threshold:.2f} minimum)",
-                    ))
+                        )
+                    )
                 conf_span.set_attribute("governance.confidence.score", _confidence)
                 conf_span.set_attribute(
                     "governance.confidence.threshold", _confidence_threshold
@@ -1190,16 +1192,18 @@ class SymbolicGovernor:
                         f"[{GovernanceControl.OPA_POLICY_ENFORCEMENT.value}] "
                         f"{_opa_meta['primary_framework']} Violation: OPA Denied Action."
                     )
-                    tier_failures.append(GovernanceTierFailure(
-                        tier="OPA",
-                        control_id=GovernanceControl.OPA_POLICY_ENFORCEMENT.value,
-                        rule_description="OPA policy denied action",
-                        governing_state={
-                            "policy_decision": policy_decision,
-                            "framework": _opa_meta["primary_framework"],
-                        },
-                        protected_consequence=f"Execution of {tool_name} denied by OPA policy",
-                    ))
+                    tier_failures.append(
+                        GovernanceTierFailure(
+                            tier="OPA",
+                            control_id=GovernanceControl.OPA_POLICY_ENFORCEMENT.value,
+                            rule_description="OPA policy denied action",
+                            governing_state={
+                                "policy_decision": policy_decision,
+                                "framework": _opa_meta["primary_framework"],
+                            },
+                            protected_consequence=f"Execution of {tool_name} denied by OPA policy",
+                        )
+                    )
                 elif policy_decision == "MANUAL_REVIEW":
                     _opa_meta = ControlRegistry().get_mapping(
                         GovernanceControl.OPA_POLICY_ENFORCEMENT
@@ -1513,9 +1517,7 @@ class SymbolicGovernor:
 
             # --- Phase 2.1: CBF atomic_verify_and_commit ---
             with tracer.start_as_current_span("cage.cbf_atomic_commit") as cbf_span:
-                cbf_span.set_attribute(
-                    "langfuse.observation.name", "cbf_barrier_check"
-                )
+                cbf_span.set_attribute("langfuse.observation.name", "cbf_barrier_check")
                 cbf_span.set_attribute("governance.stage", "cbf")
                 cbf_span.set_attribute("governance.phase", "mutation")
                 cbf_span.set_attribute("governance.cbf.atomic", True)
@@ -1539,19 +1541,22 @@ class SymbolicGovernor:
 
                     if not committed and cbf_result.startswith("UNSAFE"):
                         violations.append(f"Safety Violation (RBC/CBF): {cbf_result}")
-                        tier_failures.append(GovernanceTierFailure(
-                            tier="CBF",
-                            control_id="CAGE-CBF-001",
-                            rule_description=cbf_result,
-                            governing_state={
-                                "cost": cost,
-                                "cbf_result": cbf_result,
-                                "amount": params.get("amount"),
-                                "symbol": params.get("symbol"),
-                            },
-                            protected_consequence=f"Balance violation: trade cost {cost} "
+                        amount_val = params.get("amount", 0.0)
+                        tier_failures.append(
+                            GovernanceTierFailure(
+                                tier="CBF",
+                                control_id="CAGE-CBF-001",
+                                rule_description=cbf_result,
+                                governing_state={
+                                    "cost": amount_val,
+                                    "cbf_result": cbf_result,
+                                    "amount": amount_val,
+                                    "symbol": params.get("symbol"),
+                                },
+                                protected_consequence=f"Balance violation: trade cost {amount_val} "
                                 f"would breach CBF safety envelope",
-                        ))
+                            )
+                        )
 
                 except Exception as cbf_exc:
                     cbf_span.record_exception(cbf_exc)
@@ -1610,11 +1615,13 @@ class SymbolicGovernor:
                             _amount = _amount_minor / 100.0
                         else:
                             _amount = float(params.get("amount", 0.0))
-                            
+
                         _agent_id = str(
-                            params.get("agent_id", params.get("user_id", "unknown-agent"))
+                            params.get(
+                                "agent_id", params.get("user_id", "unknown-agent")
+                            )
                         )
-                        
+
                         _fiscal_token = None
                         if _amount_minor is not None and _amount_minor > 0:
                             _fiscal_token = await self.fiscal_limit_guard.reserve(
@@ -1626,7 +1633,7 @@ class SymbolicGovernor:
                                 agent_id=_agent_id,
                                 amount_usd=_amount,
                             )
-                            
+
                         if _fiscal_token is not None:
                             fiscal_span.set_attribute(
                                 "governance.fiscal.reservation_id",
@@ -1657,20 +1664,22 @@ class SymbolicGovernor:
                                     f"(running_total=${_fiscal_token.running_total_usd:,.2f}). "
                                     f"reservation_id={_fiscal_token.reservation_id}"
                                 )
-                                tier_failures.append(GovernanceTierFailure(
-                                    tier="FISCAL",
-                                    control_id="CAGE-FISCAL-001",
-                                    rule_description=f"amount ${_amount:,.2f} exceeds daily cap ${_fiscal_token.cap_usd:,.2f}",
-                                    governing_state={
-                                        "amount_usd": _amount,
-                                        "running_total_usd": _fiscal_token.running_total_usd,
-                                        "cap_usd": _fiscal_token.cap_usd,
-                                        "reservation_id": _fiscal_token.reservation_id,
-                                        "agent_id": _agent_id,
-                                    },
-                                    protected_consequence=f"Fiscal overrun: ${_amount:,.2f} trade "
+                                tier_failures.append(
+                                    GovernanceTierFailure(
+                                        tier="FISCAL",
+                                        control_id="CAGE-FISCAL-001",
+                                        rule_description=f"amount ${_amount:,.2f} exceeds daily cap ${_fiscal_token.cap_usd:,.2f}",
+                                        governing_state={
+                                            "amount_usd": _amount,
+                                            "running_total_usd": _fiscal_token.running_total_usd,
+                                            "cap_usd": _fiscal_token.cap_usd,
+                                            "reservation_id": _fiscal_token.reservation_id,
+                                            "agent_id": _agent_id,
+                                        },
+                                        protected_consequence=f"Fiscal overrun: ${_amount:,.2f} trade "
                                         f"would push running total beyond ${_fiscal_token.cap_usd:,.2f} daily cap",
-                                ))
+                                    )
+                                )
                                 # Fiscal rejected AFTER CBF committed — must compensate CBF
                                 if _cbf_committed:
                                     logger.warning(
@@ -1717,9 +1726,7 @@ class SymbolicGovernor:
                                 "CBF rollback for budget leakage prevention."
                             )
                             try:
-                                await self.safety_filter.rollback_state(
-                                    cost=_amount
-                                )
+                                await self.safety_filter.rollback_state(cost=_amount)
                                 logger.info(
                                     "✅ CBF rollback complete after fiscal error."
                                 )
@@ -1738,7 +1745,11 @@ class SymbolicGovernor:
         # Release fiscal reservation if Phase 2 produced violations AFTER fiscal
         # reservation succeeded. This should be rare since we compensate CBF above,
         # but handles edge cases.
-        if violations and _fiscal_token is not None and self.fiscal_limit_guard is not None:
+        if (
+            violations
+            and _fiscal_token is not None
+            and self.fiscal_limit_guard is not None
+        ):
             try:
                 await self.fiscal_limit_guard.release(_fiscal_token)
                 logger.info(
@@ -1810,7 +1821,9 @@ class SymbolicGovernor:
                     receipt = RefusalReceipt(
                         thread_id=thread_id,
                         action=tool_name,
-                        violated_tier=_first_tf.tier if _first_tf else "SYMBOLIC_GOVERNOR",
+                        violated_tier=_first_tf.tier
+                        if _first_tf
+                        else "SYMBOLIC_GOVERNOR",
                         violated_rule=violation_msg,
                         standing_at_refusal={
                             "symbol": params.get("symbol"),
@@ -1821,12 +1834,17 @@ class SymbolicGovernor:
                         # ── 5-part proof chain (Terry Snyder) ──
                         schema_version="v2",
                         attempted_params={
-                            k: v for k, v in params.items()
+                            k: v
+                            for k, v in params.items()
                             if k not in ("thread_id", "transaction_id")
                         },
-                        standing_snapshot=_first_tf.governing_state if _first_tf else {},
+                        standing_snapshot=_first_tf.governing_state
+                        if _first_tf
+                        else {},
                         control_id=_first_tf.control_id if _first_tf else "",
-                        protected_consequence=_first_tf.protected_consequence if _first_tf else "",
+                        protected_consequence=_first_tf.protected_consequence
+                        if _first_tf
+                        else "",
                         non_formation_proof="action_blocked_pre_commit",
                         tier_failures=tuple(_tier_failures),
                     )
@@ -2534,7 +2552,9 @@ class SymbolicGovernor:
                             pause_manager = PauseManager(redis_client)
                             request_id = params.get(
                                 "request_id",
-                                params.get("thread_id", f"{action}_{_va_pause_thread_id}"),
+                                params.get(
+                                    "thread_id", f"{action}_{_va_pause_thread_id}"
+                                ),
                             )
                             pause_token = await pause_manager.pause_request(
                                 request_id=request_id,
@@ -2545,7 +2565,9 @@ class SymbolicGovernor:
                                 estimated_wait_secs=estimated_wait,
                             )
                             # Fetch the state to get expires_at
-                            pause_state = await pause_manager.get_pause_state(pause_token)
+                            pause_state = await pause_manager.get_pause_state(
+                                pause_token
+                            )
                             if pause_state:
                                 expires_at_utc = pause_state.expires_at_utc
                         except Exception as pause_exc:
@@ -2662,7 +2684,9 @@ class SymbolicGovernor:
                     receipt = RefusalReceipt(
                         thread_id=_va_thread_id,
                         action=action,
-                        violated_tier=_va_first_tf.tier if _va_first_tf else "SYMBOLIC_GOVERNOR",
+                        violated_tier=_va_first_tf.tier
+                        if _va_first_tf
+                        else "SYMBOLIC_GOVERNOR",
                         violated_rule=violations[0],
                         standing_at_refusal={
                             "symbol": params.get("symbol"),
@@ -2672,12 +2696,17 @@ class SymbolicGovernor:
                         # ── 5-part proof chain (Terry Snyder) ──
                         schema_version="v2",
                         attempted_params={
-                            k: v for k, v in params.items()
+                            k: v
+                            for k, v in params.items()
                             if k not in ("thread_id", "transaction_id")
                         },
-                        standing_snapshot=_va_first_tf.governing_state if _va_first_tf else {},
+                        standing_snapshot=_va_first_tf.governing_state
+                        if _va_first_tf
+                        else {},
                         control_id=_va_first_tf.control_id if _va_first_tf else "",
-                        protected_consequence=_va_first_tf.protected_consequence if _va_first_tf else "",
+                        protected_consequence=_va_first_tf.protected_consequence
+                        if _va_first_tf
+                        else "",
                         non_formation_proof="action_blocked_pre_commit",
                         tier_failures=tuple(_va_tier_failures),
                     )

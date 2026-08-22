@@ -89,7 +89,7 @@ logger = logging.getLogger("Gateway.Governance.GovernanceEnvelope")
 # Configuration
 # ---------------------------------------------------------------------------
 
-_ENVELOPE_VERSION = "2.0"
+_ENVELOPE_VERSION = "2.1"
 _ENVELOPE_TYPE = "cage_governance_decision"
 
 # Instance identification (from environment or generated)
@@ -108,6 +108,20 @@ class EnvelopeType(str, Enum):
     EVIDENCE_RECORD = "cage_evidence_record"
     POLICY_ATTESTATION = "cage_policy_attestation"
     AUDIT_CHECKPOINT = "cage_audit_checkpoint"
+
+
+class AttestationStatus(str, Enum):
+    """Status of an external attestation entry.
+
+    Mirrors the OSCAL four-state finding vocabulary to prevent
+    vocabulary drift across attestation providers (c.f. decisions.py).
+    """
+
+    VERIFIED = "VERIFIED"
+    DENIED = "DENIED"
+    STALE = "STALE"
+    DRIFT_DETECTED = "DRIFT_DETECTED"
+    ERROR = "ERROR"
 
 
 @dataclass
@@ -182,6 +196,39 @@ class SignatureBlock:
 
 
 @dataclass
+class ExternalAttestation:
+    """An external attestation entry embedded in a governance envelope.
+
+    Generic container for third-party attestation data (e.g.,
+    risk-acceptance proofs, identity admissibility grants, substrate
+    integrity checks). The ``attestation_type`` and ``metadata`` fields
+    are provider-defined; the remaining fields are standardized.
+
+    The ``metadata`` dict is flattened into the serialized output alongside
+    the standard fields so that provider-specific keys (e.g.
+    ``threshold_id``, ``ca_fingerprint``, ``node_id``) appear at the top
+    level of each attestation entry in the envelope JSON.
+    """
+
+    attestation_type: str  # e.g. "BLUEPRINT", "KEY", "PHYSICS"
+    status: str  # AttestationStatus value
+    receipt_id: str  # Provider-issued receipt ID
+    attested_at: str  # ISO 8601 UTC timestamp
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict.  Provider metadata is flattened to top level."""
+        result: dict[str, Any] = {
+            "type": self.attestation_type,
+            "status": self.status,
+            "receipt_id": self.receipt_id,
+            "attested_at": self.attested_at,
+        }
+        result.update(self.metadata)
+        return result
+
+
+@dataclass
 class GovernanceEnvelope:
     """The complete CAGE Governance Envelope."""
 
@@ -194,6 +241,7 @@ class GovernanceEnvelope:
     subject: SubjectMetadata
     governance_context: GovernanceContext
     payload: dict[str, Any]
+    external_attestations: list[ExternalAttestation] = field(default_factory=list)
     signature: SignatureBlock | None = None
 
     def to_dict(self, include_signature: bool = True) -> dict[str, Any]:
@@ -214,6 +262,10 @@ class GovernanceEnvelope:
             "governance_context": self.governance_context.to_dict(),
             "payload": self.payload,
         }
+        if self.external_attestations:
+            result["external_attestations"] = [
+                a.to_dict() for a in self.external_attestations
+            ]
         if include_signature and self.signature:
             result["signature"] = self.signature.to_dict()
         return result
@@ -296,6 +348,7 @@ class GovernanceEnvelopeBuilder:
         tiers_passed: list[str] | None = None,
         controls_satisfied: list[str] | None = None,
         envelope_type: EnvelopeType = EnvelopeType.GOVERNANCE_DECISION,
+        external_attestations: list[ExternalAttestation] | None = None,
     ) -> GovernanceEnvelope:
         """Build an unsigned envelope for external signing.
 
@@ -308,14 +361,16 @@ class GovernanceEnvelopeBuilder:
             tiers_passed: List of governance tiers that passed.
             controls_satisfied: List of control IDs satisfied.
             envelope_type: The type of envelope to create.
+            external_attestations: Optional list of external attestation
+                entries to embed in the envelope.  These are included in
+                the JCS-canonicalized digest and therefore protected by
+                the envelope's KMS signature.
 
         Returns:
             An unsigned GovernanceEnvelope ready for signing.
         """
         now = datetime.now(timezone.utc)
-        expires = datetime.fromtimestamp(
-            now.timestamp() + self._ttl_s, tz=timezone.utc
-        )
+        expires = datetime.fromtimestamp(now.timestamp() + self._ttl_s, tz=timezone.utc)
 
         action_hash = self._compute_action_hash(action, params)
 
@@ -338,11 +393,14 @@ class GovernanceEnvelopeBuilder:
             envelope_type=envelope_type.value,
             envelope_id=f"cage-{uuid.uuid4().hex}",
             issued_at=now.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-            expires_at=expires.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            expires_at=expires.isoformat(timespec="milliseconds").replace(
+                "+00:00", "Z"
+            ),
             issuer=self._issuer,
             subject=subject,
             governance_context=context,
             payload=governance_result,
+            external_attestations=external_attestations or [],
             signature=None,
         )
 
@@ -386,6 +444,7 @@ class GovernanceEnvelopeBuilder:
         tiers_passed: list[str] | None = None,
         controls_satisfied: list[str] | None = None,
         envelope_type: EnvelopeType = EnvelopeType.GOVERNANCE_DECISION,
+        external_attestations: list[ExternalAttestation] | None = None,
     ) -> GovernanceEnvelope:
         """Build a signed envelope using the KMS signer.
 
@@ -398,6 +457,8 @@ class GovernanceEnvelopeBuilder:
             tiers_passed: List of governance tiers that passed.
             controls_satisfied: List of control IDs satisfied.
             envelope_type: The type of envelope to create.
+            external_attestations: Optional list of external attestation
+                entries to embed in the envelope.
 
         Returns:
             A signed GovernanceEnvelope.
@@ -411,17 +472,16 @@ class GovernanceEnvelopeBuilder:
             tiers_passed=tiers_passed,
             controls_satisfied=controls_satisfied,
             envelope_type=envelope_type,
+            external_attestations=external_attestations,
         )
 
         try:
-            from src.gateway.governance.kms_signer import get_governance_signer
             from src.gateway.governance.jwks import pem_to_jwk
+            from src.gateway.governance.kms_signer import get_governance_signer
 
             signer = get_governance_signer()
-            if not signer.kms_active:
-                logger.warning(
-                    "⚠️ KMS not active — envelope will be unsigned"
-                )
+            if not signer.is_kms_active:
+                logger.warning("⚠️ KMS not active — envelope will be unsigned")
                 return envelope
 
             # Use the direct digest signing method for efficiency
@@ -462,10 +522,17 @@ class GovernanceEnvelopeBuilder:
             return False
 
         try:
-            from src.gateway.governance.jwks import get_jwks, pem_to_jwk
-            from cryptography.hazmat.primitives import hashes, serialization
-            from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
             import base64
+
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import (
+                ec,
+                ed25519,
+                rsa,
+                utils,
+            )
+
+            from src.gateway.governance.jwks import get_jwks, pem_to_jwk
 
             # Get the verification key
             kid = envelope.signature.kid
@@ -493,7 +560,6 @@ class GovernanceEnvelopeBuilder:
             digest = envelope.compute_digest()
 
             # Verify based on key type
-            alg = envelope.signature.algorithm
             if isinstance(public_key, ec.EllipticCurvePublicKey):
                 # Convert IEEE P1363 signature to DER if needed
                 key_size = (public_key.curve.key_size + 7) // 8
@@ -512,9 +578,11 @@ class GovernanceEnvelopeBuilder:
                 # Ed25519 uses message, not digest
                 canonical = envelope.to_canonical_bytes(include_signature=False)
                 public_key.verify(signature_bytes, canonical)
-            else:
+            elif isinstance(public_key, rsa.RSAPublicKey):
                 # RSA
-                from cryptography.hazmat.primitives.asymmetric import padding as rsa_padding
+                from cryptography.hazmat.primitives.asymmetric import (
+                    padding as rsa_padding,
+                )
 
                 public_key.verify(
                     signature_bytes,
@@ -522,6 +590,8 @@ class GovernanceEnvelopeBuilder:
                     rsa_padding.PKCS1v15(),
                     utils.Prehashed(hashes.SHA256()),
                 )
+            else:
+                raise ValueError(f"Unsupported public key type: {type(public_key)}")
 
             logger.debug("✅ Envelope signature verified: id=%s", envelope.envelope_id)
             return True
@@ -564,6 +634,23 @@ class GovernanceEnvelopeBuilder:
                 value=sig_data.get("value", ""),
             )
 
+        # Deserialize external attestations
+        attestations_data = data.get("external_attestations", [])
+        external_attestations: list[ExternalAttestation] = []
+        for att in attestations_data:
+            # Standard fields are extracted; everything else goes into metadata
+            standard_keys = {"type", "status", "receipt_id", "attested_at"}
+            metadata = {k: v for k, v in att.items() if k not in standard_keys}
+            external_attestations.append(
+                ExternalAttestation(
+                    attestation_type=att.get("type", ""),
+                    status=att.get("status", ""),
+                    receipt_id=att.get("receipt_id", ""),
+                    attested_at=att.get("attested_at", ""),
+                    metadata=metadata,
+                )
+            )
+
         return GovernanceEnvelope(
             envelope_version=data.get("envelope_version", _ENVELOPE_VERSION),
             envelope_type=data.get("envelope_type", _ENVELOPE_TYPE),
@@ -574,6 +661,7 @@ class GovernanceEnvelopeBuilder:
             subject=subject,
             governance_context=context,
             payload=data.get("payload", {}),
+            external_attestations=external_attestations,
             signature=signature,
         )
 
@@ -626,5 +714,3 @@ async def build_governance_envelope(
         record_hash=record_hash,
         **kwargs,
     )
-
-

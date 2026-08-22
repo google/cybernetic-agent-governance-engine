@@ -304,7 +304,6 @@ gcloud services enable container.googleapis.com \
 
 ## Rollback
 
-If issues occur, see [ROLLBACK_PROCEDURES.md](ROLLBACK_PROCEDURES.md).
 
 Quick rollback:
 
@@ -331,6 +330,4 @@ terraform apply -var-file=dev.tfvars
 ## See Also
 
 - [Quick Start Guide](QUICK_START.md) — 5-minute getting started
-- [Implementation Status](IMPLEMENTATION_STATUS.md) — component reference
-- [Rollback Procedures](ROLLBACK_PROCEDURES.md) — how to revert changes
 - [Module Documentation](modules/) — individual module READMEs

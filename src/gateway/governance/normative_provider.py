@@ -73,6 +73,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol
 
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
 logger = logging.getLogger("cage.normative_provider")
 
 
@@ -164,6 +166,20 @@ class ExecutionStatus(str, Enum):
     DEFER = "DEFER"
 
 
+class FindingStatus(str, Enum):
+    """OSCAL four-state assessment result vocabulary.
+
+    Standardized vocabulary for NormativeProvider.validate_fria() findings,
+    matching NIST OSCAL Assessment Results finding states and preventing
+    vocabulary drift across external compliance providers.
+    """
+
+    PASS = "pass"
+    FAIL = "fail"
+    NOT_APPLICABLE = "not_applicable"
+    ERROR = "error"
+
+
 @dataclass
 class NormativeBaseline:
     """Fetched legal/regulatory baseline from an external provider.
@@ -191,9 +207,9 @@ class NormativeBaseline:
 
     @property
     def profile_hash(self) -> str:
-        """SHA-256 hash of the serialized profile for change detection."""
-        canonical = json.dumps(self.profile, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode()).hexdigest()
+        """RFC 8785 JCS SHA-256 hash of the profile for deterministic change detection."""
+        canonical = jcs_canonicalize_plan(self.profile)
+        return hashlib.sha256(canonical).hexdigest()
 
 
 @dataclass

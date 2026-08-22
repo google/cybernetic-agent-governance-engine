@@ -540,7 +540,9 @@ async def test_rollback_state_cross_window_skipped(
 
     # Verify the current window's balance is unchanged
     current_spend = await guard.current_spend_usd()
-    assert current_spend == 50_000.0, "Balance should be unchanged after cross-window rollback"
+    assert current_spend == 50_000.0, (
+        "Balance should be unchanged after cross-window rollback"
+    )
 
 
 @pytest.mark.asyncio
