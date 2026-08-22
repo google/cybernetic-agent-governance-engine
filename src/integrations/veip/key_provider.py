@@ -108,4 +108,3 @@ class VEIPKeyProvider(AttestationProvider):
                 },
             )
         ]
-

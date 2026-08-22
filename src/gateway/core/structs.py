@@ -33,7 +33,9 @@ class TradeOrder(BaseModel):
     # User-provided fields
     symbol: str = Field(..., description="Ticker symbol of the asset")
     amount: float | None = Field(default=None, description="Amount to trade")
-    amount_minor: int | None = Field(default=None, description="Amount to trade in minor units (e.g. cents).")
+    amount_minor: int | None = Field(
+        default=None, description="Amount to trade in minor units (e.g. cents)."
+    )
     currency: str = Field(..., description="Currency code (e.g. USD, EUR)")
     confidence: float = Field(
         ...,
@@ -89,10 +91,10 @@ class TradeOrder(BaseModel):
             self.amount_minor = int(round(self.amount * 100))
         elif self.amount_minor is not None and self.amount is None:
             self.amount = self.amount_minor / 100.0
-            
+
         if self.amount_minor is not None and self.amount_minor <= 0:
             raise ValueError("Amount must be positive")
-            
+
         return self
 
     @field_validator("transaction_id")

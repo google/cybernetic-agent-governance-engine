@@ -14,8 +14,8 @@
 
 """Archytan integration — attestation provider and envelope mapper."""
 
-from src.integrations.archytan.provider import ArchytanAttestationProvider
 from src.integrations.archytan.envelope_mapper import ArchytanEnvelopeMapper
+from src.integrations.archytan.provider import ArchytanAttestationProvider
 
 __all__ = [
     "ArchytanAttestationProvider",

@@ -117,7 +117,7 @@ def pem_to_jwk(pem_bytes: bytes, kid: str | None = None) -> dict[str, Any]:
         }
 
     elif isinstance(pub, ec.EllipticCurvePublicKey):
-        numbers = pub.public_numbers()
+        ec_numbers = pub.public_numbers()
         curve_name = pub.curve.name
         crv_map = {
             "secp256r1": ("P-256", "ES256"),
@@ -129,8 +129,8 @@ def pem_to_jwk(pem_bytes: bytes, kid: str | None = None) -> dict[str, Any]:
         return {
             "kty": "EC",
             "crv": crv,
-            "x": _to_base64url(numbers.x.to_bytes(key_size, "big")),
-            "y": _to_base64url(numbers.y.to_bytes(key_size, "big")),
+            "x": _to_base64url(ec_numbers.x.to_bytes(key_size, "big")),
+            "y": _to_base64url(ec_numbers.y.to_bytes(key_size, "big")),
             "kid": computed_kid,
             "use": "sig",
             "alg": alg,
@@ -377,27 +377,27 @@ def _initialize_jwks_from_kms(jwks: JWKSet) -> None:
         from src.gateway.governance.kms_signer import get_governance_signer
 
         signer = get_governance_signer()
-        if not signer.kms_active:
+        if not signer.is_kms_active:
             logger.warning("⚠️ KMS not active — JWKSet will be empty")
             return
 
         # Get public key(s) from the signer
-        if signer.provider:
+        if signer._provider:
             try:
                 # Try multi-key method first
-                pem_dict = signer.provider.get_public_keys_pem()
-                for key_id, pem_bytes in pem_dict.items():
+                pem_dict = signer._provider.get_public_keys_pem()
+                for _key_id, pem_bytes in pem_dict.items():
                     jwks.add_key(pem_bytes)
                 logger.info(
                     "✅ JWKSet initialized with %d key(s) from KMS", len(pem_dict)
                 )
             except AttributeError:
                 # Fallback to single-key method
-                pem_bytes = signer.provider.get_public_key_pem()
+                pem_bytes = signer._provider.get_public_key_pem()
                 jwks.add_key(pem_bytes)
                 logger.info("✅ JWKSet initialized with 1 key from KMS")
-        elif signer.public_key_pem:
-            jwks.add_key(signer.public_key_pem)
+        elif signer._public_key_pem:
+            jwks.add_key(signer._public_key_pem)
             logger.info("✅ JWKSet initialized with 1 key from local PEM")
     except Exception as e:
         logger.error("❌ Failed to initialize JWKSet from KMS: %s", e)

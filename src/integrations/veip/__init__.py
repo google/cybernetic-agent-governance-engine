@@ -21,23 +21,22 @@ Implements the Three Uncomputable Axioms integration:
   - Axiom 3 (Substrate Integrity / Physics) — VEIPPhysicsProvider
 """
 
+from src.integrations.veip.blueprint_provider import VEIPBlueprintProvider
 from src.integrations.veip.client import (
     AdmissibilityGrant,
     RiskAcceptanceRecord,
     SubstrateAttestation,
     VEIPClient,
 )
-from src.integrations.veip.blueprint_provider import VEIPBlueprintProvider
 from src.integrations.veip.key_provider import VEIPKeyProvider
 from src.integrations.veip.physics_provider import VEIPPhysicsProvider
 
 __all__ = [
-    "VEIPClient",
-    "RiskAcceptanceRecord",
     "AdmissibilityGrant",
+    "RiskAcceptanceRecord",
     "SubstrateAttestation",
     "VEIPBlueprintProvider",
+    "VEIPClient",
     "VEIPKeyProvider",
     "VEIPPhysicsProvider",
 ]
-

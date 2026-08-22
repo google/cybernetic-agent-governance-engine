@@ -118,4 +118,3 @@ class VEIPPhysicsProvider(AttestationProvider):
                 },
             )
         ]
-

@@ -1,6 +1,6 @@
 import re
 
-with open("src/gateway/governance/kms_signer.py", "r") as f:
+with open("src/gateway/governance/kms_signer.py") as f:
     content = f.read()
 
 # Add get_public_keys_pem to BaseKMSProvider
@@ -15,7 +15,7 @@ base_provider_replace = """    def get_public_key_pem(self) -> bytes:
 content = re.sub(
     r"    def get_public_key_pem\(self\) -> bytes:\n        \"\"\"Fetch the public key PEM from the cloud provider\.\"\"\"\n        pass\n",
     base_provider_replace,
-    content
+    content,
 )
 
 # Add get_public_keys_pem to GCPKMSProvider
@@ -48,7 +48,7 @@ gcp_provider_add = """    def get_public_key_pem(self) -> bytes:
 content = re.sub(
     r"    def get_public_key_pem\(self\) -> bytes:\n        response = self._kms_client.get_public_key\(name=self._key_version_name\)  # type: ignore\[union-attr\]\n        return response.pem.encode\(\"utf-8\"\)\n",
     gcp_provider_add,
-    content
+    content,
 )
 
 # Add get_jwks to KMSGovernanceSigner
@@ -79,7 +79,7 @@ signer_add = """    def get_public_key_pem(self) -> bytes:
 content = re.sub(
     r"    def get_public_key_pem\(self\) -> bytes:\n        if not self._public_key_pem:\n            raise RuntimeError\(\"No public key is loaded.\"\)\n        return self._public_key_pem\n",
     signer_add,
-    content
+    content,
 )
 
 with open("src/gateway/governance/kms_signer.py", "w") as f:

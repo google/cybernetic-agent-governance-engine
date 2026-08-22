@@ -35,7 +35,6 @@ import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-
 # ---------------------------------------------------------------------------
 # Test Fixtures
 # ---------------------------------------------------------------------------
@@ -88,8 +87,8 @@ class TestGovernanceEnvelope:
     def test_envelope_to_dict(self, sample_governance_result, sample_params):
         """Test envelope serialization to dictionary."""
         from src.gateway.governance.governance_envelope import (
-            GovernanceEnvelope,
             GovernanceContext,
+            GovernanceEnvelope,
             IssuerMetadata,
             SubjectMetadata,
         )
@@ -135,8 +134,8 @@ class TestGovernanceEnvelope:
     def test_envelope_canonical_bytes(self, sample_governance_result):
         """Test envelope serialization to RFC 8785 canonical bytes."""
         from src.gateway.governance.governance_envelope import (
-            GovernanceEnvelope,
             GovernanceContext,
+            GovernanceEnvelope,
             IssuerMetadata,
             SubjectMetadata,
         )
@@ -163,8 +162,8 @@ class TestGovernanceEnvelope:
     def test_envelope_digest_is_deterministic(self, sample_governance_result):
         """Test that envelope digest is deterministic."""
         from src.gateway.governance.governance_envelope import (
-            GovernanceEnvelope,
             GovernanceContext,
+            GovernanceEnvelope,
             IssuerMetadata,
             SubjectMetadata,
         )
@@ -231,7 +230,9 @@ class TestGovernanceEnvelopeBuilder:
         assert envelope.payload == sample_governance_result
         assert envelope.signature is None
 
-    def test_action_hash_is_deterministic(self, sample_governance_result, sample_params):
+    def test_action_hash_is_deterministic(
+        self, sample_governance_result, sample_params
+    ):
         """Test that action hash is deterministic for same inputs."""
         from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 
@@ -251,7 +252,9 @@ class TestGovernanceEnvelopeBuilder:
 
         assert envelope1.subject.action_hash == envelope2.subject.action_hash
 
-    def test_action_hash_changes_with_params(self, sample_governance_result, sample_params):
+    def test_action_hash_changes_with_params(
+        self, sample_governance_result, sample_params
+    ):
         """Test that action hash changes when params change."""
         from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 
@@ -347,13 +350,16 @@ class TestGovernanceEnvelopeBuilder:
 class TestEnvelopeSigningVerification:
     """Tests for envelope signing and verification with real keys."""
 
-    def test_sign_and_verify_ec_key(self, ec_key_pair, sample_governance_result, sample_params):
+    def test_sign_and_verify_ec_key(
+        self, ec_key_pair, sample_governance_result, sample_params
+    ):
         """Test signing and verifying with EC key."""
-        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
-        from src.gateway.governance.jwks import JWKSet, pem_to_jwk
         from cryptography.hazmat.primitives.asymmetric import utils
 
-        private_key, public_key, public_pem = ec_key_pair
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
+        from src.gateway.governance.jwks import JWKSet, pem_to_jwk
+
+        private_key, _, public_pem = ec_key_pair
 
         builder = GovernanceEnvelopeBuilder()
         envelope = builder.build_unsigned(
@@ -364,7 +370,9 @@ class TestEnvelopeSigningVerification:
 
         # Sign the envelope manually - use Prehashed since digest is already SHA256
         digest = envelope.compute_digest()
-        signature_der = private_key.sign(digest, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
+        signature_der = private_key.sign(
+            digest, ec.ECDSA(utils.Prehashed(hashes.SHA256()))
+        )
 
         # Get kid from JWK
         jwk = pem_to_jwk(public_pem)
@@ -382,13 +390,16 @@ class TestEnvelopeSigningVerification:
 
         assert result is True
 
-    def test_verify_fails_with_wrong_key(self, ec_key_pair, sample_governance_result, sample_params):
+    def test_verify_fails_with_wrong_key(
+        self, ec_key_pair, sample_governance_result, sample_params
+    ):
         """Test verification fails with wrong key."""
-        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
-        from src.gateway.governance.jwks import JWKSet, pem_to_jwk
         from cryptography.hazmat.primitives.asymmetric import utils
 
-        private_key, public_key, public_pem = ec_key_pair
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
+        from src.gateway.governance.jwks import JWKSet, pem_to_jwk
+
+        private_key, _, public_pem = ec_key_pair
 
         builder = GovernanceEnvelopeBuilder()
         envelope = builder.build_unsigned(
@@ -399,7 +410,9 @@ class TestEnvelopeSigningVerification:
 
         # Sign with the correct key - use Prehashed since digest is already SHA256
         digest = envelope.compute_digest()
-        signature_der = private_key.sign(digest, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
+        signature_der = private_key.sign(
+            digest, ec.ECDSA(utils.Prehashed(hashes.SHA256()))
+        )
 
         jwk = pem_to_jwk(public_pem)
         kid = jwk["kid"]
@@ -421,13 +434,16 @@ class TestEnvelopeSigningVerification:
 
         assert result is False
 
-    def test_verify_fails_with_tampered_payload(self, ec_key_pair, sample_governance_result, sample_params):
+    def test_verify_fails_with_tampered_payload(
+        self, ec_key_pair, sample_governance_result, sample_params
+    ):
         """Test verification fails when payload is tampered."""
-        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
-        from src.gateway.governance.jwks import JWKSet, pem_to_jwk
         from cryptography.hazmat.primitives.asymmetric import utils
 
-        private_key, public_key, public_pem = ec_key_pair
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
+        from src.gateway.governance.jwks import JWKSet, pem_to_jwk
+
+        private_key, _, public_pem = ec_key_pair
 
         builder = GovernanceEnvelopeBuilder()
         envelope = builder.build_unsigned(
@@ -438,7 +454,9 @@ class TestEnvelopeSigningVerification:
 
         # Sign the envelope - use Prehashed since digest is already SHA256
         digest = envelope.compute_digest()
-        signature_der = private_key.sign(digest, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
+        signature_der = private_key.sign(
+            digest, ec.ECDSA(utils.Prehashed(hashes.SHA256()))
+        )
 
         jwk = pem_to_jwk(public_pem)
         kid = jwk["kid"]
@@ -504,7 +522,9 @@ class TestConvenienceFunctions:
         assert builder2._ttl_s == 600
 
     @pytest.mark.asyncio
-    async def test_build_governance_envelope_no_kms(self, sample_governance_result, sample_params):
+    async def test_build_governance_envelope_no_kms(
+        self, sample_governance_result, sample_params
+    ):
         """Test build_governance_envelope without KMS."""
         from src.gateway.governance.governance_envelope import build_governance_envelope
 
@@ -537,7 +557,10 @@ class TestEnvelopeTypes:
 
     def test_evidence_record_type(self, sample_governance_result, sample_params):
         """Test creating an evidence record envelope."""
-        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder, EnvelopeType
+        from src.gateway.governance.governance_envelope import (
+            EnvelopeType,
+            GovernanceEnvelopeBuilder,
+        )
 
         builder = GovernanceEnvelopeBuilder()
         envelope = builder.build_unsigned(
@@ -551,7 +574,10 @@ class TestEnvelopeTypes:
 
     def test_policy_attestation_type(self, sample_governance_result, sample_params):
         """Test creating a policy attestation envelope."""
-        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder, EnvelopeType
+        from src.gateway.governance.governance_envelope import (
+            EnvelopeType,
+            GovernanceEnvelopeBuilder,
+        )
 
         builder = GovernanceEnvelopeBuilder()
         envelope = builder.build_unsigned(
@@ -565,7 +591,10 @@ class TestEnvelopeTypes:
 
     def test_audit_checkpoint_type(self, sample_governance_result, sample_params):
         """Test creating an audit checkpoint envelope."""
-        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder, EnvelopeType
+        from src.gateway.governance.governance_envelope import (
+            EnvelopeType,
+            GovernanceEnvelopeBuilder,
+        )
 
         builder = GovernanceEnvelopeBuilder()
         envelope = builder.build_unsigned(
@@ -599,9 +628,14 @@ class TestWireFormatV2:
 
         assert envelope.envelope_version == "2.1"
 
-    def test_envelope_type_uses_cage_prefix(self, sample_governance_result, sample_params):
+    def test_envelope_type_uses_cage_prefix(
+        self, sample_governance_result, sample_params
+    ):
         """Verify envelope_type uses 'cage_' prefix instead of 'agw_'."""
-        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder, EnvelopeType
+        from src.gateway.governance.governance_envelope import (
+            EnvelopeType,
+            GovernanceEnvelopeBuilder,
+        )
 
         builder = GovernanceEnvelopeBuilder()
 
@@ -613,10 +647,16 @@ class TestWireFormatV2:
                 governance_result=sample_governance_result,
                 envelope_type=etype,
             )
-            assert envelope.envelope_type.startswith("cage_"), f"Expected cage_ prefix for {etype}"
-            assert not envelope.envelope_type.startswith("agw_"), f"Should not have agw_ prefix for {etype}"
+            assert envelope.envelope_type.startswith("cage_"), (
+                f"Expected cage_ prefix for {etype}"
+            )
+            assert not envelope.envelope_type.startswith("agw_"), (
+                f"Should not have agw_ prefix for {etype}"
+            )
 
-    def test_envelope_id_uses_cage_prefix(self, sample_governance_result, sample_params):
+    def test_envelope_id_uses_cage_prefix(
+        self, sample_governance_result, sample_params
+    ):
         """Verify envelope_id uses 'cage-' prefix instead of 'agw-'."""
         from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 
@@ -627,8 +667,12 @@ class TestWireFormatV2:
             governance_result=sample_governance_result,
         )
 
-        assert envelope.envelope_id.startswith("cage-"), f"Expected cage- prefix, got {envelope.envelope_id}"
-        assert not envelope.envelope_id.startswith("agw-"), "Should not have agw- prefix"
+        assert envelope.envelope_id.startswith("cage-"), (
+            f"Expected cage- prefix, got {envelope.envelope_id}"
+        )
+        assert not envelope.envelope_id.startswith("agw-"), (
+            "Should not have agw- prefix"
+        )
 
     def test_enum_values_use_cage_prefix(self):
         """Verify EnvelopeType enum values use 'cage_' prefix."""
@@ -828,5 +872,3 @@ class TestExternalAttestations:
         assert recon_att.metadata["node_id"] == "gke-node-1"
         assert recon_att.metadata["freshness_seconds"] == 15
         assert reconstructed.compute_digest() == envelope.compute_digest()
-
-

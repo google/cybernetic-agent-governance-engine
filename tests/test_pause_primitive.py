@@ -838,19 +838,15 @@ class TestValidateActionPauseHandler:
             "policy_ambiguous": False,
         }
 
-        with patch(
-            "src.gateway.governance.symbolic_governor.CAGE_PAUSE_ENABLED", True
-        ), patch(
-            "src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True
-        ), patch(
-            "src.gateway.infrastructure.redis_client.redis_client", mock_redis
+        with (
+            patch("src.gateway.governance.symbolic_governor.CAGE_PAUSE_ENABLED", True),
+            patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
+            patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
         ):
             governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
 
             # Patch _run_checks to return our mock result
-            with patch.object(
-                governor, "_run_checks", return_value=mock_result
-            ):
+            with patch.object(governor, "_run_checks", return_value=mock_result):
                 result = await governor.validate_action(
                     action="test_action",
                     params={"symbol": "AAPL", "amount": 100, "confidence": 0.9},
@@ -883,18 +879,14 @@ class TestValidateActionPauseHandler:
             "policy_ambiguous": False,
         }
 
-        with patch(
-            "src.gateway.governance.symbolic_governor.CAGE_PAUSE_ENABLED", True
-        ), patch(
-            "src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True
-        ), patch(
-            "src.gateway.infrastructure.redis_client.redis_client", mock_redis
+        with (
+            patch("src.gateway.governance.symbolic_governor.CAGE_PAUSE_ENABLED", True),
+            patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
+            patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
         ):
             governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
 
-            with patch.object(
-                governor, "_run_checks", return_value=mock_result
-            ):
+            with patch.object(governor, "_run_checks", return_value=mock_result):
                 result = await governor.validate_action(
                     action="test_action",
                     params={
@@ -937,12 +929,12 @@ class TestValidateActionPauseHandler:
         }
 
         # Enable in _classify_violation but disable at handler level
-        with patch(
-            "src.gateway.governance.symbolic_governor._classify_violation"
-        ) as mock_classify, patch(
-            "src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", False
-        ), patch(
-            "src.gateway.infrastructure.redis_client.redis_client", mock_redis
+        with (
+            patch(
+                "src.gateway.governance.symbolic_governor._classify_violation"
+            ) as mock_classify,
+            patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", False),
+            patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
         ):
             # Mock _classify_violation to return PAUSE
             mock_classify.return_value = (
@@ -961,9 +953,7 @@ class TestValidateActionPauseHandler:
 
             governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
 
-            with patch.object(
-                governor, "_run_checks", return_value=mock_result
-            ):
+            with patch.object(governor, "_run_checks", return_value=mock_result):
                 # Should raise GovernanceError (DENY fallback)
                 with pytest.raises(GovernanceError) as exc_info:
                     await governor.validate_action(
@@ -992,18 +982,14 @@ class TestValidateActionPauseHandler:
             "policy_ambiguous": False,
         }
 
-        with patch(
-            "src.gateway.governance.symbolic_governor.CAGE_PAUSE_ENABLED", True
-        ), patch(
-            "src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True
-        ), patch(
-            "src.gateway.infrastructure.redis_client.redis_client", mock_redis
+        with (
+            patch("src.gateway.governance.symbolic_governor.CAGE_PAUSE_ENABLED", True),
+            patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
+            patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
         ):
             governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
 
-            with patch.object(
-                governor, "_run_checks", return_value=mock_result
-            ):
+            with patch.object(governor, "_run_checks", return_value=mock_result):
                 result = await governor.validate_action(
                     action="test_action",
                     params={"symbol": "MSFT", "amount": 200},
@@ -1037,16 +1023,17 @@ class TestValidateActionPauseHandler:
 
         # Create a mock Redis that raises an exception
         mock_redis_broken = AsyncMock()
-        mock_redis_broken.pipeline.side_effect = ConnectionError(
-            "Redis unavailable"
-        )
+        mock_redis_broken.pipeline.side_effect = ConnectionError("Redis unavailable")
 
-        with patch(
-            "src.gateway.governance.symbolic_governor._classify_violation"
-        ) as mock_classify, patch(
-            "src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True
-        ), patch(
-            "src.gateway.infrastructure.redis_client.redis_client", mock_redis_broken
+        with (
+            patch(
+                "src.gateway.governance.symbolic_governor._classify_violation"
+            ) as mock_classify,
+            patch("src.gateway.governance.pause_primitive.CAGE_PAUSE_ENABLED", True),
+            patch(
+                "src.gateway.infrastructure.redis_client.redis_client",
+                mock_redis_broken,
+            ),
         ):
             mock_classify.return_value = (
                 GovernanceDecision.PAUSE,
@@ -1064,9 +1051,7 @@ class TestValidateActionPauseHandler:
 
             governor = SymbolicGovernor(opa_client, safety_filter, consensus_engine)
 
-            with patch.object(
-                governor, "_run_checks", return_value=mock_result
-            ):
+            with patch.object(governor, "_run_checks", return_value=mock_result):
                 with pytest.raises(GovernanceError) as exc_info:
                     await governor.validate_action(
                         action="test_action",

@@ -51,7 +51,7 @@ ESCAPE_DCT = {
     "\t": "\\t",
 }
 for i in range(0x20):
-    ESCAPE_DCT.setdefault(chr(i), "\\u{0:04x}".format(i))
+    ESCAPE_DCT.setdefault(chr(i), f"\\u{i:04x}")
     # ESCAPE_DCT.setdefault(chr(i), '\\u%04x' % (i,))
 
 INFINITY = float("inf")
@@ -79,14 +79,14 @@ def py_encode_basestring_ascii(s):
         except KeyError:
             n = ord(s)
             if n < 0x10000:
-                return "\\u{0:04x}".format(n)
+                return f"\\u{n:04x}"
                 # return '\\u%04x' % (n,)
             else:
                 # surrogate pair
                 n -= 0x10000
                 s1 = 0xD800 | ((n >> 10) & 0x3FF)
                 s2 = 0xDC00 | (n & 0x3FF)
-                return "\\u{0:04x}\\u{1:04x}".format(s1, s2)
+                return f"\\u{s1:04x}\\u{s2:04x}"
 
     return '"' + ESCAPE_ASCII.sub(replace, s) + '"'
 
@@ -94,7 +94,7 @@ def py_encode_basestring_ascii(s):
 encode_basestring_ascii = c_encode_basestring_ascii or py_encode_basestring_ascii
 
 
-class JSONEncoder(object):
+class JSONEncoder:
     """Extensible JSON <http://json.org> encoder for Python data structures.
 
     Supports the following objects and types by default:

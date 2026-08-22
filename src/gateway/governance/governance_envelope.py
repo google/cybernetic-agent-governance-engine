@@ -370,9 +370,7 @@ class GovernanceEnvelopeBuilder:
             An unsigned GovernanceEnvelope ready for signing.
         """
         now = datetime.now(timezone.utc)
-        expires = datetime.fromtimestamp(
-            now.timestamp() + self._ttl_s, tz=timezone.utc
-        )
+        expires = datetime.fromtimestamp(now.timestamp() + self._ttl_s, tz=timezone.utc)
 
         action_hash = self._compute_action_hash(action, params)
 
@@ -395,7 +393,9 @@ class GovernanceEnvelopeBuilder:
             envelope_type=envelope_type.value,
             envelope_id=f"cage-{uuid.uuid4().hex}",
             issued_at=now.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-            expires_at=expires.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            expires_at=expires.isoformat(timespec="milliseconds").replace(
+                "+00:00", "Z"
+            ),
             issuer=self._issuer,
             subject=subject,
             governance_context=context,
@@ -476,14 +476,12 @@ class GovernanceEnvelopeBuilder:
         )
 
         try:
-            from src.gateway.governance.kms_signer import get_governance_signer
             from src.gateway.governance.jwks import pem_to_jwk
+            from src.gateway.governance.kms_signer import get_governance_signer
 
             signer = get_governance_signer()
-            if not signer.kms_active:
-                logger.warning(
-                    "⚠️ KMS not active — envelope will be unsigned"
-                )
+            if not signer.is_kms_active:
+                logger.warning("⚠️ KMS not active — envelope will be unsigned")
                 return envelope
 
             # Use the direct digest signing method for efficiency
@@ -524,10 +522,17 @@ class GovernanceEnvelopeBuilder:
             return False
 
         try:
-            from src.gateway.governance.jwks import get_jwks, pem_to_jwk
-            from cryptography.hazmat.primitives import hashes, serialization
-            from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
             import base64
+
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import (
+                ec,
+                ed25519,
+                rsa,
+                utils,
+            )
+
+            from src.gateway.governance.jwks import get_jwks, pem_to_jwk
 
             # Get the verification key
             kid = envelope.signature.kid
@@ -555,7 +560,6 @@ class GovernanceEnvelopeBuilder:
             digest = envelope.compute_digest()
 
             # Verify based on key type
-            alg = envelope.signature.algorithm
             if isinstance(public_key, ec.EllipticCurvePublicKey):
                 # Convert IEEE P1363 signature to DER if needed
                 key_size = (public_key.curve.key_size + 7) // 8
@@ -574,9 +578,11 @@ class GovernanceEnvelopeBuilder:
                 # Ed25519 uses message, not digest
                 canonical = envelope.to_canonical_bytes(include_signature=False)
                 public_key.verify(signature_bytes, canonical)
-            else:
+            elif isinstance(public_key, rsa.RSAPublicKey):
                 # RSA
-                from cryptography.hazmat.primitives.asymmetric import padding as rsa_padding
+                from cryptography.hazmat.primitives.asymmetric import (
+                    padding as rsa_padding,
+                )
 
                 public_key.verify(
                     signature_bytes,
@@ -584,6 +590,8 @@ class GovernanceEnvelopeBuilder:
                     rsa_padding.PKCS1v15(),
                     utils.Prehashed(hashes.SHA256()),
                 )
+            else:
+                raise ValueError(f"Unsupported public key type: {type(public_key)}")
 
             logger.debug("✅ Envelope signature verified: id=%s", envelope.envelope_id)
             return True
@@ -706,5 +714,3 @@ async def build_governance_envelope(
         record_hash=record_hash,
         **kwargs,
     )
-
-

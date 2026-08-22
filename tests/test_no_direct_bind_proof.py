@@ -304,7 +304,9 @@ def test_narrow_state_is_reachable_and_has_seal() -> None:
     for state in narrow:
         assert state.seal_present is True, "NARROW must have seal_present=TRUE"
         assert state.resolved_allow is True, "NARROW must have resolvedAllow=TRUE"
-        assert state.soft_threshold_exceeded is True, "NARROW implies soft_threshold_exceeded"
+        assert state.soft_threshold_exceeded is True, (
+            "NARROW implies soft_threshold_exceeded"
+        )
         assert state.all_tiers_passed(), "NARROW requires all tiers to pass"
 
 

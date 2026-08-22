@@ -161,6 +161,7 @@ def test_gateway_assert_custom_salt_raises_uses_environment_fallback():
 # 3. is_default_salt() — GFA utils version
 # ---------------------------------------------------------------------------
 
+
 def test_gateway_generate_and_gfa_verify_round_trip():
     """generate_seal() + GFA verify_seal() round-trip succeeds with the test salt."""
     from src.gateway.governance.routing_seal import generate_seal
@@ -211,6 +212,7 @@ def test_gateway_verify_seal_rejects_expired_seal():
     with pytest.raises(SymbolicGovernorViolation):
         verify_seal(seal, "execute_trade", params)
 
+
 # ---------------------------------------------------------------------------
 # 7. verify_seal() rejects wrong action
 # ---------------------------------------------------------------------------
@@ -228,6 +230,7 @@ def test_gateway_verify_seal_rejects_wrong_action():
     seal = generate_seal("execute_trade", params)
     with pytest.raises(SymbolicGovernorViolation):
         verify_seal(seal, "cancel_trade", params)
+
 
 def test_gateway_verify_seal_rejects_tampered_hmac():
     """verify_seal() raises SymbolicGovernorViolation when the HMAC component is tampered."""
@@ -284,6 +287,7 @@ def test_gateway_verify_seal_rejects_malformed_seal():
     # Empty
     with pytest.raises(SymbolicGovernorViolation):
         verify_seal("", "execute_trade", {})
+
 
 @pytest.mark.asyncio
 async def test_gateway_verify_and_consume_seal_prevents_replay():
@@ -361,8 +365,12 @@ class TestEvidenceBindingEnforcement:
         import src.gateway.governance.routing_seal as gw_seal
 
         params = {"symbol": "MSFT", "amount": 500.0}
-        valid_record_hash = "abc123def456789012345678901234567890abcdef123456789012345678901234"
-        seal = gw_seal.generate_seal("execute_trade", params, record_hash=valid_record_hash)
+        valid_record_hash = (
+            "abc123def456789012345678901234567890abcdef123456789012345678901234"
+        )
+        seal = gw_seal.generate_seal(
+            "execute_trade", params, record_hash=valid_record_hash
+        )
 
         with (
             patch.object(gw_seal, "_REQUIRE_EVIDENCE_BINDING", True),
@@ -401,6 +409,7 @@ class TestEvidenceBindingEnforcement:
 
             assert "Evidence sufficiency violation" in str(exc_info.value)
 
+
 @pytest.mark.asyncio
 async def test_gfa_verify_and_consume_seal_prevents_replay():
     """GFA verify_and_consume_seal() burns the seal in Redis and rejects replays."""
@@ -430,15 +439,16 @@ async def test_gfa_verify_and_consume_seal_prevents_replay():
 
     assert "already consumed" in str(exc_info.value) or "Replay" in str(exc_info.value)
 
+
 def test_gateway_rejects_hmac_in_production():
     """verify_seal() rejects v2 HMAC seals when running in production."""
     import src.gateway.governance.routing_seal as gw_seal
-    
+
     params = {"symbol": "AAPL", "amount": 1000.0}
     seal = gw_seal.generate_seal("execute_trade", params)
-    
+
     with patch.object(gw_seal, "_IS_PRODUCTION", True):
         with pytest.raises(gw_seal.SymbolicGovernorViolation) as exc_info:
             gw_seal.verify_seal(seal, "execute_trade", params)
-            
+
         assert "HMAC seals are not accepted in production" in str(exc_info.value)

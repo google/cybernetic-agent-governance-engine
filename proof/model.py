@@ -1029,22 +1029,26 @@ def main() -> None:
     print()
 
     # Verify NARROW states satisfy NoDirectBind (they are ALLOW variants)
-    narrow_valid = all(
-        s.resolved_allow and s.seal_present for s in narrow_states
+    narrow_valid = all(s.resolved_allow and s.seal_present for s in narrow_states)
+    print(
+        f"  NARROW states have resolvedAllow=TRUE and seal_present=TRUE: {narrow_valid}"
     )
-    print(f"  NARROW states have resolvedAllow=TRUE and seal_present=TRUE: {narrow_valid}")
 
     # Verify PAUSE states do NOT have seal_present=TRUE (they are retryable, not ALLOW)
     pause_no_seal = all(
         not s.seal_present and not s.resolved_allow for s in pause_states
     )
-    print(f"  PAUSE states have seal_present=FALSE and resolvedAllow=FALSE: {pause_no_seal}")
+    print(
+        f"  PAUSE states have seal_present=FALSE and resolvedAllow=FALSE: {pause_no_seal}"
+    )
     print()
 
     # ── Ungated NARROW negative control ───────────────────────────────────────
     print("Ungated NARROW negative control (C1-sub):")
     ungated_narrow_states = enumerate_reachable(ungated_narrow_transitions)
-    ungated_narrow_holds, ungated_narrow_cex = check_no_direct_bind(ungated_narrow_states)
+    ungated_narrow_holds, ungated_narrow_cex = check_no_direct_bind(
+        ungated_narrow_states
+    )
     print(f"  Reachable states: {len(ungated_narrow_states)}")
     print(f"  No-Direct-Bind holds: {ungated_narrow_holds}")
     if ungated_narrow_cex is not None:
@@ -1052,7 +1056,9 @@ def main() -> None:
         print(f"     phase={ungated_narrow_cex.phase}")
         print(f"     resolvedAllow={ungated_narrow_cex.resolved_allow}")
         print(f"     seal_present={ungated_narrow_cex.seal_present}")
-        print(f"     soft_threshold_exceeded={ungated_narrow_cex.soft_threshold_exceeded}")
+        print(
+            f"     soft_threshold_exceeded={ungated_narrow_cex.soft_threshold_exceeded}"
+        )
     print()
 
     # ── Final assertions ──────────────────────────────────────────────────────
@@ -1094,7 +1100,9 @@ def main() -> None:
     print(f"  5. NARROW states ({len(narrow_states)}) are ALLOW variants with")
     print("     resolvedAllow=TRUE and seal_present=TRUE (seal on clamped params).")
     print(f"  6. PAUSE states ({len(pause_states)}) are retryable with")
-    print("     resolvedAllow=FALSE and seal_present=FALSE (no execution without re-check).")
+    print(
+        "     resolvedAllow=FALSE and seal_present=FALSE (no execution without re-check)."
+    )
     print("  7. The ungated NARROW variant produces a counterexample, confirming")
     print("     the seal gate is load-bearing for NARROW decisions as well.")
     print()

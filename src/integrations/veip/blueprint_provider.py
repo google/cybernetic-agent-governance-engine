@@ -118,4 +118,3 @@ class VEIPBlueprintProvider(AttestationProvider):
                 },
             )
         ]
-

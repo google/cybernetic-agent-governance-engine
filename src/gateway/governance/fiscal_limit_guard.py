@@ -460,14 +460,20 @@ class FiscalLimitGuard:
 
         if amount_minor is not None:
             if not isinstance(amount_minor, int):
-                raise ValueError(f"reserve: amount_minor must be an integer, got {type(amount_minor)}")
+                raise ValueError(
+                    f"reserve: amount_minor must be an integer, got {type(amount_minor)}"
+                )
             if amount_minor <= 0:
-                raise ValueError(f"reserve: amount_minor must be > 0, got {amount_minor}")
+                raise ValueError(
+                    f"reserve: amount_minor must be > 0, got {amount_minor}"
+                )
             amount_cents = amount_minor
             if amount_usd is None:
                 amount_usd = amount_minor / 100.0
         else:
-            if not isinstance(amount_usd, (int, float)) or not math.isfinite(amount_usd):  # type: ignore[arg-type]
+            if not isinstance(amount_usd, (int, float)) or not math.isfinite(
+                amount_usd
+            ):  # type: ignore[arg-type]
                 raise ValueError(
                     f"reserve: amount_usd must be a finite positive number, got {amount_usd!r}"
                 )
@@ -564,13 +570,15 @@ class FiscalLimitGuard:
 
         if amount_minor is not None:
             if not isinstance(amount_minor, int):
-                raise ValueError(f"rollback: amount_minor must be an integer, got {type(amount_minor)}")
+                raise ValueError(
+                    f"rollback: amount_minor must be an integer, got {type(amount_minor)}"
+                )
             amount_cents = amount_minor
             if amount is None:
                 amount = amount_minor / 100.0
         else:
             amount_cents = int(round(amount * 100))  # type: ignore[operator]
-            
+
         # Determine the target window key
         target_window_key: str
         if window_key is not None:

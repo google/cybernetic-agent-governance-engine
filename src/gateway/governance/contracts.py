@@ -112,10 +112,9 @@ class RefusalReceipt:
                     for tf in self.tier_failures
                 ]
             from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
             canon = jcs_canonicalize_plan(payload)
-            object.__setattr__(
-                self, "proof_hash", hashlib.sha256(canon).hexdigest()
-            )
+            object.__setattr__(self, "proof_hash", hashlib.sha256(canon).hexdigest())
 
 
 @dataclass(frozen=True)
@@ -159,10 +158,9 @@ class PauseReceipt:
                 "timestamp": self.timestamp,
             }
             from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
             canon = jcs_canonicalize_plan(payload)
-            object.__setattr__(
-                self, "proof_hash", hashlib.sha256(canon).hexdigest()
-            )
+            object.__setattr__(self, "proof_hash", hashlib.sha256(canon).hexdigest())
 
 
 class SafetyFilter(Protocol):

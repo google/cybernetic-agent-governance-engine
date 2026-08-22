@@ -15,11 +15,12 @@
 """Unit tests for AttestationProvider and AttestationAggregator."""
 
 import asyncio
-import pytest
 from typing import Any
 
-from src.gateway.governance.attestation_provider import AttestationProvider
+import pytest
+
 from src.gateway.governance.attestation_aggregator import AttestationAggregator
+from src.gateway.governance.attestation_provider import AttestationProvider
 from src.gateway.governance.governance_envelope import (
     AttestationStatus,
     ExternalAttestation,
@@ -29,7 +30,9 @@ from src.gateway.governance.governance_envelope import (
 class MockAttestationProvider(AttestationProvider):
     """Mock provider for unit testing."""
 
-    def __init__(self, name: str, attestations: list[ExternalAttestation], fail: bool = False):
+    def __init__(
+        self, name: str, attestations: list[ExternalAttestation], fail: bool = False
+    ):
         self._name = name
         self._attestations = attestations
         self._fail = fail
@@ -134,4 +137,3 @@ async def test_aggregator_poll_refreshes_cache():
 
     await aggregator.poll()
     assert provider.fetch_count == 2
-

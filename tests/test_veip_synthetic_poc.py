@@ -26,6 +26,7 @@ Validates all 6 success criteria from §8.4 of plans/veip_three_axioms_architect
 
 import hashlib
 import json
+
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -122,7 +123,7 @@ async def test_criterion_1_end_to_end_envelope_round_trip(
     seeded_veip_client, ec_key_pair
 ):
     """Verify $25k Treasury Transfer produces signed envelope with 3 VERIFIED attestations."""
-    private_key, public_key, public_pem = ec_key_pair
+    private_key, _, public_pem = ec_key_pair
 
     # 1. Initialize Aggregator with all Three Axiom providers
     aggregator = AttestationAggregator(
@@ -189,6 +190,7 @@ async def test_criterion_1_end_to_end_envelope_round_trip(
 
     with pytest.MonkeyPatch.context() as mp:
         from src.gateway.governance.jwks import JWKSet
+
         jwks = JWKSet()
         jwks.add_key(public_pem, kid="test-key-01")
         mp.setattr("src.gateway.governance.jwks.get_jwks", lambda: jwks)
@@ -210,15 +212,17 @@ def test_criterion_2_canonicalization_parity(seeded_veip_client):
     veip_digest = hashlib.sha256(veip_bytes).hexdigest()
 
     # CAGE JCS canonicalizer on raw dictionary
-    cage_bytes = jcs_canonicalize_plan({
-        "threshold_id": "THR-FIN-006",
-        "threshold_value": 10000.0,
-        "ao_name": "Jane Doe, CISO / AO",
-        "ao_signature_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "receipt_id": "veip-blueprint-rec-9821",
-        "attested_at": "2026-08-21T06:00:00.000Z",
-        "rationale": "Approved $10k threshold per Q3 Risk Committee Charter",
-    })
+    cage_bytes = jcs_canonicalize_plan(
+        {
+            "threshold_id": "THR-FIN-006",
+            "threshold_value": 10000.0,
+            "ao_name": "Jane Doe, CISO / AO",
+            "ao_signature_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "receipt_id": "veip-blueprint-rec-9821",
+            "attested_at": "2026-08-21T06:00:00.000Z",
+            "rationale": "Approved $10k threshold per Q3 Risk Committee Charter",
+        }
+    )
     cage_digest = hashlib.sha256(cage_bytes).hexdigest()
 
     assert veip_bytes == cage_bytes
@@ -264,6 +268,7 @@ def test_criterion_3_signature_tamper_evidence(seeded_veip_client, ec_key_pair):
 
     with pytest.MonkeyPatch.context() as mp:
         from src.gateway.governance.jwks import JWKSet
+
         jwks = JWKSet()
         jwks.add_key(public_pem, kid="key-1")
         mp.setattr("src.gateway.governance.jwks.get_jwks", lambda: jwks)
@@ -283,7 +288,9 @@ def test_criterion_3_signature_tamper_evidence(seeded_veip_client, ec_key_pair):
 
         # Tamper 3: Mutate metadata payload
         env_tampered_meta = builder._envelope_from_dict(signed_env.to_dict())
-        env_tampered_meta.external_attestations[0].metadata["threshold_id"] = "THR-MALICIOUS-999"
+        env_tampered_meta.external_attestations[0].metadata["threshold_id"] = (
+            "THR-MALICIOUS-999"
+        )
         assert builder.verify(env_tampered_meta) is False
 
 
@@ -298,10 +305,12 @@ async def test_criterion_4_trust_domain_admissibility_negative_test(seeded_veip_
     provider = VEIPKeyProvider(client=seeded_veip_client)
 
     # 1. Valid admitted agent
-    valid_att = await provider.fetch_attestations({
-        "spiffe_id": "spiffe://cage.local/treasury-agent",
-        "consequence_class": "treasury_transfer",
-    })
+    valid_att = await provider.fetch_attestations(
+        {
+            "spiffe_id": "spiffe://cage.local/treasury-agent",
+            "consequence_class": "treasury_transfer",
+        }
+    )
     assert len(valid_att) == 1
     assert valid_att[0].status == AttestationStatus.VERIFIED.value
 
@@ -317,10 +326,12 @@ async def test_criterion_4_trust_domain_admissibility_negative_test(seeded_veip_
         )
     )
 
-    denied_att = await provider.fetch_attestations({
-        "spiffe_id": "spiffe://cage.local/unauthorized-agent",
-        "consequence_class": "treasury_transfer",
-    })
+    denied_att = await provider.fetch_attestations(
+        {
+            "spiffe_id": "spiffe://cage.local/unauthorized-agent",
+            "consequence_class": "treasury_transfer",
+        }
+    )
     assert len(denied_att) == 1
     assert denied_att[0].status == AttestationStatus.DENIED.value
 
@@ -357,8 +368,16 @@ def test_criterion_6_oscal_finding_vocabulary():
 
     # Construct ValidationResult with OSCAL findings
     findings = [
-        {"control_id": "CTRL_OPA_001", "status": FindingStatus.PASS.value, "detail": "Policy met"},
-        {"control_id": "CTRL_CBF_001", "status": FindingStatus.PASS.value, "detail": "Balance above floor"},
+        {
+            "control_id": "CTRL_OPA_001",
+            "status": FindingStatus.PASS.value,
+            "detail": "Policy met",
+        },
+        {
+            "control_id": "CTRL_CBF_001",
+            "status": FindingStatus.PASS.value,
+            "detail": "Balance above floor",
+        },
     ]
     result = ValidationResult(admitted=True, findings=findings)
     assert result.admitted is True
@@ -370,6 +389,7 @@ def test_criterion_6_oscal_finding_vocabulary():
         region="US_FED",
         profile={"consensus_threshold": 10000.0, "risk_acceptance_id": "RA-001"},
     )
-    expected_canon = jcs_canonicalize_plan({"consensus_threshold": 10000.0, "risk_acceptance_id": "RA-001"})
+    expected_canon = jcs_canonicalize_plan(
+        {"consensus_threshold": 10000.0, "risk_acceptance_id": "RA-001"}
+    )
     assert baseline.profile_hash == hashlib.sha256(expected_canon).hexdigest()
-

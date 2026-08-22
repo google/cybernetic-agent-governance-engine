@@ -50,6 +50,7 @@ MAX_KMS_PAYLOAD_AGE_SECONDS: int = 300
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
+
 def _canonicalise_plan(plan: dict) -> bytes:
     """Produce a deterministic byte representation of a governance plan.
     Now uses RFC 8785 JCS (JSON Canonicalization Scheme) to prevent cross-language
@@ -230,7 +231,7 @@ class GCPKMSProvider(BaseKMSProvider):
         parts = self._key_version_name.split("/cryptoKeyVersions/")
         if len(parts) != 2:
             return {self._key_version_name: self.get_public_key_pem()}
-        
+
         crypto_key_name = parts[0]
         keys = {}
         try:
@@ -241,8 +242,11 @@ class GCPKMSProvider(BaseKMSProvider):
                     keys[v.name] = pub.pem.encode("utf-8")
         except Exception as exc:
             import logging
-            logging.getLogger(__name__).warning("Failed to list crypto key versions: %s", exc)
-            
+
+            logging.getLogger(__name__).warning(
+                "Failed to list crypto key versions: %s", exc
+            )
+
         if not keys:
             keys[self._key_version_name] = self.get_public_key_pem()
         return keys
@@ -288,7 +292,9 @@ class AWSKMSProvider(BaseKMSProvider):
         return response["Signature"]
 
     def sign_raw(self, message: bytes) -> bytes:
-        raise NotImplementedError("AWS KMS does not support Ed25519 raw-message signing.")
+        raise NotImplementedError(
+            "AWS KMS does not support Ed25519 raw-message signing."
+        )
 
     def get_public_key_pem(self) -> bytes:
         response = self._client.get_public_key(KeyId=self._key_id)
@@ -350,7 +356,9 @@ class AzureKMSProvider(BaseKMSProvider):
         return result.signature
 
     def sign_raw(self, message: bytes) -> bytes:
-        raise NotImplementedError("Azure Key Vault does not support Ed25519 raw-message signing.")
+        raise NotImplementedError(
+            "Azure Key Vault does not support Ed25519 raw-message signing."
+        )
 
     def get_public_key_pem(self) -> bytes:
         from cryptography.hazmat.primitives import serialization
@@ -447,7 +455,7 @@ class KMSGovernanceSigner:
     @classmethod
     def from_env(cls) -> KMSGovernanceSigner:
         """Construct from environment variables based on CAGE_KMS_PROVIDER.
-        
+
         In test/dev environments without KMS configured, returns a fallback
         signer that uses HMAC-SHA256 with GOVERNANCE_SALT.
         """
@@ -455,7 +463,7 @@ class KMSGovernanceSigner:
         provider: BaseKMSProvider | None = None
         kms_client = None
         key_version = _KMS_KEY_VERSION
-        
+
         # Check if we're in a non-production environment
         env = (
             os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
@@ -579,13 +587,13 @@ class KMSGovernanceSigner:
 
     def sign_raw(self, message: bytes) -> bytes:
         """Sign raw bytes directly (for JWT signing).
-        
+
         This is a thin wrapper around the provider's sign_raw/sign_digest methods.
         Uses the provider's digest algorithm to determine the correct signing path.
-        
+
         Args:
             message: Raw bytes to sign (e.g., JWT signing input).
-            
+
         Returns:
             Raw signature bytes.
         """
@@ -603,7 +611,7 @@ class KMSGovernanceSigner:
             span.set_attribute("cage.signing.kms_active", self._kms_active)
             span.set_attribute("kms.channel.pre_warmed", self._channel_warmed.is_set())
             span.set_attribute("cage.signing.message_len", len(message))
-            
+
             if self._provider.digest_algorithm == "raw":
                 # Ed25519 / PureEdDSA: sign the message directly
                 return self._provider.sign_raw(message)
@@ -615,13 +623,13 @@ class KMSGovernanceSigner:
 
     def sign_precomputed_digest(self, digest: bytes) -> str:
         """Sign a pre-computed envelope digest directly.
-        
+
         Bypasses local canonicalization and hashing to minimize memory and KMS bandwidth
         for large plan envelopes.
-        
+
         Args:
             digest: Pre-computed digest bytes matching the provider's expected digest width.
-            
+
         Returns:
             Hex-encoded signature string.
         """
@@ -633,11 +641,13 @@ class KMSGovernanceSigner:
             raise RuntimeError(
                 "[KMSSigner] sign_precomputed_digest() called but no provider is configured."
             )
-            
-        with _tracer.start_as_current_span("cage.kms_signer.sign_precomputed_digest") as span:
+
+        with _tracer.start_as_current_span(
+            "cage.kms_signer.sign_precomputed_digest"
+        ) as span:
             span.set_attribute("cage.signing.algorithm", self.signing_algorithm)
             span.set_attribute("cage.signing.digest_len", len(digest))
-            
+
             sig_bytes = self._provider.sign_digest(digest)
             return sig_bytes.hex()
 

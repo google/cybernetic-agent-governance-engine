@@ -155,7 +155,10 @@ class TestValidateEvidenceStreamPreconditions:
                 evidence_stream.validate_evidence_stream_preconditions()
 
             error_msg = str(exc_info.value)
-            assert "EVIDENCE_CHAIN_BLOCKING=true" in error_msg or "EVIDENCE_CHAIN_BLOCKING=True" in error_msg
+            assert (
+                "EVIDENCE_CHAIN_BLOCKING=true" in error_msg
+                or "EVIDENCE_CHAIN_BLOCKING=True" in error_msg
+            )
             assert "EVIDENCE_STREAM_ENABLED" in error_msg
 
     def test_validation_handles_case_insensitive_true(self) -> None:
@@ -267,15 +270,15 @@ class TestProductionNonBlockingCheck:
     def test_prod_nonblocking_fails_without_explicit_override_env(self) -> None:
         """When CAGE_ALLOW_NONBLOCKING_PROD is not set, default to failing."""
         env_copy = {
-            k: v
-            for k, v in os.environ.items()
-            if k != "CAGE_ALLOW_NONBLOCKING_PROD"
+            k: v for k, v in os.environ.items() if k != "CAGE_ALLOW_NONBLOCKING_PROD"
         }
-        env_copy.update({
-            "CAGE_ENV": "prod",
-            "EVIDENCE_CHAIN_BLOCKING": "false",
-            "EVIDENCE_STREAM_ENABLED": "false",
-        })
+        env_copy.update(
+            {
+                "CAGE_ENV": "prod",
+                "EVIDENCE_CHAIN_BLOCKING": "false",
+                "EVIDENCE_STREAM_ENABLED": "false",
+            }
+        )
         with mock.patch.dict(os.environ, env_copy, clear=True):
             with pytest.raises(evidence_stream.ConfigurationError):
                 evidence_stream.validate_evidence_stream_preconditions()
@@ -329,7 +332,9 @@ class TestStreamDisabledWarning:
     When EVIDENCE_STREAM_ENABLED=false, a warning should be logged.
     """
 
-    def test_stream_disabled_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_stream_disabled_logs_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """When evidence stream is disabled, a warning should be logged."""
         with mock.patch.dict(
             os.environ,
@@ -350,8 +355,7 @@ class TestStreamDisabledWarning:
                 if record.levelno == logging.WARNING
             ]
             assert any(
-                "EVIDENCE_STREAM_ENABLED=false" in msg
-                for msg in warning_msgs
+                "EVIDENCE_STREAM_ENABLED=false" in msg for msg in warning_msgs
             ), f"Expected warning about disabled stream, got: {warning_msgs}"
 
     def test_stream_enabled_no_warning(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -381,7 +385,9 @@ class TestStreamDisabledWarning:
 class TestProductionNonBlockingLogging:
     """B4 Enhancement: Test production non-blocking critical logging."""
 
-    def test_prod_nonblocking_logs_critical(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_prod_nonblocking_logs_critical(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """When production has blocking disabled, a CRITICAL log should be emitted."""
         with mock.patch.dict(
             os.environ,
@@ -405,7 +411,9 @@ class TestProductionNonBlockingLogging:
             assert any(
                 "EVIDENCE_CHAIN_BLOCKING=false" in msg and "production" in msg.lower()
                 for msg in critical_msgs
-            ), f"Expected critical warning about non-blocking in prod, got: {critical_msgs}"
+            ), (
+                f"Expected critical warning about non-blocking in prod, got: {critical_msgs}"
+            )
 
 
 class TestPrometheusMetricsEmission:

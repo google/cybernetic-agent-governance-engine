@@ -53,15 +53,17 @@ class RiskAcceptanceRecord:
     rationale: str = ""
 
     def to_canonical_bytes(self) -> bytes:
-        return jcs_canonicalize_plan({
-            "threshold_id": self.threshold_id,
-            "threshold_value": self.threshold_value,
-            "ao_name": self.ao_name,
-            "ao_signature_hash": self.ao_signature_hash,
-            "receipt_id": self.receipt_id,
-            "attested_at": self.attested_at,
-            "rationale": self.rationale,
-        })
+        return jcs_canonicalize_plan(
+            {
+                "threshold_id": self.threshold_id,
+                "threshold_value": self.threshold_value,
+                "ao_name": self.ao_name,
+                "ao_signature_hash": self.ao_signature_hash,
+                "receipt_id": self.receipt_id,
+                "attested_at": self.attested_at,
+                "rationale": self.rationale,
+            }
+        )
 
 
 @dataclass
@@ -76,14 +78,16 @@ class AdmissibilityGrant:
     admitted: bool = True
 
     def to_canonical_bytes(self) -> bytes:
-        return jcs_canonicalize_plan({
-            "spiffe_id": self.spiffe_id,
-            "consequence_class": self.consequence_class,
-            "ca_fingerprint": self.ca_fingerprint,
-            "receipt_id": self.receipt_id,
-            "attested_at": self.attested_at,
-            "admitted": self.admitted,
-        })
+        return jcs_canonicalize_plan(
+            {
+                "spiffe_id": self.spiffe_id,
+                "consequence_class": self.consequence_class,
+                "ca_fingerprint": self.ca_fingerprint,
+                "receipt_id": self.receipt_id,
+                "attested_at": self.attested_at,
+                "admitted": self.admitted,
+            }
+        )
 
 
 @dataclass
@@ -98,14 +102,16 @@ class SubstrateAttestation:
     freshness_seconds: int = 0
 
     def to_canonical_bytes(self) -> bytes:
-        return jcs_canonicalize_plan({
-            "node_id": self.node_id,
-            "vtpm_status": self.vtpm_status,
-            "ebpf_anomaly_count": self.ebpf_anomaly_count,
-            "receipt_id": self.receipt_id,
-            "attested_at": self.attested_at,
-            "freshness_seconds": self.freshness_seconds,
-        })
+        return jcs_canonicalize_plan(
+            {
+                "node_id": self.node_id,
+                "vtpm_status": self.vtpm_status,
+                "ebpf_anomaly_count": self.ebpf_anomaly_count,
+                "receipt_id": self.receipt_id,
+                "attested_at": self.attested_at,
+                "freshness_seconds": self.freshness_seconds,
+            }
+        )
 
 
 class VEIPClient:
@@ -138,7 +144,9 @@ class VEIPClient:
         """Seed a substrate attestation for local/synthetic evaluation."""
         self._substrate_attestations[attestation.node_id] = attestation
 
-    async def get_risk_acceptance(self, threshold_id: str) -> RiskAcceptanceRecord | None:
+    async def get_risk_acceptance(
+        self, threshold_id: str
+    ) -> RiskAcceptanceRecord | None:
         """Retrieve the risk acceptance record for a given threshold."""
         if threshold_id in self._risk_acceptances:
             return self._risk_acceptances[threshold_id]
@@ -159,7 +167,9 @@ class VEIPClient:
         # HTTP client implementation for live deployment
         return None
 
-    async def get_substrate_attestation(self, node_id: str) -> SubstrateAttestation | None:
+    async def get_substrate_attestation(
+        self, node_id: str
+    ) -> SubstrateAttestation | None:
         """Retrieve substrate attestation for a host/node."""
         if node_id in self._substrate_attestations:
             return self._substrate_attestations[node_id]
@@ -167,4 +177,3 @@ class VEIPClient:
             return None
         # HTTP client implementation for live deployment
         return None
-

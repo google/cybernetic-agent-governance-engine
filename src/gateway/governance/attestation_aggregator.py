@@ -88,9 +88,7 @@ class AttestationAggregator:
             provider: The attestation provider to register.
         """
         self._providers.append(provider)
-        logger.info(
-            "Registered attestation provider: %s", provider.provider_name
-        )
+        logger.info("Registered attestation provider: %s", provider.provider_name)
 
     @property
     def provider_count(self) -> int:
@@ -191,9 +189,7 @@ class AttestationAggregator:
             try:
                 await self.poll()
             except Exception as exc:
-                logger.error(
-                    "Attestation poll loop error (continuing): %s", exc
-                )
+                logger.error("Attestation poll loop error (continuing): %s", exc)
 
     def stop_poll_loop(self) -> None:
         """Cancel the background poll loop if running."""

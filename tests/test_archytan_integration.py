@@ -15,14 +15,15 @@
 """Unit tests for Archytan integration (AttestationProvider & EnvelopeMapper)."""
 
 import pytest
-from src.integrations.archytan import (
-    ArchytanAttestationProvider,
-    ArchytanEnvelopeMapper,
-)
+
 from src.gateway.governance.governance_envelope import (
     AttestationStatus,
     ExternalAttestation,
     GovernanceEnvelopeBuilder,
+)
+from src.integrations.archytan import (
+    ArchytanAttestationProvider,
+    ArchytanEnvelopeMapper,
 )
 
 
@@ -79,7 +80,9 @@ def test_archytan_envelope_mapper_to_and_from_format():
     assert reconstructed.envelope_version == "2.1"
     assert len(reconstructed.external_attestations) == 1
     assert reconstructed.external_attestations[0].attestation_type == "BLUEPRINT"
-    assert reconstructed.external_attestations[0].metadata["threshold_id"] == "THR-FIN-006"
+    assert (
+        reconstructed.external_attestations[0].metadata["threshold_id"] == "THR-FIN-006"
+    )
     assert reconstructed.compute_digest() == envelope.compute_digest()
 
 
@@ -88,4 +91,3 @@ def test_archytan_envelope_mapper_invalid_payload_raises():
     mapper = ArchytanEnvelopeMapper()
     with pytest.raises(ValueError, match="missing 'cage_envelope'"):
         mapper.from_archytan_format({"archytan_version": "1.0"})
-

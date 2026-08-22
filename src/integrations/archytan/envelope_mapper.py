@@ -52,9 +52,7 @@ class ArchytanEnvelopeMapper:
     def __init__(self) -> None:
         self._builder = GovernanceEnvelopeBuilder()
 
-    def to_archytan_format(
-        self, envelope: GovernanceEnvelope
-    ) -> dict[str, Any]:
+    def to_archytan_format(self, envelope: GovernanceEnvelope) -> dict[str, Any]:
         """Convert a GovernanceEnvelope to Archytan's wire format.
 
         The Archytan wire format wraps the CAGE envelope in an outer
@@ -74,18 +72,14 @@ class ArchytanEnvelopeMapper:
             "cage_envelope": cage_dict,
             "digest": envelope.compute_digest_hex(),
             "metadata": {
-                "source_service": cage_dict.get("issuer", {}).get(
-                    "service", ""
-                ),
+                "source_service": cage_dict.get("issuer", {}).get("service", ""),
                 "envelope_id": envelope.envelope_id,
                 "envelope_version": envelope.envelope_version,
                 "attestation_count": len(envelope.external_attestations),
             },
         }
 
-    def from_archytan_format(
-        self, data: dict[str, Any]
-    ) -> GovernanceEnvelope:
+    def from_archytan_format(self, data: dict[str, Any]) -> GovernanceEnvelope:
         """Convert an Archytan wire-format payload back to a GovernanceEnvelope.
 
         Args:
@@ -99,8 +93,6 @@ class ArchytanEnvelopeMapper:
         """
         cage_dict = data.get("cage_envelope")
         if not cage_dict:
-            raise ValueError(
-                "Archytan payload missing 'cage_envelope' field"
-            )
+            raise ValueError("Archytan payload missing 'cage_envelope' field")
 
         return self._builder._envelope_from_dict(cage_dict)

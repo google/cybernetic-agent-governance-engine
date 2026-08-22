@@ -165,6 +165,9 @@ lint = [
 [tool.ruff]
 line-length = 88
 target-version = "py310"
+exclude = [
+    "src/gateway/governance/vendor",
+]
 
 [tool.ruff.lint]
 select = [
@@ -241,6 +244,7 @@ exclude = [
     ".venv",
     "src/gateway/protos/",
     "src/agentsight-ui/gateway_protos/",
+    "src/gateway/governance/vendor/",
 ]
 
 [tool.bandit]

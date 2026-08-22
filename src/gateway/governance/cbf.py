@@ -877,16 +877,15 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         """
         if action_name != "execute_trade":
             return 0.0
-        
+
         if "amount_minor" in payload and payload["amount_minor"] is not None:
             cost = float(payload["amount_minor"]) / 100.0
         else:
             cost = float(payload.get("amount", 0.0))
-            
+
         if not math.isfinite(cost) or cost < 0:
             raise ValueError(
-                f"invalid trade amount {cost!r} — "
-                "must be a finite, non-negative number"
+                f"invalid trade amount {cost!r} — must be a finite, non-negative number"
             )
         return cost
 
@@ -1317,7 +1316,9 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                 if committed and _WAIT_REPLICAS > 0:
                     wait_result = await self._sync_to_replicas()
                     span.set_attribute("cage.cbf.wait_success", wait_result)
-                    span.set_attribute("cage.cbf.strict_replication", _STRICT_REPLICATION)
+                    span.set_attribute(
+                        "cage.cbf.strict_replication", _STRICT_REPLICATION
+                    )
                     if not wait_result:
                         # P0 hardening: Fail-closed for financial actions in production
                         if _STRICT_REPLICATION and _FENCE_EPOCH_ENABLED:
@@ -1328,7 +1329,9 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                 cost,
                             )
                             await self.rollback_state(cost)
-                            span.set_attribute("cage.cbf.strict_replication_rollback", True)
+                            span.set_attribute(
+                                "cage.cbf.strict_replication_rollback", True
+                            )
                             if _STRICT_REPLICATION_ROLLBACK_COUNTER is not None:
                                 _STRICT_REPLICATION_ROLLBACK_COUNTER.inc()
                             return (

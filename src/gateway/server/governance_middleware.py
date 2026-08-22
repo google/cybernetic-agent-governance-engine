@@ -652,7 +652,7 @@ async def get_jwks_endpoint() -> JSONResponse:
         The response includes Cache-Control headers matching the JWKS cache TTL
         to allow external verifiers to cache the keyset appropriately.
     """
-    from src.gateway.governance.jwks import get_jwks, _JWKS_CACHE_TTL_S
+    from src.gateway.governance.jwks import _JWKS_CACHE_TTL_S, get_jwks
 
     jwks = get_jwks()
     jwks_dict = jwks.to_dict()
