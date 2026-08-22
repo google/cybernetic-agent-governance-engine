@@ -10,7 +10,7 @@ This document records key architectural decisions regarding the deployment of th
 Cybernetic AI Governance Engine (CAGE). The canonical deployment entry point is
 [`deploy_all.sh`](../../deploy_all.sh). Active infrastructure-as-code lives under
 [`infra/`](../../infra/); the historical `deployment/terraform/` directory was
-removed on 2026-03-15 (see [`deployment/TERRAFORM_MIGRATION.md`](../TERRAFORM_MIGRATION.md)).
+removed on 2026-03-15.
 
 ---
 
@@ -200,7 +200,7 @@ portability across cloud providers.
 - `cloud.google.com/gke-accelerator: nvidia-l4` node selectors →
   `nvidia.com/gpu.product: NVIDIA-L4` across all vLLM manifests
 - `deployment/terraform/` removed 2026-03-15; active IaC is
-  `infra/targets/gcp-gke/` (see [`deployment/TERRAFORM_MIGRATION.md`](../TERRAFORM_MIGRATION.md))
+  `infra/targets/gcp-gke/`
 
 **Consequences:**
 - Inference gateway and AgentSight ingress are portable across any Kubernetes

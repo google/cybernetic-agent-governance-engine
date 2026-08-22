@@ -99,7 +99,7 @@ In the event of suspected key compromise:
 3. **Audit Trail Verification:**
    Query Langfuse / OpenTelemetry traces for evidence receipts signed during the compromise window:
    ```bash
-   python scripts/verify_audit_provenance.py --since="2026-08-20T00:00:00Z"
+   python scripts/verify_audit_provenance.py --since="<TIMESTAMP>"
    ```
 4. **POAM Logging:**
    Record incident details, revoked key version IDs, and remediation timestamps in [`docs/POAM.md`](../POAM.md) under incident controls (IR-6 / SC-12).

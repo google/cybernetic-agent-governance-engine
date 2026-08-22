@@ -1,5 +1,7 @@
 # FTRA Compensating Controls
 
+> **Reference Architecture Note:** Per `AGENTS.md`, CAGE is a reference architecture demonstrating governance patterns for AI systems. The compensating controls below provide an **illustrative operational model** for defense-in-depth.
+
 > **Status**: PERMANENT — The FTRA boundary check is now **mandatory** and
 > unconditional (no feature flag). This document is retained for: (1) historical
 > record of the interim compensating-control period, and (2) ongoing
@@ -149,39 +151,6 @@ cage_ftra_boundary_checks_total{result="hitl_required"}
 cage_ftra_boundary_checks_total{result="passed"}
 cage_ftra_boundary_checks_total{result="error"}
 ```
-
-## NetworkPolicy Removal Criteria
-
-The NetworkPolicy defense-in-depth control can be removed once ALL of the
-following conditions are met:
-
-1. **Lula validation passes** (`compliance/lula/lula-validation-ftra.yaml`).
-2. **At least 30 days of production telemetry** shows the boundary check is
-   catching bypass attempts (or confirms none exist).
-3. **Risk R-02 is fully mitigated** by an alternative control (e.g.,
-   execution-time re-validation).
-
-### Removal Procedure
-
-```bash
-# 1. Verify Lula validation passes
-lula validate -f compliance/lula/lula-validation-ftra.yaml
-
-# 2. Review telemetry for bypass attempts
-# (Query Langfuse or Prometheus for cage.ftra.bypassed_ftra_node=true events)
-
-# 3. Remove the NetworkPolicy
-kubectl delete -f deployment/k8s/ftra-network-policy.yaml
-
-# 4. Update this document to mark NetworkPolicy as REMOVED
-```
-
-## POAM Reference
-
-| POAM ID | Title | Status |
-|---------|-------|--------|
-| POAM-2026-030 | FTRA Pre-Pipeline Boundary Gate Implementation (test coverage) | CLOSED |
-| POAM-2026-030-B | FTRA Boundary Check Mandatory (flag removal) | CLOSED |
 
 ## Compliance Mappings
 

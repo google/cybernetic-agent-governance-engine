@@ -2,7 +2,7 @@
 title: "Cybernetic Governance Engine (CAGE) — Deployment & Infrastructure"
 document: "08-DEPLOYMENT-INFRASTRUCTURE"
 version: "3.0"
-date: "2026-08-16"
+date: "2026-08-22"
 classification: "INTERNAL"
 ---
 
@@ -10,7 +10,7 @@ classification: "INTERNAL"
 
 ## Infrastructure Overview
 
-CAGE runs on Google Kubernetes Engine (GKE) in the `governance-stack` namespace. All infrastructure is defined as code via Terraform, containerised with Docker, and deployed through Google Cloud Build pipelines. GPU compute uses NVIDIA L4 24 GB Spot instances with AWQ quantization to balance cost and the 200 ms latency budget required by real-time interbank rails (FedNow / SEPA Instant) to support synchronous, inline AML and fraud-screening pipelines.
+CAGE runs on Google Kubernetes Engine (GKE) in the `governance-stack` namespace. All infrastructure is defined as code via Terraform, containerised with Docker (standardized on `python:3.12-slim-bookworm` base images with security upgrade layers and pinned third-party tags), and deployed through Google Cloud Build pipelines. GPU compute uses NVIDIA L4 24 GB Spot instances with AWQ quantization to balance cost and the 200 ms latency budget required by real-time interbank rails (FedNow / SEPA Instant) to support synchronous, inline AML and fraud-screening pipelines.
 
 **Platform Summary**
 
@@ -41,15 +41,15 @@ All services run in the `governance-stack` namespace. Full manifest inventory li
 | AgentSight UI              | `frontend-deployment.yaml.tpl` | 5173 | React dashboard              |
 | vLLM Reasoning             | `vllm-reasoning.yaml.tpl`      | —    | DeepSeek-R1-Distill-Llama-8B |
 | vLLM Fast                  | `vllm-fast.yaml.tpl`           | —    | Qwen/Qwen2.5-1.5B-Instruct   |
-| OPA                        | `deployment/k8s/opa.yaml`                     | —    | Policy engine                |
-| Redis (reads)              | `deployment/k8s/redis-statefulset.yaml`       | 6379 | Checkpointing (db=0) + DEFER (db=1, noeviction); load-balanced across all pods |
+| OPA                        | `deployment/k8s/opa.yaml`                     | —    | Policy engine (`opa:0.68.0-static`) |
+| Redis (reads)              | `deployment/k8s/redis-statefulset.yaml`       | 6379 | Checkpointing (db=0) + DEFER (db=1, noeviction); `redis-stack-server:7.4.0-v1` |
 | Redis (writes)             | `deployment/k8s/redis-master-service.yaml`    | 6379 | `redis-master` ClusterIP pinned to Sentinel primary (`redis-node-1`); write-only endpoint |
 | NeMo                       | `deployment/k8s/nemo.yaml`                    | —    | Guardrails server            |
 | MinIO                      | `deployment/k8s/minio.yaml`                   | —    | Model weight storage         |
 | Langfuse Web               | `deployment/k8s/langfuse-web.yaml`            | —    | Observability UI             |
 | Langfuse DB                | `deployment/k8s/langfuse-db.yaml`             | —    | PostgreSQL                   |
 | Lula CronJob               | `deployment/k8s/lula-cron.yaml`               | —    | OSCAL validation every 6 h   |
-| SBOM CronJob               | `deployment/k8s/sbom-cronjob.yaml`            | —    | Daily SBOM generation        |
+| SBOM CronJob               | `deployment/k8s/sbom-cronjob.yaml`            | —    | Daily SBOM generation (`syft:v1.10.0`) |
 | AgentSight DaemonSet       | `deployment/k8s/agentsight-daemon.yaml`       | —    | eBPF kernel monitoring       |
 
 **Supporting Manifests**
@@ -67,8 +67,11 @@ Third-party compliance and attestation adapters are deployed as part of the Hybr
 
 | Adapter          | Env Var Required          | Activated In         |
 | ---------------- | ------------------------- | -------------------- |
+| VEIP             | `VEIP_ENABLED`            | Hybrid Gateway pod   |
 | TrustLayers      | `TRUSTLAYERS_API_KEY`     | Hybrid Gateway pod   |
 | NexArt           | `NEXART_API_KEY`          | Hybrid Gateway pod   |
+| Archytan         | `ARCHYTAN_SOCKET_PATH`    | Hybrid Gateway pod   |
+| Veritas          | `VERITAS_ENABLED`         | Hybrid Gateway pod   |
 
 See [`EXTENSIBILITY_ARCHITECTURE.md §2.6`](../../docs/architecture/EXTENSIBILITY_ARCHITECTURE.md) for the full vendor isolation architecture.
 

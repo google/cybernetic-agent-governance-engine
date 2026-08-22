@@ -3,7 +3,7 @@
 | Field              | Value                                           |
 | ------------------ | ----------------------------------------------- |
 | **Version**        | 3.0                                             |
-| **Date**           | 2026-08-16                                      |
+| **Date**           | 2026-08-22                                      |
 | **Classification** | INTERNAL                                        |
 | **Document**       | CAGE Technical Report — Security Infrastructure |
 
@@ -592,8 +592,11 @@ All third-party compliance and attestation provider adapters are isolated under 
 
 | Vendor        | Module                                    | Role                                                                 | Security Boundary                                      |
 | ------------- | ----------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------ |
+| VEIP          | `src/integrations/veip/`                  | RFC-3161 Verifiable Execution Evidence Pack (3 axioms: Blueprint, Key, Physics) | Isolated package; lazy-loaded |
 | TrustLayers   | `src/integrations/trustlayers/provider.py` | Normative legal-baseline provider (Tier 6b FRIA gate)               | Isolated package; lazy-loaded only when `TRUSTLAYERS_API_KEY` is set |
 | NexArt        | `src/integrations/nexart/provider.py`      | CER (Compliance Evidence Record) attestation provider                | Isolated package; lazy-loaded only when `NEXART_API_KEY` is set |
+| Archytan      | `src/integrations/archytan/`              | Socket-level execution guillotine integration                        | Isolated package; lazy-loaded |
+| Veritas       | `src/integrations/veritas/`               | JCS canonicalization and evidence formatting adapter                 | Isolated package; lazy-loaded |
 
 **Key security properties:**
 - Vendor SDKs are **not imported at module load time** — the provider factory in `src/integrations/__init__.py` uses lazy imports, so a missing or misconfigured vendor credential does not crash the gateway.
@@ -608,16 +611,16 @@ All third-party compliance and attestation provider adapters are isolated under 
 
 | Mechanism               | Algorithm                  | Usage                            | FIPS Status              | Gaps                             |
 | ----------------------- | -------------------------- | -------------------------------- | ------------------------ | -------------------------------- |
-| **KMS Governance Signing** | RSA asymmetric HSM (GCP/AWS/Azure; algorithm auto-detected per key) | **Primary** — all governance decisions; non-repudiation; provider selected via `CAGE_KMS_PROVIDER` | ✅ FIPS-approved | Production only; HMAC routing seal for dev/CI when KMS inactive |
+| **KMS Governance Signing** | RSA asymmetric HSM (GCP/AWS/Azure; algorithm auto-detected per key) | **Primary** — all governance decisions; non-repudiation; provider selected via `CAGE_KMS_PROVIDER` | ✅ FIPS-approved | 90-day rotation cadence per `KEY_ROTATION.md` |
 
 > **Security hardening (H52):** `KmsSigner.sign()` embeds `"signed_at": int(time.time())` in every signed payload. `KmsSigner.verify()` raises `ValueError` if `now - signed_at > 300 s` (`MAX_KMS_PAYLOAD_AGE_SECONDS`). This closes the replay-attack vector where a compromised agent with Redis write access could reset the 300 s TTL indefinitely by overwriting a stale-but-signed payload.
-| Routing Seal            | HMAC-SHA256                | Every `POST /tools/execute` call | ✅ FIPS-approved         | Fallback only when KMS unavailable |
+| Routing Seal            | HMAC-SHA256                | Every `POST /tools/execute` call | ✅ FIPS-approved         | 30-day secret rotation cadence per `KEY_ROTATION.md` |
 | Governance Signature    | HMAC-SHA256                | Agent state transitions          | ✅ FIPS-approved         | None — fully implemented         |
-| TLS (external)          | TLS 1.2+                   | External service connections     | ✅ FIPS-compliant        | No intra-cluster equivalent      |
-| Intra-cluster transport | **Linkerd mTLS**           | Service-to-service               | ✅ FIPS-compliant        | **FIND-011 RESOLVED** — Linkerd mTLS |
+| TLS (external)          | TLS 1.2+ (NIST SP 800-52)  | External service connections     | ✅ FIPS-compliant        | Verified via `tests/test_tls_enforcement.py` (POAM-011 CLOSED) |
+| Intra-cluster transport | **Linkerd mTLS**           | Service-to-service               | ✅ FIPS-compliant        | **FIND-011 RESOLVED** — Linkerd mTLS with SA annotations |
 | Context Evidence Chain  | SHA-256 Hash Chain         | OscalFindings integrity tracking | ✅ FIPS-approved         | None — fully implemented         |
 | Provenance Hash Chain   | SHA-256 Hash Chain         | LangGraph governance node audit trail | ✅ FIPS-approved    | None — fully implemented         |
-| Session token expiry    | N/A (expiry policy)        | Session tokens ≤ 8h              | N/A                      | No rotation schedule (FIND-012)  |
+| Key Lifecycle & Rotation| Cloud KMS / HMAC / mTLS    | Key management policies          | ✅ FIPS-compliant        | **POAM-012 CLOSED** — Documented in `KEY_ROTATION.md` |
 
 **FIPS 140-2/3 Assessment**: HMAC-SHA256 is a FIPS-approved algorithm. Intra-cluster mTLS is now enforced via Linkerd (FIND-011 resolved), satisfying FIPS transport requirements for all service-to-service communication within the `governance-stack` namespace.
 

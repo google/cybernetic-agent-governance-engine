@@ -26,9 +26,10 @@ Cursor, Cline, GitHub Copilot, and Windsurf) — see
 5. [Debugging Standards](#debugging-standards)
 6. [Compliance Artifact Obligations](#compliance-artifact-obligations)
 7. [Architecture & Design Standards](#architecture--design-standards)
-8. [Answering Questions About This Repository](#answering-questions-about-this-repository)
-9. [Tool-Specific Configuration](#tool-specific-configuration)
-10. [Test Execution](#test-execution)
+8. [Documentation Standards](#documentation-standards)
+9. [Answering Questions About This Repository](#answering-questions-about-this-repository)
+10. [Tool-Specific Configuration](#tool-specific-configuration)
+11. [Test Execution](#test-execution)
 
 ---
 
@@ -276,6 +277,16 @@ When modifying STPA source files:
 - Stable tags are annotated: `git tag -a v<X.Y.Z> -m "release: v<X.Y.Z> — ..."`.
 - Regional gates (US_FED, EU_ECB, APAC_MAS) are additive — they block regional
   deployment posture only, never the global stable tag.
+
+---
+
+## Documentation Standards
+
+Because CAGE is an illustrative reference architecture and not a live production deployment, all repository documentation must strictly adhere to the following principles:
+
+- **No Internal Operational Tracking:** Do not add or maintain documents that track specific internal deployments, incidents, or team progress (e.g., active POAM trackers, rollback procedures for specific migrations, internal implementation status).
+- **Illustrative Patterns Only:** Documents that describe operational procedures (like key rotation, deployment rules, or compensating controls) must clearly include a "Reference Architecture Note" stating they are illustrative templates for adopters.
+- **Maintainer Independence:** Documentation should be written for an external adopter to adapt, devoid of maintainer-specific internal cloud project names, timestamps, or specific ticket tracking.
 
 ---
 

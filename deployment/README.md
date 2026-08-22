@@ -419,7 +419,6 @@ cd infra/targets/gcp-gke
 CAGE_DEPLOYMENT_REGION=US_FED terraform apply -var-file=prod.tfvars
 ```
 
-See [`deployment/TERRAFORM_MIGRATION.md`](TERRAFORM_MIGRATION.md) for migration notes.
 
 ---
 
@@ -440,5 +439,4 @@ See [`deployment/TERRAFORM_MIGRATION.md`](TERRAFORM_MIGRATION.md) for migration 
 - [`infra/DEPLOYMENT_GUIDE.md`](../infra/DEPLOYMENT_GUIDE.md) — full deployment reference
 - [`deployment/k8s/NAMESPACE-GUIDE.md`](k8s/NAMESPACE-GUIDE.md) — namespace inventory and Redis topology
 - [`deployment/agentsight/README.md`](agentsight/README.md) — AgentSight setup
-- [`deployment/TERRAFORM_MIGRATION.md`](TERRAFORM_MIGRATION.md) — Terraform migration notes
 - [`docs/operations/DEPLOYMENT_RULES.md`](../docs/operations/DEPLOYMENT_RULES.md) — deployment rules (Cloud Build requirement)
