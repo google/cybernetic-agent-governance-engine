@@ -198,7 +198,7 @@ def test_round_trip_with_nested_params_coerced_to_string():
 
 
 def test_gateway_verify_seal_rejects_expired_seal():
-    """verify_seal() raises SymbolicGovernorViolation for a seal generated with ttl_s=0 (immediately expired)."""
+    """verify_seal() raises SymbolicGovernorViolation for a seal generated with ttl_s=-10 (already expired)."""
     from src.gateway.governance.routing_seal import (
         SymbolicGovernorViolation,
         generate_seal,
@@ -206,13 +206,10 @@ def test_gateway_verify_seal_rejects_expired_seal():
     )
 
     params = {"symbol": "AAPL", "amount": 1000.0}
-    # ttl_s=0 means expire_ts = now; freeze time 2 s ahead to ensure past expiry
-    now = time.time()
-    seal = generate_seal("execute_trade", params, ttl_s=0)
-    frozen_dt = datetime.datetime.fromtimestamp(now + 2, tz=datetime.timezone.utc)
-    with freeze_time(frozen_dt):
-        with pytest.raises(SymbolicGovernorViolation):
-            verify_seal(seal, "execute_trade", params)
+    # ttl_s=-10 generates an already-expired seal (both for JWT exp claim and HMAC timestamp)
+    seal = generate_seal("execute_trade", params, ttl_s=-10)
+    with pytest.raises(SymbolicGovernorViolation):
+        verify_seal(seal, "execute_trade", params)
 
 # ---------------------------------------------------------------------------
 # 7. verify_seal() rejects wrong action

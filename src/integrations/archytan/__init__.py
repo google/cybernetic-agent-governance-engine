@@ -12,18 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-RFC 8785 JSON Canonicalization Scheme (JCS) utility.
-"""
+"""Archytan integration — attestation provider and envelope mapper."""
 
-from typing import Any
-from src.gateway.governance.vendor.jcs import canonicalize
+from src.integrations.archytan.provider import ArchytanAttestationProvider
+from src.integrations.archytan.envelope_mapper import ArchytanEnvelopeMapper
 
-def jcs_canonicalize_plan(plan: dict[str, Any]) -> bytes:
-    """
-    Produce an RFC 8785 deterministic byte representation of a payload.
-    
-    This replaces ad-hoc json.dumps(sort_keys=True) which is vulnerable to 
-    floating-point canonicalization drift between different languages (e.g. Python vs Go).
-    """
-    return canonicalize(plan)
+__all__ = [
+    "ArchytanAttestationProvider",
+    "ArchytanEnvelopeMapper",
+]

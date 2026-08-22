@@ -220,7 +220,7 @@ class TestGovernanceEnvelopeBuilder:
             controls_satisfied=["CTRL_OPA_001"],
         )
 
-        assert envelope.envelope_version == "2.0"
+        assert envelope.envelope_version == "2.1"
         assert envelope.envelope_type == "cage_governance_decision"
         assert envelope.envelope_id.startswith("cage-")
         assert envelope.subject.action == "execute_trade"
@@ -586,8 +586,8 @@ class TestEnvelopeTypes:
 class TestWireFormatV2:
     """Tests verifying the v2.0 wire format changes."""
 
-    def test_envelope_version_is_2_0(self, sample_governance_result, sample_params):
-        """Verify envelope_version is now 2.0."""
+    def test_envelope_version_is_2_1(self, sample_governance_result, sample_params):
+        """Verify envelope_version is now 2.1."""
         from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 
         builder = GovernanceEnvelopeBuilder()
@@ -597,7 +597,7 @@ class TestWireFormatV2:
             governance_result=sample_governance_result,
         )
 
-        assert envelope.envelope_version == "2.0"
+        assert envelope.envelope_version == "2.1"
 
     def test_envelope_type_uses_cage_prefix(self, sample_governance_result, sample_params):
         """Verify envelope_type uses 'cage_' prefix instead of 'agw_'."""
@@ -638,5 +638,195 @@ class TestWireFormatV2:
         assert EnvelopeType.EVIDENCE_RECORD.value == "cage_evidence_record"
         assert EnvelopeType.POLICY_ATTESTATION.value == "cage_policy_attestation"
         assert EnvelopeType.AUDIT_CHECKPOINT.value == "cage_audit_checkpoint"
+
+
+# ---------------------------------------------------------------------------
+# Tests for External Attestations (v2.1)
+# ---------------------------------------------------------------------------
+
+
+class TestExternalAttestations:
+    """Tests verifying the external_attestations[] envelope extension."""
+
+    def test_attestation_status_enum(self):
+        """Verify AttestationStatus enum values."""
+        from src.gateway.governance.governance_envelope import AttestationStatus
+
+        assert AttestationStatus.VERIFIED.value == "VERIFIED"
+        assert AttestationStatus.DENIED.value == "DENIED"
+        assert AttestationStatus.STALE.value == "STALE"
+        assert AttestationStatus.DRIFT_DETECTED.value == "DRIFT_DETECTED"
+        assert AttestationStatus.ERROR.value == "ERROR"
+
+    def test_external_attestation_to_dict(self):
+        """Verify ExternalAttestation serializes properly with flattened metadata."""
+        from src.gateway.governance.governance_envelope import (
+            AttestationStatus,
+            ExternalAttestation,
+        )
+
+        att = ExternalAttestation(
+            attestation_type="BLUEPRINT",
+            status=AttestationStatus.VERIFIED.value,
+            receipt_id="veip-receipt-001",
+            attested_at="2026-08-21T12:00:00.000Z",
+            metadata={
+                "threshold_id": "THR-FIN-006",
+                "ao_signature_hash": "sha256:fedcba",
+            },
+        )
+
+        d = att.to_dict()
+        assert d["type"] == "BLUEPRINT"
+        assert d["status"] == "VERIFIED"
+        assert d["receipt_id"] == "veip-receipt-001"
+        assert d["attested_at"] == "2026-08-21T12:00:00.000Z"
+        assert d["threshold_id"] == "THR-FIN-006"
+        assert d["ao_signature_hash"] == "sha256:fedcba"
+
+    def test_envelope_to_dict_omits_empty_attestations(
+        self, sample_governance_result, sample_params
+    ):
+        """Verify to_dict() omits external_attestations key when list is empty (backward compat)."""
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
+
+        builder = GovernanceEnvelopeBuilder()
+        envelope = builder.build_unsigned(
+            action="test",
+            params=sample_params,
+            governance_result=sample_governance_result,
+        )
+
+        d = envelope.to_dict()
+        assert "external_attestations" not in d
+
+    def test_envelope_to_dict_includes_populated_attestations(
+        self, sample_governance_result, sample_params
+    ):
+        """Verify to_dict() includes external_attestations when present."""
+        from src.gateway.governance.governance_envelope import (
+            AttestationStatus,
+            ExternalAttestation,
+            GovernanceEnvelopeBuilder,
+        )
+
+        att = ExternalAttestation(
+            attestation_type="KEY",
+            status=AttestationStatus.VERIFIED.value,
+            receipt_id="veip-key-123",
+            attested_at="2026-08-21T12:00:00.000Z",
+            metadata={"ca_fingerprint": "sha256:abcd"},
+        )
+
+        builder = GovernanceEnvelopeBuilder()
+        envelope = builder.build_unsigned(
+            action="test",
+            params=sample_params,
+            governance_result=sample_governance_result,
+            external_attestations=[att],
+        )
+
+        d = envelope.to_dict()
+        assert "external_attestations" in d
+        assert len(d["external_attestations"]) == 1
+        assert d["external_attestations"][0]["type"] == "KEY"
+        assert d["external_attestations"][0]["ca_fingerprint"] == "sha256:abcd"
+
+    def test_attestations_participate_in_digest_and_tamper_evidence(
+        self, sample_governance_result, sample_params
+    ):
+        """Verify mutating an attestation field changes the computed digest."""
+        from src.gateway.governance.governance_envelope import (
+            AttestationStatus,
+            ExternalAttestation,
+            GovernanceEnvelopeBuilder,
+        )
+
+        builder = GovernanceEnvelopeBuilder()
+
+        att1 = ExternalAttestation(
+            attestation_type="BLUEPRINT",
+            status=AttestationStatus.VERIFIED.value,
+            receipt_id="receipt-1",
+            attested_at="2026-08-21T12:00:00.000Z",
+        )
+        env1 = builder.build_unsigned(
+            action="test",
+            params=sample_params,
+            governance_result=sample_governance_result,
+            external_attestations=[att1],
+        )
+        digest1 = env1.compute_digest()
+
+        # Same envelope structure without attestations has different digest
+        env_no_att = builder.build_unsigned(
+            action="test",
+            params=sample_params,
+            governance_result=sample_governance_result,
+            external_attestations=[],
+        )
+        # Ensure identical IDs/timestamps for comparison
+        env_no_att.envelope_id = env1.envelope_id
+        env_no_att.issued_at = env1.issued_at
+        env_no_att.expires_at = env1.expires_at
+        assert env_no_att.compute_digest() != digest1
+
+        # Mutated attestation receipt_id changes digest
+        att2 = ExternalAttestation(
+            attestation_type="BLUEPRINT",
+            status=AttestationStatus.VERIFIED.value,
+            receipt_id="receipt-TAMPERED",
+            attested_at="2026-08-21T12:00:00.000Z",
+        )
+        env2 = builder.build_unsigned(
+            action="test",
+            params=sample_params,
+            governance_result=sample_governance_result,
+            external_attestations=[att2],
+        )
+        env2.envelope_id = env1.envelope_id
+        env2.issued_at = env1.issued_at
+        env2.expires_at = env1.expires_at
+        assert env2.compute_digest() != digest1
+
+    def test_envelope_from_dict_roundtrip_with_attestations(
+        self, sample_governance_result, sample_params
+    ):
+        """Verify _envelope_from_dict deserializes external_attestations correctly."""
+        from src.gateway.governance.governance_envelope import (
+            AttestationStatus,
+            ExternalAttestation,
+            GovernanceEnvelopeBuilder,
+        )
+
+        att = ExternalAttestation(
+            attestation_type="PHYSICS",
+            status=AttestationStatus.VERIFIED.value,
+            receipt_id="receipt-phys-99",
+            attested_at="2026-08-21T12:00:00.000Z",
+            metadata={"node_id": "gke-node-1", "freshness_seconds": 15},
+        )
+
+        builder = GovernanceEnvelopeBuilder()
+        envelope = builder.build_unsigned(
+            action="execute_transfer",
+            params=sample_params,
+            governance_result=sample_governance_result,
+            external_attestations=[att],
+        )
+
+        serialized = envelope.to_dict()
+        reconstructed = builder._envelope_from_dict(serialized)
+
+        assert reconstructed.envelope_version == "2.1"
+        assert len(reconstructed.external_attestations) == 1
+        recon_att = reconstructed.external_attestations[0]
+        assert recon_att.attestation_type == "PHYSICS"
+        assert recon_att.status == "VERIFIED"
+        assert recon_att.receipt_id == "receipt-phys-99"
+        assert recon_att.attested_at == "2026-08-21T12:00:00.000Z"
+        assert recon_att.metadata["node_id"] == "gke-node-1"
+        assert recon_att.metadata["freshness_seconds"] == 15
+        assert reconstructed.compute_digest() == envelope.compute_digest()
 
 
