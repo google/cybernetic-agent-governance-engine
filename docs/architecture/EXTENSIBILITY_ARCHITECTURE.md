@@ -378,11 +378,11 @@ External normative providers are configured via environment variables, following
 
 ```bash
 # External normative provider configuration
-CAGE_NORMATIVE_PROVIDER=trustlayers          # Provider name (default: "static")
-CAGE_NORMATIVE_ENDPOINT=https://api.trustlayers.example.com
+CAGE_NORMATIVE_PROVIDER=provider_01          # Provider name (default: "static")
+CAGE_NORMATIVE_ENDPOINT=https://api.example.com/normative
 CAGE_NORMATIVE_POLL_INTERVAL_HOURS=6         # Background refresh interval
 CAGE_NORMATIVE_BOOT_TIMEOUT_SECONDS=10       # Max wait at container init
-CAGE_NORMATIVE_API_KEY_SECRET=projects/cage-prod/secrets/trustlayers-api-key
+CAGE_NORMATIVE_API_KEY_SECRET=projects/cage-prod/secrets/normative-provider-api-key
 ```
 
 When `CAGE_NORMATIVE_PROVIDER=static` (default), the ControlRegistry loads from `config/compliance/` as it does today. No external dependency is introduced unless explicitly configured.
@@ -396,17 +396,17 @@ All third-party compliance and attestation provider adapters are consolidated un
 ```
 src/integrations/
 ├── __init__.py                # Provider factory (lazy-loading)
-├── nexart/
+├── provider_01/
 │   ├── __init__.py
-│   ├── adapter.py             # NexArtAttestationCallback (LangGraph callback handler) + NexArtClient
-│   ├── provider.py            # NexArtProvider (NormativeProvider interface, JWK-verifiable CERs)
+│   └── provider.py            # Provider01 (3-endpoint normative provider adapter)
+├── provider_02/
+│   ├── __init__.py
+│   ├── adapter.py             # AttestationCallback (LangGraph callback handler) + Client
+│   ├── provider.py            # Provider02 (NormativeProvider interface, JWK-verifiable CERs)
 │   └── tests/
 │       ├── __init__.py
 │       ├── test_adapter.py
 │       └── test_provider.py
-└── trustlayers/
-    ├── __init__.py
-    └── provider.py            # TrustLayersProvider (3-endpoint normative provider adapter)
 ```
 
 **Key architectural rules:**
@@ -447,8 +447,8 @@ The `FINANCE_SR26_2_DORA` profile (current `US_FED_BASELINE.json`) serves as the
 | STPA-to-Policy Compiler            | [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py)                    | ✅ Production |
 | External CBF reconciliation        | [`reconciliation_worker.py`](../../src/compliance_bridge/reconciliation_worker.py)         | ✅ Production |
 | External Normative Provider (§2.5)| [`normative_provider.py`](../../src/gateway/governance/normative_provider.py)          | ✅ Production |
-| TrustLayers normative provider     | [`src/integrations/trustlayers/provider.py`](../../src/integrations/trustlayers/provider.py) | ✅ Production |
-| NexArt attestation provider        | [`src/integrations/nexart/provider.py`](../../src/integrations/trustlayers/provider.py)    | ✅ Production |
+| Provider 01 normative provider     | [`src/integrations/provider_01/provider.py`](../../src/integrations/provider_01/provider.py) | ✅ Production |
+| Provider 02 attestation provider   | [`src/integrations/provider_02/provider.py`](../../src/integrations/provider_02/provider.py) | ✅ Production |
 | OPA policy enforcement             | `config/opa/`                                                     | ✅ Production |
 | NeMo input/output rails            | `config/rails/`                                                 | ✅ Production |
 | LangGraph Saga engine              | `src/governed_financial_advisor/agents/`                                                   | ✅ Production |

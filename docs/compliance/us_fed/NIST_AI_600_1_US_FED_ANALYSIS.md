@@ -177,7 +177,7 @@ Before mapping AI 600-1 risks, this section inventories all CAGE components that
 | **NeMo Guardrails** (Colang 2.x flows) | AI safety layer | Low — deterministic rule enforcement | Colang flows are human-authored |
 | **SymbolicGovernor** (8-tier pipeline: FTRA + 7 in-pipeline tiers) | AI governance orchestrator | Low — deterministic policy enforcement | All tiers are deterministic except Tier 5 (consensus) |
 | **CausalGatekeeper** | Causal inference gate | Low — statistical causal model | Deterministic causal graph |
-| **ExternalNormativeProvider** (TrustLayers) | External AI validator | Low — stub mode currently | Adaptive FRIA gating (tri-state) |
+| **ExternalNormativeProvider** (Provider 01) | External AI validator | Low — stub mode currently | Adaptive FRIA gating (tri-state) |
 | **EvaluatorAuditor** | AI output auditor | Low — rule-based scoring | Human review required for LLM advisory outputs |
 | **MCP tool calls** (`execute_trade`, `get_market_data`) | Agentic actuators | **Critical** — real-world financial effects | STPA UCAs, CBF, OPA RBAC, HMAC seal |
 

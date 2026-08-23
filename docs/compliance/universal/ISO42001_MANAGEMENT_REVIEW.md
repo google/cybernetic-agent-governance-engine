@@ -70,7 +70,7 @@ Per ISO 42001 §9.3.3, the following decisions and actions result from this revi
 
 | Action | Resource | Owner | Timeline |
 |---|---|---|---|
-| Provision TrustLayers API credentials | `normative_provider.py` activation (POAM-022) | Engineering lead | Q3 2026 |
+| Provision external normative provider API credentials | `normative_provider.py` activation (POAM-022) | Engineering lead | Q3 2026 |
 | Obtain AO signature on IRP (POAM-008) | Legal/compliance team | Compliance officer | 2026-07-31 |
 | Provision SHA-256 model hashes | `config/model_hashes.json` (AI600-007) | Security engineer | 2026-07-15 |
 | Conduct first AI Fairness Assessment | `evaluate_langfuse_traces.py --fairness-report` (AI600-004) | Compliance team | 2026-06-30 |

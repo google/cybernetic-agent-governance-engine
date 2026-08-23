@@ -590,20 +590,20 @@ The eBPF exporter has been updated to `remote` output mode:
 
 All third-party compliance and attestation provider adapters are isolated under `src/integrations/{vendor}/`. This boundary prevents vendor SDK code from leaking into the governance kernel or gateway packages, limiting the blast radius of any vendor-side vulnerability.
 
-| Vendor        | Module                                    | Role                                                                 | Security Boundary                                      |
+| Provider      | Module                                    | Role                                                                 | Security Boundary                                      |
 | ------------- | ----------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------ |
-| VEIP          | `src/integrations/veip/`                  | RFC-3161 Verifiable Execution Evidence Pack (3 axioms: Blueprint, Key, Physics) | Isolated package; lazy-loaded |
-| TrustLayers   | `src/integrations/trustlayers/provider.py` | Normative legal-baseline provider (Tier 6b FRIA gate)               | Isolated package; lazy-loaded only when `TRUSTLAYERS_API_KEY` is set |
-| NexArt        | `src/integrations/nexart/provider.py`      | CER (Compliance Evidence Record) attestation provider                | Isolated package; lazy-loaded only when `NEXART_API_KEY` is set |
-| Archytan      | `src/integrations/archytan/`              | Socket-level execution guillotine integration                        | Isolated package; lazy-loaded |
-| Veritas       | `src/integrations/veritas/`               | JCS canonicalization and evidence formatting adapter                 | Isolated package; lazy-loaded |
+| Provider 01   | `src/integrations/provider_01/provider.py` | Normative legal-baseline provider (Tier 6b FRIA gate)               | Isolated package; lazy-loaded only when provider API key is set |
+| Provider 02   | `src/integrations/provider_02/provider.py` | CER (Compliance Evidence Record) attestation provider                | Isolated package; lazy-loaded only when provider API key is set |
+| Provider 03   | `src/integrations/provider_03/`           | JCS canonicalization and evidence formatting adapter                 | Isolated package; lazy-loaded |
+| Provider 04   | `src/integrations/provider_04/`           | Socket-level execution guillotine integration                        | Isolated package; lazy-loaded |
+| Provider 05   | `src/integrations/provider_05/`           | RFC-3161 Verifiable Execution Evidence Pack (3 axioms: Blueprint, Key, Physics) | Isolated package; lazy-loaded |
 
 **Key security properties:**
 - Vendor SDKs are **not imported at module load time** — the provider factory in `src/integrations/__init__.py` uses lazy imports, so a missing or misconfigured vendor credential does not crash the gateway.
 - Each vendor directory has its own test suite (`src/integrations/{vendor}/tests/`) to prevent regressions from vendor SDK updates.
 - Cloud KMS (`kms_signer.py`) and Redis (`evidence_stream.py`) are **not** vendor adapters — they are substrate infrastructure invariants and remain in `src/gateway/governance/`.
 
-> ⚠️ **POAM-018 (Open):** TrustLayers credentials (`LANGFUSE_COMPLIANCE_*`) fail silently when absent. See [`DUAL_PROJECT_ARCHITECTURE.md §5.2`](../../docs/architecture/DUAL_PROJECT_ARCHITECTURE.md) for remediation details.
+> ⚠️ **POAM-018 (Open):** External normative provider credentials (`LANGFUSE_COMPLIANCE_*`) fail silently when absent. See [`DUAL_PROJECT_ARCHITECTURE.md §5.2`](../../docs/architecture/DUAL_PROJECT_ARCHITECTURE.md) for remediation details.
 
 ---
 
