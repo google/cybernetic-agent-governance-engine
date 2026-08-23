@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-VEIP Key Attestation Provider (Axiom 2: Identity Genesis).
+Provider 05 Key Attestation Provider (Axiom 2: Identity Genesis).
 
 Validates that an agent's SPIFFE mTLS identity chains to a Certificate
 Authority that is explicitly admitted to authorize the requested consequence
@@ -30,26 +30,26 @@ from src.gateway.governance.governance_envelope import (
     AttestationStatus,
     ExternalAttestation,
 )
-from src.integrations.veip.client import VEIPClient
+from src.integrations.provider_05.client import Provider05Client
 
-logger = logging.getLogger("cage.integrations.veip.key")
+logger = logging.getLogger("cage.integrations.provider_05.key")
 
 _DEFAULT_SPIFFE_ID = "spiffe://cage.local/treasury-agent"
 _DEFAULT_CONSEQUENCE_CLASS = "treasury_transfer"
 
 
-class VEIPKeyProvider(AttestationProvider):
+class Provider05KeyProvider(AttestationProvider):
     """Key (Identity Genesis) attestation provider.
 
     Validates SPIFFE ID authority scope against institutional consequence classes.
     """
 
-    def __init__(self, client: VEIPClient | None = None) -> None:
-        self._client = client or VEIPClient()
+    def __init__(self, client: Provider05Client | None = None) -> None:
+        self._client = client or Provider05Client()
 
     @property
     def provider_name(self) -> str:
-        return "veip-key"
+        return "provider_05-key"
 
     async def fetch_attestations(
         self, context: dict[str, Any]

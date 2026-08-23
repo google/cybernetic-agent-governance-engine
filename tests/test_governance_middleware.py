@@ -390,6 +390,7 @@ class TestValidateActionEndpoint:
 
         assert resp.status_code == 200
         data = resp.json()
+        assert data.get("schema_version") == "1.0.0"
         assert data["verdict"] == "APPROVED"
         assert data["violations"] == []
         assert "seal" in data
@@ -436,6 +437,7 @@ class TestValidateActionEndpoint:
 
         assert resp.status_code == 403
         data = resp.json()
+        assert data.get("schema_version") == "1.0.0"
         assert data["verdict"] == "DENIED"
         assert len(data["violations"]) > 0
         assert data["seal"] == ""

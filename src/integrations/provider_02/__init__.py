@@ -13,35 +13,35 @@
 # limitations under the License.
 
 """
-NexArt Integration Package
-===========================
+Provider 02 Integration Package
+================================
 
 Provides two components:
 
-1. **NexArtAttestationProvider** — CER creation, JWK-cached verification,
-   and Project Bundle registration against the NexArt attestation API.
+1. **Provider02AttestationProvider** — CER creation, JWK-cached verification,
+   and Project Bundle registration against the attestation API.
 
-2. **NexArtAttestationCallback** — LangGraph callback handler that captures
+2. **Provider02AttestationCallback** — LangGraph callback handler that captures
    immutable state snapshots at governance-significant node boundaries and
-   assembles NexArt Project Bundles.
+   assembles Project Bundles.
 
 Usage::
 
-    from src.integrations.nexart import NexArtAttestationProvider, NexArtAttestationCallback
+    from src.integrations.provider_02 import Provider02AttestationProvider, Provider02AttestationCallback
 """
 
 from .adapter import (
     AttestationBundle,
-    NexArtAttestationCallback,
-    NexArtClient,
+    Provider02AttestationCallback,
+    Provider02Client,
     ProjectBundleStepEntry,
 )
 from .provider import (
     CERReceipt,
     CERVerification,
     JWKCache,
-    NexArtAttestationProvider,
-    get_nexart_provider,
+    Provider02AttestationProvider,
+    get_provider_02,
 )
 
 __all__ = [
@@ -49,9 +49,9 @@ __all__ = [
     "CERReceipt",
     "CERVerification",
     "JWKCache",
-    "NexArtAttestationCallback",
-    "NexArtAttestationProvider",
-    "NexArtClient",
+    "Provider02AttestationCallback",
+    "Provider02AttestationProvider",
+    "Provider02Client",
     "ProjectBundleStepEntry",
-    "get_nexart_provider",
+    "get_provider_02",
 ]

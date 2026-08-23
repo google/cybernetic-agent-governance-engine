@@ -13,17 +13,17 @@
 # limitations under the License.
 
 """
-Archytan Envelope Mapper.
+Provider 04 Envelope Mapper.
 
 Bidirectional mapping between CAGE's generic ``GovernanceEnvelope`` and
-Archytan's wire format.  Translates CAGE's envelope into Archytan's
-expected schema and vice versa, handling any Archytan-specific field
+Provider 04's wire format.  Translates CAGE's envelope into Provider 04's
+expected schema and vice versa, handling any Provider 04-specific field
 naming, nesting, or protocol conventions.
 
 This mapper is used when:
-  - Dispatching a signed GovernanceEnvelope to an Archytan downstream
+  - Dispatching a signed GovernanceEnvelope to a Provider 04 downstream
     execution layer.
-  - Ingesting an Archytan-produced envelope back into CAGE for audit
+  - Ingesting a Provider 04-produced envelope back into CAGE for audit
     or verification.
 """
 
@@ -38,37 +38,37 @@ from src.gateway.governance.governance_envelope import (
     GovernanceEnvelopeBuilder,
 )
 
-logger = logging.getLogger("cage.integrations.archytan.envelope_mapper")
+logger = logging.getLogger("cage.integrations.provider_04.envelope_mapper")
 
 
-class ArchytanEnvelopeMapper:
-    """Bidirectional mapping between GovernanceEnvelope and Archytan wire format.
+class Provider04EnvelopeMapper:
+    """Bidirectional mapping between GovernanceEnvelope and Provider 04 wire format.
 
-    Translates CAGE's generic envelope into Archytan's expected schema
-    and vice versa, handling any Archytan-specific field naming, nesting,
+    Translates CAGE's generic envelope into Provider 04's expected schema
+    and vice versa, handling any Provider 04-specific field naming, nesting,
     or protocol conventions.
     """
 
     def __init__(self) -> None:
         self._builder = GovernanceEnvelopeBuilder()
 
-    def to_archytan_format(self, envelope: GovernanceEnvelope) -> dict[str, Any]:
-        """Convert a GovernanceEnvelope to Archytan's wire format.
+    def to_provider_04_format(self, envelope: GovernanceEnvelope) -> dict[str, Any]:
+        """Convert a GovernanceEnvelope to Provider 04's wire format.
 
-        The Archytan wire format wraps the CAGE envelope in an outer
-        metadata layer containing Archytan-specific routing and
+        The Provider 04 wire format wraps the CAGE envelope in an outer
+        metadata layer containing Provider 04-specific routing and
         provenance fields.
 
         Args:
             envelope: The CAGE GovernanceEnvelope to convert.
 
         Returns:
-            A dictionary in Archytan's expected wire format.
+            A dictionary in Provider 04's expected wire format.
         """
         cage_dict = envelope.to_dict(include_signature=True)
 
         return {
-            "archytan_version": "1.0",
+            "provider_04_version": "1.0",
             "cage_envelope": cage_dict,
             "digest": envelope.compute_digest_hex(),
             "metadata": {
@@ -79,11 +79,11 @@ class ArchytanEnvelopeMapper:
             },
         }
 
-    def from_archytan_format(self, data: dict[str, Any]) -> GovernanceEnvelope:
-        """Convert an Archytan wire-format payload back to a GovernanceEnvelope.
+    def from_provider_04_format(self, data: dict[str, Any]) -> GovernanceEnvelope:
+        """Convert a Provider 04 wire-format payload back to a GovernanceEnvelope.
 
         Args:
-            data: A dictionary in Archytan's wire format.
+            data: A dictionary in Provider 04's wire format.
 
         Returns:
             A reconstructed GovernanceEnvelope.
@@ -93,6 +93,6 @@ class ArchytanEnvelopeMapper:
         """
         cage_dict = data.get("cage_envelope")
         if not cage_dict:
-            raise ValueError("Archytan payload missing 'cage_envelope' field")
+            raise ValueError("Provider 04 payload missing 'cage_envelope' field")
 
         return self._builder._envelope_from_dict(cage_dict)

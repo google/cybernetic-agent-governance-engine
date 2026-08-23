@@ -13,17 +13,17 @@
 # limitations under the License.
 
 """
-Archytan Attestation Provider.
+Provider 04 Attestation Provider.
 
-Implements the generic ``AttestationProvider`` protocol for the Archytan
-trust service.  Maps Archytan-specific receipt formats, signature
+Implements the generic ``AttestationProvider`` protocol for the Provider 04
+trust service.  Maps Provider 04-specific receipt formats, signature
 verification, and protocol-level conventions to the generic
 ``ExternalAttestation`` schema used by ``GovernanceEnvelopeBuilder``.
 
 Architecture:
   - Follows the vendor-isolation pattern established by
-    ``src/integrations/veritas/provider.py``.
-  - Fetches attestation records from the Archytan endpoint at boot
+    ``src/integrations/provider_03/provider.py``.
+  - Fetches attestation records from the Provider 04 endpoint at boot
     and on a configurable poll interval.
   - Caches results in-memory via ``AttestationAggregator``.
   - No per-transaction network calls on the hot path.
@@ -41,21 +41,21 @@ from src.gateway.governance.governance_envelope import (
     ExternalAttestation,
 )
 
-logger = logging.getLogger("cage.integrations.archytan")
+logger = logging.getLogger("cage.integrations.provider_04")
 
-_ENDPOINT: str = os.environ.get("ARCHYTAN_ATTESTATION_ENDPOINT", "")
-_API_KEY_SECRET: str = os.environ.get("ARCHYTAN_ATTESTATION_API_KEY_SECRET", "")
+_ENDPOINT: str = os.environ.get("PROVIDER_04_ATTESTATION_ENDPOINT", "")
+_API_KEY_SECRET: str = os.environ.get("PROVIDER_04_ATTESTATION_API_KEY_SECRET", "")
 _TIMEOUT_SECONDS: float = float(
-    os.environ.get("ARCHYTAN_ATTESTATION_TIMEOUT_SECONDS", "5.0")
+    os.environ.get("PROVIDER_04_ATTESTATION_TIMEOUT_SECONDS", "5.0")
 )
 
 
-class ArchytanAttestationProvider(AttestationProvider):
-    """Archytan-specific attestation provider.
+class Provider04AttestationProvider(AttestationProvider):
+    """Provider 04-specific attestation provider.
 
-    Maps Archytan envelope semantics to the generic ExternalAttestation
-    schema.  Handles Archytan-specific receipt formats, signature
-    verification against Archytan's JWKS, and protocol-level mapping.
+    Maps Provider 04 envelope semantics to the generic ExternalAttestation
+    schema.  Handles Provider 04-specific receipt formats, signature
+    verification against Provider 04's JWKS, and protocol-level mapping.
     """
 
     def __init__(
@@ -71,34 +71,34 @@ class ArchytanAttestationProvider(AttestationProvider):
     @property
     def provider_name(self) -> str:
         """Unique provider identifier for telemetry."""
-        return "archytan"
+        return "provider_04"
 
     async def fetch_attestations(
         self, context: dict[str, Any]
     ) -> list[ExternalAttestation]:
-        """Fetch current attestations from the Archytan service.
+        """Fetch current attestations from the Provider 04 service.
 
         Args:
             context: Governance context (action, region, agent identity).
 
         Returns:
-            A list of ExternalAttestation entries from Archytan.
+            A list of ExternalAttestation entries from Provider 04.
         """
         if not self._endpoint:
             logger.debug(
-                "Archytan endpoint not configured — returning empty attestations"
+                "Provider 04 endpoint not configured — returning empty attestations"
             )
             return []
 
-        # TODO: Implement actual HTTP fetch against Archytan's attestation
+        # TODO: Implement actual HTTP fetch against Provider 04's attestation
         # endpoint once the production API is available.  The implementation
         # should follow the httpx async pattern established in
-        # VeritasNormativeProvider.fetch_legal_baseline().
+        # Provider03NormativeProvider.fetch_legal_baseline().
         #
         # For now, return an empty list so the aggregator can be wired up
         # end-to-end without a live endpoint.
         logger.info(
-            "Archytan attestation fetch (endpoint=%s) — stub implementation",
+            "Provider 04 attestation fetch (endpoint=%s) — stub implementation",
             self._endpoint,
         )
         return []

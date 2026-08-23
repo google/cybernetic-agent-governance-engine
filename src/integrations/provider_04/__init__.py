@@ -12,17 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-TrustLayers Integration Package
-=================================
+"""Provider 04 integration — attestation provider and envelope mapper."""
 
-Production normative provider backed by the TrustLayers cloud API.
+from src.integrations.provider_04.envelope_mapper import Provider04EnvelopeMapper
+from src.integrations.provider_04.provider import Provider04AttestationProvider
 
-Usage::
-
-    from src.integrations.trustlayers import TrustLayersProvider
-"""
-
-from .provider import TrustLayersProvider
-
-__all__ = ["TrustLayersProvider"]
+__all__ = [
+    "Provider04AttestationProvider",
+    "Provider04EnvelopeMapper",
+]

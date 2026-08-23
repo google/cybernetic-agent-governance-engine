@@ -49,7 +49,7 @@ This module mirrors the pattern proven in ``config/compliance/reconciliation_wor
 
 Environment variables
 ---------------------
-  CAGE_NORMATIVE_PROVIDER             — "static" (default), "trustlayers", or "nexart"
+  CAGE_NORMATIVE_PROVIDER             — "static" (default), "provider_01", or "provider_02"
   CAGE_NORMATIVE_ENDPOINT             — Provider base URL
   CAGE_NORMATIVE_POLL_INTERVAL_HOURS  — Background refresh interval (default: 6)
   CAGE_NORMATIVE_BOOT_TIMEOUT_SECONDS — Max wait at container init (default: 10)
@@ -309,7 +309,7 @@ class StubNormativeProvider:
       - Local development without provider credentials
       - Default behavior when CAGE_NORMATIVE_PROVIDER=static
 
-    Set CAGE_NORMATIVE_PROVIDER=trustlayers to activate the production provider.
+    Set CAGE_NORMATIVE_PROVIDER=provider_01 to activate the production provider.
     """
 
     def __init__(self) -> None:
@@ -327,7 +327,7 @@ class StubNormativeProvider:
                 "StubNormativeProvider cannot be used in production "
                 f"(CAGE_ENV={_cage_env!r}). "
                 "Set CAGE_NORMATIVE_PROVIDER to a real provider name "
-                "(e.g. CAGE_NORMATIVE_PROVIDER=trustlayers) and ensure the "
+                "(e.g. CAGE_NORMATIVE_PROVIDER=provider_01) and ensure the "
                 "provider credentials are configured."
             )
 
@@ -822,8 +822,8 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
 
     Supported providers:
         - "static"       — Local stub for dev/CI (kernel-resident)
-        - "trustlayers"  — TrustLayers cloud API (src/integrations/trustlayers/)
-        - "nexart"       — NexArt attestation API (src/integrations/nexart/)
+        - "provider_01"  — Provider 01 cloud API (src/integrations/provider_01/)
+        - "provider_02"  — Provider 02 attestation API (src/integrations/provider_02/)
 
     Returns:
         An instantiated NormativeProvider.
@@ -837,18 +837,18 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
     if provider_name in _PROVIDERS:
         return _PROVIDERS[provider_name]()
 
-    # Vendor providers — lazy-loaded from src/integrations/{vendor}/
-    if provider_name == "trustlayers":
-        from src.integrations.trustlayers import TrustLayersProvider
+    # Vendor providers — lazy-loaded from src/integrations/{provider}/
+    if provider_name == "provider_01":
+        from src.integrations.provider_01 import Provider01NormativeProvider
 
-        return TrustLayersProvider()
+        return Provider01NormativeProvider()
 
-    if provider_name == "nexart":
-        from src.integrations.nexart import NexArtAttestationProvider
+    if provider_name == "provider_02":
+        from src.integrations.provider_02 import Provider02AttestationProvider
 
-        return NexArtAttestationProvider()  # type: ignore[return-value]
+        return Provider02AttestationProvider()  # type: ignore[return-value]
 
-    valid = [*_PROVIDERS.keys(), "trustlayers", "nexart"]
+    valid = [*_PROVIDERS.keys(), "provider_01", "provider_02"]
     raise ValueError(
         f"Unknown normative provider: {provider_name!r}. Available providers: {valid}."
     )

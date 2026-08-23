@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-tests/test_nexart_adapter.py — Tests for the LangGraph-to-NexArt attestation adapter.
+tests/test_provider_02_adapter.py — Tests for the LangGraph-to-Provider 02 attestation adapter.
 
 Verification invariants:
   1. Step serialization captures all AgentState governance fields.
@@ -23,8 +23,8 @@ Verification invariants:
   5. Loop unrolling produces correct parentStepIds across iterations.
   6. All 4 degenerate paths produce valid bundles.
   7. Terminal path classification is correct.
-  8. NexArtClient builds correct HTTP requests.
-  9. AttestationBundle serialization matches NexArt API contract.
+  8. Provider02Client builds correct HTTP requests.
+  9. AttestationBundle serialization matches Provider 02 API contract.
 """
 
 from __future__ import annotations
@@ -33,10 +33,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.integrations.nexart.adapter import (
+from src.integrations.provider_02.adapter import (
     AttestationBundle,
-    NexArtAttestationCallback,
-    NexArtClient,
+    Provider02AttestationCallback,
+    Provider02Client,
     ProjectBundleStepEntry,
     _classify_terminal_path,
     _extract_signals,
@@ -241,11 +241,11 @@ class TestSignalExtraction:
 
 
 class TestCallbackHandler:
-    """Tests for NexArtAttestationCallback step recording."""
+    """Tests for Provider02AttestationCallback step recording."""
 
     def test_records_attestation_node(self):  # type: ignore[no-untyped-def]
         """Governance-significant nodes produce step entries."""
-        cb = NexArtAttestationCallback(thread_id="test-thread")
+        cb = Provider02AttestationCallback(thread_id="test-thread")
         state = _approved_state()
 
         cb.on_chain_start("evaluator", state)
@@ -255,7 +255,7 @@ class TestCallbackHandler:
 
     def test_skips_non_attestation_node(self):  # type: ignore[no-untyped-def]
         """Non-governance nodes don't produce step entries but track IDs."""
-        cb = NexArtAttestationCallback(thread_id="test-thread")
+        cb = Provider02AttestationCallback(thread_id="test-thread")
         state = _base_state()
 
         cb.on_chain_start("thinker_node", state)
@@ -265,7 +265,7 @@ class TestCallbackHandler:
 
     def test_parent_step_ids_resolve(self):  # type: ignore[no-untyped-def]
         """Parent step IDs are correctly resolved from graph topology."""
-        cb = NexArtAttestationCallback(thread_id="test-thread")
+        cb = Provider02AttestationCallback(thread_id="test-thread")
         state = _base_state()
 
         # Simulate: nemo_guardrail → thinker → doer → execution_analyst → evaluator
@@ -288,7 +288,7 @@ class TestCallbackHandler:
 
     def test_hitl_interrupt_recorded(self):  # type: ignore[no-untyped-def]
         """HITL interrupt produces a step with approval signals."""
-        cb = NexArtAttestationCallback(thread_id="test-thread")
+        cb = Provider02AttestationCallback(thread_id="test-thread")
         state = _base_state()
 
         # Simulate path up to safety_check
@@ -322,7 +322,7 @@ class TestLoopUnrolling:
 
     def test_single_iteration(self):  # type: ignore[no-untyped-def]
         """Single loop iteration produces correct parentStepIds."""
-        cb = NexArtAttestationCallback(thread_id="test-thread")
+        cb = Provider02AttestationCallback(thread_id="test-thread")
         state = _base_state(loop_count=1)
 
         # First pass
@@ -335,7 +335,7 @@ class TestLoopUnrolling:
 
     def test_multi_iteration_produces_sequential_parents(self):  # type: ignore[no-untyped-def]
         """Multiple loop iterations produce sequential parent chains."""
-        cb = NexArtAttestationCallback(thread_id="test-thread")
+        cb = Provider02AttestationCallback(thread_id="test-thread")
 
         for iteration in range(3):
             state = _base_state(loop_count=iteration + 1)
@@ -353,7 +353,7 @@ class TestLoopUnrolling:
 
     def test_loop_breaker_at_count_3(self):  # type: ignore[no-untyped-def]
         """After 3 iterations, the path should classify as loop_breaker."""
-        cb = NexArtAttestationCallback(thread_id="test-thread")
+        cb = Provider02AttestationCallback(thread_id="test-thread")
 
         for iteration in range(3):
             state = _base_state(loop_count=iteration + 1)
@@ -430,7 +430,7 @@ class TestBundleAssembly:
     """Tests for AttestationBundle creation."""
 
     def test_bundle_serialization(self):  # type: ignore[no-untyped-def]
-        """Bundle serializes to NexArt-compatible dict."""
+        """Bundle serializes to Provider 02-compatible dict."""
         bundle = AttestationBundle(
             thread_id="thread-001",
             steps=[
@@ -448,7 +448,7 @@ class TestBundleAssembly:
 
     def test_bundle_from_callback(self):  # type: ignore[no-untyped-def]
         """Full callback flow produces a valid bundle."""
-        cb = NexArtAttestationCallback(thread_id="e2e-thread")
+        cb = Provider02AttestationCallback(thread_id="e2e-thread")
         state = _base_state()
 
         cb.on_chain_start("nemo_guardrail", state)
@@ -483,17 +483,17 @@ class TestBundleAssembly:
 
 
 # ---------------------------------------------------------------------------
-# Test 7: NexArt HTTP Client
+# Test 7: Provider 02 HTTP Client
 # ---------------------------------------------------------------------------
 
 
-class TestNexArtClient:
-    """Tests for NexArtClient HTTP request construction."""
+class TestProvider02Client:
+    """Tests for Provider02Client HTTP request construction."""
 
     def test_headers_include_bearer_auth(self):  # type: ignore[no-untyped-def]
         """Authorization header uses Bearer scheme."""
-        client = NexArtClient(
-            endpoint="https://api.nexart.io",
+        client = Provider02Client(
+            endpoint="https://api.provider02.example.com",
             api_key="test-key-123",
         )
         headers = client._headers()
@@ -502,7 +502,7 @@ class TestNexArtClient:
 
     def test_headers_without_api_key(self):  # type: ignore[no-untyped-def]
         """Without API key, only Content-Type header is present."""
-        client = NexArtClient(endpoint="https://api.nexart.io", api_key="")
+        client = Provider02Client(endpoint="https://api.provider02.example.com", api_key="")
         headers = client._headers()
         assert "Authorization" not in headers
 
@@ -521,9 +521,9 @@ class TestNexArtClient:
             mock_instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = mock_instance
 
-            client = NexArtClient(endpoint="https://api.nexart.io/v1")
+            client = Provider02Client(endpoint="https://api.provider02.example.com/v1")
             await client.certify_decision({"test": True})
 
             mock_instance.post.assert_called_once()
             call_args = mock_instance.post.call_args
-            assert call_args[0][0] == "https://api.nexart.io/v1/certifyDecision"
+            assert call_args[0][0] == "https://api.provider02.example.com/v1/certifyDecision"

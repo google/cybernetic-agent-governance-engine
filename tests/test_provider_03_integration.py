@@ -13,32 +13,32 @@
 # limitations under the License.
 
 """
-Unit tests for VeritasNormativeProvider adapter (CAGE-REM-006).
+Unit tests for Provider03NormativeProvider adapter (CAGE-REM-006).
 """
 
 from __future__ import annotations
 
 import pytest
 
-from src.integrations.veritas import VeritasNormativeProvider
+from src.integrations.provider_03 import Provider03NormativeProvider
 
 
 @pytest.mark.asyncio
-async def test_veritas_provider_lifecycle():
-    provider = VeritasNormativeProvider(
-        endpoint="https://veritas.example.com", api_key="secret-key"
+async def test_provider_03_lifecycle():
+    provider = Provider03NormativeProvider(
+        endpoint="https://provider03.example.com", api_key="secret-key"
     )
 
     baseline = await provider.fetch_legal_baseline("US_FED")
     assert baseline["region"] == "US_FED"
-    assert baseline["provider"] == "VERITAS_OS"
-    assert "VERITAS_DECISION_MANDATE_V1" in baseline["active_rules"]
+    assert baseline["provider"] == "PROVIDER_03"
+    assert "PROVIDER_03_DECISION_MANDATE_V1" in baseline["active_rules"]
 
     fria = await provider.validate_external_fria(
         "thread-123", {"action": "execute_trade", "amount": 5000}
     )
     assert fria["verdict"] == "APPROVED"
-    assert fria["provider"] == "VERITAS_OS"
+    assert fria["provider"] == "PROVIDER_03"
     assert fria["thread_id"] == "thread-123"
 
     evidence_ok = await provider.submit_evidence_chain(
@@ -47,8 +47,8 @@ async def test_veritas_provider_lifecycle():
     assert evidence_ok is True
 
 
-def test_veritas_bind_receipt_ingestion():
-    provider = VeritasNormativeProvider()
+def test_provider_03_bind_receipt_ingestion():
+    provider = Provider03NormativeProvider()
     receipt = {
         "receipt_id": "rcpt-9988",
         "action": "execute_trade",

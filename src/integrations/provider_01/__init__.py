@@ -13,12 +13,16 @@
 # limitations under the License.
 
 """
-VERITAS OS Integration Package.
-===============================
-Provides the VeritasNormativeProvider adapter connecting VERITAS OS decision
-governance, bind receipts, and TrustLog provenance into CAGE's NormativeProvider seam.
+Provider 01 Integration Package
+=================================
+
+Production normative provider backed by cloud API.
+
+Usage::
+
+    from src.integrations.provider_01 import Provider01NormativeProvider
 """
 
-from .provider import VeritasNormativeProvider
+from .provider import Provider01NormativeProvider
 
-__all__ = ["VeritasNormativeProvider"]
+__all__ = ["Provider01NormativeProvider"]
