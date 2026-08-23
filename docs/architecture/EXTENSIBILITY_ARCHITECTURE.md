@@ -544,6 +544,136 @@ All three extension points are selected at runtime via environment variables (`K
 
 ---
 
+## Private Partner Integration Pattern
+
+> **Reference Architecture Note**: This section describes an illustrative pattern for
+> adopters who need to onboard partners under NDA. The workflow below is a template—
+> adapt package names, signing mechanisms, and registry locations to your environment.
+
+When a partner requires NDA protection (their integration code must be invisible in
+the public repository), use the plugin escape hatch described below.
+
+### Prerequisites
+
+- Partner has signed NDA
+- Partner adapter must implement the `NormativeProvider` Protocol (3 async methods:
+  `fetch_baseline`, `validate_fria`, `submit_evidence`)
+
+### Step 1: Build Plugin Loader (One-Time Setup)
+
+If not already implemented, create `src/gateway/governance/provider_plugin_loader.py`:
+
+1. Implement allow-list validation from external Secret/ConfigMap
+2. Implement signature verification (cosign/Sigstore or SHA-256 digest pinning)
+3. Implement Protocol conformance check at runtime
+4. Wire into `get_normative_provider()` fallback branch
+5. Gate behind `CAGE_ALLOW_EXTERNAL_PROVIDER_PLUGINS=false` (default)
+
+### Step 2: Create Private Adapter Package
+
+In a **separate private repository** (never in the public monorepo):
+
+```text
+cage-provider-extXX/
+├── pyproject.toml
+└── src/
+    └── cage_extXX/
+        ├── __init__.py
+        └── provider.py
+```
+
+**provider.py:**
+```python
+from typing import Any
+from cage.core.interfaces import NormativeProvider
+
+class ExtXXNormativeProvider:
+    async def fetch_baseline(self, region: str) -> NormativeBaseline:
+        ...
+    
+    async def validate_fria(self, envelope: GovernanceEnvelope) -> ValidationResult:
+        ...
+    
+    async def submit_evidence(self, evidence: EvidenceSeal) -> None:
+        ...
+```
+
+**pyproject.toml:**
+```toml
+[project.entry-points."cage.normative_providers"]
+extXX = "cage_extXX.provider:ExtXXNormativeProvider"
+```
+
+### Step 3: Sign and Publish Package
+
+```bash
+# Build wheel
+uv build
+
+# Sign with cosign (or compute SHA-256)
+cosign sign-blob dist/cage_provider_extXX-0.1.0-py3-none-any.whl \
+  --key cosign.key \
+  --output-signature dist/cage_provider_extXX-0.1.0.sig
+
+# Upload to private PyPI
+twine upload --repository-url https://private-pypi.example/simple dist/*
+```
+
+### Step 4: Update External Allow-List
+
+Add entry to external K8s Secret (maintained outside the public repository):
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cage-provider-allowlist
+  namespace: governance-stack
+stringData:
+  allowlist.json: |
+    {
+      "extXX": {
+        "package": "cage-provider-extXX",
+        "version": "0.1.0",
+        "sha256": "<wheel-digest>",
+        "signature_key_id": "cosign-key-01"
+      }
+    }
+```
+
+### Step 5: Deploy
+
+```bash
+# Install in production container (private build pipeline)
+pip install --extra-index-url https://private-pypi.example/simple cage-provider-extXX==0.1.0
+
+# Enable plugin loading
+export CAGE_ALLOW_EXTERNAL_PROVIDER_PLUGINS=true
+export CAGE_NORMATIVE_PROVIDER=extXX
+```
+
+### Step 6: Update Private Compliance Artifacts
+
+In a private compliance overlay (not in the public repository):
+
+- Add OSCAL component-definition entry using a generic title
+- Add Lula validation stub for the provider
+- Generate SBOM in private build pipeline (not public CI)
+
+### Security Constraints Checklist
+
+For any private partner integration:
+
+- [ ] Package signed and signature verified before `ep.load()`
+- [ ] Allow-list entry with pinned hash exists in external Secret
+- [ ] Protocol conformance verified at runtime (`NormativeProvider` 3-method async)
+- [ ] Credentials resolved via Secret Manager, never constructor kwargs
+- [ ] Fail-closed on any validation error (no silent fallback)
+- [ ] Private build pipeline for images containing NDA plugins
+- [ ] Private SBOM generation (not public CI workflows)
+
+---
+
 ## Related Documentation
 
 | Document                                                              | Relationship                                            |
