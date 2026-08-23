@@ -45,10 +45,10 @@ jobs:
 
       - name: Download lula CLI
         run: |
-          # Download lula binary from defenseunicorns/lula GitHub releases.
-          LULA_VERSION="v0.10.0"
+          # Download lula binary from defenseunicorns-labs/lula1 GitHub releases.
+          LULA_VERSION="v0.16.0"
           curl -fsSL \
-            "https://github.com/defenseunicorns/lula/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_linux_amd64" \
+            "https://github.com/defenseunicorns-labs/lula1/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64" \
             -o /usr/local/bin/lula
           chmod +x /usr/local/bin/lula
           lula version
