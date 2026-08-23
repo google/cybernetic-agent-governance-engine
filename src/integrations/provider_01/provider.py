@@ -13,10 +13,10 @@
 # limitations under the License.
 
 """
-provider.py — TrustLayers Normative Compliance Provider
-========================================================
+provider.py — Provider 01 Normative Compliance Provider
+=======================================================
 
-Production normative provider backed by the TrustLayers cloud API.
+Production normative provider backed by external cloud API.
 Extracted from ``src/gateway/governance/normative_provider.py`` for
 vendor isolation.
 
@@ -41,8 +41,7 @@ Environment variables
 
 Status
 ------
-**INTERFACE READY** — HTTP client is fully implemented.  Production
-activation requires TrustLayers API credentials from the TrustLayers team.
+**INTERFACE READY** — HTTP client is fully implemented.
 """
 
 from __future__ import annotations
@@ -52,7 +51,7 @@ import os
 from typing import Any
 from urllib.parse import quote
 
-logger = logging.getLogger("cage.integrations.trustlayers")
+logger = logging.getLogger("cage.integrations.provider_01")
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -66,12 +65,12 @@ _GATE_TIMEOUT_SECONDS: float = float(
 
 
 # ---------------------------------------------------------------------------
-# TrustLayers Provider
+# Provider 01
 # ---------------------------------------------------------------------------
 
 
-class TrustLayersProvider:
-    """Production normative provider backed by the TrustLayers cloud API.
+class Provider01NormativeProvider:
+    """Production normative provider backed by external cloud API.
 
     Implements the 3-endpoint HTTP contract defined in §2.5.2 of
     EXTENSIBILITY_ARCHITECTURE.md:
@@ -92,12 +91,12 @@ class TrustLayersProvider:
 
         if not self._endpoint:
             logger.error(
-                "[TrustLayersProvider] CAGE_NORMATIVE_ENDPOINT is required. "
+                "[Provider01] CAGE_NORMATIVE_ENDPOINT is required. "
                 "Set CAGE_NORMATIVE_PROVIDER=static for dev/test."
             )
 
         logger.info(
-            "[TrustLayersProvider] Initialised: endpoint=%s timeout=%.1fs",
+            "[Provider01] Initialised: endpoint=%s timeout=%.1fs",
             self._endpoint or "(not set)",
             self._timeout,
         )
@@ -110,7 +109,7 @@ class TrustLayersProvider:
         return headers
 
     async def fetch_baseline(self, region: str):  # type: ignore[no-untyped-def]
-        """Fetch the active legal baseline from TrustLayers."""
+        """Fetch the active legal baseline from provider."""
         import httpx
 
         from src.gateway.governance.normative_provider import NormativeBaseline
@@ -127,11 +126,11 @@ class TrustLayersProvider:
                     etag=resp.headers.get("ETag", ""),
                 )
         except Exception as exc:
-            logger.error("[TrustLayersProvider] fetch_baseline failed: %s %s", url, exc)
+            logger.error("[Provider01] fetch_baseline failed: %s %s", url, exc)
             return NormativeBaseline(region=region, profile={}, error=str(exc))
 
     async def validate_fria(self, payload: dict[str, Any]):  # type: ignore[no-untyped-def]
-        """Submit FRIA validation to TrustLayers (synchronous blocking gate)."""
+        """Submit FRIA validation (synchronous blocking gate)."""
         import httpx
 
         from src.gateway.governance.normative_provider import ValidationResult
@@ -147,7 +146,7 @@ class TrustLayersProvider:
                     findings=data.get("findings", []),
                 )
         except Exception as exc:
-            logger.error("[TrustLayersProvider] validate_fria failed: %s %s", url, exc)
+            logger.error("[Provider01] validate_fria failed: %s %s", url, exc)
             return ValidationResult(
                 admitted=False,
                 error=str(exc),
@@ -175,6 +174,6 @@ class TrustLayersProvider:
                 )
         except Exception as exc:
             logger.error(
-                "[TrustLayersProvider] submit_evidence failed: %s %s", url, exc
+                "[Provider01] submit_evidence failed: %s %s", url, exc
             )
             return EvidenceSeal(thread_id=thread_id, error=str(exc))

@@ -13,9 +13,9 @@
 # limitations under the License.
 
 """
-VEIP (Verifiable Execution Evidence Pack) Client Interface.
+Provider 05 (Verifiable Execution Evidence Pack) Client Interface.
 
-Provides structured access to VEIP attestation endpoints for the Three Axioms:
+Provides structured access to Provider 05 attestation endpoints for the Three Axioms:
   1. Policy Legitimacy (Blueprint) — RiskAcceptanceRecord
   2. Identity Genesis (Key) — AdmissibilityGrant
   3. Substrate Integrity (Physics) — SubstrateAttestation
@@ -32,12 +32,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.integrations.provider_05.warrant import Warrant, WarrantStandingVerifier
 
-logger = logging.getLogger("cage.integrations.veip.client")
+logger = logging.getLogger("cage.integrations.provider_05.client")
 
-_ENDPOINT: str = os.environ.get("VEIP_ATTESTATION_ENDPOINT", "")
-_API_KEY_SECRET: str = os.environ.get("VEIP_API_KEY_SECRET", "")
-_TIMEOUT_SECONDS: float = float(os.environ.get("VEIP_TIMEOUT_SECONDS", "5.0"))
+_ENDPOINT: str = os.environ.get("PROVIDER_05_ATTESTATION_ENDPOINT", "")
+_API_KEY_SECRET: str = os.environ.get("PROVIDER_05_API_KEY_SECRET", "")
+_TIMEOUT_SECONDS: float = float(os.environ.get("PROVIDER_05_TIMEOUT_SECONDS", "5.0"))
 
 
 @dataclass
@@ -114,8 +115,8 @@ class SubstrateAttestation:
         )
 
 
-class VEIPClient:
-    """Client for querying VEIP attestation services."""
+class Provider05Client:
+    """Client for querying Provider 05 attestation services."""
 
     def __init__(
         self,
@@ -131,6 +132,7 @@ class VEIPClient:
         self._risk_acceptances: dict[str, RiskAcceptanceRecord] = {}
         self._admissibility_grants: dict[tuple[str, str], AdmissibilityGrant] = {}
         self._substrate_attestations: dict[str, SubstrateAttestation] = {}
+        self._warrants: dict[str, Warrant] = {}
 
     def seed_risk_acceptance(self, record: RiskAcceptanceRecord) -> None:
         """Seed a risk acceptance record for local/synthetic evaluation."""
@@ -143,6 +145,20 @@ class VEIPClient:
     def seed_substrate_attestation(self, attestation: SubstrateAttestation) -> None:
         """Seed a substrate attestation for local/synthetic evaluation."""
         self._substrate_attestations[attestation.node_id] = attestation
+
+    def seed_warrant(self, warrant: Warrant) -> None:
+        """Seed a Provider 05 institutional warrant for local/synthetic evaluation."""
+        self._warrants[warrant.norm_id] = warrant
+        self._warrants[warrant.warrant_id] = warrant
+
+    async def get_warrant(self, norm_or_warrant_id: str) -> Warrant | None:
+        """Retrieve a warrant by norm_id or warrant_id."""
+        if norm_or_warrant_id in self._warrants:
+            return self._warrants[norm_or_warrant_id]
+        if not self._endpoint:
+            return None
+        # HTTP client implementation for live deployment
+        return None
 
     async def get_risk_acceptance(
         self, threshold_id: str

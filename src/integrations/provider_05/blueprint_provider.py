@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-VEIP Blueprint Attestation Provider (Axiom 1: Policy Legitimacy).
+Provider 05 Blueprint Attestation Provider (Axiom 1: Policy Legitimacy).
 
 Cryptographically binds Authorizing Official (AO) risk-acceptance records
 to machine-enforced governance thresholds (e.g. THR-FIN-006) and detects
@@ -30,15 +30,15 @@ from src.gateway.governance.governance_envelope import (
     AttestationStatus,
     ExternalAttestation,
 )
-from src.integrations.veip.client import VEIPClient
+from src.integrations.provider_05.client import Provider05Client
 
-logger = logging.getLogger("cage.integrations.veip.blueprint")
+logger = logging.getLogger("cage.integrations.provider_05.blueprint")
 
 # Default consensus threshold value for THR-FIN-006 ($10,000)
 _DEFAULT_THR_FIN_006_VALUE: float = 10000.0
 
 
-class VEIPBlueprintProvider(AttestationProvider):
+class Provider05BlueprintProvider(AttestationProvider):
     """Blueprint (Policy Legitimacy) attestation provider.
 
     Validates that active runtime thresholds have a signed risk-acceptance
@@ -47,17 +47,17 @@ class VEIPBlueprintProvider(AttestationProvider):
 
     def __init__(
         self,
-        client: VEIPClient | None = None,
+        client: Provider05Client | None = None,
         active_thresholds: dict[str, float] | None = None,
     ) -> None:
-        self._client = client or VEIPClient()
+        self._client = client or Provider05Client()
         self._active_thresholds = dict(
             active_thresholds or {"THR-FIN-006": _DEFAULT_THR_FIN_006_VALUE}
         )
 
     @property
     def provider_name(self) -> str:
-        return "veip-blueprint"
+        return "provider_05-blueprint"
 
     async def fetch_attestations(
         self, context: dict[str, Any]

@@ -750,7 +750,8 @@ async def validate_action_endpoint(
             params=body.params,
             policy_version_id=body.policy_version_id,
         )
-        return JSONResponse(content=result)
+        payload = {"schema_version": "1.0.0", **result}
+        return JSONResponse(content=payload)
 
     except GovernanceError as exc:
         # P6: emit a signed OSCAL compliance receipt for every hard refusal.
@@ -764,6 +765,7 @@ async def validate_action_endpoint(
         return JSONResponse(
             status_code=403,
             content={
+                "schema_version": "1.0.0",
                 "verdict": "DENIED",
                 "violations": [str(exc)],
                 "seal": "",

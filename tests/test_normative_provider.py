@@ -48,7 +48,7 @@ from src.gateway.governance.normative_provider import (
     enforce_fria_boundary,
     get_normative_provider,
 )
-from src.integrations.trustlayers import TrustLayersProvider
+from src.integrations.provider_01 import Provider01NormativeProvider
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -504,10 +504,10 @@ class TestProviderFactory:
         provider = get_normative_provider("static")
         assert isinstance(provider, StubNormativeProvider)
 
-    def test_provider_factory_maps_trustlayers(self) -> None:
-        """get_normative_provider('trustlayers') returns TrustLayersProvider."""
-        provider = get_normative_provider("trustlayers")
-        assert isinstance(provider, TrustLayersProvider)
+    def test_provider_factory_maps_provider_01(self) -> None:
+        """get_normative_provider('provider_01') returns Provider01NormativeProvider."""
+        provider = get_normative_provider("provider_01")
+        assert isinstance(provider, Provider01NormativeProvider)
 
     def test_provider_factory_unknown_raises(self) -> None:
         """Unknown provider name raises ValueError."""
@@ -521,19 +521,19 @@ class TestProviderFactory:
             assert isinstance(provider, StubNormativeProvider)
 
 
-class TestTrustLayersProvider:
-    """Tests for TrustLayersProvider URL construction."""
+class TestProvider01NormativeProvider:
+    """Tests for Provider01NormativeProvider URL construction."""
 
     def test_constructs_correct_baseline_url(self) -> None:
-        """TrustLayersProvider builds correct endpoint URL for baseline fetch."""
-        provider = TrustLayersProvider(endpoint="https://api.trustlayers.example.com")
+        """Provider01NormativeProvider builds correct endpoint URL for baseline fetch."""
+        provider = Provider01NormativeProvider(endpoint="https://api.provider01.example.com")
         # Verify endpoint is stored correctly (URL construction tested via fetch)
-        assert provider._endpoint == "https://api.trustlayers.example.com"
+        assert provider._endpoint == "https://api.provider01.example.com"
 
     def test_strips_trailing_slash(self) -> None:
         """Endpoint trailing slash is stripped."""
-        provider = TrustLayersProvider(endpoint="https://api.trustlayers.example.com/")
-        assert provider._endpoint == "https://api.trustlayers.example.com"
+        provider = Provider01NormativeProvider(endpoint="https://api.provider01.example.com/")
+        assert provider._endpoint == "https://api.provider01.example.com"
 
     async def test_thread_id_cannot_retarget_request_path(self) -> None:
         """A thread_id with path separators stays a single encoded segment.
@@ -560,12 +560,12 @@ class TestTrustLayersProvider:
                 captured["url"] = url
                 raise RuntimeError("stop after URL capture")
 
-        provider = TrustLayersProvider(endpoint="https://api.trustlayers.example.com")
+        provider = Provider01NormativeProvider(endpoint="https://api.provider01.example.com")
         with patch("httpx.AsyncClient", _Client):
             await provider.submit_evidence("../../admin/rotate-key", "HASH")
 
         target = httpx.URL(captured["url"])
-        assert target.host == "api.trustlayers.example.com"
+        assert target.host == "api.provider01.example.com"
         assert target.raw_path.startswith(b"/evidence-chain/")
 
     async def test_region_cannot_retarget_baseline_path(self) -> None:
@@ -588,12 +588,12 @@ class TestTrustLayersProvider:
                 captured["url"] = url
                 raise RuntimeError("stop after URL capture")
 
-        provider = TrustLayersProvider(endpoint="https://api.trustlayers.example.com")
+        provider = Provider01NormativeProvider(endpoint="https://api.provider01.example.com")
         with patch("httpx.AsyncClient", _Client):
             await provider.fetch_baseline("../../secret")
 
         target = httpx.URL(captured["url"])
-        assert target.host == "api.trustlayers.example.com"
+        assert target.host == "api.provider01.example.com"
         assert target.raw_path.startswith(b"/legal-baseline/")
 
 

@@ -2,7 +2,7 @@
 
 **Document:** EU-001 / EU AI Act Art. 29a / ISO 42001 §A.6.1
 **Date:** 2026-06-24
-**Status:** Draft — pending TrustLayers credential provisioning and DPO sign-off
+**Status:** Draft — pending external normative provider credential provisioning and DPO sign-off
 **POAM:** EU-001 (POAM_EU_ECB.md)
 **Region Scope:** `CAGE_DEPLOYMENT_REGION=EU_ECB` only
 
@@ -10,7 +10,7 @@
 
 > [!IMPORTANT]
 > This FRIA is a **draft** and has not been signed off by the Data Protection Officer (DPO) or reviewed by the EU AI Office. EU-001 remains **In Progress** until:
-> 1. TrustLayers credentials are provisioned and `CAGE_NORMATIVE_PROVIDER=trustlayers` is active in EU_ECB prod
+> 1. External normative provider credentials are provisioned and `CAGE_NORMATIVE_PROVIDER=provider_01` is active in EU_ECB prod
 > 2. DPO sign-off is obtained
 > 3. A completed FRIA attestation is submitted to the EU AI Office
 
@@ -135,41 +135,41 @@ The mathematical thresholds complement the qualitative FRIA controls documented 
 - **§4.3 Effective remedy (Art. 47):** The BLOCK zone (`score < 0.70`) provides an absolute safety net: no AI recommendation with high fundamental-rights risk can be autonomously executed, preserving the client's right to challenge decisions made by a human reviewer rather than an opaque algorithm.
 - **§4.2 Data protection (Art. 8):** The FRIA score is computed after PII sanitization (a pre-pipeline / audit-log stage, not a numbered `_run_checks()` tier) — the score never incorporates raw PII, satisfying GDPR Art. 25 data minimisation.
 
-### 5.4 TrustLayers Integration
+### 5.4 External Normative Provider Integration
 
-When `CAGE_NORMATIVE_PROVIDER=trustlayers`, every decision with `fria_score < 0.95` (i.e., in the DEFER or BLOCK zone) is submitted to TrustLayers for independent FRIA validation before the zone decision is finalised. TrustLayers may upgrade a DEFER to ALLOW or downgrade an ALLOW to DEFER based on its own assessment. The Langfuse trace records `fria.path` as one of:
+When `CAGE_NORMATIVE_PROVIDER=provider_01`, every decision with `fria_score < 0.95` (i.e., in the DEFER or BLOCK zone) is submitted to the external normative provider for independent FRIA validation before the zone decision is finalised. The external provider may upgrade a DEFER to ALLOW or downgrade an ALLOW to DEFER based on its own assessment. The Langfuse trace records `fria.path` as one of:
 - `ASYNC_ATTESTED` — score ≥ 0.95, async path
-- `SYNC_GATE_ADMITTED` — 0.70 ≤ score < 0.95, TrustLayers admitted
+- `SYNC_GATE_ADMITTED` — 0.70 ≤ score < 0.95, external provider admitted
 - `SYNC_GATE_DEFERRED` — 0.70 ≤ score < 0.95, HITL required
 - `BLOCKED` — score < 0.70, hard deny
 
 ---
 
-## 6. TrustLayers FRIA Validation (EU AI Act Art. 29a — External Validation)
+## 6. External Normative Provider FRIA Validation (EU AI Act Art. 29a — External Validation)
 
 The `normative_provider.py` module implements adaptive FRIA enforcement gating:
-- When `CAGE_NORMATIVE_PROVIDER=trustlayers` and TrustLayers credentials are configured, every execute_trade decision with confidence < 0.95 is submitted to TrustLayers for independent FRIA validation before action
-- TrustLayers returns an admissibility determination and a set of findings
+- When `CAGE_NORMATIVE_PROVIDER=provider_01` and external provider credentials are configured, every execute_trade decision with confidence < 0.95 is submitted to the external normative provider for independent FRIA validation before action
+- The external provider returns an admissibility determination and a set of findings
 - Non-admitted decisions are blocked (DENY) or escalated to HITL (DEFER)
 
-**Current status:** `CAGE_NORMATIVE_PROVIDER=static` (stub mode) — TrustLayers credentials not yet provisioned. All FRIA checks are stub-admitted. **EU-001 is In Progress pending credential provisioning.**
+**Current status:** `CAGE_NORMATIVE_PROVIDER=static` (stub mode) — external normative provider credentials not yet provisioned. All FRIA checks are stub-admitted. **EU-001 is In Progress pending credential provisioning.**
 
-### TrustLayers Provisioning Runbook
+### External Normative Provider Provisioning Runbook
 
-1. Obtain TrustLayers API key from TrustLayers team (contact: [TBD])
-2. Store API key in GCP Secret Manager: `gcloud secrets create cage-trustlayers-api-key --data-file=-`
+1. Obtain external provider API key from external provider team (contact: [TBD])
+2. Store API key in GCP Secret Manager: `gcloud secrets create cage-normative-provider-api-key --data-file=-`
 3. Add to EU_ECB `prod.tfvars`:
    ```hcl
-   cage_normative_provider         = "trustlayers"
-   cage_normative_endpoint         = "https://api.trustlayers.ai/v1"
-   cage_normative_api_key_secret   = "projects/${project_id}/secrets/cage-trustlayers-api-key/versions/latest"
+   cage_normative_provider         = "provider_01"
+   cage_normative_endpoint         = "https://api.example.com/normative/v1"
+   cage_normative_api_key_secret   = "projects/${project_id}/secrets/cage-normative-provider-api-key/versions/latest"
    ```
 4. Set in EU_ECB gateway Deployment env:
    ```yaml
    - name: CAGE_NORMATIVE_PROVIDER
-     value: "trustlayers"
+     value: "provider_01"
    - name: CAGE_NORMATIVE_ENDPOINT
-     value: "https://api.trustlayers.ai/v1"
+     value: "https://api.example.com/normative/v1"
    ```
 5. Verify boot-time baseline fetch: `kubectl logs -n governance-stack deploy/cage-gateway | grep NormativeDaemon`
 6. Verify adaptive gating: Submit a test trade with confidence 0.80 and confirm Langfuse trace shows `fria.path=SYNC_GATE_ADMITTED`

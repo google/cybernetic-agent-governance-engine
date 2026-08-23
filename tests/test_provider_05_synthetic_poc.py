@@ -13,14 +13,14 @@
 # limitations under the License.
 
 """
-VEIP Synthetic Proof-of-Concept Test Suite (Treasury Transfer).
+Provider 05 Synthetic Proof-of-Concept Test Suite (Treasury Transfer).
 
-Validates all 6 success criteria from §8.4 of plans/veip_three_axioms_architecture.md:
+Validates all 6 success criteria from §8.4 of plans/provider_05_three_axioms_architecture.md:
   1. End-to-end envelope round-trip with all 3 axioms (BLUEPRINT, KEY, PHYSICS)
   2. Canonicalization parity (RFC 8785 JCS determinism)
   3. Signature tamper-evidence over external_attestations[]
   4. Trust-domain admissibility handoff gating (negative test)
-  5. Fail-open resilience when VEIP endpoint is unavailable
+  5. Fail-open resilience when Provider 05 endpoint is unavailable
   6. OSCAL four-state finding vocabulary ingestion
 """
 
@@ -45,14 +45,14 @@ from src.gateway.governance.normative_provider import (
     NormativeBaseline,
     ValidationResult,
 )
-from src.integrations.veip import (
+from src.integrations.provider_05 import (
     AdmissibilityGrant,
     RiskAcceptanceRecord,
     SubstrateAttestation,
-    VEIPBlueprintProvider,
-    VEIPClient,
-    VEIPKeyProvider,
-    VEIPPhysicsProvider,
+    Provider05BlueprintProvider,
+    Provider05Client,
+    Provider05KeyProvider,
+    Provider05PhysicsProvider,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -71,9 +71,9 @@ def ec_key_pair():
 
 
 @pytest.fixture
-def seeded_veip_client():
-    """Create a VEIPClient seeded with valid records for the Treasury Transfer PoC."""
-    client = VEIPClient()
+def seeded_provider_05_client():
+    """Create a Provider05Client seeded with valid records for the Treasury Transfer PoC."""
+    client = Provider05Client()
 
     # Axiom 1 (Blueprint): AO risk-acceptance for THR-FIN-006 ($10,000 consensus trigger)
     client.seed_risk_acceptance(
@@ -82,7 +82,7 @@ def seeded_veip_client():
             threshold_value=10000.0,
             ao_name="Jane Doe, CISO / AO",
             ao_signature_hash="sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            receipt_id="veip-blueprint-rec-9821",
+            receipt_id="provider05-blueprint-rec-9821",
             attested_at="2026-08-21T06:00:00.000Z",
             rationale="Approved $10k threshold per Q3 Risk Committee Charter",
         )
@@ -94,7 +94,7 @@ def seeded_veip_client():
             spiffe_id="spiffe://cage.local/treasury-agent",
             consequence_class="treasury_transfer",
             ca_fingerprint="sha256:a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0",
-            receipt_id="veip-key-grant-4412",
+            receipt_id="provider05-key-grant-4412",
             attested_at="2026-08-21T11:58:00.000Z",
             admitted=True,
         )
@@ -106,7 +106,7 @@ def seeded_veip_client():
             node_id="gke-node-us-central1-01",
             vtpm_status="VERIFIED",
             ebpf_anomaly_count=0,
-            receipt_id="veip-physics-att-7789",
+            receipt_id="provider05-physics-att-7789",
             attested_at="2026-08-21T11:59:48.000Z",
             freshness_seconds=12,
         )
@@ -122,7 +122,7 @@ def seeded_veip_client():
 
 @pytest.mark.asyncio
 async def test_criterion_1_end_to_end_envelope_round_trip(
-    seeded_veip_client, ec_key_pair
+    seeded_provider_05_client, ec_key_pair
 ):
     """Verify $25k Treasury Transfer produces signed envelope with 3 VERIFIED attestations."""
     private_key, _, public_pem = ec_key_pair
@@ -130,9 +130,9 @@ async def test_criterion_1_end_to_end_envelope_round_trip(
     # 1. Initialize Aggregator with all Three Axiom providers
     aggregator = AttestationAggregator(
         providers=[
-            VEIPBlueprintProvider(client=seeded_veip_client),
-            VEIPKeyProvider(client=seeded_veip_client),
-            VEIPPhysicsProvider(client=seeded_veip_client),
+            Provider05BlueprintProvider(client=seeded_provider_05_client),
+            Provider05KeyProvider(client=seeded_provider_05_client),
+            Provider05PhysicsProvider(client=seeded_provider_05_client),
         ]
     )
     await aggregator.boot_fetch()
@@ -169,7 +169,7 @@ async def test_criterion_1_end_to_end_envelope_round_trip(
 
     for att in envelope.external_attestations:
         assert att.status == AttestationStatus.VERIFIED.value
-        assert att.receipt_id.startswith("veip-")
+        assert att.receipt_id.startswith("provider05-")
 
     # 4. Sign and verify envelope with mock key
     digest = envelope.compute_digest()
@@ -205,13 +205,13 @@ async def test_criterion_1_end_to_end_envelope_round_trip(
 # ---------------------------------------------------------------------------
 
 
-def test_criterion_2_canonicalization_parity(seeded_veip_client):
-    """Verify VEIP records and CAGE compute identical RFC 8785 JCS digests."""
-    bp_record = seeded_veip_client._risk_acceptances["THR-FIN-006"]
+def test_criterion_2_canonicalization_parity(seeded_provider_05_client):
+    """Verify Provider 05 records and CAGE compute identical RFC 8785 JCS digests."""
+    bp_record = seeded_provider_05_client._risk_acceptances["THR-FIN-006"]
 
-    # VEIP record canonical bytes
-    veip_bytes = bp_record.to_canonical_bytes()
-    veip_digest = hashlib.sha256(veip_bytes).hexdigest()
+    # Provider 05 record canonical bytes
+    provider_05_bytes = bp_record.to_canonical_bytes()
+    provider_05_digest = hashlib.sha256(provider_05_bytes).hexdigest()
 
     # CAGE JCS canonicalizer on raw dictionary
     cage_bytes = jcs_canonicalize_plan(
@@ -220,15 +220,15 @@ def test_criterion_2_canonicalization_parity(seeded_veip_client):
             "threshold_value": 10000.0,
             "ao_name": "Jane Doe, CISO / AO",
             "ao_signature_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "receipt_id": "veip-blueprint-rec-9821",
+            "receipt_id": "provider05-blueprint-rec-9821",
             "attested_at": "2026-08-21T06:00:00.000Z",
             "rationale": "Approved $10k threshold per Q3 Risk Committee Charter",
         }
     )
     cage_digest = hashlib.sha256(cage_bytes).hexdigest()
 
-    assert veip_bytes == cage_bytes
-    assert veip_digest == cage_digest
+    assert provider_05_bytes == cage_bytes
+    assert provider_05_digest == cage_digest
 
 
 # ---------------------------------------------------------------------------
@@ -236,14 +236,14 @@ def test_criterion_2_canonicalization_parity(seeded_veip_client):
 # ---------------------------------------------------------------------------
 
 
-def test_criterion_3_signature_tamper_evidence(seeded_veip_client, ec_key_pair):
+def test_criterion_3_signature_tamper_evidence(seeded_provider_05_client, ec_key_pair):
     """Verify mutating any field inside external_attestations[] fails signature verification."""
     private_key, _, public_pem = ec_key_pair
 
     att = ExternalAttestation(
         attestation_type="BLUEPRINT",
         status=AttestationStatus.VERIFIED.value,
-        receipt_id="veip-blueprint-rec-9821",
+        receipt_id="provider05-blueprint-rec-9821",
         attested_at="2026-08-21T06:00:00.000Z",
         metadata={"threshold_id": "THR-FIN-006"},
     )
@@ -280,7 +280,7 @@ def test_criterion_3_signature_tamper_evidence(seeded_veip_client, ec_key_pair):
 
         # Tamper 1: Mutate receipt_id
         env_tampered_receipt = builder._envelope_from_dict(signed_env.to_dict())
-        env_tampered_receipt.external_attestations[0].receipt_id = "veip-FORGED-receipt"
+        env_tampered_receipt.external_attestations[0].receipt_id = "provider05-FORGED-receipt"
         assert builder.verify(env_tampered_receipt) is False
 
         # Tamper 2: Mutate status from VERIFIED to DENIED
@@ -302,9 +302,9 @@ def test_criterion_3_signature_tamper_evidence(seeded_veip_client, ec_key_pair):
 
 
 @pytest.mark.asyncio
-async def test_criterion_4_trust_domain_admissibility_negative_test(seeded_veip_client):
+async def test_criterion_4_trust_domain_admissibility_negative_test(seeded_provider_05_client):
     """Verify unauthorized SPIFFE ID produces status: DENIED."""
-    provider = VEIPKeyProvider(client=seeded_veip_client)
+    provider = Provider05KeyProvider(client=seeded_provider_05_client)
 
     # 1. Valid admitted agent
     valid_att = await provider.fetch_attestations(
@@ -317,12 +317,12 @@ async def test_criterion_4_trust_domain_admissibility_negative_test(seeded_veip_
     assert valid_att[0].status == AttestationStatus.VERIFIED.value
 
     # 2. Seed an explicit DENIED grant for an unauthorized agent
-    seeded_veip_client.seed_admissibility_grant(
+    seeded_provider_05_client.seed_admissibility_grant(
         AdmissibilityGrant(
             spiffe_id="spiffe://cage.local/unauthorized-agent",
             consequence_class="treasury_transfer",
             ca_fingerprint="sha256:0000000000000000000000000000000000000000000000000000000000000000",
-            receipt_id="veip-key-grant-denied-001",
+            receipt_id="provider05-key-grant-denied-001",
             attested_at="2026-08-21T12:00:00.000Z",
             admitted=False,
         )
@@ -345,9 +345,9 @@ async def test_criterion_4_trust_domain_admissibility_negative_test(seeded_veip_
 
 @pytest.mark.asyncio
 async def test_criterion_5_fail_open_resilience():
-    """Verify empty/offline VEIP client emits STALE attestation without crashing."""
-    empty_client = VEIPClient()  # No seeded records and no live endpoint
-    provider = VEIPBlueprintProvider(client=empty_client)
+    """Verify empty/offline Provider 05 client emits STALE attestation without crashing."""
+    empty_client = Provider05Client()  # No seeded records and no live endpoint
+    provider = Provider05BlueprintProvider(client=empty_client)
 
     attestations = await provider.fetch_attestations({"threshold_id": "THR-FIN-006"})
     assert len(attestations) == 1

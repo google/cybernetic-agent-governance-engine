@@ -13,12 +13,12 @@
 # limitations under the License.
 
 """
-tests/test_nexart_integration.py
-=================================
-Hermetic unit tests for src/integrations/nexart/adapter.py and
-src/integrations/nexart/provider.py.
+tests/test_provider_02_integration.py
+=====================================
+Hermetic unit tests for src/integrations/provider_02/adapter.py and
+src/integrations/provider_02/provider.py.
 
-Gap 6: Both nexart adapter and provider are functionally untested.
+Gap 6: Both provider_02 adapter and provider are functionally untested.
 These tests exercise public APIs, data contracts, and logic branches
 without making live HTTP calls (all network I/O is mocked).
 
@@ -51,7 +51,7 @@ class TestProjectBundleStepEntry:
 
     def test_step_entry_auto_generates_step_id(self) -> None:
         """ProjectBundleStepEntry must auto-generate a UUID step_id."""
-        from src.integrations.nexart.adapter import ProjectBundleStepEntry
+        from src.integrations.provider_02.adapter import ProjectBundleStepEntry
 
         entry = ProjectBundleStepEntry(node_name="evaluator")
         assert entry.step_id, "step_id must be non-empty"
@@ -60,8 +60,8 @@ class TestProjectBundleStepEntry:
         assert str(parsed) == entry.step_id, "step_id must be a valid UUID string"
 
     def test_step_entry_to_dict_contains_all_keys(self) -> None:
-        """ProjectBundleStepEntry.to_dict() must contain all NexArt API keys."""
-        from src.integrations.nexart.adapter import ProjectBundleStepEntry
+        """ProjectBundleStepEntry.to_dict() must contain all Provider 02 API keys."""
+        from src.integrations.provider_02.adapter import ProjectBundleStepEntry
 
         entry = ProjectBundleStepEntry(
             node_name="safety_check",
@@ -83,7 +83,7 @@ class TestProjectBundleStepEntry:
 
     def test_step_entry_to_dict_values_match(self) -> None:
         """ProjectBundleStepEntry.to_dict() values must match field values."""
-        from src.integrations.nexart.adapter import ProjectBundleStepEntry
+        from src.integrations.provider_02.adapter import ProjectBundleStepEntry
 
         entry = ProjectBundleStepEntry(
             node_name="governed_trader",
@@ -98,7 +98,7 @@ class TestProjectBundleStepEntry:
 
     def test_step_entry_default_parent_step_ids_is_empty_list(self) -> None:
         """ProjectBundleStepEntry.parent_step_ids defaults to empty list."""
-        from src.integrations.nexart.adapter import ProjectBundleStepEntry
+        from src.integrations.provider_02.adapter import ProjectBundleStepEntry
 
         entry = ProjectBundleStepEntry(node_name="nemo_guardrail")
         assert entry.parent_step_ids == [], "parent_step_ids must default to empty list"
@@ -110,7 +110,7 @@ class TestAttestationBundle:
 
     def test_bundle_auto_generates_bundle_id(self) -> None:
         """AttestationBundle must auto-generate a UUID bundle_id."""
-        from src.integrations.nexart.adapter import AttestationBundle
+        from src.integrations.provider_02.adapter import AttestationBundle
 
         bundle = AttestationBundle(thread_id="thread-001")
         assert bundle.bundle_id, "bundle_id must be non-empty"
@@ -118,8 +118,8 @@ class TestAttestationBundle:
         assert str(parsed) == bundle.bundle_id, "bundle_id must be a valid UUID"
 
     def test_bundle_to_dict_structure(self) -> None:
-        """AttestationBundle.to_dict() must contain all required NexArt API keys."""
-        from src.integrations.nexart.adapter import (
+        """AttestationBundle.to_dict() must contain all required Provider 02 API keys."""
+        from src.integrations.provider_02.adapter import (
             AttestationBundle,
             ProjectBundleStepEntry,
         )
@@ -143,7 +143,7 @@ class TestAttestationBundle:
 
     def test_bundle_to_dict_serializes_steps(self) -> None:
         """AttestationBundle.to_dict() must serialize nested steps."""
-        from src.integrations.nexart.adapter import (
+        from src.integrations.provider_02.adapter import (
             AttestationBundle,
             ProjectBundleStepEntry,
         )
@@ -165,7 +165,7 @@ class TestHelperFunctions:
 
     def test_serialize_state_snapshot_deep_copies_state(self) -> None:
         """_serialize_state_snapshot must return an independent deep copy."""
-        from src.integrations.nexart.adapter import _serialize_state_snapshot
+        from src.integrations.provider_02.adapter import _serialize_state_snapshot
 
         original = {"risk_status": "APPROVED", "loop_count": 1}
         snapshot = _serialize_state_snapshot(original)
@@ -178,7 +178,7 @@ class TestHelperFunctions:
 
     def test_serialize_state_snapshot_drops_completed_transactions(self) -> None:
         """_serialize_state_snapshot must drop completed_transactions."""
-        from src.integrations.nexart.adapter import _serialize_state_snapshot
+        from src.integrations.provider_02.adapter import _serialize_state_snapshot
 
         state = {
             "risk_status": "APPROVED",
@@ -191,7 +191,7 @@ class TestHelperFunctions:
 
     def test_hash_state_is_deterministic(self) -> None:
         """_hash_state must produce the same hash for identical state."""
-        from src.integrations.nexart.adapter import _hash_state
+        from src.integrations.provider_02.adapter import _hash_state
 
         state = {"risk_status": "APPROVED", "loop_count": 1}
         hash1 = _hash_state(state)
@@ -201,7 +201,7 @@ class TestHelperFunctions:
 
     def test_hash_state_differs_for_different_states(self) -> None:
         """_hash_state must produce different hashes for different states."""
-        from src.integrations.nexart.adapter import _hash_state
+        from src.integrations.provider_02.adapter import _hash_state
 
         state_a = {"risk_status": "APPROVED"}
         state_b = {"risk_status": "REJECTED"}
@@ -211,7 +211,7 @@ class TestHelperFunctions:
 
     def test_extract_signals_guardrail_blocked(self) -> None:
         """_extract_signals must capture guardrail_blocked and guardrail_reason."""
-        from src.integrations.nexart.adapter import _extract_signals
+        from src.integrations.provider_02.adapter import _extract_signals
 
         state = {
             "guardrail_blocked": True,
@@ -223,7 +223,7 @@ class TestHelperFunctions:
 
     def test_extract_signals_evaluation_result(self) -> None:
         """_extract_signals must extract evaluation verdict and policy check."""
-        from src.integrations.nexart.adapter import _extract_signals
+        from src.integrations.provider_02.adapter import _extract_signals
 
         state = {
             "evaluation_result": {
@@ -238,7 +238,7 @@ class TestHelperFunctions:
 
     def test_classify_terminal_path_happy_path(self) -> None:
         """_classify_terminal_path must return 'happy_path' when governed_trader present."""
-        from src.integrations.nexart.adapter import (
+        from src.integrations.provider_02.adapter import (
             ProjectBundleStepEntry,
             _classify_terminal_path,
         )
@@ -256,7 +256,7 @@ class TestHelperFunctions:
 
     def test_classify_terminal_path_cbf_block(self) -> None:
         """_classify_terminal_path must return 'cbf_block' on BLOCKED safety_check."""
-        from src.integrations.nexart.adapter import (
+        from src.integrations.provider_02.adapter import (
             ProjectBundleStepEntry,
             _classify_terminal_path,
         )
@@ -276,7 +276,7 @@ class TestHelperFunctions:
 
     def test_classify_terminal_path_loop_breaker(self) -> None:
         """_classify_terminal_path returns 'loop_breaker' when loopCount >= 3."""
-        from src.integrations.nexart.adapter import (
+        from src.integrations.provider_02.adapter import (
             ProjectBundleStepEntry,
             _classify_terminal_path,
         )
@@ -295,37 +295,37 @@ class TestHelperFunctions:
 
 
 @pytest.mark.local
-class TestNexArtAttestationCallback:
-    """Tests for NexArtAttestationCallback lifecycle and step recording."""
+class TestProvider02AttestationCallback:
+    """Tests for Provider02AttestationCallback lifecycle and step recording."""
 
     def test_callback_initialises_with_thread_id(self) -> None:
-        """NexArtAttestationCallback must store the provided thread_id."""
-        from src.integrations.nexart.adapter import NexArtAttestationCallback
+        """Provider02AttestationCallback must store the provided thread_id."""
+        from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
-        cb = NexArtAttestationCallback(thread_id="thread-abc")
+        cb = Provider02AttestationCallback(thread_id="thread-abc")
         assert cb._thread_id == "thread-abc"
 
     def test_callback_auto_generates_thread_id_when_not_provided(self) -> None:
-        """NexArtAttestationCallback must auto-generate a thread_id when not given."""
-        from src.integrations.nexart.adapter import NexArtAttestationCallback
+        """Provider02AttestationCallback must auto-generate a thread_id when not given."""
+        from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
-        cb = NexArtAttestationCallback()
+        cb = Provider02AttestationCallback()
         assert cb._thread_id, "thread_id must be auto-generated"
         parsed = uuid.UUID(cb._thread_id)
         assert str(parsed) == cb._thread_id
 
     def test_callback_step_count_starts_at_zero(self) -> None:
         """step_count property must return 0 before any node events."""
-        from src.integrations.nexart.adapter import NexArtAttestationCallback
+        from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
-        cb = NexArtAttestationCallback(thread_id="t")
+        cb = Provider02AttestationCallback(thread_id="t")
         assert cb.step_count == 0
 
     def test_on_chain_end_records_attestation_nodes(self) -> None:
         """on_chain_end must record a step for governance-significant nodes."""
-        from src.integrations.nexart.adapter import NexArtAttestationCallback
+        from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
-        cb = NexArtAttestationCallback(thread_id="t")
+        cb = Provider02AttestationCallback(thread_id="t")
         cb.on_chain_start("evaluator", {})
         cb.on_chain_end("evaluator", {"risk_status": "APPROVED"})
 
@@ -335,9 +335,9 @@ class TestNexArtAttestationCallback:
 
     def test_on_chain_end_skips_non_attestation_nodes(self) -> None:
         """on_chain_end must not record a step for non-significant nodes."""
-        from src.integrations.nexart.adapter import NexArtAttestationCallback
+        from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
-        cb = NexArtAttestationCallback(thread_id="t")
+        cb = Provider02AttestationCallback(thread_id="t")
         cb.on_chain_end("thinker_node", {"some": "state"})
 
         assert cb.step_count == 0, (
@@ -346,12 +346,12 @@ class TestNexArtAttestationCallback:
 
     def test_get_bundle_returns_attestation_bundle(self) -> None:
         """get_bundle() must return an AttestationBundle with collected steps."""
-        from src.integrations.nexart.adapter import (
+        from src.integrations.provider_02.adapter import (
             AttestationBundle,
-            NexArtAttestationCallback,
+            Provider02AttestationCallback,
         )
 
-        cb = NexArtAttestationCallback(thread_id="t")
+        cb = Provider02AttestationCallback(thread_id="t")
         cb.on_chain_start("evaluator", {})
         cb.on_chain_end("evaluator", {"risk_status": "APPROVED"})
 
@@ -364,9 +364,9 @@ class TestNexArtAttestationCallback:
 
     def test_hitl_interrupt_records_interrupt_step(self) -> None:
         """handle_hitl_interrupt() must record a hitl_interrupt step."""
-        from src.integrations.nexart.adapter import NexArtAttestationCallback
+        from src.integrations.provider_02.adapter import Provider02AttestationCallback
 
-        cb = NexArtAttestationCallback(thread_id="t")
+        cb = Provider02AttestationCallback(thread_id="t")
         state = {
             "approval_required": True,
             "approval_decision": {
@@ -387,7 +387,7 @@ class TestNexArtAttestationCallback:
 
 
 # ---------------------------------------------------------------------------
-# Tests: provider.py — CERReceipt, CERVerification, JWKCache, NexArtAttestationProvider
+# Tests: provider.py — CERReceipt, CERVerification, JWKCache, Provider02AttestationProvider
 # ---------------------------------------------------------------------------
 
 
@@ -397,11 +397,11 @@ class TestProviderDataContracts:
 
     def test_cer_receipt_is_valid_when_hash_present(self) -> None:
         """CERReceipt.is_valid must be True when certificate_hash is set and no error."""
-        from src.integrations.nexart.provider import CERReceipt
+        from src.integrations.provider_02.provider import CERReceipt
 
         receipt = CERReceipt(
             certificate_hash="a" * 64,
-            receipt_url="https://nexart.example.com/cer/abc",
+            receipt_url="https://provider02.example.com/cer/abc",
             signer_key_id="kid-1",
             signed_at="2026-01-01T00:00:00+00:00",
         )
@@ -411,14 +411,14 @@ class TestProviderDataContracts:
 
     def test_cer_receipt_is_invalid_when_error_set(self) -> None:
         """CERReceipt.is_valid must be False when error is set."""
-        from src.integrations.nexart.provider import CERReceipt
+        from src.integrations.provider_02.provider import CERReceipt
 
         receipt = CERReceipt(error="HTTP 503 Service Unavailable")
         assert receipt.is_valid is False, "CERReceipt must be invalid when error is set"
 
     def test_cer_receipt_is_invalid_when_hash_empty(self) -> None:
         """CERReceipt.is_valid must be False when certificate_hash is empty."""
-        from src.integrations.nexart.provider import CERReceipt
+        from src.integrations.provider_02.provider import CERReceipt
 
         receipt = CERReceipt(certificate_hash="")
         assert receipt.is_valid is False, (
@@ -427,21 +427,21 @@ class TestProviderDataContracts:
 
     def test_jwk_cache_is_stale_when_never_synced(self) -> None:
         """JWKCache.is_stale must be True when last_synced=0."""
-        from src.integrations.nexart.provider import JWKCache
+        from src.integrations.provider_02.provider import JWKCache
 
         cache = JWKCache()
         assert cache.is_stale is True, "Fresh JWKCache must be stale (last_synced=0)"
 
     def test_jwk_cache_has_keys_false_when_empty(self) -> None:
         """JWKCache.has_keys must be False when no keys loaded."""
-        from src.integrations.nexart.provider import JWKCache
+        from src.integrations.provider_02.provider import JWKCache
 
         cache = JWKCache()
         assert cache.has_keys is False, "JWKCache.has_keys must be False when empty"
 
     def test_jwk_cache_has_keys_true_when_populated(self) -> None:
         """JWKCache.has_keys must be True when keys list is non-empty."""
-        from src.integrations.nexart.provider import JWKCache
+        from src.integrations.provider_02.provider import JWKCache
 
         cache = JWKCache(
             jwk_set={"keys": [{"kty": "OKP", "crv": "Ed25519", "kid": "key-1"}]},
@@ -451,38 +451,38 @@ class TestProviderDataContracts:
 
 
 @pytest.mark.local
-class TestNexArtAttestationProvider:
-    """Tests for NexArtAttestationProvider (hermetic — all HTTP mocked)."""
+class TestProvider02AttestationProvider:
+    """Tests for Provider02AttestationProvider (hermetic — all HTTP mocked)."""
 
     def test_provider_initialises_without_endpoint(self) -> None:
-        """NexArtAttestationProvider must initialise without crashing even if endpoint is unset."""
-        from src.integrations.nexart.provider import NexArtAttestationProvider
+        """Provider02AttestationProvider must initialise without crashing even if endpoint is unset."""
+        from src.integrations.provider_02.provider import Provider02AttestationProvider
 
         # No env vars set — should not raise
-        provider = NexArtAttestationProvider(endpoint="", api_key="")
+        provider = Provider02AttestationProvider(endpoint="", api_key="")
         assert provider is not None
 
     def test_provider_has_no_jwk_keys_initially(self) -> None:
         """Provider must report has_jwk_keys=False before any sync."""
-        from src.integrations.nexart.provider import NexArtAttestationProvider
+        from src.integrations.provider_02.provider import Provider02AttestationProvider
 
-        provider = NexArtAttestationProvider(endpoint="https://nexart.example.com")
+        provider = Provider02AttestationProvider(endpoint="https://provider02.example.com")
         assert provider.has_jwk_keys is False
 
     def test_provider_jwk_cache_age_is_inf_before_sync(self) -> None:
         """jwk_cache_age_seconds must be inf before any sync."""
-        from src.integrations.nexart.provider import NexArtAttestationProvider
+        from src.integrations.provider_02.provider import Provider02AttestationProvider
 
-        provider = NexArtAttestationProvider()
+        provider = Provider02AttestationProvider()
         assert provider.jwk_cache_age_seconds == float("inf"), (
             "jwk_cache_age_seconds must be inf before sync"
         )
 
     def test_verify_local_fails_with_wrong_hash_length(self) -> None:
         """_verify_local must return invalid when certificate_hash length != 64."""
-        from src.integrations.nexart.provider import JWKCache, NexArtAttestationProvider
+        from src.integrations.provider_02.provider import JWKCache, Provider02AttestationProvider
 
-        provider = NexArtAttestationProvider(endpoint="https://nexart.example.com")
+        provider = Provider02AttestationProvider(endpoint="https://provider02.example.com")
         # Inject a fake JWK cache so the local path is taken
         provider._jwk_cache = JWKCache(
             jwk_set={"keys": [{"kid": "k1"}]},
@@ -495,9 +495,9 @@ class TestNexArtAttestationProvider:
 
     def test_verify_local_returns_valid_for_correct_hash_length(self) -> None:
         """_verify_local must return valid when certificate_hash is 64 chars."""
-        from src.integrations.nexart.provider import JWKCache, NexArtAttestationProvider
+        from src.integrations.provider_02.provider import JWKCache, Provider02AttestationProvider
 
-        provider = NexArtAttestationProvider(endpoint="https://nexart.example.com")
+        provider = Provider02AttestationProvider(endpoint="https://provider02.example.com")
         provider._jwk_cache = JWKCache(
             jwk_set={"keys": [{"kid": "k1"}]},
             last_synced=time.time(),
@@ -511,9 +511,9 @@ class TestNexArtAttestationProvider:
     @pytest.mark.asyncio
     async def test_certify_decision_returns_error_receipt_on_http_failure(self) -> None:
         """certify_decision() must return a CERReceipt with error on HTTP failure."""
-        from src.integrations.nexart.provider import NexArtAttestationProvider
+        from src.integrations.provider_02.provider import Provider02AttestationProvider
 
-        provider = NexArtAttestationProvider(endpoint="https://nexart.example.com")
+        provider = Provider02AttestationProvider(endpoint="https://provider02.example.com")
 
         # Patch httpx to raise a connection error
         import httpx
@@ -533,9 +533,9 @@ class TestNexArtAttestationProvider:
     @pytest.mark.asyncio
     async def test_register_project_bundle_returns_error_on_failure(self) -> None:
         """register_project_bundle() must return error dict on HTTP failure."""
-        from src.integrations.nexart.provider import NexArtAttestationProvider
+        from src.integrations.provider_02.provider import Provider02AttestationProvider
 
-        provider = NexArtAttestationProvider(endpoint="https://nexart.example.com")
+        provider = Provider02AttestationProvider(endpoint="https://provider02.example.com")
 
         import httpx
 
@@ -552,16 +552,16 @@ class TestNexArtAttestationProvider:
             "register_project_bundle must return an error dict on HTTP failure"
         )
 
-    def test_get_nexart_provider_returns_singleton(self) -> None:
-        """get_nexart_provider() must return the same instance on repeated calls."""
-        from src.integrations.nexart import provider as provider_module
+    def test_get_provider_02_returns_singleton(self) -> None:
+        """get_provider_02() must return the same instance on repeated calls."""
+        from src.integrations.provider_02 import provider as provider_module
 
         # Reset singleton for clean test
         provider_module._provider = None
 
-        p1 = provider_module.get_nexart_provider()
-        p2 = provider_module.get_nexart_provider()
-        assert p1 is p2, "get_nexart_provider() must return a singleton instance"
+        p1 = provider_module.get_provider_02()
+        p2 = provider_module.get_provider_02()
+        assert p1 is p2, "get_provider_02() must return a singleton instance"
 
         # Cleanup
         provider_module._provider = None

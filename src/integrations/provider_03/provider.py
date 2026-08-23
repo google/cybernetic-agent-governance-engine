@@ -13,14 +13,14 @@
 # limitations under the License.
 
 """
-VERITAS OS Normative Compliance Provider Adapter.
-=================================================
+Provider 03 Normative Compliance Provider Adapter.
+==================================================
 
-Production normative provider connecting VERITAS OS decision governance,
-bind receipts, and TrustLog provenance into CAGE's NormativeProvider seam.
+Production normative provider connecting decision governance,
+bind receipts, and provenance into CAGE's NormativeProvider seam.
 
 Architecture:
-  - Ingests VERITAS bind receipts and maps them to CAGE authority context.
+  - Ingests bind receipts and maps them to CAGE authority context.
   - Implements the 3-endpoint NormativeProvider contract:
       1. fetch_legal_baseline(region)
       2. validate_external_fria(thread_id, plan)
@@ -36,17 +36,17 @@ import os
 import time
 from typing import Any
 
-logger = logging.getLogger("cage.integrations.veritas")
+logger = logging.getLogger("cage.integrations.provider_03")
 
-_ENDPOINT: str = os.environ.get("VERITAS_NORMATIVE_ENDPOINT", "")
-_API_KEY_SECRET: str = os.environ.get("VERITAS_NORMATIVE_API_KEY_SECRET", "")
+_ENDPOINT: str = os.environ.get("PROVIDER_03_NORMATIVE_ENDPOINT", "")
+_API_KEY_SECRET: str = os.environ.get("PROVIDER_03_NORMATIVE_API_KEY_SECRET", "")
 _TIMEOUT_SECONDS: float = float(
-    os.environ.get("VERITAS_NORMATIVE_TIMEOUT_SECONDS", "5.0")
+    os.environ.get("PROVIDER_03_NORMATIVE_TIMEOUT_SECONDS", "5.0")
 )
 
 
-class VeritasNormativeProvider:
-    """Normative provider adapter connecting VERITAS OS with CAGE."""
+class Provider03NormativeProvider:
+    """Normative provider adapter connecting Provider 03 with CAGE."""
 
     def __init__(
         self,
@@ -59,22 +59,22 @@ class VeritasNormativeProvider:
         self._timeout = timeout
 
         logger.info(
-            "[VeritasNormativeProvider] Initialised: endpoint=%s timeout=%.1fs",
+            "[Provider03NormativeProvider] Initialised: endpoint=%s timeout=%.1fs",
             self._endpoint or "<in-process-mock>",
             self._timeout,
         )
 
     async def fetch_legal_baseline(self, region: str) -> dict[str, Any]:
-        """Fetch jurisdictional normative baseline from VERITAS."""
+        """Fetch jurisdictional normative baseline from Provider 03."""
         logger.info(
-            "[VeritasNormativeProvider] Fetching baseline for region=%s", region
+            "[Provider03NormativeProvider] Fetching baseline for region=%s", region
         )
         return {
             "region": region,
-            "provider": "VERITAS_OS",
+            "provider": "PROVIDER_03",
             "active_rules": [
-                "VERITAS_DECISION_MANDATE_V1",
-                "VERITAS_BOUND_AUTHORITY_V2",
+                "PROVIDER_03_DECISION_MANDATE_V1",
+                "PROVIDER_03_BOUND_AUTHORITY_V2",
             ],
             "synced_at": time.time(),
         }
@@ -82,36 +82,36 @@ class VeritasNormativeProvider:
     async def validate_external_fria(
         self, thread_id: str, plan: dict[str, Any]
     ) -> dict[str, Any]:
-        """Validate execution intent against VERITAS decision governance."""
+        """Validate execution intent against Provider 03 decision governance."""
         logger.info(
-            "[VeritasNormativeProvider] Validating FRIA: thread_id=%s action=%s",
+            "[Provider03NormativeProvider] Validating FRIA: thread_id=%s action=%s",
             thread_id,
             plan.get("action"),
         )
         return {
             "verdict": "APPROVED",
-            "provider": "VERITAS_OS",
+            "provider": "PROVIDER_03",
             "thread_id": thread_id,
-            "decision_receipt_id": f"veritas-{thread_id[:8]}",
+            "decision_receipt_id": f"provider03-{thread_id[:8]}",
             "attestation_timestamp": time.time(),
         }
 
     async def submit_evidence_chain(
         self, thread_id: str, record: dict[str, Any]
     ) -> bool:
-        """Submit post-execution attestation evidence to VERITAS TrustLog."""
+        """Submit post-execution attestation evidence to Provider 03."""
         logger.info(
-            "[VeritasNormativeProvider] Submitting evidence chain to TrustLog: thread_id=%s",
+            "[Provider03NormativeProvider] Submitting evidence chain: thread_id=%s",
             thread_id,
         )
         return True
 
     def ingest_bind_receipt(self, receipt: dict[str, Any]) -> str:
-        """Ingest and verify a VERITAS bind receipt, returning its canonical hash."""
+        """Ingest and verify a Provider 03 bind receipt, returning its canonical hash."""
         canon = json.dumps(receipt, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(canon.encode()).hexdigest()
         logger.info(
-            "[VeritasNormativeProvider] Ingested bind receipt: id=%s hash=%s",
+            "[Provider03NormativeProvider] Ingested bind receipt: id=%s hash=%s",
             receipt.get("receipt_id", "unknown"),
             digest[:16],
         )

@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Archytan integration — attestation provider and envelope mapper."""
+"""
+Provider 03 Integration Package.
+================================
+Provides the Provider03NormativeProvider adapter connecting decision
+governance, bind receipts, and provenance into CAGE's NormativeProvider seam.
+"""
 
-from src.integrations.archytan.envelope_mapper import ArchytanEnvelopeMapper
-from src.integrations.archytan.provider import ArchytanAttestationProvider
+from .provider import Provider03NormativeProvider
 
-__all__ = [
-    "ArchytanAttestationProvider",
-    "ArchytanEnvelopeMapper",
-]
+__all__ = ["Provider03NormativeProvider"]

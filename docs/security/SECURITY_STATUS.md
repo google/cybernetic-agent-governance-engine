@@ -37,7 +37,7 @@ CAGE v2.1.0 provides a **production-grade AI governance enforcement runtime**. T
 | Recursion guard                  | `loop_count >= 3 → explainer` escape hatch                                | ✅ Implemented & tested |
 | DEFER state machine (AARM-V7)    | Redis db=1 noeviction; SSE events; OTel metrics; closes AARM-V7 threat vector | ✅ Implemented |
 | SHA-256 hash-chained context     | Context accumulator with hash-chain integrity; closes AARM-V1 threat vector | ✅ Implemented |
-| External Normative Provider      | Adaptive FRIA gating (EU AI Act); stub mode until TrustLayers credentials provisioned (POAM-022) | ✅ Implemented |
+| External Normative Provider      | Adaptive FRIA gating (EU AI Act); stub mode until external provider credentials provisioned (POAM-022) | ✅ Implemented |
 | Linkerd mTLS (SC-8 / IA-3)       | SPIFFE/SVID identity; gateway↔OPA, gateway↔NeMo; closes POAM-007          | ✅ Implemented (v1.1.0) |
 | Cilium L7 egress lockdown (SC-7) | FQDN allowlist (gateway); internal-only (agent pods)                      | ✅ Implemented (v1.1.0) |
 | Cryptographic evidence chain     | SHA-256 hash-chained NDJSON; MiFID II / GDPR view-access log; KMS batch signing for OSCAL artifacts | ✅ Implemented (v1.1.0) |
@@ -117,7 +117,7 @@ The following weaknesses are documented in [`docs/POAM_US_FED.md`](../compliance
 | POAM-019 | AU-9, SC-7 | ~~Terraform fallback silently collapses dual-project telemetry isolation~~ **✅ Closed** — `lifecycle.precondition` added to `app_secrets` module call in `main.tf`; `variables.tf` adds `nullable=false` + validation blocks on compliance key vars (2026-06-23) | High | **Closed** | 2026-06-23 |
 | POAM-020 | CM-3       | ~~Technical report README version mismatch~~ **✅ Closed** — aligned to current release | Moderate | **Closed** | 2026-06-15 |
 | POAM-021 | SI-4       | ~~AgentSight eBPF exporter in console mode~~ **✅ Closed** — `exporter.type: "remote"` confirmed | High | **Closed** | 2026-07-15 |
-| POAM-022 | SA-9, CA-7 | External Normative Provider operating in stub mode (TrustLayers credentials not provisioned) | Moderate | In Progress | 2026-08-31 |
+| POAM-022 | SA-9, CA-7 | External Normative Provider operating in stub mode (external provider credentials not provisioned) | Moderate | In Progress | 2026-08-31 |
 | POAM-023 | SI-2       | CVE-2025-13462 in `libpython3.11` (python:3.12-slim-bookworm base layer) — 19 CRITICAL CVEs; gateway Dockerfile pinned to `python:3.12-slim-bookworm` with `apt-get upgrade -y` applied at build time; no Debian bookworm fix available as of 2026-06-08; residual CVEs suppressed via `.trivyignore`; Cilium egress lockdown reduces exploitability; risk accepted with review date 2026-09-08 | **Critical** | Open | 2026-09-08 |
 
 ### Testing Gaps
@@ -179,7 +179,7 @@ Before deploying CAGE in a regulated financial environment:
 4. **Configure Langfuse compliance credentials** — `LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `LANGFUSE_COMPLIANCE_SECRET_KEY` must be set; absence silently drops all compliance audit traces (POAM-018)
 5. **Add TLS enforcement test** — verify all REST and gRPC endpoints require TLS 1.2+ with a test assertion (POAM-011)
 6. **Pin all dependencies** — replace `>=` specifiers with exact pinned versions to prevent uncontrolled updates (POAM-013)
-7. **Provision TrustLayers credentials** — configure `CAGE_NORMATIVE_ENDPOINT` and `CAGE_NORMATIVE_API_KEY_SECRET` to activate External Normative Provider for EU AI Act FRIA gating (POAM-022)
+7. **Provision external normative provider credentials** — configure `CAGE_NORMATIVE_ENDPOINT` and `CAGE_NORMATIVE_API_KEY_SECRET` to activate External Normative Provider for EU AI Act FRIA gating (POAM-022)
 
 ---
 

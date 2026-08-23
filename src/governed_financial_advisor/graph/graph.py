@@ -241,18 +241,18 @@ def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
     # Falls back gracefully to MemorySaver when redis_url is None (local dev/test).
     checkpointer = get_checkpointer(redis_url)
 
-    # NexArt Attestation — opt-in via NEXART_ATTESTATION_ENABLED=true
-    # When enabled, a NexArtAttestationCallback is created and stored on the
-    # compiled graph as ``_nexart_callback`` for retrieval after execution.
+    # Provider 02 Attestation — opt-in via PROVIDER_02_ATTESTATION_ENABLED=true
+    # When enabled, a Provider02AttestationCallback is created and stored on the
+    # compiled graph as ``_provider_02_callback`` for retrieval after execution.
     # Zero overhead when disabled — no import, no instantiation.
-    nexart_callback = None
-    if os.environ.get("NEXART_ATTESTATION_ENABLED", "").lower() == "true":
+    provider_02_callback = None
+    if os.environ.get("PROVIDER_02_ATTESTATION_ENABLED", "").lower() == "true":
         try:
-            from src.integrations.nexart import NexArtAttestationCallback
+            from src.integrations.provider_02 import Provider02AttestationCallback
 
-            nexart_callback = NexArtAttestationCallback()
+            provider_02_callback = Provider02AttestationCallback()
         except ImportError:
-            pass  # nexart_adapter not available — skip silently
+            pass  # provider_02 adapter not available — skip silently
 
     compiled = workflow.compile(
         checkpointer=checkpointer,
@@ -260,6 +260,6 @@ def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
     )
 
     # Attach the callback for caller retrieval (does not affect graph execution)
-    compiled._nexart_callback = nexart_callback  # type: ignore[attr-defined]
+    compiled._provider_02_callback = provider_02_callback  # type: ignore[attr-defined]
 
     return compiled

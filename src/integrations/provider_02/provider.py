@@ -13,13 +13,13 @@
 # limitations under the License.
 
 """
-nexart_provider.py — NexArt Attestation Provider (Feature 5)
-=============================================================
+provider.py — Provider 02 Attestation Provider (Feature 5)
+==========================================================
 
-Integrates NexArt as an attestation provider following the existing
+Integrates Provider 02 as an attestation provider following the existing
 ``NormativeProvider`` Protocol pattern from ``normative_provider.py``.
 
-NexArt adds a capability beyond TrustLayers: **public JWK-verifiable receipts**
+Provider 02 adds a capability: **public JWK-verifiable receipts**
 (Ed25519 signed CERs).  This module provides:
 
   1. CER creation via ``certifyDecision`` — wraps the raw HTTP API
@@ -28,7 +28,7 @@ NexArt adds a capability beyond TrustLayers: **public JWK-verifiable receipts**
 
 JWK Caching Strategy
 --------------------
-The JWK endpoint is configured via ``NEXART_JWK_ENDPOINT`` and cached locally
+The JWK endpoint is configured via ``PROVIDER_02_JWK_ENDPOINT`` and cached locally
 with a 24-hour sync interval.  This avoids relying on a live out-of-band
 network request during hot-path validation, which would break zero-trust
 network boundaries and paralyse the worker pool on DNS degradation.
@@ -38,13 +38,13 @@ PEM string instantly accessible inside the execution environment.
 
 Environment variables
 ---------------------
-  NEXART_API_ENDPOINT       — NexArt API base URL (required)
-  NEXART_API_KEY_SECRET     — API key (direct or Secret Manager path)
-  NEXART_JWK_ENDPOINT       — Public JWK endpoint for receipt verification
-  NEXART_JWK_CACHE_TTL_HOURS — JWK cache TTL (default: 24)
-  NEXART_TIMEOUT_SECONDS    — Per-request timeout (default: 5.0)
+  PROVIDER_02_API_ENDPOINT       — API base URL (required)
+  PROVIDER_02_API_KEY_SECRET     — API key (direct or Secret Manager path)
+  PROVIDER_02_JWK_ENDPOINT       — Public JWK endpoint for receipt verification
+  PROVIDER_02_JWK_CACHE_TTL_HOURS — JWK cache TTL (default: 24)
+  PROVIDER_02_TIMEOUT_SECONDS    — Per-request timeout (default: 5.0)
 
-Architecture precedent: follows the ``TrustLayersProvider`` pattern in
+Architecture precedent: follows the Provider 01 pattern in
 ``normative_provider.py`` — httpx.AsyncClient, timeout config, fail-closed.
 """
 
@@ -57,17 +57,17 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-logger = logging.getLogger("cage.nexart_provider")
+logger = logging.getLogger("cage.provider_02")
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-_ENDPOINT: str = os.environ.get("NEXART_API_ENDPOINT", "")
-_API_KEY: str = os.environ.get("NEXART_API_KEY_SECRET", "")
-_JWK_ENDPOINT: str = os.environ.get("NEXART_JWK_ENDPOINT", "")
-_JWK_CACHE_TTL_HOURS: float = float(os.environ.get("NEXART_JWK_CACHE_TTL_HOURS", "24"))
-_TIMEOUT: float = float(os.environ.get("NEXART_TIMEOUT_SECONDS", "5.0"))
+_ENDPOINT: str = os.environ.get("PROVIDER_02_API_ENDPOINT", "")
+_API_KEY: str = os.environ.get("PROVIDER_02_API_KEY_SECRET", "")
+_JWK_ENDPOINT: str = os.environ.get("PROVIDER_02_JWK_ENDPOINT", "")
+_JWK_CACHE_TTL_HOURS: float = float(os.environ.get("PROVIDER_02_JWK_CACHE_TTL_HOURS", "24"))
+_TIMEOUT: float = float(os.environ.get("PROVIDER_02_TIMEOUT_SECONDS", "5.0"))
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +77,7 @@ _TIMEOUT: float = float(os.environ.get("NEXART_TIMEOUT_SECONDS", "5.0"))
 
 @dataclass
 class CERReceipt:
-    """NexArt Certified Evidence Receipt.
+    """Provider 02 Certified Evidence Receipt.
 
     Returned by ``certifyDecision``.  The ``certificate_hash`` is the
     primary identifier for verification against the public JWK set.
@@ -107,7 +107,7 @@ class CERVerification:
 
 @dataclass
 class JWKCache:
-    """In-memory cache of NexArt's public JWK set.
+    """In-memory cache of Provider 02's public JWK set.
 
     Synced out-of-band every ``_JWK_CACHE_TTL_HOURS`` hours.
     The cache holds the raw JWK set dict and the last sync timestamp.
@@ -128,20 +128,20 @@ class JWKCache:
 
 
 # ---------------------------------------------------------------------------
-# NexArt Attestation Provider
+# Provider 02 Attestation Provider
 # ---------------------------------------------------------------------------
 
 
-class NexArtAttestationProvider:
-    """NexArt attestation provider for CER creation and verification.
+class Provider02AttestationProvider:
+    """Provider 02 attestation provider for CER creation and verification.
 
     Implements the attestation surface as a peer to the existing
     ``NormativeProvider`` protocol.  Not directly implementing the 3-method
-    protocol because NexArt's surface is richer (CERs + JWKs + bundles).
+    protocol because Provider 02's surface is richer (CERs + JWKs + bundles).
 
     Usage::
 
-        provider = NexArtAttestationProvider()
+        provider = Provider02AttestationProvider()
         await provider.start()  # starts JWK sync daemon
 
         # Create a CER
@@ -171,12 +171,12 @@ class NexArtAttestationProvider:
 
         if not self._endpoint:
             logger.warning(
-                "[NexArtProvider] NEXART_API_ENDPOINT not set. "
+                "[Provider02] PROVIDER_02_API_ENDPOINT not set. "
                 "Attestation calls will fail."
             )
 
         logger.info(
-            "[NexArtProvider] Initialised: endpoint=%s jwk=%s timeout=%.1fs",
+            "[Provider02] Initialised: endpoint=%s jwk=%s timeout=%.1fs",
             self._endpoint or "(not set)",
             self._jwk_endpoint or "(not set)",
             self._timeout,
@@ -205,7 +205,7 @@ class NexArtAttestationProvider:
             await self._sync_jwks()
             self._sync_task = asyncio.create_task(
                 self._jwk_sync_loop(),
-                name="nexart-jwk-sync",
+                name="provider-02-jwk-sync",
             )
 
     async def stop(self) -> None:
@@ -223,7 +223,7 @@ class NexArtAttestationProvider:
     # ------------------------------------------------------------------
 
     async def certify_decision(self, evidence_record: dict[str, Any]) -> CERReceipt:
-        """Submit a governance decision for NexArt CER certification.
+        """Submit a governance decision for Provider 02 CER certification.
 
         Args:
             evidence_record: Governance decision payload with signals and state hash.
@@ -248,7 +248,7 @@ class NexArtAttestationProvider:
                     signed_at=data.get("signedAt", ""),
                 )
         except Exception as exc:
-            logger.error("[NexArtProvider] certifyDecision failed: %s %s", url, exc)
+            logger.error("[Provider02] certifyDecision failed: %s %s", url, exc)
             return CERReceipt(error=str(exc))
 
     # ------------------------------------------------------------------
@@ -256,7 +256,7 @@ class NexArtAttestationProvider:
     # ------------------------------------------------------------------
 
     async def verify_cer(self, certificate_hash: str) -> CERVerification:
-        """Verify a CER against locally-cached NexArt JWKs.
+        """Verify a CER against locally-cached Provider 02 JWKs.
 
         This method does NOT make a network call during verification.
         JWKs are synced out-of-band by the background daemon.
@@ -293,24 +293,24 @@ class NexArtAttestationProvider:
 
         # Placeholder for full Ed25519 verification implementation.
         # The actual verification requires:
-        #   1. Fetching the CER payload from NexArt
+        #   1. Fetching the CER payload from Provider 02
         #   2. Extracting the Ed25519 signature
         #   3. Verifying against the cached JWK public key
-        # This will be completed when the NexArt API contract is finalised.
+        # This will be completed when the API contract is finalised.
         logger.debug(
-            "[NexArtProvider] Local JWK verification: hash=%s… keys=%d",
+            "[Provider02] Local JWK verification: hash=%s… keys=%d",
             certificate_hash[:16],
             len(self._jwk_cache.jwk_set.get("keys", [])),
         )
 
         return CERVerification(
             valid=True,
-            signer="nexart-attestation-node",
+            signer="provider-02-attestation-node",
             key_id=self._jwk_cache.jwk_set.get("keys", [{}])[0].get("kid", ""),
         )
 
     async def _verify_remote(self, certificate_hash: str) -> CERVerification:
-        """Fallback: verify a CER via NexArt's remote verification endpoint."""
+        """Fallback: verify a CER via Provider 02's remote verification endpoint."""
         import httpx
 
         url = f"{self._endpoint}/verify/{certificate_hash}"
@@ -326,7 +326,7 @@ class NexArtAttestationProvider:
                     key_id=data.get("keyId", ""),
                 )
         except Exception as exc:
-            logger.error("[NexArtProvider] Remote verification failed: %s %s", url, exc)
+            logger.error("[Provider02] Remote verification failed: %s %s", url, exc)
             return CERVerification(valid=False, error=str(exc))
 
     # ------------------------------------------------------------------
@@ -334,10 +334,10 @@ class NexArtAttestationProvider:
     # ------------------------------------------------------------------
 
     async def register_project_bundle(self, bundle: dict[str, Any]) -> dict[str, Any]:
-        """Register a completed Project Bundle with NexArt.
+        """Register a completed Project Bundle with Provider 02.
 
         Args:
-            bundle: Serialized AttestationBundle dict (from nexart_adapter.py).
+            bundle: Serialized AttestationBundle dict (from provider_02_adapter.py).
 
         Returns:
             Registration response with bundleHash and receiptUrl.
@@ -352,7 +352,7 @@ class NexArtAttestationProvider:
                 return resp.json()
         except Exception as exc:
             logger.error(
-                "[NexArtProvider] registerProjectBundle failed: %s %s", url, exc
+                "[Provider02] registerProjectBundle failed: %s %s", url, exc
             )
             return {"error": str(exc)}
 
@@ -361,7 +361,7 @@ class NexArtAttestationProvider:
     # ------------------------------------------------------------------
 
     async def _sync_jwks(self) -> None:
-        """Fetch the NexArt public JWK set and update the local cache."""
+        """Fetch the Provider 02 public JWK set and update the local cache."""
         if not self._jwk_endpoint:
             return
 
@@ -379,7 +379,7 @@ class NexArtAttestationProvider:
                     # Not modified — cache is still valid
                     self._jwk_cache.last_synced = time.time()
                     logger.debug(
-                        "[NexArtProvider] JWK cache still valid (304 Not Modified)."
+                        "[Provider02] JWK cache still valid (304 Not Modified)."
                     )
                     return
 
@@ -394,14 +394,14 @@ class NexArtAttestationProvider:
 
                 key_count = len(jwk_set.get("keys", []))
                 logger.info(
-                    "[NexArtProvider] JWK cache refreshed: %d keys (etag=%s)",
+                    "[Provider02] JWK cache refreshed: %d keys (etag=%s)",
                     key_count,
                     self._jwk_cache.etag[:16] if self._jwk_cache.etag else "none",
                 )
 
         except Exception as exc:
             logger.warning(
-                "[NexArtProvider] JWK sync failed: %s — using cached keys.",
+                "[Provider02] JWK sync failed: %s — using cached keys.",
                 exc,
             )
 
@@ -414,7 +414,7 @@ class NexArtAttestationProvider:
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                logger.error("[NexArtProvider] JWK sync loop error: %s", exc)
+                logger.error("[Provider02] JWK sync loop error: %s", exc)
                 await asyncio.sleep(300)  # retry in 5 minutes
 
     # ------------------------------------------------------------------
@@ -438,12 +438,12 @@ class NexArtAttestationProvider:
 # Module-level singleton
 # ---------------------------------------------------------------------------
 
-_provider: NexArtAttestationProvider | None = None
+_provider: Provider02AttestationProvider | None = None
 
 
-def get_nexart_provider() -> NexArtAttestationProvider:
-    """Return the module-level NexArtAttestationProvider singleton."""
+def get_provider_02() -> Provider02AttestationProvider:
+    """Return the module-level Provider02AttestationProvider singleton."""
     global _provider
     if _provider is None:
-        _provider = NexArtAttestationProvider()
+        _provider = Provider02AttestationProvider()
     return _provider

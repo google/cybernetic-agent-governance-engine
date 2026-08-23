@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-tests/test_nexart_provider.py — Tests for the NexArt Attestation Provider.
+tests/test_provider_02_provider.py — Tests for the Provider 02 Attestation Provider.
 
 Verification invariants:
   1. CER creation via certifyDecision returns CERReceipt.
@@ -22,7 +22,7 @@ Verification invariants:
   4. JWK staleness detection works at TTL boundary.
   5. Local verification uses cached JWKs (no network call).
   6. Remote verification fallback when JWK cache is empty.
-  7. Provider factory resolves "nexart" correctly.
+  7. Provider factory resolves "provider_02" correctly.
 """
 
 from __future__ import annotations
@@ -32,10 +32,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.integrations.nexart.provider import (
+from src.integrations.provider_02.provider import (
     CERReceipt,
     JWKCache,
-    NexArtAttestationProvider,
+    Provider02AttestationProvider,
 )
 
 # ---------------------------------------------------------------------------
@@ -52,7 +52,7 @@ class TestCERCreation:
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "certificateHash": "abc123def456",
-            "receiptUrl": "https://verify.nexart.io/cer/abc123def456",
+            "receiptUrl": "https://verify.provider02.example.com/cer/abc123def456",
             "signerKeyId": "key-001",
             "signedAt": "2026-05-29T14:00:00Z",
         }
@@ -65,8 +65,8 @@ class TestCERCreation:
             mock_instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = mock_instance
 
-            provider = NexArtAttestationProvider(
-                endpoint="https://api.nexart.io/v1",
+            provider = Provider02AttestationProvider(
+                endpoint="https://api.provider02.example.com/v1",
                 api_key="test-key",
             )
             cer = await provider.certify_decision({"test": True})
@@ -85,8 +85,8 @@ class TestCERCreation:
             mock_instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = mock_instance
 
-            provider = NexArtAttestationProvider(
-                endpoint="https://api.nexart.io/v1",
+            provider = Provider02AttestationProvider(
+                endpoint="https://api.provider02.example.com/v1",
             )
             cer = await provider.certify_decision({"test": True})
 
@@ -131,7 +131,7 @@ class TestJWKCache:
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "keys": [
-                {"kid": "nexart-ed25519-001", "kty": "OKP", "crv": "Ed25519"},
+                {"kid": "provider02-ed25519-001", "kty": "OKP", "crv": "Ed25519"},
             ]
         }
         mock_response.raise_for_status = MagicMock()
@@ -145,9 +145,9 @@ class TestJWKCache:
             mock_instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = mock_instance
 
-            provider = NexArtAttestationProvider(
-                endpoint="https://api.nexart.io/v1",
-                jwk_endpoint="https://jwks.nexart.io/.well-known/jwks.json",
+            provider = Provider02AttestationProvider(
+                endpoint="https://api.provider02.example.com/v1",
+                jwk_endpoint="https://jwks.provider02.example.com/.well-known/jwks.json",
             )
 
             await provider._sync_jwks()
@@ -167,7 +167,7 @@ class TestCERVerification:
     @pytest.mark.asyncio
     async def test_local_verification_with_cached_keys(self):  # type: ignore[no-untyped-def]
         """With cached JWKs, verify_cer uses local verification."""
-        provider = NexArtAttestationProvider(endpoint="https://api.nexart.io/v1")
+        provider = Provider02AttestationProvider(endpoint="https://api.provider02.example.com/v1")
         provider._jwk_cache = JWKCache(
             jwk_set={"keys": [{"kid": "key-001", "kty": "OKP", "crv": "Ed25519"}]},
             last_synced=time.time(),
@@ -181,7 +181,7 @@ class TestCERVerification:
     @pytest.mark.asyncio
     async def test_local_verification_rejects_invalid_hash(self):  # type: ignore[no-untyped-def]
         """Local verification rejects hash with wrong length."""
-        provider = NexArtAttestationProvider(endpoint="https://api.nexart.io/v1")
+        provider = Provider02AttestationProvider(endpoint="https://api.provider02.example.com/v1")
         provider._jwk_cache = JWKCache(
             jwk_set={"keys": [{"kid": "key-001"}]},
             last_synced=time.time(),
@@ -197,7 +197,7 @@ class TestCERVerification:
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "valid": True,
-            "signer": "nexart-node",
+            "signer": "provider02-node",
             "timestamp": "2026-05-29T14:00:00Z",
             "keyId": "key-001",
         }
@@ -210,14 +210,14 @@ class TestCERVerification:
             mock_instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = mock_instance
 
-            provider = NexArtAttestationProvider(
-                endpoint="https://api.nexart.io/v1",
+            provider = Provider02AttestationProvider(
+                endpoint="https://api.provider02.example.com/v1",
             )
             # No JWK cache — should fall back to remote
             result = await provider.verify_cer("a" * 64)
 
             assert result.valid is True
-            assert result.signer == "nexart-node"
+            assert result.signer == "provider02-node"
             mock_instance.get.assert_called_once()
 
 
@@ -229,18 +229,18 @@ class TestCERVerification:
 class TestProviderFactory:
     """Tests for normative_provider factory registration."""
 
-    def test_nexart_provider_resolves(self):  # type: ignore[no-untyped-def]
-        """get_normative_provider('nexart') returns NexArtAttestationProvider."""
+    def test_provider_02_resolves(self):  # type: ignore[no-untyped-def]
+        """get_normative_provider('provider_02') returns Provider02AttestationProvider."""
         from src.gateway.governance.normative_provider import get_normative_provider
 
-        provider = get_normative_provider("nexart")
-        assert isinstance(provider, NexArtAttestationProvider)
+        provider = get_normative_provider("provider_02")
+        assert isinstance(provider, Provider02AttestationProvider)
 
-    def test_invalid_provider_raises_with_nexart_in_list(self):  # type: ignore[no-untyped-def]
-        """Invalid provider name includes 'nexart' in the error message."""
+    def test_invalid_provider_raises_with_provider_02_in_list(self):  # type: ignore[no-untyped-def]
+        """Invalid provider name includes 'provider_02' in the error message."""
         from src.gateway.governance.normative_provider import get_normative_provider
 
-        with pytest.raises(ValueError, match="nexart"):
+        with pytest.raises(ValueError, match="provider_02"):
             get_normative_provider("nonexistent")
 
 
@@ -276,8 +276,8 @@ class TestProviderLifecycle:
     @pytest.mark.asyncio
     async def test_start_stop_without_jwk_endpoint(self):  # type: ignore[no-untyped-def]
         """Provider starts and stops cleanly without JWK endpoint."""
-        provider = NexArtAttestationProvider(
-            endpoint="https://api.nexart.io/v1",
+        provider = Provider02AttestationProvider(
+            endpoint="https://api.provider02.example.com/v1",
         )
         await provider.start()
         assert provider._running is True
@@ -287,8 +287,8 @@ class TestProviderLifecycle:
 
     def test_auth_headers(self):  # type: ignore[no-untyped-def]
         """Provider generates correct auth headers."""
-        provider = NexArtAttestationProvider(
-            endpoint="https://api.nexart.io/v1",
+        provider = Provider02AttestationProvider(
+            endpoint="https://api.provider02.example.com/v1",
             api_key="test-key-123",
         )
         headers = provider._headers()

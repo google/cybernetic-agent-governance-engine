@@ -465,8 +465,8 @@ cybernetic-agent-governance-engine/
 │   │       ├── defer_queue.py        # AARM-V7: Redis DEFER state machine (db=1, noeviction)
 │   │       └── ...                   # SymbolicGovernor, STPAValidator, NeMo manager
 │   ├── integrations/                 # v2.0.0: Vendor-isolated third-party adapters
-│   │   ├── nexart/                   # NexArt SDK attestation adapter + provider
-│   │   └── trustlayers/              # TrustLayers normative provider adapter
+│   │   ├── provider_01/              # External normative provider adapter
+│   │   └── provider_02/              # SDK attestation adapter + provider
 │   └── agentsight-ui/                # React/TypeScript operator dashboard
 ├── config/
 │   ├── stpa_control_structure.yaml   # Single source of truth for all STPA UCAs

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for TrustLayersProvider adapter."""
+"""Unit tests for Provider01NormativeProvider adapter."""
 
 from __future__ import annotations
 
@@ -20,15 +20,15 @@ import httpx
 import pytest
 import respx
 
-from src.integrations.trustlayers.provider import TrustLayersProvider
+from src.integrations.provider_01.provider import Provider01NormativeProvider
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 @pytest.fixture
-def provider() -> TrustLayersProvider:
-    return TrustLayersProvider(
-        endpoint="https://trustlayers.example.com",
+def provider() -> Provider01NormativeProvider:
+    return Provider01NormativeProvider(
+        endpoint="https://provider01.example.com",
         api_key="test-api-key",
         timeout=2.0,
     )
@@ -36,8 +36,8 @@ def provider() -> TrustLayersProvider:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_fetch_baseline_success(provider: TrustLayersProvider) -> None:
-    respx.get("https://trustlayers.example.com/legal-baseline/US_FED").mock(
+async def test_fetch_baseline_success(provider: Provider01NormativeProvider) -> None:
+    respx.get("https://provider01.example.com/legal-baseline/US_FED").mock(
         return_value=httpx.Response(
             200,
             json={"profile": {"rule": "allow"}},
@@ -53,8 +53,8 @@ async def test_fetch_baseline_success(provider: TrustLayersProvider) -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_fetch_baseline_error(provider: TrustLayersProvider) -> None:
-    respx.get("https://trustlayers.example.com/legal-baseline/US_FED").mock(
+async def test_fetch_baseline_error(provider: Provider01NormativeProvider) -> None:
+    respx.get("https://provider01.example.com/legal-baseline/US_FED").mock(
         return_value=httpx.Response(500)
     )
     baseline = await provider.fetch_baseline("US_FED")
@@ -64,8 +64,8 @@ async def test_fetch_baseline_error(provider: TrustLayersProvider) -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_validate_fria_success(provider: TrustLayersProvider) -> None:
-    respx.post("https://trustlayers.example.com/validate/fria").mock(
+async def test_validate_fria_success(provider: Provider01NormativeProvider) -> None:
+    respx.post("https://provider01.example.com/validate/fria").mock(
         return_value=httpx.Response(
             200,
             json={"admitted": True, "findings": []},
@@ -78,8 +78,8 @@ async def test_validate_fria_success(provider: TrustLayersProvider) -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_validate_fria_error(provider: TrustLayersProvider) -> None:
-    respx.post("https://trustlayers.example.com/validate/fria").mock(
+async def test_validate_fria_error(provider: Provider01NormativeProvider) -> None:
+    respx.post("https://provider01.example.com/validate/fria").mock(
         return_value=httpx.Response(502)
     )
     result = await provider.validate_fria({"action": "trade"})
@@ -89,8 +89,8 @@ async def test_validate_fria_error(provider: TrustLayersProvider) -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_submit_evidence_success(provider: TrustLayersProvider) -> None:
-    respx.get("https://trustlayers.example.com/evidence-chain/thread-1").mock(
+async def test_submit_evidence_success(provider: Provider01NormativeProvider) -> None:
+    respx.get("https://provider01.example.com/evidence-chain/thread-1").mock(
         return_value=httpx.Response(
             200,
             json={"seal_hash": "seal-abc-123"},
@@ -104,8 +104,8 @@ async def test_submit_evidence_success(provider: TrustLayersProvider) -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_submit_evidence_error(provider: TrustLayersProvider) -> None:
-    respx.get("https://trustlayers.example.com/evidence-chain/thread-1").mock(
+async def test_submit_evidence_error(provider: Provider01NormativeProvider) -> None:
+    respx.get("https://provider01.example.com/evidence-chain/thread-1").mock(
         return_value=httpx.Response(500)
     )
     seal = await provider.submit_evidence("thread-1", "evidence-hash-1")

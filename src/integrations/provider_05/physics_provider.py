@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-VEIP Physics Attestation Provider (Axiom 3: Substrate Integrity).
+Provider 05 Physics Attestation Provider (Axiom 3: Substrate Integrity).
 
 Validates that the underlying execution substrate (GKE node vTPM and AgentSight
 eBPF hypervisor monitors) has not been compromised by kernel exploits or physical
@@ -31,14 +31,14 @@ from src.gateway.governance.governance_envelope import (
     AttestationStatus,
     ExternalAttestation,
 )
-from src.integrations.veip.client import VEIPClient
+from src.integrations.provider_05.client import Provider05Client
 
-logger = logging.getLogger("cage.integrations.veip.physics")
+logger = logging.getLogger("cage.integrations.provider_05.physics")
 
 _DEFAULT_NODE_ID = os.environ.get("CAGE_NODE_ID", "gke-node-us-central1-01")
 
 
-class VEIPPhysicsProvider(AttestationProvider):
+class Provider05PhysicsProvider(AttestationProvider):
     """Physics (Substrate Integrity) attestation provider.
 
     Polls vTPM measurements and AgentSight eBPF counters to detect hardware
@@ -47,15 +47,15 @@ class VEIPPhysicsProvider(AttestationProvider):
 
     def __init__(
         self,
-        client: VEIPClient | None = None,
+        client: Provider05Client | None = None,
         node_id: str = _DEFAULT_NODE_ID,
     ) -> None:
-        self._client = client or VEIPClient()
+        self._client = client or Provider05Client()
         self._node_id = node_id
 
     @property
     def provider_name(self) -> str:
-        return "veip-physics"
+        return "provider_05-physics"
 
     async def fetch_attestations(
         self, context: dict[str, Any]

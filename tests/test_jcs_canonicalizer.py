@@ -69,10 +69,71 @@ def test_jcs_canonicalize_unicode_escapes():
 
 def test_jcs_canonicalize_negative_zero():
     """Verify RFC 8785 handling of negative zero."""
-    # JCS says -0 must be serialized as -0, but floating point -0.0 might be tricky.
-    # In JCS, -0.0 is technically not different from 0 in Python usually, but if represented as float it might.
     plan = {"val": -0.0}
     canonical = jcs_canonicalize_plan(plan)
-    assert (
-        canonical == b'{"val":0}'
-    )  # wait, let's just make sure it's stable. JCS handles this.
+    assert canonical == b'{"val":0}'
+
+
+def test_jcs_archytan_reference_vector_1():
+    """Verify exact byte and SHA-256 parity for Archytan reference Vector 1."""
+    import hashlib
+
+    vector_1_input = {
+        "envelope_version": "archytan.envelope/v1",
+        "correlation_id": "550e8400-e29b-41d4-a716-446655440000",
+        "operator_urn": "urn:archytan:op:test_vector_1",
+        "action": "payment.wire.execute",
+        "target": {
+            "account_hash": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        "parameters": {"amount_minor": 12345, "currency": "USD"},
+        "governance": {
+            "decision": "ALLOW",
+            "decision_path": "DIRECT",
+            "receipt_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receipt_id": "cage-seal-test-0001",
+            "policy_version": "cage-policy-2.1.1",
+            "evaluated_at": 1785012000,
+            "required_quorum": 2,
+        },
+        "authority_ref": {
+            "graph_version": "ag-2026-08-01T00:00:00Z",
+            "graph_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+        },
+        "issued_at": 1785012000,
+        "ttl_seconds": 30,
+        "nonce": "0102030405060708090a0b0c0d0e0f10",
+    }
+
+    expected_canonical_bytes = b'{"action":"payment.wire.execute","authority_ref":{"graph_hash":"1111111111111111111111111111111111111111111111111111111111111111","graph_version":"ag-2026-08-01T00:00:00Z"},"correlation_id":"550e8400-e29b-41d4-a716-446655440000","envelope_version":"archytan.envelope/v1","governance":{"decision":"ALLOW","decision_path":"DIRECT","evaluated_at":1785012000,"policy_version":"cage-policy-2.1.1","receipt_hash":"2222222222222222222222222222222222222222222222222222222222222222","receipt_id":"cage-seal-test-0001","required_quorum":2},"issued_at":1785012000,"nonce":"0102030405060708090a0b0c0d0e0f10","operator_urn":"urn:archytan:op:test_vector_1","parameters":{"amount_minor":12345,"currency":"USD"},"target":{"account_hash":"3333333333333333333333333333333333333333333333333333333333333333"},"ttl_seconds":30}'
+    # Note: SHA-256 of the exact canonical bytes printed in §11 of the Archytan spec
+    expected_sha256 = (
+        "8f7fc2b331437aa6c6adc5916e0452de01bc9bdcd571d7b155e832af72b3fe40"
+    )
+
+    actual_canonical_bytes = jcs_canonicalize_plan(vector_1_input)
+    assert actual_canonical_bytes == expected_canonical_bytes
+    assert hashlib.sha256(actual_canonical_bytes).hexdigest() == expected_sha256
+
+
+def test_jcs_archytan_reference_vector_2():
+    """Verify exact byte and SHA-256 parity for Archytan reference Vector 2 (adversarial formatting)."""
+    import hashlib
+
+    vector_2_input = {
+        "z_trailing_zero": 100.50,
+        "a_bare_int_as_float": 5.0,
+        "m_big_sci_notation": 1.0e21,
+        "unicode_name": "José's édition spéciale",
+    }
+
+    expected_canonical_bytes = '{"a_bare_int_as_float":5,"m_big_sci_notation":1e+21,"unicode_name":"José\'s édition spéciale","z_trailing_zero":100.5}'.encode(
+        "utf-8"
+    )
+    expected_sha256 = (
+        "b66634fe2360add85affbfea2386963881187e0ab6142bebaeff546d1a711712"
+    )
+
+    actual_canonical_bytes = jcs_canonicalize_plan(vector_2_input)
+    assert actual_canonical_bytes == expected_canonical_bytes
+    assert hashlib.sha256(actual_canonical_bytes).hexdigest() == expected_sha256

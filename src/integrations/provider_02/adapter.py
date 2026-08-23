@@ -13,10 +13,10 @@
 # limitations under the License.
 
 """
-nexart_adapter.py — LangGraph-to-NexArt Attestation Adapter (Feature 1)
-========================================================================
+adapter.py — LangGraph-to-Provider 02 Attestation Adapter (Feature 1)
+=====================================================================
 
-Emits NexArt ``certifyDecision`` CERs at governance-significant node boundaries
+Emits Provider 02 ``certifyDecision`` CERs at governance-significant node boundaries
 and assembles a ``registerProjectBundle`` at graph completion — without modifying
 any existing node logic.
 
@@ -46,10 +46,10 @@ the actual DAG traversal.
 
 Environment variables
 ---------------------
-  NEXART_ATTESTATION_ENABLED   — "true" to enable (default: "false")
-  NEXART_API_ENDPOINT          — NexArt API base URL
-  NEXART_API_KEY               — API key for authentication
-  NEXART_ATTESTATION_TIMEOUT   — HTTP timeout in seconds (default: 5.0)
+  PROVIDER_02_ATTESTATION_ENABLED   — "true" to enable (default: "false")
+  PROVIDER_02_API_ENDPOINT          — API base URL
+  PROVIDER_02_API_KEY               — API key for authentication
+  PROVIDER_02_ATTESTATION_TIMEOUT   — HTTP timeout in seconds (default: 5.0)
 """
 
 from __future__ import annotations
@@ -64,16 +64,16 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-logger = logging.getLogger("cage.nexart_adapter")
+logger = logging.getLogger("cage.provider_02_adapter")
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-_ENABLED: bool = os.environ.get("NEXART_ATTESTATION_ENABLED", "false").lower() == "true"
-_API_ENDPOINT: str = os.environ.get("NEXART_API_ENDPOINT", "")
-_API_KEY: str = os.environ.get("NEXART_API_KEY", "")
-_TIMEOUT: float = float(os.environ.get("NEXART_ATTESTATION_TIMEOUT", "5.0"))
+_ENABLED: bool = os.environ.get("PROVIDER_02_ATTESTATION_ENABLED", "false").lower() == "true"
+_API_ENDPOINT: str = os.environ.get("PROVIDER_02_API_ENDPOINT", "")
+_API_KEY: str = os.environ.get("PROVIDER_02_API_KEY", "")
+_TIMEOUT: float = float(os.environ.get("PROVIDER_02_ATTESTATION_TIMEOUT", "5.0"))
 
 # Governance-significant nodes that trigger CER emission
 _ATTESTATION_NODES = frozenset(
@@ -110,7 +110,7 @@ _GRAPH_PARENTS: dict[str, list[str]] = {
 
 @dataclass
 class ProjectBundleStepEntry:
-    """A single step in the NexArt Project Bundle DAG.
+    """A single step in the Provider 02 Project Bundle DAG.
 
     Maps 1:1 to a LangGraph node execution snapshot. The ``parentStepIds``
     field captures the DAG edge from the preceding node.
@@ -126,7 +126,7 @@ class ProjectBundleStepEntry:
     state_hash: str = ""  # SHA-256 of the serialized AgentState snapshot
 
     def to_dict(self) -> dict:
-        """Serialize to NexArt API-compatible dict."""
+        """Serialize to Provider 02 API-compatible dict."""
         return {
             "stepId": self.step_id,
             "nodeName": self.node_name,
@@ -144,7 +144,7 @@ class AttestationBundle:
     """A complete Project Bundle for a single graph execution.
 
     Assembled from all ``ProjectBundleStepEntry`` objects collected during
-    a graph run, then submitted to NexArt's ``registerProjectBundle`` endpoint.
+    a graph run, then submitted to Provider 02's ``registerProjectBundle`` endpoint.
     """
 
     bundle_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -157,7 +157,7 @@ class AttestationBundle:
     )
 
     def to_dict(self) -> dict:
-        """Serialize to NexArt API-compatible dict."""
+        """Serialize to Provider 02 API-compatible dict."""
         return {
             "bundleId": self.bundle_id,
             "threadId": self.thread_id,
@@ -314,19 +314,19 @@ def _classify_terminal_path(steps: list[ProjectBundleStepEntry]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# NexArt Attestation Callback Handler
+# Provider 02 Attestation Callback Handler
 # ---------------------------------------------------------------------------
 
 
-class NexArtAttestationCallback:
-    """LangGraph callback handler that emits NexArt attestation CERs.
+class Provider02AttestationCallback:
+    """LangGraph callback handler that emits Provider 02 attestation CERs.
 
     Subscribes to node lifecycle events and captures immutable state snapshots
     at governance-significant node boundaries.
 
     Usage::
 
-        callback = NexArtAttestationCallback(thread_id="thread-123")
+        callback = Provider02AttestationCallback(thread_id="thread-123")
         # Pass to LangGraph invoke/stream as a callback
         graph.invoke(input, config={"callbacks": [callback]})
 
@@ -407,7 +407,7 @@ class NexArtAttestationCallback:
         self._step_id_by_node[node_name] = step.step_id
 
         logger.debug(
-            "[NexArtAdapter] Step recorded: node=%s step_id=%s parents=%s signals=%d",
+            "[Provider02Adapter] Step recorded: node=%s step_id=%s parents=%s signals=%d",
             node_name,
             step.step_id[:8],
             [p[:8] for p in parent_step_ids],
@@ -461,7 +461,7 @@ class NexArtAttestationCallback:
         self._steps.append(step)
         self._step_id_by_node["hitl_interrupt"] = step.step_id
         logger.info(
-            "[NexArtAdapter] HITL interrupt recorded: step_id=%s",
+            "[Provider02Adapter] HITL interrupt recorded: step_id=%s",
             step.step_id[:8],
         )
 
@@ -489,21 +489,21 @@ class NexArtAttestationCallback:
 
 
 # ---------------------------------------------------------------------------
-# NexArt HTTP Client (raw httpx.AsyncClient)
+# Provider 02 HTTP Client (raw httpx.AsyncClient)
 # ---------------------------------------------------------------------------
 
 
-class NexArtClient:
-    """HTTP client for the NexArt attestation API.
+class Provider02Client:
+    """HTTP client for the Provider 02 attestation API.
 
     Built against the raw HTTP API (not a SDK wrapper) for supply-chain
     control and FIPS compliance tracking. Follows the same httpx.AsyncClient
-    pattern as normative_provider.py TrustLayersProvider.
+    pattern as normative_provider.py Provider01NormativeProvider.
 
     Environment variables:
-        NEXART_API_ENDPOINT   — Base URL (required)
-        NEXART_API_KEY        — API key for Bearer auth
-        NEXART_ATTESTATION_TIMEOUT — HTTP timeout in seconds (default: 5.0)
+        PROVIDER_02_API_ENDPOINT   — Base URL (required)
+        PROVIDER_02_API_KEY        — API key for Bearer auth
+        PROVIDER_02_ATTESTATION_TIMEOUT — HTTP timeout in seconds (default: 5.0)
     """
 
     def __init__(
@@ -518,8 +518,8 @@ class NexArtClient:
 
         if not self._endpoint:
             logger.warning(
-                "[NexArtClient] NEXART_API_ENDPOINT not set. "
-                "Attestation calls will fail. Set NEXART_ATTESTATION_ENABLED=false "
+                "[Provider02Client] PROVIDER_02_API_ENDPOINT not set. "
+                "Attestation calls will fail. Set PROVIDER_02_ATTESTATION_ENABLED=false "
                 "to suppress this warning."
             )
 
@@ -531,7 +531,7 @@ class NexArtClient:
         return headers
 
     async def certify_decision(self, evidence_record: dict[str, Any]) -> dict[str, Any]:
-        """Submit a governance decision for NexArt CER certification.
+        """Submit a governance decision for Provider 02 CER certification.
 
         Args:
             evidence_record: The governance decision payload (signals + state hash).
@@ -552,7 +552,7 @@ class NexArtClient:
             return resp.json()
 
     async def register_project_bundle(self, bundle: dict[str, Any]) -> dict[str, Any]:
-        """Register a completed Project Bundle with NexArt.
+        """Register a completed Project Bundle with Provider 02.
 
         Args:
             bundle: The serialized AttestationBundle dict.
@@ -569,7 +569,7 @@ class NexArtClient:
             return resp.json()
 
     async def verify_cer(self, certificate_hash: str) -> dict[str, Any]:
-        """Verify a CER against NexArt's public JWK set.
+        """Verify a CER against Provider 02's public JWK set.
 
         Args:
             certificate_hash: The CER hash to verify.
