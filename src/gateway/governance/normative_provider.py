@@ -848,7 +848,18 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
     Raises:
         ValueError: If the provider name is not registered.
     """
-    provider_name = (name or _PROVIDER_NAME).strip().lower()
+    raw_name = name or os.environ.get("CAGE_NORMATIVE_PROVIDER", _PROVIDER_NAME)
+    provider_name = raw_name.split("#")[0].strip().lower()
+
+    # Vendor alias normalization
+    alias_map = {
+        "trustlayers": "provider_01",
+        "nexart": "provider_02",
+        "veritas": "provider_03",
+        "agent_integrity": "provider_06",
+        "agentintegrity": "provider_06",
+    }
+    provider_name = alias_map.get(provider_name, provider_name)
 
     # Kernel-resident providers
     if provider_name in _PROVIDERS:

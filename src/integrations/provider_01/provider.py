@@ -57,10 +57,13 @@ logger = logging.getLogger("cage.integrations.provider_01")
 # Configuration
 # ---------------------------------------------------------------------------
 
-_ENDPOINT: str = os.environ.get("CAGE_NORMATIVE_ENDPOINT", "")
-_API_KEY_SECRET: str = os.environ.get("CAGE_NORMATIVE_API_KEY_SECRET", "")
+_ENDPOINT: str = os.environ.get("CAGE_NORMATIVE_ENDPOINT", "").split("#")[0].strip()
+_API_KEY_SECRET: str = (
+    os.environ.get("CAGE_NORMATIVE_API_KEY_SECRET", "").split("#")[0].strip()
+)
 _GATE_TIMEOUT_SECONDS: float = float(
-    os.environ.get("CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS", "5")
+    os.environ.get("CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS", "5").split("#")[0].strip()
+    or "5"
 )
 
 
