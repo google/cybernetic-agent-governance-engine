@@ -24,9 +24,9 @@ Implements the Three Uncomputable Axioms integration:
 from src.integrations.provider_05.blueprint_provider import Provider05BlueprintProvider
 from src.integrations.provider_05.client import (
     AdmissibilityGrant,
+    Provider05Client,
     RiskAcceptanceRecord,
     SubstrateAttestation,
-    Provider05Client,
 )
 from src.integrations.provider_05.key_provider import Provider05KeyProvider
 from src.integrations.provider_05.physics_provider import Provider05PhysicsProvider
@@ -42,14 +42,14 @@ from src.integrations.provider_05.warrant import (
 
 __all__ = [
     "AdmissibilityGrant",
-    "RelianceStatus",
-    "RiskAcceptanceRecord",
-    "StandingVerificationResult",
-    "SubstrateAttestation",
     "Provider05BlueprintProvider",
     "Provider05Client",
     "Provider05KeyProvider",
     "Provider05PhysicsProvider",
+    "RelianceStatus",
+    "RiskAcceptanceRecord",
+    "StandingVerificationResult",
+    "SubstrateAttestation",
     "Warrant",
     "WarrantScope",
     "WarrantStandingVerifier",

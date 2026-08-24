@@ -70,7 +70,9 @@ logger = logging.getLogger("cage.provider_02_adapter")
 # Configuration
 # ---------------------------------------------------------------------------
 
-_ENABLED: bool = os.environ.get("PROVIDER_02_ATTESTATION_ENABLED", "false").lower() == "true"
+_ENABLED: bool = (
+    os.environ.get("PROVIDER_02_ATTESTATION_ENABLED", "false").lower() == "true"
+)
 _API_ENDPOINT: str = os.environ.get("PROVIDER_02_API_ENDPOINT", "")
 _API_KEY: str = os.environ.get("PROVIDER_02_API_KEY", "")
 _TIMEOUT: float = float(os.environ.get("PROVIDER_02_ATTESTATION_TIMEOUT", "5.0"))

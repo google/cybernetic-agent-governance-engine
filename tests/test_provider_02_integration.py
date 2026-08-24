@@ -466,7 +466,9 @@ class TestProvider02AttestationProvider:
         """Provider must report has_jwk_keys=False before any sync."""
         from src.integrations.provider_02.provider import Provider02AttestationProvider
 
-        provider = Provider02AttestationProvider(endpoint="https://provider02.example.com")
+        provider = Provider02AttestationProvider(
+            endpoint="https://provider02.example.com"
+        )
         assert provider.has_jwk_keys is False
 
     def test_provider_jwk_cache_age_is_inf_before_sync(self) -> None:
@@ -480,9 +482,14 @@ class TestProvider02AttestationProvider:
 
     def test_verify_local_fails_with_wrong_hash_length(self) -> None:
         """_verify_local must return invalid when certificate_hash length != 64."""
-        from src.integrations.provider_02.provider import JWKCache, Provider02AttestationProvider
+        from src.integrations.provider_02.provider import (
+            JWKCache,
+            Provider02AttestationProvider,
+        )
 
-        provider = Provider02AttestationProvider(endpoint="https://provider02.example.com")
+        provider = Provider02AttestationProvider(
+            endpoint="https://provider02.example.com"
+        )
         # Inject a fake JWK cache so the local path is taken
         provider._jwk_cache = JWKCache(
             jwk_set={"keys": [{"kid": "k1"}]},
@@ -495,9 +502,14 @@ class TestProvider02AttestationProvider:
 
     def test_verify_local_returns_valid_for_correct_hash_length(self) -> None:
         """_verify_local must return valid when certificate_hash is 64 chars."""
-        from src.integrations.provider_02.provider import JWKCache, Provider02AttestationProvider
+        from src.integrations.provider_02.provider import (
+            JWKCache,
+            Provider02AttestationProvider,
+        )
 
-        provider = Provider02AttestationProvider(endpoint="https://provider02.example.com")
+        provider = Provider02AttestationProvider(
+            endpoint="https://provider02.example.com"
+        )
         provider._jwk_cache = JWKCache(
             jwk_set={"keys": [{"kid": "k1"}]},
             last_synced=time.time(),
@@ -513,7 +525,9 @@ class TestProvider02AttestationProvider:
         """certify_decision() must return a CERReceipt with error on HTTP failure."""
         from src.integrations.provider_02.provider import Provider02AttestationProvider
 
-        provider = Provider02AttestationProvider(endpoint="https://provider02.example.com")
+        provider = Provider02AttestationProvider(
+            endpoint="https://provider02.example.com"
+        )
 
         # Patch httpx to raise a connection error
         import httpx
@@ -535,7 +549,9 @@ class TestProvider02AttestationProvider:
         """register_project_bundle() must return error dict on HTTP failure."""
         from src.integrations.provider_02.provider import Provider02AttestationProvider
 
-        provider = Provider02AttestationProvider(endpoint="https://provider02.example.com")
+        provider = Provider02AttestationProvider(
+            endpoint="https://provider02.example.com"
+        )
 
         import httpx
 

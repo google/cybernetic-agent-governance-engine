@@ -36,8 +36,8 @@ from src.gateway.governance.governance_envelope import (
     GovernanceEnvelopeBuilder,
 )
 from src.integrations.provider_05 import (
-    RelianceStatus,
     Provider05Client,
+    RelianceStatus,
     Warrant,
     WarrantScope,
     WarrantStandingVerifier,
@@ -315,8 +315,4 @@ async def test_falsifiable_test_b_and_c_revoked_warrant_defers_without_deny(
     att = bind_warrant_to_attestation(warrant, standing)
     assert att.status == AttestationStatus.DENIED.value
     assert att.metadata["reliance_status"] == "INELIGIBLE_REVOKED"
-    assert (
-        "Board Resolution 2026-08-22"
-        in att.metadata["reason"]
-    )
-
+    assert "Board Resolution 2026-08-22" in att.metadata["reason"]

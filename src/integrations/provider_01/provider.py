@@ -125,8 +125,24 @@ class Provider01NormativeProvider:
                     profile=data.get("profile", data),
                     etag=resp.headers.get("ETag", ""),
                 )
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "[Provider01] fetch_baseline HTTP error: %s status=%d",
+                url,
+                exc.response.status_code,
+            )
+            return NormativeBaseline(
+                region=region,
+                profile={},
+                error=f"HTTP {exc.response.status_code}: {exc.response.text[:200]}",
+            )
+        except httpx.RequestError as exc:
+            logger.error("[Provider01] fetch_baseline request error: %s %s", url, exc)
+            return NormativeBaseline(region=region, profile={}, error=str(exc))
         except Exception as exc:
-            logger.error("[Provider01] fetch_baseline failed: %s %s", url, exc)
+            logger.error(
+                "[Provider01] fetch_baseline unexpected error: %s %s", url, exc
+            )
             return NormativeBaseline(region=region, profile={}, error=str(exc))
 
     async def validate_fria(self, payload: dict[str, Any]):  # type: ignore[no-untyped-def]
@@ -145,11 +161,48 @@ class Provider01NormativeProvider:
                     admitted=data.get("admitted", False),
                     findings=data.get("findings", []),
                 )
-        except Exception as exc:
-            logger.error("[Provider01] validate_fria failed: %s %s", url, exc)
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "[Provider01] validate_fria HTTP error: %s status=%d",
+                url,
+                exc.response.status_code,
+            )
+            return ValidationResult(
+                admitted=False,
+                error=f"HTTP {exc.response.status_code}",
+                findings=[
+                    {
+                        "code": "ENDPOINT_ERROR",
+                        "severity": "blocked",
+                        "message": f"Provider 01 HTTP error: {exc.response.status_code}",
+                    }
+                ],
+            )
+        except httpx.RequestError as exc:
+            logger.error("[Provider01] validate_fria request error: %s %s", url, exc)
             return ValidationResult(
                 admitted=False,
                 error=str(exc),
+                findings=[
+                    {
+                        "code": "ENDPOINT_ERROR",
+                        "severity": "blocked",
+                        "message": f"Provider 01 request failed: {exc}",
+                    }
+                ],
+            )
+        except Exception as exc:
+            logger.error("[Provider01] validate_fria unexpected error: %s %s", url, exc)
+            return ValidationResult(
+                admitted=False,
+                error=str(exc),
+                findings=[
+                    {
+                        "code": "ENDPOINT_ERROR",
+                        "severity": "blocked",
+                        "message": f"Provider 01 unexpected error: {exc}",
+                    }
+                ],
             )
 
     async def submit_evidence(self, thread_id: str, evidence_hash: str):  # type: ignore[no-untyped-def]
@@ -172,8 +225,21 @@ class Provider01NormativeProvider:
                     thread_id=thread_id,
                     seal_hash=data.get("seal_hash", ""),
                 )
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "[Provider01] submit_evidence HTTP error: %s status=%d",
+                url,
+                exc.response.status_code,
+            )
+            return EvidenceSeal(
+                thread_id=thread_id,
+                error=f"HTTP {exc.response.status_code}: {exc.response.text[:200]}",
+            )
+        except httpx.RequestError as exc:
+            logger.error("[Provider01] submit_evidence request error: %s %s", url, exc)
+            return EvidenceSeal(thread_id=thread_id, error=str(exc))
         except Exception as exc:
             logger.error(
-                "[Provider01] submit_evidence failed: %s %s", url, exc
+                "[Provider01] submit_evidence unexpected error: %s %s", url, exc
             )
             return EvidenceSeal(thread_id=thread_id, error=str(exc))
