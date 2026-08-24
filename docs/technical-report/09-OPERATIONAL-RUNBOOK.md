@@ -674,7 +674,7 @@ curl http://localhost:3002/health | jq '.compliance_langfuse_connected'
 
 ### 7.4 Verifying Normative Provider Boot-Time Baseline Fetch
 
-**Purpose:** Confirm that the external normative provider (TrustLayers or stub) has completed its boot-time baseline fetch and the background polling daemon is running.
+**Purpose:** Confirm that the external normative provider (Provider 01 or stub) has completed its boot-time baseline fetch and the background polling daemon is running.
 
 ```bash
 # Check normative provider status via gateway health endpoint
@@ -683,7 +683,7 @@ kubectl exec -n governance-stack deploy/gateway -- \
 
 # Expected fields:
 # {
-#   "provider": "static" | "trustlayers",
+#   "provider": "static" | "provider_01",
 #   "baseline_fetched": true,
 #   "last_refresh": "<ISO-8601 timestamp>",
 #   "next_refresh_in_seconds": <int>
@@ -692,7 +692,7 @@ kubectl exec -n governance-stack deploy/gateway -- \
 
 **Stub mode (default):** `CAGE_NORMATIVE_PROVIDER=static` — all FRIA checks are stub-admitted. No external call is made. `baseline_fetched` will be `true` immediately.
 
-**Production mode:** Set `CAGE_NORMATIVE_PROVIDER=trustlayers` and configure `CAGE_NORMATIVE_ENDPOINT` + `CAGE_NORMATIVE_API_KEY_SECRET` in the Kubernetes Secret. The daemon polls every 6 hours.
+**Production mode:** Set `CAGE_NORMATIVE_PROVIDER=provider_01` and configure `CAGE_NORMATIVE_ENDPOINT` + `CAGE_NORMATIVE_API_KEY_SECRET` in the Kubernetes Secret. The daemon polls every 6 hours.
 
 ---
 

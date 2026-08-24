@@ -67,11 +67,12 @@ Third-party compliance and attestation adapters are deployed as part of the Hybr
 
 | Adapter          | Env Var Required          | Activated In         |
 | ---------------- | ------------------------- | -------------------- |
-| VEIP             | `VEIP_ENABLED`            | Hybrid Gateway pod   |
-| TrustLayers      | `TRUSTLAYERS_API_KEY`     | Hybrid Gateway pod   |
-| NexArt           | `NEXART_API_KEY`          | Hybrid Gateway pod   |
-| Archytan         | `ARCHYTAN_SOCKET_PATH`    | Hybrid Gateway pod   |
-| Veritas          | `VERITAS_ENABLED`         | Hybrid Gateway pod   |
+| Provider 01      | `PROVIDER_01_API_KEY`     | Hybrid Gateway pod   |
+| Provider 02      | `PROVIDER_02_API_KEY`     | Hybrid Gateway pod   |
+| Provider 03      | `PROVIDER_03_NORMATIVE_ENDPOINT` | Hybrid Gateway pod |
+| Provider 04      | `PROVIDER_04_SOCKET_PATH` | Hybrid Gateway pod   |
+| Provider 05      | `PROVIDER_05_API_KEY`     | Hybrid Gateway pod   |
+| Provider 06      | `PROVIDER_06_ENDPOINT`    | Hybrid Gateway pod   |
 
 See [`EXTENSIBILITY_ARCHITECTURE.md §2.6`](../../docs/architecture/EXTENSIBILITY_ARCHITECTURE.md) for the full vendor isolation architecture.
 

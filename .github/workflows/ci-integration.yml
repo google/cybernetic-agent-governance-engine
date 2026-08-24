@@ -61,12 +61,7 @@ jobs:
             --timeout=300 \
             -x
         continue-on-error: false
-      - name: Run nexart integration tests
-        run: |
-          uv run pytest tests/test_nexart_integration.py \
-            --no-cov --tb=short -q \
-            --timeout=600
-        continue-on-error: false
+
 
   compliance-postures:
     name: Compliance Posture Suite

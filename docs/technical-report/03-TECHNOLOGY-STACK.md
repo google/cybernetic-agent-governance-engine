@@ -159,15 +159,16 @@
 
 ## 5. Vendor & Partner Integrations (`src/integrations/`)
 
-Third-party compliance and attestation provider adapters are architecturally isolated in `src/integrations/{vendor}/` to prevent external SDK code from leaking into the governance kernel. Each adapter implements the appropriate provider interface (`NormativeProvider`, `EvidencePackGenerator`, etc.).
+Third-party compliance and attestation provider adapters are architecturally isolated in `src/integrations/{provider_id}/` to prevent external SDK code from leaking into the governance kernel. Each adapter implements the appropriate provider interface (`NormativeProvider`, `EvidencePackGenerator`, etc.).
 
 | Integration          | Root Path                        | Purpose                                                                                                   | Status                  |
 | -------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------- |
-| **VEIP**             | `src/integrations/veip/`         | Verifiable Execution Evidence Pack; generates RFC-3161 cryptographic evidence packages with 3 axioms (Blueprint, Key, Physics) | Implemented             |
-| **TrustLayers**      | `src/integrations/trustlayers/`  | Production normative provider; `TrustLayersProvider` implements 3-endpoint external validation API; activated via `CAGE_NORMATIVE_PROVIDER=trustlayers` | Implemented (POAM-022 In Progress — awaiting API credentials) |
-| **NexArt**           | `src/integrations/nexart/`       | CER (Compliance Evidence Record) attestation provider; `NexArtClient` + `NexArtAttestationCallback` (LangGraph callback handler) in `adapter.py`; `NexArtProvider` (NormativeProvider interface) in `provider.py` | Implemented             |
-| **Archytan**         | `src/integrations/archytan/`     | Socket-level execution guillotine and hardware enforcement integration                                    | Implemented             |
-| **Veritas**          | `src/integrations/veritas/`      | JCS (JSON Canonicalization Scheme) RFC-8785 evidence normalization adapter                               | Implemented             |
+| **Provider 01**      | `src/integrations/provider_01/`  | Production normative provider; `Provider01NormativeProvider` implements 3-endpoint external validation API; activated via `CAGE_NORMATIVE_PROVIDER=provider_01` | Implemented (POAM-022 In Progress — awaiting API credentials) |
+| **Provider 02**      | `src/integrations/provider_02/`  | CER (Compliance Evidence Record) attestation provider; `Provider02Client` + `Provider02AttestationCallback` (LangGraph callback handler) in `adapter.py`; `Provider02AttestationProvider` in `provider.py` | Implemented             |
+| **Provider 03**      | `src/integrations/provider_03/`  | JCS (JSON Canonicalization Scheme) RFC-8785 evidence normalization and decision governance adapter        | Implemented             |
+| **Provider 04**      | `src/integrations/provider_04/`  | Socket-level execution guillotine and envelope mapper integration                                         | Implemented             |
+| **Provider 05**      | `src/integrations/provider_05/`  | Verifiable Execution Evidence Pack; generates RFC-3161 cryptographic evidence packages with 3 axioms (Blueprint, Key, Physics) | Implemented             |
+| **Provider 06**      | `src/integrations/provider_06/`  | Tri-state deterministic verifier adapter (PASS/REVIEW/BLOCKED) with DeferQueue parking integration        | Implemented             |
 
 > **Vendor Isolation Design:** Infrastructure invariants (Cloud KMS, Redis, OPA) remain in `src/gateway/governance/`. Vendor adapters are lazy-loaded and never imported by the governance kernel directly — they are registered via the provider factories at startup.
 

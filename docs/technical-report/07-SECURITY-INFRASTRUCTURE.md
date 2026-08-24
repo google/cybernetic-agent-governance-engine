@@ -259,7 +259,7 @@ This hardening directly supports **ISO/IEC 42001:2023 §A.9.4** (AI system opera
 
 ### Background
 
-The `StubNormativeProvider` is a development-only implementation of the `NormativeProvider` protocol. Its `validate_fria()` method unconditionally returns `admitted=True` — meaning every FRIA boundary check passes without any external validation. This is intentional for dev/CI environments where the external normative provider (e.g. TrustLayers) is not reachable.
+The `StubNormativeProvider` is a development-only implementation of the `NormativeProvider` protocol. Its `validate_fria()` method unconditionally returns `admitted=True` — meaning every FRIA boundary check passes without any external validation. This is intentional for dev/CI environments where the external normative provider (e.g. Provider 01) is not reachable.
 
 Prior to this hardening, `StubNormativeProvider` could be instantiated in any environment, including production. If `CAGE_NORMATIVE_PROVIDER=static` (the default) was left unchanged in a production deployment, the adaptive FRIA gating mechanism would silently operate against the stub — admitting all transactions regardless of their compliance posture.
 
@@ -277,7 +277,7 @@ def __init__(self) -> None:
             "StubNormativeProvider cannot be used in production "
             f"(CAGE_ENV={_cage_env!r}). "
             "Set CAGE_NORMATIVE_PROVIDER to a real provider name "
-            "(e.g. CAGE_NORMATIVE_PROVIDER=trustlayers) and ensure the "
+            "(e.g. CAGE_NORMATIVE_PROVIDER=provider_01) and ensure the "
             "provider credentials are configured."
         )
 ```
@@ -289,7 +289,7 @@ Because `StubNormativeProvider` is the implementation behind `CAGE_NORMATIVE_PRO
 | `CAGE_ENV` | `CAGE_NORMATIVE_PROVIDER` | Result |
 | ---------- | ------------------------- | ------ |
 | `production` (or unset) | `static` (default) | `RuntimeError` at construction — pod crashes |
-| `production` (or unset) | `trustlayers` or `nexart` | Real provider instantiated — normal operation |
+| `production` (or unset) | `provider_01` or `provider_02` | Real provider instantiated — normal operation |
 | `development` / `dev` / `test` / `ci` | `static` | Stub instantiated with `WARNING` log |
 
 ### Security Significance

@@ -14,7 +14,7 @@
 
 """
 tests/test_kms_evidence_signing.py — Tests for per-record KMS attestation
-on evidence chain records (Feature 3 of NexArt integration).
+on evidence chain records (Feature 3 of Provider 02 integration).
 
 Verification invariants:
   1. kms_sign=False (default) produces no kms_signature field — backward compat.

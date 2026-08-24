@@ -134,7 +134,7 @@ def build_oscal_assessment_results(
         assessor:         Party responsible for the assessment.
         chain_root:       SHA-256 root of the Context Accumulator chain (CAGE v0.1.0).
         chain_sealed_utc: ISO-8601 UTC timestamp when the chain was sealed.
-        cer_uris:         Optional mapping of control_id → NexArt CER URI for external
+        cer_uris:         Optional mapping of control_id → Provider 02 CER URI for external
                           attestation links.  When present, each finding entry gets an
                           OSCAL ``links[]`` array with ``rel: evidence`` entries.
 
@@ -204,14 +204,14 @@ def build_oscal_assessment_results(
         if f.remarks:
             entry["description"] = f.remarks
 
-        # NexArt CER attestation link (Feature 2 — OSCAL CER Links)
+        # Provider 02 CER attestation link (Feature 2 — OSCAL CER Links)
         if cer_uris and f.control_id in cer_uris:
             cer_uri = cer_uris[f.control_id]
             entry["links"] = [
                 {
                     "href": cer_uri,
                     "rel": "evidence",
-                    "text": f"NexArt CER attestation receipt for {f.control_id}",
+                    "text": f"Provider 02 CER attestation receipt for {f.control_id}",
                 }
             ]
             # Extract certificate hash from URI (last path segment)

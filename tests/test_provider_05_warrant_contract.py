@@ -52,7 +52,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 def sample_warrant() -> Warrant:
     """Fixture providing an active warrant for min_trade_confidence = 0.97."""
     return Warrant(
-        warrant_id="warrant-veip-2026-001",
+        warrant_id="warrant-provider05-2026-001",
         norm_id="confidence.min_trade_confidence",
         issuing_authority="Risk Oversight Committee (EU_ECB)",
         authority_basis="EU AI Act Art. 9 Risk Management Instrument #442",
@@ -87,7 +87,7 @@ def test_warrant_canonicalization_and_digest(sample_warrant: Warrant) -> None:
     # Verify all 11 fields are present in the canonical dict
     d = sample_warrant.to_canonical_dict()
     assert len(d) == 11
-    assert d["warrant_id"] == "warrant-veip-2026-001"
+    assert d["warrant_id"] == "warrant-provider05-2026-001"
     assert d["norm_id"] == "confidence.min_trade_confidence"
     assert d["status"] == "ACTIVE"
 
@@ -96,7 +96,7 @@ def test_warrant_standing_verification_valid(sample_warrant: Warrant) -> None:
     """Verify active warrant passes standing check within valid window and scope."""
     context = {
         "action": "execute_trade",
-        "actor": "urn:archytan:op:test_operator",
+        "actor": "urn:provider_04:op:test_operator",
         "system": "cage-gateway",
         "jurisdiction": "EU_ECB",
         "governing_version": "cage-policy-2.1.0",

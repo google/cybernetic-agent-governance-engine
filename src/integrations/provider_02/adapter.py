@@ -219,7 +219,7 @@ def _hash_state(state: dict[str, Any]) -> str:
 def _extract_signals(node_name: str, state: dict[str, Any]) -> dict[str, Any]:
     """Extract governance-significant signals from AgentState for a given node.
 
-    Returns a dict of signals relevant to the NexArt CER for this node.
+    Returns a dict of signals relevant to the Provider 02 CER for this node.
     """
     signals: dict[str, Any] = {}
 

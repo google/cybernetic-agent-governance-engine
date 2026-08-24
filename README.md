@@ -111,7 +111,7 @@ CAGE is composed of six runtime subsystems:
 | **Compliance Bridge**            | `src/compliance_bridge/`          | OSCAL audit ingest; SSE event bus; Langfuse integration; AARM Conformance Engine; DEFER Queue API |
 | **AgentSight UI**                | `src/agentsight-ui/`              | React/TypeScript operator dashboard; real-time governance and remediation events |
 | **AgentSight eBPF DaemonSet**    | `deployment/agentsight/`          | Kernel-level process telemetry via BPF uprobes                              |
-| **Vendor Integrations**          | `src/integrations/`               | Isolated third-party adapters: `trustlayers/` (normative provider), `nexart/` (CER attestation), `veip/` (Verifiable Execution Evidence Pack), `archytan/` (socket-level execution guillotine), `veritas/` (JCS canonicalization) |
+| **Vendor Integrations**          | `src/integrations/`               | Isolated third-party adapters: `provider_01/` (normative provider), `provider_02/` (CER attestation), `provider_03/` (JCS canonicalization), `provider_04/` (socket-level execution guillotine), `provider_05/` (Verifiable Execution Evidence Pack), `provider_06/` (tri-state verifier) |
 
 ```
 User ──POST /agent/query──► FastAPI Agent Server (:8000)
@@ -381,7 +381,7 @@ Copy `.env.example` to `.env` and configure at minimum:
 | `VLLM_FAST_API_BASE`                             | vLLM fast-path endpoint (also default for Compliance Officer consensus persona) |
 | `CONSENSUS_RISK_MANAGER_URL`                     | Override vLLM endpoint for Risk Manager critic persona |
 | `CONSENSUS_COMPLIANCE_OFFICER_URL`               | Override vLLM endpoint for Compliance Officer critic persona |
-| `CAGE_NORMATIVE_PROVIDER`                        | External normative provider (`static` or `trustlayers`; default `static`) |
+| `CAGE_NORMATIVE_PROVIDER`                        | External normative provider (`static` or `provider_01`; default `static`) |
 | `STEP_QUOTA_MAX`                                 | Hard step-count limit per agent session for Token Quota Proxy (default: `12`) |
 | `TOKEN_QUOTA_MAX`                                | Hard token limit per agent session for Token Quota Proxy (default: `100000`) |
 | `SESSION_TTL_SECONDS`                            | Redis key TTL for Token Quota Proxy session counters in seconds (default: `3600`) |
@@ -572,7 +572,7 @@ Full license inventory: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 
 - **`fix(infra)`: P0 blocker remediation (D-01, D-02, D-04, D-06, D-07)** — PodSecurity `restricted`-compliant `securityContext` applied to all 6 app deployment manifests (`runAsNonRoot`, `runAsUser: 65534`, `seccompProfile: RuntimeDefault`, `allowPrivilegeEscalation: false`, `capabilities.drop: ALL`). Security-scan CronJob deployed (closes D-06 / POAM-010 RA-5 dependency). PSA labels applied via Terraform (`enable_pod_security_standards=true`). `GOVERNANCE_SALT` moved to `secretKeyRef` in `live_deployment.yaml`.
 
-- **`fix`: CI failures resolved** — STPA freshness check now passes after re-running the STPA compiler. License headers added to `src/integrations/nexart/tests/__init__.py`, `src/gateway/protos/nemo_pb2.py`, and `src/gateway/protos/nemo_pb2_grpc.py`. CI workflow branch triggers corrected (`main → rc-v2.0.0`).
+- **`fix`: CI failures resolved** — STPA freshness check now passes after re-running the STPA compiler. License headers added to `src/integrations/provider_02/tests/__init__.py`, `src/gateway/protos/nemo_pb2.py`, and `src/gateway/protos/nemo_pb2_grpc.py`. CI workflow branch triggers corrected (`main → rc-v2.0.0`).
 
 - **`fix(infra)`: Lula-audit CronJob self-perpetuating failure resolved** — Stale Job deletion logic corrected; `lula-sc4-watch` patched to `lula:0.9.5` (resolves `ImagePullBackOff`). `Dockerfile.lula` rewritten as multi-stage `go-build` from source (v0.9.5). `scripts/build_images.sh` fixed: `SHORT_SHA` substitution added for `vllm-streamer` build.
 
