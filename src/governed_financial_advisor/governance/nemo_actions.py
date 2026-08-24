@@ -217,12 +217,13 @@ def validate_approval_token(token: str, thread_id: str, trade_id: str) -> bool:
 def check_approval_token(context: dict[str, Any]) -> bool:
     """Return True if a valid HMAC-signed approval token is present.
 
-    Uses cryptographic HMAC-SHA256 validation. Falls back to legacy
-    non-empty check when thread_id/trade_id are not provided in context.
+    Uses cryptographic HMAC-SHA256 validation. When thread_id/trade_id are
+    not present in the context the token cannot be bound or verified, so the
+    check denies rather than trusting an unverified value.
 
     Returns:
         True  — token present and cryptographically valid.
-        False — token absent or invalid (fail-closed).
+        False — token absent, unverifiable, or invalid (fail-closed).
     """
     token = context.get("approval_token")
     if not token:
@@ -251,11 +252,12 @@ def check_approval_token(context: dict[str, Any]) -> bool:
             )
         return valid
 
-    # Legacy path: token is non-empty and not a known bad value
-    logger.debug(
-        "check_approval_token: no thread_id/trade_id — using legacy non-empty check"
+    # Without thread_id/trade_id the token's HMAC cannot be recomputed, so a
+    # non-empty string proves nothing. Deny instead of accepting it unverified.
+    logger.warning(
+        "check_approval_token: thread_id/trade_id absent — token unverifiable — DENY"
     )
-    return True
+    return False
 
 
 def check_data_latency(context: dict[str, Any]) -> bool:
