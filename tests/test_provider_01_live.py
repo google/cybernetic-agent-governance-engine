@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live integration tests for Provider 01 (TrustLayers).
+"""Live integration tests for Provider 01.
 
-Executes live HTTP requests against the TrustLayers sandbox endpoint
+Executes live HTTP requests against the Provider 01 sandbox endpoint
 when configured via environment variables or local test credentials.
 """
 
@@ -33,7 +33,7 @@ from src.gateway.governance.normative_provider import (
 )
 from src.integrations.provider_01.provider import Provider01NormativeProvider
 
-pytestmark = [pytest.mark.eu_ecb, pytest.mark.local]
+pytestmark = [pytest.mark.eu_ecb, pytest.mark.integration]
 
 
 def _get_live_credentials() -> tuple[str, str]:
@@ -42,7 +42,7 @@ def _get_live_credentials() -> tuple[str, str]:
         (
             os.environ.get("PROVIDER_01_ENDPOINT")
             or os.environ.get(
-                "CAGE_NORMATIVE_ENDPOINT", "https://trustlayers.eu/api/cage"
+                "CAGE_NORMATIVE_ENDPOINT", "https://provider-01.example.com/api/cage"
             )
         )
         .split("#")[0]
@@ -65,7 +65,7 @@ def _get_live_credentials() -> tuple[str, str]:
 def live_provider() -> Provider01NormativeProvider:
     endpoint, api_key = _get_live_credentials()
     if not api_key:
-        pytest.skip("TrustLayers API key not configured")
+        pytest.skip("Provider 01 API key not configured")
     return Provider01NormativeProvider(
         endpoint=endpoint,
         api_key=api_key,

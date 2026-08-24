@@ -97,7 +97,7 @@ flowchart TB
 ```
 
 **Key principle:** VEIP integrates as a **NormativeProvider implementation**
-(the same seam used by TrustLayers, NexArt, and VERITAS OS today — see
+(the same seam used by Provider 01, Provider 02, and Provider 03 today — see
 [`get_normative_provider()`](../src/gateway/governance/normative_provider.py:800)),
 plus a new **attestation-embedding hook** in the envelope builder. This keeps
 VEIP off the synchronous hot path for ALLOW-zone transactions and reuses
@@ -205,7 +205,7 @@ sequenceDiagram
    `src/integrations/veip/` implements:
    - `fetch_risk_acceptance(threshold_id: str) -> RiskAcceptanceRecord`
    - `verify_signature(record) -> bool`
-   This mirrors [`VeritasNormativeProvider`](../src/integrations/veritas/provider.py:48)
+   This mirrors [`Provider03NormativeProvider`](../src/integrations/provider_03/provider.py:48)
    as the template for a vendor-isolated adapter.
 2. **No hot-path network call.** Risk-acceptance records are fetched at boot
    and on a poll interval (default 6h, matching `THR-AUD-002` Lula cadence),
@@ -685,7 +685,7 @@ be confused:
 `ValidationResult.findings`
 ([`normative_provider.py:200-214`](../src/gateway/governance/normative_provider.py:200))
 is currently an untyped `list[dict[str, Any]]` with no enforced vocabulary —
-each provider (TrustLayers, NexArt, VERITAS, and now VEIP) is free to invent
+each provider (Provider 01, Provider 02, Provider 03, and now VEIP) is free to invent
 its own finding-status strings, which is exactly the kind of vocabulary drift
 `decisions.py`'s docstring (`:22-42`) describes CAGE having already suffered
 and fixed once for the gateway-decision vocabulary.
@@ -701,7 +701,7 @@ class FindingStatus(str, Enum):
     """OSCAL four-state assessment-result vocabulary.
 
     Maps 1:1 to NIST OSCAL `finding.status.state` / `observation.status`
-    values, ensuring every NormativeProvider (TrustLayers, NexArt, VERITAS,
+    values, ensuring every NormativeProvider (Provider 01, Provider 02, Provider 03,
     VEIP) emits findings the OSCAL SSP exporter can ingest without a
     translation layer.
     """
@@ -729,7 +729,7 @@ signal, since OSCAL's native vocabulary has no "evaluation errored" state).
 ### 7.1 Module Layout
 
 Following the vendor-isolation pattern already established by
-`src/integrations/{nexart,trustlayers,veritas}/`, VEIP is a **new,
+`src/integrations/{provider_02,provider_01,provider_03}/`, VEIP is a **new,
 independent vendor package** — never a modification to kernel-resident
 governance code:
 
@@ -806,7 +806,7 @@ CAGE takes on.
   [`SUBSTRATE_CONTRACT.md §2.3`](../docs/SUBSTRATE_CONTRACT.md:156)'s 8-tier
   enumeration. It is evidence-embedding infrastructure, orthogonal to the
   ALLOW/DENY/REQUIRE_APPROVAL/DEFER decision path.
-- VEIP does **not** replace TrustLayers/NexArt/VERITAS — those remain
+- VEIP does **not** replace Provider 01/Provider 02/Provider 03 — those remain
   `NormativeProvider` implementations for FRIA validation; VEIP is a
   **cross-cutting attestation layer** that could, in principle, itself be
   registered as an additional `NormativeProvider` for the Blueprint axiom
@@ -959,7 +959,7 @@ deferred** to a follow-on phase:
 | **Fail-open default for all three axioms** means a compromised/unavailable VEIP feed does not, by itself, block a transaction — an adversary who can DoS VEIP gains nothing (transactions proceed) but an adversary who can **spoof** VEIP with false-positive `VERIFIED` attestations degrades audit trust without affecting the ALLOW/DENY decision. | Medium | VEIP root-of-trust JWKS must be provisioned via the same Workload-Identity/KMS rigor as CAGE's own signer — this is a deployment-hardening requirement, not a code gap, and should be captured as a POAM item once VEIP integration ships. |
 | **Physics axiom is fundamentally probabilistic**, not a formal guarantee (§5.4). Overclaiming "Rowhammer-proof" would be a compliance-narrative risk (c.f. FTRA BFS-exclusion honesty precedent). | Medium | Document the eBPF-correlation approach explicitly as a compensating control, not a formal proof, in both this document and any downstream OSCAL/SSP narrative generated from it. |
 | **Per-deployment-region fail-open/fail-closed policy** (`CAGE_VEIP_FAIL_CLOSED_<AXIOM>`) introduces a new region-specific configuration surface — must integrate with the existing `CAGE_DEPLOYMENT_REGION` guard pattern used throughout the codebase (`config/compliance/{REGION}_BASELINE.json`). | Low | Extend `config/thresholds/{REGION}_BASELINE.json` schema with a `veip_axiom_policy` block during implementation; validated by `schemas/thresholds.py` Pydantic model, same as all other region-gated config. |
-| **Open question:** should the Blueprint axiom's `VEIPBlueprintProvider` be registered as the **primary** `NormativeProvider` (replacing TrustLayers/VERITAS for FRIA validation) or as a **secondary, attestation-only** provider that coexists with the FRIA provider? | — | Requires a product decision with Arkadiy's team; this document assumes secondary/coexisting (§7.4) as the lower-risk default, but the PoC (§8) should explicitly test both wiring options if time permits. |
+| **Open question:** should the Blueprint axiom's `VEIPBlueprintProvider` be registered as the **primary** `NormativeProvider` (replacing Provider 01/Provider 03 for FRIA validation) or as a **secondary, attestation-only** provider that coexists with the FRIA provider? | — | Requires a product decision with Arkadiy's team; this document assumes secondary/coexisting (§7.4) as the lower-risk default, but the PoC (§8) should explicitly test both wiring options if time permits. |
 | **Open question:** does VEIP's Key-axiom admissibility ledger need to be **regionally partitioned** (a CA admitted for `treasury_transfer` in `US_FED` might not be admitted in `EU_ECB`)? | — | Likely yes, given CAGE's existing regional-baseline pattern — flag for the PoC's follow-on phase (§8.5); not required for the single-region PoC. |
 | **Open question:** what is VEIP's own key-rotation story, and does it need a `JWKSet`-equivalent structure mirroring `jwks.py`? | — | Recommend VEIP expose a standard `/.well-known/jwks.json` endpoint so CAGE can reuse `pem_to_jwk()`/`get_verification_key_for_jwt()` verbatim rather than building bespoke VEIP-specific key-lookup code. |
 
@@ -995,9 +995,9 @@ deferred** to a follow-on phase:
 
 | Precedent | Relevance |
 |---|---|
-| [`src/integrations/veritas/provider.py`](../src/integrations/veritas/provider.py) | Direct template for `VEIPBlueprintProvider`'s `NormativeProvider` shape |
-| [`src/integrations/nexart/`](../src/integrations/nexart) | Vendor-isolation module layout template (§7.1) |
-| [`src/integrations/trustlayers/`](../src/integrations/trustlayers) | Additional `NormativeProvider` precedent |
+| [`src/integrations/provider_03/provider.py`](../src/integrations/provider_03/provider.py) | Direct template for `VEIPBlueprintProvider`'s `NormativeProvider` shape |
+| [`src/integrations/provider_02/`](../src/integrations/provider_02) | Vendor-isolation module layout template (§7.1) |
+| [`src/integrations/provider_01/`](../src/integrations/provider_01) | Additional `NormativeProvider` precedent |
 
 ---
 

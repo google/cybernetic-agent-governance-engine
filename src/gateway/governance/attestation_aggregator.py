@@ -54,8 +54,8 @@ class AttestationAggregator:
     Usage::
 
         aggregator = AttestationAggregator()
-        aggregator.register(VEIPBlueprintProvider(...))
-        aggregator.register(ArchytanAttestationProvider(...))
+        aggregator.register(Provider05BlueprintProvider(...))
+        aggregator.register(Provider04AttestationProvider(...))
         await aggregator.boot_fetch()
 
         # Later, at envelope-build time:

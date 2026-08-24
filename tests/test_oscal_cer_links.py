@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-tests/test_oscal_cer_links.py — Tests for NexArt CER URI embedding in OSCAL
+tests/test_oscal_cer_links.py — Tests for Provider 02 CER URI embedding in OSCAL
 Assessment Results (Feature 2).
 
 Verification invariants:
@@ -57,7 +57,7 @@ def test_cer_links_present_when_uris_provided():
     """Findings get links[] array when cer_uris mapping includes their control_id."""
     findings = [_finding("A.5.3")]
     cer_uris = {
-        "A.5.3": "https://verify.nexart.io/cer/abc123def456",
+        "A.5.3": "https://verify.provider-02.example.com/cer/abc123def456",
     }
 
     doc = build_oscal_assessment_results(
@@ -74,9 +74,9 @@ def test_cer_links_present_when_uris_provided():
     assert len(finding["links"]) == 1
 
     link = finding["links"][0]
-    assert link["href"] == "https://verify.nexart.io/cer/abc123def456"
+    assert link["href"] == "https://verify.provider-02.example.com/cer/abc123def456"
     assert link["rel"] == "evidence"
-    assert "NexArt CER" in link["text"]
+    assert "Provider 02 CER" in link["text"]
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +120,7 @@ def test_cer_hash_prop_extracted():
     """CER hash is extracted from URI and added as a 'cer-hash' prop."""
     findings = [_finding("SC-4")]
     cer_uris = {
-        "SC-4": "https://verify.nexart.io/cer/deadbeef12345678",
+        "SC-4": "https://verify.provider-02.example.com/cer/deadbeef12345678",
     }
 
     doc = build_oscal_assessment_results(
@@ -148,7 +148,7 @@ def test_only_matching_findings_get_cer_links():
         _finding("A.8.4"),
     ]
     cer_uris = {
-        "A.5.3": "https://verify.nexart.io/cer/hash_a53",
+        "A.5.3": "https://verify.provider-02.example.com/cer/hash_a53",
         # SC-4 and A.8.4 intentionally missing
     }
 
@@ -176,7 +176,7 @@ def test_only_matching_findings_get_cer_links():
 def test_evidence_rel_semantics():
     """CER links use rel='evidence' per OSCAL linking model."""
     findings = [_finding("A.5.3")]
-    cer_uris = {"A.5.3": "https://verify.nexart.io/cer/test_hash"}
+    cer_uris = {"A.5.3": "https://verify.provider-02.example.com/cer/test_hash"}
 
     doc = build_oscal_assessment_results(
         findings=findings,
@@ -199,8 +199,8 @@ def test_document_round_trips_with_cer_links():
     """OSCAL document with CER links round-trips through JSON serialization."""
     findings = [_finding("A.5.3"), _finding("SC-4")]
     cer_uris = {
-        "A.5.3": "https://verify.nexart.io/cer/hash1",
-        "SC-4": "https://verify.nexart.io/cer/hash2",
+        "A.5.3": "https://verify.provider-02.example.com/cer/hash1",
+        "SC-4": "https://verify.provider-02.example.com/cer/hash2",
     }
 
     doc = build_oscal_assessment_results(

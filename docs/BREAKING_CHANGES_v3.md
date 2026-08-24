@@ -11,7 +11,7 @@
 > so the two documents can be cross-referenced.
 >
 > **Post-tag corrections (this update):** `AGWEnvelope`/`AGWEnvelopeBuilder`
-> removal was missing from this document entirely; `sign_archytan_digest()`
+> removal was missing from this document entirely; legacy provider signing method
 > removal was missing from the Removed Classes/Functions table; the
 > `KMS_BATCH_ENABLED` discrepancy flagged in the original release notes is
 > now resolved (default confirmed as `"false"`, not `"true"` — see
@@ -74,7 +74,7 @@ behavior change in `v3.0.0`.
 | `EVIDENCE_SLA_SECONDS` (module-level dict alias) | [`src/compliance_bridge/types.py:446`](../src/compliance_bridge/types.py:446) | `get_sla_seconds(region)` | Replace direct dict access with `get_sla_seconds(region)`. Same universal-only → region-merged behavior note as `CONTROL_META` applies. |
 | `ISO_CONTROL_MAP` (module-level dict alias — **two distinct symbols**) | [`src/compliance_bridge/types.py:512`](../src/compliance_bridge/types.py:512) **and** [`src/gateway/governance/ontology.py:197-234`](../src/gateway/governance/ontology.py:197) (`TradingKnowledgeGraph.ISO_CONTROL_MAP` class attribute) | `get_iso_control_map(region)` (types.py); `get_control_map(region)` (ontology.py) | These are **two unrelated symbols with the same name in two different modules** — migrate each independently. `src/compliance_bridge/types.py` callers use `get_iso_control_map(region)`; `TradingKnowledgeGraph` callers use `get_control_map(region)`. |
 | `update_state()` (public API) | [`src/gateway/governance/cbf.py:907-998`](../src/gateway/governance/cbf.py:907) | `atomic_verify_and_commit()` (same module) | **Completed (CR-3)**: `update_state()` was renamed to `_update_state_unsafe()` (internal-only) to eliminate TOCTOU race conditions. External callers must call `atomic_verify_and_commit()`, which performs the CBF safety check and state commit atomically within a single Redis Lua execution. |
-| `sign_archytan_digest()` (method) | [`src/gateway/governance/kms_signer.py`](../src/gateway/governance/kms_signer.py) (`KMSSigner` class) | `sign()` (same class) | Replace `kms_signer.sign_archytan_digest(digest)` with `kms_signer.sign(payload)`; `sign()` is the canonical signing entry point and covers the same code path. **(Completed post-tag, `fix/v3-breaking-changes-completion`.)** |
+| `sign_provider_04_digest()` (legacy method) | [`src/gateway/governance/kms_signer.py`](../src/gateway/governance/kms_signer.py) (`KMSSigner` class) | `sign()` (same class) | Replace legacy digest signing with `kms_signer.sign(payload)`; `sign()` is the canonical signing entry point and covers the same code path. **(Completed post-tag, `fix/v3-breaking-changes-completion`.)** |
 
 ### Removed Endpoints
 
