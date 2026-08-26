@@ -58,9 +58,9 @@ async def test_async_redis_client_basic_ops(fake_async_redis):
     val_f_invalid = await client_wrapper.get_float("key1", default=5.5)
     assert val_f_invalid == 5.5
 
-    assert client_wrapper.get_raw_client() is fake_async_redis
-    assert client_wrapper.pipeline() is not None
-    assert client_wrapper.watch("key1") is not None
+    assert await client_wrapper.get_raw_client() is fake_async_redis
+    assert await client_wrapper.pipeline() is not None
+    assert await client_wrapper.watch("key1") is not None
 
 
 @pytest.mark.local

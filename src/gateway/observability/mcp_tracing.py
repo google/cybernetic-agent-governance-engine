@@ -54,7 +54,9 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
     original_call_tool = tool_manager.call_tool
 
     async def traced_call_tool(name, arguments, context=None, convert_result=False):  # type: ignore[no-untyped-def]
-        # 1. Extract carrier BEFORE Pydantic validation strips it
+        # 1. Extract carrier BEFORE Pydantic validation strips it.
+        # Create a shallow copy to avoid mutating the caller's dict.
+        arguments = {**arguments}
         carrier = arguments.pop("_otel_carrier", None) or {}
         otel_ctx = propagator.extract(carrier)
 

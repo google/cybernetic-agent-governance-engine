@@ -53,6 +53,8 @@ from pathlib import Path
 
 import jsonschema
 
+logger = logging.getLogger("cage.integrations.provider_06.mock")
+
 SCHEMA_PATH = (
     Path(__file__).resolve().parents[3]
     / "local"
@@ -70,8 +72,6 @@ except Exception as e:
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
-
-logger = logging.getLogger("cage.integrations.provider_06.mock")
 
 # Protocol version from Agent Integrity (packages/protocol/src/types.ts)
 PROTOCOL_VERSION = "1-alpha"

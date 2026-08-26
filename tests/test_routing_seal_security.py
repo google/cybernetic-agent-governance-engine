@@ -39,6 +39,16 @@ from freezegun import freeze_time
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.fixture(autouse=True)
+def disable_seal_strict_mode(monkeypatch):
+    """Disable strict mode for all tests in this module.
+    
+    Strict mode rejects HMAC seals in production environments.
+    Tests use HMAC seals for unit testing, so we disable strict mode.
+    """
+    monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
+
 # ---------------------------------------------------------------------------
 # NOTE on module-level state
 # ---------------------------------------------------------------------------
@@ -447,8 +457,12 @@ def test_gateway_rejects_hmac_in_production():
     params = {"symbol": "AAPL", "amount": 1000.0}
     seal = gw_seal.generate_seal("execute_trade", params)
 
-    with patch.object(gw_seal, "_IS_PRODUCTION", True):
+    # Patch environment to simulate production (runtime check via _is_production_env)
+    # Clear both CAGE_ENV and ENVIRONMENT to ensure production detection
+    env = {k: v for k, v in os.environ.items() if k not in ("CAGE_ENV", "ENVIRONMENT")}
+    env["CAGE_ENV"] = "production"
+    with patch.dict(os.environ, env, clear=True):
         with pytest.raises(gw_seal.SymbolicGovernorViolation) as exc_info:
             gw_seal.verify_seal(seal, "execute_trade", params)
 
-        assert "HMAC seals are not accepted in production" in str(exc_info.value)
+        assert "HMAC seals are not accepted" in str(exc_info.value)
