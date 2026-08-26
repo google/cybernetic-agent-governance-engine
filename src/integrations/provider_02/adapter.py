@@ -66,6 +66,20 @@ from typing import Any
 
 logger = logging.getLogger("cage.provider_02_adapter")
 
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+
+class Provider02Error(Exception):
+    """Raised when Provider 02 API calls fail (fail-closed semantics)."""
+
+    def __init__(self, message: str, code: str = "PROVIDER_02_ERROR") -> None:
+        super().__init__(message)
+        self.code = code
+
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -542,16 +556,32 @@ class Provider02Client:
             CER response dict with ``certificateHash`` and ``receipt``.
 
         Raises:
-            httpx.HTTPStatusError: On non-2xx response.
-            httpx.TimeoutException: On timeout.
+            Provider02Error: On any HTTP or network failure (fail-closed).
         """
         import httpx
 
         url = f"{self._endpoint}/certifyDecision"
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.post(url, json=evidence_record, headers=self._headers())
-            resp.raise_for_status()
-            return resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(url, json=evidence_record, headers=self._headers())
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "[Provider02] certify_decision HTTP error: %s status=%d",
+                url,
+                exc.response.status_code,
+            )
+            raise Provider02Error(
+                f"HTTP {exc.response.status_code}: {exc.response.text[:200]}",
+                code="ENDPOINT_ERROR",
+            ) from exc
+        except httpx.RequestError as exc:
+            logger.error("[Provider02] certify_decision request error: %s %s", url, exc)
+            raise Provider02Error(str(exc), code="ENDPOINT_ERROR") from exc
+        except Exception as exc:
+            logger.error("[Provider02] certify_decision unexpected error: %s", exc)
+            raise Provider02Error(f"Unexpected error: {exc}", code="ENDPOINT_ERROR") from exc
 
     async def register_project_bundle(self, bundle: dict[str, Any]) -> dict[str, Any]:
         """Register a completed Project Bundle with Provider 02.
@@ -561,14 +591,34 @@ class Provider02Client:
 
         Returns:
             Registration response with ``bundleHash`` and ``receiptUrl``.
+
+        Raises:
+            Provider02Error: On any HTTP or network failure (fail-closed).
         """
         import httpx
 
         url = f"{self._endpoint}/registerProjectBundle"
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.post(url, json=bundle, headers=self._headers())
-            resp.raise_for_status()
-            return resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(url, json=bundle, headers=self._headers())
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "[Provider02] register_project_bundle HTTP error: %s status=%d",
+                url,
+                exc.response.status_code,
+            )
+            raise Provider02Error(
+                f"HTTP {exc.response.status_code}: {exc.response.text[:200]}",
+                code="ENDPOINT_ERROR",
+            ) from exc
+        except httpx.RequestError as exc:
+            logger.error("[Provider02] register_project_bundle request error: %s %s", url, exc)
+            raise Provider02Error(str(exc), code="ENDPOINT_ERROR") from exc
+        except Exception as exc:
+            logger.error("[Provider02] register_project_bundle unexpected error: %s", exc)
+            raise Provider02Error(f"Unexpected error: {exc}", code="ENDPOINT_ERROR") from exc
 
     async def verify_cer(self, certificate_hash: str) -> dict[str, Any]:
         """Verify a CER against Provider 02's public JWK set.
@@ -578,11 +628,31 @@ class Provider02Client:
 
         Returns:
             Verification result with ``valid``, ``signer``, ``timestamp``.
+
+        Raises:
+            Provider02Error: On any HTTP or network failure (fail-closed).
         """
         import httpx
 
         url = f"{self._endpoint}/verify/{certificate_hash}"
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.get(url, headers=self._headers())
-            resp.raise_for_status()
-            return resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.get(url, headers=self._headers())
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "[Provider02] verify_cer HTTP error: %s status=%d",
+                url,
+                exc.response.status_code,
+            )
+            raise Provider02Error(
+                f"HTTP {exc.response.status_code}: {exc.response.text[:200]}",
+                code="ENDPOINT_ERROR",
+            ) from exc
+        except httpx.RequestError as exc:
+            logger.error("[Provider02] verify_cer request error: %s %s", url, exc)
+            raise Provider02Error(str(exc), code="ENDPOINT_ERROR") from exc
+        except Exception as exc:
+            logger.error("[Provider02] verify_cer unexpected error: %s", exc)
+            raise Provider02Error(f"Unexpected error: {exc}", code="ENDPOINT_ERROR") from exc

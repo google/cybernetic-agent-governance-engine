@@ -118,7 +118,19 @@ class Provider03NormativeProvider:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.get(url, headers=self._headers())
                 resp.raise_for_status()
-                data = resp.json()
+                try:
+                    data = resp.json()
+                except json.JSONDecodeError as jexc:
+                    logger.error(
+                        "[Provider03] fetch_baseline JSON parse error: %s %s",
+                        url,
+                        jexc,
+                    )
+                    return NormativeBaseline(
+                        region=region,
+                        profile={},
+                        error=f"Invalid JSON response: {jexc}",
+                    )
                 return NormativeBaseline(
                     region=region,
                     profile=data.get("profile", data),

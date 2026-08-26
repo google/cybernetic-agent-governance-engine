@@ -262,40 +262,46 @@ class TestCircuitBreaker:
         cb = CircuitBreaker()
         assert cb.can_execute() is True
 
-    def test_record_failure_increments_count(self) -> None:
+    @pytest.mark.asyncio
+    async def test_record_failure_increments_count(self) -> None:
         cb = CircuitBreaker(failure_threshold=10)
-        cb.record_failure()
+        await cb.record_failure()
         assert cb.failures == 1
 
-    def test_opens_after_threshold_failures(self) -> None:
+    @pytest.mark.asyncio
+    async def test_opens_after_threshold_failures(self) -> None:
         cb = CircuitBreaker(failure_threshold=3)
         for _ in range(3):
-            cb.record_failure()
+            await cb.record_failure()
         assert cb.state == "OPEN"
 
-    def test_does_not_open_before_threshold(self) -> None:
+    @pytest.mark.asyncio
+    async def test_does_not_open_before_threshold(self) -> None:
         cb = CircuitBreaker(failure_threshold=3)
-        cb.record_failure()
-        cb.record_failure()
+        await cb.record_failure()
+        await cb.record_failure()
         assert cb.state == "CLOSED"
 
-    def test_cannot_execute_when_open_and_within_recovery(self) -> None:
+    @pytest.mark.asyncio
+    async def test_cannot_execute_when_open_and_within_recovery(self) -> None:
         cb = CircuitBreaker(failure_threshold=1, recovery_timeout=9999)
-        cb.record_failure()
+        await cb.record_failure()
         assert cb.state == "OPEN"
         assert cb.can_execute() is False
 
-    def test_can_execute_when_open_and_past_recovery_timeout(self) -> None:
+    @pytest.mark.asyncio
+    async def test_can_execute_when_open_and_past_recovery_timeout(self) -> None:
         cb = CircuitBreaker(failure_threshold=1, recovery_timeout=0)
-        cb.record_failure()
+        await cb.record_failure()
         # last_failure_time is in the past; recovery_timeout=0 means immediate
         assert cb.can_execute() is True
 
-    def test_record_success_resets_to_closed(self) -> None:
+    @pytest.mark.asyncio
+    async def test_record_success_resets_to_closed(self) -> None:
         cb = CircuitBreaker(failure_threshold=1)
-        cb.record_failure()
+        await cb.record_failure()
         assert cb.state == "OPEN"
-        cb.record_success()
+        await cb.record_success()
         assert cb.state == "CLOSED"
         assert cb.failures == 0
 
@@ -319,9 +325,10 @@ class TestCircuitBreaker:
         cb = CircuitBreaker()
         assert cb.check_soft_ceiling(2001.0) is True
 
-    def test_recovery_timeout_measured_from_last_failure(self) -> None:
+    @pytest.mark.asyncio
+    async def test_recovery_timeout_measured_from_last_failure(self) -> None:
         cb = CircuitBreaker(failure_threshold=1, recovery_timeout=60)
-        cb.record_failure()
+        await cb.record_failure()
         # Manipulate last_failure_time to simulate 61s ago
         cb.last_failure_time = time.time() - 61
         assert cb.can_execute() is True

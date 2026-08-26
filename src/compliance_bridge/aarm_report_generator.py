@@ -52,8 +52,23 @@ logger = logging.getLogger(__name__)
 # Semaphore: bound concurrency to 3 to avoid vLLM rate-limit saturation
 # ---------------------------------------------------------------------------
 
-_NARRATIVE_SEM = asyncio.Semaphore(3)
+# Lazy initialization to avoid binding to wrong event loop at import time.
+# See: https://docs.python.org/3/library/asyncio-sync.html#asyncio.Semaphore
+_NARRATIVE_SEM: asyncio.Semaphore | None = None
 _MAX_TOKENS = int(os.environ.get("AARM_NARRATIVE_MAX_TOKENS", "512"))
+
+
+def _get_narrative_semaphore() -> asyncio.Semaphore:
+    """Return the narrative semaphore, creating it lazily on first use.
+
+    This avoids the 'attached to a different loop' RuntimeError that occurs
+    when asyncio.Semaphore is created at module import time (before the
+    FastAPI event loop is running).
+    """
+    global _NARRATIVE_SEM
+    if _NARRATIVE_SEM is None:
+        _NARRATIVE_SEM = asyncio.Semaphore(3)
+    return _NARRATIVE_SEM
 _TIMEOUT_SEC = int(os.environ.get("AARM_NARRATIVE_TIMEOUT_MS", "25000")) / 1000
 
 
@@ -146,7 +161,7 @@ async def generate_aarm_narrative(
     Returns:
         A prose narrative string (never None — falls back to template on error).
     """
-    async with _NARRATIVE_SEM:
+    async with _get_narrative_semaphore():
         try:
             from openai import AsyncOpenAI
 

@@ -484,9 +484,14 @@ def build_aarm_conformance_report(
         elif fail_count == 0 and not_found == 0:
             status = "NEUTRALIZED"
             neutralized += 1
-        elif pass_count == 0:
+        elif pass_count == 0 and fail_count > 0:
+            # At least one control explicitly failed — truly exposed
             status = "EXPOSED"
             exposed += 1
+        elif pass_count == 0 and not_found > 0 and fail_count == 0:
+            # No evidence gathered yet (all NOT_FOUND), not necessarily exposed
+            status = "UNKNOWN"
+            unknown += 1
         else:
             status = "PARTIAL"
             partial += 1

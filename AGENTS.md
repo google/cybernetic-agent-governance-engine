@@ -302,6 +302,7 @@ Because CAGE is an illustrative reference architecture and not a live production
 - **No Internal Operational Tracking:** Do not add or maintain documents that track specific internal deployments, incidents, or team progress (e.g., active POAM trackers, rollback procedures for specific migrations, internal implementation status).
 - **Illustrative Patterns Only:** Documents that describe operational procedures (like key rotation, deployment rules, or compensating controls) must clearly include a "Reference Architecture Note" stating they are illustrative templates for adopters.
 - **Maintainer Independence:** Documentation should be written for an external adopter to adapt, devoid of maintainer-specific internal cloud project names, timestamps, or specific ticket tracking.
+- **Chunked Document Writing:** When creating or updating long documentation files, write content in many small chunks rather than single large writes. This improves reliability of file operations and reduces the risk of truncation or corruption during write operations. Prefer using `apply_diff` with multiple small SEARCH/REPLACE blocks or multiple sequential `write_to_file` calls with append semantics over a single monolithic write.
 
 ---
 

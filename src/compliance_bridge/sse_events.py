@@ -123,6 +123,8 @@ class GovernanceEventBus:
         # ``_queues`` is the Python equivalent of the TypeScript ``Set<Subscriber>``.
         self._queues: list[asyncio.Queue[dict]] = []
         self._maxsize = maxsize
+        # Lock to protect _queues from concurrent modification during iteration.
+        self._lock = asyncio.Lock()
         # Optional evidence stream sink — set via attach_evidence_sink()
         # When not None, publish() forwards events for hash-chained persistence.
         self._evidence_sink = None
@@ -133,35 +135,37 @@ class GovernanceEventBus:
     # generator loop) and calling ``unsubscribe()`` when done.
     # ------------------------------------------------------------------
 
-    def _new_queue(self) -> asyncio.Queue[dict]:
+    async def _new_queue(self) -> asyncio.Queue[dict]:
         """Allocate a fresh subscriber queue and register it.
 
         M-07: Raises RuntimeError if MAX_SUBSCRIBERS is already reached to
         prevent unbounded memory growth from connection floods.
         """
-        if len(self._queues) >= self.MAX_SUBSCRIBERS:
-            raise RuntimeError(
-                f"[event_bus] SSE subscriber limit reached ({self.MAX_SUBSCRIBERS}). "
-                "Rejecting new connection to prevent resource exhaustion."
-            )
-        q: asyncio.Queue[dict] = asyncio.Queue(maxsize=self._maxsize)
-        self._queues.append(q)
+        async with self._lock:
+            if len(self._queues) >= self.MAX_SUBSCRIBERS:
+                raise RuntimeError(
+                    f"[event_bus] SSE subscriber limit reached ({self.MAX_SUBSCRIBERS}). "
+                    "Rejecting new connection to prevent resource exhaustion."
+                )
+            q: asyncio.Queue[dict] = asyncio.Queue(maxsize=self._maxsize)
+            self._queues.append(q)
         logger.debug(
             "[event_bus] New SSE subscriber registered. Total subscribers: %d",
             len(self._queues),
         )
         return q
 
-    def unsubscribe(self, q: asyncio.Queue[dict]) -> None:
+    async def unsubscribe(self, q: asyncio.Queue[dict]) -> None:
         """Remove a queue from the registry (called on client disconnect)."""
-        try:
-            self._queues.remove(q)
-            logger.debug(
-                "[event_bus] SSE subscriber removed. Remaining subscribers: %d",
-                len(self._queues),
-            )
-        except ValueError:
-            pass  # Already removed — safe to ignore
+        async with self._lock:
+            try:
+                self._queues.remove(q)
+                logger.debug(
+                    "[event_bus] SSE subscriber removed. Remaining subscribers: %d",
+                    len(self._queues),
+                )
+            except ValueError:
+                pass  # Already removed — safe to ignore
 
     async def subscribe(self) -> AsyncGenerator[dict, None]:
         """Async generator that yields governance events as they arrive.
@@ -178,7 +182,7 @@ class GovernanceEventBus:
                         break
                     yield ServerSentEvent(data=json.dumps(event), event="governance-event")
         """
-        q = self._new_queue()
+        q = await self._new_queue()
         try:
             while True:
                 event = await q.get()
@@ -186,7 +190,7 @@ class GovernanceEventBus:
         except GeneratorExit:
             pass
         finally:
-            self.unsubscribe(q)
+            await self.unsubscribe(q)
 
     # ------------------------------------------------------------------
     # publish — broadcast an event to all active subscriber queues.
@@ -212,14 +216,17 @@ class GovernanceEventBus:
             except Exception as exc:
                 logger.warning("[event_bus] Evidence stream ingest failed: %s", exc)
 
-        if not self._queues:
-            logger.debug(
-                "[event_bus] publish() called with no subscribers — skipping fan-out."
-            )
-            return
+        # Take a snapshot under the lock to avoid mutation during iteration.
+        async with self._lock:
+            if not self._queues:
+                logger.debug(
+                    "[event_bus] publish() called with no subscribers — skipping fan-out."
+                )
+                return
+            subscribers_snapshot = list(self._queues)
 
         dead: list[asyncio.Queue[dict]] = []
-        for q in list(self._queues):  # snapshot to avoid mutation during iteration
+        for q in subscribers_snapshot:
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
@@ -233,7 +240,7 @@ class GovernanceEventBus:
                 dead.append(q)
 
         for q in dead:
-            self.unsubscribe(q)
+            await self.unsubscribe(q)
 
     @property
     def subscriber_count(self) -> int:

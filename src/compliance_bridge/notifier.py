@@ -46,6 +46,7 @@ COMPLIANCE_ALERT_WEBHOOK_URL (backward compat with the task spec).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -57,6 +58,40 @@ import httpx
 from .types import OscalFinding
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# HIGH-3 FIX: Shared HTTP client to prevent resource exhaustion
+#
+# Creating a new httpx.AsyncClient() per request exhausts file descriptors
+# under load. This module-level singleton is lazily initialized with
+# double-checked locking for thread/task safety.
+# ---------------------------------------------------------------------------
+
+_notifier_http_client: httpx.AsyncClient | None = None
+_notifier_http_lock = asyncio.Lock()
+
+
+async def _get_notifier_http_client() -> httpx.AsyncClient:
+    """Return a shared httpx.AsyncClient, creating it if needed.
+
+    Uses double-checked locking pattern for async safety.
+    """
+    global _notifier_http_client
+    if _notifier_http_client is None or _notifier_http_client.is_closed:
+        async with _notifier_http_lock:
+            if _notifier_http_client is None or _notifier_http_client.is_closed:
+                _notifier_http_client = httpx.AsyncClient(timeout=30.0)
+                logger.info("[notifier] Shared HTTP client initialized")
+    return _notifier_http_client
+
+
+async def close_notifier_http_client() -> None:
+    """Close the shared HTTP client. Call on application shutdown."""
+    global _notifier_http_client
+    if _notifier_http_client is not None and not _notifier_http_client.is_closed:
+        await _notifier_http_client.aclose()
+        _notifier_http_client = None
+        logger.info("[notifier] Shared HTTP client closed")
 
 # PagerDuty Events API v2 endpoint — hardcoded per PD docs, not configurable
 _PAGERDUTY_EVENTS_URL = "https://events.pagerduty.com/v2/enqueue"
@@ -257,12 +292,13 @@ class SlackNotifier:
     ) -> None:
         body = _build_critical_alert_body(critical_fails, audit_id)
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    self._webhook_url,
-                    json=body,
-                    headers={"Content-Type": "application/json"},
-                )
+            # HIGH-3 FIX: Reuse shared client instead of creating new one per request
+            client = await _get_notifier_http_client()
+            resp = await client.post(
+                self._webhook_url,
+                json=body,
+                headers={"Content-Type": "application/json"},
+            )
             if resp.is_success:
                 logger.info(
                     "[SlackNotifier] 🚨 Alert sent for: %s",
@@ -287,12 +323,13 @@ class SlackNotifier:
             control_id, audit_id, model_name, remediation_text, trace_ids
         )
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    self._webhook_url,
-                    json=body,
-                    headers={"Content-Type": "application/json"},
-                )
+            # HIGH-3 FIX: Reuse shared client instead of creating new one per request
+            client = await _get_notifier_http_client()
+            resp = await client.post(
+                self._webhook_url,
+                json=body,
+                headers={"Content-Type": "application/json"},
+            )
             if resp.is_success:
                 logger.info(
                     "[SlackNotifier] 📨 Remediation advisory posted to Slack for %s",
@@ -354,12 +391,13 @@ class PagerDutyNotifier:
                 },
             )
             try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(
-                        _PAGERDUTY_EVENTS_URL,
-                        json=payload,
-                        headers={"Content-Type": "application/json"},
-                    )
+                # HIGH-3 FIX: Reuse shared client instead of creating new one per request
+                client = await _get_notifier_http_client()
+                resp = await client.post(
+                    _PAGERDUTY_EVENTS_URL,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
                 if resp.is_success:
                     logger.info(
                         "[PagerDutyNotifier] 🚨 Incident triggered: %s (dedup=%s)",
@@ -406,12 +444,13 @@ class PagerDutyNotifier:
             },
         )
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    _PAGERDUTY_EVENTS_URL,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                )
+            # HIGH-3 FIX: Reuse shared client instead of creating new one per request
+            client = await _get_notifier_http_client()
+            resp = await client.post(
+                _PAGERDUTY_EVENTS_URL,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
             if resp.is_success:
                 logger.info(
                     "[PagerDutyNotifier] 📨 Remediation advisory event posted for %s",
@@ -452,15 +491,16 @@ class WebhookNotifier:
 
     async def _post(self, payload: dict) -> None:
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    self._webhook_url,
-                    json=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "X-Source": "cage-compliance-bridge",
-                    },
-                )
+            # HIGH-3 FIX: Reuse shared client instead of creating new one per request
+            client = await _get_notifier_http_client()
+            resp = await client.post(
+                self._webhook_url,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Source": "cage-compliance-bridge",
+                },
+            )
             if resp.is_success:
                 logger.info(
                     "[WebhookNotifier] ✅ Payload posted (HTTP %d)", resp.status_code

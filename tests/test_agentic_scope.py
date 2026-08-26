@@ -18,9 +18,18 @@ POAM: AI600-004
 Phase: 0 (foundation)
 """
 
-import os
-
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def disable_seal_strict_mode(monkeypatch):
+    """Disable strict mode for all tests in this module.
+    
+    Strict mode rejects HMAC seals in production environments.
+    Tests use HMAC seals for unit testing, so we disable strict mode.
+    """
+    monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
+
 
 # Skip the entire module gracefully when dowhy is not installed (e.g. in CI
 # environments that install only the base dependency group without the
@@ -46,10 +55,8 @@ class TestRoutingSealRejectsInvalidSeal:
 
     def test_verify_seal_rejects_missing_seal(self):
         """verify_seal raises SymbolicGovernorViolation for an empty seal string."""
-        os.environ.setdefault(
-            "GOVERNANCE_SALT",
-            "test-salt-for-unit-tests-minimum-64-chars-padding-here-ok",
-        )
+        # GOVERNANCE_SALT is set by conftest.py to ensure consistent HMAC key
+        # across all tests. Do not override here.
         from src.gateway.governance.routing_seal import (
             SymbolicGovernorViolation,
             verify_seal,
@@ -60,10 +67,8 @@ class TestRoutingSealRejectsInvalidSeal:
 
     def test_verify_seal_rejects_malformed_seal(self):
         """verify_seal raises SymbolicGovernorViolation for a malformed seal (wrong number of parts)."""
-        os.environ.setdefault(
-            "GOVERNANCE_SALT",
-            "test-salt-for-unit-tests-minimum-64-chars-padding-here-ok",
-        )
+        # GOVERNANCE_SALT is set by conftest.py to ensure consistent HMAC key
+        # across all tests. Do not override here.
         from src.gateway.governance.routing_seal import (
             SymbolicGovernorViolation,
             verify_seal,
@@ -74,10 +79,8 @@ class TestRoutingSealRejectsInvalidSeal:
 
     def test_verify_seal_rejects_tampered_hmac(self):
         """verify_seal raises SymbolicGovernorViolation when the HMAC is tampered."""
-        os.environ.setdefault(
-            "GOVERNANCE_SALT",
-            "test-salt-for-unit-tests-minimum-64-chars-padding-here-ok",
-        )
+        # GOVERNANCE_SALT is set by conftest.py to ensure consistent HMAC key
+        # across all tests. Do not override here.
         from src.gateway.governance.routing_seal import (
             SymbolicGovernorViolation,
             generate_seal,
@@ -94,10 +97,8 @@ class TestRoutingSealRejectsInvalidSeal:
 
     def test_verify_seal_accepts_valid_seal(self):
         """verify_seal returns True for a freshly generated valid seal."""
-        os.environ.setdefault(
-            "GOVERNANCE_SALT",
-            "test-salt-for-unit-tests-minimum-64-chars-padding-here-ok",
-        )
+        # GOVERNANCE_SALT is set by conftest.py to ensure consistent HMAC key
+        # across all tests. Do not override here.
         from src.gateway.governance.routing_seal import generate_seal, verify_seal
 
         seal = generate_seal("execute_trade", {"amount": 5000})

@@ -275,14 +275,30 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 
 # M-13: Build CORS origin list without empty strings (empty string allows all origins)
-_cors_origins: list[str] = [
-    "http://localhost:5173",  # Vite dev server default
-    "http://localhost:3000",  # Alternative dev port
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:3000",
-]
+# HIGH-1 FIX: Get allowed origins from environment, no wildcard default
+_allowed_origins_str = os.environ.get("ALLOWED_ORIGINS", "")
+if _allowed_origins_str:
+    _cors_origins: list[str] = [
+        origin.strip() for origin in _allowed_origins_str.split(",") if origin.strip()
+    ]
+else:
+    # In production, fail-closed - no CORS if not configured
+    _cage_env = os.environ.get("CAGE_ENV", "production")
+    if _cage_env == "production":
+        _cors_origins = []  # Deny all cross-origin in production if not configured
+        logger.warning("ALLOWED_ORIGINS not set in production - CORS disabled")
+    else:
+        # Dev defaults only in non-production environments
+        _cors_origins = [
+            "http://localhost:5173",  # Vite dev server default
+            "http://localhost:3000",  # Alternative dev port
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:3000",
+        ]
+
+# Allow UI_ORIGIN as additional origin (backward compat)
 _ui_origin = os.environ.get("UI_ORIGIN", "").strip()
-if _ui_origin:
+if _ui_origin and _ui_origin not in _cors_origins:
     _cors_origins.append(_ui_origin)
 
 app.add_middleware(

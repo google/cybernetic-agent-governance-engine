@@ -31,6 +31,8 @@ Governance pipeline applied here:
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import logging
 import os
@@ -140,7 +142,8 @@ async def _stream_vllm(
     first-token (TTFT) on the first non-empty chunk and records it on the span
     as ``gen_ai.ttft_ms`` and ``gen_ai.completion_start_time``.
     """
-    client = _get_http_client()
+    raw_client = _get_http_client()
+    client = await raw_client if inspect.isawaitable(raw_client) else raw_client
     _ttft_recorded = False
     async with client.stream(
         "POST",
@@ -378,12 +381,20 @@ async def chat_completions(
         api_base = _resolve_backend_url(model_id)
         api_key = config_manager.get("VLLM_API_KEY") or "EMPTY"
         target_url = f"{api_base.rstrip('/')}/chat/completions"
-        client = _get_http_client()
+        raw_client = _get_http_client()
+        client = await raw_client if inspect.isawaitable(raw_client) else raw_client
 
         # Respect the caller's streaming preference.  When stream=True the
         # response is proxied byte-for-byte as an SSE stream so the frontend
         # receives real-time tokens.
-        want_stream: bool = body.get("stream", False) is True
+        # Use explicit truthiness check instead of identity comparison to handle
+        # string "true", int 1, or bool True from various client serializers.
+        stream_val = body.get("stream", False)
+        want_stream: bool = (
+            stream_val is True
+            or stream_val == 1
+            or (isinstance(stream_val, str) and stream_val.lower() == "true")
+        )
 
         if want_stream:
             stamp_iso_control(span, tier=4, control="A.5.3", outcome="STREAM")

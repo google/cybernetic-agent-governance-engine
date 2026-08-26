@@ -45,7 +45,7 @@ _MIN_CASH = 10_000.0
 _GAMMA = 0.9
 
 
-def _make_cbf(fake_redis: fakeredis.aioredis.FakeRedis) -> ControlBarrierFunction:
+def _make_cbf(fake_redis: fakeredis.aioredis.FakeRedis):
     """Return a CBF wired to *fake_redis* with deterministic thresholds."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 
@@ -55,7 +55,7 @@ def _make_cbf(fake_redis: fakeredis.aioredis.FakeRedis) -> ControlBarrierFunctio
     cbf.gamma = _GAMMA
     cbf.tracer = None  # suppress OTel span creation
 
-    mock_redis_module = MagicMock()
+    mock_redis_module = AsyncMock()
     mock_redis_module.get_raw_client = MagicMock(return_value=fake_redis)
     mock_redis_module.get = AsyncMock(side_effect=lambda key: fake_redis.get(key))
     mock_redis_module.get_float = AsyncMock(

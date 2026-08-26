@@ -226,6 +226,10 @@ def start_explain_worker(loop: asyncio.AbstractEventLoop) -> asyncio.Task:
 class CircuitBreaker:
     """
     Implements a Fail-Fast Circuit Breaker pattern.
+
+    Thread-safety: Uses asyncio.Lock to protect shared mutable state
+    (failures, state, last_failure_time) from race conditions when
+    multiple concurrent coroutines call record_failure/record_success.
     """
 
     def __init__(
@@ -240,19 +244,36 @@ class CircuitBreaker:
         self.failures = 0
         self.last_failure_time = 0.0
         self.state = "CLOSED"
+        self._lock = asyncio.Lock()
 
-    def record_failure(self):  # type: ignore[no-untyped-def]
-        self.failures += 1
-        self.last_failure_time = time.time()
-        if self.state == "CLOSED" and self.failures >= self.failure_threshold:
-            self.state = "OPEN"
-            logger.warning(f"🔥 Circuit Breaker OPENED after {self.failures} failures.")
+    async def record_failure(self) -> None:
+        """Record a failure and potentially open the circuit breaker.
 
-    def record_success(self):  # type: ignore[no-untyped-def]
-        if self.state == "OPEN":
-            logger.info("✅ Circuit Breaker RECOVERED (CLOSED).")
-        self.failures = 0
-        self.state = "CLOSED"
+        Thread-safe: Uses asyncio.Lock to prevent race conditions
+        on the read-modify-write of failures counter and state transitions.
+        """
+        async with self._lock:
+            self.failures += 1
+            self.last_failure_time = time.time()
+            if self.state == "CLOSED" and self.failures >= self.failure_threshold:
+                self.state = "OPEN"
+                logger.warning(
+                    f"🔥 Circuit Breaker OPENED after {self.failures} failures."
+                )
+
+    async def record_success(self) -> None:
+        """Record a success and potentially close the circuit breaker.
+
+        Thread-safe: Uses asyncio.Lock to prevent race conditions
+        on state transitions from HALF_OPEN to CLOSED.
+        """
+        async with self._lock:
+            if self.state == "OPEN":
+                logger.info("✅ Circuit Breaker RECOVERED (CLOSED).")
+            elif self.state == "HALF_OPEN":
+                logger.info("✅ Circuit Breaker recovered from HALF_OPEN → CLOSED.")
+            self.failures = 0
+            self.state = "CLOSED"
 
     def can_execute(self) -> bool:
         if self.state == "CLOSED":
@@ -480,14 +501,32 @@ class OPAClient:
                 )
 
                 response.raise_for_status()
-                self.cb.record_success()
+                await self.cb.record_success()
 
                 resp_json = response.json()
-                result = resp_json.get("result", "DENY")
+                raw_result = resp_json.get("result", "DENY")
                 explanation = resp_json.get("explanation", [])
 
+                # ── Normalize OPA result to canonical decision string ────────
+                # OPA policies can return various types:
+                #   - dict: {"allow": true, "reasons": [...]} or {"decision": "ALLOW"}
+                #   - bool: true/false
+                #   - str: "ALLOW"/"DENY"/"MANUAL_REVIEW"
+                # We normalize all variants to a canonical uppercase string.
+                if isinstance(raw_result, dict):
+                    # Extract decision from dict response (common OPA patterns)
+                    decision = raw_result.get("allow", raw_result.get("decision", "DENY"))
+                    if isinstance(decision, bool):
+                        decision_str = "ALLOW" if decision else "DENY"
+                    else:
+                        decision_str = str(decision).upper()
+                elif isinstance(raw_result, bool):
+                    decision_str = "ALLOW" if raw_result else "DENY"
+                else:
+                    decision_str = str(raw_result).upper() if raw_result is not None else "DENY"
+
                 span.set_attribute(
-                    "langfuse.trace.metadata.governance.decision", str(result)
+                    "langfuse.trace.metadata.governance.decision", decision_str
                 )
 
                 # Return the decision string (documented API).
@@ -499,8 +538,6 @@ class OPAClient:
 
                 # ── Write cache (non-blocking, fire-and-forget) ──────────────
                 # Only cache deterministic decisions (ALLOW/DENY/MANUAL_REVIEW).
-                # Do not cache None or unexpected types.
-                decision_str: str = str(result) if result is not None else "DENY"
                 await _write_opa_cache(cache_key, decision_str)
 
                 # ── Async explain-mode logging (non-blocking) ────────────────
@@ -525,10 +562,10 @@ class OPAClient:
                             decision_str,
                         )
 
-                return result
+                return decision_str
 
             except Exception as e:
-                self.cb.record_failure()
+                await self.cb.record_failure()
                 logger.critical(f"🔥 OPA FAILURE: {e}")
                 span.record_exception(e)
                 span.set_status(Status(StatusCode.ERROR))
