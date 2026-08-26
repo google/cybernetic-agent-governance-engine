@@ -769,10 +769,18 @@ class GcsLedgerProvider:
         #   - "balance" or "balances.{account_id}" -> balance_usd
         #   - "timestamp" -> verified_at (converted to Unix float)
         #   - "kms_signature" -> signature (if present)
+        # Resolve with explicit membership so a genuine 0.0 balance is honoured
+        # rather than treated as "absent" and overwritten by the top-level
+        # fallback — a drained account is the case the cash barrier must catch.
         balances = data.get("balances", {})
-        balance_value = balances.get(account_id, balances.get("default_account", 0.0))
-        if not balance_value and "balance" in data:
+        if account_id in balances:
+            balance_value = balances[account_id]
+        elif "default_account" in balances:
+            balance_value = balances["default_account"]
+        elif "balance" in data:
             balance_value = data["balance"]
+        else:
+            balance_value = 0.0
 
         # Parse timestamp if present, otherwise use current time
         verified_at = time.time()
@@ -892,11 +900,19 @@ class ObjectStoreLedgerProvider:
         raw = response["Body"].read().decode("utf-8")
         data = _json.loads(raw)
 
-        # Map the S3 snapshot schema to ReconciliationResult fields
+        # Map the S3 snapshot schema to ReconciliationResult fields.
+        # Resolve with explicit membership so a genuine 0.0 balance is honoured
+        # rather than treated as "absent" and overwritten by the top-level
+        # fallback — a drained account is the case the cash barrier must catch.
         balances = data.get("balances", {})
-        balance_value = balances.get(account_id, balances.get("default_account", 0.0))
-        if not balance_value and "balance" in data:
+        if account_id in balances:
+            balance_value = balances[account_id]
+        elif "default_account" in balances:
+            balance_value = balances["default_account"]
+        elif "balance" in data:
             balance_value = data["balance"]
+        else:
+            balance_value = 0.0
 
         # Parse timestamp if present, otherwise use current time
         verified_at = time.time()
