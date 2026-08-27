@@ -34,7 +34,7 @@ CAGE uses **two complementary scrubbing layers**:
 
 ### Layer 1: Pre-Ledger Regex Sanitization (`pii_sanitizer.py`)
 
-The `PIISanitizer` class applies 7 regex patterns sequentially to all UCA compliance records **before** they are written to the WORM audit ledger:
+The `PIISanitizer` class applies **8 regex patterns** plus a **key-based denylist** to all UCA compliance records **before** they are written to the WORM audit ledger:
 
 | Pattern | Replacement | Example |
 |---|---|---|
@@ -45,6 +45,13 @@ The `PIISanitizer` class applies 7 regex patterns sequentially to all UCA compli
 | Email address | `[REDACTED_EMAIL]` | `user@example.com` → `[REDACTED_EMAIL]` |
 | Phone number (US/international) | `[REDACTED_PHONE]` | `+1 (555) 867-5309` → `[REDACTED_PHONE]` |
 | API keys / Bearer tokens | `[REDACTED_API_KEY]` | `pk-lf-abc123...` → `[REDACTED_API_KEY]` |
+| **Compact JWS/JWT tokens (R5)** | `[REDACTED_JWS]` | `eyJhbGci...` → `[REDACTED_JWS]` |
+
+**Key-based redaction (R5 — ConsequenceToken leakage mitigation):**
+
+When `sanitize_dict()` encounters a key matching the denylist (case-insensitive), the value is unconditionally redacted to `[REDACTED_TOKEN]`, regardless of content. This ensures ConsequenceToken JWS strings are scrubbed even if format variations evade the regex pattern.
+
+**Denylisted keys:** `token`, `consequence_token`, `jws`, `jwt`, `bearer_token`
 
 **Configuration:** `PIISanitizer` is stateless; patterns compile once at import time.
 

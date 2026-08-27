@@ -34,6 +34,8 @@ import logging
 import os
 import re
 
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
 logger = logging.getLogger(__name__)
 
 
@@ -111,14 +113,15 @@ class QueryCache:
         """Generate cache key from normalized query and governance context.
 
         # Governance context included in cache key to prevent stale decisions
+        # v3.1.0: Migrated to RFC 8785 JCS canonicalization.
         """
         # Normalize: lowercase, strip whitespace, remove extra spaces
         normalized = " ".join(query.lower().strip().split())
         # Use full 64-character SHA-256 hex digest (M-02: no truncation)
         query_hash = hashlib.sha256(normalized.encode()).hexdigest()
         if governance_context:
-            ctx_json = json.dumps(governance_context, sort_keys=True)
-            ctx_hash = hashlib.sha256(ctx_json.encode()).hexdigest()
+            ctx_bytes = jcs_canonicalize_plan(governance_context)
+            ctx_hash = hashlib.sha256(ctx_bytes).hexdigest()
             return f"query_cache:{query_hash}:{ctx_hash}"
         return f"query_cache:{query_hash}"
 

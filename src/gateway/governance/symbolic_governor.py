@@ -2411,10 +2411,6 @@ class SymbolicGovernor:
                             "defer_reason": "CONFIDENCE_BELOW_THRESHOLD",
                             # Phase 1.2: HTTP layer wiring fields
                             "defer_token": defer_token,
-                            "defer_id": defer_token,  # Alias for backward compat
-                            "missing_input_reason": classification_meta.get(
-                                "classification_reason", ""
-                            ),
                             "deferrable": classification_meta.get("deferrable", True),
                             "retry_after_seconds": 300,  # 5 minute default
                         }

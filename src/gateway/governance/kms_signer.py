@@ -437,6 +437,124 @@ class KMSGovernanceSigner:
             return "HMAC_SHA256_FALLBACK"
         return self._provider.provider_name if self._provider else "KMS_ASYMMETRIC"
 
+    @property
+    def key_id(self) -> str:
+        """Returns the active signing key identifier.
+
+        Returns:
+            The configured key resource identifier when KMS is active.
+
+        Raises:
+            RuntimeError: If KMS is not active (no key configured).
+        """
+        if not self._kms_active:
+            raise RuntimeError(
+                "[KMSSigner] key_id requested but KMS is not active. "
+                "Ensure KMS_GOVERNANCE_KEY is set and from_env() succeeded."
+            )
+        return self._key_version_name
+
+    @property
+    def jose_alg(self) -> str:
+        """Returns the JOSE-compliant algorithm string for the active key.
+
+        Maps the underlying KMS key algorithm to JOSE registered algorithm names
+        per RFC 7518 (JSON Web Algorithms).
+
+        Supported mappings:
+        - ECDSA P-256 + SHA-256 → ES256
+        - ECDSA P-384 + SHA-384 → ES384
+        - Ed25519 → EdDSA
+        - RSA PSS SHA-256 → PS256
+        - RSA PKCS1 SHA-256 → RS256
+        - RSA PSS SHA-384 → PS384
+        - RSA PKCS1 SHA-384 → RS384
+        - RSA PSS SHA-512 → PS512
+        - RSA PKCS1 SHA-512 → RS512
+
+        Returns:
+            JOSE algorithm string (e.g., "ES256", "EdDSA").
+
+        Raises:
+            RuntimeError: If KMS is not active or algorithm cannot be determined.
+        """
+        if not self._kms_active or not self._provider:
+            raise RuntimeError(
+                "[KMSSigner] jose_alg requested but KMS is not active. "
+                "Ensure KMS_GOVERNANCE_KEY is set and from_env() succeeded."
+            )
+
+        # For GCP KMS, query the key version algorithm to map to JOSE
+        if isinstance(self._provider, GCPKMSProvider):
+            if not self._provider._kms_client or not self._key_version_name:
+                raise RuntimeError(
+                    "[KMSSigner] GCP KMS provider has no client or key version name."
+                )
+            try:
+                # Type narrowing: _kms_client is object but we know it's KMS client at runtime
+                version = self._provider._kms_client.get_crypto_key_version(  # type: ignore[attr-defined]
+                    name=self._key_version_name
+                )
+                algorithm_name = version.algorithm.name
+
+                # Map GCP CryptoKeyVersionAlgorithm to JOSE alg
+                if algorithm_name == "EC_SIGN_P256_SHA256":
+                    return "ES256"
+                elif algorithm_name == "EC_SIGN_P384_SHA384":
+                    return "ES384"
+                elif algorithm_name == "EC_SIGN_ED25519":
+                    return "EdDSA"
+                elif algorithm_name in (
+                    "RSA_SIGN_PSS_2048_SHA256",
+                    "RSA_SIGN_PSS_3072_SHA256",
+                ):
+                    return "PS256"
+                elif algorithm_name in (
+                    "RSA_SIGN_PKCS1_2048_SHA256",
+                    "RSA_SIGN_PKCS1_3072_SHA256",
+                ):
+                    return "RS256"
+                elif algorithm_name == "RSA_SIGN_PSS_3072_SHA384":
+                    return "PS384"
+                elif algorithm_name == "RSA_SIGN_PKCS1_3072_SHA384":
+                    return "RS384"
+                elif algorithm_name in (
+                    "RSA_SIGN_PSS_4096_SHA512",
+                    "RSA_SIGN_PSS_4096_SHA256",
+                ):
+                    return "PS512" if "SHA512" in algorithm_name else "PS256"
+                elif algorithm_name in (
+                    "RSA_SIGN_PKCS1_4096_SHA512",
+                    "RSA_SIGN_PKCS1_4096_SHA256",
+                ):
+                    return "RS512" if "SHA512" in algorithm_name else "RS256"
+                else:
+                    logger.warning(
+                        "[KMSSigner] Unknown GCP algorithm %s, defaulting to ES256",
+                        algorithm_name,
+                    )
+                    return "ES256"
+            except Exception as exc:
+                raise RuntimeError(
+                    f"[KMSSigner] Failed to determine JOSE algorithm: {exc}"
+                ) from exc
+
+        # AWS/Azure: infer from digest_algorithm (best-effort)
+        if self._provider.digest_algorithm == "raw":
+            return "EdDSA"
+        elif self._provider.digest_algorithm == "sha256":
+            return "ES256"  # Assume ECDSA P-256 by default
+        elif self._provider.digest_algorithm == "sha384":
+            return "ES384"
+        elif self._provider.digest_algorithm == "sha512":
+            return "PS512"  # Assume RSA PSS by default
+        else:
+            logger.warning(
+                "[KMSSigner] Unknown digest algorithm %s, defaulting to ES256",
+                self._provider.digest_algorithm,
+            )
+            return "ES256"
+
     def get_public_key_pem(self) -> bytes:
         """Return the public key PEM for this signer.
 
@@ -779,15 +897,125 @@ class KMSGovernanceSigner:
                     raise ValueError("KMS payload has expired (signed_at too old)")
         return result
 
+    def verify_raw(self, message: bytes, signature: bytes) -> bool:
+        """Verify a raw signature produced by sign_raw().
+
+        Verifies that the signature was produced by signing the message with
+        the private key corresponding to this signer's public key.
+
+        Args:
+            message: Raw bytes that were signed.
+            signature: Raw signature bytes produced by sign_raw().
+
+        Returns:
+            True if the signature is valid, False otherwise.
+
+        Raises:
+            RuntimeError: If KMS is not active (fail-closed, never fail-open).
+        """
+        if not self._kms_active:
+            raise RuntimeError(
+                "[KMSSigner] verify_raw() called but KMS is not active. "
+                "Ensure KMS_GOVERNANCE_KEY is set and from_env() succeeded."
+            )
+        if not self._public_key_pem:
+            raise RuntimeError(
+                "[KMSSigner] verify_raw() called but no public key is loaded. "
+                "Ensure KMS_GOVERNANCE_PUBLIC_PEM is set or KMS bootstrap succeeded."
+            )
+
+        try:
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import (
+                ec,
+                ed25519,
+                padding,
+                rsa,
+            )
+            from cryptography.hazmat.primitives.asymmetric import utils as asym_utils
+
+            public_key = serialization.load_pem_public_key(self._public_key_pem)
+
+            # Ed25519: verify raw message directly (PureEdDSA)
+            if isinstance(public_key, ed25519.Ed25519PublicKey):
+                public_key.verify(signature, message)
+                return True
+
+            # ECDSA / RSA: hash first, then verify digest
+            hash_alg_name = (
+                self._provider.digest_algorithm.upper() if self._provider else "SHA256"
+            )
+            hash_alg = getattr(hashes, hash_alg_name)()
+            digest = hashlib.new(hash_alg_name.lower(), message).digest()
+
+            if isinstance(public_key, ec.EllipticCurvePublicKey):
+                public_key.verify(
+                    signature,
+                    digest,
+                    ec.ECDSA(asym_utils.Prehashed(hash_alg)),
+                )
+                return True
+            elif isinstance(public_key, rsa.RSAPublicKey):
+                # Infer padding from algorithm name if available
+                padding_scheme: padding.PKCS1v15 | padding.PSS = (
+                    padding.PKCS1v15()
+                )  # Default to PKCS1v15
+                if self._provider and isinstance(self._provider, GCPKMSProvider):
+                    try:
+                        # Type narrowing: _kms_client is object but we know it's KMS client at runtime
+                        version = self._provider._kms_client.get_crypto_key_version(  # type: ignore[attr-defined]
+                            name=self._key_version_name
+                        )
+                        if "PSS" in version.algorithm.name:
+                            padding_scheme = padding.PSS(
+                                mgf=padding.MGF1(hash_alg),
+                                salt_length=padding.PSS.MAX_LENGTH,
+                            )
+                    except Exception:
+                        pass  # Fall back to PKCS1v15
+
+                public_key.verify(
+                    signature,
+                    digest,
+                    padding_scheme,
+                    asym_utils.Prehashed(hash_alg),
+                )
+                return True
+            else:
+                logger.warning(
+                    "[KMSSigner] verify_raw: Unsupported public key type: %s",
+                    type(public_key).__name__,
+                )
+                return False
+        except Exception as exc:
+            # Invalid signature or verification failure
+            logger.debug("[KMSSigner] verify_raw failed: %s", exc)
+            return False
+
     def _kms_verify(self, plan_bytes: bytes, signature_hex: str) -> bool:
         try:
             from cryptography.hazmat.primitives import hashes, serialization
-            from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
+            from cryptography.hazmat.primitives.asymmetric import (
+                ec,
+                ed25519,
+                padding,
+                rsa,
+            )
             from cryptography.hazmat.primitives.asymmetric import utils as asym_utils
 
             public_key = serialization.load_pem_public_key(self._public_key_pem)
             signature_bytes = bytes.fromhex(signature_hex)
 
+            # Ed25519: verify raw message directly (PureEdDSA)
+            # Ed25519 signs the raw message without a separate pre-hash step.
+            # Previously, this code path would fail because it tried to use
+            # hashlib.new("raw", ...) which doesn't exist, and Ed25519PublicKey
+            # isn't an EllipticCurvePublicKey instance.
+            if isinstance(public_key, ed25519.Ed25519PublicKey):
+                public_key.verify(signature_bytes, plan_bytes)
+                return True
+
+            # ECDSA / RSA: use pre-hashed digest
             # Use the same digest width the provider's key requires (e.g.
             # sha512 for RSA_SIGN_PKCS1_4096_SHA512) — hardcoding SHA-256
             # here previously caused verification to fail (silently, since

@@ -164,7 +164,44 @@ _PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"\b(?:pk-lf-|sk-lf-|hf_|Bearer\s+)[A-Za-z0-9_\-]{8,}\b"),
         "[REDACTED_API_KEY]",
     ),
+    # Compact JWS/JWT tokens (R5: ConsequenceToken leakage mitigation).
+    # Pattern: three base64url segments separated by dots, with the first segment
+    # starting with eyJ (base64url-encoded '{"' JSON header prefix).
+    # Minimum segment lengths prevent false positives on dotted identifiers:
+    #   - Header: ≥20 chars (typical JWT header is ~36 chars encoded)
+    #   - Payload: ≥20 chars
+    #   - Signature: ≥20 chars (typical RS256 signature is ~342 chars)
+    # The eyJ anchor ensures we don't redact semantic version strings (1.2.3),
+    # module paths (src.gateway.governance), or UUIDs (which contain hyphens, not dots).
+    (
+        re.compile(
+            r"\beyJ[A-Za-z0-9_\-]{17,}\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}\b"
+        ),
+        "[REDACTED_JWS]",
+    ),
 ]
+
+
+# ---------------------------------------------------------------------------
+# R5: Key-based redaction denylist for CONSEQUENCE_TOKEN findings
+# ---------------------------------------------------------------------------
+# Field names whose values should be unconditionally redacted, regardless of
+# content. This complements the regex patterns above: a JWS that survives
+# format changes (e.g. whitespace-padded base64) is still caught when emitted
+# under a known-sensitive key.
+#
+# ConsequenceToken findings attach the raw JWS under the "token" key. Other
+# governance contexts may use "consequence_token", "jws", or similar keys.
+# Add keys in lowercase (the sanitizer normalizes before comparison).
+# ---------------------------------------------------------------------------
+
+_KEY_DENYLIST: set[str] = {
+    "token",
+    "consequence_token",
+    "jws",
+    "jwt",
+    "bearer_token",
+}
 
 
 class PIISanitizer:
@@ -212,6 +249,12 @@ class PIISanitizer:
         Useful for sanitizing an entire request body or UCA record before
         WORM persistence.  Non-string values are passed through unchanged.
 
+        **R5 mitigation (key-based redaction):** If a key (case-insensitive)
+        matches any entry in ``_KEY_DENYLIST``, its value is unconditionally
+        redacted to ``[REDACTED_TOKEN]``, regardless of content. This ensures
+        ConsequenceToken JWS strings are scrubbed even if the JWS regex
+        pattern fails to match (e.g. due to format variations).
+
         Args:
             data: A dict (possibly nested) to sanitize.
 
@@ -220,7 +263,23 @@ class PIISanitizer:
         """
         result: dict = {}
         for key, value in data.items():
-            if isinstance(value, str):
+            # R5: Key-based redaction for known-sensitive keys
+            if key.lower() in _KEY_DENYLIST:
+                if isinstance(value, str):
+                    result[key] = "[REDACTED_TOKEN]"
+                    logger.debug(
+                        "PIISanitizer: redacted value for key-denylisted field '%s'",
+                        key,
+                    )
+                else:
+                    # Non-string value under a denylisted key: redact type but preserve shape
+                    result[key] = f"[REDACTED_TOKEN:{type(value).__name__}]"
+                    logger.debug(
+                        "PIISanitizer: redacted non-string value for key-denylisted field '%s' (type=%s)",
+                        key,
+                        type(value).__name__,
+                    )
+            elif isinstance(value, str):
                 result[key] = self.sanitize(value)
             elif isinstance(value, dict):
                 result[key] = self.sanitize_dict(value)

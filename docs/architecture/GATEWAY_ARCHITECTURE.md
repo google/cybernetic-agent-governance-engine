@@ -216,12 +216,17 @@ Client action: poll `GET /v1/approvals/pending` for the outcome.
 **Response** (evidence/context missing — HTTP 202):
 ```json
 {
-  "verdict": "DEFER",
-  "defer_id": "<defer-queue-id>",
-  "missing_input_reason": "<reason>"
+  "decision": "DEFER",
+  "defer_token": "<defer-queue-token>",
+  "classification_reason": "<reason>"
 }
 ```
 Client action: poll `GET /v1/defer/pending` for the outcome.
+
+> **Field migration:** the legacy duplicate keys `verdict`, `defer_id`, and
+> `missing_input_reason` were removed from DEFER response bodies. Clients must
+> read `decision`, `defer_token`, and `classification_reason` — see
+> [`docs/BREAKING_CHANGES_v3.md`](../BREAKING_CHANGES_v3.md).
 
 > **Canonical four-state vocabulary:** `ALLOW` / `DENY` / `REQUIRE_APPROVAL` / `DEFER` is the single authoritative decision vocabulary at every CAGE gateway boundary (`validate_action()` return values, HTTP response bodies, audit events, provenance records). Internal OPA policy strings (`ALLOW`/`DENY`/`MANUAL_REVIEW`) and LangGraph execution-phase statuses (`APPROVED`/`BLOCKED`/`ESCALATED`) are translated to this vocabulary at the gateway boundary and must never leak into client-facing responses. See [`decisions.py`](../../src/gateway/governance/decisions.py) for the full translation table.
 
@@ -238,7 +243,7 @@ The following modules were added as part of the NIST AI 600-1 implementation (`C
 | [`confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) | §2.1 — Confabulation/Hallucination | Scores LLM outputs for confabulation risk. Computes `risk_score = 1.0 − confidence` and emits a structured Langfuse score payload (`confabulation_risk`) for every governed request. Blocks requests where `confidence < CONFIDENCE_MIN_SCORE` (default 0.95, sourced from `CONFIDENCE_MIN_SCORE` env var or `governance_thresholds.json`). Implements `CTRL_AGT_001`. | AI600-001 |
 | [`hitl_escalator.py`](../../src/gateway/governance/hitl_escalator.py) | §2.5 — Human-AI Configuration | Human-in-the-Loop escalation for high-risk decisions. Produces structured `EscalationRecord` objects written to the DeferQueue (Redis db=1, noeviction). Escalation reasons: `CONSENSUS_THRESHOLD` (amount > $10k), `CONFIDENCE_LOW` (confidence < 0.95), `CAUSAL_BLOCK` (DoWhy refutation failed), `MANUAL_REVIEW` (OPA policy decision), `GOVERNANCE_CONFIDENCE_LOW` (recursive governance risk). SR 26-2 §3.2 SLA: 4-hour resolution window. | AI600-004 |
 | [`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py) | §2.3 — Prompt Injection | Detects structural prompt injection patterns in incoming requests. Complements the Aho-Corasick Tier-1 keyword scanner (`text_filter.py`) with 14 structural regex patterns targeting instruction overrides, persona hijacking, ChatML injection, jailbreak attempts, and role-play bypasses. Stage 2.5 applies semantic similarity via `all-MiniLM-L6-v2` at threshold 0.82. Returns on first match (fail-fast). Violations logged to UCA Logger. | AI600-003 |
-| [`provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | §2.7 — Information Integrity | Builds a cryptographic SHA-256 hash chain linking each LangGraph governance node's input and output, creating an immutable audit trail of governance decisions. Each `ProvenanceRecord` carries `input_hash`, `output_hash`, `decision` (one of `ALLOW`, `BLOCK`, `ESCALATE`, `REQUIRE_APPROVAL`, `DEFER`), and `parent_hash` for chain linkage. In production, records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`. `verify_chain_integrity()` validates the full chain on demand. | AI600-005 |
+| [`provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | §2.7 — Information Integrity | Builds a cryptographic SHA-256 hash chain linking each LangGraph governance node's input and output, creating an immutable audit trail of governance decisions. Each `ProvenanceRecord` carries `input_hash`, `output_hash`, `decision` (one of the canonical six: `ALLOW`, `DENY`, `DEFER`, `NARROW`, `PAUSE`, `REQUIRE_APPROVAL` — the legacy `BLOCK`/`ESCALATE` values are rejected), and `parent_hash` for chain linkage. Hashes are computed with RFC 8785 JCS canonicalization. In production, records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`. `verify_chain_integrity()` validates the full chain on demand. | AI600-005 |
 | [`text_filter.py`](../../src/gateway/governance/text_filter.py) | §2.6 — CBRN / Hazardous Content | Stateless O(n) Tier-1 keyword scanner using a lazy-initialised Aho-Corasick automaton (`pyahocorasick`). Falls back to O(n×m) `any()` loop when the optional dependency is absent. Keyword list sourced exclusively from `config/governance_thresholds.json` (`tier1_keywords` and `tier1_keywords_cbrn` arrays; `tier1_keywords_cbrn_enabled: true`). Includes a separate `ac_cbrn_keyword_scan()` function for CBRN-specific multi-word phrase detection. **US_FED only** for CBRN enforcement; general keyword scan is active in all regions. *(Note: The legacy shim `src/gateway/governance/safety.py` was removed in v3.0.0; import `ac_keyword_scan` from `text_filter.py` and `ControlBarrierFunction` from `cbf.py` directly).* | — |
 | [`pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py) | §2.2 — Data Privacy | Pre-ledger PII sanitization pipeline (ISO 42001 Annex A.6). Applies 7 compiled regex patterns sequentially: SSN (IRS-valid ranges), credit card (Visa/MC/Amex/Discover/JCB/Diners), IBAN, SWIFT/BIC, email, phone (US/international), and API keys/Bearer tokens. Thread-safe singleton (`PIISanitizer`). `sanitize_dict()` recursively sanitizes nested dicts before WORM persistence. `pii_audit_log()` produces structured audit records (FISMA AU-11, 90-day retention). Active in **all regions**. | — |
 

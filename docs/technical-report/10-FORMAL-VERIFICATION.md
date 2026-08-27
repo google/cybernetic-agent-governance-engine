@@ -449,18 +449,18 @@ Each governance node execution produces a `ProvenanceRecord`:
 record_n = ProvenanceRecord(
     trace_id    = <Langfuse trace ID>,
     node_id     = <LangGraph node name>,
-    input_hash  = SHA-256(json.dumps(input_data,  sort_keys=True)),
-    output_hash = SHA-256(json.dumps(output_data, sort_keys=True)),
-    decision    = "ALLOW" | "BLOCK" | "ESCALATE",
+    input_hash  = SHA-256(jcs_canonicalize_plan(input_data)),
+    output_hash = SHA-256(jcs_canonicalize_plan(output_data)),
+    decision    = "ALLOW" | "DENY" | "DEFER" | "NARROW" | "PAUSE" | "REQUIRE_APPROVAL",
     parent_hash = chain_hash(record_{n-1})   # None for first record
 )
 ```
 
-**Chain hash:** `chain_hash(record) = SHA-256(json.dumps(record.to_dict(), sort_keys=True))`
+**Chain hash:** `chain_hash(record) = SHA-256(jcs_canonicalize_plan(record.to_dict()))`
 
-**Deterministic serialization:** All hashes use `json.dumps(..., sort_keys=True, separators=(",", ":"))` with non-serializable values coerced to strings. This guarantees identical digests regardless of Python dict insertion order.
+**Deterministic serialization:** All hashes use RFC 8785 JCS canonicalization (`jcs_canonicalize_plan()`) with non-serializable values coerced to strings beforehand. This guarantees identical digests regardless of Python dict insertion order and across Python, Go, and JavaScript runtimes.
 
-> **Serialisation note (H57):** `compute_hash()` in `provenance_chain.py` uses `json.dumps(…, separators=(',', ':'), sort_keys=True)`. This matches the formal specification. Earlier versions omitted `separators`, producing non-spec-compliant hash values.
+> **Serialisation note (supersedes H57):** `compute_hash()` in `provenance_chain.py` previously used `json.dumps(…, separators=(',', ':'), sort_keys=True)`; it now uses RFC 8785 JCS. Digests are not comparable across the change — see [`docs/BREAKING_CHANGES_v3.md`](../BREAKING_CHANGES_v3.md).
 
 **Tamper detection:** Any mutation at node `k` produces `chain_hash(record_k) ≠ expected_k`, which is detectable by `verify_chain_integrity()` in O(n) time:
 
@@ -468,7 +468,7 @@ $$\forall n: \text{record\_hash}_n = \text{SHA256}(\text{prev\_hash}_{n-1} \| \t
 
 **Complexity:** O(n) construction and O(n) verification — linear in the number of governance nodes traversed per request.
 
-**Valid decisions:** `ALLOW`, `BLOCK`, `ESCALATE` — `build_provenance_record()` raises `ValueError` for any other value, preventing silent chain corruption from invalid decision strings.
+**Valid decisions:** the canonical six — `ALLOW`, `DENY`, `DEFER`, `NARROW`, `PAUSE`, `REQUIRE_APPROVAL`. `build_provenance_record()` raises `ValueError` for any other value, including the removed legacy `BLOCK`/`ESCALATE` statuses, preventing silent chain corruption from invalid decision strings.
 
 In production, each record is signed with the KMS key ring via [`src/gateway/governance/kms_signer.py`](../../src/gateway/governance/kms_signer.py) and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`.
 

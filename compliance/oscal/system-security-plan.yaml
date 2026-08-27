@@ -883,9 +883,7 @@ system-security-plan:
         \nThe blocking mode satisfies AU-12(1) system-wide/time-correlated audit trail\n\
         requirements through the hash-linked evidence chain. Each evidence record\n\
         includes a previous_hash field linking to the prior entry, enabling forensic\n\
-        reconstruction of the complete audit trail sequence.\n\nDual-schema verification\
-        \ (v1.0/v1.1) in the provenance chain ensures forward\ncompatibility while\
-        \ maintaining audit record integrity across schema migrations.\nBoth modes\
+        reconstruction of the complete audit trail sequence.\n\nBoth modes\
         \ are compliant AU-12 implementations — the choice depends on whether\nthe\
         \ deployment prioritizes availability (decision-time) or non-repudiation\n\
         (evidence-of-execution).\n\nAudit records are exported to GCS buckets for\
@@ -943,10 +941,13 @@ system-security-plan:
           directly to the persisted audit record, ensuring non-repudiation.
 
 
-          The gateway also supports dual-schema verification (v1.0/v1.1) for evidence
+          The backward-compatibility remediation (BC-01–BC-08, 2026-08-27) removed the
 
-          records, enabling forward-compatible schema migration without audit trail
-          gaps.
+          dual-schema verification machinery; evidence records now use RFC 8785 JCS with
+
+          a /2.0 schema sentinel only. This was a breaking change — records written before
+
+          2026-08-27 are not verifiable by the current code.
 
           '
         implementation-status:

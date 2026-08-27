@@ -659,3 +659,92 @@ class TestDataContracts:
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_async_attestation_uses_jcs_canonicalization():
+    """Verify _async_attestation() evidence hash uses RFC 8785 JCS, not json.dumps.
+
+    FlowSignal Phase 2 §5.3: Evidence hash migrated from json.dumps(sort_keys=True)
+    to jcs_canonicalize_plan() for deterministic cross-language canonicalization.
+    """
+    import hashlib
+    from unittest.mock import AsyncMock
+
+    from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+    from src.gateway.governance.normative_provider import _async_attestation
+
+    # Mock provider that captures the evidence hash submitted
+    mock_provider = AsyncMock()
+    mock_provider.validate_fria = AsyncMock(
+        return_value=ValidationResult(admitted=True, findings=[])
+    )
+    mock_provider.submit_evidence = AsyncMock(
+        return_value=EvidenceSeal(
+            thread_id="test-thread-123", seal_hash="test-seal", error=None
+        )
+    )
+
+    action_context = {"action": "test", "amount": 100.5, "score": 1.0}
+    thread_id = "test-thread-123"
+
+    # Call _async_attestation
+    await _async_attestation(mock_provider, action_context, thread_id)
+
+    # Verify submit_evidence was called
+    assert mock_provider.submit_evidence.call_count == 1
+    call_args = mock_provider.submit_evidence.call_args
+    submitted_hash = call_args[0][1]  # Second positional arg is the evidence hash
+
+    # Compute expected hash using JCS
+    expected_hash = hashlib.sha256(jcs_canonicalize_plan(action_context)).hexdigest()
+
+    # Assert the evidence hash matches the JCS-based digest
+    assert submitted_hash == expected_hash
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_daemon_boot_fetch_cached_hash_uses_jcs():
+    """Verify NormativeProviderDaemon computes cached profile hash with JCS.
+
+    FlowSignal Phase 2 §5.3: Profile hash computation for change detection must
+    match NormativeBaseline.profile_hash property (which uses JCS).
+    """
+    import hashlib
+    import tempfile
+    from pathlib import Path
+
+    from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
+    # Create a temp baseline file
+    test_profile = {"controls": ["AC-1", "AC-2"], "version": "1.0", "rate": 0.05}
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        baseline_path = Path(tmpdir) / "US_FED_BASELINE.json"
+        with open(baseline_path, "w") as f:
+            json.dump(test_profile, f)
+
+        # Mock provider that returns error (forcing fallback to cached file)
+        mock_provider = AsyncMock()
+        mock_provider.fetch_baseline = AsyncMock(
+            return_value=NormativeBaseline(
+                region="US_FED", profile={}, error="Network timeout"
+            )
+        )
+
+        # Patch the _COMPLIANCE_DIR constant to point to our temp dir
+        with patch(
+            "src.gateway.governance.normative_provider._COMPLIANCE_DIR", Path(tmpdir)
+        ):
+            daemon = NormativeProviderDaemon(provider=mock_provider, region="US_FED")
+
+            # Run boot_fetch (should fall back to cached file)
+            await daemon.boot_fetch()
+
+            # Verify the daemon computed the hash using JCS
+            expected_hash = hashlib.sha256(
+                jcs_canonicalize_plan(test_profile)
+            ).hexdigest()
+            assert daemon._last_hash == expected_hash

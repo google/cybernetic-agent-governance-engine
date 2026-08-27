@@ -82,9 +82,6 @@ VALID_DECISIONS = frozenset(
         "NARROW",
         "PAUSE",
         "REQUIRE_APPROVAL",
-        # Execution-phase statuses (LangGraph nodes, backward compat)
-        "BLOCK",
-        "ESCALATE",
     }
 )
 
@@ -105,8 +102,6 @@ class ProvenanceRecord:
         output_hash:  SHA-256 hex digest of the node's output data.
         decision:     Governance decision. Canonical values:
                       "ALLOW" | "DENY" | "DEFER" | "NARROW" | "PAUSE" | "REQUIRE_APPROVAL".
-                      Legacy execution-phase values also accepted:
-                      "BLOCK" | "ESCALATE" (for backward compatibility).
         parent_hash:  SHA-256 hex digest of the previous record in the chain,
                       or None for the first record.
     """
@@ -186,8 +181,6 @@ def build_provenance_record(
         output_data: The node's output dict (will be hashed, not stored).
         decision:    Governance decision. Canonical values:
                      "ALLOW" | "DENY" | "DEFER" | "NARROW" | "PAUSE" | "REQUIRE_APPROVAL".
-                     Legacy execution-phase values also accepted:
-                     "BLOCK" | "ESCALATE" (for backward compatibility).
         parent_hash: Hash of the previous record in the chain, or None.
 
     Returns:

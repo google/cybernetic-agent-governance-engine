@@ -41,10 +41,10 @@ component-definition:
   uuid: f1025a8c-4d3e-5a99-8b2f-c418e7f92d1a
   metadata:
     title: CAGE Validation — FlowSignal Integration (FLOWSIGNAL-001)
-    last-modified: '2026-08-26T22:44:00Z'
-    version: 1.0.0
+    last-modified: '2026-08-27T16:14:00Z'
+    version: 1.1.0
     oscal-version: 1.1.2
-    remarks: "Auto-converted from standalone lula validation format.\nRegion: ALL. Posture: iso42001.\nNotes: ISO 42001 §A.8.4 — FlowSignal Integration Compliance (FLOWSIGNAL-001). Asserts that the FlowSignal (provider_01) consequence authority integration is configured correctly on the gateway Deployment in the governance-stack namespace:\n  (1) CAGE_NORMATIVE_PROVIDER=provider_01 is set via env var (not hardcoded in image),\n      enabling runtime provider selection per the plugin architecture specification.\n  (2) All FlowSignal mTLS secrets (FLOWSIGNAL_CLIENT_CERT, FLOWSIGNAL_CLIENT_KEY,\n      FLOWSIGNAL_CA_BUNDLE) are referenced via secretKeyRef if present — never\n      inline value: fields (prevents credential exposure in pod specs).\n  (3) Redis key namespace flowsignal:token:* does not collide with existing\n      prefixes (fiscal:*, DEFER:*, safety:*) — ensures namespace isolation for\n      the distributed consequence authority consumption store.\n  (4) REDIS_URL env var is present on the gateway Deployment (consumption store\n      dependency per consequence_authority_store.py from_env() factory).\nReference architecture: This validation enforces illustrative deployment patterns for FlowSignal consequence authority integration. Adopters should adapt namespace prefixes and secret names to their own environments. See: plans/flowsignal_integration_implementation_plan.md Phase 1 §4. See: src/gateway/governance/consequence_authority_store.py — Redis key schema."
+    remarks: "Auto-converted from standalone lula validation format.\nRegion: ALL. Posture: iso42001.\nNotes: ISO 42001 §A.8.4 — FlowSignal Integration Compliance (FLOWSIGNAL-001). Asserts that the FlowSignal (provider_01) consequence authority integration is configured correctly on the gateway Deployment in the governance-stack namespace:\n  (1) CAGE_NORMATIVE_PROVIDER=provider_01 is set via env var (not hardcoded in image),\n      enabling runtime provider selection per the plugin architecture specification.\n  (2) All FlowSignal mTLS secrets (FLOWSIGNAL_CLIENT_CERT, FLOWSIGNAL_CLIENT_KEY,\n      FLOWSIGNAL_CA_BUNDLE) are referenced via secretKeyRef if present — never\n      inline value: fields (prevents credential exposure in pod specs).\n  (3) Redis key namespace flowsignal:token:* does not collide with existing\n      prefixes (fiscal:*, DEFER:*, safety:*) — ensures namespace isolation for\n      the distributed consequence authority consumption store.\n  (4) REDIS_URL env var is present on the gateway Deployment (consumption store\n      dependency per consequence_authority_store.py from_env() factory).\n  (5) Phase 2: KMS configuration env vars (KMS_GOVERNANCE_KEY or CAGE_KMS_PROVIDER)\n      are present for ConsequenceToken JWS signing via KMSGovernanceSigner.\nReference architecture: This validation enforces illustrative deployment patterns for FlowSignal consequence authority integration. Adopters should adapt namespace prefixes, secret names, and KMS key configurations to their own environments. See: plans/flowsignal_integration_implementation_plan.md Phase 1 §4, Phase 2 §5. See: src/gateway/governance/consequence_authority_store.py — Redis key schema, src/gateway/governance/consequence_token.py — KMS-signed JWS."
   components:
   - uuid: a4d8f2c1-6e9b-5c73-ba18-f29e4a7c8d0e
     type: software
@@ -93,6 +93,7 @@ component-definition:
               # Check 2: FlowSignal secrets use secretKeyRef if present (never inline value:).
               # Check 3: Redis key namespace flowsignal:token:* does not collide with existing prefixes.
               # Check 4: REDIS_URL env var is present.
+              # Check 5: KMS configuration env vars present (Phase 2 ConsequenceToken signing).
 
               # Check 1: CAGE_NORMATIVE_PROVIDER=provider_01 is set via env var (not hardcoded).
               normative_provider_configured if {
@@ -150,9 +151,26 @@ component-definition:
                 env.name == "REDIS_URL"
               }
 
+              # Check 5: KMS configuration env vars present (Phase 2 ConsequenceToken signing).
+              # ConsequenceToken.mint() requires KMSGovernanceSigner, which is initialized
+              # via get_signer() from env vars. At least one of KMS_GOVERNANCE_KEY or
+              # CAGE_KMS_PROVIDER must be present to enable KMS signing.
+              kms_config_present if {
+                some container in input["gateway-deployment"].spec.template.spec.containers
+                some env in container.env
+                env.name == "KMS_GOVERNANCE_KEY"
+              }
+
+              kms_config_present if {
+                some container in input["gateway-deployment"].spec.template.spec.containers
+                some env in container.env
+                env.name == "CAGE_KMS_PROVIDER"
+              }
+
               validate if {
                 normative_provider_configured
                 flowsignal_secrets_use_secretref
                 redis_namespace_no_collision
                 redis_url_configured
+                kms_config_present
               }

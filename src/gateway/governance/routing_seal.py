@@ -257,6 +257,7 @@ _NO_EVIDENCE_BINDING = "no-evidence-binding"
 def _canonical_payload(action: str, params: dict) -> bytes:
     """Produce a stable, deterministic byte representation of the action payload.
 
+    v3.1.0: Migrated to RFC 8785 JCS canonicalization.
     Fields are sorted so that dict ordering differences don't break verification.
     Non-serialisable values are coerced to strings.
     """
@@ -264,10 +265,8 @@ def _canonical_payload(action: str, params: dict) -> bytes:
         k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v))
         for k, v in params.items()
     }
-    canon = json.dumps(
-        {"action": action, **safe}, sort_keys=True, separators=(",", ":")
-    )
-    return canon.encode()
+    payload_dict = {"action": action, **safe}
+    return jcs_canonicalize_plan(payload_dict)
 
 
 def generate_seal(
@@ -415,13 +414,30 @@ async def generate_seal_with_evidence(
         span.set_attribute("cage.seal.action", action)
 
         # Build evidence payload from governance decision
+        # v3.1.0: Migrated params_hash to JCS
+        # Note: default=str was used, so pre-normalize datetime/Decimal
+        def _normalize(obj: Any) -> Any:
+            if isinstance(obj, (datetime,)):
+                return obj.isoformat()
+            elif isinstance(obj, dict):
+                return {k: _normalize(v) for k, v in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [_normalize(item) for item in obj]
+            else:
+                return (
+                    obj
+                    if isinstance(obj, (str, int, float, bool, type(None)))
+                    else str(obj)
+                )
+
+        normalized_params = _normalize(params)
+        params_bytes = jcs_canonicalize_plan(normalized_params)
+
         evidence_event = {
             "type": "GOVERNANCE_DECISION",
             "controlId": _SCOPE_CONTROL.value,
             "action": action,
-            "params_hash": hashlib.sha256(
-                json.dumps(params, sort_keys=True, default=str).encode()
-            ).hexdigest()[:16],
+            "params_hash": hashlib.sha256(params_bytes).hexdigest()[:16],
             "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
             "seal_ttl_s": ttl_s,
         }

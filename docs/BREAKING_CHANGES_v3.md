@@ -35,6 +35,7 @@ files.
 | Coordinated Removals (compliance-critical, sign-off gated) | 3 (CR-1–CR-3) | High |
 | Feature Flag Graduations | 2 (FF-1, FF-2) | Medium–High if graduated |
 | Environment Variable Consolidations | 6 (EV-1–EV-6) | Low–Medium |
+| Backward-Compatibility Remediation (canonicalization + legacy-path removal) | 8 (BC-01–BC-08; BC-06 deliberately unchanged) | High |
 
 **Who is affected:** Any consumer that (a) imports directly from the
 deprecated modules/aliases listed below, (b) calls the legacy
@@ -191,12 +192,14 @@ postures. The following items affect compliance posture:
   deprecated symbol names directly.
 - **CR-1 (Evidence Stream dual-schema v1.0/v1.1)** — **US_FED, EU_ECB,
   APAC_MAS all impacted.** This is the cryptographic hash-chain integrity
-  mechanism for the audit evidence trail. Per the cleanup plan, this item
-  requires a **data-migration completeness gate** (100% of production
-  evidence records migrated v1.0 → v1.1) and Compliance/OSCAL + Security
-  sign-off *before* it can ship — it is not gated purely on code review.
-  Historical v1.0 records remain verifiable via a retained archival/read-only
-  path even after live-write v1.0 support is removed.
+  mechanism for the audit evidence trail. **Superseded — see
+  [Backward-Compatibility Remediation](#backward-compatibility-remediation)
+  below.** The "data-migration completeness gate" and retained archival
+  read-only path described in earlier revisions of this document were
+  artifacts of a production-deployment framing that does not apply to this
+  repository. The entire dual-schema apparatus — including the archival
+  migration helpers — has now been **deleted**, and the schema sentinel
+  advanced to `cage-evidence-stream/2.0`. No v1.0 or v1.1 read path remains.
 - **CR-2 (NeMo auto-apply removal)** — governance-integrity concern, not a
   region-specific compliance-framework change; affects the audit trail for
   NeMo Guardrails refinement across all regions equally.
@@ -220,3 +223,287 @@ implementing MR-1–3 or CR-1. Region-gated CI must be run explicitly for all
 three postures (`CAGE_DEPLOYMENT_REGION=US_FED|EU_ECB|APAC_MAS`) before
 considering these items complete — see the [Migration Guide's test
 verification step](MIGRATION_GUIDE_v3.md#step-4-test-verification).
+
+---
+
+## Evidence Hash Canonicalization (FlowSignal Phase 2)
+
+**Breaking Change:** Evidence and attestation hash computation in [`normative_provider.py`](../src/gateway/governance/normative_provider.py) migrated from `json.dumps(sort_keys=True)` to RFC 8785 JCS canonicalization.
+
+| Function/Method | Old Algorithm | New Algorithm | Impact |
+|---|---|---|---|
+| [`_async_attestation()`](../src/gateway/governance/normative_provider.py:410) | `hashlib.sha256(json.dumps(action_context, sort_keys=True).encode()).hexdigest()` | `hashlib.sha256(jcs_canonicalize_plan(action_context)).hexdigest()` | Evidence hash values will differ for payloads containing floats (e.g., `1.0` → `"1"` in JCS vs `"1.0"` in json.dumps) |
+| [`NormativeProviderDaemon.boot_fetch()`](../src/gateway/governance/normative_provider.py:756) cached profile hash | `hashlib.sha256(json.dumps(cached, sort_keys=True, separators=(",", ":")).encode()).hexdigest()` | `hashlib.sha256(jcs_canonicalize_plan(cached)).hexdigest()` | Cached baseline change-detection hash now matches [`NormativeBaseline.profile_hash`](../src/gateway/governance/normative_provider.py:209) property (already using JCS) |
+
+**Who is affected:** External systems that independently recompute evidence hashes for verification, or stored evidence records that reference pre-migration digest values. No such external integrations are currently known in this reference architecture.
+
+**Migration:** Hash values computed pre-migration are not backward-compatible. This is an accepted breaking change in the v3.x reference architecture release to achieve deterministic cross-language canonicalization. See FlowSignal integration plan §5.3 and the float-divergence test in [`tests/test_jcs_canonicalizer.py`](../tests/test_jcs_canonicalizer.py:136).
+
+---
+
+## Backward-Compatibility Remediation
+
+> **Governing posture change.** [`AGENTS.md`](../AGENTS.md) was amended during
+> this work: the "data already at rest" backward-compatibility exception was
+> **deactivated** and relocated verbatim to a new
+> *Dormant Rules — Reactivate When CAGE Begins Real Deployments* section. The
+> active posture is now unconditional — breaking changes are preferred, with
+> **no carve-out for any category of change**, including persisted, signed
+> artifacts. This is why the WORM/KMS signing path below was migrated without
+> a compatibility shim.
+
+This release completes the RFC 8785 JCS canonicalization migration and removes
+every remaining backward-compatibility shim, legacy fallback, and duplicated
+legacy field identified by a full code-inspection sweep. Tracking IDs
+`BC-01`–`BC-08` match the analysis in
+[`plans/poam_backward_compat_remediation_plan.md`](../plans/poam_backward_compat_remediation_plan.md);
+the corresponding closed POAM findings are `POAM-2026-060` and
+`POAM-2026-062`–`POAM-2026-068` in [`docs/POAM.md`](POAM.md).
+
+### Hash-chain canonicalization and `/2.0` schema sentinels
+
+**Breaking Change:** the `ContextAccumulator` and `EvidenceStreamSink` audit
+hash chains now canonicalize with RFC 8785 JCS (`jcs_canonicalize_plan()`)
+instead of `json.dumps(..., sort_keys=True)`. Write and verify paths were
+migrated **atomically in the same change**, so a build is never in a state
+where it fails to verify records it just wrote.
+
+| Module | Old sentinel | New sentinel |
+|---|---|---|
+| [`src/compliance_bridge/evidence_stream.py`](../src/compliance_bridge/evidence_stream.py) | `cage-evidence-stream/1.1` | `cage-evidence-stream/2.0` |
+| [`src/compliance_bridge/context_accumulator.py`](../src/compliance_bridge/context_accumulator.py) | `cage-context-accumulator/1.1` | `cage-context-accumulator/2.0` |
+
+**Who is affected:** any deployment holding evidence or context-accumulator
+records written before this change.
+
+**Migration:** records written pre-change **will fail verification** under the
+new algorithm. No dual-read path is provided. These chains are self-verifying —
+the verifier recomputes each digest with the same function the writer used, and
+no independently-stored ground-truth digest exists — so writer and verifier
+migrate together and the break is confined to pre-existing records. The `/2.0`
+sentinel makes the break self-identifying: a record carrying a `/1.1` sentinel
+is unambiguously pre-migration. Adopters holding pre-change chains should
+archive them alongside the CAGE version that produced them and start a fresh
+chain; there is no in-place upgrade.
+
+**Note on `default=str`.** `jcs_canonicalize_plan()` has no `default=` escape
+hatch, so payloads that previously relied on `default=str` for `datetime` and
+`Decimal` values now receive explicit pre-normalization — `_normalize_for_jcs()`
+in the compliance-bridge modules, and an inline `_normalize()` elsewhere. If you
+have subclassed or wrapped these writers, ensure your payloads contain only
+JSON-native types before canonicalization or `jcs_canonicalize_plan()` will
+raise rather than silently coerce.
+
+### WORM / KMS signing algorithm
+
+**Breaking Change:** `_sign_record()` in
+[`src/gateway/governance/uca_logger.py`](../src/gateway/governance/uca_logger.py)
+now builds its KMS signing payload with RFC 8785 JCS instead of
+`json.dumps(..., sort_keys=True)`.
+
+**Who is affected:** any deployment with UCA records already written to a WORM
+bucket and signed under the previous algorithm.
+
+**Migration:** **no compatibility shim is provided.** Previously-signed WORM
+records will not verify against a re-serialization produced by the new code,
+and WORM semantics mean they cannot be re-signed in place. An auditor verifying
+a pre-change record must use a CAGE build from before this change. Adopters who
+require continuous verifiability of an existing WORM archive should pin the
+prior release for their verification tooling and cut over new records only.
+This break is accepted under the amended [`AGENTS.md`](../AGENTS.md) posture
+described in the callout above.
+
+### `EvidenceRecord.schema_version` and dual-schema function removal (BC-01)
+
+**Breaking Change:** the evidence-stream dual-schema apparatus is deleted.
+
+| Removed symbol | Module | Replacement |
+|---|---|---|
+| `_detect_schema_version()` | [`src/compliance_bridge/evidence_stream.py`](../src/compliance_bridge/evidence_stream.py) | *(none — all records are `/2.0`; there is nothing to detect)* |
+| `migrate_record_1_0_to_1_1()` | same | *(none — v1.0 read support was already removed; the helper had zero production callers)* |
+| `get_last_v1_0_hash()` | same | *(none)* |
+| `_link_hash_v1_1()` | same | Collapsed into `_link_hash()`, whose header fields are now unconditional |
+| `EvidenceRecord.schema_version` field | same | *(none — removed from the dataclass, from `verify_record()`, and from `VerifyResult`)* |
+
+**Migration:** stop reading `record.schema_version` — the attribute no longer
+exists and access raises `AttributeError`. Any consumer branching on schema
+version should be simplified to the single `/2.0` shape. `tests/test_dual_schema_verification.py`
+was deleted; its still-relevant hash-determinism and tamper-detection assertions
+were folded into [`tests/test_evidence_stream.py`](../tests/test_evidence_stream.py).
+
+### TTL-bounded artifacts — tokens, seals, and signed balances
+
+These formats changed because their canonicalization changed. All are bounded
+by a short TTL, so the disruption is time-boxed rather than permanent.
+
+| Artifact | Module | TTL | Impact during rolling deploy |
+|---|---|---|---|
+| ConsequenceToken JWS header + payload | [`src/gateway/governance/consequence_token.py`](../src/gateway/governance/consequence_token.py) | 60 s | Tokens minted by a pre-migration pod are rejected by a post-migration pod. Brief 401/`ConsequenceTokenError` rate during cutover, self-clearing within the TTL. |
+| Routing seal (v2 HMAC `_canonical_payload()` and v3 JWT claims) | [`src/gateway/governance/routing_seal.py`](../src/gateway/governance/routing_seal.py) | 30 s | Seals issued pre-cutover fail verification post-cutover. Single-use burn semantics are unchanged. Self-clearing within 30 s. |
+| Reconciliation signed balance | [`src/compliance_bridge/reconciliation_worker.py`](../src/compliance_bridge/reconciliation_worker.py) | 300 s | A balance signed pre-cutover will not verify post-cutover. The CBF **fails closed** on an unverifiable or expired balance, so a deployment may see up to 5 minutes of conservative DENY behavior until the reconciliation worker writes a freshly-signed balance. |
+
+**Migration:** none required for correctly-behaving clients — retry after the
+relevant TTL. Do **not** attempt a partial rollout that leaves pre- and
+post-migration pods serving the same seal or token population for longer than
+the TTL; drain rather than trickle. Note that the ConsequenceToken *verify*
+path decodes the transmitted JWS segments rather than re-serializing them, so
+only mint-time output changed — RFC 7515 exact-bytes verification is preserved.
+
+### Cache-key changes
+
+Canonicalization changes also altered the digest inputs used as cache keys:
+
+| Cache | Module | Effect |
+|---|---|---|
+| OPA decision cache key | [`src/gateway/core/policy.py`](../src/gateway/core/policy.py) | One-time full cache miss on deploy; 10 s TTL repopulates immediately |
+| Query cache key | [`src/governed_financial_advisor/infrastructure/query_cache.py`](../src/governed_financial_advisor/infrastructure/query_cache.py) | One-time full cache miss; default 3600 s TTL repopulates on demand |
+| Control-registry profile hash | [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py) | Recomputed on every registry load; a one-time drift-detection delta is expected on first startup after upgrade |
+| Provider receipt / state digests | [`src/integrations/provider_03/provider.py`](../src/integrations/provider_03/provider.py), [`src/integrations/provider_02/adapter.py`](../src/integrations/provider_02/adapter.py) | Digest values returned to callers change; CAGE does not persist them |
+| `policy_version_id` fallback input | [`src/gateway/governance/ingress/policy_translator.py`](../src/gateway/governance/ingress/policy_translator.py) | Recomputed on every translation run |
+
+**Migration:** no action required. Expect one cold-cache interval and a
+transient latency increase immediately after deployment. If you assert on
+specific cache-key strings or profile-hash values in your own tests, regenerate
+those fixtures.
+
+### FlowSignal / Provider 01 — `decision` is now mandatory (BC-03)
+
+**Breaking Change:** [`src/integrations/provider_01/provider.py`](../src/integrations/provider_01/provider.py)
+no longer accepts the legacy binary `admitted`/`findings` response shape. The
+FlowSignal tri-state `decision` field is now **required**.
+
+| Response contains | Old behavior | New behavior |
+|---|---|---|
+| A recognized `decision` value | Tri-state mapping via `_map_flowsignal_decision()`, ConsequenceToken minted | Unchanged |
+| No `decision`, but `admitted: true` | **Admitted** — governance mapping skipped entirely | **Fails closed** — `ValidationResult(admitted=False)` with a structured finding carrying `code="cage.endpoint_error"` |
+| No `decision`, `admitted: false` | Rejected | Fails closed with the same structured finding |
+| An unrecognized `decision` value | Fell through to the legacy branch | Fails closed with the same structured finding |
+
+**Why this matters.** The old fallback was a latent fail-open: any response
+that lost its `decision` key — including a proxy error page that happens to
+parse as JSON with a truthy `admitted` — was admitted without ever passing
+through tri-state governance mapping or token minting. Two tests in the
+Universal Protocol Conformance Suite were locking that behavior in; they have
+been **inverted** so the fail-closed contract is now the asserted one.
+
+**Migration:** vendor endpoints must emit `decision` on every response. If you
+operate a FlowSignal-compatible endpoint that still returns the binary shape,
+add the `decision` field before upgrading — CAGE will otherwise reject all its
+responses. Map upstream non-binary verdicts (`REVIEW`, `ESCALATE`) per the
+tri-state guidance in [`AGENTS.md`](../AGENTS.md) so they park in the
+`DeferQueue` rather than failing.
+
+### Provider 03 — compatibility aliases removed (BC-02)
+
+**Breaking Change:** three dict-returning shadow methods on
+`Provider03NormativeProvider` are deleted from
+[`src/integrations/provider_03/provider.py`](../src/integrations/provider_03/provider.py).
+
+| Removed method | Replacement | Return type change |
+|---|---|---|
+| `fetch_legal_baseline()` | `fetch_baseline()` | `dict` → `NormativeBaseline` |
+| `validate_external_fria()` | `validate_fria()` | `dict` → `ValidationResult` |
+| `submit_evidence_chain()` | `submit_evidence()` | `dict` → `EvidenceSeal` |
+
+**Migration:** call the canonical `NormativeProvider` protocol methods and read
+the dataclass fields instead of dictionary keys. Note that
+`validate_external_fria()` returned a hardcoded `APPROVED` verdict — any caller
+relying on its return value was not receiving a real governance decision, so
+switching to `validate_fria()` may surface rejections that were previously
+invisible. This is the intended behavior.
+
+### `VALID_DECISIONS` narrowed to the canonical six (BC-04)
+
+**Breaking Change:** `VALID_DECISIONS` in
+[`src/gateway/governance/provenance_chain.py`](../src/gateway/governance/provenance_chain.py)
+drops the two execution-phase statuses and now contains exactly:
+`ALLOW`, `DENY`, `DEFER`, `NARROW`, `PAUSE`, `REQUIRE_APPROVAL`.
+
+| Removed value | Canonical replacement |
+|---|---|
+| `BLOCK` | `DENY` |
+| `ESCALATE` | `REQUIRE_APPROVAL` |
+
+**Migration:** every emitter writing into the provenance chain must stop
+sending `BLOCK` and `ESCALATE`. `build_provenance_record()` now raises
+`ValueError` for either value rather than accepting it. If you translate
+LangGraph execution-phase statuses (`APPROVED`/`BLOCKED`/`ESCALATED`) into
+provenance records, perform the remap at your gateway boundary — the canonical
+vocabulary must not be widened again, since `BLOCK` and `DENY` were previously
+indistinguishable to a downstream auditor.
+
+### DEFER response fields removed (BC-05)
+
+**Breaking Change:** duplicated legacy keys are removed from every DEFER
+response body and from the `DeferResponse` model.
+
+| Removed field | Canonical replacement | Emitted by (before) |
+|---|---|---|
+| `verdict` | `decision` | [`decisions.py`](../src/gateway/governance/decisions.py), [`agent_gateway_adapter.py`](../src/gateway/server/agent_gateway_adapter.py) |
+| `defer_id` | `defer_token` | [`symbolic_governor.py`](../src/gateway/governance/symbolic_governor.py) |
+| `missing_input_reason` | `classification_reason` | [`decisions.py`](../src/gateway/governance/decisions.py), [`agent_gateway_adapter.py`](../src/gateway/server/agent_gateway_adapter.py) |
+
+**Migration:** clients parsing DEFER responses must read `decision`,
+`defer_token`, and `classification_reason`. The removed keys are absent from the
+JSON body entirely — a client using `body["verdict"]` will raise `KeyError`
+rather than silently degrading, which is deliberate. This affects the
+`/validate-action` DEFER path and the `/v1/defer/*` polling responses.
+
+### `rollback()` requires an explicit window (BC-07)
+
+**Breaking Change:** `rollback()` in
+[`src/gateway/governance/fiscal_limit_guard.py`](../src/gateway/governance/fiscal_limit_guard.py)
+now raises `ValueError` when called with neither `window_key` nor `token`.
+
+**Why this matters.** The removed legacy fallback silently targeted the
+*current* window rather than the window the reservation was made against. That
+guaranteed `target == current`, so the cross-window guard immediately below it
+could never fire — nullifying the control added under POAM-2026-058.
+
+**Migration:** pass the `ReservationToken` returned at reservation time
+(`rollback(token=reservation_token)`), or supply an explicit `window_key`.
+Calls relying on the implicit fallback now fail loudly instead of rolling back
+against the wrong window.
+
+### Missing regional baseline now fails at startup (BC-08)
+
+**Breaking Change:** [`src/gateway/governance/constants.py`](../src/gateway/governance/constants.py)
+no longer falls back to `config/control_mappings.json` with `region="LEGACY"`
+when the regional compliance profile is absent. `_LEGACY_PATH` is deleted and
+`ControlRegistry` raises `RuntimeError` at startup.
+
+**Why this matters.** A region-guarded system that silently degrades to a
+non-regional profile emits audit spans with jurisdictionally wrong citations —
+the defect class closed by POAM-2026-034, -035 and -036. The fallback
+reintroduced it through the back door.
+
+**Migration:** every deployment must provision the baseline file for its region
+before startup:
+
+```
+config/compliance/US_FED_BASELINE.json
+config/compliance/EU_ECB_BASELINE.json
+config/compliance/APAC_MAS_BASELINE.json
+```
+
+Provide the file matching `CAGE_DEPLOYMENT_REGION`. A deployment that
+previously started successfully by falling through to the legacy mappings will
+now fail fast with `RuntimeError: Cannot start governance engine without a
+valid profile`. Treat this as a configuration prerequisite of the upgrade, not
+a runtime error to be caught.
+
+### Explicitly unchanged
+
+The **routing seal v2 HMAC-SHA256 signing mode** is retained. Despite the
+`v2`/`v3` naming it is not a version-negotiation shim for older clients — it is
+the KMS-free signing mode required for local development, CI, and the offline
+`local`/`unit` test markers. It is already fail-closed in production
+(`SymbolicGovernorViolation` with a `[DOWNGRADE_ATTACK]` log under
+`CAGE_SEAL_STRICT_MODE`). Only its canonicalization changed, as described under
+[TTL-bounded artifacts](#ttl-bounded-artifacts--tokens-seals-and-signed-balances).
+Recorded as a deliberate no-change decision (BC-06) in [`docs/POAM.md`](POAM.md).
+
+---
+
+**Last updated:** 2026-08-27 (post-v3.0.0-tag corrections + FlowSignal Phase 2 ST-5
++ backward-compatibility remediation BC-01–BC-08 / POAM-2026-060, -062–-068)

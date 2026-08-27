@@ -408,11 +408,13 @@ async def _async_attestation(
             logger.debug("[FRIA Async Attestation] Confirmed for thread=%s", thread_id)
 
         # Also submit evidence seal (non-blocking)
+        # BREAKING CHANGE (FlowSignal Phase 2 §5.3): Evidence hash migrated from
+        # json.dumps(sort_keys=True) to RFC 8785 JCS canonicalization. Hash values
+        # will differ for payloads containing floats. Pre-migration evidence hashes
+        # are not backward-compatible with this digest algorithm.
         seal = await provider.submit_evidence(
             thread_id,
-            hashlib.sha256(
-                json.dumps(action_context, sort_keys=True).encode()
-            ).hexdigest(),
+            hashlib.sha256(jcs_canonicalize_plan(action_context)).hexdigest(),
         )
         if seal.error:
             logger.warning(
@@ -751,10 +753,12 @@ class NormativeProviderDaemon:
                     local_path,
                 )
                 # Load hash for change detection
+                # BREAKING CHANGE (FlowSignal Phase 2 §5.3): Profile hash computation
+                # migrated to RFC 8785 JCS to match NormativeBaseline.profile_hash property.
                 with open(local_path) as fh:
                     cached = json.load(fh)
                 self._last_hash = hashlib.sha256(
-                    json.dumps(cached, sort_keys=True, separators=(",", ":")).encode()
+                    jcs_canonicalize_plan(cached)
                 ).hexdigest()
             else:
                 # Level 4: No profile at any level
@@ -823,6 +827,7 @@ class NormativeProviderDaemon:
         output_path = _COMPLIANCE_DIR / f"{baseline.region}_BASELINE.json"
         try:
             with open(output_path, "w") as fh:
+                # Human-readable file write (not hashed), indent for readability
                 json.dump(baseline.profile, fh, indent=2, sort_keys=True)
             logger.info("[NormativeDaemon] Profile written to %s", output_path)
         except Exception as exc:

@@ -86,9 +86,8 @@ class TestDeferE2EFlow:
             "violations": ["Confidence below threshold"],
             "seal": "",
             "thread_id": "",
-            "defer_id": "defer-e2e-test-123",
             "defer_token": "defer-e2e-test-123",
-            "missing_input_reason": "confidence_below_threshold",
+            "classification_reason": "confidence_below_threshold",
             "deferrable": True,
             "classification_meta": {
                 "classification_reason": "Soft violation(s) with data starvation: confidence 0.50 < FRIA_ZONE_DEFER 0.70",
@@ -111,11 +110,14 @@ class TestDeferE2EFlow:
 
         # Validate response body
         body = json.loads(response["denied_response"]["body"])
-        assert body["verdict"] == GovernanceDecision.DEFER
-        assert body["defer_id"] == "defer-e2e-test-123"
+        assert body["decision"] == GovernanceDecision.DEFER
         assert body["defer_token"] == "defer-e2e-test-123"
-        assert "missing_input_reason" in body
+        assert "classification_reason" in body
         assert body["deferrable"] is True
+        # Legacy fields must be absent
+        assert "verdict" not in body
+        assert "defer_id" not in body
+        assert "missing_input_reason" not in body
 
         # Validate message guides client to polling endpoint
         assert "GET /v1/defer/pending" in body.get("message", "")
@@ -297,7 +299,6 @@ class TestDeferResponseModel:
             classification_reason="Low confidence",
             defer_token="test-token-abc",
             violations=["Confidence below threshold"],
-            missing_input_reason="confidence_starved",
         )
 
         body = resp.to_http_body()
@@ -307,7 +308,10 @@ class TestDeferResponseModel:
         assert body["defer_token"] == "test-token-abc"
         assert body["deferrable"] is True
         assert body["violations"] == ["Confidence below threshold"]
-        assert body["verdict"] == GovernanceDecision.DEFER
+        # Legacy fields must be absent
+        assert "verdict" not in body
+        assert "defer_id" not in body
+        assert "missing_input_reason" not in body
 
     def test_defer_response_serialization(self):
         """DeferResponse can be serialized to JSON."""

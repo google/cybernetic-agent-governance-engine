@@ -54,7 +54,10 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
+
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 from .types import OscalFinding
 
@@ -64,8 +67,36 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-_SCHEMA = "cage-context-accumulator/1.0"
+_SCHEMA = "cage-context-accumulator/2.0"
 _GENESIS = "GENESIS"  # sentinel used as prev_hash for the first node
+
+
+# ---------------------------------------------------------------------------
+# JSON normalization helper
+# ---------------------------------------------------------------------------
+
+
+def _normalize_for_jcs(obj: Any) -> Any:
+    """Recursively normalize objects for JCS canonicalization.
+
+    JCS (RFC 8785) requires JSON-native types only. This helper converts:
+    - datetime -> ISO 8601 string
+    - Decimal -> float or string
+    - Any other non-JSON-native -> str
+    """
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, Decimal):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {k: _normalize_for_jcs(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_normalize_for_jcs(item) for item in obj]
+    elif isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+    else:
+        # Fallback for unknown types
+        return str(obj)
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +115,7 @@ def _link_hash(
     audit_id: str,
     control_id: str,
     event_type: str,
-    content_json: str,
+    content_bytes: bytes,
 ) -> str:
     """Compute a node's ``record_hash`` over its identifying header + payload.
 
@@ -93,26 +124,30 @@ def _link_hash(
     different position, or re-attributing it to another audit changes the link
     and breaks the chain.  ``timestamp_utc`` is deliberately excluded to keep
     ``record_hash`` a deterministic function of the node's content.
+
+    v2.0: Migrated to RFC 8785 JCS canonicalization.
     """
-    header = json.dumps(
+    header_bytes = jcs_canonicalize_plan(
         {
             "schema": _SCHEMA,
             "node_index": node_index,
             "audit_id": audit_id,
             "control_id": control_id,
             "event_type": event_type,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
+        }
     )
-    return _sha256(prev_hash + header + content_json)
+    return hashlib.sha256(
+        prev_hash.encode("utf-8") + header_bytes + content_bytes
+    ).hexdigest()
 
 
 def _content_hash(payload: dict) -> str:
-    """Return the SHA-256 hash of a JSON-serialised payload (deterministic key ordering)."""
-    return _sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-    )
+    """Return the SHA-256 hash of a JSON-serialised payload (deterministic key ordering).
+
+    v2.0: Migrated to RFC 8785 JCS canonicalization.
+    """
+    normalized = _normalize_for_jcs(payload)
+    return hashlib.sha256(jcs_canonicalize_plan(normalized)).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -294,20 +329,21 @@ class ContextAccumulator:
         expected_prev = _sha256(self._audit_id)  # genesis seed
 
         for i, entry in enumerate(self._entries):
-            content_json = json.dumps(entry.payload, sort_keys=True, default=str)
+            normalized_payload = _normalize_for_jcs(entry.payload)
+            content_bytes = jcs_canonicalize_plan(normalized_payload)
             expected_hash = _link_hash(
                 prev_hash=expected_prev,
                 node_index=entry.node_index,
                 audit_id=entry.audit_id,
                 control_id=entry.control_id,
                 event_type=entry.event_type,
-                content_json=content_json,
+                content_bytes=content_bytes,
             )
 
             if (
                 entry.prev_hash != expected_prev
                 or entry.record_hash != expected_hash
-                or entry.content_hash != _sha256(content_json)
+                or entry.content_hash != hashlib.sha256(content_bytes).hexdigest()
             ):
                 logger.warning(
                     "[context_accumulator] Chain integrity FAILED at node %d "
@@ -376,8 +412,9 @@ class ContextAccumulator:
         field will be populated asynchronously.
         """
         now_utc = datetime.now(tz=timezone.utc).isoformat()
-        content_json = json.dumps(payload, sort_keys=True, default=str)
-        chash = _sha256(content_json)
+        normalized_payload = _normalize_for_jcs(payload)
+        content_bytes = jcs_canonicalize_plan(normalized_payload)
+        chash = hashlib.sha256(content_bytes).hexdigest()
         node_index = len(self._entries)
         record_hash = _link_hash(
             prev_hash=self._prev_hash,
@@ -385,7 +422,7 @@ class ContextAccumulator:
             audit_id=self._audit_id,
             control_id=control_id,
             event_type=event_type,
-            content_json=content_json,
+            content_bytes=content_bytes,
         )
 
         entry = ContextAccumulatorEntry(

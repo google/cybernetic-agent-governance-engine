@@ -661,16 +661,16 @@ The routing seal satisfies the `NoDirectBind` formal invariant: there is no code
 
 The provenance chain builds a tamper-evident SHA-256 hash chain across all LangGraph governance nodes. Any modification to any node's input, output, or decision invalidates all subsequent chain links.
 
-**Hash computation:** [`compute_hash(data)`](../../src/gateway/governance/provenance_chain.py) serialises the dict with `json.dumps(sort_keys=True, separators=(',', ':'))` before SHA-256 hashing — **deterministic sorted-key JSON** regardless of insertion order. Non-serialisable values are coerced to strings. Earlier versions omitted `separators`, producing non-spec-compliant hash values.
+**Hash computation:** [`compute_hash(data)`](../../src/gateway/governance/provenance_chain.py) canonicalises the dict with **RFC 8785 JCS** (`jcs_canonicalize_plan()`) before SHA-256 hashing — deterministic regardless of insertion order and byte-identical across Python, Go, and JavaScript runtimes. Non-serialisable values are coerced to strings before canonicalization. This replaces the previous `json.dumps(sort_keys=True, separators=(',', ':'))` form; digests are not comparable across the change (see [`docs/BREAKING_CHANGES_v3.md`](../BREAKING_CHANGES_v3.md)).
 
 **Chain construction complexity:** O(n) — each record's `parent_hash` is the SHA-256 of the preceding record's full dict (sorted keys). The first record has `parent_hash=None`.
 
 ```
 ProvenanceRecord[0]  (parent_hash=None)
-      │  chain_hash() = SHA-256(json.dumps(record_0, sort_keys=True))
+      │  chain_hash() = SHA-256(jcs_canonicalize_plan(record_0))
       ▼
 ProvenanceRecord[1]  (parent_hash=chain_hash[0])
-      │  chain_hash() = SHA-256(json.dumps(record_1, sort_keys=True))
+      │  chain_hash() = SHA-256(jcs_canonicalize_plan(record_1))
       ▼
 ProvenanceRecord[n]  (parent_hash=chain_hash[n-1])
 ```

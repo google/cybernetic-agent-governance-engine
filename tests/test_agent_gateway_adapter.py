@@ -334,12 +334,12 @@ class TestHandleCheckRequest:
         assert "defer_id" not in body_parsed
 
     @pytest.mark.asyncio
-    async def test_defer_returns_202_with_defer_verdict(self):
-        """DEFER verdict → DeniedHttpResponse(202) with DEFER body and defer_id.
+    async def test_defer_returns_202_with_canonical_decision_field(self):
+        """DEFER verdict → DeniedHttpResponse(202) with DEFER body and defer_token.
 
         Conformance test: the adapter must NOT collapse DEFER into REQUIRE_APPROVAL
-        or DEFERRED.  The body verdict field must exactly match GovernanceDecision.DEFER
-        and must include defer_id and missing_input_reason so clients can route to
+        or DEFERRED.  The body decision field must exactly match GovernanceDecision.DEFER
+        and must include defer_token and classification_reason so clients can route to
         GET /v1/defer/pending (data-hydration path), not GET /v1/approvals/pending.
         """
         body = json.dumps(
@@ -353,8 +353,8 @@ class TestHandleCheckRequest:
             "violations": [],
             "seal": "",
             "thread_id": "",
-            "defer_id": "defer-xyz-789",
-            "missing_input_reason": "confidence_below_threshold",
+            "defer_token": "defer-xyz-789",
+            "classification_reason": "confidence_below_threshold",
         }
         mock_gov = MagicMock()
         mock_gov.validate_action = AsyncMock(return_value=mock_result)
@@ -366,14 +366,17 @@ class TestHandleCheckRequest:
         assert "denied_response" in resp
         assert resp["denied_response"]["status"]["code"] == 202
         body_parsed = json.loads(resp["denied_response"]["body"])
-        # Conformance assertion: verdict must be DEFER, not DEFERRED or REQUIRE_APPROVAL
-        assert body_parsed["verdict"] == GovernanceDecision.DEFER, (
-            f"Expected verdict={GovernanceDecision.DEFER!r}, "
-            f"got {body_parsed['verdict']!r}. "
+        # Conformance assertion: decision must be DEFER, not DEFERRED or REQUIRE_APPROVAL
+        assert body_parsed["decision"] == GovernanceDecision.DEFER, (
+            f"Expected decision={GovernanceDecision.DEFER!r}, "
+            f"got {body_parsed['decision']!r}. "
             "DEFER must not be collapsed into REQUIRE_APPROVAL or DEFERRED."
         )
-        assert body_parsed["defer_id"] == "defer-xyz-789"
-        assert body_parsed["missing_input_reason"] == "confidence_below_threshold"
+        assert body_parsed["defer_token"] == "defer-xyz-789"
+        # Legacy fields must be absent
+        assert "verdict" not in body_parsed
+        assert "defer_id" not in body_parsed
+        assert "missing_input_reason" not in body_parsed
         # Must NOT contain thread_id (that belongs to REQUIRE_APPROVAL responses only)
         assert body_parsed.get("thread_id", "") == ""
 
@@ -456,23 +459,26 @@ class TestGovernanceDecisionConformance:
             },
             GovernanceDecision.DENY: {
                 "verdict": GovernanceDecision.DENY,
+                "decision": GovernanceDecision.DENY,
                 "violations": ["policy violation"],
                 "seal": "",
                 "thread_id": "",
             },
             GovernanceDecision.REQUIRE_APPROVAL: {
                 "verdict": GovernanceDecision.REQUIRE_APPROVAL,
+                "decision": GovernanceDecision.REQUIRE_APPROVAL,
                 "violations": [],
                 "seal": "",
                 "thread_id": "t-123",
             },
             GovernanceDecision.DEFER: {
                 "verdict": GovernanceDecision.DEFER,
+                "decision": GovernanceDecision.DEFER,
                 "violations": [],
                 "seal": "",
                 "thread_id": "",
-                "defer_id": "d-456",
-                "missing_input_reason": "confidence_below_threshold",
+                "defer_token": "d-456",
+                "classification_reason": "confidence_below_threshold",
             },
         }
 
@@ -496,16 +502,16 @@ class TestGovernanceDecisionConformance:
                     f"{decision} must produce denied_response"
                 )
                 body_parsed = json.loads(resp["denied_response"]["body"])
-                verdict_in_body = body_parsed.get("verdict", "")
-                assert verdict_in_body == decision, (
-                    f"Expected verdict={decision!r} in body, got {verdict_in_body!r}. "
+                decision_in_body = body_parsed.get("decision", "")
+                assert decision_in_body == decision, (
+                    f"Expected decision={decision!r} in body, got {decision_in_body!r}. "
                     "Canonical decision must be preserved end-to-end."
                 )
-                assert verdict_in_body not in seen_verdicts, (
-                    f"Verdict {verdict_in_body!r} appeared in multiple responses — "
+                assert decision_in_body not in seen_verdicts, (
+                    f"Decision {decision_in_body!r} appeared in multiple responses — "
                     "decisions must map to distinct external states."
                 )
-                seen_verdicts.add(verdict_in_body)
+                seen_verdicts.add(decision_in_body)
 
 
 # ---------------------------------------------------------------------------
@@ -566,9 +572,8 @@ class TestDeferHTTPResponse:
             "violations": [],
             "seal": "",
             "thread_id": "",
-            "defer_id": "defer-xyz-789",
             "defer_token": "defer-xyz-789",
-            "missing_input_reason": "confidence_below_threshold",
+            "classification_reason": "confidence_below_threshold",
             "deferrable": True,
         }
         mock_gov = MagicMock()
@@ -580,8 +585,10 @@ class TestDeferHTTPResponse:
 
         body_parsed = json.loads(resp["denied_response"]["body"])
         assert body_parsed.get("defer_token") == "defer-xyz-789"
-        # Also check legacy field for backward compatibility
-        assert body_parsed.get("defer_id") == "defer-xyz-789"
+        # Legacy fields must be absent
+        assert "verdict" not in body_parsed
+        assert "defer_id" not in body_parsed
+        assert "missing_input_reason" not in body_parsed
 
     @pytest.mark.asyncio
     async def test_defer_disabled_returns_403(self, monkeypatch):

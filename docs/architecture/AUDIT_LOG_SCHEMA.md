@@ -19,6 +19,18 @@ The CAGE audit log system produces two complementary NDJSON streams:
 
 ### Hash Chain Mechanics
 
+> **Scope note.** This document describes the **playground telemetry** chains
+> produced by [`examples/telemetry.py`](../../examples/telemetry.py), which are
+> separate from the production audit chains in
+> [`src/compliance_bridge/evidence_stream.py`](../../src/compliance_bridge/evidence_stream.py)
+> (`cage-evidence-stream/2.0`) and
+> [`src/compliance_bridge/context_accumulator.py`](../../src/compliance_bridge/context_accumulator.py)
+> (`cage-context-accumulator/2.0`). Those production chains canonicalize with
+> RFC 8785 JCS; the `sort_keys=True` serialization described below applies only
+> to the playground chains and is **not** interchangeable with them. See
+> [`docs/BREAKING_CHANGES_v3.md`](../BREAKING_CHANGES_v3.md) for the production
+> canonicalization change.
+
 ```
 record_hash = SHA-256( prev_hash || JSON(payload, sort_keys=True) )
 ```

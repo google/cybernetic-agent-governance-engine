@@ -830,7 +830,7 @@ changes.
 | `ALLOW` | `OkHttpResponse` | 200 (proxy forwards) | — |
 | `DENY` | `DeniedHttpResponse` | 403 | `{"verdict":"DENY","violations":[...]}` |
 | `REQUIRE_APPROVAL` | `DeniedHttpResponse` | 202 | `{"verdict":"REQUIRE_APPROVAL","thread_id":"..."}` |
-| `DEFER` | `DeniedHttpResponse` | 202 | `{"verdict":"DEFER","defer_id":"...","missing_input_reason":"..."}` |
+| `DEFER` | `DeniedHttpResponse` | 202 | `{"decision":"DEFER","defer_token":"...","classification_reason":"..."}` |
 | Parse error | `DeniedHttpResponse` | 403 | `{"error":"parse_error","message":"..."}` |
 | Body > 64KB | `DeniedHttpResponse` | 403 | `{"error":"parse_error","message":"..."}` |
 
@@ -848,6 +848,11 @@ Confidence-Starvation Boundary (default 0.70) — trusted context or evidence
 is missing. This is structurally distinct from `REQUIRE_APPROVAL`: it routes
 to automated data-hydration, not human triage. The MCP client must poll
 `GET /v1/defer/pending?defer_id=<did>` for the outcome.
+
+> **Field migration:** the legacy DEFER response keys `verdict`, `defer_id`,
+> and `missing_input_reason` were removed. Clients must read `decision`,
+> `defer_token`, and `classification_reason` — see
+> [`docs/BREAKING_CHANGES_v3.md`](BREAKING_CHANGES_v3.md).
 
 **GCP Adaptation note:** When deployed as a GCP AGW Service Extension, this
 endpoint is called by the AGW control plane. No code changes are required —

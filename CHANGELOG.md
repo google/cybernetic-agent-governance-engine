@@ -33,9 +33,24 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `src/compliance_bridge/evidence_stream.py` — Evidence chain blocking default: `EVIDENCE_CHAIN_BLOCKING` now defaults to `"true"` (peer review Fix B) (`fix(compliance)`)
 - `src/gateway/governance/symbolic_governor.py:_ftra_boundary_check()` — FTRA boundary check mandatory: now runs unconditionally (flag `CAGE_FTRA_BOUNDARY_ENABLED` removed per POAM-2026-030-B) (`fix(governance)`)
 
+#### Breaking — backward-compatibility remediation (BC-01–BC-08)
+
+See [`docs/BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md) for full migration guidance.
+
+- **Canonicalization** — RFC 8785 JCS migration completed across `src/`: every executable `json.dumps(..., sort_keys=True)` canonicalization site now uses `jcs_canonicalize_plan()`. Affects the `ContextAccumulator` and `EvidenceStreamSink` hash chains (write and verify migrated atomically), the WORM/KMS UCA signing path, ConsequenceToken JWS envelopes, routing seals, OPA/query cache keys, the reconciliation signed balance, the control-registry profile hash, and provider receipt/state digests. Closes POAM-2026-060 (`refactor(compliance)!`)
+- **Schema sentinels** — `cage-evidence-stream/1.1` → `/2.0` and `cage-context-accumulator/1.1` → `/2.0`; records written pre-change do not verify (`refactor(compliance)!`)
+- **WORM/KMS signing** — `uca_logger._sign_record()` migrated to JCS with no compatibility shim; previously-signed WORM records will not verify (`refactor(governance)!`)
+- `src/integrations/provider_01/provider.py` — FlowSignal `decision` field now mandatory; a missing or unrecognized value fails closed with `code="cage.endpoint_error"` instead of falling back to the legacy binary `admitted`/`findings` shape. Closes a latent fail-open; POAM-2026-064 (`fix(governance)!`)
+- `src/gateway/governance/provenance_chain.py` — `VALID_DECISIONS` narrowed from eight to the canonical six (`ALLOW`, `DENY`, `DEFER`, `NARROW`, `PAUSE`, `REQUIRE_APPROVAL`); legacy `BLOCK`/`ESCALATE` rejected. POAM-2026-065 (`refactor(governance)!`)
+- `src/gateway/governance/fiscal_limit_guard.py` — `rollback()` now raises `ValueError` without an explicit `window_key` or `token`, restoring the POAM-2026-058 cross-window guard the legacy fallback defeated. POAM-2026-067 (`fix(governance)!`)
+- `src/gateway/governance/constants.py` — a missing regional compliance profile now raises `RuntimeError` at startup instead of degrading to a `region="LEGACY"` profile; deployments must provision `config/compliance/{REGION}_BASELINE.json`. POAM-2026-068 (`fix(governance)!`)
+
 ### Removed
 
 - `src/compliance_bridge/evidence_stream.py` — Evidence chain v1.0 schema support: removed deprecated `_SCHEMA_1_0`/`_SCHEMA_1_1` constants; only v1.1 supported (CR-1 from 3.0.0) (`refactor(compliance)`)
+- `src/compliance_bridge/evidence_stream.py` — Dual-schema machinery deleted: `_detect_schema_version()`, `migrate_record_1_0_to_1_1()`, `get_last_v1_0_hash()`, `_link_hash_v1_1()` (collapsed into `_link_hash()`), and the `EvidenceRecord.schema_version` field; `tests/test_dual_schema_verification.py` deleted. POAM-2026-062 (`refactor(compliance)!`)
+- `src/integrations/provider_03/provider.py` — Three backward-compatibility aliases removed (`fetch_legal_baseline()`, `validate_external_fria()`, `submit_evidence_chain()`); `validate_external_fria()` had returned a hardcoded `APPROVED`, a silent-bypass risk. POAM-2026-063 (`refactor(governance)!`)
+- `src/gateway/governance/decisions.py`, `symbolic_governor.py`, `src/gateway/server/agent_gateway_adapter.py` — Duplicated legacy DEFER response fields removed (`verdict`, `defer_id`, `missing_input_reason`); canonical fields are `decision`, `defer_token`, `classification_reason`. POAM-2026-066 (`refactor(governance)!`)
 
 ### Fixed
 

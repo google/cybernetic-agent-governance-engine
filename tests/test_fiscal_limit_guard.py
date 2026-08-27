@@ -301,19 +301,19 @@ async def test_confirm_on_rejected_token_is_noop(guard: FiscalLimitGuard) -> Non
 @pytest.mark.asyncio
 async def test_rollback_state_decrements_spend(guard: FiscalLimitGuard) -> None:
     """rollback_state() decrements the aggregate spend counter."""
-    await guard.reserve(agent_id="agent-a", amount_usd=200_000.0)
+    token = await guard.reserve(agent_id="agent-a", amount_usd=200_000.0)
     assert await guard.current_spend_usd() == pytest.approx(200_000.0, abs=0.01)
 
-    await guard.rollback_state(amount=100_000.0, audit_id="audit-123")
+    await guard.rollback_state(amount=100_000.0, audit_id="audit-123", token=token)
     assert await guard.current_spend_usd() == pytest.approx(100_000.0, abs=0.01)
 
 
 @pytest.mark.asyncio
 async def test_rollback_state_floors_at_zero(guard: FiscalLimitGuard) -> None:
     """rollback_state() never goes below zero (floor-at-zero)."""
-    await guard.reserve(agent_id="agent-a", amount_usd=50_000.0)
+    token = await guard.reserve(agent_id="agent-a", amount_usd=50_000.0)
     # Roll back more than spent
-    await guard.rollback_state(amount=200_000.0, audit_id="audit-456")
+    await guard.rollback_state(amount=200_000.0, audit_id="audit-456", token=token)
     assert await guard.current_spend_usd() >= 0.0
 
 
@@ -323,11 +323,11 @@ async def test_rollback_state_redis_error_re_raises(
 ) -> None:
     """rollback_state() re-raises Redis errors (Saga error handling responsibility)."""
     guard = FiscalLimitGuard(redis_client=redis_client, daily_cap_usd=500_000.0)
-    await guard.reserve(agent_id="agent-a", amount_usd=100_000.0)
+    token = await guard.reserve(agent_id="agent-a", amount_usd=100_000.0)
 
     guard._atomic_decrement = AsyncMock(side_effect=RuntimeError("Redis gone"))
     with pytest.raises(RuntimeError, match="Redis gone"):
-        await guard.rollback_state(amount=50_000.0, audit_id="audit-err")
+        await guard.rollback_state(amount=50_000.0, audit_id="audit-err", token=token)
 
 
 # ---------------------------------------------------------------------------
@@ -607,10 +607,14 @@ async def test_rollback_state_with_token_uses_token_window_key(
 
 
 @pytest.mark.asyncio
-async def test_rollback_state_legacy_no_window_key_uses_current(
+async def test_rollback_state_without_window_key_or_token_raises_value_error(
     redis_client: fakeredis.aioredis.FakeRedis,
 ) -> None:
-    """Legacy rollback (no window_key/token) uses current window — backward compatible."""
+    """Rollback without window_key or token raises ValueError.
+
+    Regression guard for BC-07 remediation (POAM-2026-058 cross-window guard).
+    The removed fallback allowed cross-window rollbacks without validation.
+    """
     guard = FiscalLimitGuard(
         redis_client=redis_client,
         daily_cap_usd=500_000.0,
@@ -621,15 +625,20 @@ async def test_rollback_state_legacy_no_window_key_uses_current(
     token = await guard.reserve(agent_id="agent-1", amount_usd=30_000.0)
     assert not token.rejected
 
-    # Call rollback_state without window_key or token (legacy path)
-    await guard.rollback_state(
-        amount=30_000.0,
-        audit_id="test-audit-004",
-    )
+    # Call rollback_state without window_key or token — must raise ValueError
+    with pytest.raises(
+        ValueError, match="rollback\\(\\) requires explicit window_key or token"
+    ):
+        await guard.rollback_state(
+            amount=30_000.0,
+            audit_id="test-audit-004",
+        )
 
-    # Verify balance was decremented (backward compatible)
+    # Verify balance was not modified (rollback did not execute)
     current_spend = await guard.current_spend_usd()
-    assert current_spend == 0.0, "Legacy rollback should work on current window"
+    assert current_spend == 30_000.0, (
+        "Rollback must not execute without explicit window_key/token"
+    )
 
 
 @pytest.mark.asyncio
@@ -644,12 +653,13 @@ async def test_rollback_state_counter_floors_at_zero(
     )
 
     # Reserve a small amount
-    await guard.reserve(agent_id="agent-1", amount_usd=5_000.0)
+    token = await guard.reserve(agent_id="agent-1", amount_usd=5_000.0)
 
     # Rollback more than reserved (should floor at 0)
     await guard.rollback_state(
         amount=100_000.0,  # Way more than reserved
         audit_id="test-audit-005",
+        token=token,
     )
 
     # Verify balance is 0, not negative
