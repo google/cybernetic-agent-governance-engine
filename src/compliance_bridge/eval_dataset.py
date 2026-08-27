@@ -148,6 +148,7 @@ async def populate_eval_dataset(  # type: ignore[no-untyped-def]
 
     created = 0
     errors = 0
+    _lock = asyncio.Lock()
 
     async def _populate_one(finding: OscalFinding) -> None:
         nonlocal created, errors
@@ -159,9 +160,11 @@ async def populate_eval_dataset(  # type: ignore[no-untyped-def]
                 audit_id,
                 langfuse,
             )
-            created += 1
+            async with _lock:
+                created += 1
         except Exception as exc:
-            errors += 1
+            async with _lock:
+                errors += 1
             logger.warning(
                 "[eval_dataset] Failed to create dataset item for %s (non-fatal): %s",
                 finding.control_id,

@@ -104,6 +104,33 @@ _REQUIRE_EVIDENCE_BINDING: bool = os.environ.get(
 ).lower() in ("true", "1", "yes")
 
 # ---------------------------------------------------------------------------
+# Feature flag: Seal strict mode - prevents HMAC downgrade attacks
+# ---------------------------------------------------------------------------
+# When CAGE_SEAL_STRICT_MODE=true (default), JWT verification failures do NOT
+# fall back to HMAC verification. This prevents downgrade attacks where an
+# attacker crafts a malformed JWT to trigger the HMAC verification path.
+# Set to "false" only in isolated development/test environments without KMS.
+#
+# NOTE: _SEAL_STRICT_MODE is kept for backwards compatibility but _get_seal_strict_mode()
+# should be used at call time to allow test fixtures to override via monkeypatch.
+_SEAL_STRICT_MODE: bool = os.environ.get(
+    "CAGE_SEAL_STRICT_MODE", "true"
+).lower() in ("true", "1", "yes")
+
+
+def _get_seal_strict_mode() -> bool:
+    """Get seal strict mode setting at call time (allows test overrides)."""
+    return os.environ.get("CAGE_SEAL_STRICT_MODE", "true").lower() in ("true", "1", "yes")
+
+
+def _is_production_env() -> bool:
+    """Check if we're in a production environment at call time (allows test overrides)."""
+    cage_env = (
+        os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
+    ).lower()
+    return cage_env not in ("development", "test", "dev", "ci")
+
+# ---------------------------------------------------------------------------
 # GOVERNANCE_SALT for HMAC compatibility layer
 # ---------------------------------------------------------------------------
 # In test/dev environments without KMS, we use HMAC-SHA256 seals.
@@ -112,6 +139,42 @@ _DEFAULT_SALT = "dev-only-insecure-placeholder-not-for-production-use"
 _GOVERNANCE_SALT = os.environ.get("GOVERNANCE_SALT", _DEFAULT_SALT)
 _USING_DEFAULT_SALT: bool = _GOVERNANCE_SALT == _DEFAULT_SALT
 _HMAC_KEY = hashlib.sha256(_GOVERNANCE_SALT.encode()).digest()
+
+# ---------------------------------------------------------------------------
+# TOCTOU-safe atomic nonce burning via Redis Lua script
+# ---------------------------------------------------------------------------
+# This Lua script eliminates the TOCTOU race condition between seal verification
+# and nonce burning by making the check-and-burn operation atomic. The script:
+#   1. Attempts to SET the nonce key with NX (only if not exists) and EX (TTL)
+#   2. Returns 0 if successfully burned (first use), 1 if already burned (replay)
+#
+# By burning the nonce BEFORE verification, we ensure that only one thread can
+# proceed to verify and execute, even if multiple threads race with the same seal.
+#
+# KEYS[1]: nonce_key (e.g., "cage:seal:nonce:{nonce}")
+# ARGV[1]: ttl_seconds (integer)
+# ARGV[2]: metadata (JSON string with action, timestamp for audit trail)
+#
+# Returns:
+#   0 = Successfully burned (proceed with verification)
+#   1 = Already burned (replay attack - reject immediately)
+_ATOMIC_BURN_NONCE_LUA = """
+local nonce_key = KEYS[1]
+local ttl_s = tonumber(ARGV[1])
+local metadata = ARGV[2]
+
+-- Attempt atomic SET NX with TTL
+-- SET returns OK if successful, nil if NX condition fails (key exists)
+local result = redis.call('SET', nonce_key, metadata, 'NX', 'EX', ttl_s)
+if result then
+    return 0  -- Success: nonce burned, caller should proceed with verification
+else
+    return 1  -- Replay: nonce was already burned by another request
+end
+"""
+
+# SHA1 hash of the Lua script for EVALSHA optimization (computed at runtime)
+_ATOMIC_BURN_NONCE_SHA: str | None = None
 
 
 def is_default_salt() -> bool:
@@ -528,16 +591,35 @@ def verify_seal(
             )
             return True
         else:
-            if _IS_PRODUCTION:
-                reason = "HMAC seals are not accepted in production (downgrade attack detected)"
+            # SECURITY FIX: Strict mode prevents HMAC downgrade attacks
+            # In strict mode (or production), reject HMAC seals to prevent attackers
+            # from crafting malformed JWTs to trigger the HMAC verification path
+            # NOTE: We use runtime functions instead of module-level constants to allow
+            # test fixtures to override via monkeypatch.setenv().
+            strict_mode = _get_seal_strict_mode()
+            is_production = _is_production_env()
+            if strict_mode or is_production:
+                reason = (
+                    "HMAC seals are not accepted in strict mode "
+                    "(CAGE_SEAL_STRICT_MODE=true or production environment). "
+                    "Possible downgrade attack detected."
+                )
                 logger.error(
-                    "⛔ [DOWNGRADE_ATTACK] Routing seal rejected: action=%s reason=%s",
+                    "⛔ [DOWNGRADE_ATTACK] Routing seal rejected: action=%s reason=%s "
+                    "strict_mode=%s is_production=%s",
                     action,
                     reason,
+                    strict_mode,
+                    is_production,
                 )
                 raise SymbolicGovernorViolation(reason, action)
 
-            # v2 HMAC format verification
+            # v2 HMAC format verification (only allowed in non-strict development mode)
+            logger.warning(
+                "⚠️ [HMAC_FALLBACK] Using HMAC verification in non-strict mode: "
+                "action=%s. This is insecure and should not be used in production.",
+                action,
+            )
             parts = seal.split(".", 3)
             if len(parts) != 4:
                 raise SymbolicGovernorViolation(
@@ -617,6 +699,80 @@ def extract_record_hash(seal: str) -> str | None:
         return None
 
 
+async def _atomic_burn_nonce(
+    redis: Any,
+    nonce_key: str,
+    ttl_s: int,
+    metadata: str,
+) -> int:
+    """Execute atomic nonce burning via Redis Lua script.
+
+    This function encapsulates the Lua script execution with EVALSHA optimization.
+    On first call, it registers the script and caches the SHA. Subsequent calls
+    use EVALSHA for efficiency.
+
+    Args:
+        redis: Async Redis client instance.
+        nonce_key: The Redis key for this nonce (e.g., "cage:seal:nonce:{nonce}").
+        ttl_s: TTL in seconds for the burned nonce key.
+        metadata: JSON string with audit metadata (action, timestamp).
+
+    Returns:
+        0 if nonce was successfully burned (first use).
+        1 if nonce was already burned (replay attack).
+
+    Raises:
+        Exception: On Redis communication errors (caller should fail-closed).
+    """
+    global _ATOMIC_BURN_NONCE_SHA
+
+    # Try EVALSHA first if we have a cached SHA
+    if _ATOMIC_BURN_NONCE_SHA is not None:
+        try:
+            result = await redis.evalsha(
+                _ATOMIC_BURN_NONCE_SHA,
+                1,  # number of keys
+                nonce_key,
+                str(ttl_s),
+                metadata,
+            )
+            return int(result)
+        except Exception as evalsha_exc:
+            # NOSCRIPT error means script not cached on this Redis instance
+            # Fall through to EVAL which will re-cache it.
+            # Check both exception type name and message for compatibility
+            # with real Redis (raises ResponseError with "NOSCRIPT") and
+            # fakeredis (raises NoScriptError with different message).
+            exc_type_name = type(evalsha_exc).__name__
+            exc_str = str(evalsha_exc).upper()
+            is_noscript = (
+                "NOSCRIPT" in exc_str
+                or "NoScriptError" in exc_type_name
+                or "No matching script" in str(evalsha_exc)
+            )
+            if not is_noscript:
+                raise
+            # Clear cached SHA so next call will use EVAL
+            _ATOMIC_BURN_NONCE_SHA = None
+
+    # Use EVAL (slower but always works) and cache the SHA for future calls
+    result = await redis.eval(
+        _ATOMIC_BURN_NONCE_LUA,
+        1,  # number of keys
+        nonce_key,
+        str(ttl_s),
+        metadata,
+    )
+
+    # Cache the script SHA for future EVALSHA calls
+    # Note: We compute SHA1 of the script to match Redis's script SHA
+    import hashlib as _hashlib
+
+    _ATOMIC_BURN_NONCE_SHA = _hashlib.sha1(_ATOMIC_BURN_NONCE_LUA.encode()).hexdigest()
+
+    return int(result)
+
+
 async def verify_and_consume_seal(
     seal: str,
     action: str,
@@ -624,28 +780,52 @@ async def verify_and_consume_seal(
     redis_client: Any = None,
     expected_record_hash: str | None = None,
 ) -> bool:
-    """Verify a routing seal and burn its nonce via Redis SETNX.
+    """Verify a routing seal and burn its nonce atomically (TOCTOU-safe).
 
-    Implements replay protection per the Cryptographic Governance Evolution spec:
-    1. Verify the seal signature and claims
-    2. Extract the nonce (from JWT claims or HMAC hash)
-    3. Use Redis SETNX to atomically burn the nonce
-    4. Reject if nonce was already burned (replay attack)
+    Implements replay protection per the Cryptographic Governance Evolution spec.
+    This function eliminates the TOCTOU race condition by burning the nonce
+    BEFORE verification using a Redis Lua script for atomicity.
+
+    Security invariant: Only one thread can successfully burn any given nonce.
+    If burning succeeds, that thread "owns" the seal and proceeds to verify.
+    If verification fails after burning, the nonce remains burned (safe: invalid
+    seals should never execute anyway).
+
+    Sequence (TOCTOU-safe):
+        1. Extract nonce from seal (parse only, no signature verification)
+        2. Atomically burn nonce via Redis Lua script
+        3. If burn fails (replay), reject immediately
+        4. If burn succeeds, verify seal signature/claims
+        5. If verification fails, nonce stays burned (safe)
+        6. If verification succeeds, return True (authorized)
 
     Fail-closed: If Redis is unavailable, verification fails.
-    """
-    # Step 1: Verify the seal (signature, expiry, payload binding)
-    verify_seal(
-        seal=seal,
-        action=action,
-        params=params,
-        expected_record_hash=expected_record_hash,
-    )
 
-    # Step 2: Extract nonce for replay protection
+    Args:
+        seal: The routing seal string (JWT or HMAC format).
+        action: The action being authorized (e.g., "execute_trade").
+        params: The parameters being authorized.
+        redis_client: Optional async Redis client (defaults to global client).
+        expected_record_hash: Optional expected evidence record hash.
+
+    Returns:
+        True if seal is valid and nonce was successfully burned.
+
+    Raises:
+        SymbolicGovernorViolation: On any failure (invalid seal, replay, Redis error).
+    """
+    import time as _time_module
+
+    _start_ns = _time_module.time_ns()
+
+    # ---------------------------------------------------------------------------
+    # Step 1: Extract nonce FIRST (parse only, no verification yet)
+    # This is critical for TOCTOU safety: we must burn the nonce before verifying
+    # so that racing threads cannot both pass verification before either burns.
+    # ---------------------------------------------------------------------------
     is_jwt = _is_jwt_seal(seal)
     if is_jwt:
-        # JWT format: extract nonce from claims
+        # JWT format: extract nonce and expiry from claims (unverified)
         try:
             claims = pyjwt.decode(seal, options={"verify_signature": False})
             nonce = claims.get("nonce")
@@ -668,10 +848,11 @@ async def verify_and_consume_seal(
             "seal missing nonce for replay protection", action
         )
 
-    # Step 3: Burn nonce via Redis SETNX (fail-closed)
+    # ---------------------------------------------------------------------------
+    # Step 2: Obtain Redis client (fail-closed if unavailable)
+    # ---------------------------------------------------------------------------
     redis = redis_client
     if redis is None:
-        # Try to get the default async client
         try:
             from src.gateway.infrastructure.redis_client import (
                 redis_client as default_redis_client,
@@ -686,32 +867,97 @@ async def verify_and_consume_seal(
                 "replay protection unavailable (Redis connection failed)", action
             ) from exc
 
-    # Use SETNX with TTL to burn the nonce
+    # ---------------------------------------------------------------------------
+    # Step 3: Atomically burn nonce via Lua script (TOCTOU fix)
+    # This is the critical section: only one thread can win the burn.
+    # ---------------------------------------------------------------------------
     nonce_key = f"cage:seal:nonce:{nonce}"
     ttl_s = max(ttl + 60, 60)  # Add 60s buffer, minimum 60s
 
+    # Prepare audit metadata for the burned nonce
+    burn_metadata = json.dumps(
+        {
+            "action": action,
+            "burned_at": datetime.now(tz=timezone.utc).isoformat(),
+            "nonce_prefix": nonce[:16],
+        }
+    )
+
+    _burn_start_ns = _time_module.time_ns()
+
     try:
-        # SETNX returns True if key was set (first use), False if exists (replay)
-        was_set = await redis.set(nonce_key, "1", nx=True, ex=ttl_s)
-        if not was_set:
+        burn_result = await _atomic_burn_nonce(redis, nonce_key, ttl_s, burn_metadata)
+
+        _burn_end_ns = _time_module.time_ns()
+        _burn_elapsed_us = (_burn_end_ns - _burn_start_ns) // 1000
+
+        if burn_result == 1:
+            # Nonce was already burned — replay attack detected
             logger.warning(
-                "🔒 [REPLAY_ATTACK] Seal nonce already consumed: action=%s nonce=%s",
+                "🔒 [REPLAY_ATTACK] Seal nonce already consumed (atomic check): "
+                "action=%s nonce=%s burn_elapsed_us=%d",
                 action,
                 nonce[:16] + "...",
+                _burn_elapsed_us,
             )
             raise SymbolicGovernorViolation(
                 "replay attack detected — seal already consumed", action
             )
+
+        logger.debug(
+            "[TOCTOU-SAFE] Nonce burned atomically: action=%s nonce=%s burn_elapsed_us=%d",
+            action,
+            nonce[:16] + "...",
+            _burn_elapsed_us,
+        )
+
     except SymbolicGovernorViolation:
         raise
     except Exception as exc:
-        logger.error("⛔ [REPLAY_PROTECTION] Redis SETNX failed — fail-closed: %s", exc)
+        logger.error(
+            "⛔ [REPLAY_PROTECTION] Redis Lua script failed — fail-closed: %s", exc
+        )
         raise SymbolicGovernorViolation(
             f"replay protection failed (Redis error): {exc}", action
         ) from exc
 
+    # ---------------------------------------------------------------------------
+    # Step 4: Now verify the seal (AFTER successfully burning the nonce)
+    # At this point, we "own" the nonce — no other thread can proceed.
+    # If verification fails, the nonce stays burned (safe: invalid seals rejected).
+    # ---------------------------------------------------------------------------
+    _verify_start_ns = _time_module.time_ns()
+
+    try:
+        verify_seal(
+            seal=seal,
+            action=action,
+            params=params,
+            expected_record_hash=expected_record_hash,
+        )
+    except SymbolicGovernorViolation:
+        # Verification failed AFTER burning — nonce stays burned (safe)
+        # Log for audit trail but re-raise the original exception
+        _verify_end_ns = _time_module.time_ns()
+        logger.warning(
+            "🔒 [SEAL_INVALID] Seal verification failed after nonce burn "
+            "(nonce remains burned for safety): action=%s nonce=%s",
+            action,
+            nonce[:16] + "...",
+        )
+        raise
+
+    _verify_end_ns = _time_module.time_ns()
+    _total_elapsed_us = (_verify_end_ns - _start_ns) // 1000
+    _verify_elapsed_us = (_verify_end_ns - _verify_start_ns) // 1000
+
     logger.debug(
-        "✅ Seal verified and consumed: action=%s nonce=%s", action, nonce[:16] + "..."
+        "✅ [TOCTOU-SAFE] Seal verified and consumed atomically: "
+        "action=%s nonce=%s total_us=%d verify_us=%d",
+        action,
+        nonce[:16] + "...",
+        _total_elapsed_us,
+        _verify_elapsed_us,
     )
     return True
 

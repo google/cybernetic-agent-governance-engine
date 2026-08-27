@@ -140,7 +140,7 @@ TARGETS: dict[str, list[int]] = {
         593,
         609,
     ],
-    "src/integrations/nexart/tests/test_adapter.py": [
+    "src/integrations/provider_02/tests/test_adapter.py": [
         52,
         130,
         141,
@@ -172,7 +172,7 @@ TARGETS: dict[str, list[int]] = {
         503,
         510,
     ],
-    "src/integrations/nexart/tests/test_provider.py": [
+    "src/integrations/provider_02/tests/test_provider.py": [
         50,
         79,
         105,
@@ -190,7 +190,7 @@ TARGETS: dict[str, list[int]] = {
         277,
         288,
     ],
-    "src/integrations/trustlayers/provider.py": [112, 133, 156],
+    "src/integrations/provider_01/provider.py": [112, 133, 156],
     "src/verify_governor.py": [26],
 }
 

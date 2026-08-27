@@ -17,7 +17,7 @@ normative_provider.py — External Normative Provider Interface (CAGE v0.1.0)
 ===========================================================================
 
 Implements §2.5 of EXTENSIBILITY_ARCHITECTURE.md: the 3-endpoint integration
-surface for external normative providers (e.g. TrustLayers), combined with an
+surface for external normative providers (e.g. Provider 01), combined with an
 **Adaptive Gating Primitive** that maps the blocking semantic directly to
 CAGE's existing confidence boundary thresholds.
 
@@ -445,9 +445,10 @@ async def enforce_fria_boundary(
 
       0.70 ≤ Score < 0.95 (DEFER_CONFIDENCE_THRESHOLD)
         → DEFER → synchronous blocking gate
-        The thread is frozen until TrustLayers explicitly returns an
-        admissibility payload.  If it rejects, the state mutation is
-        aborted before it can touch an external tool boundary.
+        The thread is frozen until the external provider explicitly returns an
+        admissibility decision (pass/fail) or the gate timeout expires.
+        This provides deterministic synchronous gating without requiring
+        a separate checkpointer or worker pool.
 
       Score < 0.70
         → DENY → hard abort, no external call
@@ -510,7 +511,7 @@ async def enforce_fria_boundary(
             token.defer_id,
         )
 
-        # BLOCK until TrustLayers responds or timeout
+        # BLOCK until external provider responds or timeout
         gate_timeout = float(
             os.environ.get("CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS", "5.0")
         )
@@ -839,8 +840,13 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
 
     Supported providers:
         - "static"       — Local stub for dev/CI (kernel-resident)
-        - "provider_01"  — Provider 01 cloud API (src/integrations/provider_01/)
-        - "provider_02"  — Provider 02 attestation API (src/integrations/provider_02/)
+        - "provider_01"  — Provider 01 legal baseline & FRIA API
+        - "provider_02"  — Provider 02 attestation API (AttestationProvider fallback)
+        - "provider_03"  — Provider 03 JCS bind receipts & normative API
+        - "provider_06"  — Provider 06 tri-state agent integrity verifier
+
+    Note: provider_04 and provider_05 are part of the ecosystem but implement
+    AttestationProvider and EnvelopeMapper, not NormativeProvider directly.
 
     Returns:
         An instantiated NormativeProvider.
@@ -851,11 +857,14 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
     raw_name = name or os.environ.get("CAGE_NORMATIVE_PROVIDER", _PROVIDER_NAME)
     provider_name = raw_name.split("#")[0].strip().lower()
 
-    # Vendor alias normalization
+    # Provider alias normalization
     alias_map = {
-        "trustlayers": "provider_01",
-        "nexart": "provider_02",
-        "veritas": "provider_03",
+        "p01": "provider_01",
+        "p02": "provider_02",
+        "p03": "provider_03",
+        "p04": "provider_04",
+        "p05": "provider_05",
+        "p06": "provider_06",
         "agent_integrity": "provider_06",
         "agentintegrity": "provider_06",
     }

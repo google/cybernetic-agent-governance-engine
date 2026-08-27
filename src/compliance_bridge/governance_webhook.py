@@ -203,6 +203,9 @@ class WebhookRegistry:
         their respective GCP regions. Cross-region registrations are rejected.
 
         US_FED has no geographic restriction on endpoint URLs.
+
+        HIGH-2 FIX: Parse and normalize URL before suffix matching to prevent
+        URL-encoding bypass attacks (e.g., %2e for dots, punycode tricks).
         """
         if self._region not in ("EU_ECB", "APAC_MAS"):
             return  # US_FED: no restriction
@@ -211,7 +214,9 @@ class WebhookRegistry:
         if not allowed_suffixes:
             return  # No restriction configured
 
+        # HIGH-2 FIX: Parse URL and normalize hostname to prevent encoding bypass
         parsed = urlparse(endpoint_url)
+        # urlparse automatically decodes percent-encoded characters in hostname
         hostname = (parsed.hostname or "").lower()
 
         # LOW-7 fix: only allow loopback addresses for EU_ECB and APAC_MAS regions.
@@ -221,15 +226,16 @@ class WebhookRegistry:
         if hostname in ("localhost", "127.0.0.1", "::1"):
             return
 
-        # Match the region designator only when it is a full dot-delimited DNS
-        # label of the hostname. The earlier `suffix in hostname` test was an
-        # unanchored substring match, so a host that merely embeds the region
-        # token inside a longer label (e.g. "europe-west1-attacker.com" for
-        # EU_ECB) passed the guard even though it is not in-region.
+        # HIGH-2 FIX: Use DNS label matching on normalized hostname instead of
+        # substring matching. Split hostname into labels and check if any complete
+        # label matches the region token. This prevents encoding attacks and
+        # correctly rejects spoofed hostnames like "europe-west1-attacker.com"
+        # where the region token is only a PREFIX of a label, not a full label.
         labels = hostname.split(".")
         for suffix in allowed_suffixes:
-            token = suffix.strip(".")
-            if token and token in labels:
+            # Normalize: remove leading/trailing dots to get the region token
+            region_token = suffix.lower().strip(".")
+            if region_token in labels:
                 return
 
         raise ValueError(

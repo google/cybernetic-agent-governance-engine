@@ -640,7 +640,7 @@ here for readability is, in the actual wire format, the envelope's own
   distributed race conditions, not just single-request interleavings (see
   the model-scope caveat at
   [`proof/model.py:13-36`](../../proof/model.py:13)).
-- **Honesty constraint (mirrors §5.4 of the VEIP document's precedent):**
+- **Honesty constraint (mirrors §5.4 of the Provider 05 specification precedent):**
   this sub-object must **not** claim exhaustive coverage of the actuator
   seal-verification boundary itself — `proof/model.py`'s own docstring
   states the actuator's `verify_seal()` check is "a verified precondition

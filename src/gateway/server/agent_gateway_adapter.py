@@ -1164,11 +1164,9 @@ async def serve_agent_gateway(port: int = _DEFAULT_GRPC_PORT) -> Any:
     #   authorization_pb2_grpc.add_AuthorizationServicer_to_server(servicer, server)
     #
     # Without generated stubs, register via the generic handler:
-    from grpc import GenericMethodHandler, method_service_name
-
     server.add_generic_rpc_handlers(
         [
-            _make_authorization_handler(servicer),
+            _AuthorizationGenericHandler(servicer),
         ]
     )
 
@@ -1184,43 +1182,72 @@ async def serve_agent_gateway(port: int = _DEFAULT_GRPC_PORT) -> Any:
     return server
 
 
-def _make_authorization_handler(servicer: CAGEAuthorizationServicer) -> Any:
-    """Build a generic gRPC handler for the Authorization.Check method.
+class _AuthorizationGenericHandler:
+    """Generic gRPC handler for the Envoy ext_authz Authorization.Check method.
 
-    This avoids requiring generated protobuf stubs at import time.  When
-    grpcio-tools stubs are generated from the vendored proto files, replace
-    this with the generated ``add_AuthorizationServicer_to_server()`` call.
+    This implements the gRPC GenericRpcHandler protocol to handle incoming
+    Authorization.Check RPCs without requiring generated protobuf stubs.
+    When grpcio-tools stubs are generated from the vendored proto files,
+    replace this with the generated ``add_AuthorizationServicer_to_server()`` call.
 
-    Args:
-        servicer: The ``CAGEAuthorizationServicer`` instance.
-
-    Returns:
-        A ``grpc.ServiceRpcHandlers`` compatible object.
+    Attributes:
+        SERVICE_NAME: The full gRPC service name for Envoy ext_authz.
+        CHECK_METHOD: The full method path for the Check RPC.
     """
-    import grpc
 
-    async def _check_handler(request_bytes: bytes, context: Any) -> bytes:
-        """Deserialise CheckRequest, call servicer.Check, serialise CheckResponse."""
-        # Without generated stubs, we work with raw JSON over gRPC.
-        # In production with grpcio-tools, replace with protobuf ser/de.
-        try:
-            request_dict = json.loads(request_bytes) if request_bytes else {}
-        except Exception:
-            request_dict = {}
+    SERVICE_NAME = "envoy.service.auth.v3.Authorization"
+    CHECK_METHOD = "/envoy.service.auth.v3.Authorization/Check"
 
-        # Wrap in a simple namespace to match the protobuf API
-        request_obj = _DictNamespace(request_dict)
-        response_dict = await servicer.Check(request_obj, context)
-        return json.dumps(response_dict).encode()
+    def __init__(self, servicer: CAGEAuthorizationServicer) -> None:
+        """Initialize the handler with the CAGE servicer.
 
-    return grpc.method_service_name(
-        grpc.unary_unary_rpc_method_handler(
+        Args:
+            servicer: The ``CAGEAuthorizationServicer`` instance to delegate calls to.
+        """
+        self._servicer = servicer
+
+    def service(self, handler_call_details: Any) -> Any:
+        """Return the appropriate RPC method handler for the given call details.
+
+        This method is called by the gRPC server for each incoming RPC to
+        determine which handler should process the request.
+
+        Args:
+            handler_call_details: gRPC HandlerCallDetails containing the method name.
+
+        Returns:
+            A ``grpc.RpcMethodHandler`` for the Authorization.Check method,
+            or None if the method is not handled by this service.
+        """
+        import grpc
+
+        method = getattr(handler_call_details, "method", None)
+        if method != self.CHECK_METHOD:
+            return None
+
+        async def _check_handler(request_bytes: bytes, context: Any) -> bytes:
+            """Deserialise CheckRequest, call servicer.Check, serialise response."""
+            # Without generated stubs, we work with raw JSON over gRPC.
+            # In production with grpcio-tools, replace with protobuf ser/de.
+            try:
+                request_dict = json.loads(request_bytes) if request_bytes else {}
+            except json.JSONDecodeError:
+                logger.warning("Failed to decode gRPC request as JSON, empty dict")
+                request_dict = {}
+            except Exception as e:
+                logger.warning("Unexpected error decoding gRPC request: %s", e)
+                request_dict = {}
+
+            # Wrap in a simple namespace to match the protobuf API
+            request_obj = _DictNamespace(request_dict)
+            response_dict = await self._servicer.Check(request_obj, context)
+            return json.dumps(response_dict).encode()
+
+        return grpc.unary_unary_rpc_method_handler(
             _check_handler,
             request_deserializer=lambda b: b,
             response_serializer=lambda r: r,
-        ),
-        "envoy.service.auth.v3.Authorization",
-    )
+        )
 
 
 class _DictNamespace:

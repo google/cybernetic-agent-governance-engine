@@ -212,18 +212,19 @@ class TestM07SSESubscriberLimit:
         assert hasattr(GovernanceEventBus, "MAX_SUBSCRIBERS")
         assert GovernanceEventBus.MAX_SUBSCRIBERS == 100
 
-    def test_subscriber_limit_raises_runtime_error(self):
+    @pytest.mark.asyncio
+    async def test_subscriber_limit_raises_runtime_error(self):
         from src.compliance_bridge.sse_events import GovernanceEventBus
 
         bus = GovernanceEventBus()
         # Fill up to the limit
         queues = []
         for _ in range(GovernanceEventBus.MAX_SUBSCRIBERS):
-            q = bus._new_queue()
+            q = await bus._new_queue()
             queues.append(q)
         # One more must raise
         with pytest.raises(RuntimeError, match="subscriber"):
-            bus._new_queue()
+            await bus._new_queue()
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +250,7 @@ class TestM08EvidenceDurability:
         bus.attach_evidence_sink(FakeSink())
 
         # Subscribe one queue so fan-out actually runs
-        q = bus._new_queue()
+        q = await bus._new_queue()
 
         async def _fanout_spy(event):
             call_order.append("fanout")

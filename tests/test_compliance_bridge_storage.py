@@ -101,9 +101,15 @@ def test_s3_operations():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_put_oscal_artifact_idempotent():
+    """Test that put_oscal_artifact returns existing key when artifact already exists."""
     with (
         patch.dict(os.environ, {"OSCAL_S3_BUCKET": "test-bucket"}, clear=False),
-        patch.object(storage, "artifact_exists", return_value=True),
+        # HIGH-4 FIX: Now uses atomic _s3_upload_if_not_exists instead of artifact_exists
+        patch.object(
+            storage,
+            "_s3_upload_if_not_exists",
+            return_value=("s3://test-bucket/oscal-artifacts/2026-08-16/audit-123.yaml", False),
+        ),
     ):
         ts = datetime(2026, 8, 16, 12, 0, 0, tzinfo=timezone.utc)
         key = await storage.put_oscal_artifact("audit-123", "dummy-yaml", timestamp=ts)
@@ -114,11 +120,14 @@ async def test_put_oscal_artifact_idempotent():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_put_oscal_artifact_upload_when_missing():
+    """Test that put_oscal_artifact uploads artifact when it doesn't exist."""
     with (
         patch.dict(os.environ, {"OSCAL_S3_BUCKET": "test-bucket"}, clear=False),
-        patch.object(storage, "artifact_exists", return_value=False),
+        # HIGH-4 FIX: Now uses atomic _s3_upload_if_not_exists instead of artifact_exists + upload_artifact
         patch.object(
-            storage, "upload_artifact", return_value="gs://test-bucket/key"
+            storage,
+            "_s3_upload_if_not_exists",
+            return_value=("s3://test-bucket/oscal-artifacts/2026-08-16/audit-123.yaml", True),
         ) as mock_upload,
     ):
         ts = datetime(2026, 8, 16, 12, 0, 0, tzinfo=timezone.utc)

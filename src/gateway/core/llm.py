@@ -134,6 +134,12 @@ class GatewayClient:
                 if getattr(response, "usage", None):
                     record_usage(span, response.usage)
 
+                # Handle empty choices or None content (e.g., tool calls, refusals)
+                if not response.choices or response.choices[0].message.content is None:
+                    logger.warning(
+                        "LLM returned empty response (no choices or None content)"
+                    )
+                    return ""
                 content = response.choices[0].message.content
                 record_completion(span, content)
 

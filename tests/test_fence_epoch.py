@@ -41,10 +41,10 @@ pytestmark = [pytest.mark.local, pytest.mark.unit]
 @pytest.fixture
 def mock_redis_client():
     """Create a mock async Redis client for testing."""
-    mock = MagicMock()
-    mock.get = AsyncMock(return_value=None)
-    mock.set = AsyncMock(return_value=True)
-    mock.incr = AsyncMock(return_value=1)
+    mock = AsyncMock()
+    mock.get.return_value = None
+    mock.set.return_value = True
+    mock.incr.return_value = 1
     mock.get_raw_client = MagicMock(return_value=mock)
 
     # Mock pipeline context manager

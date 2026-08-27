@@ -13,7 +13,7 @@
 
 ## 1. Architectural Overview
 
-> **v3.0.0 additions**: 6 Governance Decision Primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`), HMAC Routing Seal v2 (`record_hash` Binding), Lua-Atomic CBF Check & Commit, Synchronous Replica Barrier with Monotonic Fence Epoch, VEIP 3-Axiom External Evidence Attestation (`src/integrations/veip/`), FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`), Phase A Ingress Adapters (`src/gateway/governance/ingress/`), Phase B AGW Absorption (`agw_adapter.py`), CAGE-003 Agent Registry (`agent_registry_adapter.py`), LangGraph Harness (`src/gateway/governance/langgraph_harness/`), AgentSight UI (`src/agentsight-ui/`), and Langfuse Native OTLP.
+> **v3.0.0 additions**: 6 Governance Decision Primitives (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `DEFER`, `NARROW`, `PAUSE`), HMAC Routing Seal v2 (`record_hash` Binding), Lua-Atomic CBF Check & Commit, Synchronous Replica Barrier with Monotonic Fence Epoch, Provider 05 3-Axiom External Evidence Attestation (`src/integrations/provider_05/`), FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`), Phase A Ingress Adapters (`src/gateway/governance/ingress/`), Phase B AGW Absorption (`agw_adapter.py`), CAGE-003 Agent Registry (`agent_registry_adapter.py`), LangGraph Harness (`src/gateway/governance/langgraph_harness/`), AgentSight UI (`src/agentsight-ui/`), and Langfuse Native OTLP.
 
 
 The **Cybernetic Governance Engine (CAGE)** is a distributed, multi-runtime system composed of five major subsystems that operate cooperatively to enforce real-time AI governance over a LangGraph-based financial advisory pipeline. Each subsystem has a discrete runtime boundary, a defined communication protocol, and a specific governance responsibility.
@@ -25,11 +25,11 @@ The **Cybernetic Governance Engine (CAGE)** is a distributed, multi-runtime syst
 | 3   | **Compliance Bridge**          | `src/compliance_bridge/`          | Python / FastAPI SSE      | 3001 (internal) / 3002 (local port-forward) |
 | 4   | **AgentSight UI**              | `src/agentsight-ui/`              | React / TypeScript / Vite | 5173            |
 | 5   | **AgentSight eBPF DaemonSet**  | `deployment/agentsight/`          | Kernel / BPF              | N/A (DaemonSet) |
-| 6   | **Vendor & Partner Integrations** | `src/integrations/`            | Python (lazy-loaded)      | N/A (adapters: `veip`, `trustlayers`, `nexart`, `archytan`, `veritas`) |
+| 6   | **Vendor & Partner Integrations** | `src/integrations/`            | Python (lazy-loaded)      | N/A (adapters: `provider_01`–`provider_06`) |
 
 All six subsystems are co-deployed within the `governance-stack` Kubernetes namespace on GKE and communicate over cluster-internal DNS. No subsystem exposes a public endpoint without traversing the Kubernetes `NetworkPolicy` boundary (9 objects, default-deny).
 
-> **Vendor Isolation (v3.0.0):** Third-party compliance provider adapters (VEIP, NexArt, TrustLayers, Archytan, Veritas) are architecturally isolated in `src/integrations/{vendor}/` to prevent vendor SDK code from leaking into the governance kernel. Infrastructure invariants (Cloud KMS, Redis) remain in `src/gateway/governance/`.
+> **Vendor Isolation (v3.0.0):** Third-party compliance provider adapters (Provider 01–Provider 06) are architecturally isolated in `src/integrations/{provider_id}/` to prevent vendor SDK code from leaking into the governance kernel. Infrastructure invariants (Cloud KMS, Redis) remain in `src/gateway/governance/`.
 
 ---
 

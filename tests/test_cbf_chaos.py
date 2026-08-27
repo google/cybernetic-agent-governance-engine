@@ -56,12 +56,13 @@ def _make_cbf(fake_redis: fakeredis.aioredis.FakeRedis):
     """Return a ControlBarrierFunction wired to a fake async Redis client."""
     from src.gateway.governance.cbf import ControlBarrierFunction
 
-    cbf = ControlBarrierFunction()
+    # B3a: Use skip_epoch_seed=True to avoid Redis seeding in tests
+    cbf = ControlBarrierFunction(skip_epoch_seed=True)
     cbf.min_cash_balance = _MIN_CASH
     cbf.gamma = _GAMMA
     cbf.tracer = None
 
-    mock_redis_module = MagicMock()
+    mock_redis_module = AsyncMock()
     mock_redis_module.get_raw_client = MagicMock(return_value=fake_redis)
     return cbf, mock_redis_module
 

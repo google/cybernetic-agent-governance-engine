@@ -98,7 +98,7 @@ class CERReceipt:
 
 @dataclass
 class CERVerification:
-    """Result of verifying a CER against NexArt's public JWKs."""
+    """Result of verifying a CER against Provider 02's public JWKs."""
 
     valid: bool = False
     signer: str = ""
@@ -274,7 +274,7 @@ class Provider02AttestationProvider:
     def _verify_local(self, certificate_hash: str) -> CERVerification:
         """Verify a CER against the locally-cached JWK set.
 
-        Uses Ed25519 verification (NexArt's attestation node signing algorithm).
+        Uses Ed25519 verification (Provider 02's attestation node signing algorithm).
         """
         if not self._jwk_cache.has_keys:
             return CERVerification(

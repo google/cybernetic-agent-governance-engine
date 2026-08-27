@@ -49,7 +49,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > breaking changes still outstanding. Those changes were completed
 > post-tag on branch `fix/v3-breaking-changes-completion` and are now
 > reflected below: the `AGWEnvelope`/`AGWEnvelopeBuilder` removal, the
-> `sign_archytan_digest()` removal, the `create_ftra_node()` deprecated-kwargs
+> `sign_external_digest()` removal, the `create_ftra_node()` deprecated-kwargs
 > removal (kwargs fully removed, not merely deprecated), and the
 > `KMS_BATCH_ENABLED` default-value discrepancy (resolved as `"false"`). See
 > [`docs/BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md) for full detail.
@@ -67,7 +67,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - (CR-2) Removed NeMo auto-apply path (`NEMO_AUTO_APPLY_ENABLED`) — all refinements require human approval
 - (CR-3) Renamed `update_state()` → `_update_state_unsafe()` — use `atomic_verify_and_commit()` instead
 - Removed `AGWEnvelope`/`AGWEnvelopeBuilder` backward-compatibility aliases (`src/gateway/governance/agw_envelope.py`, entire file deleted) — use `GovernanceEnvelope`/`GovernanceEnvelopeBuilder` from `src/gateway/governance/governance_envelope.py`
-- Removed `sign_archytan_digest()` method from `KMSSigner` (`src/gateway/governance/kms_signer.py`) — use `sign()` instead
+- Removed legacy `sign_provider_04_digest()` method from `KMSSigner` (`src/gateway/governance/kms_signer.py`) — use `sign()` instead
 
 ### Added
 - `config/governance_thresholds.json` v2.0.0 schema with FRIA, confidence, and causal thresholds
@@ -77,7 +77,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Removed
 - `src/gateway/governance/agw_envelope.py` (entire file) — `AGWEnvelope` and `AGWEnvelopeBuilder` backward-compatibility aliases; use `GovernanceEnvelope`/`GovernanceEnvelopeBuilder` from `src/gateway/governance/governance_envelope.py`
 - `tests/test_agw_envelope.py` — backward-compatibility test suite for the removed `AGWEnvelope`/`AGWEnvelopeBuilder` aliases; see `tests/test_governance_envelope.py` for canonical coverage
-- `sign_archytan_digest()` method from `KMSSigner` (`src/gateway/governance/kms_signer.py`) — use `sign()` instead
+- Removed legacy `sign_provider_04_digest()` method from `KMSSigner` (`src/gateway/governance/kms_signer.py`) — use `sign()` instead
 - `create_ftra_node()` deprecated `registry_path`/`plan_key` keyword arguments (`src/gateway/governance/ftra/node_factory.py`) — fully removed, not just deprecated; pass a `FtraNodeConfig` instance instead
 
 ### Changed

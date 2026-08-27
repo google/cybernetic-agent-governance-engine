@@ -30,6 +30,7 @@ TOCTOU windows between check and commit.
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import math
@@ -59,6 +60,17 @@ _cage_env_cbf = (
     os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
 ).lower()
 _IS_PRODUCTION: bool = _cage_env_cbf not in ("development", "test", "dev", "ci")
+
+# ---------------------------------------------------------------------------
+# Feature flag: CBF strict mode - fail-closed on ground truth unavailability
+# ---------------------------------------------------------------------------
+# When CAGE_CBF_STRICT_MODE=true (default), the CBF rejects transactions when
+# KMS verification of reconciled balance fails. This prevents fail-open behavior
+# where an attacker could exhaust KMS quota to force unverified balance usage.
+# Set to "false" only in isolated development/test environments.
+_CBF_STRICT_MODE: bool = os.environ.get(
+    "CAGE_CBF_STRICT_MODE", "true" if _IS_PRODUCTION else "false"
+).lower() in ("true", "1", "yes")
 
 # ---------------------------------------------------------------------------
 # Feature flag: Replay defense (R-04 mitigation, §2.10)
@@ -164,6 +176,25 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 
+class GroundTruthUnavailableError(RuntimeError):
+    """Raised when CBF cannot verify ground truth balance (fail-closed behavior).
+
+    This exception is raised when:
+    - KMS signature verification fails on the reconciled balance
+    - Reconciled balance read fails entirely
+    - Production environment receives unsigned balance
+
+    In strict mode (CAGE_CBF_STRICT_MODE=true, default), this error is raised
+    to prevent transactions from proceeding with unverified self-reported balance.
+    This is a security control to prevent attackers from exhausting KMS quota
+    to force unverified balance usage.
+    """
+
+    def __init__(self, message: str, cause: Exception | None = None):
+        super().__init__(message)
+        self.cause = cause
+
+
 class CBFInitializationError(RuntimeError):
     """Raised when CBF cannot seed its initial fence epoch from Redis.
 
@@ -178,7 +209,17 @@ class CBFInitializationError(RuntimeError):
     reachable and the epoch is successfully seeded.
     """
 
-    pass
+async def _get_raw_redis(r: Any) -> Any:
+    """Helper to extract raw redis client from wrapper or mock."""
+    if r is None:
+        return None
+    getter = getattr(r, "get_raw_client", None)
+    if callable(getter):
+        client = getter()
+        if inspect.isawaitable(client):
+            client = await client
+        return client
+    return r
 
 
 # ---------------------------------------------------------------------------
@@ -353,11 +394,12 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         if await redis_client.get(self.redis_key) is None:
             await redis_client.set(self.redis_key, "100000.0")
         # Initialize fence epoch if absent (R-05)
-        client = redis_client.get_raw_client()
-        epoch_raw = await client.get(_REDIS_KEY_FENCE_EPOCH)
-        if epoch_raw is None:
-            await client.set(_REDIS_KEY_FENCE_EPOCH, "0")
-            logger.info("R-05: Initialized fence epoch to 0")
+        client = await _get_raw_redis(redis_client)
+        if client is not None:
+            epoch_raw = await client.get(_REDIS_KEY_FENCE_EPOCH)
+            if epoch_raw is None:
+                await client.set(_REDIS_KEY_FENCE_EPOCH, "0")
+                logger.info("R-05: Initialized fence epoch to 0")
 
     async def _get_current_cash(self) -> float:
         if redis_client is None:
@@ -401,7 +443,7 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         """
         if redis_client is None:
             raise RuntimeError("Redis client unavailable.")
-        client = redis_client.get_raw_client()
+        client = await _get_raw_redis(redis_client)
         raw = await client.get(_REDIS_KEY_FENCE_EPOCH)
         if raw is None:
             return 0
@@ -505,13 +547,23 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             logger.warning("Redis client unavailable — cannot execute WAIT command.")
             return False
 
-        client = redis_client.get_raw_client()
+        raw_client_getter = getattr(redis_client, "get_raw_client", None)
+        if callable(raw_client_getter):
+            client = raw_client_getter()
+            if inspect.isawaitable(client):
+                client = await client
+        else:
+            client = redis_client
         start_time = time.time()
 
         try:
             # WAIT numreplicas timeout
             # Returns: number of replicas that acknowledged the write
-            acks: int = await client.execute_command("WAIT", replicas, timeout)
+            cmd = client.execute_command("WAIT", replicas, timeout)
+            if inspect.isawaitable(cmd):
+                acks = await cmd
+            else:
+                acks = int(cmd) if cmd is not None else 0
 
             elapsed = time.time() - start_time
 
@@ -759,13 +811,42 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                                     "event": "CBF_KMS_VERIFY_FAILED",
                                     "severity": "CRITICAL",
                                     "error": str(sig_exc),
+                                    "strict_mode": _CBF_STRICT_MODE,
                                     "audit_note": (
                                         "KMS signature verification raised an exception. "
-                                        "Falling back to self-reported balance. "
-                                        "POAM-023: CBF ground truth unverified."
+                                        + (
+                                            "FAIL-CLOSED: Transaction rejected (strict mode). "
+                                            if _CBF_STRICT_MODE
+                                            else "Falling back to self-reported balance. "
+                                        )
+                                        + "POAM-023: CBF ground truth unverified."
                                     ),
                                 }
                             )
+                        )
+                        # SECURITY FIX: Fail-closed in strict mode to prevent attackers
+                        # from exhausting KMS quota to force unverified balance usage
+                        if _CBF_STRICT_MODE:
+                            logger.error(
+                                "[SECURITY] CBF ground truth unavailable — rejecting transaction "
+                                "(strict mode enabled). error_type=%s error=%s source=%s",
+                                type(sig_exc).__name__,
+                                str(sig_exc)[:100],
+                                verified.source if verified else "unknown",
+                            )
+                            raise GroundTruthUnavailableError(
+                                f"Cannot verify balance — transaction rejected. "
+                                f"KMS verification failed: {type(sig_exc).__name__}",
+                                cause=sig_exc,
+                            ) from sig_exc
+                        # Non-strict mode: fall through to self-reported balance (legacy behavior)
+                        logger.warning(
+                            "[DIAG-FAILOPEN] cbf_kms_verify_failed decision=continue_with_fallback "
+                            "error_type=%s error=%s source=%s balance_usd=%.2f "
+                            "poam_ref=POAM-023 security_impact=HIGH strict_mode=false",
+                            type(sig_exc).__name__, str(sig_exc)[:100],
+                            verified.source if verified else "unknown",
+                            verified.balance_usd if verified else 0.0,
                         )
                 else:
                     # Unsigned reconciled balance — accept only in dev/test.
@@ -796,14 +877,43 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                             "current_cash": verified.balance_usd,
                             "source": "reconciled_unsigned",
                         }
+        except GroundTruthUnavailableError:
+            # Re-raise security exceptions — do not fall back
+            raise
         except Exception as recon_exc:
+            # SECURITY FIX: Fail-closed in strict mode when reconciliation fails
+            if _CBF_STRICT_MODE:
+                logger.error(
+                    "[SECURITY] CBF reconciled balance read failed — rejecting transaction "
+                    "(strict mode enabled). error_type=%s error=%s",
+                    type(recon_exc).__name__,
+                    str(recon_exc)[:100],
+                )
+                raise GroundTruthUnavailableError(
+                    f"Cannot verify balance — transaction rejected. "
+                    f"Reconciliation read failed: {type(recon_exc).__name__}",
+                    cause=recon_exc,
+                ) from recon_exc
+            # Non-strict mode: fall through to self-reported balance (legacy behavior)
             logger.warning(
                 "CBF: reconciled balance read failed (%s) — falling back to "
-                "self-reported balance.",
+                "self-reported balance (strict mode disabled).",
                 recon_exc,
+            )
+            # DIAG-FAILOPEN: Track fail-open events for CBF ground truth
+            logger.warning(
+                "[DIAG-FAILOPEN] cbf_reconciliation_failed decision=continue_with_self_reported "
+                "error_type=%s error=%s poam_ref=POAM-023 security_impact=HIGH strict_mode=false",
+                type(recon_exc).__name__, str(recon_exc)[:100],
             )
 
         # ── Fallback: self-reported balance (POAM-023 open) ──────────────────
+        # DIAG-FAILOPEN: Track whenever CBF falls back to self-reported balance
+        logger.warning(
+            "[DIAG-FAILOPEN] cbf_using_self_reported_balance decision=allow_with_unverified_ground_truth "
+            "redis_key=%s poam_ref=POAM-023 security_impact=HIGH",
+            self.redis_key,
+        )
         logger.critical(
             json.dumps(
                 {
@@ -820,11 +930,16 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             )
         )
         # CRIT-4 fix: use public get_raw_client() instead of private _get().
-        client = redis_client.get_raw_client()
-        async with client.pipeline(transaction=False) as pipe:
+        client = await _get_raw_redis(redis_client)
+        pipe_ctx = client.pipeline(transaction=False)
+        if inspect.isawaitable(pipe_ctx):
+            pipe_ctx = await pipe_ctx
+        async with pipe_ctx as pipe:
             pipe.get(self.redis_key)
             pipe.get(_REDIS_KEY_FENCE_EPOCH)  # R-05: read epoch atomically
             results = await pipe.execute()
+            if inspect.isawaitable(results):
+                results = await results
         raw_cash = results[0]
         raw_epoch = results[1]
         current_cash = float(raw_cash) if raw_cash is not None else 100000.0
@@ -1068,7 +1183,10 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
         for attempt in range(self._MAX_RETRIES):
             try:
-                async with redis_client.pipeline() as pipe:
+                pipe_ctx = redis_client.pipeline()
+                if inspect.isawaitable(pipe_ctx):
+                    pipe_ctx = await pipe_ctx
+                async with pipe_ctx as pipe:
                     await pipe.watch(self.redis_key)
                     raw = await pipe.get(self.redis_key)
                     current = float(raw) if raw is not None else 100000.0
@@ -1165,7 +1283,10 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
 
         for attempt in range(self._MAX_RETRIES):
             try:
-                async with redis_client.pipeline() as pipe:
+                pipe_ctx = redis_client.pipeline()
+                if inspect.isawaitable(pipe_ctx):
+                    pipe_ctx = await pipe_ctx
+                async with pipe_ctx as pipe:
                     await pipe.watch(self.redis_key)
                     raw = await pipe.get(self.redis_key)
                     current = float(raw) if raw is not None else 100000.0
@@ -1280,13 +1401,15 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
         ]
 
         # CRIT-4 fix: use public get_raw_client() instead of private _get().
-        client = redis_client.get_raw_client()
+        client = await _get_raw_redis(redis_client)
 
         async def _run_evalsha() -> list:
-            return await client.evalsha(self._lua_sha, len(keys), *keys, *argv)  # type: ignore[arg-type, misc]  # evalsha return type varies by redis-py version
+            res = client.evalsha(self._lua_sha, len(keys), *keys, *argv)  # type: ignore[arg-type, misc]  # evalsha return type varies by redis-py version
+            return await res if inspect.isawaitable(res) else res
 
         async def _load_and_run() -> list:
-            self._lua_sha = await client.script_load(self.LUA_ATOMIC_CBF)
+            res = client.script_load(self.LUA_ATOMIC_CBF)
+            self._lua_sha = await res if inspect.isawaitable(res) else res
             return await _run_evalsha()
 
         if self.tracer:

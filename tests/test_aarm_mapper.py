@@ -181,9 +181,9 @@ def test_not_found_controls_scored_correctly():
     report = build_aarm_conformance_report(findings, audit_id="not-found-001")
 
     v7_result = next(r for r in report.vectors if r.vector_id == "AARM-V7")
-    # NOT_FOUND with no PASSes → EXPOSED
+    # NOT_FOUND with no PASSes → UNKNOWN (not EXPOSED - we don't know if controls pass or fail)
     assert v7_result.not_found_count >= 1
-    assert v7_result.status == "EXPOSED"
+    assert v7_result.status == "UNKNOWN"
 
 
 # ---------------------------------------------------------------------------

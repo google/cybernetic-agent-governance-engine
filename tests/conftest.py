@@ -267,6 +267,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Run tests marked with @pytest.mark.integration (require live services).",
     )
     parser.addoption(
+        "--run-live-external",
+        action="store_true",
+        default=False,
+        help="Run tests marked with @pytest.mark.live_external (hit live partner APIs).",
+    )
+    parser.addoption(
         "--run-chaos",
         action="store_true",
         default=False,
@@ -282,12 +288,19 @@ def pytest_collection_modifyitems(
 ) -> None:
     """Auto-skip @pytest.mark.integration and @pytest.mark.chaos tests unless opted in."""
     run_integration = config.getoption("--run-integration")
+    run_live_external = config.getoption("--run-live-external")
     run_chaos = config.getoption("--run-chaos")
 
     skip_integration = pytest.mark.skip(
         reason=(
             "Integration test — requires live external services. "
             "Pass --run-integration to enable."
+        )
+    )
+    skip_live_external = pytest.mark.skip(
+        reason=(
+            "Live external test — hits partner APIs. "
+            "Pass --run-live-external to enable."
         )
     )
     skip_chaos = pytest.mark.skip(
@@ -297,6 +310,8 @@ def pytest_collection_modifyitems(
     for item in items:
         if "integration" in item.keywords and not run_integration:
             item.add_marker(skip_integration)
+        if "live_external" in item.keywords and not run_live_external:
+            item.add_marker(skip_live_external)
         if "chaos" in item.keywords and not run_chaos:
             item.add_marker(skip_chaos)
 

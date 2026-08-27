@@ -715,7 +715,7 @@ class TestExternalAttestations:
         att = ExternalAttestation(
             attestation_type="BLUEPRINT",
             status=AttestationStatus.VERIFIED.value,
-            receipt_id="veip-receipt-001",
+            receipt_id="provider-05-receipt-001",
             attested_at="2026-08-21T12:00:00.000Z",
             metadata={
                 "threshold_id": "THR-FIN-006",
@@ -726,7 +726,7 @@ class TestExternalAttestations:
         d = att.to_dict()
         assert d["type"] == "BLUEPRINT"
         assert d["status"] == "VERIFIED"
-        assert d["receipt_id"] == "veip-receipt-001"
+        assert d["receipt_id"] == "provider-05-receipt-001"
         assert d["attested_at"] == "2026-08-21T12:00:00.000Z"
         assert d["threshold_id"] == "THR-FIN-006"
         assert d["ao_signature_hash"] == "sha256:fedcba"
@@ -760,7 +760,7 @@ class TestExternalAttestations:
         att = ExternalAttestation(
             attestation_type="KEY",
             status=AttestationStatus.VERIFIED.value,
-            receipt_id="veip-key-123",
+            receipt_id="provider-05-key-123",
             attested_at="2026-08-21T12:00:00.000Z",
             metadata={"ca_fingerprint": "sha256:abcd"},
         )

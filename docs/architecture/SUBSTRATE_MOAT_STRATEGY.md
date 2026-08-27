@@ -253,7 +253,7 @@ The following capabilities are **fully implemented** in v2.0.0 and constitute ge
 
 2. **Developer Experience** — CAGE's governance pipeline is powerful but requires deep familiarity with the STPA/OPA/CBF stack. ACS and AAIF both offer simpler developer-facing abstractions. Without a thin SDK that hides the substrate complexity, enterprise adoption will be limited to teams with compliance engineering expertise.
 
-3. **Ecosystem Breadth** — Red Hat/AAIF's Linux Foundation backing provides cross-vendor interoperability that CAGE currently lacks. The `NormativeProvider` protocol ([`normative_provider.py:255`](../../src/gateway/governance/normative_provider.py:255)) is the right architectural pattern for ecosystem integration, but only `trustlayers` and `nexart` are currently registered as vendor providers.
+3. **Ecosystem Breadth** — Red Hat/AAIF's Linux Foundation backing provides cross-vendor interoperability in policy authoring. However, CAGE leverages the `NormativeProvider` and `AttestationProvider` protocols ([`normative_provider.py:271`](../../src/gateway/governance/normative_provider.py:271)) to function as the deterministic execution substrate ("Iron Shell") underneath these consortium standards. Currently, CAGE supports 6 registered vendor providers (`provider_01` through `provider_06`) across normative gating, execution guillotines, and evidence pack generation. <!-- Note: ensure this roster stays in sync with src/integrations/ -->
 
 ---
 

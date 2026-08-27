@@ -16,7 +16,7 @@
 Generic Attestation Provider Protocol.
 
 Defines the abstract base class that all external attestation providers
-(e.g., VEIP, Archytan, or future vendors) must implement to integrate
+(e.g., Provider 05, Provider 04, or future vendors) must implement to integrate
 with the GovernanceEnvelope's ``external_attestations[]`` field.
 
 Providers fetch, cache, and verify attestation records from external

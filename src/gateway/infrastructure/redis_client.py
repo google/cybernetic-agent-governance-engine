@@ -171,42 +171,78 @@ try:
         def __init__(self):  # type: ignore[no-untyped-def]
             self._client: aioredis.Redis | None = None
             self._loop: asyncio.AbstractEventLoop | None = None
+            self._lock: asyncio.Lock | None = None
 
-        def _get(self) -> aioredis.Redis:
+        def _get_lock(self) -> asyncio.Lock:
+            """Return (or lazily create) an asyncio.Lock bound to the current event loop.
+            
+            The lock must be created within an async context to be bound to the
+            correct event loop.
+            """
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                current_loop = None
+            
+            # Create a new lock if we don't have one or if the event loop changed
+            if self._lock is None or (self._loop is not None and self._loop != current_loop):
+                self._lock = asyncio.Lock()
+            return self._lock
+
+        async def _get(self) -> aioredis.Redis:
+            """Return (or lazily create) the Redis client.
+            
+            Thread-safe via double-check locking pattern with asyncio.Lock to prevent
+            multiple concurrent async tasks from racing during initialization.
+            """
             try:
                 current_loop = asyncio.get_running_loop()
             except RuntimeError:
                 current_loop = None
 
+            # Fast path: client exists and is valid
             if (
-                self._client is None
-                or (self._loop is not None and self._loop != current_loop)
-                or (self._loop is not None and self._loop.is_closed())
+                self._client is not None
+                and (self._loop is None or self._loop == current_loop)
+                and (self._loop is None or not self._loop.is_closed())
             ):
-                self._loop = current_loop
-                self._client = aioredis.Redis(
-                    host=_REDIS_HOST,
-                    port=_REDIS_PORT,
-                    db=_REDIS_DB,
-                    password=_REDIS_PASSWORD,
-                    decode_responses=True,
-                    socket_connect_timeout=3.0,
-                    socket_timeout=3.0,
-                    ssl=_REDIS_TLS,
-                    ssl_cert_reqs=_REDIS_SSL_CERT_REQS,
-                    ssl_ca_certs=_REDIS_CA_CERT_PATH,
-                )
+                return self._client
+            
+            # Slow path: need to create client, use lock to prevent races
+            async with self._get_lock():
+                # Double-check inside lock
+                if (
+                    self._client is None
+                    or (self._loop is not None and self._loop != current_loop)
+                    or (self._loop is not None and self._loop.is_closed())
+                ):
+                    self._loop = current_loop
+                    self._client = aioredis.Redis(
+                        host=_REDIS_HOST,
+                        port=_REDIS_PORT,
+                        db=_REDIS_DB,
+                        password=_REDIS_PASSWORD,
+                        decode_responses=True,
+                        socket_connect_timeout=3.0,
+                        socket_timeout=3.0,
+                        ssl=_REDIS_TLS,
+                        ssl_cert_reqs=_REDIS_SSL_CERT_REQS,
+                        ssl_ca_certs=_REDIS_CA_CERT_PATH,
+                    )
             return self._client
 
         async def get(self, key: str) -> str | None:
-            return await self._get().get(key)
+            client = await self._get()
+            return await client.get(key)
 
         async def set(self, key: str, value: str) -> None:
-            await self._get().set(key, value)
+            client = await self._get()
+            await client.set(key, value)
 
         async def setex(self, key: str, ttl_seconds: int, value: str) -> None:
             """Set *key* to *value* with an expiry of *ttl_seconds* seconds."""
-            await self._get().setex(key, ttl_seconds, value)
+            client = await self._get()
+            await client.setex(key, ttl_seconds, value)
 
         async def get_float(self, key: str, default: float = 0.0) -> float:
             raw = await self.get(key)
@@ -217,15 +253,17 @@ try:
             except (ValueError, TypeError):
                 return default
 
-        def pipeline(self):  # type: ignore[no-untyped-def]
+        async def pipeline(self):  # type: ignore[no-untyped-def]
             """Return a raw redis.asyncio pipeline for WATCH/MULTI/EXEC."""
-            return self._get().pipeline()
+            client = await self._get()
+            return client.pipeline()
 
-        def watch(self, *keys: str):  # type: ignore[no-untyped-def]
+        async def watch(self, *keys: str):  # type: ignore[no-untyped-def]
             """Return a pipeline in WATCH mode for optimistic locking."""
-            return self._get().pipeline()
+            client = await self._get()
+            return client.pipeline()
 
-        def get_raw_client(self) -> aioredis.Redis:
+        async def get_raw_client(self) -> aioredis.Redis:
             """Return the underlying aioredis.Redis client.
 
             Use this only when the raw client is required for operations not
@@ -235,7 +273,7 @@ try:
             CRIT-4 fix: replaces direct calls to the private _get() method from
             cbf.py, which broke encapsulation and bypassed the wrapper contract.
             """
-            return self._get()
+            return await self._get()
 
         async def watched_transaction(
             self,
@@ -282,7 +320,7 @@ try:
                 TransactionAbortedError: A watched key was modified concurrently.
                                          All staging keys have been deleted.
             """
-            client = self._get()
+            client = await self._get()
             async with client.pipeline(transaction=True) as pipe:
                 try:
                     await pipe.watch(*watch_keys)
@@ -327,7 +365,8 @@ try:
                 RuntimeError: If the PING command fails or raises any exception.
             """
             try:
-                result = await self._get().ping()  # type: ignore[misc]  # redis-py ping() returns bool | Awaitable[bool] depending on connection type
+                client = await self._get()
+                result = await client.ping()  # type: ignore[misc]  # redis-py ping() returns bool | Awaitable[bool] depending on connection type
                 if not result:
                     raise RuntimeError(
                         f"Redis PING returned falsy response at "
