@@ -175,7 +175,7 @@ try:
 
         def _get_lock(self) -> asyncio.Lock:
             """Return (or lazily create) an asyncio.Lock bound to the current event loop.
-            
+
             The lock must be created within an async context to be bound to the
             correct event loop.
             """
@@ -183,15 +183,17 @@ try:
                 current_loop = asyncio.get_running_loop()
             except RuntimeError:
                 current_loop = None
-            
+
             # Create a new lock if we don't have one or if the event loop changed
-            if self._lock is None or (self._loop is not None and self._loop != current_loop):
+            if self._lock is None or (
+                self._loop is not None and self._loop != current_loop
+            ):
                 self._lock = asyncio.Lock()
             return self._lock
 
         async def _get(self) -> aioredis.Redis:
             """Return (or lazily create) the Redis client.
-            
+
             Thread-safe via double-check locking pattern with asyncio.Lock to prevent
             multiple concurrent async tasks from racing during initialization.
             """
@@ -207,7 +209,7 @@ try:
                 and (self._loop is None or not self._loop.is_closed())
             ):
                 return self._client
-            
+
             # Slow path: need to create client, use lock to prevent races
             async with self._get_lock():
                 # Double-check inside lock

@@ -54,6 +54,7 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -71,6 +72,9 @@ logger = logging.getLogger(__name__)
 _KEY_PREFIX = "DEFER:"
 _EXPIRY_ZSET = "DEFER:expiry_index"
 _DEFAULT_TTL = 3600 * 4  # 4-hour park window before stale escalation
+_FLOWSIGNAL_ESCALATION_TTL = (
+    300  # 5-minute TTL for FlowSignal escalations (Phase 1, §3.2)
+)
 
 # ---------------------------------------------------------------------------
 # DeferReason — why the execution graph was halted
@@ -103,6 +107,12 @@ class DeferReason(str, Enum):
     of the ExecutionPlan and the Evaluator confidence score is >= FRIA_ZONE_DEFER
     (0.70).  The plan is parked pending synchronous human-in-the-loop clearance.
     Control ID: CTRL_FTRA_001."""
+
+    FLOWSIGNAL_ESCALATION = "FLOWSIGNAL_ESCALATION"
+    """FlowSignal provider returned ESCALATE decision (FLOWSIGNAL_HOLD finding).
+    Transaction requires human-in-the-loop approval. Uses shorter 300s TTL
+    per Phase 1, §3.2 FlowSignal integration plan. On expiry, routes to
+    governance-hitl-dlq topic for operator review."""
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +160,12 @@ class DeferToken(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+#: Type alias for the DLQ publisher callback.
+#: The callback receives the expired DeferToken and is responsible for
+#: publishing it to the governance-hitl-dlq Pub/Sub topic.
+DLQPublisher = Callable[[DeferToken], Awaitable[None]]
+
+
 class DeferQueue:
     """Redis-backed DEFER token queue with TTL-scored expiry.
 
@@ -161,10 +177,22 @@ class DeferQueue:
     Args:
         redis_client: An aioredis or redis-py async client connected to ``db=1``.
                       Callers are responsible for connection lifecycle.
+        dlq_publisher: Optional async callback invoked when a
+                       ``DeferReason.FLOWSIGNAL_ESCALATION`` token expires.
+                       The callback should publish the token to the
+                       ``governance-hitl-dlq`` Pub/Sub topic. If ``None``
+                       (default), expired tokens are logged but not published.
+                       Errors raised by the callback are caught and logged —
+                       they do not crash the expiry sweep for other tokens.
     """
 
-    def __init__(self, redis_client: Any) -> None:
+    def __init__(
+        self,
+        redis_client: Any,
+        dlq_publisher: DLQPublisher | None = None,
+    ) -> None:
         self._redis = redis_client
+        self._dlq_publisher = dlq_publisher
 
     # ------------------------------------------------------------------
     # park — add a deferred token to the queue
@@ -336,6 +364,12 @@ class DeferQueue:
 
         Called periodically by the SLA monitor background task.
 
+        For tokens with ``DeferReason.FLOWSIGNAL_ESCALATION``, the optional
+        ``dlq_publisher`` callback (set via constructor) is invoked to route
+        the expired token to the ``governance-hitl-dlq`` Pub/Sub topic. Errors
+        in the publisher callback are caught and logged but do not crash the
+        expiry sweep — other tokens continue to be processed.
+
         Returns:
             Count of tokens that were expired and escalated.
         """
@@ -343,18 +377,52 @@ class DeferQueue:
         members = await self._redis.zrangebyscore(_EXPIRY_ZSET, "-inf", now)
 
         count = 0
+        dlq_count = 0
         for defer_id in members:
+            # Fetch token BEFORE resolving — needed for DLQ routing decision
+            token_before = await self.get(defer_id)
             resolved = await self.resolve(defer_id, "EXPIRED")
             if resolved:
                 count += 1
                 logger.warning(
-                    "[defer_queue] Token expired and auto-escalated: defer_id=%s thread_id=%s",
+                    "[defer_queue] Token expired and auto-escalated: defer_id=%s "
+                    "thread_id=%s reason=%s",
                     defer_id,
                     resolved.thread_id,
+                    resolved.defer_reason.value,
                 )
 
+                # Route FLOWSIGNAL_ESCALATION tokens to DLQ if publisher is configured
+                if (
+                    token_before is not None
+                    and token_before.defer_reason == DeferReason.FLOWSIGNAL_ESCALATION
+                    and self._dlq_publisher is not None
+                ):
+                    try:
+                        await self._dlq_publisher(resolved)
+                        dlq_count += 1
+                        logger.info(
+                            "[defer_queue] FLOWSIGNAL_ESCALATION token routed to DLQ: "
+                            "defer_id=%s thread_id=%s",
+                            defer_id,
+                            resolved.thread_id,
+                        )
+                    except Exception as dlq_exc:
+                        # Log but don't crash — other tokens should still be processed
+                        logger.warning(
+                            "[defer_queue] DLQ publish failed for defer_id=%s: %s "
+                            "(token still marked EXPIRED)",
+                            defer_id,
+                            dlq_exc,
+                        )
+
         if count:
-            logger.info("[defer_queue] expire_stale() swept %d stale token(s).", count)
+            logger.info(
+                "[defer_queue] expire_stale() swept %d stale token(s), "
+                "%d routed to DLQ.",
+                count,
+                dlq_count,
+            )
         return count
 
 
@@ -367,6 +435,81 @@ class DeferQueue:
 #: than MANUAL_REVIEW, preventing operational fatigue from fundamentally incomplete
 #: context windows. See UCA-7 in src/gateway/governance/ontology.py.
 DEFER_CONFIDENCE_THRESHOLD: float = 0.70
+
+
+# ---------------------------------------------------------------------------
+# FlowSignal escalation token factory
+# ---------------------------------------------------------------------------
+
+
+def create_flowsignal_escalation_token(
+    thread_id: str,
+    confidence_score: float,
+    opa_input_snapshot: dict[str, Any],
+    finding_message: str | None = None,
+) -> DeferToken:
+    """Create a DeferToken for FlowSignal ESCALATE decisions.
+
+    This factory ensures the correct ``DeferReason.FLOWSIGNAL_ESCALATION`` reason
+    and the shorter 300-second TTL are applied, per Phase 1 §3.2 of the
+    FlowSignal integration plan.
+
+    Args:
+        thread_id:           LangGraph thread ID for checkpoint correlation.
+        confidence_score:    Model/consensus confidence at decision time.
+        opa_input_snapshot:  Sanitized OPA input dict (PII stripped).
+        finding_message:     Optional message from the FLOWSIGNAL_HOLD finding.
+
+    Returns:
+        A fully constructed DeferToken ready for ``DeferQueue.park()``.
+
+    Example::
+
+        from src.gateway.governance.defer_queue import (
+            create_flowsignal_escalation_token, DeferQueue
+        )
+
+        token = create_flowsignal_escalation_token(
+            thread_id="thread-123",
+            confidence_score=0.82,
+            opa_input_snapshot={"action": "execute_trade", "amount_usd": 50000},
+        )
+        await queue.park(token)
+    """
+    return DeferToken(
+        thread_id=thread_id,
+        defer_reason=DeferReason.FLOWSIGNAL_ESCALATION,
+        confidence_score=confidence_score,
+        opa_input_snapshot={
+            **opa_input_snapshot,
+            # Embed the finding message for audit purposes (non-sensitive)
+            "_flowsignal_finding_message": finding_message or "",
+        },
+        ttl_seconds=_FLOWSIGNAL_ESCALATION_TTL,  # 300s, not 4h
+        aarm_vector="AARM-V8",  # FlowSignal External Hold
+    )
+
+
+def is_flowsignal_hold_finding(finding: dict[str, Any]) -> bool:
+    """Check if a validation finding is a FlowSignal HOLD (ESCALATE) finding.
+
+    A finding is a FlowSignal HOLD if it has:
+      - ``code`` == "FLOWSIGNAL_HOLD"
+      - ``needs_human_review`` == True
+
+    This helper is used by ``enforce_fria_boundary()`` to detect when to use
+    the FlowSignal-specific TTL and DeferReason.
+
+    Args:
+        finding: A single finding dict from ``ValidationResult.findings``.
+
+    Returns:
+        True if the finding is a FLOWSIGNAL_HOLD, False otherwise.
+    """
+    return (
+        finding.get("code") == "FLOWSIGNAL_HOLD"
+        and finding.get("needs_human_review", False) is True
+    )
 
 
 # ---------------------------------------------------------------------------

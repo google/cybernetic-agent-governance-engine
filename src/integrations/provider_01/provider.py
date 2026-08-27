@@ -66,6 +66,78 @@ _GATE_TIMEOUT_SECONDS: float = float(
     or "5"
 )
 
+# ---------------------------------------------------------------------------
+# FlowSignal Decision Values (tri-state)
+# ---------------------------------------------------------------------------
+
+_FLOWSIGNAL_ALLOW = "ALLOW"
+_FLOWSIGNAL_REFUSE = "REFUSE"
+_FLOWSIGNAL_ESCALATE = "ESCALATE"
+
+# Finding codes for FlowSignal decision mapping
+FINDING_CODE_FLOWSIGNAL_REFUSE = "FLOWSIGNAL_REFUSE"
+FINDING_CODE_FLOWSIGNAL_HOLD = "FLOWSIGNAL_HOLD"
+FINDING_CODE_PARSE_ERROR = "PARSE_ERROR"
+
+
+def _map_flowsignal_decision(
+    decision: str, data: dict[str, Any]
+) -> tuple[bool, list[dict[str, Any]]]:
+    """Map FlowSignal tri-state decision to CAGE (admitted, findings).
+
+    This implements the ESCALATE contract mapping per §3.1 of the FlowSignal
+    integration plan, mirroring provider_06's tri-state pattern.
+
+    Mapping logic:
+      - ALLOW    → admitted=True, findings=[] (informational only)
+      - REFUSE   → admitted=False, findings with code=FLOWSIGNAL_REFUSE
+      - ESCALATE → admitted=False, findings with code=FLOWSIGNAL_HOLD,
+                   needs_human_review=True for DeferQueue parking
+
+    Args:
+        decision: The FlowSignal decision value (ALLOW, REFUSE, ESCALATE).
+        data: The full response payload (for extracting message context).
+
+    Returns:
+        Tuple of (admitted: bool, findings: list[dict]).
+
+    Raises:
+        ValueError: If decision is unrecognized (fail-closed).
+    """
+    from src.gateway.governance.normative_provider import ValidationResult
+
+    decision_upper = decision.upper().strip()
+
+    if decision_upper == _FLOWSIGNAL_ALLOW:
+        # ALLOW: admitted=True, no blocking findings
+        return True, []
+
+    if decision_upper == _FLOWSIGNAL_REFUSE:
+        # REFUSE: hard deny with blocked severity
+        message = data.get("message", "FlowSignal refused the transaction")
+        return False, [
+            {
+                "code": FINDING_CODE_FLOWSIGNAL_REFUSE,
+                "severity": "blocked",
+                "message": message,
+            }
+        ]
+
+    if decision_upper == _FLOWSIGNAL_ESCALATE:
+        # ESCALATE: soft deny for human review (DeferQueue parking)
+        message = data.get("message", "FlowSignal escalated — requires human approval")
+        return False, [
+            {
+                "code": FINDING_CODE_FLOWSIGNAL_HOLD,
+                "severity": "review",
+                "message": message,
+                "needs_human_review": True,  # CAGE-specific extension for DeferQueue
+            }
+        ]
+
+    # Unrecognized decision value: fail-closed
+    raise ValueError(f"Unrecognized FlowSignal decision: {decision!r}")
+
 
 # ---------------------------------------------------------------------------
 # Provider 01
@@ -149,7 +221,16 @@ class Provider01NormativeProvider:
             return NormativeBaseline(region=region, profile={}, error=str(exc))
 
     async def validate_fria(self, payload: dict[str, Any]):  # type: ignore[no-untyped-def]
-        """Submit FRIA validation (synchronous blocking gate)."""
+        """Submit FRIA validation (synchronous blocking gate).
+
+        Supports two response formats:
+          1. FlowSignal tri-state: {"decision": "ALLOW|REFUSE|ESCALATE", ...}
+          2. Legacy binary: {"admitted": bool, "findings": [...]}
+
+        If ``decision`` is present, it is mapped via _map_flowsignal_decision().
+        If ``decision`` is absent, falls back to legacy admitted/findings parsing.
+        If ``decision`` is present but unrecognized, fail-closed with PARSE_ERROR.
+        """
         import httpx
 
         from src.gateway.governance.normative_provider import ValidationResult
@@ -160,6 +241,32 @@ class Provider01NormativeProvider:
                 resp = await client.post(url, json=payload, headers=self._headers())
                 resp.raise_for_status()
                 data = resp.json()
+
+                # FlowSignal tri-state decision mapping (Phase 1, §3.1)
+                if "decision" in data:
+                    decision = data["decision"]
+                    try:
+                        admitted, findings = _map_flowsignal_decision(decision, data)
+                        return ValidationResult(admitted=admitted, findings=findings)
+                    except ValueError as exc:
+                        # Unrecognized decision value: fail-closed
+                        logger.warning(
+                            "[Provider01] FlowSignal decision parse error: %s",
+                            exc,
+                        )
+                        return ValidationResult(
+                            admitted=False,
+                            error=str(exc),
+                            findings=[
+                                {
+                                    "code": FINDING_CODE_PARSE_ERROR,
+                                    "severity": "blocked",
+                                    "message": f"Malformed FlowSignal decision: {decision!r}",
+                                }
+                            ],
+                        )
+
+                # Backward compatibility: legacy admitted/findings shape
                 return ValidationResult(
                     admitted=data.get("admitted", False),
                     findings=data.get("findings", []),

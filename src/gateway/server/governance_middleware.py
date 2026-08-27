@@ -326,7 +326,9 @@ _RATE_LIMIT_WINDOW: int = int(os.environ.get("VALIDATE_ACTION_RATE_WINDOW", "60"
 # {client_ip: [timestamp, ...]} — timestamps of requests within the window
 # Uses TTLCache to prevent unbounded memory growth: entries expire after 1 hour,
 # and max 10,000 unique IPs are tracked simultaneously.
-_validate_action_rate_buckets: TTLCache[str, list[float]] = TTLCache(maxsize=10000, ttl=3600)
+_validate_action_rate_buckets: TTLCache[str, list[float]] = TTLCache(
+    maxsize=10000, ttl=3600
+)
 
 # ---------------------------------------------------------------------------
 # HIGH-5: Trusted proxy CIDR list for X-Forwarded-For validation.
@@ -372,13 +374,13 @@ def _check_validate_action_rate_limit(client_ip: str) -> bool:
 
     MED-3: In multi-pod Kubernetes deployments this limiter is per-pod.
     See the module-level comment above for the Redis-backed alternative.
-    
+
     Memory safety: Uses TTLCache with maxsize=10000 and ttl=3600 to prevent
     unbounded memory growth from unique IPs.
     """
     now = time.monotonic()
     window_start = now - _RATE_LIMIT_WINDOW
-    
+
     # TTLCache doesn't auto-create entries like defaultdict; handle missing keys
     if client_ip not in _validate_action_rate_buckets:
         _validate_action_rate_buckets[client_ip] = []
@@ -760,6 +762,40 @@ async def validate_action_endpoint(
             policy_version_id=body.policy_version_id,
         )
         payload = {"schema_version": "1.0.0", **result}
+
+        # Phase 1, §3.2: HTTP 202 Accepted for FlowSignal ESCALATE decisions
+        # When the verdict is DEFER and it's a FlowSignal escalation, return
+        # HTTP 202 with an async receipt body so clients know to poll for resolution.
+        # Detection: defer_reason == "FLOWSIGNAL_ESCALATION" OR
+        #            is_flowsignal_hold == True (explicit marker from FRIA tier)
+        verdict = result.get("verdict")
+        defer_reason = result.get("defer_reason", "")
+        is_flowsignal_hold = result.get("is_flowsignal_hold", False)
+
+        if verdict == "DEFER" and (
+            defer_reason == "FLOWSIGNAL_ESCALATION" or is_flowsignal_hold is True
+        ):
+            defer_id = result.get("defer_id", "")
+            receipt_payload = {
+                "schema_version": "1.0.0",
+                "defer_id": defer_id,
+                "status": "pending_review",
+                "poll_url": f"/v1/defer/{defer_id}",
+                "verdict": "DEFER",
+                "defer_reason": "FLOWSIGNAL_ESCALATION",
+                "ttl_seconds": 300,  # FlowSignal escalations use 5-minute TTL
+                "latency_ms": result.get("latency_ms", 0),
+            }
+            logger.info(
+                "🔔 FlowSignal ESCALATE → HTTP 202: defer_id=%s action=%s",
+                defer_id,
+                body.action,
+            )
+            return JSONResponse(
+                status_code=202,
+                content=receipt_payload,
+            )
+
         return JSONResponse(content=payload)
 
     except GovernanceError as exc:

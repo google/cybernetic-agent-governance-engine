@@ -1055,3 +1055,162 @@ class TestGovernanceAppRoutes:
         """An unknown route returns 404."""
         resp = client.get("/nonexistent-endpoint")
         assert resp.status_code == 404
+
+
+# ===========================================================================
+# G. FlowSignal HTTP 202 receipt tests (Phase 1, §3.2)
+# ===========================================================================
+
+
+class TestFlowSignalHttp202Receipt:
+    """Tests for HTTP 202 Accepted receipt on FlowSignal ESCALATE decisions.
+
+    Phase 1, §3.2 of the FlowSignal integration plan requires that
+    FLOWSIGNAL_ESCALATION verdicts return HTTP 202 with an async receipt body
+    containing defer_id, status, and poll_url.
+    """
+
+    @pytest.fixture()
+    def client_for_flowsignal(self, mock_kms_signer):
+        """TestClient with a mock governor that returns FlowSignal DEFER."""
+        from src.gateway.server.governance_middleware import governance_app
+
+        return TestClient(governance_app, raise_server_exceptions=False)
+
+    def test_flowsignal_escalation_returns_http_202(
+        self, client_for_flowsignal, mock_kms_signer
+    ):
+        """FlowSignal ESCALATE decision returns HTTP 202 Accepted (not 200)."""
+        flowsignal_result = {
+            "verdict": "DEFER",
+            "defer_reason": "FLOWSIGNAL_ESCALATION",
+            "defer_id": "fs-defer-001",
+            "violations": ["FlowSignal: requires human approval"],
+            "seal": "",
+            "latency_ms": 5.2,
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=flowsignal_result)
+
+        with patch(
+            "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
+        ):
+            resp = client_for_flowsignal.post(
+                "/validate-action",
+                json={"action": "execute_trade", "params": {"amount": 50000}},
+            )
+
+        assert resp.status_code == 202
+
+    def test_flowsignal_escalation_receipt_shape(
+        self, client_for_flowsignal, mock_kms_signer
+    ):
+        """HTTP 202 body contains defer_id, status: pending_review, poll_url."""
+        flowsignal_result = {
+            "verdict": "DEFER",
+            "defer_reason": "FLOWSIGNAL_ESCALATION",
+            "defer_id": "fs-defer-002",
+            "violations": ["FlowSignal: requires human approval"],
+            "seal": "",
+            "latency_ms": 3.1,
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=flowsignal_result)
+
+        with patch(
+            "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
+        ):
+            resp = client_for_flowsignal.post(
+                "/validate-action",
+                json={"action": "execute_trade", "params": {"amount": 50000}},
+            )
+
+        data = resp.json()
+        assert data["defer_id"] == "fs-defer-002"
+        assert data["status"] == "pending_review"
+        assert data["poll_url"] == "/v1/defer/fs-defer-002"
+        assert data["verdict"] == "DEFER"
+        assert data["defer_reason"] == "FLOWSIGNAL_ESCALATION"
+        assert data["ttl_seconds"] == 300
+
+    def test_flowsignal_escalation_via_is_flowsignal_hold_marker(
+        self, client_for_flowsignal, mock_kms_signer
+    ):
+        """is_flowsignal_hold=True also triggers HTTP 202 (alternative detection)."""
+        # This covers the case where defer_reason might be different but the
+        # explicit marker is set
+        result_with_marker = {
+            "verdict": "DEFER",
+            "is_flowsignal_hold": True,
+            "defer_id": "fs-defer-003",
+            "violations": ["FlowSignal hold"],
+            "seal": "",
+            "latency_ms": 2.0,
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=result_with_marker)
+
+        with patch(
+            "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
+        ):
+            resp = client_for_flowsignal.post(
+                "/validate-action",
+                json={"action": "execute_trade", "params": {"amount": 25000}},
+            )
+
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "pending_review"
+
+    def test_non_flowsignal_defer_returns_200_not_202(
+        self, client_for_flowsignal, mock_kms_signer
+    ):
+        """Regular DEFER (not FlowSignal) returns HTTP 200, not 202."""
+        regular_defer_result = {
+            "verdict": "DEFER",
+            "defer_reason": "CONFIDENCE_BELOW_THRESHOLD",
+            "defer_id": "regular-defer-001",
+            "violations": ["confidence too low"],
+            "seal": "",
+            "latency_ms": 1.5,
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=regular_defer_result)
+
+        with patch(
+            "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
+        ):
+            resp = client_for_flowsignal.post(
+                "/validate-action",
+                json={"action": "execute_trade", "params": {"amount": 1000}},
+            )
+
+        # Non-FlowSignal DEFER should return 200 (current behavior preserved)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["verdict"] == "DEFER"
+
+    def test_approved_verdict_still_returns_200(
+        self, client_for_flowsignal, mock_kms_signer
+    ):
+        """APPROVED verdict returns HTTP 200 (not affected by FlowSignal changes)."""
+        approved_result = {
+            "verdict": "APPROVED",
+            "violations": [],
+            "seal": "valid-seal",
+            "latency_ms": 1.0,
+        }
+        mock_gov = MagicMock()
+        mock_gov.validate_action = AsyncMock(return_value=approved_result)
+
+        with patch(
+            "src.gateway.server.governance_middleware.symbolic_governor", mock_gov
+        ):
+            resp = client_for_flowsignal.post(
+                "/validate-action",
+                json={"action": "execute_trade", "params": {"amount": 100}},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["verdict"] == "APPROVED"

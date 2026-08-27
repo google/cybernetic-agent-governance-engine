@@ -563,7 +563,9 @@ class Provider02Client:
         url = f"{self._endpoint}/certifyDecision"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, json=evidence_record, headers=self._headers())
+                resp = await client.post(
+                    url, json=evidence_record, headers=self._headers()
+                )
                 resp.raise_for_status()
                 return resp.json()
         except httpx.HTTPStatusError as exc:
@@ -581,7 +583,9 @@ class Provider02Client:
             raise Provider02Error(str(exc), code="ENDPOINT_ERROR") from exc
         except Exception as exc:
             logger.error("[Provider02] certify_decision unexpected error: %s", exc)
-            raise Provider02Error(f"Unexpected error: {exc}", code="ENDPOINT_ERROR") from exc
+            raise Provider02Error(
+                f"Unexpected error: {exc}", code="ENDPOINT_ERROR"
+            ) from exc
 
     async def register_project_bundle(self, bundle: dict[str, Any]) -> dict[str, Any]:
         """Register a completed Project Bundle with Provider 02.
@@ -614,11 +618,17 @@ class Provider02Client:
                 code="ENDPOINT_ERROR",
             ) from exc
         except httpx.RequestError as exc:
-            logger.error("[Provider02] register_project_bundle request error: %s %s", url, exc)
+            logger.error(
+                "[Provider02] register_project_bundle request error: %s %s", url, exc
+            )
             raise Provider02Error(str(exc), code="ENDPOINT_ERROR") from exc
         except Exception as exc:
-            logger.error("[Provider02] register_project_bundle unexpected error: %s", exc)
-            raise Provider02Error(f"Unexpected error: {exc}", code="ENDPOINT_ERROR") from exc
+            logger.error(
+                "[Provider02] register_project_bundle unexpected error: %s", exc
+            )
+            raise Provider02Error(
+                f"Unexpected error: {exc}", code="ENDPOINT_ERROR"
+            ) from exc
 
     async def verify_cer(self, certificate_hash: str) -> dict[str, Any]:
         """Verify a CER against Provider 02's public JWK set.
@@ -655,4 +665,6 @@ class Provider02Client:
             raise Provider02Error(str(exc), code="ENDPOINT_ERROR") from exc
         except Exception as exc:
             logger.error("[Provider02] verify_cer unexpected error: %s", exc)
-            raise Provider02Error(f"Unexpected error: {exc}", code="ENDPOINT_ERROR") from exc
+            raise Provider02Error(
+                f"Unexpected error: {exc}", code="ENDPOINT_ERROR"
+            ) from exc

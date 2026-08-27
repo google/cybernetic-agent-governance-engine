@@ -318,6 +318,134 @@ component-definition:
           links:
           - href: ../../compliance/lula/lula-validation-tqp007.yaml
             rel: lula
+  - uuid: f10a5e8d-4b2c-5f99-8c3a-d41f7e8b9c2f
+    title: FlowSignal Consequence Authority Integration
+    type: software
+    description: 'FlowSignal (provider_01) integration providing distributed consequence
+      authority verification and single-use consumption enforcement. Implements
+      a two-phase consequence token model: governance evaluation (OPA + FlowSignal
+      authority determination) produces a short-TTL, single-use, KMS-signed ConsequenceToken
+      (JWS) that execution adapters verify and atomically consume via Redis (SET
+      NX PX) before side-effects execute. Key namespace: flowsignal:token:* (90s
+      TTL, exceeds 60s token TTL by safety margin). Prevents TOCTOU attacks on
+      authority consumption and substitution attacks via binding-hash verification.
+
+      '
+    purpose: 'Provides cryptographically-verifiable consequence authority for high-stakes
+      AI governance decisions, bridging external normative providers (FlowSignal)
+      with CAGE''s execution boundary. Implements ISO 42001 §A.8.4 AI System Operation
+      Controls — specifically the requirement that authority decisions are tamper-evident,
+      single-use, and bound to specific execution contexts.
+
+      '
+    responsible-roles:
+    - role-id: provider
+    props:
+    - name: software-version
+      value: 0.1.0
+    - name: redis-key-namespace
+      value: 'flowsignal:token:*'
+    - name: token-ttl-seconds
+      value: '60'
+    - name: consumption-marker-ttl-seconds
+      value: '90'
+    - name: normative-provider-slot
+      value: provider_01
+    control-implementations:
+    - uuid: a20b6f9e-5c3d-6a00-9d4b-e52a8f9c0d3a
+      source: https://www.iso.org/standard/81230.html
+      description: ISO/IEC 42001:2023 Annex A.8.4 controls implemented by FlowSignal
+        consequence authority integration
+      implemented-requirements:
+      - uuid: b31c7a0f-6d4e-7b11-0e5c-f63b9a0d1e4b
+        control-id: A.8.4
+        description: 'FLOWSIGNAL-001: FlowSignal consequence authority integration
+          enforces distributed single-use consumption for AI governance decisions.
+          The ConsequenceAuthorityStore (src/gateway/governance/consequence_authority_store.py)
+          uses atomic Redis SET NX PX operations to prevent replay attacks and TOCTOU
+          race conditions across N GKE replicas. CAGE_NORMATIVE_PROVIDER=provider_01
+          is configured via env var (not hardcoded), enabling runtime provider selection.
+          FlowSignal mTLS secrets (FLOWSIGNAL_CLIENT_CERT, FLOWSIGNAL_CLIENT_KEY,
+          FLOWSIGNAL_CA_BUNDLE) must be referenced via secretKeyRef when present
+          — never inline value: fields. Redis key namespace flowsignal:token:* is
+          isolated from existing prefixes (fiscal:*, DEFER:*, safety:*) to prevent
+          cross-concern key collisions. This implements ISO 42001 §A.8.4 AI System
+          Operation Controls — specifically the requirement that consequence authority
+          is cryptographically bound, tamper-evident, and enforced at the execution
+          boundary.
+
+          '
+        remarks: 'Implemented in Phase 1 of the FlowSignal integration plan (plans/flowsignal_integration_implementation_plan.md).
+          ConsequenceAuthorityStore provides distributed atomicity guarantees via
+          Redis SET NX PX (single round-trip, no Lua required for single-key operations).
+          Binding hash (SHA-256 of thread_id:actor_id:action_digest:authority_state_version)
+          stored as the marker value enables substitution-attack detection. Reference
+          architecture: Lula validation enforces illustrative patterns; adopters
+          should adapt namespace prefixes and secret names to their environments.
+
+          '
+        links:
+        - href: ../../compliance/lula/lula-validation-flowsignal.yaml
+          rel: lula
+  - uuid: tls-infra-2026-0827-sc8-000000000001
+    title: TLS Infrastructure
+    type: software
+    description: 'Hardened TLS client context factory (src/gateway/infrastructure/tls_context.py::create_hardened_client_context)
+      enforcing NIST SP 800-52 Rev. 2 minimum TLS 1.2+ protocol version. Pins ssl.TLSVersion.TLSv1_2
+      as minimum_version and explicitly disables legacy protocols via OP_NO_TLSv1
+      and OP_NO_TLSv1_1 options. Used by all external HTTP/HTTPS client connections
+      in CAGE (OPA policy sync, vLLM inference, Langfuse telemetry, external normative
+      provider adapters). Remediates POAM-2026-011.
+
+      '
+    purpose: 'Provides cryptographic transmission confidentiality for all external
+      client connections, preventing downgrade attacks to TLS 1.0/1.1 and enforcing
+      NIST SP 800-52 Rev. 2 cipher suite requirements. Implements SC-8 (Transmission
+      Confidentiality and Integrity) for US_FED deployments.
+
+      '
+    responsible-roles:
+    - role-id: provider
+    props:
+    - name: software-version
+      value: 0.1.0
+    - name: source-file
+      value: src/gateway/infrastructure/tls_context.py
+    - name: remediation-commit
+      value: df47020e4211bc6b673ffd5e3b4e3c05894415f4
+    - name: nist-sp-800-52-rev2-compliant
+      value: 'true'
+    control-implementations:
+    - uuid: tls-ctrl-impl-2026-0827-sc8-us-fed-001
+      source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
+      description: NIST SP 800-53 Rev 5 SC-8 (Transmission Confidentiality and Integrity)
+        implemented by TLS Infrastructure (US_FED only — CAGE_DEPLOYMENT_REGION=US_FED)
+      props:
+      - name: cage-deployment-region
+        value: US_FED
+      - name: cage-posture-scope
+        value: us-federal-only
+      implemented-requirements:
+      - uuid: tls-req-2026-0827-sc8-us-fed-001
+        control-id: SC-8
+        description: 'NIST SP 800-53 SC-8 (Transmission Confidentiality and Integrity):
+          TLS 1.2+ enforcement via canonical hardened SSL context factory (src/gateway/infrastructure/tls_context.py::create_hardened_client_context),
+          pinning minimum_version=TLSv1_2 and disabling legacy protocols (OP_NO_TLSv1/TLSv1_1).
+          Remediates POAM-2026-011. Complies with NIST SP 800-52 Rev. 2 minimum protocol
+          version requirements. US_FED deployment only.
+
+          '
+        remarks: 'US_FED only. Test coverage: tests/test_tls_enforcement.py::TestTlsProtocolStandards::test_default_client_context_minimum_version
+          and test_legacy_tls_protocols_disabled confirm ssl.TLSVersion.TLSv1_2
+          minimum version and OP_NO_TLSv1/TLSv1_1 option enforcement. Not applicable
+          to EU_ECB or APAC_MAS deployments (those regions may have different cryptographic
+          standards).
+
+          '
+        links:
+        - href: ../../compliance/lula/lula-validation-sc8.yaml
+          rel: lula
+          text: 'Lula validation: SC-8 Transmission Confidentiality (US_FED)'
   - uuid: e5000099-stpa-4000-8000-compiler00001
     title: STPA-to-Policy Compiler
     type: software

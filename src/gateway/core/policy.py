@@ -515,7 +515,9 @@ class OPAClient:
                 # We normalize all variants to a canonical uppercase string.
                 if isinstance(raw_result, dict):
                     # Extract decision from dict response (common OPA patterns)
-                    decision = raw_result.get("allow", raw_result.get("decision", "DENY"))
+                    decision = raw_result.get(
+                        "allow", raw_result.get("decision", "DENY")
+                    )
                     if isinstance(decision, bool):
                         decision_str = "ALLOW" if decision else "DENY"
                     else:
@@ -523,7 +525,9 @@ class OPAClient:
                 elif isinstance(raw_result, bool):
                     decision_str = "ALLOW" if raw_result else "DENY"
                 else:
-                    decision_str = str(raw_result).upper() if raw_result is not None else "DENY"
+                    decision_str = (
+                        str(raw_result).upper() if raw_result is not None else "DENY"
+                    )
 
                 span.set_attribute(
                     "langfuse.trace.metadata.governance.decision", decision_str
