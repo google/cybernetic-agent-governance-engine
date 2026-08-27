@@ -39,7 +39,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from cachetools import TTLCache
-
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from opentelemetry import context as otel_context
@@ -870,7 +869,7 @@ async def _fetch_jwks() -> dict[str, Any]:
     now = time.monotonic()
     fetched_at = _jwks_cache.get("_fetched_at", 0.0)
     if _jwks_cache and (now - fetched_at) < _JWKS_CACHE_TTL_S:
-        return _jwks_cache
+        return dict(_jwks_cache)  # type: ignore[arg-type,return-value]
 
     if not _OIDC_JWKS_URI:
         return {}
@@ -895,7 +894,7 @@ async def _fetch_jwks() -> dict[str, Any]:
     keys["_fetched_at"] = now
     _jwks_cache.clear()
     _jwks_cache.update(keys)
-    return _jwks_cache
+    return dict(_jwks_cache)  # type: ignore[arg-type]
 
 
 def _decode_jwt_header(token: str) -> dict[str, Any]:
