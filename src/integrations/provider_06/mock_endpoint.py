@@ -53,6 +53,12 @@ from pathlib import Path
 
 import jsonschema
 
+from datetime import datetime, timezone
+from typing import Any
+from uuid import uuid4
+
+logger = logging.getLogger("cage.integrations.provider_06.mock")
+
 SCHEMA_PATH = (
     Path(__file__).resolve().parents[3]
     / "local"
@@ -66,12 +72,6 @@ try:
 except Exception as e:
     ENVELOPE_SCHEMA = None
     logger.warning(f"Could not load schema: {e}")
-
-from datetime import datetime, timezone
-from typing import Any
-from uuid import uuid4
-
-logger = logging.getLogger("cage.integrations.provider_06.mock")
 
 # Protocol version from Agent Integrity (packages/protocol/src/types.ts)
 PROTOCOL_VERSION = "1-alpha"
@@ -214,12 +214,12 @@ try:
         version=ENGINE_VERSION,
     )
 
-    @app.get("/health")
+    @app.get("/health")  # type: ignore[union-attr]
     async def health() -> dict[str, str]:
         """Health check endpoint."""
         return {"status": "healthy", "version": ENGINE_VERSION}
 
-    @app.post("/verify")
+    @app.post("/verify")  # type: ignore[union-attr]
     async def verify(
         request: Request,
         x_fixture_name: str | None = Header(None, alias="X-Fixture-Name"),
@@ -268,7 +268,7 @@ try:
 
         return JSONResponse(content=result)
 
-    @app.post("/receipt")
+    @app.post("/receipt")  # type: ignore[union-attr]
     async def create_receipt(
         request: Request,
         x_fixture_name: str | None = Header(None, alias="X-Fixture-Name"),
@@ -313,7 +313,7 @@ try:
 
         return JSONResponse(content=receipt)
 
-    @app.get("/fixtures")
+    @app.get("/fixtures")  # type: ignore[union-attr]
     async def list_fixtures() -> dict[str, list[str]]:
         """List available test fixtures."""
         return {"fixtures": list(FIXTURES.keys())}
@@ -321,7 +321,7 @@ try:
 
 except ImportError:
     # FastAPI not available — provide a fallback for testing
-    app = None
+    app = None  # type: ignore[assignment]
     logger.warning(
         "[MockEndpoint] FastAPI not available. Install with: uv add fastapi uvicorn"
     )
