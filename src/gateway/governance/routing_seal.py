@@ -113,14 +113,20 @@ _REQUIRE_EVIDENCE_BINDING: bool = os.environ.get(
 #
 # NOTE: _SEAL_STRICT_MODE is kept for backwards compatibility but _get_seal_strict_mode()
 # should be used at call time to allow test fixtures to override via monkeypatch.
-_SEAL_STRICT_MODE: bool = os.environ.get(
-    "CAGE_SEAL_STRICT_MODE", "true"
-).lower() in ("true", "1", "yes")
+_SEAL_STRICT_MODE: bool = os.environ.get("CAGE_SEAL_STRICT_MODE", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 
 def _get_seal_strict_mode() -> bool:
     """Get seal strict mode setting at call time (allows test overrides)."""
-    return os.environ.get("CAGE_SEAL_STRICT_MODE", "true").lower() in ("true", "1", "yes")
+    return os.environ.get("CAGE_SEAL_STRICT_MODE", "true").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
 
 
 def _is_production_env() -> bool:
@@ -129,6 +135,7 @@ def _is_production_env() -> bool:
         os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
     ).lower()
     return cage_env not in ("development", "test", "dev", "ci")
+
 
 # ---------------------------------------------------------------------------
 # GOVERNANCE_SALT for HMAC compatibility layer

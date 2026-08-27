@@ -69,6 +69,8 @@ def _get_narrative_semaphore() -> asyncio.Semaphore:
     if _NARRATIVE_SEM is None:
         _NARRATIVE_SEM = asyncio.Semaphore(3)
     return _NARRATIVE_SEM
+
+
 _TIMEOUT_SEC = int(os.environ.get("AARM_NARRATIVE_TIMEOUT_MS", "25000")) / 1000
 
 
