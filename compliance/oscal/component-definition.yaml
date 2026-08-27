@@ -412,7 +412,7 @@ component-definition:
     - name: source-file
       value: src/gateway/infrastructure/tls_context.py
     - name: remediation-commit
-      value: df47020e4211bc6b673ffd5e3b4e3c05894415f4
+      value: c8d66189a94cb782f4e0f61e14e05e341d27a8f6
     - name: nist-sp-800-52-rev2-compliant
       value: 'true'
     control-implementations:
