@@ -775,7 +775,9 @@ async def _atomic_burn_nonce(
     # Note: We compute SHA1 of the script to match Redis's script SHA
     import hashlib as _hashlib
 
-    _ATOMIC_BURN_NONCE_SHA = _hashlib.sha1(_ATOMIC_BURN_NONCE_LUA.encode()).hexdigest()
+    _ATOMIC_BURN_NONCE_SHA = _hashlib.sha1(
+        _ATOMIC_BURN_NONCE_LUA.encode(), usedforsecurity=False
+    ).hexdigest()
 
     return int(result)
 
