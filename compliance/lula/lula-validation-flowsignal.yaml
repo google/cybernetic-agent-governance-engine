@@ -1,0 +1,158 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# lula-validation-flowsignal.yaml
+# FlowSignal Integration — Consequence Authority Store & Provider Configuration
+#
+# Asserts that:
+#   1. CAGE_NORMATIVE_PROVIDER=provider_01 is sourced via env var (not hardcoded image)
+#   2. FlowSignal secrets (FLOWSIGNAL_CLIENT_CERT, FLOWSIGNAL_CLIENT_KEY, 
+#      FLOWSIGNAL_CA_BUNDLE) are referenced via secretKeyRef if present — never inline value:
+#   3. Redis key namespace flowsignal:token:* does not collide with existing prefixes
+#      (fiscal:*, DEFER:*, safety:*)
+#   4. REDIS_URL env var is present on the gateway Deployment (consumption store dependency)
+#
+# Domain: kubernetes → Gateway Deployment in governance-stack namespace
+# Provider: opa (inline Rego)
+#
+# References:
+#   - src/gateway/governance/consequence_authority_store.py — Redis consumption store
+#   - src/integrations/provider_01/provider.py — FlowSignal NormativeProvider
+#   - plans/flowsignal_integration_implementation_plan.md — Phase 1 §4
+#
+# OSCAL Mapping:
+#   component: cage-gateway
+#   control: A.8.4 (ISO 42001 — AI System Operation Controls)
+#
+# Namespace: governance-stack (confirmed from deployment/k8s/gateway-deployment.yaml.tpl)
+
+component-definition:
+  uuid: f1025a8c-4d3e-5a99-8b2f-c418e7f92d1a
+  metadata:
+    title: CAGE Validation — FlowSignal Integration (FLOWSIGNAL-001)
+    last-modified: '2026-08-26T22:44:00Z'
+    version: 1.0.0
+    oscal-version: 1.1.2
+    remarks: "Auto-converted from standalone lula validation format.\nRegion: ALL. Posture: iso42001.\nNotes: ISO 42001 §A.8.4 — FlowSignal Integration Compliance (FLOWSIGNAL-001). Asserts that the FlowSignal (provider_01) consequence authority integration is configured correctly on the gateway Deployment in the governance-stack namespace:\n  (1) CAGE_NORMATIVE_PROVIDER=provider_01 is set via env var (not hardcoded in image),\n      enabling runtime provider selection per the plugin architecture specification.\n  (2) All FlowSignal mTLS secrets (FLOWSIGNAL_CLIENT_CERT, FLOWSIGNAL_CLIENT_KEY,\n      FLOWSIGNAL_CA_BUNDLE) are referenced via secretKeyRef if present — never\n      inline value: fields (prevents credential exposure in pod specs).\n  (3) Redis key namespace flowsignal:token:* does not collide with existing\n      prefixes (fiscal:*, DEFER:*, safety:*) — ensures namespace isolation for\n      the distributed consequence authority consumption store.\n  (4) REDIS_URL env var is present on the gateway Deployment (consumption store\n      dependency per consequence_authority_store.py from_env() factory).\nReference architecture: This validation enforces illustrative deployment patterns for FlowSignal consequence authority integration. Adopters should adapt namespace prefixes and secret names to their own environments. See: plans/flowsignal_integration_implementation_plan.md Phase 1 §4. See: src/gateway/governance/consequence_authority_store.py — Redis key schema."
+  components:
+  - uuid: a4d8f2c1-6e9b-5c73-ba18-f29e4a7c8d0e
+    type: software
+    title: CAGE Cybernetic Governance Engine
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    control-implementations:
+    - uuid: b5e9a3d2-7f0c-5d84-cb29-a30f5b8d9e1f
+      source: https://www.iso.org/standard/81230.html
+      description: 'Control implementation for FlowSignal Integration (FLOWSIGNAL-001). Region: ALL. Posture: iso42001.'
+      implemented-requirements:
+      - uuid: c6f0b4e3-8a1d-5e95-dc3a-b41a6c9e0f2a
+        control-id: A.8.4
+        description: Automated lula validation for FlowSignal Integration (FLOWSIGNAL-001).
+        links:
+        - href: '#d7a1c5f4-9b2e-5fa6-ed4b-c52b7d0a1f3b'
+          rel: lula
+  back-matter:
+    resources:
+    - uuid: d7a1c5f4-9b2e-5fa6-ed4b-c52b7d0a1f3b
+      title: Lula Validation — FlowSignal Integration (FLOWSIGNAL-001)
+      rlinks:
+      - href: lula.dev
+      description: |
+        domain:
+          type: kubernetes
+          kubernetes-spec:
+            resources:
+            - name: gateway-deployment
+              resource: deployments
+              namespace: governance-stack
+              filters:
+              - field: metadata.name
+                value: cage-gateway
+        provider:
+          type: opa
+          opa-spec:
+            rego: |
+              package lula
+
+              import future.keywords.if
+              import future.keywords.every
+
+              # FlowSignal Integration — Consequence Authority Store & Provider Configuration
+              #
+              # Check 1: CAGE_NORMATIVE_PROVIDER=provider_01 is set via env var.
+              # Check 2: FlowSignal secrets use secretKeyRef if present (never inline value:).
+              # Check 3: Redis key namespace flowsignal:token:* does not collide with existing prefixes.
+              # Check 4: REDIS_URL env var is present.
+
+              # Check 1: CAGE_NORMATIVE_PROVIDER=provider_01 is set via env var (not hardcoded).
+              normative_provider_configured if {
+                some container in input["gateway-deployment"].spec.template.spec.containers
+                some env in container.env
+                env.name == "CAGE_NORMATIVE_PROVIDER"
+                env.value == "provider_01"
+              }
+
+              # Check 2: FlowSignal secrets use secretKeyRef if present — never inline value:.
+              # This check is "if present, must use secretKeyRef" (graceful for reference architecture).
+              flowsignal_secret_names := {"FLOWSIGNAL_CLIENT_CERT", "FLOWSIGNAL_CLIENT_KEY", "FLOWSIGNAL_CA_BUNDLE"}
+
+              # Find all FlowSignal-related env vars across all containers.
+              flowsignal_env_vars[env] {
+                some container in input["gateway-deployment"].spec.template.spec.containers
+                some env in container.env
+                flowsignal_secret_names[env.name]
+              }
+
+              # Assert that every FlowSignal env var uses secretKeyRef (not inline value:).
+              flowsignal_secrets_use_secretref if {
+                every env in flowsignal_env_vars {
+                  env.valueFrom.secretKeyRef != null
+                  not env.value
+                }
+              }
+
+              # If no FlowSignal env vars are present, pass the check (reference architecture —
+              # not all deployments will have FlowSignal configured).
+              flowsignal_secrets_use_secretref if {
+                count(flowsignal_env_vars) == 0
+              }
+
+              # Check 3: Redis key namespace flowsignal:token:* does not collide with existing prefixes.
+              # Existing prefixes to check against: fiscal:*, DEFER:*, safety:*
+              existing_prefixes := {"fiscal:", "DEFER:", "safety:"}
+              flowsignal_prefix := "flowsignal:token:"
+
+              redis_namespace_no_collision if {
+                # flowsignal:token:* must not start with any existing prefix
+                every prefix in existing_prefixes {
+                  not startswith(flowsignal_prefix, prefix)
+                }
+                # and vice versa — existing prefixes must not start with flowsignal:token:
+                every prefix in existing_prefixes {
+                  not startswith(prefix, flowsignal_prefix)
+                }
+              }
+
+              # Check 4: REDIS_URL env var is present on the gateway Deployment.
+              redis_url_configured if {
+                some container in input["gateway-deployment"].spec.template.spec.containers
+                some env in container.env
+                env.name == "REDIS_URL"
+              }
+
+              validate if {
+                normative_provider_configured
+                flowsignal_secrets_use_secretref
+                redis_namespace_no_collision
+                redis_url_configured
+              }

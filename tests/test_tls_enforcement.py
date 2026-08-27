@@ -31,6 +31,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 
+from src.gateway.infrastructure.tls_context import create_hardened_client_context
+
 pytestmark = pytest.mark.local
 
 
@@ -43,9 +45,9 @@ class TestTlsProtocolStandards:
     """Validate standard SSLContext configuration meets NIST SP 800-52 Rev. 2 (SC-8)."""
 
     def test_default_client_context_minimum_version(self) -> None:
-        """Verify standard client SSLContext defaults enforce at least TLS 1.2."""
-        ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-        # Python 3.10+ create_default_context enforces TLSv1_2 minimum by default
+        """Verify hardened client SSLContext enforces at least TLS 1.2."""
+        ctx = create_hardened_client_context(ssl.Purpose.SERVER_AUTH)
+        # create_hardened_client_context must enforce TLSv1_2 minimum per NIST SP 800-52 Rev. 2
         assert ctx.minimum_version in (
             ssl.TLSVersion.TLSv1_2,
             ssl.TLSVersion.TLSv1_3,
@@ -56,7 +58,7 @@ class TestTlsProtocolStandards:
 
     def test_legacy_tls_protocols_disabled(self) -> None:
         """Verify that TLS 1.0 and TLS 1.1 are explicitly not allowed in client contexts."""
-        ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        ctx = create_hardened_client_context(ssl.Purpose.SERVER_AUTH)
         assert (
             ctx.options & ssl.OP_NO_TLSv1
             or ctx.minimum_version >= ssl.TLSVersion.TLSv1_2

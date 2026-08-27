@@ -255,12 +255,14 @@ class FRIAEnforcementResult:
         path:             The enforcement path taken (for OTel span tagging).
         consensus_score:  The consensus confidence score that drove the decision.
         validation:       ValidationResult from the provider (if sync gate was used).
+        defer_id:         DeferToken.defer_id when status=DEFER (for HTTP 202 receipt).
     """
 
     status: ExecutionStatus
     path: str
     consensus_score: float
     validation: ValidationResult | None = None
+    defer_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -540,6 +542,50 @@ async def enforce_fria_boundary(
                     f.get("needs_human_review", False) for f in result.findings
                 )
                 if needs_human_review:
+                    # Check if this is a FlowSignal ESCALATE decision
+                    # (FLOWSIGNAL_HOLD finding with needs_human_review=True)
+                    from src.gateway.governance.defer_queue import (
+                        create_flowsignal_escalation_token,
+                        is_flowsignal_hold_finding,
+                    )
+
+                    flowsignal_finding = next(
+                        (f for f in result.findings if is_flowsignal_hold_finding(f)),
+                        None,
+                    )
+
+                    if flowsignal_finding is not None:
+                        # FlowSignal escalation — resolve the original
+                        # EXTERNAL_VALIDATION token and park a new
+                        # FLOWSIGNAL_ESCALATION token with 300s TTL
+                        if defer_queue is not None:
+                            await defer_queue.resolve(token.defer_id, "ESCALATED")
+
+                        flowsignal_token = create_flowsignal_escalation_token(
+                            thread_id=thread_id or "unknown",
+                            confidence_score=consensus_score,
+                            opa_input_snapshot=action_context,
+                            finding_message=flowsignal_finding.get("message"),
+                        )
+                        if defer_queue is not None:
+                            await defer_queue.park(flowsignal_token)
+
+                        logger.warning(
+                            "[FRIA] FlowSignal ESCALATE → FLOWSIGNAL_HOLD for "
+                            "defer_id=%s thread=%s (original_defer_id=%s, ttl=300s)",
+                            flowsignal_token.defer_id,
+                            thread_id,
+                            token.defer_id,
+                        )
+                        return FRIAEnforcementResult(
+                            status=ExecutionStatus.DEFER,
+                            path="SYNC_GATE_REVIEW",
+                            consensus_score=consensus_score,
+                            validation=result,
+                            defer_id=flowsignal_token.defer_id,
+                        )
+
+                    # Non-FlowSignal human review request — use original token
                     logger.warning(
                         "[FRIA] Sync gate REVIEW requested for defer_id=%s thread=%s findings=%s",
                         token.defer_id,
@@ -551,6 +597,7 @@ async def enforce_fria_boundary(
                         path="SYNC_GATE_REVIEW",
                         consensus_score=consensus_score,
                         validation=result,
+                        defer_id=token.defer_id,
                     )
 
                 if defer_queue is not None:
