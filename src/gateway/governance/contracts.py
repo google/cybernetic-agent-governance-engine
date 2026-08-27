@@ -82,6 +82,19 @@ class RefusalReceipt:
 
     def __post_init__(self) -> None:
         if not self.proof_hash:
+            # NOTE: standing_at_refusal MUST be included in the hashed payload
+            # to ensure the cryptographic proof binds to the actual refused
+            # transaction context (symbol, amount, etc.). Without this, two
+            # RefusalReceipts for the same action/tier/rule/timestamp but
+            # different amounts would produce identical proof_hash values,
+            # breaking the evidentiary chain. (CAGE-SEC-009, plans/unified_implementation_analysis.md:191-193)
+            #
+            # Backward compatibility: Any Decimal values in standing_at_refusal
+            # are serialized via JCS canonicalization (RFC 8785), which
+            # converts Python Decimal to JSON number representation. Receipts
+            # generated after this fix will have different proof_hash values
+            # than hypothetical receipts from an implementation that excluded
+            # standing_at_refusal — this is the intended behavior.
             payload: dict[str, Any] = {
                 "thread_id": self.thread_id,
                 "action": self.action,

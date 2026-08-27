@@ -32,9 +32,9 @@ Usage::
 
 from .adapter import (
     AttestationBundle,
+    ProjectBundleStepEntry,
     Provider02AttestationCallback,
     Provider02Client,
-    ProjectBundleStepEntry,
 )
 from .provider import (
     CERReceipt,
@@ -49,9 +49,9 @@ __all__ = [
     "CERReceipt",
     "CERVerification",
     "JWKCache",
+    "ProjectBundleStepEntry",
     "Provider02AttestationCallback",
     "Provider02AttestationProvider",
     "Provider02Client",
-    "ProjectBundleStepEntry",
     "get_provider_02",
 ]

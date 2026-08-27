@@ -167,7 +167,9 @@ class TestCERVerification:
     @pytest.mark.asyncio
     async def test_local_verification_with_cached_keys(self):  # type: ignore[no-untyped-def]
         """With cached JWKs, verify_cer uses local verification."""
-        provider = Provider02AttestationProvider(endpoint="https://api.provider02.example.com/v1")
+        provider = Provider02AttestationProvider(
+            endpoint="https://api.provider02.example.com/v1"
+        )
         provider._jwk_cache = JWKCache(
             jwk_set={"keys": [{"kid": "key-001", "kty": "OKP", "crv": "Ed25519"}]},
             last_synced=time.time(),
@@ -181,7 +183,9 @@ class TestCERVerification:
     @pytest.mark.asyncio
     async def test_local_verification_rejects_invalid_hash(self):  # type: ignore[no-untyped-def]
         """Local verification rejects hash with wrong length."""
-        provider = Provider02AttestationProvider(endpoint="https://api.provider02.example.com/v1")
+        provider = Provider02AttestationProvider(
+            endpoint="https://api.provider02.example.com/v1"
+        )
         provider._jwk_cache = JWKCache(
             jwk_set={"keys": [{"kid": "key-001"}]},
             last_synced=time.time(),

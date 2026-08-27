@@ -526,13 +526,17 @@ class TestProvider01NormativeProvider:
 
     def test_constructs_correct_baseline_url(self) -> None:
         """Provider01NormativeProvider builds correct endpoint URL for baseline fetch."""
-        provider = Provider01NormativeProvider(endpoint="https://api.provider01.example.com")
+        provider = Provider01NormativeProvider(
+            endpoint="https://api.provider01.example.com"
+        )
         # Verify endpoint is stored correctly (URL construction tested via fetch)
         assert provider._endpoint == "https://api.provider01.example.com"
 
     def test_strips_trailing_slash(self) -> None:
         """Endpoint trailing slash is stripped."""
-        provider = Provider01NormativeProvider(endpoint="https://api.provider01.example.com/")
+        provider = Provider01NormativeProvider(
+            endpoint="https://api.provider01.example.com/"
+        )
         assert provider._endpoint == "https://api.provider01.example.com"
 
     async def test_thread_id_cannot_retarget_request_path(self) -> None:
@@ -560,7 +564,9 @@ class TestProvider01NormativeProvider:
                 captured["url"] = url
                 raise RuntimeError("stop after URL capture")
 
-        provider = Provider01NormativeProvider(endpoint="https://api.provider01.example.com")
+        provider = Provider01NormativeProvider(
+            endpoint="https://api.provider01.example.com"
+        )
         with patch("httpx.AsyncClient", _Client):
             await provider.submit_evidence("../../admin/rotate-key", "HASH")
 
@@ -588,7 +594,9 @@ class TestProvider01NormativeProvider:
                 captured["url"] = url
                 raise RuntimeError("stop after URL capture")
 
-        provider = Provider01NormativeProvider(endpoint="https://api.provider01.example.com")
+        provider = Provider01NormativeProvider(
+            endpoint="https://api.provider01.example.com"
+        )
         with patch("httpx.AsyncClient", _Client):
             await provider.fetch_baseline("../../secret")
 

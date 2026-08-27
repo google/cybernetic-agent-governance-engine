@@ -143,9 +143,7 @@ class Warrant:
     def to_canonical_dict(self) -> dict[str, Any]:
         """Produce the dictionary of fields 1-11 for JCS canonicalization."""
         scope_dict = (
-            self.scope.to_dict()
-            if isinstance(self.scope, WarrantScope)
-            else self.scope
+            self.scope.to_dict() if isinstance(self.scope, WarrantScope) else self.scope
         )
         return {
             "warrant_id": self.warrant_id,
@@ -279,9 +277,7 @@ class WarrantStandingVerifier:
         # 4. Currency / Temporal check
         current_time = now or datetime.now(timezone.utc)
         try:
-            from_dt = datetime.fromisoformat(
-                warrant.valid_from.replace("Z", "+00:00")
-            )
+            from_dt = datetime.fromisoformat(warrant.valid_from.replace("Z", "+00:00"))
             until_dt = datetime.fromisoformat(
                 warrant.valid_until.replace("Z", "+00:00")
             )
@@ -380,4 +376,3 @@ def bind_warrant_to_attestation(
             "authority_basis": warrant.authority_basis,
         },
     )
-

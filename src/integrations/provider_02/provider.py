@@ -66,7 +66,9 @@ logger = logging.getLogger("cage.provider_02")
 _ENDPOINT: str = os.environ.get("PROVIDER_02_API_ENDPOINT", "")
 _API_KEY: str = os.environ.get("PROVIDER_02_API_KEY_SECRET", "")
 _JWK_ENDPOINT: str = os.environ.get("PROVIDER_02_JWK_ENDPOINT", "")
-_JWK_CACHE_TTL_HOURS: float = float(os.environ.get("PROVIDER_02_JWK_CACHE_TTL_HOURS", "24"))
+_JWK_CACHE_TTL_HOURS: float = float(
+    os.environ.get("PROVIDER_02_JWK_CACHE_TTL_HOURS", "24")
+)
 _TIMEOUT: float = float(os.environ.get("PROVIDER_02_TIMEOUT_SECONDS", "5.0"))
 
 
@@ -351,9 +353,7 @@ class Provider02AttestationProvider:
                 resp.raise_for_status()
                 return resp.json()
         except Exception as exc:
-            logger.error(
-                "[Provider02] registerProjectBundle failed: %s %s", url, exc
-            )
+            logger.error("[Provider02] registerProjectBundle failed: %s %s", url, exc)
             return {"error": str(exc)}
 
     # ------------------------------------------------------------------

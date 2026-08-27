@@ -35,9 +35,9 @@ import pytest
 
 from src.integrations.provider_02.adapter import (
     AttestationBundle,
+    ProjectBundleStepEntry,
     Provider02AttestationCallback,
     Provider02Client,
-    ProjectBundleStepEntry,
     _classify_terminal_path,
     _extract_signals,
     _hash_state,
@@ -502,7 +502,9 @@ class TestProvider02Client:
 
     def test_headers_without_api_key(self):  # type: ignore[no-untyped-def]
         """Without API key, only Content-Type header is present."""
-        client = Provider02Client(endpoint="https://api.provider02.example.com", api_key="")
+        client = Provider02Client(
+            endpoint="https://api.provider02.example.com", api_key=""
+        )
         headers = client._headers()
         assert "Authorization" not in headers
 
@@ -526,4 +528,7 @@ class TestProvider02Client:
 
             mock_instance.post.assert_called_once()
             call_args = mock_instance.post.call_args
-            assert call_args[0][0] == "https://api.provider02.example.com/v1/certifyDecision"
+            assert (
+                call_args[0][0]
+                == "https://api.provider02.example.com/v1/certifyDecision"
+            )

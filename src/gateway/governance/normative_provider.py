@@ -535,6 +535,23 @@ async def enforce_fria_boundary(
                     validation=result,
                 )
             else:
+                needs_human_review = any(
+                    f.get("needs_human_review", False) for f in result.findings
+                )
+                if needs_human_review:
+                    logger.warning(
+                        "[FRIA] Sync gate REVIEW requested for defer_id=%s thread=%s findings=%s",
+                        token.defer_id,
+                        thread_id,
+                        result.findings,
+                    )
+                    return FRIAEnforcementResult(
+                        status=ExecutionStatus.DEFER,
+                        path="SYNC_GATE_REVIEW",
+                        consensus_score=consensus_score,
+                        validation=result,
+                    )
+
                 if defer_queue is not None:
                     await defer_queue.resolve(token.defer_id, "ESCALATED")
                 logger.warning(
@@ -831,7 +848,18 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
     Raises:
         ValueError: If the provider name is not registered.
     """
-    provider_name = (name or _PROVIDER_NAME).strip().lower()
+    raw_name = name or os.environ.get("CAGE_NORMATIVE_PROVIDER", _PROVIDER_NAME)
+    provider_name = raw_name.split("#")[0].strip().lower()
+
+    # Vendor alias normalization
+    alias_map = {
+        "trustlayers": "provider_01",
+        "nexart": "provider_02",
+        "veritas": "provider_03",
+        "agent_integrity": "provider_06",
+        "agentintegrity": "provider_06",
+    }
+    provider_name = alias_map.get(provider_name, provider_name)
 
     # Kernel-resident providers
     if provider_name in _PROVIDERS:
@@ -848,7 +876,23 @@ def get_normative_provider(name: str | None = None) -> NormativeProvider:
 
         return Provider02AttestationProvider()  # type: ignore[return-value]
 
-    valid = [*_PROVIDERS.keys(), "provider_01", "provider_02"]
+    if provider_name == "provider_03":
+        from src.integrations.provider_03 import Provider03NormativeProvider
+
+        return Provider03NormativeProvider()
+
+    if provider_name == "provider_06":
+        from src.integrations.provider_06 import Provider06AgentIntegrityAdapter
+
+        return Provider06AgentIntegrityAdapter()
+
+    valid = [
+        *_PROVIDERS.keys(),
+        "provider_01",
+        "provider_02",
+        "provider_03",
+        "provider_06",
+    ]
     raise ValueError(
         f"Unknown normative provider: {provider_name!r}. Available providers: {valid}."
     )

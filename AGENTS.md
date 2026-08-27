@@ -278,6 +278,17 @@ When modifying STPA source files:
 - Regional gates (US_FED, EU_ECB, APAC_MAS) are additive — they block regional
   deployment posture only, never the global stable tag.
 
+### External Vendor Adapter Standards (Plugin Architecture)
+
+All external vendor adapters and integrations (`src/integrations/provider_*`) **must strictly follow** the design principles, isolation boundaries, and latency budgets specified in [`local/analysis/Secure Plugin & Adapter Architecture Specification.md`](local/analysis/Secure%20Plugin%20%26%20Adapter%20Architecture%20Specification.md):
+
+- **Vendor Isolation**: Vendor packages live exclusively under `src/integrations/{provider_name}/` and must never introduce direct dependencies or imports into the core CAGE kernel (`src/gateway/`).
+- **Seam Implementation**: Synchronous gate adapters must implement the canonical `NormativeProvider` protocol (`fetch_baseline`, `validate_fria`, `submit_evidence`) and return CAGE dataclasses (`NormativeBaseline`, `ValidationResult`, `EvidenceSeal`).
+- **Tri-State / Review Mapping**: Upstream non-binary verdicts (`REVIEW`, `ESCALATE`) must be mapped to `ValidationResult(admitted=False, findings=[{"needs_human_review": True, ...}])` to enable native parking in CAGE's `DeferQueue` rather than raising custom exceptions.
+- **Fail-Closed Semantics**: Network timeouts, HTTP status errors, and parse failures must fail-closed (`admitted=False`) and populate structured findings with `code="ENDPOINT_ERROR"`.
+- **Sidecar & UDS Architecture**: In production deployments, external vendor SDKs (e.g. Node.js engines) run as sidecar containers communicating via Unix Domain Sockets (UDS) to meet sub-millisecond hot-path latency requirements.
+- **Hermetic Testing & Schema Validation**: Vendor mocks must validate payloads against vendored JSON schemas and provide hermetic unit tests with mock clients.
+
 ---
 
 ## Documentation Standards
@@ -303,6 +314,7 @@ documents rather than paraphrasing from memory:
 | CI pipeline | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
 | Compliance obligations | [`compliance/lula/`](compliance/lula/), [`compliance/oscal/`](compliance/oscal/) |
 | POAM tracking | [`docs/POAM.md`](docs/POAM.md) |
+| Vendor adapters / Plugin architecture | [`local/analysis/Secure Plugin & Adapter Architecture Specification.md`](local/analysis/Secure%20Plugin%20%26%20Adapter%20Architecture%20Specification.md) |
 
 When explaining compliance posture or security controls:
 - CAGE is a reference architecture — clarify that region gates and deployment

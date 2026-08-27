@@ -47,12 +47,12 @@ from src.gateway.governance.normative_provider import (
 )
 from src.integrations.provider_05 import (
     AdmissibilityGrant,
-    RiskAcceptanceRecord,
-    SubstrateAttestation,
     Provider05BlueprintProvider,
     Provider05Client,
     Provider05KeyProvider,
     Provider05PhysicsProvider,
+    RiskAcceptanceRecord,
+    SubstrateAttestation,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -280,7 +280,9 @@ def test_criterion_3_signature_tamper_evidence(seeded_provider_05_client, ec_key
 
         # Tamper 1: Mutate receipt_id
         env_tampered_receipt = builder._envelope_from_dict(signed_env.to_dict())
-        env_tampered_receipt.external_attestations[0].receipt_id = "provider05-FORGED-receipt"
+        env_tampered_receipt.external_attestations[
+            0
+        ].receipt_id = "provider05-FORGED-receipt"
         assert builder.verify(env_tampered_receipt) is False
 
         # Tamper 2: Mutate status from VERIFIED to DENIED
@@ -302,7 +304,9 @@ def test_criterion_3_signature_tamper_evidence(seeded_provider_05_client, ec_key
 
 
 @pytest.mark.asyncio
-async def test_criterion_4_trust_domain_admissibility_negative_test(seeded_provider_05_client):
+async def test_criterion_4_trust_domain_admissibility_negative_test(
+    seeded_provider_05_client,
+):
     """Verify unauthorized SPIFFE ID produces status: DENIED."""
     provider = Provider05KeyProvider(client=seeded_provider_05_client)
 
