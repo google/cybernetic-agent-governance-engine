@@ -1,21 +1,17 @@
 # CAGE v3.0.0 Breaking Changes
 
-> **Status:** Corrected release. v3.0.0 was initially tagged 2026-08-15 with
-> four breaking changes still outstanding (see below); those changes were
-> completed on branch `fix/v3-breaking-changes-completion` and this document
-> has been updated to reflect what was actually removed. See
-> [`CHANGELOG.md`](../CHANGELOG.md) for the full release notes. This document
+> **Status:** Released. CAGE v3.0.0 release date: 2026-08-28.
+> See [`CHANGELOG.md`](../CHANGELOG.md) for the full release notes. This document
 > describes the breaking changes included in this release. Item IDs (`SR-#`,
 > `MR-#`, `CR-#`, `FF-#`, `EV-#`) match
 > [`docs/MAJOR_VERSION_CLEANUP_PLAN.md`](MAJOR_VERSION_CLEANUP_PLAN.md) 1:1
 > so the two documents can be cross-referenced.
 >
-> **Post-tag corrections (this update):** `AGWEnvelope`/`AGWEnvelopeBuilder`
-> removal was missing from this document entirely; legacy provider signing method
-> removal was missing from the Removed Classes/Functions table; the
-> `KMS_BATCH_ENABLED` discrepancy flagged in the original release notes is
-> now resolved (default confirmed as `"false"`, not `"true"` — see
-> [Feature Flags Graduated](#feature-flags-graduated)).
+> **Release Scope:** `AGWEnvelope`/`AGWEnvelopeBuilder` removal, legacy provider
+> signing method removal, RFC 8785 JCS canonicalization migration (POAM-2026-060),
+> schema sentinels (`cage-evidence-stream/2.0` / `cage-context-accumulator/2.0`),
+> canonical 6 governance decision set, and `KMS_BATCH_ENABLED` default-value
+> confirmation (`"false"`).
 
 ## Overview
 
@@ -554,5 +550,5 @@ Recorded as a deliberate no-change decision (BC-06) in [`docs/POAM.md`](POAM.md)
 
 ---
 
-**Last updated:** 2026-08-27 (post-v3.0.0-tag corrections + FlowSignal Phase 2 ST-5
+**Last updated:** 2026-08-28 (v3.0.0 release + FlowSignal Phase 2 ST-5
 + backward-compatibility remediation BC-01–BC-08 / POAM-2026-060, -062–-068)

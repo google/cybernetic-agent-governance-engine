@@ -1,6 +1,6 @@
 # Cybernetic Governance of Agentic AI
 
-**Last Updated:** 2026-08-16 | **System Version:** v3.0.0
+**Last Updated:** 2026-08-28 | **System Version:** v3.0.0
 
 > **Jurisdiction separation principle:** **ISO/IEC 42001:2023** is the **sole universal governance baseline** — every control, pipeline step, and audit artifact in this document applies to all deployment regions (`US_FED`, `EU_ECB`, `APAC_MAS`). All other regulatory frameworks are **additive, jurisdiction-specific layers** activated exclusively by the `CAGE_DEPLOYMENT_REGION` environment variable:
 > - **US_FED only:** SR 26-2 (Federal Reserve), NIST AI 600-1, NIST SP 800-53, NIST AI RMF
@@ -434,7 +434,7 @@ All four phases of the NIST AI 600-1 implementation are now complete. The follow
 
 ### Three-Region Compliance Matrix
 
-CAGE v2.1.0 ships separate OSCAL SSPs and Lula manifests for each deployment region:
+CAGE v3.0.0 ships separate OSCAL SSPs and Lula manifests for each deployment region:
 
 | Region | OSCAL SSP | Lula Manifests |
 |--------|-----------|----------------|

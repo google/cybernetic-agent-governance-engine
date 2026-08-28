@@ -82,7 +82,7 @@ Summary:
 | Refactor | `refactor/<short-description>` | `refactor/gateway-middleware` |
 | CI / tooling | `ci/<short-description>` | `ci/pin-actions-sha` |
 | Hotfix on release | `hotfix/<version>-<description>` | `hotfix/2.0.1-redis-timeout` |
-| Release candidate | `rc-v<semver>` | `rc-v2.1.0` |
+| Release candidate | `rc-v<semver>` | `rc-v3.0.0` |
 | Experiment / spike | `spike/<short-description>` | `spike/cbf-formal-proof` |
 
 **Rules:** lowercase kebab-case only; description ≤ 30 characters after the

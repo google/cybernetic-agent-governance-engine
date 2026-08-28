@@ -3,7 +3,7 @@
 **System:** Cybernetic AI Governance Engine (CAGE)
 **Document:** Public Security Posture Statement
 **Frameworks:** NIST SP 800-53 Rev. 5, NIST AI 600-1, ISO 42001, EU AI Act, DORA, GDPR, MAS FEAT, MAS TRM, MAS Notice 655
-**Last Updated:** 2026-08-27
+**Last Updated:** 2026-08-28
 
 ---
 

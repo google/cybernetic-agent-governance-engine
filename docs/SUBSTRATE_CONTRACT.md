@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Status:** Active — Phase A implementation
-**Last updated:** 2026-08-05
+**Last updated:** 2026-08-28
 **Cross-reference:** [`docs/CAGE_OPEN_INTEROP_SPEC.md §1`](CAGE_OPEN_INTEROP_SPEC.md) (Platform Overview)
 
 ---

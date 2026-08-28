@@ -77,13 +77,13 @@ The active/stub split is **intentional and aligned with the posture architecture
 - **1 Active (US_FED scope):** SC-4 fiscal limits — production-ready for US Federal deployments
 - **1 Stub (ALL scope):** CSA AARM vectors — universal but requires cluster configuration. **Note:** This validation is listed as `Status: 🔶 Stub` and counted as 1 stub (ALL scope). It is NOT counted as an active validation for release gate purposes until real assertions replace the stub. See CA-05 remediation note below.
 - **10 Stub (US_FED scope):** NIST SP 800-53 controls — US Federal only; require cluster-specific namespace/resource configuration before activation
-- **5 Stub (US_FED scope):** NIST AI 600-1 controls — phases 0–3 implemented in v2.1.0 (runtime enforcement active); Lula manifests are stub-ready and require Langfuse metric availability and cluster-specific configuration before activation
+- **5 Stub (US_FED scope):** NIST AI 600-1 controls — phases 0–3 implemented in v3.0.0 (runtime enforcement active); Lula manifests are stub-ready and require Langfuse metric availability and cluster-specific configuration before activation
 - **3 Stub (EU_ECB scope):** EU AI Act / GDPR / DORA controls — EU regional only; require cluster-specific resource configuration and live compliance-bridge endpoints
 - **3 Stub (APAC_MAS scope):** MAS FEAT / MAS Notice 655 / MAS TRM §6.3 controls — APAC regional only; require cluster-specific configuration and `data_residency_region = "asia-southeast1"` assertion
 
 The 10 US_FED NIST SP 800-53 stubs represent an **implementation gap** tracked as open POAM items in [`docs/POAM.md`](../../docs/POAM.md) (see POAM-2026-010, POAM-2026-011, POAM-2026-012, POAM-2026-013): activating all 10 would raise NIST SP 800-53 Lula coverage from 1/11 to 11/11 controls, directly supporting the US_FED release gate. The CSA AARM stub (1 manifest, ALL scope) is a separate gap affecting all regions.
 
-The 5 US_FED NIST AI 600-1 stubs correspond to **phases 0–3 of the AI 600-1 implementation** (v2.1.0). Runtime enforcement is active for all phases via `confabulation_scorer.py`, `pii_sanitizer.py`, `prompt_injection_detector.py`, `hitl_escalator.py`, and `text_filter.py`. The Lula manifests are scaffolding-ready and will be hardened to full live-cluster assertions once Langfuse metric endpoints are configured. The CBRN stub (`lula-validation-ai600-cbrn.yaml`) remains a **Cat-M change** requiring AO pre-approval before cluster activation in a real deployment's own change-management process.
+The 5 US_FED NIST AI 600-1 stubs correspond to **phases 0–3 of the AI 600-1 implementation** (v3.0.0). Runtime enforcement is active for all phases via `confabulation_scorer.py`, `pii_sanitizer.py`, `prompt_injection_detector.py`, `hitl_escalator.py`, and `text_filter.py`. The Lula manifests are scaffolding-ready and will be hardened to full live-cluster assertions once Langfuse metric endpoints are configured. The CBRN stub (`lula-validation-ai600-cbrn.yaml`) remains a **Cat-M change** requiring AO pre-approval before cluster activation in a real deployment's own change-management process.
 
 ### Three-Region OSCAL SSPs
 

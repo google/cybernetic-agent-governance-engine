@@ -1,4 +1,4 @@
-# Quick Start — v2.1.0
+# Quick Start — v3.0.0
 
 Get CAGE running locally in under 10 minutes using Docker Compose.
 

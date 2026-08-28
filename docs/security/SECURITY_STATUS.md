@@ -1,13 +1,13 @@
-# Security & Compliance Status — CAGE v2.1.0
+# Security & Compliance Status — CAGE v3.0.0
 
-**Date:** 2026-06-23
+**Date:** 2026-08-28
 **Status:** Public disclosure of current security posture and compliance implementation state
 
 ---
 
 ## Summary
 
-CAGE v2.1.0 provides a **production-grade AI governance enforcement runtime**. The AI-layer controls (NeMo Guardrails, OPA policy enforcement, Cloud KMS HSM-backed asymmetric signing with HMAC-SHA256 dev/CI fallback, HITL with TOCTOU remediation, LangGraph safety nodes, DEFER state machine, SHA-256 hash-chained context accumulator) are fully implemented and tested. However, the full **NIST Risk Management Framework (RMF) authorization process has not been completed**, and several infrastructure-level security controls have known gaps documented in [`docs/POAM.md`](../compliance/cross-region/POAM.md).
+CAGE v3.0.0 provides a **production-grade AI governance enforcement runtime**. The AI-layer controls (NeMo Guardrails, OPA policy enforcement, Cloud KMS HSM-backed asymmetric signing with HMAC-SHA256 dev/CI fallback, HITL with TOCTOU remediation, LangGraph safety nodes, DEFER state machine, SHA-256 hash-chained context accumulator, 6 governance primitives, Lua-atomic CBF, and external attestation layers) are fully implemented and tested. However, the full **NIST Risk Management Framework (RMF) authorization process has not been completed**, and several infrastructure-level security controls have known gaps documented in [`docs/POAM.md`](../compliance/cross-region/POAM.md).
 
 > [!IMPORTANT]
 > This system has **not received an Authorization to Operate (ATO)** from a NIST-designated Authorizing Official. It has not undergone a formal Security Assessment. Deployers in regulated environments must complete their own risk assessment before production use.
