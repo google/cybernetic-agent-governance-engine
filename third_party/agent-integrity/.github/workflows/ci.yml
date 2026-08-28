@@ -1,0 +1,39 @@
+name: Exact head proof
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: exact-head-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-head-proof:
+    name: exact-head-proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Use Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Audit locked dependencies
+        run: npm audit --audit-level=high
+      - name: Run full verification
+        run: npm run verify
+      - name: Scan public release payload
+        run: npm run release:check
+      - name: Pack and clean-install public payloads
+        run: npm run pack:check

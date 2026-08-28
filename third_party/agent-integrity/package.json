@@ -1,0 +1,46 @@
+{
+  "name": "agent-integrity",
+  "version": "0.1.0-alpha.0",
+  "private": true,
+  "description": "Deterministic integrity verification and release controls for AI-agent responses.",
+  "license": "Apache-2.0",
+  "author": "Simranjit Singh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SimranPabla/agent-integrity.git"
+  },
+  "homepage": "https://github.com/SimranPabla/agent-integrity#readme",
+  "bugs": {
+    "url": "https://github.com/SimranPabla/agent-integrity/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "integrity",
+    "verification",
+    "provenance",
+    "security"
+  ],
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b packages/protocol packages/core packages/sdk packages/cli",
+    "typecheck": "tsc -b packages/protocol packages/core packages/sdk packages/cli --pretty false",
+    "test": "vitest run",
+    "verify": "npm run typecheck && npm test && npm run build",
+    "release:check": "node scripts/pre-release-check.mjs",
+    "pack:check": "node scripts/check-packages.mjs",
+    "release:status": "node scripts/release-status.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "24.1.0",
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
+    "typescript": "5.8.3",
+    "vitest": "3.2.7"
+  }
+}

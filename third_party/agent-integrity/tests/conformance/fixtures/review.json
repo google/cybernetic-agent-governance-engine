@@ -1,0 +1,39 @@
+{
+  "name": "ambiguous support requires review",
+  "envelope": {
+    "protocolVersion": "1-alpha",
+    "policy": {
+      "version": 1,
+      "sources": { "allowedRoots": ["docs"] },
+      "decisions": { "path": "integrity/decisions.yaml" },
+      "rules": {
+        "requireEvidenceFor": ["factual", "recommendation"],
+        "contradictions": "review",
+        "rejectedDecisions": "block",
+        "responseMutation": "block",
+        "replay": "block"
+      }
+    },
+    "response": {
+      "content": "The deployment window may begin at 09:00 UTC.",
+      "sections": [{ "sectionId": "answer", "substantive": true, "byteStart": 0, "byteEnd": 45, "sha256": "754e33f98a22e1600b2f752a2eb34bc3e5d3319894ab7c461ce4f42a2bd57b82" }]
+    },
+    "sources": [{
+      "sourceId": "notes",
+      "path": "docs/notes.md",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "size": 31
+    }],
+    "decisionRegistryDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "decisions": [],
+    "evidence": [{ "evidenceId": "tentative-window", "sourceId": "notes" }],
+    "claims": [{
+      "claimId": "deployment-window",
+      "sectionId": "answer",
+      "kind": "factual",
+      "decisionIds": [],
+      "evidence": [{ "evidenceId": "tentative-window", "role": "supporting", "support": "ambiguous" }]
+    }]
+  },
+  "expected": { "status": "REVIEW", "findingCodes": ["claim.support_ambiguous"] }
+}

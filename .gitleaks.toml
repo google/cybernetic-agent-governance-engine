@@ -1,0 +1,7 @@
+title = "CAGE Gitleaks Configuration"
+
+[allowlist]
+description = "Allow synthetic test fixtures in unit tests"
+paths = [
+    '''tests/test_pii_sanitizer\.py''',
+]

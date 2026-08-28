@@ -1,0 +1,15 @@
+{
+  "owner": "SimranPabla",
+  "repository": "agent-integrity",
+  "tag": "v0.1.0-alpha.0",
+  "commit": "0000000000000000000000000000000000000000",
+  "mainBranch": "main",
+  "workflowFile": "npm-release.yml",
+  "environment": "npm-release",
+  "packages": [
+    { "name": "@agent-integrity/protocol", "version": "0.1.0-alpha.0" },
+    { "name": "@agent-integrity/core", "version": "0.1.0-alpha.0" },
+    { "name": "@agent-integrity/sdk", "version": "0.1.0-alpha.0" },
+    { "name": "@agent-integrity/cli", "version": "0.1.0-alpha.0" }
+  ]
+}

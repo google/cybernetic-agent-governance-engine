@@ -1,0 +1,17 @@
+{
+  "name": "@agent-integrity/protocol",
+  "version": "0.1.0-alpha.0",
+  "description": "Versioned TypeScript protocol types for Agent Integrity.",
+  "license": "Apache-2.0",
+  "author": "Simranjit Singh",
+  "repository": { "type": "git", "url": "git+https://github.com/SimranPabla/agent-integrity.git", "directory": "packages/protocol" },
+  "homepage": "https://github.com/SimranPabla/agent-integrity#readme",
+  "bugs": { "url": "https://github.com/SimranPabla/agent-integrity/issues" },
+  "keywords": ["ai-agents", "integrity", "protocol", "typescript"],
+  "type": "module",
+  "files": ["dist", "README.md"],
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "engines": { "node": ">=22" },
+  "publishConfig": { "access": "public", "provenance": true }
+}

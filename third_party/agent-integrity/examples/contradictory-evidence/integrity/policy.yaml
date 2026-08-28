@@ -1,0 +1,11 @@
+version: 1
+sources:
+  allowedRoots: [docs]
+decisions:
+  path: integrity/decisions.yaml
+rules:
+  requireEvidenceFor: [factual]
+  contradictions: review
+  rejectedDecisions: block
+  responseMutation: block
+  replay: block

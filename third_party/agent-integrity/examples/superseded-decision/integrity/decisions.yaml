@@ -1,0 +1,15 @@
+version: 1
+events:
+  - eventId: old-1
+    decisionId: old
+    revision: 1
+    action: activate
+  - eventId: new-1
+    decisionId: new
+    revision: 1
+    action: activate
+  - eventId: old-2
+    decisionId: old
+    revision: 2
+    action: supersede
+    supersededBy: new

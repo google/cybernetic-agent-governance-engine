@@ -1,0 +1,39 @@
+{
+  "name": "complete supported response passes",
+  "envelope": {
+    "protocolVersion": "1-alpha",
+    "policy": {
+      "version": 1,
+      "sources": { "allowedRoots": ["docs"] },
+      "decisions": { "path": "integrity/decisions.yaml" },
+      "rules": {
+        "requireEvidenceFor": ["factual", "recommendation"],
+        "contradictions": "review",
+        "rejectedDecisions": "block",
+        "responseMutation": "block",
+        "replay": "block"
+      }
+    },
+    "response": {
+      "content": "The deployment window begins at 09:00 UTC.",
+      "sections": [{ "sectionId": "answer", "substantive": true, "byteStart": 0, "byteEnd": 42, "sha256": "7cb298d0f168bdd2d7d1e6b3d42c1615039c4af22d0879f92febbe67736147ad" }]
+    },
+    "sources": [{
+      "sourceId": "operations-policy",
+      "path": "docs/operations.md",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 42
+    }],
+    "decisionRegistryDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "decisions": [],
+    "evidence": [{ "evidenceId": "window", "sourceId": "operations-policy" }],
+    "claims": [{
+      "claimId": "deployment-window",
+      "sectionId": "answer",
+      "kind": "factual",
+      "decisionIds": [],
+      "evidence": [{ "evidenceId": "window", "role": "supporting", "support": "direct" }]
+    }]
+  },
+  "expected": { "status": "PASS", "findingCodes": [] }
+}

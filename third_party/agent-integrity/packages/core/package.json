@@ -1,0 +1,21 @@
+{
+  "name": "@agent-integrity/core",
+  "version": "0.1.0-alpha.0",
+  "description": "Deterministic verification, trusted collection, and signed receipts for Agent Integrity.",
+  "license": "Apache-2.0",
+  "author": "Simranjit Singh",
+  "repository": { "type": "git", "url": "git+https://github.com/SimranPabla/agent-integrity.git", "directory": "packages/core" },
+  "homepage": "https://github.com/SimranPabla/agent-integrity#readme",
+  "bugs": { "url": "https://github.com/SimranPabla/agent-integrity/issues" },
+  "keywords": ["ai-agents", "integrity", "verification", "security"],
+  "type": "module",
+  "files": ["dist", "README.md"],
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "dependencies": {
+    "@agent-integrity/protocol": "0.1.0-alpha.0",
+    "yaml": "^2.8.1"
+  },
+  "engines": { "node": ">=22" },
+  "publishConfig": { "access": "public", "provenance": true }
+}

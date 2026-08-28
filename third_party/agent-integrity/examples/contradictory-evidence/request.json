@@ -1,0 +1,16 @@
+{
+  "envelope": {
+    "protocolVersion": "1-alpha",
+    "policy": { "version": 1, "sources": { "allowedRoots": ["docs"] }, "decisions": { "path": "integrity/decisions.yaml" }, "rules": { "requireEvidenceFor": ["factual"], "contradictions": "review", "rejectedDecisions": "block", "responseMutation": "block", "replay": "block" } },
+    "response": { "content": "The service is available.", "sections": [{ "sectionId": "answer", "substantive": true, "byteStart": 0, "byteEnd": 25, "sha256": "5728632ff4b209df7b268ac2df58bba3ce1581727caf92526f8c5aee2ed479a8" }] },
+    "sources": [{ "sourceId": "status", "path": "docs/status.md", "sha256": "4bae501fc72bf90e110ea2c9d5d693dd0f63dbfc2ddd646e90704b5ccfcd147d", "size": 40 }],
+    "decisionRegistryDigest": "44fbe87080e7534ae05e225047dcdc1851e5d3a1e7e45d654d7828a5dd8e0e88",
+    "decisions": [],
+    "evidence": [
+      { "evidenceId": "status-check", "sourceId": "status", "anchor": { "byteStart": 0, "byteEnd": 18, "sha256": "5479b3000f46476346c7e21f1a3877abcf40d8a0267d8db15fedc9e4f4c11912" } },
+      { "evidenceId": "status-check-conflict", "sourceId": "status", "anchor": { "byteStart": 19, "byteEnd": 39, "sha256": "8116ccdeda30424ab758a2eea1d9e866540a718282dc2dc06357cdbaedc82ba7" } }
+    ],
+    "claims": [{ "claimId": "availability", "sectionId": "answer", "kind": "factual", "decisionIds": [], "evidence": [{ "evidenceId": "status-check", "role": "supporting", "support": "direct" }, { "evidenceId": "status-check-conflict", "role": "contradictory", "disclosed": false }] }]
+  },
+  "context": { "projectRoot": "examples/contradictory-evidence", "allowedRoots": ["docs"], "decisionRegistryPath": "integrity/decisions.yaml" }
+}
