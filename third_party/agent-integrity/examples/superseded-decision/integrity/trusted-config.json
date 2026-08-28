@@ -1,0 +1,5 @@
+{
+  "projectRoot": "examples/superseded-decision",
+  "allowedRoots": ["docs"],
+  "decisionRegistryPath": "integrity/decisions.yaml"
+}

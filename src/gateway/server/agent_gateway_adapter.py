@@ -651,6 +651,7 @@ async def handle_check_request(
                 202,
                 {
                     "verdict": GovernanceDecision.REQUIRE_APPROVAL,
+                    "decision": GovernanceDecision.REQUIRE_APPROVAL,
                     "thread_id": thread_id,
                     "message": (
                         "Request requires human approval. "
@@ -731,11 +732,6 @@ async def handle_check_request(
                     "violations": violations_list,
                     "defer_token": defer_token,
                     "retry_after_seconds": retry_after,
-                    # Legacy fields for backward compatibility
-                    "verdict": GovernanceDecision.DEFER,
-                    "defer_id": defer_token,
-                    "missing_input_reason": missing_input_reason
-                    or classification_reason,
                     "message": (
                         "Request deferred pending context hydration. "
                         "Poll GET /v1/defer/pending for the outcome."
@@ -972,6 +968,7 @@ async def handle_check_request(
                     403,
                     {
                         "verdict": GovernanceDecision.DENY,
+                        "decision": GovernanceDecision.DENY,
                         "violations": violations,
                         "tool_name": tool_name,
                         "fallback_from": "PAUSE",
@@ -990,6 +987,7 @@ async def handle_check_request(
             403,
             {
                 "verdict": GovernanceDecision.DENY,
+                "decision": GovernanceDecision.DENY,
                 "violations": violations,
                 "tool_name": tool_name,
             },

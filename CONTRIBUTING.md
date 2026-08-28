@@ -42,7 +42,7 @@ This installs:
 | Refactor | `refactor/<short-description>` | `refactor/gateway-middleware` |
 | CI / tooling | `ci/<short-description>` | `ci/pin-actions-sha` |
 | Hotfix on release | `hotfix/<version>-<description>` | `hotfix/2.0.1-redis-timeout` |
-| Release candidate | `rc-v<semver>` | `rc-v2.1.0` |
+| Release candidate | `rc-v<semver>` | `rc-v3.0.0` |
 | Experiment / spike | `spike/<short-description>` | `spike/cbf-formal-proof` |
 
 **Rules:**
@@ -171,8 +171,8 @@ of scenario:
 2. Update `CHANGELOG.md` — add release date under the version header
 3. Create an **annotated tag**:
    ```bash
-   git tag -a v2.1.0 -m "release: v2.1.0 — Cybernetic Governance Engine"
-   git push origin v2.1.0
+   git tag -a v3.0.0 -m "release: v3.0.0 — Cybernetic Governance Engine"
+   git push origin v3.0.0
    ```
 4. Open a PR from the integration branch into `main` and **squash-merge** it
    (see [Merge Strategy](#merge-strategy) above — merge commits are not
@@ -185,7 +185,7 @@ of scenario:
 v<MAJOR>.<MINOR>.<PATCH>[-<pre-release>]
 ```
 
-Examples: `v2.0.0`, `v2.1.0-rc.1`, `v2.1.0-dev.1`
+Examples: `v3.0.0`, `v3.0.0-rc.1`, `v3.0.0-dev.1`
 
 ---
 

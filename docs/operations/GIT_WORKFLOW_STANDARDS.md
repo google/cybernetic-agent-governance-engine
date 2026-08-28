@@ -9,8 +9,8 @@
 **Effective:** 2026-08-05  
 **Applies to:** All contributors to `cybernetic-governance-engine`
 
-> **Release Note:** The stable `v2.1.0` tag has been pushed to origin and
-> the GitHub Release is published as Latest (prior stable: `v2.0.0`). There
+> **Release Note:** The stable `v3.0.0` tag has been pushed to origin and
+> the GitHub Release is published as Latest (prior stable: `v2.1.2`). There
 > is no `rc-v*` branch currently retained — release-candidate branches are
 > deleted once their tag is cut. All feature work branches from `main`. The
 > `pre-push` hook blocks direct pushes to `main`.
@@ -250,7 +250,7 @@ letters. No spaces.
 | CI / tooling | `ci/<short-description>` | `ci/pin-actions-sha` |
 | Chore | `chore/<short-description>` | `chore/bump-langfuse-version` |
 | Hotfix on release | `hotfix/<version>-<description>` | `hotfix/2.0.1-redis-timeout` |
-| Release candidate | `rc-v<semver>` | `rc-v2.1.0` |
+| Release candidate | `rc-v<semver>` | `rc-v3.0.0` |
 | Experiment / spike | `spike/<short-description>` | `spike/cbf-formal-proof` |
 
 ### 3.2 Length limit

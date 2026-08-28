@@ -779,10 +779,10 @@ Fail-closed: if Redis is unavailable, the trade is blocked. A `ReservationToken`
 Each `ProvenanceRecord` is linked to its predecessor via SHA-256:
 
 ```
-record_hash_n = SHA-256(parent_hash_{n-1} || sorted_key_json(record_n))
+record_hash_n = SHA-256(parent_hash_{n-1} || jcs_canonicalize(record_n))
 ```
 
-**Deterministic sorted-key JSON serialization** ensures reproducibility across Python versions and runtimes. `compute_hash()` uses `json.dumps(…, separators=(',', ':'), sort_keys=True)` — matching the formal specification; earlier versions omitted `separators`. Chain construction is **O(n)** in the number of governance nodes. `verify_chain_integrity()` validates the full chain on demand. In production, records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`.
+**Deterministic RFC 8785 JCS canonicalization** ensures reproducibility across Python versions and runtimes, and byte-identical digests across Python, Go, and JavaScript. `compute_hash()` uses `jcs_canonicalize_plan()`, replacing the earlier `json.dumps(…, separators=(',', ':'), sort_keys=True)` form; digests are not comparable across that change (see [`docs/BREAKING_CHANGES_v3.md`](../BREAKING_CHANGES_v3.md)). Chain construction is **O(n)** in the number of governance nodes. `verify_chain_integrity()` validates the full chain on demand. In production, records are KMS-signed and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`.
 
 ### 11.7 HMAC-SHA256 Routing Seal v2 (with Evidence Binding)
 

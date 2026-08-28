@@ -79,6 +79,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
 logger = logging.getLogger("cage.reconciliation")
 
 # ---------------------------------------------------------------------------
@@ -179,18 +181,18 @@ class ReconciliationResult:
         return (time.time() - self.verified_at) > self.ttl_seconds
 
     def to_redis_payload(self) -> str:
-        """Serialize to a deterministic JSON string for Redis storage."""
-        return json.dumps(
-            {
-                "source": self.source,
-                "balance_usd": self.balance_usd,
-                "verified_at": self.verified_at,
-                "signature": self.signature,
-                "sequence": self.sequence,  # §2.10: included in signed payload
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
+        """Serialize to a deterministic JSON string for Redis storage.
+
+        v3.1.0: Migrated to RFC 8785 JCS canonicalization.
+        """
+        payload_dict = {
+            "source": self.source,
+            "balance_usd": self.balance_usd,
+            "verified_at": self.verified_at,
+            "signature": self.signature,
+            "sequence": self.sequence,  # §2.10: included in signed payload
+        }
+        return jcs_canonicalize_plan(payload_dict).decode("utf-8")
 
     @classmethod
     def from_redis_payload(cls, payload: str) -> ReconciliationResult:

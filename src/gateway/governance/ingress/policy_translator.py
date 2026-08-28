@@ -54,6 +54,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
 logger = logging.getLogger("Gateway.Governance.Ingress.PolicyTranslator")
 
 # ---------------------------------------------------------------------------
@@ -354,12 +356,13 @@ def translate_policy(spec: dict[str, Any]) -> ArtifactBundle:
     router(spec, bundle)
 
     # Compute policy_version_id from the primary compiled artifact
+    # v3.1.0: Migrated fallback to JCS
     primary_content = (
         bundle.opa_content
         or bundle.python_content
         or bundle.nemo_content
         or bundle.langgraph_content
-        or json.dumps(bundle.control_structure_patch, sort_keys=True)
+        or jcs_canonicalize_plan(bundle.control_structure_patch).decode("utf-8")
     )
     bundle.policy_version_id = _compute_version_id(primary_content)
 

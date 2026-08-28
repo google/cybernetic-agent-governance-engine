@@ -131,3 +131,76 @@ def test_jcs_provider_04_reference_vector_2():
     actual_canonical_bytes = jcs_canonicalize_plan(vector_2_input)
     assert actual_canonical_bytes == expected_canonical_bytes
     assert hashlib.sha256(actual_canonical_bytes).hexdigest() == expected_sha256
+
+
+def test_jcs_divergence_from_json_dumps_sort_keys():
+    """Demonstrate that JCS and json.dumps(sort_keys=True) produce different bytes for float payloads.
+
+    This test documents the breaking change introduced in FlowSignal Phase 2 §5.3:
+    Evidence hashes computed with json.dumps(sort_keys=True) will NOT match hashes
+    computed with RFC 8785 JCS for payloads containing floating-point numbers.
+
+    The divergence occurs because:
+    - json.dumps may emit "1.0" for the float 1.0
+    - JCS mandates "1" (no trailing .0 for whole-number floats)
+    """
+    import hashlib
+    import json
+
+    # Payload with floats that expose the canonicalization difference
+    payload = {
+        "amount": 100.0,  # JCS: "100", json.dumps: "100.0"
+        "rate": 0.05,  # Both emit "0.05"
+        "score": 1.0,  # JCS: "1", json.dumps: "1.0"
+    }
+
+    # Old method (json.dumps with sort_keys=True)
+    old_canonical = json.dumps(payload, sort_keys=True).encode()
+    old_hash = hashlib.sha256(old_canonical).hexdigest()
+
+    # New method (RFC 8785 JCS)
+    new_canonical = jcs_canonicalize_plan(payload)
+    new_hash = hashlib.sha256(new_canonical).hexdigest()
+
+    # Assert they produce different bytes
+    assert old_canonical != new_canonical, (
+        "Expected json.dumps and JCS to produce different bytes for float payloads"
+    )
+
+    # Assert they produce different hashes
+    assert old_hash != new_hash, (
+        "Expected different SHA-256 digests between json.dumps and JCS for float payloads"
+    )
+
+    # Demonstrate the specific byte difference (json.dumps includes spaces, JCS does not)
+    # Also, json.dumps emits "100.0" while JCS emits "100" for whole-number floats
+    assert b"100.0" in old_canonical or b"100" in old_canonical
+    assert b"100" in new_canonical and b"100.0" not in new_canonical
+    assert b"1.0" in old_canonical or b'"score": 1' in old_canonical
+    assert b'"score":1' in new_canonical  # JCS: no spaces, "1" not "1.0"
+
+
+def test_jcs_determinism_across_key_orderings():
+    """Verify JCS produces identical bytes regardless of dict insertion order.
+
+    This is the core value proposition of JCS over json.dumps(sort_keys=True):
+    identical semantic payloads with different key orderings produce byte-identical output.
+    """
+    import hashlib
+
+    payload_1 = {"z": 3, "a": 1, "m": 2}
+    payload_2 = {"a": 1, "m": 2, "z": 3}
+    payload_3 = {"m": 2, "z": 3, "a": 1}
+
+    canonical_1 = jcs_canonicalize_plan(payload_1)
+    canonical_2 = jcs_canonicalize_plan(payload_2)
+    canonical_3 = jcs_canonicalize_plan(payload_3)
+
+    # All three must produce identical bytes
+    assert canonical_1 == canonical_2 == canonical_3
+
+    # And therefore identical hashes
+    hash_1 = hashlib.sha256(canonical_1).hexdigest()
+    hash_2 = hashlib.sha256(canonical_2).hexdigest()
+    hash_3 = hashlib.sha256(canonical_3).hexdigest()
+    assert hash_1 == hash_2 == hash_3

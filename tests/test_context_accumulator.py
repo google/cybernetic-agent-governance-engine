@@ -284,7 +284,7 @@ def test_export_ndjson_is_valid_json():
 
     for line in lines:
         obj = json.loads(line)
-        assert obj["schema"] == "cage-context-accumulator/1.0"
+        assert obj["schema"] == "cage-context-accumulator/2.0"
         assert "record_hash" in obj
         assert "prev_hash" in obj
         assert "node_index" in obj

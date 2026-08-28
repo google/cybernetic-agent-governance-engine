@@ -1,0 +1,5 @@
+{
+  "projectRoot": "examples/contradictory-evidence",
+  "allowedRoots": ["docs"],
+  "decisionRegistryPath": "integrity/decisions.yaml"
+}

@@ -81,9 +81,40 @@ import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 from opentelemetry import trace
+
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
+# ---------------------------------------------------------------------------
+# JSON normalization helper for JCS
+# ---------------------------------------------------------------------------
+
+
+def _normalize_for_jcs(obj: Any) -> Any:
+    """Recursively normalize objects for JCS canonicalization.
+
+    JCS (RFC 8785) requires JSON-native types only. This helper converts:
+    - datetime -> ISO 8601 string
+    - Decimal -> str
+    - Any other non-JSON-native -> str
+    """
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, Decimal):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {k: _normalize_for_jcs(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_normalize_for_jcs(item) for item in obj]
+    elif isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+    else:
+        # Fallback for unknown types
+        return str(obj)
+
 
 logger = logging.getLogger("cage.evidence_stream")
 tracer = trace.get_tracer(__name__)
@@ -194,7 +225,6 @@ class EvidenceRecord:
         payload: Full decision payload (JSON-serializable dict).
 
     v1.1 metadata fields:
-        schema_version: Schema version identifier (always "1.1").
         classification_reason: Human-readable reason for DEFER decisions.
         narrowing_applied: Dict describing narrowing constraints for NARROW decisions.
         pause_token: Unique token for PAUSE decisions (for resumption).
@@ -211,7 +241,6 @@ class EvidenceRecord:
     payload: dict[str, Any]
 
     # v1.1 metadata fields
-    schema_version: str = "1.1"
     classification_reason: str | None = None
     narrowing_applied: dict[str, Any] | None = None
     pause_token: str | None = None
@@ -229,7 +258,6 @@ class EvidenceRecord:
             "prev_hash": self.prev_hash,
             "record_hash": self.record_hash,
             "payload": self.payload,
-            "schema_version": self.schema_version,
         }
         # Only include v1.1 fields if present (sparse representation)
         if self.classification_reason is not None:
@@ -242,16 +270,13 @@ class EvidenceRecord:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EvidenceRecord:
-        """Deserialize from dict, auto-detecting schema version."""
+        """Deserialize from dict (v1.1 schema only)."""
         # Parse timestamp if it's a string
         timestamp = data.get("timestamp")
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         elif timestamp is None:
             timestamp = datetime.now(tz=timezone.utc)
-
-        # Detect schema version (default to 1.0 for records without version field)
-        schema_version = data.get("schema_version", "1.0")
 
         return cls(
             evidence_id=data.get("evidence_id", ""),
@@ -262,7 +287,6 @@ class EvidenceRecord:
             prev_hash=data.get("prev_hash", ""),
             record_hash=data.get("record_hash", ""),
             payload=data.get("payload", {}),
-            schema_version=schema_version,
             classification_reason=data.get("classification_reason"),
             narrowing_applied=data.get("narrowing_applied"),
             pause_token=data.get("pause_token"),
@@ -339,7 +363,8 @@ _EVIDENCE_COMMIT_TIMEOUT_S: float = float(
 
 # v3.0.0 Breaking Change: Schema v1.0 support has been removed.
 # All new records use v1.1 schema exclusively.
-_SCHEMA = "cage-evidence-stream/1.1"
+# v3.1.0 Breaking Change: Migrated to RFC 8785 JCS canonicalization.
+_SCHEMA = "cage-evidence-stream/2.0"
 
 
 def validate_evidence_stream_preconditions() -> None:
@@ -483,8 +508,10 @@ def is_evidence_chain_blocking() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _sha256(data: str) -> str:
+def _sha256(data: str | bytes) -> str:
     """Return the SHA-256 hex digest of *data*."""
+    if isinstance(data, bytes):
+        return hashlib.sha256(data).hexdigest()
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
@@ -494,6 +521,9 @@ def _link_hash(
     event_type: str,
     control_id: str,
     payload_json: str,
+    classification_reason: str | None = None,
+    narrowing_applied: dict[str, Any] | None = None,
+    pause_token: str | None = None,
 ) -> str:
     """Compute a stream entry's ``record_hash`` over its header + payload.
 
@@ -501,38 +531,7 @@ def _link_hash(
     the Redis Stream entry, so re-ordering or re-labelling a record changes
     the link and breaks the chain.
 
-    Note: This function uses the current schema version (_SCHEMA) for new entries.
-    For verification of existing records, use _link_hash_versioned() which
-    respects the record's original schema version.
-    """
-    header = json.dumps(
-        {
-            "schema": _SCHEMA,
-            "sequence": sequence,
-            "event_type": event_type,
-            "control_id": control_id,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return _sha256(prev_hash + header + payload_json)
-
-
-def _link_hash_v1_1(
-    prev_hash: str,
-    sequence: int,
-    event_type: str,
-    control_id: str,
-    payload_json: str,
-    classification_reason: str | None = None,
-    narrowing_applied: dict[str, Any] | None = None,
-    pause_token: str | None = None,
-) -> str:
-    """Compute a v1.1 record hash for evidence verification.
-
-    v3.0.0 Breaking Change: Schema v1.0 support has been removed.
-    This function only supports v1.1 schema. For legacy v1.0 records,
-    use migrate_record_1_0_to_1_1() to upgrade them first.
+    v3.0.0: Collapsed from _link_hash_v1_1 - all records now use v1.1 schema.
 
     Args:
         prev_hash: Hash of the previous record in the chain.
@@ -540,15 +539,16 @@ def _link_hash_v1_1(
         event_type: Event type (e.g., "AUDIT_FINDING", "GOVERNANCE_DECISION").
         control_id: NIST/ISO control identifier.
         payload_json: JSON-serialized event payload.
-        classification_reason: Reason for DEFER decisions.
-        narrowing_applied: Narrowing constraints for NARROW decisions.
-        pause_token: Token for PAUSE decisions.
+        classification_reason: Reason for DEFER decisions (optional).
+        narrowing_applied: Narrowing constraints for NARROW decisions (optional).
+        pause_token: Token for PAUSE decisions (optional).
 
     Returns:
         SHA-256 hex digest of the record.
     """
     # v1.1: Include metadata fields in hash computation
     # Only include non-None fields to maintain determinism
+    # v2.0: Migrated to RFC 8785 JCS canonicalization
     header_dict: dict[str, Any] = {
         "schema": _SCHEMA,
         "sequence": sequence,
@@ -563,31 +563,10 @@ def _link_hash_v1_1(
     if pause_token is not None:
         header_dict["pause_token"] = pause_token
 
-    header = json.dumps(header_dict, sort_keys=True, separators=(",", ":"))
-    return _sha256(prev_hash + header + payload_json)
-
-
-def _detect_schema_version(record: EvidenceRecord | dict[str, Any]) -> str:
-    """Detect the schema version of an evidence record.
-
-    Args:
-        record: EvidenceRecord dataclass or dict representation.
-
-    Returns:
-        Schema version string ("1.0" or "1.1").
-    """
-    if isinstance(record, EvidenceRecord):
-        return record.schema_version
-    # For dict records, check for explicit version field
-    version = record.get("schema_version")
-    if version:
-        return version
-    # Check for schema field in wire format
-    schema = record.get("schema", "")
-    if schema == "cage-evidence-stream/1.1":
-        return "1.1"
-    # Default to 1.0 for records without version marker
-    return "1.0"
+    header_bytes = jcs_canonicalize_plan(header_dict)
+    return _sha256(
+        prev_hash.encode("utf-8") + header_bytes + payload_json.encode("utf-8")
+    )
 
 
 def verify_record(
@@ -596,16 +575,7 @@ def verify_record(
     """Verify evidence record hash (v1.1 schema only).
 
     v3.0.0 Breaking Change: Schema v1.0 support has been removed.
-    This function only verifies v1.1 records. Legacy v1.0 records will
-    return a VerifyResult with valid=False and an error message indicating
-    the schema is unsupported. Use migrate_record_1_0_to_1_1() to upgrade
-    legacy records before verification.
-
-    Verification Process:
-        1. Detect schema version from record
-        2. Return error if v1.0 (deprecated)
-        3. Extract fields and compute hash using v1.1 algorithm
-        4. Compare computed hash against stored record_hash
+    All records use v1.1 schema exclusively.
 
     Args:
         record: EvidenceRecord dataclass or dict to verify.
@@ -626,26 +596,12 @@ def verify_record(
         else:
             record_dict = record
 
-        # Detect schema version
-        schema_version = _detect_schema_version(record_dict)
-
-        # v3.0.0: Schema v1.0 is no longer supported
-        if schema_version == "1.0":
-            return VerifyResult(
-                valid=False,
-                schema_version=schema_version,
-                computed_hash="",
-                expected_hash=record_dict.get("record_hash", ""),
-                error="Schema v1.0 is deprecated (v3.0.0 breaking change). "
-                "Use migrate_record_1_0_to_1_1() to upgrade legacy records.",
-            )
-
         # Extract common fields
         expected_hash = record_dict.get("record_hash", "")
         if not expected_hash:
             return VerifyResult(
                 valid=False,
-                schema_version=schema_version,
+                schema_version="1.1",
                 computed_hash="",
                 expected_hash="",
                 error="Record missing record_hash field",
@@ -662,21 +618,23 @@ def verify_record(
         control_id = record_dict.get("control_id", "")
 
         # Extract payload - handle both wire format and internal format
+        # v2.0: Migrated to JCS with pre-normalization
         payload = record_dict.get("payload")
         if payload is None:
             payload_json = record_dict.get("payload_json", "{}")
         elif isinstance(payload, str):
             payload_json = payload
         else:
-            payload_json = json.dumps(payload, sort_keys=True, default=str)
+            normalized_payload = _normalize_for_jcs(payload)
+            payload_json = jcs_canonicalize_plan(normalized_payload).decode("utf-8")
 
         # v1.1 specific fields
         classification_reason = record_dict.get("classification_reason")
         narrowing_applied = record_dict.get("narrowing_applied")
         pause_token = record_dict.get("pause_token")
 
-        # Compute hash using v1.1 algorithm
-        computed_hash = _link_hash_v1_1(
+        # Compute hash using current algorithm
+        computed_hash = _link_hash(
             prev_hash=prev_hash,
             sequence=sequence,
             event_type=event_type,
@@ -691,7 +649,7 @@ def verify_record(
         if computed_hash == expected_hash:
             return VerifyResult(
                 valid=True,
-                schema_version=schema_version,
+                schema_version="1.1",
                 computed_hash=computed_hash,
                 expected_hash=expected_hash,
                 error=None,
@@ -699,7 +657,7 @@ def verify_record(
         else:
             return VerifyResult(
                 valid=False,
-                schema_version=schema_version,
+                schema_version="1.1",
                 computed_hash=computed_hash,
                 expected_hash=expected_hash,
                 error=f"Hash mismatch: computed={computed_hash[:16]}... expected={expected_hash[:16]}...",
@@ -708,7 +666,7 @@ def verify_record(
     except Exception as exc:
         return VerifyResult(
             valid=False,
-            schema_version="unknown",
+            schema_version="1.1",
             computed_hash="",
             expected_hash=str(
                 record.get("record_hash", "")
@@ -717,101 +675,6 @@ def verify_record(
             ),
             error=f"Verification error: {exc}",
         )
-
-
-def migrate_record_1_0_to_1_1(record: dict[str, Any]) -> EvidenceRecord:
-    """Upgrade a v1.0 evidence record to v1.1 format with default values.
-
-    This migration helper preserves all existing v1.0 fields and adds
-    v1.1 metadata fields with appropriate defaults. The record_hash is
-    NOT recomputed - the original hash is preserved to maintain chain
-    integrity.
-
-    Migration Rules:
-        - schema_version: Set to "1.1"
-        - classification_reason: Set to None (no classification for legacy records)
-        - narrowing_applied: Set to None (no narrowing metadata for legacy records)
-        - pause_token: Set to None (no pause token for legacy records)
-
-    Note on prev_hash Seeding (per specs §4.1):
-        On cutover to v1.1, the first v1.1 record's prev_hash MUST be seeded
-        from the LAST v1.0 record's record_hash, NOT a genesis sentinel.
-        This ensures chain continuity across schema versions.
-
-    Args:
-        record: v1.0 record as dict.
-
-    Returns:
-        EvidenceRecord with v1.1 schema version.
-
-    Example:
-        >>> v1_0_record = {"evidence_id": "evt-123", "decision": "ALLOW", ...}
-        >>> v1_1_record = migrate_record_1_0_to_1_1(v1_0_record)
-        >>> v1_1_record.schema_version
-        '1.1'
-    """
-    # Parse timestamp if it's a string
-    timestamp = record.get("timestamp")
-    if isinstance(timestamp, str):
-        timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    elif timestamp is None:
-        timestamp = datetime.now(tz=timezone.utc)
-
-    # Handle wire format conversions
-    payload = record.get("payload")
-    if payload is None:
-        payload_json = record.get("payload_json", "{}")
-        try:
-            payload = json.loads(payload_json)
-        except (json.JSONDecodeError, TypeError):
-            payload = {}
-    elif isinstance(payload, str):
-        try:
-            payload = json.loads(payload)
-        except (json.JSONDecodeError, TypeError):
-            payload = {}
-
-    return EvidenceRecord(
-        evidence_id=record.get("evidence_id", ""),
-        decision=record.get("decision", record.get("event_type", "")),
-        timestamp=timestamp,
-        tool_name=record.get("tool_name", ""),
-        control_id=record.get("control_id", ""),
-        prev_hash=record.get("prev_hash", ""),
-        record_hash=record.get("record_hash", ""),
-        payload=payload,
-        # Upgrade to v1.1 with default values for new fields
-        schema_version="1.1",
-        classification_reason=None,
-        narrowing_applied=None,
-        pause_token=None,
-    )
-
-
-def get_last_v1_0_hash(records: list[dict[str, Any]]) -> str:
-    """Extract the hash of the last v1.0 record for cutover seeding.
-
-    Per specs §4.1: On cutover to v1.1, prev_hash must be seeded from
-    the LAST v1.0 record, NOT a genesis sentinel. This function finds
-    the last v1.0 record in a sequence and returns its record_hash.
-
-    Args:
-        records: List of evidence records (newest last).
-
-    Returns:
-        The record_hash of the last v1.0 record, or the genesis hash
-        if no v1.0 records exist.
-    """
-    genesis_hash = _sha256("EVIDENCE_STREAM_GENESIS")
-
-    # Scan from end to find last v1.0 record
-    for record in reversed(records):
-        version = _detect_schema_version(record)
-        if version == "1.0":
-            return record.get("record_hash", genesis_hash)
-
-    # No v1.0 records found - this is a fresh chain
-    return genesis_hash
 
 
 # ---------------------------------------------------------------------------
@@ -934,7 +797,9 @@ class EvidenceStreamSink:
             return None
 
         # Hash-chain the event — lock guards all reads/writes of _prev_hash and _sequence
-        payload_json = json.dumps(event, sort_keys=True, default=str)
+        # v2.0: Migrated to RFC 8785 JCS with pre-normalization
+        normalized_event = _normalize_for_jcs(event)
+        payload_json = jcs_canonicalize_plan(normalized_event).decode("utf-8")
 
         event_type = event.get("type", "UNKNOWN")
         control_id = event.get("controlId", "")
@@ -1126,7 +991,9 @@ class EvidenceStreamSink:
         including the hash and sequence number for the commit proof.
         """
         # Hash-chain the event — lock guards all reads/writes of _prev_hash and _sequence
-        payload_json = json.dumps(event, sort_keys=True, default=str)
+        # v2.0: Migrated to RFC 8785 JCS with pre-normalization
+        normalized_event = _normalize_for_jcs(event)
+        payload_json = jcs_canonicalize_plan(normalized_event).decode("utf-8")
 
         event_type = event.get("type", "UNKNOWN")
         control_id = event.get("controlId", "")

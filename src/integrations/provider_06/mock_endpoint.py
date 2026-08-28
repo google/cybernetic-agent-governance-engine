@@ -56,6 +56,8 @@ from uuid import uuid4
 
 import jsonschema
 
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
 logger = logging.getLogger("cage.integrations.provider_06.mock")
 
 SCHEMA_PATH = (
@@ -185,8 +187,9 @@ def _create_mock_receipt(
     }
 
     # Mock signature (not cryptographically valid)
-    payload_json = json.dumps(payload, sort_keys=True)
-    mock_signature = _sha256(f"mock-sign:{payload_json}")
+    # v3.1.0: Migrated to JCS for consistency
+    payload_bytes = jcs_canonicalize_plan(payload)
+    mock_signature = _sha256(f"mock-sign:{payload_bytes.decode('utf-8')}")
 
     return {
         **payload,
@@ -195,7 +198,7 @@ def _create_mock_receipt(
             "keyId": "mock-key-001",
             "value": mock_signature,
         },
-        "receiptDigest": _sha256(payload_json + mock_signature),
+        "receiptDigest": _sha256(payload_bytes.decode("utf-8") + mock_signature),
     }
 
 

@@ -1002,12 +1002,12 @@ Each [`ProvenanceRecord`](../../src/gateway/governance/provenance_chain.py) cont
 | `node_id` | `str` | LangGraph node name (e.g. `"opa_node"`, `"causal_gatekeeper"`) |
 | `input_hash` | `str` | SHA-256 hex digest of the node's input data (64 chars) |
 | `output_hash` | `str` | SHA-256 hex digest of the node's output data (64 chars) |
-| `decision` | `str` | Governance decision: one of `VALID_DECISIONS = {"ALLOW", "BLOCK", "ESCALATE", "REQUIRE_APPROVAL", "DEFER"}` |
+| `decision` | `str` | Governance decision: one of `VALID_DECISIONS = {"ALLOW", "DENY", "DEFER", "NARROW", "PAUSE", "REQUIRE_APPROVAL"}` — the canonical six. Legacy `BLOCK`/`ESCALATE` were removed; emitters must remap `BLOCK → DENY` and `ESCALATE → REQUIRE_APPROVAL`. See [`docs/BREAKING_CHANGES_v3.md`](../BREAKING_CHANGES_v3.md) |
 | `parent_hash` | `str \| None` | SHA-256 of the previous record's full dict (sorted keys); `None` for the first record |
 
-**Hash computation:** [`compute_hash(data)`](../../src/gateway/governance/provenance_chain.py) serialises the dict with `json.dumps(sort_keys=True)` before SHA-256 hashing — deterministic regardless of insertion order. Non-serialisable values are coerced to strings.
+**Hash computation:** [`compute_hash(data)`](../../src/gateway/governance/provenance_chain.py) canonicalises the dict with RFC 8785 JCS (`jcs_canonicalize_plan()`) before SHA-256 hashing — deterministic regardless of insertion order and identical across Python, Go, and JavaScript runtimes. Non-serialisable values are coerced to strings before canonicalization.
 
-> **Serialisation note (H57):** `compute_hash()` uses `json.dumps(…, separators=(',', ':'), sort_keys=True)`. This matches the formal specification. Earlier versions omitted `separators`, producing non-spec-compliant hash values.
+> **Serialisation note (supersedes H57):** `compute_hash()` previously used `json.dumps(…, separators=(',', ':'), sort_keys=True)`. It now uses RFC 8785 JCS. Digests computed under the previous algorithm do not match those computed now — see [`docs/BREAKING_CHANGES_v3.md`](../BREAKING_CHANGES_v3.md).
 
 **Chain integrity verification:** [`verify_chain_integrity(records)`](../../src/gateway/governance/provenance_chain.py) checks that each record's `parent_hash` matches the `chain_hash()` of the preceding record. The first record must have `parent_hash=None`. Returns `False` on any broken link.
 
@@ -1025,7 +1025,7 @@ LangGraph Governance Node (e.g. opa_node)
       │  input_data, output_data, decision
       ▼
 build_provenance_record(trace_id, node_id, input_data, output_data, decision, parent_hash)
-      │  Computes input_hash, output_hash; validates decision ∈ {ALLOW, BLOCK, ESCALATE, REQUIRE_APPROVAL, DEFER}
+      │  Computes input_hash, output_hash; validates decision ∈ {ALLOW, DENY, DEFER, NARROW, PAUSE, REQUIRE_APPROVAL}
       ▼
 ProvenanceRecord.chain_hash()   ← becomes parent_hash for next node
       │

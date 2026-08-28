@@ -51,12 +51,13 @@ NON_TESTABLE_CONTROLS = {
     "sa11",  # SA-11 (Developer Testing) — covered by test-gap findings; no Lula stub
     "sa9",  # SA-9 (External System Services) — external integration boundary
     "si7",  # SI-7 (Software/System Integrity) — algorithmic/code integrity enforced via Python unit tests/formal proofs; no standalone Lula stub
+    "sc13",  # SC-13 (Cryptographic Protection) — KMS/JCS canonicalization in Python codebase; verified via unit tests
     "external",
 }
 
 CONTROL_ALIASES: dict[str, list[str]] = {
-    "a84": ["tqp007", "iso001-token-quota"],
-    "iso42001": ["a52", "a53", "a92", "tqp007", "iso001-token-quota"],
+    "a84": ["tqp007", "iso001-token-quota", "flowsignal"],
+    "iso42001": ["a52", "a53", "a92", "tqp007", "iso001-token-quota", "flowsignal"],
     "sc7": ["ftra"],
     "ac4": ["ftra"],
     "ctrlftra001": ["ftra"],

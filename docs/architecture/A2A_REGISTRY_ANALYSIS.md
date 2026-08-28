@@ -2,13 +2,13 @@
 
 The GitHub proposal discussion (**#741 Agent Registry - Proposal**) captures the maturation of the **Discovery & Orchestration Plane** in the emerging Agent-to-Agent (A2A) ecosystem. Over the course of the thread, the conversation pivots from a naive, centralized CRUD catalog toward a structured **Three-Layer Model (Agent Card / Publication Record / Authorization Overlay)** and a **Core vs. Extensions** separation.
 
-When analyzed against **CAGE (Cybernetic Agent Governance Engine v2.1.0)**, this registry discussion provides external market validation for CAGE's core architectural thesis: **Discoverability is not authority, and catalog lookup is not runtime containment.**
+When analyzed against **CAGE (Cybernetic Agent Governance Engine v3.0.0)**, this registry discussion provides external market validation for CAGE's core architectural thesis: **Discoverability is not authority, and catalog lookup is not runtime containment.**
 
 ---
 
 ### 🏛️ Direct Comparative Architecture Matrix
 
-| Architectural Vector | A2A Registry Proposal (Consensus Spec) | CAGE v2.1.0 Posture |
+| Architectural Vector | A2A Registry Proposal (Consensus Spec) | CAGE v3.0.0 Posture |
 | --- | --- | --- |
 | **Primary Domain** | **Discovery & Negotiation Plane:** Locating agent endpoints, matching capabilities/skills, and establishing interface protocols. | **Execution & Substrate Plane:** Real-time interception, cryptographic consequence gating, and out-of-process invariant enforcement. |
 | **Identity & Trust Anchor** | Declarative Agent Cards, SPIFFE/mTLS federation hints, W3C DID/VC references, or OAuth client credentials. | **SPIFFE Trust Domains (CAGE-003):** Dynamic mTLS binding synchronized via `AgentRegistryDaemon` directly into Open Policy Agent (OPA/Rego) perimeters. |
@@ -29,7 +29,7 @@ When analyzed against **CAGE (Cybernetic Agent Governance Engine v2.1.0)**, this
 #### 2. Native Registry Ingestion & Identity Binding (CAGE-003)
 
 * **The Proposal's Implementation:** The thread debates centralized catalogs (Path A / xRegistry) versus federated peer networks using SPIFFE SVIDs and mTLS (Path B / `@SecureAgentTools`).
-* **The CAGE Posture:** CAGE v2.1.0 solves this via the **AGW Ingress Adapter Suite & CAGE-003**. CAGE runs an out-of-process `AgentRegistryDaemon` that ingests external agent catalogs (supporting Google Agent Registry, SPIFFE trust domains, and MCP server catalogs). It automatically compiles catalog entries into low-level OPA Rego ASTs (`generated_tool_authorizations.json`), bridging high-level registry discovery directly into low-level kernel and network admission rules.
+* **The CAGE Posture:** CAGE v3.0.0 solves this via the **AGW Ingress Adapter Suite & CAGE-003**. CAGE runs an out-of-process `AgentRegistryDaemon` that ingests external agent catalogs (supporting Google Agent Registry, SPIFFE trust domains, and MCP server catalogs). It automatically compiles catalog entries into low-level OPA Rego ASTs (`generated_tool_authorizations.json`), bridging high-level registry discovery directly into low-level kernel and network admission rules.
 
 #### 3. Topology Validation & Forward-Looking Trajectory Reachability (FTRA)
 

@@ -1,6 +1,6 @@
 # Cybernetic Agent Governance Engine (CAGE) — One-Pager
 
-**Authors:** CAGE Engineering Team · **Last updated:** 2026-08-18 · **Status:** GO — STABLE RELEASE (v3.0.0)
+**Authors:** CAGE Engineering Team · **Last updated:** 2026-08-28 · **Status:** GO — STABLE RELEASE (v3.0.0)
 
 ---
 
@@ -94,7 +94,7 @@ Source: [`src/gateway/governance/symbolic_governor.py`](../../src/gateway/govern
 | Document type         | Engineering one-pager                                                                                                                                                   |
 | Audience              | Engineering leads, compliance reviewers, AI governance evaluators                                                                                                       |
 | Companion documents   | [`README.md`](../README.md), [`COMPLIANCE.md`](../../COMPLIANCE.md), [`docs/GOVERNANCE_CROSSWALK.md`](../compliance/cross-region/GOVERNANCE_CROSSWALK.md), [`docs/NEURO_SYMBOLIC_GOVERNANCE.md`](../governance/NEURO_SYMBOLIC_GOVERNANCE.md) |
-| Implementation status | v3.0.0 — 2026-08-18                                                                                                                                                    |
-| Production readiness  | **GO — STABLE RELEASE (v3.0.0, 2026-08-18)**; see `CHANGELOG.md` and `docs/security/SECURITY_STATUS.md` for current posture. CAGE has not received a NIST Authorization to Operate (ATO) — see the ATO caveat in `README.md`.                                     |
+| Implementation status | v3.0.0 — 2026-08-28                                                                                                                                                    |
+| Production readiness  | **GO — STABLE RELEASE (v3.0.0, 2026-08-28)**; see `CHANGELOG.md` and `docs/security/SECURITY_STATUS.md` for current posture. CAGE has not received a NIST Authorization to Operate (ATO) — see the ATO caveat in `README.md`.                                     |
 | Open issues           | File a GitHub issue for any defects or feature requests                                                                                                                 |
 | Feedback              | File a GitHub issue or suggest edits via pull request                                                                                                                   |

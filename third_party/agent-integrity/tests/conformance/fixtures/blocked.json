@@ -1,0 +1,43 @@
+{
+  "name": "superseded decision blocks release",
+  "envelope": {
+    "protocolVersion": "1-alpha",
+    "policy": {
+      "version": 1,
+      "sources": { "allowedRoots": ["docs"] },
+      "decisions": { "path": "integrity/decisions.yaml" },
+      "rules": {
+        "requireEvidenceFor": ["factual", "recommendation"],
+        "contradictions": "review",
+        "rejectedDecisions": "block",
+        "responseMutation": "block",
+        "replay": "block"
+      }
+    },
+    "response": {
+      "content": "Use the retired rollout plan.",
+      "sections": [{ "sectionId": "answer", "substantive": true, "byteStart": 0, "byteEnd": 29, "sha256": "3f265451550d810f589936201e9813b53773babd27b7cca60547f7e167901068" }]
+    },
+    "sources": [{
+      "sourceId": "rollout",
+      "path": "docs/rollout.md",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "size": 25
+    }],
+    "decisionRegistryDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "decisions": [
+      { "eventId": "old-1", "decisionId": "old-plan", "revision": 1, "action": "activate" },
+      { "eventId": "new-1", "decisionId": "new-plan", "revision": 1, "action": "activate" },
+      { "eventId": "old-2", "decisionId": "old-plan", "revision": 2, "action": "supersede", "supersededBy": "new-plan" }
+    ],
+    "evidence": [{ "evidenceId": "old-rollout", "sourceId": "rollout" }],
+    "claims": [{
+      "claimId": "rollout-plan",
+      "sectionId": "answer",
+      "kind": "recommendation",
+      "decisionIds": ["old-plan"],
+      "evidence": [{ "evidenceId": "old-rollout", "role": "supporting", "support": "direct" }]
+    }]
+  },
+  "expected": { "status": "BLOCKED", "findingCodes": ["decision.superseded"] }
+}

@@ -243,10 +243,6 @@ class DeferResponse(BaseModel):
         default=300,
         description="Suggested retry interval in seconds (default 5 minutes)",
     )
-    missing_input_reason: str = Field(
-        default="",
-        description="Legacy field: reason for missing context (backward compat)",
-    )
     defer_reason: str = Field(
         default="CONFIDENCE_BELOW_THRESHOLD",
         description="Enum-style reason code for the deferral",
@@ -265,9 +261,6 @@ class DeferResponse(BaseModel):
             "violations": self.violations,
             "defer_token": self.defer_token,
             "retry_after_seconds": self.retry_after_seconds,
-            # Legacy fields for backward compatibility
-            "missing_input_reason": self.missing_input_reason,
-            "verdict": GovernanceDecision.DEFER,  # Legacy field
         }
 
 

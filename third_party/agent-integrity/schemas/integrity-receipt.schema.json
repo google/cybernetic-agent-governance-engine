@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SimranPabla/agent-integrity/schemas/integrity-receipt.schema.json",
+  "title": "Agent Integrity Receipt 2-alpha",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "receiptVersion", "engineVersion", "issuer", "audience", "purpose", "nonce", "runId", "createdAt", "expiresAt", "policyDigest", "envelopeDigest", "verification", "signature", "receiptDigest"],
+  "properties": {
+    "protocolVersion": { "const": "1-alpha" }, "receiptVersion": { "const": "2-alpha" },
+    "engineVersion": { "type": "string", "minLength": 1, "maxLength": 256 }, "issuer": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "audience": { "type": "string", "minLength": 1, "maxLength": 256 }, "purpose": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "nonce": { "type": "string", "minLength": 1, "maxLength": 256 }, "runId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "createdAt": { "type": "string", "format": "date-time" }, "expiresAt": { "type": "string", "format": "date-time" },
+    "policyDigest": { "$ref": "#/$defs/sha256" }, "envelopeDigest": { "$ref": "#/$defs/sha256" },
+    "verification": { "$ref": "#/$defs/result" },
+    "signature": { "type": "object", "additionalProperties": false, "required": ["algorithm", "keyId", "value"], "properties": { "algorithm": { "const": "Ed25519" }, "keyId": { "type": "string", "minLength": 1, "maxLength": 256 }, "value": { "type": "string", "minLength": 88, "maxLength": 88, "pattern": "^[A-Za-z0-9+/]{86}==$" } } },
+    "receiptDigest": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "finding": { "type": "object", "additionalProperties": false, "required": ["code", "severity", "message"], "properties": { "code": { "type": "string", "minLength": 1 }, "severity": { "enum": ["review", "blocked"] }, "message": { "type": "string", "minLength": 1 }, "path": { "type": "string" } } },
+    "result": { "type": "object", "additionalProperties": false, "required": ["protocolVersion", "status", "findings"], "properties": { "protocolVersion": { "const": "1-alpha" }, "status": { "enum": ["PASS", "REVIEW", "BLOCKED"] }, "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } } } }
+  }
+}

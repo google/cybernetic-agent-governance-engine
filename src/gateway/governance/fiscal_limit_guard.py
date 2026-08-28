@@ -579,15 +579,17 @@ class FiscalLimitGuard:
         else:
             amount_cents = int(round(amount * 100))  # type: ignore[operator]
 
-        # Determine the target window key
+        # Determine the target window key (BC-07 remediation: require explicit window_key or token)
         target_window_key: str
         if window_key is not None:
             target_window_key = window_key
         elif token is not None:
             target_window_key = token.window_key
         else:
-            # Legacy fallback: compute current window (backward compatible)
-            target_window_key = self._window_key()
+            raise ValueError(
+                f"rollback() requires explicit window_key or token argument. "
+                f"Neither was provided for audit_id={audit_id}"
+            )
 
         current_window_key = self._window_key()
 

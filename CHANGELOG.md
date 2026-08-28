@@ -7,7 +7,40 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [Unreleased]
+## [3.0.0] - 2026-08-28
+
+> **Major Version Release:** Architectural cleanup, formal safety consolidations,
+> governed threshold centralization, RFC 8785 JCS canonicalization, 6-primitive
+> governance runtime (PAUSE/NARROW/DEFER), Lua-atomic CBF, and provider integrations.
+> See [`docs/BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md) for full migration guidance.
+
+### Breaking Changes
+
+#### Backward-Compatibility Remediation & JCS Migration (BC-01–BC-08)
+- **Canonicalization (BC-01)** — RFC 8785 JCS migration completed across `src/`: every executable `json.dumps(..., sort_keys=True)` canonicalization site now uses `jcs_canonicalize_plan()`. Affects the `ContextAccumulator` and `EvidenceStreamSink` hash chains (write and verify migrated atomically), the WORM/KMS UCA signing path, ConsequenceToken JWS envelopes, routing seals, OPA/query cache keys, the reconciliation signed balance, the control-registry profile hash, and provider receipt/state digests. Closes POAM-2026-060 (`refactor(compliance)!`)
+- **Schema Sentinels (BC-02)** — `cage-evidence-stream/1.1` → `/2.0` and `cage-context-accumulator/1.1` → `/2.0`; records written pre-change do not verify (`refactor(compliance)!`)
+- **WORM/KMS Signing (BC-03)** — `uca_logger._sign_record()` migrated to JCS with no compatibility shim; previously-signed WORM records will not verify (`refactor(governance)!`)
+- **FlowSignal Decision Field (BC-04)** — `src/integrations/provider_01/provider.py`: FlowSignal `decision` field is now mandatory; a missing or unrecognized value fails closed with `code="cage.endpoint_error"` instead of falling back to the legacy binary `admitted`/`findings` shape. Closes a latent fail-open; POAM-2026-064 (`fix(governance)!`)
+- **Canonical Decisions (BC-05)** — `src/gateway/governance/provenance_chain.py`: `VALID_DECISIONS` narrowed from eight to the canonical six (`ALLOW`, `DENY`, `DEFER`, `NARROW`, `PAUSE`, `REQUIRE_APPROVAL`); legacy `BLOCK`/`ESCALATE` rejected. POAM-2026-065 (`refactor(governance)!`)
+- **Fiscal Limit Rollback (BC-07)** — `src/gateway/governance/fiscal_limit_guard.py`: `rollback()` now raises `ValueError` without an explicit `window_key` or `token`, restoring the POAM-2026-058 cross-window guard the legacy fallback defeated. POAM-2026-067 (`fix(governance)!`)
+- **Regional Compliance Prerequisite (BC-08)** — `src/gateway/governance/constants.py`: a missing regional compliance profile now raises `RuntimeError` at startup instead of degrading to a `region="LEGACY"` profile; deployments must provision `config/compliance/{REGION}_BASELINE.json`. POAM-2026-068 (`fix(governance)!`)
+
+#### Removals & Deprecations (SR-1–SR-7, MR-1–MR-4, CR-1–CR-3)
+- Removed `stpa_validator.py` shim module — use `GeneratedSTPAValidator` directly (SR-1)
+- Removed `safety.py` re-export shim — import from `text_filter` and `cbf` directly (SR-2)
+- Removed `GovernanceClient`, `RedisClient`, `HybridClient` aliases — use `StructuredLLMClient` and `AsyncRedisClient` (SR-3, SR-4, SR-5)
+- Removed `check_safety_constraints` legacy tool alias — use `simulate_governance_check` (SR-6)
+- Removed `create_ftra_node()` deprecated params (`registry_path`, `plan_key`) — kwargs no longer accepted; pass a `FtraNodeConfig` instance instead (SR-7)
+- Removed `CONTROL_META`, `EVIDENCE_SLA_SECONDS`, `ISO_CONTROL_MAP` aliases — use region-aware accessors `get_control_meta()`, `get_sla_seconds()`, `get_iso_control_map()` (MR-1, MR-2, MR-3)
+- Removed `config/settings.py` module-level aliases — use `Config.X` class attributes (MR-4)
+- Migrated threshold env vars to `config/governance_thresholds.json` (env vars still work as overrides) (EV-1–EV-6)
+- (CR-1 / POAM-2026-062) Removed Evidence Stream v1.0 schema support — v1.1 is now the only supported schema; dual-schema machinery deleted (`_detect_schema_version()`, `migrate_record_1_0_to_1_1()`, `get_last_v1_0_hash()`, `_link_hash_v1_1()`, `EvidenceRecord.schema_version`)
+- (CR-2) Removed NeMo auto-apply path (`NEMO_AUTO_APPLY_ENABLED`) — all refinements require human approval via `/v1/nemo/propose-refinement` and `/v1/nemo/approve-refinement/{proposal_id}`
+- (CR-3) Renamed `update_state()` → `_update_state_unsafe()` — use `atomic_verify_and_commit()` instead
+- Removed `AGWEnvelope`/`AGWEnvelopeBuilder` backward-compatibility aliases (`src/gateway/governance/agw_envelope.py`, entire file deleted) — use `GovernanceEnvelope`/`GovernanceEnvelopeBuilder` from `src/gateway/governance/governance_envelope.py`
+- Removed legacy `sign_provider_04_digest()` method from `KMSSigner` (`src/gateway/governance/kms_signer.py`) — use `sign()` instead
+- Removed Provider 03 backward-compatibility aliases (`fetch_legal_baseline()`, `validate_external_fria()`, `submit_evidence_chain()`) (POAM-2026-063)
+- Removed duplicated legacy DEFER response fields (`verdict`, `defer_id`, `missing_input_reason`) — canonical fields are `decision`, `defer_token`, `classification_reason` (POAM-2026-066)
 
 ### Added
 
@@ -27,69 +60,37 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `src/gateway/governance/symbolic_governor.py:_park_defer_context()` — DeferQueue integration: DEFER tokens now persisted via DeferQueue for client polling (`feat(governance)`)
 - `src/gateway/governance/cbf.py` — Redis fence epoch: `safety:fence_epoch` monotonic counter for failover safety (gated by `CAGE_REDIS_SYNCHRONOUS_REPLICATION`, default true) (`feat(governance)`)
 - `src/gateway/governance/cbf.py`, `src/compliance_bridge/reconciliation_worker.py` — Reconciliation replay defense: monotonic sequence numbers prevent payload replay attacks (gated by `CAGE_RECONCILIATION_REPLAY_DEFENSE`) (`feat(governance)`)
+- `config/governance_thresholds.json` v2.0.0 schema with FRIA, confidence, and causal thresholds
+- Threshold accessor functions in `src/gateway/governance/schemas/thresholds.py`
+- Region-aware control metadata accessors (`get_control_meta()`, `get_sla_seconds()`, `get_iso_control_map()`)
 
 ### Changed
 
 - `src/compliance_bridge/evidence_stream.py` — Evidence chain blocking default: `EVIDENCE_CHAIN_BLOCKING` now defaults to `"true"` (peer review Fix B) (`fix(compliance)`)
 - `src/gateway/governance/symbolic_governor.py:_ftra_boundary_check()` — FTRA boundary check mandatory: now runs unconditionally (flag `CAGE_FTRA_BOUNDARY_ENABLED` removed per POAM-2026-030-B) (`fix(governance)`)
+- `FtraNodeConfig` is now required for `create_ftra_node()` (no fallback extractors)
+- Threshold values loaded from config file with env var overrides
+- `SafetyBoundaryProtocol` no longer exposes `update_state()` method
 
 ### Removed
 
 - `src/compliance_bridge/evidence_stream.py` — Evidence chain v1.0 schema support: removed deprecated `_SCHEMA_1_0`/`_SCHEMA_1_1` constants; only v1.1 supported (CR-1 from 3.0.0) (`refactor(compliance)`)
-
-### Fixed
-
-- POAM-2026-038 closure — Reconciliation worker secrets populated, CronJob operational — 2026-08-16 (`fix(compliance)`)
-
----
-
-## [3.0.0] - 2026-08-15
-
-> **Corrected release:** v3.0.0 was initially tagged 2026-08-15 with four
-> breaking changes still outstanding. Those changes were completed
-> post-tag on branch `fix/v3-breaking-changes-completion` and are now
-> reflected below: the `AGWEnvelope`/`AGWEnvelopeBuilder` removal, the
-> `sign_external_digest()` removal, the `create_ftra_node()` deprecated-kwargs
-> removal (kwargs fully removed, not merely deprecated), and the
-> `KMS_BATCH_ENABLED` default-value discrepancy (resolved as `"false"`). See
-> [`docs/BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md) for full detail.
-
-### Breaking Changes
-- Removed `stpa_validator.py` shim module — use `GeneratedSTPAValidator` directly
-- Removed `safety.py` re-export shim — import from `text_filter` and `cbf` directly
-- Removed `GovernanceClient`, `RedisClient`, `HybridClient` aliases
-- Removed `check_safety_constraints` legacy tool alias — use `simulate_governance_check`
-- Removed `create_ftra_node()` deprecated params (`registry_path`, `plan_key`) — kwargs no longer accepted; pass a `FtraNodeConfig` instance instead
-- Removed `CONTROL_META`, `EVIDENCE_SLA_SECONDS`, `ISO_CONTROL_MAP` aliases — use region-aware accessors
-- Removed `config/settings.py` module-level aliases — use `Config.X` class attributes
-- Migrated threshold env vars to `config/governance_thresholds.json` (env vars still work as overrides)
-- (CR-1) Removed Evidence Stream v1.0 schema support — v1.1 is now the only supported schema
-- (CR-2) Removed NeMo auto-apply path (`NEMO_AUTO_APPLY_ENABLED`) — all refinements require human approval
-- (CR-3) Renamed `update_state()` → `_update_state_unsafe()` — use `atomic_verify_and_commit()` instead
-- Removed `AGWEnvelope`/`AGWEnvelopeBuilder` backward-compatibility aliases (`src/gateway/governance/agw_envelope.py`, entire file deleted) — use `GovernanceEnvelope`/`GovernanceEnvelopeBuilder` from `src/gateway/governance/governance_envelope.py`
-- Removed legacy `sign_provider_04_digest()` method from `KMSSigner` (`src/gateway/governance/kms_signer.py`) — use `sign()` instead
-
-### Added
-- `config/governance_thresholds.json` v2.0.0 schema with FRIA, confidence, and causal thresholds
-- Threshold accessor functions in `src/gateway/governance/schemas/thresholds.py`
-- Region-aware control metadata accessors (`get_control_meta()`, `get_sla_seconds()`, `get_iso_control_map()`)
-
-### Removed
+- `src/compliance_bridge/evidence_stream.py` — Dual-schema machinery deleted: `_detect_schema_version()`, `migrate_record_1_0_to_1_1()`, `get_last_v1_0_hash()`, `_link_hash_v1_1()` (collapsed into `_link_hash()`), and the `EvidenceRecord.schema_version` field; `tests/test_dual_schema_verification.py` deleted. POAM-2026-062 (`refactor(compliance)!`)
+- `src/integrations/provider_03/provider.py` — Three backward-compatibility aliases removed (`fetch_legal_baseline()`, `validate_external_fria()`, `submit_evidence_chain()`); `validate_external_fria()` had returned a hardcoded `APPROVED`, a silent-bypass risk. POAM-2026-063 (`refactor(governance)!`)
+- `src/gateway/governance/decisions.py`, `symbolic_governor.py`, `src/gateway/server/agent_gateway_adapter.py` — Duplicated legacy DEFER response fields removed (`verdict`, `defer_id`, `missing_input_reason`); canonical fields are `decision`, `defer_token`, `classification_reason`. POAM-2026-066 (`refactor(governance)!`)
 - `src/gateway/governance/agw_envelope.py` (entire file) — `AGWEnvelope` and `AGWEnvelopeBuilder` backward-compatibility aliases; use `GovernanceEnvelope`/`GovernanceEnvelopeBuilder` from `src/gateway/governance/governance_envelope.py`
 - `tests/test_agw_envelope.py` — backward-compatibility test suite for the removed `AGWEnvelope`/`AGWEnvelopeBuilder` aliases; see `tests/test_governance_envelope.py` for canonical coverage
 - Removed legacy `sign_provider_04_digest()` method from `KMSSigner` (`src/gateway/governance/kms_signer.py`) — use `sign()` instead
 - `create_ftra_node()` deprecated `registry_path`/`plan_key` keyword arguments (`src/gateway/governance/ftra/node_factory.py`) — fully removed, not just deprecated; pass a `FtraNodeConfig` instance instead
 
-### Changed
-- `FtraNodeConfig` is now required for `create_ftra_node()` (no fallback extractors)
-- Threshold values loaded from config file with env var overrides
-- `SafetyBoundaryProtocol` no longer exposes `update_state()` method
-
 ### Fixed
-- `KMS_BATCH_ENABLED` default-value discrepancy (Wave 0) resolved: confirmed default is `"false"` (disabled), matching `KmsBatchThresholds.enabled` in `src/gateway/governance/schemas/thresholds.py` and `config/governance_thresholds.json`. **Note:** the startup log comment in `src/compliance_bridge/main.py` (near line 213) still states the default is `"true"` and requires a follow-up code fix to align with the verified `"false"` default.
+
+- POAM-2026-038 closure — Reconciliation worker secrets populated, CronJob operational — 2026-08-16 (`fix(compliance)`)
+- `KMS_BATCH_ENABLED` default-value discrepancy resolved: confirmed default is `"false"` (disabled), matching `KmsBatchThresholds.enabled` in `src/gateway/governance/schemas/thresholds.py` and `config/governance_thresholds.json`.
 
 ### Migration
-See [MIGRATION_GUIDE_v3.md](docs/MIGRATION_GUIDE_v3.md) for detailed upgrade instructions.
+
+See [docs/BREAKING_CHANGES_v3.md](docs/BREAKING_CHANGES_v3.md) for detailed upgrade instructions.
 
 Example migration for the `AGWEnvelope` removal:
 
@@ -572,7 +573,9 @@ First stable reference implementation with full security hardening scope.
 
 ---
 
-[Unreleased]: https://github.com/google/cybernetic-governance-engine/compare/v2.1.1...HEAD
+[Unreleased]: https://github.com/google/cybernetic-governance-engine/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/google/cybernetic-governance-engine/compare/v2.1.2...v3.0.0
+[2.1.2]: https://github.com/google/cybernetic-governance-engine/compare/v2.1.1...v2.1.2
 [v2.1.1]: https://github.com/google/cybernetic-governance-engine/compare/v2.1.0...v2.1.1
 [v2.1.0]: https://github.com/google/cybernetic-governance-engine/compare/v2.0.0...v2.1.0
 [v2.0.0]: https://github.com/google/cybernetic-governance-engine/releases/tag/v2.0.0

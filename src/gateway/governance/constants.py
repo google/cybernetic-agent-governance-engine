@@ -73,6 +73,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
 logger = logging.getLogger("Gateway.Governance.Constants")
 
 
@@ -206,8 +208,7 @@ class ControlRegistry:
     ----------------------------------
     1. ``CAGE_DEPLOYMENT_REGION`` environment variable (at instantiation time).
     2. Default region ``US_FED`` if env var is unset.
-    3. ``config/compliance/{REGION}_BASELINE.json`` regional profile.
-    4. Legacy fallback: ``config/control_mappings.json`` (backward compat).
+    3. ``config/compliance/{REGION}_BASELINE.json`` regional profile (required).
 
     Raises:
         RuntimeError: If no JSON file can be found or parsed at startup.
@@ -223,7 +224,6 @@ class ControlRegistry:
     # Paths
     _REPO_ROOT: Path = Path(__file__).resolve().parents[3]
     _COMPLIANCE_DIR: Path = _REPO_ROOT / "config" / "compliance"
-    _LEGACY_PATH: Path = _REPO_ROOT / "config" / "control_mappings.json"
 
     def __new__(cls) -> ControlRegistry:
         if cls._instance is None:
@@ -245,7 +245,7 @@ class ControlRegistry:
         """The deployment region whose profile is currently loaded.
 
         Returns the string identifier (e.g. ``"EU_ECB"``, ``"US_FED"``,
-        ``"APAC_MAS"``) or ``"LEGACY"`` if the fallback file was used.
+        ``"APAC_MAS"``).
         """
         return self.__class__._active_region
 
@@ -301,13 +301,10 @@ class ControlRegistry:
         config_path = self._COMPLIANCE_DIR / f"{region}_BASELINE.json"
 
         if not config_path.exists():
-            logger.warning(
-                "ControlRegistry: regional profile not found at %s — "
-                "falling back to legacy control_mappings.json.",
-                config_path,
+            raise RuntimeError(
+                f"ControlRegistry: regional profile not found at {config_path}. "
+                f"Cannot start governance engine without a valid profile."
             )
-            config_path = self._LEGACY_PATH
-            region = "LEGACY"
 
         try:
             with open(config_path) as fh:
@@ -321,11 +318,10 @@ class ControlRegistry:
             self.__class__._active_region = region
 
             # Canonical stringification: sorted keys, compact separators
+            # v3.1.0: Migrated to RFC 8785 JCS canonicalization
             normalized_raw = self._coerce_floats(raw)
-            canonical_json = json.dumps(
-                normalized_raw, sort_keys=True, separators=(",", ":")
-            )
-            computed_hash = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+            canonical_bytes = jcs_canonicalize_plan(normalized_raw)
+            computed_hash = hashlib.sha256(canonical_bytes).hexdigest()
 
             with self.__class__._lock:
                 self.__class__._active_hash = computed_hash
@@ -339,9 +335,7 @@ class ControlRegistry:
             )
         except FileNotFoundError:
             raise RuntimeError(
-                f"ControlRegistry: no control mappings file found. "
-                f"Tried regional path {self._COMPLIANCE_DIR / f'{region}_BASELINE.json'} "
-                f"and legacy fallback {self._LEGACY_PATH}. "
+                f"ControlRegistry: no control mappings file found at {config_path}. "
                 f"Cannot start governance engine without a valid profile."
             )
         except json.JSONDecodeError as exc:

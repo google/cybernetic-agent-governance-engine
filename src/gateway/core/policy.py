@@ -23,6 +23,8 @@ import logging
 import os
 import time
 import urllib.parse
+from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -30,6 +32,7 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from config.settings import Config
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 logger = logging.getLogger("Gateway.Policy")
 tracer = trace.get_tracer("gateway.policy")
@@ -77,10 +80,29 @@ def _opa_cache_enabled() -> bool:
 
 
 def _opa_cache_key(input_data: dict) -> str:
-    """Return a deterministic Redis key for an OPA input payload."""
-    # Sort keys for deterministic serialisation regardless of dict insertion order
-    canonical = json.dumps(input_data, sort_keys=True, default=str)
-    digest = hashlib.sha256(canonical.encode()).hexdigest()[:24]
+    """Return a deterministic Redis key for an OPA input payload.
+
+    v3.1.0: Migrated to RFC 8785 JCS canonicalization with pre-normalization.
+    """
+
+    # Normalize datetime/Decimal before JCS canonicalization
+    def _normalize(obj: Any) -> Any:
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        elif isinstance(obj, Decimal):
+            return str(obj)
+        elif isinstance(obj, dict):
+            return {k: _normalize(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [_normalize(item) for item in obj]
+        elif isinstance(obj, (str, int, float, bool, type(None))):
+            return obj
+        else:
+            return str(obj)
+
+    normalized = _normalize(input_data)
+    canonical_bytes = jcs_canonicalize_plan(normalized)
+    digest = hashlib.sha256(canonical_bytes).hexdigest()[:24]
     return f"{_OPA_CACHE_PREFIX}{digest}"
 
 

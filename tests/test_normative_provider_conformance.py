@@ -28,6 +28,7 @@ and runs as part of the fast `pytest-logic` CI matrix across all regions.
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -147,23 +148,45 @@ class TestProvider01FlowSignalDecisionMapping:
 
     @pytest.mark.asyncio
     async def test_flowsignal_decision_allow(self, provider) -> None:
-        """ALLOW decision → admitted=True, empty findings."""
-        with respx.mock:
+        """ALLOW decision → admitted=True, CONSEQUENCE_TOKEN finding (Phase 2 ST-4)."""
+        from unittest.mock import patch
+
+        # Mock KMS signer to avoid RuntimeError in dev/test
+        with (
+            respx.mock,
+            patch(
+                "src.gateway.governance.kms_signer.get_governance_signer"
+            ) as mock_get_signer,
+        ):
+            # Mock signer that fails (to test token minting is attempted)
+            mock_signer = MagicMock()
+            mock_signer.sign_raw.side_effect = RuntimeError("KMS not active in test")
+            mock_get_signer.return_value = mock_signer
+
             respx.post("https://mock.flowsignal.example.com/validate/fria").mock(
                 return_value=httpx.Response(
                     200,
                     json={
                         "decision": "ALLOW",
                         "message": "Transaction approved by FlowSignal",
+                        "authority_record_id": "test-auth-rec",
                     },
                 )
             )
 
-            result = await provider.validate_fria({"action": "test_allow"})
+            result = await provider.validate_fria(
+                {
+                    "action": "test_allow",
+                    "actor_id": "test-actor",
+                    "thread_id": "test-thread",
+                }
+            )
 
             assert isinstance(result, ValidationResult)
-            assert result.admitted is True
-            assert result.findings == []
+            # Phase 2: Token minting fails without KMS, so admitted=False (fail-closed)
+            assert result.admitted is False
+            assert len(result.findings) == 1
+            assert result.findings[0]["code"] == "CONSEQUENCE_TOKEN_MINT_FAILED"
 
     @pytest.mark.asyncio
     async def test_flowsignal_decision_refuse(self, provider) -> None:
@@ -249,8 +272,10 @@ class TestProvider01FlowSignalDecisionMapping:
             assert malformed_decision in result.findings[0]["message"]
 
     @pytest.mark.asyncio
-    async def test_flowsignal_backward_compat_no_decision_field(self, provider) -> None:
-        """Payload without decision field → backward-compat with admitted/findings shape."""
+    async def test_flowsignal_missing_decision_field_fails_closed(
+        self, provider
+    ) -> None:
+        """Payload without decision field → fail closed (BC-03 remediation)."""
         with respx.mock:
             respx.post("https://mock.flowsignal.example.com/validate/fria").mock(
                 return_value=httpx.Response(
@@ -267,15 +292,20 @@ class TestProvider01FlowSignalDecisionMapping:
             result = await provider.validate_fria({"action": "test_legacy"})
 
             assert isinstance(result, ValidationResult)
-            assert result.admitted is True
+            assert result.admitted is False  # Fail closed
             assert len(result.findings) == 1
-            assert result.findings[0]["code"] == "INFO"
+            assert result.findings[0]["code"] == "cage.endpoint_error"
+            assert result.findings[0]["severity"] == "blocked"
+            assert (
+                "missing required 'decision' field"
+                in result.findings[0]["message"].lower()
+            )
 
     @pytest.mark.asyncio
-    async def test_flowsignal_backward_compat_no_decision_admitted_false(
+    async def test_flowsignal_missing_decision_field_fails_closed_even_when_admitted_false(
         self, provider
     ) -> None:
-        """Legacy payload with admitted=False → preserved without PARSE_ERROR."""
+        """Payload without decision field fails closed regardless of admitted value (BC-03 remediation)."""
         with respx.mock:
             respx.post("https://mock.flowsignal.example.com/validate/fria").mock(
                 return_value=httpx.Response(
@@ -296,32 +326,54 @@ class TestProvider01FlowSignalDecisionMapping:
             result = await provider.validate_fria({"action": "test_legacy_block"})
 
             assert isinstance(result, ValidationResult)
-            assert result.admitted is False
+            assert result.admitted is False  # Fail closed
             assert len(result.findings) == 1
-            assert result.findings[0]["code"] == "LEGACY_BLOCK"
-            # Crucially, no PARSE_ERROR — this is not a malformed response
-            assert all(f["code"] != "PARSE_ERROR" for f in result.findings)
+            # The legacy LEGACY_BLOCK finding is ignored; fail-closed finding is emitted
+            assert result.findings[0]["code"] == "cage.endpoint_error"
+            assert result.findings[0]["severity"] == "blocked"
+            assert (
+                "missing required 'decision' field"
+                in result.findings[0]["message"].lower()
+            )
 
     @pytest.mark.asyncio
     async def test_flowsignal_decision_case_insensitive(self, provider) -> None:
         """Decision values are case-insensitive (ALLOW, Allow, allow all work)."""
-        with respx.mock:
-            # Lowercase
+        from unittest.mock import patch
+
+        # Mock KMS signer to avoid RuntimeError in dev/test
+        with (
+            respx.mock,
+            patch(
+                "src.gateway.governance.kms_signer.get_governance_signer"
+            ) as mock_get_signer,
+        ):
+            # Mock signer that fails (to test token minting is attempted)
+            mock_signer = MagicMock()
+            mock_signer.sign_raw.side_effect = RuntimeError("KMS not active in test")
+            mock_get_signer.return_value = mock_signer
+
+            # Lowercase "allow"
             respx.post("https://mock.flowsignal.example.com/validate/fria").mock(
                 return_value=httpx.Response(
                     200,
-                    json={"decision": "allow", "message": "lowercase"},
+                    json={
+                        "decision": "allow",  # lowercase
+                        "message": "lowercase",
+                        "authority_record_id": "test-auth-rec",
+                    },
                 )
             )
 
-            result = await provider.validate_fria({"action": "test_case"})
-            # Note: Our implementation normalizes to uppercase, so "allow" should work
-            # However, per the spec, only exact uppercase values are valid
-            # Let's verify the current behavior: "allow" (lowercase) should fail-closed
-            # because _map_flowsignal_decision checks decision_upper == _FLOWSIGNAL_ALLOW
-            # and "allow".upper() == "ALLOW" which equals _FLOWSIGNAL_ALLOW
-
-            # Actually, re-reading the implementation: decision_upper = decision.upper().strip()
-            # So lowercase "allow" becomes "ALLOW" and matches. This is intentional case-insensitivity.
-            assert result.admitted is True
-            assert result.findings == []
+            result = await provider.validate_fria(
+                {
+                    "action": "test_case",
+                    "actor_id": "test-actor",
+                    "thread_id": "test-thread",
+                }
+            )
+            # Our implementation normalizes to uppercase, so "allow" → "ALLOW" → mints token
+            # But token minting fails without KMS → fail-closed
+            assert result.admitted is False
+            assert len(result.findings) == 1
+            assert result.findings[0]["code"] == "CONSEQUENCE_TOKEN_MINT_FAILED"

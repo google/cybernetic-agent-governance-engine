@@ -98,10 +98,14 @@ class TestBuildProvenanceRecord:
             trace_id="trace-003",
             node_id="consensus_engine",
             input_data={"amount": 15000},
-            output_data={"status": "ESCALATE"},
-            decision="ESCALATE",
+            output_data={"status": "DENY"},
+            decision="DENY",
         )
-        assert len(record.output_hash) == 64
+        # Recomputed with RFC 8785 JCS canonicalization
+        assert (
+            record.output_hash
+            == "da0d470e54a6fd783a3952a8aa63bdd5da4f4cb63925241ec508de5fa8f8aac2"
+        )
 
     def test_parent_hash_linked_correctly(self):
         """build_provenance_record links parent_hash to the previous record."""
@@ -134,43 +138,37 @@ class TestBuildProvenanceRecord:
                 decision="APPROVE",  # not a valid decision
             )
 
-    def test_valid_decisions_includes_all_canonical_and_legacy_values(self):
-        """VALID_DECISIONS contains all canonical and legacy decision values.
+    def test_valid_decisions_includes_all_canonical_values(self):
+        """VALID_DECISIONS contains exactly the six canonical decision values.
 
         Canonical gateway-boundary decisions (GovernanceDecision enum):
           ALLOW, DENY, DEFER, NARROW, PAUSE, REQUIRE_APPROVAL
 
-        Legacy execution-phase values (backward compat):
-          BLOCK, ESCALATE
+        Legacy values BLOCK and ESCALATE have been removed.
         """
         assert VALID_DECISIONS == frozenset(
             {
-                # Canonical gateway-boundary decisions
                 "ALLOW",
                 "DENY",
                 "DEFER",
                 "NARROW",
                 "PAUSE",
                 "REQUIRE_APPROVAL",
-                # Legacy execution-phase values
-                "BLOCK",
-                "ESCALATE",
             }
         )
+        # Regression guard: legacy values must be rejected
+        assert "BLOCK" not in VALID_DECISIONS
+        assert "ESCALATE" not in VALID_DECISIONS
 
     def test_all_valid_decisions_accepted(self):
         """build_provenance_record accepts all valid decision values."""
         all_decisions = [
-            # Canonical gateway-boundary decisions
             "ALLOW",
             "DENY",
             "DEFER",
             "NARROW",
             "PAUSE",
             "REQUIRE_APPROVAL",
-            # Legacy execution-phase values
-            "BLOCK",
-            "ESCALATE",
         ]
         for decision in all_decisions:
             record = build_provenance_record(
@@ -181,6 +179,31 @@ class TestBuildProvenanceRecord:
                 decision=decision,
             )
             assert record.decision == decision
+
+    def test_legacy_decisions_are_rejected(self):
+        """build_provenance_record rejects legacy BLOCK and ESCALATE values.
+
+        Regression guard for the legacy-decision removal in Track 2.
+        """
+        import pytest
+
+        with pytest.raises(ValueError, match="Invalid decision 'BLOCK'"):
+            build_provenance_record(
+                trace_id="trace-reject-1",
+                node_id="test_node",
+                input_data={},
+                output_data={},
+                decision="BLOCK",
+            )
+
+        with pytest.raises(ValueError, match="Invalid decision 'ESCALATE'"):
+            build_provenance_record(
+                trace_id="trace-reject-2",
+                node_id="test_node",
+                input_data={},
+                output_data={},
+                decision="ESCALATE",
+            )
 
 
 class TestVerifyChainIntegrity:

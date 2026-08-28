@@ -1,0 +1,21 @@
+{
+  "name": "@agent-integrity/sdk",
+  "version": "0.1.0-alpha.0",
+  "description": "Agent session builder and exact-response release guard for Agent Integrity.",
+  "license": "Apache-2.0",
+  "author": "Simranjit Singh",
+  "repository": { "type": "git", "url": "git+https://github.com/SimranPabla/agent-integrity.git", "directory": "packages/sdk" },
+  "homepage": "https://github.com/SimranPabla/agent-integrity#readme",
+  "bugs": { "url": "https://github.com/SimranPabla/agent-integrity/issues" },
+  "keywords": ["ai-agents", "integrity", "sdk", "release-guard"],
+  "type": "module",
+  "files": ["dist", "README.md"],
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "dependencies": {
+    "@agent-integrity/core": "0.1.0-alpha.0",
+    "@agent-integrity/protocol": "0.1.0-alpha.0"
+  },
+  "engines": { "node": ">=22" },
+  "publishConfig": { "access": "public", "provenance": true }
+}

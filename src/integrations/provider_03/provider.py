@@ -45,6 +45,8 @@ import time
 from typing import Any
 from urllib.parse import quote
 
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
 logger = logging.getLogger("cage.integrations.provider_03")
 
 _ENDPOINT: str = os.environ.get("PROVIDER_03_NORMATIVE_ENDPOINT", "")
@@ -299,52 +301,14 @@ class Provider03NormativeProvider:
 
         This is a Provider 03-specific extension method, not part of the
         standard NormativeProvider protocol.
+
+        v3.1.0: Migrated to RFC 8785 JCS canonicalization.
         """
-        canon = json.dumps(receipt, sort_keys=True, separators=(",", ":"))
-        digest = hashlib.sha256(canon.encode()).hexdigest()
+        canon_bytes = jcs_canonicalize_plan(receipt)
+        digest = hashlib.sha256(canon_bytes).hexdigest()
         logger.info(
             "[Provider03] Ingested bind receipt: id=%s hash=%s",
             receipt.get("receipt_id", "unknown"),
             digest[:16],
         )
         return digest
-
-    async def fetch_legal_baseline(self, region: str) -> dict[str, Any]:
-        """Backward-compatibility alias returning dictionary format."""
-        logger.info("[Provider03] fetch_legal_baseline (compat) for region=%s", region)
-        return {
-            "region": region,
-            "provider": "PROVIDER_03",
-            "active_rules": [
-                "PROVIDER_03_DECISION_MANDATE_V1",
-                "PROVIDER_03_BOUND_AUTHORITY_V2",
-            ],
-            "synced_at": time.time(),
-        }
-
-    async def validate_external_fria(
-        self, thread_id: str, plan: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Backward-compatibility alias returning dictionary format."""
-        logger.info(
-            "[Provider03] validate_external_fria (compat): thread_id=%s action=%s",
-            thread_id,
-            plan.get("action"),
-        )
-        return {
-            "verdict": "APPROVED",
-            "provider": "PROVIDER_03",
-            "thread_id": thread_id,
-            "decision_receipt_id": f"provider03-{thread_id[:8]}",
-            "attestation_timestamp": time.time(),
-        }
-
-    async def submit_evidence_chain(
-        self, thread_id: str, record: dict[str, Any]
-    ) -> bool:
-        """Backward-compatibility alias."""
-        logger.info(
-            "[Provider03] submit_evidence_chain (compat): thread_id=%s",
-            thread_id,
-        )
-        return True

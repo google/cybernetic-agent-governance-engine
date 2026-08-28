@@ -10,6 +10,13 @@
 > change-management, and region-guard rules below describe how to operate a
 > live instance of CAGE; they are illustrative patterns for adopters, not
 > mandatory production obligations imposed on this repository's maintainers.
+>
+> **No production deployments to maintain — breaking changes preferred.** This
+> repository has no production installations under its management. Backward
+> compatibility with hypothetical adopter deployments is not a design constraint.
+> When a change can either add a compatibility layer or break cleanly and
+> simplify, prefer the breaking change. See [Backward Compatibility Posture](#backward-compatibility-posture)
+> for details.
 
 This file defines standards for anyone (human or AI coding agent) contributing
 to this repository. It is written in the tool-agnostic `AGENTS.md` convention
@@ -30,6 +37,7 @@ Cursor, Cline, GitHub Copilot, and Windsurf) — see
 9. [Answering Questions About This Repository](#answering-questions-about-this-repository)
 10. [Tool-Specific Configuration](#tool-specific-configuration)
 11. [Test Execution](#test-execution)
+12. [Dormant Rules — Reactivate When CAGE Begins Real Deployments](#dormant-rules--reactivate-when-cage-begins-real-deployments)
 
 ---
 
@@ -74,7 +82,7 @@ Summary:
 | Refactor | `refactor/<short-description>` | `refactor/gateway-middleware` |
 | CI / tooling | `ci/<short-description>` | `ci/pin-actions-sha` |
 | Hotfix on release | `hotfix/<version>-<description>` | `hotfix/2.0.1-redis-timeout` |
-| Release candidate | `rc-v<semver>` | `rc-v2.1.0` |
+| Release candidate | `rc-v<semver>` | `rc-v3.0.0` |
 | Experiment / spike | `spike/<short-description>` | `spike/cbf-formal-proof` |
 
 **Rules:** lowercase kebab-case only; description ≤ 30 characters after the
@@ -272,6 +280,22 @@ When modifying STPA source files:
 
 ## Architecture & Design Standards
 
+### Backward Compatibility Posture
+
+CAGE is a reference architecture with no production installations under this repository's management. Backward compatibility with hypothetical adopter deployments is **not a design constraint**.
+
+**Breaking changes are preferred when they simplify.** When a change can either:
+- **(a)** Add a compatibility layer, dual-write path, deprecation window, or version-negotiation shim to preserve backward compatibility, or
+- **(b)** Break cleanly and simplify the code, removing dead paths and making behavior more obvious
+
+**Always prefer (b).**
+
+Agents and contributors should not preserve backward compatibility purely to avoid breaking hypothetical downstream adopters. This repository is a living reference design, and clean, simple, correct code takes priority over API stability.
+
+**Breaking changes must still be documented.** Use the Conventional Commits `!` marker and `BREAKING CHANGE:` footer (both required together), and document the change in [`docs/BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md) so adopters can track migration paths between reference versions.
+
+**This preference is unconditional.** There is no carve-out for any category of change. A previously recognised data-at-rest exception is currently dormant — see [Dormant Rules — Reactivate When CAGE Begins Real Deployments](#dormant-rules--reactivate-when-cage-begins-real-deployments) — and must not be enforced or cited as grounds for deferring a migration.
+
 ### Release Versioning
 
 - Releases follow SemVer (`MAJOR.MINOR.PATCH`).
@@ -412,3 +436,73 @@ Key facts:
 - Tests that genuinely require live GKE (live OPA policy evaluation, Langfuse SLA timing, CMEK/pod-restart checks, real backend accuracy) **cannot be replaced** by a mock-only nightly — these are the `integration`-marked corpus and the 51 skips in the full run.
 - Existing CI already covers what a nightly would target: `pytest-logic` (mock/unit, every push), `ai600-unit-tests` (red-team mock, every push), `locust-load-test` (nightly load test).
 - **Practical guidance**: treat `pytest-logic` + `ai600-unit-tests` (GKE-independent, secret-free) as the authoritative daily regression gate. Reserve the live-GKE `integration-smoke` job and manual full-suite runs (`port_forward_dev.sh` + `uv run pytest tests/ --run-integration`) for periodic live-service validation.
+
+---
+
+## Dormant Rules — Reactivate When CAGE Begins Real Deployments
+
+**The rules in this section are currently INACTIVE and must not be enforced.**
+They were deactivated because CAGE has no deployed instances and therefore no
+artifacts at rest — there is no persisted evidence whose verification could be
+broken. They are preserved here verbatim, not deleted, so they can be moved
+back into the active sections unchanged once CAGE begins operating real
+deployments with persisted evidence.
+
+**Instruction to agents:** do not apply these rules when reviewing, writing, or
+refusing changes. Do not cite them as a reason to add a compatibility layer, to
+defer a migration, or to block a PR. If a contributor cites one of these rules,
+note that it is dormant and point them to this section.
+
+Each dormant rule below is recorded as a `### [DORMANT] ...` subsection.
+Future deactivated rules should be appended here in the same form.
+
+---
+
+### [DORMANT] Data-at-Rest Read-Compatibility Exception
+
+**Status:** Dormant — not binding. Do not enforce.
+
+**Reactivation trigger:** Reinstate this rule verbatim into the active
+[Backward Compatibility Posture](#backward-compatibility-posture) section (and,
+if desired, the top introductory blockquote) at the moment CAGE begins
+operating real deployments that produce persisted hash chains, signed evidence
+records, or stored audit logs which must remain verifiable across releases.
+Until such artifacts exist at rest, the rule protects nothing.
+
+**Originally located in:** `### Backward Compatibility Posture`, under
+`## Architecture & Design Standards` — immediately after the "Breaking changes
+must still be documented." paragraph.
+
+**Verbatim preserved text (paste back unchanged on reactivation):**
+
+> **One exception: data already at rest.** Persisted artifacts like hash chains, signed evidence records, and stored audit logs cannot be invalidated casually — breaking their verification logic breaks trust rather than just breaking an API. When cryptographic or serialization changes affect stored data, preserve read-compatibility for existing artifacts. Example: the RFC 8785 JCS migration deliberately left 10 `json.dumps(sort_keys=True)` sites unmigrated to preserve verification of pre-existing evidence (tracked as POAM-2026-060 in [`docs/POAM.md`](docs/POAM.md)).
+
+**Originally located in:** the top introductory blockquote ("No production
+deployments to maintain — breaking changes preferred"), as a closing
+qualification on the breaking-changes-preferred posture.
+
+**Verbatim preserved text (paste back unchanged on reactivation):**
+
+> The single exception is **data already at rest** (hash chains, signed evidence records, stored audit logs), where read-compatibility for existing artifacts must be preserved.
+
+**Code decisions to revisit on reactivation.** This exception previously
+justified specific implementation choices. When the rule becomes binding again,
+re-examine at minimum:
+
+- The WORM-bucket KMS signing path in [`src/gateway/governance/uca_logger.py`](src/gateway/governance/uca_logger.py)
+- The evidence hash-chain canonicalization in [`src/compliance_bridge/evidence_stream.py`](src/compliance_bridge/evidence_stream.py)
+- The evidence hash-chain canonicalization in [`src/compliance_bridge/context_accumulator.py`](src/compliance_bridge/context_accumulator.py)
+
+**Status of the preserved example (informational — the quoted text above is
+frozen verbatim and must not be edited).** The example inside the first
+preserved block is now historical: it describes 10 `json.dumps(sort_keys=True)`
+sites left unmigrated under POAM-2026-060. Two things have since changed. The
+site count was never accurate — the real figure was roughly 25 executable call
+sites. And the migration is now complete: all three modules listed above were
+migrated to RFC 8785 JCS with **no compatibility shim**, and POAM-2026-060 is
+closed. Records written before that migration are not verifiable by the current
+code. On reactivation, the quoted text should be pasted back unchanged as the
+governing rule, but its illustrative example no longer describes the codebase —
+see [`docs/POAM.md`](docs/POAM.md) and
+[`docs/BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md) for the current
+state.

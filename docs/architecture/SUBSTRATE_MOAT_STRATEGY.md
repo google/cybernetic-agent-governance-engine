@@ -1,4 +1,4 @@
-# CAGE v2.0.0 — Substrate Moat Strategy
+# CAGE v3.0.0 — Substrate Moat Strategy
 ## Competitive Positioning Against Microsoft MXC/ACS, Red Hat/AAIF, and Google Agent Gateway
 
 **Document type:** Architectural Strategy & Gap Analysis

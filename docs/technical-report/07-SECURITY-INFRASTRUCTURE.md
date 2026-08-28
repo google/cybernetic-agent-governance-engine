@@ -590,17 +590,32 @@ The eBPF exporter has been updated to `remote` output mode:
 
 All third-party compliance and attestation provider adapters are isolated under `src/integrations/{vendor}/`. This boundary prevents vendor SDK code from leaking into the governance kernel or gateway packages, limiting the blast radius of any vendor-side vulnerability.
 
-| Provider      | Module                                    | Role                                                                 | Security Boundary                                      |
-| ------------- | ----------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------ |
-| Provider 01   | `src/integrations/provider_01/provider.py` | Normative legal-baseline provider (Tier 6b FRIA gate)               | Isolated package; lazy-loaded only when provider API key is set |
-| Provider 02   | `src/integrations/provider_02/provider.py` | CER (Compliance Evidence Record) attestation provider                | Isolated package; lazy-loaded only when provider API key is set |
-| Provider 03   | `src/integrations/provider_03/`           | JCS canonicalization and evidence formatting adapter                 | Isolated package; lazy-loaded |
-| Provider 04   | `src/integrations/provider_04/`           | Socket-level execution guillotine integration                        | Isolated package; lazy-loaded |
-| Provider 05   | `src/integrations/provider_05/`           | RFC-3161 Verifiable Execution Evidence Pack (3 axioms: Blueprint, Key, Physics) | Isolated package; lazy-loaded |
+| Provider      | Module                                    | Protocol | Role                                                                 | Verdict vocabulary | Security Boundary                                      |
+| ------------- | ----------------------------------------- | -------- | -------------------------------------------------------------------- | ------------------ | ------------------------------------------------------ |
+| Provider 01   | `src/integrations/provider_01/provider.py` | `NormativeProvider` | Normative legal-baseline provider and synchronous FRIA gate (Tier 6b) | `ALLOW` / `REFUSE` / `ESCALATE` | Isolated package; lazy-loaded only when provider API key is set |
+| Provider 02   | `src/integrations/provider_02/`           | Vendor attestation surface | Certified Evidence Receipt creation, JWK-cached verification, and LangGraph bundle assembly | — (no gate verdict) | Isolated package; lazy-loaded only when provider API key is set |
+| Provider 03   | `src/integrations/provider_03/`           | `NormativeProvider` | Decision-governance and bind-receipt provider; synchronous FRIA gate | `APPROVED` / `ESCALATE` / `REJECTED` | Isolated package; lazy-loaded |
+| Provider 04   | `src/integrations/provider_04/`           | `AttestationProvider` + envelope mapper | Attestation fetch (**stub — returns an empty list**) and bidirectional `GovernanceEnvelope` ↔ vendor wire-format mapping | — (emits `AttestationStatus`) | Isolated package; lazy-loaded |
+| Provider 05   | `src/integrations/provider_05/`           | `AttestationProvider` ×3 | Verifiable Execution Evidence Pack — three axioms (Blueprint, Key, Physics); seeded/synthetic data store | — (emits `AttestationStatus`) | Isolated package; lazy-loaded |
+| Provider 06   | `src/integrations/provider_06/adapter.py` | `NormativeProvider` | Agent-integrity verifier; synchronous gate. In-repo component is a **SPIKE** with a mock endpoint; upstream vendored at `third_party/agent-integrity/` | `PASS` / `REVIEW` / `BLOCKED` | Isolated package; lazy-loaded |
+
+> **Verdict vocabularies are per-provider and are not interchangeable.** In
+> particular, `REVIEW` is valid **only** for Provider 06; Provider 01 rejects it
+> as unrecognized and fails closed. `ESCALATE` (Providers 01 and 03) and
+> `REVIEW` (Provider 06) produce the same CAGE-side outcome — `admitted=False`
+> with `needs_human_review: true`, parking the request in the `DeferQueue` —
+> but the accepted wire tokens differ. Each adapter directory carries a
+> `README.md` with its full mapping table.
+>
+> Providers 01, 02, and 03 are `INTERFACE READY` — the HTTP clients are
+> complete, but **no live endpoints are configured** in this repository;
+> documentation uses placeholders such as `https://api.example.com/normative`.
+> Provider 04's fetch path is a stub and Provider 05 serves seeded synthetic
+> records, so neither performs live I/O today.
 
 **Key security properties:**
-- Vendor SDKs are **not imported at module load time** — the provider factory in `src/integrations/__init__.py` uses lazy imports, so a missing or misconfigured vendor credential does not crash the gateway.
-- Each vendor directory has its own test suite (`src/integrations/{vendor}/tests/`) to prevent regressions from vendor SDK updates.
+- Vendor SDKs are **not imported at module load time** — `get_normative_provider()` in [`src/gateway/governance/normative_provider.py`](../../src/gateway/governance/normative_provider.py) resolves vendor packages through lazy imports, so a missing or misconfigured vendor credential does not crash the gateway.
+- Every adapter is exercised by the hermetic Universal Protocol Conformance Suite ([`tests/test_normative_provider_conformance.py`](../../tests/test_normative_provider_conformance.py)), which asserts protocol conformance and fail-closed semantics across all regions in CI. Some vendor directories additionally carry a package-local suite under `src/integrations/{vendor}/tests/`.
 - Cloud KMS (`kms_signer.py`) and Redis (`evidence_stream.py`) are **not** vendor adapters — they are substrate infrastructure invariants and remain in `src/gateway/governance/`.
 
 > ⚠️ **POAM-018 (Open):** External normative provider credentials (`LANGFUSE_COMPLIANCE_*`) fail silently when absent. See [`DUAL_PROJECT_ARCHITECTURE.md §5.2`](../../docs/architecture/DUAL_PROJECT_ARCHITECTURE.md) for remediation details.
@@ -661,16 +676,16 @@ The routing seal satisfies the `NoDirectBind` formal invariant: there is no code
 
 The provenance chain builds a tamper-evident SHA-256 hash chain across all LangGraph governance nodes. Any modification to any node's input, output, or decision invalidates all subsequent chain links.
 
-**Hash computation:** [`compute_hash(data)`](../../src/gateway/governance/provenance_chain.py) serialises the dict with `json.dumps(sort_keys=True, separators=(',', ':'))` before SHA-256 hashing — **deterministic sorted-key JSON** regardless of insertion order. Non-serialisable values are coerced to strings. Earlier versions omitted `separators`, producing non-spec-compliant hash values.
+**Hash computation:** [`compute_hash(data)`](../../src/gateway/governance/provenance_chain.py) canonicalises the dict with **RFC 8785 JCS** (`jcs_canonicalize_plan()`) before SHA-256 hashing — deterministic regardless of insertion order and byte-identical across Python, Go, and JavaScript runtimes. Non-serialisable values are coerced to strings before canonicalization. This replaces the previous `json.dumps(sort_keys=True, separators=(',', ':'))` form; digests are not comparable across the change (see [`docs/BREAKING_CHANGES_v3.md`](../BREAKING_CHANGES_v3.md)).
 
 **Chain construction complexity:** O(n) — each record's `parent_hash` is the SHA-256 of the preceding record's full dict (sorted keys). The first record has `parent_hash=None`.
 
 ```
 ProvenanceRecord[0]  (parent_hash=None)
-      │  chain_hash() = SHA-256(json.dumps(record_0, sort_keys=True))
+      │  chain_hash() = SHA-256(jcs_canonicalize_plan(record_0))
       ▼
 ProvenanceRecord[1]  (parent_hash=chain_hash[0])
-      │  chain_hash() = SHA-256(json.dumps(record_1, sort_keys=True))
+      │  chain_hash() = SHA-256(jcs_canonicalize_plan(record_1))
       ▼
 ProvenanceRecord[n]  (parent_hash=chain_hash[n-1])
 ```

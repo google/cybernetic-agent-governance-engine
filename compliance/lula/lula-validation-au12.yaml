@@ -72,7 +72,6 @@ component-definition:
          commit before seal issuance. The provenance chain (provenance_chain.py) must
          successfully persist the evidence record before the routing seal is computed.
          Provides stronger non-repudiation: seal cryptographically tied to evidence.
-         Supports dual-schema verification (v1.0/v1.1) for forward compatibility.
          Hash-linked evidence chain satisfies AU-12(1) time-correlation requirements.
 
       Key distinction: Decision-time records WHAT was decided; evidence-of-execution
@@ -123,7 +122,9 @@ component-definition:
           The evidence chain in provenance_chain.py provides hash-linked audit records
           that enable time-correlated analysis across system components. Each evidence
           record includes: timestamp_utc, request_id, previous_hash (chain link),
-          and schema_version for dual-schema verification (v1.0/v1.1).
+          decision, and enforcement_tier. The backward-compatibility remediation
+          (BC-01, 2026-08-27) removed dual-schema machinery from evidence_stream.py;
+          hash-chain canonicalization now uses RFC 8785 JCS with a /2.0 schema sentinel only.
         links:
         - href: '#7a2b3c4d-5e6f-4a8b-9c0d-1e2f3a4b5c6d'
           rel: lula

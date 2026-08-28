@@ -1,0 +1,83 @@
+name: Publish npm packages
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    environment: npm-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Require the immutable tag commit to be on main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Use an npm version with trusted publishing support
+        run: npm install --global npm@11.5.1
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Audit locked dependencies
+        run: npm audit --audit-level=high
+
+      - name: Require tag and workspace versions to match
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          const names = ["protocol", "core", "sdk", "cli"];
+          const root = JSON.parse(await readFile("package.json", "utf8"));
+          if (process.env.RELEASE_TAG !== `v${root.version}`) throw new Error("release tag must equal v<root package version>");
+          for (const name of names) {
+            const manifest = JSON.parse(await readFile(`packages/${name}/package.json`, "utf8"));
+            if (manifest.version !== root.version) throw new Error(`${name} version does not match the root version`);
+          }
+          NODE
+
+      - name: Run full verification
+        run: npm run verify
+
+      - name: Fail closed on publication placeholders
+        run: npm run release:check
+
+      - name: Pack and clean-install public payloads
+        run: npm run pack:check
+
+      - name: Publish protocol
+        run: node scripts/publish-package.mjs packages/protocol
+
+      - name: Publish core
+        run: node scripts/publish-package.mjs packages/core
+
+      - name: Publish SDK
+        run: node scripts/publish-package.mjs packages/sdk
+
+      - name: Publish CLI
+        run: node scripts/publish-package.mjs packages/cli

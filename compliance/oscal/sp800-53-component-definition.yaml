@@ -117,10 +117,14 @@ component-definition:
                 The blocking mode satisfies AU-12(1) system-wide/time-correlated audit
                 trail requirements through hash-linked evidence chain correlation.
 
-                Dual-schema verification (v1.0/v1.1) in the provenance chain ensures
-                forward compatibility while maintaining audit record integrity across
-                schema migrations. The compliance-bridge aggregates spans into OSCAL
-                Assessment Results via audit_workflow.py.
+                The backward-compatibility remediation (BC-01–BC-08, 2026-08-27) removed
+                all dual-schema machinery (v1.0/v1.1 support) from the evidence pipeline
+                and compliance-bridge. Hash-chain canonicalization in evidence_stream.py
+                and context_accumulator.py now uses RFC 8785 JCS (jcs_canonicalize_plan)
+                exclusively, with a /2.0 schema sentinel. The six canonical decision values
+                (ALLOW, DENY, DEFER, NARROW, PAUSE, REQUIRE_APPROVAL) are enforced in
+                provenance_chain.py (VALID_DECISIONS). The compliance-bridge aggregates
+                spans into OSCAL Assessment Results via audit_workflow.py.
               props:
                 - name: implementation-status
                   value: implemented
@@ -130,6 +134,10 @@ component-definition:
                   value: "configurable via EVIDENCE_CHAIN_BLOCKING env var"
                 - name: au-12-1-enhancement
                   value: "hash-linked evidence chain provides time-correlated audit trail"
+                - name: jcs-canonicalization
+                  value: "RFC 8785 JCS for deterministic cross-platform evidence integrity"
+                - name: canonical-decision-vocabulary
+                  value: "ALLOW, DENY, DEFER, NARROW, PAUSE, REQUIRE_APPROVAL"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AU-12"
                   rel: reference
@@ -154,6 +162,80 @@ component-definition:
                   value: system-specific
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-12"
+                  rel: reference
+
+            - uuid: "2f94e8b5-7d3a-4c61-b9f4-8e5a9d6c3f2a"
+              control-id: sc-13
+              description: |
+                Cryptographic protection is implemented via KMS-signed ConsequenceToken
+                JWS (src/gateway/governance/consequence_token.py) introduced in FlowSignal
+                Phase 2. ConsequenceToken.mint() uses KMSGovernanceSigner.sign_raw()
+                to produce a compact JWS with 8 claims (sub, tid, rec, act, ver, iat,
+                exp, jti). The signing algorithm is determined by the KMS key type
+                (ES256/ES384 for ECDSA, EdDSA for Ed25519, PS256/RS256 for RSA).
+                ConsequenceToken.verify() validates the JWS signature via
+                KMSGovernanceSigner.verify_raw(), rejects alg:none, and enforces
+                algorithm consistency (protected header alg must match signer.jose_alg).
+                All cryptographic operations fail closed — bad signature, expired token,
+                algorithm confusion, or malformed claims raise ConsequenceTokenError.
+                The token carries a SHA-256 digest of the RFC 8785 JCS-canonicalized
+                action payload in the 'act' claim, providing cryptographic binding
+                between governance evaluation and execution. The backward-compatibility
+                remediation (BC-01–BC-08, 2026-08-27) migrated all hash-chain modules
+                (provenance_chain.py, evidence_stream.py, context_accumulator.py) from
+                json.dumps(sort_keys=True) to RFC 8785 JCS (jcs_canonicalize_plan) for
+                deterministic cross-platform evidence integrity verification. This migration
+                was a breaking change — records written before 2026-08-27 are not verifiable
+                by the current code. No cryptographic path is excluded from JCS: the
+                WORM-bucket KMS signing payload built by _sign_record() in uca_logger.py
+                was migrated to RFC 8785 JCS with no compatibility shim and no carve-out,
+                so previously-signed WORM UCA records will not verify under the current
+                algorithm. That break is accepted because the data-at-rest
+                read-compatibility exception is dormant, not active (see the Dormant Rules
+                section of AGENTS.md).
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+                - name: phase-2-implementation
+                  value: "true"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-13"
+                  rel: reference
+
+            - uuid: "3a85d9c6-8e4b-5d72-c0a5-9f6b0e7d4a3b"
+              control-id: si-7
+              description: |
+                Software, firmware, and information integrity is implemented via
+                ConsequenceGateway 6-step post-FRIA evaluation (src/gateway/governance/consequence_gateway.py)
+                introduced in FlowSignal Phase 2. Steps 3-4 recompute the SHA-256
+                digest of the RFC 8785 JCS-canonicalized action payload and compare
+                it to the 'act' claim in the ConsequenceToken. Digest mismatch triggers
+                ACTION_BINDING_MISMATCH rejection, closing the TOCTOU gap where the
+                action payload could be modified between governance evaluation and
+                execution. Step 5 verifies the binding hash (SHA-256 of
+                thread_id:actor_id:action_digest:authority_state_version) matches
+                the consumed marker in Redis, detecting substitution attacks where
+                a different binding is replayed under the same authority record ID.
+                All integrity failures fail closed with BLOCK decision and structured
+                reason codes. The deterministic RFC 8785 JCS canonicalization ensures
+                identical digest computation across Python/Go/JavaScript runtimes,
+                eliminating float-representation and key-ordering drift that could
+                cause spurious integrity check failures. The backward-compatibility
+                remediation (BC-01–BC-08, 2026-08-27) migrated all hash-chain modules
+                (provenance_chain.py, evidence_stream.py, context_accumulator.py) to
+                RFC 8785 JCS with no compatibility shim; previously-signed records will
+                not verify under the current code.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+                - name: phase-2-implementation
+                  value: "true"
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SI-7"
                   rel: reference
 
     # -----------------------------------------------------------------------

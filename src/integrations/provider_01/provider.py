@@ -46,6 +46,7 @@ Status
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from typing import Any
@@ -78,25 +79,123 @@ _FLOWSIGNAL_ESCALATE = "ESCALATE"
 FINDING_CODE_FLOWSIGNAL_REFUSE = "FLOWSIGNAL_REFUSE"
 FINDING_CODE_FLOWSIGNAL_HOLD = "FLOWSIGNAL_HOLD"
 FINDING_CODE_PARSE_ERROR = "PARSE_ERROR"
+FINDING_CODE_CONSEQUENCE_TOKEN = "CONSEQUENCE_TOKEN"
+FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED = "CONSEQUENCE_TOKEN_MINT_FAILED"
+
+
+def _mint_consequence_token(
+    response_data: dict[str, Any], action_payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Mint a ConsequenceToken on FlowSignal ALLOW (Phase 2 ST-4).
+
+    Extracts the five ConsequenceToken claim inputs (sub, tid, rec, act, ver)
+    from the FlowSignal response and FRIA action payload, mints a KMS-signed
+    JWS, and returns it as a CONSEQUENCE_TOKEN finding.
+
+    Args:
+        response_data: FlowSignal /validate/fria response payload containing
+            authority_record_id and optionally authority_state_version.
+        action_payload: Original FRIA request payload containing actor_id,
+            thread_id, and the full action context for digest computation.
+
+    Returns:
+        A finding dict with code=CONSEQUENCE_TOKEN, severity=info, and the JWS
+        token in the 'token' field. On mint failure (KMS error), returns a
+        fail-closed finding with code=CONSEQUENCE_TOKEN_MINT_FAILED, admitted=False.
+
+    Fail-closed behavior:
+        If minting fails (KMS unavailable, missing required fields), returns a
+        blocking finding rather than silently allowing execution without a token.
+    """
+    from src.gateway.governance.consequence_token import ConsequenceToken
+    from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+    from src.gateway.governance.kms_signer import get_governance_signer
+
+    # Extract required mint inputs from response and action payload
+    try:
+        # Mint inputs (5 required):
+        # 1. sub (actor_id): from action_payload
+        actor_id = action_payload.get("actor_id")
+        if not actor_id:
+            raise ValueError("actor_id missing from action_payload")
+
+        # 2. tid (thread_id): from action_payload
+        thread_id = action_payload.get("thread_id")
+        if not thread_id:
+            raise ValueError("thread_id missing from action_payload")
+
+        # 3. rec (authority_record_id): from FlowSignal response
+        authority_record_id = response_data.get("authority_record_id")
+        if not authority_record_id:
+            raise ValueError("authority_record_id missing from FlowSignal response")
+
+        # 4. act (action digest): SHA-256 over JCS-canonicalized action_payload
+        action_digest = hashlib.sha256(
+            jcs_canonicalize_plan(action_payload)
+        ).hexdigest()
+
+        # 5. ver (authority_state_version): nullable, from FlowSignal response
+        authority_state_version = response_data.get("authority_state_version")
+
+        # Get KMS signer (may raise if KMS not active in dev/test)
+        signer = get_governance_signer()
+
+        # Mint the token (60s TTL default per plan §5.4)
+        token = ConsequenceToken.mint(
+            sub=actor_id,
+            tid=thread_id,
+            rec=authority_record_id,
+            act=action_digest,
+            ver=authority_state_version,
+            ttl_seconds=60,
+            signer=signer,
+        )
+
+        # Return as an informational finding (does NOT block; admitted=True)
+        # The token travels with the execution plan to the consequence gateway
+        return {
+            "code": FINDING_CODE_CONSEQUENCE_TOKEN,
+            "severity": "info",
+            "token": token,
+            "authority_record_id": authority_record_id,
+            "message": "ConsequenceToken minted for post-FRIA consequence enforcement",
+        }
+
+    except Exception as exc:
+        # Mint failure: fail-closed (return a blocking finding, not a silent admit)
+        logger.error(
+            "[Provider01] ConsequenceToken minting failed: %s — fail-closed, blocking execution",
+            exc,
+        )
+        return {
+            "code": FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
+            "severity": "blocked",
+            "message": f"ConsequenceToken minting failed: {exc}",
+        }
 
 
 def _map_flowsignal_decision(
-    decision: str, data: dict[str, Any]
+    decision: str, data: dict[str, Any], action_payload: dict[str, Any]
 ) -> tuple[bool, list[dict[str, Any]]]:
     """Map FlowSignal tri-state decision to CAGE (admitted, findings).
 
     This implements the ESCALATE contract mapping per §3.1 of the FlowSignal
     integration plan, mirroring provider_06's tri-state pattern.
 
+    Phase 2 (ST-4): On ALLOW, mints a ConsequenceToken and attaches it as a
+    CONSEQUENCE_TOKEN finding to enable post-FRIA consequence enforcement.
+
     Mapping logic:
-      - ALLOW    → admitted=True, findings=[] (informational only)
+      - ALLOW    → admitted=True, findings=[CONSEQUENCE_TOKEN] (ConsequenceToken JWS)
       - REFUSE   → admitted=False, findings with code=FLOWSIGNAL_REFUSE
       - ESCALATE → admitted=False, findings with code=FLOWSIGNAL_HOLD,
                    needs_human_review=True for DeferQueue parking
 
     Args:
         decision: The FlowSignal decision value (ALLOW, REFUSE, ESCALATE).
-        data: The full response payload (for extracting message context).
+        data: The full response payload (for extracting authority record context).
+        action_payload: The original FRIA request payload (for extracting actor/thread
+            context and computing the action digest).
 
     Returns:
         Tuple of (admitted: bool, findings: list[dict]).
@@ -109,8 +208,9 @@ def _map_flowsignal_decision(
     decision_upper = decision.upper().strip()
 
     if decision_upper == _FLOWSIGNAL_ALLOW:
-        # ALLOW: admitted=True, no blocking findings
-        return True, []
+        # ALLOW: admitted=True, with ConsequenceToken finding (Phase 2 ST-4)
+        consequence_token_finding = _mint_consequence_token(data, action_payload)
+        return True, [consequence_token_finding]
 
     if decision_upper == _FLOWSIGNAL_REFUSE:
         # REFUSE: hard deny with blocked severity
@@ -223,13 +323,13 @@ class Provider01NormativeProvider:
     async def validate_fria(self, payload: dict[str, Any]):  # type: ignore[no-untyped-def]
         """Submit FRIA validation (synchronous blocking gate).
 
-        Supports two response formats:
-          1. FlowSignal tri-state: {"decision": "ALLOW|REFUSE|ESCALATE", ...}
-          2. Legacy binary: {"admitted": bool, "findings": [...]}
+        Expects FlowSignal tri-state response: {"decision": "ALLOW|REFUSE|ESCALATE", ...}
 
-        If ``decision`` is present, it is mapped via _map_flowsignal_decision().
-        If ``decision`` is absent, falls back to legacy admitted/findings parsing.
-        If ``decision`` is present but unrecognized, fail-closed with PARSE_ERROR.
+        The ``decision`` field is mandatory. Missing or unrecognized values fail closed
+        with structured findings (code="cage.endpoint_error" or "FINDING_CODE_PARSE_ERROR").
+
+        Phase 2 (ST-4): On FlowSignal ALLOW, mints a ConsequenceToken and attaches
+        it as a CONSEQUENCE_TOKEN finding in the returned ValidationResult.
         """
         import httpx
 
@@ -242,11 +342,21 @@ class Provider01NormativeProvider:
                 resp.raise_for_status()
                 data = resp.json()
 
-                # FlowSignal tri-state decision mapping (Phase 1, §3.1)
+                # FlowSignal tri-state decision mapping (Phase 1, §3.1; Phase 2 ST-4)
                 if "decision" in data:
                     decision = data["decision"]
                     try:
-                        admitted, findings = _map_flowsignal_decision(decision, data)
+                        admitted, findings = _map_flowsignal_decision(
+                            decision, data, payload
+                        )
+                        # Check if minting failed (fail-closed finding present)
+                        mint_failed = any(
+                            f.get("code") == FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED
+                            for f in findings
+                        )
+                        if mint_failed:
+                            # Mint failure: override admitted=True to False (fail-closed)
+                            admitted = False
                         return ValidationResult(admitted=admitted, findings=findings)
                     except ValueError as exc:
                         # Unrecognized decision value: fail-closed
@@ -266,10 +376,20 @@ class Provider01NormativeProvider:
                             ],
                         )
 
-                # Backward compatibility: legacy admitted/findings shape
+                # Missing decision field: fail closed (BC-03 remediation)
+                logger.warning(
+                    "[Provider01] FlowSignal response missing 'decision' field — failing closed"
+                )
                 return ValidationResult(
-                    admitted=data.get("admitted", False),
-                    findings=data.get("findings", []),
+                    admitted=False,
+                    error="Missing required 'decision' field in FlowSignal response",
+                    findings=[
+                        {
+                            "code": "cage.endpoint_error",
+                            "severity": "blocked",
+                            "message": "FlowSignal response missing required 'decision' field",
+                        }
+                    ],
                 )
         except httpx.HTTPStatusError as exc:
             logger.error(

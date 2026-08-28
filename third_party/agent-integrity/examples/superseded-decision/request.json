@@ -1,0 +1,13 @@
+{
+  "envelope": {
+    "protocolVersion": "1-alpha",
+    "policy": { "version": 1, "sources": { "allowedRoots": ["docs"] }, "decisions": { "path": "integrity/decisions.yaml" }, "rules": { "requireEvidenceFor": ["recommendation"], "contradictions": "review", "rejectedDecisions": "block", "responseMutation": "block", "replay": "block" } },
+    "response": { "content": "Use the old plan.", "sections": [{ "sectionId": "answer", "substantive": true, "byteStart": 0, "byteEnd": 17, "sha256": "148dbaba7edd1ded5756f96668198c952743a84642beb371bd1c82279f25e6d2" }] },
+    "sources": [{ "sourceId": "plan", "path": "docs/plan.md", "sha256": "cd477e07179796a52efef7c783544b7b4dae3caca8d0aa28af256d005162ee5a", "size": 18 }],
+    "decisionRegistryDigest": "b18b03d600960278ee0a8956d25efdf03b3fba7f5e394a863d0912f46752e88d",
+    "decisions": [{ "eventId": "old-1", "decisionId": "old", "revision": 1, "action": "activate" }, { "eventId": "new-1", "decisionId": "new", "revision": 1, "action": "activate" }, { "eventId": "old-2", "decisionId": "old", "revision": 2, "action": "supersede", "supersededBy": "new" }],
+    "evidence": [{ "evidenceId": "old-plan", "sourceId": "plan", "anchor": { "byteStart": 0, "byteEnd": 17, "sha256": "148dbaba7edd1ded5756f96668198c952743a84642beb371bd1c82279f25e6d2" } }],
+    "claims": [{ "claimId": "plan-choice", "sectionId": "answer", "kind": "recommendation", "decisionIds": ["old"], "evidence": [{ "evidenceId": "old-plan", "role": "supporting", "support": "direct" }] }]
+  },
+  "context": { "projectRoot": "examples/superseded-decision", "allowedRoots": ["docs"], "decisionRegistryPath": "integrity/decisions.yaml" }
+}

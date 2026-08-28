@@ -62,7 +62,10 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
+
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 logger = logging.getLogger("cage.provider_02_adapter")
 
@@ -225,9 +228,30 @@ def _serialize_state_snapshot(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _hash_state(state: dict[str, Any]) -> str:
-    """SHA-256 hash of a serialized state snapshot."""
-    canonical = json.dumps(state, sort_keys=True, default=str, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    """SHA-256 hash of a serialized state snapshot.
+
+    v3.1.0: Migrated to RFC 8785 JCS with pre-normalization.
+    """
+    # Pre-normalize datetime/Decimal (default=str was used)
+    from datetime import datetime
+
+    def _normalize(obj: Any) -> Any:
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        elif isinstance(obj, Decimal):
+            return str(obj)
+        elif isinstance(obj, dict):
+            return {k: _normalize(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [_normalize(item) for item in obj]
+        elif isinstance(obj, (str, int, float, bool, type(None))):
+            return obj
+        else:
+            return str(obj)
+
+    normalized = _normalize(state)
+    canonical_bytes = jcs_canonicalize_plan(normalized)
+    return hashlib.sha256(canonical_bytes).hexdigest()
 
 
 def _extract_signals(node_name: str, state: dict[str, Any]) -> dict[str, Any]:

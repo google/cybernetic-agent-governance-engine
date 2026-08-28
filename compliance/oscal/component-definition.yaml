@@ -215,8 +215,11 @@ component-definition:
         description: AARM-V1 Memory Poisoning neutralized by SHA-256 hash-chained
           Context Accumulator. Any post-hoc mutation to any session state node breaks
           the chain at the mutated node, detected by verify_integrity().
-        remarks: Implemented in src/compliance_bridge/context_accumulator.py. Chain
-          sealed per audit run; root hash embedded in OSCAL Assessment Results.
+        remarks: Implemented in src/compliance_bridge/context_accumulator.py. Hash-chain
+          canonicalization uses RFC 8785 JCS (jcs_canonicalize_plan). The backward-compatibility
+          remediation (BC-01–BC-08, 2026-08-27) migrated the hash chain from
+          json.dumps(sort_keys=True) to RFC 8785 JCS; this was a breaking change.
+          Chain sealed per audit run; root hash embedded in OSCAL Assessment Results.
         links:
         - href: ../../compliance/lula/lula-validation-aarm-vectors.yaml
           rel: lula
@@ -330,19 +333,36 @@ component-definition:
       TTL, exceeds 60s token TTL by safety margin). Prevents TOCTOU attacks on
       authority consumption and substitution attacks via binding-hash verification.
 
+
+      Phase 2 (Consolidation & Crypto) capabilities: ConsequenceToken JWS mint/verify
+      (src/gateway/governance/consequence_token.py) with 8 claims (sub, tid, rec,
+      act, ver, iat, exp, jti), 60s TTL, KMS-signed via KMSGovernanceSigner, rejects
+      alg:none and algorithm confusion attacks. ConsequenceGateway 6-step post-FRIA
+      evaluation (src/gateway/governance/consequence_gateway.py): JWS signature
+      verification, TTL check, action digest recomputation via RFC 8785 JCS canonicalization,
+      digest comparison (TOCTOU closure), atomic single-use consumption, EXECUTE/HOLD/BLOCK
+      decision with reason codes (OK, TOKEN_INVALID, ACTION_BINDING_MISMATCH, REDIS_ERROR,
+      ALREADY_CONSUMED, AUTHORITY_RECORD_BINDING_MISMATCH). Evidence pipeline migrated
+      to RFC 8785 JCS (JSON Canonicalization Scheme) for deterministic cross-platform
+      hashing. R5 mitigation: JWS token log-scrubbing via pii_sanitizer.py regex
+      pattern (eyJ-anchored 3-segment base64url) and key-based denylist (token,
+      consequence_token, jws, jwt, bearer_token).
+
       '
     purpose: 'Provides cryptographically-verifiable consequence authority for high-stakes
       AI governance decisions, bridging external normative providers (FlowSignal)
       with CAGE''s execution boundary. Implements ISO 42001 §A.8.4 AI System Operation
       Controls — specifically the requirement that authority decisions are tamper-evident,
-      single-use, and bound to specific execution contexts.
+      single-use, and bound to specific execution contexts. Phase 2 adds cryptographic
+      integrity (KMS-signed JWS), deterministic evidence canonicalization (RFC 8785
+      JCS), and comprehensive TOCTOU/replay/substitution defenses.
 
       '
     responsible-roles:
     - role-id: provider
     props:
     - name: software-version
-      value: 0.1.0
+      value: 0.2.0
     - name: redis-key-namespace
       value: 'flowsignal:token:*'
     - name: token-ttl-seconds
@@ -351,6 +371,18 @@ component-definition:
       value: '90'
     - name: normative-provider-slot
       value: provider_01
+    - name: phase-2-jcs-canonicalization
+      value: 'true'
+    - name: phase-2-consequence-gateway
+      value: src/gateway/governance/consequence_gateway.py
+    - name: phase-2-consequence-token
+      value: src/gateway/governance/consequence_token.py
+    - name: kms-signing-algorithm
+      value: variable (ES256/ES384/EdDSA/PS256/RS256)
+    - name: jws-claims-count
+      value: '8'
+    - name: clock-skew-tolerance-seconds
+      value: '5'
     control-implementations:
     - uuid: a20b6f9e-5c3d-6a00-9d4b-e52a8f9c0d3a
       source: https://www.iso.org/standard/81230.html
@@ -374,14 +406,38 @@ component-definition:
           is cryptographically bound, tamper-evident, and enforced at the execution
           boundary.
 
+
+          Phase 2 extensions: ConsequenceToken JWS (src/gateway/governance/consequence_token.py)
+          provides KMS-signed cryptographic binding between governance evaluation
+          and execution. 8-claim structure (sub=actor_id, tid=thread_id, rec=authority_record_id,
+          act=SHA256(JCS(action_payload)), ver=authority_state_version, iat/exp,
+          jti) enforces temporal validity (60s TTL with 5s clock-skew tolerance),
+          action integrity (recomputed digest comparison), and single-use semantics
+          (rec == jti). ConsequenceGateway (src/gateway/governance/consequence_gateway.py)
+          implements vendor-agnostic 6-step post-FRIA evaluation: (1) JWS signature
+          verification via KMSGovernanceSigner.verify_raw(), (2) TTL check, (3-4)
+          action digest recomputation and comparison (TOCTOU closure), (5) atomic
+          consumption via ConsequenceAuthorityStore.consume_once() with binding-hash
+          verification (substitution defense), (6) EXECUTE/HOLD/BLOCK decision with
+          structured reason codes. Fails closed on all errors (TOKEN_INVALID, REDIS_ERROR,
+          ACTION_BINDING_MISMATCH, ALREADY_CONSUMED, AUTHORITY_RECORD_BINDING_MISMATCH).
+          Evidence pipeline migrated to RFC 8785 JSON Canonicalization Scheme (JCS)
+          for deterministic cross-platform/cross-language evidence hashing (replaces
+          json.dumps(sort_keys=True) in normative_provider.py _async_attestation()).
+          R5 mitigation: pii_sanitizer.py JWS log-scrubbing via eyJ-anchored regex
+          pattern plus key-based denylist (token, consequence_token, jws, jwt, bearer_token)
+          prevents ConsequenceToken leakage in audit logs and Langfuse telemetry.
+
           '
-        remarks: 'Implemented in Phase 1 of the FlowSignal integration plan (plans/flowsignal_integration_implementation_plan.md).
-          ConsequenceAuthorityStore provides distributed atomicity guarantees via
-          Redis SET NX PX (single round-trip, no Lua required for single-key operations).
-          Binding hash (SHA-256 of thread_id:actor_id:action_digest:authority_state_version)
+        remarks: 'Implemented across Phase 1 and Phase 2 of the FlowSignal integration
+          plan (plans/flowsignal_integration_implementation_plan.md). Phase 1: ConsequenceAuthorityStore
+          distributed atomicity guarantees via Redis SET NX PX. Phase 2: ConsequenceToken
+          KMS-signed JWS, ConsequenceGateway 6-step verification, RFC 8785 JCS evidence
+          canonicalization, R5 log-scrubbing. Binding hash (SHA-256 of thread_id:actor_id:action_digest:authority_state_version)
           stored as the marker value enables substitution-attack detection. Reference
           architecture: Lula validation enforces illustrative patterns; adopters
-          should adapt namespace prefixes and secret names to their environments.
+          should adapt namespace prefixes, secret names, and KMS key configurations
+          to their environments.
 
           '
         links:

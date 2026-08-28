@@ -1,6 +1,6 @@
 # CAGE Compliance & Governance Posture Framework
 **CAGE Version:** v3.0.0
-**Last Evaluated:** 2026-08-22
+**Last Evaluated:** 2026-08-28
 
 ---
 

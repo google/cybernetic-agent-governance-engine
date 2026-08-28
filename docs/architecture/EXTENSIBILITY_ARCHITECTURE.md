@@ -4,7 +4,7 @@
 | ------------------ | ------------------------- |
 | **Classification** | PUBLIC                    |
 | **Date**           | 2026-06-03                |
-| **Version**        | v2.1.0                    |
+| **Version**        | v3.0.0                    |
 | **Status**         | Current State + Roadmap (GKE deployment verified 2026-06-03; see `CHANGELOG.md` for v2.1.0 additions) |
 
 ---

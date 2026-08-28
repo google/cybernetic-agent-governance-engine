@@ -103,7 +103,11 @@ def test_s3_operations():
 async def test_put_oscal_artifact_idempotent():
     """Test that put_oscal_artifact returns existing key when artifact already exists."""
     with (
-        patch.dict(os.environ, {"OSCAL_S3_BUCKET": "test-bucket"}, clear=False),
+        patch.dict(
+            os.environ,
+            {"OSCAL_S3_BUCKET": "test-bucket", "STORAGE_BACKEND": "s3"},
+            clear=False,
+        ),
         # HIGH-4 FIX: Now uses atomic _s3_upload_if_not_exists instead of artifact_exists
         patch.object(
             storage,
@@ -125,7 +129,11 @@ async def test_put_oscal_artifact_idempotent():
 async def test_put_oscal_artifact_upload_when_missing():
     """Test that put_oscal_artifact uploads artifact when it doesn't exist."""
     with (
-        patch.dict(os.environ, {"OSCAL_S3_BUCKET": "test-bucket"}, clear=False),
+        patch.dict(
+            os.environ,
+            {"OSCAL_S3_BUCKET": "test-bucket", "STORAGE_BACKEND": "s3"},
+            clear=False,
+        ),
         # HIGH-4 FIX: Now uses atomic _s3_upload_if_not_exists instead of artifact_exists + upload_artifact
         patch.object(
             storage,

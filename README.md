@@ -13,8 +13,8 @@
 
 ## What's New in v3.0.0
 
-> **Release date:** 2026-08-15 — Major Version Release: Architectural cleanup, formal safety consolidations, and governed threshold centralization.
-> See [CHANGELOG.md](CHANGELOG.md#300---2026-08-15) and [docs/BREAKING_CHANGES_v3.md](docs/BREAKING_CHANGES_v3.md) for migration guides.
+> **Release date:** 2026-08-28 — Major Version Release: Architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime.
+> See [CHANGELOG.md](CHANGELOG.md#300---2026-08-28) and [docs/BREAKING_CHANGES_v3.md](docs/BREAKING_CHANGES_v3.md) for migration guides.
 
 ### Major Capabilities & Enhancements
 
@@ -311,7 +311,7 @@ CAGE enforces strict deployment rules to ensure compliance and consistency:
 ## Security & Compliance Status
 
 > [!IMPORTANT]
-> **CAGE v2.1.0 has not received a NIST Authorization to Operate (ATO).** The AI governance enforcement controls (NeMo Guardrails, OPA, Cloud KMS signing, HITL, STPA, heterogeneous consensus, human-gated refinement, externally reconciled CBF) are fully implemented and tested. The full NIST RMF authorization process — Security Assessment, System Security Plan, ATO letter — has not been completed. Regulated-environment deployers must conduct their own risk assessment before production use.
+> **CAGE v3.0.0 has not received a NIST Authorization to Operate (ATO).** The AI governance enforcement controls (NeMo Guardrails, OPA, Cloud KMS signing, HITL, STPA, heterogeneous consensus, human-gated refinement, externally reconciled CBF) are fully implemented and tested. The full NIST RMF authorization process — Security Assessment, System Security Plan, ATO letter — has not been completed. Regulated-environment deployers must conduct their own risk assessment before production use.
 
 ### Compliance Framework Scope
 
@@ -632,4 +632,4 @@ This is not an officially supported Google product. This project is not eligible
 
 By participating in this project, you agree to abide by the [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
-_CAGE v2.0.0 — 2026-06-08 — Stable Release: Token Quota Proxy, PII Sanitizer, UCA Logger, CTRL_TQP_007, gateway CVE remediation, seal enforcement verification_
+_CAGE v3.0.0 — 2026-08-28 — Stable Release: Architectural cleanup, formal safety consolidations, governed threshold centralization, and 6-primitive governance runtime_

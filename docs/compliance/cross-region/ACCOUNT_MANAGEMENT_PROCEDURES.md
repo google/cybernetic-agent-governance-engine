@@ -1,4 +1,4 @@
-# Account Management Procedures — CAGE v2.1.0
+# Account Management Procedures — CAGE v3.0.0
 
 **Document:** POAM-001 / NIST SP 800-53 AC-2 / ISO 42001 §A.9.2
 **Date:** 2026-06-23

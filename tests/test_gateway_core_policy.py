@@ -103,9 +103,12 @@ class TestOpaCacheKey:
         assert key1 == key2
 
     def test_key_matches_manual_sha256(self) -> None:
+        """Cache key uses RFC 8785 JCS canonicalization (migrated v3.1.0)."""
+        from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
         data = {"action": "execute_trade"}
-        canonical = json.dumps(data, sort_keys=True, default=str)
-        expected_digest = hashlib.sha256(canonical.encode()).hexdigest()[:24]
+        canonical_bytes = jcs_canonicalize_plan(data)
+        expected_digest = hashlib.sha256(canonical_bytes).hexdigest()[:24]
         expected_key = f"cage:opa:decision:{expected_digest}"
         assert _opa_cache_key(data) == expected_key
 

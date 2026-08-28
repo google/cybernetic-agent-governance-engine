@@ -366,3 +366,54 @@ def test_ensure_all_enum_controls_are_referenced_in_source():
         + "\n".join(orphaned)
         + "\n\nWire each control into an active check before merging."
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 6 — Vendor isolation: kernel governance modules never import from integrations
+# ---------------------------------------------------------------------------
+
+
+def test_consequence_gateway_never_imports_from_integrations():
+    """Vendor-isolation boundary for consequence_gateway.py (FlowSignal ST-3):
+    consequence_gateway.py must never import from src.integrations.*.
+
+    Per the Plugin & Adapter Architecture Specification, providers may import
+    kernel modules, never the reverse.
+
+    This test is scoped to consequence_gateway.py only because pre-existing
+    kernel files (normative_provider.py) already violate the boundary. Those
+    violations are tracked separately and outside the scope of ST-3.
+    """
+    import ast
+
+    consequence_gateway_path = _SRC_GOVERNANCE / "consequence_gateway.py"
+    assert consequence_gateway_path.exists(), (
+        "consequence_gateway.py not found in src/gateway/governance/"
+    )
+
+    with open(consequence_gateway_path, encoding="utf-8") as fh:
+        try:
+            tree = ast.parse(fh.read(), filename=str(consequence_gateway_path))
+        except SyntaxError:
+            pytest.fail("consequence_gateway.py has syntax errors")
+
+    violations = []
+    for node in ast.walk(tree):
+        # Check 'import src.integrations.*' (ast.Import)
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("src.integrations."):
+                    violations.append(f"Line {node.lineno}: import {alias.name}")
+
+        # Check 'from src.integrations.* import ...' (ast.ImportFrom)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and node.module.startswith("src.integrations."):
+                violations.append(f"Line {node.lineno}: from {node.module} import ...")
+
+    assert not violations, (
+        "Vendor-isolation boundary violated in consequence_gateway.py — "
+        "this kernel module must never import from src.integrations.*.\n\n"
+        "Per the Plugin & Adapter Architecture Specification, providers may "
+        "import kernel modules, never the reverse.\n\n"
+        "Violations:\n" + "\n".join(violations)
+    )

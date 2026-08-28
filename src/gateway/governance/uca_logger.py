@@ -46,6 +46,8 @@ from typing import Any
 
 import yaml
 
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -281,10 +283,12 @@ class UCALogger:
                 kwargs[_field] = _sanitize(kwargs[_field])
 
         # Build request_summary with PII sanitization
+        # Note: raw_summary is ephemeral (log string only, not hashed), so
+        # canonicalization is not critical. Using plain json.dumps for readability.
         raw_summary = ""
         if request_body:
             try:
-                raw_summary = json.dumps(request_body, sort_keys=True)[:512]
+                raw_summary = json.dumps(request_body)[:512]
             except (TypeError, ValueError):
                 raw_summary = str(request_body)[:512]
         elif kwargs.get("injected_content"):
@@ -431,6 +435,10 @@ class UCALogger:
 
         In test mode: HMAC-SHA256 stub with prefix ``0xSTUB_``.
         In production: delegates to ``KMSGovernanceSigner.sign()``.
+
+        v3.1.0 Breaking Change: Migrated WORM signing payload to RFC 8785 JCS.
+        Previously-signed WORM records will not verify under the new algorithm.
+        This is acceptable per AGENTS.md dormant rules (no live deployments).
         """
         # Exclude signature fields from the payload being signed
         payload = {
@@ -438,7 +446,7 @@ class UCALogger:
             for k, v in record.items()
             if k not in ("cryptographic_signature", "signing_key_id")
         }
-        payload_bytes = json.dumps(payload, sort_keys=True).encode()
+        payload_bytes = jcs_canonicalize_plan(payload)
 
         if self._test_mode or self._signer is None:
             stub_sig = hmac.new(
