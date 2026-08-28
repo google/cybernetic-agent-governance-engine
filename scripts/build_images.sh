@@ -49,7 +49,7 @@ build_image() {
   echo "🏗️  Starting build for ${image_name} (${SHORT_SHA}) using ${dockerfile}..."
 
   local cb_file
-  cb_file=$(mktemp -t cloudbuild)
+  cb_file=$(mktemp -t cloudbuild.XXXXXX)
 
   cat <<EOF > "$cb_file"
 steps:
@@ -85,7 +85,7 @@ EOF
 
 # 1. Backend / Governed Financial Advisor
 echo "🏗️  Starting build for governed-financial-advisor (${SHORT_SHA})..."
-cb_backend=$(mktemp -t cloudbuild_backend)
+cb_backend=$(mktemp -t cloudbuild_backend.XXXXXX)
 cat <<EOF > "$cb_backend"
 steps:
 - name: 'gcr.io/cloud-builders/docker'

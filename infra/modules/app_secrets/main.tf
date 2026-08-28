@@ -60,8 +60,9 @@ resource "kubernetes_secret" "advisor_secrets" {
     "NEXTAUTH_SECRET"             = var.nextauth_secret
     "NEXTAUTH_URL"                = var.nextauth_url
     "CAGE_DEPLOYMENT_REGION"      = var.cage_deployment_region
-    CAGE_ROUTING_SEAL_SECRET = var.routing_seal_secret
-    GOVERNANCE_SALT          = var.governance_salt
+    "CAGE_ROUTING_SEAL_SECRET"    = var.routing_seal_secret
+    "GOVERNANCE_SALT"             = var.governance_salt
+    "EVIDENCE_STREAM_ENABLED"     = "true"
   }
 }
 

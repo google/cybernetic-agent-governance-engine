@@ -282,6 +282,12 @@ resource "kubernetes_deployment" "vllm" {
     create = "25m"
     update = "25m"
   }
+
+  lifecycle {
+    ignore_changes = [
+      spec[0].replicas,
+    ]
+  }
 }
 
 # Service for vLLM

@@ -51,6 +51,14 @@ resource "kubernetes_deployment" "compliance_bridge" {
       spec {
         service_account_name = "financial-advisor-sa"
 
+        security_context {
+          run_as_non_root = true
+          run_as_user     = 1000
+          seccomp_profile {
+            type = "RuntimeDefault"
+          }
+        }
+
         container {
           name              = "compliance-bridge"
           image             = var.image

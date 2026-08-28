@@ -144,7 +144,7 @@ resource "google_container_cluster" "primary" {
       enable_components = [
         "SYSTEM_COMPONENTS",
         "WORKLOADS",
-        "API_SERVER",
+        "APISERVER",
         "SCHEDULER",
         "CONTROLLER_MANAGER"
       ]
@@ -158,7 +158,17 @@ resource "google_container_cluster" "primary" {
     content {
       enable_components = [
         "SYSTEM_COMPONENTS",
-        "WORKLOADS"
+        "APISERVER",
+        "SCHEDULER",
+        "CONTROLLER_MANAGER",
+        "STORAGE",
+        "POD",
+        "DEPLOYMENT",
+        "STATEFULSET",
+        "DAEMONSET",
+        "HPA",
+        "CADVISOR",
+        "KUBELET"
       ]
       managed_prometheus {
         enabled = true
@@ -205,6 +215,14 @@ resource "google_container_cluster" "primary" {
   lifecycle {
     ignore_changes = [
       node_version,
+      initial_node_count,
+      node_config,
+      release_channel,
+      security_posture_config,
+      node_pool_auto_config,
+      node_pool_defaults,
+      notification_config,
+      service_external_ips_config,
     ]
   }
 }
