@@ -19,6 +19,9 @@
 8. [Schema Reference](#8-schema-reference)
 9. [Error Reference](#9-error-reference)
 10. [Rate Limits and Quotas](#10-rate-limits-and-quotas)
+11. [Policy Ingestion API](#11-policy-ingestion-api)
+12. [Governance Webhook](#12-governance-webhook)
+13. [Normative Provider Contract (Outbound)](#13-normative-provider-contract-outbound)
 
 ---
 
@@ -1458,6 +1461,106 @@ Cross-region webhook endpoints are rejected with HTTP 422:
 | `US_FED` | No geographic restriction |
 
 Localhost and private IP ranges are always allowed (for testing).
+
+---
+
+## 13. Normative Provider Contract (Outbound)
+
+Sections 3–12 describe endpoints CAGE **exposes**. This section describes the
+contract CAGE **calls** — the outbound HTTP interface an external compliance
+vendor must implement to act as a synchronous FRIA gate.
+
+Providers are numbered and anonymized in this repository (`provider_01` …
+`provider_06`) and ship with **no configured live endpoints**. All URLs below
+are placeholders. Adapter sources live under `src/integrations/{provider}/`;
+each directory carries a `README.md` with its own verdict vocabulary.
+
+> **Reference architecture note:** this contract is an illustrative integration
+> pattern for adopters to adapt, not a hosted service offered by this
+> repository.
+
+**Protocol:** [`NormativeProvider`](../src/gateway/governance/normative_provider.py:273)
+— three methods, three endpoints.
+
+| Method | Endpoint (Provider 01 shape) | Returns |
+|---|---|---|
+| `fetch_baseline(region)` | `GET {base}/legal-baseline/{region}` | `NormativeBaseline` |
+| `validate_fria(payload)` | `POST {base}/validate/fria` | `ValidationResult` |
+| `submit_evidence(thread_id, hash)` | `GET {base}/evidence-chain/{thread_id}` | `EvidenceSeal` |
+
+**Base URL:** `https://api.example.com/normative` (placeholder)
+**Auth:** `Authorization: Bearer <key>`
+**Timeout:** 5 seconds (default)
+
+---
+
+### 13.1 `POST /validate/fria` — Synchronous Gate
+
+This call sits on the request hot path. Every 200 response body **must**
+carry a top-level `decision` field.
+
+**Valid `decision` values** (matched case-insensitively,
+[`provider.py`](../src/integrations/provider_01/provider.py:74)):
+
+| `decision` | `admitted` | Finding code | Severity | CAGE behavior |
+|---|---|---|---|---|
+| `ALLOW` | `true` | `CONSEQUENCE_TOKEN` | `info` | Admitted; a ConsequenceToken JWS is minted and travels with the execution plan |
+| `REFUSE` | `false` | `FLOWSIGNAL_REFUSE` | `blocked` | Hard deny |
+| `ESCALATE` | `false` | `FLOWSIGNAL_HOLD` | `review` | Carries `needs_human_review: true`; parks in the `DeferQueue` for human approval rather than hard-denying |
+
+> **`REVIEW` is not valid here.** `PASS` / `REVIEW` / `BLOCKED` is the
+> vocabulary of a *different* adapter
+> ([`provider_06/adapter.py`](../src/integrations/provider_06/adapter.py:87)).
+> An endpoint emitting `REVIEW` on this contract is rejected as unrecognized.
+> If your upstream engine returns `REVIEW`, map it to `ESCALATE` before
+> responding — both mean "hold for a human", and `ESCALATE` reaches the same
+> `DeferQueue` outcome.
+
+**Fail-closed cases.** All produce `admitted: false`:
+
+| Condition | Finding code |
+|---|---|
+| `decision` field absent | `cage.endpoint_error` |
+| `decision` present but unrecognized | `PARSE_ERROR` |
+| Non-2xx status, timeout, transport failure | `ENDPOINT_ERROR` |
+
+> **Wire-contract change:** the legacy binary `admitted`/`findings` response
+> shape is no longer accepted — `decision` is mandatory, and a response
+> lacking it fails closed rather than being admitted. Endpoints emitting
+> `decision: "ALLOW"` must additionally emit `authority_record_id`, or the
+> `ALLOW` is downgraded to a denial. See **BC-03** and the companion
+> `authority_record_id` section in
+> [`docs/BREAKING_CHANGES_v3.md`](BREAKING_CHANGES_v3.md).
+
+**Example — `ALLOW`:**
+
+```json
+{
+  "decision": "ALLOW",
+  "authority_record_id": "ar-7f3c9b21",
+  "authority_state_version": 14
+}
+```
+
+`authority_record_id` is **required** whenever `decision` is `ALLOW`. CAGE
+mints a ConsequenceToken bound to it before admitting the action; without it
+the mint raises, a `CONSEQUENCE_TOKEN_MINT_FAILED` finding is emitted, and
+`admitted` is forced back to `false`. This is a distinct failure from a missing
+`decision`: the response parses cleanly and says `ALLOW`, but CAGE will not
+admit a consequential action it cannot bind to an authority record.
+`authority_state_version` is nullable and does not block.
+
+**Example — `ESCALATE`:**
+
+```json
+{
+  "decision": "ESCALATE",
+  "message": "Counterparty jurisdiction requires manual sign-off"
+}
+```
+
+The optional `message` string is surfaced in the finding. On `REFUSE` and
+`ESCALATE` it defaults to a generic string if omitted.
 
 ---
 

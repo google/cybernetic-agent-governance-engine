@@ -386,12 +386,61 @@ through tri-state governance mapping or token minting. Two tests in the
 Universal Protocol Conformance Suite were locking that behavior in; they have
 been **inverted** so the fail-closed contract is now the asserted one.
 
+**The three valid values.** Provider 01's tri-state vocabulary is exactly
+`ALLOW`, `REFUSE`, `ESCALATE`, matched case-insensitively
+([`provider.py`](../src/integrations/provider_01/provider.py:74)). Any other
+string — including `REVIEW`, which belongs to Provider 06's unrelated
+`PASS`/`REVIEW`/`BLOCKED` vocabulary — raises inside
+`_map_flowsignal_decision()` and is returned as a fail-closed
+`PARSE_ERROR` finding.
+
+| `decision` | `admitted` | Finding code | Severity | Effect |
+|---|---|---|---|---|
+| `ALLOW` | `True` | `CONSEQUENCE_TOKEN` | `info` | ConsequenceToken JWS minted and attached |
+| `REFUSE` | `False` | `FLOWSIGNAL_REFUSE` | `blocked` | Hard deny |
+| `ESCALATE` | `False` | `FLOWSIGNAL_HOLD` | `review` | `needs_human_review: true` → parks in `DeferQueue` |
+| Unrecognized | `False` | `PARSE_ERROR` | `blocked` | Fail-closed |
+| *(absent)* | `False` | `cage.endpoint_error` | `blocked` | Fail-closed (this BC-03 change) |
+
 **Migration:** vendor endpoints must emit `decision` on every response. If you
 operate a FlowSignal-compatible endpoint that still returns the binary shape,
 add the `decision` field before upgrading — CAGE will otherwise reject all its
 responses. Map upstream non-binary verdicts (`REVIEW`, `ESCALATE`) per the
 tri-state guidance in [`AGENTS.md`](../AGENTS.md) so they park in the
-`DeferQueue` rather than failing.
+`DeferQueue` rather than failing. Note the direction of that mapping for this
+provider specifically: an upstream `REVIEW` must be emitted to CAGE as
+`ESCALATE`, because `REVIEW` is not in Provider 01's accepted set.
+
+### FlowSignal / Provider 01 — `authority_record_id` is required on `ALLOW`
+
+**Companion requirement — a separate failure mode from BC-03, and not part of
+it.** BC-03 covers a response that omits `decision` entirely. This covers a
+response that is well-formed, carries `decision: "ALLOW"`, and is *still*
+rejected.
+
+On `ALLOW`, CAGE mints a ConsequenceToken before admitting the action. The mint
+requires `authority_record_id` in the same `POST /validate/fria` response body;
+[`_mint_consequence_token()`](../src/integrations/provider_01/provider.py:128)
+raises when it is absent. A mint failure does not degrade to a warning — it
+produces a `CONSEQUENCE_TOKEN_MINT_FAILED` finding with severity `blocked`, and
+[`validate_fria()`](../src/integrations/provider_01/provider.py:357) then
+overrides `admitted` back to `False`.
+
+| Response on `ALLOW` | Outcome |
+|---|---|
+| `decision: "ALLOW"` **+** `authority_record_id` | `admitted=True`, `CONSEQUENCE_TOKEN` finding carrying the JWS |
+| `decision: "ALLOW"`, no `authority_record_id` | **`admitted=False`**, `CONSEQUENCE_TOKEN_MINT_FAILED` (severity `blocked`) |
+
+`authority_state_version` is read from the same body but is nullable — its
+absence does not block. The other two mint inputs, `actor_id` and `thread_id`,
+come from the CAGE-side FRIA request payload rather than from the vendor
+response.
+
+**Migration:** endpoints emitting `decision: "ALLOW"` must also emit
+`authority_record_id`. An endpoint that satisfies BC-03 but omits this field
+will see every `ALLOW` converted to a denial, which is the intended
+fail-closed behavior: CAGE will not admit a consequential action it cannot
+bind to an authority record.
 
 ### Provider 03 — compatibility aliases removed (BC-02)
 

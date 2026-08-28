@@ -932,6 +932,87 @@ Paginated historical compliance telemetry from Langfuse.
 
 ---
 
+## 7. Outbound Vendor APIs — Normative Provider Contract
+
+The sections above document endpoints CAGE **serves**. This section documents
+the outbound calls CAGE **makes** to external compliance vendors, because those
+calls have a wire contract that vendor implementers must satisfy.
+
+Vendor adapters are isolated under `src/integrations/{provider}/` and are
+lazy-loaded. Providers are numbered/anonymized and have **no configured live
+endpoints** in this repository — all URLs are placeholders. Per-provider detail,
+including each provider's verdict vocabulary, is in the `README.md` inside each
+adapter directory.
+
+| Provider | Protocol | Style |
+|---|---|---|
+| `provider_01` | `NormativeProvider` | Synchronous FRIA gate (HTTP) |
+| `provider_03` | `NormativeProvider` | Synchronous FRIA gate (HTTP) |
+| `provider_06` | `NormativeProvider` | Synchronous integrity verifier (HTTP) |
+| `provider_02` | Attestation surface | Out-of-band receipt certification |
+| `provider_04` | `AttestationProvider` + envelope mapper | Out-of-band (stub) |
+| `provider_05` | `AttestationProvider` ×3 | Out-of-band, seeded/synthetic |
+
+---
+
+### 7.1 `POST {base}/validate/fria` — Provider 01 Synchronous Gate
+
+**Base URL:** `https://api.example.com/normative` (placeholder,
+`CAGE_NORMATIVE_ENDPOINT`)
+**Auth:** `Authorization: Bearer <key>`
+**Timeout:** 5s default (`CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS`)
+**Adapter:** [`provider_01/provider.py`](../src/integrations/provider_01/provider.py:323)
+
+Every 200 response **must** include a top-level `decision`. The vocabulary is
+`ALLOW` / `REFUSE` / `ESCALATE`, matched case-insensitively.
+
+| `decision` | `admitted` | Finding code | Effect |
+|---|---|---|---|
+| `ALLOW` | `true` | `CONSEQUENCE_TOKEN` (`info`) | ConsequenceToken JWS minted |
+| `REFUSE` | `false` | `FLOWSIGNAL_REFUSE` (`blocked`) | Hard deny |
+| `ESCALATE` | `false` | `FLOWSIGNAL_HOLD` (`review`) | `needs_human_review: true` → `DeferQueue` |
+| Unrecognized | `false` | `PARSE_ERROR` (`blocked`) | Fail-closed |
+| *(absent)* | `false` | `cage.endpoint_error` (`blocked`) | Fail-closed |
+
+**`REVIEW` is not valid on this endpoint.** `PASS`/`REVIEW`/`BLOCKED` is
+`provider_06`'s vocabulary
+([`provider_06/adapter.py`](../src/integrations/provider_06/adapter.py:87)).
+Map an upstream `REVIEW` to `ESCALATE` — both reach the `DeferQueue`.
+
+**Request example (`ALLOW`):**
+```json
+{
+  "decision": "ALLOW",
+  "authority_record_id": "ar-7f3c9b21",
+  "authority_state_version": 14
+}
+```
+
+`authority_record_id` is **required on `ALLOW`**. CAGE mints a ConsequenceToken
+bound to it; without the field the mint raises, a
+`CONSEQUENCE_TOKEN_MINT_FAILED` finding (`blocked`) is emitted, and `admitted`
+is forced to `false`
+([`provider.py`](../src/integrations/provider_01/provider.py:357)). This is a
+**separate** failure from a missing `decision` — the response is well-formed and
+says `ALLOW`, yet still fails closed. `authority_state_version` is nullable.
+
+> **Wire-contract change:** the legacy binary `admitted`/`findings` shape is no
+> longer accepted; `decision` is mandatory and its absence fails closed rather
+> than admitting. The `authority_record_id`-on-`ALLOW` requirement is documented
+> alongside it. See **BC-03** in
+> [`docs/BREAKING_CHANGES_v3.md`](BREAKING_CHANGES_v3.md).
+
+---
+
+### 7.2 Other Provider 01 endpoints
+
+| Method | Path | Purpose | Failure mode |
+|---|---|---|---|
+| `GET` | `/legal-baseline/{region}` | Fetch regional normative baseline | Returns `NormativeBaseline` with populated `error`; empty profile |
+| `GET` | `/evidence-chain/{thread_id}` | Seal governance evidence hash (`?evidence_hash=`) | Returns `EvidenceSeal` with populated `error` |
+
+---
+
 ## External Endpoint Summary
 
 | Service | Method | Path | Description |
