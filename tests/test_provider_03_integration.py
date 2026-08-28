@@ -18,33 +18,62 @@ Unit tests for Provider03NormativeProvider adapter (CAGE-REM-006).
 
 from __future__ import annotations
 
+import httpx
 import pytest
+import respx
 
 from src.integrations.provider_03 import Provider03NormativeProvider
 
 
 @pytest.mark.asyncio
+@respx.mock
 async def test_provider_03_lifecycle():
     provider = Provider03NormativeProvider(
         endpoint="https://provider03.example.com", api_key="secret-key"
     )
 
-    baseline = await provider.fetch_legal_baseline("US_FED")
-    assert baseline["region"] == "US_FED"
-    assert baseline["provider"] == "PROVIDER_03"
-    assert "PROVIDER_03_DECISION_MANDATE_V1" in baseline["active_rules"]
-
-    fria = await provider.validate_external_fria(
-        "thread-123", {"action": "execute_trade", "amount": 5000}
+    respx.get("https://provider03.example.com/baseline/US_FED").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "profile": {
+                    "rule": "allow",
+                    "active_rules": ["PROVIDER_03_DECISION_MANDATE_V1"],
+                },
+                "provider": "PROVIDER_03",
+            },
+            headers={"ETag": "etag-3"},
+        )
     )
-    assert fria["verdict"] == "APPROVED"
-    assert fria["provider"] == "PROVIDER_03"
-    assert fria["thread_id"] == "thread-123"
+    baseline = await provider.fetch_baseline("US_FED")
+    assert baseline.region == "US_FED"
+    assert baseline.profile == {
+        "rule": "allow",
+        "active_rules": ["PROVIDER_03_DECISION_MANDATE_V1"],
+    }
+    assert baseline.etag == "etag-3"
 
-    evidence_ok = await provider.submit_evidence_chain(
-        "thread-123", {"event": "trade_executed"}
+    respx.post("https://provider03.example.com/validate").mock(
+        return_value=httpx.Response(
+            200,
+            json={"verdict": "APPROVED", "findings": []},
+        )
     )
-    assert evidence_ok is True
+    fria = await provider.validate_fria(
+        {"action": "execute_trade", "amount": 5000, "thread_id": "thread-123"}
+    )
+    assert fria.admitted is True
+    assert fria.findings == []
+
+    respx.post("https://provider03.example.com/evidence/thread-123").mock(
+        return_value=httpx.Response(
+            200,
+            json={"seal_hash": "sha256-hash-xyz"},
+        )
+    )
+    seal = await provider.submit_evidence("thread-123", "sha256-evidence-hash")
+    assert seal.thread_id == "thread-123"
+    assert seal.seal_hash == "sha256-hash-xyz"
 
 
 def test_provider_03_bind_receipt_ingestion():

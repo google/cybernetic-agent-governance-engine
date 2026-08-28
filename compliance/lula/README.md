@@ -23,6 +23,7 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 | [`lula-validation-tqp007.yaml`](lula-validation-tqp007.yaml)             | A.8.4         | ISO 42001 | ALL | ✅ Active | TokenQuotaProxy fail-closed (CTRL_TQP_007) — asserts tqp_running, tqp_has_redis_url, tqp_fail_closed |
 | [`lula-validation-iso001-token-quota.yaml`](lula-validation-iso001-token-quota.yaml) | A.4 | ISO 42001 | ALL | ✅ Active | Token Quota OPA Injection (ISO-001) — asserts advisor_running, advisor_has_redis_url, advisor_has_quota_markers |
 | [`lula-validation-ftra.yaml`](lula-validation-ftra.yaml)                 | CTRL_FTRA_001 | ISO 42001 / NIST | ALL | ✅ Active | FTRA Tier 0.5 Gate — Forward-Looking Trajectory Reachability Analyzer boundary check |
+| [`lula-validation-flowsignal.yaml`](lula-validation-flowsignal.yaml)     | A.8.4         | ISO 42001 | ALL | ✅ Active | FlowSignal Integration (FLOWSIGNAL-001) — asserts normative provider, secretKeyRef for mTLS credentials, Redis namespace isolation, and KMS config |
 
 ### US_FED Controls (NIST SP 800-53 / NIST AI 600-1 — US_FED only)
 
@@ -72,7 +73,7 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 
 The active/stub split is **intentional and aligned with the posture architecture**:
 
-- **5 Active (ALL scope):** ISO 42001 universal controls (A.5.2, A.5.3, A.9.2) + TokenQuotaProxy fail-closed (A.8.4 / CTRL_TQP_007) + Token Quota OPA Injection (A.4 / ISO-001) — production-ready across all deployment regions
+- **6 Active (ALL scope):** ISO 42001 universal controls (A.5.2, A.5.3, A.9.2) + TokenQuotaProxy fail-closed (A.8.4 / CTRL_TQP_007) + Token Quota OPA Injection (A.4 / ISO-001) + FlowSignal Integration (A.8.4 / FLOWSIGNAL-001) — production-ready across all deployment regions
 - **1 Active (US_FED scope):** SC-4 fiscal limits — production-ready for US Federal deployments
 - **1 Stub (ALL scope):** CSA AARM vectors — universal but requires cluster configuration. **Note:** This validation is listed as `Status: 🔶 Stub` and counted as 1 stub (ALL scope). It is NOT counted as an active validation for release gate purposes until real assertions replace the stub. See CA-05 remediation note below.
 - **10 Stub (US_FED scope):** NIST SP 800-53 controls — US Federal only; require cluster-specific namespace/resource configuration before activation
