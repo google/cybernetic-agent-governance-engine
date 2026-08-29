@@ -309,15 +309,29 @@ class AgentRegistryAdapter:
         agent_list = raw.get("agents", [])
 
         for agent in agent_list:
-            # Extract SPIFFE ID from the resource name (last path segment)
+            # The GEAP resource name embeds the full SPIFFE identity, e.g.
+            #   projects/.../agents/spiffe://trust-domain/ns/default/sa/trader-agent
+            # agent_catalog.rego (approved_agents[input.caller_identity.sub]) and
+            # config/agent_catalog.json both key on the FULL spiffe:// identity, so
+            # the catalog key must be that whole identity.  Taking only the final
+            # "/"-segment collapses distinct identities that share a trailing
+            # component — the same service-account name in two namespaces or trust
+            # domains — onto one key, and the later entry silently overwrites the
+            # earlier one's allowed_tools/roles (grant substitution).
             resource_name: str = agent.get("name", "")
-            spiffe_id = (
-                resource_name.rsplit("/", 1)[-1]
-                if "/" in resource_name
-                else resource_name
-            )
+            marker = resource_name.find("spiffe://")
+            spiffe_id = resource_name[marker:] if marker != -1 else resource_name
 
             if not spiffe_id:
+                continue
+
+            if spiffe_id in agents:
+                logger.warning(
+                    "agent_registry_adapter: duplicate agent identity '%s' in "
+                    "registry response — keeping the first entry and skipping the "
+                    "later one to avoid authorization grant substitution.",
+                    spiffe_id,
+                )
                 continue
 
             allowed_tools: list[str] = [
