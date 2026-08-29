@@ -500,7 +500,9 @@ class TestNarrowE2EFlow:
 
         try:
             with patch.object(_singletons, "symbolic_governor", mock_gov):
-                with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
+                with patch(
+                    "src.gateway.infrastructure.redis_client.redis_client", mock_redis
+                ):
                     response = await handle_check_request(request_body)
         finally:
             adapter_module._NARROW_ENABLED = original_narrow_enabled
@@ -571,7 +573,9 @@ class TestNarrowE2EFlow:
 
         try:
             with patch.object(_singletons, "symbolic_governor", mock_gov):
-                with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
+                with patch(
+                    "src.gateway.infrastructure.redis_client.redis_client", mock_redis
+                ):
                     response = await handle_check_request(request_body)
         finally:
             adapter_module._NARROW_ENABLED = original_narrow_enabled
