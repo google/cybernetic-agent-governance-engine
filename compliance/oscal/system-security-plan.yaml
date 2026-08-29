@@ -3,8 +3,8 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-08-22T12:48:05Z'
-    version: 1.0.1-draft+stpa+stpa+stpa
+    last-modified: '2026-08-29T19:37:15Z'
+    version: 1.0.1-draft+stpa+stpa+stpa+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
       for the Cybernetic AI Governance Engine (CAGE), a HIGH-impact AI governance
@@ -883,12 +883,12 @@ system-security-plan:
         \nThe blocking mode satisfies AU-12(1) system-wide/time-correlated audit trail\n\
         requirements through the hash-linked evidence chain. Each evidence record\n\
         includes a previous_hash field linking to the prior entry, enabling forensic\n\
-        reconstruction of the complete audit trail sequence.\n\nBoth modes\
-        \ are compliant AU-12 implementations — the choice depends on whether\nthe\
-        \ deployment prioritizes availability (decision-time) or non-repudiation\n\
-        (evidence-of-execution).\n\nAudit records are exported to GCS buckets for\
-        \ long-term retention per SEC\nRule 17a-4. The Compliance Bridge Service triggers\
-        \ Slack/PagerDuty alerts\nwhen safety_rate thresholds are breached.\n"
+        reconstruction of the complete audit trail sequence.\n\nBoth modes are compliant\
+        \ AU-12 implementations — the choice depends on whether\nthe deployment prioritizes\
+        \ availability (decision-time) or non-repudiation\n(evidence-of-execution).\n\
+        \nAudit records are exported to GCS buckets for long-term retention per SEC\n\
+        Rule 17a-4. The Compliance Bridge Service triggers Slack/PagerDuty alerts\n\
+        when safety_rate thresholds are breached.\n"
       props:
       - name: implementation-status
         value: implemented
@@ -941,11 +941,14 @@ system-security-plan:
           directly to the persisted audit record, ensuring non-repudiation.
 
 
-          The backward-compatibility remediation (BC-01–BC-08, 2026-08-27) removed the
+          The backward-compatibility remediation (BC-01–BC-08, 2026-08-27) removed
+          the
 
-          dual-schema verification machinery; evidence records now use RFC 8785 JCS with
+          dual-schema verification machinery; evidence records now use RFC 8785 JCS
+          with
 
-          a /2.0 schema sentinel only. This was a breaking change — records written before
+          a /2.0 schema sentinel only. This was a breaking change — records written
+          before
 
           2026-08-27 are not verifiable by the current code.
 
@@ -1170,7 +1173,7 @@ system-security-plan:
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 9\n          Hazards modelled: 7\n          Safety constraints: 3\n    \
-        \      Last compiled: 2026-08-22T12:48:05Z\n\n          UCA-to-Control mapping\
+        \      Last compiled: 2026-08-29T19:37:15Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
@@ -1203,7 +1206,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-08-22T12:48:05Z'
+        value: '2026-08-29T19:37:15Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa

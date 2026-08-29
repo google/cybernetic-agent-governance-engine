@@ -4,7 +4,7 @@ component-definition:
     title: Cybernetic Governance Engine — ISO 42001 AIMS Component Definition
     version: 1.0.0
     oscal-version: 1.0.4
-    last-modified: '2026-08-22T12:48:05Z'
+    last-modified: '2026-08-29T19:37:15Z'
     remarks: 'This component definition maps technical enforcement components to ISO/IEC
       42001:2023 Annex A controls. Each implemented requirement links to a Lula validation
       manifest for automated continuous compliance.
@@ -217,9 +217,9 @@ component-definition:
           the chain at the mutated node, detected by verify_integrity().
         remarks: Implemented in src/compliance_bridge/context_accumulator.py. Hash-chain
           canonicalization uses RFC 8785 JCS (jcs_canonicalize_plan). The backward-compatibility
-          remediation (BC-01–BC-08, 2026-08-27) migrated the hash chain from
-          json.dumps(sort_keys=True) to RFC 8785 JCS; this was a breaking change.
-          Chain sealed per audit run; root hash embedded in OSCAL Assessment Results.
+          remediation (BC-01–BC-08, 2026-08-27) migrated the hash chain from json.dumps(sort_keys=True)
+          to RFC 8785 JCS; this was a breaking change. Chain sealed per audit run;
+          root hash embedded in OSCAL Assessment Results.
         links:
         - href: ../../compliance/lula/lula-validation-aarm-vectors.yaml
           rel: lula
@@ -325,28 +325,28 @@ component-definition:
     title: FlowSignal Consequence Authority Integration
     type: software
     description: 'FlowSignal (provider_01) integration providing distributed consequence
-      authority verification and single-use consumption enforcement. Implements
-      a two-phase consequence token model: governance evaluation (OPA + FlowSignal
-      authority determination) produces a short-TTL, single-use, KMS-signed ConsequenceToken
-      (JWS) that execution adapters verify and atomically consume via Redis (SET
-      NX PX) before side-effects execute. Key namespace: flowsignal:token:* (90s
-      TTL, exceeds 60s token TTL by safety margin). Prevents TOCTOU attacks on
-      authority consumption and substitution attacks via binding-hash verification.
+      authority verification and single-use consumption enforcement. Implements a
+      two-phase consequence token model: governance evaluation (OPA + FlowSignal authority
+      determination) produces a short-TTL, single-use, KMS-signed ConsequenceToken
+      (JWS) that execution adapters verify and atomically consume via Redis (SET NX
+      PX) before side-effects execute. Key namespace: flowsignal:token:* (90s TTL,
+      exceeds 60s token TTL by safety margin). Prevents TOCTOU attacks on authority
+      consumption and substitution attacks via binding-hash verification.
 
 
       Phase 2 (Consolidation & Crypto) capabilities: ConsequenceToken JWS mint/verify
       (src/gateway/governance/consequence_token.py) with 8 claims (sub, tid, rec,
       act, ver, iat, exp, jti), 60s TTL, KMS-signed via KMSGovernanceSigner, rejects
       alg:none and algorithm confusion attacks. ConsequenceGateway 6-step post-FRIA
-      evaluation (src/gateway/governance/consequence_gateway.py): JWS signature
-      verification, TTL check, action digest recomputation via RFC 8785 JCS canonicalization,
-      digest comparison (TOCTOU closure), atomic single-use consumption, EXECUTE/HOLD/BLOCK
+      evaluation (src/gateway/governance/consequence_gateway.py): JWS signature verification,
+      TTL check, action digest recomputation via RFC 8785 JCS canonicalization, digest
+      comparison (TOCTOU closure), atomic single-use consumption, EXECUTE/HOLD/BLOCK
       decision with reason codes (OK, TOKEN_INVALID, ACTION_BINDING_MISMATCH, REDIS_ERROR,
       ALREADY_CONSUMED, AUTHORITY_RECORD_BINDING_MISMATCH). Evidence pipeline migrated
       to RFC 8785 JCS (JSON Canonicalization Scheme) for deterministic cross-platform
-      hashing. R5 mitigation: JWS token log-scrubbing via pii_sanitizer.py regex
-      pattern (eyJ-anchored 3-segment base64url) and key-based denylist (token,
-      consequence_token, jws, jwt, bearer_token).
+      hashing. R5 mitigation: JWS token log-scrubbing via pii_sanitizer.py regex pattern
+      (eyJ-anchored 3-segment base64url) and key-based denylist (token, consequence_token,
+      jws, jwt, bearer_token).
 
       '
     purpose: 'Provides cryptographically-verifiable consequence authority for high-stakes
@@ -364,7 +364,7 @@ component-definition:
     - name: software-version
       value: 0.2.0
     - name: redis-key-namespace
-      value: 'flowsignal:token:*'
+      value: flowsignal:token:*
     - name: token-ttl-seconds
       value: '60'
     - name: consumption-marker-ttl-seconds
@@ -398,22 +398,21 @@ component-definition:
           race conditions across N GKE replicas. CAGE_NORMATIVE_PROVIDER=provider_01
           is configured via env var (not hardcoded), enabling runtime provider selection.
           FlowSignal mTLS secrets (FLOWSIGNAL_CLIENT_CERT, FLOWSIGNAL_CLIENT_KEY,
-          FLOWSIGNAL_CA_BUNDLE) must be referenced via secretKeyRef when present
-          — never inline value: fields. Redis key namespace flowsignal:token:* is
-          isolated from existing prefixes (fiscal:*, DEFER:*, safety:*) to prevent
-          cross-concern key collisions. This implements ISO 42001 §A.8.4 AI System
-          Operation Controls — specifically the requirement that consequence authority
-          is cryptographically bound, tamper-evident, and enforced at the execution
-          boundary.
+          FLOWSIGNAL_CA_BUNDLE) must be referenced via secretKeyRef when present —
+          never inline value: fields. Redis key namespace flowsignal:token:* is isolated
+          from existing prefixes (fiscal:*, DEFER:*, safety:*) to prevent cross-concern
+          key collisions. This implements ISO 42001 §A.8.4 AI System Operation Controls
+          — specifically the requirement that consequence authority is cryptographically
+          bound, tamper-evident, and enforced at the execution boundary.
 
 
           Phase 2 extensions: ConsequenceToken JWS (src/gateway/governance/consequence_token.py)
           provides KMS-signed cryptographic binding between governance evaluation
           and execution. 8-claim structure (sub=actor_id, tid=thread_id, rec=authority_record_id,
-          act=SHA256(JCS(action_payload)), ver=authority_state_version, iat/exp,
-          jti) enforces temporal validity (60s TTL with 5s clock-skew tolerance),
-          action integrity (recomputed digest comparison), and single-use semantics
-          (rec == jti). ConsequenceGateway (src/gateway/governance/consequence_gateway.py)
+          act=SHA256(JCS(action_payload)), ver=authority_state_version, iat/exp, jti)
+          enforces temporal validity (60s TTL with 5s clock-skew tolerance), action
+          integrity (recomputed digest comparison), and single-use semantics (rec
+          == jti). ConsequenceGateway (src/gateway/governance/consequence_gateway.py)
           implements vendor-agnostic 6-step post-FRIA evaluation: (1) JWS signature
           verification via KMSGovernanceSigner.verify_raw(), (2) TTL check, (3-4)
           action digest recomputation and comparison (TOCTOU closure), (5) atomic
@@ -435,9 +434,9 @@ component-definition:
           KMS-signed JWS, ConsequenceGateway 6-step verification, RFC 8785 JCS evidence
           canonicalization, R5 log-scrubbing. Binding hash (SHA-256 of thread_id:actor_id:action_digest:authority_state_version)
           stored as the marker value enables substitution-attack detection. Reference
-          architecture: Lula validation enforces illustrative patterns; adopters
-          should adapt namespace prefixes, secret names, and KMS key configurations
-          to their environments.
+          architecture: Lula validation enforces illustrative patterns; adopters should
+          adapt namespace prefixes, secret names, and KMS key configurations to their
+          environments.
 
           '
         links:
@@ -492,9 +491,9 @@ component-definition:
 
           '
         remarks: 'US_FED only. Test coverage: tests/test_tls_enforcement.py::TestTlsProtocolStandards::test_default_client_context_minimum_version
-          and test_legacy_tls_protocols_disabled confirm ssl.TLSVersion.TLSv1_2
-          minimum version and OP_NO_TLSv1/TLSv1_1 option enforcement. Not applicable
-          to EU_ECB or APAC_MAS deployments (those regions may have different cryptographic
+          and test_legacy_tls_protocols_disabled confirm ssl.TLSVersion.TLSv1_2 minimum
+          version and OP_NO_TLSv1/TLSv1_1 option enforcement. Not applicable to EU_ECB
+          or APAC_MAS deployments (those regions may have different cryptographic
           standards).
 
           '
@@ -524,7 +523,7 @@ component-definition:
     - name: control-structure-input
       value: config/stpa_control_structure.yaml
     - name: last-compiled
-      value: '2026-08-22T12:48:05Z'
+      value: '2026-08-29T19:37:15Z'
     - name: uca-count
       value: '9'
     control-implementations:
