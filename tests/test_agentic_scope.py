@@ -24,7 +24,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def disable_seal_strict_mode(monkeypatch):
     """Disable strict mode for all tests in this module.
-    
+
     Strict mode rejects HMAC seals in production environments.
     Tests use HMAC seals for unit testing, so we disable strict mode.
     """

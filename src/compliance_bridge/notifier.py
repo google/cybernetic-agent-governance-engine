@@ -93,6 +93,7 @@ async def close_notifier_http_client() -> None:
         _notifier_http_client = None
         logger.info("[notifier] Shared HTTP client closed")
 
+
 # PagerDuty Events API v2 endpoint — hardcoded per PD docs, not configurable
 _PAGERDUTY_EVENTS_URL = "https://events.pagerduty.com/v2/enqueue"
 

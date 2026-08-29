@@ -108,7 +108,10 @@ async def test_put_oscal_artifact_idempotent():
         patch.object(
             storage,
             "_s3_upload_if_not_exists",
-            return_value=("s3://test-bucket/oscal-artifacts/2026-08-16/audit-123.yaml", False),
+            return_value=(
+                "s3://test-bucket/oscal-artifacts/2026-08-16/audit-123.yaml",
+                False,
+            ),
         ),
     ):
         ts = datetime(2026, 8, 16, 12, 0, 0, tzinfo=timezone.utc)
@@ -127,7 +130,10 @@ async def test_put_oscal_artifact_upload_when_missing():
         patch.object(
             storage,
             "_s3_upload_if_not_exists",
-            return_value=("s3://test-bucket/oscal-artifacts/2026-08-16/audit-123.yaml", True),
+            return_value=(
+                "s3://test-bucket/oscal-artifacts/2026-08-16/audit-123.yaml",
+                True,
+            ),
         ) as mock_upload,
     ):
         ts = datetime(2026, 8, 16, 12, 0, 0, tzinfo=timezone.utc)

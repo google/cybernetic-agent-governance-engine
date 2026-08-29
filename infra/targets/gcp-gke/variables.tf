@@ -84,6 +84,29 @@ variable "enable_apac_mas_compliance" {
   default     = false
 }
 
+# ─── High Availability Toggle ─────────────────────────────────────────────────
+# Introduced to decouple redundancy from security compliance (POAM-024).
+# Previously, enable_nist_compliance controlled both security hardening AND
+# replica scaling (gateway ×2, Redis replication, PDBs, resource limits).
+# This prevented testing full security posture at dev scale.
+# enable_high_availability now drives redundancy independently, allowing:
+#   - dev: secure=false, ha=false (cheap iteration)
+#   - staging: secure=true, ha=false (cheap full-security validation)
+#   - prod: secure=true, ha=true (production HA + security)
+
+variable "enable_high_availability" {
+  description = "Enable high availability redundancy: multi-replica deployments (gateway ×2, advisor ×2, OPA ×2, NeMo ×2, Langfuse web/worker ×2, compliance bridge ×2), Redis replication (3 replicas + sentinel), PodDisruptionBudgets, and production resource limits. Independent of security compliance flags. Set true for production workloads requiring fault tolerance; false for dev/staging cost optimization."
+  type        = bool
+  default     = false
+}
+
+# POAM-024: Decoupled from enable_nist_compliance to allow ephemeral staging clusters.
+variable "enable_deletion_protection" {
+  description = "Enable deletion protection on the GKE cluster. Set false for ephemeral environments (staging) that need terraform destroy capability. Set true for production to prevent accidental cluster deletion."
+  type        = bool
+  default     = false
+}
+
 variable "enable_binary_authorization" {
   description = "Enable Binary Authorization (CM-7, SI-7)"
   type        = bool

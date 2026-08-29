@@ -30,7 +30,7 @@ from src.gateway.slm.mock_slm import (
 )
 
 # Re-export public API for backward compatibility
-__all__ = ["app", "similarity", "health", "INJECTION_TARGET"]
+__all__ = ["INJECTION_TARGET", "app", "health", "similarity"]
 
 if __name__ == "__main__":
     port = int(os.environ.get("SLM_PORT", "5001"))

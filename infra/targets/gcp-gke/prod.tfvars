@@ -50,6 +50,9 @@ cage_deployment_region = "US_FED"
 enable_nist_compliance         = true
 enable_eu_ecb_compliance       = false
 enable_apac_mas_compliance     = false
+# POAM-024: HA decoupled from compliance — set explicitly true for production
+enable_high_availability       = true
+enable_deletion_protection     = true
 enable_binary_authorization    = true
 enable_audit_logging           = true
 enable_cmek                    = false # Enable when KMS key is configured

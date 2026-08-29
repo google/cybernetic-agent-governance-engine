@@ -209,6 +209,7 @@ class CBFInitializationError(RuntimeError):
     reachable and the epoch is successfully seeded.
     """
 
+
 async def _get_raw_redis(r: Any) -> Any:
     """Helper to extract raw redis client from wrapper or mock."""
     if r is None:
@@ -844,7 +845,8 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
                             "[DIAG-FAILOPEN] cbf_kms_verify_failed decision=continue_with_fallback "
                             "error_type=%s error=%s source=%s balance_usd=%.2f "
                             "poam_ref=POAM-023 security_impact=HIGH strict_mode=false",
-                            type(sig_exc).__name__, str(sig_exc)[:100],
+                            type(sig_exc).__name__,
+                            str(sig_exc)[:100],
                             verified.source if verified else "unknown",
                             verified.balance_usd if verified else 0.0,
                         )
@@ -904,7 +906,8 @@ return {1, "COMMITTED", tostring(next_cash), new_epoch}
             logger.warning(
                 "[DIAG-FAILOPEN] cbf_reconciliation_failed decision=continue_with_self_reported "
                 "error_type=%s error=%s poam_ref=POAM-023 security_impact=HIGH strict_mode=false",
-                type(recon_exc).__name__, str(recon_exc)[:100],
+                type(recon_exc).__name__,
+                str(recon_exc)[:100],
             )
 
         # ── Fallback: self-reported balance (POAM-023 open) ──────────────────

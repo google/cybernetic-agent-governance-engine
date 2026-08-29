@@ -52,11 +52,12 @@ os.environ.setdefault("GOVERNANCE_SALT", "TEST_SALT_UNIT_32_CHARACTERS_OK!")
 @pytest.fixture(autouse=True)
 def disable_seal_strict_mode(monkeypatch):
     """Disable strict mode for all tests in this module.
-    
+
     Strict mode rejects HMAC seals in production environments.
     Tests use HMAC seals for unit testing, so we disable strict mode.
     """
     monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
+
 
 from src.gateway.governance.routing_seal import (
     extract_record_hash,

@@ -43,6 +43,21 @@ variable "namespace" {
   default     = "governance-stack"
 }
 
+# ─── High Availability Toggle ─────────────────────────────────────────────────
+# Introduced to decouple redundancy from environment (POAM-024).
+# Previously, var.environment == "prod" controlled both the deployment tier AND
+# replica scaling. This prevented testing full security posture at dev scale.
+# enable_high_availability now drives redundancy independently, allowing:
+#   - dev: ha=false (cheap iteration)
+#   - staging: ha=false (cheap full-security validation)
+#   - prod: ha=true (production HA)
+
+variable "enable_high_availability" {
+  description = "Enable high availability redundancy: multi-replica deployments, resource limits, and security context enforcement. Independent of environment tier. Set true for production workloads requiring fault tolerance; false for dev/staging cost optimization."
+  type        = bool
+  default     = false
+}
+
 # ─── Storage Configuration ────────────────────────────────────────────────────
 
 variable "storage_class" {

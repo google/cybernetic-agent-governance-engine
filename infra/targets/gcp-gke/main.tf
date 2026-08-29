@@ -70,6 +70,7 @@ module "gke" {
 
   # Security posture toggles
   enable_nist_compliance         = var.enable_nist_compliance
+  enable_deletion_protection     = var.enable_deletion_protection
   enable_binary_authorization    = var.enable_binary_authorization
   enable_audit_logging           = var.enable_audit_logging
   enable_cmek                    = var.enable_cmek
@@ -258,14 +259,15 @@ module "redis" {
   namespace                 = module.namespace.name
   storage_size              = var.redis_storage_size
   storage_class             = var.storage_class
-  # DEP-20: Redis HA (replication + sentinel) now activates for EU_ECB (DORA Art. 10)
-  # and APAC_MAS (MAS TRM §9.1) in addition to US_FED (NIST SC-6).
-  architecture              = local.any_compliance_active ? "replication" : "standalone"
-  replica_count             = local.any_compliance_active ? 3 : 1
-  enable_persistence        = local.any_compliance_active
-  enable_sentinel           = local.any_compliance_active
-  resources_limits_memory   = local.any_compliance_active ? "2Gi" : ""
-  resources_limits_cpu      = local.any_compliance_active ? "1000m" : ""
+  # DEP-20 + POAM-024: Redis HA now controlled by enable_high_availability (decoupled
+  # from compliance flags). Prod tfvars for all regions (US_FED, EU_ECB, APAC_MAS)
+  # set enable_high_availability=true to satisfy NIST SC-6, DORA Art. 10, and MAS TRM §9.1.
+  architecture              = var.enable_high_availability ? "replication" : "standalone"
+  replica_count             = var.enable_high_availability ? 3 : 1
+  enable_persistence        = var.enable_high_availability
+  enable_sentinel           = var.enable_high_availability
+  resources_limits_memory   = var.enable_high_availability ? "2Gi" : ""
+  resources_limits_cpu      = var.enable_high_availability ? "1000m" : ""
   resources_requests_cpu    = "200m"
   resources_requests_memory = "512Mi"
   maxmemory                 = var.environment == "prod" ? "1024mb" : "256mb"
@@ -284,11 +286,11 @@ module "clickhouse" {
   storage_class             = var.storage_class
   replicas                  = 1
   enable_persistence        = true
-  # DEP-20: PDB and resource limits now activate for any jurisdiction compliance flag.
-  enable_pdb                = local.any_compliance_active
+  # DEP-20 + POAM-024: PDB and resource limits now controlled by enable_high_availability.
+  enable_pdb                = var.enable_high_availability
   enable_nist_compliance    = var.enable_nist_compliance
-  resources_limits_cpu      = local.any_compliance_active ? "3000m" : ""
-  resources_limits_memory   = local.any_compliance_active ? "4Gi" : ""
+  resources_limits_cpu      = var.enable_high_availability ? "3000m" : ""
+  resources_limits_memory   = var.enable_high_availability ? "4Gi" : ""
   resources_requests_cpu    = "1000m"
   resources_requests_memory = "2Gi"
 
@@ -305,8 +307,8 @@ module "nemo_guardrails" {
   namespace       = module.namespace.name
   deployment_name = "nemo-guardrails"
   service_name    = "nemo-guardrails"
-  replicas        = var.enable_nist_compliance ? 2 : 1
-  enable_pdb      = var.enable_nist_compliance
+  replicas        = var.enable_high_availability ? 2 : 1
+  enable_pdb      = var.enable_high_availability
 
   # NeMo container image (custom-built via Cloud Build or upstream NVIDIA)
   nemo_image = var.nemo_image != "" ? var.nemo_image : "gcr.io/${var.project_id}/nemo-guardrails:latest"
@@ -323,13 +325,13 @@ module "nemo_guardrails" {
   # Resource sizing
   nemo_cpu_request    = "500m"
   nemo_memory_request = "1Gi"
-  nemo_cpu_limit      = var.enable_nist_compliance ? "2000m" : ""
-  nemo_memory_limit   = var.enable_nist_compliance ? "4Gi" : ""
+  nemo_cpu_limit      = var.enable_high_availability ? "2000m" : ""
+  nemo_memory_limit   = var.enable_high_availability ? "4Gi" : ""
 
   presidio_cpu_request    = "200m"
   presidio_memory_request = "512Mi"
-  presidio_cpu_limit      = var.enable_nist_compliance ? "1000m" : ""
-  presidio_memory_limit   = var.enable_nist_compliance ? "2Gi" : ""
+  presidio_cpu_limit      = var.enable_high_availability ? "1000m" : ""
+  presidio_memory_limit   = var.enable_high_availability ? "2Gi" : ""
 
   enable_security_context = var.enable_nist_compliance
 
@@ -367,7 +369,7 @@ module "vllm" {
   gpu_count      = var.vllm_gpu_count
   gpu_product    = var.gpu_type
   replicas       = var.vllm_replicas
-  enable_pdb     = var.enable_nist_compliance
+  enable_pdb     = var.enable_high_availability
   memory_limit   = var.vllm_memory_limit
   cpu_limit      = var.vllm_cpu_limit
   memory_request = var.vllm_memory_request
@@ -437,7 +439,7 @@ module "vllm_reasoning" {
   gpu_count      = var.vllm_gpu_count
   gpu_product    = var.gpu_type
   replicas       = var.vllm_replicas
-  enable_pdb     = var.enable_nist_compliance
+  enable_pdb     = var.enable_high_availability
   memory_limit   = var.vllm_memory_limit
   cpu_limit      = var.vllm_cpu_limit
   memory_request = var.vllm_memory_request
@@ -502,8 +504,8 @@ module "langfuse" {
   s3_region     = var.region
 
   nextauth_url          = var.langfuse_nextauth_url
-  web_replicas          = var.enable_nist_compliance ? 2 : 1
-  worker_replicas       = var.enable_nist_compliance ? 2 : 1
+  web_replicas          = var.enable_high_availability ? 2 : 1
+  worker_replicas       = var.enable_high_availability ? 2 : 1
   web_cpu_request       = "50m"
   worker_cpu_request    = "50m"
   web_memory_request    = "256Mi"
@@ -532,7 +534,7 @@ module "compliance_bridge" {
   namespace     = module.namespace.name
   image         = var.compliance_bridge_image != "" ? var.compliance_bridge_image : "gcr.io/${var.project_id}/compliance-bridge:latest"
   langfuse_host = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
-  replicas      = var.enable_nist_compliance ? 2 : 1
+  replicas      = var.enable_high_availability ? 2 : 1
 
   remediation_model      = var.model_fast
   remediation_max_tokens = "2048"
@@ -560,7 +562,7 @@ module "opa" {
   source = "../../modules/opa_policy"
 
   namespace = module.namespace.name
-  replicas  = var.enable_nist_compliance ? 2 : 1
+  replicas  = var.enable_high_availability ? 2 : 1
 
   # Optional: Add custom policies
   policy_files = {
@@ -577,7 +579,7 @@ module "gateway" {
 
   namespace               = module.namespace.name
   image                   = "gcr.io/${var.project_id}/gateway:latest"
-  replicas                = var.enable_nist_compliance ? 2 : 1
+  replicas                = var.enable_high_availability ? 2 : 1
   project_id              = var.project_id
   region                  = var.region
   enable_logging          = "true"
@@ -612,7 +614,7 @@ module "governed_advisor" {
 
   namespace                = module.namespace.name
   image                    = "gcr.io/${var.project_id}/governed-financial-advisor:latest"
-  replicas                 = var.enable_nist_compliance ? 2 : 1
+  replicas                 = var.enable_high_availability ? 2 : 1
   project_id               = var.project_id
   region                   = var.region
   enable_logging           = "true"

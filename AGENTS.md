@@ -404,6 +404,47 @@ Key facts:
 - Last known result (2026-08-10): **2553 passed, 51 skipped, 1 failed** in ~9m25s. The 51 skips are region/OPA-gated integration tests; the 1 failure was a test-isolation bug (cache leak in `tests/test_red_teaming.py::mock_thresholds` fixture), not a GKE connectivity issue.
 - Always use `uv run pytest`, never bare `pytest`.
 
+### Staging Lifecycle Validation (POAM-024 Closure)
+
+**Status**: Provisioned 2026-08-29
+
+The `staging` environment is an ephemeral pre-production validation tier that proves full security posture at dev-scale cost before promoting to production:
+
+```bash
+# Automated lifecycle (recommended)
+./scripts/staging_lifecycle.sh
+
+# Manual deployment
+./deploy_all.sh --target gcp-gke --env staging --auto-approve
+
+# Manual teardown
+cd infra/targets/gcp-gke
+terraform destroy -var-file=staging.tfvars -auto-approve
+```
+
+**What staging validates** (ISO 42001 §A.5.3 CA-2 pre-production validation):
+- All 31 Lula validation gates pass at 1-replica scale
+- NIST SP 800-53 controls enforced without HA overhead
+- Cluster-scoped controls active (Binary Authorization, PSS restricted, CMEK, audit logs)
+- Regional compliance postures (US_FED, EU_ECB, APAC_MAS) validated
+
+**Key characteristics**:
+- **Cost**: ~$2-4 per validation cycle (20-30 minutes runtime)
+- **Hardware**: Dev-scale (e2-standard-4 nodes, pd-standard disks, GPU scale-to-zero)
+- **Security**: Full prod posture (`enable_nist_compliance=true` for US_FED, Binary Authorization, audit logging, CMEK, PSS restricted)
+- **HA**: Decoupled (`enable_high_availability=false`, 1 replica per service, standalone Redis)
+- **Lifecycle**: Ephemeral (`enable_deletion_protection=false`, allows teardown)
+
+**Automation workflow** ([`scripts/staging_lifecycle.sh`](scripts/staging_lifecycle.sh)):
+1. **Phase 1**: Provision staging with `./deploy_all.sh --env staging`
+2. **Phase 2**: Wait for cluster readiness (`kubectl wait --for=condition=Ready`)
+3. **Phase 3**: Lula validation (all 31 gates, exit on failure)
+4. **Phase 4**: Region posture tests (`CAGE_DEPLOYMENT_REGION={US_FED,EU_ECB,APAC_MAS}`)
+5. **Phase 5**: Cluster-scoped control verification (BinAuthz, PSS, CMEK, audit logs)
+6. **Phase 6**: Teardown (`terraform destroy -var-file=staging.tfvars`)
+
+See [`infra/targets/gcp-gke/staging.tfvars`](infra/targets/gcp-gke/staging.tfvars) for configuration and [`docs/operations/DEPLOYMENT_DECISION_RECORD.md`](docs/operations/DEPLOYMENT_DECISION_RECORD.md) ADR-004 for design rationale.
+
 ### Nightly CI Without Live GKE
 
 **Verdict: No new nightly workflow is needed.**
@@ -411,4 +452,4 @@ Key facts:
 - The `local`/`unit` marker subset (~90%+ of the 2553 passing tests) already runs on every push/PR via the existing `pytest-logic` job in all three region postures (`.github/workflows/ci.yml` lines 87–134). A dedicated nightly run of the same markers adds negligible incremental regression-detection value over what is already gated on `main` before merge.
 - Tests that genuinely require live GKE (live OPA policy evaluation, Langfuse SLA timing, CMEK/pod-restart checks, real backend accuracy) **cannot be replaced** by a mock-only nightly — these are the `integration`-marked corpus and the 51 skips in the full run.
 - Existing CI already covers what a nightly would target: `pytest-logic` (mock/unit, every push), `ai600-unit-tests` (red-team mock, every push), `locust-load-test` (nightly load test).
-- **Practical guidance**: treat `pytest-logic` + `ai600-unit-tests` (GKE-independent, secret-free) as the authoritative daily regression gate. Reserve the live-GKE `integration-smoke` job and manual full-suite runs (`port_forward_dev.sh` + `uv run pytest tests/ --run-integration`) for periodic live-service validation.
+- **Practical guidance**: treat `pytest-logic` + `ai600-unit-tests` (GKE-independent, secret-free) as the authoritative daily regression gate. Reserve the live-GKE `integration-smoke` job, manual full-suite runs (`port_forward_dev.sh` + `uv run pytest tests/ --run-integration`), and **staging lifecycle validation** (`./scripts/staging_lifecycle.sh`) for periodic live-service validation.

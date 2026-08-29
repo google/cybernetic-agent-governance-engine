@@ -238,5 +238,71 @@ CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env prod \
 **Consequences:**
 - `TF_VAR_cage_deployment_region` is derived from `CAGE_DEPLOYMENT_REGION` via
   `.env` / `_read_env_var()` (DEP-02 / DEP-22)
-- `staging` environment is defined in the Terraform schema but not yet
-  provisioned (POAM-024, target v2.1.0, 2026-12-31)
+- `staging` environment provisioned 2026-08-29 (POAM-024 closed) — ephemeral
+  pre-production validation tier with full security posture at dev-scale cost
+
+---
+
+## ADR-004: Decouple Security Posture from High Availability
+
+**Date:** 2026-08-29
+**Status:** Accepted
+
+**Context:** `enable_nist_compliance` was overloaded — controlling both
+security controls (Binary Authorization, audit logging, CMEK) and redundancy
+(replica counts, PDBs, Redis replication, resource limits). This prevented
+testing full security posture at dev-scale cost, blocking POAM-024 (ISO 42001
+§A.5.3 pre-production validation).
+
+**Problem:**
+- No Lula validation file asserts on replica counts (searched all 31 gates).
+- Full security posture is provable at 1-replica scale.
+- Dev cannot test production-equivalent security without production-scale spend.
+
+**Decision:** Introduce two independent flags:
+
+1. **`enable_high_availability`** (new) — controls redundancy:
+   - Gateway, Advisor, OPA, NeMo, Langfuse, compliance bridge replica counts
+   - PodDisruptionBudgets (min_available)
+   - Redis architecture (`replication` vs `standalone`) and replica_count
+   - Resource limits (CPU/memory) for prod-scale workloads
+   - Defaults to `false`
+
+2. **`enable_deletion_protection`** (new) — controls GKE cluster lifecycle:
+   - Detached from `enable_nist_compliance`
+   - Allows ephemeral staging to be destroyed
+   - Defaults to `false`
+
+3. **`enable_nist_compliance`** (unchanged) — still controls security posture:
+   - Binary Authorization, audit logging, CMEK, PSS restricted
+   - Langfuse project isolation (POAM-019 precondition)
+   - Compliance bridge activation
+   - No longer controls redundancy or deletion protection
+
+**Implementation:**
+- All prod tfvars: `enable_high_availability=true`, `enable_deletion_protection=true`
+- All dev tfvars: `enable_high_availability=false`, `enable_deletion_protection=false`
+- Staging tfvars: `enable_high_availability=false`, `enable_deletion_protection=false`,
+  but full security flags enabled (Binary Authorization, audit, CMEK, PSS)
+- Zero-diff terraform plan on existing dev/prod — refactor is behavior-preserving
+
+**Staging Tier (POAM-024 Closure):**
+- **Environment**: `staging.tfvars` — ephemeral pre-production validation tier
+- **Lifecycle**: Provision → Validate (Lula + posture tests) → Destroy
+- **Cost**: ~$2-4 per cycle (20-30 min runtime, sub-hour usage)
+- **Hardware**: Dev-scale (e2-standard-4, pd-standard, GPU scale-to-zero)
+- **Security**: Full prod posture (enable_nist_compliance=true for US_FED)
+- **HA**: Decoupled (1 replica per service, no PDBs, standalone Redis)
+- **Automation**: `scripts/staging_lifecycle.sh` (6-phase workflow)
+
+**Validation:**
+- Terraform plan against existing dev: zero infrastructure diff (validated 2026-08-29)
+- All 31 Lula gates target cluster-scoped controls, not replica topology
+- Staging proves ISO 42001 §A.5.3 CA-2 pre-production validation requirement
+
+**Consequences:**
+- Three-tier promotion path: dev → staging → prod
+- Staging validates security posture at dev-scale cost before prod deploy
+- `enable_nist_compliance` no longer implies high availability
+- Prod retains exact same behavior (`enable_high_availability=true` by construction)
+- Dev gains explicit HA control (currently false, can be overridden for testing)

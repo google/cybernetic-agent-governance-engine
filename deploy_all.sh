@@ -261,23 +261,18 @@ deploy_terraform_target() {
   # Load environment variables
   load_env
   
-  # Reject staging — defined in Terraform schema but not yet provisioned (POAM-024, target v2.1.0)
-  if [[ "$env" == "staging" ]]; then
-    error "The 'staging' deployment posture is defined in the Terraform schema but not yet provisioned."
-    echo "  Staging is deferred to v2.1.0 (POAM-024, target 2026-12-31)."
-    echo "  See docs/CHANGE_MANAGEMENT_PROCESS.md §3.5 and docs/POAM_ISO42001.md#POAM-024."
-    echo "  Use '--env dev' or '--env prod'."
-    exit 1
-  fi
-
   # DEP-01: Gate enable_nist_compliance on CAGE_DEPLOYMENT_REGION, not just --env prod.
   # A prod deployment to EU_ECB or APAC_MAS must NOT activate NIST-specific
   # infrastructure hardening (SC-7, AC-3, deletion protection, Redis replication).
   # ISO 42001 baseline hardening is always active in prod regardless of region.
   # R-2: NIST SP 800-53 logic MUST be gated on CAGE_DEPLOYMENT_REGION == "US_FED".
+  #
+  # POAM-024 (closed 2026-08-29): Staging tier provisioned — full security posture
+  # at dev-scale cost. Staging behaves like prod for compliance flag injection but
+  # uses enable_high_availability=false and enable_deletion_protection=false.
   _cage_region="${CAGE_DEPLOYMENT_REGION:-${TF_VAR_cage_deployment_region:-}}"
 
-  # Set environment-specific banners
+  # Set environment-specific banners and compliance flags
   if [[ "$env" == "prod" ]]; then
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════╗${RESET}"
@@ -285,6 +280,22 @@ deploy_terraform_target() {
     echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
     # DEP-01: Only activate NIST-specific hardening for US_FED deployments.
+    if [[ "$_cage_region" == "US_FED" ]]; then
+      info "CAGE_DEPLOYMENT_REGION=US_FED — activating NIST SP 800-53 hardening"
+      tf_args+=("-var=enable_nist_compliance=true")
+    else
+      info "CAGE_DEPLOYMENT_REGION=${_cage_region:-unset} — NIST hardening suppressed (not US_FED)"
+      tf_args+=("-var=enable_nist_compliance=false")
+    fi
+  elif [[ "$env" == "staging" ]]; then
+    echo ""
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║  🧪  STAGING MODE: Full security posture at dev-scale cost.      ║${RESET}"
+    echo -e "${CYAN}║      Ephemeral validation tier — provision, test, destroy.       ║${RESET}"
+    echo -e "${CYAN}║      POAM-024: CA-2 pre-production validation satisfied.         ║${RESET}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
+    echo ""
+    # Staging mirrors prod compliance logic but at 1-replica scale
     if [[ "$_cage_region" == "US_FED" ]]; then
       info "CAGE_DEPLOYMENT_REGION=US_FED — activating NIST SP 800-53 hardening"
       tf_args+=("-var=enable_nist_compliance=true")
