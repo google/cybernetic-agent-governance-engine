@@ -247,3 +247,7 @@ coverage.json
 # Local developer/agent instructions (uncommitted overrides)
 .agents.local.md
 .agents.md
+
+# Third party external repositories
+third_party/agent-integrity/
+
