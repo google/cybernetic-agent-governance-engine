@@ -421,3 +421,78 @@ class TestReadVerifiedBalance:
 
         result = mod.read_verified_balance(mock_redis)
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# GcsLedgerProvider / ObjectStoreLedgerProvider — zero-balance mapping
+#
+# A drained (0.0) account in a multi-account snapshot must be reported as 0.0,
+# not silently replaced by the top-level "balance" fallback. The barrier the
+# reconciler feeds, h(x) = cash - min_cash, relies on the real balance; a
+# masked zero inflates it and lets trades clear against an empty account.
+# ---------------------------------------------------------------------------
+
+
+class TestLedgerProviderZeroBalanceMapping:
+    """Ledger providers must not treat a present 0.0 balance as absent."""
+
+    def _gcs_client_for(self, snapshot: dict) -> MagicMock:
+        blob = MagicMock()
+        blob.download_as_text.return_value = json.dumps(snapshot)
+        bucket = MagicMock()
+        bucket.blob.return_value = blob
+        client = MagicMock()
+        client.bucket.return_value = bucket
+        return client
+
+    def _s3_provider_with_snapshot(self, mod, monkeypatch, snapshot: dict):
+        monkeypatch.setenv("S3_RECONCILIATION_BUCKET", "cage-ledger")
+        body = MagicMock()
+        body.read.return_value = json.dumps(snapshot).encode("utf-8")
+        client = MagicMock()
+        client.get_object.return_value = {"Body": body}
+        provider = mod.ObjectStoreLedgerProvider()
+        monkeypatch.setattr(provider, "_make_client", lambda: client)
+        return provider
+
+    def test_gcs_present_zero_balance_not_masked(self, monkeypatch):
+        """A 0.0 target balance must survive even when a top-level fallback exists."""
+        mod = _get_module()
+        monkeypatch.setenv("GCS_RECONCILIATION_BUCKET", "cage-ledger")
+        snapshot = {"balances": {"acct1": 0.0}, "balance": 100_000.0}
+        client = self._gcs_client_for(snapshot)
+        provider = mod.GcsLedgerProvider()
+        with patch("google.cloud.storage.Client", return_value=client):
+            result = provider.fetch_balance("acct1")
+        assert result.balance_usd == 0.0
+
+    def test_s3_present_zero_balance_not_masked(self, monkeypatch):
+        """Same containment for the S3-compatible provider."""
+        mod = _get_module()
+        snapshot = {"balances": {"acct1": 0.0}, "balance": 100_000.0}
+        provider = self._s3_provider_with_snapshot(mod, monkeypatch, snapshot)
+
+        result = provider.fetch_balance("acct1")
+        assert result.balance_usd == 0.0
+
+    def test_gcs_nonzero_balance_preferred_over_fallback(self, monkeypatch):
+        """A real per-account balance still wins over the top-level fallback."""
+        mod = _get_module()
+        monkeypatch.setenv("GCS_RECONCILIATION_BUCKET", "cage-ledger")
+        snapshot = {"balances": {"acct1": 4_200.0}, "balance": 100_000.0}
+        client = self._gcs_client_for(snapshot)
+        provider = mod.GcsLedgerProvider()
+        with patch("google.cloud.storage.Client", return_value=client):
+            result = provider.fetch_balance("acct1")
+        assert result.balance_usd == 4_200.0
+
+    def test_gcs_absent_account_falls_back_to_top_level_balance(self, monkeypatch):
+        """When the account is absent, the top-level balance is still used."""
+        mod = _get_module()
+        monkeypatch.setenv("GCS_RECONCILIATION_BUCKET", "cage-ledger")
+        snapshot = {"balances": {}, "balance": 100_000.0}
+        client = self._gcs_client_for(snapshot)
+        provider = mod.GcsLedgerProvider()
+        with patch("google.cloud.storage.Client", return_value=client):
+            result = provider.fetch_balance("acct1")
+        assert result.balance_usd == 100_000.0
